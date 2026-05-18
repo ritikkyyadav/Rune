@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Alan CLI launcher — run from anywhere
+
+set -euo pipefail
+
+ALAN_ROOT="/Users/ritikyadav890/Documents/Alan"
+ALAN_ENV="$HOME/.alan/.env"
+
+# Load API keys from ~/.alan/.env
+if [ -f "$ALAN_ENV" ]; then
+  set -a
+  source "$ALAN_ENV"
+  set +a
+fi
+
+# Resolve bun
+BUN="${HOME}/.bun/bin/bun"
+if ! [ -x "$BUN" ]; then
+  BUN="$(command -v bun 2>/dev/null || true)"
+fi
+if [ -z "$BUN" ]; then
+  echo "Error: bun not found. Install it: curl -fsSL https://bun.sh/install | bash" >&2
+  exit 1
+fi
+
+# Default workspace to current directory
+WORKSPACE="${PWD}"
+
+exec "$BUN" run "$ALAN_ROOT/packages/orchestrator/src/bin/alan-cli.ts" \
+  --workspace "$WORKSPACE" \
+  "$@"

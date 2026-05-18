@@ -1,0 +1,368 @@
+import { Database } from "bun:sqlite";
+import { randomUUIDv7 } from "bun";
+import { createHash } from "crypto";
+
+// ─── Types ───
+
+// SessionInfo is exported from protocol.ts — we use it but don't re-export
+
+export interface SessionEvent {
+  type: string;
+  payload: Record<string, unknown>;
+}
+
+interface SessionRow {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  workspace_root: string;
+  model: string;
+  title: string | null;
+  event_count: number;
+}
+
+export interface SessionInfoInternal {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  workspaceRoot: string;
+  model: string;
+  eventCount: number;
+  title: string | null;
+}
+
+// ─── Schema (mirrors crates/alan-core/src/session.rs exactly) ───
+
+const SCHEMA = `
+  PRAGMA journal_mode = WAL;
+  PRAGMA foreign_keys = ON;
+  PRAGMA busy_timeout = 5000;
+
+  CREATE TABLE IF NOT EXISTS sessions (
+    id              TEXT PRIMARY KEY,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    workspace_root  TEXT NOT NULL,
+    model           TEXT NOT NULL DEFAULT 'claude-sonnet-4-20250514',
+    system_prompt_hash TEXT,
+    title           TEXT,
+    status          TEXT NOT NULL DEFAULT 'active'
+                    CHECK (status IN ('active', 'archived', 'deleted'))
+  );
+
+  CREATE TABLE IF NOT EXISTS events (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id      TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    seq             INTEGER NOT NULL,
+    type            TEXT NOT NULL,
+    payload_json    TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    UNIQUE(session_id, seq)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_events_session_seq
+    ON events(session_id, seq);
+
+  CREATE TABLE IF NOT EXISTS files (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id      TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    path            TEXT NOT NULL,
+    hash            TEXT NOT NULL,
+    last_read_seq   INTEGER NOT NULL,
+    updated_at      TEXT NOT NULL,
+    UNIQUE(session_id, path)
+  );
+
+  CREATE TABLE IF NOT EXISTS permissions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id      TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    tool            TEXT NOT NULL,
+    scope           TEXT NOT NULL DEFAULT 'session'
+                    CHECK (scope IN ('once', 'session', 'project', 'global')),
+    pattern         TEXT,
+    granted_at      TEXT NOT NULL,
+    expires_at      TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS audit_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id      TEXT,
+    tool_name       TEXT NOT NULL,
+    args_hash       TEXT NOT NULL,
+    result_hash     TEXT,
+    duration_ms     INTEGER,
+    exit_code       INTEGER,
+    prev_hash       TEXT,
+    entry_hash      TEXT NOT NULL,
+    created_at      TEXT NOT NULL
+  );
+`;
+
+function rowToSessionInfo(r: SessionRow): SessionInfoInternal {
+  return {
+    id: r.id,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    workspaceRoot: r.workspace_root,
+    model: r.model,
+    eventCount: r.event_count,
+    title: r.title,
+  };
+}
+
+// ─── Session Manager ───
+
+export class SessionManager {
+  private db: Database;
+
+  constructor(dbPath: string) {
+    this.db = new Database(dbPath, { create: true });
+    this.db.exec(SCHEMA);
+  }
+
+  createSession(workspaceRoot: string, model: string): SessionInfoInternal {
+    const id = randomUUIDv7();
+    const now = new Date().toISOString();
+
+    this.db
+      .prepare(
+        "INSERT INTO sessions (id, workspace_root, model, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(id, workspaceRoot, model, now, now);
+
+    return {
+      id,
+      createdAt: now,
+      updatedAt: now,
+      workspaceRoot,
+      model,
+      eventCount: 0,
+      title: null,
+    };
+  }
+
+  appendEvent(sessionId: string, event: SessionEvent): number {
+    const now = new Date().toISOString();
+    const payloadJson = JSON.stringify(event);
+
+    const row = this.db
+      .prepare("SELECT COALESCE(MAX(seq), 0) + 1 as next_seq FROM events WHERE session_id = ?")
+      .get(sessionId) as { next_seq: number };
+
+    const seq = row.next_seq;
+
+    this.db
+      .prepare(
+        "INSERT INTO events (session_id, seq, type, payload_json, created_at) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(sessionId, seq, event.type, payloadJson, now);
+
+    this.db
+      .prepare("UPDATE sessions SET updated_at = ? WHERE id = ?")
+      .run(now, sessionId);
+
+    return seq;
+  }
+
+  listSessions(): SessionInfoInternal[] {
+    const rows = this.db
+      .prepare(
+        `SELECT s.id, s.created_at, s.updated_at, s.workspace_root, s.model, s.title,
+                (SELECT COUNT(*) FROM events WHERE session_id = s.id) as event_count
+         FROM sessions s
+         WHERE s.status = 'active'
+         ORDER BY s.updated_at DESC`,
+      )
+      .all() as SessionRow[];
+
+    return rows.map(rowToSessionInfo);
+  }
+
+  getEvents(
+    sessionId: string,
+    fromSeq: number,
+    limit?: number,
+  ): Array<{ seq: number; event: SessionEvent }> {
+    const effectiveLimit = limit ?? 999999999;
+
+    const rows = this.db
+      .prepare(
+        `SELECT seq, payload_json FROM events
+         WHERE session_id = ? AND seq >= ?
+         ORDER BY seq ASC
+         LIMIT ?`,
+      )
+      .all(sessionId, fromSeq, effectiveLimit) as Array<{
+      seq: number;
+      payload_json: string;
+    }>;
+
+    return rows.map((r) => ({
+      seq: r.seq,
+      event: JSON.parse(r.payload_json) as SessionEvent,
+    }));
+  }
+
+  getSession(sessionId: string): SessionInfoInternal | null {
+    const row = this.db
+      .prepare(
+        `SELECT s.id, s.created_at, s.updated_at, s.workspace_root, s.model, s.title,
+                (SELECT COUNT(*) FROM events WHERE session_id = s.id) as event_count
+         FROM sessions s WHERE s.id = ? AND s.status = 'active'`,
+      )
+      .get(sessionId) as SessionRow | null;
+
+    if (!row) return null;
+    return rowToSessionInfo(row);
+  }
+
+  // ─── Audit Log (hash-chained, tamper-evident) ───
+  //
+  // Each entry's hash binds it to the previous one, so any retroactive
+  // edit invalidates every subsequent hash. `verifyAuditChain` recomputes
+  // every hash and reports the first mismatch.
+
+  appendAuditEntry(entry: {
+    sessionId?: string | null;
+    toolName: string;
+    argsHash: string;
+    resultHash?: string | null;
+    durationMs?: number | null;
+    exitCode?: number | null;
+  }): { id: number; entryHash: string; prevHash: string } {
+    const prevRow = this.db
+      .prepare("SELECT entry_hash FROM audit_log ORDER BY id DESC LIMIT 1")
+      .get() as { entry_hash: string } | null;
+    const prevHash = prevRow?.entry_hash ?? "";
+    const now = new Date().toISOString();
+
+    const entryHash = computeEntryHash({
+      prevHash,
+      sessionId: entry.sessionId ?? null,
+      toolName: entry.toolName,
+      argsHash: entry.argsHash,
+      resultHash: entry.resultHash ?? null,
+      durationMs: entry.durationMs ?? null,
+      exitCode: entry.exitCode ?? null,
+      createdAt: now,
+    });
+
+    const result = this.db
+      .prepare(
+        `INSERT INTO audit_log
+          (session_id, tool_name, args_hash, result_hash, duration_ms, exit_code,
+           prev_hash, entry_hash, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        entry.sessionId ?? null,
+        entry.toolName,
+        entry.argsHash,
+        entry.resultHash ?? null,
+        entry.durationMs ?? null,
+        entry.exitCode ?? null,
+        prevHash,
+        entryHash,
+        now,
+      );
+
+    return {
+      id: Number(result.lastInsertRowid),
+      entryHash,
+      prevHash,
+    };
+  }
+
+  /**
+   * Walk the audit log in order and verify each entry's hash. Returns the
+   * id of the first tampered entry, or null if the chain is intact.
+   */
+  verifyAuditChain(): { ok: true } | { ok: false; firstBadId: number } {
+    const rows = this.db
+      .prepare(
+        `SELECT id, session_id, tool_name, args_hash, result_hash, duration_ms,
+                exit_code, prev_hash, entry_hash, created_at
+         FROM audit_log ORDER BY id ASC`,
+      )
+      .all() as Array<{
+      id: number;
+      session_id: string | null;
+      tool_name: string;
+      args_hash: string;
+      result_hash: string | null;
+      duration_ms: number | null;
+      exit_code: number | null;
+      prev_hash: string;
+      entry_hash: string;
+      created_at: string;
+    }>;
+
+    let expectedPrev = "";
+    for (const r of rows) {
+      if (r.prev_hash !== expectedPrev) {
+        return { ok: false, firstBadId: r.id };
+      }
+      const recomputed = computeEntryHash({
+        prevHash: r.prev_hash,
+        sessionId: r.session_id,
+        toolName: r.tool_name,
+        argsHash: r.args_hash,
+        resultHash: r.result_hash,
+        durationMs: r.duration_ms,
+        exitCode: r.exit_code,
+        createdAt: r.created_at,
+      });
+      if (recomputed !== r.entry_hash) {
+        return { ok: false, firstBadId: r.id };
+      }
+      expectedPrev = r.entry_hash;
+    }
+    return { ok: true };
+  }
+
+  close(): void {
+    this.db.close();
+  }
+}
+
+function computeEntryHash(parts: {
+  prevHash: string;
+  sessionId: string | null;
+  toolName: string;
+  argsHash: string;
+  resultHash: string | null;
+  durationMs: number | null;
+  exitCode: number | null;
+  createdAt: string;
+}): string {
+  const h = createHash("sha256");
+  h.update(parts.prevHash);
+  h.update("\x1f");
+  h.update(parts.sessionId ?? "");
+  h.update("\x1f");
+  h.update(parts.toolName);
+  h.update("\x1f");
+  h.update(parts.argsHash);
+  h.update("\x1f");
+  h.update(parts.resultHash ?? "");
+  h.update("\x1f");
+  h.update(String(parts.durationMs ?? ""));
+  h.update("\x1f");
+  h.update(String(parts.exitCode ?? ""));
+  h.update("\x1f");
+  h.update(parts.createdAt);
+  return h.digest("hex");
+}
+
+/** Hash arbitrary JSON-serialisable args with a stable encoding. */
+export function hashArgs(args: unknown): string {
+  return createHash("sha256")
+    .update(JSON.stringify(args ?? null))
+    .digest("hex");
+}
+
+/** Hash a result string (or stringify-and-hash a non-string). */
+export function hashResult(result: unknown): string {
+  const s = typeof result === "string" ? result : JSON.stringify(result ?? "");
+  return createHash("sha256").update(s).digest("hex");
+}

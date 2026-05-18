@@ -1,0 +1,16 @@
+{
+  "name": "@alan/shared",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "src/index.ts",
+  "scripts": {
+    "build": "bun build ./src/index.ts --outdir ./dist --target bun",
+    "typecheck": "tsc --noEmit",
+    "lint": "prettier --check src/",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "typescript": "^5.8"
+  }
+}

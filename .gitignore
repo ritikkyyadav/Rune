@@ -1,0 +1,36 @@
+# Rust
+/target
+**/*.rs.bk
+
+# Node / Bun
+node_modules/
+.turbo/
+dist/
+bun.lockb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Alan runtime
+.alan/cache/
+.alan/logs/
+
+# Environment
+.env
+.env.local
+
+# Build artifacts
+*.dmg
+*.deb
+*.rpm
+*.AppImage
+
+# Test artifacts
+tests/fixtures/tmp/

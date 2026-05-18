@@ -1,0 +1,21 @@
+{
+  "name": "@alan/llm-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "src/index.ts",
+  "scripts": {
+    "build": "bun build ./src/index.ts --outdir ./dist --target bun",
+    "typecheck": "tsc --noEmit",
+    "lint": "prettier --check src/",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@alan/shared": "workspace:*",
+    "@anthropic-ai/sdk": "^0.39",
+    "openai": "^4"
+  },
+  "devDependencies": {
+    "typescript": "^5.8"
+  }
+}
