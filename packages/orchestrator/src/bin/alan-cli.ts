@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { Engine } from "../engine";
 import type { PermissionHandler, UserPermissionDecision } from "../engine";
+import { loadConfig } from "@alan/shared";
 import { parseArgs } from "util";
 import * as readline from "readline";
 import { Spinner } from "./spinner";
@@ -31,6 +32,14 @@ const command = positionals[0] ?? "chat";
 // ─── Resolve Tool Binary ───
 
 async function findToolsBinary(): Promise<string> {
+  // 1. Check env var (set by bin/alan launcher)
+  const envPath = process.env.ALAN_TOOLS_BIN;
+  if (envPath) {
+    const envFile = Bun.file(envPath);
+    if (await envFile.exists()) return envPath;
+  }
+
+  // 2. Check relative paths from source tree
   const devPath = new URL(
     "../../../../target/release/alan-tools",
     import.meta.url,
@@ -45,6 +54,7 @@ async function findToolsBinary(): Promise<string> {
   const file2 = Bun.file(debugPath);
   if (await file2.exists()) return debugPath;
 
+  // 3. Hope it's on PATH
   return "alan-tools";
 }
 
@@ -76,23 +86,33 @@ async function main() {
   const toolsBinary = await findToolsBinary();
   const workspaceRoot = (values.workspace as string | undefined) ?? process.cwd();
 
+  // Load config from ~/.alan/config.toml + .alan/config.toml + env vars
+  const config = loadConfig(workspaceRoot);
+
+  // CLI flags override config file values
+  const model = (values.model as string | undefined) ?? config.llm.anthropic?.model ?? "deepseek/deepseek-v4-flash:free";
+  const provider = (values.provider as string | undefined) ?? config.llm.defaultProvider ?? "openrouter";
+
   const plannerMode = values.planner as boolean;
   const engine = new Engine({
-    model: values.model as string,
-    provider: (values.provider as "anthropic" | "openai" | "openrouter") ?? "openrouter",
+    model,
+    provider: provider as "anthropic" | "openai" | "openrouter",
     workspaceRoot,
-    dbPath: `${dataDir}/alan.db`,
+    dbPath: config.engine.dbPath,
     toolsBinaryPath: toolsBinary,
     yoloMode: values.yolo as boolean,
     plannerMode,
     routing: plannerMode
       ? {
-          planner: (values["planner-model"] as string) ?? values.model as string,
-          executor: (values["executor-model"] as string) ?? values.model as string,
-          plannerProvider: values.provider as string ?? "openrouter",
-          executorProvider: values.provider as string ?? "openrouter",
+          planner: (values["planner-model"] as string) ?? config.llm.planner?.model ?? model,
+          executor: (values["executor-model"] as string) ?? config.llm.executor?.model ?? model,
+          plannerProvider: config.llm.planner?.provider ?? provider,
+          executorProvider: config.llm.executor?.provider ?? provider,
         }
       : undefined,
+    anthropicApiKey: config.llm.anthropic?.apiKey,
+    openaiApiKey: config.llm.openai?.apiKey,
+    openrouterApiKey: config.llm.openrouter?.apiKey,
   });
 
   if (command === "list" || values.list) {

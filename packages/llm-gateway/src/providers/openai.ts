@@ -16,9 +16,12 @@ export class OpenAIProvider implements LlmProvider {
   private client: OpenAI;
 
   constructor(apiKey?: string, baseUrl?: string) {
+    const resolvedKey = apiKey ?? process.env.OPENAI_API_KEY ?? "dummy";
     this.client = new OpenAI({
-      apiKey: apiKey ?? process.env.OPENAI_API_KEY,
+      apiKey: resolvedKey,
       ...(baseUrl && { baseURL: baseUrl }),
+      timeout: 60_000,
+      maxRetries: 0,
     });
   }
 
@@ -49,95 +52,144 @@ export class OpenAIProvider implements LlmProvider {
   }
 
   async *inferStream(request: InferenceRequest): AsyncGenerator<StreamEvent> {
-    const stream = await this.client.chat.completions.create({
-      model: request.model,
-      max_tokens: request.maxTokens,
-      messages: this.toOpenAIMessages(request.messages, request.system),
-      tools: request.tools ? this.toOpenAITools(request.tools) : undefined,
-      temperature: request.temperature,
-      top_p: request.topP,
-      stop: request.stopSequences,
-      stream: true,
-      stream_options: { include_usage: true },
-    });
+    const controller = new AbortController();
+    const streamTimeout = setTimeout(() => controller.abort(), 90_000);
 
-    let messageId = "";
-    let contentIndex = 0;
-    let contentStarted = false;
-    const toolCalls: Map<
-      number,
-      { id: string; name: string; argsJson: string }
-    > = new Map();
+    try {
+      const stream = await this.client.chat.completions.create(
+        {
+          model: request.model,
+          max_tokens: request.maxTokens,
+          messages: this.toOpenAIMessages(request.messages, request.system),
+          tools: request.tools ? this.toOpenAITools(request.tools) : undefined,
+          temperature: request.temperature,
+          top_p: request.topP,
+          stop: request.stopSequences,
+          stream: true,
+        },
+        { signal: controller.signal },
+      );
 
-    for await (const chunk of stream) {
-      if (!messageId && chunk.id) {
-        messageId = chunk.id;
-        yield { type: "message_start", messageId };
-      }
+      let messageId = "";
+      let contentIndex = 0;
+      let contentStarted = false;
+      let gotFinish = false;
+      const toolCalls: Map<
+        number,
+        { id: string; name: string; argsJson: string }
+      > = new Map();
 
-      const delta = chunk.choices?.[0]?.delta;
-      const finishReason = chunk.choices?.[0]?.finish_reason;
+      for await (const chunk of stream) {
+        // Reset per-chunk timeout
+        clearTimeout(streamTimeout);
+        const chunkTimeout = setTimeout(() => controller.abort(), 30_000);
 
-      if (delta?.content) {
-        if (!contentStarted) {
-          yield { type: "content_start", contentIndex: 0 };
-          contentStarted = true;
-        }
-        yield {
-          type: "content_delta",
-          contentIndex: 0,
-          delta: { type: "text_delta", text: delta.content },
-        };
-      }
+        try {
+          // Check for error in chunk (OpenRouter sends errors as stream events)
+          const anyChunk = chunk as Record<string, unknown>;
+          if (anyChunk.error) {
+            const errObj = anyChunk.error as Record<string, unknown>;
+            throw new Error(
+              (errObj.message as string) ?? `API error ${errObj.code ?? ""}`,
+            );
+          }
 
-      if (delta?.tool_calls) {
-        for (const tc of delta.tool_calls) {
-          const idx = tc.index;
-          if (!toolCalls.has(idx) && tc.id) {
-            toolCalls.set(idx, { id: tc.id, name: tc.function?.name ?? "", argsJson: "" });
+          if (!messageId && chunk.id) {
+            messageId = chunk.id;
+            yield { type: "message_start", messageId };
+          }
+
+          const delta = chunk.choices?.[0]?.delta;
+          const finishReason = chunk.choices?.[0]?.finish_reason;
+
+          // Handle regular content AND reasoning output (for reasoning models)
+          const textChunk =
+            delta?.content ||
+            (delta as Record<string, unknown>)?.reasoning;
+          if (textChunk && typeof textChunk === "string") {
+            if (!contentStarted) {
+              yield { type: "content_start", contentIndex: 0 };
+              contentStarted = true;
+            }
+            yield {
+              type: "content_delta",
+              contentIndex: 0,
+              delta: { type: "text_delta", text: textChunk },
+            };
+          }
+
+          if (delta?.tool_calls) {
+            for (const tc of delta.tool_calls) {
+              const idx = tc.index;
+              if (!toolCalls.has(idx) && tc.id) {
+                toolCalls.set(idx, {
+                  id: tc.id,
+                  name: tc.function?.name ?? "",
+                  argsJson: "",
+                });
+                if (contentStarted) {
+                  yield { type: "content_stop", contentIndex: 0 };
+                  contentStarted = false;
+                }
+                contentIndex++;
+                yield {
+                  type: "tool_use_start",
+                  toolCallId: tc.id,
+                  toolName: tc.function?.name ?? "",
+                };
+              }
+              const entry = toolCalls.get(idx)!;
+              if (tc.function?.arguments) {
+                entry.argsJson += tc.function.arguments;
+                yield {
+                  type: "tool_use_delta",
+                  toolCallId: entry.id,
+                  partialJson: tc.function.arguments,
+                };
+              }
+            }
+          }
+
+          if (finishReason) {
+            gotFinish = true;
             if (contentStarted) {
               yield { type: "content_stop", contentIndex: 0 };
-              contentStarted = false;
             }
-            contentIndex++;
+            for (const [, entry] of toolCalls) {
+              const toolInput = entry.argsJson
+                ? JSON.parse(entry.argsJson)
+                : {};
+              yield { type: "tool_use_stop", toolCallId: entry.id, toolInput };
+            }
+
+            const usage: TokenUsage = {
+              inputTokens: chunk.usage?.prompt_tokens ?? 0,
+              outputTokens: chunk.usage?.completion_tokens ?? 0,
+            };
             yield {
-              type: "tool_use_start",
-              toolCallId: tc.id,
-              toolName: tc.function?.name ?? "",
+              type: "message_stop",
+              stopReason: this.mapFinishReason(finishReason),
+              usage,
             };
           }
-          const entry = toolCalls.get(idx)!;
-          if (tc.function?.arguments) {
-            entry.argsJson += tc.function.arguments;
-            yield {
-              type: "tool_use_delta",
-              toolCallId: entry.id,
-              partialJson: tc.function.arguments,
-            };
-          }
+        } finally {
+          clearTimeout(chunkTimeout);
         }
       }
 
-      if (finishReason) {
+      // If stream ended without a finish reason, emit a synthetic stop
+      if (!gotFinish) {
         if (contentStarted) {
           yield { type: "content_stop", contentIndex: 0 };
         }
-        // Emit tool_use_stop for all accumulated tools
-        for (const [, entry] of toolCalls) {
-          const toolInput = entry.argsJson ? JSON.parse(entry.argsJson) : {};
-          yield { type: "tool_use_stop", toolCallId: entry.id, toolInput };
-        }
-
-        const usage: TokenUsage = {
-          inputTokens: chunk.usage?.prompt_tokens ?? 0,
-          outputTokens: chunk.usage?.completion_tokens ?? 0,
-        };
         yield {
           type: "message_stop",
-          stopReason: this.mapFinishReason(finishReason),
-          usage,
+          stopReason: "end_turn",
+          usage: { inputTokens: 0, outputTokens: 0 },
         };
       }
+    } finally {
+      clearTimeout(streamTimeout);
     }
   }
 
@@ -247,8 +299,12 @@ export class OpenAIProvider implements LlmProvider {
   ): ContentBlock[] {
     const blocks: ContentBlock[] = [];
 
-    if (choice.message.content) {
-      blocks.push({ type: "text", text: choice.message.content });
+    // Handle regular content or reasoning (for reasoning models like DeepSeek)
+    const content =
+      choice.message.content ||
+      (choice.message as Record<string, unknown>).reasoning;
+    if (content && typeof content === "string") {
+      blocks.push({ type: "text", text: content });
     }
 
     if (choice.message.tool_calls) {

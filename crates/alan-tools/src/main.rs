@@ -9,6 +9,10 @@ struct Cli {
     #[arg(long, default_value = ".")]
     workspace: PathBuf,
 
+    /// Run bash commands through the platform sandbox
+    #[arg(long, default_value_t = false)]
+    sandbox: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -27,6 +31,8 @@ enum Commands {
     EditFile,
     /// Execute a bash command
     Bash,
+    /// Search indexed symbols in the workspace
+    SymbolSearch,
 }
 
 fn read_stdin() -> String {
@@ -108,7 +114,19 @@ async fn main() {
                     eprintln!("Invalid input JSON: {e}");
                     std::process::exit(2);
                 });
-            output_result(alan_tools::bash::execute(input, &workspace).await);
+            if cli.sandbox {
+                output_result(alan_tools::bash::execute_sandboxed(input, &workspace).await);
+            } else {
+                output_result(alan_tools::bash::execute(input, &workspace).await);
+            }
+        }
+        Commands::SymbolSearch => {
+            let input: alan_tools::symbol_search::SymbolSearchInput =
+                serde_json::from_str(&input_json).unwrap_or_else(|e| {
+                    eprintln!("Invalid input JSON: {e}");
+                    std::process::exit(2);
+                });
+            output_result(alan_tools::symbol_search::execute(input, &workspace));
         }
     }
 }

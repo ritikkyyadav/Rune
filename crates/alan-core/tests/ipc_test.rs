@@ -1,14 +1,26 @@
-use alan_core::ipc::{IpcClient, IpcServer};
+use alan_core::ipc::{IpcClient, IpcContext, IpcServer};
 use alan_core::protocol::{JsonRpcRequest, RequestId};
+use alan_core::session::SessionManager;
+use std::sync::Arc;
 use tempfile::TempDir;
+use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
+
+fn make_context(tmp: &TempDir) -> Arc<IpcContext> {
+    let db_path = tmp.path().join("test.db");
+    let sessions = SessionManager::open(&db_path).unwrap();
+    Arc::new(IpcContext {
+        sessions: Mutex::new(sessions),
+    })
+}
 
 #[tokio::test]
 async fn ping_returns_pong_with_version() {
     let tmp = TempDir::new().unwrap();
     let sock = tmp.path().join("test.sock");
+    let ctx = make_context(&tmp);
 
-    let mut server = IpcServer::new(sock.clone());
+    let mut server = IpcServer::new(sock.clone(), ctx);
     server.start().await.unwrap();
 
     // Spawn accept loop in background
@@ -40,8 +52,9 @@ async fn ping_returns_pong_with_version() {
 async fn unknown_method_returns_method_not_found() {
     let tmp = TempDir::new().unwrap();
     let sock = tmp.path().join("test.sock");
+    let ctx = make_context(&tmp);
 
-    let mut server = IpcServer::new(sock.clone());
+    let mut server = IpcServer::new(sock.clone(), ctx);
     server.start().await.unwrap();
 
     tokio::spawn(async move {
@@ -71,8 +84,9 @@ async fn unknown_method_returns_method_not_found() {
 async fn multiple_requests_on_same_connection() {
     let tmp = TempDir::new().unwrap();
     let sock = tmp.path().join("test.sock");
+    let ctx = make_context(&tmp);
 
-    let mut server = IpcServer::new(sock.clone());
+    let mut server = IpcServer::new(sock.clone(), ctx);
     server.start().await.unwrap();
 
     tokio::spawn(async move {

@@ -40,7 +40,7 @@ export class LlmGateway {
       } catch (err) {
         lastError = err as Error;
         if (!this.shouldRetry(err as Error, attempt)) break;
-        await this.backoff(attempt);
+        await this.backoff(lastError, attempt);
       }
     }
 
@@ -50,6 +50,7 @@ export class LlmGateway {
   async *inferStream(request: InferenceRequest): AsyncGenerator<StreamEvent> {
     const provider = this.resolveProvider(request.provider);
     let lastError: Error | undefined;
+    let lastStatus: number | undefined;
 
     for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
       try {
@@ -63,12 +64,39 @@ export class LlmGateway {
         return;
       } catch (err) {
         lastError = err as Error;
-        if (!this.shouldRetry(err as Error, attempt)) break;
-        await this.backoff(attempt);
+        lastStatus = (err as Record<string, unknown>).status as
+          | number
+          | undefined;
+        // Non-retryable auth errors — surface immediately
+        if (lastStatus === 401 || lastStatus === 403) {
+          yield {
+            type: "error",
+            error: `Auth error (${lastStatus}): ${lastError.message ?? ""}`,
+          };
+          return;
+        }
+        if (lastStatus === 402) {
+          yield {
+            type: "error",
+            error: `Insufficient credits: ${lastError.message ?? ""}. Add credits at https://openrouter.ai/settings/credits`,
+          };
+          return;
+        }
+        if (!this.shouldRetry(lastError, attempt)) break;
+        await this.backoff(lastError, attempt);
       }
     }
 
-    yield { type: "error", error: lastError?.message ?? "Stream failed" };
+    // Final error message with actionable advice
+    const msg = lastError?.message ?? "Stream failed";
+    if (lastStatus === 429) {
+      yield {
+        type: "error",
+        error: `Rate limited after ${this.config.maxRetries + 1} attempts. Model "${request.model}" is busy. Try: alan --model google/gemma-4-31b-it:free`,
+      };
+    } else {
+      yield { type: "error", error: msg };
+    }
   }
 
   async countTokens(
@@ -113,16 +141,29 @@ export class LlmGateway {
 
   private shouldRetry(err: Error, attempt: number): boolean {
     if (attempt >= this.config.maxRetries) return false;
-    // Don't retry client errors (4xx) except 429
     const status = (err as unknown as Record<string, unknown>).status as number | undefined;
-    if (status && status >= 400 && status < 500 && status !== 429) return false;
+    // Retry 429 (rate limit) and 5xx errors
+    if (status === 429) return true;
+    if (status && status >= 500) return true;
+    // Don't retry other 4xx
+    if (status && status >= 400 && status < 500) return false;
+    // Retry network errors
     return true;
   }
 
-  private async backoff(attempt: number): Promise<void> {
-    const ms = this.config.retryBaseMs * Math.pow(2, attempt);
-    const jitter = Math.random() * ms * 0.1;
-    await new Promise((resolve) => setTimeout(resolve, ms + jitter));
+  private async backoff(err: Error | undefined, attempt: number): Promise<void> {
+    // Check for Retry-After header in error metadata
+    let retryAfterMs = 0;
+    if (err) {
+      const headers = (err as Record<string, unknown>).headers as Record<string, string> | undefined;
+      const retryAfter = headers?.["retry-after"] ?? headers?.["Retry-After"];
+      if (retryAfter) {
+        retryAfterMs = parseInt(retryAfter, 10) * 1000;
+      }
+    }
+    const baseMs = Math.max(retryAfterMs, this.config.retryBaseMs * Math.pow(2, attempt));
+    const jitter = Math.random() * baseMs * 0.1;
+    await new Promise((resolve) => setTimeout(resolve, baseMs + jitter));
   }
 
   private recordCost(
