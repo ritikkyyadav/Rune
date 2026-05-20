@@ -209,7 +209,14 @@ export class Engine {
       payload: { content: userMessage },
     });
 
+    // Mark session as running for crash recovery
+    this.sessions.appendEvent(sessionId, {
+      type: "checkpoint",
+      payload: { summary: "session_started" },
+    });
+
     const permCheck = this.buildPermissionCheck();
+    let turnCount = 0;
 
     // Choose agent mode
     let runner: { run: (...args: [string, string, string]) => AsyncGenerator<PlanRunnerEvent>; getMessages: () => Message[] };
@@ -264,6 +271,17 @@ export class Engine {
       )) {
         if (event.type === "error" && !event.recoverable) {
           runError = event.error;
+        }
+
+        // Track turns and auto-checkpoint every 10
+        if (event.type === "turn_complete") {
+          turnCount++;
+          if (turnCount % 10 === 0) {
+            this.sessions.appendEvent(sessionId, {
+              type: "checkpoint",
+              payload: { summary: `auto-checkpoint at turn ${turnCount}` },
+            });
+          }
         }
 
         // Audit tool calls
@@ -337,6 +355,12 @@ export class Engine {
           payload: { content: `agent loop terminated: ${runError}` },
         });
       }
+
+      // Mark session as cleanly ended for crash recovery
+      this.sessions.appendEvent(sessionId, {
+        type: "checkpoint",
+        payload: { summary: "session_ended" },
+      });
     }
   }
 

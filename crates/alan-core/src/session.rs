@@ -195,6 +195,116 @@ impl SessionManager {
 
         Ok(events)
     }
+
+    // ─── Crash Recovery ───
+
+    /// Mark a session as "running" by inserting a system_note checkpoint.
+    /// Call this when a session is started or resumed.
+    pub fn mark_running(&self, session_id: &Uuid) -> Result<u64, AlanError> {
+        self.append_event(
+            session_id,
+            &SessionEvent::Checkpoint {
+                summary: "session_started".to_string(),
+            },
+        )
+    }
+
+    /// Insert a checkpoint event summarizing the current state.
+    /// Call this periodically (e.g. every 10 turns).
+    pub fn create_checkpoint(
+        &self,
+        session_id: &Uuid,
+        summary: &str,
+    ) -> Result<u64, AlanError> {
+        self.append_event(
+            session_id,
+            &SessionEvent::Checkpoint {
+                summary: summary.to_string(),
+            },
+        )
+    }
+
+    /// Find sessions that were active but have a "session_started" checkpoint
+    /// as their last checkpoint without a corresponding "session_ended" checkpoint.
+    /// These are "dirty" sessions that may have crashed mid-execution.
+    pub fn find_dirty_sessions(&self) -> Result<Vec<SessionInfo>, AlanError> {
+        // Sessions that have a "session_started" checkpoint but no "session_ended"
+        // checkpoint after it.
+        let mut stmt = self.conn.prepare(
+            "SELECT s.id, s.created_at, s.updated_at, s.workspace_root, s.model, s.title,
+                    (SELECT COUNT(*) FROM events WHERE session_id = s.id) as event_count
+             FROM sessions s
+             WHERE s.status = 'active'
+               AND EXISTS (
+                 SELECT 1 FROM events e
+                 WHERE e.session_id = s.id
+                   AND e.type = 'checkpoint'
+                   AND e.payload_json LIKE '%session_started%'
+               )
+               AND NOT EXISTS (
+                 SELECT 1 FROM events e2
+                 WHERE e2.session_id = s.id
+                   AND e2.type = 'checkpoint'
+                   AND e2.payload_json LIKE '%session_ended%'
+                   AND e2.seq > (
+                     SELECT MAX(e3.seq) FROM events e3
+                     WHERE e3.session_id = s.id
+                       AND e3.type = 'checkpoint'
+                       AND e3.payload_json LIKE '%session_started%'
+                   )
+               )
+             ORDER BY s.updated_at DESC",
+        )?;
+
+        let sessions = stmt
+            .query_map([], |row| {
+                Ok(SessionInfo {
+                    id: row.get::<_, String>(0)?.parse().unwrap(),
+                    created_at: row.get::<_, String>(1)?.parse().unwrap(),
+                    updated_at: row.get::<_, String>(2)?.parse().unwrap(),
+                    workspace_root: row.get(3)?,
+                    model: row.get(4)?,
+                    title: row.get(5)?,
+                    event_count: row.get(6)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(sessions)
+    }
+
+    /// Mark a session as cleanly ended.
+    pub fn mark_ended(&self, session_id: &Uuid) -> Result<u64, AlanError> {
+        self.append_event(
+            session_id,
+            &SessionEvent::Checkpoint {
+                summary: "session_ended".to_string(),
+            },
+        )
+    }
+
+    /// Rollback a dirty session to the last checkpoint before the crash.
+    /// Deletes all events after the last "session_started" checkpoint.
+    pub fn rollback_to_last_checkpoint(
+        &self,
+        session_id: &Uuid,
+    ) -> Result<u64, AlanError> {
+        let checkpoint_seq: u64 = self.conn.query_row(
+            "SELECT MAX(seq) FROM events
+             WHERE session_id = ?1
+               AND type = 'checkpoint'
+               AND payload_json LIKE '%session_started%'",
+            params![session_id.to_string()],
+            |row| row.get(0),
+        )?;
+
+        let deleted = self.conn.execute(
+            "DELETE FROM events WHERE session_id = ?1 AND seq > ?2",
+            params![session_id.to_string(), checkpoint_seq],
+        )?;
+
+        Ok(deleted as u64)
+    }
 }
 
 fn event_type_name(event: &SessionEvent) -> &'static str {

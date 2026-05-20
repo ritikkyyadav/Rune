@@ -292,6 +292,20 @@ impl SymbolStore {
         })
     }
 
+    /// Get the file path for a given file ID.
+    pub fn get_file_path_by_id(&self, file_id: i64) -> Result<Option<String>, IndexError> {
+        let result = self.conn.query_row(
+            "SELECT path FROM indexed_files WHERE id = ?1",
+            params![file_id],
+            |row| row.get(0),
+        );
+        match result {
+            Ok(path) => Ok(Some(path)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(IndexError::Database(e)),
+        }
+    }
+
     /// Get the indexed file record for a path, if it exists.
     pub fn get_indexed_file(&self, path: &str) -> Result<Option<IndexedFile>, IndexError> {
         let result = self.conn.query_row(

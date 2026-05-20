@@ -105,6 +105,8 @@ name = "alan-tools"
 version = "0.1.0"
 dependencies = [
  "alan-core",
+ "alan-index",
+ "alan-sandbox",
  "clap",
  "globset",
  "hex",

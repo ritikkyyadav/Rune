@@ -118,6 +118,33 @@ const BASH_SCHEMA: ToolSchema = {
   category: "execute",
 };
 
+const SYMBOL_SEARCH_SCHEMA: ToolSchema = {
+  name: "symbol_search",
+  version: "0.1.0",
+  description:
+    "Search for code symbols (functions, classes, structs, etc.) across the workspace. Uses the code index for fast lookup. Returns symbol names, file locations, signatures, and doc comments.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      query: { type: "string", description: "Name pattern to search for (substring match)" },
+      kind: {
+        type: "string",
+        description:
+          "Filter by symbol kind: function, method, class, struct, enum, trait, interface, type, constant, impl",
+      },
+      file_glob: { type: "string", description: "Glob pattern to filter files (e.g. 'src/**/*.rs')" },
+      limit: { type: "number", description: "Max results (default 25)" },
+      reindex: {
+        type: "boolean",
+        description: "Re-index the workspace before searching (use on first call or after edits)",
+      },
+    },
+    required: ["query"],
+  },
+  permissionLevel: "auto",
+  category: "read",
+};
+
 const ALL_SCHEMAS: Array<{ schema: ToolSchema; subcommand: string }> = [
   { schema: READ_FILE_SCHEMA, subcommand: "read-file" },
   { schema: LIST_DIR_SCHEMA, subcommand: "list-dir" },
@@ -125,6 +152,7 @@ const ALL_SCHEMAS: Array<{ schema: ToolSchema; subcommand: string }> = [
   { schema: WRITE_FILE_SCHEMA, subcommand: "write-file" },
   { schema: EDIT_FILE_SCHEMA, subcommand: "edit-file" },
   { schema: BASH_SCHEMA, subcommand: "bash" },
+  { schema: SYMBOL_SEARCH_SCHEMA, subcommand: "symbol-search" },
 ];
 
 /**

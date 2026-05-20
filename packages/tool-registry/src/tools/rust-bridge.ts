@@ -16,7 +16,12 @@ export function createRustToolHandler(
     execute: async (input: ToolCallInput): Promise<ToolCallOutput> => {
       const start = performance.now();
       try {
-        const proc = Bun.spawn([binaryPath, "--workspace", input.workspaceRoot, subcommand], {
+        const args = ["--workspace", input.workspaceRoot];
+        if (schema.permissionLevel === "sandbox") {
+          args.push("--sandbox");
+        }
+        args.push(subcommand);
+        const proc = Bun.spawn([binaryPath, ...args], {
           stdin: new Blob([JSON.stringify(input.args)]),
           stdout: "pipe",
           stderr: "pipe",

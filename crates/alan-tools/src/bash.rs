@@ -110,6 +110,58 @@ pub async fn execute(input: BashInput, workspace_root: &Path) -> Result<BashOutp
     }
 }
 
+/// Execute a bash command through the platform sandbox (macOS sandbox-exec / Linux bwrap).
+pub async fn execute_sandboxed(input: BashInput, workspace_root: &Path) -> Result<BashOutput, ToolError> {
+    use alan_sandbox::{create_sandbox, SandboxConfig};
+
+    let config = SandboxConfig {
+        workspace_root: workspace_root.to_path_buf(),
+        timeout_ms: input.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS),
+        allow_network: false,
+        ..Default::default()
+    };
+
+    let sandbox = create_sandbox(config);
+
+    match sandbox
+        .execute(
+            &input.command,
+            Some(workspace_root),
+            input.timeout_ms,
+        )
+        .await
+    {
+        Ok(result) => {
+            let truncated = result.stdout.len() > MAX_OUTPUT_BYTES
+                || result.stderr.len() > MAX_OUTPUT_BYTES;
+
+            Ok(BashOutput {
+                stdout: if result.stdout.len() > MAX_OUTPUT_BYTES {
+                    result.stdout[..MAX_OUTPUT_BYTES].to_string()
+                } else {
+                    result.stdout
+                },
+                stderr: if result.stderr.len() > MAX_OUTPUT_BYTES {
+                    result.stderr[..MAX_OUTPUT_BYTES].to_string()
+                } else {
+                    result.stderr
+                },
+                exit_code: Some(result.exit_code),
+                timed_out: false,
+                truncated,
+            })
+        }
+        Err(alan_sandbox::SandboxError::Timeout(ms)) => Ok(BashOutput {
+            stdout: String::new(),
+            stderr: format!("Command timed out after {ms}ms"),
+            exit_code: None,
+            timed_out: true,
+            truncated: false,
+        }),
+        Err(e) => Err(ToolError::CommandFailed(e.to_string())),
+    }
+}
+
 fn truncate_string(buf: &[u8], max: usize) -> String {
     let slice = if buf.len() > max { &buf[..max] } else { buf };
     String::from_utf8_lossy(slice).to_string()

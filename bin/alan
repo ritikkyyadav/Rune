@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
-# Alan CLI launcher — run from anywhere
+# Alan — Sovereign Agentic Coding Assistant by Savoir Studio
+# Just type `alan` from any directory to start.
 
 set -euo pipefail
 
 ALAN_ROOT="/Users/ritikyadav890/Documents/Alan"
 ALAN_ENV="$HOME/.alan/.env"
+ALAN_CONFIG="$HOME/.alan/config.toml"
 
-# Load API keys from ~/.alan/.env
+# ─── Load API keys from ~/.alan/.env ───
 if [ -f "$ALAN_ENV" ]; then
   set -a
   source "$ALAN_ENV"
   set +a
 fi
 
-# Resolve bun
+# ─── Resolve bun ───
 BUN="${HOME}/.bun/bin/bun"
 if ! [ -x "$BUN" ]; then
   BUN="$(command -v bun 2>/dev/null || true)"
@@ -23,9 +25,16 @@ if [ -z "$BUN" ]; then
   exit 1
 fi
 
-# Default workspace to current directory
+# ─── Ensure ~/.alan exists ───
+mkdir -p "$HOME/.alan"
+
+# ─── Workspace = current directory ───
 WORKSPACE="${PWD}"
 
+# ─── Export tool binary path so the TS CLI finds it ───
+export ALAN_TOOLS_BIN="$ALAN_ROOT/target/release/alan-tools"
+
+# ─── Launch ───
 exec "$BUN" run "$ALAN_ROOT/packages/orchestrator/src/bin/alan-cli.ts" \
   --workspace "$WORKSPACE" \
   "$@"
