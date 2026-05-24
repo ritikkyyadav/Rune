@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { ToolCallInfo } from "../lib/types";
 
 interface ToolCardProps {
@@ -40,6 +40,13 @@ const styles: Record<string, React.CSSProperties> = {
     color: "var(--text-muted)",
     fontFamily: "var(--font-mono)",
   },
+  statusLabel: {
+    fontSize: 10,
+    fontWeight: 500,
+    padding: "1px 6px",
+    borderRadius: 8,
+    textTransform: "uppercase" as const,
+  },
   chevron: {
     color: "var(--text-muted)",
     fontSize: 12,
@@ -71,6 +78,15 @@ const styles: Record<string, React.CSSProperties> = {
     maxHeight: 200,
     overflowY: "auto" as const,
   },
+};
+
+const statusLabelColors: Record<
+  ToolCallInfo["status"],
+  { bg: string; text: string }
+> = {
+  running: { bg: "rgba(251, 191, 36, 0.15)", text: "var(--warning)" },
+  success: { bg: "rgba(74, 222, 128, 0.15)", text: "var(--success)" },
+  error: { bg: "rgba(248, 113, 113, 0.15)", text: "var(--error)" },
 };
 
 function StatusIcon({ status }: { status: ToolCallInfo["status"] }) {
@@ -143,6 +159,13 @@ function StatusIcon({ status }: { status: ToolCallInfo["status"] }) {
 export function ToolCard({ toolCall }: ToolCardProps) {
   const [expanded, setExpanded] = useState(false);
 
+  // Auto-expand on error so the user sees what went wrong
+  useEffect(() => {
+    if (toolCall.status === "error" && !expanded) {
+      setExpanded(true);
+    }
+  }, [toolCall.status]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const formatDuration = (ms?: number) => {
     if (ms == null) return null;
     if (ms < 1000) return `${ms}ms`;
@@ -157,14 +180,32 @@ export function ToolCard({ toolCall }: ToolCardProps) {
     }
   };
 
+  const statusColors = statusLabelColors[toolCall.status];
+
+  // Highlight card border on error
+  const cardBorder =
+    toolCall.status === "error"
+      ? "1px solid var(--error)"
+      : "1px solid var(--border)";
+
   return (
-    <div style={styles.card}>
+    <div style={{ ...styles.card, border: cardBorder }}>
       <div
         style={styles.header}
         onClick={() => setExpanded(!expanded)}
       >
         <StatusIcon status={toolCall.status} />
         <span style={styles.toolName}>{toolCall.toolName}</span>
+        {/* Status label */}
+        <span
+          style={{
+            ...styles.statusLabel,
+            background: statusColors.bg,
+            color: statusColors.text,
+          }}
+        >
+          {toolCall.status}
+        </span>
         {toolCall.durationMs != null && (
           <span style={styles.duration}>
             {formatDuration(toolCall.durationMs)}
@@ -206,6 +247,18 @@ export function ToolCard({ toolCall }: ToolCardProps) {
               <div style={{ ...styles.codeBlock, color: "var(--error)" }}>
                 {toolCall.error}
               </div>
+            </div>
+          )}
+
+          {toolCall.status === "running" && (
+            <div
+              style={{
+                fontSize: 12,
+                color: "var(--text-muted)",
+                fontStyle: "italic",
+              }}
+            >
+              Running...
             </div>
           )}
         </div>

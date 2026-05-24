@@ -1,3 +1,4 @@
+import { useState, useCallback, useEffect } from "react";
 import type { PermissionPrompt, PermissionDecision } from "../lib/types";
 
 interface PermissionModalProps {
@@ -93,7 +94,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     fontSize: 13,
     fontWeight: 500,
-    transition: "background 0.15s",
+    transition: "background 0.15s, opacity 0.15s",
   },
   allowOnceButton: {
     background: "var(--accent)",
@@ -110,9 +111,21 @@ const styles: Record<string, React.CSSProperties> = {
     color: "var(--error)",
     border: "1px solid var(--error)",
   },
+  disabledButton: {
+    opacity: 0.5,
+    cursor: "not-allowed",
+  },
+  shortcutHint: {
+    fontSize: 11,
+    color: "var(--text-muted)",
+    textAlign: "center" as const,
+    padding: "0 24px 12px",
+  },
 };
 
 export function PermissionModal({ prompt, onDecision }: PermissionModalProps) {
+  const [submitting, setSubmitting] = useState(false);
+
   const formatArgs = (args: Record<string, unknown>) => {
     try {
       return JSON.stringify(args, null, 2);
@@ -121,8 +134,39 @@ export function PermissionModal({ prompt, onDecision }: PermissionModalProps) {
     }
   };
 
+  const handleDecision = useCallback(
+    (decision: PermissionDecision) => {
+      if (submitting) return;
+      setSubmitting(true);
+      onDecision(decision);
+    },
+    [submitting, onDecision],
+  );
+
+  // Keyboard shortcuts: y = allow once, a = allow session, n = deny
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (submitting) return;
+      if (e.key === "y" || e.key === "Y") {
+        handleDecision("allow_once");
+      } else if (e.key === "a" || e.key === "A") {
+        handleDecision("allow_session");
+      } else if (e.key === "n" || e.key === "N" || e.key === "Escape") {
+        handleDecision("deny");
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [submitting, handleDecision]);
+
+  const buttonStyle = (base: React.CSSProperties) => ({
+    ...styles.button,
+    ...base,
+    ...(submitting ? styles.disabledButton : {}),
+  });
+
   return (
-    <div style={styles.overlay} onClick={() => onDecision("deny")}>
+    <div style={styles.overlay} onClick={() => handleDecision("deny")}>
       <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
         <div style={styles.header}>
           <div style={styles.headerTitle}>
@@ -154,23 +198,30 @@ export function PermissionModal({ prompt, onDecision }: PermissionModalProps) {
 
         <div style={styles.footer}>
           <button
-            style={{ ...styles.button, ...styles.denyButton }}
-            onClick={() => onDecision("deny")}
+            style={buttonStyle(styles.denyButton)}
+            onClick={() => handleDecision("deny")}
+            disabled={submitting}
           >
-            Deny
+            Deny (N)
           </button>
           <button
-            style={{ ...styles.button, ...styles.allowSessionButton }}
-            onClick={() => onDecision("allow_session")}
+            style={buttonStyle(styles.allowSessionButton)}
+            onClick={() => handleDecision("allow_session")}
+            disabled={submitting}
           >
-            Allow Session
+            Allow Session (A)
           </button>
           <button
-            style={{ ...styles.button, ...styles.allowOnceButton }}
-            onClick={() => onDecision("allow_once")}
+            style={buttonStyle(styles.allowOnceButton)}
+            onClick={() => handleDecision("allow_once")}
+            disabled={submitting}
           >
-            Allow Once
+            Allow Once (Y)
           </button>
+        </div>
+
+        <div style={styles.shortcutHint}>
+          Press Y to allow once, A to allow for session, N or Esc to deny
         </div>
       </div>
     </div>

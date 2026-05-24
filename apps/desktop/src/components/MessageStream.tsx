@@ -84,6 +84,21 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: "50%",
     background: "var(--accent)",
   },
+  timestamp: {
+    fontSize: 10,
+    color: "var(--text-muted)",
+    marginTop: 4,
+    fontFamily: "var(--font-mono)",
+  },
+  streamingCursor: {
+    display: "inline-block",
+    width: 2,
+    height: 16,
+    background: "var(--accent)",
+    marginLeft: 2,
+    verticalAlign: "text-bottom",
+    animation: "blink 1s step-end infinite",
+  },
 };
 
 // Simple loading indicator
@@ -114,10 +129,23 @@ function LoadingIndicator() {
             0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
             40% { opacity: 1; transform: scale(1); }
           }
+          @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0; }
+          }
         `}</style>
       </div>
     </div>
   );
+}
+
+function formatTimestamp(iso: string): string {
+  const date = new Date(iso);
+  return date.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 }
 
 export function MessageStream({ messages, isLoading }: MessageStreamProps) {
@@ -149,53 +177,77 @@ export function MessageStream({ messages, isLoading }: MessageStreamProps) {
     );
   }
 
+  // Determine if the last assistant message is still being streamed
+  const lastMsg = messages[messages.length - 1];
+  const isStreaming = isLoading && lastMsg?.role === "assistant";
+
   return (
     <div style={styles.container}>
-      {messages.map((msg) => (
-        <div key={msg.id}>
-          {/* Message bubble */}
-          {msg.content && (
-            <div
-              style={{
-                ...styles.messageRow,
-                ...(msg.role === "user"
-                  ? styles.userRow
-                  : styles.assistantRow),
-              }}
-            >
+      {messages.map((msg, idx) => {
+        const isLastAssistant =
+          idx === messages.length - 1 && msg.role === "assistant";
+        const showCursor = isStreaming && isLastAssistant;
+
+        return (
+          <div key={msg.id}>
+            {/* Message bubble */}
+            {msg.content && (
               <div
                 style={{
-                  ...styles.bubble,
+                  ...styles.messageRow,
                   ...(msg.role === "user"
-                    ? styles.userBubble
-                    : styles.assistantBubble),
+                    ? styles.userRow
+                    : styles.assistantRow),
                 }}
               >
-                {msg.content}
+                <div
+                  style={{
+                    ...styles.bubble,
+                    ...(msg.role === "user"
+                      ? styles.userBubble
+                      : styles.assistantBubble),
+                  }}
+                >
+                  {msg.content}
+                  {showCursor && <span style={styles.streamingCursor} />}
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* Tool calls */}
-          {msg.toolCalls && msg.toolCalls.length > 0 && (
-            <div
-              style={{
-                ...styles.messageRow,
-                ...styles.assistantRow,
-                marginTop: msg.content ? 8 : 0,
-              }}
-            >
-              <div style={styles.toolCallsContainer}>
-                {msg.toolCalls.map((tc) => (
-                  <ToolCard key={tc.callId} toolCall={tc} />
-                ))}
+            {/* Tool calls */}
+            {msg.toolCalls && msg.toolCalls.length > 0 && (
+              <div
+                style={{
+                  ...styles.messageRow,
+                  ...styles.assistantRow,
+                  marginTop: msg.content ? 8 : 0,
+                }}
+              >
+                <div style={styles.toolCallsContainer}>
+                  {msg.toolCalls.map((tc) => (
+                    <ToolCard key={tc.callId} toolCall={tc} />
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
-        </div>
-      ))}
+            )}
 
-      {isLoading && <LoadingIndicator />}
+            {/* Timestamp */}
+            {msg.timestamp && (
+              <div
+                style={{
+                  ...styles.timestamp,
+                  textAlign: msg.role === "user" ? "right" : "left",
+                }}
+              >
+                {formatTimestamp(msg.timestamp)}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {/* Show loading dots only when waiting for first response token */}
+      {isLoading && !isStreaming && <LoadingIndicator />}
 
       <div ref={bottomRef} />
     </div>
