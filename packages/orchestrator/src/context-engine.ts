@@ -1,6 +1,7 @@
 import type { Message, ContentBlock, ToolDefinition } from "@alan/llm-gateway";
 import { LlmGateway } from "@alan/llm-gateway";
 import type { ProviderName } from "@alan/llm-gateway";
+import { TokenCounter, countTokens, getContextLimit } from "./tokenizer";
 
 // ─── Context Budget Configuration ───
 
@@ -92,6 +93,14 @@ export class ContextEngine {
   private gateway: LlmGateway;
   private summarizerModel: string;
   private summarizerProvider: ProviderName;
+  private tokenCounter: TokenCounter;
+  private config: {
+    budget?: Partial<ContextBudget>;
+    summarizeTurnsThreshold?: number;
+    summarizerModel?: string;
+    summarizerProvider?: ProviderName;
+  };
+  private lastTokenUsage: { used: number; limit: number } | null = null;
 
   constructor(
     config: {
@@ -102,12 +111,14 @@ export class ContextEngine {
     },
     gateway: LlmGateway,
   ) {
+    this.config = config;
     this.budget = { ...DEFAULT_BUDGET, ...config.budget };
     this.memory = { summaries: [], discoveries: [] };
     this.summarizeTurnsThreshold = config.summarizeTurnsThreshold ?? 10;
     this.gateway = gateway;
     this.summarizerModel = config.summarizerModel ?? "claude-haiku-4-5-20251001";
     this.summarizerProvider = config.summarizerProvider ?? "anthropic";
+    this.tokenCounter = new TokenCounter();
   }
 
   // ─── Pinned Files ───
@@ -115,7 +126,7 @@ export class ContextEngine {
   pinFile(path: string, content: string): void {
     this.pinnedFiles.set(path, {
       content,
-      tokens: estimateTokens(content),
+      tokens: this.tokenCounter.countTokens(content),
     });
   }
 
@@ -169,7 +180,7 @@ export class ContextEngine {
     items.push({
       kind: "system_prompt",
       content: systemPrompt,
-      tokens: estimateTokens(systemPrompt),
+      tokens: this.tokenCounter.countTokens(systemPrompt),
       relevance: 1,
       age: 0,
       pinned: true,
@@ -180,7 +191,7 @@ export class ContextEngine {
     items.push({
       kind: "tool_schemas",
       content: toolSchemaStr,
-      tokens: estimateTokens(toolSchemaStr),
+      tokens: this.tokenCounter.countTokens(toolSchemaStr),
       relevance: 1,
       age: 0,
       pinned: true,
@@ -219,7 +230,7 @@ export class ContextEngine {
       items.push({
         kind: roleToKind(msg.role),
         content,
-        tokens: estimateTokens(content),
+        tokens: this.tokenCounter.countTokens(content),
         relevance: 1 / (1 + age * 0.1), // decay with age
         age,
         pinned: false,
@@ -244,7 +255,7 @@ export class ContextEngine {
       items.push({
         kind: "discovery",
         content: `[Discovery] ${disc.fact} (from: ${disc.source})`,
-        tokens: estimateTokens(disc.fact) + 10,
+        tokens: this.tokenCounter.countTokens(disc.fact) + 10,
         relevance: 0.5,
         age: Math.floor((Date.now() - disc.createdAt) / 60000), // minutes
         pinned: false,
@@ -257,7 +268,7 @@ export class ContextEngine {
         items.push({
           kind: "retrieved_chunk",
           content: chunk.content,
-          tokens: estimateTokens(chunk.content),
+          tokens: this.tokenCounter.countTokens(chunk.content),
           relevance: chunk.relevance,
           age: 50,
           pinned: false,
@@ -288,6 +299,12 @@ export class ContextEngine {
 
     const totalTokens = sorted.reduce((sum, item) => sum + item.tokens, 0);
     evictedCount = items.length - sorted.length;
+
+    // Track token usage for getContextUsage()
+    this.lastTokenUsage = {
+      used: totalTokens,
+      limit: this.budget.maxTokens,
+    };
 
     return {
       messages: finalMessages,
@@ -324,7 +341,7 @@ export class ContextEngine {
       fromSeq: 0,
       toSeq: toSummarize.length,
       summary: summaryText,
-      tokens: estimateTokens(summaryText),
+      tokens: this.tokenCounter.countTokens(summaryText),
     });
 
     return true;
@@ -374,6 +391,26 @@ ${transcript}`,
 
   getMemory(): SessionMemory {
     return { ...this.memory };
+  }
+
+  /**
+   * Return current context window usage statistics.
+   * Updated after each buildPrompt() call.
+   */
+  getContextUsage(): { used: number; limit: number; percent: number } {
+    return {
+      used: this.lastTokenUsage?.used ?? 0,
+      limit:
+        this.lastTokenUsage?.limit ??
+        getContextLimit(
+          this.config.summarizerModel || "claude-sonnet-4-20250514",
+        ),
+      percent: this.lastTokenUsage
+        ? Math.round(
+            (this.lastTokenUsage.used / this.lastTokenUsage.limit) * 100,
+          )
+        : 0,
+    };
   }
 }
 
@@ -443,6 +480,10 @@ function budgetPass(
 
 // ─── Helpers ───
 
+/**
+ * @deprecated Use TokenCounter.countTokens() instead. This naive estimate
+ * (text.length / 4) can be off by 30-50%. Kept for backward compatibility.
+ */
 function estimateTokens(text: string): number {
   // Rough estimate: ~4 characters per token for English text
   return Math.ceil(text.length / 4);
