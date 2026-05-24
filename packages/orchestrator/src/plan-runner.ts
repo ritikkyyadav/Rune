@@ -3,6 +3,7 @@ import { LlmGateway } from "@alan/llm-gateway";
 import { ToolRegistry } from "@alan/tool-registry";
 import { AgentLoop } from "./agent-loop";
 import type { AgentTurnEvent, PermissionCheck } from "./agent-loop";
+import type { ContextEngine } from "./context-engine";
 import { Planner } from "./planner";
 import type { PlannerEvent } from "./planner";
 import type { ModelRouting, Plan, Step, StepResult } from "./types";
@@ -29,6 +30,7 @@ export interface PlanRunnerConfig {
   maxReplanAttempts: number;
   systemPrompt: string;
   priorMessages?: Message[];
+  contextEngine?: ContextEngine;
 }
 
 const DEFAULT_CONFIG: PlanRunnerConfig = {
@@ -318,6 +320,7 @@ export class PlanRunner {
         maxTokens: this.config.maxTokens,
         maxTurns: this.config.maxTurnsPerStep,
         systemPrompt: stepPrompt,
+        contextEngine: this.config.contextEngine,
       },
       this.gateway,
       this.registry,
