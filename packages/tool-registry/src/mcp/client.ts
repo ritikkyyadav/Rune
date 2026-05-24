@@ -28,6 +28,12 @@ interface McpJsonRpcResponse {
   error?: { code: number; message: string };
 }
 
+// ─── Constants ───
+
+const MAX_RESPONSE_SIZE = 5 * 1024 * 1024; // 5MB
+const MAX_PARAM_SIZE = 1_000_000; // 1MB per string param
+const HEALTH_CHECK_MAX_FAILURES = 3;
+
 // ─── MCP Client ───
 
 export class McpClient {
@@ -44,6 +50,8 @@ export class McpClient {
   private responseBuffer = "";
   private tools: McpToolSchema[] = [];
   private ready = false;
+  private healthCheckTimer: ReturnType<typeof setInterval> | null = null;
+  private consecutiveFailures = 0;
 
   constructor(config: {
     name: string;
@@ -101,6 +109,7 @@ export class McpClient {
    * Stop the MCP server subprocess.
    */
   async stop(): Promise<void> {
+    this.stopHealthChecks();
     if (this.proc) {
       this.proc.kill();
       this.proc = null;
@@ -117,17 +126,124 @@ export class McpClient {
   }
 
   /**
+   * Validate tool input arguments against the tool's schema.
+   */
+  private validateToolInput(schema: McpToolSchema | undefined, args: Record<string, unknown>): { valid: boolean; errors: string[] } {
+    const errors: string[] = [];
+    if (schema?.inputSchema) {
+      const s = schema.inputSchema as Record<string, unknown>;
+      if (Array.isArray(s.required)) {
+        for (const req of s.required as string[]) {
+          if (!(req in args)) errors.push(`Missing required param: ${req}`);
+        }
+      }
+    }
+    // Check string values aren't too large
+    for (const [key, val] of Object.entries(args)) {
+      if (typeof val === 'string' && val.length > MAX_PARAM_SIZE) {
+        errors.push(`Param ${key} exceeds 1MB limit`);
+      }
+    }
+    return { valid: errors.length === 0, errors };
+  }
+
+  /**
+   * Enforce a max response size, truncating with a warning if exceeded.
+   */
+  private limitResponseSize(result: McpCallToolResult): McpCallToolResult {
+    const totalSize = result.content.reduce((sum, c) => sum + (c.text?.length ?? 0), 0);
+    if (totalSize <= MAX_RESPONSE_SIZE) return result;
+
+    let remaining = MAX_RESPONSE_SIZE;
+    const truncatedContent = result.content.map((c) => {
+      if (!c.text || remaining <= 0) return { ...c, text: '' };
+      if (c.text.length <= remaining) {
+        remaining -= c.text.length;
+        return c;
+      }
+      const truncated = c.text.slice(0, remaining);
+      remaining = 0;
+      return { ...c, text: truncated };
+    });
+
+    truncatedContent.push({
+      type: 'text',
+      text: `\n[WARNING: Response truncated from ${totalSize} to ${MAX_RESPONSE_SIZE} bytes]`,
+    });
+
+    return { ...result, content: truncatedContent };
+  }
+
+  /**
+   * Start periodic health checks for this MCP server.
+   */
+  startHealthChecks(intervalMs = 30000): void {
+    this.stopHealthChecks();
+    this.healthCheckTimer = setInterval(async () => {
+      try {
+        await this.send("tools/list", {});
+        this.consecutiveFailures = 0;
+      } catch {
+        this.consecutiveFailures++;
+        if (this.consecutiveFailures >= HEALTH_CHECK_MAX_FAILURES) {
+          console.error(`[MCP] Server ${this.serverName} failed ${this.consecutiveFailures} health checks, restarting...`);
+          try {
+            await this.stop();
+            await this.start();
+            this.consecutiveFailures = 0;
+          } catch (restartErr) {
+            console.error(`[MCP] Failed to restart ${this.serverName}: ${restartErr instanceof Error ? restartErr.message : restartErr}`);
+          }
+        }
+      }
+    }, intervalMs);
+  }
+
+  /**
+   * Stop periodic health checks.
+   */
+  stopHealthChecks(): void {
+    if (this.healthCheckTimer) {
+      clearInterval(this.healthCheckTimer);
+      this.healthCheckTimer = null;
+    }
+  }
+
+  /**
+   * Get current health status of this MCP server.
+   */
+  getServerHealth(): { name: string; status: 'healthy' | 'degraded' | 'down'; failureCount: number } {
+    let status: 'healthy' | 'degraded' | 'down' = 'healthy';
+    if (!this.ready || !this.proc) {
+      status = 'down';
+    } else if (this.consecutiveFailures > 0) {
+      status = this.consecutiveFailures >= HEALTH_CHECK_MAX_FAILURES ? 'down' : 'degraded';
+    }
+    return { name: this.serverName, status, failureCount: this.consecutiveFailures };
+  }
+
+  /**
    * Call a tool on this MCP server.
    */
   async callTool(
     name: string,
     args: Record<string, unknown>,
   ): Promise<McpCallToolResult> {
+    // Find schema for the tool and validate input
+    const toolSchema = this.tools.find(t => t.name === name);
+    const validation = this.validateToolInput(toolSchema, args);
+    if (!validation.valid) {
+      return {
+        content: [{ type: 'text', text: `Validation failed: ${validation.errors.join('; ')}` }],
+        isError: true,
+      };
+    }
+
     const result = (await this.send("tools/call", {
       name,
       arguments: args,
     })) as McpCallToolResult;
-    return result;
+    return this.limitResponseSize(result);
   }
 
   /**
