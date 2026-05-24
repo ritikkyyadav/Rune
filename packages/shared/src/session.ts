@@ -366,3 +366,51 @@ export function hashResult(result: unknown): string {
   const s = typeof result === "string" ? result : JSON.stringify(result ?? "");
   return createHash("sha256").update(s).digest("hex");
 }
+
+// ─── Auto Verification ───
+
+export interface AuditVerificationStats {
+  totalCalls: number;
+  lastVerified: Date | null;
+  isValid: boolean;
+}
+
+/**
+ * Verify the audit chain of a SessionManager instance.
+ * Returns { valid: true } if intact, { valid: false, firstBadId } otherwise.
+ */
+function verifyAuditChain(db: SessionManager): { valid: boolean; firstBadId?: number } {
+  const result = db.verifyAuditChain();
+  if (result.ok) return { valid: true };
+  return { valid: false, firstBadId: result.firstBadId };
+}
+
+/**
+ * Create an auto-verifier that periodically checks audit chain integrity
+ * after a configurable number of tool calls.
+ */
+export function createAutoVerifier(db: SessionManager, intervalCalls: number = 50): {
+  onToolCall: () => void;
+  getStats: () => AuditVerificationStats;
+} {
+  let callCount = 0;
+  let lastVerified: Date | null = null;
+  let isValid = true;
+
+  return {
+    onToolCall: () => {
+      callCount++;
+      if (callCount % intervalCalls === 0) {
+        try {
+          const result = verifyAuditChain(db);
+          isValid = result.valid !== false;
+          lastVerified = new Date();
+          if (!isValid) console.error('[AUDIT] Chain integrity FAILED');
+        } catch (e) {
+          console.error('[AUDIT] Verification error:', e);
+        }
+      }
+    },
+    getStats: () => ({ totalCalls: callCount, lastVerified, isValid }),
+  };
+}
