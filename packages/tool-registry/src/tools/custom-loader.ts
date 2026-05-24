@@ -98,6 +98,28 @@ export class CustomToolsLoader {
     return [...this.handlers.values()];
   }
 
+  /**
+   * Validate a custom tool export for correctness and security risk.
+   */
+  validate(tool: CustomToolExport): { valid: boolean; errors: string[]; riskLevel: 'safe' | 'review' | 'dangerous' } {
+    const errors: string[] = [];
+    let riskLevel: 'safe' | 'review' | 'dangerous' = 'safe';
+
+    if (!tool.schema?.name || !/^[a-zA-Z_]\w*$/.test(tool.schema.name)) {
+      errors.push('Invalid tool name');
+    }
+    if (!tool.schema?.description) errors.push('Missing description');
+    if (typeof tool.execute !== 'function') errors.push('Missing execute function');
+
+    // Source analysis if available
+    const src = (tool as Record<string, unknown>)._source as string || tool.execute?.toString?.() || '';
+    if (/child_process|exec\(|execSync|spawn\(/.test(src)) riskLevel = 'dangerous';
+    if (/process\.env/.test(src)) riskLevel = riskLevel === 'safe' ? 'review' : riskLevel;
+    if (/require\s*\(\s*['"]fs['"]/.test(src)) riskLevel = riskLevel === 'safe' ? 'review' : riskLevel;
+
+    return { valid: errors.length === 0 && riskLevel !== 'dangerous', errors, riskLevel };
+  }
+
   private async loadToolFile(
     filePath: string,
   ): Promise<ToolHandler | null> {
@@ -108,6 +130,16 @@ export class CustomToolsLoader {
     if (!exported.schema?.name || !exported.execute) {
       console.warn(`[CustomTools] ${filePath}: missing schema.name or execute`);
       return null;
+    }
+
+    // Run validation
+    const validation = this.validate(exported);
+    if (!validation.valid) {
+      console.warn(`[CustomTools] ${filePath} failed validation: ${validation.errors.join('; ')}`);
+      return null;
+    }
+    if (validation.riskLevel === 'review') {
+      console.warn(`[CustomTools] ${filePath} flagged for review (risk: ${validation.riskLevel})`);
     }
 
     const prefixedName = `custom_${exported.schema.name}`;
@@ -122,7 +154,15 @@ export class CustomToolsLoader {
 
     return {
       schema,
-      validate: () => ({ valid: true }),
+      validate: (args: Record<string, unknown>) => {
+        const inputSchema = schema.inputSchema as Record<string, unknown>;
+        if (Array.isArray(inputSchema.required)) {
+          for (const req of inputSchema.required as string[]) {
+            if (!(req in args)) return { valid: false, error: `Missing required param: ${req}` };
+          }
+        }
+        return { valid: true };
+      },
       execute: async (input: ToolCallInput): Promise<ToolCallOutput> => {
         const start = performance.now();
         try {
