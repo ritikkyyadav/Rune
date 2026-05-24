@@ -35,6 +35,7 @@ export class PermissionBroker {
   check(schema: ToolSchema, args: Record<string, unknown>): PermissionDecision {
     // Yolo mode — allow everything
     if (this.yoloMode) {
+      console.warn(`[SECURITY] Yolo mode active — all permission checks bypassed for: ${schema.name}`);
       return { type: "allowed" };
     }
 
@@ -69,6 +70,18 @@ export class PermissionBroker {
       scope,
       grantedAt: new Date(),
     });
+  }
+
+  isYoloMode(): boolean {
+    return this.yoloMode;
+  }
+
+  getSecurityPosture(): "strict" | "standard" | "permissive" | "yolo" {
+    if (this.yoloMode) return "yolo";
+    const grantedCount = this.sessionGrants?.length ?? 0;
+    if (grantedCount === 0) return "strict";
+    if (grantedCount > 10) return "permissive";
+    return "standard";
   }
 
   revokeAll(): void {
