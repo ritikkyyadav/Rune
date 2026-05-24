@@ -20,6 +20,7 @@ pub struct NoopSandbox {
 
 impl NoopSandbox {
     pub fn new(config: SandboxConfig) -> Self {
+        eprintln!("[WARN] OS-level sandbox unavailable, using PathGuard-only fallback");
         let mut guard = PathGuard::new(config.workspace_root.clone());
         guard.allow_extra_write_paths(config.extra_write_paths.clone());
         Self {
