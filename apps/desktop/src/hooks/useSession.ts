@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import type {
   SessionInfo,
   ChatMessage,
@@ -6,12 +6,25 @@ import type {
   Plan,
 } from "../lib/types";
 
+// ─── Safe Tauri invoke wrapper ───
+async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T | null> {
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return await invoke<T>(cmd, args);
+  } catch {
+    console.warn(`Tauri not available, using mock for: ${cmd}`);
+    return null;
+  }
+}
+
 interface SessionState {
   sessions: SessionInfo[];
   activeSessionId: string | null;
   messages: ChatMessage[];
   activePlan: Plan | null;
   isLoading: boolean;
+  sessionsLoading: boolean;
+  error: string | null;
 }
 
 const initialState: SessionState = {
@@ -20,6 +33,8 @@ const initialState: SessionState = {
   messages: [],
   activePlan: null,
   isLoading: false,
+  sessionsLoading: false,
+  error: null,
 };
 
 function generateId(): string {
@@ -28,6 +43,36 @@ function generateId(): string {
 
 export function useSession() {
   const [state, setState] = useState<SessionState>(initialState);
+
+  // ─── Load sessions from backend on mount ───
+
+  const loadSessions = useCallback(async () => {
+    setState((prev) => ({ ...prev, sessionsLoading: true, error: null }));
+    try {
+      const sessions = await safeInvoke<SessionInfo[]>("list_sessions");
+      if (sessions) {
+        setState((prev) => ({
+          ...prev,
+          sessions,
+          sessionsLoading: false,
+        }));
+      } else {
+        setState((prev) => ({ ...prev, sessionsLoading: false }));
+      }
+    } catch (err) {
+      setState((prev) => ({
+        ...prev,
+        sessionsLoading: false,
+        error: err instanceof Error ? err.message : "Failed to load sessions",
+      }));
+    }
+  }, []);
+
+  useEffect(() => {
+    loadSessions();
+  }, [loadSessions]);
+
+  // ─── Create session ───
 
   const createSession = useCallback(() => {
     const id = `session-${Date.now()}`;
@@ -46,19 +91,70 @@ export function useSession() {
       activeSessionId: id,
       messages: [],
       activePlan: null,
+      error: null,
     }));
     return id;
   }, []);
 
-  const selectSession = useCallback((sessionId: string) => {
+  // ─── Select / resume session ───
+
+  const selectSession = useCallback(async (sessionId: string) => {
     setState((prev) => ({
       ...prev,
       activeSessionId: sessionId,
-      // In a real app, messages would be loaded from the backend
       messages: [],
       activePlan: null,
+      isLoading: true,
+      error: null,
     }));
+
+    try {
+      const history = await safeInvoke<ChatMessage[]>("resume_session", {
+        sessionId,
+      });
+      if (history) {
+        setState((prev) => ({
+          ...prev,
+          messages: history,
+          isLoading: false,
+        }));
+      } else {
+        // Tauri not available -- just clear loading
+        setState((prev) => ({ ...prev, isLoading: false }));
+      }
+    } catch (err) {
+      setState((prev) => ({
+        ...prev,
+        isLoading: false,
+        error:
+          err instanceof Error ? err.message : "Failed to load session history",
+      }));
+    }
   }, []);
+
+  // ─── Delete session ───
+
+  const deleteSession = useCallback(async (sessionId: string) => {
+    try {
+      await safeInvoke("delete_session", { sessionId });
+    } catch {
+      // Best effort -- remove from local state regardless
+    }
+    setState((prev) => {
+      const sessions = prev.sessions.filter((s) => s.id !== sessionId);
+      const activeSessionId =
+        prev.activeSessionId === sessionId ? null : prev.activeSessionId;
+      return {
+        ...prev,
+        sessions,
+        activeSessionId,
+        messages: activeSessionId === null ? [] : prev.messages,
+        activePlan: activeSessionId === null ? null : prev.activePlan,
+      };
+    });
+  }, []);
+
+  // ─── Message management ───
 
   const addUserMessage = useCallback((content: string) => {
     const msg: ChatMessage = {
@@ -71,6 +167,7 @@ export function useSession() {
       ...prev,
       messages: [...prev.messages, msg],
       isLoading: true,
+      error: null,
     }));
     return msg.id;
   }, []);
@@ -142,15 +239,22 @@ export function useSession() {
     setState((prev) => ({ ...prev, isLoading: loading }));
   }, []);
 
+  const clearError = useCallback(() => {
+    setState((prev) => ({ ...prev, error: null }));
+  }, []);
+
   return {
     ...state,
+    loadSessions,
     createSession,
     selectSession,
+    deleteSession,
     addUserMessage,
     appendAssistantText,
     addToolCall,
     updateToolCall,
     setPlan,
     setLoading,
+    clearError,
   };
 }

@@ -120,6 +120,36 @@ export interface PermissionPrompt {
 
 export type PermissionDecision = "allow_once" | "allow_session" | "deny";
 
+// ─── Connection Types ───
+
+export type ConnectionState =
+  | "connecting"
+  | "connected"
+  | "disconnected"
+  | "error";
+
+export interface EngineStatus {
+  state: ConnectionState;
+  model: string;
+  provider: string;
+  contextUsed: number;
+  contextMax: number;
+  totalCost: number;
+}
+
+// ─── Settings Types ───
+
+export interface ProviderSettings {
+  apiKey: string;
+  model: string;
+}
+
+export interface AppSettings {
+  providers: Record<string, ProviderSettings>;
+  activeProvider: string;
+  permissionLevel: "ask" | "auto_allow" | "auto_deny";
+}
+
 // ─── Diff Types ───
 
 export type DiffLineType = "added" | "removed" | "context";
