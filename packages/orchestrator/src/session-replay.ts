@@ -1,5 +1,6 @@
 import type { ContentBlock, Message } from "@alan/llm-gateway";
 import type { SessionEvent } from "@alan/shared";
+import type { CheckpointStore, RunState } from "@alan/shared";
 
 interface ToolUseRecord {
   callId: string;
@@ -131,4 +132,17 @@ export function messageToToolResultPayloads(
     }
   }
   return results;
+}
+
+/**
+ * Resume a run from its latest checkpoint.
+ * Returns the restored RunState, or null if no checkpoint is found.
+ */
+export function resumeFromCheckpoint(runId: string, store: CheckpointStore): RunState | null {
+  try {
+    const checkpoint = store.load(runId);
+    return checkpoint?.state ?? null;
+  } catch {
+    return null;
+  }
 }
