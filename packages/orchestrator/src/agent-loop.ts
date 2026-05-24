@@ -10,6 +10,7 @@ import type {
 import { LlmGateway } from "@alan/llm-gateway";
 import type { ToolCallInput, ToolCallOutput } from "@alan/tool-registry";
 import { ToolRegistry } from "@alan/tool-registry";
+import type { ContextEngine } from "./context-engine";
 
 // ─── Agent Turn Events (yielded to caller) ───
 
@@ -24,7 +25,8 @@ export type AgentTurnEvent =
       output: ToolCallOutput;
     }
   | { type: "turn_complete"; stopReason: string; totalTurns: number }
-  | { type: "error"; error: string; recoverable: boolean };
+  | { type: "error"; error: string; recoverable: boolean }
+  | { type: "context_warning"; message: string };
 
 // ─── Permission Gate ───
 // The agent loop invokes this before executing every tool call.
@@ -57,6 +59,7 @@ export interface AgentLoopConfig {
   systemPrompt: string;
   temperature?: number;
   priorMessages?: Message[];
+  contextEngine?: ContextEngine;
 }
 
 const DEFAULT_CONFIG: AgentLoopConfig = {
@@ -133,9 +136,32 @@ export class AgentLoop {
 
       // Build inference request
       const tools = this.registry.toLlmTools();
+
+      // Before building the request, apply context engine if available
+      let requestMessages = this.messages;
+      let requestSystemPrompt = this.config.systemPrompt;
+
+      if (this.config.contextEngine) {
+        const built = this.config.contextEngine.buildPrompt(
+          this.config.systemPrompt || '',
+          tools.length > 0 ? tools : [],
+          this.messages,
+        );
+        requestMessages = built.messages;
+        requestSystemPrompt = built.system;
+
+        // Warn if context is getting full (items were evicted to fit budget)
+        if (built.evictedCount > 0) {
+          yield {
+            type: "context_warning",
+            message: `Context budget exceeded: ${built.evictedCount} items evicted, ${built.totalTokens} tokens used`,
+          };
+        }
+      }
+
       const request: InferenceRequest = {
-        messages: this.messages,
-        system: this.config.systemPrompt,
+        messages: requestMessages,
+        system: requestSystemPrompt,
         tools: tools.length > 0 ? tools : undefined,
         model: this.config.model,
         provider: this.config.provider,
@@ -198,6 +224,10 @@ export class AgentLoop {
 
       // If no tool use, we're done
       if (stopReason !== "tool_use" || pendingToolCalls.length === 0) {
+        // Try summarization before finishing
+        if (this.config.contextEngine) {
+          await this.config.contextEngine.maybeSummarize(this.messages);
+        }
         this.state = "done";
         yield { type: "turn_complete", stopReason, totalTurns: turn };
         return;
@@ -294,6 +324,12 @@ export class AgentLoop {
 
       // Add tool results as user message
       this.messages.push({ role: "tool", content: toolResults });
+
+      // After processing the assistant response, try summarization
+      if (this.config.contextEngine) {
+        await this.config.contextEngine.maybeSummarize(this.messages);
+      }
+
       this.state = "observing";
     }
 
