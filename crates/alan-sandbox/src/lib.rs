@@ -28,6 +28,17 @@ pub use crate::error::SandboxError;
 pub use crate::factory::create_sandbox;
 pub use crate::path_guard::PathGuard;
 
+/// Describes the level of sandboxing available on the current platform.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SandboxCapability {
+    /// Full OS-level sandbox (Seatbelt on macOS, bwrap on Linux).
+    Full,
+    /// PathGuard validation only -- no OS-level isolation.
+    PathGuardOnly,
+    /// No sandboxing available at all.
+    None,
+}
+
 /// Configuration for constructing a sandbox.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SandboxConfig {
