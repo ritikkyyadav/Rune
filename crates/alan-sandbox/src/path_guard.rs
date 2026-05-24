@@ -135,12 +135,87 @@ impl PathGuard {
         Ok(canonical)
     }
 
+    /// Strip quotes from a command string so patterns can match inside quoted args.
+    fn strip_quotes(cmd: &str) -> String {
+        cmd.replace('\'', " ").replace('"', " ")
+    }
+
     /// Validate a command string for dangerous patterns.
     ///
     /// This is a defence-in-depth heuristic — the sandbox itself is the primary
     /// containment boundary, but catching obviously destructive commands early
     /// provides a better error message and avoids unnecessary process spawns.
+    ///
+    /// The validator also handles:
+    /// - Quoted arguments (patterns are matched after stripping quotes)
+    /// - Variable expansion (`${VAR}`, `$(cmd)`)
+    /// - Command chaining (`; rm`, `&& rm`, `|| rm`)
     pub fn validate_command(&self, cmd: &str) -> Result<(), SandboxError> {
+        // First check for dangerous variable expansion patterns
+        let expansion_patterns: Vec<(&str, Regex)> = vec![
+            (
+                "shell variable expansion with destructive command",
+                Regex::new(r"\$\{[^}]*\}\s*&&\s*(?:rm|dd|mkfs|chmod|chown)")
+                    .expect("valid regex"),
+            ),
+            (
+                "command substitution with destructive command",
+                Regex::new(r"\$\([^)]*(?:rm\s+-r|dd\s+if|mkfs|chmod\s+777)[^)]*\)")
+                    .expect("valid regex"),
+            ),
+        ];
+
+        for (description, pattern) in &expansion_patterns {
+            if pattern.is_match(cmd) {
+                warn!(command = cmd, pattern = *description, "dangerous expansion blocked");
+                return Err(SandboxError::Violation(format!(
+                    "command blocked: {description}"
+                )));
+            }
+        }
+
+        // Check for command chaining that introduces destructive commands
+        let chaining_patterns: Vec<(&str, Regex)> = vec![
+            (
+                "chained rm via semicolon",
+                Regex::new(r";\s*rm\s+.*-r").expect("valid regex"),
+            ),
+            (
+                "chained rm via &&",
+                Regex::new(r"&&\s*rm\s+.*-r").expect("valid regex"),
+            ),
+            (
+                "chained rm via ||",
+                Regex::new(r"\|\|\s*rm\s+.*-r").expect("valid regex"),
+            ),
+            (
+                "chained destructive command via semicolon",
+                Regex::new(r";\s*(?:dd\s+if|mkfs|chmod\s+777\s+/)").expect("valid regex"),
+            ),
+            (
+                "chained destructive command via &&",
+                Regex::new(r"&&\s*(?:dd\s+if|mkfs|chmod\s+777\s+/)").expect("valid regex"),
+            ),
+            (
+                "chained destructive command via ||",
+                Regex::new(r"\|\|\s*(?:dd\s+if|mkfs|chmod\s+777\s+/)").expect("valid regex"),
+            ),
+        ];
+
+        for (description, pattern) in &chaining_patterns {
+            if pattern.is_match(cmd) {
+                warn!(command = cmd, pattern = *description, "chained dangerous command blocked");
+                return Err(SandboxError::Violation(format!(
+                    "command blocked: {description}"
+                )));
+            }
+        }
+
+        // Match against both the raw command and a quote-stripped version
+        // so that patterns inside quotes are also detected.
+        let unquoted = Self::strip_quotes(cmd);
+        let variants = [cmd, unquoted.as_str()];
+
         let dangerous_patterns: Vec<(&str, Regex)> = vec![
             (
                 "recursive forced deletion of root",
@@ -188,11 +263,13 @@ impl PathGuard {
         ];
 
         for (description, pattern) in &dangerous_patterns {
-            if pattern.is_match(cmd) {
-                warn!(command = cmd, pattern = *description, "dangerous command blocked");
-                return Err(SandboxError::Violation(format!(
-                    "command blocked: {description}"
-                )));
+            for variant in &variants {
+                if pattern.is_match(variant) {
+                    warn!(command = cmd, pattern = *description, "dangerous command blocked");
+                    return Err(SandboxError::Violation(format!(
+                        "command blocked: {description}"
+                    )));
+                }
             }
         }
 
@@ -251,6 +328,27 @@ mod tests {
         let guard = PathGuard::new(PathBuf::from("/tmp/workspace"));
         assert!(guard.validate_command("ls -la").is_ok());
         assert!(guard.validate_command("cargo build").is_ok());
+    }
+
+    #[test]
+    fn rejects_quoted_rm_rf() {
+        let guard = PathGuard::new(PathBuf::from("/tmp/workspace"));
+        // rm -rf inside quotes should still be caught
+        assert!(guard.validate_command(r#"sh -c "rm -rf /""#).is_err());
+    }
+
+    #[test]
+    fn rejects_chained_rm() {
+        let guard = PathGuard::new(PathBuf::from("/tmp/workspace"));
+        assert!(guard.validate_command("echo hello; rm -rf /tmp").is_err());
+        assert!(guard.validate_command("true && rm -rf /tmp").is_err());
+        assert!(guard.validate_command("false || rm -rf /tmp").is_err());
+    }
+
+    #[test]
+    fn rejects_variable_expansion_attacks() {
+        let guard = PathGuard::new(PathBuf::from("/tmp/workspace"));
+        assert!(guard.validate_command("$(rm -rf /tmp/data)").is_err());
     }
 
     #[test]
