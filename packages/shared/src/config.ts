@@ -52,6 +52,11 @@ export interface AlanConfig {
   telemetry: {
     enabled: boolean;
   };
+  checkpoint?: {
+    enabled: boolean;
+    intervalTurns: number;
+    autoVerifyAudit: boolean;
+  };
 }
 
 export interface PermissionRule {
