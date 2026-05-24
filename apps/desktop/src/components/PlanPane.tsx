@@ -42,6 +42,18 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 10,
     textTransform: "capitalize" as const,
   },
+  progressBarOuter: {
+    height: 4,
+    background: "var(--bg-primary)",
+    borderRadius: 2,
+    overflow: "hidden",
+    margin: "0 16px",
+  },
+  progressBarInner: {
+    height: "100%",
+    borderRadius: 2,
+    transition: "width 0.4s ease",
+  },
   list: {
     flex: 1,
     overflowY: "auto" as const,
@@ -84,6 +96,14 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "4px 8px",
     borderRadius: "var(--radius-sm)",
     background: "var(--bg-primary)",
+  },
+  elapsed: {
+    fontSize: 11,
+    color: "var(--text-muted)",
+    fontFamily: "var(--font-mono)",
+    padding: "8px 16px",
+    borderTop: "1px solid var(--border)",
+    textAlign: "center" as const,
   },
 };
 
@@ -136,11 +156,11 @@ function CheckboxIcon({ status }: { status: StepStatus }) {
             height: 8,
             borderRadius: 2,
             background: color,
-            animation: "pulse 1.4s ease-in-out infinite",
+            animation: "planPulse 1.4s ease-in-out infinite",
           }}
         />
         <style>{`
-          @keyframes pulse {
+          @keyframes planPulse {
             0%, 100% { opacity: 0.4; }
             50% { opacity: 1; }
           }
@@ -177,6 +197,28 @@ export function PlanPane({ plan, onClose }: PlanPaneProps) {
   const completedCount = plan.steps.filter(
     (s) => s.status === "completed",
   ).length;
+  const failedCount = plan.steps.filter((s) => s.status === "failed").length;
+  const totalSteps = plan.steps.length;
+  const progressPercent =
+    totalSteps > 0 ? Math.round((completedCount / totalSteps) * 100) : 0;
+
+  const progressColor =
+    failedCount > 0
+      ? "var(--error)"
+      : plan.status === "completed"
+        ? "var(--success)"
+        : "var(--accent)";
+
+  // Compute elapsed time since plan creation
+  const elapsed = (() => {
+    const start = new Date(plan.createdAt).getTime();
+    const now = Date.now();
+    const diffSec = Math.round((now - start) / 1000);
+    if (diffSec < 60) return `${diffSec}s`;
+    const min = Math.floor(diffSec / 60);
+    const sec = diffSec % 60;
+    return `${min}m ${sec}s`;
+  })();
 
   return (
     <div style={styles.container} className="no-select">
@@ -198,12 +240,23 @@ export function PlanPane({ plan, onClose }: PlanPaneProps) {
               color: "var(--text-muted)",
             }}
           >
-            {completedCount}/{plan.steps.length}
+            {completedCount}/{totalSteps}
           </span>
         </div>
         <button style={styles.closeButton} onClick={onClose} title="Close plan">
           &#215;
         </button>
+      </div>
+
+      {/* Progress bar */}
+      <div style={{ ...styles.progressBarOuter, marginTop: 8, marginBottom: 4 }}>
+        <div
+          style={{
+            ...styles.progressBarInner,
+            width: `${progressPercent}%`,
+            background: progressColor,
+          }}
+        />
       </div>
 
       <div style={styles.list}>
@@ -242,6 +295,9 @@ export function PlanPane({ plan, onClose }: PlanPaneProps) {
           </div>
         ))}
       </div>
+
+      {/* Elapsed time footer */}
+      <div style={styles.elapsed}>Elapsed: {elapsed}</div>
     </div>
   );
 }
