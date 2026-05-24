@@ -1,6 +1,9 @@
 import type { ToolSchema } from "../types";
 import type { ToolRegistry } from "../registry";
 import { createRustToolHandler } from "./rust-bridge";
+import { createWebFetchHandler } from "./web-fetch";
+import { createWebSearchHandler } from "./web-search";
+import { createAstQueryHandler } from "./ast-query";
 
 const READ_FILE_SCHEMA: ToolSchema = {
   name: "read_file",
@@ -163,4 +166,9 @@ export function registerBuiltinTools(registry: ToolRegistry, binaryPath: string)
   for (const { schema, subcommand } of ALL_SCHEMAS) {
     registry.register(createRustToolHandler(schema, subcommand, binaryPath));
   }
+
+  // TypeScript-native tools (no Rust binary needed)
+  registry.register(createWebFetchHandler());
+  registry.register(createWebSearchHandler());
+  registry.register(createAstQueryHandler());
 }
