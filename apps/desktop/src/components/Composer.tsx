@@ -3,6 +3,8 @@ import { useState, useRef, useCallback } from "react";
 interface ComposerProps {
   onSend: (message: string) => void;
   disabled: boolean;
+  isProcessing?: boolean;
+  onAbort?: () => void;
 }
 
 const styles: Record<string, React.CSSProperties> = {
@@ -66,11 +68,34 @@ const styles: Record<string, React.CSSProperties> = {
     opacity: 0.4,
     cursor: "not-allowed",
   },
+  abortButton: {
+    background: "var(--error)",
+    border: "none",
+    color: "white",
+    cursor: "pointer",
+    width: 32,
+    height: 32,
+    borderRadius: "var(--radius-md)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+    transition: "background 0.15s",
+  },
   hint: {
     fontSize: 11,
     color: "var(--text-muted)",
     marginTop: 6,
     textAlign: "center" as const,
+  },
+  processingHint: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    fontSize: 11,
+    color: "var(--warning)",
+    marginTop: 6,
   },
 };
 
@@ -93,7 +118,26 @@ function SendIcon() {
   );
 }
 
-export function Composer({ onSend, disabled }: ComposerProps) {
+// Stop/square icon for abort
+function StopIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 14 14"
+      fill="currentColor"
+    >
+      <rect x="2" y="2" width="10" height="10" rx="2" />
+    </svg>
+  );
+}
+
+export function Composer({
+  onSend,
+  disabled,
+  isProcessing = false,
+  onAbort,
+}: ComposerProps) {
   const [value, setValue] = useState("");
   const [focused, setFocused] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -155,25 +199,58 @@ export function Composer({ onSend, disabled }: ComposerProps) {
           onKeyDown={handleKeyDown}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
-          placeholder="Ask Alan anything..."
+          placeholder={
+            isProcessing ? "Waiting for response..." : "Ask Alan anything..."
+          }
           rows={1}
           disabled={disabled}
         />
-        <button
-          style={{
-            ...styles.sendButton,
-            ...(canSend ? {} : styles.sendButtonDisabled),
-          }}
-          onClick={handleSubmit}
-          disabled={!canSend}
-          title="Send message"
-        >
-          <SendIcon />
-        </button>
+        {isProcessing && onAbort ? (
+          <button
+            style={styles.abortButton}
+            onClick={onAbort}
+            title="Stop generation"
+          >
+            <StopIcon />
+          </button>
+        ) : (
+          <button
+            style={{
+              ...styles.sendButton,
+              ...(canSend ? {} : styles.sendButtonDisabled),
+            }}
+            onClick={handleSubmit}
+            disabled={!canSend}
+            title="Send message"
+          >
+            <SendIcon />
+          </button>
+        )}
       </div>
-      <div style={styles.hint}>
-        Enter to send &middot; Shift+Enter for newline
-      </div>
+      {isProcessing ? (
+        <div style={styles.processingHint}>
+          <div
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              background: "var(--warning)",
+              animation: "pulse 1.4s ease-in-out infinite",
+            }}
+          />
+          Processing... click stop to cancel
+          <style>{`
+            @keyframes pulse {
+              0%, 80%, 100% { opacity: 0.3; }
+              40% { opacity: 1; }
+            }
+          `}</style>
+        </div>
+      ) : (
+        <div style={styles.hint}>
+          Enter to send &middot; Shift+Enter for newline
+        </div>
+      )}
     </div>
   );
 }
