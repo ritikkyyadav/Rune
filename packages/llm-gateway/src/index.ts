@@ -26,3 +26,4 @@ export { OpenRouterProvider } from "./providers/openrouter";
 export { GoogleProvider } from "./providers/google";
 export { CostTracker, BudgetExceededError } from "./cost-tracker";
 export type { BudgetScope, BudgetCap, CostBreakdown } from "./cost-tracker";
+export { ApiError, parseApiErrorBody } from "./types";

@@ -900,25 +900,29 @@ async function main() {
           case "error": {
             spinner.stop();
             isStreaming = false;
-            const errW = Math.min((process.stdout.columns ?? 80) - 4, 56);
-            process.stdout.write(`\n  ${dim("┌")}${dim("─".repeat(errW))}${dim("┐")}\n`);
-            process.stdout.write(
-              `  ${dim("│")} ${vermillion("§ ERROR")}${" ".repeat(Math.max(0, errW - 10))}${dim("│")}\n`,
-            );
-            process.stdout.write(`  ${dim("├")}${dim("─".repeat(errW))}${dim("┤")}\n`);
-            // Wrap error text within the box
-            const errText = event.error ?? "Unknown error";
-            const maxLineW = errW - 4;
-            const errLines: string[] = [];
-            for (let i = 0; i < errText.length; i += maxLineW) {
-              errLines.push(errText.slice(i, i + maxLineW));
+            const rawErr = event.error ?? "Unknown error";
+            // Extract clean message — strip raw JSON, limit length
+            let errDisplay = rawErr;
+            if (rawErr.includes('"error"') || rawErr.length > 200) {
+              // Try to extract just the message from JSON errors
+              try {
+                const parsed = JSON.parse(rawErr.slice(rawErr.indexOf("{")));
+                errDisplay = parsed.error?.message?.split("\n")[0] ?? rawErr.slice(0, 150);
+              } catch {
+                errDisplay = rawErr.slice(0, 150);
+              }
             }
-            for (const el of errLines) {
-              process.stdout.write(
-                `  ${dim("│")} ${vermillion(el)}${" ".repeat(Math.max(0, errW - el.length - 3))}${dim("│")}\n`,
-              );
+            // Detect rate limit and add suggestion
+            const isRateLimit = rawErr.includes("429") || rawErr.toLowerCase().includes("rate limit") || rawErr.toLowerCase().includes("quota");
+            if (isRateLimit) {
+              errDisplay = errDisplay.split("\n")[0].slice(0, 120);
             }
-            process.stdout.write(`  ${dim("└")}${dim("─".repeat(errW))}${dim("┘")}\n\n`);
+            process.stdout.write(`\n  ${vermillion("✕")} ${errDisplay}\n`);
+            if (isRateLimit) {
+              process.stdout.write(`  ${dim("→")} ${brass("Tip:")} ${dim("Try switching models:")} ${cyanotype("/model")}\n`);
+              process.stdout.write(`  ${dim("  or use:")} ${brass("alan --model gemini-2.5-flash")}\n`);
+            }
+            process.stdout.write("\n");
             break;
           }
         }

@@ -112,43 +112,37 @@ export class LlmGateway {
       }
 
       if (shouldFallback && fallbackOrder.indexOf(providerName) < fallbackOrder.length - 1) {
-        // Try next provider — yield info event about the switch
         const nextProvider = fallbackOrder[fallbackOrder.indexOf(providerName) + 1];
         if (this.providers.has(nextProvider)) {
+          const nextModel = PROVIDER_DEFAULT_MODELS[nextProvider] ?? "default";
           yield {
             type: "error",
-            error: `${providerName} failed (${lastStatus}): ${lastError?.message ?? ""}. Switching to ${nextProvider}…`,
+            error: `${providerName}/${adjustedRequest.model} unavailable. Switching to ${nextProvider}/${nextModel}...`,
           };
           continue;
         }
       }
 
-      // No more fallbacks — yield final error
-      const providerHints: Record<string, string> = {
-        openrouter: "Add credits at https://openrouter.ai/settings/credits",
-        anthropic: "Check billing at https://console.anthropic.com/settings/billing",
-        openai: "Check billing at https://platform.openai.com/account/billing",
-        google: "Check billing at https://console.cloud.google.com/billing",
-      };
+      // No more fallbacks — yield clean final error
+      const cleanMsg = lastError?.message?.split("\n")[0]?.slice(0, 150) ?? "Unknown error";
 
       if (lastStatus === 401 || lastStatus === 403) {
         yield {
           type: "error",
-          error: `Auth error (${lastStatus}) on ${providerName}: ${lastError?.message ?? ""}`,
+          error: `Auth failed on ${providerName}. Check your API key.`,
         };
       } else if (lastStatus === 402) {
-        const hint = providerHints[providerName] ?? "Check your provider billing";
         yield {
           type: "error",
-          error: `Insufficient credits (${providerName}): ${lastError?.message ?? ""}. ${hint}`,
+          error: `No credits on ${providerName}. Add billing or switch providers with /model.`,
         };
       } else if (lastStatus === 429) {
         yield {
           type: "error",
-          error: `Rate limited after ${this.config.maxRetries + 1} attempts on ${providerName}. Model "${adjustedRequest.model}" is busy.`,
+          error: `Rate limited on ${providerName}/${adjustedRequest.model}. ${cleanMsg}`,
         };
       } else {
-        yield { type: "error", error: lastError?.message ?? "Stream failed" };
+        yield { type: "error", error: cleanMsg };
       }
       return;
     }

@@ -5,7 +5,7 @@
 # ──────────────────────────────────────────────────────────
 set -euo pipefail
 
-ALAN_ROOT="/Users/ritikyadav890/Documents/Alan"
+ALAN_ROOT="/Users/ritikyadav890/Projects/Alan"
 ALAN_DATA="$HOME/.alan"
 ALAN_ENV="$ALAN_DATA/.env"
 

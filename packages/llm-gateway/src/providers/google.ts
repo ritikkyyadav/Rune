@@ -9,6 +9,7 @@ import type {
   ToolDefinition,
   TokenUsage,
 } from "../types";
+import { parseApiErrorBody } from "../types";
 
 interface GeminiPart {
   text?: string;
@@ -78,7 +79,8 @@ export class GoogleProvider implements LlmProvider {
     );
 
     if (!response.ok || !response.body) {
-      throw new Error(`Google API error ${response.status}: ${await response.text()}`);
+      const body = await response.text();
+      throw parseApiErrorBody(body, response.status, "google");
     }
 
     const messageId = `google_${Date.now()}`;
@@ -183,7 +185,8 @@ export class GoogleProvider implements LlmProvider {
     );
 
     if (!response.ok) {
-      throw new Error(`Google API error ${response.status}: ${await response.text()}`);
+      const body = await response.text();
+      throw parseApiErrorBody(body, response.status, "google");
     }
     return (await response.json()) as T;
   }
