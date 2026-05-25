@@ -4,7 +4,7 @@ use alan_core::session::SessionManager;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::sync::Mutex;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 
 fn make_context(tmp: &TempDir) -> Arc<IpcContext> {
     let db_path = tmp.path().join("test.db");

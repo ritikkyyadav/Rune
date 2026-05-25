@@ -3,7 +3,7 @@ use std::path::Path;
 use std::process::Stdio;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 
 use crate::error::ToolError;
 
@@ -111,8 +111,11 @@ pub async fn execute(input: BashInput, workspace_root: &Path) -> Result<BashOutp
 }
 
 /// Execute a bash command through the platform sandbox (macOS sandbox-exec / Linux bwrap).
-pub async fn execute_sandboxed(input: BashInput, workspace_root: &Path) -> Result<BashOutput, ToolError> {
-    use alan_sandbox::{create_sandbox, SandboxConfig};
+pub async fn execute_sandboxed(
+    input: BashInput,
+    workspace_root: &Path,
+) -> Result<BashOutput, ToolError> {
+    use alan_sandbox::{SandboxConfig, create_sandbox};
 
     let config = SandboxConfig {
         workspace_root: workspace_root.to_path_buf(),
@@ -124,16 +127,12 @@ pub async fn execute_sandboxed(input: BashInput, workspace_root: &Path) -> Resul
     let sandbox = create_sandbox(config);
 
     match sandbox
-        .execute(
-            &input.command,
-            Some(workspace_root),
-            input.timeout_ms,
-        )
+        .execute(&input.command, Some(workspace_root), input.timeout_ms)
         .await
     {
         Ok(result) => {
-            let truncated = result.stdout.len() > MAX_OUTPUT_BYTES
-                || result.stderr.len() > MAX_OUTPUT_BYTES;
+            let truncated =
+                result.stdout.len() > MAX_OUTPUT_BYTES || result.stderr.len() > MAX_OUTPUT_BYTES;
 
             Ok(BashOutput {
                 stdout: if result.stdout.len() > MAX_OUTPUT_BYTES {

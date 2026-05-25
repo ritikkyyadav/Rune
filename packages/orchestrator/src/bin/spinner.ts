@@ -1,23 +1,12 @@
 // ─── Alan Status Spinner ───
-// Animated status indicator with creative action words
+// Animated terminal spinner with rotating activity words
 
 // ─── Spinner Frames ───
-// A pulse wave that feels alive
-const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+// Geometric rotation frames matching the terminal design
+const FRAMES = ["\u25DC", "\u25DD", "\u25DE", "\u25DF"];
 
-// ─── Color Helpers ───
-const esc = (code: string) => `\x1b[${code}m`;
-const reset = esc("0");
-const bold = (s: string) => `${esc("1")}${s}${reset}`;
-const dim = (s: string) => `${esc("2")}${s}${reset}`;
-const italic = (s: string) => `${esc("3")}${s}${reset}`;
-const cyan = (s: string) => `${esc("36")}${s}${reset}`;
-const magenta = (s: string) => `${esc("35")}${s}${reset}`;
-const yellow = (s: string) => `${esc("33")}${s}${reset}`;
-const green = (s: string) => `${esc("32")}${s}${reset}`;
-const blue = (s: string) => `${esc("34")}${s}${reset}`;
-const white = (s: string) => `${esc("97")}${s}${reset}`;
-const indigo = (s: string) => `${esc("38;5;105")}${s}${reset}`;
+// ─── Colors (L'Atlas Terminal Palette) ───
+import { bold, dim, vermillion, brass, cyanotype, green, draftLine, stripAnsi } from "./colors";
 
 // ─── Status Word Categories ───
 
@@ -211,19 +200,19 @@ function pickWord(activity: ActivityType): string {
 function colorSymbol(frame: string, activity: ActivityType): string {
   switch (activity) {
     case "thinking":
-      return indigo(frame);
+      return vermillion(frame);
     case "reading":
-      return cyan(frame);
+      return cyanotype(frame);
     case "writing":
-      return yellow(frame);
+      return brass(frame);
     case "executing":
-      return magenta(frame);
+      return vermillion(frame);
     case "searching":
-      return blue(frame);
+      return cyanotype(frame);
     case "planning":
-      return green(frame);
+      return cyanotype(frame);
     case "tool_call":
-      return white(frame);
+      return draftLine(frame);
   }
 }
 
@@ -259,15 +248,18 @@ export class Spinner {
     this.currentWord = pickWord(activity);
 
     // Rotate words every 3-5 seconds
-    this.wordChangeInterval = setInterval(() => {
-      this.currentWord = pickWord(this.activity);
-    }, 3000 + Math.random() * 2000);
+    this.wordChangeInterval = setInterval(
+      () => {
+        this.currentWord = pickWord(this.activity);
+      },
+      3000 + Math.random() * 2000,
+    );
 
-    // Animate at 80ms per frame
+    // Animate at 120ms per frame (matches design reference)
     this.interval = setInterval(() => {
       this.render();
       this.frameIndex = (this.frameIndex + 1) % FRAMES.length;
-    }, 80);
+    }, 120);
   }
 
   /** Update activity type (e.g., when a tool call starts) */
@@ -310,10 +302,8 @@ export class Spinner {
     const frame = FRAMES[this.frameIndex];
     const symbol = colorSymbol(frame, this.activity);
     const word = bold(this.currentWord);
-    const meta = dim(
-      `(${elapsed}${this.tokens > 0 ? ` \u00b7 \u2191 ${this.tokens} tokens` : ""})`,
-    );
-    const line = `  ${symbol} ${word}\u2026 ${meta}`;
+    const meta = dim(`${elapsed}${this.tokens > 0 ? ` \u00b7 ${this.tokens} tokens` : ""}`);
+    const line = `  ${symbol} ${word}\u2026  ${meta}`;
 
     this.clearLine();
     process.stderr.write(line);
@@ -326,11 +316,6 @@ export class Spinner {
       this.lastLineLen = 0;
     }
   }
-}
-
-// Strip ANSI escape codes for length calculation
-function stripAnsi(s: string): string {
-  return s.replace(/\x1b\[[0-9;]*m/g, "");
 }
 
 export { toolToActivity, type ActivityType };

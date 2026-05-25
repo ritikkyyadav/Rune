@@ -3,8 +3,7 @@ import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../
 export const WEB_FETCH_SCHEMA: ToolSchema = {
   name: "web_fetch",
   version: "0.1.0",
-  description:
-    "Fetch content from a URL. Returns text content with HTML tags stripped.",
+  description: "Fetch content from a URL. Returns text content with HTML tags stripped.",
   inputSchema: {
     type: "object",
     properties: {

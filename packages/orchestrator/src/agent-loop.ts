@@ -44,9 +44,7 @@ export interface PermissionCheckResult {
   reason?: string;
 }
 
-export type PermissionCheck = (
-  args: PermissionCheckArgs,
-) => Promise<PermissionCheckResult>;
+export type PermissionCheck = (args: PermissionCheckArgs) => Promise<PermissionCheckResult>;
 
 // ─── Agent Configuration ───
 
@@ -73,13 +71,7 @@ const DEFAULT_CONFIG: AgentLoopConfig = {
 
 // ─── Agent State ───
 
-export type AgentState =
-  | "idle"
-  | "thinking"
-  | "tool_calling"
-  | "observing"
-  | "done"
-  | "error";
+export type AgentState = "idle" | "thinking" | "tool_calling" | "observing" | "done" | "error";
 
 // ─── Agent Loop ───
 
@@ -143,7 +135,7 @@ export class AgentLoop {
 
       if (this.config.contextEngine) {
         const built = this.config.contextEngine.buildPrompt(
-          this.config.systemPrompt || '',
+          this.config.systemPrompt || "",
           tools.length > 0 ? tools : [],
           this.messages,
         );
@@ -181,11 +173,7 @@ export class AgentLoop {
 
       try {
         for await (const event of this.gateway.inferStream(request)) {
-          const result = this.processStreamEvent(
-            event,
-            contentBlocks,
-            pendingToolCalls,
-          );
+          const result = this.processStreamEvent(event, contentBlocks, pendingToolCalls);
           if (result.event) yield result.event;
           if (result.stopReason) stopReason = result.stopReason;
           if (result.error) {
@@ -234,15 +222,11 @@ export class AgentLoop {
       }
 
       // Infinite loop detection
-      const signature = pendingToolCalls
-        .map((tc) => `${tc.toolName}:${tc.argsJson}`)
-        .join("|");
+      const signature = pendingToolCalls.map((tc) => `${tc.toolName}:${tc.argsJson}`).join("|");
       recentToolSignatures.push(signature);
       if (recentToolSignatures.length > 10) recentToolSignatures.shift();
 
-      const duplicateCount = recentToolSignatures.filter(
-        (s) => s === signature,
-      ).length;
+      const duplicateCount = recentToolSignatures.filter((s) => s === signature).length;
       if (duplicateCount >= 3) {
         this.state = "error";
         yield {
@@ -313,9 +297,7 @@ export class AgentLoop {
         toolResults.push({
           type: "tool_result",
           toolCallId: tc.callId,
-          toolResultContent: output.success
-            ? output.result
-            : `Error: ${output.error}`,
+          toolResultContent: output.success ? output.result : `Error: ${output.error}`,
           isError: !output.success,
         });
 
@@ -404,9 +386,7 @@ export class AgentLoop {
         if (block && block.type === "tool_use") {
           block.toolInput = event.toolInput;
         }
-        const pending = pendingToolCalls.find(
-          (t) => t.callId === event.toolCallId,
-        );
+        const pending = pendingToolCalls.find((t) => t.callId === event.toolCallId);
         if (pending) {
           pending.argsJson = JSON.stringify(event.toolInput);
         }

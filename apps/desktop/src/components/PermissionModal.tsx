@@ -189,9 +189,7 @@ export function PermissionModal({ prompt, onDecision }: PermissionModalProps) {
           {Object.keys(prompt.rawArgs).length > 0 && (
             <div style={styles.fieldRow}>
               <div style={styles.fieldLabel}>Arguments</div>
-              <div style={styles.argsValue}>
-                {formatArgs(prompt.rawArgs)}
-              </div>
+              <div style={styles.argsValue}>{formatArgs(prompt.rawArgs)}</div>
             </div>
           )}
         </div>

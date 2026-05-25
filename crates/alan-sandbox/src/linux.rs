@@ -4,7 +4,7 @@ use std::time::Instant;
 use tokio::process::Command;
 use tracing::{debug, info, warn};
 
-use crate::audit::{sha256_hash, AuditLog};
+use crate::audit::{AuditLog, sha256_hash};
 use crate::error::SandboxError;
 use crate::path_guard::PathGuard;
 use crate::{Sandbox, SandboxConfig, SandboxFuture, SandboxResult};
@@ -51,25 +51,13 @@ impl LinuxSandbox {
         }
 
         // Writable mounts.
-        args.extend_from_slice(&[
-            "--bind".to_string(),
-            workspace.clone(),
-            workspace.clone(),
-        ]);
+        args.extend_from_slice(&["--bind".to_string(), workspace.clone(), workspace.clone()]);
 
         if alan_cache.exists() {
-            args.extend_from_slice(&[
-                "--bind".to_string(),
-                cache_path.clone(),
-                cache_path.clone(),
-            ]);
+            args.extend_from_slice(&["--bind".to_string(), cache_path.clone(), cache_path.clone()]);
         }
 
-        args.extend_from_slice(&[
-            "--bind".to_string(),
-            "/tmp".to_string(),
-            "/tmp".to_string(),
-        ]);
+        args.extend_from_slice(&["--bind".to_string(), "/tmp".to_string(), "/tmp".to_string()]);
 
         // Extra read-only paths.
         for p in &self.config.extra_read_paths {
@@ -105,11 +93,7 @@ impl LinuxSandbox {
         args.extend_from_slice(&["--chdir".to_string(), cwd.display().to_string()]);
 
         // The command to run.
-        args.extend_from_slice(&[
-            "/bin/sh".to_string(),
-            "-c".to_string(),
-            command.to_string(),
-        ]);
+        args.extend_from_slice(&["/bin/sh".to_string(), "-c".to_string(), command.to_string()]);
 
         args
     }
@@ -165,7 +149,11 @@ impl Sandbox for LinuxSandbox {
             )
             .await
             .map_err(|_| {
-                warn!(command = command, timeout_ms = timeout, "sandboxed command timed out");
+                warn!(
+                    command = command,
+                    timeout_ms = timeout,
+                    "sandboxed command timed out"
+                );
                 SandboxError::Timeout(timeout)
             })?
             .map_err(|e| SandboxError::SpawnFailed(e.to_string()))?;

@@ -11,6 +11,15 @@ import type {
 } from "./types";
 import { MODEL_PRICING as PRICING } from "./types";
 
+// Default model for each provider, used during fallback
+const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
+  google: "gemini-2.5-flash",
+  anthropic: "claude-sonnet-4-20250514",
+  openai: "gpt-4o",
+  openrouter: "deepseek/deepseek-v4-flash:free",
+  ollama: "llama3",
+};
+
 export class LlmGateway {
   private providers: Map<ProviderName, LlmProvider> = new Map();
   private config: GatewayConfig;
@@ -26,6 +35,10 @@ export class LlmGateway {
 
   getProvider(name: ProviderName): LlmProvider | undefined {
     return this.providers.get(name);
+  }
+
+  getRegisteredProviderNames(): ProviderName[] {
+    return [...this.providers.keys()];
   }
 
   async infer(request: InferenceRequest): Promise<InferenceResponse> {
@@ -48,55 +61,117 @@ export class LlmGateway {
   }
 
   async *inferStream(request: InferenceRequest): AsyncGenerator<StreamEvent> {
-    const provider = this.resolveProvider(request.provider);
-    let lastError: Error | undefined;
-    let lastStatus: number | undefined;
+    // Build ordered list: requested provider first, then fallbacks
+    const fallbackOrder = this.getFallbackProviders(request.provider);
 
-    for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
-      try {
-        const gen = provider.inferStream(request);
-        for await (const event of gen) {
-          if (event.type === "message_stop") {
-            this.recordCost(request.model, request.provider, event.usage);
+    for (const providerName of fallbackOrder) {
+      const provider = this.providers.get(providerName);
+      if (!provider) continue;
+
+      // Adjust model for fallback providers
+      const adjustedRequest =
+        providerName === request.provider
+          ? request
+          : {
+              ...request,
+              provider: providerName,
+              model: PROVIDER_DEFAULT_MODELS[providerName] ?? request.model,
+            };
+
+      let lastError: Error | undefined;
+      let lastStatus: number | undefined;
+      let shouldFallback = false;
+
+      for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
+        try {
+          const gen = provider.inferStream(adjustedRequest);
+          for await (const event of gen) {
+            if (event.type === "message_stop") {
+              this.recordCost(adjustedRequest.model, providerName, event.usage);
+            }
+            yield event;
           }
-          yield event;
+          return; // success — done
+        } catch (err) {
+          lastError = err as Error;
+          lastStatus = (err as Record<string, unknown>).status as number | undefined;
+
+          // Auth / billing errors → immediately try fallback provider
+          if (lastStatus === 401 || lastStatus === 402 || lastStatus === 403) {
+            shouldFallback = true;
+            break;
+          }
+          if (!this.shouldRetry(lastError, attempt)) break;
+          await this.backoff(lastError, attempt);
         }
-        return;
-      } catch (err) {
-        lastError = err as Error;
-        lastStatus = (err as Record<string, unknown>).status as
-          | number
-          | undefined;
-        // Non-retryable auth errors — surface immediately
-        if (lastStatus === 401 || lastStatus === 403) {
-          yield {
-            type: "error",
-            error: `Auth error (${lastStatus}): ${lastError.message ?? ""}`,
-          };
-          return;
-        }
-        if (lastStatus === 402) {
-          yield {
-            type: "error",
-            error: `Insufficient credits: ${lastError.message ?? ""}. Add credits at https://openrouter.ai/settings/credits`,
-          };
-          return;
-        }
-        if (!this.shouldRetry(lastError, attempt)) break;
-        await this.backoff(lastError, attempt);
       }
+
+      // Also fallback on 429 after exhausting retries — the model is overloaded
+      if (!shouldFallback && lastStatus === 429) {
+        shouldFallback = true;
+      }
+
+      if (shouldFallback && fallbackOrder.indexOf(providerName) < fallbackOrder.length - 1) {
+        // Try next provider — yield info event about the switch
+        const nextProvider = fallbackOrder[fallbackOrder.indexOf(providerName) + 1];
+        if (this.providers.has(nextProvider)) {
+          yield {
+            type: "error",
+            error: `${providerName} failed (${lastStatus}): ${lastError?.message ?? ""}. Switching to ${nextProvider}…`,
+          };
+          continue;
+        }
+      }
+
+      // No more fallbacks — yield final error
+      const providerHints: Record<string, string> = {
+        openrouter: "Add credits at https://openrouter.ai/settings/credits",
+        anthropic: "Check billing at https://console.anthropic.com/settings/billing",
+        openai: "Check billing at https://platform.openai.com/account/billing",
+        google: "Check billing at https://console.cloud.google.com/billing",
+      };
+
+      if (lastStatus === 401 || lastStatus === 403) {
+        yield {
+          type: "error",
+          error: `Auth error (${lastStatus}) on ${providerName}: ${lastError?.message ?? ""}`,
+        };
+      } else if (lastStatus === 402) {
+        const hint = providerHints[providerName] ?? "Check your provider billing";
+        yield {
+          type: "error",
+          error: `Insufficient credits (${providerName}): ${lastError?.message ?? ""}. ${hint}`,
+        };
+      } else if (lastStatus === 429) {
+        yield {
+          type: "error",
+          error: `Rate limited after ${this.config.maxRetries + 1} attempts on ${providerName}. Model "${adjustedRequest.model}" is busy.`,
+        };
+      } else {
+        yield { type: "error", error: lastError?.message ?? "Stream failed" };
+      }
+      return;
     }
 
-    // Final error message with actionable advice
-    const msg = lastError?.message ?? "Stream failed";
-    if (lastStatus === 429) {
-      yield {
-        type: "error",
-        error: `Rate limited after ${this.config.maxRetries + 1} attempts. Model "${request.model}" is busy. Try: alan --model google/gemma-4-31b-it:free`,
-      };
-    } else {
-      yield { type: "error", error: msg };
+    // No providers available at all
+    yield {
+      type: "error",
+      error:
+        "No providers available. Set an API key: GOOGLE_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY",
+    };
+  }
+
+  /**
+   * Returns an ordered list of providers to try: primary first, then fallbacks.
+   */
+  private getFallbackProviders(primary: ProviderName): ProviderName[] {
+    const all = [...this.providers.keys()];
+    // Put primary first, then remaining registered providers
+    const rest = all.filter((p) => p !== primary);
+    if (this.providers.has(primary)) {
+      return [primary, ...rest];
     }
+    return rest.length > 0 ? rest : [primary];
   }
 
   async countTokens(
@@ -109,9 +184,7 @@ export class LlmGateway {
 
   async healthCheck(provider?: ProviderName): Promise<Record<ProviderName, boolean>> {
     const results: Partial<Record<ProviderName, boolean>> = {};
-    const toCheck = provider
-      ? [this.resolveProvider(provider)]
-      : [...this.providers.values()];
+    const toCheck = provider ? [this.resolveProvider(provider)] : [...this.providers.values()];
 
     await Promise.all(
       toCheck.map(async (p) => {
@@ -141,7 +214,7 @@ export class LlmGateway {
 
   private shouldRetry(err: Error, attempt: number): boolean {
     if (attempt >= this.config.maxRetries) return false;
-    const status = (err as unknown as Record<string, unknown>).status as number | undefined;
+    const status = (err as unknown as { status?: number }).status;
     // Retry 429 (rate limit) and 5xx errors
     if (status === 429) return true;
     if (status && status >= 500) return true;
@@ -155,7 +228,7 @@ export class LlmGateway {
     // Check for Retry-After header in error metadata
     let retryAfterMs = 0;
     if (err) {
-      const headers = (err as Record<string, unknown>).headers as Record<string, string> | undefined;
+      const headers = (err as unknown as { headers?: Record<string, string> }).headers;
       const retryAfter = headers?.["retry-after"] ?? headers?.["Retry-After"];
       if (retryAfter) {
         retryAfterMs = parseInt(retryAfter, 10) * 1000;
@@ -166,11 +239,7 @@ export class LlmGateway {
     await new Promise((resolve) => setTimeout(resolve, baseMs + jitter));
   }
 
-  private recordCost(
-    model: string,
-    provider: ProviderName,
-    usage: TokenUsage,
-  ): void {
+  private recordCost(model: string, provider: ProviderName, usage: TokenUsage): void {
     const pricing = PRICING[model];
     if (!pricing) return;
 

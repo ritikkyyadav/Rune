@@ -8,7 +8,7 @@ use tracing::{debug, info, instrument, warn};
 use walkdir::WalkDir;
 
 use crate::error::IndexError;
-use crate::languages::{detect_language, Language};
+use crate::languages::{Language, detect_language};
 use crate::query::{Symbol, SymbolKind};
 use crate::store::SymbolStore;
 
@@ -671,7 +671,13 @@ impl Config {
         // Check doc comment was captured for main.
         let main_sym = symbols.iter().find(|s| s.name == "main").unwrap();
         assert!(main_sym.doc_comment.is_some());
-        assert!(main_sym.doc_comment.as_ref().unwrap().contains("Docs for main"));
+        assert!(
+            main_sym
+                .doc_comment
+                .as_ref()
+                .unwrap()
+                .contains("Docs for main")
+        );
     }
 
     #[test]

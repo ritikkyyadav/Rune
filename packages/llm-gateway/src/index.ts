@@ -23,3 +23,6 @@ export { LlmGateway } from "./gateway";
 export { AnthropicProvider } from "./providers/anthropic";
 export { OpenAIProvider } from "./providers/openai";
 export { OpenRouterProvider } from "./providers/openrouter";
+export { GoogleProvider } from "./providers/google";
+export { CostTracker, BudgetExceededError } from "./cost-tracker";
+export type { BudgetScope, BudgetCap, CostBreakdown } from "./cost-tracker";

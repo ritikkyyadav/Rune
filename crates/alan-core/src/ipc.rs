@@ -6,7 +6,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 use crate::error::AlanError;
-use crate::protocol::{error_codes, JsonRpcRequest, JsonRpcResponse, SessionEvent};
+use crate::protocol::{JsonRpcRequest, JsonRpcResponse, SessionEvent, error_codes};
 use crate::session::SessionManager;
 
 // ─── Shared Context ───
@@ -181,9 +181,7 @@ async fn dispatch_request(request: &JsonRpcRequest, ctx: &IpcContext) -> JsonRpc
                 .and_then(|p| p.get("from_seq"))
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
-            let limit = params
-                .and_then(|p| p.get("limit"))
-                .and_then(|v| v.as_u64());
+            let limit = params.and_then(|p| p.get("limit")).and_then(|v| v.as_u64());
 
             let sessions = ctx.sessions.lock().await;
             match sessions.get_events(&session_id, from_seq, limit) {
@@ -231,9 +229,7 @@ async fn dispatch_request(request: &JsonRpcRequest, ctx: &IpcContext) -> JsonRpc
     }
 }
 
-fn extract_session_id(
-    params: Option<&serde_json::Value>,
-) -> Result<uuid::Uuid, JsonRpcResponse> {
+fn extract_session_id(params: Option<&serde_json::Value>) -> Result<uuid::Uuid, JsonRpcResponse> {
     let raw = params
         .and_then(|p| p.get("session_id"))
         .and_then(|v| v.as_str());

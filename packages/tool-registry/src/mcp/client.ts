@@ -128,7 +128,10 @@ export class McpClient {
   /**
    * Validate tool input arguments against the tool's schema.
    */
-  private validateToolInput(schema: McpToolSchema | undefined, args: Record<string, unknown>): { valid: boolean; errors: string[] } {
+  private validateToolInput(
+    schema: McpToolSchema | undefined,
+    args: Record<string, unknown>,
+  ): { valid: boolean; errors: string[] } {
     const errors: string[] = [];
     if (schema?.inputSchema) {
       const s = schema.inputSchema as Record<string, unknown>;
@@ -140,7 +143,7 @@ export class McpClient {
     }
     // Check string values aren't too large
     for (const [key, val] of Object.entries(args)) {
-      if (typeof val === 'string' && val.length > MAX_PARAM_SIZE) {
+      if (typeof val === "string" && val.length > MAX_PARAM_SIZE) {
         errors.push(`Param ${key} exceeds 1MB limit`);
       }
     }
@@ -156,7 +159,7 @@ export class McpClient {
 
     let remaining = MAX_RESPONSE_SIZE;
     const truncatedContent = result.content.map((c) => {
-      if (!c.text || remaining <= 0) return { ...c, text: '' };
+      if (!c.text || remaining <= 0) return { ...c, text: "" };
       if (c.text.length <= remaining) {
         remaining -= c.text.length;
         return c;
@@ -167,7 +170,7 @@ export class McpClient {
     });
 
     truncatedContent.push({
-      type: 'text',
+      type: "text",
       text: `\n[WARNING: Response truncated from ${totalSize} to ${MAX_RESPONSE_SIZE} bytes]`,
     });
 
@@ -186,13 +189,17 @@ export class McpClient {
       } catch {
         this.consecutiveFailures++;
         if (this.consecutiveFailures >= HEALTH_CHECK_MAX_FAILURES) {
-          console.error(`[MCP] Server ${this.serverName} failed ${this.consecutiveFailures} health checks, restarting...`);
+          console.error(
+            `[MCP] Server ${this.serverName} failed ${this.consecutiveFailures} health checks, restarting...`,
+          );
           try {
             await this.stop();
             await this.start();
             this.consecutiveFailures = 0;
           } catch (restartErr) {
-            console.error(`[MCP] Failed to restart ${this.serverName}: ${restartErr instanceof Error ? restartErr.message : restartErr}`);
+            console.error(
+              `[MCP] Failed to restart ${this.serverName}: ${restartErr instanceof Error ? restartErr.message : restartErr}`,
+            );
           }
         }
       }
@@ -212,12 +219,16 @@ export class McpClient {
   /**
    * Get current health status of this MCP server.
    */
-  getServerHealth(): { name: string; status: 'healthy' | 'degraded' | 'down'; failureCount: number } {
-    let status: 'healthy' | 'degraded' | 'down' = 'healthy';
+  getServerHealth(): {
+    name: string;
+    status: "healthy" | "degraded" | "down";
+    failureCount: number;
+  } {
+    let status: "healthy" | "degraded" | "down" = "healthy";
     if (!this.ready || !this.proc) {
-      status = 'down';
+      status = "down";
     } else if (this.consecutiveFailures > 0) {
-      status = this.consecutiveFailures >= HEALTH_CHECK_MAX_FAILURES ? 'down' : 'degraded';
+      status = this.consecutiveFailures >= HEALTH_CHECK_MAX_FAILURES ? "down" : "degraded";
     }
     return { name: this.serverName, status, failureCount: this.consecutiveFailures };
   }
@@ -225,16 +236,13 @@ export class McpClient {
   /**
    * Call a tool on this MCP server.
    */
-  async callTool(
-    name: string,
-    args: Record<string, unknown>,
-  ): Promise<McpCallToolResult> {
+  async callTool(name: string, args: Record<string, unknown>): Promise<McpCallToolResult> {
     // Find schema for the tool and validate input
-    const toolSchema = this.tools.find(t => t.name === name);
+    const toolSchema = this.tools.find((t) => t.name === name);
     const validation = this.validateToolInput(toolSchema, args);
     if (!validation.valid) {
       return {
-        content: [{ type: 'text', text: `Validation failed: ${validation.errors.join('; ')}` }],
+        content: [{ type: "text", text: `Validation failed: ${validation.errors.join("; ")}` }],
         isError: true,
       };
     }
@@ -307,10 +315,7 @@ export class McpClient {
 
   // ─── JSON-RPC over stdio ───
 
-  private async send(
-    method: string,
-    params: Record<string, unknown>,
-  ): Promise<unknown> {
+  private async send(method: string, params: Record<string, unknown>): Promise<unknown> {
     const id = ++this.requestId;
     const request: McpJsonRpcRequest = {
       jsonrpc: "2.0",
@@ -327,7 +332,9 @@ export class McpClient {
 
       const stdin = this.proc?.stdin;
       if (stdin && typeof stdin !== "number" && "write" in stdin) {
-        (stdin as { write(data: string | Uint8Array): number }).write(new TextEncoder().encode(message));
+        (stdin as { write(data: string | Uint8Array): number }).write(
+          new TextEncoder().encode(message),
+        );
       } else {
         reject(new Error("MCP server stdin not available"));
       }
@@ -342,17 +349,16 @@ export class McpClient {
     });
   }
 
-  private async notify(
-    method: string,
-    params: Record<string, unknown>,
-  ): Promise<void> {
+  private async notify(method: string, params: Record<string, unknown>): Promise<void> {
     const notification = { jsonrpc: "2.0" as const, method, params };
     const json = JSON.stringify(notification);
     const message = `Content-Length: ${Buffer.byteLength(json)}\r\n\r\n${json}`;
 
     const stdin = this.proc?.stdin;
     if (stdin && typeof stdin !== "number" && "write" in stdin) {
-      (stdin as { write(data: string | Uint8Array): number }).write(new TextEncoder().encode(message));
+      (stdin as { write(data: string | Uint8Array): number }).write(
+        new TextEncoder().encode(message),
+      );
     }
   }
 

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use tracing::{debug, instrument};
 
 use crate::error::IndexError;
@@ -262,17 +262,13 @@ impl SymbolStore {
 
     /// Return aggregate stats about the index.
     pub fn stats(&self) -> Result<IndexStats, IndexError> {
-        let total_files: u64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM indexed_files",
-            [],
-            |row| row.get(0),
-        )?;
+        let total_files: u64 =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM indexed_files", [], |row| row.get(0))?;
 
-        let total_symbols: u64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM symbols",
-            [],
-            |row| row.get(0),
-        )?;
+        let total_symbols: u64 =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM symbols", [], |row| row.get(0))?;
 
         let mut stmt = self.conn.prepare(
             "SELECT language, COUNT(*) FROM indexed_files GROUP BY language ORDER BY COUNT(*) DESC",

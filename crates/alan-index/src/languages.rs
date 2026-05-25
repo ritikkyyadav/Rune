@@ -64,10 +64,7 @@ mod tests {
             Some(Language::Python)
         );
         assert_eq!(detect_language(Path::new("main.go")), Some(Language::Go));
-        assert_eq!(
-            detect_language(Path::new("App.java")),
-            Some(Language::Java)
-        );
+        assert_eq!(detect_language(Path::new("App.java")), Some(Language::Java));
         assert_eq!(detect_language(Path::new("utils.c")), Some(Language::C));
         assert_eq!(detect_language(Path::new("utils.h")), Some(Language::C));
         assert_eq!(detect_language(Path::new("utils.cpp")), Some(Language::Cpp));

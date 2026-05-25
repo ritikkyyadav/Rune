@@ -4,7 +4,7 @@ use std::time::Instant;
 use tokio::process::Command;
 use tracing::{debug, warn};
 
-use crate::audit::{sha256_hash, AuditLog};
+use crate::audit::{AuditLog, sha256_hash};
 use crate::error::SandboxError;
 use crate::path_guard::PathGuard;
 use crate::{Sandbox, SandboxConfig, SandboxFuture, SandboxResult};

@@ -271,8 +271,12 @@ export function scanOutput(output: string, redact = true): OutputScanResult {
  * Used when no explicit allowlist is configured.
  */
 export const DEFAULT_EGRESS_ALLOWLIST = [
-  'registry.npmjs.org', 'api.github.com', 'pypi.org',
-  'raw.githubusercontent.com', 'crates.io', 'cdn.jsdelivr.net',
+  "registry.npmjs.org",
+  "api.github.com",
+  "pypi.org",
+  "raw.githubusercontent.com",
+  "crates.io",
+  "cdn.jsdelivr.net",
 ];
 
 /**
@@ -301,7 +305,7 @@ export function createEgressGuard(allowlist?: string[]): (url: string) => boolea
   return (url: string) => {
     try {
       const hostname = new URL(url).hostname;
-      return list.some(allowed => hostname === allowed || hostname.endsWith('.' + allowed));
+      return list.some((allowed) => hostname === allowed || hostname.endsWith("." + allowed));
     } catch {
       return false; // Invalid URL = blocked
     }
@@ -319,7 +323,10 @@ export function createToolExecutionGuard(config: {
   redactOutputs?: boolean;
   scanInputs?: boolean;
 }): {
-  preExecution: (toolName: string, args: Record<string, unknown>) => { allowed: boolean; reason?: string; findings?: ScanFinding[] };
+  preExecution: (
+    toolName: string,
+    args: Record<string, unknown>,
+  ) => { allowed: boolean; reason?: string; findings?: ScanFinding[] };
   postExecution: (output: string) => string;
 } {
   const egressCheck = createEgressGuard(config.egressAllowlist);
@@ -329,12 +336,19 @@ export function createToolExecutionGuard(config: {
       if (config.scanInputs !== false) {
         const inputStr = JSON.stringify(args);
         const injection = scanForInjection(inputStr);
-        if (injection.findings.length > 0 && injection.findings.some(f => f.confidence === 'high')) {
-          return { allowed: false, reason: 'Prompt injection detected in tool args', findings: injection.findings };
+        if (
+          injection.findings.length > 0 &&
+          injection.findings.some((f) => f.confidence === "high")
+        ) {
+          return {
+            allowed: false,
+            reason: "Prompt injection detected in tool args",
+            findings: injection.findings,
+          };
         }
       }
       // Check egress for network tools
-      if (['web_fetch', 'web_search', 'bash'].includes(toolName)) {
+      if (["web_fetch", "web_search", "bash"].includes(toolName)) {
         const urlMatch = JSON.stringify(args).match(/https?:\/\/[^\s"']+/g);
         if (urlMatch) {
           for (const url of urlMatch) {

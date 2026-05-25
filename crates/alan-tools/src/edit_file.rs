@@ -36,11 +36,10 @@ pub fn execute(input: EditFileInput, workspace_root: &Path) -> Result<EditFileOu
         path: resolved.display().to_string(),
         detail: e.to_string(),
     })?;
-    let workspace_canonical =
-        fs::canonicalize(workspace_root).map_err(|e| ToolError::Io {
-            path: workspace_root.display().to_string(),
-            detail: e.to_string(),
-        })?;
+    let workspace_canonical = fs::canonicalize(workspace_root).map_err(|e| ToolError::Io {
+        path: workspace_root.display().to_string(),
+        detail: e.to_string(),
+    })?;
     if !canonical.starts_with(&workspace_canonical) {
         return Err(ToolError::PathEscape {
             path: resolved.display().to_string(),
@@ -199,7 +198,9 @@ mod tests {
             tmp.path(),
         );
 
-        assert!(matches!(result, Err(ToolError::InvalidArgs(msg)) if msg.contains("Hash mismatch")));
+        assert!(
+            matches!(result, Err(ToolError::InvalidArgs(msg)) if msg.contains("Hash mismatch"))
+        );
     }
 
     #[test]

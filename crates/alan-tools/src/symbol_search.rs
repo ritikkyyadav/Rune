@@ -43,7 +43,10 @@ pub struct IndexStatsOutput {
     pub total_symbols: u64,
 }
 
-pub fn execute(input: SymbolSearchInput, workspace: &Path) -> Result<SymbolSearchOutput, ToolError> {
+pub fn execute(
+    input: SymbolSearchInput,
+    workspace: &Path,
+) -> Result<SymbolSearchOutput, ToolError> {
     let db_path = workspace.join(".alan").join("symbols.db");
 
     // Ensure .alan directory exists
@@ -77,10 +80,7 @@ fn search_symbols(
     input: &SymbolSearchInput,
     workspace: &Path,
 ) -> Result<SymbolSearchOutput, ToolError> {
-    let kind = input
-        .kind
-        .as_deref()
-        .and_then(SymbolKind::from_str_lossy);
+    let kind = input.kind.as_deref().and_then(SymbolKind::from_str_lossy);
 
     let query = SymbolQuery {
         name: Some(input.query.clone()),
@@ -98,10 +98,7 @@ fn search_symbols(
     let hits: Vec<SymbolHit> = symbols
         .into_iter()
         .filter_map(|sym| {
-            let file_path = store
-                .get_file_path_by_id(sym.file_id)
-                .ok()
-                .flatten()?;
+            let file_path = store.get_file_path_by_id(sym.file_id).ok().flatten()?;
             // Make path relative to workspace
             let file = Path::new(&file_path)
                 .strip_prefix(workspace)

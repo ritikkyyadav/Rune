@@ -96,10 +96,7 @@ export class AnthropicProvider implements LlmProvider {
               contentIndex,
               delta: { type: "text_delta", text: delta.text },
             };
-          } else if (
-            delta.type === "input_json_delta" &&
-            currentToolCallId
-          ) {
+          } else if (delta.type === "input_json_delta" && currentToolCallId) {
             toolJsonAccumulator += delta.partial_json;
             yield {
               type: "tool_use_delta",
@@ -112,9 +109,7 @@ export class AnthropicProvider implements LlmProvider {
 
         case "content_block_stop":
           if (currentToolCallId) {
-            const toolInput = toolJsonAccumulator
-              ? JSON.parse(toolJsonAccumulator)
-              : {};
+            const toolInput = toolJsonAccumulator ? JSON.parse(toolJsonAccumulator) : {};
             yield {
               type: "tool_use_stop",
               toolCallId: currentToolCallId,
@@ -144,10 +139,7 @@ export class AnthropicProvider implements LlmProvider {
     }
   }
 
-  async countTokens(
-    messages: Message[],
-    tools?: ToolDefinition[],
-  ): Promise<number> {
+  async countTokens(messages: Message[], tools?: ToolDefinition[]): Promise<number> {
     const result = await this.client.messages.countTokens({
       model: "claude-sonnet-4-20250514",
       messages: this.toAnthropicMessages(messages),
@@ -171,9 +163,7 @@ export class AnthropicProvider implements LlmProvider {
 
   // ─── Translation Helpers ───
 
-  private toAnthropicMessages(
-    messages: Message[],
-  ): Anthropic.MessageParam[] {
+  private toAnthropicMessages(messages: Message[]): Anthropic.MessageParam[] {
     return messages
       .filter((m) => m.role !== "system")
       .map((msg) => ({
@@ -182,9 +172,7 @@ export class AnthropicProvider implements LlmProvider {
       }));
   }
 
-  private toAnthropicBlock(
-    block: ContentBlock,
-  ): Anthropic.ContentBlockParam {
+  private toAnthropicBlock(block: ContentBlock): Anthropic.ContentBlockParam {
     switch (block.type) {
       case "text":
         return { type: "text", text: block.text };
@@ -207,20 +195,14 @@ export class AnthropicProvider implements LlmProvider {
           type: "image",
           source: {
             type: "base64",
-            media_type: block.mediaType as
-              | "image/png"
-              | "image/jpeg"
-              | "image/gif"
-              | "image/webp",
+            media_type: block.mediaType as "image/png" | "image/jpeg" | "image/gif" | "image/webp",
             data: block.data,
           },
         };
     }
   }
 
-  private toAnthropicTools(
-    tools: ToolDefinition[],
-  ): Anthropic.Tool[] {
+  private toAnthropicTools(tools: ToolDefinition[]): Anthropic.Tool[] {
     return tools.map((t) => ({
       name: t.name,
       description: t.description,
@@ -228,9 +210,7 @@ export class AnthropicProvider implements LlmProvider {
     }));
   }
 
-  private fromAnthropicContent(
-    content: Anthropic.ContentBlock[],
-  ): ContentBlock[] {
+  private fromAnthropicContent(content: Anthropic.ContentBlock[]): ContentBlock[] {
     return content.map((block) => {
       if (block.type === "text") {
         return { type: "text" as const, text: block.text };
@@ -247,9 +227,7 @@ export class AnthropicProvider implements LlmProvider {
     });
   }
 
-  private mapStopReason(
-    reason: string | null | undefined,
-  ): StopReason {
+  private mapStopReason(reason: string | null | undefined): StopReason {
     switch (reason) {
       case "end_turn":
         return "end_turn";

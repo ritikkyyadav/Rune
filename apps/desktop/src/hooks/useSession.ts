@@ -1,10 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import type {
-  SessionInfo,
-  ChatMessage,
-  ToolCallInfo,
-  Plan,
-} from "../lib/types";
+import type { SessionInfo, ChatMessage, ToolCallInfo, Plan } from "../lib/types";
 
 // ─── Safe Tauri invoke wrapper ───
 async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T | null> {
@@ -126,8 +121,7 @@ export function useSession() {
       setState((prev) => ({
         ...prev,
         isLoading: false,
-        error:
-          err instanceof Error ? err.message : "Failed to load session history",
+        error: err instanceof Error ? err.message : "Failed to load session history",
       }));
     }
   }, []);
@@ -142,8 +136,7 @@ export function useSession() {
     }
     setState((prev) => {
       const sessions = prev.sessions.filter((s) => s.id !== sessionId);
-      const activeSessionId =
-        prev.activeSessionId === sessionId ? null : prev.activeSessionId;
+      const activeSessionId = prev.activeSessionId === sessionId ? null : prev.activeSessionId;
       return {
         ...prev,
         sessions,
@@ -215,21 +208,18 @@ export function useSession() {
     });
   }, []);
 
-  const updateToolCall = useCallback(
-    (callId: string, update: Partial<ToolCallInfo>) => {
-      setState((prev) => {
-        const msgs = prev.messages.map((msg) => {
-          if (!msg.toolCalls) return msg;
-          const toolCalls = msg.toolCalls.map((tc) =>
-            tc.callId === callId ? { ...tc, ...update } : tc,
-          );
-          return { ...msg, toolCalls };
-        });
-        return { ...prev, messages: msgs };
+  const updateToolCall = useCallback((callId: string, update: Partial<ToolCallInfo>) => {
+    setState((prev) => {
+      const msgs = prev.messages.map((msg) => {
+        if (!msg.toolCalls) return msg;
+        const toolCalls = msg.toolCalls.map((tc) =>
+          tc.callId === callId ? { ...tc, ...update } : tc,
+        );
+        return { ...msg, toolCalls };
       });
-    },
-    [],
-  );
+      return { ...prev, messages: msgs };
+    });
+  }, []);
 
   const setPlan = useCallback((plan: Plan | null) => {
     setState((prev) => ({ ...prev, activePlan: plan }));

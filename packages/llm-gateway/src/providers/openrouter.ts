@@ -21,10 +21,7 @@ export class OpenRouterProvider implements LlmProvider {
   private inner: OpenAIProvider;
 
   constructor(apiKey?: string) {
-    this.inner = new OpenAIProvider(
-      apiKey ?? process.env.OPENROUTER_API_KEY,
-      OPENROUTER_BASE_URL,
-    );
+    this.inner = new OpenAIProvider(apiKey ?? process.env.OPENROUTER_API_KEY, OPENROUTER_BASE_URL);
   }
 
   infer(request: InferenceRequest): Promise<InferenceResponse> {

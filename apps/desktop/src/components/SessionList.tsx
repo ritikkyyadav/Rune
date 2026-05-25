@@ -208,11 +208,7 @@ export function SessionList({
     <div style={styles.container}>
       <div style={styles.header}>
         <span style={styles.title}>Sessions</span>
-        <button
-          style={styles.newButton}
-          onClick={onNewSession}
-          title="New session"
-        >
+        <button style={styles.newButton} onClick={onNewSession} title="New session">
           +
         </button>
       </div>
@@ -240,9 +236,7 @@ export function SessionList({
                     key={s.id}
                     style={{
                       ...styles.sessionItem,
-                      background: isActive
-                        ? "var(--bg-tertiary)"
-                        : "transparent",
+                      background: isActive ? "var(--bg-tertiary)" : "transparent",
                     }}
                     onClick={() => onSelect(s.id)}
                     onMouseEnter={(e) => {
@@ -259,9 +253,7 @@ export function SessionList({
                     }}
                   >
                     <div style={styles.sessionInfo}>
-                      <div style={styles.sessionTitle}>
-                        {s.title || "Untitled Session"}
-                      </div>
+                      <div style={styles.sessionTitle}>{s.title || "Untitled Session"}</div>
                       <div style={styles.sessionMeta}>
                         <span>{s.eventCount} events</span>
                         <span>&middot;</span>
@@ -279,9 +271,7 @@ export function SessionList({
                         style={{
                           ...styles.deleteButton,
                           opacity: 1,
-                          color: isConfirming
-                            ? "var(--error)"
-                            : "var(--text-muted)",
+                          color: isConfirming ? "var(--error)" : "var(--text-muted)",
                         }}
                         onClick={(e) => handleDelete(e, s.id)}
                         title={isConfirming ? "Click again to confirm" : "Delete session"}

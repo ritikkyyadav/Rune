@@ -37,8 +37,7 @@ export interface TaskResult {
 }
 
 const TOOLS_BINARY =
-  process.env.ALAN_TOOLS_BINARY ??
-  join(__dirname, "..", "..", "target", "release", "alan-tools");
+  process.env.ALAN_TOOLS_BINARY ?? join(__dirname, "..", "..", "target", "release", "alan-tools");
 
 export async function runTask(task: EvalTask): Promise<TaskResult> {
   const start = performance.now();

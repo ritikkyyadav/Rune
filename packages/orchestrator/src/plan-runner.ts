@@ -131,11 +131,7 @@ export class PlanRunner {
     let plan: Plan | null = null;
     let plannerTextAccum = "";
 
-    for await (const event of planner.analyze(
-      this.messages,
-      tools,
-      this.config.systemPrompt,
-    )) {
+    for await (const event of planner.analyze(this.messages, tools, this.config.systemPrompt)) {
       switch (event.type) {
         case "text_delta":
           plannerTextAccum += event.text;

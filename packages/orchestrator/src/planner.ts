@@ -164,9 +164,7 @@ export class Planner {
     }
 
     // Check for create_plan tool call
-    const planCall = pendingToolCalls.find(
-      (tc) => tc.toolName === "create_plan",
-    );
+    const planCall = pendingToolCalls.find((tc) => tc.toolName === "create_plan");
 
     if (planCall) {
       const args = JSON.parse(planCall.argsJson || "{}");
@@ -241,9 +239,7 @@ Use the update_plan tool to create a revised plan that accounts for this failure
       }
     }
 
-    const updateCall = pendingToolCalls.find(
-      (tc) => tc.toolName === "update_plan",
-    );
+    const updateCall = pendingToolCalls.find((tc) => tc.toolName === "update_plan");
     if (updateCall) {
       const args = JSON.parse(updateCall.argsJson || "{}");
       const plan = this.buildPlan(args.steps ?? []);
@@ -294,10 +290,7 @@ function accumulateStreamEvent(
   switch (event.type) {
     case "content_delta":
       if (event.delta.type === "text_delta") {
-        if (
-          contentBlocks.length === 0 ||
-          contentBlocks[contentBlocks.length - 1].type !== "text"
-        ) {
+        if (contentBlocks.length === 0 || contentBlocks[contentBlocks.length - 1].type !== "text") {
           contentBlocks.push({ type: "text", text: "" });
         }
         const last = contentBlocks[contentBlocks.length - 1];
@@ -321,9 +314,7 @@ function accumulateStreamEvent(
       return {};
 
     case "tool_use_delta": {
-      const tc = pendingToolCalls.find(
-        (t) => t.callId === event.toolCallId,
-      );
+      const tc = pendingToolCalls.find((t) => t.callId === event.toolCallId);
       if (tc) tc.argsJson += event.partialJson;
       return {};
     }
@@ -335,9 +326,7 @@ function accumulateStreamEvent(
       if (block && block.type === "tool_use") {
         block.toolInput = event.toolInput;
       }
-      const pending = pendingToolCalls.find(
-        (t) => t.callId === event.toolCallId,
-      );
+      const pending = pendingToolCalls.find((t) => t.callId === event.toolCallId);
       if (pending) pending.argsJson = JSON.stringify(event.toolInput);
       return {};
     }

@@ -1,5 +1,5 @@
 use chrono::Utc;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::path::Path;
 use uuid::Uuid;
 
@@ -113,11 +113,7 @@ impl SessionManager {
         })
     }
 
-    pub fn append_event(
-        &self,
-        session_id: &Uuid,
-        event: &SessionEvent,
-    ) -> Result<u64, AlanError> {
+    pub fn append_event(&self, session_id: &Uuid, event: &SessionEvent) -> Result<u64, AlanError> {
         let event_type = event_type_name(event);
         let payload = serde_json::to_string(event)?;
 
@@ -211,11 +207,7 @@ impl SessionManager {
 
     /// Insert a checkpoint event summarizing the current state.
     /// Call this periodically (e.g. every 10 turns).
-    pub fn create_checkpoint(
-        &self,
-        session_id: &Uuid,
-        summary: &str,
-    ) -> Result<u64, AlanError> {
+    pub fn create_checkpoint(&self, session_id: &Uuid, summary: &str) -> Result<u64, AlanError> {
         self.append_event(
             session_id,
             &SessionEvent::Checkpoint {
@@ -285,10 +277,7 @@ impl SessionManager {
 
     /// Rollback a dirty session to the last checkpoint before the crash.
     /// Deletes all events after the last "session_started" checkpoint.
-    pub fn rollback_to_last_checkpoint(
-        &self,
-        session_id: &Uuid,
-    ) -> Result<u64, AlanError> {
+    pub fn rollback_to_last_checkpoint(&self, session_id: &Uuid) -> Result<u64, AlanError> {
         let checkpoint_seq: u64 = self.conn.query_row(
             "SELECT MAX(seq) FROM events
              WHERE session_id = ?1

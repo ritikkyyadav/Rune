@@ -3,10 +3,20 @@ import {
   AnthropicProvider,
   OpenAIProvider,
   OpenRouterProvider,
+  GoogleProvider,
+  CostTracker,
 } from "@alan/llm-gateway";
 import type { Message, ProviderName } from "@alan/llm-gateway";
-import { ToolRegistry, registerBuiltinTools } from "@alan/tool-registry";
-import { SessionManager, hashArgs, hashResult } from "@alan/shared";
+import { ToolRegistry, registerBuiltinTools, ToolRateLimiter } from "@alan/tool-registry";
+import {
+  SessionManager,
+  hashArgs,
+  hashResult,
+  SqliteCheckpointStore,
+  DEFAULT_CHECKPOINT_POLICY,
+  createAutoVerifier,
+} from "@alan/shared";
+import type { CheckpointStore, CheckpointPolicy, RunState } from "@alan/shared";
 import { AgentLoop } from "./agent-loop";
 import type { PermissionCheck, AgentTurnEvent } from "./agent-loop";
 import { PermissionBroker } from "./permissions";
@@ -18,7 +28,14 @@ import {
   eventsToMessages,
   messageToAssistantPayload,
   messageToToolResultPayloads,
+  resumeFromCheckpoint,
 } from "./session-replay";
+import { ContextEngine } from "./context-engine";
+import type { ContextBudget } from "./context-engine";
+import { createToolExecutionGuard } from "./security";
+import { MemoryManager } from "./memory/manager";
+import { EpisodicMemory } from "./memory/episodic";
+import { WorkingMemory } from "./memory/working";
 
 // ─── Permission Prompt Handler ───
 
@@ -34,11 +51,11 @@ export type UserPermissionDecision =
   | { kind: "allow_session" }
   | { kind: "deny" };
 
-export type PermissionHandler = (
-  prompt: PermissionPrompt,
-) => Promise<UserPermissionDecision>;
+export type PermissionHandler = (prompt: PermissionPrompt) => Promise<UserPermissionDecision>;
 
 // ─── Engine Config ───
+
+export type EffortLevel = "low" | "medium" | "high" | "max";
 
 export interface EngineConfig {
   model: string;
@@ -54,7 +71,24 @@ export interface EngineConfig {
   anthropicApiKey?: string;
   openaiApiKey?: string;
   openrouterApiKey?: string;
+  googleApiKey?: string;
+  contextBudget?: Partial<ContextBudget>;
+  enableSecurity?: boolean;
+  enableRateLimiting?: boolean;
+  enableCheckpoints?: boolean;
+  checkpointPolicy?: Partial<CheckpointPolicy>;
+  egressAllowlist?: string[];
+  redactOutputs?: boolean;
+  userId?: string;
 }
+
+const EFFORT_SETTINGS: Record<EffortLevel, { maxTokens: number; maxTurns: number; label: string }> =
+  {
+    low: { maxTokens: 2048, maxTurns: 10, label: "Quick responses, minimal reasoning" },
+    medium: { maxTokens: 8192, maxTurns: 50, label: "Balanced depth and speed (default)" },
+    high: { maxTokens: 16384, maxTurns: 80, label: "Thorough analysis, deeper reasoning" },
+    max: { maxTokens: 32768, maxTurns: 120, label: "Maximum capability, deepest reasoning" },
+  };
 
 const DEFAULT_ENGINE_CONFIG: EngineConfig = {
   model: "deepseek/deepseek-v4-flash:free",
@@ -89,6 +123,15 @@ export class Engine {
   private permissions: PermissionBroker;
   private config: EngineConfig;
   private permissionHandler?: PermissionHandler;
+  private effort: EffortLevel = "medium";
+  private contextEngine: ContextEngine;
+  private costTracker: CostTracker;
+  private rateLimiter: ToolRateLimiter | null = null;
+  private securityGuard: ReturnType<typeof createToolExecutionGuard> | null = null;
+  private checkpointStore: CheckpointStore | null = null;
+  private checkpointPolicy: CheckpointPolicy;
+  private memoryManager: MemoryManager | null = null;
+  private autoVerifier: ReturnType<typeof createAutoVerifier> | null = null;
 
   constructor(config: Partial<EngineConfig> = {}) {
     this.config = { ...DEFAULT_ENGINE_CONFIG, ...config };
@@ -103,19 +146,16 @@ export class Engine {
 
     // Register providers
     if (this.config.anthropicApiKey || process.env.ANTHROPIC_API_KEY) {
-      this.gateway.registerProvider(
-        new AnthropicProvider(this.config.anthropicApiKey),
-      );
+      this.gateway.registerProvider(new AnthropicProvider(this.config.anthropicApiKey));
     }
     if (this.config.openaiApiKey || process.env.OPENAI_API_KEY) {
-      this.gateway.registerProvider(
-        new OpenAIProvider(this.config.openaiApiKey),
-      );
+      this.gateway.registerProvider(new OpenAIProvider(this.config.openaiApiKey));
     }
     if (this.config.openrouterApiKey || process.env.OPENROUTER_API_KEY) {
-      this.gateway.registerProvider(
-        new OpenRouterProvider(this.config.openrouterApiKey),
-      );
+      this.gateway.registerProvider(new OpenRouterProvider(this.config.openrouterApiKey));
+    }
+    if (this.config.googleApiKey || process.env.GOOGLE_API_KEY) {
+      this.gateway.registerProvider(new GoogleProvider(this.config.googleApiKey));
     }
 
     // Initialize Tool Registry with built-in tools
@@ -127,6 +167,60 @@ export class Engine {
 
     // Initialize Permission Broker
     this.permissions = new PermissionBroker(this.config.yoloMode);
+
+    // Initialize Context Engine — always on, manages token budgets
+    this.contextEngine = new ContextEngine(
+      { budget: this.config.contextBudget },
+      this.gateway,
+    );
+
+    // Initialize Cost Tracker
+    this.costTracker = new CostTracker();
+
+    // Checkpoint policy
+    this.checkpointPolicy = {
+      ...DEFAULT_CHECKPOINT_POLICY,
+      ...this.config.checkpointPolicy,
+    };
+
+    // Security guard — on by default
+    if (this.config.enableSecurity !== false) {
+      this.securityGuard = createToolExecutionGuard({
+        egressAllowlist: this.config.egressAllowlist,
+        redactOutputs: this.config.redactOutputs ?? true,
+        scanInputs: true,
+      });
+    }
+
+    // Rate limiter — on by default
+    if (this.config.enableRateLimiting !== false) {
+      this.rateLimiter = new ToolRateLimiter();
+    }
+
+    // Checkpoint store — on by default
+    if (this.config.enableCheckpoints !== false) {
+      try {
+        const { Database } = require("bun:sqlite");
+        const db = new Database(this.config.dbPath);
+        this.checkpointStore = new SqliteCheckpointStore(db);
+      } catch {
+        // SQLite unavailable, checkpoints disabled
+      }
+    }
+
+    // Auto audit verifier
+    this.autoVerifier = createAutoVerifier(this.sessions);
+
+    // Memory manager
+    try {
+      const { Database } = require("bun:sqlite");
+      const db = new Database(this.config.dbPath);
+      const episodic = new EpisodicMemory(db);
+      const working = new WorkingMemory();
+      this.memoryManager = new MemoryManager(episodic, working);
+    } catch {
+      // Memory subsystem unavailable
+    }
   }
 
   createSession(model?: string): string {
@@ -143,6 +237,31 @@ export class Engine {
 
   private buildPermissionCheck(): PermissionCheck {
     return async ({ toolName, args }) => {
+      // Rate limiter check
+      if (this.rateLimiter) {
+        const rateResult = this.rateLimiter.checkLimit(toolName);
+        if (!rateResult.allowed) {
+          return {
+            allowed: false,
+            reason: `Rate limit exceeded for "${toolName}". Retry after ${rateResult.retryAfterMs}ms`,
+          };
+        }
+      }
+
+      // Security guard pre-execution check
+      if (this.securityGuard) {
+        const secResult = this.securityGuard.preExecution(toolName, args);
+        if (!secResult.allowed) {
+          return { allowed: false, reason: secResult.reason ?? "Blocked by security guard" };
+        }
+      }
+
+      // Cost budget pre-execution check
+      const estimatedCost = this.costTracker.estimateToolCost(toolName);
+      if (!this.costTracker.preExecutionCheck(estimatedCost)) {
+        return { allowed: false, reason: "Session cost budget exceeded" };
+      }
+
       const handler = this.registry.get(toolName);
       if (!handler) {
         return { allowed: false, reason: `Unknown tool: ${toolName}` };
@@ -151,6 +270,9 @@ export class Engine {
       const decision = this.permissions.check(handler.schema, args);
 
       if (decision.type === "allowed") {
+        // Record rate limiter call on approval
+        this.rateLimiter?.recordCall(toolName);
+        this.autoVerifier?.onToolCall();
         return { allowed: true };
       }
       if (decision.type === "denied") {
@@ -177,6 +299,9 @@ export class Engine {
       if (userDecision.kind === "allow_session") {
         this.permissions.grantTool(toolName, "session");
       }
+      // Record rate limiter call on approval
+      this.rateLimiter?.recordCall(toolName);
+      this.autoVerifier?.onToolCall();
       return { allowed: true };
     };
   }
@@ -189,15 +314,14 @@ export class Engine {
    * Chat with the agent. Uses the Planner-Executor architecture if plannerMode
    * is enabled; otherwise falls back to the flat ReAct loop.
    */
-  async *chat(
-    sessionId: string,
-    userMessage: string,
-  ): AsyncGenerator<PlanRunnerEvent> {
+  async *chat(sessionId: string, userMessage: string): AsyncGenerator<PlanRunnerEvent> {
     const session = this.sessions.getSession(sessionId);
     if (!session) {
       yield { type: "error", error: "Session not found", recoverable: false };
       return;
     }
+
+    const runId = `${sessionId}-${Date.now()}`;
 
     // Load prior conversation history
     const priorEvents = this.sessions.getEvents(sessionId, 1);
@@ -219,7 +343,12 @@ export class Engine {
     let turnCount = 0;
 
     // Choose agent mode
-    let runner: { run: (...args: [string, string, string]) => AsyncGenerator<PlanRunnerEvent>; getMessages: () => Message[] };
+    let runner: {
+      run: (...args: [string, string, string]) => AsyncGenerator<PlanRunnerEvent>;
+      getMessages: () => Message[];
+    };
+
+    const effortCfg = EFFORT_SETTINGS[this.effort];
 
     if (this.config.plannerMode) {
       const routing: ModelRouting = {
@@ -232,72 +361,119 @@ export class Engine {
       runner = new PlanRunner(
         {
           routing,
-          maxTokens: 8192,
-          maxTurnsPerStep: 20,
+          maxTokens: effortCfg.maxTokens,
+          maxTurnsPerStep: Math.min(effortCfg.maxTurns, 20),
           maxStepRetries: 2,
           maxReplanAttempts: 2,
           systemPrompt: SYSTEM_PROMPT,
           priorMessages,
+          contextEngine: this.contextEngine,
         },
         this.gateway,
         this.registry,
         permCheck,
       );
     } else {
-      // Flat ReAct loop (original behavior)
       const loop = new AgentLoop(
         {
           model: session.model,
           provider: this.config.provider,
+          maxTokens: effortCfg.maxTokens,
+          maxTurns: effortCfg.maxTurns,
           systemPrompt: SYSTEM_PROMPT,
           priorMessages,
+          contextEngine: this.contextEngine,
         },
         this.gateway,
         this.registry,
         permCheck,
       );
       runner = {
-        run: (msg: string, sid: string, ws: string) => loop.run(msg, sid, ws) as AsyncGenerator<PlanRunnerEvent>,
+        run: (msg: string, sid: string, ws: string) =>
+          loop.run(msg, sid, ws) as AsyncGenerator<PlanRunnerEvent>,
         getMessages: () => loop.getMessages(),
       };
     }
 
     let runError: string | null = null;
     try {
-      for await (const event of runner.run(
-        userMessage,
-        sessionId,
-        this.config.workspaceRoot,
-      )) {
+      for await (const event of runner.run(userMessage, sessionId, this.config.workspaceRoot)) {
         if (event.type === "error" && !event.recoverable) {
           runError = event.error;
         }
 
-        // Track turns and auto-checkpoint every 10
+        // Track turns, checkpoint, and context management
         if (event.type === "turn_complete") {
           turnCount++;
-          if (turnCount % 10 === 0) {
-            this.sessions.appendEvent(sessionId, {
-              type: "checkpoint",
-              payload: { summary: `auto-checkpoint at turn ${turnCount}` },
-            });
+
+          // Checkpoint save per policy
+          if (
+            this.checkpointStore &&
+            turnCount % this.checkpointPolicy.intervalTurns === 0
+          ) {
+            try {
+              const state: RunState = {
+                runId,
+                sessionId,
+                messages: runner.getMessages(),
+                turnCount,
+                context: { effort: this.effort, model: session.model },
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              };
+              this.checkpointStore.save(runId, state);
+            } catch {
+              // Checkpoint save failed — non-fatal
+            }
           }
+
+          this.sessions.appendEvent(sessionId, {
+            type: "checkpoint",
+            payload: { summary: `auto-checkpoint at turn ${turnCount}` },
+          });
         }
 
-        // Audit tool calls
+        // Audit tool calls with security post-processing
         if (event.type === "tool_call_end") {
+          // Redact sensitive data from tool output before persisting
+          const resultContent = event.output.success
+            ? event.output.result
+            : (event.output.error ?? "");
+          const safeResult = this.securityGuard
+            ? this.securityGuard.postExecution(resultContent)
+            : resultContent;
+
           this.sessions.appendAuditEntry({
             sessionId,
             toolName: event.output.toolName,
             argsHash: hashArgs(event.args),
-            resultHash: hashResult(
-              event.output.success
-                ? event.output.result
-                : event.output.error ?? "",
-            ),
+            resultHash: hashResult(safeResult),
             durationMs: event.output.durationMs,
             exitCode: event.output.success ? 0 : 1,
           });
+
+          // Save checkpoint after successful file writes
+          if (
+            this.checkpointStore &&
+            this.checkpointPolicy.onToolSuccess &&
+            event.output.success &&
+            ["write_file", "edit_file"].includes(event.output.toolName)
+          ) {
+            try {
+              const state: RunState = {
+                runId,
+                sessionId,
+                messages: runner.getMessages(),
+                turnCount,
+                context: { effort: this.effort, model: session.model },
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              };
+              this.checkpointStore.save(runId, state);
+            } catch {
+              // Non-fatal
+            }
+          }
         }
 
         // Persist plan events
@@ -356,11 +532,17 @@ export class Engine {
         });
       }
 
-      // Mark session as cleanly ended for crash recovery
+      // Mark session as cleanly ended
       this.sessions.appendEvent(sessionId, {
         type: "checkpoint",
         payload: { summary: "session_ended" },
       });
+
+      // Episodic memory: extract facts from this run
+      if (this.memoryManager && this.config.userId) {
+        const summary = `User asked: "${userMessage.slice(0, 200)}". Turns: ${turnCount}. ${runError ? `Error: ${runError}` : "Completed successfully."}`;
+        this.memoryManager.onRunComplete(this.config.userId, summary).catch(() => {});
+      }
     }
   }
 
@@ -374,6 +556,120 @@ export class Engine {
 
   verifyAuditChain() {
     return this.sessions.verifyAuditChain();
+  }
+
+  /** Switch model and/or provider at runtime. */
+  switchModel(model: string, provider?: ProviderName, sessionId?: string): void {
+    this.config.model = model;
+    if (provider) {
+      this.config.provider = provider;
+      this.gateway = new LlmGateway({
+        providers: {},
+        defaultProvider: provider,
+        maxRetries: 3,
+        retryBaseMs: 1000,
+      });
+      // Re-register all providers
+      if (this.config.anthropicApiKey || process.env.ANTHROPIC_API_KEY) {
+        this.gateway.registerProvider(new AnthropicProvider(this.config.anthropicApiKey));
+      }
+      if (this.config.openaiApiKey || process.env.OPENAI_API_KEY) {
+        this.gateway.registerProvider(new OpenAIProvider(this.config.openaiApiKey));
+      }
+      if (this.config.openrouterApiKey || process.env.OPENROUTER_API_KEY) {
+        this.gateway.registerProvider(new OpenRouterProvider(this.config.openrouterApiKey));
+      }
+      if (this.config.googleApiKey || process.env.GOOGLE_API_KEY) {
+        this.gateway.registerProvider(new GoogleProvider(this.config.googleApiKey));
+      }
+    }
+    // Update the session record so chat() picks up the new model
+    if (sessionId) {
+      this.sessions.updateSessionModel(sessionId, model);
+    }
+  }
+
+  getModel(): string {
+    return this.config.model;
+  }
+
+  getProvider(): ProviderName {
+    return this.config.provider;
+  }
+
+  getRegisteredProviders(): ProviderName[] {
+    const providers: ProviderName[] = [];
+    for (const name of [
+      "anthropic",
+      "openai",
+      "openrouter",
+      "google",
+      "ollama",
+    ] as ProviderName[]) {
+      if (this.gateway.getProvider(name)) providers.push(name);
+    }
+    return providers;
+  }
+
+  setEffort(level: EffortLevel): void {
+    this.effort = level;
+  }
+
+  getEffort(): EffortLevel {
+    return this.effort;
+  }
+
+  getEffortSettings(): { maxTokens: number; maxTurns: number; label: string } {
+    return EFFORT_SETTINGS[this.effort];
+  }
+
+  getContextUsage(): { used: number; limit: number; percent: number } {
+    return this.contextEngine.getContextUsage();
+  }
+
+  getSecurityPosture(): "strict" | "standard" | "permissive" | "yolo" {
+    if (this.config.yoloMode) return "yolo";
+    if (this.securityGuard && this.rateLimiter) return "strict";
+    if (this.securityGuard || this.rateLimiter) return "standard";
+    return "permissive";
+  }
+
+  getAuditStats() {
+    return this.autoVerifier?.getStats() ?? { totalCalls: 0, lastVerified: null, isValid: true };
+  }
+
+  getCostBreakdown() {
+    return this.costTracker.getBreakdown();
+  }
+
+  getStatus(sessionId?: string): {
+    model: string;
+    provider: ProviderName;
+    effort: EffortLevel;
+    effortLabel: string;
+    workspace: string;
+    plannerMode: boolean;
+    yoloMode: boolean;
+    registeredProviders: ProviderName[];
+    cost: number;
+    sessionId?: string;
+    contextUsage: { used: number; limit: number; percent: number };
+    securityPosture: string;
+  } {
+    return {
+      model: this.config.model,
+      provider: this.config.provider,
+      effort: this.effort,
+      effortLabel: EFFORT_SETTINGS[this.effort].label,
+      workspace: this.config.workspaceRoot,
+      plannerMode: this.config.plannerMode,
+      yoloMode: this.config.yoloMode,
+      registeredProviders: this.getRegisteredProviders(),
+      cost: this.getCost(),
+      sessionId,
+      contextUsage: this.getContextUsage(),
+      securityPosture: this.getSecurityPosture(),
+    };
   }
 
   close(): void {

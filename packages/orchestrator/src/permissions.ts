@@ -35,7 +35,9 @@ export class PermissionBroker {
   check(schema: ToolSchema, args: Record<string, unknown>): PermissionDecision {
     // Yolo mode — allow everything
     if (this.yoloMode) {
-      console.warn(`[SECURITY] Yolo mode active — all permission checks bypassed for: ${schema.name}`);
+      console.warn(
+        `[SECURITY] Yolo mode active — all permission checks bypassed for: ${schema.name}`,
+      );
       return { type: "allowed" };
     }
 
@@ -88,10 +90,7 @@ export class PermissionBroker {
     this.sessionGrants = [];
   }
 
-  private findGrant(
-    tool: string,
-    args: Record<string, unknown>,
-  ): PermissionRule | undefined {
+  private findGrant(tool: string, args: Record<string, unknown>): PermissionRule | undefined {
     return this.sessionGrants.find((grant) => {
       if (grant.tool !== tool) return false;
 

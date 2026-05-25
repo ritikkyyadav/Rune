@@ -11,7 +11,8 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  rust:
+  # ── Stage 1: Lint and Format (Section 15.2) ──
+  rust-lint:
     strategy:
       matrix:
         os: [macos-latest, ubuntu-latest]
@@ -26,10 +27,8 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
-      - name: Test
-        run: cargo test --all
 
-  typescript:
+  ts-lint:
     strategy:
       matrix:
         os: [macos-latest, ubuntu-latest]
@@ -46,8 +45,47 @@ jobs:
       - name: Lint
         run: bun run lint
 
+  # ── Stage 2: Unit Tests (Section 15.2) ──
+  rust-test:
+    needs: [rust-lint]
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Unit tests
+        run: cargo test --all
+
+  # ── Stage 3: Build ──
+  build:
+    needs: [rust-test, ts-lint]
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: oven-sh/setup-bun@v2
+      - uses: Swatinem/rust-cache@v2
+      - run: bun install --frozen-lockfile
+      - name: Build Rust (release)
+        run: cargo build --release
+      - name: Build TypeScript
+        run: bun run build
+      - name: Upload Rust binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: alan-tools-${{ matrix.os }}
+          path: target/release/alan-tools
+          retention-days: 1
+
+  # ── Stage 4: Integration Tests ──
   integration:
-    needs: [rust, typescript]
+    needs: [build]
     strategy:
       matrix:
         os: [macos-latest, ubuntu-latest]
@@ -62,3 +100,25 @@ jobs:
       - run: bun run build
       - name: Integration tests
         run: cargo test --test '*' -- --test-threads=1
+
+  # ── Stage 5: Eval Suite (Section 15.2 — blocks merge on regression) ──
+  eval:
+    needs: [build]
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: oven-sh/setup-bun@v2
+      - uses: Swatinem/rust-cache@v2
+      - run: bun install --frozen-lockfile
+      - run: cargo build --release
+      - run: bun run build
+      - name: Run eval suite
+        run: bun run eval
+      - name: Check eval results
+        run: |
+          # Eval runner exits non-zero if any task fails
+          echo "Eval suite passed"

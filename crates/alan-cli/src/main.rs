@@ -9,7 +9,11 @@ use tokio::sync::Mutex;
 use tracing::{error, info};
 
 #[derive(Parser)]
-#[command(name = "alan", version, about = "Alan \u{2014} Agentic Coding Assistant")]
+#[command(
+    name = "alan",
+    version,
+    about = "Alan \u{2014} Agentic Coding Assistant"
+)]
 struct Cli {
     /// Path to Unix socket
     #[arg(long, global = true)]
@@ -191,11 +195,7 @@ async fn main() -> anyhow::Result<()> {
                 .to_string_lossy()
                 .to_string();
 
-            let mut args: Vec<String> = vec![
-                "chat".into(),
-                "--workspace".into(),
-                ws,
-            ];
+            let mut args: Vec<String> = vec!["chat".into(), "--workspace".into(), ws];
             if let Some(m) = model {
                 args.push("--model".into());
                 args.push(m);

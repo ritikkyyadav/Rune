@@ -22,9 +22,9 @@ export interface CheckpointVersion {
 // ─── Checkpoint Policy ───
 
 export interface CheckpointPolicy {
-  intervalTurns: number;    // default 5
-  intervalMs: number;       // default 60000
-  onToolSuccess: boolean;   // default true
+  intervalTurns: number; // default 5
+  intervalMs: number; // default 60000
+  onToolSuccess: boolean; // default true
 }
 
 export const DEFAULT_CHECKPOINT_POLICY: CheckpointPolicy = {
@@ -103,7 +103,12 @@ export class SqliteCheckpointStore implements CheckpointStore {
          ORDER BY version DESC
          LIMIT 1`,
       )
-      .get(runId) as { run_id: string; version: number; state_json: string; created_at: string } | null;
+      .get(runId) as {
+      run_id: string;
+      version: number;
+      state_json: string;
+      created_at: string;
+    } | null;
 
     if (!row) return null;
 
@@ -126,7 +131,12 @@ export class SqliteCheckpointStore implements CheckpointStore {
          FROM checkpoints
          WHERE run_id = ? AND version = ?`,
       )
-      .get(runId, version) as { run_id: string; version: number; state_json: string; created_at: string } | null;
+      .get(runId, version) as {
+      run_id: string;
+      version: number;
+      state_json: string;
+      created_at: string;
+    } | null;
 
     if (!row) return null;
 
@@ -156,7 +166,12 @@ export class SqliteCheckpointStore implements CheckpointStore {
          WHERE run_id = ?
          ORDER BY version ASC`,
       )
-      .all(runId) as Array<{ run_id: string; version: number; state_json: string; created_at: string }>;
+      .all(runId) as Array<{
+      run_id: string;
+      version: number;
+      state_json: string;
+      created_at: string;
+    }>;
 
     return rows.map((row) => ({
       runId: row.run_id,

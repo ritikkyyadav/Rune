@@ -3,8 +3,7 @@ import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../
 export const WEB_SEARCH_SCHEMA: ToolSchema = {
   name: "web_search",
   version: "0.1.0",
-  description:
-    "Search the web via DuckDuckGo. No API key needed.",
+  description: "Search the web via DuckDuckGo. No API key needed.",
   inputSchema: {
     type: "object",
     properties: {
@@ -55,9 +54,7 @@ export function createWebSearchHandler(): ToolHandler {
 
         let m;
         while ((m = regex.exec(html)) && results.length < maxResults) {
-          const rUrl = decodeURIComponent(
-            (m[1].match(/uddg=([^&]+)/) || [])[1] || m[1],
-          );
+          const rUrl = decodeURIComponent((m[1].match(/uddg=([^&]+)/) || [])[1] || m[1]);
           const title = m[2].replace(/<[^>]+>/g, "").trim();
           const snippet = m[3].replace(/<[^>]+>/g, "").trim();
           if (title && rUrl) {
@@ -74,8 +71,7 @@ export function createWebSearchHandler(): ToolHandler {
         };
       } catch (err: unknown) {
         const durationMs = Math.round(performance.now() - start);
-        const message =
-          err instanceof Error ? err.message : String(err);
+        const message = err instanceof Error ? err.message : String(err);
         return {
           callId: input.callId,
           toolName: input.toolName,

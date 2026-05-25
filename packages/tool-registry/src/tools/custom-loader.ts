@@ -11,7 +11,10 @@ interface CustomToolExport {
     description: string;
     inputSchema: Record<string, unknown>;
   };
-  execute: (args: Record<string, unknown>, context: { workspaceRoot: string; sessionId: string }) => Promise<string | Record<string, unknown>>;
+  execute: (
+    args: Record<string, unknown>,
+    context: { workspaceRoot: string; sessionId: string },
+  ) => Promise<string | Record<string, unknown>>;
 }
 
 // ─── Custom Tools Loader ───
@@ -101,28 +104,32 @@ export class CustomToolsLoader {
   /**
    * Validate a custom tool export for correctness and security risk.
    */
-  validate(tool: CustomToolExport): { valid: boolean; errors: string[]; riskLevel: 'safe' | 'review' | 'dangerous' } {
+  validate(tool: CustomToolExport): {
+    valid: boolean;
+    errors: string[];
+    riskLevel: "safe" | "review" | "dangerous";
+  } {
     const errors: string[] = [];
-    let riskLevel: 'safe' | 'review' | 'dangerous' = 'safe';
+    let riskLevel: "safe" | "review" | "dangerous" = "safe";
 
     if (!tool.schema?.name || !/^[a-zA-Z_]\w*$/.test(tool.schema.name)) {
-      errors.push('Invalid tool name');
+      errors.push("Invalid tool name");
     }
-    if (!tool.schema?.description) errors.push('Missing description');
-    if (typeof tool.execute !== 'function') errors.push('Missing execute function');
+    if (!tool.schema?.description) errors.push("Missing description");
+    if (typeof tool.execute !== "function") errors.push("Missing execute function");
 
     // Source analysis if available
-    const src = (tool as Record<string, unknown>)._source as string || tool.execute?.toString?.() || '';
-    if (/child_process|exec\(|execSync|spawn\(/.test(src)) riskLevel = 'dangerous';
-    if (/process\.env/.test(src)) riskLevel = riskLevel === 'safe' ? 'review' : riskLevel;
-    if (/require\s*\(\s*['"]fs['"]/.test(src)) riskLevel = riskLevel === 'safe' ? 'review' : riskLevel;
+    const sourceHint = (tool as unknown as { _source?: unknown })._source;
+    const src = typeof sourceHint === "string" ? sourceHint : (tool.execute?.toString?.() ?? "");
+    if (/child_process|exec\(|execSync|spawn\(/.test(src)) riskLevel = "dangerous";
+    if (/process\.env/.test(src)) riskLevel = riskLevel === "safe" ? "review" : riskLevel;
+    if (/require\s*\(\s*['"]fs['"]/.test(src))
+      riskLevel = riskLevel === "safe" ? "review" : riskLevel;
 
-    return { valid: errors.length === 0 && riskLevel !== 'dangerous', errors, riskLevel };
+    return { valid: errors.length === 0 && riskLevel !== "dangerous", errors, riskLevel };
   }
 
-  private async loadToolFile(
-    filePath: string,
-  ): Promise<ToolHandler | null> {
+  private async loadToolFile(filePath: string): Promise<ToolHandler | null> {
     // Use dynamic import with cache-busting for hot reload
     const mod = await import(`${filePath}?t=${Date.now()}`);
     const exported: CustomToolExport = mod.default ?? mod;
@@ -135,10 +142,10 @@ export class CustomToolsLoader {
     // Run validation
     const validation = this.validate(exported);
     if (!validation.valid) {
-      console.warn(`[CustomTools] ${filePath} failed validation: ${validation.errors.join('; ')}`);
+      console.warn(`[CustomTools] ${filePath} failed validation: ${validation.errors.join("; ")}`);
       return null;
     }
-    if (validation.riskLevel === 'review') {
+    if (validation.riskLevel === "review") {
       console.warn(`[CustomTools] ${filePath} flagged for review (risk: ${validation.riskLevel})`);
     }
 
@@ -171,8 +178,7 @@ export class CustomToolsLoader {
             sessionId: input.sessionId,
           });
 
-          const resultStr =
-            typeof result === "string" ? result : JSON.stringify(result);
+          const resultStr = typeof result === "string" ? result : JSON.stringify(result);
 
           return {
             callId: input.callId,
