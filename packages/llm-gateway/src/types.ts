@@ -151,3 +151,53 @@ export interface ProviderConfig {
   baseUrl?: string;
   defaultModel: string;
 }
+
+// ─── Structured API Error ───
+
+export class ApiError extends Error {
+  readonly status: number;
+  readonly provider: string;
+  readonly retryAfterMs: number | null;
+
+  constructor(opts: { status: number; provider: string; message: string; retryAfterMs?: number }) {
+    super(opts.message);
+    this.name = "ApiError";
+    this.status = opts.status;
+    this.provider = opts.provider;
+    this.retryAfterMs = opts.retryAfterMs ?? null;
+  }
+}
+
+export function parseApiErrorBody(
+  body: string,
+  status: number,
+  provider: string,
+): ApiError {
+  let message = `${provider} API error (${status})`;
+  let retryAfterMs: number | undefined;
+
+  try {
+    const json = JSON.parse(body);
+    const err = json.error ?? json;
+    if (err.message) {
+      // Extract just the first line/sentence
+      const raw: string = err.message;
+      const firstLine = raw.split("\n")[0].slice(0, 200);
+      message = firstLine;
+    }
+    // Google puts retryDelay in details
+    const retryInfo = err.details?.find?.(
+      (d: Record<string, unknown>) =>
+        (d["@type"] as string)?.includes("RetryInfo"),
+    );
+    if (retryInfo?.retryDelay) {
+      const secs = parseFloat(retryInfo.retryDelay);
+      if (!isNaN(secs)) retryAfterMs = secs * 1000;
+    }
+  } catch {
+    // Not JSON — use first 100 chars of body
+    message = body.slice(0, 100);
+  }
+
+  return new ApiError({ status, provider, message, retryAfterMs });
+}
