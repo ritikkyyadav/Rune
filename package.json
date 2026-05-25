@@ -10,6 +10,7 @@
   "scripts": {
     "build": "turbo build",
     "test": "turbo test",
+    "test:unit": "bun test tests/unit/",
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",
     "eval": "bun run tests/eval/runner.ts"
