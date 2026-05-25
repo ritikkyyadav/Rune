@@ -17,18 +17,13 @@ export class TokenCounter {
    */
   countTokens(text: string, _model?: string): number {
     // Check cache first
-    const cacheKey =
-      text.length > 200
-        ? text.slice(0, 100) + text.slice(-100) + text.length
-        : text;
+    const cacheKey = text.length > 200 ? text.slice(0, 100) + text.slice(-100) + text.length : text;
     if (this.cache.has(cacheKey)) return this.cache.get(cacheKey)!;
 
     // Better heuristic: word-based counting
     // Split on whitespace and punctuation, multiply by ~1.3 for subword tokenization
     const words = text.split(/[\s]+/).filter((w) => w.length > 0);
-    const punctuation = (
-      text.match(/[{}()\[\]<>:;,."'`!@#$%^&*=+|\\/?~-]/g) || []
-    ).length;
+    const punctuation = (text.match(/[{}()\[\]<>:;,."'`!@#$%^&*=+|\\/?~-]/g) || []).length;
     const tokens = Math.ceil(words.length * 1.3 + punctuation * 0.5);
 
     // Cache the result

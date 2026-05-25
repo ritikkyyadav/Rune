@@ -74,10 +74,7 @@ export class OpenAIProvider implements LlmProvider {
       let contentIndex = 0;
       let contentStarted = false;
       let gotFinish = false;
-      const toolCalls: Map<
-        number,
-        { id: string; name: string; argsJson: string }
-      > = new Map();
+      const toolCalls: Map<number, { id: string; name: string; argsJson: string }> = new Map();
 
       for await (const chunk of stream) {
         // Reset per-chunk timeout
@@ -86,12 +83,10 @@ export class OpenAIProvider implements LlmProvider {
 
         try {
           // Check for error in chunk (OpenRouter sends errors as stream events)
-          const anyChunk = chunk as Record<string, unknown>;
+          const anyChunk = chunk as unknown as Record<string, unknown>;
           if (anyChunk.error) {
             const errObj = anyChunk.error as Record<string, unknown>;
-            throw new Error(
-              (errObj.message as string) ?? `API error ${errObj.code ?? ""}`,
-            );
+            throw new Error((errObj.message as string) ?? `API error ${errObj.code ?? ""}`);
           }
 
           if (!messageId && chunk.id) {
@@ -103,9 +98,7 @@ export class OpenAIProvider implements LlmProvider {
           const finishReason = chunk.choices?.[0]?.finish_reason;
 
           // Handle regular content AND reasoning output (for reasoning models)
-          const textChunk =
-            delta?.content ||
-            (delta as Record<string, unknown>)?.reasoning;
+          const textChunk = delta?.content || (delta as Record<string, unknown>)?.reasoning;
           if (textChunk && typeof textChunk === "string") {
             if (!contentStarted) {
               yield { type: "content_start", contentIndex: 0 };
@@ -156,9 +149,7 @@ export class OpenAIProvider implements LlmProvider {
               yield { type: "content_stop", contentIndex: 0 };
             }
             for (const [, entry] of toolCalls) {
-              const toolInput = entry.argsJson
-                ? JSON.parse(entry.argsJson)
-                : {};
+              const toolInput = entry.argsJson ? JSON.parse(entry.argsJson) : {};
               yield { type: "tool_use_stop", toolCallId: entry.id, toolInput };
             }
 
@@ -193,19 +184,14 @@ export class OpenAIProvider implements LlmProvider {
     }
   }
 
-  async countTokens(
-    messages: Message[],
-    _tools?: ToolDefinition[],
-  ): Promise<number> {
+  async countTokens(messages: Message[], _tools?: ToolDefinition[]): Promise<number> {
     // Estimate: ~4 chars per token for English text
     let totalChars = 0;
     for (const msg of messages) {
       for (const block of msg.content) {
         if (block.type === "text") totalChars += block.text.length;
-        else if (block.type === "tool_result")
-          totalChars += block.toolResultContent.length;
-        else if (block.type === "tool_use")
-          totalChars += JSON.stringify(block.toolInput).length;
+        else if (block.type === "tool_result") totalChars += block.toolResultContent.length;
+        else if (block.type === "tool_use") totalChars += JSON.stringify(block.toolInput).length;
       }
     }
     return Math.ceil(totalChars / 4);
@@ -281,9 +267,7 @@ export class OpenAIProvider implements LlmProvider {
     return result;
   }
 
-  private toOpenAITools(
-    tools: ToolDefinition[],
-  ): OpenAI.ChatCompletionTool[] {
+  private toOpenAITools(tools: ToolDefinition[]): OpenAI.ChatCompletionTool[] {
     return tools.map((t) => ({
       type: "function" as const,
       function: {
@@ -294,15 +278,12 @@ export class OpenAIProvider implements LlmProvider {
     }));
   }
 
-  private fromOpenAIChoice(
-    choice: OpenAI.ChatCompletion.Choice,
-  ): ContentBlock[] {
+  private fromOpenAIChoice(choice: OpenAI.ChatCompletion.Choice): ContentBlock[] {
     const blocks: ContentBlock[] = [];
 
     // Handle regular content or reasoning (for reasoning models like DeepSeek)
     const content =
-      choice.message.content ||
-      (choice.message as Record<string, unknown>).reasoning;
+      choice.message.content || (choice.message as unknown as Record<string, unknown>).reasoning;
     if (content && typeof content === "string") {
       blocks.push({ type: "text", text: content });
     }

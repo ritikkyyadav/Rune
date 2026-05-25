@@ -41,12 +41,7 @@ export interface ToolCallInfo {
 // Mirrors the orchestrator's plan types.
 
 export type PlanStatus = "active" | "completed" | "failed" | "cancelled";
-export type StepStatus =
-  | "pending"
-  | "running"
-  | "completed"
-  | "failed"
-  | "skipped";
+export type StepStatus = "pending" | "running" | "completed" | "failed" | "skipped";
 
 export interface StepResult {
   success: boolean;
@@ -122,11 +117,7 @@ export type PermissionDecision = "allow_once" | "allow_session" | "deny";
 
 // ─── Connection Types ───
 
-export type ConnectionState =
-  | "connecting"
-  | "connected"
-  | "disconnected"
-  | "error";
+export type ConnectionState = "connecting" | "connected" | "disconnected" | "error";
 
 export interface EngineStatus {
   state: ConnectionState;

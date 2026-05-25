@@ -80,8 +80,12 @@ pub struct SessionInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum SessionEvent {
-    UserMessage { content: String },
-    AssistantMessage { content: String },
+    UserMessage {
+        content: String,
+    },
+    AssistantMessage {
+        content: String,
+    },
     ToolCall {
         call_id: String,
         tool_name: String,
@@ -94,10 +98,18 @@ pub enum SessionEvent {
         duration_ms: u64,
         exit_code: Option<i32>,
     },
-    SystemNote { content: String },
-    Checkpoint { summary: String },
-    PlanCreated { plan: Plan },
-    PlanUpdated { plan: Plan },
+    SystemNote {
+        content: String,
+    },
+    Checkpoint {
+        summary: String,
+    },
+    PlanCreated {
+        plan: Plan,
+    },
+    PlanUpdated {
+        plan: Plan,
+    },
     StepCompleted {
         plan_id: String,
         step_index: usize,

@@ -40,11 +40,7 @@ impl Default for AppState {
 // ─── Tauri Commands ───
 
 #[tauri::command]
-fn create_session(
-    state: tauri::State<'_, AppState>,
-    workspace: String,
-    model: String,
-) -> String {
+fn create_session(state: tauri::State<'_, AppState>, workspace: String, model: String) -> String {
     let mut next_id = state.next_id.lock().unwrap();
     let id = format!("session-{:04}", *next_id);
     *next_id += 1;

@@ -53,11 +53,10 @@ pub fn execute(input: GrepInput, workspace_root: &Path) -> Result<GrepOutput, To
         detail: e.to_string(),
     })?;
 
-    let workspace_canonical =
-        fs::canonicalize(workspace_root).map_err(|e| ToolError::Io {
-            path: workspace_root.display().to_string(),
-            detail: e.to_string(),
-        })?;
+    let workspace_canonical = fs::canonicalize(workspace_root).map_err(|e| ToolError::Io {
+        path: workspace_root.display().to_string(),
+        detail: e.to_string(),
+    })?;
 
     if !canonical.starts_with(&workspace_canonical) {
         return Err(ToolError::PathEscape {
@@ -200,7 +199,11 @@ mod tests {
     #[test]
     fn finds_literal_matches() {
         let tmp = TempDir::new().unwrap();
-        fs::write(tmp.path().join("code.rs"), "fn main() {\n    println!(\"hello\");\n}\n").unwrap();
+        fs::write(
+            tmp.path().join("code.rs"),
+            "fn main() {\n    println!(\"hello\");\n}\n",
+        )
+        .unwrap();
 
         let output = execute(
             GrepInput {
@@ -224,7 +227,11 @@ mod tests {
     #[test]
     fn finds_regex_matches() {
         let tmp = TempDir::new().unwrap();
-        fs::write(tmp.path().join("test.ts"), "const foo = 42;\nlet bar = 'hello';\nconst baz = true;\n").unwrap();
+        fs::write(
+            tmp.path().join("test.ts"),
+            "const foo = 42;\nlet bar = 'hello';\nconst baz = true;\n",
+        )
+        .unwrap();
 
         let output = execute(
             GrepInput {
@@ -271,7 +278,11 @@ mod tests {
     #[test]
     fn includes_context_lines() {
         let tmp = TempDir::new().unwrap();
-        fs::write(tmp.path().join("ctx.txt"), "line1\nline2\nTARGET\nline4\nline5\n").unwrap();
+        fs::write(
+            tmp.path().join("ctx.txt"),
+            "line1\nline2\nTARGET\nline4\nline5\n",
+        )
+        .unwrap();
 
         let output = execute(
             GrepInput {

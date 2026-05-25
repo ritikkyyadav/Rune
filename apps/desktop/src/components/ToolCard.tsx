@@ -80,10 +80,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
 };
 
-const statusLabelColors: Record<
-  ToolCallInfo["status"],
-  { bg: string; text: string }
-> = {
+const statusLabelColors: Record<ToolCallInfo["status"], { bg: string; text: string }> = {
   running: { bg: "rgba(251, 191, 36, 0.15)", text: "var(--warning)" },
   success: { bg: "rgba(74, 222, 128, 0.15)", text: "var(--success)" },
   error: { bg: "rgba(248, 113, 113, 0.15)", text: "var(--error)" },
@@ -184,16 +181,11 @@ export function ToolCard({ toolCall }: ToolCardProps) {
 
   // Highlight card border on error
   const cardBorder =
-    toolCall.status === "error"
-      ? "1px solid var(--error)"
-      : "1px solid var(--border)";
+    toolCall.status === "error" ? "1px solid var(--error)" : "1px solid var(--border)";
 
   return (
     <div style={{ ...styles.card, border: cardBorder }}>
-      <div
-        style={styles.header}
-        onClick={() => setExpanded(!expanded)}
-      >
+      <div style={styles.header} onClick={() => setExpanded(!expanded)}>
         <StatusIcon status={toolCall.status} />
         <span style={styles.toolName}>{toolCall.toolName}</span>
         {/* Status label */}
@@ -207,9 +199,7 @@ export function ToolCard({ toolCall }: ToolCardProps) {
           {toolCall.status}
         </span>
         {toolCall.durationMs != null && (
-          <span style={styles.duration}>
-            {formatDuration(toolCall.durationMs)}
-          </span>
+          <span style={styles.duration}>{formatDuration(toolCall.durationMs)}</span>
         )}
         <span
           style={{
@@ -226,9 +216,7 @@ export function ToolCard({ toolCall }: ToolCardProps) {
           {Object.keys(toolCall.args).length > 0 && (
             <div>
               <div style={styles.sectionLabel}>Arguments</div>
-              <div style={styles.codeBlock}>
-                {formatArgs(toolCall.args)}
-              </div>
+              <div style={styles.codeBlock}>{formatArgs(toolCall.args)}</div>
             </div>
           )}
 
@@ -241,12 +229,8 @@ export function ToolCard({ toolCall }: ToolCardProps) {
 
           {toolCall.error && (
             <div>
-              <div style={{ ...styles.sectionLabel, color: "var(--error)" }}>
-                Error
-              </div>
-              <div style={{ ...styles.codeBlock, color: "var(--error)" }}>
-                {toolCall.error}
-              </div>
+              <div style={{ ...styles.sectionLabel, color: "var(--error)" }}>Error</div>
+              <div style={{ ...styles.codeBlock, color: "var(--error)" }}>{toolCall.error}</div>
             </div>
           )}
 

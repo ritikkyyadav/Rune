@@ -7,11 +7,7 @@ import { PermissionModal } from "./components/PermissionModal";
 import { Settings } from "./components/Settings";
 import { useSession } from "./hooks/useSession";
 import { useEngine } from "./hooks/useEngine";
-import type {
-  PermissionPrompt,
-  PermissionDecision,
-  ConnectionState,
-} from "./lib/types";
+import type { PermissionPrompt, PermissionDecision, ConnectionState } from "./lib/types";
 
 // ─── Connection status dot colours ───
 const connectionColors: Record<ConnectionState, string> = {
@@ -150,11 +146,10 @@ export default function App() {
   const session = useSession();
   const [showPlanPane, setShowPlanPane] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [permissionRequest, setPermissionRequest] =
-    useState<{
-      prompt: PermissionPrompt;
-      resolve: (decision: PermissionDecision) => void;
-    } | null>(null);
+  const [permissionRequest, setPermissionRequest] = useState<{
+    prompt: PermissionPrompt;
+    resolve: (decision: PermissionDecision) => void;
+  } | null>(null);
 
   const engine = useEngine({
     onTextDelta: session.appendAssistantText,
@@ -232,20 +227,11 @@ export default function App() {
 
   const contextPercent =
     engine.status.contextMax > 0
-      ? Math.min(
-          Math.round(
-            (engine.status.contextUsed / engine.status.contextMax) * 100,
-          ),
-          100,
-        )
+      ? Math.min(Math.round((engine.status.contextUsed / engine.status.contextMax) * 100), 100)
       : 0;
 
   const contextBarColor =
-    contextPercent > 90
-      ? "var(--error)"
-      : contextPercent > 70
-        ? "var(--warning)"
-        : "var(--accent)";
+    contextPercent > 90 ? "var(--error)" : contextPercent > 70 ? "var(--warning)" : "var(--accent)";
 
   return (
     <div style={styles.container}>
@@ -318,10 +304,7 @@ export default function App() {
           </div>
         )}
 
-        <MessageStream
-          messages={session.messages}
-          isLoading={session.isLoading}
-        />
+        <MessageStream messages={session.messages} isLoading={session.isLoading} />
         <Composer
           onSend={handleSend}
           disabled={engine.isProcessing}
@@ -333,19 +316,13 @@ export default function App() {
       {/* Right rail: plan pane (collapsible) */}
       {showPlanPane && session.activePlan && (
         <div style={styles.rightRail}>
-          <PlanPane
-            plan={session.activePlan}
-            onClose={() => setShowPlanPane(false)}
-          />
+          <PlanPane plan={session.activePlan} onClose={() => setShowPlanPane(false)} />
         </div>
       )}
 
       {/* Permission modal overlay */}
       {permissionRequest && (
-        <PermissionModal
-          prompt={permissionRequest.prompt}
-          onDecision={handlePermissionDecision}
-        />
+        <PermissionModal prompt={permissionRequest.prompt} onDecision={handlePermissionDecision} />
       )}
 
       {/* Settings panel */}

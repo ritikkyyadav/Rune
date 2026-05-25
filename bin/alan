@@ -1,40 +1,203 @@
 #!/usr/bin/env bash
-# Alan — Sovereign Agentic Coding Assistant by Savoir Studio
-# Just type `alan` from any directory to start.
-
+# ──────────────────────────────────────────────────────────
+#  Alan — Sovereign Agentic Coding Assistant by Savoir Studio
+#  Just type `alan` from any directory to start.
+# ──────────────────────────────────────────────────────────
 set -euo pipefail
 
 ALAN_ROOT="/Users/ritikyadav890/Documents/Alan"
-ALAN_ENV="$HOME/.alan/.env"
-ALAN_CONFIG="$HOME/.alan/config.toml"
+ALAN_DATA="$HOME/.alan"
+ALAN_ENV="$ALAN_DATA/.env"
 
-# ─── Load API keys from ~/.alan/.env ───
+# ─── Colors (Savoir Studio / L'Atlas Theme) ───
+red()    { printf '\033[38;5;166m%s\033[0m' "$*"; } # vermillion
+green()  { printf '\033[38;5;65m%s\033[0m' "$*"; }  # green (#5a8a5a)
+yellow() { printf '\033[38;5;179m%s\033[0m' "$*"; } # brass
+cyan()   { printf '\033[38;5;24m%s\033[0m' "$*"; }  # cyanotype (#1f5d7a)
+dim()    { printf '\033[38;5;245m%s\033[0m' "$*"; } # graphite-3 (#8a8a82)
+bold()   { printf '\033[1m%s\033[0m' "$*"; }
+
+# ─── Handle --help / --version before anything else ───
+for arg in "$@"; do
+  case "$arg" in
+    --help|-h)
+      cat <<'USAGE'
+Usage: alan [options] [message]
+
+Options:
+  -m, --model <model>       LLM model (default: config/provider default)
+  -p, --provider <name>     Provider: openrouter, anthropic, openai, google
+  -w, --workspace <path>    Workspace root (default: current directory)
+  --yolo                    Auto-approve all tool calls
+  --planner                 Use planner-executor mode
+  --planner-model <model>   Model for the planner
+  --executor-model <model>  Model for the executor
+  -r, --resume <id>         Resume a session by ID
+  -l, --list                List sessions
+
+Commands:
+  alan                      Start interactive chat
+  alan "your question"      Ask a one-shot question
+  alan --list               List past sessions
+  alan --resume <id>        Resume a session
+  alan setup                First-time setup (build + install)
+
+Config: ~/.alan/config.toml
+API keys: ~/.alan/.env
+USAGE
+      exit 0
+      ;;
+    --version|-v|-V)
+      echo "alan 0.1.0"
+      exit 0
+      ;;
+  esac
+done
+
+# ─── Resolve Bun ───
+find_bun() {
+  if [ -x "$HOME/.bun/bin/bun" ]; then
+    echo "$HOME/.bun/bin/bun"
+  elif command -v bun &>/dev/null; then
+    command -v bun
+  else
+    return 1
+  fi
+}
+
+# ─── First-time setup check ───
+setup() {
+  echo ""
+  echo "  $(bold '  Alan Setup')"
+  echo "  $(dim '──────────────────────────────────────')"
+  echo ""
+
+  # 1. Check Bun
+  if BUN=$(find_bun); then
+    echo "  $(green '✓') Bun found: $(dim "$BUN")"
+  else
+    echo "  $(yellow '⚡') Installing Bun..."
+    curl -fsSL https://bun.sh/install | bash
+    export PATH="$HOME/.bun/bin:$PATH"
+    BUN="$HOME/.bun/bin/bun"
+    echo "  $(green '✓') Bun installed"
+  fi
+
+  # 2. Check Rust
+  if command -v cargo &>/dev/null; then
+    echo "  $(green '✓') Rust toolchain found"
+  else
+    echo "  $(yellow '⚡') Installing Rust..."
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    source "$HOME/.cargo/env"
+    echo "  $(green '✓') Rust installed"
+  fi
+
+  # 3. Install TS dependencies
+  echo "  $(dim '...') Installing dependencies"
+  (cd "$ALAN_ROOT" && "$BUN" install --frozen-lockfile 2>&1 | tail -1)
+  echo "  $(green '✓') Dependencies installed"
+
+  # 4. Build Rust tools binary
+  echo "  $(dim '...') Building tools (this may take a minute)"
+  (cd "$ALAN_ROOT" && cargo build --release 2>&1 | tail -1)
+  echo "  $(green '✓') Rust tools built"
+
+  # 5. Ensure data directory
+  mkdir -p "$ALAN_DATA"
+
+  # 6. Create config if missing
+  if [ ! -f "$ALAN_DATA/config.toml" ]; then
+    cat > "$ALAN_DATA/config.toml" <<'TOML'
+# Alan Configuration
+[llm]
+defaultProvider = "openrouter"
+
+[llm.openrouter]
+model = "deepseek/deepseek-v4-flash:free"
+maxTokens = 8192
+
+# To use Google/Gemini instead:
+# defaultProvider = "google"
+#
+# [llm.google]
+# model = "gemini-2.5-flash"
+# maxTokens = 8192
+
+[permissions]
+defaultLevel = "confirm"
+TOML
+    echo "  $(green '✓') Config created: $(dim '~/.alan/config.toml')"
+  else
+    echo "  $(green '✓') Config exists"
+  fi
+
+  # 7. Create .env if missing
+  if [ ! -f "$ALAN_ENV" ]; then
+    cat > "$ALAN_ENV" <<'ENV'
+# Uncomment and fill in your API keys:
+# OPENROUTER_API_KEY=sk-or-v1-...
+# ANTHROPIC_API_KEY=sk-ant-...
+# OPENAI_API_KEY=sk-...
+# GOOGLE_API_KEY=...
+ENV
+    echo "  $(green '✓') API key file: $(dim '~/.alan/.env')"
+    echo ""
+    echo "  $(yellow '→') Add your API key to $(bold '~/.alan/.env') to get started"
+    echo "    $(dim 'Free models work without a key via OpenRouter')"
+  else
+    echo "  $(green '✓') API keys file exists"
+  fi
+
+  echo ""
+  echo "  $(green '✓') $(bold 'Setup complete!') Type $(cyan 'alan') to start."
+  echo ""
+}
+
+# Handle `alan setup` command
+if [ "${1:-}" = "setup" ]; then
+  setup
+  exit 0
+fi
+
+# ─── Ensure everything is ready ───
+BUN=$(find_bun) || {
+  echo ""
+  echo "  $(red '✗') Bun not found. Run: $(bold 'alan setup')"
+  echo ""
+  exit 1
+}
+
+TOOLS_BIN="$ALAN_ROOT/target/release/alan-tools"
+if [ ! -x "$TOOLS_BIN" ]; then
+  # Try debug build as fallback
+  TOOLS_BIN="$ALAN_ROOT/target/debug/alan-tools"
+  if [ ! -x "$TOOLS_BIN" ]; then
+    echo ""
+    echo "  $(yellow '!') Tools binary not found. Running first-time setup..."
+    echo ""
+    setup
+    TOOLS_BIN="$ALAN_ROOT/target/release/alan-tools"
+    BUN=$(find_bun)
+  fi
+fi
+
+# ─── Load API keys ───
 if [ -f "$ALAN_ENV" ]; then
   set -a
+  # shellcheck disable=SC1090
   source "$ALAN_ENV"
   set +a
 fi
 
-# ─── Resolve bun ───
-BUN="${HOME}/.bun/bin/bun"
-if ! [ -x "$BUN" ]; then
-  BUN="$(command -v bun 2>/dev/null || true)"
-fi
-if [ -z "$BUN" ]; then
-  echo "Error: bun not found. Install it: curl -fsSL https://bun.sh/install | bash" >&2
-  exit 1
-fi
+# ─── Ensure data dir ───
+mkdir -p "$ALAN_DATA"
 
-# ─── Ensure ~/.alan exists ───
-mkdir -p "$HOME/.alan"
-
-# ─── Workspace = current directory ───
-WORKSPACE="${PWD}"
-
-# ─── Export tool binary path so the TS CLI finds it ───
-export ALAN_TOOLS_BIN="$ALAN_ROOT/target/release/alan-tools"
+# ─── Export for TS CLI ───
+export ALAN_TOOLS_BIN="$TOOLS_BIN"
+export ALAN_ROOT
 
 # ─── Launch ───
 exec "$BUN" run "$ALAN_ROOT/packages/orchestrator/src/bin/alan-cli.ts" \
-  --workspace "$WORKSPACE" \
+  --workspace "${PWD}" \
   "$@"

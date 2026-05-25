@@ -135,7 +135,10 @@ const SYMBOL_SEARCH_SCHEMA: ToolSchema = {
         description:
           "Filter by symbol kind: function, method, class, struct, enum, trait, interface, type, constant, impl",
       },
-      file_glob: { type: "string", description: "Glob pattern to filter files (e.g. 'src/**/*.rs')" },
+      file_glob: {
+        type: "string",
+        description: "Glob pattern to filter files (e.g. 'src/**/*.rs')",
+      },
       limit: { type: "number", description: "Max results (default 25)" },
       reindex: {
         type: "boolean",

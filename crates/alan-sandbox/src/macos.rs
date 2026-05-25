@@ -4,7 +4,7 @@ use std::time::Instant;
 use tokio::process::Command;
 use tracing::{debug, info, warn};
 
-use crate::audit::{sha256_hash, AuditLog};
+use crate::audit::{AuditLog, sha256_hash};
 use crate::error::SandboxError;
 use crate::path_guard::PathGuard;
 use crate::{Sandbox, SandboxConfig, SandboxFuture, SandboxResult};
@@ -148,7 +148,11 @@ impl Sandbox for MacOsSandbox {
             )
             .await
             .map_err(|_| {
-                warn!(command = command, timeout_ms = timeout, "sandboxed command timed out");
+                warn!(
+                    command = command,
+                    timeout_ms = timeout,
+                    "sandboxed command timed out"
+                );
                 SandboxError::Timeout(timeout)
             })?
             .map_err(|e| SandboxError::SpawnFailed(e.to_string()))?;

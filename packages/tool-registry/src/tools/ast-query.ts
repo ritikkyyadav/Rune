@@ -5,16 +5,14 @@ import * as path from "path";
 export const AST_QUERY_SCHEMA: ToolSchema = {
   name: "ast_query",
   version: "0.1.0",
-  description:
-    "Find functions, classes, imports, exports in a source file via pattern matching.",
+  description: "Find functions, classes, imports, exports in a source file via pattern matching.",
   inputSchema: {
     type: "object",
     properties: {
       file: { type: "string", description: "File path to analyze" },
       pattern: {
         type: "string",
-        description:
-          '"functions", "classes", "imports", "exports", or a regex pattern',
+        description: '"functions", "classes", "imports", "exports", or a regex pattern',
       },
       language: {
         type: "string",
@@ -77,15 +75,17 @@ export function createAstQueryHandler(): ToolHandler {
 
     execute: async (input: ToolCallInput): Promise<ToolCallOutput> => {
       const start = performance.now();
-      const { file: fp, pattern, language } = input.args as {
+      const {
+        file: fp,
+        pattern,
+        language,
+      } = input.args as {
         file: string;
         pattern: string;
         language?: string;
       };
 
-      const fullPath = path.isAbsolute(fp)
-        ? fp
-        : path.join(input.workspaceRoot, fp);
+      const fullPath = path.isAbsolute(fp) ? fp : path.join(input.workspaceRoot, fp);
 
       if (!fs.existsSync(fullPath)) {
         return {
@@ -99,8 +99,7 @@ export function createAstQueryHandler(): ToolHandler {
       }
 
       const lines = fs.readFileSync(fullPath, "utf-8").split("\n");
-      const lang =
-        language || LANG_MAP[path.extname(fullPath)] || "typescript";
+      const lang = language || LANG_MAP[path.extname(fullPath)] || "typescript";
 
       const results: {
         name: string;

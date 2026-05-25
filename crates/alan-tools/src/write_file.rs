@@ -29,11 +29,10 @@ pub fn execute(input: WriteFileInput, workspace_root: &Path) -> Result<WriteFile
 
     // Validate workspace containment (parent must exist and be within workspace)
     if let Some(parent) = resolved.parent() {
-        let workspace_canonical =
-            fs::canonicalize(workspace_root).map_err(|e| ToolError::Io {
-                path: workspace_root.display().to_string(),
-                detail: e.to_string(),
-            })?;
+        let workspace_canonical = fs::canonicalize(workspace_root).map_err(|e| ToolError::Io {
+            path: workspace_root.display().to_string(),
+            detail: e.to_string(),
+        })?;
 
         // Parent might not exist yet; check the closest existing ancestor
         let mut check_path = parent.to_path_buf();
@@ -44,11 +43,10 @@ pub fn execute(input: WriteFileInput, workspace_root: &Path) -> Result<WriteFile
             }
         }
         if check_path.exists() {
-            let canonical_check =
-                fs::canonicalize(&check_path).map_err(|e| ToolError::Io {
-                    path: check_path.display().to_string(),
-                    detail: e.to_string(),
-                })?;
+            let canonical_check = fs::canonicalize(&check_path).map_err(|e| ToolError::Io {
+                path: check_path.display().to_string(),
+                detail: e.to_string(),
+            })?;
             if !canonical_check.starts_with(&workspace_canonical) {
                 return Err(ToolError::PathEscape {
                     path: resolved.display().to_string(),
@@ -121,7 +119,10 @@ mod tests {
         assert!(output.created);
         assert_eq!(output.bytes_written, 12);
         assert!(!output.hash.is_empty());
-        assert_eq!(fs::read_to_string(tmp.path().join("new.txt")).unwrap(), "hello world\n");
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("new.txt")).unwrap(),
+            "hello world\n"
+        );
     }
 
     #[test]

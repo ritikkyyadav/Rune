@@ -1,14 +1,7 @@
 // ─── Diff Renderer ───
-// Parses unified diff output from the edit_file tool and renders it
-// with colored +/- lines, hunk headers, and a line-count summary.
+// Unified diff with green/vermillion coloring matching the terminal design
 
-const esc = (code: string) => `\x1b[${code}m`;
-const reset = esc("0");
-const dim = (s: string) => `${esc("2")}${s}${reset}`;
-const green = (s: string) => `${esc("32")}${s}${reset}`;
-const red = (s: string) => `${esc("31")}${s}${reset}`;
-const cyan = (s: string) => `${esc("36")}${s}${reset}`;
-const bold = (s: string) => `${esc("1")}${s}${reset}`;
+import { bold, dim, vermillion as red, cyanotype as cyan, green } from "./colors";
 
 const MAX_DIFF_LINES = 60;
 
@@ -33,7 +26,6 @@ export function renderUnifiedDiff(diff: string, indent = "  "): RenderedDiff {
 
   for (const line of lines) {
     if (line.startsWith("--- ") || line.startsWith("+++ ")) {
-      // File headers — skip; they're redundant with the tool's path summary
       continue;
     }
     if (line.startsWith("@@")) {
@@ -61,7 +53,7 @@ export function renderUnifiedDiff(diff: string, indent = "  "): RenderedDiff {
   }
 
   if (truncated) {
-    rendered.push(`${indent}${dim(`… diff truncated at ${MAX_DIFF_LINES} lines …`)}`);
+    rendered.push(`${indent}${dim(`\u2026 diff truncated at ${MAX_DIFF_LINES} lines \u2026`)}`);
   }
 
   return {
@@ -74,7 +66,6 @@ export function renderUnifiedDiff(diff: string, indent = "  "): RenderedDiff {
 
 /**
  * Pretty-print an edit_file tool result.
- * Expects parsed JSON shape: { path, hash, diff, replacements }.
  */
 export function renderEditResult(
   parsed: { path?: string; diff?: string; replacements?: number },
@@ -92,7 +83,6 @@ export function renderEditResult(
 
 /**
  * Pretty-print a write_file tool result.
- * Expects parsed JSON shape: { path, hash, bytes_written, created }.
  */
 export function renderWriteResult(
   parsed: { path?: string; bytes_written?: number; created?: boolean },
@@ -107,7 +97,6 @@ export function renderWriteResult(
 }
 
 function shortenPath(path: string): string {
-  // Show last 3 path components for context
   const parts = path.split("/").filter((p) => p.length > 0);
   if (parts.length <= 3) return path;
   return ".../" + parts.slice(-3).join("/");

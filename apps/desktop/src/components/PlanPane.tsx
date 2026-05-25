@@ -194,13 +194,10 @@ function CheckboxIcon({ status }: { status: StepStatus }) {
 
 export function PlanPane({ plan, onClose }: PlanPaneProps) {
   const statusStyle = planStatusColors[plan.status] ?? planStatusColors.active;
-  const completedCount = plan.steps.filter(
-    (s) => s.status === "completed",
-  ).length;
+  const completedCount = plan.steps.filter((s) => s.status === "completed").length;
   const failedCount = plan.steps.filter((s) => s.status === "failed").length;
   const totalSteps = plan.steps.length;
-  const progressPercent =
-    totalSteps > 0 ? Math.round((completedCount / totalSteps) * 100) : 0;
+  const progressPercent = totalSteps > 0 ? Math.round((completedCount / totalSteps) * 100) : 0;
 
   const progressColor =
     failedCount > 0
@@ -268,24 +265,19 @@ export function PlanPane({ plan, onClose }: PlanPaneProps) {
                 style={{
                   ...styles.stepDescription,
                   opacity: step.status === "skipped" ? 0.5 : 1,
-                  textDecoration:
-                    step.status === "skipped" ? "line-through" : "none",
+                  textDecoration: step.status === "skipped" ? "line-through" : "none",
                 }}
               >
                 {step.description}
               </div>
               {step.successCriteria && (
-                <div style={styles.stepCriteria}>
-                  {step.successCriteria}
-                </div>
+                <div style={styles.stepCriteria}>{step.successCriteria}</div>
               )}
               {step.result && (
                 <div
                   style={{
                     ...styles.stepResult,
-                    color: step.result.success
-                      ? "var(--success)"
-                      : "var(--error)",
+                    color: step.result.success ? "var(--success)" : "var(--error)",
                   }}
                 >
                   {step.result.summary}

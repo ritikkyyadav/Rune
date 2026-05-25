@@ -31,7 +31,7 @@ export interface ToolDefinition {
 
 // ─── Provider Names ───
 
-export type ProviderName = "anthropic" | "openai" | "openrouter" | "ollama";
+export type ProviderName = "anthropic" | "openai" | "openrouter" | "ollama" | "google";
 
 // ─── Inference Request ───
 
@@ -115,7 +115,7 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   "claude-haiku-4-5-20251001": { inputPerMillion: 0.8, outputPerMillion: 4 },
   "gpt-4o": { inputPerMillion: 2.5, outputPerMillion: 10 },
   "gpt-4o-mini": { inputPerMillion: 0.15, outputPerMillion: 0.6 },
-  "o3": { inputPerMillion: 10, outputPerMillion: 40 },
+  o3: { inputPerMillion: 10, outputPerMillion: 40 },
   // OpenRouter model IDs
   "anthropic/claude-sonnet-4": { inputPerMillion: 3, outputPerMillion: 15 },
   "anthropic/claude-sonnet-4-20250514": { inputPerMillion: 3, outputPerMillion: 15 },

@@ -50,9 +50,7 @@ interface UseEngineOptions {
   onPlanUpdated: (plan: Plan) => void;
   onTurnComplete: () => void;
   onError: (error: string) => void;
-  onPermissionRequest: (
-    prompt: PermissionPrompt,
-  ) => Promise<PermissionDecision>;
+  onPermissionRequest: (prompt: PermissionPrompt) => Promise<PermissionDecision>;
 }
 
 const DEFAULT_STATUS: EngineStatus = {
@@ -80,62 +78,59 @@ export function useEngine(options: UseEngineOptions) {
 
   // ─── Event handler ───
 
-  const handleEvent = useCallback(
-    (event: EngineEvent) => {
-      const opts = optionsRef.current;
-      switch (event.type) {
-        case "text_delta":
-          opts.onTextDelta(event.text);
-          break;
+  const handleEvent = useCallback((event: EngineEvent) => {
+    const opts = optionsRef.current;
+    switch (event.type) {
+      case "text_delta":
+        opts.onTextDelta(event.text);
+        break;
 
-        case "tool_call_start":
-          opts.onToolCallStart(event.callId, event.toolName);
-          break;
+      case "tool_call_start":
+        opts.onToolCallStart(event.callId, event.toolName);
+        break;
 
-        case "tool_call_end":
-          opts.onToolCallEnd(event.callId, {
-            status: event.output.success ? "success" : "error",
-            result: event.output.result,
-            error: event.output.error,
-            durationMs: event.output.durationMs,
-          });
-          break;
+      case "tool_call_end":
+        opts.onToolCallEnd(event.callId, {
+          status: event.output.success ? "success" : "error",
+          result: event.output.result,
+          error: event.output.error,
+          durationMs: event.output.durationMs,
+        });
+        break;
 
-        case "plan_created":
-          opts.onPlanCreated(event.plan);
-          break;
+      case "plan_created":
+        opts.onPlanCreated(event.plan);
+        break;
 
-        case "plan_updated":
-          opts.onPlanUpdated(event.plan);
-          break;
+      case "plan_updated":
+        opts.onPlanUpdated(event.plan);
+        break;
 
-        case "plan_completed":
-          opts.onPlanUpdated(event.plan);
-          break;
+      case "plan_completed":
+        opts.onPlanUpdated(event.plan);
+        break;
 
-        case "step_started":
-          // Plan step status is tracked via plan events
-          break;
+      case "step_started":
+        // Plan step status is tracked via plan events
+        break;
 
-        case "step_completed":
-          // Plan step result is tracked via plan events
-          break;
+      case "step_completed":
+        // Plan step result is tracked via plan events
+        break;
 
-        case "turn_complete":
+      case "turn_complete":
+        setIsProcessing(false);
+        opts.onTurnComplete();
+        break;
+
+      case "error":
+        opts.onError(event.error);
+        if (!event.recoverable) {
           setIsProcessing(false);
-          opts.onTurnComplete();
-          break;
-
-        case "error":
-          opts.onError(event.error);
-          if (!event.recoverable) {
-            setIsProcessing(false);
-          }
-          break;
-      }
-    },
-    [],
-  );
+        }
+        break;
+    }
+  }, []);
 
   // ─── Connection management ───
 
@@ -177,10 +172,7 @@ export function useEngine(options: UseEngineOptions) {
     if (reconnectTimerRef.current) {
       clearTimeout(reconnectTimerRef.current);
     }
-    const delay = Math.min(
-      BASE_BACKOFF_MS * Math.pow(2, retriesRef.current),
-      MAX_BACKOFF_MS,
-    );
+    const delay = Math.min(BASE_BACKOFF_MS * Math.pow(2, retriesRef.current), MAX_BACKOFF_MS);
     retriesRef.current += 1;
     reconnectTimerRef.current = setTimeout(() => {
       connect();
@@ -240,9 +232,7 @@ export function useEngine(options: UseEngineOptions) {
           });
         }
       } catch (err) {
-        optionsRef.current.onError(
-          err instanceof Error ? err.message : "Failed to send message",
-        );
+        optionsRef.current.onError(err instanceof Error ? err.message : "Failed to send message");
         setIsProcessing(false);
       }
     },
@@ -251,24 +241,21 @@ export function useEngine(options: UseEngineOptions) {
 
   // ─── Model switching ───
 
-  const switchModel = useCallback(
-    async (model: string, provider?: string) => {
-      const result = await safeInvoke<EngineStatus>("switch_model", {
+  const switchModel = useCallback(async (model: string, provider?: string) => {
+    const result = await safeInvoke<EngineStatus>("switch_model", {
+      model,
+      provider,
+    });
+    if (result) {
+      setStatus(result);
+    } else {
+      setStatus((prev) => ({
+        ...prev,
         model,
-        provider,
-      });
-      if (result) {
-        setStatus(result);
-      } else {
-        setStatus((prev) => ({
-          ...prev,
-          model,
-          provider: provider ?? prev.provider,
-        }));
-      }
-    },
-    [],
-  );
+        provider: provider ?? prev.provider,
+      }));
+    }
+  }, []);
 
   // ─── Status polling ───
 
@@ -289,15 +276,12 @@ export function useEngine(options: UseEngineOptions) {
 
   // ─── Permission response ───
 
-  const respondPermission = useCallback(
-    async (requestId: string, decision: PermissionDecision) => {
-      await safeInvoke("respond_permission", {
-        requestId,
-        decision,
-      });
-    },
-    [],
-  );
+  const respondPermission = useCallback(async (requestId: string, decision: PermissionDecision) => {
+    await safeInvoke("respond_permission", {
+      requestId,
+      decision,
+    });
+  }, []);
 
   return {
     sendMessage,

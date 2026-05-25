@@ -11,7 +11,7 @@ export interface AlanConfig {
     maxSessions: number;
   };
   llm: {
-    defaultProvider: "anthropic" | "openai" | "openrouter" | "ollama";
+    defaultProvider: "anthropic" | "openai" | "openrouter" | "ollama" | "google";
     anthropic?: {
       apiKey: string;
       model: string;
@@ -23,6 +23,11 @@ export interface AlanConfig {
       maxTokens: number;
     };
     openrouter?: {
+      apiKey: string;
+      model: string;
+      maxTokens: number;
+    };
+    google?: {
       apiKey: string;
       model: string;
       maxTokens: number;
@@ -152,12 +157,22 @@ function parseTomlValue(raw: string): unknown {
 
 // ─── Deep Merge ───
 
-function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): Record<string, unknown> {
+function deepMerge(
+  target: Record<string, unknown>,
+  source: Record<string, unknown>,
+): Record<string, unknown> {
   const result = { ...target };
   for (const key of Object.keys(source)) {
     const sv = source[key];
     const tv = result[key];
-    if (sv && typeof sv === "object" && !Array.isArray(sv) && tv && typeof tv === "object" && !Array.isArray(tv)) {
+    if (
+      sv &&
+      typeof sv === "object" &&
+      !Array.isArray(sv) &&
+      tv &&
+      typeof tv === "object" &&
+      !Array.isArray(tv)
+    ) {
       result[key] = deepMerge(tv as Record<string, unknown>, sv as Record<string, unknown>);
     } else if (sv !== undefined) {
       result[key] = sv;
@@ -171,17 +186,25 @@ function deepMerge(target: Record<string, unknown>, source: Record<string, unkno
 function applyEnvOverrides(config: Record<string, unknown>): void {
   const envMap: Record<string, (c: Record<string, unknown>) => void> = {
     ALAN_PROVIDER: (c) => setNested(c, "llm.defaultProvider", process.env.ALAN_PROVIDER!),
-    ALAN_MODEL: (c) => setNested(c, "llm.anthropic.model", process.env.ALAN_MODEL!),
-    ALAN_MAX_TOKENS: (c) => setNested(c, "llm.anthropic.maxTokens", Number(process.env.ALAN_MAX_TOKENS!)),
+    ALAN_MODEL: (c) => {
+      const provider = getDefaultProvider(c);
+      setNested(c, `llm.${provider}.model`, process.env.ALAN_MODEL!);
+    },
+    ALAN_MAX_TOKENS: (c) =>
+      setNested(c, `llm.${getDefaultProvider(c)}.maxTokens`, Number(process.env.ALAN_MAX_TOKENS!)),
     ALAN_DB_PATH: (c) => setNested(c, "engine.dbPath", process.env.ALAN_DB_PATH!),
     ALAN_SOCKET_PATH: (c) => setNested(c, "engine.socketPath", process.env.ALAN_SOCKET_PATH!),
     ALAN_LOG_DIR: (c) => setNested(c, "engine.logDir", process.env.ALAN_LOG_DIR!),
-    ALAN_SANDBOX_ENABLED: (c) => setNested(c, "sandbox.enabled", process.env.ALAN_SANDBOX_ENABLED === "true"),
-    ALAN_SANDBOX_NETWORK: (c) => setNested(c, "sandbox.networkDeny", process.env.ALAN_SANDBOX_NETWORK !== "allow"),
+    ALAN_SANDBOX_ENABLED: (c) =>
+      setNested(c, "sandbox.enabled", process.env.ALAN_SANDBOX_ENABLED === "true"),
+    ALAN_SANDBOX_NETWORK: (c) =>
+      setNested(c, "sandbox.networkDeny", process.env.ALAN_SANDBOX_NETWORK !== "allow"),
     ALAN_TELEMETRY: (c) => setNested(c, "telemetry.enabled", process.env.ALAN_TELEMETRY === "true"),
     ANTHROPIC_API_KEY: (c) => setNested(c, "llm.anthropic.apiKey", process.env.ANTHROPIC_API_KEY!),
     OPENAI_API_KEY: (c) => setNested(c, "llm.openai.apiKey", process.env.OPENAI_API_KEY!),
-    OPENROUTER_API_KEY: (c) => setNested(c, "llm.openrouter.apiKey", process.env.OPENROUTER_API_KEY!),
+    OPENROUTER_API_KEY: (c) =>
+      setNested(c, "llm.openrouter.apiKey", process.env.OPENROUTER_API_KEY!),
+    GOOGLE_API_KEY: (c) => setNested(c, "llm.google.apiKey", process.env.GOOGLE_API_KEY!),
   };
 
   for (const [envVar, apply] of Object.entries(envMap)) {
@@ -189,6 +212,11 @@ function applyEnvOverrides(config: Record<string, unknown>): void {
       apply(config);
     }
   }
+}
+
+function getDefaultProvider(config: Record<string, unknown>): string {
+  const llm = config.llm as Record<string, unknown> | undefined;
+  return typeof llm?.defaultProvider === "string" ? llm.defaultProvider : "anthropic";
 }
 
 function setNested(obj: Record<string, unknown>, path: string, value: unknown): void {

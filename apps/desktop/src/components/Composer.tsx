@@ -121,23 +121,13 @@ function SendIcon() {
 // Stop/square icon for abort
 function StopIcon() {
   return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 14 14"
-      fill="currentColor"
-    >
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
       <rect x="2" y="2" width="10" height="10" rx="2" />
     </svg>
   );
 }
 
-export function Composer({
-  onSend,
-  disabled,
-  isProcessing = false,
-  onAbort,
-}: ComposerProps) {
+export function Composer({ onSend, disabled, isProcessing = false, onAbort }: ComposerProps) {
   const [value, setValue] = useState("");
   const [focused, setFocused] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -163,16 +153,13 @@ export function Composer({
     [handleSubmit],
   );
 
-  const handleChange = useCallback(
-    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-      setValue(e.target.value);
-      // Auto-resize textarea
-      const el = e.target;
-      el.style.height = "auto";
-      el.style.height = `${Math.min(el.scrollHeight, 150)}px`;
-    },
-    [],
-  );
+  const handleChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setValue(e.target.value);
+    // Auto-resize textarea
+    const el = e.target;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 150)}px`;
+  }, []);
 
   const canSend = value.trim().length > 0 && !disabled;
 
@@ -184,11 +171,7 @@ export function Composer({
           ...(focused ? styles.inputRowFocused : {}),
         }}
       >
-        <button
-          style={styles.attachButton}
-          title="Attach file (coming soon)"
-          tabIndex={-1}
-        >
+        <button style={styles.attachButton} title="Attach file (coming soon)" tabIndex={-1}>
           +
         </button>
         <textarea
@@ -199,18 +182,12 @@ export function Composer({
           onKeyDown={handleKeyDown}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
-          placeholder={
-            isProcessing ? "Waiting for response..." : "Ask Alan anything..."
-          }
+          placeholder={isProcessing ? "Waiting for response..." : "Ask Alan anything..."}
           rows={1}
           disabled={disabled}
         />
         {isProcessing && onAbort ? (
-          <button
-            style={styles.abortButton}
-            onClick={onAbort}
-            title="Stop generation"
-          >
+          <button style={styles.abortButton} onClick={onAbort} title="Stop generation">
             <StopIcon />
           </button>
         ) : (
@@ -247,9 +224,7 @@ export function Composer({
           `}</style>
         </div>
       ) : (
-        <div style={styles.hint}>
-          Enter to send &middot; Shift+Enter for newline
-        </div>
+        <div style={styles.hint}>Enter to send &middot; Shift+Enter for newline</div>
       )}
     </div>
   );

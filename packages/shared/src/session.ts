@@ -141,6 +141,13 @@ export class SessionManager {
     };
   }
 
+  updateSessionModel(sessionId: string, model: string): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare("UPDATE sessions SET model = ?, updated_at = ? WHERE id = ?")
+      .run(model, now, sessionId);
+  }
+
   appendEvent(sessionId: string, event: SessionEvent): number {
     const now = new Date().toISOString();
     const payloadJson = JSON.stringify(event);
@@ -157,9 +164,7 @@ export class SessionManager {
       )
       .run(sessionId, seq, event.type, payloadJson, now);
 
-    this.db
-      .prepare("UPDATE sessions SET updated_at = ? WHERE id = ?")
-      .run(now, sessionId);
+    this.db.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(now, sessionId);
 
     return seq;
   }
@@ -389,7 +394,10 @@ function verifyAuditChain(db: SessionManager): { valid: boolean; firstBadId?: nu
  * Create an auto-verifier that periodically checks audit chain integrity
  * after a configurable number of tool calls.
  */
-export function createAutoVerifier(db: SessionManager, intervalCalls: number = 50): {
+export function createAutoVerifier(
+  db: SessionManager,
+  intervalCalls: number = 50,
+): {
   onToolCall: () => void;
   getStats: () => AuditVerificationStats;
 } {
@@ -405,9 +413,9 @@ export function createAutoVerifier(db: SessionManager, intervalCalls: number = 5
           const result = verifyAuditChain(db);
           isValid = result.valid !== false;
           lastVerified = new Date();
-          if (!isValid) console.error('[AUDIT] Chain integrity FAILED');
+          if (!isValid) console.error("[AUDIT] Chain integrity FAILED");
         } catch (e) {
-          console.error('[AUDIT] Verification error:', e);
+          console.error("[AUDIT] Verification error:", e);
         }
       }
     },

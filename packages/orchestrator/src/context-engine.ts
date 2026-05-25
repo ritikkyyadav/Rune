@@ -87,8 +87,7 @@ export interface BuiltPrompt {
 export class ContextEngine {
   private budget: ContextBudget;
   private memory: SessionMemory;
-  private pinnedFiles: Map<string, { content: string; tokens: number }> =
-    new Map();
+  private pinnedFiles: Map<string, { content: string; tokens: number }> = new Map();
   private summarizeTurnsThreshold: number;
   private gateway: LlmGateway;
   private summarizerModel: string;
@@ -328,10 +327,7 @@ export class ContextEngine {
     }
 
     // Summarize the oldest half of messages
-    const toSummarize = messages.slice(
-      0,
-      Math.floor(messages.length / 2),
-    );
+    const toSummarize = messages.slice(0, Math.floor(messages.length / 2));
     if (toSummarize.length < 4) return false;
 
     const summaryText = await this.generateSummary(toSummarize);
@@ -347,12 +343,8 @@ export class ContextEngine {
     return true;
   }
 
-  private async generateSummary(
-    messages: Message[],
-  ): Promise<string | null> {
-    const transcript = messages
-      .map((m) => `${m.role}: ${messageToString(m)}`)
-      .join("\n\n");
+  private async generateSummary(messages: Message[]): Promise<string | null> {
+    const transcript = messages.map((m) => `${m.role}: ${messageToString(m)}`).join("\n\n");
 
     try {
       const response = await this.gateway.infer({
@@ -374,8 +366,7 @@ ${transcript}`,
             ],
           },
         ],
-        system:
-          "You are a conversation summarizer. Be concise — 3-5 bullet points.",
+        system: "You are a conversation summarizer. Be concise — 3-5 bullet points.",
         model: this.summarizerModel,
         provider: this.summarizerProvider,
         maxTokens: 500,
@@ -402,13 +393,9 @@ ${transcript}`,
       used: this.lastTokenUsage?.used ?? 0,
       limit:
         this.lastTokenUsage?.limit ??
-        getContextLimit(
-          this.config.summarizerModel || "claude-sonnet-4-20250514",
-        ),
+        getContextLimit(this.config.summarizerModel || "claude-sonnet-4-20250514"),
       percent: this.lastTokenUsage
-        ? Math.round(
-            (this.lastTokenUsage.used / this.lastTokenUsage.limit) * 100,
-          )
+        ? Math.round((this.lastTokenUsage.used / this.lastTokenUsage.limit) * 100)
         : 0,
     };
   }
@@ -421,10 +408,7 @@ ${transcript}`,
  * Pinned items are always kept. Non-pinned items are scored by
  * `relevance / (1 + age * 0.05)` and dropped lowest-first.
  */
-function budgetPass(
-  items: ContextItem[],
-  maxTokens: number,
-): ContextItem[] {
+function budgetPass(items: ContextItem[], maxTokens: number): ContextItem[] {
   const pinned = items.filter((i) => i.pinned);
   const unpinned = items.filter((i) => !i.pinned);
 
@@ -432,13 +416,9 @@ function budgetPass(
   if (pinnedTokens > maxTokens) {
     // Even pinned items exceed budget — drop oldest pinned items
     // (except system prompt and tool schemas)
-    const essential = pinned.filter(
-      (i) => i.kind === "system_prompt" || i.kind === "tool_schemas",
-    );
+    const essential = pinned.filter((i) => i.kind === "system_prompt" || i.kind === "tool_schemas");
     const rest = pinned
-      .filter(
-        (i) => i.kind !== "system_prompt" && i.kind !== "tool_schemas",
-      )
+      .filter((i) => i.kind !== "system_prompt" && i.kind !== "tool_schemas")
       .sort((a, b) => b.relevance - a.relevance);
 
     const result: ContextItem[] = [...essential];
@@ -495,16 +475,13 @@ function messageToString(msg: Message): string {
       if (block.type === "text") return block.text;
       if (block.type === "tool_use")
         return `[tool: ${block.toolName}(${JSON.stringify(block.toolInput).slice(0, 200)})]`;
-      if (block.type === "tool_result")
-        return `[result: ${block.toolResultContent.slice(0, 500)}]`;
+      if (block.type === "tool_result") return `[result: ${block.toolResultContent.slice(0, 500)}]`;
       return "";
     })
     .join("\n");
 }
 
-function roleToKind(
-  role: string,
-): "user_message" | "assistant_message" | "tool_message" {
+function roleToKind(role: string): "user_message" | "assistant_message" | "tool_message" {
   if (role === "assistant") return "assistant_message";
   if (role === "tool") return "tool_message";
   return "user_message";

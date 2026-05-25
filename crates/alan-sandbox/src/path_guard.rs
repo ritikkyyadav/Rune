@@ -114,7 +114,10 @@ impl PathGuard {
             if &canonical == blocked {
                 return Err(SandboxError::PathBlocked {
                     path: canonical.display().to_string(),
-                    reason: format!("path is a protected system location ({})", blocked.display()),
+                    reason: format!(
+                        "path is a protected system location ({})",
+                        blocked.display()
+                    ),
                 });
             }
         }
@@ -155,8 +158,7 @@ impl PathGuard {
         let expansion_patterns: Vec<(&str, Regex)> = vec![
             (
                 "shell variable expansion with destructive command",
-                Regex::new(r"\$\{[^}]*\}\s*&&\s*(?:rm|dd|mkfs|chmod|chown)")
-                    .expect("valid regex"),
+                Regex::new(r"\$\{[^}]*\}\s*&&\s*(?:rm|dd|mkfs|chmod|chown)").expect("valid regex"),
             ),
             (
                 "command substitution with destructive command",
@@ -167,7 +169,11 @@ impl PathGuard {
 
         for (description, pattern) in &expansion_patterns {
             if pattern.is_match(cmd) {
-                warn!(command = cmd, pattern = *description, "dangerous expansion blocked");
+                warn!(
+                    command = cmd,
+                    pattern = *description,
+                    "dangerous expansion blocked"
+                );
                 return Err(SandboxError::Violation(format!(
                     "command blocked: {description}"
                 )));
@@ -204,7 +210,11 @@ impl PathGuard {
 
         for (description, pattern) in &chaining_patterns {
             if pattern.is_match(cmd) {
-                warn!(command = cmd, pattern = *description, "chained dangerous command blocked");
+                warn!(
+                    command = cmd,
+                    pattern = *description,
+                    "chained dangerous command blocked"
+                );
                 return Err(SandboxError::Violation(format!(
                     "command blocked: {description}"
                 )));
@@ -265,7 +275,11 @@ impl PathGuard {
         for (description, pattern) in &dangerous_patterns {
             for variant in &variants {
                 if pattern.is_match(variant) {
-                    warn!(command = cmd, pattern = *description, "dangerous command blocked");
+                    warn!(
+                        command = cmd,
+                        pattern = *description,
+                        "dangerous command blocked"
+                    );
                     return Err(SandboxError::Violation(format!(
                         "command blocked: {description}"
                     )));

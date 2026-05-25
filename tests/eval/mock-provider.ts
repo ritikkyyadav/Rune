@@ -103,8 +103,7 @@ export class MockProvider implements LlmProvider {
     }
 
     const stopReason =
-      r.stopReason ??
-      (r.toolCalls && r.toolCalls.length > 0 ? "tool_use" : "end_turn");
+      r.stopReason ?? (r.toolCalls && r.toolCalls.length > 0 ? "tool_use" : "end_turn");
 
     yield {
       type: "message_stop",

@@ -35,6 +35,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@alan/shared": "workspace:*",
+        "@alan/telemetry": "workspace:*",
         "@anthropic-ai/sdk": "^0.39",
         "openai": "^4",
       },
@@ -51,6 +52,7 @@
       "dependencies": {
         "@alan/llm-gateway": "workspace:*",
         "@alan/shared": "workspace:*",
+        "@alan/telemetry": "workspace:*",
         "@alan/tool-registry": "workspace:*",
       },
       "devDependencies": {
@@ -62,6 +64,13 @@
       "version": "0.1.0",
       "devDependencies": {
         "typescript": "^5.8",
+      },
+    },
+    "packages/telemetry": {
+      "name": "@alan/telemetry",
+      "version": "0.1.0",
+      "devDependencies": {
+        "typescript": "^5.8.0",
       },
     },
     "packages/tool-registry": {
@@ -99,6 +108,8 @@
     "@alan/orchestrator": ["@alan/orchestrator@workspace:packages/orchestrator"],
 
     "@alan/shared": ["@alan/shared@workspace:packages/shared"],
+
+    "@alan/telemetry": ["@alan/telemetry@workspace:packages/telemetry"],
 
     "@alan/tool-registry": ["@alan/tool-registry@workspace:packages/tool-registry"],
 

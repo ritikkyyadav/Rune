@@ -94,11 +94,10 @@ fn validate_within_workspace(path: &Path, workspace_root: &Path) -> Result<(), T
         path: path.display().to_string(),
         detail: e.to_string(),
     })?;
-    let workspace_canonical =
-        fs::canonicalize(workspace_root).map_err(|e| ToolError::Io {
-            path: workspace_root.display().to_string(),
-            detail: e.to_string(),
-        })?;
+    let workspace_canonical = fs::canonicalize(workspace_root).map_err(|e| ToolError::Io {
+        path: workspace_root.display().to_string(),
+        detail: e.to_string(),
+    })?;
 
     if !canonical.starts_with(&workspace_canonical) {
         return Err(ToolError::PathEscape {

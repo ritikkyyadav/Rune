@@ -12,9 +12,7 @@ async function main() {
   const total = results.length;
   const pct = ((passed / total) * 100).toFixed(0);
   const tone = passed === total ? "32" : passed >= total * 0.6 ? "33" : "31";
-  console.log(
-    `\n  \x1b[${tone}m${passed}/${total} passed (${pct}%)\x1b[0m\n`,
-  );
+  console.log(`\n  \x1b[${tone}m${passed}/${total} passed (${pct}%)\x1b[0m\n`);
 
   process.exit(passed === total ? 0 : 1);
 }

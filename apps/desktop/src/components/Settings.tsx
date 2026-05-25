@@ -38,28 +38,17 @@ const PROVIDERS: ProviderConfig[] = [
   {
     name: "Anthropic",
     id: "anthropic",
-    models: [
-      "claude-sonnet-4-20250514",
-      "claude-haiku-3-20250422",
-      "claude-opus-4-20250514",
-    ],
+    models: ["claude-sonnet-4-20250514", "claude-haiku-3-20250422", "claude-opus-4-20250514"],
   },
   {
     name: "OpenAI",
     id: "openai",
-    models: [
-      "gpt-4o",
-      "gpt-4o-mini",
-      "o3-mini",
-    ],
+    models: ["gpt-4o", "gpt-4o-mini", "o3-mini"],
   },
   {
     name: "Google",
     id: "google",
-    models: [
-      "gemini-2.5-flash",
-      "gemini-2.5-pro",
-    ],
+    models: ["gemini-2.5-flash", "gemini-2.5-pro"],
   },
 ];
 
@@ -220,31 +209,22 @@ export function Settings({ status, onSwitchModel, onClose }: SettingsProps) {
 
   const provider = PROVIDERS.find((p) => p.id === selectedProvider) ?? PROVIDERS[0];
 
-  const handleProviderChange = useCallback(
-    (e: React.ChangeEvent<HTMLSelectElement>) => {
-      const pid = e.target.value;
-      setSelectedProvider(pid);
-      const p = PROVIDERS.find((pr) => pr.id === pid);
-      if (p && p.models.length > 0) {
-        setSelectedModel(p.models[0]);
-      }
-    },
-    [],
-  );
+  const handleProviderChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
+    const pid = e.target.value;
+    setSelectedProvider(pid);
+    const p = PROVIDERS.find((pr) => pr.id === pid);
+    if (p && p.models.length > 0) {
+      setSelectedModel(p.models[0]);
+    }
+  }, []);
 
-  const handleModelChange = useCallback(
-    (e: React.ChangeEvent<HTMLSelectElement>) => {
-      setSelectedModel(e.target.value);
-    },
-    [],
-  );
+  const handleModelChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
+    setSelectedModel(e.target.value);
+  }, []);
 
-  const handleApiKeyChange = useCallback(
-    (providerId: string, value: string) => {
-      setApiKeys((prev) => ({ ...prev, [providerId]: value }));
-    },
-    [],
-  );
+  const handleApiKeyChange = useCallback((providerId: string, value: string) => {
+    setApiKeys((prev) => ({ ...prev, [providerId]: value }));
+  }, []);
 
   const maskKey = (key: string): string => {
     if (key.length <= 8) return key.replace(/./g, "*");
@@ -270,9 +250,7 @@ export function Settings({ status, onSwitchModel, onClose }: SettingsProps) {
   }, [selectedProvider, selectedModel, permissionLevel, apiKeys, onSwitchModel]);
 
   const contextPercent =
-    status.contextMax > 0
-      ? Math.round((status.contextUsed / status.contextMax) * 100)
-      : 0;
+    status.contextMax > 0 ? Math.round((status.contextUsed / status.contextMax) * 100) : 0;
 
   return (
     <div style={styles.overlay} onClick={onClose}>
@@ -304,11 +282,7 @@ export function Settings({ status, onSwitchModel, onClose }: SettingsProps) {
             </div>
             <div style={styles.fieldRow}>
               <span style={styles.label}>Model</span>
-              <select
-                style={styles.select}
-                value={selectedModel}
-                onChange={handleModelChange}
-              >
+              <select style={styles.select} value={selectedModel} onChange={handleModelChange}>
                 {provider.models.map((m) => (
                   <option key={m} value={m}>
                     {m}
@@ -350,26 +324,18 @@ export function Settings({ status, onSwitchModel, onClose }: SettingsProps) {
           <div style={styles.section}>
             <div style={styles.sectionTitle}>Permission Level</div>
             <div style={styles.toggle}>
-              {(["ask", "auto_allow", "auto_deny"] as PermissionLevel[]).map(
-                (level) => (
-                  <button
-                    key={level}
-                    style={{
-                      ...styles.toggleButton,
-                      ...(permissionLevel === level
-                        ? styles.toggleActive
-                        : styles.toggleInactive),
-                    }}
-                    onClick={() => setPermissionLevel(level)}
-                  >
-                    {level === "ask"
-                      ? "Ask"
-                      : level === "auto_allow"
-                        ? "Auto Allow"
-                        : "Auto Deny"}
-                  </button>
-                ),
-              )}
+              {(["ask", "auto_allow", "auto_deny"] as PermissionLevel[]).map((level) => (
+                <button
+                  key={level}
+                  style={{
+                    ...styles.toggleButton,
+                    ...(permissionLevel === level ? styles.toggleActive : styles.toggleInactive),
+                  }}
+                  onClick={() => setPermissionLevel(level)}
+                >
+                  {level === "ask" ? "Ask" : level === "auto_allow" ? "Auto Allow" : "Auto Deny"}
+                </button>
+              ))}
             </div>
           </div>
 
@@ -379,13 +345,11 @@ export function Settings({ status, onSwitchModel, onClose }: SettingsProps) {
             <div style={styles.statusRow}>
               <span>Context Window</span>
               <span>
-                {status.contextUsed.toLocaleString()} /{" "}
-                {status.contextMax.toLocaleString()} tokens ({contextPercent}%)
+                {status.contextUsed.toLocaleString()} / {status.contextMax.toLocaleString()} tokens
+                ({contextPercent}%)
               </span>
             </div>
-            <div style={styles.costDisplay}>
-              Session Cost: ${status.totalCost.toFixed(4)}
-            </div>
+            <div style={styles.costDisplay}>Session Cost: ${status.totalCost.toFixed(4)}</div>
           </div>
 
           {/* Save */}

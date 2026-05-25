@@ -23,9 +23,7 @@ interface UserMsgPayload {
   content: string;
 }
 
-export function eventsToMessages(
-  events: Array<{ seq: number; event: SessionEvent }>,
-): Message[] {
+export function eventsToMessages(events: Array<{ seq: number; event: SessionEvent }>): Message[] {
   const messages: Message[] = [];
 
   for (const { event } of events) {
@@ -93,9 +91,7 @@ export interface AssistantPersistPayload {
   [key: string]: unknown;
 }
 
-export function messageToAssistantPayload(
-  message: Message,
-): AssistantPersistPayload {
+export function messageToAssistantPayload(message: Message): AssistantPersistPayload {
   const textParts: string[] = [];
   const toolUses: ToolUseRecord[] = [];
   for (const block of message.content) {
@@ -118,9 +114,7 @@ export interface ToolResultPersistPayload {
   [key: string]: unknown;
 }
 
-export function messageToToolResultPayloads(
-  message: Message,
-): ToolResultPersistPayload[] {
+export function messageToToolResultPayloads(message: Message): ToolResultPersistPayload[] {
   const results: ToolResultPersistPayload[] = [];
   for (const block of message.content) {
     if (block.type === "tool_result") {

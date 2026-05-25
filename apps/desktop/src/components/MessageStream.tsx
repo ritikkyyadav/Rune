@@ -160,9 +160,7 @@ export function MessageStream({ messages, isLoading }: MessageStreamProps) {
       <div style={styles.container}>
         <div style={styles.emptyState}>
           <div style={styles.logo}>alan</div>
-          <div style={styles.subtitle}>
-            Sovereign agentic coding assistant
-          </div>
+          <div style={styles.subtitle}>Sovereign agentic coding assistant</div>
           <div
             style={{
               fontSize: 13,
@@ -184,8 +182,7 @@ export function MessageStream({ messages, isLoading }: MessageStreamProps) {
   return (
     <div style={styles.container}>
       {messages.map((msg, idx) => {
-        const isLastAssistant =
-          idx === messages.length - 1 && msg.role === "assistant";
+        const isLastAssistant = idx === messages.length - 1 && msg.role === "assistant";
         const showCursor = isStreaming && isLastAssistant;
 
         return (
@@ -195,17 +192,13 @@ export function MessageStream({ messages, isLoading }: MessageStreamProps) {
               <div
                 style={{
                   ...styles.messageRow,
-                  ...(msg.role === "user"
-                    ? styles.userRow
-                    : styles.assistantRow),
+                  ...(msg.role === "user" ? styles.userRow : styles.assistantRow),
                 }}
               >
                 <div
                   style={{
                     ...styles.bubble,
-                    ...(msg.role === "user"
-                      ? styles.userBubble
-                      : styles.assistantBubble),
+                    ...(msg.role === "user" ? styles.userBubble : styles.assistantBubble),
                   }}
                 >
                   {msg.content}
