@@ -451,10 +451,11 @@ function budgetPass(items: ContextItem[], maxTokens: number): ContextItem[] {
   }
 
   // Re-sort by original order (messages should stay in conversation order)
+  // Higher age = older message; chronological order = oldest first = descending by age
   return kept.sort((a, b) => {
     if (a.pinned && !b.pinned) return -1;
     if (!a.pinned && b.pinned) return 1;
-    return a.age - b.age;
+    return b.age - a.age;
   });
 }
 
