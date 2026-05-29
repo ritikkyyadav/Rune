@@ -199,11 +199,19 @@ if [ ! -x "$TOOLS_BIN" ]; then
   fi
 fi
 
-# ─── Load API keys ───
+# ─── Load API keys (global ~/.alan/.env then project .env) ───
 if [ -f "$ALAN_ENV" ]; then
   set -a
   # shellcheck disable=SC1090
   source "$ALAN_ENV"
+  set +a
+fi
+# Project-local .env (Bun also auto-loads this, but export here so the
+# Rust tools binary and any subprocesses inherit the keys too).
+if [ -f "$ALAN_ROOT/.env" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ALAN_ROOT/.env"
   set +a
 fi
 
