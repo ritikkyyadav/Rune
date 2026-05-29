@@ -84,7 +84,9 @@ const DEFAULT_CONFIG: AlanConfig = {
     maxSessions: 50,
   },
   llm: {
-    defaultProvider: "anthropic",
+    // Dev/test default = free tier (Gemini). Override via ~/.alan/config.toml,
+    // <workspace>/.alan/config.toml, or ALAN_PROVIDER for production validation.
+    defaultProvider: "google",
   },
   permissions: {
     defaultLevel: "confirm",
