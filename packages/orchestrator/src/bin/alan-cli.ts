@@ -387,44 +387,38 @@ async function main() {
   });
 
   // ─── Permission Handler ───
+  // The prompt must be UNMISSABLE. Default = ALLOW (Enter proceeds, 'n' denies).
 
   const permissionHandler: PermissionHandler = (prompt) =>
     new Promise<UserPermissionDecision>((resolve) => {
       const wasSpinning = spinner.isRunning?.() ?? false;
       spinner.stop();
 
-      const w = process.stdout.columns ?? 80;
-      const ruleW = Math.min(w - 4, 56);
-      process.stdout.write(`\n  ${dim("┌")}${dim("─".repeat(ruleW))}${dim("┐")}\n`);
+      const argPreview = prompt.argsSummary.slice(0, 100);
+      process.stdout.write("\n");
+      process.stdout.write(`  ${brass("?")} Allow ${cyanotype(prompt.toolName)}${argPreview ? dim(" \u2014 " + argPreview) : ""}?\n`);
       process.stdout.write(
-        `  ${dim("│")} ${vermillion("§ PERMISSION REQUIRED")}${" ".repeat(Math.max(0, ruleW - 24))}${dim("│")}\n`,
-      );
-      process.stdout.write(`  ${dim("├")}${dim("─".repeat(ruleW))}${dim("┤")}\n`);
-      process.stdout.write(
-        `  ${dim("│")} ${dim("tool")}  ${cyanotype(prompt.toolName)}${" ".repeat(Math.max(0, ruleW - 8 - prompt.toolName.length))}${dim("│")}\n`,
-      );
-      process.stdout.write(
-        `  ${dim("│")} ${dim("args")}  ${prompt.argsSummary.slice(0, ruleW - 9)}${" ".repeat(Math.max(0, ruleW - 8 - prompt.argsSummary.slice(0, ruleW - 9).length))}${dim("│")}\n`,
-      );
-      process.stdout.write(`  ${dim("└")}${dim("─".repeat(ruleW))}${dim("┘")}\n`);
-      process.stdout.write(
-        `  ${brass("[a]")} allow once  ${brass("[s]")} allow session  ${vermillion("[d]")} deny ${dim("(default)")}\n`,
+        `  ${green("Enter")} ${dim("= allow")}  ${brass("s")} ${dim("= allow for session")}  ${vermillion("n")} ${dim("= deny")}\n`,
       );
 
-      rl.question(`  ${vermillion("\u203A")} `, (answer) => {
+      rl.question(`  ${brass(">")} `, (answer) => {
         const a = answer.trim().toLowerCase();
         let decision: UserPermissionDecision;
-        if (a === "s" || a === "session") decision = { kind: "allow_session" };
-        else if (a === "a" || a === "allow" || a === "y" || a === "yes")
+        if (a === "n" || a === "no" || a === "d" || a === "deny") {
+          decision = { kind: "deny" };
+        } else if (a === "s" || a === "session") {
+          decision = { kind: "allow_session" };
+        } else {
+          // Default (Enter / y / yes / anything) = allow once
           decision = { kind: "allow_once" };
-        else decision = { kind: "deny" };
+        }
 
         if (decision.kind === "deny") {
-          process.stdout.write(`  ${vermillion("✕")} ${dim("denied")}\n`);
+          process.stdout.write(`  ${vermillion("\u2715")} denied\n`);
         } else if (decision.kind === "allow_session") {
-          process.stdout.write(`  ${green("✓")} ${dim("granted for session")}\n`);
+          process.stdout.write(`  ${green("\u2713")} allowed for session\n`);
         } else {
-          process.stdout.write(`  ${green("✓")} ${dim("granted once")}\n`);
+          process.stdout.write(`  ${green("\u2713")} allowed\n`);
         }
 
         if (wasSpinning) spinner.start("tool_call");

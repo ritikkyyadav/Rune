@@ -125,6 +125,13 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   "anthropic/claude-sonnet-4-20250514": { inputPerMillion: 3, outputPerMillion: 15 },
   "anthropic/claude-haiku-4-5-20251001": { inputPerMillion: 0.8, outputPerMillion: 4 },
   "openai/gpt-4o": { inputPerMillion: 2.5, outputPerMillion: 10 },
+  // Google Gemini (free tier = $0, but track usage for when paid tier is used)
+  "gemini-2.5-flash": { inputPerMillion: 0.15, outputPerMillion: 0.6 },
+  "gemini-2.5-pro": { inputPerMillion: 1.25, outputPerMillion: 10 },
+  "gemini-2.0-flash": { inputPerMillion: 0.1, outputPerMillion: 0.4 },
+  // OpenRouter free models (actual cost is $0 but track usage)
+  "deepseek/deepseek-v4-flash:free": { inputPerMillion: 0, outputPerMillion: 0 },
+  "deepseek/deepseek-r1:free": { inputPerMillion: 0, outputPerMillion: 0 },
 };
 
 export interface CostEntry {
