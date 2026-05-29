@@ -7,6 +7,7 @@ import type {
   LlmProvider,
   ProviderName,
   StreamEvent,
+  StreamOpts,
   TokenUsage,
 } from "./types";
 import { MODEL_PRICING as PRICING } from "./types";
@@ -60,7 +61,7 @@ export class LlmGateway {
     throw lastError ?? new Error("Inference failed");
   }
 
-  async *inferStream(request: InferenceRequest): AsyncGenerator<StreamEvent> {
+  async *inferStream(request: InferenceRequest, opts?: StreamOpts): AsyncGenerator<StreamEvent> {
     // Build ordered list: requested provider first, then fallbacks
     const fallbackOrder = this.getFallbackProviders(request.provider);
 
@@ -84,7 +85,7 @@ export class LlmGateway {
 
       for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
         try {
-          const gen = provider.inferStream(adjustedRequest);
+          const gen = provider.inferStream(adjustedRequest, opts);
           for await (const event of gen) {
             if (event.type === "message_stop") {
               this.recordCost(adjustedRequest.model, providerName, event.usage);

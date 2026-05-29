@@ -36,6 +36,7 @@ import { createToolExecutionGuard } from "./security";
 import { MemoryManager } from "./memory/manager";
 import { EpisodicMemory } from "./memory/episodic";
 import { WorkingMemory } from "./memory/working";
+import { HookRunner } from "./hooks";
 
 // ─── Permission Prompt Handler ───
 
@@ -76,6 +77,7 @@ export interface EngineConfig {
   enableSecurity?: boolean;
   enableRateLimiting?: boolean;
   enableCheckpoints?: boolean;
+  enableHooks?: boolean;
   checkpointPolicy?: Partial<CheckpointPolicy>;
   egressAllowlist?: string[];
   redactOutputs?: boolean;
@@ -132,6 +134,9 @@ export class Engine {
   private checkpointPolicy: CheckpointPolicy;
   private memoryManager: MemoryManager | null = null;
   private autoVerifier: ReturnType<typeof createAutoVerifier> | null = null;
+  private currentAbort: AbortController | null = null;
+  private hookRunner: HookRunner | null = null;
+  private hooksLoaded = false;
 
   constructor(config: Partial<EngineConfig> = {}) {
     this.config = { ...DEFAULT_ENGINE_CONFIG, ...config };
@@ -235,6 +240,24 @@ export class Engine {
     this.permissionHandler = handler;
   }
 
+  /**
+   * Lazily load user-defined hooks from `<workspace>/.alan/hooks.json` once per
+   * engine. Missing file → no-op runner. Malformed file → warn once, run without.
+   */
+  private async ensureHookRunner(): Promise<void> {
+    if (this.hooksLoaded) return;
+    this.hooksLoaded = true;
+    if (this.config.enableHooks === false) return;
+    try {
+      this.hookRunner = await HookRunner.load(this.config.workspaceRoot);
+    } catch (err) {
+      console.warn(
+        `[hooks] failed to load: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      this.hookRunner = null;
+    }
+  }
+
   private buildPermissionCheck(): PermissionCheck {
     return async ({ toolName, args }) => {
       // Rate limiter check
@@ -265,6 +288,17 @@ export class Engine {
       const handler = this.registry.get(toolName);
       if (!handler) {
         return { allowed: false, reason: `Unknown tool: ${toolName}` };
+      }
+
+      // User-defined preToolUse hooks may veto the call (e.g. protect paths).
+      if (this.hookRunner) {
+        const hookDecision = await this.hookRunner.runPreToolUse(toolName, args);
+        if (!hookDecision.allow) {
+          return {
+            allowed: false,
+            reason: hookDecision.reason ?? "Blocked by preToolUse hook",
+          };
+        }
       }
 
       const decision = this.permissions.check(handler.schema, args);
@@ -339,12 +373,19 @@ export class Engine {
       payload: { summary: "session_started" },
     });
 
+    await this.ensureHookRunner();
+
     const permCheck = this.buildPermissionCheck();
     let turnCount = 0;
 
+    // Create a per-turn AbortController for cancellation
+    const abortController = new AbortController();
+    this.currentAbort = abortController;
+    const signal = abortController.signal;
+
     // Choose agent mode
     let runner: {
-      run: (...args: [string, string, string]) => AsyncGenerator<PlanRunnerEvent>;
+      run: (...args: [string, string, string, AbortSignal?]) => AsyncGenerator<PlanRunnerEvent>;
       getMessages: () => Message[];
     };
 
@@ -389,15 +430,15 @@ export class Engine {
         permCheck,
       );
       runner = {
-        run: (msg: string, sid: string, ws: string) =>
-          loop.run(msg, sid, ws) as AsyncGenerator<PlanRunnerEvent>,
+        run: (msg: string, sid: string, ws: string, sig?: AbortSignal) =>
+          loop.run(msg, sid, ws, sig) as AsyncGenerator<PlanRunnerEvent>,
         getMessages: () => loop.getMessages(),
       };
     }
 
     let runError: string | null = null;
     try {
-      for await (const event of runner.run(userMessage, sessionId, this.config.workspaceRoot)) {
+      for await (const event of runner.run(userMessage, sessionId, this.config.workspaceRoot, signal)) {
         if (event.type === "error" && !event.recoverable) {
           runError = event.error;
         }
@@ -451,6 +492,11 @@ export class Engine {
             durationMs: event.output.durationMs,
             exitCode: event.output.success ? 0 : 1,
           });
+
+          // Fire user-defined postToolUse hooks (e.g. auto-format/lint after writes).
+          if (this.hookRunner) {
+            await this.hookRunner.runPostToolUse(event.output.toolName, event.output);
+          }
 
           // Save checkpoint after successful file writes
           if (
@@ -543,7 +589,21 @@ export class Engine {
         const summary = `User asked: "${userMessage.slice(0, 200)}". Turns: ${turnCount}. ${runError ? `Error: ${runError}` : "Completed successfully."}`;
         this.memoryManager.onRunComplete(this.config.userId, summary).catch(() => {});
       }
+
+      // Clear the abort controller reference when the run is done
+      if (this.currentAbort === abortController) {
+        this.currentAbort = null;
+      }
     }
+  }
+
+  /**
+   * Abort the currently running chat() generator, if any.
+   * The in-flight AgentLoop will stop cleanly at the next safe checkpoint
+   * and yield a turn_complete with stopReason "aborted".
+   */
+  abort(): void {
+    this.currentAbort?.abort();
   }
 
   getPermissions(): PermissionBroker {

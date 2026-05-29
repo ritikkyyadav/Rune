@@ -1,11 +1,9 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/alan-core",
     "crates/alan-sandbox",
     "crates/alan-index",
     "crates/alan-tools",
-    "crates/alan-cli",
 ]
 exclude = [
     "apps/desktop/src-tauri",
@@ -44,8 +42,6 @@ hex = "0.4"
 tokio-util = { version = "0.7", features = ["codec"] }
 futures = "0.3"
 tokio-stream = "0.1"
-# Tree-sitter
-tree-sitter = "0.24"
 # Diff
 similar = { version = "2", features = ["inline"] }
 # Testing

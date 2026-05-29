@@ -14,7 +14,6 @@ name = "alan_tools"
 path = "src/lib.rs"
 
 [dependencies]
-alan-core = { path = "../alan-core" }
 alan-index = { path = "../alan-index" }
 alan-sandbox = { path = "../alan-sandbox" }
 serde = { workspace = true }

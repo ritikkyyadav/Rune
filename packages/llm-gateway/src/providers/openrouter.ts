@@ -1,11 +1,10 @@
-import OpenAI from "openai";
 import type {
-  ContentBlock,
   InferenceRequest,
   InferenceResponse,
   LlmProvider,
   Message,
   StreamEvent,
+  StreamOpts,
   ToolDefinition,
 } from "../types";
 import { OpenAIProvider } from "./openai";
@@ -28,8 +27,8 @@ export class OpenRouterProvider implements LlmProvider {
     return this.inner.infer(request);
   }
 
-  inferStream(request: InferenceRequest): AsyncGenerator<StreamEvent> {
-    return this.inner.inferStream(request);
+  inferStream(request: InferenceRequest, opts?: StreamOpts): AsyncGenerator<StreamEvent> {
+    return this.inner.inferStream(request, opts);
   }
 
   countTokens(messages: Message[], tools?: ToolDefinition[]): Promise<number> {

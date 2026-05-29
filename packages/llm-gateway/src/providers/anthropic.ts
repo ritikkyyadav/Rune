@@ -7,6 +7,7 @@ import type {
   Message,
   StreamEvent,
   StopReason,
+  StreamOpts,
   ToolDefinition,
   TokenUsage,
 } from "../types";
@@ -26,9 +27,9 @@ export class AnthropicProvider implements LlmProvider {
     const response = await this.client.messages.create({
       model: request.model,
       max_tokens: request.maxTokens,
-      system: request.system ?? undefined,
-      messages: this.toAnthropicMessages(request.messages),
-      tools: request.tools ? this.toAnthropicTools(request.tools) : undefined,
+      system: request.system ? this.toSystemWithCache(request.system) : undefined,
+      messages: this.toAnthropicMessagesWithCache(request.messages),
+      tools: request.tools ? this.toAnthropicToolsWithCache(request.tools) : undefined,
       temperature: request.temperature,
       top_p: request.topP,
       stop_sequences: request.stopSequences,
@@ -49,17 +50,20 @@ export class AnthropicProvider implements LlmProvider {
     };
   }
 
-  async *inferStream(request: InferenceRequest): AsyncGenerator<StreamEvent> {
-    const stream = this.client.messages.stream({
-      model: request.model,
-      max_tokens: request.maxTokens,
-      system: request.system ?? undefined,
-      messages: this.toAnthropicMessages(request.messages),
-      tools: request.tools ? this.toAnthropicTools(request.tools) : undefined,
-      temperature: request.temperature,
-      top_p: request.topP,
-      stop_sequences: request.stopSequences,
-    });
+  async *inferStream(request: InferenceRequest, opts?: StreamOpts): AsyncGenerator<StreamEvent> {
+    const stream = this.client.messages.stream(
+      {
+        model: request.model,
+        max_tokens: request.maxTokens,
+        system: request.system ? this.toSystemWithCache(request.system) : undefined,
+        messages: this.toAnthropicMessagesWithCache(request.messages),
+        tools: request.tools ? this.toAnthropicToolsWithCache(request.tools) : undefined,
+        temperature: request.temperature,
+        top_p: request.topP,
+        stop_sequences: request.stopSequences,
+      },
+      { signal: opts?.signal },
+    );
 
     let contentIndex = 0;
     let currentToolCallId: string | null = null;
@@ -163,6 +167,43 @@ export class AnthropicProvider implements LlmProvider {
 
   // ─── Translation Helpers ───
 
+  /** Wraps the system prompt in a text block array with ephemeral cache_control. */
+  private toSystemWithCache(
+    system: string,
+  ): Anthropic.TextBlockParam[] {
+    return [
+      {
+        type: "text",
+        text: system,
+        cache_control: { type: "ephemeral" },
+      },
+    ];
+  }
+
+  /**
+   * Converts messages and adds cache_control to the last content block of the
+   * last message so the full conversation prefix is eligible for caching.
+   */
+  private toAnthropicMessagesWithCache(messages: Message[]): Anthropic.MessageParam[] {
+    const filtered = messages.filter((m) => m.role !== "system");
+    return filtered.map((msg, msgIdx) => {
+      const isLast = msgIdx === filtered.length - 1;
+      const blocks = msg.content.map((block, blkIdx) => {
+        const isLastBlock = blkIdx === msg.content.length - 1;
+        const base = this.toAnthropicBlock(block);
+        if (isLast && isLastBlock) {
+          return { ...base, cache_control: { type: "ephemeral" as const } };
+        }
+        return base;
+      });
+      return {
+        role: msg.role === "tool" ? "user" : (msg.role as "user" | "assistant"),
+        content: blocks,
+      };
+    });
+  }
+
+  /** For backwards-compat internal use (e.g. countTokens — no cache_control needed). */
   private toAnthropicMessages(messages: Message[]): Anthropic.MessageParam[] {
     return messages
       .filter((m) => m.role !== "system")
@@ -202,6 +243,25 @@ export class AnthropicProvider implements LlmProvider {
     }
   }
 
+  /**
+   * Converts tools and adds cache_control to the LAST tool so the stable
+   * tools + system prefix is cached as a single prefix.
+   */
+  private toAnthropicToolsWithCache(tools: ToolDefinition[]): Anthropic.Tool[] {
+    return tools.map((t, idx) => {
+      const base: Anthropic.Tool = {
+        name: t.name,
+        description: t.description,
+        input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
+      };
+      if (idx === tools.length - 1) {
+        return { ...base, cache_control: { type: "ephemeral" } };
+      }
+      return base;
+    });
+  }
+
+  /** For backwards-compat internal use (e.g. countTokens — no cache_control needed). */
   private toAnthropicTools(tools: ToolDefinition[]): Anthropic.Tool[] {
     return tools.map((t) => ({
       name: t.name,

@@ -7,6 +7,7 @@ import type {
   Message,
   StreamEvent,
   StopReason,
+  StreamOpts,
   ToolDefinition,
   TokenUsage,
 } from "../types";
@@ -51,8 +52,10 @@ export class OpenAIProvider implements LlmProvider {
     };
   }
 
-  async *inferStream(request: InferenceRequest): AsyncGenerator<StreamEvent> {
+  async *inferStream(request: InferenceRequest, opts?: StreamOpts): AsyncGenerator<StreamEvent> {
     const controller = new AbortController();
+    // If caller provides a signal, abort our controller when it fires
+    opts?.signal?.addEventListener("abort", () => controller.abort());
     const streamTimeout = setTimeout(() => controller.abort(), 90_000);
 
     try {

@@ -15,6 +15,7 @@ export type {
   Role,
   StopReason,
   StreamEvent,
+  StreamOpts,
   TokenUsage,
   ToolDefinition,
 } from "./types";

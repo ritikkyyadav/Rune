@@ -5,6 +5,11 @@ import { Database } from "bun:sqlite";
 import { SessionManager } from "@alan/shared";
 
 import type { EvalTask } from "./harness";
+import { COMPREHENSION_TASKS } from "./tasks-comprehension";
+import { FIX_FAILING_TEST_TASKS } from "./tasks-fix-failing-test";
+import { MULTI_FILE_REFACTOR_TASKS } from "./tasks-multi-file-refactor";
+import { NEW_FEATURE_TASKS } from "./tasks-new-feature";
+import { TOOL_DISCIPLINE_TASKS } from "./tasks-tool-discipline";
 
 // Each task scripts the LLM behavior deterministically and verifies a
 // concrete invariant after execution. No real model calls.
@@ -17,6 +22,7 @@ function sha256OfFile(path: string): Promise<string> {
 
 const readAndGrep: EvalTask = {
   name: "read_and_grep",
+  category: "core",
   description: "Agent reads a file, then greps for a pattern, then summarizes the finding.",
   setup: async ({ workspace }) => {
     await writeFile(
@@ -45,6 +51,7 @@ const readAndGrep: EvalTask = {
 
 const editWithHash: EvalTask = {
   name: "edit_with_hash",
+  category: "core",
   description: "Agent reads a file, captures its hash, edits it, verifies new content.",
   setup: async ({ workspace }) => {
     await writeFile(join(workspace, "greeter.ts"), "export const greeting = 'hello';\n");
@@ -90,6 +97,7 @@ const editWithHash: EvalTask = {
 
 const multiTurnMemory: EvalTask = {
   name: "multi_turn_memory",
+  category: "core",
   description:
     "Two-turn conversation: first turn discovers a file path; second turn references it without re-discovering.",
   setup: async ({ workspace }) => {
@@ -110,7 +118,17 @@ const multiTurnMemory: EvalTask = {
     { text: "Confirmed: auth.ts contains the auth comment." },
   ],
   prompts: ["what files are in this repo?", "now read the auth file you just found"],
-  verify: async ({ engine, mock }) => {
+  verify: async ({ engine, mock, real, finalText }) => {
+    if (real) {
+      // Live model: the second turn must resolve "the auth file" to auth.ts,
+      // which only works if prior-turn context was replayed. Judge by content.
+      if (!/auth\.ts/i.test(finalText)) {
+        return { pass: false, reason: `multi-turn answer did not reference auth.ts: ${finalText.slice(0, 200)}` };
+      }
+      const audit = engine.verifyAuditChain();
+      if (!audit.ok) return { pass: false, reason: "audit chain broken" };
+      return { pass: true };
+    }
     // The second engine.chat() call must have included the FIRST turn's
     // messages as priors. Find the first inference request from turn 2
     // (which happens after the first two inference calls of turn 1) and
@@ -119,11 +137,11 @@ const multiTurnMemory: EvalTask = {
     // Turn 1 → 2 inference calls (initial + post-tool)
     // Turn 2 → 2 inference calls (initial + post-tool)
     // The 3rd inference call (index 2) is turn-2's first model call.
-    const turn2Request = mock.requestHistory[2];
+    const turn2Request = mock?.requestHistory[2];
     if (!turn2Request) {
       return {
         pass: false,
-        reason: `expected ≥3 inference calls, got ${mock.requestHistory.length}`,
+        reason: `expected ≥3 inference calls, got ${mock?.requestHistory.length ?? 0}`,
       };
     }
     // Multi-turn means this request includes BOTH user prompts, plus
@@ -151,6 +169,7 @@ const multiTurnMemory: EvalTask = {
 
 const permissionDenied: EvalTask = {
   name: "permission_denied",
+  category: "core",
   description: "Agent tries to write a file; user denies; verify file was NOT created.",
   script: [
     {
@@ -184,6 +203,7 @@ const permissionDenied: EvalTask = {
 
 const auditChainIntegrity: EvalTask = {
   name: "audit_chain_integrity",
+  category: "core",
   description: "After several tool calls, the audit chain must verify clean.",
   setup: async ({ workspace }) => {
     await writeFile(join(workspace, "a.txt"), "alpha\n");
@@ -215,6 +235,7 @@ const auditChainIntegrity: EvalTask = {
 
 const infiniteLoopHalts: EvalTask = {
   name: "infinite_loop_halts",
+  category: "core",
   description: "Agent issues the same tool call 3 times in a row; loop detector must stop it.",
   setup: async ({ workspace }) => {
     await writeFile(join(workspace, "stuck.txt"), "x\n");
@@ -240,14 +261,22 @@ const infiniteLoopHalts: EvalTask = {
     },
   ],
   prompts: ["read stuck.txt"],
-  verify: async ({ mock }) => {
+  verify: async ({ mock, real, engine }) => {
+    if (real) {
+      // Loop detection is a deterministic engine guard; a live model won't
+      // reliably reproduce a 3x-identical-call loop. In real mode we only
+      // assert the run completed with an intact audit chain.
+      const audit = engine.verifyAuditChain();
+      if (!audit.ok) return { pass: false, reason: "audit chain broken" };
+      return { pass: true };
+    }
     // The loop detector must stop the agent before it consumes the 4th
     // scripted response. We expect exactly 3 inference calls (the 3rd
     // produces the trigger that the detector catches).
-    if (mock.callsConsumed >= 4) {
+    if ((mock?.callsConsumed ?? 0) >= 4) {
       return {
         pass: false,
-        reason: `loop detector failed — consumed ${mock.callsConsumed} responses (expected ≤3)`,
+        reason: `loop detector failed — consumed ${mock?.callsConsumed} responses (expected ≤3)`,
       };
     }
     return { pass: true };
@@ -258,6 +287,7 @@ const infiniteLoopHalts: EvalTask = {
 
 const tamperDetection: EvalTask = {
   name: "tamper_detection",
+  category: "core",
   description:
     "After tool calls land, mutating an audit row directly must cause verifyAuditChain to flag the first bad entry.",
   setup: async ({ workspace }) => {
@@ -310,7 +340,7 @@ const tamperDetection: EvalTask = {
   },
 };
 
-export const ALL_TASKS: EvalTask[] = [
+const CORE_TASKS: EvalTask[] = [
   readAndGrep,
   editWithHash,
   multiTurnMemory,
@@ -318,4 +348,13 @@ export const ALL_TASKS: EvalTask[] = [
   auditChainIntegrity,
   infiniteLoopHalts,
   tamperDetection,
+];
+
+export const ALL_TASKS: EvalTask[] = [
+  ...CORE_TASKS,
+  ...COMPREHENSION_TASKS,
+  ...FIX_FAILING_TEST_TASKS,
+  ...MULTI_FILE_REFACTOR_TASKS,
+  ...NEW_FEATURE_TASKS,
+  ...TOOL_DISCIPLINE_TASKS,
 ];

@@ -7,6 +7,7 @@ import * as readline from "readline";
 import { Spinner } from "./spinner";
 import { renderWelcome } from "./welcome";
 import { renderEditResult, renderWriteResult } from "./diff-render";
+import { exportSession } from "../session-export";
 
 // ─── CLI Argument Parsing ───
 
@@ -22,12 +23,41 @@ const { values, positionals } = parseArgs({
     "executor-model": { type: "string" },
     resume: { type: "string", short: "r" },
     list: { type: "boolean", short: "l", default: false },
+    format: { type: "string", default: "md" },
+    sign: { type: "boolean", default: false },
+    out: { type: "string" },
+    help: { type: "boolean", short: "h", default: false },
   },
   allowPositionals: true,
   strict: false,
 });
 
 const command = positionals[0] ?? "chat";
+
+// ─── Top-level --help ───
+
+if (values.help) {
+  process.stdout.write(
+    `\n  alan — AI coding agent\n\n` +
+      `  Usage:\n` +
+      `    alan [chat]                  Start an interactive chat session\n` +
+      `    alan list                    List all stored sessions\n` +
+      `    alan export <sessionId>      Export a session transcript\n\n` +
+      `  Export options:\n` +
+      `    --format md|json             Output format (default: md)\n` +
+      `    --sign                       Sign the export with Ed25519\n` +
+      `    --out <path>                 Write output to file instead of stdout\n\n` +
+      `  Global options:\n` +
+      `    -m, --model <model>          LLM model to use\n` +
+      `    -p, --provider <provider>    LLM provider (anthropic|openai|openrouter|google)\n` +
+      `    -w, --workspace <path>       Workspace root directory\n` +
+      `    -r, --resume <sessionId>     Resume an existing session\n` +
+      `    --yolo                       Skip permission prompts\n` +
+      `    --planner                    Enable planner+executor mode\n` +
+      `    -h, --help                   Show this help\n\n`,
+  );
+  process.exit(0);
+}
 
 type CliProvider = "anthropic" | "openai" | "openrouter" | "google";
 
@@ -178,6 +208,77 @@ async function main() {
     googleApiKey: config.llm.google?.apiKey,
   });
 
+  // ─── DB-only commands — run before provider validation ───
+
+  if (command === "list" || values.list) {
+    const sessions = engine.listSessions();
+    if (sessions.length === 0) {
+      console.log(dim("  No sessions found."));
+    } else {
+      console.log(`\n  ${dim("§ SESSIONS")}\n`);
+      for (const s of sessions) {
+        console.log(
+          `  ${cyanotype(s.id.slice(0, 8))}  ${s.workspaceRoot}  ${dim(`${s.eventCount} events`)}  ${dim(s.model)}`,
+        );
+      }
+      console.log("");
+    }
+    engine.close();
+    return;
+  }
+
+  if (command === "export") {
+    const sessionId = positionals[1];
+    if (!sessionId) {
+      process.stderr.write(
+        `  ${vermillion("✕")} Usage: alan export <sessionId> [--format md|json] [--sign] [--out <path>]\n`,
+      );
+      engine.close();
+      process.exit(1);
+    }
+
+    const format = (values.format as string | undefined) ?? "md";
+    if (format !== "md" && format !== "json") {
+      process.stderr.write(
+        `  ${vermillion("✕")} Invalid format: ${format}. Must be "md" or "json".\n`,
+      );
+      engine.close();
+      process.exit(1);
+    }
+
+    const sign = values.sign as boolean;
+    const outPath = values.out as string | undefined;
+
+    try {
+      const result = await exportSession(config.engine.dbPath, sessionId, { format, sign });
+
+      if (outPath) {
+        await Bun.write(outPath, result.content);
+        process.stdout.write(`  ${green("✓")} Export written to ${brass(outPath)}\n`);
+      } else {
+        process.stdout.write(result.content);
+        if (!result.content.endsWith("\n")) process.stdout.write("\n");
+      }
+
+      if (sign && result.signature && result.publicKey) {
+        process.stdout.write(`\n  ${dim("§ SIGNATURE")}\n\n`);
+        process.stdout.write(`  ${dim("signature:")}  ${result.signature}\n`);
+        process.stdout.write(`  ${dim("public-key:")}\n${result.publicKey}\n`);
+        if (result.chainHead) {
+          process.stdout.write(`  ${dim("chain-head:")} ${result.chainHead}\n`);
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`  ${vermillion("✕")} ${msg}\n`);
+      engine.close();
+      process.exit(1);
+    }
+
+    engine.close();
+    return;
+  }
+
   // ─── Startup Provider Validation ───
   const registeredProviders = engine.getRegisteredProviders();
   if (registeredProviders.length === 0) {
@@ -200,23 +301,6 @@ async function main() {
       `  ${brass("⚠")} ${dim(`${provider} has no API key, using`)} ${green(fallback)} ${dim("instead")}\n`,
     );
     engine.switchModel(DEFAULT_MODELS[fallback as CliProvider] ?? DEFAULT_MODELS.google, fallback);
-  }
-
-  if (command === "list" || values.list) {
-    const sessions = engine.listSessions();
-    if (sessions.length === 0) {
-      console.log(dim("  No sessions found."));
-    } else {
-      console.log(`\n  ${dim("§ SESSIONS")}\n`);
-      for (const s of sessions) {
-        console.log(
-          `  ${cyanotype(s.id.slice(0, 8))}  ${s.workspaceRoot}  ${dim(`${s.eventCount} events`)}  ${dim(s.model)}`,
-        );
-      }
-      console.log("");
-    }
-    engine.close();
-    return;
   }
 
   // Create or resume session
@@ -803,6 +887,36 @@ async function main() {
             break;
           }
 
+          case "todo_updated": {
+            spinner.stop();
+            if (isStreaming) {
+              process.stdout.write("\n");
+              isStreaming = false;
+            }
+            const todoW = Math.min((process.stdout.columns ?? 80) - 4, 62);
+            process.stdout.write(`\n  ${dim("┌")}${dim("─".repeat(todoW))}${dim("┐")}\n`);
+            process.stdout.write(
+              `  ${dim("│")} ${dim("§ TODO")}${" ".repeat(Math.max(0, todoW - 9))}${dim("│")}\n`,
+            );
+            process.stdout.write(`  ${dim("├")}${dim("─".repeat(todoW))}${dim("┤")}\n`);
+            for (const item of event.items) {
+              const marker =
+                item.status === "completed"
+                  ? green("✓")
+                  : item.status === "in_progress"
+                    ? brass("▸")
+                    : dim("·");
+              const itemText = item.content.slice(0, todoW - 6);
+              const padLen = Math.max(0, todoW - stripAnsi(itemText).length - 5);
+              process.stdout.write(
+                `  ${dim("│")} ${marker} ${itemText}${" ".repeat(padLen)}${dim("│")}\n`,
+              );
+            }
+            process.stdout.write(`  ${dim("└")}${dim("─".repeat(todoW))}${dim("┘")}\n\n`);
+            spinner.start("thinking");
+            break;
+          }
+
           case "plan_created": {
             spinner.stop();
             if (isStreaming) {
@@ -941,6 +1055,35 @@ async function main() {
     console.log(dim("\n  Goodbye.\n"));
     engine.close();
     process.exit(0);
+  });
+
+  // ─── SIGINT: abort in-flight turn; exit when idle ───
+  let sigintIdleCount = 0;
+  process.on("SIGINT", () => {
+    if (busy) {
+      // Turn is in progress — cancel it without exiting
+      engine.abort();
+      spinner.stop();
+      process.stdout.write(`\n  ${vermillion("✕")} ${dim("aborted")}\n`);
+      // busy will be reset to false once the chat loop drains
+      sigintIdleCount = 0;
+      return;
+    }
+    // Idle — first Ctrl-C clears the line, second exits
+    sigintIdleCount++;
+    if (sigintIdleCount === 1) {
+      process.stdout.write(`\r${" ".repeat(80)}\r`); // clear input line
+      process.stdout.write(`  ${dim("(Press Ctrl-C again to exit)")}\n`);
+      showPrompt();
+      // Reset after 2 s so a single stray Ctrl-C doesn't lock in "exit mode"
+      setTimeout(() => {
+        sigintIdleCount = 0;
+      }, 2000);
+    } else {
+      console.log(dim("\n  Goodbye.\n"));
+      engine.close();
+      process.exit(0);
+    }
   });
 }
 
