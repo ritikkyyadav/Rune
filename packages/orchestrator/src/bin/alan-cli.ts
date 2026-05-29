@@ -8,6 +8,7 @@ import { Spinner } from "./spinner";
 import { renderWelcome } from "./welcome";
 import { renderEditResult, renderWriteResult } from "./diff-render";
 import { exportSession } from "../session-export";
+import { loadCommands, findCommand } from "../commands";
 
 // ─── CLI Argument Parsing ───
 
@@ -305,6 +306,7 @@ async function main() {
 
   // Create or resume session
   const sessionId = (values.resume as string) ?? engine.createSession();
+  const customCommands = await loadCommands(workspaceRoot);
 
   // ─── Welcome Screen ───
   const recentSessions = engine.listSessions().filter((s) => s.id !== sessionId);
@@ -443,6 +445,8 @@ async function main() {
     ["/providers", "List providers"],
     ["/cost", "Session cost"],
     ["/compact", "Toggle compact mode"],
+    ["/plan", "Toggle plan mode"],
+    ["/rewind", "Roll back the conversation"],
     ["/help", "Show all commands"],
     ["/quit", "Exit Alan"],
   ];
@@ -512,6 +516,12 @@ async function main() {
       for (const [cmd, desc] of SLASH_CMDS) {
         process.stdout.write(`    ${brass(cmd.padEnd(14))}${dim(desc)}\n`);
       }
+      if (customCommands.length) {
+        process.stdout.write(`\n  ${dim("§ Custom")}\n\n`);
+        for (const c of customCommands) {
+          process.stdout.write(`    ${brass(("/" + c.name).padEnd(14))}${dim(c.description ?? "")}\n`);
+        }
+      }
       process.stdout.write("\n");
       showPrompt();
       return;
@@ -538,6 +548,8 @@ async function main() {
         ["/providers", "List providers"],
         ["/cost", "Session cost"],
         ["/compact", "Toggle compact mode"],
+        ["/plan", "Toggle plan mode"],
+        ["/rewind", "Roll back the conversation"],
         ["/help", "This reference"],
         ["/quit", "Exit"],
       ];
@@ -809,6 +821,64 @@ async function main() {
       }
       showPrompt();
       return;
+    }
+
+    if (input === "/plan") {
+      const on = !engine.isPlannerMode();
+      engine.setPlannerMode(on);
+      process.stdout.write(
+        `  ${green("✓")} plan mode ${on ? "on" : "off"} ${dim(
+          on ? "— Alan drafts a step plan before executing" : "— flat agent loop",
+        )}\n\n`,
+      );
+      showPrompt();
+      return;
+    }
+
+    if (input === "/rewind" || input.startsWith("/rewind ")) {
+      const turns = engine.listUserTurns(sessionId);
+      const arg = input.slice("/rewind".length).trim();
+      if (turns.length === 0) {
+        process.stdout.write(`  ${dim("Nothing to rewind — no messages yet.")}\n\n`);
+        showPrompt();
+        return;
+      }
+      if (!arg) {
+        process.stdout.write(
+          `  ${dim("§ Rewind — roll back to a turn (removes it and everything after):")}\n\n`,
+        );
+        turns.forEach((t, i) => {
+          const preview = t.text.replace(/\s+/g, " ").slice(0, 60);
+          process.stdout.write(`    ${brass(String(i + 1).padStart(2))}  ${dim(preview)}\n`);
+        });
+        process.stdout.write(`\n  ${dim("Run")} ${brass("/rewind <n>")}\n\n`);
+        showPrompt();
+        return;
+      }
+      const n = parseInt(arg, 10);
+      if (isNaN(n) || n < 1 || n > turns.length) {
+        process.stdout.write(
+          `  ${vermillion("✕")} invalid turn — use ${brass("/rewind")} to list.\n\n`,
+        );
+        showPrompt();
+        return;
+      }
+      const removed = engine.rewindTo(sessionId, turns[n - 1].seq - 1);
+      process.stdout.write(
+        `  ${green("✓")} rewound to turn ${n} ${dim(`(removed ${removed} event${removed === 1 ? "" : "s"})`)}\n`,
+      );
+      process.stdout.write(`  ${dim("Note: rewinds the conversation, not files on disk.")}\n\n`);
+      showPrompt();
+      return;
+    }
+
+    // Custom slash commands from .alan/commands/*.md — render, then run as a prompt.
+    if (input.startsWith("/") && !input.startsWith("/ ")) {
+      const parts = input.slice(1).split(" ");
+      const custom = findCommand(customCommands, parts[0]);
+      if (custom) {
+        input = custom.render(parts.slice(1).join(" "));
+      }
     }
 
     // Catch unknown slash commands

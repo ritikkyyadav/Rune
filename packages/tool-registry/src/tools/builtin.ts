@@ -7,6 +7,7 @@ import { createAstQueryHandler } from "./ast-query";
 import { createTodoWriteHandler } from "./todo-write";
 import { createGlobHandler } from "./glob";
 import { createMultiEditHandler } from "./multi-edit";
+import { createN8nTriggerHandler } from "./n8n";
 
 const READ_FILE_SCHEMA: ToolSchema = {
   name: "read_file",
@@ -180,4 +181,5 @@ export function registerBuiltinTools(registry: ToolRegistry, binaryPath: string)
   registry.register(createTodoWriteHandler());
   registry.register(createGlobHandler());
   registry.register(createMultiEditHandler());
+  registry.register(createN8nTriggerHandler());
 }

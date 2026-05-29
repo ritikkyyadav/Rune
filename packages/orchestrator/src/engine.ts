@@ -38,6 +38,7 @@ import { MemoryManager } from "./memory/manager";
 import { EpisodicMemory } from "./memory/episodic";
 import { WorkingMemory } from "./memory/working";
 import { HookRunner } from "./hooks";
+import { createSubagentTool } from "./subagent";
 
 // ─── Permission Prompt Handler ───
 
@@ -178,6 +179,20 @@ export class Engine {
     // Initialize Tool Registry with built-in tools
     this.registry = new ToolRegistry();
     registerBuiltinTools(this.registry, this.config.toolsBinaryPath);
+
+    // Register the `task` sub-agent tool. It runs nested investigations against
+    // a SEPARATE read-only registry (built-ins only, without `task` itself) so a
+    // sub-agent can never write/execute and can never recurse into more agents.
+    const subRegistry = new ToolRegistry();
+    registerBuiltinTools(subRegistry, this.config.toolsBinaryPath);
+    this.registry.register(
+      createSubagentTool({
+        gateway: this.gateway,
+        registry: subRegistry,
+        model: this.config.model,
+        provider: this.config.provider,
+      }),
+    );
 
     // Initialize Session Manager
     this.sessions = new SessionManager(this.config.dbPath);
@@ -354,6 +369,31 @@ export class Engine {
 
   listSessions() {
     return this.sessions.listSessions();
+  }
+
+  /** User-message turns for a session, chronological — backs the `/rewind` UI. */
+  listUserTurns(sessionId: string): { seq: number; text: string }[] {
+    return this.sessions
+      .getEvents(sessionId, 1)
+      .filter((e) => e.event.type === "user_msg")
+      .map((e) => ({
+        seq: e.seq,
+        text: typeof e.event.payload.content === "string" ? e.event.payload.content : "",
+      }));
+  }
+
+  /** Roll a session's history back, removing everything after `afterSeq`. */
+  rewindTo(sessionId: string, afterSeq: number): number {
+    return this.sessions.deleteEventsAfter(sessionId, afterSeq);
+  }
+
+  /** Toggle planner-executor mode for subsequent turns. */
+  setPlannerMode(enabled: boolean): void {
+    this.config.plannerMode = enabled;
+  }
+
+  isPlannerMode(): boolean {
+    return this.config.plannerMode;
   }
 
   /**
