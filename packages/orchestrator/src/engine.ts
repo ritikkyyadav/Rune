@@ -4,6 +4,7 @@ import {
   OpenAIProvider,
   OpenRouterProvider,
   GoogleProvider,
+  OllamaProvider,
   CostTracker,
 } from "@alan/llm-gateway";
 import type { Message, ProviderName } from "@alan/llm-gateway";
@@ -73,6 +74,8 @@ export interface EngineConfig {
   openaiApiKey?: string;
   openrouterApiKey?: string;
   googleApiKey?: string;
+  /** Base URL for a local Ollama server (default http://localhost:11434). */
+  ollamaBaseUrl?: string;
   contextBudget?: Partial<ContextBudget>;
   enableSecurity?: boolean;
   enableRateLimiting?: boolean;
@@ -161,6 +164,15 @@ export class Engine {
     }
     if (this.config.googleApiKey || process.env.GOOGLE_API_KEY) {
       this.gateway.registerProvider(new GoogleProvider(this.config.googleApiKey));
+    }
+    // Local-first: register Ollama only when explicitly selected, so cloud
+    // sessions never accidentally fall back to a local server.
+    if (
+      this.config.provider === "ollama" ||
+      this.config.ollamaBaseUrl ||
+      process.env.OLLAMA_HOST
+    ) {
+      this.gateway.registerProvider(new OllamaProvider(this.config.ollamaBaseUrl));
     }
 
     // Initialize Tool Registry with built-in tools
