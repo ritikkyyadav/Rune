@@ -9,11 +9,13 @@ import type { ModelSweepResult } from "./report";
 //
 // In --real mode the suite drives a LIVE model through the real engine/gateway.
 // Provider/model come from env (ALAN_EVAL_PROVIDER / ALAN_EVAL_MODEL), with the
-// older ALAN_PROVIDER / ALAN_MODEL names accepted as fallbacks. The default is a
-// current balanced Claude model; override ALAN_EVAL_MODEL for a cheaper smoke run.
+// older ALAN_PROVIDER / ALAN_MODEL names accepted as fallbacks. The dev default
+// is a FREE model (Gemini 2.5 Flash). For a later production-validation pass, set
+// ALAN_EVAL_PROVIDER / ALAN_EVAL_MODEL to a paid top-tier model
+// (e.g. anthropic / claude-sonnet-4-20250514).
 
-const DEFAULT_PROVIDER = "anthropic";
-const DEFAULT_MODEL = "claude-sonnet-4-20250514";
+const DEFAULT_PROVIDER = "google";
+const DEFAULT_MODEL = "gemini-2.5-flash";
 
 /** Which env var holds the API key for each provider. */
 const PROVIDER_KEY_ENV: Record<string, string> = {

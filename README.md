@@ -73,19 +73,26 @@ Or use the installer script:
 
 ## Quickstart
 
-Set a provider API key and start the CLI:
+Alan defaults to a **free model (Gemini 2.5 Flash)**. Grab a free
+[Google AI Studio key](https://aistudio.google.com/apikey), then:
 
 ```bash
-export ANTHROPIC_API_KEY=sk-...   # or OPENAI_API_KEY / OPENROUTER_API_KEY / GOOGLE_API_KEY
-./bin/alan                        # or: bun packages/orchestrator/src/bin/alan-cli.ts
+export GOOGLE_API_KEY=...     # free tier — or put it in .env (Bun auto-loads it)
+./bin/alan                    # or: bun packages/orchestrator/src/bin/alan-cli.ts
 ```
 
-Run **fully local** with Ollama (no code leaves your machine):
+Other **free** options:
 
 ```bash
-export OLLAMA_HOST=http://localhost:11434   # an Ollama server you're running
+export OPENROUTER_API_KEY=...                                   # free models on OpenRouter
+bun packages/orchestrator/src/bin/alan-cli.ts -p openrouter -m deepseek/deepseek-v4-flash:free
+
+export OLLAMA_HOST=http://localhost:11434                       # fully local / offline
 bun packages/orchestrator/src/bin/alan-cli.ts -p ollama -m llama3
 ```
+
+Paid top-tier (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`) is **optional** — only needed
+for a later production-grade validation pass. See `.env.example`.
 
 Common flags: `-m/--model`, `-p/--provider`, `-w/--workspace <dir>`, `--yolo`, `--planner`,
 `-r/--resume <sessionId>`, `-l/--list`.

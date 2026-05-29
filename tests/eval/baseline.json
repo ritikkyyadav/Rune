@@ -1,12 +1,12 @@
 {
-  "timestamp": "2026-05-29T17:57:56.760Z",
+  "timestamp": "2026-05-29T18:14:11.730Z",
   "mode": "mock",
   "passRate": 1,
   "passed": 25,
   "total": 25,
   "totalCost": 0,
   "avgCostPerTask": 0,
-  "avgDurationMs": 611.96,
+  "avgDurationMs": 615.56,
   "avgTurns": 1,
   "categories": [
     {

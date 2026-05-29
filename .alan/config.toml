@@ -1,0 +1,22 @@
+# Alan project config — free-tier dev/test defaults.
+# Precedence: built-in defaults < ~/.alan/config.toml < this file < ALAN_* env vars.
+# Keys are NOT stored here — set GOOGLE_API_KEY / OPENROUTER_API_KEY in your env or .env.
+
+[llm]
+# Free by default. Switch to "openrouter" (free models) or "ollama" (local) anytime,
+# or "anthropic" / "openai" for a later paid production-validation pass.
+defaultProvider = "google"
+
+[llm.google]
+model = "gemini-2.5-flash"
+maxTokens = 8192
+
+# Planner-executor split (used with --planner): a stronger free model plans,
+# a fast free model executes. Both stay on the free tier.
+[llm.planner]
+provider = "google"
+model = "gemini-2.5-pro"
+
+[llm.executor]
+provider = "google"
+model = "gemini-2.5-flash"
