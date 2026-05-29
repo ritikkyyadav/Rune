@@ -5,7 +5,24 @@
 # ──────────────────────────────────────────────────────────
 set -euo pipefail
 
-ALAN_ROOT="/Users/ritikyadav890/Projects/Alan"
+# ─── Resolve ALAN_ROOT from this script's real location ───
+# Follow symlinks so `bin/alan` works when invoked via a symlink anywhere.
+_resolve_script_dir() {
+  local src="${BASH_SOURCE[0]}"
+  # Follow symlinks until we reach the real file
+  while [ -L "$src" ]; do
+    local dir
+    dir="$(cd -P "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    # If the symlink target is relative, resolve it against the link's directory
+    [[ "$src" != /* ]] && src="$dir/$src"
+  done
+  cd -P "$(dirname "$src")" && pwd
+}
+
+SCRIPT_DIR="$(_resolve_script_dir)"
+ALAN_ROOT="$(cd -P "$SCRIPT_DIR/.." && pwd)"
+
 ALAN_DATA="$HOME/.alan"
 ALAN_ENV="$ALAN_DATA/.env"
 

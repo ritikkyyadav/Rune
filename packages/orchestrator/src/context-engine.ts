@@ -319,6 +319,10 @@ export class ContextEngine {
   /**
    * Check if older turns should be summarized and compress them.
    * Call this after each turn to keep the context manageable.
+   *
+   * @deprecated Callers should prefer compactWorkingSet() which actually
+   * removes the summarized messages from the working set instead of only
+   * appending a summary to session memory (token bloat).
    */
   async maybeSummarize(messages: Message[]): Promise<boolean> {
     // Only summarize if we have enough messages
@@ -341,6 +345,88 @@ export class ContextEngine {
     });
 
     return true;
+  }
+
+  /**
+   * Compact the working set by summarizing old messages and returning a
+   * shorter list that still contains the most-recent verbatim turns.
+   *
+   * CONTRACT C1 — stable public API for other agents.
+   *
+   * Algorithm:
+   * 1. If messages.length < summarizeTurnsThreshold → return unchanged.
+   * 2. Determine the "keep recent" window: the last `recentK` messages
+   *    that form a COMPLETE set (no orphaned tool_use/tool_result pairs).
+   * 3. Summarize everything before that window using generateSummary().
+   * 4. Return [ summaryMessage, ...recentMessages ] so the caller can
+   *    replace its message array in-place — the working set SHRINKS.
+   *
+   * Invariants guaranteed:
+   * - Every assistant message with a tool_use block has its matching
+   *   tool_result present (same toolCallId).
+   * - No orphan tool_result messages appear without their tool_use.
+   * - The summary message is role "user" (safe across all providers).
+   *
+   * @param messages  The current full message history (chronological order).
+   * @param recentK   How many of the most-recent messages to keep verbatim.
+   *                  Defaults to 6. The cut point is adjusted upward when
+   *                  needed to avoid splitting a tool_use/tool_result pair.
+   * @returns { messages, compacted }
+   *   - messages: the new (shorter) array if compacted, or the original array.
+   *   - compacted: true when summarization actually happened.
+   */
+  async compactWorkingSet(
+    messages: Message[],
+    recentK: number = 6,
+  ): Promise<{ messages: Message[]; compacted: boolean }> {
+    // ── 1. Below-threshold guard ──
+    if (messages.length < this.summarizeTurnsThreshold) {
+      return { messages, compacted: false };
+    }
+
+    // ── 2. Find a safe cut point ──
+    // We want to keep the last `recentK` messages verbatim, but we must not
+    // split a tool_use/tool_result pair.  We scan forward from the naive cut
+    // point until we land on a boundary that is safe.
+    const safeCutPoint = findSafeCutPoint(messages, recentK);
+
+    // If we can't carve off at least 4 messages to summarise, bail out.
+    if (safeCutPoint < 4) {
+      return { messages, compacted: false };
+    }
+
+    const toSummarize = messages.slice(0, safeCutPoint);
+    const toKeep = messages.slice(safeCutPoint);
+
+    // ── 3. Summarise the old portion ──
+    const summaryText = await this.generateSummary(toSummarize);
+    if (!summaryText) {
+      return { messages, compacted: false };
+    }
+
+    // ── 4. Build the summary message (role "user" — safe across providers) ──
+    const summaryMessage: Message = {
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: `[Earlier conversation summary]\n${summaryText}`,
+        },
+      ],
+    };
+
+    // Also persist to session memory so buildPrompt() can use it.
+    this.memory.summaries.push({
+      fromSeq: 0,
+      toSeq: safeCutPoint,
+      summary: summaryText,
+      tokens: this.tokenCounter.countTokens(summaryText),
+    });
+
+    return {
+      messages: [summaryMessage, ...toKeep],
+      compacted: true,
+    };
   }
 
   private async generateSummary(messages: Message[]): Promise<string | null> {
@@ -468,6 +554,74 @@ function budgetPass(items: ContextItem[], maxTokens: number): ContextItem[] {
 function estimateTokens(text: string): number {
   // Rough estimate: ~4 characters per token for English text
   return Math.ceil(text.length / 4);
+}
+
+/**
+ * Find the index at which we can safely cut the message array so that:
+ *  - At least `recentK` messages are kept verbatim (i.e., cut ≤ length - recentK).
+ *  - The message at index `cut` starts a "clean" boundary — no orphaned
+ *    tool_use or tool_result blocks straddle the cut.
+ *
+ * We walk *backward* from the naive cut point (messages.length - recentK)
+ * until we land on a position where:
+ *   (a) The message just before the cut is NOT an assistant message that
+ *       contains a tool_use whose tool_result falls AFTER the cut.
+ *   (b) The message AT the cut is NOT a tool_result whose tool_use is
+ *       BEFORE the cut.
+ *
+ * Returns the safe cut index (0 … messages.length). Returns 0 if no safe
+ * cut can be found (caller should treat this as "cannot compact").
+ */
+function findSafeCutPoint(messages: Message[], recentK: number): number {
+  const naiveCut = messages.length - recentK;
+
+  // We try the naive cut first, then walk backward toward 0.
+  for (let cut = naiveCut; cut >= 0; cut--) {
+    if (isSafeCut(messages, cut)) return cut;
+  }
+
+  return 0;
+}
+
+/**
+ * Returns true when slicing at `cut` (i.e., old = messages[0..cut),
+ * recent = messages[cut..]) does not split any tool_use/tool_result pair.
+ */
+function isSafeCut(messages: Message[], cut: number): boolean {
+  if (cut <= 0) return cut === 0; // cut=0 is trivially safe (nothing to summarize)
+
+  // Collect all tool_use IDs in the OLD portion (before cut).
+  const toolUseIdsInOld = new Set<string>();
+  for (let i = 0; i < cut; i++) {
+    for (const block of messages[i].content) {
+      if (block.type === "tool_use") {
+        toolUseIdsInOld.add(block.toolCallId);
+      }
+    }
+  }
+
+  // Collect all tool_result IDs in the RECENT portion (at/after cut).
+  const toolResultIdsInRecent = new Set<string>();
+  for (let i = cut; i < messages.length; i++) {
+    for (const block of messages[i].content) {
+      if (block.type === "tool_result") {
+        toolResultIdsInRecent.add(block.toolCallId);
+      }
+    }
+  }
+
+  // A split occurs when a tool_use in old has its tool_result in recent.
+  for (const id of toolUseIdsInOld) {
+    if (toolResultIdsInRecent.has(id)) return false;
+  }
+
+  // Also check the reverse: a tool_result in recent whose tool_use is in old
+  // (already covered above, but let's be explicit for orphan tool_result at cut).
+  for (const id of toolResultIdsInRecent) {
+    if (toolUseIdsInOld.has(id)) return false;
+  }
+
+  return true;
 }
 
 function messageToString(msg: Message): string {

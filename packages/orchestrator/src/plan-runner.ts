@@ -18,7 +18,8 @@ export type PlanRunnerEvent =
   | { type: "step_started"; stepIndex: number; description: string }
   | { type: "step_completed"; stepIndex: number; result: StepResult }
   | { type: "plan_completed"; plan: Plan }
-  | { type: "replanning"; failedStep: number; reason: string };
+  | { type: "replanning"; failedStep: number; reason: string }
+  | { type: "todo_updated"; items: { content: string; status: "pending" | "in_progress" | "completed" }[] };
 
 // ─── Plan Runner Config ───
 
@@ -110,6 +111,7 @@ export class PlanRunner {
     userMessage: string,
     sessionId: string,
     workspaceRoot: string,
+    signal?: AbortSignal,
   ): AsyncGenerator<PlanRunnerEvent> {
     // Add user message
     this.messages.push({
@@ -220,6 +222,12 @@ export class PlanRunner {
       let retries = 0;
 
       while (retries <= this.config.maxStepRetries && !stepSuccess) {
+        // Check for abort before each step attempt
+        if (signal?.aborted) {
+          yield { type: "turn_complete", stopReason: "aborted", totalTurns: stepResults.length };
+          return;
+        }
+
         const result = yield* this.executeStep(
           nextStep,
           activePlan,
@@ -227,6 +235,7 @@ export class PlanRunner {
           sessionId,
           workspaceRoot,
           retries > 0 ? lastError : undefined,
+          signal,
         );
 
         if (result.success) {
@@ -303,6 +312,7 @@ export class PlanRunner {
     sessionId: string,
     workspaceRoot: string,
     priorError?: string,
+    signal?: AbortSignal,
   ): AsyncGenerator<AgentTurnEvent, StepResult> {
     const stepPrompt = buildStepPrompt(step, plan, priorResults);
     const retryNote = priorError
@@ -332,6 +342,7 @@ export class PlanRunner {
       step.description + retryNote,
       sessionId,
       workspaceRoot,
+      signal,
     )) {
       // Forward events to the caller
       yield event;

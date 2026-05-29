@@ -1,0 +1,55 @@
+{
+  "timestamp": "2026-05-29T12:26:51.798Z",
+  "mode": "mock",
+  "passRate": 1,
+  "passed": 25,
+  "total": 25,
+  "totalCost": 0,
+  "avgCostPerTask": 0,
+  "avgDurationMs": 606.44,
+  "avgTurns": 1,
+  "categories": [
+    {
+      "category": "core",
+      "passed": 7,
+      "total": 7,
+      "passRate": 1,
+      "avgCost": 0
+    },
+    {
+      "category": "comprehension",
+      "passed": 4,
+      "total": 4,
+      "passRate": 1,
+      "avgCost": 0
+    },
+    {
+      "category": "fix-failing-test",
+      "passed": 3,
+      "total": 3,
+      "passRate": 1,
+      "avgCost": 0
+    },
+    {
+      "category": "multi-file-refactor",
+      "passed": 3,
+      "total": 3,
+      "passRate": 1,
+      "avgCost": 0
+    },
+    {
+      "category": "new-feature",
+      "passed": 4,
+      "total": 4,
+      "passRate": 1,
+      "avgCost": 0
+    },
+    {
+      "category": "tool-discipline",
+      "passed": 4,
+      "total": 4,
+      "passRate": 1,
+      "avgCost": 0
+    }
+  ]
+}

@@ -6,6 +6,7 @@ import type {
   ProviderName,
   StreamEvent,
   ToolDefinition,
+  StreamOpts,
 } from "@alan/llm-gateway";
 import { LlmGateway } from "@alan/llm-gateway";
 import type { ToolCallInput, ToolCallOutput } from "@alan/tool-registry";
@@ -26,7 +27,8 @@ export type AgentTurnEvent =
     }
   | { type: "turn_complete"; stopReason: string; totalTurns: number }
   | { type: "error"; error: string; recoverable: boolean }
-  | { type: "context_warning"; message: string };
+  | { type: "context_warning"; message: string }
+  | { type: "todo_updated"; items: { content: string; status: "pending" | "in_progress" | "completed" }[] };
 
 // ─── Permission Gate ───
 // The agent loop invokes this before executing every tool call.
@@ -110,6 +112,7 @@ export class AgentLoop {
     userMessage: string,
     sessionId: string,
     workspaceRoot: string,
+    signal?: AbortSignal,
   ): AsyncGenerator<AgentTurnEvent> {
     this.state = "thinking";
 
@@ -124,6 +127,13 @@ export class AgentLoop {
     const recentToolSignatures: string[] = [];
 
     while (turn < this.config.maxTurns) {
+      // Check for abort before starting each turn
+      if (signal?.aborted) {
+        this.state = "done";
+        yield { type: "turn_complete", stopReason: "aborted", totalTurns: turn };
+        return;
+      }
+
       turn++;
 
       // Build inference request
@@ -172,7 +182,8 @@ export class AgentLoop {
       }> = [];
 
       try {
-        for await (const event of this.gateway.inferStream(request)) {
+        const streamOpts: StreamOpts = signal ? { signal } : {};
+        for await (const event of this.gateway.inferStream(request, streamOpts)) {
           const result = this.processStreamEvent(event, contentBlocks, pendingToolCalls);
           if (result.event) yield result.event;
           if (result.stopReason) stopReason = result.stopReason;
@@ -192,6 +203,12 @@ export class AgentLoop {
           }
         }
       } catch (err) {
+        // Handle clean abort
+        if (signal?.aborted) {
+          this.state = "done";
+          yield { type: "turn_complete", stopReason: "aborted", totalTurns: turn };
+          return;
+        }
         consecutiveErrors++;
         const msg = err instanceof Error ? err.message : String(err);
         yield { type: "error", error: msg, recoverable: true };
@@ -212,9 +229,10 @@ export class AgentLoop {
 
       // If no tool use, we're done
       if (stopReason !== "tool_use" || pendingToolCalls.length === 0) {
-        // Try summarization before finishing
+        // Compact working set before finishing
         if (this.config.contextEngine) {
-          await this.config.contextEngine.maybeSummarize(this.messages);
+          const r = await this.config.contextEngine.compactWorkingSet(this.messages);
+          if (r.compacted) this.messages = r.messages;
         }
         this.state = "done";
         yield { type: "turn_complete", stopReason, totalTurns: turn };
@@ -242,6 +260,13 @@ export class AgentLoop {
       const toolResults: ContentBlock[] = [];
 
       for (const tc of pendingToolCalls) {
+        // Check for abort between tool calls
+        if (signal?.aborted) {
+          this.state = "done";
+          yield { type: "turn_complete", stopReason: "aborted", totalTurns: turn };
+          return;
+        }
+
         const parsedArgs = tc.argsJson ? JSON.parse(tc.argsJson) : {};
         const input: ToolCallInput = {
           toolName: tc.toolName,
@@ -294,6 +319,20 @@ export class AgentLoop {
           output,
         };
 
+        // Emit todo_updated when todo_write succeeds
+        if (output.success && tc.toolName === "todo_write" && output.result) {
+          try {
+            const parsed = JSON.parse(output.result) as {
+              items?: { content: string; status: "pending" | "in_progress" | "completed" }[];
+            };
+            if (Array.isArray(parsed.items)) {
+              yield { type: "todo_updated", items: parsed.items };
+            }
+          } catch {
+            // Non-parsable result — skip todo_updated
+          }
+        }
+
         toolResults.push({
           type: "tool_result",
           toolCallId: tc.callId,
@@ -307,9 +346,10 @@ export class AgentLoop {
       // Add tool results as user message
       this.messages.push({ role: "tool", content: toolResults });
 
-      // After processing the assistant response, try summarization
+      // After processing the assistant response, compact working set
       if (this.config.contextEngine) {
-        await this.config.contextEngine.maybeSummarize(this.messages);
+        const r = await this.config.contextEngine.compactWorkingSet(this.messages);
+        if (r.compacted) this.messages = r.messages;
       }
 
       this.state = "observing";

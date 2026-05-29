@@ -6,6 +6,7 @@ import type {
   Message,
   StreamEvent,
   StopReason,
+  StreamOpts,
   ToolDefinition,
   TokenUsage,
 } from "../types";
@@ -68,13 +69,14 @@ export class GoogleProvider implements LlmProvider {
     };
   }
 
-  async *inferStream(request: InferenceRequest): AsyncGenerator<StreamEvent> {
+  async *inferStream(request: InferenceRequest, opts?: StreamOpts): AsyncGenerator<StreamEvent> {
     const response = await fetch(
       `${this.baseUrl}/models/${encodeURIComponent(request.model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(this.apiKey)}`,
       {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(this.toGeminiRequest(request)),
+        signal: opts?.signal,
       },
     );
 
@@ -99,11 +101,11 @@ export class GoogleProvider implements LlmProvider {
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
-        const events = buffer.split("\n\n");
+        const events = buffer.split(/\r?\n\r?\n/);
         buffer = events.pop() ?? "";
 
         for (const event of events) {
-          const dataLine = event.split("\n").find((line) => line.startsWith("data:"));
+          const dataLine = event.split(/\r?\n/).find((line) => line.startsWith("data:"));
           if (!dataLine) continue;
 
           const payload = dataLine.slice("data:".length).trim();

@@ -94,10 +94,14 @@ export type StreamEvent =
 
 // ─── Provider Adapter Interface ───
 
+export interface StreamOpts {
+  signal?: AbortSignal;
+}
+
 export interface LlmProvider {
   name: ProviderName;
   infer(request: InferenceRequest): Promise<InferenceResponse>;
-  inferStream(request: InferenceRequest): AsyncGenerator<StreamEvent>;
+  inferStream(request: InferenceRequest, opts?: StreamOpts): AsyncGenerator<StreamEvent>;
   countTokens(messages: Message[], tools?: ToolDefinition[]): Promise<number>;
   healthCheck(): Promise<boolean>;
 }
