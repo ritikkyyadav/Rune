@@ -208,6 +208,21 @@ export class SessionManager {
     }));
   }
 
+  /**
+   * Delete every event for a session whose seq is strictly greater than
+   * `afterSeq`. Used by `/rewind` to truncate the conversation back to an
+   * earlier turn (the next chat then resumes from the truncated history).
+   * Returns the number of events removed.
+   */
+  deleteEventsAfter(sessionId: string, afterSeq: number): number {
+    const result = this.db
+      .prepare("DELETE FROM events WHERE session_id = ? AND seq > ?")
+      .run(sessionId, afterSeq);
+    const now = new Date().toISOString();
+    this.db.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(now, sessionId);
+    return Number(result.changes ?? 0);
+  }
+
   getSession(sessionId: string): SessionInfoInternal | null {
     const row = this.db
       .prepare(
