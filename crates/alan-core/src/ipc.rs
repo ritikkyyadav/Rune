@@ -18,6 +18,10 @@ pub struct IpcContext {
 
 // ─── Server ───
 
+/// JSON-RPC server over a Unix domain socket.
+///
+/// Accepts multiple concurrent client connections. Each connection is handled
+/// in its own tokio task sharing the [`IpcContext`] via `Arc<Mutex<_>>`.
 pub struct IpcServer {
     socket_path: PathBuf,
     listener: Option<UnixListener>,
@@ -266,12 +270,16 @@ fn extract_session_id(
 
 // ─── Client ───
 
+/// Async JSON-RPC client over a Unix domain socket.
+///
+/// Connects to a running alan daemon and issues `call()` requests.
 pub struct IpcClient {
     reader: BufReader<tokio::net::unix::OwnedReadHalf>,
     writer: tokio::net::unix::OwnedWriteHalf,
 }
 
 impl IpcClient {
+    /// Connect to the daemon socket at `path`. Returns an error if no daemon is listening.
     pub async fn connect(path: &Path) -> Result<Self, AlanError> {
         let stream = UnixStream::connect(path).await?;
         let (reader, writer) = stream.into_split();

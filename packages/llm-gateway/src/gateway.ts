@@ -11,6 +11,13 @@ import type {
 } from "./types";
 import { MODEL_PRICING as PRICING } from "./types";
 
+/**
+ * Multi-provider LLM gateway with retry, exponential back-off, and cost tracking.
+ *
+ * Register one or more providers via `registerProvider`, then call `infer` or
+ * `inferStream`. The gateway retries 429 and 5xx errors automatically; 4xx
+ * auth errors are surfaced immediately without retrying.
+ */
 export class LlmGateway {
   private providers: Map<ProviderName, LlmProvider> = new Map();
   private config: GatewayConfig;
@@ -20,14 +27,17 @@ export class LlmGateway {
     this.config = config;
   }
 
+  /** Register a provider. Must be called before `infer` or `inferStream`. */
   registerProvider(provider: LlmProvider): void {
     this.providers.set(provider.name, provider);
   }
 
+  /** Return the registered provider instance, or undefined if not registered. */
   getProvider(name: ProviderName): LlmProvider | undefined {
     return this.providers.get(name);
   }
 
+  /** Run a single non-streaming inference. Retries on transient errors. */
   async infer(request: InferenceRequest): Promise<InferenceResponse> {
     const provider = this.resolveProvider(request.provider);
     let lastError: Error | undefined;
@@ -47,6 +57,7 @@ export class LlmGateway {
     throw lastError ?? new Error("Inference failed");
   }
 
+  /** Stream inference events. Yields typed `StreamEvent` objects as they arrive. */
   async *inferStream(request: InferenceRequest): AsyncGenerator<StreamEvent> {
     const provider = this.resolveProvider(request.provider);
     let lastError: Error | undefined;
@@ -107,6 +118,7 @@ export class LlmGateway {
     return p.countTokens(...args);
   }
 
+  /** Ping registered providers. Pass a name to check a single provider. */
   async healthCheck(provider?: ProviderName): Promise<Record<ProviderName, boolean>> {
     const results: Partial<Record<ProviderName, boolean>> = {};
     const toCheck = provider

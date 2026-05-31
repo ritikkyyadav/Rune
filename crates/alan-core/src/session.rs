@@ -6,6 +6,11 @@ use uuid::Uuid;
 use crate::error::AlanError;
 use crate::protocol::{SessionEvent, SessionInfo};
 
+/// Persistent session store backed by a SQLite WAL database.
+///
+/// Every conversation is an append-only sequence of [`SessionEvent`]s.
+/// The log supports replay, fork, and rewind via [`get_events`] and
+/// [`rollback_to_last_checkpoint`].
 pub struct SessionManager {
     conn: Connection,
 }
@@ -13,6 +18,10 @@ pub struct SessionManager {
 impl SessionManager {
     const SCHEMA_VERSION: i64 = 1;
 
+    /// Open (or create) the session database at `db_path`.
+    ///
+    /// Returns an error if the database was written by a newer binary
+    /// (schema version > `SCHEMA_VERSION`).
     pub fn open(db_path: &Path) -> Result<Self, AlanError> {
         let conn = Connection::open(db_path)?;
         let mgr = Self { conn };
@@ -106,6 +115,7 @@ impl SessionManager {
         );
     "#;
 
+    /// Create a new session for the given workspace and model.
     pub fn create_session(
         &self,
         workspace_root: &str,
@@ -131,6 +141,7 @@ impl SessionManager {
         })
     }
 
+    /// Append an event to the session log. Returns the sequence number assigned.
     pub fn append_event(
         &self,
         session_id: &Uuid,
@@ -159,6 +170,7 @@ impl SessionManager {
         Ok(seq)
     }
 
+    /// Return all active sessions ordered by most-recently-updated first.
     pub fn list_sessions(&self) -> Result<Vec<SessionInfo>, AlanError> {
         let mut stmt = self.conn.prepare(
             "SELECT s.id, s.created_at, s.updated_at, s.workspace_root, s.model, s.title,
@@ -185,6 +197,8 @@ impl SessionManager {
         Ok(sessions)
     }
 
+    /// Fetch events from `from_seq` onward, up to `limit` entries.
+    /// Returns `(seq, event)` pairs in ascending sequence order.
     pub fn get_events(
         &self,
         session_id: &Uuid,

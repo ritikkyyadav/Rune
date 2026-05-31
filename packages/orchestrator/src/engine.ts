@@ -22,30 +22,45 @@ import {
 
 // ─── Permission Prompt Handler ───
 
+/** Data surfaced to the permission handler before a confirm/sandbox tool runs. */
 export interface PermissionPrompt {
   toolName: string;
+  /** Human-readable summary of the arguments passed to the tool. */
   argsSummary: string;
+  /** Scope the broker suggests the user grant if they allow the call. */
   suggestedScope: PermissionScope;
   rawArgs: Record<string, unknown>;
 }
 
+/** Decision returned by the UI after showing a permission prompt. */
 export type UserPermissionDecision =
   | { kind: "allow_once" }
   | { kind: "allow_session" }
   | { kind: "deny" };
 
+/**
+ * Callback invoked whenever a tool requires user confirmation.
+ * Pause the spinner, show the prompt, resolve with the user's choice.
+ */
 export type PermissionHandler = (
   prompt: PermissionPrompt,
 ) => Promise<UserPermissionDecision>;
 
 // ─── Engine Config ───
 
+/** Full configuration for an Engine instance. All fields have defaults. */
 export interface EngineConfig {
+  /** Model identifier forwarded to the LLM provider (e.g. "claude-sonnet-4-20250514"). */
   model: string;
+  /** Which LLM provider to use by default. */
   provider: ProviderName;
+  /** Absolute path to the project root the agent will operate on. */
   workspaceRoot: string;
+  /** Path to the SQLite session database (defaults to ~/.alan/alan.db). */
   dbPath: string;
+  /** Path or name of the alan-tools binary. */
   toolsBinaryPath: string;
+  /** When true, all tool permission checks are bypassed. */
   yoloMode: boolean;
   /** Enable Planner-Executor two-tier mode. */
   plannerMode: boolean;
@@ -82,6 +97,20 @@ Be concise and direct. Focus on solving the user's problem.`;
 
 // ─── Engine ───
 
+/**
+ * Top-level Alan engine. Wires together the session store, LLM gateway,
+ * tool registry, permission broker, and agent loop into a single interface.
+ *
+ * @example
+ * ```ts
+ * const engine = new Engine({ provider: "anthropic", workspaceRoot: "/my/project" });
+ * const sessionId = engine.createSession();
+ * for await (const event of engine.chat(sessionId, "Refactor the auth module")) {
+ *   if (event.type === "text_delta") process.stdout.write(event.text);
+ * }
+ * engine.close();
+ * ```
+ */
 export class Engine {
   private gateway: LlmGateway;
   private registry: ToolRegistry;
@@ -129,6 +158,7 @@ export class Engine {
     this.permissions = new PermissionBroker(this.config.yoloMode);
   }
 
+  /** Create a new session for the configured workspace. Returns the session ID. */
   createSession(model?: string): string {
     const session = this.sessions.createSession(
       this.config.workspaceRoot,
@@ -137,6 +167,10 @@ export class Engine {
     return session.id;
   }
 
+  /**
+   * Register the UI callback that is invoked when a tool requires confirmation.
+   * Must be set before `chat()` is called if `yoloMode` is false.
+   */
   setPermissionHandler(handler: PermissionHandler): void {
     this.permissionHandler = handler;
   }
