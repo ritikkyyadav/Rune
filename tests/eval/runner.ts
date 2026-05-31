@@ -31,6 +31,8 @@ interface CliArgs {
   tasksFilter?: string;
   /** Cap the number of tasks that run (after filtering). */
   max?: number;
+  /** Regression gate: exit 0 if passRate >= this (0–1); else require all pass. */
+  minPassRate?: number;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -47,6 +49,10 @@ function parseArgs(argv: string[]): CliArgs {
       args.max = Number(argv[++i]);
     } else if (a.startsWith("--max=")) {
       args.max = Number(a.slice("--max=".length));
+    } else if (a === "--min-pass-rate") {
+      args.minPassRate = Number(argv[++i]);
+    } else if (a.startsWith("--min-pass-rate=")) {
+      args.minPassRate = Number(a.slice("--min-pass-rate=".length));
     }
   }
   return args;
@@ -162,7 +168,9 @@ async function main() {
       await writeBaseline(sweepResults[0].report);
     }
 
-    const allPassed = sweepResults.every((s) => s.report.passRate === 1);
+    const floor =
+      args.minPassRate != null && Number.isFinite(args.minPassRate) ? args.minPassRate : 1;
+    const allPassed = sweepResults.every((s) => s.report.passRate >= floor);
     process.exit(allPassed ? 0 : 1);
   }
 
@@ -178,7 +186,11 @@ async function main() {
   printReport(report);
   await writeBaseline(report);
 
-  process.exit(report.passed === report.total ? 0 : 1);
+  const ok =
+    args.minPassRate != null && Number.isFinite(args.minPassRate)
+      ? report.passRate >= args.minPassRate
+      : report.passed === report.total;
+  process.exit(ok ? 0 : 1);
 }
 
 main().catch((err) => {

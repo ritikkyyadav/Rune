@@ -240,26 +240,12 @@ const infiniteLoopHalts: EvalTask = {
   setup: async ({ workspace }) => {
     await writeFile(join(workspace, "stuck.txt"), "x\n");
   },
-  script: [
-    // Three identical responses with the same tool call signature
-    {
-      text: "trying",
-      toolCalls: [{ name: "read_file", args: { path: "stuck.txt" } }],
-    },
-    {
-      text: "trying again",
-      toolCalls: [{ name: "read_file", args: { path: "stuck.txt" } }],
-    },
-    {
-      text: "trying once more",
-      toolCalls: [{ name: "read_file", args: { path: "stuck.txt" } }],
-    },
-    // If we got here the detector failed; provide one more to fail loudly
-    {
-      text: "should never reach this",
-      toolCalls: [{ name: "read_file", args: { path: "stuck.txt" } }],
-    },
-  ],
+  // Many identical responses. The detector nudges once then bails, so a working
+  // detector halts well before consuming all of these.
+  script: Array.from({ length: 8 }, () => ({
+    text: "trying the same thing again",
+    toolCalls: [{ name: "read_file", args: { path: "stuck.txt" } }],
+  })),
   prompts: ["read stuck.txt"],
   verify: async ({ mock, real, engine }) => {
     if (real) {
@@ -273,10 +259,13 @@ const infiniteLoopHalts: EvalTask = {
     // The loop detector must stop the agent before it consumes the 4th
     // scripted response. We expect exactly 3 inference calls (the 3rd
     // produces the trigger that the detector catches).
-    if ((mock?.callsConsumed ?? 0) >= 4) {
+    // The detector nudges once (maxStuckNudges=1) before bailing, so a runaway
+    // identical-call loop halts within ~6 calls. If it never halted it would
+    // consume every scripted response.
+    if ((mock?.callsConsumed ?? 0) >= 8) {
       return {
         pass: false,
-        reason: `loop detector failed — consumed ${mock?.callsConsumed} responses (expected ≤3)`,
+        reason: `loop detector failed — consumed all ${mock?.callsConsumed} responses (never halted)`,
       };
     }
     return { pass: true };

@@ -127,4 +127,29 @@ describe("ContextEngine", () => {
     expect(memory.discoveries).toHaveLength(1);
     expect(memory.discoveries[0].fact).toBe("Project uses Bun runtime");
   });
+
+  test("shouldCompact: false before buildPrompt, true once over the high-water mark", () => {
+    const engine = new ContextEngine(
+      { budget: { maxTokens: 100, workingSetRatio: 0.5, sessionMemoryRatio: 0.25, retrievalRatio: 0.25 } },
+      createMockGateway(),
+    );
+    // No buildPrompt has run yet → unknown usage → must not compact.
+    expect(engine.shouldCompact()).toBe(false);
+
+    // Fill well past 70% of the tiny 100-token budget.
+    const messages = Array.from({ length: 40 }, (_, i) => ({
+      role: "user" as const,
+      content: [{ type: "text" as const, text: `message ${i} with extra words to consume tokens` }],
+    }));
+    engine.buildPrompt("System prompt", [], messages);
+    expect(engine.shouldCompact()).toBe(true);
+  });
+
+  test("shouldCompact stays false when usage is well under budget", () => {
+    const engine = new ContextEngine({ budget: { maxTokens: 100000 } }, createMockGateway());
+    engine.buildPrompt("Short system", [], [
+      { role: "user", content: [{ type: "text", text: "hi" }] },
+    ]);
+    expect(engine.shouldCompact()).toBe(false);
+  });
 });

@@ -73,7 +73,7 @@ function makeRegistry(toolResult: {
 }
 
 /** Context engine stub that tracks compactWorkingSet calls. */
-function makeContextEngine(compact = false) {
+function makeContextEngine(compact = false, shouldCompactVal = true) {
   const compactMock = mock(async (messages: unknown[]) => ({
     messages,
     compacted: compact,
@@ -90,6 +90,7 @@ function makeContextEngine(compact = false) {
       totalTokens: 100,
     })),
     getContextUsage: mock(() => ({ used: 100, limit: 1000, percent: 10 })),
+    shouldCompact: mock(() => shouldCompactVal),
   } as any;
 }
 
@@ -291,5 +292,21 @@ describe("Wave 2 wiring — compactWorkingSet (C1)", () => {
 
     expect((ctx.compactWorkingSet as ReturnType<typeof mock>).mock.calls.length).toBeGreaterThan(0);
     expect((ctx.maybeSummarize as ReturnType<typeof mock>).mock.calls.length).toBe(0);
+  });
+
+  test("does NOT call compactWorkingSet when usage is below the high-water mark", async () => {
+    const gateway = makeGateway();
+    const registry = makeRegistry({ success: true, result: "" });
+    const ctx = makeContextEngine(false, false); // shouldCompact() → false
+
+    const loop = new AgentLoop(
+      { model: "m", provider: "anthropic", maxTokens: 100, maxTurns: 5, systemPrompt: "s", contextEngine: ctx },
+      gateway,
+      registry,
+    );
+
+    await collect(loop.run("hello", "sess-1", "/ws"));
+
+    expect((ctx.compactWorkingSet as ReturnType<typeof mock>).mock.calls.length).toBe(0);
   });
 });

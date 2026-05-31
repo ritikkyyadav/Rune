@@ -44,6 +44,8 @@ jobs:
         run: bun run typecheck
       - name: Lint
         run: bun run lint
+      - name: Unit tests
+        run: bun test tests/unit/
 
   # ── Stage 2: Unit Tests (Section 15.2) ──
   rust-test:
@@ -122,3 +124,30 @@ jobs:
         run: |
           # Eval runner exits non-zero if any task fails
           echo "Eval suite passed"
+
+  # ── Stage 6: Real-model eval regression gate (only when the secret is set) ──
+  # Runs the suite against a live model and fails if the pass-rate drops below a
+  # floor. Skips cleanly on forks / when no ANTHROPIC_API_KEY secret is configured.
+  eval-real:
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: oven-sh/setup-bun@v2
+      - uses: Swatinem/rust-cache@v2
+      - run: bun install --frozen-lockfile
+      - run: cargo build --release
+      - run: bun run build
+      - name: Real-model eval gate (skipped if no ANTHROPIC_API_KEY secret)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ALAN_EVAL_PROVIDER: anthropic
+          ALAN_EVAL_MODEL: claude-sonnet-4-20250514
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "No ANTHROPIC_API_KEY secret configured — skipping real-model eval gate."
+            exit 0
+          fi
+          # Conservative floor; raise it once a clean ceiling baseline is recorded.
+          bun run tests/eval/runner.ts --real --max 12 --min-pass-rate 0.5

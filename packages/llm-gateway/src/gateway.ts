@@ -17,7 +17,7 @@ const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
   google: "gemini-2.5-flash",
   anthropic: "claude-sonnet-4-20250514",
   openai: "gpt-4o",
-  openrouter: "deepseek/deepseek-v4-flash:free",
+  openrouter: "qwen/qwen3-coder:free",
   ollama: "llama3",
 };
 

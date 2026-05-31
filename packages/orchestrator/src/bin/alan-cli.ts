@@ -72,7 +72,7 @@ type CliProvider = "anthropic" | "openai" | "openrouter" | "google";
 const DEFAULT_MODELS: Record<CliProvider, string> = {
   anthropic: "claude-sonnet-4-20250514",
   openai: "gpt-4o",
-  openrouter: "deepseek/deepseek-v4-flash:free",
+  openrouter: "qwen/qwen3-coder:free",
   google: "gemini-2.5-flash",
 };
 
@@ -750,14 +750,14 @@ async function main() {
           {
             key: `${presets.length + 1}`,
             provider: "openrouter",
-            model: "deepseek/deepseek-v4-flash:free",
-            label: "DeepSeek V4 Flash (free)",
+            model: "qwen/qwen3-coder:free",
+            label: "Qwen3 Coder (free)",
           },
           {
             key: `${presets.length + 2}`,
             provider: "openrouter",
-            model: "deepseek/deepseek-r1:free",
-            label: "DeepSeek R1 (free)",
+            model: "meta-llama/llama-3.3-70b-instruct:free",
+            label: "Llama 3.3 70B (free)",
           },
         );
       }

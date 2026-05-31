@@ -7,6 +7,7 @@ import type { ContextEngine } from "./context-engine";
 import { Planner } from "./planner";
 import type { PlannerEvent } from "./planner";
 import type { ModelRouting, Plan, Step, StepResult } from "./types";
+import type { Verifier } from "./verifier";
 
 // ─── Plan Runner Events ───
 // Extends AgentTurnEvent with plan-level events.
@@ -32,6 +33,7 @@ export interface PlanRunnerConfig {
   systemPrompt: string;
   priorMessages?: Message[];
   contextEngine?: ContextEngine;
+  verifier?: Verifier;
 }
 
 const DEFAULT_CONFIG: PlanRunnerConfig = {
@@ -327,6 +329,7 @@ export class PlanRunner {
         maxTurns: this.config.maxTurnsPerStep,
         systemPrompt: stepPrompt,
         contextEngine: this.config.contextEngine,
+        verifier: this.config.verifier,
       },
       this.gateway,
       this.registry,

@@ -12,6 +12,7 @@ import { LlmGateway } from "@alan/llm-gateway";
 import type { ToolCallInput, ToolCallOutput } from "@alan/tool-registry";
 import { ToolRegistry } from "@alan/tool-registry";
 import type { ContextEngine } from "./context-engine";
+import type { Verifier } from "./verifier";
 
 // ─── Agent Turn Events (yielded to caller) ───
 
@@ -61,6 +62,14 @@ export interface AgentLoopConfig {
   temperature?: number;
   priorMessages?: Message[];
   contextEngine?: ContextEngine;
+  /** Runs project checks after edits; on failure the agent is asked to fix. */
+  verifier?: Verifier;
+  /** Max times to run verification + re-prompt on failure. Default 2. */
+  maxVerifyAttempts?: number;
+  /** Max independent read-only tool calls to run concurrently. Default 8. */
+  maxParallelTools?: number;
+  /** Max times to nudge a stuck agent before bailing. Default 1. */
+  maxStuckNudges?: number;
 }
 
 const DEFAULT_CONFIG: AgentLoopConfig = {
@@ -125,6 +134,9 @@ export class AgentLoop {
 
     let turn = 0;
     let consecutiveErrors = 0;
+    let verifyAttempts = 0;
+    let editsSinceVerify = false;
+    let stuckNudges = 0;
     const recentToolSignatures: string[] = [];
 
     while (turn < this.config.maxTurns) {
@@ -176,6 +188,7 @@ export class AgentLoop {
       // Stream inference
       const contentBlocks: ContentBlock[] = [];
       let stopReason = "end_turn";
+      let streamErrored = false;
       const pendingToolCalls: Array<{
         callId: string;
         toolName: string;
@@ -200,6 +213,7 @@ export class AgentLoop {
               };
               return;
             }
+            streamErrored = true;
             break;
           }
         }
@@ -225,13 +239,54 @@ export class AgentLoop {
         continue;
       }
 
+      // If the stream errored mid-turn (e.g. provider throttle / 5xx after
+      // retries), don't treat it as a finished turn — retry instead of
+      // silently completing as end_turn with no tool calls. Bounded by
+      // maxConsecutiveErrors (checked above) and maxTurns.
+      if (streamErrored) {
+        continue;
+      }
+
       // Record assistant message
       this.messages.push({ role: "assistant", content: contentBlocks });
 
-      // If no tool use, we're done
+      // If no tool use, we're done — but first, if edits were made, run
+      // verification (project checks). On failure, feed the report back and
+      // continue so the agent self-corrects. Bounded by maxVerifyAttempts.
       if (stopReason !== "tool_use" || pendingToolCalls.length === 0) {
-        // Compact working set before finishing
-        if (this.config.contextEngine) {
+        if (
+          this.config.verifier &&
+          editsSinceVerify &&
+          verifyAttempts < (this.config.maxVerifyAttempts ?? 2) &&
+          !signal?.aborted
+        ) {
+          verifyAttempts++;
+          yield { type: "notice", message: "Verifying changes…" };
+          const result = await this.config.verifier.verify(signal);
+          editsSinceVerify = false;
+          if (result.ran && !result.passed) {
+            this.messages.push({
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text:
+                    "Automated verification failed after your changes. Fix the " +
+                    `problems below, then finish.\n\n${result.report}`,
+                },
+              ],
+            });
+            yield {
+              type: "notice",
+              message: "Verification failed — asking the agent to fix it.",
+            };
+            continue;
+          }
+        }
+
+        // Compact only when context is near budget (avoids a summarization
+        // LLM call every turn).
+        if (this.config.contextEngine && this.config.contextEngine.shouldCompact()) {
           const r = await this.config.contextEngine.compactWorkingSet(this.messages);
           if (r.compacted) this.messages = r.messages;
         }
@@ -240,34 +295,74 @@ export class AgentLoop {
         return;
       }
 
-      // Infinite loop detection
+      // Loop detection: if the same tool batch keeps repeating, first NUDGE the
+      // agent to change approach; only bail if it's still stuck after the nudge.
       const signature = pendingToolCalls.map((tc) => `${tc.toolName}:${tc.argsJson}`).join("|");
       recentToolSignatures.push(signature);
       if (recentToolSignatures.length > 10) recentToolSignatures.shift();
 
       const duplicateCount = recentToolSignatures.filter((s) => s === signature).length;
       if (duplicateCount >= 3) {
+        if (stuckNudges < (this.config.maxStuckNudges ?? 1)) {
+          stuckNudges++;
+          recentToolSignatures.length = 0; // reset the detection window
+          // Answer the repeated tool_use blocks (keeps the transcript valid),
+          // then nudge the model to reconsider instead of silently bailing.
+          this.messages.push({
+            role: "tool",
+            content: pendingToolCalls.map(
+              (tc): ContentBlock => ({
+                type: "tool_result",
+                toolCallId: tc.callId,
+                toolResultContent:
+                  "Skipped: this identical call was repeated without progress. " +
+                  "Re-read the goal and try a different approach, or finish if the task is already done.",
+                isError: true,
+              }),
+            ),
+          });
+          yield {
+            type: "notice",
+            message: "Detected a repeating tool call — nudging the agent to change approach.",
+          };
+          this.state = "observing";
+          continue;
+        }
         this.state = "error";
         yield {
           type: "error",
-          error: "Infinite loop detected: same tool calls repeated 3 times",
+          error:
+            "Infinite loop detected: same tool calls repeated without progress, even after a nudge.",
           recoverable: false,
         };
         return;
       }
 
-      // Execute tool calls
+      // Execute tool calls. Independent read-only (auto-permission) calls run
+      // CONCURRENTLY; writes / execute / network and any confirm-gated call run
+      // serially so user prompts stay ordered and edits never race. Events and
+      // tool_result blocks are emitted in the original call order regardless.
       this.state = "tool_calling";
-      const toolResults: ContentBlock[] = [];
 
+      if (signal?.aborted) {
+        this.state = "done";
+        yield { type: "turn_complete", stopReason: "aborted", totalTurns: turn };
+        return;
+      }
+
+      type PlannedCall = {
+        tc: (typeof pendingToolCalls)[number];
+        parsedArgs: Record<string, unknown>;
+        input: ToolCallInput;
+        allowed: boolean;
+        parallelSafe: boolean;
+        isWrite: boolean;
+        output?: ToolCallOutput;
+      };
+
+      // ── Phase A: permission gates, in order (interactive prompts are serial) ──
+      const planned: PlannedCall[] = [];
       for (const tc of pendingToolCalls) {
-        // Check for abort between tool calls
-        if (signal?.aborted) {
-          this.state = "done";
-          yield { type: "turn_complete", stopReason: "aborted", totalTurns: turn };
-          return;
-        }
-
         const parsedArgs = tc.argsJson ? JSON.parse(tc.argsJson) : {};
         const input: ToolCallInput = {
           toolName: tc.toolName,
@@ -277,9 +372,8 @@ export class AgentLoop {
           workspaceRoot,
         };
 
-        let output: ToolCallOutput;
-
-        // Permission gate — blocks confirm/sandbox tools until approved.
+        let allowed = true;
+        let denied: ToolCallOutput | undefined;
         if (this.permissionCheck) {
           const decision = await this.permissionCheck({
             callId: tc.callId,
@@ -287,7 +381,8 @@ export class AgentLoop {
             args: parsedArgs,
           });
           if (!decision.allowed) {
-            output = {
+            allowed = false;
+            denied = {
               callId: tc.callId,
               toolName: tc.toolName,
               success: false,
@@ -295,33 +390,42 @@ export class AgentLoop {
               error: decision.reason ?? "Permission denied",
               durationMs: 0,
             };
-            yield {
-              type: "tool_call_end",
-              callId: tc.callId,
-              args: parsedArgs,
-              output,
-            };
-            toolResults.push({
-              type: "tool_result",
-              toolCallId: tc.callId,
-              toolResultContent: `Permission denied: ${output.error}`,
-              isError: true,
-            });
-            consecutiveErrors++;
-            continue;
           }
         }
 
-        output = await this.registry.execute(input);
+        // Only auto-permission read tools are safe to run concurrently. If the
+        // registry doesn't know the tool, default to serial (safe).
+        const schema = this.registry.get(tc.toolName)?.schema;
+        const parallelSafe =
+          allowed && schema?.category === "read" && schema.permissionLevel === "auto";
+        const isWrite = schema?.category === "write";
+
+        planned.push({ tc, parsedArgs, input, allowed, parallelSafe, isWrite, output: denied });
+      }
+
+      // ── Phase B: execute — parallel-safe reads concurrently (bounded), rest serial ──
+      const parallel = planned.filter((p) => p.allowed && p.parallelSafe && !p.output);
+      await mapWithConcurrency(parallel, this.config.maxParallelTools ?? 8, async (p) => {
+        p.output = await this.registry.execute(p.input);
+      });
+      for (const p of planned) {
+        if (!p.allowed || p.output) continue; // denied, or already run in parallel
+        p.output = await this.registry.execute(p.input);
+      }
+
+      // ── Phase C: emit events + assemble tool_result blocks in original order ──
+      const toolResults: ContentBlock[] = [];
+      for (const p of planned) {
+        const output = p.output!;
         yield {
           type: "tool_call_end",
-          callId: tc.callId,
-          args: parsedArgs,
+          callId: p.tc.callId,
+          args: p.parsedArgs,
           output,
         };
 
         // Emit todo_updated when todo_write succeeds
-        if (output.success && tc.toolName === "todo_write" && output.result) {
+        if (output.success && p.tc.toolName === "todo_write" && output.result) {
           try {
             const parsed = JSON.parse(output.result) as {
               items?: { content: string; status: "pending" | "in_progress" | "completed" }[];
@@ -334,21 +438,39 @@ export class AgentLoop {
           }
         }
 
-        toolResults.push({
-          type: "tool_result",
-          toolCallId: tc.callId,
-          toolResultContent: output.success ? output.result : `Error: ${output.error}`,
-          isError: !output.success,
-        });
-
-        consecutiveErrors = output.success ? 0 : consecutiveErrors + 1;
+        if (!p.allowed) {
+          toolResults.push({
+            type: "tool_result",
+            toolCallId: p.tc.callId,
+            toolResultContent: `Permission denied: ${output.error}`,
+            isError: true,
+          });
+          consecutiveErrors++;
+        } else {
+          toolResults.push({
+            type: "tool_result",
+            toolCallId: p.tc.callId,
+            toolResultContent: output.success ? output.result : `Error: ${output.error}`,
+            isError: !output.success,
+          });
+          consecutiveErrors = output.success ? 0 : consecutiveErrors + 1;
+          if (output.success && p.isWrite) editsSinceVerify = true;
+        }
       }
 
       // Add tool results as user message
       this.messages.push({ role: "tool", content: toolResults });
 
-      // After processing the assistant response, compact working set
-      if (this.config.contextEngine) {
+      // Abort may have fired during tool execution (e.g. a long bash call).
+      if (signal?.aborted) {
+        this.state = "done";
+        yield { type: "turn_complete", stopReason: "aborted", totalTurns: turn };
+        return;
+      }
+
+      // After processing the assistant response, compact the working set —
+      // but only when context is near budget, not every turn.
+      if (this.config.contextEngine && this.config.contextEngine.shouldCompact()) {
         const r = await this.config.contextEngine.compactWorkingSet(this.messages);
         if (r.compacted) this.messages = r.messages;
       }
@@ -447,4 +569,27 @@ export class AgentLoop {
         return {};
     }
   }
+}
+
+/**
+ * Run `fn` over `items` with at most `limit` concurrent invocations. Used to
+ * bound parallel tool execution (so the model can't, e.g., spawn dozens of
+ * sub-agents or file reads at once). Preserves no ordering — callers assemble
+ * results in their own order afterward.
+ */
+async function mapWithConcurrency<T>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  if (items.length === 0) return;
+  const max = Math.max(1, limit);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const i = next++;
+      await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(max, items.length) }, () => worker()));
 }
