@@ -46,7 +46,7 @@ export class TokenCounter {
       "claude-opus-4-20250514": 200000,
       "gpt-4o": 128000,
       "gpt-4o-mini": 128000,
-      "deepseek/deepseek-v4-flash:free": 128000,
+      "qwen/qwen3-coder:free": 262144,
       "gemini-2.5-flash": 1048576,
     };
 

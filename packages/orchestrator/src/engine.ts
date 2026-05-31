@@ -39,6 +39,8 @@ import { EpisodicMemory } from "./memory/episodic";
 import { WorkingMemory } from "./memory/working";
 import { HookRunner } from "./hooks";
 import { createSubagentTool } from "./subagent";
+import { CommandVerifier } from "./verifier";
+import type { Verifier } from "./verifier";
 
 // ─── Permission Prompt Handler ───
 
@@ -87,6 +89,10 @@ export interface EngineConfig {
   enableRateLimiting?: boolean;
   enableCheckpoints?: boolean;
   enableHooks?: boolean;
+  /** Run project checks (typecheck/test/cargo) after edits so the agent self-corrects. Default on. */
+  enableVerification?: boolean;
+  /** Explicit verification commands; when set, project auto-detection is skipped. */
+  verifyCommand?: string[];
   checkpointPolicy?: Partial<CheckpointPolicy>;
   egressAllowlist?: string[];
   redactOutputs?: boolean;
@@ -101,9 +107,23 @@ const EFFORT_SETTINGS: Record<EffortLevel, { maxTokens: number; maxTurns: number
     max: { maxTokens: 32768, maxTurns: 120, label: "Maximum capability, deepest reasoning" },
   };
 
+// Cheaper "executor" model per provider for planner-executor routing: the
+// planner keeps the session's (stronger) model; individual steps run on the
+// fast model. Falls back to the session model when no fast variant is known.
+const FAST_MODELS: Partial<Record<ProviderName, string>> = {
+  anthropic: "claude-haiku-4-5-20251001",
+  openai: "gpt-4o-mini",
+  google: "gemini-2.5-flash",
+  openrouter: "qwen/qwen3-coder:free",
+  ollama: "llama3",
+};
+
 const DEFAULT_ENGINE_CONFIG: EngineConfig = {
-  model: "deepseek/deepseek-v4-flash:free",
-  provider: "openrouter",
+  // Default to a known-good, free model. The previous default
+  // (openrouter/deepseek-v4-flash:free) is an invalid model id that errors
+  // instantly on OpenRouter, so out-of-the-box runs hit a dead model.
+  model: "gemini-2.5-flash",
+  provider: "google",
   workspaceRoot: process.cwd(),
   dbPath: `${process.env.HOME}/.alan/alan.db`,
   toolsBinaryPath: "alan-tools",
@@ -147,6 +167,7 @@ export class Engine {
   private currentAbort: AbortController | null = null;
   private hookRunner: HookRunner | null = null;
   private hooksLoaded = false;
+  private verifier: Verifier | null = null;
 
   constructor(config: Partial<EngineConfig> = {}) {
     this.config = { ...DEFAULT_ENGINE_CONFIG, ...config };
@@ -214,6 +235,15 @@ export class Engine {
       { budget: this.config.contextBudget },
       this.gateway,
     );
+
+    // Verifier — runs project checks after edits so the agent self-corrects.
+    // On by default; detection is best-effort and a no-op when nothing matches.
+    if (this.config.enableVerification !== false) {
+      this.verifier = new CommandVerifier({
+        workspaceRoot: this.config.workspaceRoot,
+        commands: this.config.verifyCommand,
+      });
+    }
 
     // Initialize Cost Tracker
     this.costTracker = new CostTracker();
@@ -455,7 +485,8 @@ export class Engine {
     if (this.config.plannerMode) {
       const routing: ModelRouting = {
         planner: this.config.routing?.planner ?? session.model,
-        executor: this.config.routing?.executor ?? session.model,
+        executor:
+          this.config.routing?.executor ?? FAST_MODELS[this.config.provider] ?? session.model,
         plannerProvider: this.config.routing?.plannerProvider ?? this.config.provider,
         executorProvider: this.config.routing?.executorProvider ?? this.config.provider,
       };
@@ -470,6 +501,7 @@ export class Engine {
           systemPrompt: SYSTEM_PROMPT,
           priorMessages,
           contextEngine: this.contextEngine,
+          verifier: this.verifier ?? undefined,
         },
         this.gateway,
         this.registry,
@@ -485,6 +517,7 @@ export class Engine {
           systemPrompt: SYSTEM_PROMPT,
           priorMessages,
           contextEngine: this.contextEngine,
+          verifier: this.verifier ?? undefined,
         },
         this.gateway,
         this.registry,

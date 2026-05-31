@@ -237,17 +237,10 @@ export class ContextEngine {
       });
     }
 
-    // 5. Session summaries
-    for (const summary of this.memory.summaries) {
-      items.push({
-        kind: "session_summary",
-        content: summary.summary,
-        tokens: summary.tokens,
-        relevance: 0.6,
-        age: 100, // old by definition
-        pinned: false,
-      });
-    }
+    // 5. Session summaries are intentionally NOT re-injected here. The rolling
+    // summary already lives in the working set as a synthetic summary message
+    // (added by compactWorkingSet), so re-adding memory.summaries would
+    // double-count the same text and grow the prompt unbounded.
 
     // 6. Discoveries
     for (const disc of this.memory.discoveries) {
@@ -484,6 +477,19 @@ ${transcript}`,
         ? Math.round((this.lastTokenUsage.used / this.lastTokenUsage.limit) * 100)
         : 0,
     };
+  }
+
+  /**
+   * Whether the working set should be compacted now, based on the most recent
+   * buildPrompt() token usage. Returns true only once usage crosses the
+   * high-water mark, so the agent loop doesn't fire an expensive summarization
+   * call every turn. Returns false until at least one buildPrompt() has run.
+   */
+  shouldCompact(highWaterRatio: number = 0.7): boolean {
+    if (!this.lastTokenUsage) return false;
+    const { used, limit } = this.lastTokenUsage;
+    if (limit <= 0) return false;
+    return used / limit >= highWaterRatio;
   }
 }
 
