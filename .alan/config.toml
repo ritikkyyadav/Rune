@@ -20,3 +20,11 @@ model = "gemini-2.5-pro"
 [llm.executor]
 provider = "google"
 model = "gemini-2.5-flash"
+
+[permissions]
+# This repo is a trusted, sandboxed test workspace: auto-approve in-workspace
+# edits and bash so iteration isn't gated by a prompt on every action.
+# Out-of-workspace writes and network tools (web_fetch/web_search/n8n) still
+# prompt; the Rust sandbox + dangerous-command blocklist remain active either way.
+# Remove this or set false to restore prompt-on-every-mutation behavior.
+trustWorkspace = true

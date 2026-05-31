@@ -48,6 +48,12 @@ export interface AlanConfig {
   permissions: {
     defaultLevel: "auto" | "confirm" | "sandbox";
     rules: PermissionRule[];
+    /**
+     * Auto-approve in-workspace writes/edits and bash without prompting. Out-of-workspace
+     * writes and network tools still prompt. Default false. Intended for trusted, sandboxed
+     * test workspaces — set per-project in `<workspace>/.alan/config.toml`.
+     */
+    trustWorkspace?: boolean;
   };
   sandbox: {
     enabled: boolean;
@@ -91,6 +97,7 @@ const DEFAULT_CONFIG: AlanConfig = {
   permissions: {
     defaultLevel: "confirm",
     rules: [],
+    trustWorkspace: false,
   },
   sandbox: {
     enabled: true,
@@ -201,6 +208,8 @@ function applyEnvOverrides(config: Record<string, unknown>): void {
       setNested(c, "sandbox.enabled", process.env.ALAN_SANDBOX_ENABLED === "true"),
     ALAN_SANDBOX_NETWORK: (c) =>
       setNested(c, "sandbox.networkDeny", process.env.ALAN_SANDBOX_NETWORK !== "allow"),
+    ALAN_TRUST_WORKSPACE: (c) =>
+      setNested(c, "permissions.trustWorkspace", process.env.ALAN_TRUST_WORKSPACE === "true"),
     ALAN_TELEMETRY: (c) => setNested(c, "telemetry.enabled", process.env.ALAN_TELEMETRY === "true"),
     ANTHROPIC_API_KEY: (c) => setNested(c, "llm.anthropic.apiKey", process.env.ANTHROPIC_API_KEY!),
     OPENAI_API_KEY: (c) => setNested(c, "llm.openai.apiKey", process.env.OPENAI_API_KEY!),

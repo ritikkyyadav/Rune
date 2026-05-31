@@ -67,6 +67,11 @@ export interface EngineConfig {
   dbPath: string;
   toolsBinaryPath: string;
   yoloMode: boolean;
+  /**
+   * Auto-approve in-workspace writes/edits and bash without prompting. Out-of-workspace
+   * writes and network tools still prompt. Default false.
+   */
+  trustWorkspace?: boolean;
   /** Enable Planner-Executor two-tier mode. */
   plannerMode: boolean;
   /** Model routing for planner-executor split. */
@@ -103,6 +108,7 @@ const DEFAULT_ENGINE_CONFIG: EngineConfig = {
   dbPath: `${process.env.HOME}/.alan/alan.db`,
   toolsBinaryPath: "alan-tools",
   yoloMode: false,
+  trustWorkspace: false,
   plannerMode: false,
 };
 
@@ -198,7 +204,10 @@ export class Engine {
     this.sessions = new SessionManager(this.config.dbPath);
 
     // Initialize Permission Broker
-    this.permissions = new PermissionBroker(this.config.yoloMode);
+    this.permissions = new PermissionBroker(this.config.yoloMode, {
+      workspaceRoot: this.config.workspaceRoot,
+      trustWorkspace: this.config.trustWorkspace,
+    });
 
     // Initialize Context Engine — always on, manages token budgets
     this.contextEngine = new ContextEngine(
@@ -762,6 +771,7 @@ export class Engine {
     workspace: string;
     plannerMode: boolean;
     yoloMode: boolean;
+    trustWorkspace: boolean;
     registeredProviders: ProviderName[];
     cost: number;
     sessionId?: string;
@@ -776,6 +786,7 @@ export class Engine {
       workspace: this.config.workspaceRoot,
       plannerMode: this.config.plannerMode,
       yoloMode: this.config.yoloMode,
+      trustWorkspace: this.permissions.isTrustWorkspace(),
       registeredProviders: this.getRegisteredProviders(),
       cost: this.getCost(),
       sessionId,
