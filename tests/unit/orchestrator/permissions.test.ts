@@ -62,3 +62,76 @@ describe("PermissionBroker", () => {
     expect(broker.check(schema, {}).type).toBe("needs_confirmation");
   });
 });
+
+describe("PermissionBroker — workspace trust", () => {
+  const WS = "/tmp/alan-ws";
+  const writeSchema = {
+    name: "write_file",
+    permissionLevel: "confirm" as const,
+    description: "",
+    parameters: [],
+  };
+  const bashSchema = {
+    name: "bash",
+    permissionLevel: "sandbox" as const,
+    description: "",
+    parameters: [],
+  };
+  const webSchema = {
+    name: "web_fetch",
+    permissionLevel: "confirm" as const,
+    description: "",
+    parameters: [],
+  };
+
+  test("auto-approves writes inside the workspace", () => {
+    const broker = new PermissionBroker(false, { workspaceRoot: WS, trustWorkspace: true });
+    expect(broker.check(writeSchema, { path: `${WS}/src/a.ts` }).type).toBe("allowed");
+    // Relative paths resolve under the workspace root.
+    expect(broker.check(writeSchema, { path: "src/a.ts" }).type).toBe("allowed");
+  });
+
+  test("still prompts for writes outside the workspace", () => {
+    const broker = new PermissionBroker(false, { workspaceRoot: WS, trustWorkspace: true });
+    expect(broker.check(writeSchema, { path: "/etc/hosts" }).type).toBe("needs_confirmation");
+    // Path traversal that escapes the root is not confined.
+    expect(broker.check(writeSchema, { path: `${WS}/../escape.ts` }).type).toBe(
+      "needs_confirmation",
+    );
+  });
+
+  test("auto-approves bash (contained by the Rust sandbox)", () => {
+    const broker = new PermissionBroker(false, { workspaceRoot: WS, trustWorkspace: true });
+    expect(broker.check(bashSchema, { command: "ls -la" }).type).toBe("allowed");
+  });
+
+  test("does not auto-approve network tools", () => {
+    const broker = new PermissionBroker(false, { workspaceRoot: WS, trustWorkspace: true });
+    expect(broker.check(webSchema, { url: "https://example.com" }).type).toBe("needs_confirmation");
+  });
+
+  test("is inert when disabled (the default)", () => {
+    const broker = new PermissionBroker(false, { workspaceRoot: WS });
+    expect(broker.check(writeSchema, { path: `${WS}/src/a.ts` }).type).toBe("needs_confirmation");
+    expect(broker.check(bashSchema, { command: "ls" }).type).toBe("needs_confirmation");
+  });
+
+  test("is inert without a workspace root", () => {
+    const broker = new PermissionBroker(false, { trustWorkspace: true });
+    expect(broker.check(writeSchema, { path: `${WS}/src/a.ts` }).type).toBe("needs_confirmation");
+  });
+
+  test("setTrustWorkspace toggles at runtime", () => {
+    const broker = new PermissionBroker(false, { workspaceRoot: WS });
+    expect(broker.check(writeSchema, { path: `${WS}/a.ts` }).type).toBe("needs_confirmation");
+    broker.setTrustWorkspace(true);
+    expect(broker.check(writeSchema, { path: `${WS}/a.ts` }).type).toBe("allowed");
+    broker.setTrustWorkspace(false);
+    expect(broker.check(writeSchema, { path: `${WS}/a.ts` }).type).toBe("needs_confirmation");
+  });
+
+  test("reports permissive posture when trust is enabled", () => {
+    const broker = new PermissionBroker(false, { workspaceRoot: WS, trustWorkspace: true });
+    expect(broker.getSecurityPosture()).toBe("permissive");
+  });
+});
