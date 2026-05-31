@@ -6,7 +6,10 @@ import { parseArgs } from "util";
 import * as readline from "readline";
 import { Spinner } from "./spinner";
 import { renderWelcome } from "./welcome";
-import { renderEditResult, renderWriteResult } from "./diff-render";
+import { renderToolCall } from "./ui/tool-call";
+import { renderStatus } from "./ui/status";
+import { promptString, statusLine } from "./ui/composer";
+import { runTui } from "./ui/tui";
 import { exportSession } from "../session-export";
 import { loadCommands, findCommand } from "../commands";
 
@@ -19,6 +22,7 @@ const { values, positionals } = parseArgs({
     provider: { type: "string", short: "p" },
     workspace: { type: "string", short: "w" },
     yolo: { type: "boolean", default: false },
+    trust: { type: "boolean", default: false },
     planner: { type: "boolean", default: false },
     "planner-model": { type: "string" },
     "executor-model": { type: "string" },
@@ -28,6 +32,7 @@ const { values, positionals } = parseArgs({
     sign: { type: "boolean", default: false },
     out: { type: "string" },
     help: { type: "boolean", short: "h", default: false },
+    tui: { type: "boolean", default: false },
   },
   allowPositionals: true,
   strict: false,
@@ -53,8 +58,10 @@ if (values.help) {
       `    -p, --provider <provider>    LLM provider (anthropic|openai|openrouter|google)\n` +
       `    -w, --workspace <path>       Workspace root directory\n` +
       `    -r, --resume <sessionId>     Resume an existing session\n` +
-      `    --yolo                       Skip permission prompts\n` +
+      `    --yolo                       Skip all permission prompts\n` +
+      `    --trust                      Auto-approve in-workspace edits & bash (outside still prompts)\n` +
       `    --planner                    Enable planner+executor mode\n` +
+      `    --tui                        Codex-style terminal UI (experimental)\n` +
       `    -h, --help                   Show this help\n\n`,
   );
   process.exit(0);
@@ -125,7 +132,23 @@ function ensureDataDir(): string {
 
 // ─── Colors (L'Atlas Terminal Palette) ───
 
-import { bold, paper, dim, vermillion, brass, cyanotype, green, stripAnsi } from "./colors";
+import {
+  bold,
+  paper,
+  dim,
+  vermillion,
+  brass,
+  cyanotype,
+  green,
+  stripAnsi,
+  text,
+  muted,
+  faint,
+  info,
+  warn,
+  accent,
+  ok,
+} from "./colors";
 
 // ─── Main ───
 
@@ -187,6 +210,8 @@ async function main() {
     DEFAULT_MODELS[provider];
 
   const plannerMode = values.planner as boolean;
+  // Workspace trust: --trust flag OR permissions.trustWorkspace in .alan/config.toml.
+  const trustWorkspace = (values.trust as boolean) || (config.permissions?.trustWorkspace ?? false);
   const engine = new Engine({
     model,
     provider: provider as "anthropic" | "openai" | "openrouter" | "google",
@@ -194,6 +219,7 @@ async function main() {
     dbPath: config.engine.dbPath,
     toolsBinaryPath: toolsBinary,
     yoloMode: values.yolo as boolean,
+    trustWorkspace,
     plannerMode,
     routing: plannerMode
       ? {
@@ -308,21 +334,40 @@ async function main() {
   const sessionId = (values.resume as string) ?? engine.createSession();
   const customCommands = await loadCommands(workspaceRoot);
 
+  // ─── TUI (opt-in) ───
+  // Default stays the readline path; the Codex-style TUI is selected with --tui or
+  // ALAN_TUI=1, and only when stdin is a real terminal. ALAN_CLASSIC forces readline.
+  const useTui =
+    !!process.stdin.isTTY &&
+    !process.env.ALAN_CLASSIC &&
+    ((values.tui as boolean) || !!process.env.ALAN_TUI);
+  if (useTui) {
+    await runTui({
+      engine,
+      sessionId,
+      workspaceRoot,
+      version: "0.1.0",
+      yoloMode: values.yolo as boolean,
+      trustWorkspace,
+      customCommands,
+    });
+    return;
+  }
+
   // ─── Welcome Screen ───
   const recentSessions = engine.listSessions().filter((s) => s.id !== sessionId);
 
   process.stdout.write(
-    "\n" +
-      renderWelcome({
-        model: engine.getModel(),
-        provider: engine.getProvider(),
-        sessionId,
-        workspace: workspaceRoot,
-        version: "0.1.0",
-        sandbox: config.sandbox?.enabled ?? false,
-        recentSessions,
-      }) +
-      "\n",
+    renderWelcome({
+      model: engine.getModel(),
+      provider: engine.getProvider(),
+      effort: engine.getEffort(),
+      sessionId,
+      workspace: workspaceRoot,
+      version: "0.1.0",
+      sandbox: config.sandbox?.enabled ?? false,
+      recentSessions,
+    }) + "\n",
   );
 
   const spinner = new Spinner();
@@ -361,7 +406,7 @@ async function main() {
           pasteCount++;
           const lineCount = content.split(/\r?\n|\r/).filter((l) => l.length > 0).length;
           process.stdout.write(
-            `  ${vermillion("\u203A")} ${dim("alan")} ${dim(`[Pasted text #${pasteCount} +${lineCount} lines]`)}\n`,
+            `  ${accent("\u203A")} ${faint(`[pasted #${pasteCount} \u00B7 +${lineCount} lines]`)}\n`,
           );
           const raw = content.trim();
           if (raw) {
@@ -383,7 +428,7 @@ async function main() {
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: `  ${vermillion("\u203A")} ${dim("alan")} `,
+    prompt: promptString(),
   });
 
   // ─── Permission Handler ───
@@ -396,12 +441,14 @@ async function main() {
 
       const argPreview = prompt.argsSummary.slice(0, 100);
       process.stdout.write("\n");
-      process.stdout.write(`  ${brass("?")} Allow ${cyanotype(prompt.toolName)}${argPreview ? dim(" \u2014 " + argPreview) : ""}?\n`);
       process.stdout.write(
-        `  ${green("Enter")} ${dim("= allow")}  ${brass("s")} ${dim("= allow for session")}  ${vermillion("n")} ${dim("= deny")}\n`,
+        `  ${warn("?")} ${text("Allow")} ${info(prompt.toolName)}${argPreview ? faint(" \u2014 " + argPreview) : ""}${text("?")}\n`,
+      );
+      process.stdout.write(
+        `  ${ok("Enter")} ${faint("allow")}   ${warn("s")} ${faint("session")}   ${accent("n")} ${faint("deny")}\n`,
       );
 
-      rl.question(`  ${brass(">")} `, (answer) => {
+      rl.question(`  ${accent("\u203a")} `, (answer) => {
         const a = answer.trim().toLowerCase();
         let decision: UserPermissionDecision;
         if (a === "n" || a === "no" || a === "d" || a === "deny") {
@@ -414,11 +461,11 @@ async function main() {
         }
 
         if (decision.kind === "deny") {
-          process.stdout.write(`  ${vermillion("\u2715")} denied\n`);
+          process.stdout.write(`  ${accent("\u2715")} ${muted("denied")}\n`);
         } else if (decision.kind === "allow_session") {
-          process.stdout.write(`  ${green("\u2713")} allowed for session\n`);
+          process.stdout.write(`  ${ok("\u2713")} ${muted("allowed for session")}\n`);
         } else {
-          process.stdout.write(`  ${green("\u2713")} allowed\n`);
+          process.stdout.write(`  ${ok("\u2713")} ${muted("allowed")}\n`);
         }
 
         if (wasSpinning) spinner.start("tool_call");
@@ -446,18 +493,16 @@ async function main() {
   ];
 
   function showPrompt() {
-    const w = process.stdout.columns ?? 80;
-    const ruleW = Math.min(w - 4, 76);
-
-    // ── confirm · google/gemini-2.5-flash ─────────────
-    const modeLabel = yoloMode ? green("yolo") : dim("confirm");
-    const provModel = `${engine.getProvider()}/${engine.getModel()}`;
-    const infoPart = `${modeLabel} ${dim("·")} ${dim(provModel)}`;
-    const infoVisLen = stripAnsi(infoPart).length;
-    const padRight = Math.max(0, ruleW - infoVisLen - 4);
-    const topRule = `  ${dim("──")} ${infoPart} ${dim("─".repeat(padRight))}`;
-
-    process.stdout.write("\n" + topRule + "\n\n");
+    process.stdout.write(
+      "\n" +
+        statusLine({
+          model: engine.getModel(),
+          effort: engine.getEffort(),
+          workspace: workspaceRoot,
+          mode: yoloMode ? "yolo" : trustWorkspace ? "trusted" : "confirm",
+        }) +
+        "\n",
+    );
     rl.prompt();
   }
 
@@ -506,14 +551,14 @@ async function main() {
 
     if (input === "/") {
       // Bare slash — show all available commands
-      process.stdout.write(`  ${dim("§ Commands")}\n\n`);
+      process.stdout.write(`  ${bold(text("Commands"))}\n\n`);
       for (const [cmd, desc] of SLASH_CMDS) {
-        process.stdout.write(`    ${brass(cmd.padEnd(14))}${dim(desc)}\n`);
+        process.stdout.write(`    ${info(cmd.padEnd(14))}${muted(desc)}\n`);
       }
       if (customCommands.length) {
-        process.stdout.write(`\n  ${dim("§ Custom")}\n\n`);
+        process.stdout.write(`\n  ${bold(text("Custom"))}\n\n`);
         for (const c of customCommands) {
-          process.stdout.write(`    ${brass(("/" + c.name).padEnd(14))}${dim(c.description ?? "")}\n`);
+          process.stdout.write(`    ${info(("/" + c.name).padEnd(14))}${muted(c.description ?? "")}\n`);
         }
       }
       process.stdout.write("\n");
@@ -528,13 +573,6 @@ async function main() {
     }
 
     if (input === "/help") {
-      const w = process.stdout.columns ?? 80;
-      const ruleW = Math.min(w - 4, 62);
-      process.stdout.write(`  ${dim("┌")}${dim("─".repeat(ruleW))}${dim("┐")}\n`);
-      process.stdout.write(
-        `  ${dim("│")} ${dim("§ 01 — Commands")}${" ".repeat(Math.max(0, ruleW - 18))}${dim("│")}\n`,
-      );
-      process.stdout.write(`  ${dim("├")}${dim("─".repeat(ruleW))}${dim("┤")}\n`);
       const cmds: [string, string][] = [
         ["/model", "Switch model/provider"],
         ["/effort", "Set reasoning effort"],
@@ -547,14 +585,11 @@ async function main() {
         ["/help", "This reference"],
         ["/quit", "Exit"],
       ];
+      process.stdout.write(`  ${bold(text("Commands"))}\n\n`);
       for (const [cmd, desc] of cmds) {
-        const line = `${brass(cmd.padEnd(14))}${dim(desc)}`;
-        const visLen = cmd.length + desc.length + (14 - cmd.length);
-        process.stdout.write(
-          `  ${dim("│")} ${line}${" ".repeat(Math.max(0, ruleW - visLen - 3))}${dim("│")}\n`,
-        );
+        process.stdout.write(`    ${info(cmd.padEnd(14))}${muted(desc)}\n`);
       }
-      process.stdout.write(`  ${dim("└")}${dim("─".repeat(ruleW))}${dim("┘")}\n\n`);
+      process.stdout.write("\n");
       showPrompt();
       return;
     }
@@ -567,29 +602,23 @@ async function main() {
 
     if (input === "/status") {
       const status = engine.getStatus(sessionId);
-      const w = process.stdout.columns ?? 80;
-      const ruleW = Math.min(w - 4, 56);
-      process.stdout.write(`  ${dim("┌")}${dim("─".repeat(ruleW))}${dim("┐")}\n`);
       process.stdout.write(
-        `  ${dim("│")} ${dim("§ 02 — Status")}${" ".repeat(Math.max(0, ruleW - 16))}${dim("│")}\n`,
+        "\n" +
+          renderStatus({
+            model: status.model,
+            provider: status.provider,
+            effort: status.effort,
+            workspace: status.workspace,
+            sessionId,
+            cost: status.cost,
+            plannerMode: status.plannerMode,
+            yoloMode: status.yoloMode,
+            trustWorkspace: status.trustWorkspace,
+            registeredProviders: status.registeredProviders,
+            version: "0.1.0",
+          }) +
+          "\n\n",
       );
-      process.stdout.write(`  ${dim("├")}${dim("─".repeat(ruleW))}${dim("┤")}\n`);
-      const rows: [string, string][] = [
-        ["model", `${status.provider}/${status.model}`],
-        ["effort", `${status.effort} (${status.effortLabel})`],
-        ["workspace", status.workspace],
-        ["session", sessionId.slice(0, 8)],
-        ["mode", `${status.plannerMode ? "planner" : "react"}${status.yoloMode ? " · yolo" : ""}`],
-        ["providers", status.registeredProviders.join(", ")],
-        ["cost", `$${status.cost.toFixed(4)}`],
-      ];
-      for (const [label, value] of rows) {
-        const visLen = label.length + 3 + value.length;
-        process.stdout.write(
-          `  ${dim("│")} ${dim(label.padEnd(12))}${brass(value)}${" ".repeat(Math.max(0, ruleW - visLen - 10))}${dim("│")}\n`,
-        );
-      }
-      process.stdout.write(`  ${dim("└")}${dim("─".repeat(ruleW))}${dim("┘")}\n\n`);
       showPrompt();
       return;
     }
@@ -597,63 +626,43 @@ async function main() {
     if (input === "/providers") {
       const registered = engine.getRegisteredProviders();
       const currentProvider = engine.getProvider();
-      const w = process.stdout.columns ?? 80;
-      const ruleW = Math.min(w - 4, 56);
-      process.stdout.write(`  ${dim("┌")}${dim("─".repeat(ruleW))}${dim("┐")}\n`);
-      process.stdout.write(
-        `  ${dim("│")} ${dim("§ 03 — Providers")}${" ".repeat(Math.max(0, ruleW - 19))}${dim("│")}\n`,
-      );
-      process.stdout.write(`  ${dim("├")}${dim("─".repeat(ruleW))}${dim("┤")}\n`);
+      const allProviders = ["google", "anthropic", "openai", "openrouter"];
 
-      const allProviders: { name: string; envVar: string }[] = [
-        { name: "google", envVar: "GOOGLE_API_KEY" },
-        { name: "anthropic", envVar: "ANTHROPIC_API_KEY" },
-        { name: "openai", envVar: "OPENAI_API_KEY" },
-        { name: "openrouter", envVar: "OPENROUTER_API_KEY" },
-      ];
-      for (const { name, envVar } of allProviders) {
+      process.stdout.write(`  ${bold(text("Providers"))}\n\n`);
+      for (const name of allProviders) {
         const isRegistered = registered.includes(name as any);
         const isActive = name === currentProvider;
-        const indicator = isActive ? green("●") : isRegistered ? brass("●") : dim("○");
-        const label = isActive ? green(name) : isRegistered ? brass(name) : dim(name);
+        const indicator = isActive ? ok("●") : isRegistered ? warn("●") : faint("○");
+        const colorName = isActive ? ok : isRegistered ? text : faint;
         const statusText = isActive
-          ? green("active")
+          ? ok("active")
           : isRegistered
-            ? dim("ready")
-            : vermillion("no key");
-        const visLen = 4 + name.length + statusText.length - (isActive || isRegistered ? 0 : 0);
-        process.stdout.write(
-          `  ${dim("│")} ${indicator} ${label.padEnd(14)} ${statusText}${" ".repeat(Math.max(0, ruleW - name.length - 22))}${dim("│")}\n`,
-        );
+            ? muted("ready")
+            : faint("no key");
+        process.stdout.write(`    ${indicator} ${colorName(name.padEnd(14))} ${statusText}\n`);
       }
-      process.stdout.write(`  ${dim("└")}${dim("─".repeat(ruleW))}${dim("┘")}\n\n`);
+      process.stdout.write("\n");
       showPrompt();
       return;
     }
 
     if (input === "/effort") {
       const current = engine.getEffort();
-      const w = process.stdout.columns ?? 80;
-      const ruleW = Math.min(w - 4, 56);
-      process.stdout.write(`  ${dim("┌")}${dim("─".repeat(ruleW))}${dim("┐")}\n`);
-      process.stdout.write(
-        `  ${dim("│")} ${dim("§ 04 — Effort")}${" ".repeat(Math.max(0, ruleW - 16))}${dim("│")}\n`,
-      );
-      process.stdout.write(`  ${dim("├")}${dim("─".repeat(ruleW))}${dim("┤")}\n`);
       const levels: { key: string; level: "low" | "medium" | "high" | "max"; label: string }[] = [
         { key: "1", level: "low", label: "Quick, minimal reasoning" },
         { key: "2", level: "medium", label: "Balanced (default)" },
         { key: "3", level: "high", label: "Thorough analysis" },
         { key: "4", level: "max", label: "Maximum capability" },
       ];
+      process.stdout.write(`  ${bold(text("Reasoning effort"))}\n\n`);
       for (const l of levels) {
-        const active = l.level === current ? ` ${green("◂")}` : "";
-        const visLen = 5 + l.level.length + l.label.length;
+        const isCurrent = l.level === current;
+        const active = isCurrent ? ` ${ok("◂ current")}` : "";
         process.stdout.write(
-          `  ${dim("│")} ${brass(`[${l.key}]`)} ${l.level.padEnd(8)} ${dim(l.label)}${active}${" ".repeat(Math.max(0, ruleW - visLen - (active ? 4 : 2)))}${dim("│")}\n`,
+          `    ${warn(`[${l.key}]`)} ${(isCurrent ? text : muted)(l.level.padEnd(8))} ${faint(l.label)}${active}\n`,
         );
       }
-      process.stdout.write(`  ${dim("└")}${dim("─".repeat(ruleW))}${dim("┘")}\n\n`);
+      process.stdout.write("\n");
 
       rl.question(`  ${vermillion("\u203A")} `, (answer) => {
         const a = answer.trim().toLowerCase();
@@ -702,7 +711,7 @@ async function main() {
       const registered = engine.getRegisteredProviders();
 
       process.stdout.write(
-        `  ${dim("current")}  ${cyanotype(currentProvider)}${dim("/")}${brass(current)}\n\n`,
+        `  ${bold(text("Model"))}  ${faint("current:")} ${info(currentProvider + "/" + current)}\n\n`,
       );
 
       const presets: { key: string; provider: string; model: string; label: string }[] = [];
@@ -754,12 +763,13 @@ async function main() {
       }
 
       for (const p of presets) {
-        const active = p.provider === currentProvider && p.model === current ? green(" ◂") : "";
+        const isCurrent = p.provider === currentProvider && p.model === current;
+        const active = isCurrent ? ` ${ok("◂ current")}` : "";
         process.stdout.write(
-          `  ${brass(`[${p.key}]`)} ${cyanotype(p.provider)}${dim("/")}${p.label}${active}\n`,
+          `    ${warn(`[${p.key}]`)} ${info(p.provider)}${faint("/")}${text(p.label)}${active}\n`,
         );
       }
-      process.stdout.write(`  ${brass("[c]")} ${dim("custom provider/model")}\n\n`);
+      process.stdout.write(`    ${warn("[c]")} ${faint("custom provider/model")}\n\n`);
 
       rl.question(`  ${vermillion("\u203A")} `, (answer) => {
         const a = answer.trim().toLowerCase();
@@ -838,14 +848,15 @@ async function main() {
         return;
       }
       if (!arg) {
+        process.stdout.write(`  ${bold(text("Rewind"))}\n`);
         process.stdout.write(
-          `  ${dim("§ Rewind — roll back to a turn (removes it and everything after):")}\n\n`,
+          `  ${faint("Roll back to a turn — removes it and everything after.")}\n\n`,
         );
         turns.forEach((t, i) => {
           const preview = t.text.replace(/\s+/g, " ").slice(0, 60);
-          process.stdout.write(`    ${brass(String(i + 1).padStart(2))}  ${dim(preview)}\n`);
+          process.stdout.write(`    ${warn(String(i + 1).padStart(2))}  ${muted(preview)}\n`);
         });
-        process.stdout.write(`\n  ${dim("Run")} ${brass("/rewind <n>")}\n\n`);
+        process.stdout.write(`\n  ${faint("Run")} ${info("/rewind <n>")}\n\n`);
         showPrompt();
         return;
       }
@@ -887,10 +898,7 @@ async function main() {
 
     busy = true;
 
-    // Bottom rule closing the input area (matching top rule indent)
-    const bw = Math.min((process.stdout.columns ?? 80) - 4, 76);
-    process.stdout.write(`  ${dim("─".repeat(bw))}\n\n`);
-
+    process.stdout.write("\n");
     spinner.start("thinking");
     let isStreaming = false;
     let totalTokens = 0;
@@ -909,44 +917,29 @@ async function main() {
           }
 
           case "tool_call_start": {
-            spinner.stop();
             if (isStreaming) {
               process.stdout.write("\n");
               isStreaming = false;
             }
-            process.stdout.write(
-              `\n  ${dim("┌─")} ${cyanotype(event.toolName)} ${dim("─".repeat(Math.max(1, 40 - event.toolName.length)))}${dim("┐")}\n`,
-            );
-            spinner.start("tool_call");
+            if (!spinner.isRunning()) spinner.start("tool_call");
             spinner.setTool(event.toolName);
             break;
           }
 
           case "tool_call_end": {
             spinner.stop();
-            if (event.output.success) {
-              process.stdout.write(
-                `  ${dim("└──")} ${green("✓")} ${dim(`${event.output.durationMs}ms`)}${dim(" ─┘")}\n`,
-              );
-
-              const toolName = event.output.toolName;
-              if (toolName === "edit_file" || toolName === "write_file") {
-                try {
-                  const parsed = JSON.parse(event.output.result);
-                  const rendered =
-                    toolName === "edit_file"
-                      ? renderEditResult(parsed, "      ")
-                      : renderWriteResult(parsed, "      ");
-                  if (rendered) process.stdout.write(rendered + "\n");
-                } catch {
-                  // result was not JSON — leave as-is
-                }
-              }
-            } else {
-              process.stdout.write(
-                `  ${dim("└──")} ${vermillion("✕")} ${vermillion(event.output.error ?? "failed")}${dim(" ─┘")}\n`,
-              );
-            }
+            process.stdout.write(
+              "\n" +
+                renderToolCall({
+                  toolName: event.output.toolName,
+                  args: event.args,
+                  result: event.output.result,
+                  success: event.output.success,
+                  error: event.output.error,
+                  durationMs: event.output.durationMs,
+                }) +
+                "\n",
+            );
             spinner.start("thinking");
             break;
           }
@@ -957,26 +950,18 @@ async function main() {
               process.stdout.write("\n");
               isStreaming = false;
             }
-            const todoW = Math.min((process.stdout.columns ?? 80) - 4, 62);
-            process.stdout.write(`\n  ${dim("┌")}${dim("─".repeat(todoW))}${dim("┐")}\n`);
-            process.stdout.write(
-              `  ${dim("│")} ${dim("§ TODO")}${" ".repeat(Math.max(0, todoW - 9))}${dim("│")}\n`,
-            );
-            process.stdout.write(`  ${dim("├")}${dim("─".repeat(todoW))}${dim("┤")}\n`);
+            process.stdout.write(`\n  ${muted("•")} ${bold(text("Updated plan"))}\n`);
             for (const item of event.items) {
               const marker =
                 item.status === "completed"
-                  ? green("✓")
+                  ? ok("✓")
                   : item.status === "in_progress"
-                    ? brass("▸")
-                    : dim("·");
-              const itemText = item.content.slice(0, todoW - 6);
-              const padLen = Math.max(0, todoW - stripAnsi(itemText).length - 5);
-              process.stdout.write(
-                `  ${dim("│")} ${marker} ${itemText}${" ".repeat(padLen)}${dim("│")}\n`,
-              );
+                    ? warn("▸")
+                    : faint("□");
+              const label = item.status === "in_progress" ? text(item.content) : muted(item.content);
+              process.stdout.write(`    ${marker} ${label}\n`);
             }
-            process.stdout.write(`  ${dim("└")}${dim("─".repeat(todoW))}${dim("┘")}\n\n`);
+            process.stdout.write("\n");
             spinner.start("thinking");
             break;
           }
@@ -987,23 +972,15 @@ async function main() {
               process.stdout.write("\n");
               isStreaming = false;
             }
-            const planW = Math.min((process.stdout.columns ?? 80) - 4, 62);
-            process.stdout.write(`\n  ${dim("┌")}${dim("─".repeat(planW))}${dim("┐")}\n`);
-            process.stdout.write(
-              `  ${dim("│")} ${dim("§ PLAN")}${" ".repeat(Math.max(0, planW - 9))}${dim("│")}\n`,
-            );
-            process.stdout.write(`  ${dim("├")}${dim("─".repeat(planW))}${dim("┤")}\n`);
+            process.stdout.write(`\n  ${muted("•")} ${bold(text("Plan"))}\n`);
             const numerals = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"];
             for (const step of event.plan.steps) {
               const num = numerals[step.index] ?? `${step.index + 1}`;
-              const deps = step.dependsOn.length > 0 ? ` (after ${step.dependsOn.join(",")})` : "";
-              const stepText = `${num}. ${step.description}${deps}`;
-              const truncStep = stepText.slice(0, planW - 4);
-              process.stdout.write(
-                `  ${dim("│")} ${vermillion(`${num}.`)} ${step.description.slice(0, planW - num.length - 7)}${deps}${" ".repeat(Math.max(0, planW - truncStep.length - 3))}${dim("│")}\n`,
-              );
+              const deps =
+                step.dependsOn.length > 0 ? faint(` (after ${step.dependsOn.join(",")})`) : "";
+              process.stdout.write(`    ${warn(`${num}.`)} ${text(step.description)}${deps}\n`);
             }
-            process.stdout.write(`  ${dim("└")}${dim("─".repeat(planW))}${dim("┘")}\n\n`);
+            process.stdout.write("\n");
             spinner.start("executing");
             break;
           }
@@ -1013,7 +990,7 @@ async function main() {
             const numerals = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"];
             const num = numerals[event.stepIndex] ?? `${event.stepIndex + 1}`;
             process.stdout.write(
-              `\n  ${brass("\u203A")} ${bold(`Step ${num}:`)} ${event.description}\n`,
+              `\n  ${muted("\u2022")} ${bold(text(`Step ${num}`))}  ${muted(event.description)}\n`,
             );
             spinner.start("executing");
             break;
@@ -1021,8 +998,8 @@ async function main() {
 
           case "step_completed": {
             spinner.stop();
-            const mark = event.result.success ? green("✓") : vermillion("✕");
-            process.stdout.write(`  ${mark} ${dim(event.result.summary.slice(0, 120))}\n`);
+            const mark = event.result.success ? ok("✓") : accent("✕");
+            process.stdout.write(`    ${mark} ${muted(event.result.summary.slice(0, 120))}\n`);
             break;
           }
 
@@ -1033,9 +1010,9 @@ async function main() {
             ).length;
             const total = event.plan.steps.length;
             const status =
-              event.plan.status === "completed" ? green("completed") : vermillion("failed");
+              event.plan.status === "completed" ? ok("completed") : accent("failed");
             process.stdout.write(
-              `\n  ${dim("§ RESULT")} ${status} ${dim(`(${completed}/${total} steps)`)}\n`,
+              `\n  ${muted("•")} ${bold(text("Result"))} ${status} ${faint(`(${completed}/${total} steps)`)}\n`,
             );
             break;
           }
@@ -1043,7 +1020,7 @@ async function main() {
           case "replanning": {
             spinner.stop();
             process.stdout.write(
-              `\n  ${brass("↻")} ${dim("replanning after step")} ${event.failedStep} ${dim("failed…")}\n`,
+              `\n  ${warn("•")} ${muted("Replanning after step")} ${warn(String(event.failedStep))} ${muted("failed…")}\n`,
             );
             spinner.start("planning");
             break;
@@ -1051,11 +1028,11 @@ async function main() {
 
           case "plan_updated": {
             spinner.stop();
-            process.stdout.write(`\n  ${dim("§ REVISED PLAN")} ${dim(event.reason)}\n`);
+            process.stdout.write(`\n  ${muted("•")} ${bold(text("Revised plan"))}  ${faint(event.reason)}\n`);
             const numerals = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"];
             for (const step of event.plan.steps) {
               const num = numerals[step.index] ?? `${step.index + 1}`;
-              process.stdout.write(`  ${vermillion(`${num}.`)} ${step.description}\n`);
+              process.stdout.write(`    ${warn(`${num}.`)} ${text(step.description)}\n`);
             }
             process.stdout.write("\n");
             spinner.start("executing");
@@ -1070,8 +1047,19 @@ async function main() {
             }
             const cost = engine.getCost();
             process.stdout.write(
-              `\n  ${dim(`↳ ${event.totalTurns} turns · $${cost.toFixed(4)}`)}\n\n`,
+              `\n  ${faint(`↳ ${event.totalTurns} turns · $${cost.toFixed(4)}`)}\n\n`,
             );
+            break;
+          }
+
+          case "notice": {
+            spinner.stop();
+            if (isStreaming) {
+              process.stdout.write("\n");
+              isStreaming = false;
+            }
+            process.stdout.write(`\n  ${warn("•")} ${muted(event.message)}\n`);
+            spinner.start("thinking");
             break;
           }
 
@@ -1095,10 +1083,10 @@ async function main() {
             if (isRateLimit) {
               errDisplay = errDisplay.split("\n")[0].slice(0, 120);
             }
-            process.stdout.write(`\n  ${vermillion("✕")} ${errDisplay}\n`);
+            process.stdout.write(`\n  ${accent("✕")} ${text(errDisplay)}\n`);
             if (isRateLimit) {
-              process.stdout.write(`  ${dim("→")} ${brass("Tip:")} ${dim("Try switching models:")} ${cyanotype("/model")}\n`);
-              process.stdout.write(`  ${dim("  or use:")} ${brass("alan --model gemini-2.5-flash")}\n`);
+              process.stdout.write(`  ${faint("→")} ${warn("Tip:")} ${muted("Try switching models:")} ${info("/model")}\n`);
+              process.stdout.write(`  ${faint("  or use:")} ${warn("alan --model gemini-2.5-flash")}\n`);
             }
             process.stdout.write("\n");
             break;
