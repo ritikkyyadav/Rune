@@ -60,10 +60,13 @@ export class GoogleProvider implements LlmProvider {
       this.toGeminiRequest(request),
     );
 
+    const candidate = response.candidates?.[0];
+    const hasToolUse = candidate?.content?.parts?.some((part) => part.functionCall) ?? false;
+
     return {
       id: `google_${Date.now()}`,
-      content: this.fromGeminiCandidate(response.candidates?.[0]),
-      stopReason: this.mapFinishReason(response.candidates?.[0]?.finishReason),
+      content: this.fromGeminiCandidate(candidate),
+      stopReason: this.mapFinishReason(candidate?.finishReason, hasToolUse),
       usage: this.fromUsage(response),
       model: request.model,
     };
@@ -93,7 +96,8 @@ export class GoogleProvider implements LlmProvider {
     const decoder = new TextDecoder();
     let buffer = "";
     let usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
-    let stopReason: StopReason = "end_turn";
+    let finishReason: string | undefined;
+    let sawToolUse = false;
 
     try {
       while (true) {
@@ -113,8 +117,8 @@ export class GoogleProvider implements LlmProvider {
 
           const parsed = JSON.parse(payload) as GeminiResponse;
           const candidate = parsed.candidates?.[0];
-          usage = this.fromUsage(parsed);
-          stopReason = this.mapFinishReason(candidate?.finishReason);
+          if (parsed.usageMetadata) usage = this.fromUsage(parsed);
+          if (candidate?.finishReason) finishReason = candidate.finishReason;
 
           for (const block of this.fromGeminiCandidate(candidate)) {
             if (block.type === "text" && block.text) {
@@ -124,6 +128,7 @@ export class GoogleProvider implements LlmProvider {
                 delta: { type: "text_delta", text: block.text },
               };
             } else if (block.type === "tool_use") {
+              sawToolUse = true;
               yield {
                 type: "tool_use_start",
                 toolCallId: block.toolCallId,
@@ -149,7 +154,11 @@ export class GoogleProvider implements LlmProvider {
     }
 
     yield { type: "content_stop", contentIndex: 0 };
-    yield { type: "message_stop", stopReason, usage };
+    yield {
+      type: "message_stop",
+      stopReason: this.mapFinishReason(finishReason, sawToolUse),
+      usage,
+    };
   }
 
   async countTokens(messages: Message[], tools?: ToolDefinition[]): Promise<number> {
@@ -210,6 +219,16 @@ export class GoogleProvider implements LlmProvider {
   }
 
   private toGeminiContents(messages: Message[]): GeminiContent[] {
+    // Gemini correlates a functionResponse with its functionCall by NAME (there
+    // is no call-id concept), so map our internal tool-call ids back to the tool
+    // name when serializing tool results.
+    const callIdToName = new Map<string, string>();
+    for (const message of messages) {
+      for (const block of message.content) {
+        if (block.type === "tool_use") callIdToName.set(block.toolCallId, block.toolName);
+      }
+    }
+
     return messages
       .filter((message) => message.role !== "system")
       .map((message) => ({
@@ -220,7 +239,7 @@ export class GoogleProvider implements LlmProvider {
             return [
               {
                 functionResponse: {
-                  name: block.toolCallId,
+                  name: callIdToName.get(block.toolCallId) ?? block.toolCallId,
                   response: { content: block.toolResultContent, isError: block.isError ?? false },
                 },
               },
@@ -256,17 +275,18 @@ export class GoogleProvider implements LlmProvider {
     };
   }
 
-  private mapFinishReason(reason: string | undefined): StopReason {
+  private mapFinishReason(reason: string | undefined, hasToolUse = false): StopReason {
     switch (reason) {
       case "MAX_TOKENS":
         return "max_tokens";
-      case "STOP":
-        return "end_turn";
       case "MALFORMED_FUNCTION_CALL":
       case "UNEXPECTED_TOOL_CALL":
         return "tool_use";
+      case "STOP":
       default:
-        return "end_turn";
+        // Gemini reports finishReason "STOP" even when the turn emitted function
+        // calls, so detect tool use from the response parts, not the reason.
+        return hasToolUse ? "tool_use" : "end_turn";
     }
   }
 }

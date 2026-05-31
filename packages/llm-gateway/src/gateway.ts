@@ -116,9 +116,12 @@ export class LlmGateway {
         const nextProvider = fallbackOrder[fallbackOrder.indexOf(providerName) + 1];
         if (this.providers.has(nextProvider)) {
           const nextModel = PROVIDER_DEFAULT_MODELS[nextProvider] ?? "default";
+          // Informational, NOT an error: the agent loop ends the turn on `error`
+          // events, so emitting the switch as an error would abandon this
+          // generator before the fallback provider streams anything.
           yield {
-            type: "error",
-            error: `${providerName}/${adjustedRequest.model} unavailable. Switching to ${nextProvider}/${nextModel}...`,
+            type: "notice",
+            message: `${providerName}/${adjustedRequest.model} unavailable. Switching to ${nextProvider}/${nextModel}…`,
           };
           continue;
         }
