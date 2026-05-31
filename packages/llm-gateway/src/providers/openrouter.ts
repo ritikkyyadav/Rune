@@ -19,12 +19,17 @@ const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 export class OpenRouterProvider implements LlmProvider {
   readonly name = "openrouter" as const;
   private inner: OpenAIProvider;
+  private apiKey: string;
 
   constructor(apiKey?: string) {
-    this.inner = new OpenAIProvider(
-      apiKey ?? process.env.OPENROUTER_API_KEY,
-      OPENROUTER_BASE_URL,
-    );
+    const key = apiKey ?? process.env.OPENROUTER_API_KEY;
+    if (!key) {
+      throw new Error(
+        "OpenRouter API key is required. Set OPENROUTER_API_KEY in ~/.alan/.env or via config.toml."
+      );
+    }
+    this.apiKey = key;
+    this.inner = new OpenAIProvider(key, OPENROUTER_BASE_URL);
   }
 
   infer(request: InferenceRequest): Promise<InferenceResponse> {
@@ -42,7 +47,7 @@ export class OpenRouterProvider implements LlmProvider {
   async healthCheck(): Promise<boolean> {
     try {
       const res = await fetch(`${OPENROUTER_BASE_URL}/models`, {
-        headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` },
+        headers: { Authorization: `Bearer ${this.apiKey}` },
       });
       return res.ok;
     } catch {

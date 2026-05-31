@@ -4,7 +4,8 @@
 
 set -euo pipefail
 
-ALAN_ROOT="/Users/ritikyadav890/Documents/Alan"
+# Resolve the repo root relative to this script, regardless of install location
+ALAN_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 ALAN_ENV="$HOME/.alan/.env"
 ALAN_CONFIG="$HOME/.alan/config.toml"
 

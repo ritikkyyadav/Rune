@@ -11,6 +11,8 @@ pub struct SessionManager {
 }
 
 impl SessionManager {
+    const SCHEMA_VERSION: i64 = 1;
+
     pub fn open(db_path: &Path) -> Result<Self, AlanError> {
         let conn = Connection::open(db_path)?;
         let mgr = Self { conn };
@@ -19,7 +21,23 @@ impl SessionManager {
     }
 
     fn initialize_schema(&self) -> Result<(), AlanError> {
+        let version: i64 = self.conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap_or(0);
+
+        if version > Self::SCHEMA_VERSION {
+            return Err(AlanError::Config(format!(
+                "Database schema version {version} is newer than this binary ({}). \
+                 Upgrade alan to continue.",
+                Self::SCHEMA_VERSION
+            )));
+        }
+
         self.conn.execute_batch(Self::SCHEMA)?;
+        self.conn.execute_batch(&format!(
+            "PRAGMA user_version = {};",
+            Self::SCHEMA_VERSION
+        ))?;
         Ok(())
     }
 
@@ -153,9 +171,9 @@ impl SessionManager {
         let sessions = stmt
             .query_map([], |row| {
                 Ok(SessionInfo {
-                    id: row.get::<_, String>(0)?.parse().unwrap(),
-                    created_at: row.get::<_, String>(1)?.parse().unwrap(),
-                    updated_at: row.get::<_, String>(2)?.parse().unwrap(),
+                    id: parse_sql_uuid(row.get::<_, String>(0)?)?,
+                    created_at: parse_sql_datetime(row.get::<_, String>(1)?)?,
+                    updated_at: parse_sql_datetime(row.get::<_, String>(2)?)?,
                     workspace_root: row.get(3)?,
                     model: row.get(4)?,
                     title: row.get(5)?,
@@ -187,7 +205,14 @@ impl SessionManager {
                 |row| {
                     let seq: u64 = row.get(0)?;
                     let payload: String = row.get(1)?;
-                    let event: SessionEvent = serde_json::from_str(&payload).unwrap();
+                    let event: SessionEvent =
+                        serde_json::from_str(&payload).map_err(|e| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                1,
+                                rusqlite::types::Type::Text,
+                                Box::new(e),
+                            )
+                        })?;
                     Ok((seq, event))
                 },
             )?
@@ -259,9 +284,9 @@ impl SessionManager {
         let sessions = stmt
             .query_map([], |row| {
                 Ok(SessionInfo {
-                    id: row.get::<_, String>(0)?.parse().unwrap(),
-                    created_at: row.get::<_, String>(1)?.parse().unwrap(),
-                    updated_at: row.get::<_, String>(2)?.parse().unwrap(),
+                    id: parse_sql_uuid(row.get::<_, String>(0)?)?,
+                    created_at: parse_sql_datetime(row.get::<_, String>(1)?)?,
+                    updated_at: parse_sql_datetime(row.get::<_, String>(2)?)?,
                     workspace_root: row.get(3)?,
                     model: row.get(4)?,
                     title: row.get(5)?,
@@ -305,6 +330,28 @@ impl SessionManager {
 
         Ok(deleted as u64)
     }
+}
+
+fn parse_sql_uuid(s: String) -> rusqlite::Result<uuid::Uuid> {
+    s.parse().map_err(|e: uuid::Error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            0,
+            rusqlite::types::Type::Text,
+            Box::new(e),
+        )
+    })
+}
+
+fn parse_sql_datetime(
+    s: String,
+) -> rusqlite::Result<chrono::DateTime<chrono::Utc>> {
+    s.parse().map_err(|e: chrono::ParseError| {
+        rusqlite::Error::FromSqlConversionFailure(
+            0,
+            rusqlite::types::Type::Text,
+            Box::new(e),
+        )
+    })
 }
 
 fn event_type_name(event: &SessionEvent) -> &'static str {

@@ -39,8 +39,18 @@ impl IpcServer {
     }
 
     pub async fn start(&mut self) -> Result<(), AlanError> {
-        // Remove stale socket
+        // If a socket file exists, check whether a live daemon owns it before
+        // removing it — prevents two daemon instances from racing.
         if self.socket_path.exists() {
+            let is_live =
+                std::os::unix::net::UnixStream::connect(&self.socket_path).is_ok();
+            if is_live {
+                return Err(AlanError::Protocol(format!(
+                    "Another alan daemon is already running at {}.\n\
+                     Stop it first or remove the socket manually.",
+                    self.socket_path.display()
+                )));
+            }
             std::fs::remove_file(&self.socket_path)?;
         }
 

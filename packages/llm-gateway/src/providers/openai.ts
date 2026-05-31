@@ -16,9 +16,14 @@ export class OpenAIProvider implements LlmProvider {
   private client: OpenAI;
 
   constructor(apiKey?: string, baseUrl?: string) {
-    const resolvedKey = apiKey ?? process.env.OPENAI_API_KEY ?? "dummy";
+    const key = apiKey ?? process.env.OPENAI_API_KEY;
+    if (!key) {
+      throw new Error(
+        "OpenAI API key is required. Set OPENAI_API_KEY in ~/.alan/.env or via config.toml."
+      );
+    }
     this.client = new OpenAI({
-      apiKey: resolvedKey,
+      apiKey: key,
       ...(baseUrl && { baseURL: baseUrl }),
       timeout: 60_000,
       maxRetries: 0,

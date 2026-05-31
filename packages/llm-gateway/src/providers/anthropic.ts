@@ -16,8 +16,14 @@ export class AnthropicProvider implements LlmProvider {
   private client: Anthropic;
 
   constructor(apiKey?: string, baseUrl?: string) {
+    const key = apiKey ?? process.env.ANTHROPIC_API_KEY;
+    if (!key) {
+      throw new Error(
+        "Anthropic API key is required. Set ANTHROPIC_API_KEY in ~/.alan/.env or via config.toml."
+      );
+    }
     this.client = new Anthropic({
-      apiKey: apiKey ?? process.env.ANTHROPIC_API_KEY,
+      apiKey: key,
       ...(baseUrl && { baseURL: baseUrl }),
     });
   }
