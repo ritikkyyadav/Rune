@@ -28,6 +28,7 @@ export type AgentTurnEvent =
   | { type: "turn_complete"; stopReason: string; totalTurns: number }
   | { type: "error"; error: string; recoverable: boolean }
   | { type: "context_warning"; message: string }
+  | { type: "notice"; message: string }
   | { type: "todo_updated"; items: { content: string; status: "pending" | "in_progress" | "completed" }[] };
 
 // ─── Permission Gate ───
@@ -435,6 +436,9 @@ export class AgentLoop {
 
       case "message_stop":
         return { stopReason: event.stopReason };
+
+      case "notice":
+        return { event: { type: "notice", message: event.message } };
 
       case "error":
         return { error: event.error };

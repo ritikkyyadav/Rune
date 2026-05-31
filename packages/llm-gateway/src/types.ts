@@ -90,6 +90,7 @@ export type StreamEvent =
   | { type: "tool_use_delta"; toolCallId: string; partialJson: string }
   | { type: "tool_use_stop"; toolCallId: string; toolInput: Record<string, unknown> }
   | { type: "message_stop"; stopReason: StopReason; usage: TokenUsage }
+  | { type: "notice"; message: string }
   | { type: "error"; error: string };
 
 // ─── Provider Adapter Interface ───
