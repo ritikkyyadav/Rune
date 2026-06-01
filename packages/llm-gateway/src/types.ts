@@ -33,6 +33,21 @@ export interface ToolDefinition {
 
 export type ProviderName = "anthropic" | "openai" | "openrouter" | "ollama" | "google";
 
+/**
+ * Providers that can run web search server-side (the model grounds itself on
+ * fresh results during generation). For these, the engine enables native
+ * grounding instead of advertising the `web_search` function tool. Other
+ * providers fall back to the universal `web_search` tool.
+ */
+const NATIVE_SEARCH_PROVIDERS: ReadonlySet<ProviderName> = new Set<ProviderName>([
+  "google",
+  "anthropic",
+]);
+
+export function providerSupportsNativeSearch(provider: ProviderName): boolean {
+  return NATIVE_SEARCH_PROVIDERS.has(provider);
+}
+
 // ─── Inference Request ───
 
 export interface CacheControlHint {
@@ -57,6 +72,12 @@ export interface InferenceRequest {
   stopSequences?: string[];
   cacheControl?: CacheControlHint[];
   responseFormat?: ResponseFormat;
+  /**
+   * Enable the provider's native web-search grounding (Gemini googleSearch /
+   * Anthropic web_search). Only honored by providers where
+   * providerSupportsNativeSearch() is true.
+   */
+  enableWebSearch?: boolean;
   stream: boolean;
 }
 
@@ -180,11 +201,7 @@ export class ApiError extends Error {
   }
 }
 
-export function parseApiErrorBody(
-  body: string,
-  status: number,
-  provider: string,
-): ApiError {
+export function parseApiErrorBody(body: string, status: number, provider: string): ApiError {
   let message = `${provider} API error (${status})`;
   let retryAfterMs: number | undefined;
 
@@ -198,9 +215,8 @@ export function parseApiErrorBody(
       message = firstLine;
     }
     // Google puts retryDelay in details
-    const retryInfo = err.details?.find?.(
-      (d: Record<string, unknown>) =>
-        (d["@type"] as string)?.includes("RetryInfo"),
+    const retryInfo = err.details?.find?.((d: Record<string, unknown>) =>
+      (d["@type"] as string)?.includes("RetryInfo"),
     );
     if (retryInfo?.retryDelay) {
       const secs = parseFloat(retryInfo.retryDelay);

@@ -1,9 +1,15 @@
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
+import { selectBackends } from "./search/index";
+import type { SearchBackend, SearchResponse } from "./search/index";
 
 export const WEB_SEARCH_SCHEMA: ToolSchema = {
   name: "web_search",
-  version: "0.1.0",
-  description: "Search the web via DuckDuckGo. No API key needed.",
+  version: "0.2.0",
+  description:
+    "Search the web for current information. Uses the Tavily or Brave API when a key is set " +
+    "(TAVILY_API_KEY / BRAVE_API_KEY), otherwise falls back to DuckDuckGo — no key required. " +
+    "Returns ranked results with titles, URLs, and snippets. Set recencyDays to bias toward the " +
+    "freshest results (latest news/updates).",
   inputSchema: {
     type: "object",
     properties: {
@@ -12,6 +18,10 @@ export const WEB_SEARCH_SCHEMA: ToolSchema = {
         type: "number",
         description: "Max results to return (default 5)",
       },
+      recencyDays: {
+        type: "number",
+        description: "Only include results from the last N days — use for the latest news/updates",
+      },
     },
     required: ["query"],
   },
@@ -19,7 +29,16 @@ export const WEB_SEARCH_SCHEMA: ToolSchema = {
   category: "network",
 };
 
-export function createWebSearchHandler(): ToolHandler {
+/**
+ * Create the web_search handler. Backends are chosen at call time (so a key
+ * added mid-session is picked up) and tried in priority order; the handler
+ * falls through to the next backend when one errors or returns nothing.
+ *
+ * @param backendsFor - injectable backend selector (defaults to env-based selection; used by tests)
+ */
+export function createWebSearchHandler(
+  backendsFor: () => SearchBackend[] = () => selectBackends(),
+): ToolHandler {
   return {
     schema: WEB_SEARCH_SCHEMA,
 
@@ -32,55 +51,54 @@ export function createWebSearchHandler(): ToolHandler {
 
     execute: async (input: ToolCallInput): Promise<ToolCallOutput> => {
       const start = performance.now();
-      const { query, maxResults = 5 } = input.args as {
+      const {
+        query,
+        maxResults = 5,
+        recencyDays,
+      } = input.args as {
         query: string;
         maxResults?: number;
+        recencyDays?: number;
       };
 
-      try {
-        const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 10_000);
-        const res = await fetch(url, {
-          signal: ctrl.signal,
-          headers: { "User-Agent": "Alan-Agent/1.0" },
-        });
-        clearTimeout(timer);
+      const backends = backendsFor();
+      const errors: string[] = [];
 
-        const html = await res.text();
-        const results: { title: string; url: string; snippet: string }[] = [];
-        const regex =
-          /<a[^>]+class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi;
-
-        let m;
-        while ((m = regex.exec(html)) && results.length < maxResults) {
-          const rUrl = decodeURIComponent((m[1].match(/uddg=([^&]+)/) || [])[1] || m[1]);
-          const title = m[2].replace(/<[^>]+>/g, "").trim();
-          const snippet = m[3].replace(/<[^>]+>/g, "").trim();
-          if (title && rUrl) {
-            results.push({ title, url: rUrl, snippet });
+      for (const backend of backends) {
+        try {
+          const resp: SearchResponse = await backend.search(query, { maxResults, recencyDays });
+          if (resp.results.length === 0 && !resp.answer) {
+            errors.push(`${backend.name}: no results`);
+            continue;
           }
+          return {
+            callId: input.callId,
+            toolName: input.toolName,
+            success: true,
+            result: JSON.stringify({
+              backend: backend.name,
+              query,
+              answer: resp.answer,
+              results: resp.results,
+            }),
+            durationMs: Math.round(performance.now() - start),
+          };
+        } catch (err) {
+          errors.push(`${backend.name}: ${err instanceof Error ? err.message : String(err)}`);
         }
-
-        return {
-          callId: input.callId,
-          toolName: input.toolName,
-          success: true,
-          result: JSON.stringify({ results }),
-          durationMs: Math.round(performance.now() - start),
-        };
-      } catch (err: unknown) {
-        const durationMs = Math.round(performance.now() - start);
-        const message = err instanceof Error ? err.message : String(err);
-        return {
-          callId: input.callId,
-          toolName: input.toolName,
-          success: false,
-          result: "",
-          error: message,
-          durationMs,
-        };
       }
+
+      return {
+        callId: input.callId,
+        toolName: input.toolName,
+        success: false,
+        result: "",
+        error:
+          errors.length > 0
+            ? `All search backends failed — ${errors.join("; ")}`
+            : "No search backend available",
+        durationMs: Math.round(performance.now() - start),
+      };
     },
   };
 }

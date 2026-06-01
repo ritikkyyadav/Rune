@@ -1,0 +1,15 @@
+{
+  "_comment": "Copy to mcp.json (gitignored). Servers load on the first chat turn; see /mcp. Use ${ENV_VAR} for secrets — they are interpolated from the environment, never store raw tokens here.",
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]
+    },
+    "example-remote": {
+      "type": "http",
+      "url": "https://example.com/mcp",
+      "headers": { "Authorization": "Bearer ${EXAMPLE_MCP_TOKEN}" },
+      "autoApprove": ["search", "list"]
+    }
+  }
+}

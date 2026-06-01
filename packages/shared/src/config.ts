@@ -68,6 +68,12 @@ export interface AlanConfig {
     intervalTurns: number;
     autoVerifyAudit: boolean;
   };
+  search?: {
+    /** Preferred web_search backend. Keys come from env (TAVILY_API_KEY / BRAVE_API_KEY). */
+    provider?: "auto" | "tavily" | "brave" | "duckduckgo";
+    /** Use provider-native grounding (Gemini/Anthropic) when available. Default true. */
+    nativeGrounding?: boolean;
+  };
 }
 
 export interface PermissionRule {
@@ -106,6 +112,10 @@ const DEFAULT_CONFIG: AlanConfig = {
   },
   telemetry: {
     enabled: false,
+  },
+  search: {
+    provider: "auto",
+    nativeGrounding: true,
   },
 };
 
@@ -211,6 +221,9 @@ function applyEnvOverrides(config: Record<string, unknown>): void {
     ALAN_TRUST_WORKSPACE: (c) =>
       setNested(c, "permissions.trustWorkspace", process.env.ALAN_TRUST_WORKSPACE === "true"),
     ALAN_TELEMETRY: (c) => setNested(c, "telemetry.enabled", process.env.ALAN_TELEMETRY === "true"),
+    ALAN_SEARCH_BACKEND: (c) => setNested(c, "search.provider", process.env.ALAN_SEARCH_BACKEND!),
+    ALAN_NATIVE_GROUNDING: (c) =>
+      setNested(c, "search.nativeGrounding", process.env.ALAN_NATIVE_GROUNDING !== "false"),
     ANTHROPIC_API_KEY: (c) => setNested(c, "llm.anthropic.apiKey", process.env.ANTHROPIC_API_KEY!),
     OPENAI_API_KEY: (c) => setNested(c, "llm.openai.apiKey", process.env.OPENAI_API_KEY!),
     OPENROUTER_API_KEY: (c) =>

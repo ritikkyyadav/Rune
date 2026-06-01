@@ -20,7 +20,10 @@ export type PlanRunnerEvent =
   | { type: "step_completed"; stepIndex: number; result: StepResult }
   | { type: "plan_completed"; plan: Plan }
   | { type: "replanning"; failedStep: number; reason: string }
-  | { type: "todo_updated"; items: { content: string; status: "pending" | "in_progress" | "completed" }[] };
+  | {
+      type: "todo_updated";
+      items: { content: string; status: "pending" | "in_progress" | "completed" }[];
+    };
 
 // ─── Plan Runner Config ───
 
@@ -34,6 +37,8 @@ export interface PlanRunnerConfig {
   priorMessages?: Message[];
   contextEngine?: ContextEngine;
   verifier?: Verifier;
+  /** Use provider-native web-search grounding in executor steps. Default false. */
+  nativeGrounding?: boolean;
 }
 
 const DEFAULT_CONFIG: PlanRunnerConfig = {
@@ -330,6 +335,7 @@ export class PlanRunner {
         systemPrompt: stepPrompt,
         contextEngine: this.config.contextEngine,
         verifier: this.config.verifier,
+        nativeGrounding: this.config.nativeGrounding,
       },
       this.gateway,
       this.registry,

@@ -57,7 +57,7 @@ export class AnthropicProvider implements LlmProvider {
         max_tokens: request.maxTokens,
         system: request.system ? this.toSystemWithCache(request.system) : undefined,
         messages: this.toAnthropicMessagesWithCache(request.messages),
-        tools: request.tools ? this.toAnthropicToolsWithCache(request.tools) : undefined,
+        tools: this.buildTools(request),
         temperature: request.temperature,
         top_p: request.topP,
         stop_sequences: request.stopSequences,
@@ -168,9 +168,7 @@ export class AnthropicProvider implements LlmProvider {
   // ─── Translation Helpers ───
 
   /** Wraps the system prompt in a text block array with ephemeral cache_control. */
-  private toSystemWithCache(
-    system: string,
-  ): Anthropic.TextBlockParam[] {
+  private toSystemWithCache(system: string): Anthropic.TextBlockParam[] {
     return [
       {
         type: "text",
@@ -241,6 +239,29 @@ export class AnthropicProvider implements LlmProvider {
           },
         };
     }
+  }
+
+  /**
+   * Build the request's tool list: the user's function tools plus, when
+   * native grounding is enabled, Anthropic's server-side web_search tool.
+   *
+   * `web_search_20250305` isn't in this SDK version's static `Tool` union (it
+   * was added to the API later), but the Messages endpoint accepts it — so we
+   * send it over the wire via a cast. The model runs the search server-side and
+   * returns the answer inline.
+   */
+  private buildTools(request: InferenceRequest): Anthropic.Tool[] | undefined {
+    const tools: Anthropic.Tool[] = request.tools
+      ? this.toAnthropicToolsWithCache(request.tools)
+      : [];
+    if (request.enableWebSearch) {
+      tools.push({
+        type: "web_search_20250305",
+        name: "web_search",
+        max_uses: 5,
+      } as unknown as Anthropic.Tool);
+    }
+    return tools.length > 0 ? tools : undefined;
   }
 
   /**
