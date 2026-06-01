@@ -212,6 +212,15 @@ async function main() {
   const plannerMode = values.planner as boolean;
   // Workspace trust: --trust flag OR permissions.trustWorkspace in .alan/config.toml.
   const trustWorkspace = (values.trust as boolean) || (config.permissions?.trustWorkspace ?? false);
+  // Make the [search].provider config visible to the env-based backend selector
+  // used by the web_search tool (keys themselves already come from the env).
+  if (
+    config.search?.provider &&
+    config.search.provider !== "auto" &&
+    !process.env.ALAN_SEARCH_BACKEND
+  ) {
+    process.env.ALAN_SEARCH_BACKEND = config.search.provider;
+  }
   const engine = new Engine({
     model,
     provider: provider as "anthropic" | "openai" | "openrouter" | "google",
@@ -233,6 +242,7 @@ async function main() {
     openaiApiKey: config.llm.openai?.apiKey,
     openrouterApiKey: config.llm.openrouter?.apiKey,
     googleApiKey: config.llm.google?.apiKey,
+    search: config.search,
   });
 
   // ─── DB-only commands — run before provider validation ───
@@ -484,6 +494,7 @@ async function main() {
     ["/effort", "Set reasoning effort"],
     ["/status", "Session status"],
     ["/providers", "List providers"],
+    ["/mcp", "List MCP servers"],
     ["/cost", "Session cost"],
     ["/compact", "Toggle compact mode"],
     ["/plan", "Toggle plan mode"],
@@ -558,7 +569,9 @@ async function main() {
       if (customCommands.length) {
         process.stdout.write(`\n  ${bold(text("Custom"))}\n\n`);
         for (const c of customCommands) {
-          process.stdout.write(`    ${info(("/" + c.name).padEnd(14))}${muted(c.description ?? "")}\n`);
+          process.stdout.write(
+            `    ${info(("/" + c.name).padEnd(14))}${muted(c.description ?? "")}\n`,
+          );
         }
       }
       process.stdout.write("\n");
@@ -578,6 +591,7 @@ async function main() {
         ["/effort", "Set reasoning effort"],
         ["/status", "Session status"],
         ["/providers", "List providers"],
+        ["/mcp", "List MCP servers"],
         ["/cost", "Session cost"],
         ["/compact", "Toggle compact mode"],
         ["/plan", "Toggle plan mode"],
@@ -619,6 +633,35 @@ async function main() {
           }) +
           "\n\n",
       );
+      if (status.mcp.servers > 0) {
+        process.stdout.write(
+          `  ${muted("MCP")}  ${text(`${status.mcp.servers} server(s), ${status.mcp.tools} tools`)}\n\n`,
+        );
+      }
+      showPrompt();
+      return;
+    }
+
+    if (input === "/mcp") {
+      const servers = await engine.listMcpServers();
+      process.stdout.write(`  ${bold(text("MCP Servers"))}\n\n`);
+      if (servers.length === 0) {
+        process.stdout.write(
+          `    ${muted("None configured. Add servers in ")}${info(".alan/mcp.json")}${muted(".")}\n\n`,
+        );
+      } else {
+        for (const s of servers) {
+          const dot =
+            s.health === "healthy" ? ok("●") : s.health === "degraded" ? warn("●") : faint("○");
+          process.stdout.write(
+            `    ${dot} ${text(s.name)} ${muted(`(${s.kind}, ${s.toolCount} tools)`)}\n`,
+          );
+          if (s.tools.length) {
+            process.stdout.write(`      ${faint(s.tools.join(", "))}\n`);
+          }
+        }
+        process.stdout.write("\n");
+      }
       showPrompt();
       return;
     }
@@ -958,7 +1001,8 @@ async function main() {
                   : item.status === "in_progress"
                     ? warn("▸")
                     : faint("□");
-              const label = item.status === "in_progress" ? text(item.content) : muted(item.content);
+              const label =
+                item.status === "in_progress" ? text(item.content) : muted(item.content);
               process.stdout.write(`    ${marker} ${label}\n`);
             }
             process.stdout.write("\n");
@@ -1009,8 +1053,7 @@ async function main() {
               (s: { status: string }) => s.status === "completed",
             ).length;
             const total = event.plan.steps.length;
-            const status =
-              event.plan.status === "completed" ? ok("completed") : accent("failed");
+            const status = event.plan.status === "completed" ? ok("completed") : accent("failed");
             process.stdout.write(
               `\n  ${muted("•")} ${bold(text("Result"))} ${status} ${faint(`(${completed}/${total} steps)`)}\n`,
             );
@@ -1028,7 +1071,9 @@ async function main() {
 
           case "plan_updated": {
             spinner.stop();
-            process.stdout.write(`\n  ${muted("•")} ${bold(text("Revised plan"))}  ${faint(event.reason)}\n`);
+            process.stdout.write(
+              `\n  ${muted("•")} ${bold(text("Revised plan"))}  ${faint(event.reason)}\n`,
+            );
             const numerals = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"];
             for (const step of event.plan.steps) {
               const num = numerals[step.index] ?? `${step.index + 1}`;
@@ -1079,14 +1124,21 @@ async function main() {
               }
             }
             // Detect rate limit and add suggestion
-            const isRateLimit = rawErr.includes("429") || rawErr.toLowerCase().includes("rate limit") || rawErr.toLowerCase().includes("quota");
+            const isRateLimit =
+              rawErr.includes("429") ||
+              rawErr.toLowerCase().includes("rate limit") ||
+              rawErr.toLowerCase().includes("quota");
             if (isRateLimit) {
               errDisplay = errDisplay.split("\n")[0].slice(0, 120);
             }
             process.stdout.write(`\n  ${accent("✕")} ${text(errDisplay)}\n`);
             if (isRateLimit) {
-              process.stdout.write(`  ${faint("→")} ${warn("Tip:")} ${muted("Try switching models:")} ${info("/model")}\n`);
-              process.stdout.write(`  ${faint("  or use:")} ${warn("alan --model gemini-2.5-flash")}\n`);
+              process.stdout.write(
+                `  ${faint("→")} ${warn("Tip:")} ${muted("Try switching models:")} ${info("/model")}\n`,
+              );
+              process.stdout.write(
+                `  ${faint("  or use:")} ${warn("alan --model gemini-2.5-flash")}\n`,
+              );
             }
             process.stdout.write("\n");
             break;

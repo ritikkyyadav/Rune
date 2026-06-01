@@ -1,68 +1,70 @@
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
+import { HttpTransport, StdioTransport } from "./transport";
+import {
+  HEALTH_CHECK_MAX_FAILURES,
+  MAX_PARAM_SIZE,
+  MAX_RESPONSE_SIZE,
+  REQUEST_TIMEOUT_MS,
+} from "./types";
+import type {
+  McpCallToolResult,
+  McpIncomingMessage,
+  McpJsonRpcResponse,
+  McpToolSchema,
+  McpTransport,
+} from "./types";
 
-// ─── MCP Protocol Types ───
-// Subset of the Model Context Protocol needed for tool discovery and execution.
+const PROTOCOL_VERSION = "2025-06-18";
 
-interface McpToolSchema {
+export interface McpClientConfig {
   name: string;
-  description?: string;
-  inputSchema?: Record<string, unknown>;
+  /** stdio transport: process to spawn. */
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  /** http transport: server URL + optional headers (e.g. Authorization). */
+  type?: "stdio" | "http";
+  url?: string;
+  headers?: Record<string, string>;
 }
 
-interface McpCallToolResult {
-  content: Array<{ type: string; text?: string }>;
-  isError?: boolean;
-}
-
-interface McpJsonRpcRequest {
-  jsonrpc: "2.0";
-  id: number;
-  method: string;
-  params?: Record<string, unknown>;
-}
-
-interface McpJsonRpcResponse {
-  jsonrpc: "2.0";
-  id: number;
-  result?: unknown;
-  error?: { code: number; message: string };
-}
-
-// ─── Constants ───
-
-const MAX_RESPONSE_SIZE = 5 * 1024 * 1024; // 5MB
-const MAX_PARAM_SIZE = 1_000_000; // 1MB per string param
-const HEALTH_CHECK_MAX_FAILURES = 3;
-
-// ─── MCP Client ───
-
+/**
+ * One connection to an MCP server. Transport-agnostic: stdio (local subprocess)
+ * or Streamable HTTP (remote). Owns JSON-RPC request/response correlation,
+ * handshake, tool discovery, and execution.
+ */
 export class McpClient {
   private serverName: string;
-  private command: string;
-  private args: string[];
-  private env: Record<string, string>;
-  private proc: ReturnType<typeof Bun.spawn> | null = null;
+  private transport: McpTransport;
+  private transportKind: "stdio" | "http";
   private requestId = 0;
   private pendingRequests = new Map<
     number,
-    { resolve: (v: unknown) => void; reject: (e: Error) => void }
+    {
+      resolve: (v: unknown) => void;
+      reject: (e: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
   >();
-  private responseBuffer = "";
   private tools: McpToolSchema[] = [];
   private ready = false;
   private healthCheckTimer: ReturnType<typeof setInterval> | null = null;
   private consecutiveFailures = 0;
 
-  constructor(config: {
-    name: string;
-    command: string;
-    args?: string[];
-    env?: Record<string, string>;
-  }) {
+  constructor(config: McpClientConfig) {
     this.serverName = config.name;
-    this.command = config.command;
-    this.args = config.args ?? [];
-    this.env = config.env ?? {};
+    if (config.url || config.type === "http") {
+      this.transportKind = "http";
+      this.transport = new HttpTransport({ url: config.url!, headers: config.headers });
+    } else {
+      this.transportKind = "stdio";
+      this.transport = new StdioTransport({
+        command: config.command!,
+        args: config.args,
+        env: config.env,
+      });
+    }
+    this.transport.setMessageHandler((msg) => this.handleMessage(msg));
   }
 
   get name(): string {
@@ -73,61 +75,90 @@ export class McpClient {
     return this.ready;
   }
 
-  /**
-   * Start the MCP server subprocess and perform handshake.
-   */
+  get kind(): "stdio" | "http" {
+    return this.transportKind;
+  }
+
+  /** Start the transport and perform the MCP handshake + tool discovery. */
   async start(): Promise<void> {
-    this.proc = Bun.spawn([this.command, ...this.args], {
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
-      env: { ...process.env, ...this.env },
-    });
+    await this.transport.start();
 
-    // Start reading stdout for JSON-RPC responses
-    this.readLoop();
-
-    // Initialize handshake
     await this.send("initialize", {
-      protocolVersion: "2024-11-05",
+      protocolVersion: PROTOCOL_VERSION,
       capabilities: {},
       clientInfo: { name: "alan", version: "0.1.0" },
     });
-
-    // Send initialized notification
     await this.notify("notifications/initialized", {});
 
-    // Discover tools
-    const toolsResult = (await this.send("tools/list", {})) as {
-      tools?: McpToolSchema[];
-    };
+    const toolsResult = (await this.send("tools/list", {})) as { tools?: McpToolSchema[] };
     this.tools = toolsResult?.tools ?? [];
     this.ready = true;
   }
 
-  /**
-   * Stop the MCP server subprocess.
-   */
+  /** Stop health checks and close the transport. */
   async stop(): Promise<void> {
     this.stopHealthChecks();
-    if (this.proc) {
-      this.proc.kill();
-      this.proc = null;
-    }
+    await this.transport.close();
     this.ready = false;
+    for (const pending of this.pendingRequests.values()) clearTimeout(pending.timer);
     this.pendingRequests.clear();
   }
 
-  /**
-   * Get the tools exposed by this MCP server.
-   */
   getTools(): McpToolSchema[] {
     return [...this.tools];
   }
 
-  /**
-   * Validate tool input arguments against the tool's schema.
-   */
+  // ─── JSON-RPC over the transport ───
+
+  private handleMessage(msg: McpIncomingMessage): void {
+    if (!msg || typeof msg !== "object" || !("id" in msg) || msg.id === undefined) {
+      // Server-initiated request/notification — not handled in this client.
+      return;
+    }
+    const response = msg as McpJsonRpcResponse;
+    const pending = this.pendingRequests.get(response.id);
+    if (!pending) return;
+    this.pendingRequests.delete(response.id);
+    clearTimeout(pending.timer);
+    if (response.error) {
+      pending.reject(new Error(response.error.message));
+    } else {
+      pending.resolve(response.result);
+    }
+  }
+
+  private send(method: string, params: Record<string, unknown>): Promise<unknown> {
+    const id = ++this.requestId;
+    return new Promise<unknown>((resolve, reject) => {
+      // Timer is cleared the moment the request settles — a dangling timeout
+      // would otherwise keep the event loop alive for its full duration.
+      const timer = setTimeout(() => {
+        if (this.pendingRequests.delete(id)) {
+          reject(new Error(`MCP request timed out: ${method}`));
+        }
+      }, REQUEST_TIMEOUT_MS);
+
+      this.pendingRequests.set(id, { resolve, reject, timer });
+
+      // Fire the message; failures to ship reject immediately. The response
+      // resolves the promise via handleMessage().
+      this.transport.send({ jsonrpc: "2.0", id, method, params }).catch((err: unknown) => {
+        const pending = this.pendingRequests.get(id);
+        if (pending) {
+          this.pendingRequests.delete(id);
+          clearTimeout(pending.timer);
+          reject(err instanceof Error ? err : new Error(String(err)));
+        }
+      });
+    });
+  }
+
+  private async notify(method: string, params: Record<string, unknown>): Promise<void> {
+    await this.transport.send({ jsonrpc: "2.0", method, params });
+  }
+
+  // ─── Tool execution ───
+
   private validateToolInput(
     schema: McpToolSchema | undefined,
     args: Record<string, unknown>,
@@ -141,7 +172,6 @@ export class McpClient {
         }
       }
     }
-    // Check string values aren't too large
     for (const [key, val] of Object.entries(args)) {
       if (typeof val === "string" && val.length > MAX_PARAM_SIZE) {
         errors.push(`Param ${key} exceeds 1MB limit`);
@@ -150,9 +180,6 @@ export class McpClient {
     return { valid: errors.length === 0, errors };
   }
 
-  /**
-   * Enforce a max response size, truncating with a warning if exceeded.
-   */
   private limitResponseSize(result: McpCallToolResult): McpCallToolResult {
     const totalSize = result.content.reduce((sum, c) => sum + (c.text?.length ?? 0), 0);
     if (totalSize <= MAX_RESPONSE_SIZE) return result;
@@ -168,18 +195,89 @@ export class McpClient {
       remaining = 0;
       return { ...c, text: truncated };
     });
-
     truncatedContent.push({
       type: "text",
       text: `\n[WARNING: Response truncated from ${totalSize} to ${MAX_RESPONSE_SIZE} bytes]`,
     });
-
     return { ...result, content: truncatedContent };
   }
 
+  async callTool(name: string, args: Record<string, unknown>): Promise<McpCallToolResult> {
+    const toolSchema = this.tools.find((t) => t.name === name);
+    const validation = this.validateToolInput(toolSchema, args);
+    if (!validation.valid) {
+      return {
+        content: [{ type: "text", text: `Validation failed: ${validation.errors.join("; ")}` }],
+        isError: true,
+      };
+    }
+
+    const result = (await this.send("tools/call", {
+      name,
+      arguments: args,
+    })) as McpCallToolResult;
+    return this.limitResponseSize(result);
+  }
+
   /**
-   * Start periodic health checks for this MCP server.
+   * Create ToolHandler instances for every tool on this server.
+   * @param autoApprove - predicate; tools it approves register at "auto" permission.
    */
+  toToolHandlers(autoApprove?: (toolName: string) => boolean): ToolHandler[] {
+    return this.tools.map((tool) => this.createHandler(tool, autoApprove?.(tool.name) ?? false));
+  }
+
+  private createHandler(mcpTool: McpToolSchema, autoApproved: boolean): ToolHandler {
+    const client = this;
+    const prefixedName = `mcp_${this.serverName}_${mcpTool.name}`;
+
+    const schema: ToolSchema = {
+      name: prefixedName,
+      version: "0.1.0",
+      description: mcpTool.description ?? `MCP tool: ${mcpTool.name} (${this.serverName})`,
+      inputSchema: (mcpTool.inputSchema as Record<string, unknown>) ?? {
+        type: "object",
+        properties: {},
+      },
+      permissionLevel: autoApproved ? "auto" : "confirm",
+      category: "network",
+    };
+
+    return {
+      schema,
+      validate: () => ({ valid: true }),
+      execute: async (input: ToolCallInput): Promise<ToolCallOutput> => {
+        const start = performance.now();
+        try {
+          const result = await client.callTool(mcpTool.name, input.args);
+          const textContent = result.content
+            .filter((c) => c.type === "text" && c.text)
+            .map((c) => c.text!)
+            .join("\n");
+          return {
+            callId: input.callId,
+            toolName: input.toolName,
+            success: !result.isError,
+            result: textContent,
+            error: result.isError ? textContent : undefined,
+            durationMs: Math.round(performance.now() - start),
+          };
+        } catch (err) {
+          return {
+            callId: input.callId,
+            toolName: input.toolName,
+            success: false,
+            result: "",
+            error: err instanceof Error ? err.message : String(err),
+            durationMs: Math.round(performance.now() - start),
+          };
+        }
+      },
+    };
+  }
+
+  // ─── Health ───
+
   startHealthChecks(intervalMs = 30000): void {
     this.stopHealthChecks();
     this.healthCheckTimer = setInterval(async () => {
@@ -206,9 +304,6 @@ export class McpClient {
     }, intervalMs);
   }
 
-  /**
-   * Stop periodic health checks.
-   */
   stopHealthChecks(): void {
     if (this.healthCheckTimer) {
       clearInterval(this.healthCheckTimer);
@@ -216,211 +311,17 @@ export class McpClient {
     }
   }
 
-  /**
-   * Get current health status of this MCP server.
-   */
   getServerHealth(): {
     name: string;
     status: "healthy" | "degraded" | "down";
     failureCount: number;
   } {
     let status: "healthy" | "degraded" | "down" = "healthy";
-    if (!this.ready || !this.proc) {
+    if (!this.ready) {
       status = "down";
     } else if (this.consecutiveFailures > 0) {
       status = this.consecutiveFailures >= HEALTH_CHECK_MAX_FAILURES ? "down" : "degraded";
     }
     return { name: this.serverName, status, failureCount: this.consecutiveFailures };
-  }
-
-  /**
-   * Call a tool on this MCP server.
-   */
-  async callTool(name: string, args: Record<string, unknown>): Promise<McpCallToolResult> {
-    // Find schema for the tool and validate input
-    const toolSchema = this.tools.find((t) => t.name === name);
-    const validation = this.validateToolInput(toolSchema, args);
-    if (!validation.valid) {
-      return {
-        content: [{ type: "text", text: `Validation failed: ${validation.errors.join("; ")}` }],
-        isError: true,
-      };
-    }
-
-    const result = (await this.send("tools/call", {
-      name,
-      arguments: args,
-    })) as McpCallToolResult;
-    return this.limitResponseSize(result);
-  }
-
-  /**
-   * Create ToolHandler instances for all tools on this server.
-   */
-  toToolHandlers(): ToolHandler[] {
-    return this.tools.map((tool) => this.createHandler(tool));
-  }
-
-  private createHandler(mcpTool: McpToolSchema): ToolHandler {
-    const client = this;
-    const prefixedName = `mcp_${this.serverName}_${mcpTool.name}`;
-
-    const schema: ToolSchema = {
-      name: prefixedName,
-      version: "0.1.0",
-      description: mcpTool.description ?? `MCP tool: ${mcpTool.name} (${this.serverName})`,
-      inputSchema: (mcpTool.inputSchema as Record<string, unknown>) ?? {
-        type: "object",
-        properties: {},
-      },
-      permissionLevel: "confirm",
-      category: "network",
-    };
-
-    return {
-      schema,
-      validate: () => ({ valid: true }),
-      execute: async (input: ToolCallInput): Promise<ToolCallOutput> => {
-        const start = performance.now();
-        try {
-          const result = await client.callTool(mcpTool.name, input.args);
-          const durationMs = Math.round(performance.now() - start);
-
-          const textContent = result.content
-            .filter((c) => c.type === "text" && c.text)
-            .map((c) => c.text!)
-            .join("\n");
-
-          return {
-            callId: input.callId,
-            toolName: input.toolName,
-            success: !result.isError,
-            result: textContent,
-            error: result.isError ? textContent : undefined,
-            durationMs,
-          };
-        } catch (err) {
-          return {
-            callId: input.callId,
-            toolName: input.toolName,
-            success: false,
-            result: "",
-            error: err instanceof Error ? err.message : String(err),
-            durationMs: Math.round(performance.now() - start),
-          };
-        }
-      },
-    };
-  }
-
-  // ─── JSON-RPC over stdio ───
-
-  private async send(method: string, params: Record<string, unknown>): Promise<unknown> {
-    const id = ++this.requestId;
-    const request: McpJsonRpcRequest = {
-      jsonrpc: "2.0",
-      id,
-      method,
-      params,
-    };
-
-    return new Promise<unknown>((resolve, reject) => {
-      this.pendingRequests.set(id, { resolve, reject });
-
-      const json = JSON.stringify(request);
-      const message = `Content-Length: ${Buffer.byteLength(json)}\r\n\r\n${json}`;
-
-      const stdin = this.proc?.stdin;
-      if (stdin && typeof stdin !== "number" && "write" in stdin) {
-        (stdin as { write(data: string | Uint8Array): number }).write(
-          new TextEncoder().encode(message),
-        );
-      } else {
-        reject(new Error("MCP server stdin not available"));
-      }
-
-      // Timeout after 30s
-      setTimeout(() => {
-        if (this.pendingRequests.has(id)) {
-          this.pendingRequests.delete(id);
-          reject(new Error(`MCP request timed out: ${method}`));
-        }
-      }, 30_000);
-    });
-  }
-
-  private async notify(method: string, params: Record<string, unknown>): Promise<void> {
-    const notification = { jsonrpc: "2.0" as const, method, params };
-    const json = JSON.stringify(notification);
-    const message = `Content-Length: ${Buffer.byteLength(json)}\r\n\r\n${json}`;
-
-    const stdin = this.proc?.stdin;
-    if (stdin && typeof stdin !== "number" && "write" in stdin) {
-      (stdin as { write(data: string | Uint8Array): number }).write(
-        new TextEncoder().encode(message),
-      );
-    }
-  }
-
-  private async readLoop(): Promise<void> {
-    const stdout = this.proc?.stdout;
-    if (!stdout || typeof stdout === "number") return;
-
-    const reader = (stdout as ReadableStream<Uint8Array>).getReader();
-    const decoder = new TextDecoder();
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        this.responseBuffer += decoder.decode(value, { stream: true });
-        this.processBuffer();
-      }
-    } catch {
-      // Server closed
-    }
-  }
-
-  private processBuffer(): void {
-    while (true) {
-      // Look for Content-Length header
-      const headerEnd = this.responseBuffer.indexOf("\r\n\r\n");
-      if (headerEnd === -1) break;
-
-      const header = this.responseBuffer.slice(0, headerEnd);
-      const match = header.match(/Content-Length:\s*(\d+)/i);
-      if (!match) {
-        // Malformed — skip to next header
-        this.responseBuffer = this.responseBuffer.slice(headerEnd + 4);
-        continue;
-      }
-
-      const contentLength = parseInt(match[1], 10);
-      const bodyStart = headerEnd + 4;
-      const bodyEnd = bodyStart + contentLength;
-
-      if (this.responseBuffer.length < bodyEnd) break; // Incomplete
-
-      const body = this.responseBuffer.slice(bodyStart, bodyEnd);
-      this.responseBuffer = this.responseBuffer.slice(bodyEnd);
-
-      try {
-        const response = JSON.parse(body) as McpJsonRpcResponse;
-        if (response.id !== undefined) {
-          const pending = this.pendingRequests.get(response.id);
-          if (pending) {
-            this.pendingRequests.delete(response.id);
-            if (response.error) {
-              pending.reject(new Error(response.error.message));
-            } else {
-              pending.resolve(response.result);
-            }
-          }
-        }
-      } catch {
-        // Malformed JSON — skip
-      }
-    }
   }
 }

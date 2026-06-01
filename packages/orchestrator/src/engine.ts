@@ -8,7 +8,12 @@ import {
   CostTracker,
 } from "@alan/llm-gateway";
 import type { Message, ProviderName } from "@alan/llm-gateway";
-import { ToolRegistry, registerBuiltinTools, ToolRateLimiter } from "@alan/tool-registry";
+import {
+  ToolRegistry,
+  registerBuiltinTools,
+  ToolRateLimiter,
+  McpDiscovery,
+} from "@alan/tool-registry";
 import {
   SessionManager,
   hashArgs,
@@ -89,6 +94,8 @@ export interface EngineConfig {
   enableRateLimiting?: boolean;
   enableCheckpoints?: boolean;
   enableHooks?: boolean;
+  /** Discover and load MCP servers from <workspace>/.alan/mcp.json. Default on. */
+  enableMcp?: boolean;
   /** Run project checks (typecheck/test/cargo) after edits so the agent self-corrects. Default on. */
   enableVerification?: boolean;
   /** Explicit verification commands; when set, project auto-detection is skipped. */
@@ -97,6 +104,13 @@ export interface EngineConfig {
   egressAllowlist?: string[];
   redactOutputs?: boolean;
   userId?: string;
+  /** Web-search configuration (backend preference + native grounding). */
+  search?: {
+    /** Preferred web_search backend: auto | tavily | brave | duckduckgo. */
+    provider?: string;
+    /** Use provider-native grounding (Gemini/Anthropic) when available. Default true. */
+    nativeGrounding?: boolean;
+  };
 }
 
 const EFFORT_SETTINGS: Record<EffortLevel, { maxTokens: number; maxTurns: number; label: string }> =
@@ -168,6 +182,8 @@ export class Engine {
   private hookRunner: HookRunner | null = null;
   private hooksLoaded = false;
   private verifier: Verifier | null = null;
+  private mcpDiscovery: McpDiscovery | null = null;
+  private mcpLoaded = false;
 
   constructor(config: Partial<EngineConfig> = {}) {
     this.config = { ...DEFAULT_ENGINE_CONFIG, ...config };
@@ -195,11 +211,7 @@ export class Engine {
     }
     // Local-first: register Ollama only when explicitly selected, so cloud
     // sessions never accidentally fall back to a local server.
-    if (
-      this.config.provider === "ollama" ||
-      this.config.ollamaBaseUrl ||
-      process.env.OLLAMA_HOST
-    ) {
+    if (this.config.provider === "ollama" || this.config.ollamaBaseUrl || process.env.OLLAMA_HOST) {
       this.gateway.registerProvider(new OllamaProvider(this.config.ollamaBaseUrl));
     }
 
@@ -231,10 +243,7 @@ export class Engine {
     });
 
     // Initialize Context Engine — always on, manages token budgets
-    this.contextEngine = new ContextEngine(
-      { budget: this.config.contextBudget },
-      this.gateway,
-    );
+    this.contextEngine = new ContextEngine({ budget: this.config.contextBudget }, this.gateway);
 
     // Verifier — runs project checks after edits so the agent self-corrects.
     // On by default; detection is best-effort and a no-op when nothing matches.
@@ -317,11 +326,42 @@ export class Engine {
     try {
       this.hookRunner = await HookRunner.load(this.config.workspaceRoot);
     } catch (err) {
-      console.warn(
-        `[hooks] failed to load: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      console.warn(`[hooks] failed to load: ${err instanceof Error ? err.message : String(err)}`);
       this.hookRunner = null;
     }
+  }
+
+  /**
+   * Lazily discover MCP servers from `<workspace>/.alan/mcp.json` once per
+   * engine and register their tools into the main registry. Missing file →
+   * no-op. A server that fails to start is logged and skipped (mirrors hooks).
+   * MCP tools are NOT added to the read-only sub-agent registry.
+   */
+  private async ensureMcpServers(): Promise<void> {
+    if (this.mcpLoaded) return;
+    this.mcpLoaded = true;
+    if (this.config.enableMcp === false) return;
+    try {
+      this.mcpDiscovery = new McpDiscovery(this.config.workspaceRoot);
+      const handlers = await this.mcpDiscovery.discover();
+      for (const handler of handlers) {
+        this.registry.register(handler);
+      }
+    } catch (err) {
+      console.warn(`[mcp] discovery failed: ${err instanceof Error ? err.message : String(err)}`);
+      this.mcpDiscovery = null;
+    }
+  }
+
+  /** Ensure MCP servers are discovered, then return their status (backs `/mcp`). */
+  async listMcpServers(): Promise<ReturnType<McpDiscovery["getStatus"]>> {
+    await this.ensureMcpServers();
+    return this.mcpDiscovery?.getStatus() ?? [];
+  }
+
+  /** Current MCP server status without triggering discovery. */
+  getMcpStatus(): ReturnType<McpDiscovery["getStatus"]> {
+    return this.mcpDiscovery?.getStatus() ?? [];
   }
 
   private buildPermissionCheck(): PermissionCheck {
@@ -465,6 +505,7 @@ export class Engine {
     });
 
     await this.ensureHookRunner();
+    await this.ensureMcpServers();
 
     const permCheck = this.buildPermissionCheck();
     let turnCount = 0;
@@ -502,6 +543,7 @@ export class Engine {
           priorMessages,
           contextEngine: this.contextEngine,
           verifier: this.verifier ?? undefined,
+          nativeGrounding: this.config.search?.nativeGrounding ?? true,
         },
         this.gateway,
         this.registry,
@@ -518,6 +560,7 @@ export class Engine {
           priorMessages,
           contextEngine: this.contextEngine,
           verifier: this.verifier ?? undefined,
+          nativeGrounding: this.config.search?.nativeGrounding ?? true,
         },
         this.gateway,
         this.registry,
@@ -532,7 +575,12 @@ export class Engine {
 
     let runError: string | null = null;
     try {
-      for await (const event of runner.run(userMessage, sessionId, this.config.workspaceRoot, signal)) {
+      for await (const event of runner.run(
+        userMessage,
+        sessionId,
+        this.config.workspaceRoot,
+        signal,
+      )) {
         if (event.type === "error" && !event.recoverable) {
           runError = event.error;
         }
@@ -542,10 +590,7 @@ export class Engine {
           turnCount++;
 
           // Checkpoint save per policy
-          if (
-            this.checkpointStore &&
-            turnCount % this.checkpointPolicy.intervalTurns === 0
-          ) {
+          if (this.checkpointStore && turnCount % this.checkpointPolicy.intervalTurns === 0) {
             try {
               const state: RunState = {
                 runId,
@@ -810,6 +855,7 @@ export class Engine {
     sessionId?: string;
     contextUsage: { used: number; limit: number; percent: number };
     securityPosture: string;
+    mcp: { servers: number; tools: number };
   } {
     return {
       model: this.config.model,
@@ -825,10 +871,16 @@ export class Engine {
       sessionId,
       contextUsage: this.getContextUsage(),
       securityPosture: this.getSecurityPosture(),
+      mcp: {
+        servers: this.getMcpStatus().length,
+        tools: this.getMcpStatus().reduce((n, s) => n + s.toolCount, 0),
+      },
     };
   }
 
   close(): void {
+    // Best-effort: stop MCP subprocesses / sessions on exit.
+    this.mcpDiscovery?.stopAll().catch(() => {});
     this.sessions.close();
   }
 }

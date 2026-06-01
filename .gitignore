@@ -21,6 +21,8 @@ Thumbs.db
 # Alan runtime
 .alan/cache/
 .alan/logs/
+# MCP server config — local, may contain credentials in headers (see mcp.json.example)
+.alan/mcp.json
 
 # Environment
 .env

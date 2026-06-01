@@ -8,7 +8,7 @@ import type {
   ToolDefinition,
   StreamOpts,
 } from "@alan/llm-gateway";
-import { LlmGateway } from "@alan/llm-gateway";
+import { LlmGateway, providerSupportsNativeSearch } from "@alan/llm-gateway";
 import type { ToolCallInput, ToolCallOutput } from "@alan/tool-registry";
 import { ToolRegistry } from "@alan/tool-registry";
 import type { ContextEngine } from "./context-engine";
@@ -30,7 +30,10 @@ export type AgentTurnEvent =
   | { type: "error"; error: string; recoverable: boolean }
   | { type: "context_warning"; message: string }
   | { type: "notice"; message: string }
-  | { type: "todo_updated"; items: { content: string; status: "pending" | "in_progress" | "completed" }[] };
+  | {
+      type: "todo_updated";
+      items: { content: string; status: "pending" | "in_progress" | "completed" }[];
+    };
 
 // ─── Permission Gate ───
 // The agent loop invokes this before executing every tool call.
@@ -70,6 +73,11 @@ export interface AgentLoopConfig {
   maxParallelTools?: number;
   /** Max times to nudge a stuck agent before bailing. Default 1. */
   maxStuckNudges?: number;
+  /**
+   * Use provider-native web-search grounding (Gemini/Anthropic) instead of the
+   * `web_search` function tool when the provider supports it. Default false.
+   */
+  nativeGrounding?: boolean;
 }
 
 const DEFAULT_CONFIG: AgentLoopConfig = {
@@ -150,7 +158,13 @@ export class AgentLoop {
       turn++;
 
       // Build inference request
-      const tools = this.registry.toLlmTools();
+      const allTools = this.registry.toLlmTools();
+      // When the provider can search server-side and native grounding is on,
+      // ground through the provider instead of advertising the web_search
+      // function tool — otherwise the model may search twice.
+      const useNativeSearch =
+        this.config.nativeGrounding === true && providerSupportsNativeSearch(this.config.provider);
+      const tools = useNativeSearch ? allTools.filter((t) => t.name !== "web_search") : allTools;
 
       // Before building the request, apply context engine if available
       let requestMessages = this.messages;
@@ -182,6 +196,7 @@ export class AgentLoop {
         provider: this.config.provider,
         maxTokens: this.config.maxTokens,
         temperature: this.config.temperature,
+        enableWebSearch: useNativeSearch ? true : undefined,
         stream: true,
       };
 

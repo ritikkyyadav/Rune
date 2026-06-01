@@ -19,7 +19,7 @@ export type {
   TokenUsage,
   ToolDefinition,
 } from "./types";
-export { MODEL_PRICING } from "./types";
+export { MODEL_PRICING, providerSupportsNativeSearch } from "./types";
 export { LlmGateway } from "./gateway";
 export { AnthropicProvider } from "./providers/anthropic";
 export { OpenAIProvider } from "./providers/openai";

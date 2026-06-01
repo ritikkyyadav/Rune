@@ -1,16 +1,22 @@
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
+import { Readability } from "@mozilla/readability";
+import { parseHTML } from "linkedom";
+import TurndownService from "turndown";
 
 export const WEB_FETCH_SCHEMA: ToolSchema = {
   name: "web_fetch",
-  version: "0.1.0",
-  description: "Fetch content from a URL. Returns text content with HTML tags stripped.",
+  version: "0.2.0",
+  description:
+    "Fetch a URL and return its main readable content as clean Markdown (article extraction + " +
+    "HTML→Markdown). Non-HTML responses (JSON, plain text) are returned as-is. Use this to read " +
+    "a page found via web_search.",
   inputSchema: {
     type: "object",
     properties: {
       url: { type: "string", description: "URL to fetch" },
       maxBytes: {
         type: "number",
-        description: "Max bytes to read (default 1MB)",
+        description: "Max bytes to read from the response (default 1MB)",
       },
     },
     required: ["url"],
@@ -18,6 +24,62 @@ export const WEB_FETCH_SCHEMA: ToolSchema = {
   permissionLevel: "confirm",
   category: "network",
 };
+
+const DEFAULT_MAX_BYTES = 1_048_576;
+const TIMEOUT_MS = 10_000;
+
+const turndown = new TurndownService({
+  headingStyle: "atx",
+  codeBlockStyle: "fenced",
+  bulletListMarker: "-",
+});
+// Drop noise that survives article extraction.
+turndown.remove(["script", "style", "noscript", "iframe"]);
+
+/** Last-resort: strip tags and collapse whitespace (previous behaviour). */
+function stripTags(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Extract the main content of an HTML page as Markdown. Tries Readability
+ * (article extraction) → Turndown (HTML→MD); falls back to whole-document
+ * Turndown, then to plain tag-stripping if those yield nothing.
+ */
+function htmlToMarkdown(html: string, url: string): { title: string; markdown: string } {
+  try {
+    const { document } = parseHTML(html);
+    let title = document.querySelector("title")?.textContent?.trim() ?? "";
+
+    // Readability mutates the document, so parse before any other DOM use.
+    let contentHtml: string | null = null;
+    try {
+      const article = new Readability(document).parse();
+      if (article?.content) {
+        contentHtml = article.content;
+        if (article.title) title = article.title;
+      }
+    } catch {
+      // Readability failed — fall through to whole-document conversion.
+    }
+
+    const markdown = turndown
+      .turndown(contentHtml ?? html)
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+
+    if (markdown) return { title, markdown };
+  } catch {
+    // DOM parse / conversion failed — fall through to tag-strip.
+  }
+
+  return { title: "", markdown: stripTags(html) };
+}
 
 export function createWebFetchHandler(): ToolHandler {
   return {
@@ -40,19 +102,23 @@ export function createWebFetchHandler(): ToolHandler {
 
     execute: async (input: ToolCallInput): Promise<ToolCallOutput> => {
       const start = performance.now();
-      const { url, maxBytes = 1048576 } = input.args as {
+      const { url, maxBytes = DEFAULT_MAX_BYTES } = input.args as {
         url: string;
         maxBytes?: number;
       };
 
       try {
         const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 10_000);
-        const res = await fetch(url, {
-          signal: ctrl.signal,
-          headers: { "User-Agent": "Alan-Agent/1.0" },
-        });
-        clearTimeout(timer);
+        const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+        let res: Response;
+        try {
+          res = await fetch(url, {
+            signal: ctrl.signal,
+            headers: { "User-Agent": "Alan-Agent/1.0" },
+          });
+        } finally {
+          clearTimeout(timer);
+        }
 
         if (!res.ok) {
           return {
@@ -66,24 +132,28 @@ export function createWebFetchHandler(): ToolHandler {
         }
 
         const buf = await res.arrayBuffer();
+        const truncated = buf.byteLength > maxBytes;
         const bytes = Math.min(buf.byteLength, maxBytes);
-        let content = new TextDecoder().decode(buf.slice(0, bytes));
+        const raw = new TextDecoder().decode(buf.slice(0, bytes));
 
-        // Strip HTML if content-type indicates HTML
-        if ((res.headers.get("content-type") || "").includes("html")) {
-          content = content
-            .replace(/<script[\s\S]*?<\/script>/gi, "")
-            .replace(/<style[\s\S]*?<\/style>/gi, "")
-            .replace(/<[^>]+>/g, " ")
-            .replace(/\s+/g, " ")
-            .trim();
+        const contentType = res.headers.get("content-type") ?? "";
+        const isHtml = contentType.includes("html") || /^\s*<(?:!doctype|html)/i.test(raw);
+
+        let title = "";
+        let content = raw;
+        if (isHtml) {
+          const extracted = htmlToMarkdown(raw, url);
+          title = extracted.title;
+          content = extracted.markdown;
         }
 
         const result = {
-          content,
-          statusCode: res.status,
+          url,
+          title,
+          markdown: content,
+          contentType,
           bytesFetched: bytes,
-          truncated: buf.byteLength > maxBytes,
+          truncated,
         };
 
         return {

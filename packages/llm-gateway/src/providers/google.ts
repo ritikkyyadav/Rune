@@ -29,9 +29,19 @@ interface GeminiContent {
   parts: GeminiPart[];
 }
 
+interface GeminiGroundingChunk {
+  web?: { uri?: string; title?: string };
+}
+
+interface GeminiGroundingMetadata {
+  groundingChunks?: GeminiGroundingChunk[];
+  webSearchQueries?: string[];
+}
+
 interface GeminiCandidate {
   content?: GeminiContent;
   finishReason?: string;
+  groundingMetadata?: GeminiGroundingMetadata;
 }
 
 interface GeminiResponse {
@@ -63,9 +73,13 @@ export class GoogleProvider implements LlmProvider {
     const candidate = response.candidates?.[0];
     const hasToolUse = candidate?.content?.parts?.some((part) => part.functionCall) ?? false;
 
+    const content = this.fromGeminiCandidate(candidate);
+    const sources = this.groundingSources(candidate);
+    if (sources) content.push({ type: "text", text: sources });
+
     return {
       id: `google_${Date.now()}`,
-      content: this.fromGeminiCandidate(candidate),
+      content,
       stopReason: this.mapFinishReason(candidate?.finishReason, hasToolUse),
       usage: this.fromUsage(response),
       model: request.model,
@@ -98,6 +112,7 @@ export class GoogleProvider implements LlmProvider {
     let usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
     let finishReason: string | undefined;
     let sawToolUse = false;
+    let groundingCandidate: GeminiCandidate | undefined;
 
     try {
       while (true) {
@@ -119,6 +134,7 @@ export class GoogleProvider implements LlmProvider {
           const candidate = parsed.candidates?.[0];
           if (parsed.usageMetadata) usage = this.fromUsage(parsed);
           if (candidate?.finishReason) finishReason = candidate.finishReason;
+          if (candidate?.groundingMetadata) groundingCandidate = candidate;
 
           for (const block of this.fromGeminiCandidate(candidate)) {
             if (block.type === "text" && block.text) {
@@ -151,6 +167,15 @@ export class GoogleProvider implements LlmProvider {
       }
     } finally {
       reader.releaseLock();
+    }
+
+    const sources = this.groundingSources(groundingCandidate);
+    if (sources) {
+      yield {
+        type: "content_delta",
+        contentIndex: 0,
+        delta: { type: "text_delta", text: sources },
+      };
     }
 
     yield { type: "content_stop", contentIndex: 0 };
@@ -203,12 +228,20 @@ export class GoogleProvider implements LlmProvider {
   }
 
   private toGeminiRequest(request: InferenceRequest): Record<string, unknown> {
+    const tools: Record<string, unknown>[] = [];
+    if (request.tools?.length) {
+      tools.push({ functionDeclarations: request.tools.map(toGeminiTool) });
+    }
+    if (request.enableWebSearch) {
+      // Gemini 2.x grounding: the model runs Google Search during generation
+      // and returns citations in groundingMetadata.
+      tools.push({ googleSearch: {} });
+    }
+
     return {
       contents: this.toGeminiContents(request.messages),
       ...(request.system && { systemInstruction: { parts: [{ text: request.system }] } }),
-      ...(request.tools?.length && {
-        tools: [{ functionDeclarations: request.tools.map(toGeminiTool) }],
-      }),
+      ...(tools.length > 0 && { tools }),
       generationConfig: {
         maxOutputTokens: request.maxTokens,
         temperature: request.temperature,
@@ -266,6 +299,20 @@ export class GoogleProvider implements LlmProvider {
       }
       return { type: "text" as const, text: part.text ?? "" };
     });
+  }
+
+  /** Format grounding citations as a Markdown "Sources" list (or "" if none). */
+  private groundingSources(candidate: GeminiCandidate | undefined): string {
+    const chunks = candidate?.groundingMetadata?.groundingChunks ?? [];
+    const seen = new Set<string>();
+    const lines: string[] = [];
+    for (const chunk of chunks) {
+      const uri = chunk.web?.uri;
+      if (!uri || seen.has(uri)) continue;
+      seen.add(uri);
+      lines.push(`- [${chunk.web?.title || uri}](${uri})`);
+    }
+    return lines.length > 0 ? `\n\nSources:\n${lines.join("\n")}` : "";
   }
 
   private fromUsage(response: GeminiResponse): TokenUsage {
