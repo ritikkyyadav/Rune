@@ -229,10 +229,20 @@ export class GoogleProvider implements LlmProvider {
 
   private toGeminiRequest(request: InferenceRequest): Record<string, unknown> {
     const tools: Record<string, unknown>[] = [];
-    if (request.tools?.length) {
-      tools.push({ functionDeclarations: request.tools.map(toGeminiTool) });
+    const functionDeclarations = request.tools?.length
+      ? request.tools.map(toGeminiTool)
+      : [];
+    if (functionDeclarations.length > 0) {
+      tools.push({ functionDeclarations });
     }
-    if (request.enableWebSearch) {
+    // Gemini rejects a request that combines the googleSearch built-in tool with
+    // functionDeclarations ("Built-in tools and Function Calling cannot be combined
+    // in the same request"). They are mutually exclusive, so grounding is only
+    // attached when no function tools are present. The agent loop already picks one
+    // or the other per request (see providerAllowsGroundingWithTools); this guard
+    // ensures the provider can never emit an API-invalid request — function tools
+    // win because an agent depends on them.
+    if (request.enableWebSearch && functionDeclarations.length === 0) {
       // Gemini 2.x grounding: the model runs Google Search during generation
       // and returns citations in groundingMetadata.
       tools.push({ googleSearch: {} });

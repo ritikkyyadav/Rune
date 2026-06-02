@@ -8,7 +8,11 @@ import type {
   ToolDefinition,
   StreamOpts,
 } from "@alan/llm-gateway";
-import { LlmGateway, providerSupportsNativeSearch } from "@alan/llm-gateway";
+import {
+  LlmGateway,
+  providerSupportsNativeSearch,
+  providerAllowsGroundingWithTools,
+} from "@alan/llm-gateway";
 import type { ToolCallInput, ToolCallOutput } from "@alan/tool-registry";
 import { ToolRegistry } from "@alan/tool-registry";
 import type { ContextEngine } from "./context-engine";
@@ -162,8 +166,18 @@ export class AgentLoop {
       // When the provider can search server-side and native grounding is on,
       // ground through the provider instead of advertising the web_search
       // function tool — otherwise the model may search twice.
+      //
+      // Caveat: Gemini's googleSearch grounding cannot be combined with function
+      // tools in one request (the API rejects it: "Built-in tools and Function
+      // Calling cannot be combined"). An agent almost always carries other tools
+      // (read/write/edit/bash), so for such providers we ground natively only when
+      // there are no other tools to advertise; otherwise we keep the universal
+      // web_search function tool, which coexists with the rest.
+      const hasOtherTools = allTools.some((t) => t.name !== "web_search");
       const useNativeSearch =
-        this.config.nativeGrounding === true && providerSupportsNativeSearch(this.config.provider);
+        this.config.nativeGrounding === true &&
+        providerSupportsNativeSearch(this.config.provider) &&
+        (providerAllowsGroundingWithTools(this.config.provider) || !hasOtherTools);
       const tools = useNativeSearch ? allTools.filter((t) => t.name !== "web_search") : allTools;
 
       // Before building the request, apply context engine if available
@@ -217,6 +231,15 @@ export class AgentLoop {
           if (result.event) yield result.event;
           if (result.stopReason) stopReason = result.stopReason;
           if (result.error) {
+            // Terminal provider failures (bad key, no credits, every provider
+            // rate-limited) won't clear by re-running — surface immediately with
+            // the gateway's guidance instead of burning maxConsecutiveErrors
+            // re-hammering throttled endpoints.
+            if (result.retryable === false) {
+              this.state = "error";
+              yield { type: "error", error: result.error, recoverable: false };
+              return;
+            }
             consecutiveErrors++;
             yield { type: "error", error: result.error, recoverable: true };
             if (consecutiveErrors >= this.config.maxConsecutiveErrors) {
@@ -506,7 +529,7 @@ export class AgentLoop {
     event: StreamEvent,
     contentBlocks: ContentBlock[],
     pendingToolCalls: Array<{ callId: string; toolName: string; argsJson: string }>,
-  ): { event?: AgentTurnEvent; stopReason?: string; error?: string } {
+  ): { event?: AgentTurnEvent; stopReason?: string; error?: string; retryable?: boolean } {
     switch (event.type) {
       case "content_delta":
         if (event.delta.type === "text_delta") {
@@ -578,7 +601,7 @@ export class AgentLoop {
         return { event: { type: "notice", message: event.message } };
 
       case "error":
-        return { error: event.error };
+        return { error: event.error, retryable: event.retryable };
 
       default:
         return {};
