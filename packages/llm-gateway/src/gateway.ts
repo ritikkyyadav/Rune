@@ -21,6 +21,11 @@ const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
   ollama: "llama3",
 };
 
+// Cap how long we'll wait on a single rate-limited attempt. A free-tier quota
+// 429 often advises tens of seconds; hanging that long is worse than switching
+// providers or surfacing a clear, actionable error.
+const RATE_LIMIT_MAX_WAIT_MS = 8_000;
+
 export class LlmGateway {
   private providers: Map<ProviderName, LlmProvider> = new Map();
   private config: GatewayConfig;
@@ -79,6 +84,13 @@ export class LlmGateway {
               model: PROVIDER_DEFAULT_MODELS[providerName] ?? request.model,
             };
 
+      // The next REGISTERED provider in the chain, if any. Used both to fall
+      // back fast (don't burn the retry ladder on a down/over-quota model) and
+      // to decide whether a failure is terminal.
+      const idx = fallbackOrder.indexOf(providerName);
+      const nextProvider = fallbackOrder.slice(idx + 1).find((p) => this.providers.has(p));
+      const hasNext = nextProvider !== undefined;
+
       let lastError: Error | undefined;
       let lastStatus: number | undefined;
       let shouldFallback = false;
@@ -97,55 +109,84 @@ export class LlmGateway {
           lastError = err as Error;
           lastStatus = (err as Record<string, unknown>).status as number | undefined;
 
-          // Auth / billing errors → immediately try fallback provider
-          if (lastStatus === 401 || lastStatus === 402 || lastStatus === 403) {
+          const isAuthOrBilling =
+            lastStatus === 401 || lastStatus === 402 || lastStatus === 403;
+          const isRateLimit = lastStatus === 429;
+
+          // Another provider is available → switch NOW. A bad key, exhausted
+          // credits, or an over-quota 429 won't clear by retrying the same
+          // provider, so falling back immediately is both faster and likelier
+          // to succeed than burning the retry ladder here.
+          if ((isAuthOrBilling || isRateLimit) && hasNext) {
             shouldFallback = true;
             break;
           }
+
+          // No fallback left. For a sole rate-limited provider, do at most one
+          // short, capped retry honoring Retry-After — a long server-advised
+          // delay means we give up cleanly instead of hanging the session.
+          if (isRateLimit) {
+            if (attempt >= 1 || this.getRetryAfterMs(lastError) > RATE_LIMIT_MAX_WAIT_MS) break;
+            await this.backoff(lastError, attempt);
+            continue;
+          }
+
+          // Transient 5xx / network → retry with backoff; hard 4xx → stop.
           if (!this.shouldRetry(lastError, attempt)) break;
           await this.backoff(lastError, attempt);
         }
       }
 
-      // Also fallback on 429 after exhausting retries — the model is overloaded
-      if (!shouldFallback && lastStatus === 429) {
+      // A 5xx / network failure that exhausted its retries still falls back to
+      // the next provider before we give up.
+      if (!shouldFallback && hasNext && (lastStatus === undefined || lastStatus >= 500)) {
         shouldFallback = true;
       }
 
-      if (shouldFallback && fallbackOrder.indexOf(providerName) < fallbackOrder.length - 1) {
-        const nextProvider = fallbackOrder[fallbackOrder.indexOf(providerName) + 1];
-        if (this.providers.has(nextProvider)) {
-          const nextModel = PROVIDER_DEFAULT_MODELS[nextProvider] ?? "default";
-          // Informational, NOT an error: the agent loop ends the turn on `error`
-          // events, so emitting the switch as an error would abandon this
-          // generator before the fallback provider streams anything.
-          yield {
-            type: "notice",
-            message: `${providerName}/${adjustedRequest.model} unavailable. Switching to ${nextProvider}/${nextModel}…`,
-          };
-          continue;
-        }
+      if (shouldFallback && nextProvider) {
+        const nextModel = PROVIDER_DEFAULT_MODELS[nextProvider] ?? "default";
+        // Informational, NOT an error: the agent loop ends the turn on `error`
+        // events, so emitting the switch as an error would abandon this
+        // generator before the fallback provider streams anything.
+        yield {
+          type: "notice",
+          message: `${providerName}/${adjustedRequest.model} unavailable. Switching to ${nextProvider}/${nextModel}…`,
+        };
+        continue;
       }
 
-      // No more fallbacks — yield clean final error
+      // Last provider in the chain failed — yield one clean, terminal error.
+      // Auth / billing / rate-limit are marked non-retryable so the agent loop
+      // stops with guidance instead of re-running the whole (doomed) chain and
+      // dying with "Too many consecutive errors".
       const cleanMsg = lastError?.message?.split("\n")[0]?.slice(0, 150) ?? "Unknown error";
+      const triedList = fallbackOrder.filter((p) => this.providers.has(p)).join(", ");
 
       if (lastStatus === 401 || lastStatus === 403) {
         yield {
           type: "error",
-          error: `Auth failed on ${providerName}. Check your API key.`,
+          error: `Auth failed on ${providerName}. Check your API key, or switch with /model.`,
+          retryable: false,
         };
       } else if (lastStatus === 402) {
         yield {
           type: "error",
           error: `No credits on ${providerName}. Add billing or switch providers with /model.`,
+          retryable: false,
         };
       } else if (lastStatus === 429) {
+        const waitMs = this.getRetryAfterMs(lastError);
+        const waitHint = waitMs > 0 ? ` Retry in ~${Math.ceil(waitMs / 1000)}s` : " Wait a moment";
+        const scope = triedList.includes(",")
+          ? `All providers rate limited (${triedList}).`
+          : `Rate limited on ${providerName}.`;
         yield {
           type: "error",
-          error: `Rate limited on ${providerName}/${adjustedRequest.model}. ${cleanMsg}`,
+          error: `${scope}${waitHint}, or switch models with /model.`,
+          retryable: false,
         };
       } else {
+        // Transient (5xx / network) with no fallback: let the agent loop retry.
         yield { type: "error", error: cleanMsg };
       }
       return;
@@ -222,19 +263,43 @@ export class LlmGateway {
     return true;
   }
 
-  private async backoff(err: Error | undefined, attempt: number): Promise<void> {
-    // Check for Retry-After header in error metadata
-    let retryAfterMs = 0;
-    if (err) {
-      const headers = (err as unknown as { headers?: Record<string, string> }).headers;
-      const retryAfter = headers?.["retry-after"] ?? headers?.["Retry-After"];
-      if (retryAfter) {
-        retryAfterMs = parseInt(retryAfter, 10) * 1000;
-      }
+  /**
+   * Best-effort Retry-After in ms. Prefers the structured `ApiError.retryAfterMs`
+   * (e.g. parsed from Google's RetryInfo body) and falls back to an HTTP
+   * `Retry-After` header on SDK-style errors. Returns 0 when unknown.
+   */
+  private getRetryAfterMs(err: Error | undefined): number {
+    if (!err) return 0;
+    const e = err as unknown as { retryAfterMs?: number | null; headers?: unknown };
+    if (typeof e.retryAfterMs === "number" && e.retryAfterMs > 0) return e.retryAfterMs;
+
+    const headers = e.headers;
+    let raw: string | null | undefined;
+    if (headers && typeof (headers as { get?: unknown }).get === "function") {
+      raw = (headers as { get(name: string): string | null }).get("retry-after");
+    } else if (headers && typeof headers === "object") {
+      const h = headers as Record<string, string>;
+      raw = h["retry-after"] ?? h["Retry-After"];
     }
-    const baseMs = Math.max(retryAfterMs, this.config.retryBaseMs * Math.pow(2, attempt));
-    const jitter = Math.random() * baseMs * 0.1;
-    await new Promise((resolve) => setTimeout(resolve, baseMs + jitter));
+    if (raw) {
+      const secs = parseInt(raw, 10);
+      if (!isNaN(secs)) return secs * 1000;
+    }
+    return 0;
+  }
+
+  private async backoff(err: Error | undefined, attempt: number): Promise<void> {
+    let waitMs = Math.max(
+      this.getRetryAfterMs(err),
+      this.config.retryBaseMs * Math.pow(2, attempt),
+    );
+    // Never hang on a long server-advised delay for rate limits — better to fall
+    // back or fail fast with guidance than freeze the session.
+    const status = (err as unknown as { status?: number } | undefined)?.status;
+    if (status === 429) waitMs = Math.min(waitMs, RATE_LIMIT_MAX_WAIT_MS);
+
+    const jitter = Math.random() * waitMs * 0.1;
+    await new Promise((resolve) => setTimeout(resolve, waitMs + jitter));
   }
 
   private recordCost(model: string, provider: ProviderName, usage: TokenUsage): void {

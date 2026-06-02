@@ -11,6 +11,7 @@ import type {
   ToolDefinition,
   TokenUsage,
 } from "../types";
+import { ApiError } from "../types";
 
 export class OpenAIProvider implements LlmProvider {
   readonly name = "openai" as const;
@@ -85,11 +86,20 @@ export class OpenAIProvider implements LlmProvider {
         const chunkTimeout = setTimeout(() => controller.abort(), 30_000);
 
         try {
-          // Check for error in chunk (OpenRouter sends errors as stream events)
+          // Check for error in chunk (OpenRouter sends errors as stream events).
+          // Preserve the HTTP status (e.g. 429) as an ApiError so the gateway's
+          // status-based fallback/retry logic can act on it — a plain Error
+          // drops the status and silently defeats fallback.
           const anyChunk = chunk as unknown as Record<string, unknown>;
           if (anyChunk.error) {
             const errObj = anyChunk.error as Record<string, unknown>;
-            throw new Error((errObj.message as string) ?? `API error ${errObj.code ?? ""}`);
+            const code = Number(errObj.code ?? errObj.status);
+            const message = (errObj.message as string) ?? `API error ${errObj.code ?? ""}`;
+            throw new ApiError({
+              status: Number.isFinite(code) ? code : 502,
+              provider: this.name,
+              message,
+            });
           }
 
           if (!messageId && chunk.id) {

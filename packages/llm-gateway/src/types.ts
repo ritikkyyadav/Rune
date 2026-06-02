@@ -48,6 +48,25 @@ export function providerSupportsNativeSearch(provider: ProviderName): boolean {
   return NATIVE_SEARCH_PROVIDERS.has(provider);
 }
 
+/**
+ * Providers whose native grounding CANNOT share a request with function-calling
+ * tools. Gemini treats googleSearch as a "built-in tool" and the API rejects any
+ * request that also sends functionDeclarations ("Built-in tools and Function
+ * Calling cannot be combined in the same request"). Anthropic, by contrast, runs
+ * web_search as a server-side tool that coexists with client function tools.
+ */
+const GROUNDING_EXCLUDES_TOOLS: ReadonlySet<ProviderName> = new Set<ProviderName>(["google"]);
+
+/**
+ * Whether a provider's native grounding can be combined with function-calling
+ * tools in the same request. When false (Gemini), grounding is only usable when
+ * no function tools are sent, so an agent that needs tools must instead fall back
+ * to the universal `web_search` function tool.
+ */
+export function providerAllowsGroundingWithTools(provider: ProviderName): boolean {
+  return !GROUNDING_EXCLUDES_TOOLS.has(provider);
+}
+
 // ─── Inference Request ───
 
 export interface CacheControlHint {
@@ -112,7 +131,10 @@ export type StreamEvent =
   | { type: "tool_use_stop"; toolCallId: string; toolInput: Record<string, unknown> }
   | { type: "message_stop"; stopReason: StopReason; usage: TokenUsage }
   | { type: "notice"; message: string }
-  | { type: "error"; error: string };
+  // `retryable: false` marks a terminal failure (bad key, no credits, every
+  // provider rate-limited) that re-running won't fix — the agent loop surfaces
+  // it immediately instead of retrying through maxConsecutiveErrors.
+  | { type: "error"; error: string; retryable?: boolean };
 
 // ─── Provider Adapter Interface ───
 
