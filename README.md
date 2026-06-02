@@ -27,6 +27,10 @@ compliance-sensitive teams.
 - **Hooks** — run shell commands automatically around tool use and session lifecycle via
   `.alan/hooks.json` (e.g. format/lint after edits, block protected paths).
 - **MCP** — project-scoped tool discovery via `.alan/mcp.json`.
+- **Skills** — 181 bundled expert playbooks (code review, debugging, architecture, data analysis,
+  PDF handling, and more) surfaced by progressive disclosure: a compact catalog rides in the system
+  prompt and the model loads a skill's full instructions on demand via the `skill` tool. Browse with
+  `/skills`; add your own under `.alan/skills/`. See [`skills/`](skills/README.md).
 - **Custom slash commands** — drop `.alan/commands/*.md` files to add your own `/commands`.
 - **Sessions, checkpoints & rewind** — SQLite-backed session history, automatic checkpoints, and
   `/rewind` to roll the conversation back to an earlier turn.
@@ -43,9 +47,10 @@ packages/
   orchestrator/   Engine: agent loop, planner-executor, context engine, permissions,
                   memory, hooks, sub-agent, session export — plus the CLI (bin/alan-cli.ts)
   llm-gateway/    Provider adapters + gateway (retry / fallback / cost tracking)
-  tool-registry/  Tool schemas, registry, built-in tools, MCP client
+  tool-registry/  Tool schemas, registry, built-in tools, MCP client, skills loader
   shared/         Sessions, checkpoints, config, protocol
   telemetry/      Telemetry
+skills/           Bundled skills catalog (21 plugins, 181 SKILL.md playbooks)
 crates/
   alan-tools/     Fast Rust tool binary (read/grep/edit/bash/symbol_search/...)
   alan-index/     Code symbol index
@@ -112,8 +117,9 @@ Common flags: `-m/--model`, `-p/--provider`, `-w/--workspace <dir>`, `--yolo`, `
 
 ## Slash commands
 
-`/model`, `/effort`, `/status`, `/providers`, `/cost`, `/compact`, `/plan`, `/rewind`, `/help`,
-`/quit` — plus any custom commands you define in `.alan/commands/`.
+`/model`, `/effort`, `/status`, `/providers`, `/mcp`, `/skills`, `/cost`, `/compact`, `/plan`,
+`/rewind`, `/help`, `/quit` — plus any custom commands you define in `.alan/commands/`.
+`/skills` lists the bundled skill catalog; `/skills <keywords>` searches it.
 
 ## Evals
 

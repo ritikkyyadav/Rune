@@ -13,7 +13,12 @@ import {
   registerBuiltinTools,
   ToolRateLimiter,
   McpDiscovery,
+  SkillLoader,
+  createSkillTool,
 } from "@alan/tool-registry";
+import type { PluginCatalogEntry, SkillSearchHit } from "@alan/tool-registry";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import {
   SessionManager,
   hashArgs,
@@ -96,6 +101,10 @@ export interface EngineConfig {
   enableHooks?: boolean;
   /** Discover and load MCP servers from <workspace>/.alan/mcp.json. Default on. */
   enableMcp?: boolean;
+  /** Load skills (bundled `skills/` + <workspace>/.alan/skills) and the `skill` tool. Default on. */
+  enableSkills?: boolean;
+  /** Explicit skill root dirs; when set, bundled + .alan/skills auto-detection is skipped. */
+  skillRoots?: string[];
   /** Run project checks (typecheck/test/cargo) after edits so the agent self-corrects. Default on. */
   enableVerification?: boolean;
   /** Explicit verification commands; when set, project auto-detection is skipped. */
@@ -184,6 +193,9 @@ export class Engine {
   private verifier: Verifier | null = null;
   private mcpDiscovery: McpDiscovery | null = null;
   private mcpLoaded = false;
+  private skillLoader: SkillLoader | null = null;
+  private skillsLoaded = false;
+  private skillCatalog = "";
 
   constructor(config: Partial<EngineConfig> = {}) {
     this.config = { ...DEFAULT_ENGINE_CONFIG, ...config };
@@ -359,6 +371,76 @@ export class Engine {
     return this.mcpDiscovery?.getStatus() ?? [];
   }
 
+  /**
+   * Lazily load skills once per engine: discover SKILL.md files from the bundled
+   * `skills/` catalog and `<workspace>/.alan/skills`, register the `skill` tool,
+   * and build the compact catalog injected into the system prompt. Missing dirs →
+   * no-op. Any failure is logged and skipped (mirrors hooks/MCP) — skills never
+   * break a session. Not added to the read-only sub-agent registry.
+   */
+  private async ensureSkills(): Promise<void> {
+    if (this.skillsLoaded) return;
+    this.skillsLoaded = true;
+    if (this.config.enableSkills === false) return;
+    try {
+      const roots = this.resolveSkillRoots();
+      if (roots.length === 0) return;
+      this.skillLoader = new SkillLoader({ roots });
+      await this.skillLoader.loadAll();
+      if (this.skillLoader.count() > 0) {
+        this.registry.register(createSkillTool(this.skillLoader));
+        this.skillCatalog = this.skillLoader.catalogPrompt();
+      }
+    } catch (err) {
+      console.warn(`[skills] load failed: ${err instanceof Error ? err.message : String(err)}`);
+      this.skillLoader = null;
+    }
+  }
+
+  /**
+   * Resolve which directories to scan for skills. Explicit `skillRoots` win;
+   * otherwise use the bundled catalog (resolved relative to this module, with an
+   * ALAN_SKILLS_DIR / cwd fallback) plus the workspace's `.alan/skills`.
+   */
+  private resolveSkillRoots(): string[] {
+    if (this.config.skillRoots && this.config.skillRoots.length > 0) {
+      return this.config.skillRoots.filter((r) => existsSync(r));
+    }
+    const candidates = [
+      process.env.ALAN_SKILLS_DIR,
+      join(import.meta.dir, "../../../skills"), // packages/orchestrator/src → repo root
+      join(process.cwd(), "skills"),
+    ].filter((c): c is string => typeof c === "string" && c.length > 0);
+
+    const roots: string[] = [];
+    for (const c of candidates) {
+      if (existsSync(c)) {
+        roots.push(c);
+        break; // one bundled catalog is enough
+      }
+    }
+    const userSkills = join(this.config.workspaceRoot, ".alan", "skills");
+    if (existsSync(userSkills)) roots.push(userSkills);
+    return roots;
+  }
+
+  /** Ensure skills are loaded, then return them grouped by plugin (backs `/skills`). */
+  async listSkills(): Promise<{ total: number; plugins: PluginCatalogEntry[] }> {
+    await this.ensureSkills();
+    return { total: this.skillLoader?.count() ?? 0, plugins: this.skillLoader?.catalog() ?? [] };
+  }
+
+  /** Ensure skills are loaded, then rank them against a query (backs `/skills <query>`). */
+  async searchSkills(query: string): Promise<SkillSearchHit[]> {
+    await this.ensureSkills();
+    return this.skillLoader?.search(query) ?? [];
+  }
+
+  /** Loaded skill count without triggering discovery (for `/status`). */
+  getSkillCount(): number {
+    return this.skillLoader?.count() ?? 0;
+  }
+
   /** Current MCP server status without triggering discovery. */
   getMcpStatus(): ReturnType<McpDiscovery["getStatus"]> {
     return this.mcpDiscovery?.getStatus() ?? [];
@@ -506,6 +588,13 @@ export class Engine {
 
     await this.ensureHookRunner();
     await this.ensureMcpServers();
+    await this.ensureSkills();
+
+    // Append the compact skills catalog to the base system prompt so the model
+    // knows which skills it can load on demand via the `skill` tool.
+    const systemPrompt = this.skillCatalog
+      ? `${SYSTEM_PROMPT}\n\n${this.skillCatalog}`
+      : SYSTEM_PROMPT;
 
     const permCheck = this.buildPermissionCheck();
     let turnCount = 0;
@@ -539,7 +628,7 @@ export class Engine {
           maxTurnsPerStep: Math.min(effortCfg.maxTurns, 20),
           maxStepRetries: 2,
           maxReplanAttempts: 2,
-          systemPrompt: SYSTEM_PROMPT,
+          systemPrompt,
           priorMessages,
           contextEngine: this.contextEngine,
           verifier: this.verifier ?? undefined,
@@ -556,7 +645,7 @@ export class Engine {
           provider: this.config.provider,
           maxTokens: effortCfg.maxTokens,
           maxTurns: effortCfg.maxTurns,
-          systemPrompt: SYSTEM_PROMPT,
+          systemPrompt,
           priorMessages,
           contextEngine: this.contextEngine,
           verifier: this.verifier ?? undefined,
@@ -856,6 +945,7 @@ export class Engine {
     contextUsage: { used: number; limit: number; percent: number };
     securityPosture: string;
     mcp: { servers: number; tools: number };
+    skills: number;
   } {
     return {
       model: this.config.model,
@@ -875,6 +965,7 @@ export class Engine {
         servers: this.getMcpStatus().length,
         tools: this.getMcpStatus().reduce((n, s) => n + s.toolCount, 0),
       },
+      skills: this.getSkillCount(),
     };
   }
 

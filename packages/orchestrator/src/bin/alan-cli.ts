@@ -495,6 +495,7 @@ async function main() {
     ["/status", "Session status"],
     ["/providers", "List providers"],
     ["/mcp", "List MCP servers"],
+    ["/skills", "Browse & search skills"],
     ["/cost", "Session cost"],
     ["/compact", "Toggle compact mode"],
     ["/plan", "Toggle plan mode"],
@@ -592,6 +593,7 @@ async function main() {
         ["/status", "Session status"],
         ["/providers", "List providers"],
         ["/mcp", "List MCP servers"],
+        ["/skills", "Browse & search skills"],
         ["/cost", "Session cost"],
         ["/compact", "Toggle compact mode"],
         ["/plan", "Toggle plan mode"],
@@ -638,6 +640,11 @@ async function main() {
           `  ${muted("MCP")}  ${text(`${status.mcp.servers} server(s), ${status.mcp.tools} tools`)}\n\n`,
         );
       }
+      if (status.skills > 0) {
+        process.stdout.write(
+          `  ${muted("Skills")}  ${text(`${status.skills} loaded`)} ${faint("(/skills to browse)")}\n\n`,
+        );
+      }
       showPrompt();
       return;
     }
@@ -661,6 +668,44 @@ async function main() {
           }
         }
         process.stdout.write("\n");
+      }
+      showPrompt();
+      return;
+    }
+
+    if (input === "/skills" || input.startsWith("/skills ")) {
+      const query = input.slice("/skills".length).trim();
+      if (query) {
+        const hits = await engine.searchSkills(query);
+        process.stdout.write(`  ${bold(text("Skills"))} ${muted(`matching “${query}”`)}\n\n`);
+        if (hits.length === 0) {
+          process.stdout.write(`    ${muted("No matches.")}\n\n`);
+        } else {
+          for (const h of hits) {
+            process.stdout.write(`    ${info(h.id)}\n`);
+            if (h.description) process.stdout.write(`      ${faint(h.description)}\n`);
+          }
+          process.stdout.write("\n");
+        }
+        showPrompt();
+        return;
+      }
+      const { total, plugins } = await engine.listSkills();
+      process.stdout.write(`  ${bold(text("Skills"))} ${muted(`(${total} across ${plugins.length} domains)`)}\n\n`);
+      if (total === 0) {
+        process.stdout.write(
+          `    ${muted("None found. Add skills under ")}${info("skills/")}${muted(" or ")}${info(".alan/skills/")}${muted(".")}\n\n`,
+        );
+      } else {
+        for (const p of plugins) {
+          const names = p.skills.map((s) => s.name).join(", ");
+          process.stdout.write(`    ${ok("●")} ${text(p.plugin)} ${muted(`(${p.skills.length})`)}\n`);
+          process.stdout.write(`      ${faint(names)}\n`);
+        }
+        process.stdout.write(
+          `\n  ${muted("The agent loads a skill automatically when your request matches it.")}\n`,
+        );
+        process.stdout.write(`  ${muted("Search with ")}${info("/skills <keywords>")}${muted(".")}\n\n`);
       }
       showPrompt();
       return;
