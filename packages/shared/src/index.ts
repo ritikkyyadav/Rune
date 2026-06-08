@@ -26,6 +26,12 @@ export {
   searchKeyStatus,
   applySearchKeysToEnv,
 } from "./secrets.js";
+export {
+  type LastModel,
+  getModelStatePath,
+  loadLastModel,
+  saveLastModel,
+} from "./model-store.js";
 export * from "./session.js";
 export {
   type RunState,
