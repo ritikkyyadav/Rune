@@ -31,7 +31,17 @@ export interface ToolDefinition {
 
 // ─── Provider Names ───
 
-export type ProviderName = "anthropic" | "openai" | "openrouter" | "ollama" | "google";
+export type ProviderName =
+  | "anthropic"
+  | "openai"
+  | "openrouter"
+  | "ollama"
+  | "ollama-turbo"
+  | "google"
+  | "groq"
+  | "xai"
+  | "deepseek"
+  | "custom";
 
 /**
  * Providers that can run web search server-side (the model grounds itself on
@@ -126,6 +136,10 @@ export type StreamEvent =
   | { type: "content_start"; contentIndex: number }
   | { type: "content_delta"; contentIndex: number; delta: { type: "text_delta"; text: string } }
   | { type: "content_stop"; contentIndex: number }
+  // Reasoning models stream chain-of-thought separately from the answer; this
+  // carries it so the UI can show it dimmed and the agent loop keeps it OUT of
+  // the persisted message + tool-call parsing.
+  | { type: "thinking_delta"; text: string }
   | { type: "tool_use_start"; toolCallId: string; toolName: string }
   | { type: "tool_use_delta"; toolCallId: string; partialJson: string }
   | { type: "tool_use_stop"; toolCallId: string; toolInput: Record<string, unknown> }

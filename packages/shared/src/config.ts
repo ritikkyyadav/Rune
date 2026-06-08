@@ -11,7 +11,7 @@ export interface AlanConfig {
     maxSessions: number;
   };
   llm: {
-    defaultProvider: "anthropic" | "openai" | "openrouter" | "ollama" | "google";
+    defaultProvider: "anthropic" | "openai" | "openrouter" | "ollama" | "ollama-turbo" | "google";
     anthropic?: {
       apiKey: string;
       model: string;
@@ -74,6 +74,32 @@ export interface AlanConfig {
     /** Use provider-native grounding (Gemini/Anthropic) when available. Default true. */
     nativeGrounding?: boolean;
   };
+  /** Deep-research (`/research`) defaults. */
+  research?: {
+    /** Depth preset: quick | standard | deep. Default standard. */
+    depth?: "quick" | "standard" | "deep";
+    /** Investigate→reflect cycles (round 1 = the plan, later rounds fill gaps). */
+    maxRounds?: number;
+    /** Max sub-questions in a plan. */
+    maxSubQuestions?: number;
+    /** Max investigators run in parallel (keep modest for keyless DuckDuckGo). */
+    maxParallel?: number;
+    /** Max sources fetched per sub-question. */
+    maxSourcesPerStep?: number;
+    /** Skip the approve gate and run immediately. Default false. */
+    autoApprove?: boolean;
+    /** Save the finished report as a markdown file. Default true. */
+    save?: boolean;
+    /** Directory for saved reports. Default `<workspace>/.alan/research`. */
+    outputDir?: string;
+  };
+  ui?: {
+    /**
+     * Default color theme name (see orchestrator ui/themes.ts). Used at startup unless
+     * overridden by the ALAN_THEME env var or a runtime `/theme` choice (~/.alan/theme.json).
+     */
+    theme?: string;
+  };
 }
 
 export interface PermissionRule {
@@ -116,6 +142,10 @@ const DEFAULT_CONFIG: AlanConfig = {
   search: {
     provider: "auto",
     nativeGrounding: true,
+  },
+  research: {
+    depth: "standard",
+    save: true,
   },
 };
 
@@ -224,6 +254,17 @@ function applyEnvOverrides(config: Record<string, unknown>): void {
     ALAN_SEARCH_BACKEND: (c) => setNested(c, "search.provider", process.env.ALAN_SEARCH_BACKEND!),
     ALAN_NATIVE_GROUNDING: (c) =>
       setNested(c, "search.nativeGrounding", process.env.ALAN_NATIVE_GROUNDING !== "false"),
+    ALAN_RESEARCH_DEPTH: (c) => setNested(c, "research.depth", process.env.ALAN_RESEARCH_DEPTH!),
+    ALAN_RESEARCH_MAX_ROUNDS: (c) =>
+      setNested(c, "research.maxRounds", Number(process.env.ALAN_RESEARCH_MAX_ROUNDS!)),
+    ALAN_RESEARCH_MAX_PARALLEL: (c) =>
+      setNested(c, "research.maxParallel", Number(process.env.ALAN_RESEARCH_MAX_PARALLEL!)),
+    ALAN_RESEARCH_MAX_SUBQUESTIONS: (c) =>
+      setNested(c, "research.maxSubQuestions", Number(process.env.ALAN_RESEARCH_MAX_SUBQUESTIONS!)),
+    ALAN_RESEARCH_AUTO_APPROVE: (c) =>
+      setNested(c, "research.autoApprove", process.env.ALAN_RESEARCH_AUTO_APPROVE === "true"),
+    ALAN_RESEARCH_SAVE: (c) =>
+      setNested(c, "research.save", process.env.ALAN_RESEARCH_SAVE !== "false"),
     ANTHROPIC_API_KEY: (c) => setNested(c, "llm.anthropic.apiKey", process.env.ANTHROPIC_API_KEY!),
     OPENAI_API_KEY: (c) => setNested(c, "llm.openai.apiKey", process.env.OPENAI_API_KEY!),
     OPENROUTER_API_KEY: (c) =>

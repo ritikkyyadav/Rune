@@ -15,6 +15,10 @@ export type Key =
   | { type: "right" }
   | { type: "home" }
   | { type: "end" }
+  | { type: "pageup" }
+  | { type: "pagedown" }
+  | { type: "wheel-up" }
+  | { type: "wheel-down" }
   | { type: "ctrl"; name: string } // e.g. "c", "d", "l", "t"
   | { type: "esc" }
   | { type: "paste-start" }
@@ -35,6 +39,8 @@ const CSI_KEYS: Record<string, Key> = {
   "4~": { type: "end" },
   "8~": { type: "end" },
   "3~": { type: "delete" },
+  "5~": { type: "pageup" },
+  "6~": { type: "pagedown" },
   "200~": { type: "paste-start" },
   "201~": { type: "paste-end" },
 };
@@ -64,6 +70,29 @@ export function parseKeys(data: string): Key[] {
           if (/[A-Za-z~]/.test(c)) break;
           j++;
         }
+        // ── Mouse (wheel → scroll) ──
+        // SGR form (ESC [ < b ; x ; y M|m) when ?1006h is honoured; legacy X10
+        // (ESC [ M b x y) otherwise. Only the wheel is surfaced (buttons 64/65, plus
+        // modifier-shifted variants); clicks/drags are consumed silently so their
+        // coordinate bytes never leak into the input as stray characters.
+        if (body.charCodeAt(0) === 0x3c /* '<' */) {
+          const semi = body.indexOf(";");
+          const btn = parseInt(body.slice(1, semi < 0 ? body.length : semi), 10);
+          if (Number.isFinite(btn) && (btn & 0x40) !== 0) {
+            keys.push((btn & 1) === 0 ? { type: "wheel-up" } : { type: "wheel-down" });
+          }
+          i = j + 1;
+          continue;
+        }
+        if (body === "M") {
+          const btn = (data.charCodeAt(j + 1) || 32) - 32;
+          if ((btn & 0x40) !== 0) {
+            keys.push((btn & 1) === 0 ? { type: "wheel-up" } : { type: "wheel-down" });
+          }
+          i = j + 4; // ESC [ M is followed by three coordinate bytes
+          continue;
+        }
+
         const key = CSI_KEYS[body];
         if (key) {
           keys.push(key);

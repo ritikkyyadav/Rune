@@ -22,6 +22,7 @@ import type { Verifier } from "./verifier";
 
 export type AgentTurnEvent =
   | { type: "text_delta"; text: string }
+  | { type: "thinking_delta"; text: string }
   | { type: "tool_call_start"; callId: string; toolName: string }
   | { type: "tool_call_args_delta"; callId: string; partialJson: string }
   | {
@@ -548,6 +549,12 @@ export class AgentLoop {
         }
         return {};
 
+      case "thinking_delta":
+        // Reasoning / chain-of-thought: forward to the UI (rendered dimmed) but
+        // do NOT push into contentBlocks, so it never becomes part of the
+        // persisted answer or confuses tool-call detection.
+        return { event: { type: "thinking_delta", text: event.text } };
+
       case "tool_use_start":
         contentBlocks.push({
           type: "tool_use",
@@ -615,7 +622,7 @@ export class AgentLoop {
  * sub-agents or file reads at once). Preserves no ordering — callers assemble
  * results in their own order afterward.
  */
-async function mapWithConcurrency<T>(
+export async function mapWithConcurrency<T>(
   items: T[],
   limit: number,
   fn: (item: T) => Promise<void>,

@@ -19,9 +19,16 @@ export class BottomRegion {
   private rows = 0; // line count of the current block
   private caretRow = 0; // caret's row within the block (0-based from top)
   private mounted = false;
+  private bgFill = ""; // optional SGR bg so clears repaint in the active theme, not the terminal's
 
   constructor(write: Writer = (s) => process.stdout.write(s)) {
     this.write = write;
+  }
+
+  /** Set an SGR background sequence so `\x1b[0J` clears fill with the theme bg (not the
+   *  terminal's), keeping redraws seamless on terminals that ignore OSC 11 (e.g. Warp). */
+  setBgFill(seq: string): void {
+    this.bgFill = seq;
   }
 
   /** Sequence to move the cursor from its parked caret cell to the block's top-left. */
@@ -42,7 +49,7 @@ export class BottomRegion {
   /** Draw or redraw the pinned block in place. */
   render(lines: string[], caretRow = lines.length - 1, caretCol = 0): void {
     let s = HIDE;
-    if (this.mounted) s += this.toTop() + CLEAR_BELOW;
+    if (this.mounted) s += this.toTop() + this.bgFill + CLEAR_BELOW;
     s += this.place(lines, caretRow, caretCol) + SHOW;
     this.write(s);
     this.rows = lines.length;
@@ -53,7 +60,7 @@ export class BottomRegion {
   /** Emit transcript text above the block (scrolls into history), then redraw. */
   printAbove(text: string, lines: string[], caretRow = lines.length - 1, caretCol = 0): void {
     let s = HIDE;
-    if (this.mounted) s += this.toTop() + CLEAR_BELOW;
+    if (this.mounted) s += this.toTop() + this.bgFill + CLEAR_BELOW;
     s += text.endsWith("\n") ? text : text + "\n";
     this.write(s);
     this.mounted = false; // old block is gone; draw a fresh one at the new bottom
@@ -71,5 +78,145 @@ export class BottomRegion {
 
   get lineCount(): number {
     return this.rows;
+  }
+}
+
+// ─── Full-screen compositor (alternate screen) ───
+// For themed UIs we take the alternate screen and repaint the whole viewport each frame,
+// so the background is painted edge-to-edge in the theme — the only way to get a cohesive
+// full-window theme on terminals that ignore OSC 11 (Warp). Trades native scrollback for a
+// self-managed scroll. Each `frame` is wrapped in synchronized-update markers so terminals
+// that support it (Warp/iTerm/kitty) show no flicker; others ignore the markers harmlessly.
+
+const ALT_ENTER = "\x1b[?1049h";
+const ALT_EXIT = "\x1b[?1049l";
+const SYNC_BEGIN = "\x1b[?2026h";
+const SYNC_END = "\x1b[?2026l";
+const HOME = "\x1b[H";
+const SCROLL_EXPOSED = "\x00"; // sentinel marking band rows freshly exposed by a region scroll
+
+export class AltScreen {
+  private write: Writer;
+  private active = false;
+  // Last painted frame + the width it was painted at, for differential redraws. `null` forces a
+  // full repaint (the first frame, after a resize, or an explicit invalidate()).
+  private prev: string[] | null = null;
+  private prevCols = 0;
+
+  constructor(write: Writer = (s) => process.stdout.write(s)) {
+    this.write = write;
+  }
+
+  get isActive(): boolean {
+    return this.active;
+  }
+
+  /** Drop the diff baseline so the next frame() repaints in full (call on resize). */
+  invalidate(): void {
+    this.prev = null;
+  }
+
+  enter(bgFill = ""): void {
+    if (this.active) return;
+    // Pre-paint the whole alt-screen in the theme bg so the first frame doesn't flash.
+    this.write(ALT_ENTER + HIDE + bgFill + "\x1b[2J" + HOME);
+    this.active = true;
+    this.prev = null; // first frame after entering is always a full paint
+  }
+
+  exit(): void {
+    if (!this.active) return;
+    this.write(SHOW + ALT_EXIT);
+    this.active = false;
+  }
+
+  /**
+   * Paint one frame. `rows` are complete, already-styled lines that exactly fill the viewport
+   * height (each bounded to the terminal width and ending in EL `\x1b[K`, so re-writing a single
+   * row overwrites its old content and refills the right margin). Caret is placed at the 0-based
+   * (row, col). Wrapped in a synchronized update so supporting terminals show no tearing.
+   *
+   * Three tiers, cheapest applicable one wins:
+   *  1. Full repaint — first frame / row-count change / width change / invalidate().
+   *  2. Region scroll — when `scroll` reports a clean vertical shift of the transcript band and the
+   *     overlap actually matches, shift that band with the terminal's own hardware scroll (DECSTBM
+   *     + SU/SD) and repaint only the freshly exposed lines. This is the key to fluid streaming AND
+   *     scrolling: appending a line, or a wheel notch, shifts the whole window, so a naive per-row
+   *     diff would rewrite every row — the region scroll turns that into "scroll N, paint N".
+   *  3. Per-row diff — rewrite only the rows whose content changed.
+   */
+  frame(
+    rows: string[],
+    caretRow: number,
+    caretCol: number,
+    scroll?: { top: number; bottom: number; delta: number },
+  ): void {
+    if (!this.active) return;
+    const cols = process.stdout.columns ?? 80;
+    const place = `\x1b[${caretRow + 1};${caretCol + 1}H`;
+
+    // Tier 1 — full repaint.
+    if (this.prev === null || this.prev.length !== rows.length || this.prevCols !== cols) {
+      let s = SYNC_BEGIN + HIDE + HOME;
+      for (let i = 0; i < rows.length; i++) {
+        s += rows[i] ?? "";
+        if (i < rows.length - 1) s += "\r\n"; // no trailing newline → never scrolls the last row
+      }
+      s += place + SHOW + SYNC_END;
+      this.write(s);
+      this.prev = rows.slice();
+      this.prevCols = cols;
+      return;
+    }
+
+    const prev = this.prev;
+    let s = SYNC_BEGIN + HIDE;
+
+    // Tier 2 — hardware region scroll. applyScroll only mutates `prev` when the shift truly matches
+    // the new frame, so a bad hint just no-ops and the per-row diff below repaints normally.
+    if (scroll && scroll.delta !== 0 && this.applyScroll(prev, rows, scroll)) {
+      const { top, bottom, delta } = scroll;
+      const move = delta > 0 ? `\x1b[${delta}T` : `\x1b[${-delta}S`; // +down (SD) / -up (SU)
+      s += `\x1b[${top + 1};${bottom + 1}r` + move + "\x1b[r"; // set region · scroll · reset region
+    }
+
+    // Tier 3 — per-row diff (also paints the lines a Tier-2 scroll just exposed).
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i] ?? "";
+      if (row !== prev[i]) s += `\x1b[${i + 1};1H` + row; // rewrite only this row, in place
+    }
+    s += place + SHOW + SYNC_END;
+    this.write(s);
+
+    this.prev = rows.slice();
+    this.prevCols = cols;
+  }
+
+  /**
+   * Verify a proposed band scroll against the new frame; if it's a clean shift, mutate `prev` to
+   * reflect the terminal-side scroll (shift the band, mark the exposed rows with a sentinel so the
+   * per-row diff repaints exactly those) and return true. Returns false — leaving `prev` untouched —
+   * when the overlap doesn't match, so the caller falls back to a plain per-row diff.
+   */
+  private applyScroll(
+    prev: string[],
+    rows: string[],
+    { top, bottom, delta }: { top: number; bottom: number; delta: number },
+  ): boolean {
+    if (top < 0 || bottom >= rows.length || top >= bottom) return false;
+    const n = Math.abs(delta);
+    if (n >= bottom - top + 1) return false; // shift ≥ band height → no cheaper than a full diff
+    if (delta > 0) {
+      // Content moved DOWN by n: row i (top+n..bottom) must equal prev[i-n]; expose top..top+n-1.
+      for (let i = top + n; i <= bottom; i++) if (rows[i] !== prev[i - n]) return false;
+      for (let i = bottom; i >= top + n; i--) prev[i] = prev[i - n]!;
+      for (let i = top; i < top + n; i++) prev[i] = SCROLL_EXPOSED;
+    } else {
+      // Content moved UP by n: row i (top..bottom-n) must equal prev[i+n]; expose bottom-n+1..bottom.
+      for (let i = top; i <= bottom - n; i++) if (rows[i] !== prev[i + n]) return false;
+      for (let i = top; i <= bottom - n; i++) prev[i] = prev[i + n]!;
+      for (let i = bottom - n + 1; i <= bottom; i++) prev[i] = SCROLL_EXPOSED;
+    }
+    return true;
   }
 }

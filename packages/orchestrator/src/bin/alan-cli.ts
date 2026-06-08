@@ -1,17 +1,38 @@
 #!/usr/bin/env bun
 import { Engine } from "../engine";
 import type { PermissionHandler, UserPermissionDecision } from "../engine";
-import { loadConfig } from "@alan/shared";
+import {
+  loadConfig,
+  loadSecrets,
+  setProviderKey as persistKey,
+  clearProviderKey as persistClearKey,
+  setCustomEndpoint as persistCustom,
+  clearCustomEndpoint as persistClearCustom,
+  setProviderDisabled as persistDisabled,
+  getPreset,
+  PROVIDER_PRESETS,
+  CUSTOM_PROVIDER_ID,
+  applySearchKeysToEnv,
+  searchKeyStatus,
+  SEARCH_KEY_PRESETS,
+} from "@alan/shared";
 import { parseArgs } from "util";
 import * as readline from "readline";
 import { Spinner } from "./spinner";
 import { renderWelcome } from "./welcome";
 import { renderToolCall } from "./ui/tool-call";
 import { renderStatus } from "./ui/status";
-import { promptString, statusLine } from "./ui/composer";
+import { promptString, statusLine, composerRule } from "./ui/composer";
 import { runTui } from "./ui/tui";
 import { exportSession } from "../session-export";
 import { loadCommands, findCommand } from "../commands";
+import { isClarification } from "../research-types";
+import type { ResearchPlan, ResearchReport } from "../research-types";
+import {
+  renderResearchPlan,
+  renderClarifyingQuestions,
+  formatResearchEvent,
+} from "./ui/research";
 
 // ─── CLI Argument Parsing ───
 
@@ -33,6 +54,7 @@ const { values, positionals } = parseArgs({
     out: { type: "string" },
     help: { type: "boolean", short: "h", default: false },
     tui: { type: "boolean", default: false },
+    classic: { type: "boolean", default: false },
   },
   allowPositionals: true,
   strict: false,
@@ -55,25 +77,27 @@ if (values.help) {
       `    --out <path>                 Write output to file instead of stdout\n\n` +
       `  Global options:\n` +
       `    -m, --model <model>          LLM model to use\n` +
-      `    -p, --provider <provider>    LLM provider (anthropic|openai|openrouter|google)\n` +
+      `    -p, --provider <provider>    LLM provider (anthropic|openai|openrouter|google|ollama-turbo)\n` +
       `    -w, --workspace <path>       Workspace root directory\n` +
       `    -r, --resume <sessionId>     Resume an existing session\n` +
       `    --yolo                       Skip all permission prompts\n` +
       `    --trust                      Auto-approve in-workspace edits & bash (outside still prompts)\n` +
       `    --planner                    Enable planner+executor mode\n` +
-      `    --tui                        Codex-style terminal UI (experimental)\n` +
+      `    --classic                    Plain readline prompt (default is the pinned composer)\n` +
+      `    --tui                        Force the Codex-style pinned composer\n` +
       `    -h, --help                   Show this help\n\n`,
   );
   process.exit(0);
 }
 
-type CliProvider = "anthropic" | "openai" | "openrouter" | "google";
+type CliProvider = "anthropic" | "openai" | "openrouter" | "google" | "ollama-turbo";
 
 const DEFAULT_MODELS: Record<CliProvider, string> = {
   anthropic: "claude-sonnet-4-20250514",
   openai: "gpt-4o",
   openrouter: "qwen/qwen3-coder:free",
   google: "gemini-2.5-flash",
+  "ollama-turbo": "qwen3-coder:480b",
 };
 
 function isCliProvider(provider: string): provider is CliProvider {
@@ -81,7 +105,8 @@ function isCliProvider(provider: string): provider is CliProvider {
     provider === "anthropic" ||
     provider === "openai" ||
     provider === "openrouter" ||
-    provider === "google"
+    provider === "google" ||
+    provider === "ollama-turbo"
   );
 }
 
@@ -98,6 +123,9 @@ function configuredModelForProvider(
       return config.llm.openrouter?.model;
     case "google":
       return config.llm.google?.model;
+    case "ollama-turbo":
+      // No dedicated config.llm section; fall back to DEFAULT_MODELS / --model.
+      return undefined;
   }
 }
 
@@ -148,7 +176,19 @@ import {
   warn,
   accent,
   ok,
+  setTheme,
+  getTheme,
+  listThemes,
+  swatch,
+  terminalThemeSeq,
+  TERMINAL_THEME_RESET,
 } from "./colors";
+import { loadSavedTheme, resolveInitialTheme, saveTheme } from "./ui/theme-store";
+
+/** Recolour the whole terminal (fg+bg) to the active theme — only on a real TTY. */
+function applyTerminalTheme(): void {
+  if (process.stdout.isTTY) process.stdout.write(terminalThemeSeq());
+}
 
 // ─── Main ───
 
@@ -158,6 +198,19 @@ async function main() {
   const workspaceRoot = (values.workspace as string | undefined) ?? process.cwd();
 
   const config = loadConfig(workspaceRoot);
+  const secrets = loadSecrets();
+
+  // Apply the persisted / configured color theme before anything renders.
+  // Precedence: ALAN_THEME env > ~/.alan/theme.json (last /theme choice) > [ui].theme > default.
+  setTheme(
+    resolveInitialTheme({
+      env: process.env.ALAN_THEME,
+      saved: loadSavedTheme(),
+      configured: config.ui?.theme,
+    }),
+  );
+  // The TUI paints its own background edge-to-edge in the alternate screen, so OSC terminal
+  // recolouring is applied only on the classic readline path (set up after the TUI branch).
 
   // ─── Smart Provider Detection ───
   // Priority: CLI arg > config > auto-detect from available API keys
@@ -188,15 +241,25 @@ async function main() {
   if (cliProvider && isCliProvider(cliProvider)) {
     provider = cliProvider;
   } else if (configProvider && isCliProvider(configProvider)) {
-    // Verify the configured default provider actually has credentials
-    const cfgSection = config.llm[configProvider] as { apiKey?: string } | undefined;
+    // Verify the configured default provider actually has credentials. Some
+    // providers carry no [llm.*] section (e.g. ollama-turbo, whose key lives in
+    // secrets.json / OLLAMA_API_KEY), so skip the section lookup for those.
+    const cfgSection =
+      configProvider === "ollama-turbo"
+        ? undefined
+        : (config.llm[configProvider] as { apiKey?: string } | undefined);
     const envVarMap: Record<CliProvider, string> = {
       google: "GOOGLE_API_KEY",
       anthropic: "ANTHROPIC_API_KEY",
       openai: "OPENAI_API_KEY",
       openrouter: "OPENROUTER_API_KEY",
+      "ollama-turbo": "OLLAMA_API_KEY",
     };
-    if (process.env[envVarMap[configProvider]] || cfgSection?.apiKey) {
+    if (
+      process.env[envVarMap[configProvider]] ||
+      cfgSection?.apiKey ||
+      secrets.keys[configProvider]
+    ) {
       provider = configProvider;
     } else {
       provider = detectBestProvider();
@@ -221,9 +284,12 @@ async function main() {
   ) {
     process.env.ALAN_SEARCH_BACKEND = config.search.provider;
   }
+  // Copy saved Tavily/Brave keys into the env so the web_search backends (used
+  // by /research) pick them up; keyless DuckDuckGo remains the fallback.
+  applySearchKeysToEnv();
   const engine = new Engine({
     model,
-    provider: provider as "anthropic" | "openai" | "openrouter" | "google",
+    provider,
     workspaceRoot,
     dbPath: config.engine.dbPath,
     toolsBinaryPath: toolsBinary,
@@ -238,11 +304,19 @@ async function main() {
           executorProvider: config.llm.executor?.provider ?? provider,
         }
       : undefined,
-    anthropicApiKey: config.llm.anthropic?.apiKey,
-    openaiApiKey: config.llm.openai?.apiKey,
-    openrouterApiKey: config.llm.openrouter?.apiKey,
-    googleApiKey: config.llm.google?.apiKey,
+    // Pass config-file keys as "saved" — but NOT when they merely echo an env
+    // var (loadConfig folds env into config.llm.*), so an env-only key is
+    // reported as "env" by the gateway's env fallback instead of "saved".
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY ? undefined : config.llm.anthropic?.apiKey,
+    openaiApiKey: process.env.OPENAI_API_KEY ? undefined : config.llm.openai?.apiKey,
+    openrouterApiKey: process.env.OPENROUTER_API_KEY ? undefined : config.llm.openrouter?.apiKey,
+    googleApiKey: process.env.GOOGLE_API_KEY ? undefined : config.llm.google?.apiKey,
+    // BYOK keys + custom endpoint + toggles from ~/.alan/secrets.json (win over config.toml).
+    providerKeys: secrets.keys,
+    customEndpoint: secrets.custom,
+    disabledProviders: secrets.disabled,
     search: config.search,
+    research: config.research,
   });
 
   // ─── DB-only commands — run before provider validation ───
@@ -344,13 +418,17 @@ async function main() {
   const sessionId = (values.resume as string) ?? engine.createSession();
   const customCommands = await loadCommands(workspaceRoot);
 
-  // ─── TUI (opt-in) ───
-  // Default stays the readline path; the Codex-style TUI is selected with --tui or
-  // ALAN_TUI=1, and only when stdin is a real terminal. ALAN_CLASSIC forces readline.
-  const useTui =
-    !!process.stdin.isTTY &&
-    !process.env.ALAN_CLASSIC &&
-    ((values.tui as boolean) || !!process.env.ALAN_TUI);
+  // ─── Composer mode ───
+  // The themed full-screen TUI — a live banner, a scrollable transcript window, and a
+  // pinned composer, repainted in the active theme on the alternate screen — is the
+  // default on interactive terminals. It owns the screen so it can paint the theme
+  // background edge-to-edge (which Warp won't do via OSC), and brings its own scrollback:
+  // mouse wheel or PageUp/PageDown. Piped/non-TTY stdin and `--classic` / ALAN_CLASSIC
+  // fall back to the plain readline prompt (native terminal scrollback); `--tui` /
+  // ALAN_TUI force the TUI even past `--classic`.
+  const classicForced = (values.classic as boolean) || !!process.env.ALAN_CLASSIC;
+  const tuiForced = (values.tui as boolean) || !!process.env.ALAN_TUI;
+  const useTui = !!process.stdin.isTTY && (tuiForced || !classicForced);
   if (useTui) {
     await runTui({
       engine,
@@ -362,6 +440,29 @@ async function main() {
       customCommands,
     });
     return;
+  }
+
+  // ─── Classic readline path: OSC terminal recolour (TUI handles its own bg) ───
+  // Paint the terminal in the theme's bg/fg, and restore it on any exit so we never leave
+  // the user's terminal recoloured after Alan quits.
+  applyTerminalTheme();
+  if (process.stdout.isTTY) {
+    const restore = () => {
+      try {
+        process.stdout.write(TERMINAL_THEME_RESET);
+      } catch {
+        /* nothing useful to do while exiting */
+      }
+    };
+    process.on("exit", restore);
+    process.on("SIGINT", () => {
+      restore();
+      process.exit(130);
+    });
+    process.on("SIGTERM", () => {
+      restore();
+      process.exit(143);
+    });
   }
 
   // ─── Welcome Screen ───
@@ -492,12 +593,16 @@ async function main() {
   const SLASH_CMDS: [string, string][] = [
     ["/model", "Switch model/provider"],
     ["/effort", "Set reasoning effort"],
+    ["/theme", "Themes — switch color theme"],
     ["/status", "Session status"],
     ["/providers", "List providers"],
+    ["/keys", "Manage API keys"],
     ["/mcp", "List MCP servers"],
     ["/skills", "Browse & search skills"],
+    ["/research", "Research — propose a plan, then a cited report"],
+    ["/deepresearch", "Deep research — multi-round, long-form"],
     ["/cost", "Session cost"],
-    ["/compact", "Toggle compact mode"],
+    ["/compress", "Summarize & shrink context"],
     ["/plan", "Toggle plan mode"],
     ["/rewind", "Roll back the conversation"],
     ["/help", "Show all commands"],
@@ -513,6 +618,8 @@ async function main() {
           workspace: workspaceRoot,
           mode: yoloMode ? "yolo" : trustWorkspace ? "trusted" : "confirm",
         }) +
+        "\n" +
+        composerRule() +
         "\n",
     );
     rl.prompt();
@@ -590,12 +697,16 @@ async function main() {
       const cmds: [string, string][] = [
         ["/model", "Switch model/provider"],
         ["/effort", "Set reasoning effort"],
+        ["/theme", "Themes — switch color theme"],
         ["/status", "Session status"],
         ["/providers", "List providers"],
+        ["/keys", "Manage API keys"],
         ["/mcp", "List MCP servers"],
         ["/skills", "Browse & search skills"],
+        ["/research", "Research — propose a plan, then a cited report"],
+        ["/deepresearch", "Deep research — multi-round, long-form"],
         ["/cost", "Session cost"],
-        ["/compact", "Toggle compact mode"],
+        ["/compress", "Summarize & shrink context"],
         ["/plan", "Toggle plan mode"],
         ["/rewind", "Roll back the conversation"],
         ["/help", "This reference"],
@@ -691,7 +802,9 @@ async function main() {
         return;
       }
       const { total, plugins } = await engine.listSkills();
-      process.stdout.write(`  ${bold(text("Skills"))} ${muted(`(${total} across ${plugins.length} domains)`)}\n\n`);
+      process.stdout.write(
+        `  ${bold(text("Skills"))} ${muted(`(${total} across ${plugins.length} domains)`)}\n\n`,
+      );
       if (total === 0) {
         process.stdout.write(
           `    ${muted("None found. Add skills under ")}${info("skills/")}${muted(" or ")}${info(".alan/skills/")}${muted(".")}\n\n`,
@@ -699,13 +812,17 @@ async function main() {
       } else {
         for (const p of plugins) {
           const names = p.skills.map((s) => s.name).join(", ");
-          process.stdout.write(`    ${ok("●")} ${text(p.plugin)} ${muted(`(${p.skills.length})`)}\n`);
+          process.stdout.write(
+            `    ${ok("●")} ${text(p.plugin)} ${muted(`(${p.skills.length})`)}\n`,
+          );
           process.stdout.write(`      ${faint(names)}\n`);
         }
         process.stdout.write(
           `\n  ${muted("The agent loads a skill automatically when your request matches it.")}\n`,
         );
-        process.stdout.write(`  ${muted("Search with ")}${info("/skills <keywords>")}${muted(".")}\n\n`);
+        process.stdout.write(
+          `  ${muted("Search with ")}${info("/skills <keywords>")}${muted(".")}\n\n`,
+        );
       }
       showPrompt();
       return;
@@ -730,6 +847,180 @@ async function main() {
         process.stdout.write(`    ${indicator} ${colorName(name.padEnd(14))} ${statusText}\n`);
       }
       process.stdout.write("\n");
+      showPrompt();
+      return;
+    }
+
+    if (input === "/theme" || input.startsWith("/theme ")) {
+      const themes = listThemes();
+      const arg = input.slice("/theme".length).trim().toLowerCase();
+      if (arg) {
+        if (setTheme(arg)) {
+          saveTheme(arg);
+          applyTerminalTheme();
+          process.stdout.write(`  ${green("✓")} theme set to ${brass(getTheme().label)}\n\n`);
+        } else {
+          process.stdout.write(`  ${vermillion("✕")} unknown theme: ${arg}\n\n`);
+        }
+        showPrompt();
+        return;
+      }
+      const current = getTheme().name;
+      process.stdout.write(`  ${bold(text("Themes"))}\n\n`);
+      themes.forEach((t, i) => {
+        const isCurrent = t.name === current;
+        const marker = isCurrent ? ` ${ok("◂ current")}` : "";
+        process.stdout.write(
+          `    ${warn(`[${String(i + 1).padStart(2)}]`)} ${(isCurrent ? text : muted)(t.label.padEnd(18))} ${swatch(t.name)}  ${faint(t.appearance)}${marker}\n`,
+        );
+      });
+      process.stdout.write("\n");
+      rl.question(`  ${vermillion("›")} `, (answer) => {
+        const a = answer.trim().toLowerCase();
+        const pick =
+          themes.find((_, i) => String(i + 1) === a) ??
+          themes.find((t) => t.name === a || t.label.toLowerCase() === a);
+        if (pick) {
+          setTheme(pick.name);
+          saveTheme(pick.name);
+          applyTerminalTheme();
+          process.stdout.write(`  ${green("✓")} theme set to ${brass(getTheme().label)}\n\n`);
+        } else {
+          process.stdout.write(`  ${dim("no change")}\n\n`);
+        }
+        showPrompt();
+      });
+      return;
+    }
+
+    if (input === "/keys" || input.startsWith("/keys ")) {
+      const parts = input.slice("/keys".length).trim().split(/\s+/).filter(Boolean);
+      const sub = (parts[0] ?? "").toLowerCase();
+
+      const printTable = () => {
+        process.stdout.write(
+          `  ${bold(text("API keys"))} ${faint("· saved to ~/.alan/secrets.json, applied live")}\n\n`,
+        );
+        for (const r of engine.getProviderStatus()) {
+          const hasKey = r.source !== "none";
+          const dot = r.disabled
+            ? faint("○")
+            : r.active
+              ? ok("●")
+              : hasKey
+                ? info("●")
+                : faint("○");
+          const name = (r.active ? ok : hasKey ? text : faint)(r.id.padEnd(12));
+          const keyCol =
+            r.source === "none"
+              ? faint("not set".padEnd(14))
+              : text((r.masked || "set").padEnd(14));
+          const src = r.disabled ? warn("off") : r.source === "none" ? faint("—") : faint(r.source);
+          process.stdout.write(`    ${dot} ${name} ${keyCol} ${src}\n`);
+        }
+        process.stdout.write(
+          `\n  ${muted("Set ")}${info("/keys set <provider> <key>")}${muted(" · ")}${info("/keys clear <provider>")}${muted(" · ")}${info("/keys off|on <provider>")}\n`,
+        );
+        process.stdout.write(
+          `  ${muted("Custom ")}${info("/keys custom <baseUrl> <model> <key>")}${muted(" · providers: ")}${faint(PROVIDER_PRESETS.map((p) => p.id).join(", "))}\n\n`,
+        );
+
+        // Web-search backends (used by /research). Not LLM providers — keys live
+        // in the same secrets file and feed the web_search tool via the env.
+        process.stdout.write(
+          `  ${bold(text("Search backends"))} ${faint("· power /research; keyless DuckDuckGo is the fallback")}\n\n`,
+        );
+        for (const r of searchKeyStatus()) {
+          const has = r.source !== "none";
+          const dot = has ? info("●") : faint("○");
+          const name = (has ? text : faint)(r.id.padEnd(12));
+          const keyCol = has ? text((r.masked || "set").padEnd(14)) : faint("not set".padEnd(14));
+          const src = has ? faint(r.source) : faint("— DuckDuckGo");
+          process.stdout.write(`    ${dot} ${name} ${keyCol} ${src}\n`);
+        }
+        process.stdout.write(
+          `\n  ${muted("Set ")}${info("/keys set tavily <key>")}${muted(" · ")}${info("/keys set brave <key>")}${muted(" · ")}${info("/keys clear <id>")}\n\n`,
+        );
+      };
+
+      if (!sub) {
+        printTable();
+        showPrompt();
+        return;
+      }
+      if (sub === "set" && parts.length >= 3) {
+        const id = parts[1].toLowerCase();
+        if (SEARCH_KEY_PRESETS.some((p) => p.id === id)) {
+          persistKey(id, parts.slice(2).join(" "));
+          applySearchKeysToEnv();
+          process.stdout.write(
+            `  ${ok("✓")} ${muted("saved search key for")} ${info(id)} ${faint("· used by /research")}\n`,
+          );
+          showPrompt();
+          return;
+        }
+        if (!getPreset(id)) {
+          process.stdout.write(
+            `  ${warn("Unknown provider")} ${info(id)}${muted(" · try ")}${faint(PROVIDER_PRESETS.map((p) => p.id).join(", "))}\n`,
+          );
+          showPrompt();
+          return;
+        }
+        const key = parts.slice(2).join(" ");
+        persistKey(id, key);
+        engine.setProviderKey(id, key);
+        process.stdout.write(
+          `  ${ok("✓")} ${muted("saved key for")} ${info(id)} ${faint("· /model to switch")}\n`,
+        );
+        showPrompt();
+        return;
+      }
+      if (sub === "clear" && parts[1]) {
+        const id = parts[1].toLowerCase();
+        const sk = SEARCH_KEY_PRESETS.find((p) => p.id === id);
+        if (sk) {
+          persistClearKey(id);
+          delete process.env[sk.envVar];
+          if (sk.altEnvVar) delete process.env[sk.altEnvVar];
+          process.stdout.write(`  ${ok("✓")} ${muted("cleared search key")} ${info(id)}\n`);
+          showPrompt();
+          return;
+        }
+        if (id === CUSTOM_PROVIDER_ID) {
+          persistClearCustom();
+          engine.setCustomEndpoint(null);
+        } else {
+          persistClearKey(id);
+          engine.setProviderKey(id, null);
+        }
+        process.stdout.write(`  ${ok("✓")} ${muted("cleared")} ${info(id)}\n`);
+        showPrompt();
+        return;
+      }
+      if ((sub === "off" || sub === "on") && parts[1]) {
+        const id = parts[1].toLowerCase();
+        const disabled = sub === "off";
+        persistDisabled(id, disabled);
+        engine.setProviderDisabled(id, disabled);
+        process.stdout.write(
+          `  ${ok("✓")} ${info(id)} ${muted(disabled ? "disabled" : "enabled")}\n`,
+        );
+        showPrompt();
+        return;
+      }
+      if (sub === "custom" && parts.length >= 4) {
+        const ep = { baseUrl: parts[1], model: parts[2], key: parts.slice(3).join(" ") };
+        persistCustom(ep);
+        engine.setCustomEndpoint(ep);
+        process.stdout.write(
+          `  ${ok("✓")} ${muted("saved custom endpoint")} ${faint(ep.baseUrl)} ${faint(`· /model custom/${ep.model}`)}\n`,
+        );
+        showPrompt();
+        return;
+      }
+      process.stdout.write(
+        `  ${warn("Usage:")} ${info("/keys")}${muted(" · ")}${info("set <p> <key>")}${muted(" · ")}${info("clear <p>")}${muted(" · ")}${info("off|on <p>")}${muted(" · ")}${info("custom <url> <model> <key>")}\n`,
+      );
       showPrompt();
       return;
     }
@@ -785,9 +1076,52 @@ async function main() {
       return;
     }
 
-    if (input === "/compact") {
-      // Toggle compact mode (future: affects output verbosity)
-      process.stdout.write(`  ${green("✓")} ${dim("compact mode toggled")}\n\n`);
+    if (input === "/compress" || input.startsWith("/compress ")) {
+      const instructions = input.slice("/compress".length).trim();
+      busy = true;
+      spinner.start("thinking");
+      let result: Awaited<ReturnType<typeof engine.compactSession>>;
+      try {
+        result = await engine.compactSession(sessionId, instructions || undefined);
+      } finally {
+        spinner.stop();
+        busy = false;
+      }
+
+      if (!result.compacted) {
+        process.stdout.write(`  ${dim(`Nothing to compact — ${result.reason}.`)}\n\n`);
+        showPrompt();
+        return;
+      }
+
+      const fmtTok = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+      const saved =
+        result.sourceTokens > 0
+          ? Math.max(0, Math.round((1 - result.summaryTokens / result.sourceTokens) * 100))
+          : 0;
+
+      process.stdout.write(
+        `  ${green("✓")} ${text("Compacted conversation")} ${dim(`(${result.originalMessages} messages → summary)`)}\n`,
+      );
+      process.stdout.write(
+        `  ${faint(`~${fmtTok(result.sourceTokens)} → ~${fmtTok(result.summaryTokens)} tokens · ${saved}% smaller · applies on the next turn`)}\n`,
+      );
+      if (instructions) {
+        process.stdout.write(`  ${faint(`Focus: ${instructions}`)}\n`);
+      }
+
+      const preview = result.summary
+        .split("\n")
+        .map((l) => l.trimEnd())
+        .filter(Boolean)
+        .slice(0, 6);
+      if (preview.length) {
+        process.stdout.write("\n");
+        for (const line of preview) {
+          process.stdout.write(`  ${dim(line.slice(0, 100))}\n`);
+        }
+      }
+      process.stdout.write("\n");
       showPrompt();
       return;
     }
@@ -802,52 +1136,21 @@ async function main() {
         `  ${bold(text("Model"))}  ${faint("current:")} ${info(currentProvider + "/" + current)}\n\n`,
       );
 
+      // Data-driven from the provider presets: every registered provider with a
+      // curated `models` list contributes its models, so adding a provider is a
+      // one-line preset edit. Free-form `/model <provider>/<id>` still works.
       const presets: { key: string; provider: string; model: string; label: string }[] = [];
-
-      if (registered.includes("google")) {
-        presets.push(
-          { key: "1", provider: "google", model: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
-          { key: "2", provider: "google", model: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
-          { key: "3", provider: "google", model: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
-        );
-      }
-      if (registered.includes("anthropic")) {
-        presets.push(
-          {
+      for (const id of registered) {
+        const preset = getPreset(id);
+        if (!preset?.models?.length) continue;
+        for (const m of preset.models) {
+          presets.push({
             key: `${presets.length + 1}`,
-            provider: "anthropic",
-            model: "claude-sonnet-4-20250514",
-            label: "Claude Sonnet 4",
-          },
-          {
-            key: `${presets.length + 2}`,
-            provider: "anthropic",
-            model: "claude-opus-4-20250514",
-            label: "Claude Opus 4",
-          },
-        );
-      }
-      if (registered.includes("openai")) {
-        presets.push(
-          { key: `${presets.length + 1}`, provider: "openai", model: "gpt-4o", label: "GPT-4o" },
-          { key: `${presets.length + 2}`, provider: "openai", model: "o3", label: "o3" },
-        );
-      }
-      if (registered.includes("openrouter")) {
-        presets.push(
-          {
-            key: `${presets.length + 1}`,
-            provider: "openrouter",
-            model: "qwen/qwen3-coder:free",
-            label: "Qwen3 Coder (free)",
-          },
-          {
-            key: `${presets.length + 2}`,
-            provider: "openrouter",
-            model: "meta-llama/llama-3.3-70b-instruct:free",
-            label: "Llama 3.3 70B (free)",
-          },
-        );
+            provider: id,
+            model: m.id,
+            label: m.label,
+          });
+        }
       }
 
       for (const p of presets) {
@@ -965,6 +1268,153 @@ async function main() {
       return;
     }
 
+    const isDeepResearch = input === "/deepresearch" || input.startsWith("/deepresearch ");
+    if (isDeepResearch || input === "/research" || input.startsWith("/research ")) {
+      const cmd = isDeepResearch ? "/deepresearch" : "/research";
+      const query0 = input.slice(cmd.length).trim();
+      // /deepresearch forces the heavy preset; /research uses the configured default.
+      const researchOpts = isDeepResearch ? ({ depth: "deep" } as const) : undefined;
+      if (!query0) {
+        const verb = isDeepResearch ? "deep, multi-round research" : "research with a cited report";
+        process.stdout.write(
+          `  ${warn("Usage:")} ${info(`${cmd} <question>`)} ${faint(`— ${verb}`)}\n\n`,
+        );
+        showPrompt();
+        return;
+      }
+
+      busy = true;
+      const ask = (q: string): Promise<string> =>
+        new Promise((res) => rl.question(q, (a) => res(a)));
+
+      try {
+        let question = query0;
+
+        // ── Phase 1: propose (asking clarifying questions if ambiguous) ──
+        spinner.start("thinking");
+        let proposal = await engine.proposeResearch(sessionId, question, researchOpts);
+        spinner.stop();
+
+        if (isClarification(proposal)) {
+          process.stdout.write("\n" + renderClarifyingQuestions(proposal) + "\n\n");
+          const answers = await ask(`  ${accent("›")} ${faint("answer, or Enter to skip: ")}`);
+          if (answers.trim()) question = `${question}\n\nClarifications: ${answers.trim()}`;
+          spinner.start("thinking");
+          proposal = await engine.proposeResearch(sessionId, question, {
+            ...researchOpts,
+            allowClarification: false,
+          });
+          spinner.stop();
+        }
+
+        let plan: ResearchPlan | null = isClarification(proposal) ? null : proposal;
+
+        // ── Phase 2: approval gate (run / revise / cancel) ──
+        let approved = false;
+        while (plan) {
+          process.stdout.write("\n" + renderResearchPlan(plan) + "\n\n");
+          process.stdout.write(
+            `  ${ok("Enter")} ${faint("run")}   ${warn("r")} ${faint("revise")}   ${accent("n")} ${faint("cancel")}\n`,
+          );
+          const a = (await ask(`  ${accent("›")} `)).trim().toLowerCase();
+          if (a === "n" || a === "no" || a === "c" || a === "cancel") {
+            process.stdout.write(`  ${dim("research cancelled")}\n\n`);
+            break;
+          }
+          if (a === "r" || a === "revise") {
+            const fb = await ask(`  ${accent("›")} ${faint("what should change? ")}`);
+            if (fb.trim()) {
+              spinner.start("thinking");
+              const revised = await engine.reviseResearch(sessionId, plan, fb.trim());
+              spinner.stop();
+              if (!isClarification(revised)) plan = revised;
+            }
+            continue;
+          }
+          approved = true;
+          break;
+        }
+
+        // ── Phase 3: execute (fan out + stream the cited report) ──
+        if (approved && plan) {
+          process.stdout.write(composerRule() + "\n\n");
+          spinner.start("executing");
+          let streaming = false;
+          let report: ResearchReport | null = null;
+
+          for await (const ev of engine.runResearch(sessionId, plan, researchOpts)) {
+            if (ev.type === "research_report_delta") {
+              if (!streaming) {
+                spinner.stop();
+                process.stdout.write("\n");
+                streaming = true;
+              }
+              process.stdout.write(ev.text);
+              continue;
+            }
+            if (ev.type === "research_complete") report = ev.report;
+            if (ev.type === "error") {
+              spinner.stop();
+              if (streaming) {
+                process.stdout.write("\n");
+                streaming = false;
+              }
+              process.stdout.write(`\n  ${accent("✕")} ${text(ev.error)}\n`);
+              continue;
+            }
+            const block = formatResearchEvent(ev);
+            if (block) {
+              spinner.stop();
+              if (streaming) {
+                process.stdout.write("\n");
+                streaming = false;
+              }
+              process.stdout.write(block + "\n");
+              if (ev.type !== "research_complete") spinner.start("executing");
+            }
+          }
+          spinner.stop();
+          process.stdout.write("\n");
+
+          // Save the report to disk unless disabled in config.
+          if (report && config.research?.save !== false) {
+            try {
+              const { writeFileSync, mkdirSync } = require("fs");
+              const { join } = require("path");
+              const dir = config.research?.outputDir || join(workspaceRoot, ".alan", "research");
+              mkdirSync(dir, { recursive: true });
+              const slug =
+                question
+                  .toLowerCase()
+                  .replace(/[^a-z0-9]+/g, "-")
+                  .replace(/^-+|-+$/g, "")
+                  .slice(0, 50) || "research";
+              const file = join(dir, `${new Date().toISOString().slice(0, 10)}-${slug}.md`);
+              const body = `# Research: ${plan.question}\n\n_Generated by Alan · ${new Date().toISOString()}_\n\n${report.markdown}\n`;
+              writeFileSync(file, body);
+              const shown = file.startsWith(workspaceRoot)
+                ? file.slice(workspaceRoot.length).replace(/^[/\\]/, "")
+                : file;
+              process.stdout.write(`  ${faint("saved to")} ${info(shown)}\n\n`);
+            } catch (err) {
+              process.stdout.write(
+                `  ${warn("could not save report:")} ${faint(err instanceof Error ? err.message : String(err))}\n\n`,
+              );
+            }
+          }
+        }
+      } catch (err) {
+        spinner.stop();
+        process.stdout.write(
+          `  ${vermillion("✕")} ${text(err instanceof Error ? err.message : String(err))}\n\n`,
+        );
+      } finally {
+        busy = false;
+      }
+      showPrompt();
+      return;
+    }
+
     // Custom slash commands from .alan/commands/*.md — render, then run as a prompt.
     if (input.startsWith("/") && !input.startsWith("/ ")) {
       const parts = input.slice(1).split(" ");
@@ -986,18 +1436,36 @@ async function main() {
 
     busy = true;
 
-    process.stdout.write("\n");
+    // Close the composer frame: a matching rule beneath the submitted input.
+    process.stdout.write(composerRule() + "\n\n");
     spinner.start("thinking");
     let isStreaming = false;
+    let isThinking = false;
     let totalTokens = 0;
 
     try {
       for await (const event of engine.chat(sessionId, input)) {
         switch (event.type) {
+          case "thinking_delta": {
+            // Reasoning models' chain-of-thought — dimmed and kept visually
+            // separate from the answer (and never persisted as part of it).
+            if (!isStreaming) {
+              spinner.stop();
+              isStreaming = true;
+            }
+            isThinking = true;
+            process.stdout.write(faint(event.text));
+            break;
+          }
+
           case "text_delta": {
             if (!isStreaming) {
               spinner.stop();
               isStreaming = true;
+            }
+            if (isThinking) {
+              process.stdout.write("\n"); // separate reasoning from the answer
+              isThinking = false;
             }
             process.stdout.write(event.text);
             totalTokens++;

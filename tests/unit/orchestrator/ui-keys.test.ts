@@ -54,4 +54,26 @@ describe("ui/keys parseKeys", () => {
     const ks = parseKeys("é🚀") as Extract<Key, { type: "char" }>[];
     expect(ks.map((k) => k.value)).toEqual(["é", "🚀"]);
   });
+
+  it("maps SGR mouse wheel to scroll, consuming clicks", () => {
+    expect(types("\x1b[<64;10;5M")).toEqual(["wheel-up"]);
+    expect(types("\x1b[<65;10;5M")).toEqual(["wheel-down"]);
+    // modifier-shifted wheel (e.g. ctrl+wheel = 64+16) still scrolls
+    expect(types("\x1b[<80;1;1M")).toEqual(["wheel-up"]);
+    expect(types("\x1b[<81;1;1M")).toEqual(["wheel-down"]);
+    // a left-click press + release yields no keys and leaks no coordinate chars
+    expect(types("\x1b[<0;10;5M\x1b[<0;10;5m")).toEqual([]);
+    // wheeling then typing: the char after the sequence still registers
+    expect(types("\x1b[<64;1;1Mx")).toEqual(["wheel-up", "char"]);
+  });
+
+  it("maps legacy X10 mouse wheel and swallows its coordinate bytes", () => {
+    // ESC [ M Cb Cx Cy, each byte offset by 32 → wheel-up Cb=96, wheel-down Cb=97
+    expect(types("\x1b[M\x60\x21\x21")).toEqual(["wheel-up"]);
+    expect(types("\x1b[M\x61\x21\x21")).toEqual(["wheel-down"]);
+    // resyncs after the 3 coordinate bytes so a trailing char isn't lost
+    expect(types("\x1b[M\x60\x21\x21x")).toEqual(["wheel-up", "char"]);
+    // a non-wheel legacy click emits nothing but is still consumed
+    expect(types("\x1b[M\x20\x21\x21")).toEqual([]);
+  });
 });

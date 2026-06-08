@@ -1,5 +1,31 @@
 export * from "./protocol.js";
 export { type AlanConfig, type PermissionRule, loadConfig, getAlanHome } from "./config.js";
+export {
+  type ProviderKind,
+  type ProviderPreset,
+  PROVIDER_PRESETS,
+  CUSTOM_PROVIDER_ID,
+  getPreset,
+} from "./providers.js";
+export {
+  type CustomEndpoint,
+  type SecretsFile,
+  getSecretsPath,
+  loadSecrets,
+  saveSecrets,
+  setProviderKey,
+  clearProviderKey,
+  setCustomEndpoint,
+  clearCustomEndpoint,
+  setProviderDisabled,
+  maskKey,
+  secretsArePrivate,
+  type SearchKeyPreset,
+  type SearchKeyStatusRow,
+  SEARCH_KEY_PRESETS,
+  searchKeyStatus,
+  applySearchKeysToEnv,
+} from "./secrets.js";
 export * from "./session.js";
 export {
   type RunState,
