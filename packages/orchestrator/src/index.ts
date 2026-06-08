@@ -25,6 +25,30 @@ export {
 export { Planner, type PlannerConfig, type PlannerEvent } from "./planner";
 export { PlanRunner, type PlanRunnerConfig, type PlanRunnerEvent } from "./plan-runner";
 export type { Plan, Step, PlanStatus, StepStatus, StepResult, ModelRouting } from "./types";
+
+// ─── Research Mode (/research) ───
+export {
+  planResearch,
+  runResearch,
+  createResearchRegistry,
+  createResearchPermissionCheck,
+  extractJson,
+  type ResearchDeps,
+  type PlanResearchOpts,
+} from "./research";
+export {
+  isClarification,
+  type ResearchDepth,
+  type SourceScope,
+  type ResearchSubQuestion,
+  type ResearchPlan,
+  type ResearchClarification,
+  type ResearchSource,
+  type SubQuestionResult,
+  type ResearchReport,
+  type ResearchOptions,
+  type ResearchEvent,
+} from "./research-types";
 export {
   ContextEngine,
   type ContextBudget,

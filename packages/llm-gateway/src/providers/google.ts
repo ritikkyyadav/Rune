@@ -349,11 +349,73 @@ export class GoogleProvider implements LlmProvider {
 }
 
 function toGeminiTool(tool: ToolDefinition): Record<string, unknown> {
-  return {
+  const decl: Record<string, unknown> = {
     name: tool.name,
     description: tool.description,
-    parameters: tool.inputSchema,
   };
+  const parameters = sanitizeGeminiSchema(tool.inputSchema);
+  if (parameters && typeof parameters === "object") decl.parameters = parameters;
+  return decl;
+}
+
+// Gemini's FunctionDeclaration.parameters is an OpenAPI-3.0 Schema subset, not full
+// JSON Schema. Keywords that MCP servers and skill authors routinely emit ($schema,
+// additionalProperties, $ref, oneOf/allOf, const, …) make the API reject the WHOLE
+// request — "Invalid JSON payload received. Unknown name \"$schema\" … Cannot find
+// field." We can't predict every keyword a tool might carry, so prune to a whitelist
+// of fields Gemini's Schema proto actually defines; anything else is dropped. This
+// keeps the request structurally valid no matter what a tool's schema contains.
+const GEMINI_SCHEMA_FIELDS = new Set([
+  "type",
+  "format",
+  "title",
+  "description",
+  "nullable",
+  "default",
+  "enum",
+  "items",
+  "properties",
+  "required",
+  "minItems",
+  "maxItems",
+  "minProperties",
+  "maxProperties",
+  "minLength",
+  "maxLength",
+  "minimum",
+  "maximum",
+  "pattern",
+  "example",
+  "anyOf",
+  "propertyOrdering",
+]);
+
+function sanitizeGeminiSchema(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(sanitizeGeminiSchema);
+  if (!schema || typeof schema !== "object") return schema;
+
+  const src = schema as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+
+  // JSON-Schema `const` has no Gemini equivalent; preserve the constraint as a
+  // single-value `enum` (which Gemini does support) instead of silently dropping it.
+  if ("const" in src && !("enum" in src)) out.enum = [src.const];
+
+  for (const [key, value] of Object.entries(src)) {
+    if (!GEMINI_SCHEMA_FIELDS.has(key)) continue;
+    if (key === "properties" && value && typeof value === "object" && !Array.isArray(value)) {
+      const props: Record<string, unknown> = {};
+      for (const [name, sub] of Object.entries(value as Record<string, unknown>)) {
+        props[name] = sanitizeGeminiSchema(sub);
+      }
+      out[key] = props;
+    } else if (key === "items" || key === "anyOf") {
+      out[key] = sanitizeGeminiSchema(value);
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
 }
 
 function messageToText(message: Message): string {

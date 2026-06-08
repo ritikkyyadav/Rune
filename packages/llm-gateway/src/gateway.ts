@@ -19,6 +19,7 @@ const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
   openai: "gpt-4o",
   openrouter: "qwen/qwen3-coder:free",
   ollama: "llama3",
+  "ollama-turbo": "qwen3-coder:480b",
 };
 
 // Cap how long we'll wait on a single rate-limited attempt. A free-tier quota
@@ -145,12 +146,17 @@ export class LlmGateway {
 
       if (shouldFallback && nextProvider) {
         const nextModel = PROVIDER_DEFAULT_MODELS[nextProvider] ?? "default";
+        const why = this.failureReason(lastStatus, lastError);
         // Informational, NOT an error: the agent loop ends the turn on `error`
         // events, so emitting the switch as an error would abandon this
-        // generator before the fallback provider streams anything.
+        // generator before the fallback provider streams anything. The reason
+        // is included so a fallback (e.g. a subscription-gated model) is never a
+        // silent swap to a different model — the user sees WHY it switched.
         yield {
           type: "notice",
-          message: `${providerName}/${adjustedRequest.model} unavailable. Switching to ${nextProvider}/${nextModel}…`,
+          message: `${providerName}/${adjustedRequest.model} unavailable${
+            why ? ` — ${why}` : ""
+          }. Switching to ${nextProvider}/${nextModel}…`,
         };
         continue;
       }
@@ -163,9 +169,10 @@ export class LlmGateway {
       const triedList = fallbackOrder.filter((p) => this.providers.has(p)).join(", ");
 
       if (lastStatus === 401 || lastStatus === 403) {
+        const why = this.failureReason(lastStatus, lastError);
         yield {
           type: "error",
-          error: `Auth failed on ${providerName}. Check your API key, or switch with /model.`,
+          error: `${providerName} rejected the request${why ? ` — ${why}` : ""}. Check the model/key or switch with /model.`,
           retryable: false,
         };
       } else if (lastStatus === 402) {
@@ -300,6 +307,36 @@ export class LlmGateway {
 
     const jitter = Math.random() * waitMs * 0.1;
     await new Promise((resolve) => setTimeout(resolve, waitMs + jitter));
+  }
+
+  /**
+   * A short, human-readable reason for a provider failure. Prefers the upstream
+   * message (e.g. Ollama's "this model requires a subscription, upgrade for
+   * access") and falls back to a status label. Used so fallbacks and terminal
+   * errors explain WHY instead of a bare "unavailable" — turning a silent
+   * provider swap into something the user can act on.
+   */
+  private failureReason(status: number | undefined, err: Error | undefined): string {
+    const firstLine =
+      (err?.message ?? "")
+        .split("\n")[0]
+        ?.replace(/^\d{3}\s+/, "") // strip a leading SDK "<status> " prefix
+        .trim() ?? "";
+    if (firstLine && firstLine.length <= 100 && !/^(error|request failed)/i.test(firstLine)) {
+      return firstLine;
+    }
+    switch (status) {
+      case 401:
+        return "invalid API key";
+      case 402:
+        return "no credits";
+      case 403:
+        return "access denied (may require a subscription)";
+      case 429:
+        return "rate limited";
+      default:
+        return status ? `HTTP ${status}` : "";
+    }
   }
 
   private recordCost(model: string, provider: ProviderName, usage: TokenUsage): void {

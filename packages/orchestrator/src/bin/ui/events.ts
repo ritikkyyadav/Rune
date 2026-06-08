@@ -6,6 +6,7 @@
 
 import { bold, text, muted, faint, info, ok, accent, warn } from "./theme";
 import { renderToolCall } from "./tool-call";
+import { formatResearchEvent } from "./research";
 
 const NUMERALS = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"];
 const num = (i: number) => NUMERALS[i] ?? `${i + 1}`;
@@ -95,10 +96,17 @@ export function formatEvent(ev: any, ctx: { cost?: number } = {}): string | null
     case "context_warning":
       return `  ${warn("•")} ${muted(ev.message)}`;
 
+    case "research_step_start":
+    case "research_source":
+    case "research_step_done":
+    case "research_synthesizing":
+    case "research_complete":
+      return formatResearchEvent(ev);
+
     case "error":
       return formatError(ev.error);
 
     default:
-      return null; // text_delta, tool_call_start, etc.
+      return null; // text_delta, tool_call_start, research_report_delta, etc.
   }
 }

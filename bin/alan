@@ -46,6 +46,7 @@ Options:
   -p, --provider <name>     Provider: openrouter, anthropic, openai, google
   -w, --workspace <path>    Workspace root (default: current directory)
   --yolo                    Auto-approve all tool calls
+  --classic                 Plain readline prompt (default is the pinned composer)
   --planner                 Use planner-executor mode
   --planner-model <model>   Model for the planner
   --executor-model <model>  Model for the executor

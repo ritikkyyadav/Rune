@@ -23,6 +23,19 @@ interface UserMsgPayload {
   content: string;
 }
 
+interface CompactionPayload {
+  /** The summary that stands in for every event folded into it. */
+  summary: string;
+  /** Highest event seq represented by this summary (informational). */
+  replacedThroughSeq?: number;
+  /** Original conversation message count before compaction (informational). */
+  originalMessages?: number;
+  /** "manual" (via /compress) or "auto". */
+  trigger?: string;
+  /** Optional user-supplied focus passed to /compress. */
+  instructions?: string;
+}
+
 export function eventsToMessages(events: Array<{ seq: number; event: SessionEvent }>): Message[] {
   const messages: Message[] = [];
 
@@ -72,6 +85,20 @@ export function eventsToMessages(events: Array<{ seq: number; event: SessionEven
         } else {
           messages.push({ role: "tool", content: [block] });
         }
+        break;
+      }
+
+      case "compaction": {
+        // A manual /compress folds every preceding event into one summary.
+        // Drop everything accumulated so far and replace it with the summary;
+        // later events (future turns) then append after it normally. The
+        // underlying event log is untouched — only the replayed view shrinks.
+        const p = event.payload as unknown as CompactionPayload;
+        messages.length = 0;
+        messages.push({
+          role: "user",
+          content: [{ type: "text", text: `[Conversation summary]\n${p.summary ?? ""}` }],
+        });
         break;
       }
 

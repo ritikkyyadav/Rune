@@ -1,0 +1,52 @@
+// ─── Theme persistence ───
+// The active theme is saved to ~/.alan/theme.json — a tiny JSON sidecar, because
+// config.ts ships only a TOML *reader* (writing TOML back would clobber user comments).
+// This follows the existing ~/.alan/<file> persistence pattern.
+//
+// resolveInitialTheme picks the startup theme by precedence:
+//   ALAN_THEME env  >  saved sidecar  >  [ui].theme in config  >  built-in default.
+
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { join } from "path";
+import { getAlanHome } from "@alan/shared";
+import { DEFAULT_THEME, findTheme } from "./themes";
+
+function themeFile(dir: string): string {
+  return join(dir, "theme.json");
+}
+
+/** Persist the chosen theme name to <dir>/theme.json. Never throws — a write failure
+ *  must not crash the UI. */
+export function saveTheme(name: string, dir: string = getAlanHome()): void {
+  try {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(themeFile(dir), JSON.stringify({ theme: name }, null, 2) + "\n");
+  } catch {
+    // Ignore — the in-memory theme still applied; only persistence was lost.
+  }
+}
+
+/** Read the saved theme name, or null if absent / unreadable / corrupt. */
+export function loadSavedTheme(dir: string = getAlanHome()): string | null {
+  try {
+    const path = themeFile(dir);
+    if (!existsSync(path)) return null;
+    const parsed = JSON.parse(readFileSync(path, "utf-8")) as { theme?: unknown };
+    return typeof parsed.theme === "string" ? parsed.theme : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Resolve the startup theme: env > saved > configured > default. Unknown names are
+ *  skipped at every tier, so a stale/typo'd value falls through to the next source. */
+export function resolveInitialTheme(opts: {
+  env?: string | null;
+  saved?: string | null;
+  configured?: string | null;
+}): string {
+  for (const candidate of [opts.env, opts.saved, opts.configured]) {
+    if (candidate && findTheme(candidate)) return candidate;
+  }
+  return DEFAULT_THEME;
+}

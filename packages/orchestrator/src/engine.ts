@@ -1,12 +1,4 @@
-import {
-  LlmGateway,
-  AnthropicProvider,
-  OpenAIProvider,
-  OpenRouterProvider,
-  GoogleProvider,
-  OllamaProvider,
-  CostTracker,
-} from "@alan/llm-gateway";
+import { LlmGateway, CostTracker } from "@alan/llm-gateway";
 import type { Message, ProviderName } from "@alan/llm-gateway";
 import {
   ToolRegistry,
@@ -27,7 +19,9 @@ import {
   DEFAULT_CHECKPOINT_POLICY,
   createAutoVerifier,
 } from "@alan/shared";
-import type { CheckpointStore, CheckpointPolicy, RunState } from "@alan/shared";
+import type { CheckpointStore, CheckpointPolicy, RunState, CustomEndpoint } from "@alan/shared";
+import { buildGateway, providerStatus } from "./provider-registry";
+import type { ProviderStatusRow, BuildGatewayOpts } from "./provider-registry";
 import { AgentLoop } from "./agent-loop";
 import type { PermissionCheck, AgentTurnEvent } from "./agent-loop";
 import { PermissionBroker } from "./permissions";
@@ -51,6 +45,16 @@ import { HookRunner } from "./hooks";
 import { createSubagentTool } from "./subagent";
 import { CommandVerifier } from "./verifier";
 import type { Verifier } from "./verifier";
+import { planResearch, runResearch as executeResearch } from "./research";
+import type { ResearchDeps, PlanResearchOpts } from "./research";
+import { isClarification } from "./research-types";
+import type {
+  ResearchClarification,
+  ResearchEvent,
+  ResearchOptions,
+  ResearchPlan,
+  ResearchReport,
+} from "./research-types";
 
 // ─── Permission Prompt Handler ───
 
@@ -92,6 +96,12 @@ export interface EngineConfig {
   openaiApiKey?: string;
   openrouterApiKey?: string;
   googleApiKey?: string;
+  /** Keys for additional providers by id (groq/xai/deepseek/…), e.g. from the BYOK store. */
+  providerKeys?: Record<string, string>;
+  /** User-defined OpenAI-compatible endpoint registered as the "custom" provider. */
+  customEndpoint?: CustomEndpoint;
+  /** Provider ids toggled off — kept configured but excluded from the gateway. */
+  disabledProviders?: string[];
   /** Base URL for a local Ollama server (default http://localhost:11434). */
   ollamaBaseUrl?: string;
   contextBudget?: Partial<ContextBudget>;
@@ -120,6 +130,8 @@ export interface EngineConfig {
     /** Use provider-native grounding (Gemini/Anthropic) when available. Default true. */
     nativeGrounding?: boolean;
   };
+  /** Deep-research ("/research") defaults: depth, fan-out, sources. */
+  research?: ResearchOptions;
 }
 
 const EFFORT_SETTINGS: Record<EffortLevel, { maxTokens: number; maxTurns: number; label: string }> =
@@ -196,36 +208,28 @@ export class Engine {
   private skillLoader: SkillLoader | null = null;
   private skillsLoaded = false;
   private skillCatalog = "";
+  // BYOK key state — the single source of truth the gateway is (re)built from.
+  private providerKeys: Record<string, string> = {};
+  private customEndpoint?: CustomEndpoint;
+  private disabledProviders: Set<string> = new Set();
 
   constructor(config: Partial<EngineConfig> = {}) {
     this.config = { ...DEFAULT_ENGINE_CONFIG, ...config };
 
-    // Initialize LLM Gateway
-    this.gateway = new LlmGateway({
-      providers: {},
-      defaultProvider: this.config.provider,
-      maxRetries: 3,
-      retryBaseMs: 1000,
-    });
-
-    // Register providers
-    if (this.config.anthropicApiKey || process.env.ANTHROPIC_API_KEY) {
-      this.gateway.registerProvider(new AnthropicProvider(this.config.anthropicApiKey));
-    }
-    if (this.config.openaiApiKey || process.env.OPENAI_API_KEY) {
-      this.gateway.registerProvider(new OpenAIProvider(this.config.openaiApiKey));
-    }
-    if (this.config.openrouterApiKey || process.env.OPENROUTER_API_KEY) {
-      this.gateway.registerProvider(new OpenRouterProvider(this.config.openrouterApiKey));
-    }
-    if (this.config.googleApiKey || process.env.GOOGLE_API_KEY) {
-      this.gateway.registerProvider(new GoogleProvider(this.config.googleApiKey));
-    }
-    // Local-first: register Ollama only when explicitly selected, so cloud
-    // sessions never accidentally fall back to a local server.
-    if (this.config.provider === "ollama" || this.config.ollamaBaseUrl || process.env.OLLAMA_HOST) {
-      this.gateway.registerProvider(new OllamaProvider(this.config.ollamaBaseUrl));
-    }
+    // Seed BYOK key state from config, then build the gateway. The named
+    // *ApiKey fields and the generic providerKeys map are merged into one
+    // id→key table (providerKeys wins) that every (re)build reads from — so a
+    // key added at runtime takes effect by simply rebuilding.
+    this.providerKeys = {
+      ...(this.config.anthropicApiKey ? { anthropic: this.config.anthropicApiKey } : {}),
+      ...(this.config.openaiApiKey ? { openai: this.config.openaiApiKey } : {}),
+      ...(this.config.openrouterApiKey ? { openrouter: this.config.openrouterApiKey } : {}),
+      ...(this.config.googleApiKey ? { google: this.config.googleApiKey } : {}),
+      ...(this.config.providerKeys ?? {}),
+    };
+    this.customEndpoint = this.config.customEndpoint;
+    this.disabledProviders = new Set(this.config.disabledProviders ?? []);
+    this.gateway = buildGateway(this.gatewayOpts());
 
     // Initialize Tool Registry with built-in tools
     this.registry = new ToolRegistry();
@@ -548,6 +552,66 @@ export class Engine {
     return this.sessions.deleteEventsAfter(sessionId, afterSeq);
   }
 
+  /**
+   * Manually compact a session (`/compress`): summarize the entire conversation
+   * so far into one summary and append a `compaction` event. Subsequent turns
+   * replay the summary in place of the full history, freeing context — while
+   * the underlying event log stays intact for audit/replay.
+   *
+   * @param instructions Optional focus, e.g. "keep the API contract details".
+   * @returns stats on success, or { compacted: false, reason } when there is
+   *          nothing to compact or summarization failed.
+   */
+  async compactSession(
+    sessionId: string,
+    instructions?: string,
+  ): Promise<
+    | { compacted: false; reason: string }
+    | {
+        compacted: true;
+        summary: string;
+        originalMessages: number;
+        sourceTokens: number;
+        summaryTokens: number;
+      }
+  > {
+    const session = this.sessions.getSession(sessionId);
+    if (!session) return { compacted: false, reason: "session not found" };
+
+    const events = this.sessions.getEvents(sessionId, 1);
+    const messages = eventsToMessages(events);
+
+    // Need a couple of exchanges before compaction is worthwhile.
+    if (messages.length < 2) {
+      return { compacted: false, reason: "not enough conversation yet" };
+    }
+
+    const result = await this.contextEngine.summarizeConversation(messages, instructions);
+    if (!result) return { compacted: false, reason: "summarization failed" };
+
+    const lastSeq = events.length > 0 ? events[events.length - 1].seq : 0;
+    this.sessions.appendEvent(sessionId, {
+      type: "compaction",
+      payload: {
+        summary: result.summary,
+        replacedThroughSeq: lastSeq,
+        originalMessages: messages.length,
+        sourceTokens: result.sourceTokens,
+        summaryTokens: result.summaryTokens,
+        trigger: "manual",
+        ...(instructions?.trim() ? { instructions: instructions.trim() } : {}),
+      },
+    });
+
+    return {
+      compacted: true,
+      summary: result.summary,
+      originalMessages: messages.length,
+      sourceTokens: result.sourceTokens,
+      summaryTokens: result.summaryTokens,
+    };
+  }
+
   /** Toggle planner-executor mode for subsequent turns. */
   setPlannerMode(enabled: boolean): void {
     this.config.plannerMode = enabled;
@@ -555,6 +619,118 @@ export class Engine {
 
   isPlannerMode(): boolean {
     return this.config.plannerMode;
+  }
+
+  // ─── Research Mode (/research) ───
+
+  /** Research defaults (depth, save, outputDir, autoApprove) for the CLI/TUI. */
+  getResearchConfig(): ResearchOptions {
+    return this.config.research ?? {};
+  }
+
+  /**
+   * Phase 1 of /research: propose a research plan (or a clarification request)
+   * for a question WITHOUT executing it. Mirrors compactSession as a
+   * self-contained method; the CLI/TUI renders the plan and gates execution.
+   * Persists the proposed plan as a `research_plan` event for audit.
+   */
+  async proposeResearch(
+    sessionId: string,
+    question: string,
+    opts?: PlanResearchOpts,
+  ): Promise<ResearchPlan | ResearchClarification> {
+    const session = this.sessions.getSession(sessionId);
+    if (!session) throw new Error("Session not found");
+    const plan = await planResearch(
+      { gateway: this.gateway, model: session.model, provider: this.config.provider },
+      question,
+      { ...this.config.research, ...opts },
+    );
+    if (!isClarification(plan)) {
+      this.sessions.appendEvent(sessionId, { type: "research_plan", payload: { plan } });
+    }
+    return plan;
+  }
+
+  /** Revise a proposed plan using the user's free-text feedback (no clarifying Qs). */
+  async reviseResearch(
+    sessionId: string,
+    plan: ResearchPlan,
+    feedback: string,
+  ): Promise<ResearchPlan | ResearchClarification> {
+    return this.proposeResearch(sessionId, plan.question, {
+      priorPlan: plan,
+      feedback,
+      allowClarification: false,
+    });
+  }
+
+  /**
+   * Phase 2 of /research: execute an approved plan — fan out investigators and
+   * stream a cited report. Persists the question + report into the session so
+   * follow-up chat turns can reference them, plus a `research_report` audit
+   * event. Honors abort() like chat().
+   */
+  async *runResearch(
+    sessionId: string,
+    plan: ResearchPlan,
+    opts?: ResearchOptions,
+  ): AsyncGenerator<ResearchEvent> {
+    const session = this.sessions.getSession(sessionId);
+    if (!session) {
+      yield { type: "error", error: "Session not found", recoverable: false };
+      return;
+    }
+
+    // Persist the question as a user turn so follow-up chat sees it.
+    this.sessions.appendEvent(sessionId, { type: "user_msg", payload: { content: plan.question } });
+
+    const abortController = new AbortController();
+    this.currentAbort = abortController;
+
+    const deps: ResearchDeps = {
+      gateway: this.gateway,
+      binaryPath: this.config.toolsBinaryPath,
+      model: session.model,
+      provider: this.config.provider,
+      workspaceRoot: this.config.workspaceRoot,
+      sessionId,
+    };
+
+    let report: ResearchReport | null = null;
+    try {
+      for await (const ev of executeResearch(
+        deps,
+        plan,
+        { ...this.config.research, ...opts },
+        abortController.signal,
+      )) {
+        if (ev.type === "research_complete") report = ev.report;
+        yield ev;
+      }
+    } finally {
+      if (report) {
+        this.sessions.appendEvent(sessionId, {
+          type: "assistant_msg",
+          payload: { content: report.markdown, toolUses: [] },
+        });
+        this.sessions.appendEvent(sessionId, {
+          type: "research_report",
+          payload: {
+            question: report.question,
+            sources: report.sources.map((s) => ({ index: s.index, title: s.title, url: s.url })),
+            completed: report.completed,
+            failed: report.failed,
+            warnings: report.warnings,
+          },
+        });
+      }
+      this.sessions.appendEvent(sessionId, {
+        type: "checkpoint",
+        payload: { summary: "research_ended" },
+      });
+      if (this.currentAbort === abortController) this.currentAbort = null;
+    }
   }
 
   /**
@@ -851,30 +1027,67 @@ export class Engine {
     this.config.model = model;
     if (provider) {
       this.config.provider = provider;
-      this.gateway = new LlmGateway({
-        providers: {},
-        defaultProvider: provider,
-        maxRetries: 3,
-        retryBaseMs: 1000,
-      });
-      // Re-register all providers
-      if (this.config.anthropicApiKey || process.env.ANTHROPIC_API_KEY) {
-        this.gateway.registerProvider(new AnthropicProvider(this.config.anthropicApiKey));
-      }
-      if (this.config.openaiApiKey || process.env.OPENAI_API_KEY) {
-        this.gateway.registerProvider(new OpenAIProvider(this.config.openaiApiKey));
-      }
-      if (this.config.openrouterApiKey || process.env.OPENROUTER_API_KEY) {
-        this.gateway.registerProvider(new OpenRouterProvider(this.config.openrouterApiKey));
-      }
-      if (this.config.googleApiKey || process.env.GOOGLE_API_KEY) {
-        this.gateway.registerProvider(new GoogleProvider(this.config.googleApiKey));
-      }
+      this.rebuildGateway();
     }
     // Update the session record so chat() picks up the new model
     if (sessionId) {
       this.sessions.updateSessionModel(sessionId, model);
     }
+  }
+
+  // ─── BYOK: live provider-key management ───
+
+  private gatewayOpts(): BuildGatewayOpts {
+    return {
+      provider: this.config.provider,
+      keys: this.providerKeys,
+      customEndpoint: this.customEndpoint,
+      disabled: this.disabledProviders,
+      ollamaBaseUrl: this.config.ollamaBaseUrl,
+    };
+  }
+
+  private rebuildGateway(): void {
+    this.gateway = buildGateway(this.gatewayOpts());
+  }
+
+  /**
+   * Add (or, with null, remove) a provider API key at runtime and rebuild the
+   * gateway so the change takes effect immediately. Persistence to the secrets
+   * file is the caller's responsibility — this only touches in-memory state.
+   */
+  setProviderKey(id: string, key: string | null): void {
+    if (key && key.trim()) this.providerKeys[id] = key.trim();
+    else delete this.providerKeys[id];
+    this.rebuildGateway();
+  }
+
+  /** Set or clear the user-defined custom OpenAI-compatible endpoint. */
+  setCustomEndpoint(ep: CustomEndpoint | null): void {
+    this.customEndpoint = ep ?? undefined;
+    this.rebuildGateway();
+  }
+
+  /** Toggle a provider on/off without discarding its key. */
+  setProviderDisabled(id: string, disabled: boolean): void {
+    if (disabled) this.disabledProviders.add(id);
+    else this.disabledProviders.delete(id);
+    this.rebuildGateway();
+  }
+
+  /** Per-provider status (with masked keys) for the `/keys` panel. */
+  getProviderStatus(): ProviderStatusRow[] {
+    return providerStatus({
+      keys: this.providerKeys,
+      customEndpoint: this.customEndpoint,
+      disabled: this.disabledProviders,
+      active: this.config.provider,
+    });
+  }
+
+  /** The configured custom endpoint, if any (used to pre-fill the editor). */
+  getCustomEndpoint(): CustomEndpoint | undefined {
+    return this.customEndpoint;
   }
 
   getModel(): string {
@@ -886,17 +1099,7 @@ export class Engine {
   }
 
   getRegisteredProviders(): ProviderName[] {
-    const providers: ProviderName[] = [];
-    for (const name of [
-      "anthropic",
-      "openai",
-      "openrouter",
-      "google",
-      "ollama",
-    ] as ProviderName[]) {
-      if (this.gateway.getProvider(name)) providers.push(name);
-    }
-    return providers;
+    return this.gateway.getRegisteredProviderNames();
   }
 
   setEffort(level: EffortLevel): void {

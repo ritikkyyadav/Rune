@@ -1,33 +1,21 @@
 // ─── Alan Terminal Theme ───
-// Brand-exact L'Atlas palette (savoir-atlas.jsx) rendered in 24-bit truecolor,
-// with a graceful ANSI-256 fallback for terminals that don't advertise truecolor.
+// Every styled string in the CLI funnels through this module. Each semantic token
+// (text, muted, …) is a *stable* function that looks up the **active theme** at call
+// time, so switching themes at runtime (setTheme) instantly recolours everything
+// rendered afterward — no call site changes. Palettes live in ./themes.
 //
-// L'Atlas pigments are tuned for a paper (light) ground. On a dark terminal we use
-// `paper` as the primary text color and the pigments as accents — the same mapping
-// the desktop dark theme (apps/desktop/src/styles/global.css) already ships.
-//
-// One place to tune: the RGB triples below. `line` is intentionally lifted off the
-// brand draft-line so hairline borders stay visible on very dark terminals.
+// Capability detection (NO_COLOR / truecolor-vs-256) is an environment fact, independent
+// of the chosen theme: it's resolved once here and applied on top of whatever theme is
+// active. Under NO_COLOR, themes are inert (tokens pass text through unchanged).
 
-interface Pigment {
-  /** Brand-exact 24-bit RGB. */
-  rgb: [number, number, number];
-  /** Closest ANSI-256 index for non-truecolor terminals. */
-  ansi: number;
-}
-
-// ─── Palette (hex → pigment) ───
-
-const PALETTE = {
-  paper: { rgb: [242, 239, 230], ansi: 255 }, // #f2efe6  primary text
-  graphite3: { rgb: [138, 138, 130], ansi: 244 }, // #8a8a82  secondary / dim
-  dimText: { rgb: [106, 106, 98], ansi: 240 }, // #6a6a62  faint hints
-  vermillion: { rgb: [181, 61, 32], ansi: 166 }, // #b53d20  emphasis / error
-  cyanotype: { rgb: [31, 93, 122], ansi: 31 }, // #1f5d7a  info / paths / commands
-  brass: { rgb: [197, 165, 114], ansi: 179 }, // #c5a572  warning / prompt / bar fill
-  green: { rgb: [90, 138, 90], ansi: 71 }, // #5a8a5a  success
-  lineGray: { rgb: [87, 83, 75], ansi: 240 }, // ~#57534b  borders (dark-tuned)
-} satisfies Record<string, Pigment>;
+import {
+  type Pigment,
+  type SlotName,
+  type Theme,
+  THEMES,
+  DEFAULT_THEME,
+  findTheme,
+} from "./themes";
 
 // ─── Capability detection ───
 
@@ -38,11 +26,26 @@ function detectNoColor(): boolean {
 }
 
 function detectTruecolor(): boolean {
+  const tp = (process.env.TERM_PROGRAM ?? "").toLowerCase();
+  // macOS Terminal.app renders only 256 colours, but many shells still export
+  // COLORTERM=truecolor globally. Trusting that makes us emit 24-bit codes Terminal.app
+  // silently drops — backgrounds never paint. Force the 256 path for it, no matter what
+  // COLORTERM says, so fg+bg both render (and stay in contrast).
+  if (tp === "apple_terminal") return false;
   const ct = (process.env.COLORTERM ?? "").toLowerCase();
   if (ct.includes("truecolor") || ct.includes("24bit")) return true;
-  // A few terminals signal truecolor via TERM_PROGRAM instead.
-  const tp = (process.env.TERM_PROGRAM ?? "").toLowerCase();
-  if (tp === "iterm.app" || tp === "wezterm" || tp === "warpterminal") return true;
+  // Several modern terminals signal truecolor via TERM_PROGRAM instead of COLORTERM.
+  if (["iterm.app", "wezterm", "warpterminal", "vscode", "ghostty", "hyper", "tabby"].includes(tp))
+    return true;
+  // …or only via TERM (kitty / alacritty / xterm-direct / *-truecolor).
+  const term = (process.env.TERM ?? "").toLowerCase();
+  if (
+    term.includes("kitty") ||
+    term.includes("alacritty") ||
+    term.includes("direct") ||
+    term.includes("truecolor")
+  )
+    return true;
   return false;
 }
 
@@ -54,17 +57,14 @@ const TRUECOLOR = detectTruecolor();
 const esc = (code: string) => `\x1b[${code}m`;
 const RESET = esc("0");
 
-function paint(p: Pigment): (value: string) => string {
-  if (NO_COLOR) return (value) => value;
-  const code = TRUECOLOR
-    ? `38;2;${p.rgb[0]};${p.rgb[1]};${p.rgb[2]}`
-    : `38;5;${p.ansi}`;
-  const open = esc(code);
-  return (value) => `${open}${value}${RESET}`;
+/** Apply a pigment to a string, honoring the terminal's colour capability. */
+function fmt(p: Pigment, value: string): string {
+  if (NO_COLOR) return value;
+  const code = TRUECOLOR ? `38;2;${p.rgb[0]};${p.rgb[1]};${p.rgb[2]}` : `38;5;${p.ansi}`;
+  return `${esc(code)}${value}${RESET}`;
 }
 
-export const bold = (value: string): string =>
-  NO_COLOR ? value : `${esc("1")}${value}${RESET}`;
+export const bold = (value: string): string => (NO_COLOR ? value : `${esc("1")}${value}${RESET}`);
 
 const ANSI_PATTERN = /\x1b\[[0-9;]*m/g;
 
@@ -77,24 +77,110 @@ export const colorEnabled = !NO_COLOR;
 /** True when 24-bit codes are being emitted (false → ANSI-256 fallback). */
 export const truecolor = TRUECOLOR;
 
-// ─── Back-compat raw pigment names ───
-// Existing imports (welcome.ts, spinner.ts, diff-render.ts, alan-cli.ts) rely on these.
+// ─── Active theme + control API ───
 
-export const paper = paint(PALETTE.paper);
-export const dim = paint(PALETTE.graphite3);
-export const vermillion = paint(PALETTE.vermillion);
-export const brass = paint(PALETTE.brass);
-export const cyanotype = paint(PALETTE.cyanotype);
-export const green = paint(PALETTE.green);
-export const draftLine = paint(PALETTE.lineGray);
+let active: Theme = findTheme(DEFAULT_THEME)!;
 
-// ─── Semantic tokens (preferred for new code) ───
+/** Switch the active theme. Returns false (and leaves the theme unchanged) if unknown. */
+export function setTheme(name: string): boolean {
+  const t = findTheme(name);
+  if (!t) return false;
+  active = t;
+  return true;
+}
 
-export const text = paint(PALETTE.paper); // primary text, banner name
-export const muted = paint(PALETTE.graphite3); // secondary text
-export const faint = paint(PALETTE.dimText); // hints, connectors
-export const accent = paint(PALETTE.vermillion); // single emphasis, errors, `>_`
-export const info = paint(PALETTE.cyanotype); // commands, paths, tool targets
-export const warn = paint(PALETTE.brass); // warnings, prompts, bar fill
-export const ok = paint(PALETTE.green); // success ✓
-export const line = paint(PALETTE.lineGray); // borders / rules
+/** The currently active theme. */
+export function getTheme(): Theme {
+  return active;
+}
+
+/** All bundled themes, in display order. */
+export function listThemes(): Theme[] {
+  return THEMES;
+}
+
+/** Format a string in a named theme's slot *without* changing the active theme. */
+export function paintWith(themeName: string, slot: SlotName, value: string): string {
+  const t = findTheme(themeName) ?? active;
+  return fmt(t.slots[slot], value);
+}
+
+/** A tiny inline colour sample (accent · info · warn · ok) in a theme's own colours. */
+export function swatch(themeName: string): string {
+  return (
+    paintWith(themeName, "accent", "●") +
+    paintWith(themeName, "info", "●") +
+    paintWith(themeName, "warn", "●") +
+    paintWith(themeName, "ok", "●")
+  );
+}
+
+// ─── Whole-terminal recolor (OSC 10/11) ───
+// Themes set the terminal's default foreground + background so the *entire* surface
+// recolours on a switch (not just newly-printed text). This is what makes a theme
+// change feel complete and makes light themes readable on a dark terminal.
+
+function hexOf(p: Pigment): string {
+  return "#" + p.rgb.map((c) => c.toString(16).padStart(2, "0")).join("");
+}
+
+/** OSC 10/11 escape setting the terminal's default fg + bg to the active theme. "" under NO_COLOR. */
+export function terminalThemeSeq(): string {
+  if (NO_COLOR) return "";
+  return `\x1b]10;${hexOf(active.slots.text)}\x07\x1b]11;${hexOf(active.bg)}\x07`;
+}
+
+/** OSC 110/111 escape restoring the terminal's default fg + bg. Emit once on exit. */
+export const TERMINAL_THEME_RESET = "\x1b]110\x07\x1b]111\x07";
+
+// ─── Per-line background fill (SGR — works where OSC 11 doesn't, e.g. Warp) ───
+// Some terminals (Warp, VS Code) ignore OSC 10/11, so the only way to actually paint a
+// theme's background is to draw it ourselves with an SGR background + EL (erase-to-EOL,
+// which fills the right margin with the current bg). EL and the bg SGR don't move the
+// cursor and are stripped by visible-length math, so this is transparent to the inline
+// renderer's caret positioning. We re-assert the bg after every RESET so it survives the
+// per-token `\x1b[0m` resets that would otherwise drop it mid-line.
+
+/** SGR sequence that opens the active theme's background (used for fills/clears).
+ *  Respects the terminal's colour depth — truecolor `48;2` or 256-colour `48;5` — exactly
+ *  like fmt() does for the foreground. (Terminal.app is 256-only and drops `48;2`, which
+ *  is why the background never painted there.) */
+export function themeBgSeq(): string {
+  if (NO_COLOR) return "";
+  const p = active.bg;
+  const code = TRUECOLOR ? `48;2;${p.rgb[0]};${p.rgb[1]};${p.rgb[2]}` : `48;5;${p.ansi}`;
+  return `\x1b[${code}m`;
+}
+
+/** Paint the active theme's background across a rendered line (right margin included). */
+export function withThemeBg(line: string): string {
+  if (NO_COLOR) return line;
+  const bg = themeBgSeq();
+  return bg + line.replace(/\x1b\[0m/g, RESET + bg) + "\x1b[K" + RESET;
+}
+
+// ─── Semantic tokens (read the active theme at call time) ───
+
+const slot = (name: SlotName) => (value: string) => fmt(active.slots[name], value);
+
+export const text = slot("text"); // primary text, banner name
+export const muted = slot("muted"); // secondary text
+export const faint = slot("faint"); // hints, connectors
+export const accent = slot("accent"); // single emphasis, errors, `›`
+export const info = slot("info"); // commands, paths, tool targets
+export const warn = slot("warn"); // warnings, prompts, bar fill
+export const ok = slot("ok"); // success ✓
+export const line = slot("line"); // borders / rules
+
+// ─── Back-compat raw pigment names (now mapped onto theme slots) ───
+// welcome.ts, spinner.ts, diff-render.ts and alan-cli.ts import these; routing them
+// through slots means diffs, the spinner and the provider list recolour with the
+// active theme too, with no changes at their call sites.
+
+export const paper = slot("text");
+export const dim = slot("muted");
+export const vermillion = slot("accent");
+export const brass = slot("warn");
+export const cyanotype = slot("info");
+export const green = slot("ok");
+export const draftLine = slot("line");

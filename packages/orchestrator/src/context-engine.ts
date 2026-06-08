@@ -422,8 +422,63 @@ export class ContextEngine {
     };
   }
 
-  private async generateSummary(messages: Message[]): Promise<string | null> {
+  /**
+   * Summarize an ENTIRE conversation into one comprehensive summary, used by
+   * the manual `/compress` command. Unlike compactWorkingSet (which keeps the
+   * most-recent turns verbatim), this collapses everything into a single
+   * summary detailed enough to resume the work from the summary alone.
+   *
+   * @param messages     Full conversation history (chronological).
+   * @param instructions Optional user-supplied focus, e.g. "keep API details".
+   * @returns the summary plus token counts, or null when there is nothing to
+   *          summarize or generation failed.
+   */
+  async summarizeConversation(
+    messages: Message[],
+    instructions?: string,
+  ): Promise<{ summary: string; sourceTokens: number; summaryTokens: number } | null> {
+    if (messages.length === 0) return null;
+
+    const summary = await this.generateSummary(messages, {
+      instructions,
+      comprehensive: true,
+    });
+    if (!summary) return null;
+
+    const sourceTokens = this.tokenCounter.countTokens(
+      messages.map((m) => messageToString(m)).join("\n"),
+    );
+    const summaryTokens = this.tokenCounter.countTokens(summary);
+    return { summary, sourceTokens, summaryTokens };
+  }
+
+  private async generateSummary(
+    messages: Message[],
+    opts?: { instructions?: string; comprehensive?: boolean },
+  ): Promise<string | null> {
     const transcript = messages.map((m) => `${m.role}: ${messageToString(m)}`).join("\n\n");
+
+    const focus = opts?.instructions?.trim()
+      ? `\n\nPay special attention to (per the user's request): ${opts.instructions.trim()}`
+      : "";
+
+    const comprehensive = opts?.comprehensive ?? false;
+    const system = comprehensive
+      ? "You are compacting a conversation so it can continue with far less context. Preserve every detail needed to resume the work: the user's goals, decisions made, files and code touched, commands run, errors encountered, and the exact current state and next step. Use short labelled sections. Never drop the most recent task."
+      : "You are a conversation summarizer. Be concise — 3-5 bullet points.";
+
+    const instructionText = comprehensive
+      ? `Write a structured summary of the conversation below so the work can continue from the summary alone. Cover:
+- Goals & requirements the user stated
+- Key facts learned about the codebase
+- Actions taken (files read/edited, commands run) and their outcomes
+- Decisions made and open questions
+- Current state and the immediate next step${focus}`
+      : `Summarize this conversation segment concisely. Focus on:
+- What was discussed and decided
+- Key facts learned about the codebase
+- Actions taken (files read, edited, commands run)
+- Outcomes and current state${focus}`;
 
     try {
       const response = await this.gateway.infer({
@@ -433,11 +488,7 @@ export class ContextEngine {
             content: [
               {
                 type: "text",
-                text: `Summarize this conversation segment concisely. Focus on:
-- What was discussed and decided
-- Key facts learned about the codebase
-- Actions taken (files read, edited, commands run)
-- Outcomes and current state
+                text: `${instructionText}
 
 Conversation:
 ${transcript}`,
@@ -445,10 +496,10 @@ ${transcript}`,
             ],
           },
         ],
-        system: "You are a conversation summarizer. Be concise — 3-5 bullet points.",
+        system,
         model: this.summarizerModel,
         provider: this.summarizerProvider,
-        maxTokens: 500,
+        maxTokens: comprehensive ? 1500 : 500,
         stream: false,
       });
 

@@ -5,6 +5,7 @@ import type {
   InferenceResponse,
   LlmProvider,
   Message,
+  ProviderName,
   StreamEvent,
   StopReason,
   StreamOpts,
@@ -14,10 +15,13 @@ import type {
 import { ApiError } from "../types";
 
 export class OpenAIProvider implements LlmProvider {
-  readonly name = "openai" as const;
+  readonly name: ProviderName;
   private client: OpenAI;
 
-  constructor(apiKey?: string, baseUrl?: string) {
+  // `name` lets OpenAI-compatible hosts (Groq, xAI, DeepSeek, a custom endpoint,
+  // OpenRouter) register under their own identity while sharing this adapter.
+  constructor(apiKey?: string, baseUrl?: string, name: ProviderName = "openai") {
+    this.name = name;
     const resolvedKey = apiKey ?? process.env.OPENAI_API_KEY ?? "dummy";
     this.client = new OpenAI({
       apiKey: resolvedKey,
@@ -110,8 +114,8 @@ export class OpenAIProvider implements LlmProvider {
           const delta = chunk.choices?.[0]?.delta;
           const finishReason = chunk.choices?.[0]?.finish_reason;
 
-          // Handle regular content AND reasoning output (for reasoning models)
-          const textChunk = delta?.content || (delta as Record<string, unknown>)?.reasoning;
+          // Real answer text.
+          const textChunk = delta?.content;
           if (textChunk && typeof textChunk === "string") {
             if (!contentStarted) {
               yield { type: "content_start", contentIndex: 0 };
@@ -122,6 +126,18 @@ export class OpenAIProvider implements LlmProvider {
               contentIndex: 0,
               delta: { type: "text_delta", text: textChunk },
             };
+          }
+
+          // Reasoning / chain-of-thought from reasoning models (gpt-oss,
+          // qwen3-next, minimax, …) arrives in a separate `reasoning` /
+          // `reasoning_content` field. Stream it as a DISTINCT thinking event so
+          // the UI can dim it and the agent loop keeps it out of the persisted
+          // answer — otherwise the raw chain-of-thought renders as the reply,
+          // which reads as hallucination.
+          const dr = delta as Record<string, unknown> | undefined;
+          const reasoningChunk = dr?.reasoning ?? dr?.reasoning_content;
+          if (typeof reasoningChunk === "string" && reasoningChunk) {
+            yield { type: "thinking_delta", text: reasoningChunk };
           }
 
           if (delta?.tool_calls) {
@@ -294,9 +310,10 @@ export class OpenAIProvider implements LlmProvider {
   private fromOpenAIChoice(choice: OpenAI.ChatCompletion.Choice): ContentBlock[] {
     const blocks: ContentBlock[] = [];
 
-    // Handle regular content or reasoning (for reasoning models like DeepSeek)
-    const content =
-      choice.message.content || (choice.message as unknown as Record<string, unknown>).reasoning;
+    // Only the real `content` is the answer. Reasoning models also return a
+    // `reasoning` field, but that is chain-of-thought, not the reply, so it must
+    // not become the assistant's message (it would read as hallucination).
+    const content = choice.message.content;
     if (content && typeof content === "string") {
       blocks.push({ type: "text", text: content });
     }

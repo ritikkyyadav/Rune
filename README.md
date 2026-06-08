@@ -27,6 +27,16 @@ compliance-sensitive teams.
 - **Hooks** — run shell commands automatically around tool use and session lifecycle via
   `.alan/hooks.json` (e.g. format/lint after edits, block protected paths).
 - **MCP** — project-scoped tool discovery via `.alan/mcp.json`.
+- **Research mode (`/research`, `/deepresearch`)** — ChatGPT/Claude-style Deep Research: the agent
+  proposes a decomposed research plan (asking a couple of clarifying questions first when the request
+  is vague), **you approve, revise, or cancel**, then it runs an **iterative** loop — bounded parallel
+  investigators search the web (and, only when the question is about your project, your local repo),
+  a supervisor reflects on the findings to spot gaps and spins up follow-up questions, and a
+  synthesizer writes a **cited** markdown report. `/research` is the standard preset; `/deepresearch`
+  runs more rounds, sources, and a longer report. Sources are captured from the investigators' tool
+  calls (not hallucinated), and the report streams to the terminal, saves under `.alan/research/`, and
+  stays in the session for follow-ups. Set a **Tavily/Brave** key via `/keys` for higher-quality
+  search; keyless DuckDuckGo is the fallback.
 - **Skills** — 181 bundled expert playbooks (code review, debugging, architecture, data analysis,
   PDF handling, and more) surfaced by progressive disclosure: a compact catalog rides in the system
   prompt and the model loads a skill's full instructions on demand via the `skill` tool. Browse with
@@ -105,7 +115,13 @@ Common flags: `-m/--model`, `-p/--provider`, `-w/--workspace <dir>`, `--yolo`, `
 ## Configuration
 
 **Environment:** `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GOOGLE_API_KEY`,
-`OLLAMA_HOST`, `N8N_BASE_URL`.
+`OLLAMA_HOST`, `N8N_BASE_URL`, and `TAVILY_API_KEY` / `BRAVE_API_KEY` for web search (used by
+`/research`; you can also save these via `/keys`).
+
+**Research defaults** live under `[research]` in `.alan/config.toml`: `depth` (`quick`/`standard`/`deep`),
+`maxSubQuestions`, `maxParallel`, `maxSourcesPerStep`, `autoApprove`, `save`, and `outputDir`. Env
+overrides: `ALAN_RESEARCH_DEPTH`, `ALAN_RESEARCH_MAX_PARALLEL`, `ALAN_RESEARCH_MAX_SUBQUESTIONS`,
+`ALAN_RESEARCH_AUTO_APPROVE`, `ALAN_RESEARCH_SAVE`.
 
 **Project files (under `.alan/` in your workspace):**
 
@@ -117,9 +133,14 @@ Common flags: `-m/--model`, `-p/--provider`, `-w/--workspace <dir>`, `--yolo`, `
 
 ## Slash commands
 
-`/model`, `/effort`, `/status`, `/providers`, `/mcp`, `/skills`, `/cost`, `/compact`, `/plan`,
-`/rewind`, `/help`, `/quit` — plus any custom commands you define in `.alan/commands/`.
+`/model`, `/effort`, `/status`, `/providers`, `/keys`, `/mcp`, `/skills`, `/research`,
+`/deepresearch`, `/cost`, `/compress`, `/plan`, `/rewind`, `/help`, `/quit` — plus any custom
+commands you define in `.alan/commands/`.
 `/skills` lists the bundled skill catalog; `/skills <keywords>` searches it.
+`/research <question>` runs research: it proposes a plan, waits for your approval (Enter to run,
+`r` to revise, `n` to cancel), then iteratively fans out and writes a cited report. `/deepresearch
+<question>` is the same flow at the heaviest preset (more rounds, sources, and a longer report).
+`/keys set tavily <key>` (or `brave`) enables a higher-quality search backend.
 
 ## Evals
 

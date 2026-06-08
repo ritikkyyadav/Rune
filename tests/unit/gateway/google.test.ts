@@ -209,4 +209,62 @@ describe("GoogleProvider", () => {
     expect(res.stopReason).toBe("tool_use");
     expect(res.content[0]).toMatchObject({ type: "tool_use", toolName: "list_dir" });
   });
+
+  // Regression: Gemini rejects the WHOLE request when a tool's parameter schema
+  // carries JSON-Schema keywords its proto doesn't define ("Invalid JSON payload
+  // received. Unknown name \"$schema\" … Cannot find field"). MCP and skill tools
+  // routinely emit these, so the provider must prune schemas to Gemini's supported
+  // subset — recursively — before sending.
+  test("strips unsupported JSON-Schema keywords from tool parameters", async () => {
+    mockFetch(() =>
+      sse([
+        {
+          candidates: [
+            { content: { role: "model", parts: [{ text: "ok" }] }, finishReason: "STOP" },
+          ],
+        },
+      ]),
+    );
+    await collect(
+      new GoogleProvider("k").inferStream(
+        baseReq({
+          tools: [
+            {
+              name: "messy",
+              description: "tool authored as a full JSON Schema",
+              inputSchema: {
+                $schema: "http://json-schema.org/draft-07/schema#",
+                $id: "https://example.com/messy",
+                type: "object",
+                additionalProperties: false,
+                required: ["path"],
+                properties: {
+                  path: { type: "string", description: "a path", additionalProperties: false },
+                  mode: { const: "fast" },
+                  tags: { type: "array", items: { type: "string", $comment: "drop me" } },
+                },
+                oneOf: [{ required: ["path"] }],
+              },
+            },
+          ],
+        }),
+      ),
+    );
+    const body = JSON.parse(lastInit!.body as string) as {
+      tools: { functionDeclarations: { parameters: Record<string, any> }[] }[];
+    };
+    const params = body.tools[0].functionDeclarations[0].parameters;
+    // No JSON-Schema-only keyword survives anywhere in the payload.
+    expect(JSON.stringify(body)).not.toContain("$schema");
+    expect(JSON.stringify(body)).not.toContain("additionalProperties");
+    expect(params.$id).toBeUndefined();
+    expect(params.oneOf).toBeUndefined();
+    // Supported structure is preserved, and recursion reaches nested schemas.
+    expect(params.type).toBe("object");
+    expect(params.required).toEqual(["path"]);
+    expect(params.properties.path).toEqual({ type: "string", description: "a path" });
+    expect(params.properties.tags.items).toEqual({ type: "string" });
+    // `const` is preserved as a single-value enum (Gemini has no `const`).
+    expect(params.properties.mode).toEqual({ enum: ["fast"] });
+  });
 });
