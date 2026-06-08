@@ -15,6 +15,8 @@ import {
   applySearchKeysToEnv,
   searchKeyStatus,
   SEARCH_KEY_PRESETS,
+  loadLastModel,
+  saveLastModel,
 } from "@alan/shared";
 import { parseArgs } from "util";
 import * as readline from "readline";
@@ -22,7 +24,7 @@ import { Spinner } from "./spinner";
 import { renderWelcome } from "./welcome";
 import { renderToolCall } from "./ui/tool-call";
 import { renderStatus } from "./ui/status";
-import { promptString, statusLine, composerRule } from "./ui/composer";
+import { promptString, statusLine, composerRule, permissionModeBanner } from "./ui/composer";
 import { runTui } from "./ui/tui";
 import { exportSession } from "../session-export";
 import { loadCommands, findCommand } from "../commands";
@@ -80,8 +82,9 @@ if (values.help) {
       `    -p, --provider <provider>    LLM provider (anthropic|openai|openrouter|google|ollama-turbo)\n` +
       `    -w, --workspace <path>       Workspace root directory\n` +
       `    -r, --resume <sessionId>     Resume an existing session\n` +
-      `    --yolo                       Skip all permission prompts\n` +
-      `    --trust                      Auto-approve in-workspace edits & bash (outside still prompts)\n` +
+      `    --yolo                       Start in Turing (bypass) mode — skip all permission prompts\n` +
+      `    --trust                      Start in auto mode — approve in-workspace edits & bash (outside still prompts)\n` +
+      `                                 (Shift+Tab cycles confirm → auto → Turing live; also /mode, /turing)\n` +
       `    --planner                    Enable planner+executor mode\n` +
       `    --classic                    Plain readline prompt (default is the pinned composer)\n` +
       `    --tui                        Force the Codex-style pinned composer\n` +
@@ -236,41 +239,44 @@ async function main() {
   const cliProvider = values.provider as string | undefined;
   const configProvider = config.llm.defaultProvider;
 
-  // Use CLI arg first, then config (only if that provider has a key), then auto-detect
+  // Does a provider have working credentials — an env var, an [llm.*].apiKey, or a /keys secret?
+  // ollama-turbo carries no [llm.*] section (its key lives in secrets.json / OLLAMA_API_KEY).
+  const providerEnvVar: Record<CliProvider, string> = {
+    google: "GOOGLE_API_KEY",
+    anthropic: "ANTHROPIC_API_KEY",
+    openai: "OPENAI_API_KEY",
+    openrouter: "OPENROUTER_API_KEY",
+    "ollama-turbo": "OLLAMA_API_KEY",
+  };
+  const hasCreds = (p: CliProvider): boolean =>
+    !!process.env[providerEnvVar[p]] ||
+    !!(p !== "ollama-turbo" && (config.llm[p] as { apiKey?: string } | undefined)?.apiKey) ||
+    !!secrets.keys[p];
+
+  // The model the user last picked sticks across sessions: it wins over the config default (but not
+  // over an explicit --model/--provider) as long as its provider still has credentials — otherwise
+  // we fall through rather than boot a keyless provider. This is why a fresh session resumes e.g.
+  // ollama-turbo/qwen3-coder:480b instead of resetting to the built-in google/gemini-2.5-flash.
+  const lastUsed = !cliProvider && !values.model ? loadLastModel() : null;
+  const sticky =
+    lastUsed && isCliProvider(lastUsed.provider) && hasCreds(lastUsed.provider) ? lastUsed : null;
+
   let provider: CliProvider;
-  if (cliProvider && isCliProvider(cliProvider)) {
-    provider = cliProvider;
-  } else if (configProvider && isCliProvider(configProvider)) {
-    // Verify the configured default provider actually has credentials. Some
-    // providers carry no [llm.*] section (e.g. ollama-turbo, whose key lives in
-    // secrets.json / OLLAMA_API_KEY), so skip the section lookup for those.
-    const cfgSection =
-      configProvider === "ollama-turbo"
-        ? undefined
-        : (config.llm[configProvider] as { apiKey?: string } | undefined);
-    const envVarMap: Record<CliProvider, string> = {
-      google: "GOOGLE_API_KEY",
-      anthropic: "ANTHROPIC_API_KEY",
-      openai: "OPENAI_API_KEY",
-      openrouter: "OPENROUTER_API_KEY",
-      "ollama-turbo": "OLLAMA_API_KEY",
-    };
-    if (
-      process.env[envVarMap[configProvider]] ||
-      cfgSection?.apiKey ||
-      secrets.keys[configProvider]
-    ) {
-      provider = configProvider;
-    } else {
-      provider = detectBestProvider();
-    }
+  let model: string;
+  if (sticky) {
+    provider = sticky.provider as CliProvider;
+    model = sticky.model;
   } else {
-    provider = detectBestProvider();
+    // CLI arg first, then config (only if that provider has a key), then auto-detect.
+    if (cliProvider && isCliProvider(cliProvider)) provider = cliProvider;
+    else if (configProvider && isCliProvider(configProvider) && hasCreds(configProvider))
+      provider = configProvider;
+    else provider = detectBestProvider();
+    model =
+      (values.model as string | undefined) ??
+      configuredModelForProvider(config, provider) ??
+      DEFAULT_MODELS[provider];
   }
-  const model =
-    (values.model as string | undefined) ??
-    configuredModelForProvider(config, provider) ??
-    DEFAULT_MODELS[provider];
 
   const plannerMode = values.planner as boolean;
   // Workspace trust: --trust flag OR permissions.trustWorkspace in .alan/config.toml.
@@ -584,9 +590,10 @@ async function main() {
       });
     });
 
-  if (!yoloMode) {
-    engine.setPermissionHandler(permissionHandler);
-  }
+  // Register in every mode. The broker short-circuits to "allowed" under Turing, so the
+  // handler is simply never called there — but stays wired so cycling back to confirm/auto
+  // (Shift+Tab, /mode, /turing) restores prompts without re-registration.
+  engine.setPermissionHandler(permissionHandler);
 
   // ─── Slash Command Definitions ───
 
@@ -604,6 +611,8 @@ async function main() {
     ["/cost", "Session cost"],
     ["/compress", "Summarize & shrink context"],
     ["/plan", "Toggle plan mode"],
+    ["/turing", "Turing — toggle bypass mode (shift+tab)"],
+    ["/mode", "Cycle permission mode (confirm/auto/turing)"],
     ["/rewind", "Roll back the conversation"],
     ["/help", "Show all commands"],
     ["/quit", "Exit Alan"],
@@ -616,13 +625,42 @@ async function main() {
           model: engine.getModel(),
           effort: engine.getEffort(),
           workspace: workspaceRoot,
-          mode: yoloMode ? "yolo" : trustWorkspace ? "trusted" : "confirm",
+          mode: engine.getPermissionMode(),
         }) +
         "\n" +
         composerRule() +
         "\n",
     );
     rl.prompt();
+  }
+
+  /**
+   * Switch the permission mode and re-render the prompt (Shift+Tab / /turing / /mode).
+   * The buffer the user is mid-typing is preserved across the reprint.
+   */
+  function cycleMode(target?: ReturnType<typeof engine.getPermissionMode>) {
+    let next: ReturnType<typeof engine.getPermissionMode>;
+    if (target) {
+      engine.setPermissionMode(target);
+      next = target;
+    } else {
+      next = engine.cyclePermissionMode();
+    }
+    const buf = rl.line;
+    process.stdout.write("\r\x1b[2K"); // clear the current input line
+    process.stdout.write(permissionModeBanner(next) + "\n");
+    showPrompt();
+    if (buf) rl.write(buf); // restore whatever was being typed
+  }
+
+  // Best-effort Shift+Tab (back-tab) in the readline path: readline decodes it to
+  // { name: "tab", shift: true } once keypress events are enabled. Terminals that
+  // swallow it can fall back to /mode or /turing.
+  if (process.stdin.isTTY) {
+    readline.emitKeypressEvents(process.stdin);
+    process.stdin.on("keypress", (_str: string, key: { name?: string; shift?: boolean } | undefined) => {
+      if (!busy && key?.name === "tab" && key.shift) cycleMode();
+    });
   }
 
   // ─── Line Handler ───
@@ -708,6 +746,8 @@ async function main() {
         ["/cost", "Session cost"],
         ["/compress", "Summarize & shrink context"],
         ["/plan", "Toggle plan mode"],
+        ["/turing", "Turing — toggle bypass mode (shift+tab)"],
+        ["/mode", "Cycle permission mode (confirm/auto/turing)"],
         ["/rewind", "Roll back the conversation"],
         ["/help", "This reference"],
         ["/quit", "Exit"],
@@ -741,6 +781,7 @@ async function main() {
             plannerMode: status.plannerMode,
             yoloMode: status.yoloMode,
             trustWorkspace: status.trustWorkspace,
+            permissionMode: status.permissionMode,
             registeredProviders: status.registeredProviders,
             version: "0.1.0",
           }) +
@@ -1172,6 +1213,7 @@ async function main() {
               const mod = modAnswer.trim();
               if (prov && mod) {
                 engine.switchModel(mod, prov as any, sessionId);
+                saveLastModel({ provider: engine.getProvider(), model: engine.getModel() });
                 process.stdout.write(
                   `  ${green("✓")} switched to ${cyanotype(prov)}${dim("/")}${brass(mod)}\n\n`,
                 );
@@ -1187,6 +1229,7 @@ async function main() {
         const preset = presets.find((p) => p.key === a);
         if (preset) {
           engine.switchModel(preset.model, preset.provider as any, sessionId);
+          saveLastModel({ provider: engine.getProvider(), model: engine.getModel() });
           process.stdout.write(
             `  ${green("✓")} switched to ${cyanotype(preset.provider)}${dim("/")}${brass(preset.label)}\n\n`,
           );
@@ -1206,12 +1249,14 @@ async function main() {
         const prov = arg.slice(0, slashIdx);
         const mod = arg.slice(slashIdx + 1);
         engine.switchModel(mod, prov as any, sessionId);
+        saveLastModel({ provider: engine.getProvider(), model: engine.getModel() });
         process.stdout.write(
           `  ${green("✓")} switched to ${cyanotype(prov)}${dim("/")}${brass(mod)}\n\n`,
         );
       } else {
         // Treat as model name with current provider
         engine.switchModel(arg, undefined, sessionId);
+        saveLastModel({ provider: engine.getProvider(), model: engine.getModel() });
         process.stdout.write(`  ${green("✓")} switched to ${brass(arg)}\n\n`);
       }
       showPrompt();
@@ -1226,6 +1271,32 @@ async function main() {
           on ? "— Alan drafts a step plan before executing" : "— flat agent loop",
         )}\n\n`,
       );
+      showPrompt();
+      return;
+    }
+
+    if (input === "/turing") {
+      // Explicit toggle into the bypass mode, or back out to confirm.
+      const target = engine.getPermissionMode() === "turing" ? "confirm" : "turing";
+      engine.setPermissionMode(target);
+      process.stdout.write(permissionModeBanner(target) + "\n");
+      showPrompt();
+      return;
+    }
+
+    if (input === "/mode" || input.startsWith("/mode ")) {
+      const arg = input.slice("/mode".length).trim().toLowerCase();
+      const valid = ["confirm", "auto", "turing"] as const;
+      if (arg && (valid as readonly string[]).includes(arg)) {
+        engine.setPermissionMode(arg as (typeof valid)[number]);
+        process.stdout.write(permissionModeBanner(arg) + "\n");
+      } else if (arg) {
+        process.stdout.write(
+          `  ${warn("Usage:")} ${info("/mode")} ${dim("[confirm|auto|turing] — empty cycles")}\n`,
+        );
+      } else {
+        process.stdout.write(permissionModeBanner(engine.cyclePermissionMode()) + "\n");
+      }
       showPrompt();
       return;
     }
