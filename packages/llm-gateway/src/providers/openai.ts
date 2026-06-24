@@ -13,6 +13,7 @@ import type {
   TokenUsage,
 } from "../types";
 import { ApiError } from "../types";
+import { parseToolArguments } from "@alan/shared";
 
 export class OpenAIProvider implements LlmProvider {
   readonly name: ProviderName;
@@ -178,7 +179,9 @@ export class OpenAIProvider implements LlmProvider {
               yield { type: "content_stop", contentIndex: 0 };
             }
             for (const [, entry] of toolCalls) {
-              const toolInput = entry.argsJson ? JSON.parse(entry.argsJson) : {};
+              // Model-streamed args aren't trustworthy JSON — parse defensively so a malformed
+              // blob (common with glm/qwen) degrades to {} instead of killing the whole stream.
+              const toolInput = parseToolArguments(entry.argsJson);
               yield { type: "tool_use_stop", toolCallId: entry.id, toolInput };
             }
 
@@ -324,7 +327,7 @@ export class OpenAIProvider implements LlmProvider {
           type: "tool_use",
           toolCallId: tc.id,
           toolName: tc.function.name,
-          toolInput: JSON.parse(tc.function.arguments || "{}"),
+          toolInput: parseToolArguments(tc.function.arguments),
         });
       }
     }

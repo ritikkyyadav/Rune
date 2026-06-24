@@ -13,6 +13,7 @@ import {
   providerSupportsNativeSearch,
   providerAllowsGroundingWithTools,
 } from "@alan/llm-gateway";
+import { parseToolArguments } from "@alan/shared";
 import type { ToolCallInput, ToolCallOutput } from "@alan/tool-registry";
 import { ToolRegistry } from "@alan/tool-registry";
 import type { ContextEngine } from "./context-engine";
@@ -402,13 +403,16 @@ export class AgentLoop {
       // ── Phase A: permission gates, in order (interactive prompts are serial) ──
       const planned: PlannedCall[] = [];
       for (const tc of pendingToolCalls) {
-        const parsedArgs = tc.argsJson ? JSON.parse(tc.argsJson) : {};
+        // Defense in depth: argsJson is normally a re-stringified object from the provider, but
+        // parse defensively so a malformed blob never aborts the turn (degrades to {} args).
+        const parsedArgs = parseToolArguments(tc.argsJson);
         const input: ToolCallInput = {
           toolName: tc.toolName,
           callId: tc.callId,
           args: parsedArgs,
           sessionId,
           workspaceRoot,
+          signal,
         };
 
         let allowed = true;

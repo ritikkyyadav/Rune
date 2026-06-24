@@ -1,4 +1,5 @@
 export * from "./protocol.js";
+export { parseToolArguments, tryParseJson } from "./json.js";
 export { type AlanConfig, type PermissionRule, loadConfig, getAlanHome } from "./config.js";
 export {
   type ProviderKind,
@@ -18,6 +19,7 @@ export {
   setCustomEndpoint,
   clearCustomEndpoint,
   setProviderDisabled,
+  setLocalEndpoint,
   maskKey,
   secretsArePrivate,
   type SearchKeyPreset,
@@ -26,12 +28,27 @@ export {
   searchKeyStatus,
   applySearchKeysToEnv,
 } from "./secrets.js";
+export { type LastModel, getModelStatePath, loadLastModel, saveLastModel } from "./model-store.js";
+export { type LogLevel, type Logger, createLogger, nullLogger } from "./logger.js";
 export {
-  type LastModel,
-  getModelStatePath,
-  loadLastModel,
-  saveLastModel,
-} from "./model-store.js";
+  type MemoryScheduleKind,
+  type ParsedSchedule,
+  type SystemMemoryMeta,
+  type SystemMemory,
+  getSystemMemoryPath,
+  getSystemMemoryMetaPath,
+  loadSystemMemory,
+  loadSystemMemoryMeta,
+  saveSystemMemory,
+  saveSystemMemoryMeta,
+  clearSystemMemory,
+  parseSchedule,
+  describeSchedule,
+  isReflectionDue,
+  effectiveSchedule,
+  estimateMemoryTokens,
+  clampToBudget,
+} from "./system-memory.js";
 export * from "./session.js";
 export {
   type RunState,

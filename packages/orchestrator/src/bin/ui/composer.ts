@@ -6,7 +6,7 @@
 
 import * as os from "os";
 import { accent, faint, warn, text, muted, line, bold, stripAnsi, info, ok } from "./theme";
-import { truncate, rule } from "./render";
+import { truncate, rule, visLen } from "./render";
 
 function shortPath(p: string): string {
   const home = os.homedir();
@@ -20,20 +20,65 @@ export function promptString(): string {
 
 export interface ComposerStatus {
   model: string;
-  effort?: string;
   workspace: string;
-  /** "confirm" | "trusted" | "yolo" */
+  /** Permission mode: "confirm" | "auto" | "turing" (legacy "trusted"/"yolo" still accepted). */
   mode?: string;
 }
 
-/** Dimmed `model effort · ~/dir` line, with a colored flag for non-default modes. */
+/** Normalize legacy mode aliases onto the current three-mode vocabulary. */
+function normalizeMode(mode?: string): "confirm" | "auto" | "turing" {
+  if (mode === "turing" || mode === "yolo") return "turing";
+  if (mode === "auto" || mode === "trusted") return "auto";
+  return "confirm";
+}
+
+/** The colored badge for a permission mode, or "" for the default (confirm). */
+export function permissionModeBadge(mode?: string): string {
+  switch (normalizeMode(mode)) {
+    case "turing":
+      return bold(warn("⚡ TURING")); // the yellow bypass mode
+    case "auto":
+      return warn("● auto");
+    default:
+      return "";
+  }
+}
+
+/** Dimmed `model · ~/dir` line, with a colored flag for non-default modes. */
 export function statusLine(s: ComposerStatus): string {
   const dir = shortPath(s.workspace);
-  const model = s.model + (s.effort ? " " + s.effort : "");
-  let out = faint(`${model} · ${dir}`);
-  if (s.mode === "yolo") out += faint(" · ") + accent("yolo");
-  else if (s.mode === "trusted") out += faint(" · ") + warn("trusted");
+  let out = faint(`${s.model} · ${dir}`);
+  const badge = permissionModeBadge(s.mode);
+  if (badge) out += faint(" · ") + badge;
   return `  ${out}`;
+}
+
+/**
+ * A transient one-liner announcing the active permission mode — printed into the
+ * transcript each time Shift+Tab cycles. Turing is loud (bold amber) because it
+ * silences every prompt; the others are calm.
+ */
+export function permissionModeBanner(mode?: string): string {
+  switch (normalizeMode(mode)) {
+    case "turing":
+      return (
+        `  ${bold(warn("⚡ Turing mode"))} ${faint("·")} ` +
+        `${text("Alan will read, write & run commands without asking.")} ` +
+        `${faint("(shift+tab to cycle)")}`
+      );
+    case "auto":
+      return (
+        `  ${warn("● Auto mode")} ${faint("·")} ` +
+        `${muted("in-workspace edits & commands auto-approved; network still asks.")} ` +
+        `${faint("(shift+tab to cycle)")}`
+      );
+    default:
+      return (
+        `  ${ok("○ Confirm mode")} ${faint("·")} ` +
+        `${muted("Alan asks before writing or running.")} ` +
+        `${faint("(shift+tab to cycle)")}`
+      );
+  }
 }
 
 /**
@@ -94,7 +139,89 @@ export function renderComposer(state: ComposerState): RenderedBlock {
   return { lines: [top, mid, bot, state.status], caretRow: 1, caretCol };
 }
 
-// ─── List picker overlay (TUI: /model, /effort) ───
+// ─── Permission request card (TUI) ───
+
+/**
+ * A human title + one clean line of detail for a permission request. The broker's
+ * `argsSummary` repeats the tool name ("bash: ls -R", "write_file /x"); strip that so
+ * the card reads "Run shell command / ls -R" instead of "Allow bash — bash: ls -R".
+ */
+export function permissionView(
+  toolName: string,
+  argsSummary: string,
+): { title: string; body: string } {
+  // The summarizer prefixes its detail with "<tool>: " (bash) or "<tool> " (others).
+  // Strip that leading "<tool>" + separator so the title isn't echoed in the body.
+  const esc = toolName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const body = (argsSummary ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(new RegExp("^" + esc + "(?::|\\s)\\s*"), "");
+  const titles: Record<string, string> = {
+    bash: "Run shell command",
+    write_file: "Write file",
+    edit_file: "Edit file",
+    multi_edit: "Edit file",
+    web_fetch: "Fetch from the web",
+    web_search: "Search the web",
+  };
+  return { title: titles[toolName] ?? `Run ${toolName}`, body: body || toolName };
+}
+
+/** The allow / session / deny key hints — one shared line for both card and compact layouts. */
+function permissionKeys(pad: string, gap: string): string {
+  return (
+    `${pad}${ok("enter")} ${muted("allow")}` +
+    `${gap}${warn("s")} ${muted("session")}` +
+    `${gap}${accent("n")} ${muted("deny")}`
+  );
+}
+
+/**
+ * The permission prompt shown while a tool awaits confirmation — it replaces the pinned
+ * composer. A titled rounded box names the action and shows the command/target; the
+ * allow/session/deny keys sit on the line below. A leading blank line separates it from
+ * the activity stream so the ask never glues onto the notice above it. Narrow terminals
+ * fall back to a compact two-line form.
+ */
+export function renderPermissionCard(
+  toolName: string,
+  argsSummary: string,
+  width: number,
+): RenderedBlock {
+  const { title, body } = permissionView(toolName, argsSummary);
+
+  // Compact form for narrow terminals — the titled box needs room to breathe.
+  if (width < 52) {
+    const detail = truncate(body, Math.max(8, width - title.length - 8));
+    const q = `${PAD}${warn("?")} ${bold(warn(title))} ${faint("—")} ${text(detail)}`;
+    return { lines: ["", q, permissionKeys(PAD, "   ")], caretRow: 2, caretCol: 2 };
+  }
+
+  const boxW = width - 3; // spans the terminal like the composer box
+  const innerW = boxW - 4; // cols between "│ " and " │"
+
+  // Top border with an inlaid title:  ╭─ ? Run shell command ──────╮
+  // Truncate the title so the border keeps ≥4 trailing dashes and never overflows.
+  const titleStr = truncate(title, Math.max(6, boxW - 11));
+  const titleW = 2 + visLen(titleStr); // "? " + title (visible width)
+  const dashes = Math.max(4, boxW - 5 - titleW);
+  const top = `${PAD}${line("╭─")} ${warn("?")} ${bold(warn(titleStr))} ${line("─".repeat(dashes) + "╮")}`;
+
+  const shown = truncate(body, innerW);
+  const fill = Math.max(0, innerW - visLen(shown));
+  const mid = `${PAD}${line("│")} ${text(shown)}${" ".repeat(fill)} ${line("│")}`;
+  const bot = `${PAD}${line("╰" + "─".repeat(boxW - 2) + "╯")}`;
+
+  // Caret parks on the default action ("enter") two cols into the keys line.
+  return {
+    lines: ["", top, mid, bot, permissionKeys(PAD + "  ", "      ")],
+    caretRow: 4,
+    caretCol: 4,
+  };
+}
+
+// ─── List picker overlay (TUI: /model) ───
 
 export interface PickerItem {
   label: string;
@@ -138,7 +265,8 @@ export function renderSlashPalette(items: SlashItem[], selected: number, width: 
   const MAX = 8;
   const sel = Math.max(0, Math.min(selected, items.length - 1));
   let start = 0;
-  if (items.length > MAX) start = Math.min(Math.max(0, sel - Math.floor(MAX / 2)), items.length - MAX);
+  if (items.length > MAX)
+    start = Math.min(Math.max(0, sel - Math.floor(MAX / 2)), items.length - MAX);
   const view = items.slice(start, start + MAX);
   const nameW = Math.min(18, Math.max(...view.map((it) => it.name.length)));
   const descMax = Math.max(8, width - nameW - 8);
@@ -165,10 +293,16 @@ export interface KeyRow {
   masked: string;
   /** Where the key came from. */
   source: "saved" | "env" | "none";
+  /** Usable now (has a key, or a configured/active local runtime). */
+  hasKey?: boolean;
   /** Toggled off (key kept but excluded). */
   disabled: boolean;
   /** The session's active provider. */
   active: boolean;
+  /** A local runtime (ollama / lmstudio) reached by base URL, no key. */
+  local?: boolean;
+  /** Resolved base URL for a local runtime (shown in place of a key). */
+  endpoint?: string;
 }
 
 /**
@@ -187,32 +321,196 @@ export function renderKeysPanel(rows: KeyRow[], selected: number, width: number)
 
   rows.forEach((r, i) => {
     const on = i === sel;
-    const hasKey = r.source !== "none";
+    // Local runtimes are usable without a key; treat a configured/active one as "ready".
+    const ready = r.local ? !!r.hasKey : r.source !== "none";
     const marker = on ? accent("❯") : " ";
-    const dot = r.disabled
-      ? faint("○")
-      : r.active
-        ? ok("●")
-        : hasKey
-          ? info("●")
-          : faint("○");
+    const dot = r.disabled ? faint("○") : r.active ? ok("●") : ready ? info("●") : faint("○");
     const name = (on ? text : muted)(r.label.padEnd(labelW));
-    const keyCell =
-      r.source === "none"
+    const keyCell = r.local
+      ? faint(truncate(r.endpoint || "—", keyW).padEnd(keyW))
+      : r.source === "none"
         ? faint("not set".padEnd(keyW))
         : text(truncate(r.masked || "set", keyW).padEnd(keyW));
-    const srcCell =
-      r.source === "saved"
+    const srcCell = r.local
+      ? faint("local".padEnd(6))
+      : r.source === "saved"
         ? faint("saved".padEnd(6))
         : r.source === "env"
           ? faint("env".padEnd(6))
           : faint(" ".repeat(6));
-    const toggle = r.disabled ? warn("off") : hasKey ? ok("on") : faint("·");
+    const toggle = r.disabled ? warn("off") : ready ? ok("on") : faint("·");
     lines.push(`${PAD}${marker} ${dot} ${name} ${keyCell} ${srcCell} ${toggle}`);
   });
 
   lines.push(`${PAD}${faint("↑↓ move · enter edit · space on/off · d clear · esc close")}`);
   return { lines, caretRow: sel + 1, caretCol: 0 };
+}
+
+// ─── System Memory panel (TUI: `/memory`) ───
+
+export interface MemoryPanelView {
+  /** The profile markdown (may be empty). */
+  content: string;
+  /** Human cadence label, e.g. "weekly", "manual". */
+  scheduleLabel: string;
+  tokens: number;
+  maxTokens: number;
+  /** Relative time of the last automatic refresh, or "never". */
+  lastDreamed: string;
+  /** A refresh ("dream") is running right now. */
+  busy: boolean;
+  /** A transient status note (e.g. "refreshed · ~120 tokens"). */
+  note?: string;
+  /** Clear is armed for a confirming second press. */
+  pendingClear: boolean;
+}
+
+/** Number of selectable actions in the memory panel (refresh/cadence/add/edit/clear). */
+export const MEMORY_ACTION_COUNT = 5;
+
+/**
+ * The `/memory` panel: the evergreen profile with a row of single-key actions
+ * (refresh / cadence / add note / edit / clear). Mirrors the keys + picker panels;
+ * a leading `❯` marks the selected action and the caret parks on it.
+ */
+export function renderMemoryPanel(
+  v: MemoryPanelView,
+  selected: number,
+  width: number,
+): RenderedBlock {
+  const sel = Math.max(0, Math.min(selected, MEMORY_ACTION_COUNT - 1));
+  const innerW = Math.max(20, width - 6);
+  const lines: string[] = [];
+
+  lines.push(
+    `${PAD}${bold(text("System memory"))}   ${faint("a guide Alan tailors to — it never overrides what you ask")}`,
+  );
+  const empty = !v.content.trim();
+  lines.push(
+    `${PAD}${faint(
+      empty
+        ? `empty · auto-update ${v.scheduleLabel}`
+        : `~${v.tokens}/${v.maxTokens} tokens · auto-update ${v.scheduleLabel} · dreamed ${v.lastDreamed}`,
+    )}`,
+  );
+  lines.push("");
+
+  if (empty) {
+    lines.push(`${PAD}${muted("Alan hasn't learned about you yet.")}`);
+    lines.push(
+      `${PAD}${faint("Refresh to learn from recent sessions, add a note, or write it yourself.")}`,
+    );
+  } else {
+    const body = v.content.split("\n");
+    const MAX = 10;
+    for (const ln of body.slice(0, MAX)) lines.push(`${PAD}${faint(truncate(ln, innerW))}`);
+    if (body.length > MAX) {
+      lines.push(`${PAD}${faint(`…(+${body.length - MAX} more lines · edit to see all)`)}`);
+    }
+  }
+  lines.push("");
+
+  const actionStart = lines.length;
+  const row = (i: number, label: string, hint: string) => {
+    const on = i === sel;
+    const marker = on ? accent("❯") : " ";
+    const lab = on ? text(label) : muted(label);
+    lines.push(`${PAD}${marker} ${lab}${hint ? "   " + faint(hint) : ""}`);
+  };
+  row(0, "Refresh now", v.busy ? "dreaming…" : "learn from your recent sessions");
+  row(1, `Auto-update: ${v.scheduleLabel}`, "↵ cycles manual · daily · 3d · weekly");
+  row(2, "Add a note", "jot a quick fact about you");
+  row(3, "Edit in your editor", "open the full profile in $EDITOR");
+  row(
+    4,
+    v.pendingClear ? "Clear — press again to confirm" : "Clear",
+    v.pendingClear ? "" : "wipe the profile (keeps your cadence)",
+  );
+
+  if (v.busy) lines.push(`${PAD}${ok("✦")} ${muted("dreaming — distilling your profile…")}`);
+  else if (v.note) lines.push(`${PAD}${ok("✓")} ${muted(v.note)}`);
+  lines.push(
+    `${PAD}${faint("↑↓ move · enter choose · r refresh · c cadence · a add · e edit · x clear · esc close")}`,
+  );
+
+  return { lines, caretRow: actionStart + sel, caretCol: 0 };
+}
+
+// ─── Sessions manager panel (TUI: `/sessions`) ───
+
+export interface SessionRowView {
+  /** Resolved display title (already falls back to "untitled"). */
+  title: string;
+  /** Pre-rendered meta line, e.g. "2h ago · 14 msgs · qwen3-coder:480b". */
+  meta: string;
+  /** The session currently loaded in this window. */
+  current: boolean;
+}
+
+/**
+ * The `/sessions` manager: every stored conversation with a status dot, its
+ * title and a meta line (age · message count · model). A leading `❯` marks the
+ * selection; the active session gets a filled dot. Windows around the selection
+ * so a long history never overruns the viewport. Returns a RenderedBlock so the
+ * TUI can pin it like the picker.
+ */
+export function renderSessionsPanel(
+  rows: SessionRowView[],
+  selected: number,
+  opts: { view: "active" | "archived"; pendingDelete: boolean },
+  width: number,
+): RenderedBlock {
+  const heading =
+    opts.view === "archived"
+      ? `${bold(text("Sessions"))}  ${faint("· archived")}`
+      : `${bold(text("Sessions"))}`;
+
+  if (rows.length === 0) {
+    const empty =
+      opts.view === "archived" ? "No archived sessions." : "No sessions yet — start chatting.";
+    return {
+      lines: [
+        `${PAD}${heading}`,
+        `${PAD}${faint(empty)}`,
+        `${PAD}${faint("tab toggle active/archived · esc close")}`,
+      ],
+      caretRow: 1,
+      caretCol: 0,
+    };
+  }
+
+  const MAX = 12;
+  const sel = Math.max(0, Math.min(selected, rows.length - 1));
+  let start = 0;
+  if (rows.length > MAX)
+    start = Math.min(Math.max(0, sel - Math.floor(MAX / 2)), rows.length - MAX);
+  const view = rows.slice(start, start + MAX);
+
+  const titleW = Math.min(42, Math.max(16, ...view.map((r) => stripAnsi(r.title).length)));
+
+  const lines: string[] = [`${PAD}${heading}   ${faint(`${rows.length} total`)}`];
+  view.forEach((r, i) => {
+    const idx = start + i;
+    const on = idx === sel;
+    const marker = on ? accent("❯") : " ";
+    const dot = r.current ? ok("●") : faint("○");
+    const titleCell = (on ? text : muted)(truncate(r.title, titleW).padEnd(titleW));
+    const meta = faint(truncate(r.meta, Math.max(12, width - titleW - 12)));
+    lines.push(`${PAD}${marker} ${dot} ${titleCell}  ${meta}`);
+  });
+  if (rows.length > MAX) {
+    lines.push(`${PAD}  ${faint(`showing ${start + 1}–${start + view.length} of ${rows.length}`)}`);
+  }
+
+  const hint = opts.pendingDelete
+    ? `${warn("press d again to delete")} ${faint("·")} ${faint("esc cancels")}`
+    : opts.view === "archived"
+      ? `${faint("↑↓ move · ↵ resume · u restore · d delete · tab active · esc close")}`
+      : `${faint("↑↓ move · ↵ resume · r rename · a archive · d delete · tab archived · esc close")}`;
+  lines.push(`${PAD}${hint}`);
+
+  // Park the caret on the selected visible row (header offsets it by one).
+  return { lines, caretRow: sel - start + 1, caretCol: 0 };
 }
 
 export interface KeyEditorState {

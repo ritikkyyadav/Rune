@@ -7,6 +7,7 @@ import type {
   ToolDefinition,
 } from "@alan/llm-gateway";
 import { LlmGateway } from "@alan/llm-gateway";
+import { parseToolArguments } from "@alan/shared";
 import type { Plan, Step } from "./types";
 
 // ─── Plan Tool Definitions ───
@@ -167,8 +168,8 @@ export class Planner {
     const planCall = pendingToolCalls.find((tc) => tc.toolName === "create_plan");
 
     if (planCall) {
-      const args = JSON.parse(planCall.argsJson || "{}");
-      const plan = this.buildPlan(args.steps ?? []);
+      const args = parseToolArguments(planCall.argsJson);
+      const plan = this.buildPlan((args.steps as Parameters<typeof this.buildPlan>[0]) ?? []);
       yield { type: "plan_created", plan };
       yield { type: "done", hadPlan: true };
       return;
@@ -180,7 +181,7 @@ export class Planner {
         type: "tool_call",
         toolName: tc.toolName,
         callId: tc.callId,
-        args: JSON.parse(tc.argsJson || "{}"),
+        args: parseToolArguments(tc.argsJson),
       };
     }
 
@@ -241,9 +242,9 @@ Use the update_plan tool to create a revised plan that accounts for this failure
 
     const updateCall = pendingToolCalls.find((tc) => tc.toolName === "update_plan");
     if (updateCall) {
-      const args = JSON.parse(updateCall.argsJson || "{}");
-      const plan = this.buildPlan(args.steps ?? []);
-      yield { type: "plan_updated", plan, reason: args.reason ?? "" };
+      const args = parseToolArguments(updateCall.argsJson);
+      const plan = this.buildPlan((args.steps as Parameters<typeof this.buildPlan>[0]) ?? []);
+      yield { type: "plan_updated", plan, reason: (args.reason as string) ?? "" };
     }
 
     yield { type: "done", hadPlan: !!updateCall };

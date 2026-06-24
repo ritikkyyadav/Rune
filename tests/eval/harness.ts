@@ -46,7 +46,30 @@ export interface TaskResult {
   turns: number;
   model?: string;
   provider?: string;
+  /**
+   * True when the run was defeated by a provider rate/usage limit (429, quota,
+   * "session usage limit") rather than a genuine capability miss. These are
+   * EXCLUDED from the clean pass-rate so throttle noise can't masquerade as
+   * failure — the exact contamination that poisoned the free-tier floor.
+   */
+  throttled?: boolean;
+  /** Raw provider error messages captured from the stream (diagnostics). */
+  errors?: string[];
+  /** How many attempts ran (1 = no retry needed). */
+  attempts?: number;
 }
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** A provider error that means "slow down / out of quota", not "wrong answer". */
+function isThrottleError(msg: string): boolean {
+  return /rate.?limit|usage limit|429|throttl|quota|too many requests|no credits/i.test(msg);
+}
+
+/** Real-mode retry/pacing knobs (env-overridable). */
+const MAX_ATTEMPTS = Math.max(1, Number(process.env.ALAN_EVAL_MAX_RETRIES ?? 3));
+const RETRY_BASE_MS = Math.max(0, Number(process.env.ALAN_EVAL_RETRY_BASE_MS ?? 4000));
+const TASK_DELAY_MS = Math.max(0, Number(process.env.ALAN_EVAL_TASK_DELAY_MS ?? 1500));
 
 const TOOLS_BINARY =
   process.env.ALAN_TOOLS_BINARY ?? join(__dirname, "..", "..", "target", "release", "alan-tools");
@@ -72,13 +95,8 @@ export async function runTask(
   opts: RunOptions = {},
 ): Promise<TaskResult> {
   const real = opts.real ?? IS_REAL_MODE;
-  const start = performance.now();
-  const tmpRoot = await mkdtemp(join(tmpdir(), "alan-eval-"));
-  const workspace = join(tmpRoot, "workspace");
-  await mkdir(workspace, { recursive: true });
-  const dbPath = join(tmpRoot, "alan.db");
 
-  // In mock mode, a deterministic script is required.
+  // Mock mode needs a deterministic script; fail fast without spinning up.
   if (!real && !task.script) {
     return {
       name: task.name,
@@ -88,18 +106,51 @@ export async function runTask(
       durationMs: 0,
       cost: 0,
       turns: 0,
+      attempts: 0,
     };
   }
+
+  // Retry loop: a run defeated purely by a provider rate/usage limit did no real
+  // work, so re-run it (fresh workspace) after a backoff. Genuine pass/fail
+  // returns immediately. Only --real runs retry — mock is deterministic.
+  const maxAttempts = real ? MAX_ATTEMPTS : 1;
+  let last: TaskResult | null = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const result = await attemptTask(task, opts, real);
+    result.attempts = attempt;
+    last = result;
+    if (!result.throttled) break; // genuine pass/fail — done
+    if (attempt < maxAttempts) {
+      // Exponential backoff; session/usage limits need real cool-down time.
+      const wait = RETRY_BASE_MS * 2 ** (attempt - 1);
+      await sleep(wait);
+    }
+  }
+  return last!;
+}
+
+/** One full attempt at a task: fresh workspace, engine, chat, verify. */
+async function attemptTask(
+  task: EvalTask,
+  opts: RunOptions,
+  real: boolean,
+): Promise<TaskResult> {
+  const start = performance.now();
+  const tmpRoot = await mkdtemp(join(tmpdir(), "alan-eval-"));
+  const workspace = join(tmpRoot, "workspace");
+  await mkdir(workspace, { recursive: true });
+  const dbPath = join(tmpRoot, "alan.db");
+
+  const provider =
+    opts.provider ?? process.env.ALAN_EVAL_PROVIDER ?? process.env.ALAN_PROVIDER ?? "anthropic";
+  const model =
+    opts.model ?? process.env.ALAN_EVAL_MODEL ?? process.env.ALAN_MODEL ?? "mock-model";
+  const errors: string[] = [];
 
   try {
     if (task.setup) {
       await task.setup({ workspace });
     }
-
-    const provider =
-      opts.provider ?? process.env.ALAN_EVAL_PROVIDER ?? process.env.ALAN_PROVIDER ?? "anthropic";
-    const model =
-      opts.model ?? process.env.ALAN_EVAL_MODEL ?? process.env.ALAN_MODEL ?? "mock-model";
 
     const engine = new Engine({
       model: real ? model : "mock-model",
@@ -138,12 +189,14 @@ export async function runTask(
 
     for (const prompt of task.prompts) {
       // Drain the chat generator. Count one turn per agent round-trip
-      // (turn_complete) and accumulate streamed assistant text so verify()
-      // can judge a real model's answer by content.
+      // (turn_complete), accumulate streamed assistant text so verify() can
+      // judge by content, and capture provider error events so a throttle
+      // surfaces as the real reason instead of a misleading verify message.
       for await (const event of engine.chat(sessionId, prompt)) {
         const ev = event as any;
         if (ev.type === "turn_complete") turns++;
         if (ev.type === "text_delta" && typeof ev.text === "string") finalText += ev.text;
+        if (ev.type === "error" && typeof ev.error === "string") errors.push(ev.error);
       }
     }
 
@@ -161,28 +214,42 @@ export async function runTask(
 
     engine.close();
 
+    // A run that produced no completed turn AND hit a throttle error is
+    // throttle-contaminated, not a measured failure. Surface the real cause.
+    const throttled =
+      !verifyResult.pass && turns === 0 && errors.some(isThrottleError);
+    const reason = throttled
+      ? `rate-limited: ${errors.find(isThrottleError)}`
+      : verifyResult.reason;
+
     return {
       name: task.name,
       category: task.category,
       pass: verifyResult.pass,
-      reason: verifyResult.reason,
+      reason,
       durationMs: Math.round(performance.now() - start),
       cost,
       turns,
       model: real ? model : "mock-model",
       provider: real ? provider : "mock",
+      throttled,
+      errors: errors.length ? errors : undefined,
     };
   } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    errors.push(msg);
     return {
       name: task.name,
       category: task.category,
       pass: false,
-      reason: err instanceof Error ? err.message : String(err),
+      reason: msg,
       durationMs: Math.round(performance.now() - start),
       cost: 0,
       turns: 0,
-      model: opts.model,
-      provider: opts.provider,
+      model: real ? model : undefined,
+      provider: real ? provider : undefined,
+      throttled: isThrottleError(msg),
+      errors,
     };
   } finally {
     await rm(tmpRoot, { recursive: true, force: true });
@@ -190,24 +257,36 @@ export async function runTask(
 }
 
 export async function runSuite(tasks: EvalTask[], opts: RunOptions = {}): Promise<TaskResult[]> {
+  const real = opts.real ?? IS_REAL_MODE;
   const results: TaskResult[] = [];
-  for (const task of tasks) {
-    const result = await runTask(task, opts);
+  for (let i = 0; i < tasks.length; i++) {
+    const result = await runTask(tasks[i], opts);
     results.push(result);
     printResult(result);
+    // Pace real runs to avoid tripping per-minute provider limits mid-suite —
+    // the failure mode that contaminated the first floor run.
+    if (real && TASK_DELAY_MS > 0 && i < tasks.length - 1) {
+      await sleep(TASK_DELAY_MS);
+    }
   }
   return results;
 }
 
 function printResult(r: TaskResult): void {
-  const mark = r.pass ? "\x1b[32m✓\x1b[0m" : "\x1b[31m✗\x1b[0m";
+  // Throttled runs get a distinct ⚠ marker so they read as "not measured",
+  // never as a capability failure.
+  const mark = r.pass
+    ? "\x1b[32m✓\x1b[0m"
+    : r.throttled
+      ? "\x1b[33m⚠\x1b[0m"
+      : "\x1b[31m✗\x1b[0m";
   const time = `\x1b[2m${r.durationMs}ms\x1b[0m`;
+  const retry = (r.attempts ?? 1) > 1 ? `\x1b[2m ×${r.attempts}\x1b[0m` : "";
   const tag = `\x1b[2m${r.name}\x1b[0m`;
-  if (r.pass) {
-    console.log(`  ${mark} ${tag} ${time}`);
-  } else {
-    console.log(`  ${mark} ${tag} ${time}`);
-    console.log(`     \x1b[31mreason:\x1b[0m ${r.reason ?? "(unspecified)"}`);
+  console.log(`  ${mark} ${tag} ${time}${retry}`);
+  if (!r.pass) {
+    const label = r.throttled ? "\x1b[33mthrottled:\x1b[0m" : "\x1b[31mreason:\x1b[0m";
+    console.log(`     ${label} ${r.reason ?? "(unspecified)"}`);
   }
 }
 

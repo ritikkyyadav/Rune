@@ -23,6 +23,21 @@ const DEFAULT_BUDGET: ContextBudget = {
   retrievalRatio: 0.2,
 };
 
+// Safe, cheap default model per provider for the summary fallback path (used
+// only when the active provider can't be reached). Keep to broadly-available,
+// inexpensive models so a fallback summary never trips a subscription gate.
+const SUMMARY_FALLBACK_MODELS: Partial<Record<ProviderName, string>> = {
+  anthropic: "claude-haiku-4-5-20251001",
+  openai: "gpt-4o-mini",
+  google: "gemini-2.5-flash",
+  openrouter: "qwen/qwen3-coder:free",
+  groq: "llama-3.3-70b-versatile",
+  xai: "grok-2-latest",
+  deepseek: "deepseek-chat",
+  "ollama-turbo": "qwen3-coder:480b",
+  ollama: "llama3",
+};
+
 // ─── Context Items ───
 
 export type ContextItemKind =
@@ -118,6 +133,27 @@ export class ContextEngine {
     this.summarizerModel = config.summarizerModel ?? "claude-haiku-4-5-20251001";
     this.summarizerProvider = config.summarizerProvider ?? "anthropic";
     this.tokenCounter = new TokenCounter();
+  }
+
+  /**
+   * Point summarization at a specific provider/model — normally the active
+   * session model, which is guaranteed registered and working. Without this the
+   * summarizer falls back to its anthropic/claude-haiku default and fails for
+   * everyone without an Anthropic key (the root cause of "/compress does
+   * nothing"). The Engine calls this whenever the model or provider changes.
+   */
+  setSummarizer(model: string, provider: ProviderName): void {
+    if (model) this.summarizerModel = model;
+    if (provider) this.summarizerProvider = provider;
+  }
+
+  /**
+   * Refresh the gateway reference. The Engine rebuilds its gateway on every key
+   * edit / provider toggle, which would otherwise leave this holding a stale one
+   * (so a freshly added key never reaches the summarizer).
+   */
+  setGateway(gateway: LlmGateway): void {
+    this.gateway = gateway;
   }
 
   // ─── Pinned Files ───
@@ -480,34 +516,51 @@ export class ContextEngine {
 - Actions taken (files read, edited, commands run)
 - Outcomes and current state${focus}`;
 
-    try {
-      const response = await this.gateway.infer({
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: `${instructionText}
+    const userText = `${instructionText}\n\nConversation:\n${transcript}`;
 
-Conversation:
-${transcript}`,
-              },
-            ],
-          },
-        ],
-        system,
-        model: this.summarizerModel,
-        provider: this.summarizerProvider,
-        maxTokens: comprehensive ? 1500 : 500,
-        stream: false,
-      });
-
-      const textBlock = response.content.find((b) => b.type === "text");
-      return textBlock && textBlock.type === "text" ? textBlock.text : null;
-    } catch {
-      return null;
+    // Try the active provider/model first, then any other registered provider.
+    // `infer` (non-streaming) does no cross-provider fallback of its own, so if
+    // the summarizer's provider is momentarily unavailable we walk the rest
+    // ourselves rather than failing the whole compaction.
+    for (const { provider, model } of this.summarizerCandidates()) {
+      try {
+        const response = await this.gateway.infer({
+          messages: [{ role: "user", content: [{ type: "text", text: userText }] }],
+          system,
+          model,
+          provider,
+          maxTokens: comprehensive ? 1500 : 500,
+          stream: false,
+        });
+        const textBlock = response.content.find((b) => b.type === "text");
+        const out = textBlock && textBlock.type === "text" ? textBlock.text.trim() : "";
+        if (out) return out;
+      } catch {
+        // Provider not registered / transient failure — try the next candidate.
+      }
     }
+    return null;
+  }
+
+  /**
+   * Ordered provider/model pairs to attempt for summarization: the configured
+   * (active) one first, then every other registered provider with a safe default
+   * model. Defensive — in normal use the first candidate is the active session
+   * model and succeeds immediately.
+   */
+  private summarizerCandidates(): Array<{ provider: ProviderName; model: string }> {
+    const candidates: Array<{ provider: ProviderName; model: string }> = [
+      { provider: this.summarizerProvider, model: this.summarizerModel },
+    ];
+    const registered = this.gateway.getRegisteredProviderNames?.() ?? [];
+    for (const name of registered) {
+      if (name === this.summarizerProvider) continue;
+      candidates.push({
+        provider: name,
+        model: SUMMARY_FALLBACK_MODELS[name] ?? this.summarizerModel,
+      });
+    }
+    return candidates;
   }
 
   getMemory(): SessionMemory {

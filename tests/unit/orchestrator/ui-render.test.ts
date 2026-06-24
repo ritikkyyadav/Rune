@@ -43,7 +43,7 @@ describe("ui/render primitives", () => {
     const rows = [
       `${faint(">_")} ${text("Alan")}  ${muted("(v0.1.0)")}`,
       "",
-      `${muted("Model".padEnd(12))}  ${info("gemini-2.5-flash")}  ${faint("(effort: high)")}`,
+      `${muted("Model".padEnd(12))}  ${info("gemini-2.5-flash")}`,
       `${muted("Permissions".padEnd(12))}  ${text("confirm · on-request")}`,
       `${muted("Session".padEnd(12))}  ${text("019e78aa")}`,
       `${muted("Cost".padEnd(12))}  ${text("$0.0234")}`,

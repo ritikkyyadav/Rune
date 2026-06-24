@@ -1,5 +1,7 @@
+import { type Logger, createLogger } from "@alan/shared";
 import { McpClient } from "./client";
 import type { ToolHandler } from "../types";
+import type { McpEvent, McpServerInfo } from "./types";
 
 // ─── MCP Config Format ───
 // Loaded from .alan/mcp.json in the workspace root. Supports local subprocess
@@ -30,20 +32,42 @@ interface McpConfigFile {
   mcpServers?: Record<string, McpServerConfig>;
 }
 
-/** Replace `${VAR}` tokens with process.env values so tokens aren't committed. */
-function interpolateEnv<T>(value: T): T {
+export interface McpDiscoveryOptions {
+  logger?: Logger;
+  /** Typed lifecycle/observability sink, forwarded to every client. */
+  onEvent?: (ev: McpEvent) => void;
+  /** Fired after any server's tool set changes (live update / restart). The owner
+   *  should reconcile its registry against `getHandlers()`. */
+  onToolsChanged?: () => void;
+}
+
+export interface McpServerStatus {
+  name: string;
+  ready: boolean;
+  kind: "stdio" | "http";
+  toolCount: number;
+  tools: string[];
+  health: "healthy" | "degraded" | "down";
+  protocolVersion?: string;
+  serverInfo?: McpServerInfo;
+  lastError?: string | null;
+}
+
+/** Replace `${VAR}` tokens with process.env values, tracking any that are unset
+ *  so we can warn (an empty Authorization header is worse than a loud failure). */
+function interpolateEnv<T>(value: T, missing: Set<string>): T {
   if (typeof value === "string") {
-    return value.replace(
-      /\$\{([A-Za-z0-9_]+)\}/g,
-      (_, name) => process.env[name] ?? "",
-    ) as unknown as T;
+    return value.replace(/\$\{([A-Za-z0-9_]+)\}/g, (_, name: string) => {
+      if (process.env[name] === undefined) missing.add(name);
+      return process.env[name] ?? "";
+    }) as unknown as T;
   }
   if (Array.isArray(value)) {
-    return value.map((v) => interpolateEnv(v)) as unknown as T;
+    return value.map((v) => interpolateEnv(v, missing)) as unknown as T;
   }
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value)) out[k] = interpolateEnv(v);
+    for (const [k, v] of Object.entries(value)) out[k] = interpolateEnv(v, missing);
     return out as unknown as T;
   }
   return value;
@@ -59,27 +83,71 @@ function makeAutoApprove(auto?: boolean | string[]): ((toolName: string) => bool
   return undefined;
 }
 
-export class McpDiscovery {
-  private clients: Map<string, McpClient> = new Map();
-  private configPath: string;
+/** Validate one server entry. Returns an error string, or null if valid. */
+function validateServer(c: McpServerConfig): string | null {
+  const hasCmd = typeof c.command === "string" && c.command.length > 0;
+  const hasUrl = typeof c.url === "string" && c.url.length > 0;
+  if (!hasCmd && !hasUrl) return 'must specify either "command" (stdio) or "url" (http)';
+  if (hasCmd && hasUrl) return 'specify only one of "command" or "url"';
+  if (c.type && c.type !== "stdio" && c.type !== "http") return `invalid type "${c.type}"`;
+  return null;
+}
 
-  constructor(workspaceRoot: string) {
+/** Sanitize a tool name to the provider-safe charset and length. */
+function sanitizeName(name: string): string {
+  const s = name.replace(/[^a-zA-Z0-9_-]/g, "_");
+  return s.length > 64 ? s.slice(0, 64) : s;
+}
+
+export class McpDiscovery {
+  private clients: Map<string, { client: McpClient; autoApprove?: (n: string) => boolean }> =
+    new Map();
+  private configPath: string;
+  private options: McpDiscoveryOptions;
+  private logger: Logger;
+
+  // Final (sanitized, namespaced) handler set, with owner tracking for diffs.
+  private handlers: Map<string, ToolHandler> = new Map();
+  private handlerOwner: Map<string, string> = new Map();
+  // Per-server errors (config-invalid or failed-to-start servers have no client).
+  private serverErrors: Map<string, { error: string; kind: "stdio" | "http" }> = new Map();
+
+  constructor(workspaceRoot: string, options: McpDiscoveryOptions = {}) {
     this.configPath = `${workspaceRoot}/.alan/mcp.json`;
+    this.options = options;
+    this.logger = options.logger ?? createLogger("mcp");
   }
 
   /**
    * Load the MCP config, start all configured servers, and return tool handlers
-   * for every discovered tool. A server that fails to start is logged and
-   * skipped — it never breaks the others or the session.
+   * for every discovered tool. A server that fails to start (or is misconfigured)
+   * is recorded with a `lastError` and skipped — it never breaks the others or
+   * the session.
    */
   async discover(): Promise<ToolHandler[]> {
-    const config = await this.loadConfig();
+    const { config, error } = await this.loadConfig();
+    if (error) this.logger.error(`mcp.json: ${error}`);
     if (!config?.mcpServers) return [];
 
-    const handlers: ToolHandler[] = [];
     for (const [name, raw] of Object.entries(config.mcpServers)) {
-      const serverConfig = interpolateEnv(raw);
+      const missing = new Set<string>();
+      const serverConfig = interpolateEnv(raw, missing);
+      if (missing.size > 0) {
+        this.logger.warn(`server "${name}": unset env var(s) ${[...missing].join(", ")}`);
+      }
+
+      const kind: "stdio" | "http" =
+        serverConfig.type === "http" || serverConfig.url ? "http" : "stdio";
+
+      const invalid = validateServer(serverConfig);
+      if (invalid) {
+        this.serverErrors.set(name, { error: invalid, kind });
+        this.logger.error(`server "${name}" misconfigured: ${invalid}`);
+        continue;
+      }
+
       try {
+        const autoApprove = makeAutoApprove(serverConfig.autoApprove);
         const client = new McpClient({
           name,
           type: serverConfig.type,
@@ -88,20 +156,65 @@ export class McpDiscovery {
           env: serverConfig.env,
           url: serverConfig.url,
           headers: serverConfig.headers,
+          logger: this.logger,
+          onEvent: this.options.onEvent,
+          onToolsChanged: () => this.handleServerToolsChanged(name),
         });
 
         await client.start();
-        this.clients.set(name, client);
+        this.clients.set(name, { client, autoApprove });
+        this.serverErrors.delete(name);
         client.startHealthChecks();
-
-        handlers.push(...client.toToolHandlers(makeAutoApprove(serverConfig.autoApprove)));
+        this.reindexServer(name, client, autoApprove);
       } catch (err) {
-        console.error(
-          `[MCP] Failed to start server "${name}": ${err instanceof Error ? err.message : err}`,
-        );
+        const msg = err instanceof Error ? err.message : String(err);
+        this.serverErrors.set(name, { error: msg, kind });
+        this.logger.error(`failed to start server "${name}": ${msg}`);
+        this.options.onEvent?.({ type: "server-down", server: name, reason: msg });
       }
     }
-    return handlers;
+    return this.getHandlers();
+  }
+
+  /** Rebuild one server's handlers, sanitizing names and disambiguating collisions
+   *  across all servers. Replaces any previously-registered handlers for it. */
+  private reindexServer(
+    serverName: string,
+    client: McpClient,
+    autoApprove?: (n: string) => boolean,
+  ): void {
+    // Drop this server's previous entries first so a shrunk tool list is reflected.
+    for (const [n, owner] of [...this.handlerOwner]) {
+      if (owner === serverName) {
+        this.handlers.delete(n);
+        this.handlerOwner.delete(n);
+      }
+    }
+    for (const h of client.toToolHandlers(autoApprove)) {
+      const base = sanitizeName(h.schema.name);
+      let name = base;
+      if (this.handlers.has(name)) {
+        let i = 2;
+        while (this.handlers.has(`${base}_${i}`)) i++;
+        name = `${base}_${i}`;
+        this.logger.warn(`tool name collision for "${base}" — registered as "${name}"`);
+      }
+      if (name !== h.schema.name) h.schema.name = name;
+      this.handlers.set(name, h);
+      this.handlerOwner.set(name, serverName);
+    }
+  }
+
+  private handleServerToolsChanged(serverName: string): void {
+    const entry = this.clients.get(serverName);
+    if (!entry) return;
+    this.reindexServer(serverName, entry.client, entry.autoApprove);
+    this.options.onToolsChanged?.();
+  }
+
+  /** Current full handler set across all live servers. */
+  getHandlers(): ToolHandler[] {
+    return [...this.handlers.values()];
   }
 
   /** Reload config and restart all servers. */
@@ -112,39 +225,63 @@ export class McpDiscovery {
 
   /** Stop all MCP servers. */
   async stopAll(): Promise<void> {
-    for (const [, client] of this.clients) {
+    for (const [, { client }] of this.clients) {
       await client.stop();
     }
     this.clients.clear();
+    this.handlers.clear();
+    this.handlerOwner.clear();
+    this.serverErrors.clear();
   }
 
   /** Per-server status for the `/mcp` command and `/status`. */
-  getStatus(): Array<{
-    name: string;
-    ready: boolean;
-    kind: "stdio" | "http";
-    toolCount: number;
-    tools: string[];
-    health: "healthy" | "degraded" | "down";
-  }> {
-    return [...this.clients.entries()].map(([name, client]) => ({
-      name,
-      ready: client.isReady,
-      kind: client.kind,
-      toolCount: client.getTools().length,
-      tools: client.getTools().map((t) => t.name),
-      health: client.getServerHealth().status,
-    }));
+  getStatus(): McpServerStatus[] {
+    const out: McpServerStatus[] = [];
+    for (const [name, { client }] of this.clients) {
+      const info = client.getServerInfo();
+      out.push({
+        name,
+        ready: client.isReady,
+        kind: client.kind,
+        toolCount: client.getTools().length,
+        tools: client.getTools().map((t) => t.name),
+        health: client.getServerHealth().status,
+        protocolVersion: info.protocolVersion,
+        serverInfo: info.serverInfo,
+        lastError: info.lastError,
+      });
+    }
+    // Servers that never started (bad config / spawn failure) — surface them too.
+    for (const [name, { error, kind }] of this.serverErrors) {
+      if (this.clients.has(name)) continue;
+      out.push({
+        name,
+        ready: false,
+        kind,
+        toolCount: 0,
+        tools: [],
+        health: "down",
+        lastError: error,
+      });
+    }
+    return out;
   }
 
-  private async loadConfig(): Promise<McpConfigFile | null> {
+  private async loadConfig(): Promise<{ config: McpConfigFile | null; error?: string }> {
     try {
       const file = Bun.file(this.configPath);
-      if (!(await file.exists())) return null;
+      if (!(await file.exists())) return { config: null };
       const text = await file.text();
-      return JSON.parse(text) as McpConfigFile;
-    } catch {
-      return null;
+      try {
+        return { config: JSON.parse(text) as McpConfigFile };
+      } catch (e) {
+        return {
+          config: null,
+          error: `invalid JSON: ${e instanceof Error ? e.message : String(e)}`,
+        };
+      }
+    } catch (e) {
+      return { config: null, error: e instanceof Error ? e.message : String(e) };
     }
   }
 }

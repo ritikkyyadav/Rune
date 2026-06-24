@@ -9,6 +9,7 @@ import {
   setCustomEndpoint as persistCustom,
   clearCustomEndpoint as persistClearCustom,
   setProviderDisabled as persistDisabled,
+  setLocalEndpoint as persistLocalEndpoint,
   getPreset,
   PROVIDER_PRESETS,
   CUSTOM_PROVIDER_ID,
@@ -17,24 +18,30 @@ import {
   SEARCH_KEY_PRESETS,
   loadLastModel,
   saveLastModel,
+  getSystemMemoryPath,
 } from "@alan/shared";
 import { parseArgs } from "util";
 import * as readline from "readline";
 import { Spinner } from "./spinner";
 import { renderWelcome } from "./welcome";
 import { renderToolCall } from "./ui/tool-call";
+import { renderTranscript } from "./ui/activity";
 import { renderStatus } from "./ui/status";
-import { promptString, statusLine, composerRule, permissionModeBanner } from "./ui/composer";
+import {
+  promptString,
+  statusLine,
+  composerRule,
+  permissionModeBanner,
+  permissionView,
+} from "./ui/composer";
+import { formatNotice } from "./ui/events";
+import { truncate } from "./ui/render";
 import { runTui } from "./ui/tui";
 import { exportSession } from "../session-export";
 import { loadCommands, findCommand } from "../commands";
 import { isClarification } from "../research-types";
 import type { ResearchPlan, ResearchReport } from "../research-types";
-import {
-  renderResearchPlan,
-  renderClarifyingQuestions,
-  formatResearchEvent,
-} from "./ui/research";
+import { renderResearchPlan, renderClarifyingQuestions, formatResearchEvent } from "./ui/research";
 
 // ─── CLI Argument Parsing ───
 
@@ -50,13 +57,17 @@ const { values, positionals } = parseArgs({
     "planner-model": { type: "string" },
     "executor-model": { type: "string" },
     resume: { type: "string", short: "r" },
+    new: { type: "boolean", short: "n", default: false },
     list: { type: "boolean", short: "l", default: false },
+    all: { type: "boolean", default: false },
+    status: { type: "string" },
     format: { type: "string", default: "md" },
     sign: { type: "boolean", default: false },
     out: { type: "string" },
     help: { type: "boolean", short: "h", default: false },
     tui: { type: "boolean", default: false },
     classic: { type: "boolean", default: false },
+    fullscreen: { type: "boolean", default: false },
   },
   allowPositionals: true,
   strict: false,
@@ -70,8 +81,10 @@ if (values.help) {
   process.stdout.write(
     `\n  alan — AI coding agent\n\n` +
       `  Usage:\n` +
-      `    alan [chat]                  Start an interactive chat session\n` +
-      `    alan list                    List all stored sessions\n` +
+      `    alan [chat]                  Start chatting — offers to resume recent work (Enter = new)\n` +
+      `    alan --new                   Skip the picker and start a fresh session\n` +
+      `    alan resume [sessionId]      Resume a session (no id → interactive picker)\n` +
+      `    alan list [--all]            List stored sessions (--all includes archived)\n` +
       `    alan export <sessionId>      Export a session transcript\n\n` +
       `  Export options:\n` +
       `    --format md|json             Output format (default: md)\n` +
@@ -79,21 +92,30 @@ if (values.help) {
       `    --out <path>                 Write output to file instead of stdout\n\n` +
       `  Global options:\n` +
       `    -m, --model <model>          LLM model to use\n` +
-      `    -p, --provider <provider>    LLM provider (anthropic|openai|openrouter|google|ollama-turbo)\n` +
+      `    -p, --provider <provider>    LLM provider (anthropic|openai|openrouter|google|ollama-turbo|ollama|lmstudio)\n` +
       `    -w, --workspace <path>       Workspace root directory\n` +
       `    -r, --resume <sessionId>     Resume an existing session\n` +
+      `    -n, --new                    Start a fresh session (skip the resume picker)\n` +
       `    --yolo                       Start in Turing (bypass) mode — skip all permission prompts\n` +
       `    --trust                      Start in auto mode — approve in-workspace edits & bash (outside still prompts)\n` +
       `                                 (Shift+Tab cycles confirm → auto → Turing live; also /mode, /turing)\n` +
       `    --planner                    Enable planner+executor mode\n` +
       `    --classic                    Plain readline prompt (default is the pinned composer)\n` +
       `    --tui                        Force the Codex-style pinned composer\n` +
+      `    --fullscreen                 Alt-screen TUI (edge-to-edge theme bg; default is native scroll)\n` +
       `    -h, --help                   Show this help\n\n`,
   );
   process.exit(0);
 }
 
-type CliProvider = "anthropic" | "openai" | "openrouter" | "google" | "ollama-turbo";
+type CliProvider =
+  | "anthropic"
+  | "openai"
+  | "openrouter"
+  | "google"
+  | "ollama-turbo"
+  | "ollama"
+  | "lmstudio";
 
 const DEFAULT_MODELS: Record<CliProvider, string> = {
   anthropic: "claude-sonnet-4-20250514",
@@ -101,7 +123,12 @@ const DEFAULT_MODELS: Record<CliProvider, string> = {
   openrouter: "qwen/qwen3-coder:free",
   google: "gemini-2.5-flash",
   "ollama-turbo": "qwen3-coder:480b",
+  ollama: "llama3.1",
+  lmstudio: "local-model",
 };
+
+/** Local runtimes that need no API key — reached by base URL on this machine. */
+const LOCAL_PROVIDERS: ReadonlySet<string> = new Set(["ollama", "lmstudio"]);
 
 function isCliProvider(provider: string): provider is CliProvider {
   return (
@@ -109,7 +136,9 @@ function isCliProvider(provider: string): provider is CliProvider {
     provider === "openai" ||
     provider === "openrouter" ||
     provider === "google" ||
-    provider === "ollama-turbo"
+    provider === "ollama-turbo" ||
+    provider === "ollama" ||
+    provider === "lmstudio"
   );
 }
 
@@ -126,10 +155,28 @@ function configuredModelForProvider(
       return config.llm.openrouter?.model;
     case "google":
       return config.llm.google?.model;
+    case "ollama":
+      return config.llm.ollama?.model;
+    case "lmstudio":
+      return config.llm.lmstudio?.model;
     case "ollama-turbo":
       // No dedicated config.llm section; fall back to DEFAULT_MODELS / --model.
       return undefined;
   }
+}
+
+/** Merge local-runtime base URLs from config.toml + the secrets sidecar (secrets win). */
+function resolveLocalBaseUrls(
+  config: ReturnType<typeof loadConfig>,
+  secrets: ReturnType<typeof loadSecrets>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (config.llm.ollama?.baseUrl) out.ollama = config.llm.ollama.baseUrl;
+  if (config.llm.lmstudio?.baseUrl) out.lmstudio = config.llm.lmstudio.baseUrl;
+  for (const [id, url] of Object.entries(secrets.endpoints ?? {})) {
+    if (url) out[id] = url;
+  }
+  return out;
 }
 
 // ─── Resolve Tool Binary ───
@@ -188,6 +235,94 @@ import {
 } from "./colors";
 import { loadSavedTheme, resolveInitialTheme, saveTheme } from "./ui/theme-store";
 
+/** A compact "2h ago" style age for the session list and pickers. */
+function relTime(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "";
+  const s = Math.max(0, Math.floor((Date.now() - then) / 1000));
+  if (s < 45) return "just now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `${d}d ago`;
+  const w = Math.floor(d / 7);
+  if (w < 5) return `${w}w ago`;
+  const mo = Math.floor(d / 30);
+  if (mo < 12) return `${mo}mo ago`;
+  return `${Math.floor(d / 365)}y ago`;
+}
+
+/** Find a session by exact id or unique id-prefix, across every status. */
+function findSessionByIdish(engine: Engine, idish: string) {
+  const all = engine.listSessions({ status: "all" });
+  return all.find((s) => s.id === idish) ?? all.find((s) => s.id.startsWith(idish));
+}
+
+/** Resolve `alan resume <id>` / `--resume <id>` to a session, reconciling its model+provider. */
+function resolveResumeId(engine: Engine, idish: string): string {
+  const found = findSessionByIdish(engine, idish);
+  if (!found) {
+    process.stdout.write(
+      `  ${brass("⚠")} ${dim("no session matches")} ${text(idish)} ${dim("— starting a new one")}\n`,
+    );
+    return engine.createSession();
+  }
+  engine.resumeSession(found.id);
+  return found.id;
+}
+
+/** `alan resume` with no id: a numbered picker on a TTY, most-recent on a pipe. */
+async function pickSessionToResume(engine: Engine): Promise<string> {
+  const sessions = engine.listSessions();
+  if (sessions.length === 0) {
+    process.stdout.write(`  ${dim("No saved sessions — starting fresh.")}\n`);
+    return engine.createSession();
+  }
+  if (!process.stdin.isTTY) {
+    engine.resumeSession(sessions[0].id);
+    return sessions[0].id;
+  }
+  const top = sessions.slice(0, 15);
+  process.stdout.write(`\n  ${bold(text("Resume a session"))}\n\n`);
+  top.forEach((s, i) => {
+    const title = s.title?.trim() || "untitled";
+    process.stdout.write(
+      `    ${brass(String(i + 1).padStart(2))}  ${text(title)}\n` +
+        `        ${dim(`${relTime(s.updatedAt)} · ${s.eventCount} events · ${s.model}`)}\n`,
+    );
+  });
+  process.stdout.write(`\n  ${dim("Enter a number, or press Enter for a new session.")}\n`);
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await new Promise<string>((res) => rl.question(`  ${accent("›")} `, res));
+  rl.close();
+  const n = parseInt(answer.trim(), 10);
+  if (!answer.trim() || Number.isNaN(n) || n < 1 || n > top.length) {
+    return engine.createSession();
+  }
+  engine.resumeSession(top[n - 1].id);
+  return top[n - 1].id;
+}
+
+/** Resolve a `/resume`/`/delete`/`/archive` argument: a 1-based index into the active list, or an id-prefix. */
+function resolveSessionArg(engine: Engine, arg: string) {
+  const a = arg.trim();
+  if (/^\d+$/.test(a)) return engine.listSessions()[parseInt(a, 10) - 1];
+  return findSessionByIdish(engine, a);
+}
+
+/** Print a session's replayed history to stdout (classic path). Renders the same
+ *  ● thought-chain language as a live turn so a resumed session is faithful. */
+function printSessionTranscript(engine: Engine, id: string): void {
+  const lines = engine.getTranscript(id);
+  if (lines.length === 0) {
+    process.stdout.write(`  ${faint("(no earlier messages)")}\n`);
+    return;
+  }
+  process.stdout.write(renderTranscript(lines) + "\n");
+}
+
 /** Recolour the whole terminal (fg+bg) to the active theme — only on a real TTY. */
 function applyTerminalTheme(): void {
   if (process.stdout.isTTY) process.stdout.write(terminalThemeSeq());
@@ -241,17 +376,24 @@ async function main() {
 
   // Does a provider have working credentials — an env var, an [llm.*].apiKey, or a /keys secret?
   // ollama-turbo carries no [llm.*] section (its key lives in secrets.json / OLLAMA_API_KEY).
-  const providerEnvVar: Record<CliProvider, string> = {
+  const providerEnvVar: Partial<Record<CliProvider, string>> = {
     google: "GOOGLE_API_KEY",
     anthropic: "ANTHROPIC_API_KEY",
     openai: "OPENAI_API_KEY",
     openrouter: "OPENROUTER_API_KEY",
     "ollama-turbo": "OLLAMA_API_KEY",
   };
-  const hasCreds = (p: CliProvider): boolean =>
-    !!process.env[providerEnvVar[p]] ||
-    !!(p !== "ollama-turbo" && (config.llm[p] as { apiKey?: string } | undefined)?.apiKey) ||
-    !!secrets.keys[p];
+  const hasCreds = (p: CliProvider): boolean => {
+    // Local runtimes are keyless — always "available"; reachability of the
+    // localhost server is surfaced at call time, not gated here.
+    if (LOCAL_PROVIDERS.has(p)) return true;
+    const envVar = providerEnvVar[p];
+    return (
+      !!(envVar && process.env[envVar]) ||
+      !!(config.llm[p as keyof typeof config.llm] as { apiKey?: string } | undefined)?.apiKey ||
+      !!secrets.keys[p]
+    );
+  };
 
   // The model the user last picked sticks across sessions: it wins over the config default (but not
   // over an explicit --model/--provider) as long as its provider still has credentials — otherwise
@@ -321,24 +463,42 @@ async function main() {
     providerKeys: secrets.keys,
     customEndpoint: secrets.custom,
     disabledProviders: secrets.disabled,
+    // Local runtime base URLs (ollama / lmstudio): config.toml defaults + /keys edits.
+    localBaseUrls: resolveLocalBaseUrls(config, secrets),
     search: config.search,
     research: config.research,
+    memory: config.memory,
   });
 
   // ─── DB-only commands — run before provider validation ───
 
   if (command === "list" || values.list) {
-    const sessions = engine.listSessions();
+    const showAll = !!values.all || (values.status as string) === "archived";
+    const sessions = engine.listSessions(showAll ? { status: "all" } : undefined);
+    const archivedCount = showAll
+      ? 0
+      : engine.listSessions({ status: "archived" }).length +
+        engine.listSessions({ status: "deleted" }).length;
     if (sessions.length === 0) {
       console.log(dim("  No sessions found."));
     } else {
       console.log(`\n  ${dim("§ SESSIONS")}\n`);
       for (const s of sessions) {
+        const title = s.title?.trim() || dim("untitled");
+        const tag = s.status !== "active" ? ` ${brass(`[${s.status}]`)}` : "";
         console.log(
-          `  ${cyanotype(s.id.slice(0, 8))}  ${s.workspaceRoot}  ${dim(`${s.eventCount} events`)}  ${dim(s.model)}`,
+          `  ${cyanotype(s.id.slice(0, 8))}  ${text(title)}${tag}` +
+            `\n            ${dim(`${relTime(s.updatedAt)} · ${s.eventCount} events · ${s.model}`)}`,
         );
       }
-      console.log("");
+      if (archivedCount > 0) {
+        console.log(
+          `\n  ${dim(`+ ${archivedCount} archived/deleted — `)}${dim("alan list --all")}`,
+        );
+      }
+      console.log(
+        `\n  ${dim("Resume: ")}${cyanotype("alan resume")}${dim(" (picker) or ")}${cyanotype("alan resume <id>")}\n`,
+      );
     }
     engine.close();
     return;
@@ -420,30 +580,72 @@ async function main() {
     engine.switchModel(DEFAULT_MODELS[fallback as CliProvider] ?? DEFAULT_MODELS.google, fallback);
   }
 
-  // Create or resume session
-  const sessionId = (values.resume as string) ?? engine.createSession();
-  const customCommands = await loadCommands(workspaceRoot);
-
-  // ─── Composer mode ───
-  // The themed full-screen TUI — a live banner, a scrollable transcript window, and a
-  // pinned composer, repainted in the active theme on the alternate screen — is the
-  // default on interactive terminals. It owns the screen so it can paint the theme
-  // background edge-to-edge (which Warp won't do via OSC), and brings its own scrollback:
-  // mouse wheel or PageUp/PageDown. Piped/non-TTY stdin and `--classic` / ALAN_CLASSIC
-  // fall back to the plain readline prompt (native terminal scrollback); `--tui` /
-  // ALAN_TUI force the TUI even past `--classic`.
+  // ─── Composer mode decision (needed before session resolution) ───
+  // The TUI — a pinned composer with the transcript scrolling above it — is the default on
+  // interactive terminals. By default it renders inline into the terminal's NORMAL buffer, so
+  // scrolling is the terminal's own native momentum scroll (fluid like Codex/Claude Code) and
+  // scrollback + copy/paste keep working; the theme bg is set via OSC 11 (+ per-line SGR for
+  // terminals that ignore it). `--fullscreen` / ALAN_FULLSCREEN opts into the alternate-screen
+  // renderer instead (edge-to-edge themed bg, self-managed scroll). Piped/non-TTY stdin and
+  // `--classic` / ALAN_CLASSIC fall back to the plain readline prompt; `--tui` / ALAN_TUI force
+  // the TUI even past `--classic`.
   const classicForced = (values.classic as boolean) || !!process.env.ALAN_CLASSIC;
   const tuiForced = (values.tui as boolean) || !!process.env.ALAN_TUI;
   const useTui = !!process.stdin.isTTY && (tuiForced || !classicForced);
+  // Warp is a block-based terminal: the inline renderer's pinned-composer technique (cursor moves +
+  // clear-below + reprint each frame, plus clearing scrollback on entry) breaks Warp's native
+  // scroll, so you can't scroll up through history. Apps can't drive a terminal's own scrollback,
+  // so there's no inline fix — default Warp to the alt-screen TUI, which manages its own scroll
+  // (wheel + PageUp/PageDown). ALAN_INLINE=1 forces the inline renderer back if you prefer it.
+  const isWarp = process.env.TERM_PROGRAM === "WarpTerminal";
+  const fullscreenTui =
+    (values.fullscreen as boolean) ||
+    !!process.env.ALAN_FULLSCREEN ||
+    (isWarp && !process.env.ALAN_INLINE);
+
+  // ─── Create or resume session (one native flow) ───
+  // `alan resume [id]` / `--resume <id>` target a specific session. Otherwise, on an
+  // interactive terminal with prior sessions, a smart picker offers to resume (Enter =
+  // new) — so "continue where you left off" is the front door, not a flag to remember.
+  // `--new`/`-n` and non-interactive runs skip straight to a fresh session. In the TUI
+  // the picker is shown inside the alternate screen (launchPick); classic uses readline.
+  const resumeId =
+    command === "resume"
+      ? (positionals[1] ?? (values.resume as string | undefined))
+      : (values.resume as string | undefined);
+  const wantNew = !!values.new;
+  const explicitResumePick = command === "resume" && !resumeId;
+  const defaultLaunch = command === "chat" && !resumeId && !wantNew;
+  const offerPicker =
+    (explicitResumePick || defaultLaunch) &&
+    !!process.stdin.isTTY &&
+    engine.listSessions().length > 0;
+
+  let sessionId: string;
+  let launchPick = false;
+  if (resumeId) {
+    sessionId = resolveResumeId(engine, resumeId);
+  } else if (offerPicker && useTui) {
+    sessionId = engine.createSession();
+    launchPick = true; // the TUI renders the picker itself, in its pinned region
+  } else if (explicitResumePick || offerPicker) {
+    sessionId = await pickSessionToResume(engine); // classic readline picker (most-recent on a pipe)
+  } else {
+    sessionId = engine.createSession();
+  }
+  const customCommands = await loadCommands(workspaceRoot);
+
   if (useTui) {
     await runTui({
       engine,
       sessionId,
+      launchPick,
       workspaceRoot,
       version: "0.1.0",
       yoloMode: values.yolo as boolean,
       trustWorkspace,
       customCommands,
+      fullscreen: fullscreenTui,
     });
     return;
   }
@@ -478,7 +680,6 @@ async function main() {
     renderWelcome({
       model: engine.getModel(),
       provider: engine.getProvider(),
-      effort: engine.getEffort(),
       sessionId,
       workspace: workspaceRoot,
       version: "0.1.0",
@@ -486,6 +687,18 @@ async function main() {
       recentSessions,
     }) + "\n",
   );
+
+  // When launched with --resume / `alan resume`, replay the prior conversation so
+  // the classic path also lands the user where they left off (the TUI seeds its
+  // own viewport). A brand-new session has no history and prints nothing.
+  if (engine.getTranscript(sessionId).length > 0) {
+    const info = engine.getSessionInfo(sessionId);
+    process.stdout.write(
+      `  ${faint("╶─")} ${muted("resumed")} ${text(info?.title?.trim() || "untitled")} ${faint(sessionId.slice(0, 8))} ${faint("╶─")}\n`,
+    );
+    printSessionTranscript(engine, sessionId);
+    process.stdout.write(`  ${faint("continue where you left off ↓")}\n\n`);
+  }
 
   const spinner = new Spinner();
   const yoloMode = values.yolo as boolean;
@@ -556,13 +769,12 @@ async function main() {
       const wasSpinning = spinner.isRunning?.() ?? false;
       spinner.stop();
 
-      const argPreview = prompt.argsSummary.slice(0, 100);
+      const { title, body } = permissionView(prompt.toolName, prompt.argsSummary);
       process.stdout.write("\n");
+      process.stdout.write(`  ${warn("?")} ${bold(warn(title))}\n`);
+      process.stdout.write(`    ${faint("\u2514")} ${text(truncate(body, 100))}\n\n`);
       process.stdout.write(
-        `  ${warn("?")} ${text("Allow")} ${info(prompt.toolName)}${argPreview ? faint(" \u2014 " + argPreview) : ""}${text("?")}\n`,
-      );
-      process.stdout.write(
-        `  ${ok("Enter")} ${faint("allow")}   ${warn("s")} ${faint("session")}   ${accent("n")} ${faint("deny")}\n`,
+        `  ${ok("Enter")} ${muted("allow")}      ${warn("s")} ${muted("session")}      ${accent("n")} ${muted("deny")}\n`,
       );
 
       rl.question(`  ${accent("\u203a")} `, (answer) => {
@@ -599,8 +811,10 @@ async function main() {
 
   const SLASH_CMDS: [string, string][] = [
     ["/model", "Switch model/provider"],
-    ["/effort", "Set reasoning effort"],
     ["/theme", "Themes — switch color theme"],
+    ["/sessions", "List sessions (resume/rename/archive/delete)"],
+    ["/resume", "Resume a session — /resume <n|id>"],
+    ["/rename", "Rename the current session"],
     ["/status", "Session status"],
     ["/providers", "List providers"],
     ["/keys", "Manage API keys"],
@@ -610,6 +824,7 @@ async function main() {
     ["/deepresearch", "Deep research — multi-round, long-form"],
     ["/cost", "Session cost"],
     ["/compress", "Summarize & shrink context"],
+    ["/memory", "System memory — your evergreen profile (update/add/edit/cadence)"],
     ["/plan", "Toggle plan mode"],
     ["/turing", "Turing — toggle bypass mode (shift+tab)"],
     ["/mode", "Cycle permission mode (confirm/auto/turing)"],
@@ -623,7 +838,6 @@ async function main() {
       "\n" +
         statusLine({
           model: engine.getModel(),
-          effort: engine.getEffort(),
           workspace: workspaceRoot,
           mode: engine.getPermissionMode(),
         }) +
@@ -658,9 +872,12 @@ async function main() {
   // swallow it can fall back to /mode or /turing.
   if (process.stdin.isTTY) {
     readline.emitKeypressEvents(process.stdin);
-    process.stdin.on("keypress", (_str: string, key: { name?: string; shift?: boolean } | undefined) => {
-      if (!busy && key?.name === "tab" && key.shift) cycleMode();
-    });
+    process.stdin.on(
+      "keypress",
+      (_str: string, key: { name?: string; shift?: boolean } | undefined) => {
+        if (!busy && key?.name === "tab" && key.shift) cycleMode();
+      },
+    );
   }
 
   // ─── Line Handler ───
@@ -669,6 +886,30 @@ async function main() {
 
   let pasteBuffer: string[] = [];
   let pasteTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // ─── System Memory: discoverability hint + background "dream" ───
+  {
+    const mem = engine.getSystemMemory();
+    if (mem.enabled && !mem.content.trim() && mem.scheduleLabel === "manual") {
+      process.stdout.write(
+        `  ${faint("✦ tip: Alan can learn your style & codebases over time — ")}${info("/memory")}${faint(" (auto-update: /memory weekly)")}\n`,
+      );
+    }
+    // Auto-refresh in the background when the chosen cadence is due. Non-blocking;
+    // prints a subtle notice on completion. Skips silently with no provider /
+    // nothing new / when the cadence is manual.
+    void engine
+      .maybeReflectSystemMemory()
+      .then((r) => {
+        if (r.updated && !busy) {
+          process.stdout.write(
+            `\n  ${green("✦")} ${faint(`system memory refreshed (~${r.tokensAfter ?? 0} tokens) · /memory to view`)}\n`,
+          );
+          showPrompt();
+        }
+      })
+      .catch(() => {});
+  }
 
   showPrompt();
 
@@ -734,8 +975,10 @@ async function main() {
     if (input === "/help") {
       const cmds: [string, string][] = [
         ["/model", "Switch model/provider"],
-        ["/effort", "Set reasoning effort"],
         ["/theme", "Themes — switch color theme"],
+        ["/sessions", "List sessions (resume/rename/archive/delete)"],
+        ["/resume", "Resume a session — /resume <n|id>"],
+        ["/rename", "Rename the current session"],
         ["/status", "Session status"],
         ["/providers", "List providers"],
         ["/keys", "Manage API keys"],
@@ -745,6 +988,7 @@ async function main() {
         ["/deepresearch", "Deep research — multi-round, long-form"],
         ["/cost", "Session cost"],
         ["/compress", "Summarize & shrink context"],
+        ["/memory", "System memory — /memory [update|add|edit|clear|daily|3d|weekly|manual]"],
         ["/plan", "Toggle plan mode"],
         ["/turing", "Turing — toggle bypass mode (shift+tab)"],
         ["/mode", "Cycle permission mode (confirm/auto/turing)"],
@@ -774,7 +1018,6 @@ async function main() {
           renderStatus({
             model: status.model,
             provider: status.provider,
-            effort: status.effort,
             workspace: status.workspace,
             sessionId,
             cost: status.cost,
@@ -812,11 +1055,15 @@ async function main() {
         for (const s of servers) {
           const dot =
             s.health === "healthy" ? ok("●") : s.health === "degraded" ? warn("●") : faint("○");
+          const proto = s.protocolVersion ? muted(` · MCP ${s.protocolVersion}`) : "";
           process.stdout.write(
-            `    ${dot} ${text(s.name)} ${muted(`(${s.kind}, ${s.toolCount} tools)`)}\n`,
+            `    ${dot} ${text(s.name)} ${muted(`(${s.kind}, ${s.toolCount} tools)`)}${proto}\n`,
           );
           if (s.tools.length) {
             process.stdout.write(`      ${faint(s.tools.join(", "))}\n`);
+          }
+          if (s.lastError) {
+            process.stdout.write(`      ${warn("⚠")} ${faint(s.lastError)}\n`);
           }
         }
         process.stdout.write("\n");
@@ -869,25 +1116,66 @@ async function main() {
       return;
     }
 
-    if (input === "/providers") {
-      const registered = engine.getRegisteredProviders();
-      const currentProvider = engine.getProvider();
-      const allProviders = ["google", "anthropic", "openai", "openrouter"];
+    if (input === "/providers" || input.startsWith("/providers ")) {
+      const parts = input.slice("/providers".length).trim().split(/\s+/).filter(Boolean);
+      const sub = (parts[0] ?? "").toLowerCase();
 
-      process.stdout.write(`  ${bold(text("Providers"))}\n\n`);
-      for (const name of allProviders) {
-        const isRegistered = registered.includes(name as any);
-        const isActive = name === currentProvider;
-        const indicator = isActive ? ok("●") : isRegistered ? warn("●") : faint("○");
-        const colorName = isActive ? ok : isRegistered ? text : faint;
-        const statusText = isActive
-          ? ok("active")
-          : isRegistered
-            ? muted("ready")
-            : faint("no key");
-        process.stdout.write(`    ${indicator} ${colorName(name.padEnd(14))} ${statusText}\n`);
+      // `/providers on|off <id>` toggles a provider — the canonical place to do it.
+      if ((sub === "on" || sub === "off") && parts[1]) {
+        const id = parts[1].toLowerCase();
+        if (!getPreset(id) && id !== CUSTOM_PROVIDER_ID) {
+          process.stdout.write(
+            `  ${warn("Unknown provider")} ${info(id)}${muted(" · try ")}${faint(PROVIDER_PRESETS.map((p) => p.id).join(", "))}\n\n`,
+          );
+          showPrompt();
+          return;
+        }
+        const disabled = sub === "off";
+        persistDisabled(id, disabled);
+        const res = engine.setProviderDisabled(id, disabled, sessionId);
+        process.stdout.write(
+          `  ${green("✓")} ${info(id)} ${muted(disabled ? "disabled" : "enabled")}\n`,
+        );
+        if (res.switchedTo) {
+          process.stdout.write(
+            `  ${brass("→")} ${muted("active provider was off — now on")} ${info(`${res.switchedTo.provider}/${res.switchedTo.model}`)}\n`,
+          );
+        }
+        process.stdout.write("\n");
+        showPrompt();
+        return;
       }
-      process.stdout.write("\n");
+
+      // Data-driven listing: every configured provider, its key state, on/off, active.
+      const rows = engine.getProviderStatus();
+      process.stdout.write(
+        `  ${bold(text("Providers"))}  ${faint("· ")}${ok("●")}${faint(" active  ")}${info("●")}${faint(" ready  ")}${faint("○ no key/off")}\n\n`,
+      );
+      for (const r of rows) {
+        const dot = r.disabled
+          ? faint("○")
+          : r.active
+            ? ok("●")
+            : r.hasKey
+              ? info("●")
+              : faint("○");
+        const name = (r.active ? ok : r.hasKey && !r.disabled ? text : faint)(r.id.padEnd(13));
+        const keyState =
+          r.source === "none"
+            ? faint("no key".padEnd(10))
+            : muted((r.source === "env" ? "env" : "key").padEnd(10));
+        const state = r.disabled
+          ? warn("off")
+          : r.active
+            ? ok("active")
+            : r.hasKey
+              ? muted("ready")
+              : faint("—");
+        process.stdout.write(`    ${dot} ${name} ${keyState} ${state}\n`);
+      }
+      process.stdout.write(
+        `\n  ${muted("Toggle ")}${info("/providers on|off <id>")}${muted(" · keys ")}${info("/keys")}${muted(" · switch ")}${info("/model")}\n\n`,
+      );
       showPrompt();
       return;
     }
@@ -943,7 +1231,7 @@ async function main() {
           `  ${bold(text("API keys"))} ${faint("· saved to ~/.alan/secrets.json, applied live")}\n\n`,
         );
         for (const r of engine.getProviderStatus()) {
-          const hasKey = r.source !== "none";
+          const hasKey = r.hasKey;
           const dot = r.disabled
             ? faint("○")
             : r.active
@@ -952,15 +1240,26 @@ async function main() {
                 ? info("●")
                 : faint("○");
           const name = (r.active ? ok : hasKey ? text : faint)(r.id.padEnd(12));
-          const keyCol =
-            r.source === "none"
-              ? faint("not set".padEnd(14))
-              : text((r.masked || "set").padEnd(14));
-          const src = r.disabled ? warn("off") : r.source === "none" ? faint("—") : faint(r.source);
-          process.stdout.write(`    ${dot} ${name} ${keyCol} ${src}\n`);
+          // Local runtimes show their base URL instead of a (non-existent) key.
+          const valCol = r.local
+            ? faint((r.endpoint || "—").padEnd(26))
+            : r.source === "none"
+              ? faint("not set".padEnd(26))
+              : text((r.masked || "set").padEnd(26));
+          const src = r.disabled
+            ? warn("off")
+            : r.local
+              ? faint("local")
+              : r.source === "none"
+                ? faint("—")
+                : faint(r.source);
+          process.stdout.write(`    ${dot} ${name} ${valCol} ${src}\n`);
         }
         process.stdout.write(
           `\n  ${muted("Set ")}${info("/keys set <provider> <key>")}${muted(" · ")}${info("/keys clear <provider>")}${muted(" · ")}${info("/keys off|on <provider>")}\n`,
+        );
+        process.stdout.write(
+          `  ${muted("Local ")}${info("/keys url <ollama|lmstudio> <baseUrl>")}${muted(" · no key needed")}\n`,
         );
         process.stdout.write(
           `  ${muted("Custom ")}${info("/keys custom <baseUrl> <model> <key>")}${muted(" · providers: ")}${faint(PROVIDER_PRESETS.map((p) => p.id).join(", "))}\n\n`,
@@ -1027,14 +1326,20 @@ async function main() {
           showPrompt();
           return;
         }
+        let res: ReturnType<typeof engine.setProviderKey>;
         if (id === CUSTOM_PROVIDER_ID) {
           persistClearCustom();
-          engine.setCustomEndpoint(null);
+          res = engine.setCustomEndpoint(null, sessionId);
         } else {
           persistClearKey(id);
-          engine.setProviderKey(id, null);
+          res = engine.setProviderKey(id, null, sessionId);
         }
         process.stdout.write(`  ${ok("✓")} ${muted("cleared")} ${info(id)}\n`);
+        if (res.switchedTo) {
+          process.stdout.write(
+            `  ${brass("→")} ${muted("active provider lost its key — now on")} ${info(`${res.switchedTo.provider}/${res.switchedTo.model}`)}\n`,
+          );
+        }
         showPrompt();
         return;
       }
@@ -1042,10 +1347,15 @@ async function main() {
         const id = parts[1].toLowerCase();
         const disabled = sub === "off";
         persistDisabled(id, disabled);
-        engine.setProviderDisabled(id, disabled);
+        const res = engine.setProviderDisabled(id, disabled, sessionId);
         process.stdout.write(
           `  ${ok("✓")} ${info(id)} ${muted(disabled ? "disabled" : "enabled")}\n`,
         );
+        if (res.switchedTo) {
+          process.stdout.write(
+            `  ${brass("→")} ${muted("active provider was off — now on")} ${info(`${res.switchedTo.provider}/${res.switchedTo.model}`)}\n`,
+          );
+        }
         showPrompt();
         return;
       }
@@ -1059,60 +1369,30 @@ async function main() {
         showPrompt();
         return;
       }
-      process.stdout.write(
-        `  ${warn("Usage:")} ${info("/keys")}${muted(" · ")}${info("set <p> <key>")}${muted(" · ")}${info("clear <p>")}${muted(" · ")}${info("off|on <p>")}${muted(" · ")}${info("custom <url> <model> <key>")}\n`,
-      );
-      showPrompt();
-      return;
-    }
-
-    if (input === "/effort") {
-      const current = engine.getEffort();
-      const levels: { key: string; level: "low" | "medium" | "high" | "max"; label: string }[] = [
-        { key: "1", level: "low", label: "Quick, minimal reasoning" },
-        { key: "2", level: "medium", label: "Balanced (default)" },
-        { key: "3", level: "high", label: "Thorough analysis" },
-        { key: "4", level: "max", label: "Maximum capability" },
-      ];
-      process.stdout.write(`  ${bold(text("Reasoning effort"))}\n\n`);
-      for (const l of levels) {
-        const isCurrent = l.level === current;
-        const active = isCurrent ? ` ${ok("◂ current")}` : "";
-        process.stdout.write(
-          `    ${warn(`[${l.key}]`)} ${(isCurrent ? text : muted)(l.level.padEnd(8))} ${faint(l.label)}${active}\n`,
-        );
-      }
-      process.stdout.write("\n");
-
-      rl.question(`  ${vermillion("\u203A")} `, (answer) => {
-        const a = answer.trim().toLowerCase();
-        const selected = levels.find((l) => l.key === a || l.level === a);
-        if (selected) {
-          engine.setEffort(selected.level);
-          process.stdout.write(`  ${green("✓")} effort set to ${brass(selected.level)}\n\n`);
-        } else {
-          process.stdout.write(`  ${dim("no change")}\n\n`);
+      // Local runtime base URL: `/keys url ollama http://host:11434` (no key).
+      if (sub === "url" && parts[1]) {
+        const id = parts[1].toLowerCase();
+        const preset = getPreset(id);
+        if (!preset?.local) {
+          process.stdout.write(
+            `  ${warn("Unknown local runtime")} ${info(id)}${muted(" · try ")}${faint("ollama, lmstudio")}\n`,
+          );
+          showPrompt();
+          return;
         }
+        const url = parts.slice(2).join(" ").trim();
+        persistLocalEndpoint(id, url || undefined);
+        engine.setLocalEndpoint(id, url || null);
+        const shown = engine.getLocalEndpoint(id) ?? preset.baseUrl ?? "";
+        process.stdout.write(
+          `  ${ok("✓")} ${info(id)} ${muted(url ? "endpoint set to" : "reset to default")} ${faint(shown)} ${faint(`· /model ${id}/<model>`)}\n`,
+        );
         showPrompt();
-      });
-      return;
-    }
-
-    if (input.startsWith("/effort ")) {
-      const arg = input.slice(8).trim().toLowerCase();
-      const validLevels = ["low", "medium", "high", "max"] as const;
-      const level = validLevels.find((l) => l === arg);
-      if (level) {
-        engine.setEffort(level);
-        const settings = engine.getEffortSettings();
-        process.stdout.write(
-          `  ${green("✓")} effort set to ${brass(level)} ${dim(`(${settings.label})`)}\n\n`,
-        );
-      } else {
-        process.stdout.write(
-          `  ${vermillion("✕")} invalid level. Use: ${validLevels.join(", ")}\n\n`,
-        );
+        return;
       }
+      process.stdout.write(
+        `  ${warn("Usage:")} ${info("/keys")}${muted(" · ")}${info("set <p> <key>")}${muted(" · ")}${info("clear <p>")}${muted(" · ")}${info("off|on <p>")}${muted(" · ")}${info("url <ollama|lmstudio> <baseUrl>")}${muted(" · ")}${info("custom <url> <model> <key>")}\n`,
+      );
       showPrompt();
       return;
     }
@@ -1167,6 +1447,149 @@ async function main() {
       return;
     }
 
+    if (input === "/memory" || input.startsWith("/memory ")) {
+      const rest = input.slice("/memory".length).trim();
+      const sub = (rest.split(/\s+/)[0] ?? "").toLowerCase();
+      const arg = rest.slice(sub.length).trim();
+      const fmtTok = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+
+      // ── update / refresh (the "dream") ──
+      if (sub === "update" || sub === "refresh" || sub === "dream") {
+        busy = true;
+        spinner.start("thinking");
+        let res: Awaited<ReturnType<typeof engine.reflectSystemMemory>>;
+        try {
+          res = await engine.reflectSystemMemory({ focus: arg || undefined, trigger: "manual" });
+        } finally {
+          spinner.stop();
+          busy = false;
+        }
+        if (!res.updated) {
+          process.stdout.write(`  ${dim(`Memory unchanged — ${res.reason}.`)}\n\n`);
+          showPrompt();
+          return;
+        }
+        process.stdout.write(
+          `  ${green("✦")} ${text("System memory refreshed")} ${faint(`· ~${fmtTok(res.tokensBefore)} → ~${fmtTok(res.tokensAfter)} tokens`)}\n`,
+        );
+        const preview = (res.content ?? "")
+          .split("\n")
+          .map((l) => l.trimEnd())
+          .filter(Boolean)
+          .slice(0, 8);
+        if (preview.length) {
+          process.stdout.write("\n");
+          for (const line of preview) process.stdout.write(`  ${dim(line.slice(0, 100))}\n`);
+        }
+        process.stdout.write("\n");
+        showPrompt();
+        return;
+      }
+
+      // ── add a manual note ──
+      if (sub === "add" || sub === "note") {
+        if (!arg) {
+          process.stdout.write(`  ${dim("Usage: /memory add <note>")}\n\n`);
+          showPrompt();
+          return;
+        }
+        const res = engine.appendSystemMemoryNote(arg);
+        process.stdout.write(
+          `  ${green("✓")} ${text("noted")} ${faint(`· ~${fmtTok(res.tokens)} tokens total`)}\n\n`,
+        );
+        showPrompt();
+        return;
+      }
+
+      // ── open the memory file in $EDITOR ──
+      if (sub === "edit") {
+        const path = getSystemMemoryPath();
+        if (!engine.getSystemMemory().content.trim()) {
+          engine.setSystemMemoryContent(
+            "# About me\n- \n\n## How I like to work\n- \n\n## My codebases\n- \n\n## Notes\n",
+          );
+        }
+        const editor = process.env.VISUAL || process.env.EDITOR || "nano";
+        process.stdout.write(`  ${dim(`opening ${editor}…`)}\n`);
+        rl.pause();
+        try {
+          const { spawnSync } = require("node:child_process");
+          spawnSync(editor, [path], { stdio: "inherit" });
+        } catch {
+          /* editor unavailable — fall through and reload whatever's on disk */
+        }
+        rl.resume();
+        try {
+          const { readFileSync } = require("fs");
+          const res = engine.setSystemMemoryContent(readFileSync(path, "utf-8"));
+          process.stdout.write(
+            `  ${green("✓")} ${text("memory saved")} ${faint(`· ~${fmtTok(res.tokens)} tokens`)}\n\n`,
+          );
+        } catch {
+          process.stdout.write(`  ${dim("memory unchanged")}\n\n`);
+        }
+        showPrompt();
+        return;
+      }
+
+      // ── clear ──
+      if (sub === "clear" || sub === "reset" || sub === "forget") {
+        engine.clearSystemMemory();
+        process.stdout.write(`  ${green("✓")} ${text("system memory cleared")}\n\n`);
+        showPrompt();
+        return;
+      }
+
+      // ── set cadence (off | manual | daily | weekly | Nd | every N days) ──
+      if (
+        sub === "off" ||
+        sub === "manual" ||
+        sub === "daily" ||
+        sub === "weekly" ||
+        /^\d+\s*d/.test(rest) ||
+        /^every\s+\d+/.test(rest)
+      ) {
+        const res = engine.setSystemMemorySchedule(rest);
+        const verb = res.label === "manual" ? "manual (no auto-refresh)" : `auto · ${res.label}`;
+        process.stdout.write(`  ${green("✓")} ${text("memory cadence:")} ${info(verb)}\n`);
+        if (res.label !== "manual") {
+          process.stdout.write(
+            `  ${faint("Alan will refresh your profile in the background when it's due.")}\n`,
+          );
+        }
+        process.stdout.write("\n");
+        showPrompt();
+        return;
+      }
+
+      // ── default: status + show the profile ──
+      const mem = engine.getSystemMemory();
+      process.stdout.write(
+        `  ${bold(text("System memory"))}${mem.enabled ? "" : ` ${faint("(disabled)")}`}\n`,
+      );
+      const last = mem.meta.updatedAt ? relTime(mem.meta.updatedAt) : "never";
+      const dreamt = mem.meta.lastReflectedAt ? relTime(mem.meta.lastReflectedAt) : "never";
+      process.stdout.write(
+        `  ${faint(`cadence: ${mem.scheduleLabel} · ~${fmtTok(mem.tokens)}/${fmtTok(mem.maxTokens)} tokens · updated ${last} · dreamed ${dreamt}`)}\n\n`,
+      );
+      if (!mem.content.trim()) {
+        process.stdout.write(`  ${dim("Empty — Alan hasn't built your profile yet.")}\n`);
+        process.stdout.write(
+          `  ${dim("Seed it with ")}${info("/memory update")}${dim(", jot a note with ")}${info("/memory add <…>")}${dim(",")}\n`,
+        );
+        process.stdout.write(
+          `  ${dim("or enable auto-updates with ")}${info("/memory weekly")}${dim(" (or daily / 3d).")}\n\n`,
+        );
+      } else {
+        for (const line of mem.content.split("\n")) process.stdout.write(`  ${text(line)}\n`);
+        process.stdout.write(
+          `\n  ${faint("update: /memory update · note: /memory add <…> · edit: /memory edit · cadence: /memory daily|3d|weekly|manual")}\n\n`,
+        );
+      }
+      showPrompt();
+      return;
+    }
+
     if (input === "/model") {
       // Show current model and interactive picker
       const current = engine.getModel();
@@ -1179,9 +1602,16 @@ async function main() {
 
       // Data-driven from the provider presets: every registered provider with a
       // curated `models` list contributes its models, so adding a provider is a
-      // one-line preset edit. Free-form `/model <provider>/<id>` still works.
+      // one-line preset edit. Local runtimes (ollama / lmstudio) are listed even
+      // when not yet active so they're discoverable — picking one switches to it.
+      // Free-form `/model <provider>/<id>` still works.
+      const localIds = PROVIDER_PRESETS.filter((p) => p.local).map((p) => p.id);
+      const pickerIds = [
+        ...registered,
+        ...localIds.filter((id) => !registered.includes(id as any)),
+      ];
       const presets: { key: string; provider: string; model: string; label: string }[] = [];
-      for (const id of registered) {
+      for (const id of pickerIds) {
         const preset = getPreset(id);
         if (!preset?.models?.length) continue;
         for (const m of preset.models) {
@@ -1297,6 +1727,125 @@ async function main() {
       } else {
         process.stdout.write(permissionModeBanner(engine.cyclePermissionMode()) + "\n");
       }
+      showPrompt();
+      return;
+    }
+
+    if (input === "/sessions" || input.startsWith("/sessions ")) {
+      const sub = input.slice("/sessions".length).trim().toLowerCase();
+      const all = sub === "archived" || sub === "all" || sub === "--all";
+      const list = engine.listSessions(all ? { status: "all" } : undefined);
+      process.stdout.write(
+        `\n  ${bold(text("Sessions"))}${all ? faint("  · incl. archived") : ""}\n\n`,
+      );
+      if (list.length === 0) {
+        process.stdout.write(`  ${dim("None yet — start chatting.")}\n\n`);
+        showPrompt();
+        return;
+      }
+      list.slice(0, 30).forEach((s, i) => {
+        const cur = s.id === sessionId ? ok("●") : faint("○");
+        const title = s.title?.trim() || "untitled";
+        const tag = s.status !== "active" ? ` ${brass(`[${s.status}]`)}` : "";
+        process.stdout.write(
+          `    ${brass(String(i + 1).padStart(2))} ${cur} ${text(title)}${tag}\n` +
+            `        ${faint(`${cyanotype(s.id.slice(0, 8))} · ${relTime(s.updatedAt)} · ${s.eventCount} events · ${s.model}`)}\n`,
+        );
+      });
+      process.stdout.write(
+        `\n  ${faint("resume")} ${info("/resume <n|id>")}  ${faint("rename")} ${info("/rename <title>")}  ${faint("archive")} ${info("/archive <n|id>")}  ${faint("delete")} ${info("/delete <n|id>")}\n\n`,
+      );
+      showPrompt();
+      return;
+    }
+
+    if (input === "/resume" || input.startsWith("/resume ")) {
+      const arg = input.slice("/resume".length).trim();
+      if (!arg) {
+        process.stdout.write(
+          `  ${warn("Usage:")} ${info("/resume <n|id>")} ${faint("— see")} ${info("/sessions")}\n\n`,
+        );
+        showPrompt();
+        return;
+      }
+      const target = resolveSessionArg(engine, arg);
+      if (!target) {
+        process.stdout.write(`  ${vermillion("✕")} no session matches ${text(arg)}\n\n`);
+        showPrompt();
+        return;
+      }
+      if (target.id === sessionId) {
+        process.stdout.write(`  ${dim("Already in that session.")}\n\n`);
+        showPrompt();
+        return;
+      }
+      const res = engine.resumeSession(target.id);
+      sessionId = target.id;
+      process.stdout.write(
+        `\n  ${faint("╶─")} ${muted("resumed")} ${text(target.title?.trim() || "untitled")} ${faint(target.id.slice(0, 8))} ${faint("╶─")}\n`,
+      );
+      printSessionTranscript(engine, sessionId);
+      if (res?.switched) {
+        process.stdout.write(
+          `  ${green("✓")} ${dim("model")} ${info(`${engine.getProvider()}/${engine.getModel()}`)}\n`,
+        );
+      }
+      process.stdout.write("\n");
+      showPrompt();
+      return;
+    }
+
+    if (input === "/rename" || input.startsWith("/rename ")) {
+      const title = input.slice("/rename".length).trim();
+      if (!title) {
+        process.stdout.write(`  ${warn("Usage:")} ${info("/rename <title>")}\n\n`);
+        showPrompt();
+        return;
+      }
+      engine.renameSession(sessionId, title);
+      process.stdout.write(`  ${green("✓")} renamed session to ${text(title)}\n\n`);
+      showPrompt();
+      return;
+    }
+
+    if (input === "/archive" || input.startsWith("/archive ")) {
+      const arg = input.slice("/archive".length).trim();
+      const target = arg ? resolveSessionArg(engine, arg) : engine.getSessionInfo(sessionId);
+      if (!target) {
+        process.stdout.write(`  ${vermillion("✕")} no session matches ${text(arg)}\n\n`);
+        showPrompt();
+        return;
+      }
+      engine.archiveSession(target.id);
+      process.stdout.write(
+        `  ${green("✓")} archived ${text(target.title?.trim() || "untitled")}\n`,
+      );
+      if (target.id === sessionId) {
+        sessionId = engine.createSession();
+        process.stdout.write(`  ${dim("started a new session")}\n`);
+      }
+      process.stdout.write("\n");
+      showPrompt();
+      return;
+    }
+
+    if (input === "/delete" || input.startsWith("/delete ")) {
+      const arg = input.slice("/delete".length).trim();
+      const target = arg ? resolveSessionArg(engine, arg) : engine.getSessionInfo(sessionId);
+      if (!target) {
+        process.stdout.write(`  ${vermillion("✕")} no session matches ${text(arg)}\n\n`);
+        showPrompt();
+        return;
+      }
+      engine.deleteSession(target.id);
+      process.stdout.write(
+        `  ${green("✓")} deleted ${text(target.title?.trim() || "untitled")} ${dim("· recoverable until purged")}\n`,
+      );
+      if (target.id === sessionId) {
+        sessionId = engine.createSession();
+        process.stdout.write(`  ${dim("started a new session")}\n`);
+      }
+      process.stdout.write("\n");
       showPrompt();
       return;
     }
@@ -1512,20 +2061,24 @@ async function main() {
     spinner.start("thinking");
     let isStreaming = false;
     let isThinking = false;
+    let needStepMarker = true; // open the next narration run with a ● step marker
     let totalTokens = 0;
 
     try {
       for await (const event of engine.chat(sessionId, input)) {
         switch (event.type) {
           case "thinking_delta": {
-            // Reasoning models' chain-of-thought — dimmed and kept visually
-            // separate from the answer (and never persisted as part of it).
+            // Reasoning models' chain-of-thought — dimmed under a header and kept
+            // visually separate from the answer (and never persisted as part of it).
             if (!isStreaming) {
               spinner.stop();
               isStreaming = true;
             }
-            isThinking = true;
-            process.stdout.write(faint(event.text));
+            if (!isThinking) {
+              process.stdout.write(`\n  ${faint("✻ Thinking")}\n  `);
+              isThinking = true;
+            }
+            process.stdout.write(faint(event.text.replace(/\n/g, "\n  ")));
             break;
           }
 
@@ -1538,7 +2091,13 @@ async function main() {
               process.stdout.write("\n"); // separate reasoning from the answer
               isThinking = false;
             }
-            process.stdout.write(event.text);
+            // Open each narration run with a ● step marker (skip leading blanks so
+            // the marker lands on real prose) and align wrapped continuation lines.
+            if (needStepMarker && event.text.trim() !== "") {
+              process.stdout.write(`\n  ${info("●")} `);
+              needStepMarker = false;
+            }
+            process.stdout.write(needStepMarker ? event.text : event.text.replace(/\n/g, "\n    "));
             totalTokens++;
             break;
           }
@@ -1567,6 +2126,7 @@ async function main() {
                 }) +
                 "\n",
             );
+            needStepMarker = true; // next prose opens a fresh ● step
             spinner.start("thinking");
             break;
           }
@@ -1687,7 +2247,7 @@ async function main() {
               process.stdout.write("\n");
               isStreaming = false;
             }
-            process.stdout.write(`\n  ${warn("•")} ${muted(event.message)}\n`);
+            process.stdout.write(`\n${formatNotice(event.message)}\n`);
             spinner.start("thinking");
             break;
           }

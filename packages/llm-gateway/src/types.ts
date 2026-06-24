@@ -37,6 +37,7 @@ export type ProviderName =
   | "openrouter"
   | "ollama"
   | "ollama-turbo"
+  | "lmstudio"
   | "google"
   | "groq"
   | "xai"

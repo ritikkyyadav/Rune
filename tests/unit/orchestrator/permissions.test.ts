@@ -1,5 +1,10 @@
 import { describe, test, expect, beforeEach, spyOn } from "bun:test";
-import { PermissionBroker } from "../../../packages/orchestrator/src/permissions";
+import {
+  PermissionBroker,
+  nextPermissionMode,
+  PERMISSION_MODE_ORDER,
+  type PermissionMode,
+} from "../../../packages/orchestrator/src/permissions";
 
 describe("PermissionBroker", () => {
   let broker: PermissionBroker;
@@ -133,5 +138,69 @@ describe("PermissionBroker — workspace trust", () => {
   test("reports permissive posture when trust is enabled", () => {
     const broker = new PermissionBroker(false, { workspaceRoot: WS, trustWorkspace: true });
     expect(broker.getSecurityPosture()).toBe("permissive");
+  });
+});
+
+describe("PermissionBroker — permission modes (the Shift+Tab cycle)", () => {
+  const WS = "/tmp/alan-ws";
+  const bashSchema = {
+    name: "bash",
+    permissionLevel: "confirm" as const,
+    description: "",
+    parameters: [],
+  };
+
+  test("nextPermissionMode cycles confirm → auto → turing → confirm", () => {
+    expect(nextPermissionMode("confirm")).toBe("auto");
+    expect(nextPermissionMode("auto")).toBe("turing");
+    expect(nextPermissionMode("turing")).toBe("confirm");
+    // Three full steps return to the start.
+    let m: PermissionMode = "confirm";
+    for (const _ of PERMISSION_MODE_ORDER) m = nextPermissionMode(m);
+    expect(m).toBe("confirm");
+  });
+
+  test("setMode maps onto the underlying booleans, getMode reads them back", () => {
+    const broker = new PermissionBroker(false, { workspaceRoot: WS });
+    expect(broker.getMode()).toBe("confirm");
+
+    broker.setMode("auto");
+    expect(broker.getMode()).toBe("auto");
+    expect(broker.isTrustWorkspace()).toBe(true);
+    expect(broker.isYoloMode()).toBe(false);
+
+    broker.setMode("turing");
+    expect(broker.getMode()).toBe("turing");
+    expect(broker.isYoloMode()).toBe(true);
+    expect(broker.isTrustWorkspace()).toBe(false);
+
+    broker.setMode("confirm");
+    expect(broker.getMode()).toBe("confirm");
+    expect(broker.isYoloMode()).toBe(false);
+    expect(broker.isTrustWorkspace()).toBe(false);
+  });
+
+  test("Turing mode bypasses confirmation; confirm restores it", () => {
+    const broker = new PermissionBroker(false, { workspaceRoot: WS });
+    expect(broker.check(bashSchema, { command: "rm -rf build" }).type).toBe("needs_confirmation");
+
+    broker.setMode("turing");
+    expect(broker.check(bashSchema, { command: "rm -rf build" }).type).toBe("allowed");
+
+    broker.setMode("confirm");
+    expect(broker.check(bashSchema, { command: "rm -rf build" }).type).toBe("needs_confirmation");
+  });
+
+  test("auto mode auto-approves in-workspace bash but not the network", () => {
+    const broker = new PermissionBroker(false, { workspaceRoot: WS });
+    broker.setMode("auto");
+    expect(broker.check(bashSchema, { command: "ls" }).type).toBe("allowed");
+    const webSchema = {
+      name: "web_fetch",
+      permissionLevel: "confirm" as const,
+      description: "",
+      parameters: [],
+    };
+    expect(broker.check(webSchema, { url: "https://example.com" }).type).toBe("needs_confirmation");
   });
 });

@@ -6,6 +6,12 @@ import {
   renderSlashPalette,
   renderKeysPanel,
   renderKeyEditor,
+  renderMemoryPanel,
+  MEMORY_ACTION_COUNT,
+  renderPermissionCard,
+  permissionView,
+  statusLine,
+  permissionModeBanner,
 } from "../../../packages/orchestrator/src/bin/ui/composer";
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
 
@@ -57,13 +63,13 @@ describe("ui/composer composerRule", () => {
 describe("ui/composer renderSlashPalette", () => {
   const items = [
     { name: "/model", desc: "Switch model / provider" },
-    { name: "/effort", desc: "Set reasoning effort" },
+    { name: "/theme", desc: "Switch color theme" },
     { name: "/help", desc: "Show commands" },
   ];
 
   it("highlights the selected row and lists names + descriptions", () => {
     const plain = renderSlashPalette(items, 1, 100).map(stripAnsi);
-    expect(plain.some((l) => l.includes("❯") && l.includes("/effort"))).toBe(true); // selected = index 1
+    expect(plain.some((l) => l.includes("❯") && l.includes("/theme"))).toBe(true); // selected = index 1
     expect(plain.find((l) => l.includes("/model"))!.startsWith("    ")).toBe(true); // unselected = no marker
     expect(plain.join("\n")).toContain("Switch model / provider");
     expect(plain.at(-1)).toContain("tab complete"); // hint footer
@@ -83,9 +89,30 @@ describe("ui/composer renderSlashPalette", () => {
 
 describe("ui/composer renderKeysPanel", () => {
   const rows = [
-    { id: "anthropic", label: "Anthropic", masked: "sk-a…1f2a", source: "saved" as const, disabled: false, active: true },
-    { id: "groq", label: "Groq", masked: "", source: "none" as const, disabled: false, active: false },
-    { id: "openai", label: "OpenAI", masked: "sk-o…9999", source: "saved" as const, disabled: true, active: false },
+    {
+      id: "anthropic",
+      label: "Anthropic",
+      masked: "sk-a…1f2a",
+      source: "saved" as const,
+      disabled: false,
+      active: true,
+    },
+    {
+      id: "groq",
+      label: "Groq",
+      masked: "",
+      source: "none" as const,
+      disabled: false,
+      active: false,
+    },
+    {
+      id: "openai",
+      label: "OpenAI",
+      masked: "sk-o…9999",
+      source: "saved" as const,
+      disabled: true,
+      active: false,
+    },
   ];
 
   it("marks the selection, shows status + masked keys, and never the raw secret", () => {
@@ -99,9 +126,69 @@ describe("ui/composer renderKeysPanel", () => {
   });
 });
 
+describe("ui/composer renderMemoryPanel", () => {
+  const base = {
+    scheduleLabel: "weekly",
+    tokens: 120,
+    maxTokens: 1500,
+    lastDreamed: "2d ago",
+    busy: false,
+    pendingClear: false,
+  };
+
+  it("shows the profile, status, all actions, and parks the caret on the selection", () => {
+    const r = renderMemoryPanel(
+      { ...base, content: "# About you\n- Builds Rust CLIs\n- Terse" },
+      0,
+      100,
+    );
+    const plain = r.lines.map(stripAnsi);
+    expect(plain[0]).toContain("System memory");
+    expect(plain.some((l) => l.includes("~120/1500 tokens") && l.includes("weekly"))).toBe(true);
+    expect(plain.some((l) => l.includes("Builds Rust CLIs"))).toBe(true);
+    for (const action of ["Refresh now", "Auto-update", "Add a note", "Edit", "Clear"]) {
+      expect(plain.some((l) => l.includes(action))).toBe(true);
+    }
+    expect(stripAnsi(r.lines[r.caretRow])).toContain("❯"); // caret on selected action row
+    expect(stripAnsi(r.lines[r.caretRow])).toContain("Refresh now");
+  });
+
+  it("invites the user when empty", () => {
+    const plain = renderMemoryPanel({ ...base, content: "" }, 0, 100).lines.map(stripAnsi);
+    expect(plain.some((l) => l.toLowerCase().includes("hasn't learned"))).toBe(true);
+    expect(plain.some((l) => l.includes("empty"))).toBe(true);
+  });
+
+  it("arms a confirm on the Clear action", () => {
+    const plain = renderMemoryPanel(
+      { ...base, content: "x", pendingClear: true },
+      4,
+      100,
+    ).lines.map(stripAnsi);
+    expect(plain.some((l) => l.includes("press again to confirm"))).toBe(true);
+  });
+
+  it("shows a dreaming indicator while busy", () => {
+    const plain = renderMemoryPanel({ ...base, content: "x", busy: true }, 0, 100).lines.map(
+      stripAnsi,
+    );
+    expect(plain.some((l) => l.toLowerCase().includes("dreaming"))).toBe(true);
+  });
+
+  it("exposes exactly the actions the panel navigates", () => {
+    expect(MEMORY_ACTION_COUNT).toBe(5);
+  });
+});
+
 describe("ui/composer renderKeyEditor", () => {
   it("masks an API key, leaving only the last 4 visible", () => {
-    const r = renderKeyEditor({ title: "Paste API key — Groq", value: "gsk_supersecret", caret: 15, width: 80, masked: true });
+    const r = renderKeyEditor({
+      title: "Paste API key — Groq",
+      value: "gsk_supersecret",
+      caret: 15,
+      width: 80,
+      masked: true,
+    });
     const joined = stripAnsi(r.lines.join("\n"));
     expect(joined).toContain("Paste API key");
     expect(joined).not.toContain("supersecret");
@@ -122,6 +209,92 @@ describe("ui/composer renderKeyEditor", () => {
     const joined = stripAnsi(r.lines.join("\n"));
     expect(joined).toContain("https://api.x.ai/v1");
     expect(joined).toContain("/v1 base URL");
+  });
+});
+
+describe("ui/composer statusLine + permission mode", () => {
+  it("flags Turing mode in the status line and omits a badge in confirm mode", () => {
+    const base = { model: "gemini-2.5-flash", workspace: "/tmp/ws" };
+    const confirm = stripAnsi(statusLine({ ...base, mode: "confirm" }));
+    expect(confirm).toContain("gemini-2.5-flash");
+    expect(confirm).not.toMatch(/turing/i);
+
+    const turing = stripAnsi(statusLine({ ...base, mode: "turing" }));
+    expect(turing).toMatch(/TURING/);
+  });
+
+  it("accepts the legacy 'yolo'/'trusted' aliases", () => {
+    expect(stripAnsi(statusLine({ model: "m", workspace: "/w", mode: "yolo" }))).toMatch(/TURING/);
+    expect(stripAnsi(statusLine({ model: "m", workspace: "/w", mode: "trusted" }))).toMatch(/auto/);
+  });
+
+  it("permissionModeBanner describes each mode and mentions shift+tab", () => {
+    const turing = stripAnsi(permissionModeBanner("turing"));
+    expect(turing).toMatch(/Turing/);
+    expect(turing).toMatch(/without asking/i);
+    expect(turing).toMatch(/shift\+tab/i);
+
+    expect(stripAnsi(permissionModeBanner("auto"))).toMatch(/Auto mode/i);
+    expect(stripAnsi(permissionModeBanner("confirm"))).toMatch(/Confirm mode/i);
+  });
+});
+
+describe("ui/composer permissionView", () => {
+  it("strips the summarizer's redundant tool prefix and gives a human title", () => {
+    expect(permissionView("bash", "bash: ls -R")).toEqual({
+      title: "Run shell command",
+      body: "ls -R",
+    });
+    expect(permissionView("write_file", "write_file src/app.ts")).toEqual({
+      title: "Write file",
+      body: "src/app.ts",
+    });
+  });
+
+  it("falls back to a generic title and never yields an empty body", () => {
+    expect(permissionView("n8n_trigger", "n8n_trigger {}")).toEqual({
+      title: "Run n8n_trigger",
+      body: "{}",
+    });
+    expect(permissionView("bash", "bash:").body).toBe("bash"); // empty detail → tool name
+  });
+});
+
+describe("ui/composer renderPermissionCard", () => {
+  it("frames a uniform-width box with the action title, clean detail, and allow/session/deny keys", () => {
+    const r = renderPermissionCard("bash", "bash: ls -R", 80);
+    const plain = r.lines.map(stripAnsi);
+    expect(plain[0]).toBe(""); // leading blank separates it from the activity stream
+    const box = plain.slice(1, 4).map((l) => l.length);
+    expect(new Set(box).size).toBe(1); // top / mid / bottom equal width
+    const joined = plain.join("\n");
+    expect(joined).toContain("Run shell command");
+    expect(joined).toContain("ls -R");
+    expect(joined).not.toMatch(/bash.*bash/); // no redundant "bash — bash:"
+    const keys = plain.at(-1)!;
+    expect(keys).toContain("enter");
+    expect(keys).toContain("session");
+    expect(keys).toContain("deny");
+    expect(r.caretRow).toBe(4); // parked on the keys line
+  });
+
+  it("never overflows the terminal width, even with a long command or tool name", () => {
+    const r = renderPermissionCard("bash", "bash: " + "echo hi && ".repeat(40), 70);
+    for (const l of r.lines) expect(stripAnsi(l).length).toBeLessThan(70);
+    // A pathologically long (unknown) tool name must not blow out the titled border.
+    const long = renderPermissionCard("some_" + "x".repeat(80) + "_tool", "{}", 70);
+    const box = long.lines.slice(1, 4).map((l) => stripAnsi(l).length);
+    expect(new Set(box).size).toBe(1);
+    for (const l of long.lines) expect(stripAnsi(l).length).toBeLessThan(70);
+  });
+
+  it("falls back to a compact two-line form on a narrow terminal", () => {
+    const r = renderPermissionCard("bash", "bash: ls", 40);
+    expect(r.lines).toHaveLength(3); // blank + question + keys
+    const joined = stripAnsi(r.lines.join("\n"));
+    expect(joined).toContain("Run shell command");
+    expect(joined).toContain("ls");
+    for (const l of r.lines) expect(stripAnsi(l).length).toBeLessThan(40);
   });
 });
 

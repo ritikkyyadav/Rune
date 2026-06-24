@@ -36,6 +36,10 @@ export interface AlanConfig {
       baseUrl: string;
       model: string;
     };
+    lmstudio?: {
+      baseUrl: string;
+      model: string;
+    };
     planner?: {
       provider: string;
       model: string;
@@ -100,6 +104,28 @@ export interface AlanConfig {
      */
     theme?: string;
   };
+  /**
+   * System Memory ("dreaming") — Alan's evergreen, narrative profile of the user and the
+   * codebases they work in, injected into the system prompt so even small models get cheap,
+   * personalised context. Stored at ~/.alan/system-memory.md (see shared/system-memory.ts).
+   */
+  memory?: {
+    /** Inject the memory into the system prompt. Default true. */
+    enabled?: boolean;
+    /**
+     * Automatic-refresh cadence: `manual` (no auto refresh) | `daily` | `weekly` | `3d` (every
+     * N days). A live choice via `/memory <cadence>` overrides this. Default `manual` — the
+     * dream never spends credits until the user opts in.
+     */
+    schedule?: string;
+    /**
+     * Model used for the refresh distillation: `cheapest` (a cheap model on an available
+     * provider) | `active` (the current chat model) | `"<provider>/<model>"`. Default `cheapest`.
+     */
+    model?: string;
+    /** Hard cap on the memory size in tokens — keeps it butter-smooth for tiny models. Default 1500. */
+    maxTokens?: number;
+  };
 }
 
 export interface PermissionRule {
@@ -146,6 +172,12 @@ const DEFAULT_CONFIG: AlanConfig = {
   research: {
     depth: "standard",
     save: true,
+  },
+  memory: {
+    enabled: true,
+    schedule: "manual",
+    model: "cheapest",
+    maxTokens: 1500,
   },
 };
 
@@ -265,6 +297,12 @@ function applyEnvOverrides(config: Record<string, unknown>): void {
       setNested(c, "research.autoApprove", process.env.ALAN_RESEARCH_AUTO_APPROVE === "true"),
     ALAN_RESEARCH_SAVE: (c) =>
       setNested(c, "research.save", process.env.ALAN_RESEARCH_SAVE !== "false"),
+    ALAN_MEMORY_ENABLED: (c) =>
+      setNested(c, "memory.enabled", process.env.ALAN_MEMORY_ENABLED !== "false"),
+    ALAN_MEMORY_SCHEDULE: (c) => setNested(c, "memory.schedule", process.env.ALAN_MEMORY_SCHEDULE!),
+    ALAN_MEMORY_MODEL: (c) => setNested(c, "memory.model", process.env.ALAN_MEMORY_MODEL!),
+    ALAN_MEMORY_MAX_TOKENS: (c) =>
+      setNested(c, "memory.maxTokens", Number(process.env.ALAN_MEMORY_MAX_TOKENS!)),
     ANTHROPIC_API_KEY: (c) => setNested(c, "llm.anthropic.apiKey", process.env.ANTHROPIC_API_KEY!),
     OPENAI_API_KEY: (c) => setNested(c, "llm.openai.apiKey", process.env.OPENAI_API_KEY!),
     OPENROUTER_API_KEY: (c) =>

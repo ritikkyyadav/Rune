@@ -10,7 +10,6 @@ export {
 } from "./agent-loop";
 export {
   Engine,
-  type EffortLevel,
   type EngineConfig,
   type PermissionHandler,
   type PermissionPrompt,

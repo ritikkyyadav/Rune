@@ -25,6 +25,13 @@ describe("ui/keys parseKeys", () => {
     expect(types("\x1b[3~")).toEqual(["delete"]);
   });
 
+  it("parses Shift+Tab (back-tab) as a distinct key, separate from tab", () => {
+    expect(types("\x1b[Z")).toEqual(["shift-tab"]);
+    expect(types("\t")).toEqual(["tab"]);
+    // Mixed in a chunk: a char, a shift-tab, then enter all survive.
+    expect(types("a\x1b[Z\r")).toEqual(["char", "shift-tab", "enter"]);
+  });
+
   it("parses control keys", () => {
     expect(parseKeys("\x03")).toEqual([{ type: "ctrl", name: "c" }]);
     expect(parseKeys("\x04")).toEqual([{ type: "ctrl", name: "d" }]);

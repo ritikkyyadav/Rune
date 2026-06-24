@@ -1,0 +1,27 @@
+{
+  "timestamp": "2026-06-19T17:52:18.352Z",
+  "mode": "real",
+  "model": "qwen3-coder:480b",
+  "provider": "ollama-turbo",
+  "passRate": 0,
+  "cleanPassRate": 0,
+  "passed": 0,
+  "measured": 0,
+  "throttled": 2,
+  "total": 2,
+  "totalCost": 0,
+  "avgCostPerTask": 0,
+  "avgDurationMs": 2373.5,
+  "avgTurns": 0,
+  "categories": [
+    {
+      "category": "comprehension",
+      "passed": 0,
+      "total": 2,
+      "throttled": 2,
+      "passRate": 0,
+      "cleanPassRate": 0,
+      "avgCost": 0
+    }
+  ]
+}

@@ -21,6 +21,24 @@ export type PermissionDecision =
       suggestedScope: PermissionScope;
     };
 
+// ─── Permission modes (the Shift+Tab cycle) ───
+// A single, user-facing knob layered over the broker's two booleans. Shift+Tab
+// cycles confirm → auto → turing → confirm, mirroring the way Claude Code cycles
+// permission modes. "turing" is Alan's bypass mode (Gemini-CLI's yellow YOLO,
+// Claude's bypass-permissions): it reads, writes, and runs commands without ever
+// asking. The names map onto the existing machinery — turing⇒yolo, auto⇒trust —
+// so nothing downstream has to learn a new concept.
+export type PermissionMode = "confirm" | "auto" | "turing";
+
+/** Cycle order for Shift+Tab. */
+export const PERMISSION_MODE_ORDER: readonly PermissionMode[] = ["confirm", "auto", "turing"];
+
+/** The next mode in the Shift+Tab cycle (wraps around). */
+export function nextPermissionMode(mode: PermissionMode): PermissionMode {
+  const i = PERMISSION_MODE_ORDER.indexOf(mode);
+  return PERMISSION_MODE_ORDER[(i + 1) % PERMISSION_MODE_ORDER.length]!;
+}
+
 export class PermissionBroker {
   private sessionGrants: PermissionRule[] = [];
   private yoloMode: boolean;
@@ -46,6 +64,22 @@ export class PermissionBroker {
 
   isTrustWorkspace(): boolean {
     return this.trustWorkspace;
+  }
+
+  /**
+   * Set the active permission mode — the single knob the Shift+Tab cycle drives.
+   * Mapped onto the two underlying booleans: turing⇒yolo, auto⇒trust, confirm⇒neither.
+   */
+  setMode(mode: PermissionMode): void {
+    this.yoloMode = mode === "turing";
+    this.trustWorkspace = mode === "auto";
+  }
+
+  /** The active permission mode, derived from the underlying booleans. */
+  getMode(): PermissionMode {
+    if (this.yoloMode) return "turing";
+    if (this.trustWorkspace) return "auto";
+    return "confirm";
   }
 
   check(schema: ToolSchema, args: Record<string, unknown>): PermissionDecision {

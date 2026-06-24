@@ -17,6 +17,9 @@ export interface ToolCallInput {
   args: Record<string, unknown>;
   sessionId: string;
   workspaceRoot: string;
+  /** Aborts the in-flight call when the turn is cancelled. Honored by tools that
+   *  support cooperative cancellation (e.g. MCP sends notifications/cancelled). */
+  signal?: AbortSignal;
 }
 
 export interface ToolCallOutput {
