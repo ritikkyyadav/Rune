@@ -7,7 +7,7 @@
 // ("openai-compat"), so they all run through OpenAIProvider with a different base
 // URL — the same mechanism OpenRouter already uses.
 
-export type ProviderKind = "anthropic" | "openai-compat" | "google";
+export type ProviderKind = "anthropic" | "openai-compat" | "google" | "ollama";
 
 export interface ProviderPreset {
   /** Stable id; also the registered provider name in the gateway. */
@@ -22,7 +22,13 @@ export interface ProviderPreset {
   docsUrl: string;
   /** Env var that also supplies this key (checked after a saved key). */
   envVar?: string;
-  /** Base URL for openai-compat hosts; omit for native OpenAI. */
+  /**
+   * A local runtime (Ollama / LM Studio) that needs no API key — it's reached by
+   * base URL on the user's machine. Registered when enabled regardless of key,
+   * and shown in `/keys`/`/providers` with an editable URL instead of a key.
+   */
+  local?: boolean;
+  /** Base URL for openai-compat/local hosts; omit for native OpenAI. */
   baseUrl?: string;
   /** Rough key-shape hint shown in the panel (e.g. "sk-ant-…"). */
   keyHint?: string;
@@ -162,6 +168,38 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
       { id: "glm-4.7", label: "GLM 4.7" },
       { id: "gpt-oss:120b", label: "GPT-OSS 120B" },
     ],
+  },
+  {
+    // Local Ollama (no key). Reached over /api/chat on the user's machine via
+    // OllamaProvider. The base URL is editable in /keys and config.toml; any
+    // pulled model works via `/model ollama/<name>` — the listed ones are just
+    // common suggestions and may need `ollama pull` first.
+    id: "ollama",
+    label: "Ollama (local)",
+    kind: "ollama",
+    local: true,
+    baseUrl: "http://localhost:11434",
+    defaultModel: "llama3.1",
+    docsUrl: "https://ollama.com/download",
+    models: [
+      { id: "llama3.1", label: "Llama 3.1" },
+      { id: "qwen2.5-coder", label: "Qwen2.5 Coder" },
+      { id: "deepseek-coder-v2", label: "DeepSeek Coder V2" },
+      { id: "qwen2.5-coder:32b", label: "Qwen2.5 Coder 32B" },
+    ],
+  },
+  {
+    // LM Studio's OpenAI-compatible local server (no key). Runs through
+    // OpenAIProvider against http://localhost:1234/v1. The model id is whatever
+    // you've loaded in LM Studio — pick it with `/model lmstudio/<id>`.
+    id: "lmstudio",
+    label: "LM Studio (local)",
+    kind: "openai-compat",
+    local: true,
+    baseUrl: "http://localhost:1234/v1",
+    defaultModel: "local-model",
+    docsUrl: "https://lmstudio.ai/docs/app/api",
+    models: [],
   },
 ];
 

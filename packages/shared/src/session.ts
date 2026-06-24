@@ -11,13 +11,17 @@ export interface SessionEvent {
   payload: Record<string, unknown>;
 }
 
+export type SessionStatus = "active" | "archived" | "deleted";
+
 interface SessionRow {
   id: string;
   created_at: string;
   updated_at: string;
   workspace_root: string;
   model: string;
+  provider: string | null;
   title: string | null;
+  status: string;
   event_count: number;
 }
 
@@ -27,8 +31,11 @@ export interface SessionInfoInternal {
   updatedAt: string;
   workspaceRoot: string;
   model: string;
+  /** Provider the session was created on (null for pre-migration rows). */
+  provider: string | null;
   eventCount: number;
   title: string | null;
+  status: SessionStatus;
 }
 
 // ─── Schema (mirrors crates/alan-core/src/session.rs exactly) ───
@@ -105,9 +112,25 @@ function rowToSessionInfo(r: SessionRow): SessionInfoInternal {
     updatedAt: r.updated_at,
     workspaceRoot: r.workspace_root,
     model: r.model,
+    provider: r.provider ?? null,
     eventCount: r.event_count,
     title: r.title,
+    status: (r.status as SessionStatus) ?? "active",
   };
+}
+
+/**
+ * Derive a short, human-readable title from a session's first user message.
+ * Collapses whitespace and trims to a single readable line, so the session
+ * manager shows "fix the login redirect" instead of a bare UUID.
+ */
+export function deriveSessionTitle(firstMessage: string, max = 60): string {
+  const cleaned = firstMessage.replace(/\s+/g, " ").trim();
+  if (cleaned.length <= max) return cleaned;
+  // Cut on a word boundary near the limit when possible, else hard-truncate.
+  const slice = cleaned.slice(0, max);
+  const lastSpace = slice.lastIndexOf(" ");
+  return (lastSpace > max * 0.6 ? slice.slice(0, lastSpace) : slice).trimEnd() + "…";
 }
 
 // ─── Session Manager ───
@@ -118,17 +141,30 @@ export class SessionManager {
   constructor(dbPath: string) {
     this.db = new Database(dbPath, { create: true });
     this.db.exec(SCHEMA);
+    this.migrate();
   }
 
-  createSession(workspaceRoot: string, model: string): SessionInfoInternal {
+  /**
+   * Additive, idempotent migrations for databases created before a column
+   * existed. SQLite has no "ADD COLUMN IF NOT EXISTS", so we probe the table
+   * shape first. Safe to run on every open.
+   */
+  private migrate(): void {
+    const cols = this.db.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "provider")) {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN provider TEXT");
+    }
+  }
+
+  createSession(workspaceRoot: string, model: string, provider?: string): SessionInfoInternal {
     const id = randomUUIDv7();
     const now = new Date().toISOString();
 
     this.db
       .prepare(
-        "INSERT INTO sessions (id, workspace_root, model, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO sessions (id, workspace_root, model, provider, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
       )
-      .run(id, workspaceRoot, model, now, now);
+      .run(id, workspaceRoot, model, provider ?? null, now, now);
 
     return {
       id,
@@ -136,16 +172,62 @@ export class SessionManager {
       updatedAt: now,
       workspaceRoot,
       model,
+      provider: provider ?? null,
       eventCount: 0,
       title: null,
+      status: "active",
     };
   }
 
-  updateSessionModel(sessionId: string, model: string): void {
+  updateSessionModel(sessionId: string, model: string, provider?: string): void {
+    const now = new Date().toISOString();
+    if (provider !== undefined) {
+      this.db
+        .prepare("UPDATE sessions SET model = ?, provider = ?, updated_at = ? WHERE id = ?")
+        .run(model, provider, now, sessionId);
+    } else {
+      this.db
+        .prepare("UPDATE sessions SET model = ?, updated_at = ? WHERE id = ?")
+        .run(model, now, sessionId);
+    }
+  }
+
+  /** Rename a session (the `title` shown in the session manager). Empty/whitespace clears it. */
+  renameSession(sessionId: string, title: string): void {
+    const now = new Date().toISOString();
+    const clean = title.trim();
+    this.db
+      .prepare("UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?")
+      .run(clean.length ? clean : null, now, sessionId);
+  }
+
+  /** Set a title only if the session has none yet — used to auto-name from the first message. */
+  setTitleIfEmpty(sessionId: string, title: string): void {
+    const clean = title.trim();
+    if (!clean.length) return;
+    this.db
+      .prepare("UPDATE sessions SET title = ? WHERE id = ? AND (title IS NULL OR title = '')")
+      .run(clean, sessionId);
+  }
+
+  /** Move a session between active / archived / deleted (soft delete keeps the data). */
+  setSessionStatus(sessionId: string, status: SessionStatus): void {
     const now = new Date().toISOString();
     this.db
-      .prepare("UPDATE sessions SET model = ?, updated_at = ? WHERE id = ?")
-      .run(model, now, sessionId);
+      .prepare("UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?")
+      .run(status, now, sessionId);
+  }
+
+  /**
+   * Permanently remove a session and (via ON DELETE CASCADE) all of its events,
+   * files and permissions. Irreversible — the soft-delete path is setSessionStatus.
+   */
+  purgeSession(sessionId: string): number {
+    // `changes` would also count cascade-deleted events; report just the session
+    // row (0 or 1) so the result means "sessions removed", not "rows touched".
+    const existed = this.db.prepare("SELECT 1 FROM sessions WHERE id = ?").get(sessionId) ? 1 : 0;
+    this.db.prepare("DELETE FROM sessions WHERE id = ?").run(sessionId);
+    return existed;
   }
 
   appendEvent(sessionId: string, event: SessionEvent): number {
@@ -169,17 +251,21 @@ export class SessionManager {
     return seq;
   }
 
-  listSessions(): SessionInfoInternal[] {
-    const rows = this.db
-      .prepare(
-        `SELECT s.id, s.created_at, s.updated_at, s.workspace_root, s.model, s.title,
-                (SELECT COUNT(*) FROM events WHERE session_id = s.id) as event_count
-         FROM sessions s
-         WHERE s.status = 'active'
-         ORDER BY s.updated_at DESC`,
-      )
-      .all() as SessionRow[];
-
+  /**
+   * List sessions, newest-activity first. Defaults to active sessions; pass a
+   * status (or "all") to include archived/deleted ones for the manager view.
+   */
+  listSessions(opts?: { status?: SessionStatus | "all" }): SessionInfoInternal[] {
+    const status = opts?.status ?? "active";
+    const where = status === "all" ? "" : "WHERE s.status = ?";
+    const stmt = this.db.prepare(
+      `SELECT s.id, s.created_at, s.updated_at, s.workspace_root, s.model, s.provider, s.title, s.status,
+              (SELECT COUNT(*) FROM events WHERE session_id = s.id) as event_count
+       FROM sessions s
+       ${where}
+       ORDER BY s.updated_at DESC`,
+    );
+    const rows = (status === "all" ? stmt.all() : stmt.all(status)) as SessionRow[];
     return rows.map(rowToSessionInfo);
   }
 
@@ -223,12 +309,27 @@ export class SessionManager {
     return Number(result.changes ?? 0);
   }
 
+  /** Fetch an *active* session (null for missing/archived/deleted). Backs chat/replay. */
   getSession(sessionId: string): SessionInfoInternal | null {
     const row = this.db
       .prepare(
-        `SELECT s.id, s.created_at, s.updated_at, s.workspace_root, s.model, s.title,
+        `SELECT s.id, s.created_at, s.updated_at, s.workspace_root, s.model, s.provider, s.title, s.status,
                 (SELECT COUNT(*) FROM events WHERE session_id = s.id) as event_count
          FROM sessions s WHERE s.id = ? AND s.status = 'active'`,
+      )
+      .get(sessionId) as SessionRow | null;
+
+    if (!row) return null;
+    return rowToSessionInfo(row);
+  }
+
+  /** Fetch a session regardless of status (active/archived/deleted) — backs the manager. */
+  getSessionInfo(sessionId: string): SessionInfoInternal | null {
+    const row = this.db
+      .prepare(
+        `SELECT s.id, s.created_at, s.updated_at, s.workspace_root, s.model, s.provider, s.title, s.status,
+                (SELECT COUNT(*) FROM events WHERE session_id = s.id) as event_count
+         FROM sessions s WHERE s.id = ?`,
       )
       .get(sessionId) as SessionRow | null;
 

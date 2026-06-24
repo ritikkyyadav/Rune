@@ -23,6 +23,7 @@ const PROVIDER_KEY_ENV: Record<string, string> = {
   openai: "OPENAI_API_KEY",
   openrouter: "OPENROUTER_API_KEY",
   google: "GOOGLE_API_KEY",
+  "ollama-turbo": "OLLAMA_API_KEY",
 };
 
 interface CliArgs {
@@ -31,8 +32,10 @@ interface CliArgs {
   tasksFilter?: string;
   /** Cap the number of tasks that run (after filtering). */
   max?: number;
-  /** Regression gate: exit 0 if passRate >= this (0–1); else require all pass. */
+  /** Regression gate: exit 0 if cleanPassRate >= this (0–1); else require all pass. */
   minPassRate?: number;
+  /** Force-promote the run to baseline.json even if some tasks were throttled. */
+  writeBaseline?: boolean;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -53,6 +56,8 @@ function parseArgs(argv: string[]): CliArgs {
       args.minPassRate = Number(argv[++i]);
     } else if (a.startsWith("--min-pass-rate=")) {
       args.minPassRate = Number(a.slice("--min-pass-rate=".length));
+    } else if (a === "--write-baseline") {
+      args.writeBaseline = true;
     }
   }
   return args;
@@ -165,12 +170,12 @@ async function main() {
 
     printModelSweep(sweepResults);
     if (sweepResults.length > 0) {
-      await writeBaseline(sweepResults[0].report);
+      await writeBaseline(sweepResults[0].report, args.writeBaseline);
     }
 
     const floor =
       args.minPassRate != null && Number.isFinite(args.minPassRate) ? args.minPassRate : 1;
-    const allPassed = sweepResults.every((s) => s.report.passRate >= floor);
+    const allPassed = sweepResults.every((s) => s.report.cleanPassRate >= floor);
     process.exit(allPassed ? 0 : 1);
   }
 
@@ -184,12 +189,15 @@ async function main() {
     real ? provider : undefined,
   );
   printReport(report);
-  await writeBaseline(report);
+  await writeBaseline(report, args.writeBaseline);
 
+  // Gate on the CLEAN rate (throttled tasks excluded). With no explicit floor,
+  // require every MEASURED task to pass — throttled tasks neither pass nor fail
+  // the gate, so a rate-limited run won't spuriously fail CI.
   const ok =
     args.minPassRate != null && Number.isFinite(args.minPassRate)
-      ? report.passRate >= args.minPassRate
-      : report.passed === report.total;
+      ? report.cleanPassRate >= args.minPassRate
+      : report.passed === report.measured && report.measured > 0;
   process.exit(ok ? 0 : 1);
 }
 

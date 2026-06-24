@@ -1,0 +1,57 @@
+{
+  "timestamp": "2026-06-19T17:33:29.206Z",
+  "mode": "real",
+  "model": "gemini-2.5-flash",
+  "provider": "google",
+  "passRate": 0.68,
+  "passed": 17,
+  "total": 25,
+  "totalCost": 0.0116433,
+  "avgCostPerTask": 0.000465732,
+  "avgDurationMs": 19390.6,
+  "avgTurns": 0.76,
+  "categories": [
+    {
+      "category": "core",
+      "passed": 7,
+      "total": 7,
+      "passRate": 1,
+      "avgCost": 0.0008623928571428569
+    },
+    {
+      "category": "comprehension",
+      "passed": 4,
+      "total": 4,
+      "passRate": 1,
+      "avgCost": 0.000160125
+    },
+    {
+      "category": "fix-failing-test",
+      "passed": 3,
+      "total": 3,
+      "passRate": 1,
+      "avgCost": 0.0013185500000000001
+    },
+    {
+      "category": "multi-file-refactor",
+      "passed": 3,
+      "total": 3,
+      "passRate": 1,
+      "avgCost": 0.0003368
+    },
+    {
+      "category": "new-feature",
+      "passed": 0,
+      "total": 4,
+      "passRate": 0,
+      "avgCost": 0
+    },
+    {
+      "category": "tool-discipline",
+      "passed": 0,
+      "total": 4,
+      "passRate": 0,
+      "avgCost": 0
+    }
+  ]
+}

@@ -18,14 +18,38 @@ import {
   SqliteCheckpointStore,
   DEFAULT_CHECKPOINT_POLICY,
   createAutoVerifier,
+  deriveSessionTitle,
+  PROVIDER_PRESETS,
+  getPreset,
+  loadSystemMemory,
+  loadSystemMemoryMeta,
+  saveSystemMemory,
+  saveSystemMemoryMeta,
+  clearSystemMemory as clearSystemMemoryStore,
+  effectiveSchedule,
+  describeSchedule,
+  isReflectionDue,
+  estimateMemoryTokens,
+  clampToBudget,
+  createLogger,
 } from "@alan/shared";
-import type { CheckpointStore, CheckpointPolicy, RunState, CustomEndpoint } from "@alan/shared";
+import type {
+  CheckpointStore,
+  CheckpointPolicy,
+  RunState,
+  CustomEndpoint,
+  SessionStatus,
+  SessionInfoInternal,
+  SystemMemoryMeta,
+} from "@alan/shared";
 import { buildGateway, providerStatus } from "./provider-registry";
 import type { ProviderStatusRow, BuildGatewayOpts } from "./provider-registry";
 import { AgentLoop } from "./agent-loop";
 import type { PermissionCheck, AgentTurnEvent } from "./agent-loop";
-import { PermissionBroker } from "./permissions";
-import type { PermissionScope } from "./permissions";
+import { PermissionBroker, nextPermissionMode } from "./permissions";
+import type { PermissionScope, PermissionMode } from "./permissions";
+
+export type { PermissionMode } from "./permissions";
 import { PlanRunner } from "./plan-runner";
 import type { PlanRunnerEvent } from "./plan-runner";
 import type { ModelRouting } from "./types";
@@ -72,9 +96,96 @@ export type UserPermissionDecision =
 
 export type PermissionHandler = (prompt: PermissionPrompt) => Promise<UserPermissionDecision>;
 
-// ─── Engine Config ───
+// ─── Transcript replay ───
 
-export type EffortLevel = "low" | "medium" | "high" | "max";
+/** One display line of a session's history, returned by `getTranscript` for UI replay. */
+export interface TranscriptLine {
+  role: "user" | "assistant" | "tool" | "note";
+  text: string;
+  /** For tool lines: the structured detail needed to replay the call faithfully
+   *  (target/command from the args, plus the result). The renderer uses these to
+   *  show `Edited foo.ts +A -B` / `Read bar.ts` instead of a bare tool name. */
+  toolName?: string;
+  args?: Record<string, unknown>;
+  result?: string;
+  /** For tool lines: the tool reported an error. */
+  isError?: boolean;
+}
+
+/**
+ * Build display-oriented transcript lines from a session's raw event log.
+ * Pure (no engine/db) so it can be unit-tested directly. Correlates each
+ * `tool_result` back to the tool name announced in the preceding assistant turn.
+ */
+export function eventsToTranscript(
+  events: Array<{ seq: number; event: { type: string; payload: Record<string, unknown> } }>,
+): TranscriptLine[] {
+  const lines: TranscriptLine[] = [];
+  // callId → the tool name + the args it was called with (kept so the result
+  // line can show the real target/command, not just the tool's name).
+  const tools = new Map<string, { toolName: string; toolInput: Record<string, unknown> }>();
+
+  for (const { event } of events) {
+    const p = event.payload as Record<string, unknown>;
+    switch (event.type) {
+      case "user_msg": {
+        const content = typeof p.content === "string" ? p.content : "";
+        if (content.trim()) lines.push({ role: "user", text: content });
+        break;
+      }
+      case "assistant_msg": {
+        const content = typeof p.content === "string" ? p.content : "";
+        if (content.trim()) lines.push({ role: "assistant", text: content });
+        const toolUses = Array.isArray(p.toolUses) ? p.toolUses : [];
+        for (const tu of toolUses as Array<Record<string, unknown>>) {
+          if (typeof tu.callId === "string" && typeof tu.toolName === "string") {
+            const toolInput =
+              tu.toolInput && typeof tu.toolInput === "object"
+                ? (tu.toolInput as Record<string, unknown>)
+                : {};
+            tools.set(tu.callId, { toolName: tu.toolName, toolInput });
+          }
+        }
+        break;
+      }
+      case "tool_result": {
+        const callId = typeof p.callId === "string" ? p.callId : "";
+        const tu = tools.get(callId);
+        lines.push({
+          role: "tool",
+          text: tu?.toolName ?? "tool",
+          toolName: tu?.toolName ?? "tool",
+          args: tu?.toolInput ?? {},
+          result: typeof p.content === "string" ? p.content : "",
+          isError: p.isError === true,
+        });
+        break;
+      }
+      case "compaction": {
+        lines.push({ role: "note", text: "context compacted earlier in this session" });
+        break;
+      }
+      default:
+        break; // checkpoint, research_*, etc. carry no transcript line
+    }
+  }
+  return lines;
+}
+
+/**
+ * Best-effort map of a model id back to the provider that hosts it, using the
+ * curated preset lists. Used when resuming a session whose provider wasn't
+ * recorded (pre-migration rows). Returns undefined for unknown/custom models.
+ */
+function inferProviderFromModel(model: string): string | undefined {
+  for (const preset of PROVIDER_PRESETS) {
+    if (preset.defaultModel === model) return preset.id;
+    if (preset.models?.some((m) => m.id === model)) return preset.id;
+  }
+  return undefined;
+}
+
+// ─── Engine Config ───
 
 export interface EngineConfig {
   model: string;
@@ -102,6 +213,8 @@ export interface EngineConfig {
   customEndpoint?: CustomEndpoint;
   /** Provider ids toggled off — kept configured but excluded from the gateway. */
   disabledProviders?: string[];
+  /** Base URLs for local runtimes (ollama / lmstudio) by id; overrides preset defaults. */
+  localBaseUrls?: Record<string, string>;
   /** Base URL for a local Ollama server (default http://localhost:11434). */
   ollamaBaseUrl?: string;
   contextBudget?: Partial<ContextBudget>;
@@ -132,15 +245,19 @@ export interface EngineConfig {
   };
   /** Deep-research ("/research") defaults: depth, fan-out, sources. */
   research?: ResearchOptions;
+  /** System Memory ("dreaming") — evergreen profile config (enabled/schedule/model/maxTokens). */
+  memory?: {
+    enabled?: boolean;
+    schedule?: string;
+    model?: string;
+    maxTokens?: number;
+  };
 }
 
-const EFFORT_SETTINGS: Record<EffortLevel, { maxTokens: number; maxTurns: number; label: string }> =
-  {
-    low: { maxTokens: 2048, maxTurns: 10, label: "Quick responses, minimal reasoning" },
-    medium: { maxTokens: 8192, maxTurns: 50, label: "Balanced depth and speed (default)" },
-    high: { maxTokens: 16384, maxTurns: 80, label: "Thorough analysis, deeper reasoning" },
-    max: { maxTokens: 32768, maxTurns: 120, label: "Maximum capability, deepest reasoning" },
-  };
+// Generation budget per step — formerly selectable via an "effort" toggle, now
+// fixed at the old "medium" default.
+const MAX_TOKENS = 8192;
+const MAX_TURNS = 50;
 
 // Cheaper "executor" model per provider for planner-executor routing: the
 // planner keeps the session's (stronger) model; individual steps run on the
@@ -181,7 +298,106 @@ When making code changes:
 
 Be concise and direct. Focus on solving the user's problem.`;
 
+// ─── System Memory ("dreaming") helpers ───
+
+// Cheap/fast model per provider for the memory distillation. The dream is just
+// summarization, so default to the inexpensive tier regardless of the active
+// chat model. Mirrors the summarizer fallbacks in context-engine.ts.
+const MEMORY_CHEAP_MODELS: Partial<Record<ProviderName, string>> = {
+  anthropic: "claude-haiku-4-5-20251001",
+  openai: "gpt-4o-mini",
+  google: "gemini-2.5-flash",
+  openrouter: "qwen/qwen3-coder:free",
+  groq: "llama-3.3-70b-versatile",
+  xai: "grok-2-latest",
+  deepseek: "deepseek-chat",
+  "ollama-turbo": "qwen3-coder:480b",
+  ollama: "llama3",
+};
+
+/** Max characters of any single message kept in the activity digest. */
+const MEMORY_MSG_CHARS = 600;
+
+function systemMemoryDistillSystemPrompt(maxTokens: number): string {
+  return [
+    "You maintain a SHORT, evergreen profile of a software developer and the codebases they work in, so an AI coding assistant (Alan) can serve them better from the very first message.",
+    "",
+    "Write a GUIDE, not rules. Describe — never command. This is background context the assistant tailors to, not rigid instructions.",
+    "",
+    "Cover, ONLY where the activity actually supports it:",
+    "- About the user: who they are, how they communicate (tone, terseness, language), how they like to work, clear likes and dislikes.",
+    "- Style & preferences: languages, frameworks, tools, conventions, testing/verification habits, what they value (e.g. concise answers, minimal diffs).",
+    "- Their codebases: the kinds of projects Alan is used for, recurring stacks and patterns, and what they typically ask for.",
+    "",
+    "Rules:",
+    `- Keep it SMALL — aim well under ~${maxTokens} tokens. Short markdown sections with terse bullets. It must fit a tiny model's context window like butter.`,
+    "- Merge new observations INTO the existing profile: keep durable facts, update what changed, drop trivia and one-off events.",
+    "- Prefer stable preferences over momentary details. NEVER invent — if the activity doesn't show it, leave it out.",
+    "- No secrets, API keys, file contents, long verbatim quotes, timestamps, or session ids.",
+    "- Output ONLY the profile as markdown — no preamble, no 'here is', no surrounding code fence.",
+  ].join("\n");
+}
+
+function systemMemoryDistillUserPrompt(existing: string, activity: string, focus?: string): string {
+  const f = focus?.trim() ? `\n\nThe user asked you to focus on: ${focus.trim()}` : "";
+  return [
+    "EXISTING PROFILE (may be empty):",
+    existing.trim() || "(empty — this is the first profile)",
+    "",
+    "RECENT ACTIVITY (newest first; user/assistant turns and which tools ran):",
+    activity.trim(),
+    f,
+    "",
+    "Return the full updated profile in markdown, ready to replace the existing one.",
+  ].join("\n");
+}
+
+/** Compact one message to a single signal-rich line (skips bulky tool outputs). */
+function compactMessageText(m: Message): string {
+  const parts: string[] = [];
+  for (const b of m.content) {
+    if (b.type === "text" && b.text.trim()) parts.push(b.text.trim());
+    else if (b.type === "tool_use") parts.push(`[used ${b.toolName}]`);
+    // tool_result bodies are intentionally dropped — noisy and large.
+  }
+  const body = parts.join(" ").replace(/\s+/g, " ").trim();
+  if (!body) return "";
+  const role = m.role === "assistant" ? "Alan" : m.role === "user" ? "User" : m.role;
+  return `${role}: ${body.slice(0, MEMORY_MSG_CHARS)}`;
+}
+
+/**
+ * Build a compact, recency-first digest of one session's messages within a token
+ * budget, then restore chronological order. Returns "" when nothing useful fits.
+ */
+function digestSessionMessages(
+  messages: Message[],
+  session: SessionInfoInternal,
+  tokenCap: number,
+): string {
+  const lines: string[] = [];
+  let used = 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const text = compactMessageText(messages[i]);
+    if (!text) continue;
+    const t = Math.ceil(text.length / 4);
+    if (used + t > tokenCap) break;
+    lines.push(text);
+    used += t;
+  }
+  if (!lines.length) return "";
+  lines.reverse();
+  const label = session.title?.trim() || session.id.slice(0, 8);
+  return `Session "${label}" (${session.workspaceRoot}):\n${lines.join("\n")}`;
+}
+
 // ─── Engine ───
+
+/** Result of a runtime key/toggle/endpoint change that may force a model switch. */
+export interface ProviderChangeResult {
+  /** Set when the active provider became unusable and we auto-moved the session. */
+  switchedTo?: { provider: ProviderName; model: string };
+}
 
 export class Engine {
   private gateway: LlmGateway;
@@ -190,7 +406,6 @@ export class Engine {
   private permissions: PermissionBroker;
   private config: EngineConfig;
   private permissionHandler?: PermissionHandler;
-  private effort: EffortLevel = "medium";
   private contextEngine: ContextEngine;
   private costTracker: CostTracker;
   private rateLimiter: ToolRateLimiter | null = null;
@@ -212,6 +427,10 @@ export class Engine {
   private providerKeys: Record<string, string> = {};
   private customEndpoint?: CustomEndpoint;
   private disabledProviders: Set<string> = new Set();
+  // Base URLs for local runtimes (ollama / lmstudio), live-editable via /keys.
+  private localBaseUrls: Record<string, string> = {};
+  // Guards against overlapping System Memory "dreams" (auto + manual at once).
+  private memoryReflecting = false;
 
   constructor(config: Partial<EngineConfig> = {}) {
     this.config = { ...DEFAULT_ENGINE_CONFIG, ...config };
@@ -229,6 +448,7 @@ export class Engine {
     };
     this.customEndpoint = this.config.customEndpoint;
     this.disabledProviders = new Set(this.config.disabledProviders ?? []);
+    this.localBaseUrls = { ...(this.config.localBaseUrls ?? {}) };
     this.gateway = buildGateway(this.gatewayOpts());
 
     // Initialize Tool Registry with built-in tools
@@ -258,8 +478,17 @@ export class Engine {
       trustWorkspace: this.config.trustWorkspace,
     });
 
-    // Initialize Context Engine — always on, manages token budgets
-    this.contextEngine = new ContextEngine({ budget: this.config.contextBudget }, this.gateway);
+    // Initialize Context Engine — always on, manages token budgets. Seed the
+    // summarizer with the active model/provider (not the anthropic default) so
+    // /compress and rolling compaction work on whatever provider is in use.
+    this.contextEngine = new ContextEngine(
+      {
+        budget: this.config.contextBudget,
+        summarizerModel: this.config.model,
+        summarizerProvider: this.config.provider,
+      },
+      this.gateway,
+    );
 
     // Verifier — runs project checks after edits so the agent self-corrects.
     // On by default; detection is best-effort and a no-op when nothing matches.
@@ -323,6 +552,7 @@ export class Engine {
     const session = this.sessions.createSession(
       this.config.workspaceRoot,
       model ?? this.config.model,
+      this.config.provider,
     );
     return session.id;
   }
@@ -357,16 +587,36 @@ export class Engine {
     if (this.mcpLoaded) return;
     this.mcpLoaded = true;
     if (this.config.enableMcp === false) return;
+    const logger = createLogger("mcp");
     try {
-      this.mcpDiscovery = new McpDiscovery(this.config.workspaceRoot);
+      this.mcpDiscovery = new McpDiscovery(this.config.workspaceRoot, {
+        logger,
+        // Live tool-list changes (or a server restart) reconcile the registry so
+        // the model always sees the current tool set without a session restart.
+        onToolsChanged: () => this.reconcileMcpTools(),
+      });
       const handlers = await this.mcpDiscovery.discover();
       for (const handler of handlers) {
         this.registry.register(handler);
       }
     } catch (err) {
-      console.warn(`[mcp] discovery failed: ${err instanceof Error ? err.message : String(err)}`);
+      logger.warn(`discovery failed: ${err instanceof Error ? err.message : String(err)}`);
       this.mcpDiscovery = null;
     }
+  }
+
+  /** Reconcile registered MCP tools against the discovery's current set: drop
+   *  tools that disappeared, (re)register the rest. Safe to call repeatedly. */
+  private reconcileMcpTools(): void {
+    if (!this.mcpDiscovery) return;
+    const current = this.mcpDiscovery.getHandlers();
+    const wanted = new Set(current.map((h) => h.schema.name));
+    for (const schema of this.registry.list()) {
+      if (schema.name.startsWith("mcp_") && !wanted.has(schema.name)) {
+        this.registry.unregister(schema.name);
+      }
+    }
+    for (const handler of current) this.registry.register(handler);
   }
 
   /** Ensure MCP servers are discovered, then return their status (backs `/mcp`). */
@@ -532,8 +782,84 @@ export class Engine {
     };
   }
 
-  listSessions() {
-    return this.sessions.listSessions();
+  /** Sessions for the manager. Defaults to active; pass a status (or "all") for archived/deleted. */
+  listSessions(opts?: { status?: SessionStatus | "all" }) {
+    return this.sessions.listSessions(opts);
+  }
+
+  /** A single session regardless of status (active/archived/deleted). */
+  getSessionInfo(sessionId: string): SessionInfoInternal | null {
+    return this.sessions.getSessionInfo(sessionId);
+  }
+
+  /** Rename a session (the title shown in the manager). Empty clears back to the auto-title slot. */
+  renameSession(sessionId: string, title: string): void {
+    this.sessions.renameSession(sessionId, title);
+  }
+
+  /** Hide a session from the default list without losing its data (reversible via restoreSession). */
+  archiveSession(sessionId: string): void {
+    this.sessions.setSessionStatus(sessionId, "archived");
+  }
+
+  /** Bring an archived/deleted session back into the active list. */
+  restoreSession(sessionId: string): void {
+    this.sessions.setSessionStatus(sessionId, "active");
+  }
+
+  /** Soft-delete: hidden everywhere but recoverable until purged. */
+  deleteSession(sessionId: string): void {
+    this.sessions.setSessionStatus(sessionId, "deleted");
+  }
+
+  /** Permanently destroy a session and every event/file/permission it owns. Irreversible. */
+  purgeSession(sessionId: string): number {
+    return this.sessions.purgeSession(sessionId);
+  }
+
+  /**
+   * The session's conversation as display-oriented lines (user / assistant /
+   * tool / note), for replaying history into the UI when a session is resumed.
+   * Formatting (colour/theme) is the UI's job — this stays presentation-agnostic.
+   */
+  getTranscript(sessionId: string): TranscriptLine[] {
+    return eventsToTranscript(this.sessions.getEvents(sessionId, 1));
+  }
+
+  /**
+   * Resume a session for continued chat. Restores it to active if it was
+   * archived/deleted and reconciles the active model+provider to the ones the
+   * session ran on — so a qwen/Ollama session isn't accidentally sent to Google
+   * after a /model switch. Provider comes from the stored column when present,
+   * else is inferred from the model id, else the current provider is kept.
+   * Returns the resolved session info (null if it doesn't exist).
+   */
+  resumeSession(sessionId: string): {
+    session: SessionInfoInternal;
+    switched: boolean;
+    providerKnown: boolean;
+  } | null {
+    const info = this.sessions.getSessionInfo(sessionId);
+    if (!info) return null;
+    if (info.status !== "active") this.sessions.setSessionStatus(sessionId, "active");
+
+    const wanted = info.provider ?? inferProviderFromModel(info.model);
+    const registered = this.getRegisteredProviders();
+    let switched = false;
+    const providerKnown = !!wanted;
+    if (
+      wanted &&
+      registered.includes(wanted as ProviderName) &&
+      (wanted !== this.config.provider || info.model !== this.config.model)
+    ) {
+      this.switchModel(info.model, wanted as ProviderName, sessionId);
+      switched = true;
+    } else if (info.model !== this.config.model && wanted === this.config.provider) {
+      // Same provider, different model — adopt the session's model.
+      this.switchModel(info.model, undefined, sessionId);
+      switched = true;
+    }
+    return { session: { ...info, status: "active" }, switched, providerKnown };
   }
 
   /** User-message turns for a session, chronological — backs the `/rewind` UI. */
@@ -612,6 +938,262 @@ export class Engine {
     };
   }
 
+  // ─── System Memory ("dreaming") ───
+  //
+  // An evergreen, narrative profile of the user and their codebases, stored at
+  // ~/.alan/system-memory.md (see @alan/shared system-memory.ts) and injected into
+  // every session's system prompt. Small by design so even tiny models load it
+  // cheaply. Refreshed manually (`/memory update`) or automatically on a cadence.
+
+  /** Resolved memory config with defaults applied. */
+  private memoryConfig(): { enabled: boolean; schedule: string; model: string; maxTokens: number } {
+    const m = this.config.memory ?? {};
+    return {
+      enabled: m.enabled !== false,
+      schedule: m.schedule ?? "manual",
+      model: m.model ?? "cheapest",
+      maxTokens: m.maxTokens && m.maxTokens > 0 ? m.maxTokens : 1500,
+    };
+  }
+
+  /** Current memory + status, for the `/memory` panel and the desktop Settings UI. */
+  getSystemMemory(): {
+    content: string;
+    meta: SystemMemoryMeta;
+    enabled: boolean;
+    schedule: string;
+    scheduleLabel: string;
+    tokens: number;
+    maxTokens: number;
+  } {
+    const cfg = this.memoryConfig();
+    const { content, meta } = loadSystemMemory();
+    const schedule = effectiveSchedule(meta, cfg.schedule);
+    return {
+      content,
+      meta,
+      enabled: cfg.enabled,
+      schedule,
+      scheduleLabel: describeSchedule(schedule),
+      tokens: estimateMemoryTokens(content),
+      maxTokens: cfg.maxTokens,
+    };
+  }
+
+  /** Set the auto-refresh cadence live (persisted to the meta sidecar, overrides config). */
+  setSystemMemorySchedule(schedule: string): { schedule: string; label: string } {
+    saveSystemMemoryMeta({ schedule });
+    return { schedule, label: describeSchedule(schedule) };
+  }
+
+  /** Replace the whole memory (desktop save / post-$EDITOR round-trip). Clamps to budget. */
+  setSystemMemoryContent(content: string): { tokens: number } {
+    const cfg = this.memoryConfig();
+    const clamped = clampToBudget(content, cfg.maxTokens);
+    saveSystemMemory(clamped, {
+      updatedAt: new Date().toISOString(),
+      tokens: estimateMemoryTokens(clamped),
+    });
+    return { tokens: estimateMemoryTokens(clamped) };
+  }
+
+  /** Quick manual capture: append a dated note under a "Notes" heading, then clamp. */
+  appendSystemMemoryNote(text: string): { tokens: number } {
+    const note = text.trim();
+    const { content } = loadSystemMemory();
+    if (!note) return { tokens: estimateMemoryTokens(content) };
+    const stamp = new Date().toISOString().slice(0, 10);
+    let next: string;
+    if (/(^|\n)#{1,6}\s*Notes\b/i.test(content)) {
+      // Insert under the existing Notes heading.
+      next = content.replace(/(#{1,6}\s*Notes\b[^\n]*\n)/i, `$1- (${stamp}) ${note}\n`);
+    } else {
+      next = `${content ? content + "\n\n" : ""}## Notes\n- (${stamp}) ${note}`;
+    }
+    return this.setSystemMemoryContent(next);
+  }
+
+  /** Wipe the memory (keeps the chosen cadence, resets the dream bookkeeping). */
+  clearSystemMemory(): void {
+    clearSystemMemoryStore();
+  }
+
+  /** Ordered provider/model candidates for the dream, per the configured preference. */
+  private memoryModelCandidates(
+    modelPref: string,
+  ): Array<{ provider: ProviderName; model: string }> {
+    const registered = this.gateway.getRegisteredProviderNames();
+    const active = this.config.provider;
+    const order = [active, ...registered.filter((p) => p !== active)].filter((p) =>
+      registered.includes(p),
+    );
+    const cheap = (p: ProviderName) => MEMORY_CHEAP_MODELS[p] ?? this.config.model;
+
+    // Explicit "provider/model" (note: model ids may contain '/', so split once).
+    if (
+      modelPref &&
+      modelPref !== "cheapest" &&
+      modelPref !== "active" &&
+      modelPref.includes("/")
+    ) {
+      const slash = modelPref.indexOf("/");
+      const prov = modelPref.slice(0, slash) as ProviderName;
+      const model = modelPref.slice(slash + 1);
+      if (registered.includes(prov) && model) {
+        const rest = order.map((p) => ({ provider: p, model: cheap(p) }));
+        return [{ provider: prov, model }, ...rest];
+      }
+    }
+    if (modelPref === "active") {
+      return order.map((p) => ({
+        provider: p,
+        model: p === active ? this.config.model : cheap(p),
+      }));
+    }
+    return order.map((p) => ({ provider: p, model: cheap(p) }));
+  }
+
+  /**
+   * Gather new activity since the last fold, newest sessions first, token-capped.
+   * Returns the digest text plus the per-session high-water seq to record so the
+   * next dream skips what's already been learned.
+   */
+  private collectActivityDigest(
+    meta: SystemMemoryMeta,
+    tokenCap: number,
+  ): { text: string; foldedSeqBySession: Record<string, number> } {
+    const folded = meta.foldedSeqBySession ?? {};
+    const sessions = this.sessions.listSessions({ status: "all" }); // newest-activity first
+    const chunks: string[] = [];
+    const newFolded: Record<string, number> = {};
+    let budget = tokenCap;
+
+    for (const s of sessions) {
+      if (budget <= 0) break;
+      const fromSeq = (folded[s.id] ?? 0) + 1;
+      const events = this.sessions.getEvents(s.id, fromSeq);
+      if (events.length === 0) continue;
+      const maxSeq = events[events.length - 1].seq;
+      const text = digestSessionMessages(eventsToMessages(events), s, Math.min(budget, 4000));
+      if (text.trim()) {
+        chunks.push(text);
+        budget -= estimateMemoryTokens(text);
+        newFolded[s.id] = Math.max(folded[s.id] ?? 0, maxSeq);
+      }
+    }
+    return { text: chunks.join("\n\n---\n\n"), foldedSeqBySession: newFolded };
+  }
+
+  /**
+   * The "dream": distill recent activity (across all sessions) into the evergreen
+   * profile. Reuses the gateway with a cheap model and walks provider candidates
+   * itself (infer() does no fallback). Always feeds the existing profile so re-runs
+   * refine rather than duplicate. No-ops when there is nothing new to learn from.
+   */
+  async reflectSystemMemory(opts: { focus?: string; trigger?: "manual" | "auto" } = {}): Promise<{
+    updated: boolean;
+    reason?: string;
+    tokensBefore: number;
+    tokensAfter: number;
+    content?: string;
+  }> {
+    const cfg = this.memoryConfig();
+    const { content: existing, meta } = loadSystemMemory();
+    const tokensBefore = estimateMemoryTokens(existing);
+    const unchanged = { updated: false as const, tokensBefore, tokensAfter: tokensBefore };
+
+    if (this.memoryReflecting) {
+      return { ...unchanged, reason: "a memory refresh is already running" };
+    }
+    if (this.gateway.getRegisteredProviderNames().length === 0) {
+      return { ...unchanged, reason: "no provider configured — add a key with /keys" };
+    }
+
+    this.memoryReflecting = true;
+    try {
+      const digest = this.collectActivityDigest(meta, opts.trigger === "auto" ? 12000 : 20000);
+      if (!digest.text.trim()) {
+        return { ...unchanged, reason: "no new activity to learn from yet" };
+      }
+
+      const system = systemMemoryDistillSystemPrompt(cfg.maxTokens);
+      const user = systemMemoryDistillUserPrompt(existing, digest.text, opts.focus);
+
+      let out = "";
+      for (const { provider, model } of this.memoryModelCandidates(cfg.model)) {
+        try {
+          const resp = await this.gateway.infer({
+            messages: [{ role: "user", content: [{ type: "text", text: user }] }],
+            system,
+            model,
+            provider,
+            maxTokens: Math.min(2048, Math.ceil(cfg.maxTokens * 1.3)),
+            stream: false,
+          });
+          const block = resp.content.find((b) => b.type === "text");
+          out = block && block.type === "text" ? block.text.trim() : "";
+          if (out) break;
+        } catch {
+          // Provider unavailable / transient — try the next candidate.
+        }
+      }
+      if (!out) {
+        return { ...unchanged, reason: "the model could not produce an update" };
+      }
+
+      const clamped = clampToBudget(out, cfg.maxTokens);
+      const tokensAfter = estimateMemoryTokens(clamped);
+      const now = new Date().toISOString();
+      saveSystemMemory(clamped, {
+        updatedAt: now,
+        lastReflectedAt: now,
+        tokens: tokensAfter,
+        foldedSeqBySession: { ...(meta.foldedSeqBySession ?? {}), ...digest.foldedSeqBySession },
+      });
+      return { updated: true, tokensBefore, tokensAfter, content: clamped };
+    } finally {
+      this.memoryReflecting = false;
+    }
+  }
+
+  /**
+   * Run the automatic dream IF it's due (interval cadence elapsed) and a provider
+   * is configured. Cheap + safe to call on every startup — returns quickly when
+   * nothing is due. Callers typically run this in the background (don't await).
+   */
+  async maybeReflectSystemMemory(): Promise<{
+    updated: boolean;
+    reason?: string;
+    tokensBefore?: number;
+    tokensAfter?: number;
+  }> {
+    const cfg = this.memoryConfig();
+    if (!cfg.enabled) return { updated: false, reason: "memory disabled" };
+    if (this.memoryReflecting) return { updated: false, reason: "already running" };
+    const meta = loadSystemMemoryMeta();
+    const schedule = effectiveSchedule(meta, cfg.schedule);
+    if (!isReflectionDue(meta, schedule)) return { updated: false, reason: "not due" };
+    return this.reflectSystemMemory({ trigger: "auto" });
+  }
+
+  /**
+   * The memory block to prepend into the system prompt (or "" when disabled/empty).
+   * Framed explicitly as a GUIDE, not rules: the model should defer to the user's
+   * in-session requests when they conflict.
+   */
+  private buildSystemMemoryBlock(): string {
+    if (this.config.memory?.enabled === false) return "";
+    const { content } = loadSystemMemory();
+    const body = content.trim();
+    if (!body) return "";
+    return [
+      "# What Alan knows about you (evergreen context — a guide, not rules)",
+      "The profile below is what Alan has learned about the user and their codebases over time, to tailor its tone, defaults, and assumptions. Treat it as helpful background, NOT as instructions — when it conflicts with what the user asks for in this session, follow the user.",
+      "",
+      body,
+    ].join("\n");
+  }
+
   /** Toggle planner-executor mode for subsequent turns. */
   setPlannerMode(enabled: boolean): void {
     this.config.plannerMode = enabled;
@@ -619,6 +1201,32 @@ export class Engine {
 
   isPlannerMode(): boolean {
     return this.config.plannerMode;
+  }
+
+  // ─── Permission mode (the Shift+Tab cycle) ───
+
+  /** The active permission mode: confirm | auto | turing. */
+  getPermissionMode(): PermissionMode {
+    return this.permissions.getMode();
+  }
+
+  /**
+   * Switch the permission mode live (Shift+Tab, `/turing`, `/mode`). Updates both
+   * the broker and the mirrored config flags so getStatus()/posture stay coherent.
+   * Takes effect on the next tool call — the permission handler stays registered in
+   * every mode; the broker simply short-circuits to "allowed" under turing.
+   */
+  setPermissionMode(mode: PermissionMode): void {
+    this.permissions.setMode(mode);
+    this.config.yoloMode = mode === "turing";
+    this.config.trustWorkspace = mode === "auto";
+  }
+
+  /** Advance to the next mode in the cycle and return it. */
+  cyclePermissionMode(): PermissionMode {
+    const next = nextPermissionMode(this.permissions.getMode());
+    this.setPermissionMode(next);
+    return next;
   }
 
   // ─── Research Mode (/research) ───
@@ -756,6 +1364,13 @@ export class Engine {
       payload: { content: userMessage },
     });
 
+    // Auto-name the session from its first real message so the manager shows a
+    // readable title instead of a bare UUID. No-op once a title exists (manual
+    // renames and later turns never clobber it).
+    if (!session.title && userMessage.trim()) {
+      this.sessions.setTitleIfEmpty(sessionId, deriveSessionTitle(userMessage));
+    }
+
     // Mark session as running for crash recovery
     this.sessions.appendEvent(sessionId, {
       type: "checkpoint",
@@ -766,11 +1381,12 @@ export class Engine {
     await this.ensureMcpServers();
     await this.ensureSkills();
 
-    // Append the compact skills catalog to the base system prompt so the model
-    // knows which skills it can load on demand via the `skill` tool.
-    const systemPrompt = this.skillCatalog
-      ? `${SYSTEM_PROMPT}\n\n${this.skillCatalog}`
-      : SYSTEM_PROMPT;
+    // Assemble the system prompt: base + the evergreen System Memory profile (a
+    // guide about the user/codebases) + the compact skills catalog. Read fresh
+    // each turn so manual edits and dreams take effect immediately.
+    const systemPrompt = [SYSTEM_PROMPT, this.buildSystemMemoryBlock(), this.skillCatalog]
+      .filter((s) => s && s.trim())
+      .join("\n\n");
 
     const permCheck = this.buildPermissionCheck();
     let turnCount = 0;
@@ -786,8 +1402,6 @@ export class Engine {
       getMessages: () => Message[];
     };
 
-    const effortCfg = EFFORT_SETTINGS[this.effort];
-
     if (this.config.plannerMode) {
       const routing: ModelRouting = {
         planner: this.config.routing?.planner ?? session.model,
@@ -800,8 +1414,8 @@ export class Engine {
       runner = new PlanRunner(
         {
           routing,
-          maxTokens: effortCfg.maxTokens,
-          maxTurnsPerStep: Math.min(effortCfg.maxTurns, 20),
+          maxTokens: MAX_TOKENS,
+          maxTurnsPerStep: Math.min(MAX_TURNS, 20),
           maxStepRetries: 2,
           maxReplanAttempts: 2,
           systemPrompt,
@@ -819,8 +1433,8 @@ export class Engine {
         {
           model: session.model,
           provider: this.config.provider,
-          maxTokens: effortCfg.maxTokens,
-          maxTurns: effortCfg.maxTurns,
+          maxTokens: MAX_TOKENS,
+          maxTurns: MAX_TURNS,
           systemPrompt,
           priorMessages,
           contextEngine: this.contextEngine,
@@ -862,7 +1476,7 @@ export class Engine {
                 sessionId,
                 messages: runner.getMessages(),
                 turnCount,
-                context: { effort: this.effort, model: session.model },
+                context: { model: session.model },
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
               };
@@ -915,7 +1529,7 @@ export class Engine {
                 sessionId,
                 messages: runner.getMessages(),
                 turnCount,
-                context: { effort: this.effort, model: session.model },
+                context: { model: session.model },
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
               };
@@ -1028,10 +1642,15 @@ export class Engine {
     if (provider) {
       this.config.provider = provider;
       this.rebuildGateway();
+    } else {
+      // Model-only switch: keep the summarizer's model in sync (rebuildGateway,
+      // which also re-syncs, doesn't run when the provider is unchanged).
+      this.contextEngine?.setSummarizer(this.config.model, this.config.provider);
     }
-    // Update the session record so chat() picks up the new model
+    // Update the session record so chat() picks up the new model — and the
+    // provider too, so a later resume reconciles to the right host.
     if (sessionId) {
-      this.sessions.updateSessionModel(sessionId, model);
+      this.sessions.updateSessionModel(sessionId, model, provider ?? this.config.provider);
     }
   }
 
@@ -1043,36 +1662,87 @@ export class Engine {
       keys: this.providerKeys,
       customEndpoint: this.customEndpoint,
       disabled: this.disabledProviders,
+      localBaseUrls: this.localBaseUrls,
       ollamaBaseUrl: this.config.ollamaBaseUrl,
     };
   }
 
   private rebuildGateway(): void {
     this.gateway = buildGateway(this.gatewayOpts());
+    // Keep the context engine pointed at the live gateway + active model so
+    // /compress and rolling compaction follow key/provider/toggle changes
+    // instead of using a stale gateway or the anthropic default.
+    this.contextEngine?.setGateway(this.gateway);
+    this.contextEngine?.setSummarizer(this.config.model, this.config.provider);
   }
 
   /**
    * Add (or, with null, remove) a provider API key at runtime and rebuild the
    * gateway so the change takes effect immediately. Persistence to the secrets
    * file is the caller's responsibility — this only touches in-memory state.
+   * Returns a forced model switch when clearing the key left the active provider
+   * unusable, so the caller can tell the user we moved them.
    */
-  setProviderKey(id: string, key: string | null): void {
+  setProviderKey(id: string, key: string | null, sessionId?: string): ProviderChangeResult {
     if (key && key.trim()) this.providerKeys[id] = key.trim();
     else delete this.providerKeys[id];
     this.rebuildGateway();
+    return { switchedTo: this.reconcileActiveProvider(sessionId) };
   }
 
   /** Set or clear the user-defined custom OpenAI-compatible endpoint. */
-  setCustomEndpoint(ep: CustomEndpoint | null): void {
+  setCustomEndpoint(ep: CustomEndpoint | null, sessionId?: string): ProviderChangeResult {
     this.customEndpoint = ep ?? undefined;
     this.rebuildGateway();
+    return { switchedTo: this.reconcileActiveProvider(sessionId) };
   }
 
   /** Toggle a provider on/off without discarding its key. */
-  setProviderDisabled(id: string, disabled: boolean): void {
+  setProviderDisabled(id: string, disabled: boolean, sessionId?: string): ProviderChangeResult {
     if (disabled) this.disabledProviders.add(id);
     else this.disabledProviders.delete(id);
     this.rebuildGateway();
+    return { switchedTo: this.reconcileActiveProvider(sessionId) };
+  }
+
+  /**
+   * Set (or, with null/empty, reset to default) the base URL of a local runtime
+   * (ollama / lmstudio) at runtime and rebuild the gateway. Persistence to the
+   * secrets file is the caller's job — this only touches in-memory state.
+   */
+  setLocalEndpoint(id: string, baseUrl: string | null): void {
+    const url = baseUrl?.trim();
+    if (url) this.localBaseUrls[id] = url;
+    else delete this.localBaseUrls[id];
+    this.rebuildGateway();
+  }
+
+  /** The configured base URL for a local runtime (or its preset default). */
+  getLocalEndpoint(id: string): string | undefined {
+    return this.localBaseUrls[id] ?? getPreset(id)?.baseUrl;
+  }
+
+  /**
+   * After a key/toggle/endpoint change, ensure the active provider is still
+   * registered. If it isn't (e.g. the user toggled OFF or cleared the provider
+   * they were using), move to the first still-available provider and its default
+   * model — updating config, the session record, and the summarizer together so
+   * chat() doesn't fire a request at a dead provider. Returns the new
+   * provider/model when a switch happened, else undefined.
+   */
+  private reconcileActiveProvider(
+    sessionId?: string,
+  ): { provider: ProviderName; model: string } | undefined {
+    const registered = this.gateway.getRegisteredProviderNames();
+    if (registered.length === 0) return undefined; // no providers at all — surfaced at the call site
+    if (registered.includes(this.config.provider)) return undefined; // still usable
+    const next = registered[0];
+    const model = getPreset(next)?.defaultModel ?? this.config.model;
+    this.config.provider = next;
+    this.config.model = model;
+    if (sessionId) this.sessions.updateSessionModel(sessionId, model, next);
+    this.contextEngine?.setSummarizer(model, next);
+    return { provider: next, model };
   }
 
   /** Per-provider status (with masked keys) for the `/keys` panel. */
@@ -1081,6 +1751,7 @@ export class Engine {
       keys: this.providerKeys,
       customEndpoint: this.customEndpoint,
       disabled: this.disabledProviders,
+      localBaseUrls: this.localBaseUrls,
       active: this.config.provider,
     });
   }
@@ -1100,18 +1771,6 @@ export class Engine {
 
   getRegisteredProviders(): ProviderName[] {
     return this.gateway.getRegisteredProviderNames();
-  }
-
-  setEffort(level: EffortLevel): void {
-    this.effort = level;
-  }
-
-  getEffort(): EffortLevel {
-    return this.effort;
-  }
-
-  getEffortSettings(): { maxTokens: number; maxTurns: number; label: string } {
-    return EFFORT_SETTINGS[this.effort];
   }
 
   getContextUsage(): { used: number; limit: number; percent: number } {
@@ -1136,12 +1795,11 @@ export class Engine {
   getStatus(sessionId?: string): {
     model: string;
     provider: ProviderName;
-    effort: EffortLevel;
-    effortLabel: string;
     workspace: string;
     plannerMode: boolean;
     yoloMode: boolean;
     trustWorkspace: boolean;
+    permissionMode: PermissionMode;
     registeredProviders: ProviderName[];
     cost: number;
     sessionId?: string;
@@ -1153,12 +1811,11 @@ export class Engine {
     return {
       model: this.config.model,
       provider: this.config.provider,
-      effort: this.effort,
-      effortLabel: EFFORT_SETTINGS[this.effort].label,
       workspace: this.config.workspaceRoot,
       plannerMode: this.config.plannerMode,
       yoloMode: this.config.yoloMode,
       trustWorkspace: this.permissions.isTrustWorkspace(),
+      permissionMode: this.permissions.getMode(),
       registeredProviders: this.getRegisteredProviders(),
       cost: this.getCost(),
       sessionId,

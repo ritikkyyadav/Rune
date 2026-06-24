@@ -1,0 +1,70 @@
+{
+  "timestamp": "2026-06-19T17:51:28.367Z",
+  "mode": "mock",
+  "passRate": 1,
+  "cleanPassRate": 1,
+  "passed": 25,
+  "measured": 25,
+  "throttled": 0,
+  "total": 25,
+  "totalCost": 0,
+  "avgCostPerTask": 0,
+  "avgDurationMs": 39.52,
+  "avgTurns": 1,
+  "categories": [
+    {
+      "category": "core",
+      "passed": 7,
+      "total": 7,
+      "throttled": 0,
+      "passRate": 1,
+      "cleanPassRate": 1,
+      "avgCost": 0
+    },
+    {
+      "category": "comprehension",
+      "passed": 4,
+      "total": 4,
+      "throttled": 0,
+      "passRate": 1,
+      "cleanPassRate": 1,
+      "avgCost": 0
+    },
+    {
+      "category": "fix-failing-test",
+      "passed": 3,
+      "total": 3,
+      "throttled": 0,
+      "passRate": 1,
+      "cleanPassRate": 1,
+      "avgCost": 0
+    },
+    {
+      "category": "multi-file-refactor",
+      "passed": 3,
+      "total": 3,
+      "throttled": 0,
+      "passRate": 1,
+      "cleanPassRate": 1,
+      "avgCost": 0
+    },
+    {
+      "category": "new-feature",
+      "passed": 4,
+      "total": 4,
+      "throttled": 0,
+      "passRate": 1,
+      "cleanPassRate": 1,
+      "avgCost": 0
+    },
+    {
+      "category": "tool-discipline",
+      "passed": 4,
+      "total": 4,
+      "throttled": 0,
+      "passRate": 1,
+      "cleanPassRate": 1,
+      "avgCost": 0
+    }
+  ]
+}

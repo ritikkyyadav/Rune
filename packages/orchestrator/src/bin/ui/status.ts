@@ -1,7 +1,7 @@
 // ─── /status — Codex-style session card ───
 
 import * as os from "os";
-import { bold, text, muted, faint, info, warn, accent } from "./theme";
+import { bold, text, muted, faint, info, warn } from "./theme";
 import { box, kv } from "./render";
 
 function shortPath(p: string): string {
@@ -12,20 +12,22 @@ function shortPath(p: string): string {
 export interface StatusView {
   model: string;
   provider: string;
-  effort: string;
   workspace: string;
   sessionId: string;
   cost: number;
   plannerMode?: boolean;
   yoloMode?: boolean;
   trustWorkspace?: boolean;
+  /** Active permission mode; falls back to the yolo/trust booleans when absent. */
+  permissionMode?: "confirm" | "auto" | "turing";
   registeredProviders?: string[];
   version?: string;
 }
 
 function permissionsLabel(s: StatusView): string {
-  if (s.yoloMode) return accent("yolo · no prompts");
-  if (s.trustWorkspace) return warn("trusted · in-workspace auto");
+  const mode = s.permissionMode ?? (s.yoloMode ? "turing" : s.trustWorkspace ? "auto" : "confirm");
+  if (mode === "turing") return bold(warn("⚡ Turing · no prompts"));
+  if (mode === "auto") return warn("auto · in-workspace auto-approved");
   return text("confirm · on-request");
 }
 
@@ -33,7 +35,7 @@ export function renderStatus(s: StatusView): string {
   const header = `${faint(">_")} ${bold(text("Alan"))}  ${muted("(v" + (s.version ?? "0.1.0") + ")")}`;
 
   const rows: [string, string][] = [
-    ["Model", `${info(s.model)}  ${faint("(effort: " + s.effort + ")")}`],
+    ["Model", info(s.model)],
     ["Provider", text(s.provider)],
     ["Directory", text(shortPath(s.workspace))],
     ["Mode", text(s.plannerMode ? "planner" : "react")],

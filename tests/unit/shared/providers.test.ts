@@ -23,15 +23,24 @@ describe("provider presets", () => {
       expect(p.label).toBeTruthy();
       expect(p.defaultModel).toBeTruthy();
       expect(p.docsUrl).toMatch(/^https:\/\//);
-      expect(["anthropic", "openai-compat", "google"]).toContain(p.kind);
+      expect(["anthropic", "openai-compat", "google", "ollama"]).toContain(p.kind);
     }
   });
 
-  it("openai-compat hosts other than native OpenAI carry a base URL", () => {
+  it("remote openai-compat hosts carry an https base URL; local ones use localhost", () => {
     for (const p of PROVIDER_PRESETS) {
-      if (p.kind === "openai-compat" && p.id !== "openai") {
+      if (p.kind === "openai-compat" && p.id !== "openai" && !p.local) {
         expect(p.baseUrl).toMatch(/^https:\/\//);
       }
+    }
+  });
+
+  it("local runtimes are keyless and carry a base URL", () => {
+    const locals = PROVIDER_PRESETS.filter((p) => p.local);
+    expect(locals.map((p) => p.id).sort()).toEqual(["lmstudio", "ollama"]);
+    for (const p of locals) {
+      expect(p.baseUrl).toMatch(/^https?:\/\//);
+      expect(p.envVar).toBeUndefined(); // no API key
     }
   });
 

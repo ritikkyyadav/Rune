@@ -29,6 +29,12 @@ export interface SecretsFile {
   custom?: CustomEndpoint;
   /** Provider ids the user toggled off (key kept, excluded from use). */
   disabled?: string[];
+  /**
+   * Base URLs for local runtimes (ollama / lmstudio), keyed by provider id.
+   * Not secret, but co-located here because the `/keys` panel edits them live and
+   * applies them the same way it applies keys. Overrides the config.toml/default.
+   */
+  endpoints?: Record<string, string>;
 }
 
 /**
@@ -59,7 +65,18 @@ export function loadSecrets(): SecretsFile {
     const disabled = Array.isArray(raw?.disabled)
       ? (raw.disabled as unknown[]).filter((x): x is string => typeof x === "string")
       : undefined;
-    return { keys, ...(custom ? { custom } : {}), ...(disabled && disabled.length ? { disabled } : {}) };
+    const endpoints: Record<string, string> = {};
+    if (raw?.endpoints && typeof raw.endpoints === "object") {
+      for (const [k, v] of Object.entries(raw.endpoints as Record<string, unknown>)) {
+        if (typeof v === "string" && v) endpoints[k] = v;
+      }
+    }
+    return {
+      keys,
+      ...(custom ? { custom } : {}),
+      ...(disabled && disabled.length ? { disabled } : {}),
+      ...(Object.keys(endpoints).length ? { endpoints } : {}),
+    };
   } catch {
     return { keys: {} };
   }
@@ -77,6 +94,7 @@ export function saveSecrets(s: SecretsFile): void {
         keys: s.keys ?? {},
         ...(s.custom ? { custom: s.custom } : {}),
         ...(s.disabled && s.disabled.length ? { disabled: s.disabled } : {}),
+        ...(s.endpoints && Object.keys(s.endpoints).length ? { endpoints: s.endpoints } : {}),
       },
       null,
       2,
@@ -129,6 +147,20 @@ export function setCustomEndpoint(ep: CustomEndpoint): SecretsFile {
 export function clearCustomEndpoint(): SecretsFile {
   const s = loadSecrets();
   delete s.custom;
+  saveSecrets(s);
+  return s;
+}
+
+/** Set (or, with empty/undefined, reset) the base URL for a local runtime. */
+export function setLocalEndpoint(id: string, baseUrl: string | undefined): SecretsFile {
+  const s = loadSecrets();
+  const url = baseUrl?.trim();
+  if (url) {
+    s.endpoints = { ...(s.endpoints ?? {}), [id]: url };
+  } else if (s.endpoints) {
+    delete s.endpoints[id];
+    if (Object.keys(s.endpoints).length === 0) delete s.endpoints;
+  }
   saveSecrets(s);
   return s;
 }

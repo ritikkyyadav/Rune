@@ -11,6 +11,7 @@ import type {
   TokenUsage,
 } from "../types";
 import { parseApiErrorBody } from "../types";
+import { tryParseJson } from "@alan/shared";
 
 interface GeminiPart {
   text?: string;
@@ -130,7 +131,11 @@ export class GoogleProvider implements LlmProvider {
           const payload = dataLine.slice("data:".length).trim();
           if (!payload || payload === "[DONE]") continue;
 
-          const parsed = JSON.parse(payload) as GeminiResponse;
+          // Skip an unparseable SSE event (partial frame / keepalive / error blob) rather than
+          // letting one bad chunk throw and abort the whole stream.
+          const parsedEvent = tryParseJson(payload);
+          if (parsedEvent === undefined) continue;
+          const parsed = parsedEvent as GeminiResponse;
           const candidate = parsed.candidates?.[0];
           if (parsed.usageMetadata) usage = this.fromUsage(parsed);
           if (candidate?.finishReason) finishReason = candidate.finishReason;

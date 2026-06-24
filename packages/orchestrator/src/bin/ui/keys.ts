@@ -9,6 +9,7 @@ export type Key =
   | { type: "backspace" }
   | { type: "delete" }
   | { type: "tab" }
+  | { type: "shift-tab" }
   | { type: "up" }
   | { type: "down" }
   | { type: "left" }
@@ -34,6 +35,7 @@ const CSI_KEYS: Record<string, Key> = {
   D: { type: "left" },
   H: { type: "home" },
   F: { type: "end" },
+  Z: { type: "shift-tab" }, // back-tab — drives the permission-mode cycle
   "1~": { type: "home" },
   "7~": { type: "home" },
   "4~": { type: "end" },

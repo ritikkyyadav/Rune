@@ -48,6 +48,49 @@ describe("buildGateway", () => {
     });
     expect(gw.getRegisteredProviderNames()).toEqual(["google"]);
   });
+
+  it("does NOT phantom-register local runtimes for a cloud session", () => {
+    // ollama/lmstudio must not appear just because they have default localhost
+    // URLs — a cloud session should never silently fall back to localhost.
+    const gw = buildGateway({ provider: "google", keys: { google: "g" }, env: noEnv });
+    const names = gw.getRegisteredProviderNames();
+    expect(names).not.toContain("ollama");
+    expect(names).not.toContain("lmstudio");
+  });
+
+  it("registers local ollama when it is the active provider", () => {
+    const gw = buildGateway({ provider: "ollama", keys: {}, env: noEnv });
+    expect(gw.getRegisteredProviderNames()).toContain("ollama");
+  });
+
+  it("registers a local runtime once its base URL is configured", () => {
+    const gw = buildGateway({
+      provider: "google",
+      keys: { google: "g" },
+      localBaseUrls: { lmstudio: "http://localhost:1234/v1" },
+      env: noEnv,
+    });
+    expect(gw.getRegisteredProviderNames()).toContain("lmstudio");
+  });
+
+  it("honors OLLAMA_HOST as a configured local endpoint", () => {
+    const gw = buildGateway({
+      provider: "google",
+      keys: { google: "g" },
+      env: { OLLAMA_HOST: "http://box:11434" } as NodeJS.ProcessEnv,
+    });
+    expect(gw.getRegisteredProviderNames()).toContain("ollama");
+  });
+
+  it("skips a disabled local runtime even when active", () => {
+    const gw = buildGateway({
+      provider: "ollama",
+      keys: {},
+      disabled: new Set(["ollama"]),
+      env: noEnv,
+    });
+    expect(gw.getRegisteredProviderNames()).not.toContain("ollama");
+  });
 });
 
 describe("providerStatus", () => {
@@ -81,5 +124,24 @@ describe("providerStatus", () => {
     const c = rows.find((r) => r.id === "custom")!;
     expect(c.hasKey).toBe(true);
     expect(c.source).toBe("saved");
+  });
+
+  it("marks local runtimes with their endpoint and no key", () => {
+    const rows = providerStatus({
+      keys: {},
+      active: "google",
+      localBaseUrls: { ollama: "http://box:11434" },
+      env: {} as NodeJS.ProcessEnv,
+    });
+    const o = rows.find((r) => r.id === "ollama")!;
+    expect(o.local).toBe(true);
+    expect(o.endpoint).toBe("http://box:11434");
+    expect(o.hasKey).toBe(true); // configured → usable
+    expect(o.masked).toBe(""); // never a key
+
+    const lm = rows.find((r) => r.id === "lmstudio")!;
+    expect(lm.local).toBe(true);
+    expect(lm.endpoint).toBe("http://localhost:1234/v1"); // preset default
+    expect(lm.hasKey).toBe(false); // not configured, not active
   });
 });

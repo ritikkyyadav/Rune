@@ -32,6 +32,22 @@ export function formatError(raw: string | undefined): string {
   return out;
 }
 
+/**
+ * Render an engine notice. Provider-fallback notices ("X unavailable — Y. Switching to Z…")
+ * are the noisy, repeated case: collapse them to a compact `↻ from → to · reason` line so a
+ * chain of retries stays scannable instead of stacking up as full-width sentences. Anything
+ * else keeps the plain bullet.
+ */
+export function formatNotice(message: string): string {
+  const m = message.match(/^(.+?) unavailable(?: — (.+?))?\.\s*Switching to (.+?)…?$/);
+  if (m) {
+    const [, from, reason, to] = m;
+    const why = reason ? `  ${faint("· " + reason)}` : "";
+    return `  ${faint("↻")} ${muted(from)} ${faint("→")} ${info(to)}${why}`;
+  }
+  return `  ${warn("•")} ${muted(message)}`;
+}
+
 /** A completed engine event rendered as transcript text, or null if none. */
 export function formatEvent(ev: any, ctx: { cost?: number } = {}): string | null {
   switch (ev.type) {
@@ -94,7 +110,7 @@ export function formatEvent(ev: any, ctx: { cost?: number } = {}): string | null
 
     case "notice":
     case "context_warning":
-      return `  ${warn("•")} ${muted(ev.message)}`;
+      return formatNotice(ev.message);
 
     case "research_step_start":
     case "research_source":

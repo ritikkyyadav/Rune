@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { AltScreen } from "../../../packages/orchestrator/src/bin/ui/screen";
+import { AltScreen, BottomRegion } from "../../../packages/orchestrator/src/bin/ui/screen";
 
 // Control sequences the renderer emits (kept in sync with screen.ts).
 const HOME = "\x1b[H";
@@ -124,5 +124,72 @@ describe("ui/AltScreen differential renderer", () => {
     expect(out).not.toContain("\x1b[1T");
     expect(out).toContain("b1"); // rows repainted directly instead
     expect(out).toContain("b4");
+  });
+});
+
+// ─── Inline renderer (default surface: native scrollback + pinned composer) ───
+
+const ALT_ENTER = "\x1b[?1049h";
+const HIDE = "\x1b[?25l";
+const SHOW = "\x1b[?25h";
+const CLEAR_BELOW = "\x1b[0J";
+
+function regionHarness() {
+  const writes: string[] = [];
+  const region = new BottomRegion((s) => writes.push(s));
+  return { region, writes, all: () => writes.join(""), reset: () => (writes.length = 0) };
+}
+
+describe("ui/BottomRegion inline renderer", () => {
+  it("renders the pinned block without ever entering the alternate screen", () => {
+    const h = regionHarness();
+    h.region.render(["> hello"], 0, 2);
+    const out = h.all();
+    expect(out).toContain("> hello");
+    expect(out).toContain(HIDE); // cursor hidden while drawing…
+    expect(out).toContain(SHOW); // …and restored after
+    expect(out).not.toContain(ALT_ENTER); // crucial: stays in the normal buffer (native scroll)
+    expect(out).toContain("\x1b[2C"); // caret advanced to column 2
+  });
+
+  it("redraws in place: returns to the block top and clears below before repainting", () => {
+    const h = regionHarness();
+    h.region.render(["a", "b"], 1, 0); // 2-line block, caret on the bottom row
+    h.reset();
+    h.region.render(["c", "d"], 1, 0);
+    const out = h.all();
+    expect(out).toContain("\x1b[1A"); // move up from caret row 1 to the block top
+    expect(out).toContain(CLEAR_BELOW); // wipe the old block
+    expect(out).toContain("c");
+    expect(out).toContain("d");
+  });
+
+  it("printAbove emits transcript into scrollback above the block, then redraws the block", () => {
+    const h = regionHarness();
+    h.region.render(["> "], 0, 2); // mount the composer
+    h.reset();
+    h.region.printAbove("assistant line", ["> "], 0, 2);
+    const out = h.all();
+    expect(out).toContain("assistant line\n"); // flushed above (into native scrollback)
+    expect(out).toContain("> "); // composer redrawn beneath it
+    expect(out).not.toContain(ALT_ENTER);
+  });
+
+  it("clear() erases the block and restores the cursor", () => {
+    const h = regionHarness();
+    h.region.render(["x"], 0, 0);
+    h.reset();
+    h.region.clear();
+    expect(h.all()).toContain(CLEAR_BELOW);
+    expect(h.all()).toContain(SHOW);
+  });
+
+  it("setBgFill makes in-place clears repaint the theme background (Warp/VS Code fallback)", () => {
+    const h = regionHarness();
+    h.region.setBgFill("\x1b[48;5;235m");
+    h.region.render(["a"], 0, 0); // first mount — nothing to clear yet
+    h.reset();
+    h.region.render(["b"], 0, 0); // re-render → the clear is prefixed with the bg fill
+    expect(h.all()).toContain("\x1b[48;5;235m" + CLEAR_BELOW);
   });
 });

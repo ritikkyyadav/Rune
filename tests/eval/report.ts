@@ -3,7 +3,7 @@
  * Prints pass-rate, $/task, avg turns, per-category breakdown,
  * and writes a baseline to tests/eval/baseline.json.
  */
-import { writeFile, readFile } from "fs/promises";
+import { writeFile, readFile, mkdir } from "fs/promises";
 import { join } from "path";
 import type { TaskResult } from "./harness";
 
@@ -12,6 +12,10 @@ export interface CategoryStats {
   total: number;
   passed: number;
   passRate: number;
+  /** Tasks defeated by a provider rate/usage limit (excluded from cleanPassRate). */
+  throttled: number;
+  /** passed / (total - throttled): the rate over actually-measured tasks. */
+  cleanPassRate: number;
   avgDurationMs: number;
   totalCost: number;
   avgCost: number;
@@ -26,6 +30,12 @@ export interface SuiteReport {
   total: number;
   passed: number;
   passRate: number;
+  /** Count of tasks excluded as throttle-contaminated. */
+  throttled: number;
+  /** Tasks that actually produced a measurable result (total - throttled). */
+  measured: number;
+  /** passed / measured — the trustworthy number. NaN-safe (0 when measured=0). */
+  cleanPassRate: number;
   totalCost: number;
   avgCostPerTask: number;
   avgDurationMs: number;
@@ -41,6 +51,7 @@ export interface ModelSweepResult {
 }
 
 const BASELINE_PATH = join(__dirname, "baseline.json");
+const RESULTS_DIR = join(__dirname, "results");
 
 export function buildReport(
   results: TaskResult[],
@@ -51,6 +62,9 @@ export function buildReport(
   const total = results.length;
   const passed = results.filter((r) => r.pass).length;
   const passRate = total > 0 ? passed / total : 0;
+  const throttled = results.filter((r) => r.throttled).length;
+  const measured = total - throttled;
+  const cleanPassRate = measured > 0 ? passed / measured : 0;
   const totalCost = results.reduce((s, r) => s + r.cost, 0);
   const avgCostPerTask = total > 0 ? totalCost / total : 0;
   const avgDurationMs = total > 0 ? results.reduce((s, r) => s + r.durationMs, 0) / total : 0;
@@ -67,6 +81,8 @@ export function buildReport(
   const categories: CategoryStats[] = Array.from(byCategory.entries()).map(([category, tasks]) => {
     const catPassed = tasks.filter((t) => t.pass).length;
     const catTotal = tasks.length;
+    const catThrottled = tasks.filter((t) => t.throttled).length;
+    const catMeasured = catTotal - catThrottled;
     const catCost = tasks.reduce((s, t) => s + t.cost, 0);
     const catTurns = tasks.reduce((s, t) => s + t.turns, 0);
     return {
@@ -74,6 +90,8 @@ export function buildReport(
       total: catTotal,
       passed: catPassed,
       passRate: catTotal > 0 ? catPassed / catTotal : 0,
+      throttled: catThrottled,
+      cleanPassRate: catMeasured > 0 ? catPassed / catMeasured : 0,
       avgDurationMs: catTotal > 0 ? tasks.reduce((s, t) => s + t.durationMs, 0) / catTotal : 0,
       totalCost: catCost,
       avgCost: catTotal > 0 ? catCost / catTotal : 0,
@@ -89,6 +107,9 @@ export function buildReport(
     total,
     passed,
     passRate,
+    throttled,
+    measured,
+    cleanPassRate,
     totalCost,
     avgCostPerTask,
     avgDurationMs,
@@ -100,7 +121,6 @@ export function buildReport(
 
 export function printReport(report: SuiteReport): void {
   const pct = (report.passRate * 100).toFixed(1);
-  const tone = report.passRate === 1 ? "32" : report.passRate >= 0.6 ? "33" : "31";
   const modeLabel = report.mode === "real"
     ? ` · ${report.provider ?? "?"}/${report.model ?? "?"}`
     : " · mock LLM provider";
@@ -114,16 +134,21 @@ export function printReport(report: SuiteReport): void {
   console.log(`\x1b[2m${"─".repeat(80)}\x1b[0m`);
 
   for (const cat of report.categories) {
-    const catPct = (cat.passRate * 100).toFixed(0);
-    const catTone = cat.passRate === 1 ? "32" : cat.passRate >= 0.5 ? "33" : "31";
-    const passStr = `${cat.passed}/${cat.total} (${catPct}%)`;
+    // Score categories on the CLEAN rate (throttled tasks excluded), so a
+    // rate-limited category doesn't read as red/failed.
+    const catMeasured = cat.total - cat.throttled;
+    const catPct = (cat.cleanPassRate * 100).toFixed(0);
+    const catTone = catMeasured === 0 ? "33" : cat.cleanPassRate === 1 ? "32" : cat.cleanPassRate >= 0.5 ? "33" : "31";
+    const thr = cat.throttled > 0 ? ` \x1b[33m(${cat.throttled} thr)\x1b[0m` : "";
+    const passStr = `${cat.passed}/${catMeasured} (${catPct}%)`;
     const costStr = cat.avgCost > 0 ? `$${cat.avgCost.toFixed(4)}` : "-";
     console.log(
       `  \x1b[${catTone}m${cat.category.padEnd(30)}\x1b[0m` +
         passStr.padEnd(12) +
         `${cat.avgDurationMs.toFixed(0)}ms`.padEnd(12) +
         `${cat.avgTurns.toFixed(1)}`.padEnd(12) +
-        costStr,
+        costStr +
+        thr,
     );
   }
 
@@ -141,7 +166,20 @@ export function printReport(report: SuiteReport): void {
       totalCostStr,
   );
 
-  console.log(`\n  \x1b[${tone}m${report.passed}/${report.total} passed (${pct}%)\x1b[0m`);
+  // Headline = the CLEAN rate over measured tasks. Raw rate shown as context.
+  const cleanPct = (report.cleanPassRate * 100).toFixed(1);
+  const cleanTone =
+    report.measured === 0 ? "33" : report.cleanPassRate === 1 ? "32" : report.cleanPassRate >= 0.6 ? "33" : "31";
+  console.log(
+    `\n  \x1b[${cleanTone}m${report.passed}/${report.measured} measured passed (${cleanPct}%)\x1b[0m` +
+      `  \x1b[2m· raw ${report.passed}/${report.total} (${pct}%)\x1b[0m`,
+  );
+  if (report.throttled > 0) {
+    console.log(
+      `  \x1b[33m⚠ ${report.throttled} task(s) throttle-contaminated and excluded\x1b[0m` +
+        `  \x1b[2m(provider rate/usage limit — not a capability miss)\x1b[0m`,
+    );
+  }
 
   if (report.totalCost > 0) {
     console.log(
@@ -151,14 +189,17 @@ export function printReport(report: SuiteReport): void {
   console.log();
 }
 
-export async function writeBaseline(report: SuiteReport): Promise<void> {
-  const baseline = {
+function baselineShape(report: SuiteReport) {
+  return {
     timestamp: report.timestamp,
     mode: report.mode,
     model: report.model,
     provider: report.provider,
     passRate: report.passRate,
+    cleanPassRate: report.cleanPassRate,
     passed: report.passed,
+    measured: report.measured,
+    throttled: report.throttled,
     total: report.total,
     totalCost: report.totalCost,
     avgCostPerTask: report.avgCostPerTask,
@@ -168,12 +209,37 @@ export async function writeBaseline(report: SuiteReport): Promise<void> {
       category: c.category,
       passed: c.passed,
       total: c.total,
+      throttled: c.throttled,
       passRate: c.passRate,
+      cleanPassRate: c.cleanPassRate,
       avgCost: c.avgCost,
     })),
   };
-  await writeFile(BASELINE_PATH, JSON.stringify(baseline, null, 2) + "\n");
-  console.log(`  \x1b[2mBaseline written to tests/eval/baseline.json\x1b[0m`);
+}
+
+/**
+ * Always archive a run to results/ (timestamped, never overwritten) so no run
+ * is lost. Only promote it to baseline.json when it's a clean snapshot — i.e.
+ * zero throttled tasks — unless `force` is set. This is what stops a broken or
+ * rate-limited run (like the no-credits "16% ceiling") from clobbering a good
+ * baseline.
+ */
+export async function writeBaseline(report: SuiteReport, force = false): Promise<void> {
+  const shape = baselineShape(report);
+  const stamp = report.timestamp.replace(/[:.]/g, "-");
+  const tag = report.mode === "real" ? `${report.provider}-${report.model}`.replace(/[^\w.-]/g, "_") : "mock";
+  const archivePath = join(RESULTS_DIR, `run-${stamp}-${tag}.json`);
+  await mkdir(RESULTS_DIR, { recursive: true });
+  await writeFile(archivePath, JSON.stringify(shape, null, 2) + "\n");
+
+  if (report.throttled > 0 && !force) {
+    console.log(
+      `  \x1b[2mRun archived to tests/eval/results/ (baseline NOT updated — ${report.throttled} throttled task(s); pass --write-baseline to force)\x1b[0m`,
+    );
+    return;
+  }
+  await writeFile(BASELINE_PATH, JSON.stringify(shape, null, 2) + "\n");
+  console.log(`  \x1b[2mBaseline written to tests/eval/baseline.json (archived in results/)\x1b[0m`);
 }
 
 export async function loadBaseline(): Promise<SuiteReport | null> {

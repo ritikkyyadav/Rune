@@ -11,6 +11,7 @@ import type {
   ToolDefinition,
   TokenUsage,
 } from "../types";
+import { parseToolArguments } from "@alan/shared";
 
 export class AnthropicProvider implements LlmProvider {
   readonly name = "anthropic" as const;
@@ -113,7 +114,7 @@ export class AnthropicProvider implements LlmProvider {
 
         case "content_block_stop":
           if (currentToolCallId) {
-            const toolInput = toolJsonAccumulator ? JSON.parse(toolJsonAccumulator) : {};
+            const toolInput = parseToolArguments(toolJsonAccumulator);
             yield {
               type: "tool_use_stop",
               toolCallId: currentToolCallId,
