@@ -72,6 +72,25 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     color: "var(--text-secondary)",
   },
+  wordmark: {
+    display: "flex",
+    alignItems: "center",
+    fontFamily: "var(--font-mono)",
+    fontSize: 14,
+    fontWeight: 600,
+    color: "var(--text-primary)",
+    letterSpacing: "0.02em",
+  },
+  wordmarkCursor: {
+    color: "var(--accent)",
+    marginLeft: 1,
+  },
+  brandDivider: {
+    width: 1,
+    height: 16,
+    background: "var(--border)",
+    margin: "0 4px",
+  },
   topBarRight: {
     display: "flex",
     alignItems: "center",
@@ -252,6 +271,10 @@ export default function App() {
         {/* Top bar with connection status, model, and context usage */}
         <div style={styles.topBar} className="no-select">
           <div style={styles.topBarLeft}>
+            <span style={styles.wordmark} title="Alan — Sovereign Agentic Coding Assistant">
+              Alan<span style={styles.wordmarkCursor}>▮</span>
+            </span>
+            <div style={styles.brandDivider} />
             <div
               style={{
                 ...styles.statusDot,

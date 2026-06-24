@@ -149,19 +149,35 @@ export function useEngine(options: UseEngineOptions) {
         retriesRef.current = 0;
       }
 
-      // Subscribe to streaming chat events from the engine
+      // (Re)subscribe to streaming events from the engine.
       if (unlistenRef.current) {
         unlistenRef.current();
       }
-      unlistenRef.current = await safeListen("chat_event", (payload) => {
+      const unlistenChat = await safeListen("chat_event", (payload) => {
         handleEvent(payload as EngineEvent);
       });
-
-      // Also listen for engine status updates
-      await safeListen("engine_status", (payload) => {
+      const unlistenStatus = await safeListen("engine_status", (payload) => {
         const update = payload as Partial<EngineStatus>;
         setStatus((prev) => ({ ...prev, ...update }));
       });
+      // Permission prompts: ask the UI, then send the decision back to the engine.
+      // The engine host blocks the tool call until respond_permission arrives, so
+      // always answer (defaulting to deny if the modal throws/cancels).
+      const unlistenPerm = await safeListen("permission_request", (payload) => {
+        const { requestId, prompt } = (payload ?? {}) as {
+          requestId: string;
+          prompt: PermissionPrompt;
+        };
+        void optionsRef.current
+          .onPermissionRequest(prompt)
+          .then((decision) => safeInvoke("respond_permission", { requestId, decision }))
+          .catch(() => safeInvoke("respond_permission", { requestId, decision: "deny" }));
+      });
+      unlistenRef.current = () => {
+        unlistenChat();
+        unlistenStatus();
+        unlistenPerm();
+      };
     } catch {
       setConnectionState("error");
       scheduleReconnect();
