@@ -54,11 +54,14 @@ Options:
   -l, --list                List sessions
 
 Commands:
-  alan                      Start interactive chat
+  alan                      Start interactive chat (CLI agent)
   alan "your question"      Ask a one-shot question
   alan --list               List past sessions
   alan --resume <id>        Resume a session
   alan setup                First-time setup (build + install)
+  alan desktop              Launch the Alan desktop app (GUI)
+  alan desktop build        Build a native macOS .app + .dmg installer
+  alan desktop dev          Run the desktop app in dev mode (live reload)
 
 Config: ~/.alan/config.toml
 API keys: ~/.alan/.env
@@ -176,6 +179,109 @@ ENV
 if [ "${1:-}" = "setup" ]; then
   setup
   exit 0
+fi
+
+# ─── Desktop app:  alan desktop [build|dev|open] ───
+# The desktop GUI runs the SAME engine as this CLI — it spawns the TypeScript
+# engine-host sidecar, which reads ~/.alan/secrets.json + ~/.alan/.env, so it
+# inherits every model, BYOK key and web-search backend the CLI has.
+launch_desktop() {
+  local sub="${1:-}"
+  local BUN
+  BUN=$(find_bun) || {
+    echo ""
+    echo "  $(red '✗') Bun not found. Run: $(bold 'alan setup')"
+    echo ""
+    exit 1
+  }
+
+  # Rust tools binary the engine host uses for file/bash/search tools.
+  local TOOLS_BIN="$ALAN_ROOT/target/release/alan-tools"
+  [ -x "$TOOLS_BIN" ] || TOOLS_BIN="$ALAN_ROOT/target/debug/alan-tools"
+
+  # Persist a pointer so a Finder/double-click launch of Alan.app can still
+  # locate the engine: the Tauri bridge reads ~/.alan/desktop.json when no
+  # ALAN_ROOT is present in its environment.
+  mkdir -p "$ALAN_DATA"
+  cat > "$ALAN_DATA/desktop.json" <<JSON
+{
+  "alanRoot": "$ALAN_ROOT",
+  "bun": "$BUN",
+  "toolsBin": "$TOOLS_BIN"
+}
+JSON
+
+  # Export for the bridge when launched directly from this terminal.
+  export ALAN_ROOT ALAN_BUN="$BUN" ALAN_TOOLS_BIN="$TOOLS_BIN"
+
+  local APP="$ALAN_ROOT/apps/desktop/src-tauri/target/release/bundle/macos/Alan.app"
+
+  case "$sub" in
+    build)
+      echo ""
+      echo "  $(dim '...') Building Alan.app + .dmg installer (first build takes a few minutes)"
+      # tauri's dmg step (bundle_dmg.sh) drives Finder via AppleScript and is
+      # unreliable when run non-interactively — but the .app always builds. So
+      # don't let its failure abort us; we package the .dmg ourselves below.
+      if ! ( cd "$ALAN_ROOT/apps/desktop" && "$BUN" run tauri build ); then
+        echo "  $(yellow '!') tauri's dmg step failed — packaging the .dmg directly."
+      fi
+
+      local BUNDLE="$ALAN_ROOT/apps/desktop/src-tauri/target/release/bundle"
+      local APP_BUILT="$BUNDLE/macos/Alan.app"
+      local DMG="$BUNDLE/dmg/Alan_0.1.0_aarch64.dmg"
+
+      if [ ! -f "$DMG" ] && [ -d "$APP_BUILT" ]; then
+        echo "  $(dim '...') Packaging .dmg with hdiutil (no Finder automation)"
+        # Clear any stale temp volumes/images bundle_dmg.sh may have left mounted.
+        for v in /Volumes/dmg.*; do [ -d "$v" ] && hdiutil detach "$v" -force >/dev/null 2>&1; done
+        rm -f "$BUNDLE"/macos/rw.*.dmg
+        local STAGING
+        STAGING="$(mktemp -d)"
+        cp -R "$APP_BUILT" "$STAGING/"
+        ln -s /Applications "$STAGING/Applications"
+        mkdir -p "$BUNDLE/dmg"
+        hdiutil create -volname "Alan" -srcfolder "$STAGING" -ov -format UDZO "$DMG" >/dev/null \
+          && echo "  $(green '✓') Packaged $(dim "$DMG")"
+        rm -rf "$STAGING"
+      fi
+
+      echo ""
+      if [ -f "$DMG" ]; then
+        echo "  $(green '✓') $(bold 'Build complete.') Installer:"
+        echo "      $DMG"
+        echo "  $(dim '  Open it, drag Alan to Applications, and launch — the agent starts on open.')"
+      else
+        echo "  $(red '✗') Build did not produce a .dmg (Alan.app may still be at $APP_BUILT)."
+        exit 1
+      fi
+      ;;
+    dev)
+      echo ""
+      echo "  $(dim '...') Launching Alan desktop (dev mode)"
+      ( cd "$ALAN_ROOT/apps/desktop" && "$BUN" run tauri dev )
+      ;;
+    ""|open)
+      if [ -d "$APP" ]; then
+        echo "  $(green '✓') Opening $(bold 'Alan') $(dim "($APP)")"
+        open "$APP"
+      else
+        echo "  $(yellow '!') No built app found — launching dev mode instead."
+        echo "    $(dim "Tip: run 'alan desktop build' once to get an installable Alan.app / .dmg.")"
+        ( cd "$ALAN_ROOT/apps/desktop" && "$BUN" run tauri dev )
+      fi
+      ;;
+    *)
+      echo "  $(red '✗') Unknown command: $(bold "alan desktop $sub")  $(dim '(use: build | dev | open)')"
+      exit 1
+      ;;
+  esac
+  exit 0
+}
+
+if [ "${1:-}" = "desktop" ]; then
+  shift
+  launch_desktop "${1:-}"
 fi
 
 # ─── Ensure everything is ready ───
