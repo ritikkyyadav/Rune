@@ -1,0 +1,296 @@
+// ─── Background Shell Processes ───
+//
+// Lets the agent start long-running commands (dev servers, watch builds, log
+// tails) without blocking the loop or hitting the foreground timeout:
+//
+//   bash { command, run_in_background: true }  → returns a shell_id instantly
+//   bash_output { shell_id }                   → new output since last read
+//   kill_shell { shell_id }                    → SIGTERM the process
+//
+// Background commands bypass the Rust sandbox (a dev server needs to bind
+// ports, which deny-net would break) — they are still permission-gated as
+// `bash`, so the user approves the command unless in trust/turing mode.
+
+import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
+
+/** Cap the retained output per shell — a chatty server must not eat memory. */
+const MAX_BUFFER_CHARS = 200_000;
+
+export type ShellStatus = "running" | "completed" | "failed" | "killed";
+
+interface BackgroundShell {
+  id: string;
+  command: string;
+  proc: ReturnType<typeof Bun.spawn>;
+  buffer: string;
+  /** Where the last bash_output read ended (offset into buffer). */
+  readOffset: number;
+  /** Chars dropped from the front of buffer when the cap was hit. */
+  dropped: number;
+  status: ShellStatus;
+  exitCode: number | null;
+  startedAt: number;
+}
+
+export class BackgroundShellManager {
+  private shells = new Map<string, BackgroundShell>();
+  private nextId = 1;
+
+  constructor() {
+    // Never leave orphaned servers behind when Alan exits.
+    process.on("exit", () => this.killAll());
+  }
+
+  start(command: string, cwd: string): { shellId: string } {
+    const id = `shell_${this.nextId++}`;
+    const proc = Bun.spawn(["bash", "-lc", command], {
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    const shell: BackgroundShell = {
+      id,
+      command,
+      proc,
+      buffer: "",
+      readOffset: 0,
+      dropped: 0,
+      status: "running",
+      exitCode: null,
+      startedAt: Date.now(),
+    };
+    this.shells.set(id, shell);
+
+    const append = (chunk: string) => {
+      shell.buffer += chunk;
+      if (shell.buffer.length > MAX_BUFFER_CHARS) {
+        const cut = shell.buffer.length - MAX_BUFFER_CHARS;
+        shell.buffer = shell.buffer.slice(cut);
+        shell.dropped += cut;
+        shell.readOffset = Math.max(0, shell.readOffset - cut);
+      }
+    };
+    const pump = async (stream: ReadableStream<Uint8Array> | null) => {
+      if (!stream) return;
+      const decoder = new TextDecoder();
+      try {
+        for await (const chunk of stream) append(decoder.decode(chunk, { stream: true }));
+      } catch {
+        // Stream closed — fine.
+      }
+    };
+    void pump(proc.stdout as ReadableStream<Uint8Array>);
+    void pump(proc.stderr as ReadableStream<Uint8Array>);
+    void proc.exited.then((code) => {
+      if (shell.status === "running") {
+        shell.status = code === 0 ? "completed" : "failed";
+      }
+      shell.exitCode = code;
+    });
+
+    return { shellId: id };
+  }
+
+  /** New output since the last read, plus current status. */
+  read(shellId: string): {
+    found: boolean;
+    status?: ShellStatus;
+    exitCode?: number | null;
+    output?: string;
+    command?: string;
+  } {
+    const shell = this.shells.get(shellId);
+    if (!shell) return { found: false };
+    const output = shell.buffer.slice(shell.readOffset);
+    shell.readOffset = shell.buffer.length;
+    return {
+      found: true,
+      status: shell.status,
+      exitCode: shell.exitCode,
+      output,
+      command: shell.command,
+    };
+  }
+
+  kill(shellId: string): { found: boolean; status?: ShellStatus } {
+    const shell = this.shells.get(shellId);
+    if (!shell) return { found: false };
+    if (shell.status === "running") {
+      shell.status = "killed";
+      try {
+        shell.proc.kill();
+      } catch {
+        // Already dead.
+      }
+    }
+    return { found: true, status: shell.status };
+  }
+
+  list(): Array<{ id: string; command: string; status: ShellStatus }> {
+    return [...this.shells.values()].map((s) => ({
+      id: s.id,
+      command: s.command,
+      status: s.status,
+    }));
+  }
+
+  killAll(): void {
+    for (const shell of this.shells.values()) {
+      if (shell.status === "running") {
+        shell.status = "killed";
+        try {
+          shell.proc.kill();
+        } catch {
+          // Already dead.
+        }
+      }
+    }
+  }
+}
+
+// ─── Tool handlers ───
+
+export const BASH_OUTPUT_SCHEMA: ToolSchema = {
+  name: "bash_output",
+  version: "0.1.0",
+  description:
+    "Read NEW output from a background shell started with bash's run_in_background. Returns output since your last read plus the shell's status (running/completed/failed/killed). Poll this to monitor servers, builds, or long test runs.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      shell_id: { type: "string", description: "The shell_id returned when the command started" },
+    },
+    required: ["shell_id"],
+  },
+  permissionLevel: "auto",
+  category: "read",
+};
+
+export const KILL_SHELL_SCHEMA: ToolSchema = {
+  name: "kill_shell",
+  version: "0.1.0",
+  description: "Terminate a background shell started with bash's run_in_background.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      shell_id: { type: "string", description: "The shell_id to terminate" },
+    },
+    required: ["shell_id"],
+  },
+  permissionLevel: "auto",
+  category: "execute",
+};
+
+export function createBashOutputHandler(manager: BackgroundShellManager): ToolHandler {
+  return {
+    schema: BASH_OUTPUT_SCHEMA,
+    validate: (args) =>
+      typeof args.shell_id === "string" && args.shell_id.length > 0
+        ? { valid: true }
+        : { valid: false, error: "shell_id is required" },
+    execute: async (input: ToolCallInput): Promise<ToolCallOutput> => {
+      const r = manager.read(String(input.args.shell_id));
+      if (!r.found) {
+        return {
+          callId: input.callId,
+          toolName: input.toolName,
+          success: false,
+          result: "",
+          error: `No background shell with id ${input.args.shell_id}. Active: ${
+            manager
+              .list()
+              .map((s) => s.id)
+              .join(", ") || "(none)"
+          }`,
+          durationMs: 0,
+        };
+      }
+      return {
+        callId: input.callId,
+        toolName: input.toolName,
+        success: true,
+        result: JSON.stringify({
+          status: r.status,
+          exit_code: r.exitCode,
+          output: r.output || "(no new output)",
+        }),
+        durationMs: 0,
+      };
+    },
+  };
+}
+
+export function createKillShellHandler(manager: BackgroundShellManager): ToolHandler {
+  return {
+    schema: KILL_SHELL_SCHEMA,
+    validate: (args) =>
+      typeof args.shell_id === "string" && args.shell_id.length > 0
+        ? { valid: true }
+        : { valid: false, error: "shell_id is required" },
+    execute: async (input: ToolCallInput): Promise<ToolCallOutput> => {
+      const r = manager.kill(String(input.args.shell_id));
+      if (!r.found) {
+        return {
+          callId: input.callId,
+          toolName: input.toolName,
+          success: false,
+          result: "",
+          error: `No background shell with id ${input.args.shell_id}`,
+          durationMs: 0,
+        };
+      }
+      return {
+        callId: input.callId,
+        toolName: input.toolName,
+        success: true,
+        result: JSON.stringify({ status: r.status }),
+        durationMs: 0,
+      };
+    },
+  };
+}
+
+/**
+ * Wrap the (Rust-backed) bash handler: `run_in_background: true` routes to the
+ * background manager and returns a shell_id immediately; everything else goes
+ * to the sandboxed foreground path unchanged.
+ */
+export function withBackgroundSupport(
+  bashHandler: ToolHandler,
+  manager: BackgroundShellManager,
+): ToolHandler {
+  return {
+    schema: bashHandler.schema,
+    validate: (args) => bashHandler.validate(args),
+    execute: async (input: ToolCallInput): Promise<ToolCallOutput> => {
+      if (input.args.run_in_background === true) {
+        const command = String(input.args.command ?? "");
+        if (!command.trim()) {
+          return {
+            callId: input.callId,
+            toolName: input.toolName,
+            success: false,
+            result: "",
+            error: "command is required",
+            durationMs: 0,
+          };
+        }
+        const { shellId } = manager.start(command, input.workspaceRoot);
+        return {
+          callId: input.callId,
+          toolName: input.toolName,
+          success: true,
+          result: JSON.stringify({
+            shell_id: shellId,
+            status: "running",
+            note: "Command started in the background. Poll bash_output with this shell_id for output; kill_shell to stop it.",
+          }),
+          durationMs: 0,
+        };
+      }
+      return bashHandler.execute(input);
+    },
+  };
+}
