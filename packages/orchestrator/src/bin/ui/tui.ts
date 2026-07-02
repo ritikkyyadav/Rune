@@ -93,7 +93,16 @@ export interface TuiContext {
   fullscreen?: boolean;
 }
 
-type Mode = "input" | "turn" | "picker" | "permission" | "keys" | "ask" | "sessions" | "memory";
+type Mode =
+  | "input"
+  | "turn"
+  | "picker"
+  | "permission"
+  | "keys"
+  | "ask"
+  | "question"
+  | "sessions"
+  | "memory";
 
 type SessionListItem = ReturnType<Engine["listSessions"]>[number];
 
@@ -197,6 +206,13 @@ class Tui {
   } | null = null;
   // transient single-line text prompt (used by /research clarify & revise)
   private askState: { resolve: (s: string | null) => void; title: string } | null = null;
+  // ask_user tool: blocking question with numbered options (turn-time).
+  private questionState: {
+    resolve: (s: string) => void;
+    question: string;
+    options: string[];
+    prevMode: Mode;
+  } | null = null;
 
   constructor(private ctx: TuiContext) {
     this.inline = !ctx.fullscreen;
@@ -212,6 +228,7 @@ class Tui {
     // under Turing, so it's simply never invoked there — and stays ready the instant
     // Shift+Tab cycles back to confirm/auto, without re-wiring.
     engine.setPermissionHandler(this.permissionHandler);
+    engine.setQuestionHandler(this.questionHandler);
 
     const stdin = process.stdin;
     stdin.setEncoding("utf8");
@@ -380,6 +397,25 @@ class Tui {
       return {
         lines: [title, ...base.lines],
         caretRow: base.caretRow + 1,
+        caretCol: base.caretCol,
+      };
+    }
+    if (this.mode === "question" && this.questionState) {
+      const q = this.questionState;
+      const base = renderComposer({
+        input: this.input,
+        caret: this.caret,
+        width: cols(),
+        status: this.statusStr(),
+      });
+      const head = [
+        `  ${info("?")} ${bold(text(q.question))}`,
+        ...q.options.map((opt, i) => `    ${info(String(i + 1))} ${text(opt)}`),
+        `  ${faint("1-" + q.options.length + " choose · or type an answer · Enter = 1 · Esc = skip")}`,
+      ];
+      return {
+        lines: [...head, ...base.lines],
+        caretRow: base.caretRow + head.length,
         caretCol: base.caretCol,
       };
     }
@@ -717,6 +753,9 @@ class Tui {
           break;
         case "ask":
           this.askKey(key);
+          break;
+        case "question":
+          this.questionKey(key);
           break;
       }
     }
@@ -2226,6 +2265,50 @@ class Tui {
       this.mode = "permission";
       this.scheduleDraw();
     });
+
+  // ── ask_user question mode ──
+
+  private questionHandler = (q: { question: string; options: string[] }): Promise<string> =>
+    new Promise<string>((resolve) => {
+      this.questionState = {
+        resolve,
+        question: q.question,
+        options: q.options,
+        prevMode: this.mode,
+      };
+      this.input = "";
+      this.caret = 0;
+      this.mode = "question";
+      this.scheduleDraw();
+    });
+
+  private questionKey(key: Key): void {
+    const q = this.questionState;
+    if (!q) return;
+    const finish = (answer: string) => {
+      this.questionState = null;
+      this.input = "";
+      this.caret = 0;
+      // Return to the in-flight turn (questions only fire mid-turn).
+      this.mode = q.prevMode === "question" ? "turn" : q.prevMode;
+      this.print(`  ${ok("✓")} ${muted(truncate(answer, 80))}`);
+      q.resolve(answer);
+    };
+    // Bare digit with an empty composer = instant pick.
+    if (key.type === "char" && this.input.length === 0 && /^[1-9]$/.test(key.value)) {
+      const n = Number(key.value);
+      if (n >= 1 && n <= q.options.length) return finish(q.options[n - 1]);
+    }
+    if (key.type === "enter") {
+      const typed = this.input.trim();
+      return finish(typed || q.options[0]);
+    }
+    if (key.type === "esc") {
+      return finish("(user skipped the question — proceed with your best judgment)");
+    }
+    // Everything else edits the composer (free-text answer).
+    if (this.editComposer(key)) this.scheduleDraw();
+  }
 
   private permKey(key: Key): void {
     if (!this.perm) return;

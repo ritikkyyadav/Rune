@@ -69,6 +69,9 @@ import { EpisodicMemory } from "./memory/episodic";
 import { WorkingMemory } from "./memory/working";
 import { HookRunner } from "./hooks";
 import { createSubagentTool } from "./subagent";
+import { createAskUserTool } from "./ask-user";
+import type { QuestionHandler } from "./ask-user";
+export type { QuestionHandler, UserQuestion } from "./ask-user";
 import {
   AGENT_DOCTRINE,
   loadProjectMemory,
@@ -408,6 +411,7 @@ export class Engine {
   private permissions: PermissionBroker;
   private config: EngineConfig;
   private permissionHandler?: PermissionHandler;
+  private questionHandler?: QuestionHandler;
   private contextEngine: ContextEngine;
   private costTracker: CostTracker;
   private rateLimiter: ToolRateLimiter | null = null;
@@ -484,6 +488,12 @@ export class Engine {
         },
       }),
     );
+
+    // ask_user: blocking clarification questions. The handler is wired later
+    // by the frontend (CLI/TUI) via setQuestionHandler — the closure reads it
+    // at execute time, and headless environments degrade to an instructive
+    // error instead of stalling. Deliberately NOT in the sub-agent registry.
+    this.registry.register(createAskUserTool(() => this.questionHandler));
 
     // Initialize Session Manager
     this.sessions = new SessionManager(this.config.dbPath);
@@ -577,6 +587,11 @@ export class Engine {
 
   setPermissionHandler(handler: PermissionHandler): void {
     this.permissionHandler = handler;
+  }
+
+  /** Wire the frontend's blocking-question UI for the ask_user tool. */
+  setQuestionHandler(handler: QuestionHandler): void {
+    this.questionHandler = handler;
   }
 
   /**

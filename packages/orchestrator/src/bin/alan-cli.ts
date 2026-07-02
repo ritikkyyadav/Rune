@@ -808,6 +808,43 @@ async function main() {
   // (Shift+Tab, /mode, /turing) restores prompts without re-registration.
   engine.setPermissionHandler(permissionHandler);
 
+  // ─── Question Handler (ask_user tool) ───
+  // Numbered options; a bare number picks one, anything else is a free-text
+  // answer, Enter alone takes the first option.
+
+  engine.setQuestionHandler(
+    (q) =>
+      new Promise<string>((resolve) => {
+        const wasSpinning = spinner.isRunning?.() ?? false;
+        spinner.stop();
+
+        process.stdout.write("\n");
+        process.stdout.write(`  ${info("?")} ${bold(text(q.question))}\n`);
+        q.options.forEach((opt, i) => {
+          process.stdout.write(`    ${accent(String(i + 1))} ${text(opt)}\n`);
+        });
+        process.stdout.write(
+          `  ${muted("number to choose · or type an answer · Enter = 1")}\n`,
+        );
+
+        rl.question(`  ${accent("›")} `, (answer) => {
+          const a = answer.trim();
+          let result: string;
+          const n = Number.parseInt(a, 10);
+          if (!a) {
+            result = q.options[0];
+          } else if (!Number.isNaN(n) && n >= 1 && n <= q.options.length && String(n) === a) {
+            result = q.options[n - 1];
+          } else {
+            result = a; // free-text answer
+          }
+          process.stdout.write(`  ${ok("✓")} ${muted(truncate(result, 80))}\n`);
+          if (wasSpinning) spinner.start("tool_call");
+          resolve(result);
+        });
+      }),
+  );
+
   // ─── Slash Command Definitions ───
 
   const SLASH_CMDS: [string, string][] = [

@@ -2,6 +2,12 @@ import type { ToolSchema } from "../types";
 import type { ToolRegistry } from "../registry";
 import { createRustToolHandler } from "./rust-bridge";
 import { FileFreshness, withFreshness } from "./freshness";
+import {
+  BackgroundShellManager,
+  createBashOutputHandler,
+  createKillShellHandler,
+  withBackgroundSupport,
+} from "./background";
 import { createWebFetchHandler } from "./web-fetch";
 import { createWebSearchHandler } from "./web-search";
 import { createAstQueryHandler } from "./ast-query";
@@ -114,12 +120,17 @@ const BASH_SCHEMA: ToolSchema = {
   name: "bash",
   version: "0.1.0",
   description:
-    "Execute a bash command in the workspace directory. Returns stdout, stderr, and exit code. Has a 120s default timeout.",
+    "Execute a bash command in the workspace directory. Returns stdout, stderr, and exit code. Has a 120s default timeout. For long-running commands (dev servers, watch builds), set run_in_background: true — you get a shell_id immediately; poll bash_output for output and kill_shell to stop it.",
   inputSchema: {
     type: "object",
     properties: {
       command: { type: "string", description: "Bash command to execute" },
       timeout_ms: { type: "number", description: "Timeout in milliseconds" },
+      run_in_background: {
+        type: "boolean",
+        description:
+          "Run detached and return a shell_id immediately instead of waiting. Use for servers/watchers.",
+      },
     },
     required: ["command"],
   },
@@ -182,11 +193,18 @@ export function registerBuiltinTools(registry: ToolRegistry, binaryPath: string)
     edit_file: { requiresFreshRead: true },
   };
 
+  // Background shells: bash gains run_in_background; bash_output/kill_shell
+  // monitor and stop them. One manager per registry (killed on process exit).
+  const shells = new BackgroundShellManager();
+
   for (const { schema, subcommand } of ALL_SCHEMAS) {
-    const handler = createRustToolHandler(schema, subcommand, binaryPath);
+    let handler = createRustToolHandler(schema, subcommand, binaryPath);
+    if (schema.name === "bash") handler = withBackgroundSupport(handler, shells);
     const opts = FRESHNESS_TOOLS[schema.name];
     registry.register(opts ? withFreshness(handler, freshness, opts) : handler);
   }
+  registry.register(createBashOutputHandler(shells));
+  registry.register(createKillShellHandler(shells));
 
   // TypeScript-native tools (no Rust binary needed)
   registry.register(createWebFetchHandler());
