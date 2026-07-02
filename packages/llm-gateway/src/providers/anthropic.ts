@@ -25,16 +25,24 @@ export class AnthropicProvider implements LlmProvider {
   }
 
   async infer(request: InferenceRequest): Promise<InferenceResponse> {
-    const response = await this.client.messages.create({
-      model: request.model,
-      max_tokens: request.maxTokens,
-      system: request.system ? this.toSystemWithCache(request.system) : undefined,
-      messages: this.toAnthropicMessagesWithCache(request.messages),
-      tools: request.tools ? this.toAnthropicToolsWithCache(request.tools) : undefined,
-      temperature: request.temperature,
-      top_p: request.topP,
-      stop_sequences: request.stopSequences,
-    });
+    const { thinking, needsInterleavedBeta } = this.buildThinkingParam(request);
+    const response = await this.client.messages.create(
+      {
+        model: request.model,
+        max_tokens: request.maxTokens,
+        system: request.system ? this.toSystemWithCache(request.system) : undefined,
+        messages: this.toAnthropicMessagesWithCache(request.messages),
+        tools: request.tools ? this.toAnthropicToolsWithCache(request.tools) : undefined,
+        // Anthropic rejects sampling params alongside thinking.
+        temperature: thinking ? undefined : request.temperature,
+        top_p: thinking ? undefined : request.topP,
+        stop_sequences: request.stopSequences,
+        ...(thinking ? { thinking: thinking as never } : {}),
+      },
+      needsInterleavedBeta
+        ? { headers: { "anthropic-beta": "interleaved-thinking-2025-05-14" } }
+        : undefined,
+    );
 
     const usage = response.usage as unknown as Record<string, number>;
     return {
@@ -52,6 +60,7 @@ export class AnthropicProvider implements LlmProvider {
   }
 
   async *inferStream(request: InferenceRequest, opts?: StreamOpts): AsyncGenerator<StreamEvent> {
+    const { thinking, needsInterleavedBeta } = this.buildThinkingParam(request);
     const stream = this.client.messages.stream(
       {
         model: request.model,
@@ -59,22 +68,48 @@ export class AnthropicProvider implements LlmProvider {
         system: request.system ? this.toSystemWithCache(request.system) : undefined,
         messages: this.toAnthropicMessagesWithCache(request.messages),
         tools: this.buildTools(request),
-        temperature: request.temperature,
-        top_p: request.topP,
+        // Anthropic rejects sampling params alongside thinking.
+        temperature: thinking ? undefined : request.temperature,
+        top_p: thinking ? undefined : request.topP,
         stop_sequences: request.stopSequences,
+        ...(thinking ? { thinking: thinking as never } : {}),
       },
-      { signal: opts?.signal },
+      {
+        signal: opts?.signal,
+        ...(needsInterleavedBeta
+          ? { headers: { "anthropic-beta": "interleaved-thinking-2025-05-14" } }
+          : {}),
+      },
     );
 
     let contentIndex = 0;
     let currentToolCallId: string | null = null;
     let toolJsonAccumulator = "";
+    // Accumulates the in-flight thinking block (text + signature) so a
+    // complete, replayable block can be emitted at content_block_stop.
+    let currentThinking: { text: string; signature: string } | null = null;
+    // Anthropic reports input/cache token counts on message_start and only
+    // output tokens on the final message_delta — capture the former so the
+    // usage we emit at message_stop is complete (the context engine relies on
+    // real input counts to schedule compaction).
+    let startUsage: { input: number; cacheRead: number; cacheCreation: number } = {
+      input: 0,
+      cacheRead: 0,
+      cacheCreation: 0,
+    };
 
     for await (const event of stream) {
       switch (event.type) {
-        case "message_start":
+        case "message_start": {
+          const u = event.message.usage as unknown as Record<string, number> | undefined;
+          startUsage = {
+            input: u?.input_tokens ?? 0,
+            cacheRead: u?.cache_read_input_tokens ?? 0,
+            cacheCreation: u?.cache_creation_input_tokens ?? 0,
+          };
           yield { type: "message_start", messageId: event.message.id };
           break;
+        }
 
         case "content_block_start": {
           const block = event.content_block;
@@ -89,6 +124,12 @@ export class AnthropicProvider implements LlmProvider {
               toolCallId: block.id,
               toolName: block.name,
             };
+          } else if (block.type === "thinking") {
+            currentThinking = { text: "", signature: "" };
+          } else if (block.type === "redacted_thinking") {
+            // Opaque, complete on arrival — forward for verbatim round-trip.
+            const data = (block as unknown as { data?: string }).data ?? "";
+            yield { type: "redacted_thinking", data };
           }
           break;
         }
@@ -108,6 +149,13 @@ export class AnthropicProvider implements LlmProvider {
               toolCallId: currentToolCallId,
               partialJson: delta.partial_json,
             };
+          } else if (delta.type === "thinking_delta" && currentThinking) {
+            const text = (delta as unknown as { thinking?: string }).thinking ?? "";
+            currentThinking.text += text;
+            if (text) yield { type: "thinking_delta", text };
+          } else if (delta.type === "signature_delta" && currentThinking) {
+            currentThinking.signature +=
+              (delta as unknown as { signature?: string }).signature ?? "";
           }
           break;
         }
@@ -122,6 +170,13 @@ export class AnthropicProvider implements LlmProvider {
             };
             currentToolCallId = null;
             toolJsonAccumulator = "";
+          } else if (currentThinking) {
+            yield {
+              type: "thinking_stop",
+              thinking: currentThinking.text,
+              signature: currentThinking.signature || undefined,
+            };
+            currentThinking = null;
           } else {
             yield { type: "content_stop", contentIndex };
           }
@@ -130,8 +185,13 @@ export class AnthropicProvider implements LlmProvider {
         case "message_delta": {
           const eventUsage = event.usage as unknown as Record<string, number> | undefined;
           const usage: TokenUsage = {
-            inputTokens: eventUsage?.input_tokens ?? 0,
+            // message_delta usually omits input tokens — fall back to the
+            // counts captured from message_start.
+            inputTokens: eventUsage?.input_tokens || startUsage.input,
             outputTokens: event.usage?.output_tokens ?? 0,
+            cacheReadTokens: eventUsage?.cache_read_input_tokens ?? startUsage.cacheRead,
+            cacheCreationTokens:
+              eventUsage?.cache_creation_input_tokens ?? startUsage.cacheCreation,
           };
           yield {
             type: "message_stop",
@@ -146,7 +206,7 @@ export class AnthropicProvider implements LlmProvider {
 
   async countTokens(messages: Message[], tools?: ToolDefinition[]): Promise<number> {
     const result = await this.client.messages.countTokens({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-6",
       messages: this.toAnthropicMessages(messages),
       tools: tools ? this.toAnthropicTools(tools) : undefined,
     });
@@ -164,6 +224,48 @@ export class AnthropicProvider implements LlmProvider {
     } catch {
       return false;
     }
+  }
+
+  // ─── Thinking ───
+
+  /** Models where thinking is adaptive (no token budget; budget_tokens is rejected). */
+  private static readonly ADAPTIVE_THINKING = /opus-4-[6-9]|sonnet-4-6|sonnet-5|fable|mythos/;
+  /** Models that support budgeted extended thinking. */
+  private static readonly BUDGET_THINKING = /3-7-sonnet|opus-4|sonnet-4|haiku-4-5/;
+
+  /**
+   * Map the request's provider-neutral thinking flag onto the wire form the
+   * target model accepts. Returns the `thinking` param (or undefined when the
+   * model has no thinking support / the budget wouldn't fit) plus whether the
+   * interleaved-thinking beta header is needed (budget mode + tools).
+   */
+  private buildThinkingParam(request: InferenceRequest): {
+    thinking?: Record<string, unknown>;
+    needsInterleavedBeta: boolean;
+  } {
+    if (!request.thinking?.enabled) return { needsInterleavedBeta: false };
+    const model = request.model.toLowerCase();
+
+    if (AnthropicProvider.ADAPTIVE_THINKING.test(model)) {
+      return { thinking: { type: "adaptive" }, needsInterleavedBeta: false };
+    }
+
+    if (AnthropicProvider.BUDGET_THINKING.test(model)) {
+      // budget_tokens must be ≥1024 and < max_tokens.
+      const budget = Math.min(
+        request.thinking.budgetTokens ?? 16_000,
+        Math.floor(request.maxTokens / 2),
+      );
+      if (budget < 1024) return { needsInterleavedBeta: false };
+      return {
+        thinking: { type: "enabled", budget_tokens: budget },
+        // Interleaved thinking (thinking between tool calls) needs the beta
+        // header on budget-mode models; harmless without tools.
+        needsInterleavedBeta: true,
+      };
+    }
+
+    return { needsInterleavedBeta: false };
   }
 
   // ─── Translation Helpers ───
@@ -190,7 +292,9 @@ export class AnthropicProvider implements LlmProvider {
       const blocks = msg.content.map((block, blkIdx) => {
         const isLastBlock = blkIdx === msg.content.length - 1;
         const base = this.toAnthropicBlock(block);
-        if (isLast && isLastBlock) {
+        // thinking blocks cannot carry cache_control (API rejects it).
+        const cacheable = block.type !== "thinking" && block.type !== "redacted_thinking";
+        if (isLast && isLastBlock && cacheable) {
           return { ...base, cache_control: { type: "ephemeral" as const } };
         }
         return base;
@@ -216,6 +320,19 @@ export class AnthropicProvider implements LlmProvider {
     switch (block.type) {
       case "text":
         return { type: "text", text: block.text };
+      case "thinking":
+        // Replayed VERBATIM (signature included) — Anthropic validates
+        // signatures and rejects modified thinking blocks in tool-use loops.
+        return {
+          type: "thinking",
+          thinking: block.thinking,
+          signature: block.signature ?? "",
+        } as Anthropic.ContentBlockParam;
+      case "redacted_thinking":
+        return {
+          type: "redacted_thinking",
+          data: block.data,
+        } as Anthropic.ContentBlockParam;
       case "tool_use":
         return {
           type: "tool_use",
@@ -304,6 +421,18 @@ export class AnthropicProvider implements LlmProvider {
           toolName: block.name,
           toolInput: block.input as Record<string, unknown>,
         };
+      }
+      if (block.type === "thinking") {
+        const b = block as unknown as { thinking?: string; signature?: string };
+        return {
+          type: "thinking" as const,
+          thinking: b.thinking ?? "",
+          signature: b.signature,
+        };
+      }
+      if (block.type === "redacted_thinking") {
+        const b = block as unknown as { data?: string };
+        return { type: "redacted_thinking" as const, data: b.data ?? "" };
       }
       return { type: "text" as const, text: "" };
     });

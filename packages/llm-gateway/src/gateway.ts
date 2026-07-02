@@ -15,7 +15,7 @@ import { MODEL_PRICING as PRICING } from "./types";
 // Default model for each provider, used during fallback
 const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
   google: "gemini-2.5-flash",
-  anthropic: "claude-sonnet-4-20250514",
+  anthropic: "claude-sonnet-4-6",
   openai: "gpt-4o",
   openrouter: "qwen/qwen3-coder:free",
   ollama: "llama3",

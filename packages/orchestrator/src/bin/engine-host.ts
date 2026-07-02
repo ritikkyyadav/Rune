@@ -75,7 +75,7 @@ function emitStream(stream: string, payload: unknown): void {
 
 type CliProvider = "anthropic" | "openai" | "openrouter" | "google" | "ollama-turbo";
 const DEFAULT_MODELS: Record<CliProvider, string> = {
-  anthropic: "claude-sonnet-4-20250514",
+  anthropic: "claude-sonnet-4-6",
   openai: "gpt-4o",
   openrouter: "qwen/qwen3-coder:free",
   google: "gemini-2.5-flash",

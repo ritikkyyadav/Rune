@@ -4,7 +4,7 @@ import { CostTracker, BudgetExceededError } from "../../../packages/llm-gateway/
 describe("CostTracker", () => {
   test("estimates cost for known models", () => {
     const tracker = new CostTracker();
-    const cost = tracker.estimate("claude-sonnet-4-20250514", {
+    const cost = tracker.estimate("claude-sonnet-4-6", {
       inputTokens: 1000,
       outputTokens: 500,
     });
@@ -22,7 +22,7 @@ describe("CostTracker", () => {
 
   test("records entries and tracks total", () => {
     const tracker = new CostTracker();
-    tracker.record("claude-sonnet-4-20250514", "anthropic", {
+    tracker.record("claude-sonnet-4-6", "anthropic", {
       inputTokens: 1000,
       outputTokens: 500,
     });
@@ -36,7 +36,7 @@ describe("CostTracker", () => {
       budgets: [{ scope: "session", limitUsd: 0.001 }],
     });
     expect(() => {
-      tracker.record("claude-sonnet-4-20250514", "anthropic", {
+      tracker.record("claude-sonnet-4-6", "anthropic", {
         inputTokens: 1_000_000,
         outputTokens: 500_000,
       });
@@ -45,7 +45,7 @@ describe("CostTracker", () => {
 
   test("getBreakdown groups by provider and model", () => {
     const tracker = new CostTracker();
-    tracker.record("claude-sonnet-4-20250514", "anthropic", { inputTokens: 100, outputTokens: 50 });
+    tracker.record("claude-sonnet-4-6", "anthropic", { inputTokens: 100, outputTokens: 50 });
     tracker.record("gpt-4o", "openai", { inputTokens: 100, outputTokens: 50 });
     const breakdown = tracker.getBreakdown();
     expect(Object.keys(breakdown.byProvider).length).toBe(2);
@@ -54,7 +54,7 @@ describe("CostTracker", () => {
 
   test("reset clears the ledger", () => {
     const tracker = new CostTracker();
-    tracker.record("claude-sonnet-4-20250514", "anthropic", { inputTokens: 100, outputTokens: 50 });
+    tracker.record("claude-sonnet-4-6", "anthropic", { inputTokens: 100, outputTokens: 50 });
     expect(tracker.getLedger().entries.length).toBe(1);
     tracker.reset();
     expect(tracker.getLedger().entries.length).toBe(0);
@@ -83,7 +83,7 @@ describe("CostTracker", () => {
       budgets: [{ scope: "session", limitUsd: 0.01 }],
     });
     // Record some cost first
-    tracker.record("claude-sonnet-4-20250514", "anthropic", {
+    tracker.record("claude-sonnet-4-6", "anthropic", {
       inputTokens: 100,
       outputTokens: 50,
     });

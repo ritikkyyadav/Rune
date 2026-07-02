@@ -105,19 +105,86 @@ describe("ContextEngine", () => {
     expect(gateway.infer).toHaveBeenCalled();
   });
 
-  test("budget evicts low-relevance items when over limit", () => {
+  test("conversation messages are NEVER individually evicted (pair safety)", () => {
+    // Dropping a single message can orphan a tool_use/tool_result pair, which
+    // providers reject with a 400. Shrinking history is compactWorkingSet()'s
+    // job. Even over a tiny budget, every message must survive buildPrompt.
     const engine = new ContextEngine(
       { budget: { maxTokens: 100, workingSetRatio: 0.5, sessionMemoryRatio: 0.25, retrievalRatio: 0.25 } },
       createMockGateway(),
     );
-    // Create enough messages to exceed the tiny 100-token budget
     const messages = Array.from({ length: 50 }, (_, i) => ({
       role: "user" as const,
       content: [{ type: "text" as const, text: `This is message number ${i} with some extra text to consume tokens` }],
     }));
     const result = engine.buildPrompt("System", [], messages);
-    expect(result.evictedCount).toBeGreaterThan(0);
-    expect(result.messages.length).toBeLessThan(50);
+    expect(result.messages.length).toBe(50);
+    expect(result.evictedCount).toBe(0);
+  });
+
+  test("auxiliary context (pinned files) is evicted when over budget, not messages", () => {
+    const engine = new ContextEngine(
+      { budget: { maxTokens: 50, workingSetRatio: 0.5, sessionMemoryRatio: 0.25, retrievalRatio: 0.25 } },
+      createMockGateway(),
+    );
+    engine.pinFile("/big.ts", "word ".repeat(500)); // far over the 50-token budget
+    const messages = [
+      { role: "user" as const, content: [{ type: "text" as const, text: "hello" }] },
+    ];
+    const result = engine.buildPrompt("System", [], messages);
+    expect(result.evictedCount).toBe(1); // the pinned file was dropped
+    // The conversation message is still there (possibly alone).
+    const texts = result.messages.flatMap((m) =>
+      m.content.filter((b) => b.type === "text").map((b) => (b as { text: string }).text),
+    );
+    expect(texts.some((t) => t.includes("hello"))).toBe(true);
+  });
+
+  test("aux context that fits is delivered ahead of the conversation", () => {
+    const engine = new ContextEngine({ budget: { maxTokens: 100000 } }, createMockGateway());
+    engine.pinFile("/src/main.ts", "export function main() {}");
+    const result = engine.buildPrompt("System", [], [
+      { role: "user", content: [{ type: "text", text: "hi" }] },
+    ]);
+    expect(result.messages.length).toBe(2);
+    const first = result.messages[0].content[0];
+    expect(first.type).toBe("text");
+    expect((first as { text: string }).text).toContain("[Pinned: /src/main.ts]");
+  });
+
+  test("system prompt is returned byte-identical (cache stability)", () => {
+    const engine = new ContextEngine({}, createMockGateway());
+    engine.addDiscovery("Uses TypeScript", "read_file");
+    const system = "You are a helpful assistant.";
+    const result = engine.buildPrompt(system, [], [
+      { role: "user", content: [{ type: "text", text: "hi" }] },
+    ]);
+    expect(result.system).toBe(system);
+  });
+
+  test("noteRealUsage overrides the heuristic with provider-reported counts", () => {
+    const engine = new ContextEngine({ budget: { maxTokens: 100000 } }, createMockGateway());
+    engine.buildPrompt("System", [], [
+      { role: "user", content: [{ type: "text", text: "hi" }] },
+    ]);
+    expect(engine.shouldCompact()).toBe(false);
+
+    // Provider reports 180k real input tokens on a 200k-context Claude model
+    engine.noteRealUsage({ inputTokens: 150000, cacheReadTokens: 30000 }, "claude-sonnet-4-5");
+    const usage = engine.getContextUsage();
+    expect(usage.used).toBe(180000);
+    expect(usage.limit).toBe(200000);
+    expect(engine.shouldCompact()).toBe(true);
+  });
+
+  test("noteRealUsage ignores empty usage reports", () => {
+    const engine = new ContextEngine({ budget: { maxTokens: 100000 } }, createMockGateway());
+    engine.buildPrompt("System", [], [
+      { role: "user", content: [{ type: "text", text: "hi" }] },
+    ]);
+    const before = engine.getContextUsage();
+    engine.noteRealUsage({ inputTokens: 0 }, "claude-sonnet-4-5");
+    expect(engine.getContextUsage()).toEqual(before);
   });
 
   test("getMemory returns summaries and discoveries", () => {

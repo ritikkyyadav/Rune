@@ -16,7 +16,14 @@ export type ContentBlock =
       toolResultContent: string;
       isError?: boolean;
     }
-  | { type: "image"; mediaType: string; data: string };
+  | { type: "image"; mediaType: string; data: string }
+  // Extended/adaptive thinking. Blocks MUST be preserved in the assistant
+  // message and replayed verbatim (signature included) on the next request of
+  // a tool-use loop — Anthropic rejects modified or missing thinking blocks
+  // when thinking is enabled. Providers that don't understand thinking skip
+  // these blocks during conversion.
+  | { type: "thinking"; thinking: string; signature?: string }
+  | { type: "redacted_thinking"; data: string };
 
 export interface Message {
   role: Role;
@@ -108,6 +115,13 @@ export interface InferenceRequest {
    * providerSupportsNativeSearch() is true.
    */
   enableWebSearch?: boolean;
+  /**
+   * Ask the provider to reason before answering (Anthropic extended/adaptive
+   * thinking). Providers pick the right wire form per model — adaptive on
+   * models that support it, budgeted extended thinking otherwise — and ignore
+   * the flag on models with no thinking support.
+   */
+  thinking?: { enabled: boolean; budgetTokens?: number };
   stream: boolean;
 }
 
@@ -141,6 +155,12 @@ export type StreamEvent =
   // carries it so the UI can show it dimmed and the agent loop keeps it OUT of
   // the persisted message + tool-call parsing.
   | { type: "thinking_delta"; text: string }
+  // A completed thinking block (text + signature). The agent loop stores this
+  // in the assistant message so it can be replayed verbatim on the next
+  // request — required for Anthropic tool-use loops with thinking enabled.
+  | { type: "thinking_stop"; thinking: string; signature?: string }
+  // Opaque redacted thinking block — must round-trip untouched.
+  | { type: "redacted_thinking"; data: string }
   | { type: "tool_use_start"; toolCallId: string; toolName: string }
   | { type: "tool_use_delta"; toolCallId: string; partialJson: string }
   | { type: "tool_use_stop"; toolCallId: string; toolInput: Record<string, unknown> }
@@ -173,15 +193,23 @@ export interface ModelPricing {
 }
 
 export const MODEL_PRICING: Record<string, ModelPricing> = {
+  // Anthropic — current generation
+  "claude-opus-4-8": { inputPerMillion: 5, outputPerMillion: 25 },
+  "claude-opus-4-7": { inputPerMillion: 5, outputPerMillion: 25 },
+  "claude-opus-4-6": { inputPerMillion: 5, outputPerMillion: 25 },
+  "claude-sonnet-5": { inputPerMillion: 3, outputPerMillion: 15 },
+  "claude-sonnet-4-6": { inputPerMillion: 3, outputPerMillion: 15 },
+  "claude-sonnet-4-5": { inputPerMillion: 3, outputPerMillion: 15 },
+  "claude-haiku-4-5": { inputPerMillion: 1, outputPerMillion: 5 },
+  // Anthropic — legacy
   "claude-opus-4-20250514": { inputPerMillion: 15, outputPerMillion: 75 },
-  "claude-sonnet-4-20250514": { inputPerMillion: 3, outputPerMillion: 15 },
   "claude-haiku-4-5-20251001": { inputPerMillion: 0.8, outputPerMillion: 4 },
   "gpt-4o": { inputPerMillion: 2.5, outputPerMillion: 10 },
   "gpt-4o-mini": { inputPerMillion: 0.15, outputPerMillion: 0.6 },
   o3: { inputPerMillion: 10, outputPerMillion: 40 },
   // OpenRouter model IDs
   "anthropic/claude-sonnet-4": { inputPerMillion: 3, outputPerMillion: 15 },
-  "anthropic/claude-sonnet-4-20250514": { inputPerMillion: 3, outputPerMillion: 15 },
+  "anthropic/claude-sonnet-4-6": { inputPerMillion: 3, outputPerMillion: 15 },
   "anthropic/claude-haiku-4-5-20251001": { inputPerMillion: 0.8, outputPerMillion: 4 },
   "openai/gpt-4o": { inputPerMillion: 2.5, outputPerMillion: 10 },
   // Google Gemini (free tier = $0, but track usage for when paid tier is used)

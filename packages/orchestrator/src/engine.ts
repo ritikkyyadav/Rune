@@ -67,6 +67,12 @@ import { EpisodicMemory } from "./memory/episodic";
 import { WorkingMemory } from "./memory/working";
 import { HookRunner } from "./hooks";
 import { createSubagentTool } from "./subagent";
+import {
+  AGENT_DOCTRINE,
+  loadProjectMemory,
+  renderEnvironmentBlock,
+  snapshotEnvironment,
+} from "./prompts";
 import { CommandVerifier } from "./verifier";
 import type { Verifier } from "./verifier";
 import { planResearch, runResearch as executeResearch } from "./research";
@@ -254,9 +260,11 @@ export interface EngineConfig {
   };
 }
 
-// Generation budget per step — formerly selectable via an "effort" toggle, now
-// fixed at the old "medium" default.
-const MAX_TOKENS = 8192;
+// Generation budget per step. 8k routinely truncated multi-file edits and
+// long tool-call sequences mid-response; 32k gives coding responses room.
+// The agent loop clamps this to each model's real per-response output cap
+// (getMaxOutputTokens), so smaller models are unaffected.
+const MAX_TOKENS = 32000;
 const MAX_TURNS = 50;
 
 // Cheaper "executor" model per provider for planner-executor routing: the
@@ -285,18 +293,11 @@ const DEFAULT_ENGINE_CONFIG: EngineConfig = {
 };
 
 // ─── System Prompt ───
+// The full doctrine, environment block, and project memory live in prompts.ts.
+// SYSTEM_PROMPT is the doctrine half; the engine appends the per-session
+// environment snapshot + ALAN.md/CLAUDE.md/AGENTS.md at turn start.
 
-const SYSTEM_PROMPT = `You are Alan, an expert software engineering assistant built by Savoir Studio.
-
-You have access to tools for reading files, editing code, searching, and running commands.
-Always read files before editing them. Use the file hash from read_file in edit_file to prevent stale edits.
-
-When making code changes:
-1. Read the relevant files first to understand context
-2. Make targeted, minimal edits
-3. Verify changes compile/pass tests when possible
-
-Be concise and direct. Focus on solving the user's problem.`;
+const SYSTEM_PROMPT = AGENT_DOCTRINE;
 
 // ─── System Memory ("dreaming") helpers ───
 
@@ -431,6 +432,10 @@ export class Engine {
   private localBaseUrls: Record<string, string> = {};
   // Guards against overlapping System Memory "dreams" (auto + manual at once).
   private memoryReflecting = false;
+  // Per-session environment snapshot (cwd/platform/git state at session start).
+  // Cached so the system prompt stays byte-stable across turns — a churning
+  // prompt would invalidate the provider's prefix cache on every call.
+  private envBlocks: Map<string, string> = new Map();
 
   constructor(config: Partial<EngineConfig> = {}) {
     this.config = { ...DEFAULT_ENGINE_CONFIG, ...config };
@@ -1381,10 +1386,26 @@ export class Engine {
     await this.ensureMcpServers();
     await this.ensureSkills();
 
-    // Assemble the system prompt: base + the evergreen System Memory profile (a
-    // guide about the user/codebases) + the compact skills catalog. Read fresh
-    // each turn so manual edits and dreams take effect immediately.
-    const systemPrompt = [SYSTEM_PROMPT, this.buildSystemMemoryBlock(), this.skillCatalog]
+    // Assemble the system prompt: doctrine + environment snapshot + project
+    // memory (ALAN.md/CLAUDE.md/AGENTS.md) + the evergreen System Memory
+    // profile + the compact skills catalog. The environment block is
+    // snapshotted once per session for prompt-cache stability; project memory
+    // is read fresh each turn so file edits take effect immediately.
+    let envBlock = this.envBlocks.get(sessionId);
+    if (envBlock === undefined) {
+      envBlock = renderEnvironmentBlock(
+        snapshotEnvironment(this.config.workspaceRoot, session.model, this.config.provider),
+      );
+      this.envBlocks.set(sessionId, envBlock);
+    }
+    const projectMemory = loadProjectMemory(this.config.workspaceRoot);
+    const systemPrompt = [
+      SYSTEM_PROMPT,
+      envBlock,
+      projectMemory.block,
+      this.buildSystemMemoryBlock(),
+      this.skillCatalog,
+    ]
       .filter((s) => s && s.trim())
       .join("\n\n");
 
