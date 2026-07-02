@@ -28,6 +28,14 @@ export interface SubagentDeps {
   maxTokens?: number;
   maxTurns?: number;
   systemPrompt?: string;
+  /**
+   * Optional live resolver, called at EXECUTE time instead of using the
+   * construction-time snapshot above. Lets the engine (a) route sub-agents to
+   * the cheap "light" model tier, and (b) hand over the CURRENT gateway — the
+   * engine rebuilds its gateway on every key edit/provider toggle, and a
+   * snapshot taken at startup would go stale.
+   */
+  resolve?: () => { gateway: LlmGateway; model: string; provider: ProviderName };
 }
 
 const DEFAULT_MAX_TURNS = 12;
@@ -123,15 +131,22 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
       try {
         const permissionCheck = createReadOnlyPermissionCheck(deps.registry);
 
+        // Live resolution (tier routing + current gateway) when available.
+        const live = deps.resolve?.() ?? {
+          gateway: deps.gateway,
+          model: deps.model,
+          provider: deps.provider,
+        };
+
         const loop = new AgentLoop(
           {
-            model: deps.model,
-            provider: deps.provider,
+            model: live.model,
+            provider: live.provider,
             maxTokens,
             maxTurns,
             systemPrompt,
           },
-          deps.gateway,
+          live.gateway,
           deps.registry,
           permissionCheck,
         );

@@ -468,6 +468,7 @@ async function main() {
     search: config.search,
     research: config.research,
     memory: config.memory,
+    tiers: config.tiers,
   });
 
   // ─── DB-only commands — run before provider validation ───

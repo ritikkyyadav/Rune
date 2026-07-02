@@ -32,7 +32,9 @@ import {
   estimateMemoryTokens,
   clampToBudget,
   createLogger,
+  resolveTier,
 } from "@alan/shared";
+import type { ModelTier, TierRef, TiersConfig } from "@alan/shared";
 import type {
   CheckpointStore,
   CheckpointPolicy,
@@ -258,6 +260,13 @@ export interface EngineConfig {
     model?: string;
     maxTokens?: number;
   };
+  /**
+   * Model tiers (config.toml `[tiers]`): route work by weight. Values are
+   * "model" (active provider) or "provider/model" (cross-provider). heavy =
+   * hardest tasks, standard = main loop, light = sub-agents, compaction
+   * summaries, and other internal utility calls.
+   */
+  tiers?: TiersConfig;
 }
 
 // Generation budget per step. 8k routinely truncated multi-file edits and
@@ -267,16 +276,8 @@ export interface EngineConfig {
 const MAX_TOKENS = 32000;
 const MAX_TURNS = 50;
 
-// Cheaper "executor" model per provider for planner-executor routing: the
-// planner keeps the session's (stronger) model; individual steps run on the
-// fast model. Falls back to the session model when no fast variant is known.
-const FAST_MODELS: Partial<Record<ProviderName, string>> = {
-  anthropic: "claude-haiku-4-5-20251001",
-  openai: "gpt-4o-mini",
-  google: "gemini-2.5-flash",
-  openrouter: "qwen/qwen3-coder:free",
-  ollama: "llama3",
-};
+// Per-provider cheap-model routing now lives in @alan/shared tiers.ts
+// (PROVIDER_TIER_DEFAULTS) — resolved via Engine.resolveModelTier("light").
 
 const DEFAULT_ENGINE_CONFIG: EngineConfig = {
   // Default to a known-good, free model. The previous default
@@ -463,6 +464,8 @@ export class Engine {
     // Register the `task` sub-agent tool. It runs nested investigations against
     // a SEPARATE read-only registry (built-ins only, without `task` itself) so a
     // sub-agent can never write/execute and can never recurse into more agents.
+    // The resolver routes sub-agents to the cheap "light" tier and hands over
+    // the CURRENT gateway at call time (the gateway is rebuilt on key edits).
     const subRegistry = new ToolRegistry();
     registerBuiltinTools(subRegistry, this.config.toolsBinaryPath);
     this.registry.register(
@@ -471,6 +474,14 @@ export class Engine {
         registry: subRegistry,
         model: this.config.model,
         provider: this.config.provider,
+        resolve: () => {
+          const light = this.resolveModelTier("light");
+          return {
+            gateway: this.gateway,
+            model: light.model,
+            provider: light.provider as ProviderName,
+          };
+        },
       }),
     );
 
@@ -484,13 +495,15 @@ export class Engine {
     });
 
     // Initialize Context Engine — always on, manages token budgets. Seed the
-    // summarizer with the active model/provider (not the anthropic default) so
-    // /compress and rolling compaction work on whatever provider is in use.
+    // summarizer with the LIGHT model tier (summarization is utility work —
+    // no need to burn frontier-model tokens on it). Resolution guarantees a
+    // registered provider, so /compress and rolling compaction always work.
+    const lightSeed = this.resolveModelTier("light");
     this.contextEngine = new ContextEngine(
       {
         budget: this.config.contextBudget,
-        summarizerModel: this.config.model,
-        summarizerProvider: this.config.provider,
+        summarizerModel: lightSeed.model,
+        summarizerProvider: lightSeed.provider as ProviderName,
       },
       this.gateway,
     );
@@ -1424,12 +1437,15 @@ export class Engine {
     };
 
     if (this.config.plannerMode) {
+      // Planner keeps the session's (stronger) model; executor steps default to
+      // the light tier — cross-provider when the user's [tiers] config says so.
+      const lightTier = this.resolveModelTier("light");
       const routing: ModelRouting = {
         planner: this.config.routing?.planner ?? session.model,
-        executor:
-          this.config.routing?.executor ?? FAST_MODELS[this.config.provider] ?? session.model,
+        executor: this.config.routing?.executor ?? lightTier.model,
         plannerProvider: this.config.routing?.plannerProvider ?? this.config.provider,
-        executorProvider: this.config.routing?.executorProvider ?? this.config.provider,
+        executorProvider:
+          this.config.routing?.executorProvider ?? (lightTier.provider as ProviderName),
       };
 
       runner = new PlanRunner(
@@ -1657,6 +1673,32 @@ export class Engine {
     return this.sessions.verifyAuditChain();
   }
 
+  /**
+   * Resolve a model tier (heavy/standard/light) to a concrete provider+model:
+   * user `[tiers]` config first (supports cross-provider "provider/model"),
+   * then the active provider's built-in tier table, then the session model.
+   * Only ever returns providers that are registered (credentials present).
+   */
+  resolveModelTier(tier: ModelTier): TierRef {
+    const registered = new Set<string>(this.gateway.getRegisteredProviderNames());
+    const known = new Set<string>(PROVIDER_PRESETS.map((p) => p.id));
+    known.add("custom");
+    return resolveTier(
+      tier,
+      this.config.tiers,
+      this.config.provider,
+      this.config.model,
+      registered,
+      known,
+    );
+  }
+
+  /** Point the compaction summarizer at the current light tier. */
+  private syncSummarizerTier(): void {
+    const light = this.resolveModelTier("light");
+    this.contextEngine?.setSummarizer(light.model, light.provider as ProviderName);
+  }
+
   /** Switch model and/or provider at runtime. */
   switchModel(model: string, provider?: ProviderName, sessionId?: string): void {
     this.config.model = model;
@@ -1664,9 +1706,9 @@ export class Engine {
       this.config.provider = provider;
       this.rebuildGateway();
     } else {
-      // Model-only switch: keep the summarizer's model in sync (rebuildGateway,
+      // Model-only switch: keep the summarizer's tier in sync (rebuildGateway,
       // which also re-syncs, doesn't run when the provider is unchanged).
-      this.contextEngine?.setSummarizer(this.config.model, this.config.provider);
+      this.syncSummarizerTier();
     }
     // Update the session record so chat() picks up the new model — and the
     // provider too, so a later resume reconciles to the right host.
@@ -1690,11 +1732,11 @@ export class Engine {
 
   private rebuildGateway(): void {
     this.gateway = buildGateway(this.gatewayOpts());
-    // Keep the context engine pointed at the live gateway + active model so
+    // Keep the context engine pointed at the live gateway + light tier so
     // /compress and rolling compaction follow key/provider/toggle changes
     // instead of using a stale gateway or the anthropic default.
     this.contextEngine?.setGateway(this.gateway);
-    this.contextEngine?.setSummarizer(this.config.model, this.config.provider);
+    this.syncSummarizerTier();
   }
 
   /**
@@ -1762,7 +1804,7 @@ export class Engine {
     this.config.provider = next;
     this.config.model = model;
     if (sessionId) this.sessions.updateSessionModel(sessionId, model, next);
-    this.contextEngine?.setSummarizer(model, next);
+    this.syncSummarizerTier();
     return { provider: next, model };
   }
 

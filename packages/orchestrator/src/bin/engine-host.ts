@@ -170,6 +170,7 @@ function buildEngine(): Engine {
     disabledProviders: secrets.disabled,
     search: config.search,
     research: config.research,
+    tiers: config.tiers,
   });
   return engine;
 }

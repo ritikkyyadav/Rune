@@ -32,16 +32,41 @@ export class OpenAIProvider implements LlmProvider {
     });
   }
 
+  /**
+   * OpenAI FIRST-PARTY reasoning-family models (gpt-5*, o1/o3/o4*): these
+   * reject `max_tokens` (require `max_completion_tokens`), reject non-default
+   * sampling params, and accept `reasoning_effort`. Other OpenAI-compatible
+   * hosts sharing this adapter (Groq/xAI/DeepSeek/OpenRouter/Ollama Turbo)
+   * keep the classic params, so this is gated on the provider name too.
+   */
+  private isOpenAIReasoningModel(model: string): boolean {
+    if (this.name !== "openai") return false;
+    return /^(gpt-5|o[134])(-|:|$)/.test(model.toLowerCase());
+  }
+
+  /** Token/sampling/reasoning params appropriate for the target model family. */
+  private buildTuningParams(request: InferenceRequest): Record<string, unknown> {
+    if (this.isOpenAIReasoningModel(request.model)) {
+      return {
+        max_completion_tokens: request.maxTokens,
+        ...(request.thinking?.enabled !== false ? { reasoning_effort: "medium" } : {}),
+      };
+    }
+    return {
+      max_tokens: request.maxTokens,
+      temperature: request.temperature,
+      top_p: request.topP,
+    };
+  }
+
   async infer(request: InferenceRequest): Promise<InferenceResponse> {
     const response = await this.client.chat.completions.create({
       model: request.model,
-      max_tokens: request.maxTokens,
       messages: this.toOpenAIMessages(request.messages, request.system),
       tools: request.tools ? this.toOpenAITools(request.tools) : undefined,
-      temperature: request.temperature,
-      top_p: request.topP,
       stop: request.stopSequences,
-    });
+      ...(this.buildTuningParams(request) as object),
+    } as Parameters<typeof this.client.chat.completions.create>[0] & { stream?: false });
 
     const choice = response.choices[0];
     const content = this.fromOpenAIChoice(choice);
@@ -68,13 +93,11 @@ export class OpenAIProvider implements LlmProvider {
       const stream = await this.client.chat.completions.create(
         {
           model: request.model,
-          max_tokens: request.maxTokens,
           messages: this.toOpenAIMessages(request.messages, request.system),
           tools: request.tools ? this.toOpenAITools(request.tools) : undefined,
-          temperature: request.temperature,
-          top_p: request.topP,
           stop: request.stopSequences,
           stream: true,
+          ...(this.buildTuningParams(request) as object),
         },
         { signal: controller.signal },
       );
