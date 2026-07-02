@@ -208,79 +208,52 @@ export class ContextEngine {
     plan?: { description: string; tokens: number },
     retrievedChunks?: Array<{ content: string; relevance: number }>,
   ): BuiltPrompt {
-    const items: ContextItem[] = [];
-    let evictedCount = 0;
+    // ── Invariants (learned the hard way) ──
+    // 1. Conversation messages are NEVER individually evicted. Dropping one
+    //    message can orphan a tool_use/tool_result pair, which providers
+    //    reject with a 400. Shrinking the history is compactWorkingSet()'s
+    //    job — it summarizes at a pair-safe cut point instead of punching
+    //    holes in the transcript.
+    // 2. The system prompt is returned BYTE-IDENTICAL to what was passed in.
+    //    Appending anything time-varying (discoveries, summaries) invalidates
+    //    the provider's prompt-prefix cache on every call, re-billing the
+    //    whole conversation each turn.
+    // Auxiliary context (plan, pinned files, discoveries, retrieved chunks)
+    // competes for the leftover budget and is delivered as a single context
+    // message BEFORE the conversation, so it stays cache-stable relative to
+    // the growing suffix.
 
-    // 1. System prompt (always pinned)
-    items.push({
-      kind: "system_prompt",
-      content: systemPrompt,
-      tokens: this.tokenCounter.countTokens(systemPrompt),
-      relevance: 1,
-      age: 0,
-      pinned: true,
-    });
+    const systemTokens = this.tokenCounter.countTokens(systemPrompt);
+    const toolTokens = this.tokenCounter.countTokens(JSON.stringify(tools));
+    const messageTokens = messages.reduce(
+      (sum, m) => sum + this.tokenCounter.countTokens(messageToString(m)),
+      0,
+    );
 
-    // Tool schemas (always pinned)
-    const toolSchemaStr = JSON.stringify(tools);
-    items.push({
-      kind: "tool_schemas",
-      content: toolSchemaStr,
-      tokens: this.tokenCounter.countTokens(toolSchemaStr),
-      relevance: 1,
-      age: 0,
-      pinned: true,
-    });
-
-    // 2. Active plan
+    // ── Auxiliary items compete for whatever budget remains ──
+    const aux: ContextItem[] = [];
     if (plan) {
-      items.push({
+      aux.push({
         kind: "plan",
-        content: plan.description,
+        content: `[Active plan]\n${plan.description}`,
         tokens: plan.tokens,
         relevance: 0.95,
         age: 0,
-        pinned: true,
+        pinned: false,
       });
     }
-
-    // 3. Pinned files
     for (const [path, file] of this.pinnedFiles) {
-      items.push({
+      aux.push({
         kind: "pinned_file",
         content: `[Pinned: ${path}]\n${file.content}`,
         tokens: file.tokens,
         relevance: 0.9,
         age: 0,
-        pinned: true,
-      });
-    }
-
-    // 4. Conversation messages (recent first = lowest age)
-    const totalMessages = messages.length;
-    for (let i = 0; i < totalMessages; i++) {
-      const msg = messages[i];
-      const content = messageToString(msg);
-      const age = totalMessages - i;
-      items.push({
-        kind: roleToKind(msg.role),
-        content,
-        tokens: this.tokenCounter.countTokens(content),
-        relevance: 1 / (1 + age * 0.1), // decay with age
-        age,
         pinned: false,
-        source: msg,
       });
     }
-
-    // 5. Session summaries are intentionally NOT re-injected here. The rolling
-    // summary already lives in the working set as a synthetic summary message
-    // (added by compactWorkingSet), so re-adding memory.summaries would
-    // double-count the same text and grow the prompt unbounded.
-
-    // 6. Discoveries
     for (const disc of this.memory.discoveries) {
-      items.push({
+      aux.push({
         kind: "discovery",
         content: `[Discovery] ${disc.fact} (from: ${disc.source})`,
         tokens: this.tokenCounter.countTokens(disc.fact) + 10,
@@ -289,11 +262,9 @@ export class ContextEngine {
         pinned: false,
       });
     }
-
-    // 7. Retrieved chunks
     if (retrievedChunks) {
       for (const chunk of retrievedChunks) {
-        items.push({
+        aux.push({
           kind: "retrieved_chunk",
           content: chunk.content,
           tokens: this.tokenCounter.countTokens(chunk.content),
@@ -304,31 +275,39 @@ export class ContextEngine {
       }
     }
 
-    // ─── Budget Pass ───
-    const budgetTokens = this.budget.maxTokens;
-    const sorted = budgetPass(items, budgetTokens);
-
-    // Reconstruct messages from the surviving items
-    const finalMessages: Message[] = [];
-    let systemContent = "";
-
-    for (const item of sorted) {
-      if (item.kind === "system_prompt") {
-        systemContent = item.content;
-      } else if (item.kind === "tool_schemas") {
-        // Tools are passed separately, not in messages
-      } else if (item.kind === "session_summary" || item.kind === "discovery") {
-        // Prepend summaries/discoveries to system prompt
-        systemContent += `\n\n${item.content}`;
-      } else if (item.source && "role" in item.source) {
-        finalMessages.push(item.source as Message);
+    const auxBudget = Math.max(0, this.budget.maxTokens - systemTokens - toolTokens - messageTokens);
+    const keptAux: ContextItem[] = [];
+    let auxUsed = 0;
+    const scoredAux = aux
+      .map((item) => ({ item, score: item.relevance / (1 + item.age * 0.05) }))
+      .sort((a, b) => b.score - a.score);
+    for (const { item } of scoredAux) {
+      if (auxUsed + item.tokens <= auxBudget) {
+        keptAux.push(item);
+        auxUsed += item.tokens;
       }
     }
+    const evictedCount = aux.length - keptAux.length;
 
-    const totalTokens = sorted.reduce((sum, item) => sum + item.tokens, 0);
-    evictedCount = items.length - sorted.length;
+    // ── Assemble: aux context (if any) as one message ahead of the history ──
+    const finalMessages: Message[] = [];
+    if (keptAux.length > 0) {
+      finalMessages.push({
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: `[Session context]\n${keptAux.map((i) => i.content).join("\n\n")}`,
+          },
+        ],
+      });
+    }
+    finalMessages.push(...messages);
 
-    // Track token usage for getContextUsage()
+    const totalTokens = systemTokens + toolTokens + messageTokens + auxUsed;
+
+    // Heuristic estimate — overwritten by noteRealUsage() as soon as the
+    // provider reports authoritative counts for the request we send.
     this.lastTokenUsage = {
       used: totalTokens,
       limit: this.budget.maxTokens,
@@ -336,11 +315,28 @@ export class ContextEngine {
 
     return {
       messages: finalMessages,
-      system: systemContent,
+      system: systemPrompt,
       tools,
       totalTokens,
       evictedCount,
     };
+  }
+
+  /**
+   * Record REAL token usage reported by the provider for the last request.
+   * Authoritative — replaces the buildPrompt() heuristic, and switches the
+   * compaction limit to the model's actual context window. Calls with a
+   * non-positive input count are ignored (some providers omit usage on
+   * streamed responses).
+   */
+  noteRealUsage(
+    usage: { inputTokens: number; cacheReadTokens?: number; cacheCreationTokens?: number },
+    model: string,
+  ): void {
+    const used =
+      usage.inputTokens + (usage.cacheReadTokens ?? 0) + (usage.cacheCreationTokens ?? 0);
+    if (used <= 0) return;
+    this.lastTokenUsage = { used, limit: getContextLimit(model) };
   }
 
   // ─── Rolling Summarization ───
@@ -576,7 +572,7 @@ export class ContextEngine {
       used: this.lastTokenUsage?.used ?? 0,
       limit:
         this.lastTokenUsage?.limit ??
-        getContextLimit(this.config.summarizerModel || "claude-sonnet-4-20250514"),
+        getContextLimit(this.config.summarizerModel || "claude-sonnet-4-6"),
       percent: this.lastTokenUsage
         ? Math.round((this.lastTokenUsage.used / this.lastTokenUsage.limit) * 100)
         : 0,
@@ -597,74 +593,7 @@ export class ContextEngine {
   }
 }
 
-// ─── Budget Pass Algorithm ───
-
-/**
- * Score and filter context items to fit within the token budget.
- * Pinned items are always kept. Non-pinned items are scored by
- * `relevance / (1 + age * 0.05)` and dropped lowest-first.
- */
-function budgetPass(items: ContextItem[], maxTokens: number): ContextItem[] {
-  const pinned = items.filter((i) => i.pinned);
-  const unpinned = items.filter((i) => !i.pinned);
-
-  let pinnedTokens = pinned.reduce((sum, i) => sum + i.tokens, 0);
-  if (pinnedTokens > maxTokens) {
-    // Even pinned items exceed budget — drop oldest pinned items
-    // (except system prompt and tool schemas)
-    const essential = pinned.filter((i) => i.kind === "system_prompt" || i.kind === "tool_schemas");
-    const rest = pinned
-      .filter((i) => i.kind !== "system_prompt" && i.kind !== "tool_schemas")
-      .sort((a, b) => b.relevance - a.relevance);
-
-    const result: ContextItem[] = [...essential];
-    let budget = maxTokens - essential.reduce((s, i) => s + i.tokens, 0);
-    for (const item of rest) {
-      if (item.tokens <= budget) {
-        result.push(item);
-        budget -= item.tokens;
-      }
-    }
-    return result;
-  }
-
-  // Score unpinned items
-  const scored = unpinned
-    .map((item) => ({
-      item,
-      score: item.relevance / (1 + item.age * 0.05),
-    }))
-    .sort((a, b) => b.score - a.score);
-
-  let remainingBudget = maxTokens - pinnedTokens;
-  const kept: ContextItem[] = [...pinned];
-
-  for (const { item } of scored) {
-    if (item.tokens <= remainingBudget) {
-      kept.push(item);
-      remainingBudget -= item.tokens;
-    }
-  }
-
-  // Re-sort by original order (messages should stay in conversation order)
-  // Higher age = older message; chronological order = oldest first = descending by age
-  return kept.sort((a, b) => {
-    if (a.pinned && !b.pinned) return -1;
-    if (!a.pinned && b.pinned) return 1;
-    return b.age - a.age;
-  });
-}
-
 // ─── Helpers ───
-
-/**
- * @deprecated Use TokenCounter.countTokens() instead. This naive estimate
- * (text.length / 4) can be off by 30-50%. Kept for backward compatibility.
- */
-function estimateTokens(text: string): number {
-  // Rough estimate: ~4 characters per token for English text
-  return Math.ceil(text.length / 4);
-}
 
 /**
  * Find the index at which we can safely cut the message array so that:
@@ -744,10 +673,4 @@ function messageToString(msg: Message): string {
       return "";
     })
     .join("\n");
-}
-
-function roleToKind(role: string): "user_message" | "assistant_message" | "tool_message" {
-  if (role === "assistant") return "assistant_message";
-  if (role === "tool") return "tool_message";
-  return "user_message";
 }

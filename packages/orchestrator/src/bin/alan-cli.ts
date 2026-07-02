@@ -118,7 +118,7 @@ type CliProvider =
   | "lmstudio";
 
 const DEFAULT_MODELS: Record<CliProvider, string> = {
-  anthropic: "claude-sonnet-4-20250514",
+  anthropic: "claude-sonnet-4-6",
   openai: "gpt-4o",
   openrouter: "qwen/qwen3-coder:free",
   google: "gemini-2.5-flash",

@@ -5,6 +5,7 @@ import type {
   Message,
   ProviderName,
   StreamEvent,
+  TokenUsage,
   ToolDefinition,
   StreamOpts,
 } from "@alan/llm-gateway";
@@ -17,6 +18,7 @@ import { parseToolArguments } from "@alan/shared";
 import type { ToolCallInput, ToolCallOutput } from "@alan/tool-registry";
 import { ToolRegistry } from "@alan/tool-registry";
 import type { ContextEngine } from "./context-engine";
+import { getMaxOutputTokens } from "./tokenizer";
 import type { Verifier } from "./verifier";
 
 // ─── Agent Turn Events (yielded to caller) ───
@@ -84,12 +86,18 @@ export interface AgentLoopConfig {
    * `web_search` function tool when the provider supports it. Default false.
    */
   nativeGrounding?: boolean;
+  /**
+   * Ask the provider to reason before answering (extended/adaptive thinking).
+   * Providers ignore this on models without thinking support. Default true —
+   * coding agents benefit heavily from inter-tool-call reasoning.
+   */
+  thinking?: boolean;
 }
 
 const DEFAULT_CONFIG: AgentLoopConfig = {
-  model: "claude-sonnet-4-20250514",
+  model: "claude-sonnet-4-5",
   provider: "anthropic",
-  maxTokens: 8192,
+  maxTokens: 32000,
   maxTurns: 50,
   maxConsecutiveErrors: 3,
   systemPrompt: "You are Alan, an expert software engineering assistant.",
@@ -98,6 +106,29 @@ const DEFAULT_CONFIG: AgentLoopConfig = {
 // ─── Agent State ───
 
 export type AgentState = "idle" | "thinking" | "tool_calling" | "observing" | "done" | "error";
+
+// ─── Tool-result transcript cap ───
+// The Rust bash tool alone can return 512KB (~130k tokens) — one verbose
+// command must not be able to consume the whole context window. Results over
+// the cap keep their head and tail (errors usually live at one end) with an
+// explicit marker so the model knows content was elided and can narrow its
+// query instead of trusting a silently-holed transcript.
+
+const TOOL_RESULT_MAX_CHARS = 30_000;
+const TOOL_RESULT_HEAD_CHARS = 22_000;
+const TOOL_RESULT_TAIL_CHARS = 6_000;
+
+export function truncateForTranscript(text: string): string {
+  if (text.length <= TOOL_RESULT_MAX_CHARS) return text;
+  const head = text.slice(0, TOOL_RESULT_HEAD_CHARS);
+  const tail = text.slice(-TOOL_RESULT_TAIL_CHARS);
+  const omitted = text.length - TOOL_RESULT_HEAD_CHARS - TOOL_RESULT_TAIL_CHARS;
+  return (
+    `${head}\n\n… [${omitted} characters omitted: output exceeded the transcript budget. ` +
+    `Re-run with a narrower pattern, path, offset/limit, or pipe through head/tail if you ` +
+    `need the elided middle] …\n\n${tail}`
+  );
+}
 
 // ─── Agent Loop ───
 
@@ -151,6 +182,7 @@ export class AgentLoop {
     let verifyAttempts = 0;
     let editsSinceVerify = false;
     let stuckNudges = 0;
+    let truncationRetries = 0;
     const recentToolSignatures: string[] = [];
 
     while (turn < this.config.maxTurns) {
@@ -210,9 +242,12 @@ export class AgentLoop {
         tools: tools.length > 0 ? tools : undefined,
         model: this.config.model,
         provider: this.config.provider,
-        maxTokens: this.config.maxTokens,
+        // Clamp to the model's per-response output cap — most providers
+        // reject requests that ask for more than the model can emit.
+        maxTokens: Math.min(this.config.maxTokens, getMaxOutputTokens(this.config.model)),
         temperature: this.config.temperature,
         enableWebSearch: useNativeSearch ? true : undefined,
+        thinking: { enabled: this.config.thinking !== false },
         stream: true,
       };
 
@@ -232,6 +267,12 @@ export class AgentLoop {
           const result = this.processStreamEvent(event, contentBlocks, pendingToolCalls);
           if (result.event) yield result.event;
           if (result.stopReason) stopReason = result.stopReason;
+          // Feed REAL token usage back to the context engine so compaction is
+          // driven by the provider's authoritative count against the model's
+          // actual context window — not a word-count heuristic.
+          if (result.usage && this.config.contextEngine) {
+            this.config.contextEngine.noteRealUsage(result.usage, this.config.model);
+          }
           if (result.error) {
             // Terminal provider failures (bad key, no credits, every provider
             // rate-limited) won't clear by re-running — surface immediately with
@@ -289,6 +330,56 @@ export class AgentLoop {
 
       // Record assistant message
       this.messages.push({ role: "assistant", content: contentBlocks });
+
+      // ── max_tokens: the response was cut off by the output-token limit ──
+      // Never execute tool calls from a truncated response: their JSON args
+      // may be salvaged-but-wrong (parseToolArguments degrades partial blobs
+      // to {}), and running a write/bash with garbage args is destructive.
+      // Instead answer any pending calls with an error result (keeps the
+      // transcript valid) and ask the model to continue — bounded so a model
+      // that maxes out every response can't loop forever.
+      if (stopReason === "max_tokens") {
+        if (truncationRetries < 2) {
+          truncationRetries++;
+          if (pendingToolCalls.length > 0) {
+            this.messages.push({
+              role: "tool",
+              content: pendingToolCalls.map(
+                (tc): ContentBlock => ({
+                  type: "tool_result",
+                  toolCallId: tc.callId,
+                  toolResultContent:
+                    "Not executed: your response hit the output-token limit mid-call, so the " +
+                    "arguments may be incomplete. Re-issue this tool call.",
+                  isError: true,
+                }),
+              ),
+            });
+          } else {
+            this.messages.push({
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text:
+                    "Your last response was cut off by the output-token limit. " +
+                    "Continue exactly where you left off — do not repeat what you already said.",
+                },
+              ],
+            });
+          }
+          yield {
+            type: "notice",
+            message: "Response hit the output-token limit — asking the agent to continue.",
+          };
+          this.state = "observing";
+          continue;
+        }
+        // Retries exhausted: surface truthfully instead of pretending we finished.
+        this.state = "done";
+        yield { type: "turn_complete", stopReason: "max_tokens", totalTurns: turn };
+        return;
+      }
 
       // If no tool use, we're done — but first, if edits were made, run
       // verification (project checks). On failure, feed the report back and
@@ -493,7 +584,9 @@ export class AgentLoop {
           toolResults.push({
             type: "tool_result",
             toolCallId: p.tc.callId,
-            toolResultContent: output.success ? output.result : `Error: ${output.error}`,
+            toolResultContent: truncateForTranscript(
+              output.success ? output.result : `Error: ${output.error}`,
+            ),
             isError: !output.success,
           });
           consecutiveErrors = output.success ? 0 : consecutiveErrors + 1;
@@ -534,7 +627,13 @@ export class AgentLoop {
     event: StreamEvent,
     contentBlocks: ContentBlock[],
     pendingToolCalls: Array<{ callId: string; toolName: string; argsJson: string }>,
-  ): { event?: AgentTurnEvent; stopReason?: string; error?: string; retryable?: boolean } {
+  ): {
+    event?: AgentTurnEvent;
+    stopReason?: string;
+    usage?: TokenUsage;
+    error?: string;
+    retryable?: boolean;
+  } {
     switch (event.type) {
       case "content_delta":
         if (event.delta.type === "text_delta") {
@@ -558,6 +657,23 @@ export class AgentLoop {
         // do NOT push into contentBlocks, so it never becomes part of the
         // persisted answer or confuses tool-call detection.
         return { event: { type: "thinking_delta", text: event.text } };
+
+      case "thinking_stop":
+        // The COMPLETE thinking block (text + signature) — stored in the
+        // assistant message so the provider can replay it verbatim on the
+        // next request. Anthropic rejects tool-use continuations whose
+        // thinking blocks are missing or modified.
+        contentBlocks.push({
+          type: "thinking",
+          thinking: event.thinking,
+          signature: event.signature,
+        });
+        return {};
+
+      case "redacted_thinking":
+        // Opaque block — must round-trip untouched.
+        contentBlocks.push({ type: "redacted_thinking", data: event.data });
+        return {};
 
       case "tool_use_start":
         contentBlocks.push({
@@ -606,7 +722,7 @@ export class AgentLoop {
       }
 
       case "message_stop":
-        return { stopReason: event.stopReason };
+        return { stopReason: event.stopReason, usage: event.usage };
 
       case "notice":
         return { event: { type: "notice", message: event.message } };

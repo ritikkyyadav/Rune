@@ -43,12 +43,12 @@ export interface PlanRunnerConfig {
 
 const DEFAULT_CONFIG: PlanRunnerConfig = {
   routing: {
-    planner: "claude-sonnet-4-20250514",
-    executor: "claude-sonnet-4-20250514",
+    planner: "claude-sonnet-4-5",
+    executor: "claude-sonnet-4-5",
     plannerProvider: "anthropic",
     executorProvider: "anthropic",
   },
-  maxTokens: 8192,
+  maxTokens: 32000,
   maxTurnsPerStep: 20,
   maxStepRetries: 2,
   maxReplanAttempts: 2,

@@ -50,7 +50,7 @@ const SCHEMA = `
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL,
     workspace_root  TEXT NOT NULL,
-    model           TEXT NOT NULL DEFAULT 'claude-sonnet-4-20250514',
+    model           TEXT NOT NULL DEFAULT 'claude-sonnet-4-6',
     system_prompt_hash TEXT,
     title           TEXT,
     status          TEXT NOT NULL DEFAULT 'active'

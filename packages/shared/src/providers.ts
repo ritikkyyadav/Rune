@@ -51,12 +51,15 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     label: "Anthropic",
     kind: "anthropic",
     envVar: "ANTHROPIC_API_KEY",
-    defaultModel: "claude-sonnet-4-20250514",
+    defaultModel: "claude-sonnet-4-6",
     docsUrl: "https://console.anthropic.com/settings/keys",
     keyHint: "sk-ant-…",
     models: [
-      { id: "claude-sonnet-4-20250514", label: "Claude Sonnet 4" },
-      { id: "claude-opus-4-20250514", label: "Claude Opus 4" },
+      { id: "claude-opus-4-8", label: "Claude Opus 4.8" },
+      { id: "claude-sonnet-5", label: "Claude Sonnet 5" },
+      { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+      { id: "claude-sonnet-4-5", label: "Claude Sonnet 4.5" },
+      { id: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
     ],
   },
   {

@@ -1,6 +1,7 @@
 import type { ToolSchema } from "../types";
 import type { ToolRegistry } from "../registry";
 import { createRustToolHandler } from "./rust-bridge";
+import { FileFreshness, withFreshness } from "./freshness";
 import { createWebFetchHandler } from "./web-fetch";
 import { createWebSearchHandler } from "./web-search";
 import { createAstQueryHandler } from "./ast-query";
@@ -89,7 +90,7 @@ const EDIT_FILE_SCHEMA: ToolSchema = {
   name: "edit_file",
   version: "0.1.0",
   description:
-    "Edit a file by replacing old_text with new_text. Requires expected_hash from a prior read_file to prevent stale edits. old_text must be unique unless replace_all is true.",
+    "Edit a file by replacing old_text with new_text. You must have read the file (read_file) in this session first — staleness is checked automatically. old_text must be unique unless replace_all is true.",
   inputSchema: {
     type: "object",
     properties: {
@@ -98,11 +99,12 @@ const EDIT_FILE_SCHEMA: ToolSchema = {
       new_text: { type: "string", description: "Replacement text" },
       expected_hash: {
         type: "string",
-        description: "SHA-256 hash from read_file — ensures file hasn't changed",
+        description:
+          "Optional SHA-256 hash from read_file. Usually omit — the harness supplies your last-read hash automatically.",
       },
       replace_all: { type: "boolean", description: "Replace all occurrences" },
     },
-    required: ["path", "old_text", "new_text", "expected_hash"],
+    required: ["path", "old_text", "new_text"],
   },
   permissionLevel: "confirm",
   category: "write",
@@ -170,8 +172,20 @@ const ALL_SCHEMAS: Array<{ schema: ToolSchema; subcommand: string }> = [
  * @param binaryPath - Path to the compiled alan-tools binary
  */
 export function registerBuiltinTools(registry: ToolRegistry, binaryPath: string): void {
+  // Harness-side file-state tracking: read_file/write_file/edit_file/multi_edit
+  // record each file's post-call hash; edit tools get the hash injected
+  // automatically instead of making the model plumb SHA-256 strings through.
+  const freshness = new FileFreshness();
+  const FRESHNESS_TOOLS: Record<string, { requiresFreshRead?: boolean }> = {
+    read_file: {},
+    write_file: {},
+    edit_file: { requiresFreshRead: true },
+  };
+
   for (const { schema, subcommand } of ALL_SCHEMAS) {
-    registry.register(createRustToolHandler(schema, subcommand, binaryPath));
+    const handler = createRustToolHandler(schema, subcommand, binaryPath);
+    const opts = FRESHNESS_TOOLS[schema.name];
+    registry.register(opts ? withFreshness(handler, freshness, opts) : handler);
   }
 
   // TypeScript-native tools (no Rust binary needed)
@@ -180,6 +194,6 @@ export function registerBuiltinTools(registry: ToolRegistry, binaryPath: string)
   registry.register(createAstQueryHandler());
   registry.register(createTodoWriteHandler());
   registry.register(createGlobHandler());
-  registry.register(createMultiEditHandler());
+  registry.register(withFreshness(createMultiEditHandler(), freshness));
   registry.register(createN8nTriggerHandler());
 }
