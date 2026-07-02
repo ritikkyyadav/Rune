@@ -105,6 +105,18 @@ export interface AlanConfig {
     theme?: string;
   };
   /**
+   * Model tiers — route work by weight instead of hardcoding one model.
+   * Values are "model" (active provider) or "provider/model" (cross-provider),
+   * e.g.  heavy = "anthropic/claude-opus-4-8", light = "deepseek/deepseek-chat".
+   * heavy: hardest tasks · standard: main loop · light: sub-agents, compaction
+   * summaries, and other internal utility calls.
+   */
+  tiers?: {
+    heavy?: string;
+    standard?: string;
+    light?: string;
+  };
+  /**
    * System Memory ("dreaming") — Alan's evergreen, narrative profile of the user and the
    * codebases they work in, injected into the system prompt so even small models get cheap,
    * personalised context. Stored at ~/.alan/system-memory.md (see shared/system-memory.ts).

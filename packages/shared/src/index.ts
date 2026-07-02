@@ -29,6 +29,14 @@ export {
   applySearchKeysToEnv,
 } from "./secrets.js";
 export { type LastModel, getModelStatePath, loadLastModel, saveLastModel } from "./model-store.js";
+export {
+  type ModelTier,
+  type TierRef,
+  type TiersConfig,
+  PROVIDER_TIER_DEFAULTS,
+  parseTierRef,
+  resolveTier,
+} from "./tiers.js";
 export { type LogLevel, type Logger, createLogger, nullLogger } from "./logger.js";
 export {
   type MemoryScheduleKind,

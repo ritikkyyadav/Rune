@@ -204,9 +204,17 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   // Anthropic — legacy
   "claude-opus-4-20250514": { inputPerMillion: 15, outputPerMillion: 75 },
   "claude-haiku-4-5-20251001": { inputPerMillion: 0.8, outputPerMillion: 4 },
+  "gpt-5": { inputPerMillion: 1.25, outputPerMillion: 10 },
+  "gpt-5-mini": { inputPerMillion: 0.25, outputPerMillion: 2 },
   "gpt-4o": { inputPerMillion: 2.5, outputPerMillion: 10 },
   "gpt-4o-mini": { inputPerMillion: 0.15, outputPerMillion: 0.6 },
-  o3: { inputPerMillion: 10, outputPerMillion: 40 },
+  o3: { inputPerMillion: 2, outputPerMillion: 8 },
+  // DeepSeek
+  "deepseek-chat": { inputPerMillion: 0.27, outputPerMillion: 1.1 },
+  "deepseek-reasoner": { inputPerMillion: 0.55, outputPerMillion: 2.19 },
+  // xAI
+  "grok-4": { inputPerMillion: 3, outputPerMillion: 15 },
+  "grok-4-fast": { inputPerMillion: 0.2, outputPerMillion: 0.5 },
   // OpenRouter model IDs
   "anthropic/claude-sonnet-4": { inputPerMillion: 3, outputPerMillion: 15 },
   "anthropic/claude-sonnet-4-6": { inputPerMillion: 3, outputPerMillion: 15 },
