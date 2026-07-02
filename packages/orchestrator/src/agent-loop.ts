@@ -183,6 +183,13 @@ export class AgentLoop {
     let editsSinceVerify = false;
     let stuckNudges = 0;
     let truncationRetries = 0;
+    // Execution-evidence gate: when files were written but NOTHING was ever
+    // executed to prove they work (no bash run, no project checks), refuse
+    // the first attempt to finish and demand verification + an honest report.
+    let anyWritesThisRun = false;
+    let executedSinceWrite = false;
+    let projectChecksPassed = false;
+    let executionNudges = 0;
     const recentToolSignatures: string[] = [];
 
     while (turn < this.config.maxTurns) {
@@ -395,6 +402,7 @@ export class AgentLoop {
           yield { type: "notice", message: "Verifying changes…" };
           const result = await this.config.verifier.verify(signal);
           editsSinceVerify = false;
+          if (result.ran && result.passed) projectChecksPassed = true;
           if (result.ran && !result.passed) {
             this.messages.push({
               role: "user",
@@ -413,6 +421,48 @@ export class AgentLoop {
             };
             continue;
           }
+        }
+
+        // ── Execution-evidence gate ──
+        // The agent wrote files but nothing was ever EXECUTED to prove they
+        // work: no bash run since the last write, and no project checks
+        // (verifier found nothing to run — common for fresh projects). A
+        // model claiming "done" here is guessing. Refuse the finish once and
+        // demand verification + an honest report. Deterministic and
+        // model-independent — weak models get pushed just as hard as strong
+        // ones.
+        if (
+          anyWritesThisRun &&
+          !executedSinceWrite &&
+          !projectChecksPassed &&
+          executionNudges < 1 &&
+          !signal?.aborted
+        ) {
+          executionNudges++;
+          this.messages.push({
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text:
+                  "Stop — you created or modified files but never executed anything to prove " +
+                  "they work. Before finishing:\n" +
+                  "1. Run the code or its tests with bash and read the REAL output.\n" +
+                  "2. Fix anything that fails and re-run until it actually works.\n" +
+                  "3. Then finish with a short report: what you verified (with actual " +
+                  "output), exactly how the user runs/uses what you built, and anything " +
+                  "left unverified — stated plainly as untested.\n" +
+                  "If execution genuinely isn't possible in this environment, say so " +
+                  "explicitly and clearly mark the work as untested.",
+              },
+            ],
+          });
+          yield {
+            type: "notice",
+            message: "No execution evidence — asking the agent to verify its work.",
+          };
+          this.state = "observing";
+          continue;
         }
 
         // Compact only when context is near budget (avoids a summarization
@@ -590,7 +640,16 @@ export class AgentLoop {
             isError: !output.success,
           });
           consecutiveErrors = output.success ? 0 : consecutiveErrors + 1;
-          if (output.success && p.isWrite) editsSinceVerify = true;
+          if (output.success && p.isWrite) {
+            editsSinceVerify = true;
+            anyWritesThisRun = true;
+            executedSinceWrite = false; // new writes need fresh execution evidence
+          }
+          // Only a real bash run counts as execution evidence — other
+          // "execute"-category tools (kill_shell, ask_user) prove nothing.
+          if (output.success && p.tc.toolName === "bash") {
+            executedSinceWrite = true;
+          }
         }
       }
 
