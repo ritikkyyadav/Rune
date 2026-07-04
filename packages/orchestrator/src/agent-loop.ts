@@ -15,6 +15,8 @@ import {
   providerAllowsGroundingWithTools,
 } from "@alan/llm-gateway";
 import { parseToolArguments } from "@alan/shared";
+import type { IncidentContext, IncidentReporter, IncidentSeverity } from "@alan/shared";
+import type { IncidentClass } from "@alan/shared";
 import type { ToolCallInput, ToolCallOutput } from "@alan/tool-registry";
 import { ToolRegistry } from "@alan/tool-registry";
 import type { ContextEngine } from "./context-engine";
@@ -92,6 +94,12 @@ export interface AgentLoopConfig {
    * coding agents benefit heavily from inter-tool-call reasoning.
    */
   thinking?: boolean;
+  /**
+   * Black-box tap for named loop reliability events (breaker trips, evidence
+   * gate, nudges, verification failures). Guarded — a throwing reporter can
+   * never affect the run.
+   */
+  onIncident?: IncidentReporter;
 }
 
 const DEFAULT_CONFIG: AgentLoopConfig = {
@@ -157,6 +165,28 @@ export class AgentLoop {
 
   getState(): AgentState {
     return this.state;
+  }
+
+  /** Guarded incident report — component fixed to "agent-loop". */
+  private report(
+    cls: IncidentClass,
+    severity: IncidentSeverity,
+    where: string,
+    message: string,
+    context?: IncidentContext,
+  ): void {
+    try {
+      this.config.onIncident?.({
+        class: cls,
+        severity,
+        component: "agent-loop",
+        where: `agent-loop#${where}`,
+        message,
+        context: { model: this.config.model, provider: this.config.provider, ...context },
+      });
+    } catch {
+      // observability must never break the loop
+    }
   }
 
   getMessages(): Message[] {
@@ -301,6 +331,12 @@ export class AgentLoop {
               const waitSecs = rateLimitWaitSecs(result.error);
               if (waitSecs != null && rateWaits < 2 && !signal?.aborted) {
                 rateWaits++;
+                this.report(
+                  "provider.rate_limit_wait",
+                  "warn",
+                  "rateWait",
+                  `all providers rate limited — waiting ${waitSecs}s: ${result.error}`,
+                );
                 yield {
                   type: "notice",
                   message: `All providers rate limited — waiting ${waitSecs}s, then resuming…`,
@@ -319,9 +355,16 @@ export class AgentLoop {
               return;
             }
             consecutiveErrors++;
+            this.report("provider.stream_error", "warn", "inferStream", result.error);
             yield { type: "error", error: result.error, recoverable: true };
             if (consecutiveErrors >= this.config.maxConsecutiveErrors) {
               this.state = "error";
+              this.report(
+                "loop.consecutive_errors",
+                "error",
+                "inferStream",
+                `run failed after ${consecutiveErrors} consecutive errors: ${result.error}`,
+              );
               yield {
                 type: "error",
                 error: `Too many consecutive errors (${consecutiveErrors})`,
@@ -342,9 +385,16 @@ export class AgentLoop {
         }
         consecutiveErrors++;
         const msg = err instanceof Error ? err.message : String(err);
+        this.report("provider.stream_error", "warn", "inferStream.catch", msg);
         yield { type: "error", error: msg, recoverable: true };
         if (consecutiveErrors >= this.config.maxConsecutiveErrors) {
           this.state = "error";
+          this.report(
+            "loop.consecutive_errors",
+            "error",
+            "inferStream.catch",
+            `run failed after ${consecutiveErrors} consecutive errors: ${msg}`,
+          );
           yield {
             type: "error",
             error: `Too many consecutive errors (${consecutiveErrors})`,
@@ -374,6 +424,12 @@ export class AgentLoop {
       // transcript valid) and ask the model to continue — bounded so a model
       // that maxes out every response can't loop forever.
       if (stopReason === "max_tokens") {
+        this.report(
+          "provider.truncation",
+          truncationRetries < 2 ? "warn" : "error",
+          "maxTokens",
+          `response hit the output-token limit (retry ${truncationRetries + 1})`,
+        );
         if (truncationRetries < 2) {
           truncationRetries++;
           if (pendingToolCalls.length > 0) {
@@ -432,6 +488,12 @@ export class AgentLoop {
           editsSinceVerify = false;
           if (result.ran && result.passed) projectChecksPassed = true;
           if (result.ran && !result.passed) {
+            this.report(
+              "loop.verification_failed",
+              "warn",
+              "verify",
+              `project checks failed after edits (attempt ${verifyAttempts}): ${result.report.slice(0, 300)}`,
+            );
             this.messages.push({
               role: "user",
               content: [
@@ -467,6 +529,12 @@ export class AgentLoop {
           !signal?.aborted
         ) {
           executionNudges++;
+          this.report(
+            "loop.evidence_gate",
+            "warn",
+            "evidenceGate",
+            "files were written but nothing was executed — refused the finish once",
+          );
           this.messages.push({
             role: "user",
             content: [
@@ -514,6 +582,12 @@ export class AgentLoop {
       if (duplicateCount >= 3) {
         if (stuckNudges < (this.config.maxStuckNudges ?? 1)) {
           stuckNudges++;
+          this.report(
+            "loop.stuck_nudge",
+            "warn",
+            "loopDetect",
+            `same tool batch repeated ${duplicateCount}×: ${signature.slice(0, 150)}`,
+          );
           recentToolSignatures.length = 0; // reset the detection window
           // Answer the repeated tool_use blocks (keeps the transcript valid),
           // then nudge the model to reconsider instead of silently bailing.
@@ -538,6 +612,12 @@ export class AgentLoop {
           continue;
         }
         this.state = "error";
+        this.report(
+          "loop.infinite_loop",
+          "error",
+          "loopDetect",
+          `bailed: same tool batch repeated after a nudge: ${signature.slice(0, 150)}`,
+        );
         yield {
           type: "error",
           error:
@@ -612,6 +692,13 @@ export class AgentLoop {
         const callSig = `${tc.toolName}:${tc.argsJson}`;
         const priorFails = failedCalls.get(callSig) ?? 0;
         if (allowed && !denied && priorFails >= 2) {
+          this.report(
+            "loop.repeated_call_refused",
+            "warn",
+            "breaker",
+            `${tc.toolName} refused without running after ${priorFails} identical failures`,
+            { tool: tc.toolName },
+          );
           denied = {
             callId: tc.callId,
             toolName: tc.toolName,
@@ -727,6 +814,12 @@ export class AgentLoop {
 
     // Max turns reached
     this.state = "done";
+    this.report(
+      "loop.max_turns",
+      "warn",
+      "run",
+      `run ended at the ${this.config.maxTurns}-turn ceiling without finishing`,
+    );
     yield {
       type: "turn_complete",
       stopReason: "max_turns",

@@ -19,7 +19,10 @@ import {
   loadLastModel,
   saveLastModel,
   getSystemMemoryPath,
+  getAlanHome,
 } from "@alan/shared";
+import { armSentinel, consumeDirtyExit, disarmSentinel } from "@alan/telemetry";
+import { join as joinPath } from "node:path";
 import { parseArgs } from "util";
 import * as readline from "readline";
 import { Spinner } from "./spinner";
@@ -66,12 +69,18 @@ const { values, positionals } = parseArgs({
     tui: { type: "boolean", default: false },
     classic: { type: "boolean", default: false },
     fullscreen: { type: "boolean", default: false },
+    pristine: { type: "boolean", default: false },
+    "by-version": { type: "boolean", default: false },
   },
   allowPositionals: true,
   strict: false,
 });
 
 const command = positionals[0] ?? "chat";
+
+// Single version string — stamped on every black-box incident so regressions
+// are queryable per release (`alan incidents top --by-version`).
+const ALAN_VERSION = "0.1.0";
 
 // ─── Top-level --help ───
 
@@ -83,7 +92,10 @@ if (values.help) {
       `    alan --new                   Skip the picker and start a fresh session\n` +
       `    alan resume [sessionId]      Resume a session (no id → interactive picker)\n` +
       `    alan list [--all]            List stored sessions (--all includes archived)\n` +
-      `    alan export <sessionId>      Export a session transcript\n\n` +
+      `    alan export <sessionId>      Export a session transcript\n` +
+      `    alan doctor                  Black-box health: recent incidents, crash sentinel, recorder state\n` +
+      `    alan incidents [sub]         Browse recorded failures — list | show <id> | top [--by-version] | export\n` +
+      `    alan notebook [sub]          Learned tactics notebook — list | show <id> | rm <id> | export\n\n` +
       `  Export options:\n` +
       `    --format md|json             Output format (default: md)\n` +
       `    --sign                       Sign the export with Ed25519\n` +
@@ -101,8 +113,27 @@ if (values.help) {
       `    --classic                    Plain readline prompt (default is the pinned composer)\n` +
       `    --tui                        Force the Codex-style pinned composer\n` +
       `    --fullscreen                 Alt-screen TUI (edge-to-edge theme bg; default is native scroll)\n` +
+      `    --pristine                   Run without the learned tactics notebook (evolution control group)\n` +
       `    -h, --help                   Show this help\n\n`,
   );
+  process.exit(0);
+}
+
+// ─── Black-box surfaces: no Engine, no provider validation — instant ───
+
+if (command === "doctor") {
+  const { runDoctor } = await import("./blackbox-cli");
+  runDoctor();
+  process.exit(0);
+}
+if (command === "incidents") {
+  const { runIncidents } = await import("./blackbox-cli");
+  runIncidents(positionals as string[], values as Record<string, unknown>);
+  process.exit(0);
+}
+if (command === "notebook") {
+  const { runNotebook } = await import("./notebook-cli");
+  runNotebook(positionals as string[], values as Record<string, unknown>);
   process.exit(0);
 }
 
@@ -468,6 +499,21 @@ async function main() {
     research: config.research,
     memory: config.memory,
     tiers: config.tiers,
+    // Black box: on by default for the real CLI (config [diagnostics] can turn
+    // it off). Unit tests construct the Engine directly and stay hermetic.
+    blackbox:
+      config.diagnostics?.enabled !== false
+        ? {
+            enabled: true,
+            version: ALAN_VERSION,
+            spoolPath: joinPath(getAlanHome(), "blackbox.spool.json"),
+          }
+        : undefined,
+    // Tactics notebook: on by default; `--pristine` runs without any learned
+    // context (the control group for measuring evolution lift).
+    notebook: {
+      enabled: !(values.pristine as boolean) && config.notebook?.enabled !== false,
+    },
   });
 
   // ─── DB-only commands — run before provider validation ───
@@ -634,6 +680,66 @@ async function main() {
     sessionId = engine.createSession();
   }
   const customCommands = await loadCommands(workspaceRoot);
+
+  // ─── Black box: crash forensics for the interactive session ───
+  // Arm a sentinel now; it is removed by the process "exit" hook, so it only
+  // survives a SIGKILL / power-loss class death — exactly the failure no
+  // in-process handler can record. Next startup turns it into a dirty_exit
+  // incident carrying the spooled flight trail.
+  const recorder = engine.getRecorder();
+  const sentinelPath = joinPath(getAlanHome(), "blackbox.sentinel.json");
+  if (recorder) {
+    const dirty = consumeDirtyExit(sentinelPath);
+    if (dirty) {
+      recorder.seedTrail(dirty.trail);
+      recorder.recordFatal({
+        class: "crash.dirty_exit",
+        severity: "critical",
+        component: "cli",
+        where: "alan-cli#startup",
+        message:
+          `previous run (v${dirty.meta.version}` +
+          `${dirty.meta.sessionId ? `, session ${dirty.meta.sessionId.slice(0, 8)}` : ""}, ` +
+          `started ${dirty.meta.startedAt}) exited without cleanup`,
+      });
+      recorder.seedTrail([]);
+    }
+    // Incidents still pending from long-dead processes can never resolve now.
+    // Only sweep old ones so a concurrently running alan isn't clobbered.
+    recorder.getStore()?.sweepPending(new Date(Date.now() - 2 * 3_600_000).toISOString());
+    armSentinel(sentinelPath, {
+      pid: process.pid,
+      version: ALAN_VERSION,
+      sessionId,
+      startedAt: new Date().toISOString(),
+      spoolPath: joinPath(getAlanHome(), "blackbox.spool.json"),
+    });
+    process.on("exit", () => disarmSentinel(sentinelPath));
+    process.on("uncaughtException", (err: Error) => {
+      recorder.recordFatal({
+        class: "crash.uncaught_exception",
+        severity: "critical",
+        component: "cli",
+        where: "process#uncaughtException",
+        message: err?.message ?? String(err),
+        stack: err?.stack,
+      });
+      console.error(err);
+      process.exit(1); // runs "exit" hooks: terminal restore + sentinel disarm
+    });
+    process.on("unhandledRejection", (reason: unknown) => {
+      recorder.recordFatal({
+        class: "crash.unhandled_rejection",
+        severity: "critical",
+        component: "cli",
+        where: "process#unhandledRejection",
+        message: reason instanceof Error ? reason.message : String(reason),
+        stack: reason instanceof Error ? reason.stack : undefined,
+      });
+      console.error(reason);
+      process.exit(1);
+    });
+  }
 
   if (useTui) {
     await runTui({
@@ -864,6 +970,8 @@ async function main() {
     ["/cost", "Session cost"],
     ["/compress", "Summarize & shrink context"],
     ["/memory", "System memory — your evergreen profile (update/add/edit/cadence)"],
+    ["/notebook", "Learned tactics active for this workspace"],
+    ["/bug", "Flag a problem — records the flight trail to the black box"],
     ["/plan", "Toggle plan mode"],
     ["/turing", "Turing — toggle bypass mode (shift+tab)"],
     ["/mode", "Cycle permission mode (confirm/auto/turing)"],
@@ -1036,6 +1144,8 @@ async function main() {
         ["/cost", "Session cost"],
         ["/compress", "Summarize & shrink context"],
         ["/memory", "System memory — /memory [update|add|edit|clear|daily|3d|weekly|manual]"],
+        ["/notebook", "Learned tactics active for this workspace"],
+        ["/bug", "Flag a problem — records the current flight trail to the black box"],
         ["/plan", "Toggle plan mode"],
         ["/turing", "Turing — toggle bypass mode (shift+tab)"],
         ["/mode", "Cycle permission mode (confirm/auto/turing)"],
@@ -1490,6 +1600,50 @@ async function main() {
         }
       }
       process.stdout.write("\n");
+      showPrompt();
+      return;
+    }
+
+    if (input === "/notebook") {
+      const entries = engine.getNotebookEntries(10);
+      if (entries.length === 0) {
+        process.stdout.write(
+          `  ${dim("Notebook is empty for this workspace — Alan fills it as it verifies how your repos work.")}\n\n`,
+        );
+      } else {
+        process.stdout.write(`\n  ${dim("§ NOTEBOOK — active for this workspace")}\n\n`);
+        for (const e of entries) {
+          process.stdout.write(
+            `  ${cyanotype(e.id.slice(-8))} ${dim(`[${e.scope}]`)} ${text(e.body.slice(0, 90))}\n`,
+          );
+        }
+        process.stdout.write(`\n  ${dim("manage: alan notebook [show <id>|rm <id>|export]")}\n\n`);
+      }
+      showPrompt();
+      return;
+    }
+
+    if (input === "/bug" || input.startsWith("/bug ")) {
+      const note = input.slice("/bug".length).trim();
+      const rec = engine.getRecorder();
+      if (!rec) {
+        process.stdout.write(
+          `  ${dim("Diagnostics are disabled ([diagnostics] enabled = false) — nothing recorded.")}\n\n`,
+        );
+      } else {
+        const id = rec.record({
+          class: "ux.user_reported",
+          severity: "warn",
+          component: "cli",
+          where: "slash#bug",
+          message: note || "user flagged the last exchange (no note given)",
+        });
+        process.stdout.write(
+          id
+            ? `  ${green("✦")} ${text("Logged with the current flight trail.")} ${faint(`· alan incidents show ${id.slice(-8)}`)}\n\n`
+            : `  ${dim("Could not record — see alan doctor.")}\n\n`,
+        );
+      }
       showPrompt();
       return;
     }

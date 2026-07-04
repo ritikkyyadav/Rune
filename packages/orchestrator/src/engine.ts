@@ -33,8 +33,12 @@ import {
   clampToBudget,
   createLogger,
   resolveTier,
+  getAlanHome,
+  setToolArgsSalvageListener,
 } from "@alan/shared";
 import type { ModelTier, TierRef, TiersConfig } from "@alan/shared";
+import type { IncidentClass, IncidentInput, IncidentSeverity } from "@alan/shared";
+import { Recorder } from "@alan/telemetry";
 import type {
   CheckpointStore,
   CheckpointPolicy,
@@ -49,6 +53,15 @@ import type { ProviderStatusRow, BuildGatewayOpts } from "./provider-registry";
 import { AgentLoop } from "./agent-loop";
 import type { PermissionCheck, AgentTurnEvent } from "./agent-loop";
 import { PermissionBroker, nextPermissionMode } from "./permissions";
+import { StruggleDetector } from "./struggle-detector";
+import {
+  NotebookStore,
+  buildNotebookBlock,
+  captureFromRun,
+  repoKey as notebookRepoKey,
+  stackKey as notebookStackKey,
+} from "./notebook";
+import type { NotebookBlock, NotebookEntry, ToolObservation } from "./notebook";
 import type { PermissionScope, PermissionMode } from "./permissions";
 
 export type { PermissionMode } from "./permissions";
@@ -277,6 +290,29 @@ export interface EngineConfig {
    * summaries, and other internal utility calls.
    */
   tiers?: TiersConfig;
+  /**
+   * Black box (flight recorder): incident capture to ~/.alan/blackbox.db.
+   * OFF unless enabled — unit tests and embedders stay hermetic; the CLI and
+   * engine-host turn it on. `version` stamps every incident for
+   * version-over-version regression queries.
+   */
+  blackbox?: {
+    enabled?: boolean;
+    dbPath?: string;
+    version?: string;
+    spoolPath?: string;
+  };
+  /**
+   * Tactics notebook (evolution loop v1): learned facts/tactics injected into
+   * the system prompt under a hard token budget. Capture is rule-based (zero
+   * model calls). OFF unless enabled; `--pristine` forces it off.
+   */
+  notebook?: {
+    enabled?: boolean;
+    dbPath?: string;
+    /** Injection budget in tokens. Default 600. */
+    maxInjectTokens?: number;
+  };
 }
 
 // Generation budget per step. 8k routinely truncated multi-file edits and
@@ -444,6 +480,18 @@ export class Engine {
   private localBaseUrls: Record<string, string> = {};
   // Guards against overlapping System Memory "dreams" (auto + manual at once).
   private memoryReflecting = false;
+  // Black box: null when disabled (tests, embedders). Created BEFORE the
+  // gateway so gatewayOpts() can hand the tap into every (re)build.
+  private recorder: Recorder | null = null;
+  // Monotonic run counter — the "turn" an incident belongs to.
+  private runCounter = 0;
+  // Behavioral struggle signals (thrash, rephrase, corrections) — recorder-fed.
+  private struggles: StruggleDetector | null = null;
+  // Tactics notebook (evolution loop v1): learned facts injected under budget.
+  private notebookStore: NotebookStore | null = null;
+  private notebookKeys: { repoKey: string; stackKey: string } | null = null;
+  // Per-session injection blocks, cached for prompt-cache stability.
+  private notebookBlocks: Map<string, NotebookBlock> = new Map();
   // Per-session environment snapshot (cwd/platform/git state at session start).
   // Cached so the system prompt stays byte-stable across turns — a churning
   // prompt would invalidate the provider's prefix cache on every call.
@@ -451,6 +499,54 @@ export class Engine {
 
   constructor(config: Partial<EngineConfig> = {}) {
     this.config = { ...DEFAULT_ENGINE_CONFIG, ...config };
+
+    // Black box first — the gateway build below captures its tap.
+    if (this.config.blackbox?.enabled) {
+      this.recorder = new Recorder({
+        dbPath: this.config.blackbox.dbPath ?? join(getAlanHome(), "blackbox.db"),
+        version: this.config.blackbox.version ?? "dev",
+        spoolPath: this.config.blackbox.spoolPath,
+      });
+      // Salvaged tool-call JSON is a provider defect we recovered from — count
+      // it. Module-global listener; last engine wins, which is fine: one real
+      // engine per process.
+      setToolArgsSalvageListener((info) => {
+        this.recorder?.record({
+          class:
+            info.stage === "gave_up"
+              ? "provider.malformed_tool_json_fatal"
+              : "provider.malformed_tool_json_salvaged",
+          severity: info.stage === "gave_up" ? "warn" : "debug",
+          component: "gateway",
+          where: "json#parseToolArguments",
+          message: `tool args ${info.stage === "gave_up" ? "unsalvageable" : `salvaged via ${info.stage}`}: ${info.snippet}`,
+        });
+      });
+      this.struggles = new StruggleDetector((i) => this.recorder?.record(i));
+    }
+
+    // Tactics notebook — rule-based learning, zero model spend. A corrupt
+    // store must never block startup: quarantine by disabling for the run.
+    if (this.config.notebook?.enabled) {
+      try {
+        this.notebookStore = new NotebookStore(
+          this.config.notebook.dbPath ?? join(getAlanHome(), "notebook.db"),
+        );
+        this.notebookKeys = {
+          repoKey: notebookRepoKey(this.config.workspaceRoot),
+          stackKey: notebookStackKey(this.config.workspaceRoot),
+        };
+      } catch (err) {
+        this.notebookStore = null;
+        this.recorder?.record({
+          class: "crash.store_corruption",
+          severity: "error",
+          component: "notebook",
+          where: "engine#constructor",
+          message: `notebook store failed to open: ${err instanceof Error ? err.message : String(err)}`,
+        });
+      }
+    }
 
     // Seed BYOK key state from config, then build the gateway. The named
     // *ApiKey fields and the generic providerKeys map are merged into one
@@ -1404,6 +1500,15 @@ export class Engine {
       payload: { content: userMessage },
     });
 
+    // Black box: scope this run and start its flight trail.
+    this.runCounter++;
+    this.recorder?.beginRun(sessionId, this.runCounter);
+    this.recorder?.note("user_msg", userMessage.slice(0, 180));
+    this.struggles?.beginRun();
+    this.struggles?.onUserMessage(userMessage);
+    let lastTodos: Array<{ content: string; status: string }> | null = null;
+    const nbObservations: ToolObservation[] = [];
+
     // Auto-name the session from its first real message so the manager shows a
     // readable title instead of a bare UUID. No-op once a title exists (manual
     // renames and later turns never clobber it).
@@ -1434,15 +1539,22 @@ export class Engine {
       this.envBlocks.set(sessionId, envBlock);
     }
     const projectMemory = loadProjectMemory(this.config.workspaceRoot);
+    const notebookBlock = this.buildNotebookInjection(sessionId);
     const systemPrompt = [
       SYSTEM_PROMPT,
       envBlock,
       projectMemory.block,
       this.buildSystemMemoryBlock(),
+      notebookBlock?.text ?? "",
       this.skillCatalog,
     ]
       .filter((s) => s && s.trim())
       .join("\n\n");
+
+    // Injection = usage. Wins are attributed at run end if the run recovered.
+    if (notebookBlock && notebookBlock.injectedIds.length > 0) {
+      this.notebookStore?.touchUses(notebookBlock.injectedIds);
+    }
 
     const permCheck = this.buildPermissionCheck();
     let turnCount = 0;
@@ -1499,6 +1611,7 @@ export class Engine {
           contextEngine: this.contextEngine,
           verifier: this.verifier ?? undefined,
           nativeGrounding: this.config.search?.nativeGrounding ?? true,
+          onIncident: this.recorder ? (i: IncidentInput) => this.recorder?.record(i) : undefined,
         },
         this.gateway,
         this.registry,
@@ -1549,6 +1662,51 @@ export class Engine {
             type: "checkpoint",
             payload: { summary: `auto-checkpoint at turn ${turnCount}` },
           });
+        }
+
+        // Track the final todo state for the end-of-run unfinished check.
+        if (event.type === "todo_updated") {
+          lastTodos = event.items;
+        }
+
+        // Notebook: observe every tool call (free — the events exist anyway).
+        if (event.type === "tool_call_end" && this.notebookStore && nbObservations.length < 200) {
+          nbObservations.push({
+            toolName: event.output.toolName,
+            args: event.args,
+            success: event.output.success,
+            error: event.output.error,
+          });
+        }
+
+        // Black box: trail + failure classification. One chokepoint sees every
+        // tool result (built-in, MCP, rust bridge) — no per-tool instrumentation.
+        if (event.type === "tool_call_end" && this.recorder) {
+          const out = event.output;
+          this.struggles?.onToolCall(out.toolName, event.args, out.success);
+          this.recorder.note(
+            `tool:${out.toolName}`,
+            out.success
+              ? `ok ${out.durationMs}ms`
+              : `FAIL ${out.durationMs}ms: ${(out.error ?? "").slice(0, 120)}`,
+          );
+          if (!out.success) {
+            const { cls, severity } = classifyToolFailure(out.toolName, out.error ?? "");
+            this.recorder.record({
+              class: cls,
+              severity,
+              component: `tool:${out.toolName}`,
+              where: "engine#toolCallEnd",
+              message: out.error ?? "tool failed without an error message",
+              context: { tool: out.toolName, argsHash: hashArgs(event.args) },
+            });
+          }
+        }
+        if (event.type === "notice" && this.recorder) {
+          this.recorder.note("notice", event.message);
+        }
+        if (event.type === "error" && this.recorder) {
+          this.recorder.note("error", event.error);
         }
 
         // Audit tool calls with security post-processing
@@ -1661,6 +1819,48 @@ export class Engine {
         payload: { summary: "session_ended" },
       });
 
+      // Behavioral signals that only resolve at run end.
+      this.struggles?.onRunEnd(lastTodos);
+
+      // Notebook: distill this run's observations (rule-based, zero tokens)
+      // and attribute a win to whatever was injected if the run ended clean.
+      if (this.notebookStore && this.notebookKeys) {
+        captureFromRun(
+          {
+            store: this.notebookStore,
+            repoKey: this.notebookKeys.repoKey,
+            stackKey: this.notebookKeys.stackKey,
+            sessionId,
+            workspaceRoot: this.config.workspaceRoot,
+          },
+          nbObservations,
+        );
+        const nb = this.notebookBlocks.get(sessionId);
+        if (nb && nb.injectedIds.length > 0 && !runError && !signal.aborted) {
+          this.notebookStore.recordWins(nb.injectedIds);
+        }
+      }
+
+      // Black box: resolve every incident this run produced. A 429 that
+      // recovered is noise; one that killed the run is signal — outcome is
+      // what separates them.
+      if (this.recorder) {
+        if (signal.aborted) {
+          this.recorder.record({
+            class: "loop.user_abort",
+            severity: "debug",
+            component: "engine",
+            where: "engine#chat.finally",
+            message: "run aborted by the user",
+          });
+          this.recorder.endRun("user_interrupted");
+        } else if (runError) {
+          this.recorder.endRun("turn_failed");
+        } else {
+          this.recorder.endRun("recovered");
+        }
+      }
+
       // Episodic memory: extract facts from this run
       if (this.memoryManager && this.config.userId) {
         const summary = `User asked: "${userMessage.slice(0, 200)}". Turns: ${turnCount}. ${runError ? `Error: ${runError}` : "Completed successfully."}`;
@@ -1680,6 +1880,7 @@ export class Engine {
    * and yield a turn_complete with stopReason "aborted".
    */
   abort(): void {
+    if (this.currentAbort) this.struggles?.onAbort();
     this.currentAbort?.abort();
   }
 
@@ -1749,6 +1950,31 @@ export class Engine {
       disabled: this.disabledProviders,
       localBaseUrls: this.localBaseUrls,
       ollamaBaseUrl: this.config.ollamaBaseUrl,
+      // Closure reads this.recorder lazily, so key-edit rebuilds keep the tap.
+      onIncident: (gi) => {
+        if (!this.recorder) return;
+        const cls: IncidentClass =
+          gi.kind === "fallback"
+            ? "provider.fallback_triggered"
+            : gi.status === 429
+              ? "provider.rate_limit"
+              : gi.status === 401 || gi.status === 403
+                ? "provider.auth"
+                : gi.status === 402
+                  ? "provider.no_credits"
+                  : "provider.terminal";
+        this.recorder.record({
+          class: cls,
+          severity: gi.kind === "fallback" ? "warn" : "error",
+          component: "gateway",
+          where: "gateway#inferStream",
+          message:
+            gi.kind === "fallback"
+              ? `${gi.provider}/${gi.model ?? "?"} → ${gi.fallbackTo}: ${gi.message}`
+              : gi.message,
+          context: { provider: gi.provider, model: gi.model, status: gi.status },
+        });
+      },
     };
   }
 
@@ -1914,9 +2140,103 @@ export class Engine {
     };
   }
 
+  /** The black-box recorder, or null when disabled. Surfaces (/bug, doctor) use this. */
+  getRecorder(): Recorder | null {
+    return this.recorder;
+  }
+
+  /** The tactics notebook store, or null when disabled (/notebook uses this). */
+  getNotebookStore(): NotebookStore | null {
+    return this.notebookStore;
+  }
+
+  /** Entries active for THIS workspace (repo + matching stack + global), ranked. */
+  getNotebookEntries(limit = 10): NotebookEntry[] {
+    if (!this.notebookStore || !this.notebookKeys) return [];
+    try {
+      return this.notebookStore.retrieve({ ...this.notebookKeys, limit });
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Build (and cache per session) the notebook injection block. Cached so the
+   * system prompt stays byte-stable across a session's turns — churn would
+   * invalidate the provider's prefix cache and cost far more than the notebook
+   * saves. New learnings appear in the NEXT session, which is the contract.
+   */
+  private buildNotebookInjection(sessionId: string): NotebookBlock | null {
+    if (!this.notebookStore || !this.notebookKeys) return null;
+    const cached = this.notebookBlocks.get(sessionId);
+    if (cached) return cached;
+    try {
+      const block = buildNotebookBlock(this.notebookStore, {
+        repoKey: this.notebookKeys.repoKey,
+        stackKey: this.notebookKeys.stackKey,
+        maxTokens: this.config.notebook?.maxInjectTokens ?? 600,
+      });
+      this.notebookBlocks.set(sessionId, block);
+      return block;
+    } catch {
+      return null; // the notebook must never break prompt assembly
+    }
+  }
+
   close(): void {
     // Best-effort: stop MCP subprocesses / sessions on exit.
     this.mcpDiscovery?.stopAll().catch(() => {});
+    if (this.recorder) {
+      setToolArgsSalvageListener(null); // never leave a listener pointing at a closed recorder
+      this.recorder.close();
+    }
+    this.notebookStore?.close();
     this.sessions.close();
   }
+}
+
+// ─── Black-box tool-failure classification ───
+// One text-based classifier at the engine chokepoint covers every tool source
+// (built-in, MCP, rust bridge) without per-tool instrumentation. Patterns are
+// deliberately conservative; anything unrecognized is a plain exec_failure.
+
+export function classifyToolFailure(
+  toolName: string,
+  error: string,
+): { cls: IncidentClass; severity: IncidentSeverity } {
+  const e = error.toLowerCase();
+  if (e.includes("panicked at") || e.includes("rust panic")) {
+    return { cls: "crash.rust_tool_panic", severity: "critical" };
+  }
+  if (e.includes("permission denied") && (e.includes("user") || e.includes("broker"))) {
+    return { cls: "tool.permission_denied", severity: "debug" };
+  }
+  if (e.includes("sandbox") || e.includes("seatbelt") || e.includes("operation not permitted")) {
+    return { cls: "tool.sandbox_denial", severity: "warn" };
+  }
+  if (
+    e.includes("outside the workspace") ||
+    e.includes("outside workspace") ||
+    e.includes("path traversal") ||
+    e.includes("blocked path")
+  ) {
+    return { cls: "tool.path_violation", severity: "warn" };
+  }
+  if (/\btimed?\s?out\b|\btimeout\b/.test(e)) {
+    return { cls: "tool.timeout", severity: "error" };
+  }
+  if (
+    e.includes("invalid arg") ||
+    e.includes("invalid input") ||
+    e.includes("invalid param") ||
+    e.includes("missing required") ||
+    e.includes("schema validation")
+  ) {
+    // The model self-corrects on the schema error it gets back — small but counted.
+    return { cls: "tool.invalid_input", severity: "debug" };
+  }
+  if (toolName.startsWith("mcp_") || e.includes("mcp ")) {
+    return { cls: "tool.mcp_error", severity: "error" };
+  }
+  return { cls: "tool.exec_failure", severity: "error" };
 }

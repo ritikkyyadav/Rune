@@ -4,6 +4,7 @@ export type {
   CostEntry,
   CostLedger,
   GatewayConfig,
+  GatewayIncidentEvent,
   InferenceRequest,
   InferenceResponse,
   LlmProvider,
