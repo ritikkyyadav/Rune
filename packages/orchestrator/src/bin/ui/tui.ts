@@ -53,9 +53,8 @@ import {
 } from "./composer";
 import { renderBanner } from "./banner";
 import { renderStatus } from "./status";
-import { formatEvent } from "./events";
-import { renderTranscript, stepHead, runningLabel } from "./activity";
-import { truncate } from "./render";
+import { TurnRenderer, userBlock, renderReplay, HEX, cookingVerb } from "./turn";
+import { truncate, clampVisible } from "./render";
 import { renderResearchPlan, renderClarifyingQuestions, formatResearchEvent } from "./research";
 import { isClarification } from "../../research-types";
 import type { ResearchOptions, ResearchPlan, ResearchReport } from "../../research-types";
@@ -106,8 +105,10 @@ type Mode =
 
 type SessionListItem = ReturnType<Engine["listSessions"]>[number];
 
-const cols = () => process.stdout.columns ?? 80;
-const rowsCount = () => process.stdout.rows ?? 24;
+// `columns`/`rows` are 0 (not undefined) on a PTY with no winsize — `||` so a
+// zero-size terminal falls back sanely instead of clamping every line to nothing.
+const cols = () => process.stdout.columns || 80;
+const rowsCount = () => process.stdout.rows || 24;
 const MAX_TRANSCRIPT = 5000; // cap the in-memory scrollback
 const SCROLL_STEP = 3; // lines per mouse-wheel notch
 
@@ -176,7 +177,12 @@ class Tui {
   private streamBuf = "";
   private queued: string[] = []; // type-ahead: messages composed mid-turn, run in order on completion
   private aborting = false; // an esc/ctrl-c interrupt is in flight (guards the "interrupting…" flood)
-  private currentActivity: string | null = null; // in-flight tool label, shown on the Working line
+  private currentActivity: string | null = null; // in-flight tool label, shown on the status line
+  private turnPreview: string[] | null = null; // live window: recent work + to-dos + prose preview
+  private filesEdited = new Set<string>(); // session-wide, shown on the footer readout
+  private lastWorkLog: string | null = null; // the last turn's full work log (ctrl+r expands it)
+  private liveTurn: TurnRenderer | null = null; // in-flight renderer (ctrl+r mid-turn)
+  private turnSeed = 0; // picks this turn's working word (Cooking…, Brewing…, …)
 
   // render coalescing — collapse bursts of draw requests into one paint per frame (~60fps), so a
   // streamed token, a held arrow key, or a flick of the mouse wheel never trigger N full repaints.
@@ -314,10 +320,18 @@ class Tui {
   // ── input rendering ──
 
   private statusStr(): string {
+    let contextPercent: number | undefined;
+    try {
+      contextPercent = this.ctx.engine.getContextUsage().percent;
+    } catch {
+      contextPercent = undefined;
+    }
     return statusLine({
       model: this.ctx.engine.getModel(),
       workspace: this.ctx.workspaceRoot,
       mode: this.ctx.engine.getPermissionMode(),
+      contextPercent,
+      filesEdited: this.filesEdited.size || undefined,
     });
   }
 
@@ -467,7 +481,9 @@ class Tui {
         width: cols(),
         status: this.statusStr(),
       });
-      const head: string[] = [`  ${this.workingText()}`];
+      // The buffered prose run streams live here (it commits to the transcript only
+      // once the turn decides which partition — work rail or response — it belongs to).
+      const head: string[] = [...(this.turnPreview ?? []), `  ${this.workingText()}`];
       for (const q of this.queued) {
         head.push(`  ${faint("↳ queued ·")} ${muted(truncate(q, Math.max(8, cols() - 16)))}`);
       }
@@ -497,9 +513,16 @@ class Tui {
   /** Append a block to the transcript, theming each line in the *current* theme and bounding
    *  the buffer. (Lines keep their theme; switching themes recolours the live composer + new
    *  output, and history stays readable in the theme it was written in.) */
+  /** Hard-bound a line to the terminal width. An over-wide line auto-wraps,
+   *  which breaks the pinned region's row math — and then every repaint leaks
+   *  stale rows into the scrollback (the "duplicated spam" failure mode). */
+  private bound(ln: string): string {
+    return clampVisible(ln, Math.max(8, cols() - 1));
+  }
+
   private pushLines(block: string): number {
     const lines = block.split("\n");
-    for (const ln of lines) this.transcript.push(withThemeBg(ln));
+    for (const ln of lines) this.transcript.push(withThemeBg(this.bound(ln)));
     if (this.transcript.length > MAX_TRANSCRIPT) {
       this.transcript.splice(0, this.transcript.length - MAX_TRANSCRIPT);
     }
@@ -510,11 +533,11 @@ class Tui {
     if (this.inline) {
       // Inline: completed blocks flow into the terminal's native scrollback above the pinned
       // composer (the terminal owns scrolling from here). printAbove redraws the composer after.
-      const lines = block.split("\n").map(withThemeBg);
+      const lines = block.split("\n").map((l) => withThemeBg(this.bound(l)));
       const comp = this.composerBlock();
       this.region.printAbove(
         lines.join("\r\n"),
-        comp.lines.map(withThemeBg),
+        comp.lines.map((l) => withThemeBg(this.bound(l))),
         comp.caretRow,
         comp.caretCol,
       );
@@ -532,7 +555,11 @@ class Tui {
    *  terminal's own scrollback). The alt-screen surface uses drawComposer() instead. */
   private renderRegion(): void {
     const comp = this.composerBlock();
-    this.region.render(comp.lines.map(withThemeBg), comp.caretRow, comp.caretCol);
+    this.region.render(
+      comp.lines.map((l) => withThemeBg(this.bound(l))),
+      comp.caretRow,
+      comp.caretCol,
+    );
   }
 
   /** Inline surface: recolour the terminal in the theme, clear to a themed screen, and print the
@@ -586,7 +613,7 @@ class Tui {
       version: this.ctx.version,
     })
       .split("\n")
-      .map(withThemeBg);
+      .map((l) => withThemeBg(this.bound(l)));
   }
 
   /** Repaint the whole viewport: live banner header, themed transcript window, composer
@@ -596,7 +623,7 @@ class Tui {
     const R = rowsCount();
     const banner = this.bannerLines();
     const comp = this.composerBlock();
-    const compLines = comp.lines.map(withThemeBg);
+    const compLines = comp.lines.map((l) => withThemeBg(this.bound(l)));
     // When scrolled up, reserve one row above the composer for a "more below" hint so the
     // user knows output isn't frozen and how to catch back up.
     const hintRows = this.scroll > 0 ? 1 : 0;
@@ -683,13 +710,15 @@ class Tui {
   }
 
   private workingText(): string {
-    if (this.aborting) return `${accent("✕")} ${bold(text("Interrupting…"))}`;
-    const secs = Math.floor((Date.now() - this.turnStart) / 1000);
+    if (this.aborting) return `${accent(HEX)} ${bold(text("Interrupting…"))}`;
+    const elapsed = Date.now() - this.turnStart;
+    const secs = Math.floor(elapsed / 1000);
     const t = secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m${secs % 60}s`;
     // The hint adapts: idle composer → how to stop; a typed-ahead draft → how to queue/clear it.
     const hint = this.input.length > 0 ? "enter queues · esc clears" : "esc to interrupt";
     const act = this.currentActivity ? faint(` · ${this.currentActivity}`) : "";
-    return `${accent("•")} ${bold(text("Working"))}${act} ${faint(`(${t} · ${hint})`)}`;
+    const verb = cookingVerb(this.turnSeed, elapsed);
+    return `${ok(HEX)} ${bold(text(`${verb}…`))}${act} ${faint(`(${t} · ${hint})`)}`;
   }
 
   // ── stdin routing ──
@@ -883,6 +912,9 @@ class Tui {
 
   private ctrlKey(name: string): void {
     switch (name) {
+      case "r":
+        this.expandWorkLog();
+        return;
       case "c":
         if (this.input.length > 0) {
           this.input = "";
@@ -974,8 +1006,10 @@ class Tui {
   private async runInput(raw: string): Promise<void> {
     this.history.push(raw);
 
-    // Echo the prompt into the transcript.
-    this.print(`  ${accent("›")} ${text(raw)}`);
+    // Echo the prompt into the transcript. A slash command is an instruction to the
+    // shell (quiet echo); anything else is the user's message — the loud block.
+    if (raw.startsWith("/")) this.print(`  ${accent("›")} ${text(raw)}`);
+    else this.print(userBlock(raw));
 
     if (raw.startsWith("/")) {
       const handled = await this.handleSlash(raw);
@@ -1642,10 +1676,11 @@ class Tui {
   }
 
   /** Render replayed history lines into the transcript (shared by resume + startup seeding).
-   *  Uses the same ● thought-chain renderer as a live turn so a resumed session is faithful. */
+   *  Uses the same two-partition renderer as a live turn so a resumed session is faithful:
+   *  work inside the rail, each turn's final answer outside it. */
   private printTranscriptLines(lines: TranscriptLine[]): void {
     if (lines.length === 0) return;
-    this.print(renderTranscript(lines));
+    this.print(renderReplay(lines));
   }
 
   /**
@@ -2338,6 +2373,11 @@ class Tui {
   // ── turn mode (streaming) ──
 
   private turnKey(key: Key): void {
+    // Ctrl+R mid-turn: print the in-flight work log so far.
+    if (key.type === "ctrl" && key.name === "r") {
+      this.expandWorkLog();
+      return;
+    }
     // Esc / Ctrl-C: clear a typed-ahead draft first; with the composer empty, interrupt the turn.
     if (key.type === "esc" || (key.type === "ctrl" && key.name === "c")) {
       if (this.input.length > 0) {
@@ -2381,108 +2421,77 @@ class Tui {
     this.mode = "turn";
     this.aborting = false;
     this.turnStart = Date.now();
+    this.turnSeed = Math.floor(Math.random() * 1000);
     this.streamBuf = "";
     this.currentActivity = null;
+    this.turnPreview = null;
     this.scheduleDraw();
     this.tick = setInterval(() => {
       if (this.mode === "turn") this.scheduleDraw();
     }, 250);
 
-    // Each assistant narration run opens with a ● step head; wrapped lines align
-    // beneath it. A tool call (or any other event) closes the run so the next
-    // prose starts a fresh step — that interleaving is the visible thought-chain.
-    let stepOpen = false;
-    const emitProse = (ln: string) => {
-      if (!stepOpen) {
-        if (ln.trim() === "") return; // don't open a step on a leading blank line
-        this.print(stepHead(ln));
-        stepOpen = true;
-      } else {
-        this.print(`    ${text(ln)}`);
-      }
-    };
-    const flush = (final = false) => {
-      let idx: number;
-      while ((idx = this.streamBuf.indexOf("\n")) >= 0) {
-        emitProse(this.streamBuf.slice(0, idx));
-        this.streamBuf = this.streamBuf.slice(idx + 1);
-      }
-      if (final && this.streamBuf.length) {
-        emitProse(this.streamBuf);
-        this.streamBuf = "";
-      }
-    };
-
-    // Reasoning models stream chain-of-thought separately; render it dimmed under
-    // a "✻ Thinking" header so it reads as thinking, not as the answer.
-    let thinkBuf = "";
-    let thinkOpen = false;
-    const emitThink = (ln: string) => {
-      if (!thinkOpen) {
-        if (ln.trim() === "") return;
-        this.print(`  ${faint("✻ Thinking")}`);
-        thinkOpen = true;
-      }
-      this.print(`  ${faint(ln)}`);
-    };
-    const flushThink = (final = false) => {
-      let idx: number;
-      while ((idx = thinkBuf.indexOf("\n")) >= 0) {
-        emitThink(thinkBuf.slice(0, idx));
-        thinkBuf = thinkBuf.slice(idx + 1);
-      }
-      if (final && thinkBuf.length) {
-        emitThink(thinkBuf);
-        thinkBuf = "";
-      }
-    };
+    // Collapsed rendering (see ./turn.ts): narration and the final answer stay in
+    // the open; the heavy work accumulates in a hidden log whose live tail — plus
+    // the to-do checklist and a preview of the streaming prose — shows in the
+    // pinned window above the composer. finish() sets down the collapsed summary,
+    // edit chips, the plan's final state, the record line, and the answer.
+    const turn = new TurnRenderer(
+      {
+        commit: (block) => this.print(block),
+        preview: (lines) => {
+          this.turnPreview = lines;
+          this.scheduleDraw();
+        },
+      },
+      { model: engine.getModel(), getCost: () => engine.getCost() },
+    );
+    this.liveTurn = turn;
 
     try {
       for await (const ev of engine.chat(this.ctx.sessionId, input)) {
-        if (ev.type === "thinking_delta") {
-          thinkBuf += ev.text;
-          flushThink();
-          continue;
+        turn.onEvent(ev);
+        this.currentActivity = turn.activity; // surfaced on the Cooking… line
+        // Session-wide edited-files readout on the footer.
+        if (
+          ev.type === "tool_call_end" &&
+          ev.output?.success &&
+          (ev.output.toolName === "edit_file" || ev.output.toolName === "write_file") &&
+          ev.args?.path
+        ) {
+          this.filesEdited.add(String(ev.args.path));
         }
-        if (ev.type === "text_delta") {
-          if (thinkBuf || thinkOpen) flushThink(true); // close out reasoning before the answer
-          this.currentActivity = null;
-          this.streamBuf += ev.text;
-          flush();
-          continue;
-        }
-        if (ev.type === "tool_call_start") {
-          this.currentActivity = runningLabel(ev.toolName); // surfaced on the Working line
-          continue;
-        }
-        flushThink(true);
-        flush(true);
-        // Any non-prose event ends the current narration run and clears the
-        // in-flight tool label; the next text opens a fresh ● step.
-        stepOpen = false;
-        this.currentActivity = null;
-        const block = formatEvent(ev, { cost: engine.getCost() });
-        if (block) this.print(block);
       }
-      flushThink(true);
-      flush(true);
     } catch (err) {
-      flush(true);
       // A user interrupt surfaces as an abort error — that's expected, not a failure to report.
-      if (!this.aborting) {
-        this.print(`  ${accent("✕")} ${text(err instanceof Error ? err.message : String(err))}`);
-      }
+      if (!this.aborting) turn.onError(err);
     } finally {
+      turn.finish({ aborted: this.aborting });
+      this.lastWorkLog = turn.fullLog();
+      this.liveTurn = null;
       if (this.tick) {
         clearInterval(this.tick);
         this.tick = null;
       }
       this.currentActivity = null;
+      this.turnPreview = null;
       const wasAborted = this.aborting;
       this.aborting = false;
       this.mode = "input";
       this.drainQueue(wasAborted);
     }
+  }
+
+  /** Ctrl+R: bring the hidden work out — the in-flight log mid-turn, else the
+   *  last turn's. Prints into the transcript (scrollback keeps it). */
+  private expandWorkLog(): void {
+    const log = this.liveTurn?.fullLog() ?? this.lastWorkLog;
+    if (!log) {
+      this.print(`  ${faint("no work log yet")}`);
+      return;
+    }
+    this.print("");
+    this.print(log);
+    this.print("");
   }
 
   /** Close out a finished turn's type-ahead queue. On a clean finish, run the next queued

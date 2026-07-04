@@ -30,6 +30,7 @@ import {
 } from "../../../packages/orchestrator/src/bin/ui/theme-store";
 
 const EXPECTED = [
+  "studio",
   "atlas",
   "atlas-light",
   "mono",
@@ -79,7 +80,7 @@ describe("ui/themes registry", () => {
   });
 
   it("default theme exists, unknown lookups return undefined", () => {
-    expect(DEFAULT_THEME).toBe("atlas");
+    expect(DEFAULT_THEME).toBe("studio");
     expect(findTheme(DEFAULT_THEME)).toBeTruthy();
     expect(findTheme("does-not-exist")).toBeUndefined();
   });

@@ -6,7 +6,8 @@
 import { line as lineColor, muted, faint, text as textColor, warn, stripAnsi } from "./theme";
 
 export function termWidth(): number {
-  return process.stdout.columns ?? 80;
+  // `columns` is 0 (not undefined) on a PTY with no winsize — fall back sanely.
+  return process.stdout.columns || 80;
 }
 
 /** Visible (printable) length of a possibly-colored string. */
@@ -23,6 +24,44 @@ export function truncate(value: string, max: number): string {
   if (plain.length <= max) return value;
   if (max <= 1) return "…";
   return plain.slice(0, max - 1) + "…";
+}
+
+/**
+ * ANSI-aware hard clamp: cut an already-STYLED line to `max` visible columns,
+ * keeping its escape sequences and closing with a reset. This is the last line
+ * of defense for the pinned-region contract (lines must never auto-wrap): a
+ * single over-wide line breaks the region's cursor math, and every subsequent
+ * repaint then leaks stale rows into the scrollback.
+ */
+export function clampVisible(line: string, max: number): string {
+  if (max <= 0) return "";
+  let visible = 0;
+  let out = "";
+  let cut = false;
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === "\x1b") {
+      // Copy the whole escape sequence (CSI `\x1b[...X` or two-char like `\x1b(B`).
+      const m = /^\x1b(\[[0-9;?]*[A-Za-z]|.)/.exec(line.slice(i));
+      const seq = m ? m[0] : line[i]!;
+      out += seq;
+      i += seq.length - 1;
+      continue;
+    }
+    if (visible >= max - 1) {
+      // Room for one glyph left: spend it on the ellipsis if anything follows.
+      const rest = stripAnsi(line.slice(i));
+      out += rest.length > 1 ? "…" : line[i];
+      visible++;
+      cut = rest.length > 1;
+      // Keep any TRAILING escape sequences (resets) so styling never bleeds.
+      const tail = line.slice(i + 1).match(/(?:\x1b\[[0-9;?]*[A-Za-z])+$/);
+      if (tail) out += tail[0];
+      break;
+    }
+    out += line[i];
+    visible++;
+  }
+  return cut ? out + "\x1b[0m" : out;
 }
 
 /** Word-wrap plain text to a column width. */

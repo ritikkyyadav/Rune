@@ -40,7 +40,7 @@ export interface Theme {
   slots: ThemeSlots;
 }
 
-export const DEFAULT_THEME = "atlas";
+export const DEFAULT_THEME = "studio";
 
 // ─── ANSI-256 nearest-match (xterm cube + grayscale ramp) ───
 
@@ -145,6 +145,21 @@ const ATLAS: Theme = {
 // ─── The bundled themes (display order) ───
 
 export const THEMES: Theme[] = [
+  // studio — the default: a dark instrument panel (Codex-style). Near-black ground
+  // with a faint green cast, grey mono text, one teal-green signal for live state
+  // and diff adds; errors keep a single warm red. Quiet by design.
+  theme("studio", "Studio (default)", "dark", {
+    bg: "#0d0f0e",
+    text: "#d6dad6",
+    muted: "#9aa29b",
+    faint: "#5f6660",
+    accent: "#e06055", // errors / interrupts — the one warm emphasis
+    info: "#8fd6c2", // paths, commands, links — soft teal readout
+    warn: "#d9b45b",
+    ok: "#22c08e", // the signal: ⬢, diff adds, success
+    line: "#2a2f2c",
+  }),
+
   ATLAS,
 
   theme("atlas-light", "Atlas Light", "light", {
