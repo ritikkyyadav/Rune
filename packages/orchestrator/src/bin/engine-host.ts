@@ -171,6 +171,10 @@ function buildEngine(): Engine {
     search: config.search,
     research: config.research,
     tiers: config.tiers,
+    // Black box: same local incident capture as the CLI (config can disable).
+    blackbox:
+      config.diagnostics?.enabled !== false ? { enabled: true, version: "0.1.0-desktop" } : undefined,
+    notebook: { enabled: config.notebook?.enabled !== false },
   });
   return engine;
 }

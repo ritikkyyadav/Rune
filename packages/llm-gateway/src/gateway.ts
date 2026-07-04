@@ -2,6 +2,7 @@ import type {
   CostEntry,
   CostLedger,
   GatewayConfig,
+  GatewayIncidentEvent,
   InferenceRequest,
   InferenceResponse,
   LlmProvider,
@@ -38,6 +39,15 @@ export class LlmGateway {
 
   registerProvider(provider: LlmProvider): void {
     this.providers.set(provider.name, provider);
+  }
+
+  /** Guarded black-box tap — an observer bug must never break a stream. */
+  private reportIncident(incident: GatewayIncidentEvent): void {
+    try {
+      this.config.onIncident?.(incident);
+    } catch {
+      // swallow: observability is strictly best-effort here
+    }
   }
 
   getProvider(name: ProviderName): LlmProvider | undefined {
@@ -147,6 +157,14 @@ export class LlmGateway {
       if (shouldFallback && nextProvider) {
         const nextModel = PROVIDER_DEFAULT_MODELS[nextProvider] ?? "default";
         const why = this.failureReason(lastStatus, lastError);
+        this.reportIncident({
+          kind: "fallback",
+          provider: providerName,
+          model: adjustedRequest.model,
+          status: lastStatus,
+          message: why || lastError?.message?.slice(0, 150) || "provider unavailable",
+          fallbackTo: nextProvider,
+        });
         // Informational, NOT an error: the agent loop ends the turn on `error`
         // events, so emitting the switch as an error would abandon this
         // generator before the fallback provider streams anything. The reason
@@ -167,6 +185,24 @@ export class LlmGateway {
       // dying with "Too many consecutive errors".
       const cleanMsg = lastError?.message?.split("\n")[0]?.slice(0, 150) ?? "Unknown error";
       const triedList = fallbackOrder.filter((p) => this.providers.has(p)).join(", ");
+
+      // Terminal (non-retryable) failures get reported to the black box here,
+      // where the status code is still known. The retryable else-branch is NOT
+      // reported — the agent loop records those as stream errors if they stick.
+      if (
+        lastStatus === 401 ||
+        lastStatus === 402 ||
+        lastStatus === 403 ||
+        lastStatus === 429
+      ) {
+        this.reportIncident({
+          kind: "terminal",
+          provider: providerName,
+          model: adjustedRequest.model,
+          status: lastStatus,
+          message: cleanMsg,
+        });
+      }
 
       if (lastStatus === 401 || lastStatus === 403) {
         const why = this.failureReason(lastStatus, lastError);

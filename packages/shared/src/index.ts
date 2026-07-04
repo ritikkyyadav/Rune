@@ -1,5 +1,25 @@
 export * from "./protocol.js";
-export { parseToolArguments, tryParseJson } from "./json.js";
+export {
+  parseToolArguments,
+  tryParseJson,
+  setToolArgsSalvageListener,
+  type ToolArgsSalvageInfo,
+} from "./json.js";
+export {
+  INCIDENT_CLASSES,
+  SEVERITY_RANK,
+  incidentFamily,
+  normalizeForFingerprint,
+  fingerprintIncident,
+  type IncidentClass,
+  type IncidentSeverity,
+  type IncidentOutcome,
+  type IncidentContext,
+  type IncidentInput,
+  type IncidentRecord,
+  type IncidentReporter,
+  type TrailEntry,
+} from "./incident.js";
 export { type AlanConfig, type PermissionRule, loadConfig, getAlanHome } from "./config.js";
 export {
   type ProviderKind,

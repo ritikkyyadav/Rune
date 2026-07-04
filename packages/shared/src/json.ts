@@ -16,6 +16,36 @@ export function tryParseJson(s: string): unknown {
   }
 }
 
+// ─── Salvage observability ───
+// Every salvage is a *provider defect we recovered from* — exactly the kind of
+// small-but-real failure the black box wants counted. A module-level listener
+// keeps this file dependency-free: the engine registers the recorder here at
+// startup. The listener must never be able to break parsing — invocation is
+// fully guarded.
+
+export interface ToolArgsSalvageInfo {
+  /** Which fallback produced a result: "fence" | "slice"; "gave_up" means {} was returned. */
+  stage: "fence" | "slice" | "gave_up";
+  /** First 120 chars of the raw blob (caller redacts before storing). */
+  snippet: string;
+}
+
+let salvageListener: ((info: ToolArgsSalvageInfo) => void) | null = null;
+
+/** Register (or clear, with null) the global salvage listener. */
+export function setToolArgsSalvageListener(fn: ((info: ToolArgsSalvageInfo) => void) | null): void {
+  salvageListener = fn;
+}
+
+function notifySalvage(stage: ToolArgsSalvageInfo["stage"], raw: string): void {
+  if (!salvageListener) return;
+  try {
+    salvageListener({ stage, snippet: raw.slice(0, 120) });
+  } catch {
+    // The observer must never break the parse path.
+  }
+}
+
 /** Coerce a parsed value to a plain object, or null if it isn't one (unwraps a double-encoded
  *  JSON string one level — e.g. `"{\"path\":\"x\"}"`). */
 function asObject(v: unknown): Record<string, unknown> | null {
@@ -65,7 +95,8 @@ export function parseToolArguments(raw: unknown): Record<string, unknown> {
   if (typeof raw === "object") {
     return Array.isArray(raw) ? {} : (raw as Record<string, unknown>);
   }
-  let s = String(raw).trim();
+  const original = String(raw).trim();
+  let s = original;
   if (!s) return {};
 
   // 1) straight parse (the common, well-formed case)
@@ -77,16 +108,23 @@ export function parseToolArguments(raw: unknown): Record<string, unknown> {
   if (fenced?.[1]) {
     s = fenced[1].trim();
     obj = asObject(tryParseJson(s));
-    if (obj) return obj;
+    if (obj) {
+      notifySalvage("fence", original);
+      return obj;
+    }
   }
 
   // 3) salvage the first balanced object substring (prose / trailing junk around the JSON)
   const slice = firstJsonObject(s);
   if (slice) {
     obj = asObject(tryParseJson(slice));
-    if (obj) return obj;
+    if (obj) {
+      notifySalvage("slice", original);
+      return obj;
+    }
   }
 
   // give up safely — an empty-arg tool call beats a dead turn
+  notifySalvage("gave_up", original);
   return {};
 }

@@ -12,7 +12,7 @@ import {
   GoogleProvider,
   OllamaProvider,
 } from "@alan/llm-gateway";
-import type { ProviderName } from "@alan/llm-gateway";
+import type { GatewayIncidentEvent, ProviderName } from "@alan/llm-gateway";
 import { PROVIDER_PRESETS, CUSTOM_PROVIDER_ID, maskKey } from "@alan/shared";
 import type { CustomEndpoint } from "@alan/shared";
 
@@ -33,6 +33,8 @@ export interface BuildGatewayOpts {
   retryBaseMs?: number;
   /** Injectable for tests; defaults to process.env. */
   env?: NodeJS.ProcessEnv;
+  /** Black-box tap forwarded into the gateway (survives gateway rebuilds). */
+  onIncident?: (incident: GatewayIncidentEvent) => void;
 }
 
 /**
@@ -57,6 +59,7 @@ export function buildGateway(opts: BuildGatewayOpts): LlmGateway {
     defaultProvider: opts.provider,
     maxRetries: opts.maxRetries ?? 3,
     retryBaseMs: opts.retryBaseMs ?? 1000,
+    onIncident: opts.onIncident,
   });
 
   const localBaseUrls = mergeLocalBaseUrls(opts);

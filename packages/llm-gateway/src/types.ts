@@ -250,6 +250,23 @@ export interface GatewayConfig {
   defaultProvider: ProviderName;
   maxRetries: number;
   retryBaseMs: number;
+  /**
+   * Black-box tap: called on provider fallbacks and terminal failures so the
+   * orchestrator's recorder can count them. Fire-and-forget; the gateway
+   * guards every invocation — a throwing handler can never break a stream.
+   */
+  onIncident?: (incident: GatewayIncidentEvent) => void;
+}
+
+/** What the gateway reports to the black box (kept provider-agnostic). */
+export interface GatewayIncidentEvent {
+  kind: "fallback" | "terminal";
+  provider: string;
+  model?: string;
+  status?: number;
+  message: string;
+  /** For kind="fallback": the provider we switched to. */
+  fallbackTo?: string;
 }
 
 export interface ProviderConfig {

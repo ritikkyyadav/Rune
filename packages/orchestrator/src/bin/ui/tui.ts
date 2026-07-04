@@ -371,6 +371,8 @@ class Tui {
       { name: "/rewind", desc: "Roll back the conversation" },
       { name: "/compress", desc: "Summarize & shrink context" },
       { name: "/memory", desc: "System memory — your evergreen profile" },
+      { name: "/notebook", desc: "Learned tactics for this workspace" },
+      { name: "/bug", desc: "Flag a problem — records the flight trail" },
       { name: "/clear", desc: "Clear the screen" },
       { name: "/help", desc: "Show commands" },
       { name: "/quit", desc: "Exit Alan" },
@@ -1037,6 +1039,45 @@ class Tui {
       case "clear":
         this.resetTranscript();
         return true;
+      case "notebook": {
+        const entries = engine.getNotebookEntries(10);
+        if (entries.length === 0) {
+          this.print(
+            `  ${muted("Notebook is empty for this workspace — Alan fills it as it verifies how your repos work.")}`,
+          );
+        } else {
+          this.print(
+            [
+              `  ${bold(text("Notebook — active for this workspace"))}`,
+              ...entries.map(
+                (e) => `    ${info(e.id.slice(-8))} ${muted(`[${e.scope}]`)} ${text(e.body.slice(0, 90))}`,
+              ),
+              `    ${muted("manage: alan notebook [show <id>|rm <id>|export]")}`,
+            ].join("\n"),
+          );
+        }
+        return true;
+      }
+      case "bug": {
+        const rec = engine.getRecorder();
+        if (!rec) {
+          this.print(`  ${muted("Diagnostics are disabled ([diagnostics] enabled = false).")}`);
+          return true;
+        }
+        const id = rec.record({
+          class: "ux.user_reported",
+          severity: "warn",
+          component: "tui",
+          where: "slash#bug",
+          message: arg || "user flagged the last exchange (no note given)",
+        });
+        this.print(
+          id
+            ? `  ${text("✦ Logged with the current flight trail.")} ${muted(`alan incidents show ${id.slice(-8)}`)}`
+            : `  ${muted("Could not record — see alan doctor.")}`,
+        );
+        return true;
+      }
       case "help": {
         const cmds: [string, string][] = [
           ["/model", "Switch model/provider"],
@@ -1056,6 +1097,8 @@ class Tui {
           ["/rewind", "Roll back the conversation"],
           ["/compress", "Summarize & shrink context"],
           ["/memory", "System memory — /memory [update|add|edit|clear|daily|3d|weekly|manual]"],
+          ["/notebook", "Learned tactics active for this workspace"],
+          ["/bug", "Flag a problem — records the flight trail to the black box"],
           ["/clear", "Clear the screen"],
           ["/quit", "Exit"],
         ];

@@ -138,6 +138,24 @@ export interface AlanConfig {
     /** Hard cap on the memory size in tokens — keeps it butter-smooth for tiny models. Default 1500. */
     maxTokens?: number;
   };
+  /**
+   * Black box (flight recorder) — local incident capture to ~/.alan/blackbox.db:
+   * every failure, degradation, and struggle, with trail forensics. Local-only;
+   * nothing is ever transmitted. Default on.
+   */
+  diagnostics?: {
+    enabled?: boolean;
+  };
+  /**
+   * Tactics notebook (evolution loop) — learned facts/tactics from past
+   * sessions, injected under a hard token budget. Capture is rule-based
+   * (zero extra model spend). Default on; `alan --pristine` disables per run.
+   */
+  notebook?: {
+    enabled?: boolean;
+    /** Injection budget in tokens. Default 600. */
+    maxInjectTokens?: number;
+  };
 }
 
 export interface PermissionRule {
