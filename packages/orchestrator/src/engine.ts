@@ -176,6 +176,13 @@ export function eventsToTranscript(
         lines.push({ role: "note", text: "context compacted earlier in this session" });
         break;
       }
+      case "system_note": {
+        // Why a turn ended abnormally ("agent loop terminated: rate limited…") is
+        // part of the record — hiding it made resumed sessions look silently broken.
+        const content = typeof p.content === "string" ? p.content : "";
+        if (content.trim()) lines.push({ role: "note", text: content });
+        break;
+      }
       default:
         break; // checkpoint, research_*, etc. carry no transcript line
     }

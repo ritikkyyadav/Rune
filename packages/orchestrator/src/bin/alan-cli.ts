@@ -24,8 +24,7 @@ import { parseArgs } from "util";
 import * as readline from "readline";
 import { Spinner } from "./spinner";
 import { renderWelcome } from "./welcome";
-import { renderToolCall } from "./ui/tool-call";
-import { renderTranscript } from "./ui/activity";
+import { TurnRenderer, userBlock, renderReplay } from "./ui/turn";
 import { renderStatus } from "./ui/status";
 import {
   promptString,
@@ -34,7 +33,6 @@ import {
   permissionModeBanner,
   permissionView,
 } from "./ui/composer";
-import { formatNotice } from "./ui/events";
 import { truncate } from "./ui/render";
 import { runTui } from "./ui/tui";
 import { exportSession } from "../session-export";
@@ -313,14 +311,15 @@ function resolveSessionArg(engine: Engine, arg: string) {
 }
 
 /** Print a session's replayed history to stdout (classic path). Renders the same
- *  ● thought-chain language as a live turn so a resumed session is faithful. */
+ *  two-partition language as a live turn — work inside the rail, each turn's final
+ *  answer outside it — so a resumed session is faithful. */
 function printSessionTranscript(engine: Engine, id: string): void {
   const lines = engine.getTranscript(id);
   if (lines.length === 0) {
     process.stdout.write(`  ${faint("(no earlier messages)")}\n`);
     return;
   }
-  process.stdout.write(renderTranscript(lines) + "\n");
+  process.stdout.write(renderReplay(lines) + "\n");
 }
 
 /** Recolour the whole terminal (fg+bg) to the active theme — only on a real TTY. */
@@ -714,6 +713,8 @@ async function main() {
   let pasteAccum = "";
   let pasteFlushTimer: ReturnType<typeof setTimeout> | null = null;
   let busy = false;
+  let turnAborted = false; // Ctrl-C mid-turn: close the record as "interrupted"
+  const filesEdited = new Set<string>(); // session-wide, shown on the footer readout
 
   const _origStdinEmit = process.stdin.emit;
   process.stdin.emit = function (event: string | symbol, ...args: unknown[]): boolean {
@@ -872,12 +873,20 @@ async function main() {
   ];
 
   function showPrompt() {
+    let contextPercent: number | undefined;
+    try {
+      contextPercent = engine.getContextUsage().percent;
+    } catch {
+      contextPercent = undefined;
+    }
     process.stdout.write(
       "\n" +
         statusLine({
           model: engine.getModel(),
           workspace: workspaceRoot,
           mode: engine.getPermissionMode(),
+          contextPercent,
+          filesEdited: filesEdited.size || undefined,
         }) +
         "\n" +
         composerRule() +
@@ -2093,244 +2102,53 @@ async function main() {
     }
 
     busy = true;
+    turnAborted = false;
 
-    // Close the composer frame: a matching rule beneath the submitted input.
-    process.stdout.write(composerRule() + "\n\n");
+    // Close the composer frame: a matching rule beneath the submitted input, then
+    // the user's message set down as the loud block (same language as the TUI).
+    process.stdout.write(composerRule() + "\n");
+    process.stdout.write(userBlock(input) + "\n\n");
     spinner.start("thinking");
-    let isStreaming = false;
-    let isThinking = false;
-    let needStepMarker = true; // open the next narration run with a ● step marker
-    let totalTokens = 0;
+
+    // Collapsed rendering (see ./ui/turn.ts): narration and the final answer stay
+    // in the open; work lines stream as they happen (streamWork — readline has no
+    // pinned window to host a live tail, and print can't be retracted). finish()
+    // sets down the edit chips, the plan's final state, the record, the answer.
+    const turn = new TurnRenderer(
+      {
+        commit: (block) => {
+          const wasSpinning = spinner.isRunning();
+          spinner.stop();
+          process.stdout.write(block + "\n");
+          if (wasSpinning) spinner.start("thinking");
+        },
+      },
+      { model: engine.getModel(), getCost: () => engine.getCost(), streamWork: true },
+    );
 
     try {
       for await (const event of engine.chat(sessionId, input)) {
-        switch (event.type) {
-          case "thinking_delta": {
-            // Reasoning models' chain-of-thought — dimmed under a header and kept
-            // visually separate from the answer (and never persisted as part of it).
-            if (!isStreaming) {
-              spinner.stop();
-              isStreaming = true;
-            }
-            if (!isThinking) {
-              process.stdout.write(`\n  ${faint("✻ Thinking")}\n  `);
-              isThinking = true;
-            }
-            process.stdout.write(faint(event.text.replace(/\n/g, "\n  ")));
-            break;
-          }
-
-          case "text_delta": {
-            if (!isStreaming) {
-              spinner.stop();
-              isStreaming = true;
-            }
-            if (isThinking) {
-              process.stdout.write("\n"); // separate reasoning from the answer
-              isThinking = false;
-            }
-            // Open each narration run with a ● step marker (skip leading blanks so
-            // the marker lands on real prose) and align wrapped continuation lines.
-            if (needStepMarker && event.text.trim() !== "") {
-              process.stdout.write(`\n  ${info("●")} `);
-              needStepMarker = false;
-            }
-            process.stdout.write(needStepMarker ? event.text : event.text.replace(/\n/g, "\n    "));
-            totalTokens++;
-            break;
-          }
-
-          case "tool_call_start": {
-            if (isStreaming) {
-              process.stdout.write("\n");
-              isStreaming = false;
-            }
-            if (!spinner.isRunning()) spinner.start("tool_call");
-            spinner.setTool(event.toolName);
-            break;
-          }
-
-          case "tool_call_end": {
-            spinner.stop();
-            process.stdout.write(
-              "\n" +
-                renderToolCall({
-                  toolName: event.output.toolName,
-                  args: event.args,
-                  result: event.output.result,
-                  success: event.output.success,
-                  error: event.output.error,
-                  durationMs: event.output.durationMs,
-                }) +
-                "\n",
-            );
-            needStepMarker = true; // next prose opens a fresh ● step
-            spinner.start("thinking");
-            break;
-          }
-
-          case "todo_updated": {
-            spinner.stop();
-            if (isStreaming) {
-              process.stdout.write("\n");
-              isStreaming = false;
-            }
-            process.stdout.write(`\n  ${muted("•")} ${bold(text("Updated plan"))}\n`);
-            for (const item of event.items) {
-              const marker =
-                item.status === "completed"
-                  ? ok("✓")
-                  : item.status === "in_progress"
-                    ? warn("▸")
-                    : faint("□");
-              const label =
-                item.status === "in_progress" ? text(item.content) : muted(item.content);
-              process.stdout.write(`    ${marker} ${label}\n`);
-            }
-            process.stdout.write("\n");
-            spinner.start("thinking");
-            break;
-          }
-
-          case "plan_created": {
-            spinner.stop();
-            if (isStreaming) {
-              process.stdout.write("\n");
-              isStreaming = false;
-            }
-            process.stdout.write(`\n  ${muted("•")} ${bold(text("Plan"))}\n`);
-            const numerals = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"];
-            for (const step of event.plan.steps) {
-              const num = numerals[step.index] ?? `${step.index + 1}`;
-              const deps =
-                step.dependsOn.length > 0 ? faint(` (after ${step.dependsOn.join(",")})`) : "";
-              process.stdout.write(`    ${warn(`${num}.`)} ${text(step.description)}${deps}\n`);
-            }
-            process.stdout.write("\n");
-            spinner.start("executing");
-            break;
-          }
-
-          case "step_started": {
-            spinner.stop();
-            const numerals = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"];
-            const num = numerals[event.stepIndex] ?? `${event.stepIndex + 1}`;
-            process.stdout.write(
-              `\n  ${muted("\u2022")} ${bold(text(`Step ${num}`))}  ${muted(event.description)}\n`,
-            );
-            spinner.start("executing");
-            break;
-          }
-
-          case "step_completed": {
-            spinner.stop();
-            const mark = event.result.success ? ok("✓") : accent("✕");
-            process.stdout.write(`    ${mark} ${muted(event.result.summary.slice(0, 120))}\n`);
-            break;
-          }
-
-          case "plan_completed": {
-            spinner.stop();
-            const completed = event.plan.steps.filter(
-              (s: { status: string }) => s.status === "completed",
-            ).length;
-            const total = event.plan.steps.length;
-            const status = event.plan.status === "completed" ? ok("completed") : accent("failed");
-            process.stdout.write(
-              `\n  ${muted("•")} ${bold(text("Result"))} ${status} ${faint(`(${completed}/${total} steps)`)}\n`,
-            );
-            break;
-          }
-
-          case "replanning": {
-            spinner.stop();
-            process.stdout.write(
-              `\n  ${warn("•")} ${muted("Replanning after step")} ${warn(String(event.failedStep))} ${muted("failed…")}\n`,
-            );
-            spinner.start("planning");
-            break;
-          }
-
-          case "plan_updated": {
-            spinner.stop();
-            process.stdout.write(
-              `\n  ${muted("•")} ${bold(text("Revised plan"))}  ${faint(event.reason)}\n`,
-            );
-            const numerals = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"];
-            for (const step of event.plan.steps) {
-              const num = numerals[step.index] ?? `${step.index + 1}`;
-              process.stdout.write(`    ${warn(`${num}.`)} ${text(step.description)}\n`);
-            }
-            process.stdout.write("\n");
-            spinner.start("executing");
-            break;
-          }
-
-          case "turn_complete": {
-            spinner.stop();
-            if (isStreaming) {
-              process.stdout.write("\n");
-              isStreaming = false;
-            }
-            const cost = engine.getCost();
-            process.stdout.write(
-              `\n  ${faint(`↳ ${event.totalTurns} turns · $${cost.toFixed(4)}`)}\n\n`,
-            );
-            break;
-          }
-
-          case "notice": {
-            spinner.stop();
-            if (isStreaming) {
-              process.stdout.write("\n");
-              isStreaming = false;
-            }
-            process.stdout.write(`\n${formatNotice(event.message)}\n`);
-            spinner.start("thinking");
-            break;
-          }
-
-          case "error": {
-            spinner.stop();
-            isStreaming = false;
-            const rawErr = event.error ?? "Unknown error";
-            // Extract clean message — strip raw JSON, limit length
-            let errDisplay = rawErr;
-            if (rawErr.includes('"error"') || rawErr.length > 200) {
-              // Try to extract just the message from JSON errors
-              try {
-                const parsed = JSON.parse(rawErr.slice(rawErr.indexOf("{")));
-                errDisplay = parsed.error?.message?.split("\n")[0] ?? rawErr.slice(0, 150);
-              } catch {
-                errDisplay = rawErr.slice(0, 150);
-              }
-            }
-            // Detect rate limit and add suggestion
-            const isRateLimit =
-              rawErr.includes("429") ||
-              rawErr.toLowerCase().includes("rate limit") ||
-              rawErr.toLowerCase().includes("quota");
-            if (isRateLimit) {
-              errDisplay = errDisplay.split("\n")[0].slice(0, 120);
-            }
-            process.stdout.write(`\n  ${accent("✕")} ${text(errDisplay)}\n`);
-            if (isRateLimit) {
-              process.stdout.write(
-                `  ${faint("→")} ${warn("Tip:")} ${muted("Try switching models:")} ${info("/model")}\n`,
-              );
-              process.stdout.write(
-                `  ${faint("  or use:")} ${warn("alan --model gemini-2.5-flash")}\n`,
-              );
-            }
-            process.stdout.write("\n");
-            break;
-          }
+        turn.onEvent(event);
+        if (event.type === "tool_call_start") {
+          if (!spinner.isRunning()) spinner.start("tool_call");
+          spinner.setTool(event.toolName);
+        }
+        if (
+          event.type === "tool_call_end" &&
+          event.output?.success &&
+          (event.output.toolName === "edit_file" || event.output.toolName === "write_file") &&
+          event.args?.path
+        ) {
+          filesEdited.add(String(event.args.path));
         }
       }
     } catch (err) {
       spinner.stop();
-      console.error(vermillion(`\n  Error: ${err instanceof Error ? err.message : err}\n`));
+      if (!turnAborted) turn.onError(err);
     }
+
+    spinner.stop();
+    turn.finish({ aborted: turnAborted });
 
     busy = false;
     showPrompt();
@@ -2348,6 +2166,7 @@ async function main() {
   process.on("SIGINT", () => {
     if (busy) {
       // Turn is in progress — cancel it without exiting
+      turnAborted = true;
       engine.abort();
       spinner.stop();
       process.stdout.write(`\n  ${vermillion("✕")} ${dim("aborted")}\n`);

@@ -1,10 +1,10 @@
 // ─── Alan Startup Banner ───
-// Codex-style `>_ Alan` header in a rounded box, with model + directory rows and a
-// short tip line. Replaces the old ASCII-art logo.
+// The Savoir lockup: the wordmark with its block cursor, the tagline, and a
+// quiet readout of model + directory. No frame — the identity is the cursor,
+// not a box. ("Know-how, set down.")
 
 import * as os from "os";
-import { bold, text, muted, faint, info } from "./theme";
-import { box } from "./render";
+import { bold, text, muted, faint, info, ok } from "./theme";
 
 function shortPath(p: string): string {
   const home = os.homedir();
@@ -22,30 +22,32 @@ export interface BannerOptions {
   recentSessions?: unknown[];
 }
 
-export function renderBanner(opts: BannerOptions): string {
-  const termWidth = process.stdout.columns ?? 80;
-  if (termWidth < 60) return renderSimple(opts);
-
-  const dir = shortPath(opts.workspace);
-  const labelW = "directory".length;
-
-  const header = `${faint(">_")} ${bold(text("Alan"))}  ${muted("(v" + opts.version + ")")}`;
-  const modelRow = `${muted("model".padEnd(labelW))}  ${info(opts.model)}   ${faint("/model to change")}`;
-  const dirRow = `${muted("directory".padEnd(labelW))}  ${text(dir)}`;
-
-  const framed = box([header, "", modelRow, dirRow], { rounded: true });
-  const tip = `  ${muted("Tip:")} ${faint("Type a task, or")} ${info("/help")} ${faint("for commands.")}`;
-
-  return ["", framed, "", tip, ""].join("\n");
+/** The wordmark: `Alan▮` — bold name, signal-teal block cursor. */
+export function wordmark(): string {
+  return `${bold(text("Alan"))}${ok("▮")}`;
 }
 
-function renderSimple(opts: BannerOptions): string {
+export function renderBanner(opts: BannerOptions): string {
+  const termWidth = process.stdout.columns || 80;
   const dir = shortPath(opts.workspace);
+
+  if (termWidth < 60) {
+    return [
+      "",
+      `  ${wordmark()}  ${faint("v" + opts.version)}`,
+      `  ${info(opts.model)}  ${muted(dir)}`,
+      `  ${faint("/help for commands")}`,
+      "",
+    ].join("\n");
+  }
+
   return [
     "",
-    `  ${faint(">_")} ${bold(text("Alan"))} ${muted("(v" + opts.version + ")")}`,
-    `  ${info(opts.model)}  ${muted(dir)}`,
-    `  ${faint("Type a task, or /help for commands.")}`,
+    `  ${wordmark()}  ${faint("v" + opts.version)}`,
+    `  ${faint("know-how, set down.")}`,
+    "",
+    `  ${info(opts.model)} ${faint("·")} ${muted(dir)}`,
+    `  ${faint("type a task · / for commands · shift+tab for modes")}`,
     "",
   ].join("\n");
 }

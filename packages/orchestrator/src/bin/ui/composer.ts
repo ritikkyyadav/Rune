@@ -13,9 +13,9 @@ function shortPath(p: string): string {
   return p.startsWith(home) ? "~" + p.slice(home.length) : p;
 }
 
-/** The readline prompt: a single `›` chevron. */
+/** The readline prompt: the follow-up arrow. */
 export function promptString(): string {
-  return `  ${accent("›")} `;
+  return `  ${faint("→")} `;
 }
 
 export interface ComposerStatus {
@@ -23,6 +23,10 @@ export interface ComposerStatus {
   workspace: string;
   /** Permission mode: "confirm" | "auto" | "turing" (legacy "trusted"/"yolo" still accepted). */
   mode?: string;
+  /** Context window usage, 0–100 (shown as "N% context used"). */
+  contextPercent?: number;
+  /** Files edited so far this session (shown as "K files edited"). */
+  filesEdited?: number;
 }
 
 /** Normalize legacy mode aliases onto the current three-mode vocabulary. */
@@ -44,13 +48,19 @@ export function permissionModeBadge(mode?: string): string {
   }
 }
 
-/** Dimmed `model · ~/dir` line, with a colored flag for non-default modes. */
+/** The dim two-line footer (Codex-style): the readout, then the key hints.
+ *  `model · 23% context used · 2 files edited` / `/ for commands · …` */
 export function statusLine(s: ComposerStatus): string {
-  const dir = shortPath(s.workspace);
-  let out = faint(`${s.model} · ${dir}`);
+  const parts: string[] = [s.model];
+  if (s.contextPercent != null) parts.push(`${Math.round(s.contextPercent)}% context used`);
+  if (s.filesEdited != null && s.filesEdited > 0)
+    parts.push(`${s.filesEdited} file${s.filesEdited === 1 ? "" : "s"} edited`);
+  if (s.contextPercent == null && s.filesEdited == null) parts.push(shortPath(s.workspace));
+  let readout = faint(parts.join(" · "));
   const badge = permissionModeBadge(s.mode);
-  if (badge) out += faint(" · ") + badge;
-  return `  ${out}`;
+  if (badge) readout += faint(" · ") + badge;
+  const hints = faint("/ for commands · ctrl+r to review work");
+  return `  ${readout}\n  ${hints}`;
 }
 
 /**
@@ -109,13 +119,18 @@ export interface RenderedBlock {
   caretCol: number;
 }
 
-/** The pinned composer: a rounded input box (horizontally scrolled) + status line. */
+/** Placeholder shown in the empty composer (the terminal cursor sits on its first char). */
+export const COMPOSER_PLACEHOLDER = "Add a follow-up";
+
+/** The pinned composer: a hairline box, `→` prompt, placeholder when empty,
+ *  and the dim multi-line footer beneath — the Codex idiom. */
 export function renderComposer(state: ComposerState): RenderedBlock {
   const width = Math.max(28, state.width);
+  const statusLines = state.status ? state.status.split("\n") : [];
 
   if (state.working) {
     return {
-      lines: [`${PAD}${state.working}`, state.status],
+      lines: [`${PAD}${state.working}`, ...statusLines],
       caretRow: 0,
       caretCol: stripAnsi(`${PAD}${state.working}`).length,
     };
@@ -123,20 +138,24 @@ export function renderComposer(state: ComposerState): RenderedBlock {
 
   const boxW = width - 3; // total box width incl. corners — spans the full terminal, like Codex/Claude
   const innerW = boxW - 4; // cols between "│ " and " │"
-  const textW = Math.max(4, innerW - 2); // minus the "› " prefix
+  const textW = Math.max(4, innerW - 2); // minus the "→ " prefix
 
   // Horizontal scroll so the caret stays visible within the window.
   let scroll = 0;
   if (state.caret > textW - 1) scroll = state.caret - textW + 1;
   const slice = state.input.slice(scroll, scroll + textW);
+  const body =
+    state.input.length === 0
+      ? faint(COMPOSER_PLACEHOLDER.padEnd(textW, " ").slice(0, textW))
+      : text(slice.padEnd(textW, " "));
 
   const top = `${PAD}${line("╭" + "─".repeat(boxW - 2) + "╮")}`;
-  const mid = `${PAD}${line("│")} ${accent("›")} ${text(slice.padEnd(textW, " "))} ${line("│")}`;
+  const mid = `${PAD}${line("│")} ${faint("→")} ${body} ${line("│")}`;
   const bot = `${PAD}${line("╰" + "─".repeat(boxW - 2) + "╯")}`;
 
-  // PAD(2) + "│"(1) + " "(1) + "›"(1) + " "(1) = 6 cols before the input text.
+  // PAD(2) + "│"(1) + " "(1) + "→"(1) + " "(1) = 6 cols before the input text.
   const caretCol = 6 + (state.caret - scroll);
-  return { lines: [top, mid, bot, state.status], caretRow: 1, caretCol };
+  return { lines: [top, mid, bot, ...statusLines], caretRow: 1, caretCol };
 }
 
 // ─── Permission request card (TUI) ───

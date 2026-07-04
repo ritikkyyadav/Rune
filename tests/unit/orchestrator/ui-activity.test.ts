@@ -22,9 +22,9 @@ function tool(over: Partial<ToolActivityView>): ToolActivityView {
 }
 
 describe("renderToolActivity — compact one-liners", () => {
-  it("renders a read as a single `Read <file>` line", () => {
+  it("renders a read as a bare path (the quiet file-listing idiom)", () => {
     const out = plain(renderToolActivity(tool({ toolName: "read_file", args: { path: "src/engine.ts" } })));
-    expect(out).toBe("  Read  src/engine.ts");
+    expect(out).toBe("  src/engine.ts");
     expect(out.split("\n")).toHaveLength(1);
   });
 
@@ -180,11 +180,11 @@ describe("renderTranscript — batch replay", () => {
     expect(out).toBe("  Read  3 files");
   });
 
-  it("keeps a single read as `Read <file>` (no collapse)", () => {
+  it("keeps a single read as its bare path (no collapse)", () => {
     const out = plain(
       renderTranscript([L({ role: "tool", toolName: "read_file", args: { path: "only.ts" }, result: "x" })]),
     );
-    expect(out).toBe("  Read  only.ts");
+    expect(out).toBe("  only.ts");
   });
 
   it("interleaves prose → tools → prose as two distinct ● steps", () => {

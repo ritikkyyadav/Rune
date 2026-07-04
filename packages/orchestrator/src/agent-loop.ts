@@ -191,6 +191,14 @@ export class AgentLoop {
     let projectChecksPassed = false;
     let executionNudges = 0;
     const recentToolSignatures: string[] = [];
+    // Repeated-failure circuit breaker: how many times each EXACT call
+    // (tool + args) has failed this run. After 2 identical failures the call is
+    // refused without executing — a failing fetch/command retried verbatim will
+    // fail the same way, and re-hammering it burns turns and floods the log.
+    const failedCalls = new Map<string, number>();
+    // Rate-limit recovery: when every provider is throttled, wait out the
+    // advertised retry window (bounded) and resume, instead of dying mid-task.
+    let rateWaits = 0;
 
     while (turn < this.config.maxTurns) {
       // Check for abort before starting each turn
@@ -286,6 +294,26 @@ export class AgentLoop {
             // the gateway's guidance instead of burning maxConsecutiveErrors
             // re-hammering throttled endpoints.
             if (result.retryable === false) {
+              // Exception: an all-providers rate limit with a known retry window
+              // is TIME-terminal, not task-terminal. Wait it out (bounded, twice
+              // per run, abortable) and resume the turn instead of failing the
+              // whole task at the finish line.
+              const waitSecs = rateLimitWaitSecs(result.error);
+              if (waitSecs != null && rateWaits < 2 && !signal?.aborted) {
+                rateWaits++;
+                yield {
+                  type: "notice",
+                  message: `All providers rate limited — waiting ${waitSecs}s, then resuming…`,
+                };
+                await abortableSleep(waitSecs * 1000, signal);
+                if (signal?.aborted) {
+                  this.state = "done";
+                  yield { type: "turn_complete", stopReason: "aborted", totalTurns: turn };
+                  return;
+                }
+                streamErrored = true;
+                break;
+              }
               this.state = "error";
               yield { type: "error", error: result.error, recoverable: false };
               return;
@@ -538,6 +566,7 @@ export class AgentLoop {
         allowed: boolean;
         parallelSafe: boolean;
         isWrite: boolean;
+        callSig: string;
         output?: ToolCallOutput;
       };
 
@@ -577,14 +606,34 @@ export class AgentLoop {
           }
         }
 
+        // Circuit breaker: this EXACT call already failed twice this run —
+        // refuse it without executing. The refusal is itself an error result,
+        // so the model reads WHY and is pushed to change strategy.
+        const callSig = `${tc.toolName}:${tc.argsJson}`;
+        const priorFails = failedCalls.get(callSig) ?? 0;
+        if (allowed && !denied && priorFails >= 2) {
+          denied = {
+            callId: tc.callId,
+            toolName: tc.toolName,
+            success: false,
+            result: "",
+            error:
+              `Refused without running: this exact ${tc.toolName} call already failed ` +
+              `${priorFails} times this run and will fail again. Do NOT repeat it. ` +
+              "Change strategy — different arguments, a different tool, or work around the " +
+              "blocker and finish with an honest report of what remains undone.",
+            durationMs: 0,
+          };
+        }
+
         // Only auto-permission read tools are safe to run concurrently. If the
         // registry doesn't know the tool, default to serial (safe).
         const schema = this.registry.get(tc.toolName)?.schema;
         const parallelSafe =
-          allowed && schema?.category === "read" && schema.permissionLevel === "auto";
+          allowed && !denied && schema?.category === "read" && schema.permissionLevel === "auto";
         const isWrite = schema?.category === "write";
 
-        planned.push({ tc, parsedArgs, input, allowed, parallelSafe, isWrite, output: denied });
+        planned.push({ tc, parsedArgs, input, allowed, parallelSafe, isWrite, callSig, output: denied });
       }
 
       // ── Phase B: execute — parallel-safe reads concurrently (bounded), rest serial ──
@@ -640,6 +689,9 @@ export class AgentLoop {
             isError: !output.success,
           });
           consecutiveErrors = output.success ? 0 : consecutiveErrors + 1;
+          if (!output.success) {
+            failedCalls.set(p.callSig, (failedCalls.get(p.callSig) ?? 0) + 1);
+          }
           if (output.success && p.isWrite) {
             editsSinceVerify = true;
             anyWritesThisRun = true;
@@ -816,4 +868,34 @@ export async function mapWithConcurrency<T>(
     }
   };
   await Promise.all(Array.from({ length: Math.min(max, items.length) }, () => worker()));
+}
+
+/**
+ * Parse the wait window out of an all-providers-rate-limited error ("… Retry in
+ * ~53s …"). Returns clamped seconds, or null when the message isn't a rate
+ * limit / has no usable window — those stay terminal.
+ */
+export function rateLimitWaitSecs(message: string): number | null {
+  if (!/rate.?limit/i.test(message)) return null;
+  const m = message.match(/retry in ~?(\d+)\s*s/i);
+  if (!m) return null;
+  const secs = Number(m[1]);
+  if (!Number.isFinite(secs) || secs <= 0) return null;
+  return Math.min(Math.max(secs + 2, 5), 90); // +2s of slack, bounded to 90s
+}
+
+/** Sleep that wakes early on abort (the wait must stay interruptible). */
+export function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve();
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(t);
+        resolve();
+      },
+      { once: true },
+    );
+  });
 }

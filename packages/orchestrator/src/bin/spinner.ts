@@ -1,8 +1,10 @@
 // ─── Alan Status Spinner ───
-// Codex-style activity indicator: "• Working (12s · esc to interrupt)".
-// The bullet stays steady; the elapsed timer ticks so the line reads as alive.
+// The live status line: "⬢ Cooking… (12s · ctrl+c to interrupt)". The hexagon
+// stays steady; the working word is drawn per run and slowly rotates
+// (Claude-style) so a long turn reads as alive — and a little fun.
 
-import { bold, text, faint, accent, stripAnsi } from "./ui/theme";
+import { bold, text, faint, ok, stripAnsi } from "./ui/theme";
+import { HEX, cookingVerb } from "./ui/turn";
 
 type ActivityType =
   | "thinking"
@@ -45,11 +47,15 @@ export class Spinner {
   private lastLineLen = 0;
   private running = false;
   private activity: ActivityType = "thinking";
+  private seed = Math.floor(Math.random() * 1000);
 
   start(activity: ActivityType = "thinking"): void {
     if (this.running) this.stop();
     this.running = true;
     this.activity = activity;
+    // Keep the SAME working word across the stop/start churn of one turn: the
+    // seed is time-stable, so restarting a second later doesn't reroll it.
+    this.seed = Math.floor(Date.now() / 120_000);
     this.startTime = Date.now();
     this.tokens = 0;
     this.render();
@@ -84,10 +90,12 @@ export class Spinner {
 
   private render(): void {
     if (!this.running) return;
-    const elapsed = formatTime(Date.now() - this.startTime);
+    const ms = Date.now() - this.startTime;
+    const elapsed = formatTime(ms);
     const tokenPart = this.tokens > 0 ? ` · ${this.tokens} tokens` : "";
-    const meta = `${elapsed}${tokenPart} · esc to interrupt`;
-    const line = `  ${accent("•")} ${bold(text("Working"))} ${faint(`(${meta})`)}`;
+    const meta = `${elapsed}${tokenPart} · ctrl+c to interrupt`;
+    const verb = cookingVerb(this.seed, ms);
+    const line = `  ${ok(HEX)} ${bold(text(`${verb}…`))} ${faint(`(${meta})`)}`;
     this.clearLine();
     process.stderr.write(line);
     this.lastLineLen = stripAnsi(line).length;
