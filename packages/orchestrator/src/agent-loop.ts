@@ -816,11 +816,16 @@ export class AgentLoop {
           };
         }
 
-        // Only auto-permission read tools are safe to run concurrently. If the
-        // registry doesn't know the tool, default to serial (safe).
+        // Auto-permission read tools are safe to run concurrently, plus tools
+        // that explicitly opt in (schema.parallelSafe — e.g. `worker`, whose
+        // ownership claims make parallel writers safe). Unknown tools default
+        // to serial (safe).
         const schema = this.registry.get(tc.toolName)?.schema;
         const parallelSafe =
-          allowed && !denied && schema?.category === "read" && schema.permissionLevel === "auto";
+          allowed &&
+          !denied &&
+          ((schema?.category === "read" && schema.permissionLevel === "auto") ||
+            schema?.parallelSafe === true);
         const isWrite = schema?.category === "write";
 
         planned.push({ tc, parsedArgs, input, allowed, parallelSafe, isWrite, callSig, output: denied });

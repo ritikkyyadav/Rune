@@ -50,6 +50,8 @@ const VERB: Record<string, string> = {
   write_file: "Wrote",
   edit_file: "Edited",
   interactive_dashboard: "Dashboard",
+  task: "Scouted",
+  worker: "Worker",
 };
 
 /** Present-tense verb for the live "what's running now" status line. */
@@ -61,6 +63,8 @@ const RUNNING: Record<string, string> = {
   write_file: "Writing",
   edit_file: "Editing",
   interactive_dashboard: "Building dashboard",
+  task: "Scouting",
+  worker: "Worker building",
 };
 
 /** A short label for an in-flight tool call (args aren't known yet at start). */
@@ -246,6 +250,14 @@ export function renderToolActivity(v: ToolActivityView): string {
       return `  ${bold(text("Stopped shell"))}${id ? "  " + info(id) : ""}`;
     }
 
+    // Parallel implementation workers: show the contract gist + what changed.
+    case "worker": {
+      const contract = truncate(firstLine(s(v.args.prompt)), 44);
+      const m = /worker changed (\d+) files?[^)]*/.exec(v.result ?? "");
+      const changed = m ? faint(`· ${m[0]}`) : "";
+      return `  ${bold(text("Worker"))}  ${text(`"${contract}"`)}  ${changed}`;
+    }
+
     // Live dashboards: surface the action + title, and above all the URL —
     // it's the thing the user clicks.
     case "interactive_dashboard": {
@@ -296,6 +308,8 @@ function compactTarget(v: ToolActivityView): string {
       return s(v.args.shell_id ?? v.args.id ?? "");
     case "interactive_dashboard":
       return s(v.args.title ?? v.args.id ?? v.args.action ?? "");
+    case "worker":
+      return `"${truncate(firstLine(s(v.args.prompt)), 40)}"`;
     default:
       return compactArgs(v.args);
   }

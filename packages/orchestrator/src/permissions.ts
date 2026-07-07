@@ -172,6 +172,19 @@ export class PermissionBroker {
     if (schema.name === "bash") {
       return args.network !== true && args.run_in_background !== true;
     }
+    // A worker's blast radius is exactly the files it owns: confined when
+    // every owned entry resolves inside the workspace (the ownership guard
+    // re-enforces this mechanically at each write).
+    if (schema.name === "worker") {
+      const files = args.files;
+      return (
+        Array.isArray(files) &&
+        files.length > 0 &&
+        files.every(
+          (f) => typeof f === "string" && f.length > 0 && this.isPathInside(this.workspaceRoot!, f),
+        )
+      );
+    }
     if (!PermissionBroker.PATH_CONFINED_TOOLS.has(schema.name)) return false;
     const target = args.path;
     if (typeof target !== "string" || target.length === 0) return false;
@@ -219,6 +232,10 @@ export class PermissionBroker {
       case "bash": {
         const net = args.network === true ? " [network — runs outside the sandbox]" : "";
         return `bash${net}: ${String(args.command ?? "").slice(0, 100)}`;
+      }
+      case "worker": {
+        const files = Array.isArray(args.files) ? (args.files as string[]) : [];
+        return `worker [owns: ${files.slice(0, 6).join(", ")}${files.length > 6 ? ` +${files.length - 6}` : ""}]: ${String(args.prompt ?? "").slice(0, 80)}`;
       }
       default:
         return `${tool} ${JSON.stringify(args).slice(0, 100)}`;
