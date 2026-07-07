@@ -29,3 +29,11 @@ export type {
   SkillSearchHit,
 } from "./skills/index";
 export { ToolRateLimiter, DEFAULT_RATE_LIMIT, type RateLimitConfig } from "./rate-limiter";
+export {
+  DashboardManager,
+  createDashboardTool,
+  openInBrowser,
+  INTERACTIVE_DASHBOARD_SCHEMA,
+  type DashboardInfo,
+  type DashboardManagerOptions,
+} from "./tools/dashboard";

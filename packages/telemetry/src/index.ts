@@ -11,6 +11,9 @@ export {
   armSentinel,
   disarmSentinel,
   consumeDirtyExit,
+  sweepDirtyExits,
+  sentinelPathFor,
+  isPidAlive,
   type SentinelMeta,
   type DirtyExit,
 } from "./sentinel";

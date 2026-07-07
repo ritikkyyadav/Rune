@@ -75,6 +75,8 @@ export class GoogleProvider implements LlmProvider {
     const hasToolUse = candidate?.content?.parts?.some((part) => part.functionCall) ?? false;
 
     const content = this.fromGeminiCandidate(candidate);
+    const hasText = content.some((b) => b.type === "text" && b.text.trim());
+    throwOnUnusableFinish(candidate?.finishReason, hasToolUse, hasText);
     const sources = this.groundingSources(candidate);
     if (sources) content.push({ type: "text", text: sources });
 
@@ -113,6 +115,7 @@ export class GoogleProvider implements LlmProvider {
     let usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
     let finishReason: string | undefined;
     let sawToolUse = false;
+    let sawText = false;
     let groundingCandidate: GeminiCandidate | undefined;
 
     try {
@@ -143,6 +146,7 @@ export class GoogleProvider implements LlmProvider {
 
           for (const block of this.fromGeminiCandidate(candidate)) {
             if (block.type === "text" && block.text) {
+              sawText = true;
               yield {
                 type: "content_delta",
                 contentIndex: 0,
@@ -173,6 +177,15 @@ export class GoogleProvider implements LlmProvider {
     } finally {
       reader.releaseLock();
     }
+
+    // A stream that ends MALFORMED_FUNCTION_CALL (Gemini botched the tool-call
+    // encoding — common with large arguments) or safety-blocked carries no
+    // usable parts, yet arrives as a "successful" stream. Returning it as a
+    // normal stop made the agent end a SILENT EMPTY TURN — observed live on
+    // 2026-07-07 (/interactive → fallback to Gemini → nothing rendered, no
+    // error). Throw instead: the gateway retries/falls back, and if this was
+    // the last provider the user gets a real error they can act on.
+    throwOnUnusableFinish(finishReason, sawToolUse, sawText);
 
     const sources = this.groundingSources(groundingCandidate);
     if (sources) {
@@ -350,6 +363,42 @@ export class GoogleProvider implements LlmProvider {
         // calls, so detect tool use from the response parts, not the reason.
         return hasToolUse ? "tool_use" : "end_turn";
     }
+  }
+}
+
+// Finish reasons whose responses carry no usable output. MALFORMED/UNEXPECTED
+// tool calls arrive with zero parts; the safety family can also strip
+// everything. In both shapes the request "succeeded" while producing nothing.
+const TOOL_CALL_FAILURE_REASONS = new Set(["MALFORMED_FUNCTION_CALL", "UNEXPECTED_TOOL_CALL"]);
+const BLOCKED_FINISH_REASONS = new Set([
+  "SAFETY",
+  "RECITATION",
+  "PROHIBITED_CONTENT",
+  "SPII",
+  "BLOCKLIST",
+  "IMAGE_SAFETY",
+]);
+
+/**
+ * Throw when Gemini's finish reason says the response is unusable:
+ *  - a malformed/unexpected function call that delivered no actual tool_use,
+ *  - a safety-class block that delivered no content at all.
+ * The error carries no HTTP status, which the gateway treats as fall-back-able,
+ * so the request moves to the next provider instead of ending a silent turn.
+ */
+function throwOnUnusableFinish(
+  finishReason: string | undefined,
+  sawToolUse: boolean,
+  sawText: boolean,
+): void {
+  if (!finishReason) return;
+  if (TOOL_CALL_FAILURE_REASONS.has(finishReason) && !sawToolUse) {
+    throw new Error(
+      `Gemini ended with ${finishReason} and no usable tool call — the model failed to encode the function call (retryable)`,
+    );
+  }
+  if (BLOCKED_FINISH_REASONS.has(finishReason) && !sawToolUse && !sawText) {
+    throw new Error(`Gemini blocked the response (${finishReason}) and returned no content`);
   }
 }
 

@@ -21,7 +21,8 @@ import {
   getSystemMemoryPath,
   getAlanHome,
 } from "@alan/shared";
-import { armSentinel, consumeDirtyExit, disarmSentinel } from "@alan/telemetry";
+import { armSentinel, disarmSentinel, sentinelPathFor, sweepDirtyExits } from "@alan/telemetry";
+import { rmSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import { parseArgs } from "util";
 import * as readline from "readline";
@@ -271,6 +272,12 @@ import {
   TERMINAL_THEME_RESET,
 } from "./colors";
 import { loadSavedTheme, resolveInitialTheme, saveTheme } from "./ui/theme-store";
+import {
+  buildInteractiveDirective,
+  loadInteractiveAuto,
+  saveInteractiveAuto,
+  shouldOfferInteractive,
+} from "./ui/interactive";
 import { PRODUCT_VERSION, PRODUCT_LABEL } from "./ui/brand";
 
 /** A compact "2h ago" style age for the session list and pickers. */
@@ -510,14 +517,19 @@ async function main() {
     tiers: config.tiers,
     git: config.git,
     context: config.context,
+    // Autonomy toggle precedence: /interactive sidecar > [interactive] auto.
+    interactive: { auto: loadInteractiveAuto() ?? config.interactive?.auto },
     // Black box: on by default for the real CLI (config [diagnostics] can turn
     // it off). Unit tests construct the Engine directly and stay hermetic.
+    // The trail spool is pid-scoped so two concurrent Berne instances don't
+    // overwrite each other's flight data (it pairs with the pid-scoped
+    // crash sentinel armed below).
     blackbox:
       config.diagnostics?.enabled !== false
         ? {
             enabled: true,
             version: ALAN_VERSION,
-            spoolPath: joinPath(getAlanHome(), "blackbox.spool.json"),
+            spoolPath: joinPath(getAlanHome(), `blackbox.spool.${process.pid}.json`),
           }
         : undefined,
     // Tactics notebook: on by default; `--pristine` runs without any learned
@@ -693,15 +705,21 @@ async function main() {
   const customCommands = await loadCommands(workspaceRoot);
 
   // ─── Black box: crash forensics for the interactive session ───
-  // Arm a sentinel now; it is removed by the process "exit" hook, so it only
-  // survives a SIGKILL / power-loss class death — exactly the failure no
-  // in-process handler can record. Next startup turns it into a dirty_exit
-  // incident carrying the spooled flight trail.
+  // Arm a pid-scoped sentinel now; it is removed by the process "exit" hook,
+  // so it only survives a SIGKILL / power-loss class death — exactly the
+  // failure no in-process handler can record. The startup sweep consumes only
+  // markers whose owner pid is DEAD, so concurrent Berne tabs never file
+  // false dirty-exit incidents about each other. Next startup turns real
+  // leftovers into dirty_exit incidents carrying the spooled flight trail.
   const recorder = engine.getRecorder();
-  const sentinelPath = joinPath(getAlanHome(), "blackbox.sentinel.json");
+  const sentinelDir = joinPath(getAlanHome(), "sentinels");
+  const ownSentinel = sentinelPathFor(sentinelDir, process.pid);
+  const ownSpool = joinPath(getAlanHome(), `blackbox.spool.${process.pid}.json`);
   if (recorder) {
-    const dirty = consumeDirtyExit(sentinelPath);
-    if (dirty) {
+    const dirtyExits = sweepDirtyExits(sentinelDir, {
+      legacyPath: joinPath(getAlanHome(), "blackbox.sentinel.json"),
+    });
+    for (const dirty of dirtyExits.slice(0, 3)) {
       recorder.seedTrail(dirty.trail);
       recorder.recordFatal({
         class: "crash.dirty_exit",
@@ -718,14 +736,23 @@ async function main() {
     // Incidents still pending from long-dead processes can never resolve now.
     // Only sweep old ones so a concurrently running alan isn't clobbered.
     recorder.getStore()?.sweepPending(new Date(Date.now() - 2 * 3_600_000).toISOString());
-    armSentinel(sentinelPath, {
+    armSentinel(ownSentinel, {
       pid: process.pid,
       version: ALAN_VERSION,
       sessionId,
       startedAt: new Date().toISOString(),
-      spoolPath: joinPath(getAlanHome(), "blackbox.spool.json"),
+      spoolPath: ownSpool,
     });
-    process.on("exit", () => disarmSentinel(sentinelPath));
+    process.on("exit", () => {
+      disarmSentinel(ownSentinel);
+      // Clean exit needs no flight trail — drop the spool so pid-scoped
+      // spools don't accumulate in ~/.alan.
+      try {
+        rmSync(ownSpool, { force: true });
+      } catch {
+        // best-effort
+      }
+    });
     process.on("uncaughtException", (err: Error) => {
       recorder.recordFatal({
         class: "crash.uncaught_exception",
@@ -832,6 +859,7 @@ async function main() {
   let busy = false;
   let turnAborted = false; // Ctrl-C mid-turn: close the record as "interrupted"
   const filesEdited = new Set<string>(); // session-wide, shown on the footer readout
+  let interactiveTipShown = false; // the /interactive offer fires at most once per session
 
   const _origStdinEmit = process.stdin.emit;
   process.stdin.emit = function (event: string | symbol, ...args: unknown[]): boolean {
@@ -981,6 +1009,7 @@ async function main() {
     ["/cost", "Session cost"],
     ["/compress", "Summarize & shrink context"],
     ["/undo", "Revert the last Berne auto-commit ([git] autoCommit)"],
+    ["/interactive", "Live dashboard from the last report (auto on|off · open)"],
     ["/memory", "System memory — your evergreen profile (update/add/edit/cadence)"],
     ["/notebook", "Learned tactics active for this workspace"],
     ["/bug", "Flag a problem — records the flight trail to the black box"],
@@ -1156,6 +1185,7 @@ async function main() {
         ["/cost", "Session cost"],
         ["/compress", "Summarize & shrink context"],
     ["/undo", "Revert the last Berne auto-commit ([git] autoCommit)"],
+    ["/interactive", "Live dashboard from the last report (auto on|off · open)"],
         ["/memory", "System memory — /memory [update|add|edit|clear|daily|3d|weekly|manual]"],
         ["/notebook", "Learned tactics active for this workspace"],
         ["/bug", "Flag a problem — records the current flight trail to the black box"],
@@ -1618,6 +1648,48 @@ async function main() {
       process.stdout.write("\n");
       showPrompt();
       return;
+    }
+
+    if (input === "/interactive" || input.startsWith("/interactive ")) {
+      const arg = input.slice("/interactive".length).trim();
+      const [sub = "", ...rest] = arg.split(/\s+/).filter(Boolean);
+      if (sub === "auto") {
+        const v = (rest[0] ?? "").toLowerCase();
+        if (v === "on" || v === "off") {
+          const on = v === "on";
+          engine.setInteractiveAuto(on);
+          saveInteractiveAuto(on);
+          process.stdout.write(
+            `  ${green("✓")} ${text(`autonomous dashboards ${on ? "on" : "off"}`)} ${faint(
+              on
+                ? "— Berne builds one when an answer is data-heavy"
+                : "— dashboards only when you ask (/interactive)",
+            )}\n\n`,
+          );
+        } else {
+          process.stdout.write(
+            `  ${text(`Autonomous dashboards: ${engine.isInteractiveAuto() ? "on" : "off"}`)}\n` +
+              `  ${faint("Toggle: /interactive auto on|off")}\n\n`,
+          );
+        }
+        showPrompt();
+        return;
+      }
+      if (sub === "open") {
+        const info = engine.openDashboard(rest[0]);
+        process.stdout.write(
+          info
+            ? `  ${green("✓")} ${text(`opened "${info.title}"`)}\n  ${faint(info.url)}\n\n`
+            : `  ${dim("No dashboard yet — run /interactive after a report, or ask for one.")}\n\n`,
+        );
+        showPrompt();
+        return;
+      }
+      // Bare /interactive (or "/interactive view <focus>" / "/interactive <focus>")
+      // becomes a normal turn: the model builds the dashboard with full context.
+      const focus = sub === "view" ? rest.join(" ") : arg;
+      input = buildInteractiveDirective(focus || undefined);
+      // …falls through to the turn loop below.
     }
 
     if (input === "/undo") {
@@ -2318,12 +2390,22 @@ async function main() {
       { model: engine.getModel(), getCost: () => engine.getCost(), streamWork: true },
     );
 
+    // Offer-a-dashboard bookkeeping: the answer text (for the data-density
+    // heuristic) and whether the model already built/updated one this turn.
+    let answerText = "";
+    let dashboardTouched = false;
+
     try {
       for await (const event of engine.chat(sessionId, input)) {
         turn.onEvent(event);
+        if (event.type === "text_delta") answerText += event.text;
+        if (event.type === "stream_reset") answerText = "";
         if (event.type === "tool_call_start") {
           if (!spinner.isRunning()) spinner.start("tool_call");
           spinner.setTool(event.toolName);
+        }
+        if (event.type === "tool_call_end" && event.output?.toolName === "interactive_dashboard") {
+          dashboardTouched = true;
         }
         if (
           event.type === "tool_call_end" &&
@@ -2341,6 +2423,17 @@ async function main() {
 
     spinner.stop();
     turn.finish({ aborted: turnAborted });
+
+    if (
+      !turnAborted &&
+      !dashboardTouched &&
+      !interactiveTipShown &&
+      !engine.isInteractiveAuto() &&
+      shouldOfferInteractive(answerText)
+    ) {
+      interactiveTipShown = true;
+      process.stdout.write(`  ${faint("✦ /interactive — view this as a live dashboard")}\n\n`);
+    }
 
     busy = false;
     showPrompt();

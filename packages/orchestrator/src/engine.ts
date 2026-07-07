@@ -7,8 +7,10 @@ import {
   McpDiscovery,
   SkillLoader,
   createSkillTool,
+  DashboardManager,
+  createDashboardTool,
 } from "@alan/tool-registry";
-import type { PluginCatalogEntry, SkillSearchHit } from "@alan/tool-registry";
+import type { DashboardInfo, PluginCatalogEntry, SkillSearchHit } from "@alan/tool-registry";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -89,6 +91,7 @@ import {
   AGENT_DOCTRINE,
   loadProjectMemory,
   renderEnvironmentBlock,
+  renderInteractiveDoctrine,
   renderRepoMap,
   snapshotEnvironment,
 } from "./prompts";
@@ -287,6 +290,15 @@ export interface EngineConfig {
   /** Context assembly: repoMap injects a compact file-tree map (default on). */
   context?: {
     repoMap?: boolean;
+  };
+  /**
+   * Interactive dashboards (config.toml `[interactive]`): auto lets the model
+   * decide on its own when an answer deserves a live dashboard; off (default)
+   * restricts building to explicit requests (/interactive). Runtime-togglable
+   * via /interactive auto on|off.
+   */
+  interactive?: {
+    auto?: boolean;
   };
   /** Deep-research ("/research") defaults: depth, fan-out, sources. */
   research?: ResearchOptions;
@@ -511,6 +523,10 @@ export class Engine {
   // prompt would invalidate the provider's prefix cache on every call.
   private envBlocks: Map<string, string> = new Map();
   private lastAutoCommitSha: string | null = null;
+  // Interactive dashboards: loopback SSE server (started lazily on first
+  // create) + the autonomy toggle that shapes the injected doctrine.
+  private dashboards = new DashboardManager();
+  private interactiveAuto = false;
 
   constructor(config: Partial<EngineConfig> = {}) {
     this.config = { ...DEFAULT_ENGINE_CONFIG, ...config };
@@ -612,6 +628,12 @@ export class Engine {
     // at execute time, and headless environments degrade to an instructive
     // error instead of stalling. Deliberately NOT in the sub-agent registry.
     this.registry.register(createAskUserTool(() => this.questionHandler));
+
+    // interactive_dashboard: live HTML dashboards in the browser. Main
+    // registry only — sub-agents are read-only investigators and must not
+    // pop browser windows.
+    this.interactiveAuto = this.config.interactive?.auto === true;
+    this.registry.register(createDashboardTool(this.dashboards));
 
     // Initialize Session Manager
     this.sessions = new SessionManager(this.config.dbPath);
@@ -1580,6 +1602,7 @@ export class Engine {
     const notebookBlock = this.buildNotebookInjection(sessionId);
     const systemPrompt = [
       SYSTEM_PROMPT,
+      renderInteractiveDoctrine(this.interactiveAuto),
       envBlock,
       projectMemory.block,
       this.buildSystemMemoryBlock(),
@@ -2264,9 +2287,32 @@ export class Engine {
     }
   }
 
+  // ── Interactive dashboards ──
+
+  /** Whether the model may build dashboards on its own judgment. */
+  isInteractiveAuto(): boolean {
+    return this.interactiveAuto;
+  }
+
+  /** Flip dashboard autonomy; takes effect on the next run's system prompt. */
+  setInteractiveAuto(on: boolean): void {
+    this.interactiveAuto = on;
+  }
+
+  /** The most recently created dashboard (id/title/url), if any. */
+  lastDashboard(): DashboardInfo | null {
+    return this.dashboards.last();
+  }
+
+  /** Re-open the last dashboard (or `id`) in the browser. */
+  openDashboard(id?: string): DashboardInfo | null {
+    return this.dashboards.open(id);
+  }
+
   close(): void {
     // Best-effort: stop MCP subprocesses / sessions on exit.
     this.mcpDiscovery?.stopAll().catch(() => {});
+    this.dashboards.closeAll();
     if (this.recorder) {
       setToolArgsSalvageListener(null); // never leave a listener pointing at a closed recorder
       this.recorder.close();

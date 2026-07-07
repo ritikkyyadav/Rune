@@ -49,6 +49,7 @@ const VERB: Record<string, string> = {
   grep: "Searched",
   write_file: "Wrote",
   edit_file: "Edited",
+  interactive_dashboard: "Dashboard",
 };
 
 /** Present-tense verb for the live "what's running now" status line. */
@@ -59,6 +60,7 @@ const RUNNING: Record<string, string> = {
   grep: "Searching",
   write_file: "Writing",
   edit_file: "Editing",
+  interactive_dashboard: "Building dashboard",
 };
 
 /** A short label for an in-flight tool call (args aren't known yet at start). */
@@ -244,6 +246,25 @@ export function renderToolActivity(v: ToolActivityView): string {
       return `  ${bold(text("Stopped shell"))}${id ? "  " + info(id) : ""}`;
     }
 
+    // Live dashboards: surface the action + title, and above all the URL —
+    // it's the thing the user clicks.
+    case "interactive_dashboard": {
+      const out = tryJson(v.result);
+      const action = s(v.args.action) || "create";
+      const verb2 =
+        action === "update"
+          ? "Updated dashboard"
+          : action === "open"
+            ? "Opened dashboard"
+            : action === "close"
+              ? "Closed dashboard"
+              : "Built dashboard";
+      const title = truncate(s(out?.title ?? v.args.title ?? ""), 32);
+      const url = s(out?.url ?? "");
+      const head = `  ${bold(text(verb2))}${title ? "  " + text(`"${title}"`) : ""}`;
+      return url ? `${head}  ${info(truncate(url, 60))}` : head;
+    }
+
     default: {
       // MCP / unknown tool — name + a compact args summary.
       const a = compactArgs(v.args);
@@ -273,6 +294,8 @@ function compactTarget(v: ToolActivityView): string {
     case "bash_output":
     case "kill_shell":
       return s(v.args.shell_id ?? v.args.id ?? "");
+    case "interactive_dashboard":
+      return s(v.args.title ?? v.args.id ?? v.args.action ?? "");
     default:
       return compactArgs(v.args);
   }
