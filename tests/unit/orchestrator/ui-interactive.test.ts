@@ -53,10 +53,11 @@ describe("interactive doctrine", () => {
     const manual = renderInteractiveDoctrine(false);
     expect(manual).toContain("ONLY when the user asks");
     expect(manual).toContain("/interactive");
-    // Both teach the real-time path.
+    // Both teach spec-first composition, the real-time path, and exports.
     for (const s of [auto, manual]) {
+      expect(s).toContain("ALWAYS build through `spec`");
       expect(s).toContain("watch_file");
-      expect(s).toContain("window.render(data)");
+      expect(s).toContain('action:"export"');
     }
   });
 });

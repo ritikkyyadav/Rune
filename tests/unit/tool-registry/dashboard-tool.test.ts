@@ -4,7 +4,7 @@
  */
 
 import { describe, test, expect, afterAll } from "bun:test";
-import { mkdtempSync, realpathSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -32,24 +32,30 @@ describe("interactive_dashboard — schema", () => {
     expect(INTERACTIVE_DASHBOARD_SCHEMA.category).toBe("execute");
   });
 
-  test("description teaches the render contract and the offline rule", () => {
+  test("description teaches spec-first, live keys, exports, and the offline rule", () => {
     const d = INTERACTIVE_DASHBOARD_SCHEMA.description;
+    expect(d).toContain("PREFER `spec`");
     expect(d).toContain("window.render(data)");
     expect(d).toContain("Chart.js");
-    expect(d).toContain("NO external URLs");
+    expect(d).toContain("no CDNs");
     expect(d).toContain("watch_file");
+    expect(d).toContain("action:'export'");
   });
 });
 
 describe("interactive_dashboard — validation", () => {
   test("rejects unknown actions and missing requirements", () => {
     expect(tool.validate({ action: "destroy" }).valid).toBe(false);
-    expect(tool.validate({ action: "create" }).valid).toBe(false); // no html
+    expect(tool.validate({ action: "create" }).valid).toBe(false); // no spec/html
     expect(tool.validate({ action: "create", html: "  " }).valid).toBe(false);
     expect(tool.validate({ action: "update" }).valid).toBe(false); // no id
     expect(tool.validate({ action: "close" }).valid).toBe(false); // no id
     expect(tool.validate({ action: "create", html: "<div/>" }).valid).toBe(true);
+    expect(tool.validate({ action: "create", spec: { title: "t", kpis: [] } }).valid).toBe(true);
     expect(tool.validate({ action: "open" }).valid).toBe(true); // id optional
+    expect(tool.validate({ action: "export" }).valid).toBe(false); // no format
+    expect(tool.validate({ action: "export", format: "docx" }).valid).toBe(false);
+    expect(tool.validate({ action: "export", format: "pdf" }).valid).toBe(true);
   });
 });
 
@@ -107,5 +113,105 @@ describe("interactive_dashboard — actions", () => {
     );
     expect(out.success).toBe(false);
     expect(out.error).toContain("inside the workspace");
+  });
+});
+
+describe("interactive_dashboard — spec mode", () => {
+  const spec = {
+    title: "Fleet",
+    kpis: [{ label: "Ships", value: 789, delta: 5.4, key: "ships" }],
+    items: [
+      {
+        type: "chart",
+        title: "Deliveries",
+        key: "weekly",
+        chart: { kind: "area", labels: ["Mon", "Tue"], series: [{ name: "Count", data: [4, 9] }] },
+      },
+      { type: "table", title: "Orders", columns: ["Id", "Status"], rows: [["#1", { chip: "Done", tone: "good" }]] },
+    ],
+  };
+
+  test("create from spec (no html): page ships the design system + baked spec", async () => {
+    const out = await tool.execute(input({ action: "create", title: "Fleet", spec, open: false }));
+    expect(out.success).toBe(true);
+    const { url, id } = JSON.parse(out.result) as { url: string; id: string };
+    const page = await (await fetch(url)).text();
+    expect(page).toContain("__BERNE_SPEC__");
+    expect(page).toContain("berne-root");
+    expect(page).toContain("--accent"); // THEME_CSS present
+    expect(page).toContain("berneTheme"); // chart defaults plugin present
+    expect(page).toContain('"Deliveries"');
+
+    // spec update re-renders live (data channel), no version bump / reload
+    const upd = await tool.execute(
+      input({ action: "update", id, spec: { ...spec, title: "Fleet v2" } }),
+    );
+    expect(upd.success).toBe(true);
+    const page2 = await (await fetch(url)).text();
+    expect(page2).toContain('"Fleet v2"');
+  });
+
+  test("exports: standalone html, json, and csv routes + files", async () => {
+    const out = await tool.execute(input({ action: "create", title: "Export Me", spec, open: false }));
+    const { url, id } = JSON.parse(out.result) as { url: string; id: string };
+
+    const html = await fetch(`${url}/export/html`);
+    expect(html.status).toBe(200);
+    expect(html.headers.get("content-disposition")).toContain("export-me.html");
+    const doc = await html.text();
+    expect(doc).toContain("__BERNE_STANDALONE__");
+    expect(doc).not.toContain("EventSource"); // no live channel in the artifact
+    expect(doc.length).toBeGreaterThan(200_000); // Chart.js inlined
+
+    // print view: freezes charts, holds load, never opens a live channel
+    const view = await fetch(`${url}/export/view`);
+    expect(view.status).toBe(200);
+    expect(view.headers.get("content-disposition")).toBeNull();
+    const viewDoc = await view.text();
+    expect(viewDoc).toContain("freezeCharts");
+    expect(viewDoc).toContain("/export/hold");
+    expect(viewDoc).not.toContain("EventSource");
+
+    const json = await fetch(`${url}/export/json`);
+    expect(json.status).toBe(200);
+    expect(((await json.json()) as { title: string }).title).toBe("Fleet");
+
+    const csv = await fetch(`${url}/export/csv`);
+    expect(csv.status).toBe(200);
+    const csvText = await csv.text();
+    expect(csvText).toContain("Metric,Value,Delta");
+    expect(csvText).toContain("Ships,789,5.4");
+    expect(csvText).toContain("# Deliveries");
+    expect(csvText).toContain("Mon,4");
+
+    // export action writes real files into the workspace
+    const fileOut = await tool.execute(
+      input({ action: "export", id, format: "html", path: "reports/fleet.html" }),
+    );
+    expect(fileOut.success).toBe(true);
+    const written = JSON.parse(fileOut.result) as { exported: string };
+    expect(written.exported).toBe(join(root, "reports/fleet.html"));
+    expect(readFileSync(written.exported, "utf8")).toContain("__BERNE_STANDALONE__");
+
+    const escape = await tool.execute(
+      input({ action: "export", id, format: "json", path: "../outside.json" }),
+    );
+    expect(escape.success).toBe(false);
+    expect(escape.error).toContain("inside the workspace");
+  });
+
+  test("pdf export without a browser fails with guidance (not a hang)", async () => {
+    const prev = process.env.BERNE_BROWSER_BIN;
+    process.env.BERNE_BROWSER_BIN = "/nonexistent/browser";
+    try {
+      const created = await tool.execute(input({ action: "create", title: "p", spec, open: false }));
+      const { id } = JSON.parse(created.result) as { id: string };
+      const out = await tool.execute(input({ action: "export", id, format: "pdf" }));
+      expect(out.success).toBe(false);
+      expect(out.error).toContain("Export menu");
+    } finally {
+      if (prev === undefined) delete process.env.BERNE_BROWSER_BIN;
+      else process.env.BERNE_BROWSER_BIN = prev;
+    }
   });
 });

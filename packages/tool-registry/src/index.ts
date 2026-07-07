@@ -33,7 +33,11 @@ export {
   DashboardManager,
   createDashboardTool,
   openInBrowser,
+  buildCsv,
+  findHeadlessBrowser,
+  printUrlToPdf,
   INTERACTIVE_DASHBOARD_SCHEMA,
   type DashboardInfo,
   type DashboardManagerOptions,
 } from "./tools/dashboard";
+export { THEME_CSS, CHART_DEFAULTS_JS, SPEC_RENDERER_JS, DASH_PALETTE } from "./tools/dashboard-theme";
