@@ -84,6 +84,7 @@ import { EpisodicMemory } from "./memory/episodic";
 import { WorkingMemory } from "./memory/working";
 import { HookRunner } from "./hooks";
 import { createSubagentTool } from "./subagent";
+import { createWorkerTool } from "./worker";
 import { createAskUserTool } from "./ask-user";
 import type { QuestionHandler } from "./ask-user";
 export type { QuestionHandler, UserQuestion } from "./ask-user";
@@ -638,6 +639,25 @@ export class Engine {
       createAskUserTool(() =>
         this.permissions.getMode() === "turing" ? undefined : this.questionHandler,
       ),
+    );
+
+    // `worker`: write-capable parallel sub-agents with disjoint file
+    // ownership — the lead splits implementation, workers run concurrently
+    // (parallelSafe + ownership claims), the lead integrates and verifies.
+    // Routed to the STANDARD tier: workers write production code. Main
+    // registry only — workers cannot spawn workers.
+    this.registry.register(
+      createWorkerTool({
+        binaryPath: this.config.toolsBinaryPath,
+        resolve: () => {
+          const std = this.resolveModelTier("standard");
+          return {
+            gateway: this.gateway,
+            model: std.model,
+            provider: std.provider as ProviderName,
+          };
+        },
+      }),
     );
 
     // interactive_dashboard: live HTML dashboards in the browser. Main
