@@ -114,12 +114,14 @@ Strike a balance: do what was asked thoroughly (including obviously implied foll
 export function renderInteractiveDoctrine(auto: boolean): string {
   const lines = [
     "# Interactive dashboards",
-    "- The interactive_dashboard tool renders data as a polished, live HTML dashboard in the user's browser (local URL, works offline, updates in real time over SSE).",
+    "- The interactive_dashboard tool renders data as a designed, live dashboard in the user's browser (local URL, works offline, updates in real time over SSE).",
+    "- ALWAYS build through `spec` — the harness's design system renders it as a polished dark bento dashboard (KPI cards with deltas/sparklines, themed charts, tables with status chips, progress bars). Never hand-write html/CSS for standard analytics; the raw html path exists only for bespoke visuals a spec cannot express (maps, custom canvases, games).",
+    "- Compose like a designer: lead with 3-6 KPIs (value + delta + spark), then one hero chart (span 8) beside a breakdown (span 4 — doughnut/progress/list), then supporting charts and a detail table. Keep charts to ≤4 series, labels short; use table cells like {chip:'Delivered', tone:'good'} for statuses.",
   ];
   if (auto) {
     lines.push(
       "- Autonomous dashboards are ON: when your answer centers on substantial structured data — reports, benchmarks, metrics over time, cost/resource breakdowns, multi-series comparisons, long tabular results — CREATE a dashboard visualizing it, alongside a concise text summary. Skip it for trivial or mostly-prose answers.",
-      "- Reuse dashboards: when the same analysis evolves across turns, push action:\"update\" with new data instead of creating another dashboard.",
+      "- Reuse dashboards: when the same analysis evolves across turns, push action:\"update\" with a new spec/data instead of creating another dashboard.",
     );
   } else {
     lines.push(
@@ -128,8 +130,8 @@ export function renderInteractiveDoctrine(auto: boolean): string {
     );
   }
   lines.push(
-    "- Real-time data (a running process, progressing work, changing metrics): have the process write JSON to a workspace file and bind it with watch_file, or push fresh data with action:\"update\" as you go — the open page re-renders instantly, no reload.",
-    "- Put ALL numbers in `data` and draw from window.render(data) so live updates flow; never hardcode values into the markup.",
+    "- Real-time data (a running process, progressing work, changing metrics): have the process write JSON to a workspace file and bind it with watch_file, giving spec blocks `key`s so payload fields update them in place; or push fresh specs/data with action:\"update\" as you go — the open page re-renders instantly, no reload.",
+    "- Exports are built in: every dashboard has an Export menu (PDF report, standalone HTML, JSON, CSV) — mention it when you share the URL. When the user wants a report FILE, use action:\"export\" (format pdf/html/json/csv) and hand them the written path.",
   );
   return lines.join("\n");
 }
