@@ -172,6 +172,15 @@ export interface AlanConfig {
   context?: {
     repoMap?: boolean;
   };
+  /**
+   * Interactive dashboards. auto: let the model decide on its own when an
+   * answer deserves a live HTML dashboard (reports, metrics, comparisons).
+   * Default false — dashboards are built only on explicit request
+   * (/interactive). Runtime toggle: /interactive auto on|off.
+   */
+  interactive?: {
+    auto?: boolean;
+  };
 }
 
 export interface PermissionRule {

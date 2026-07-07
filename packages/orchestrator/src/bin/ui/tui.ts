@@ -77,6 +77,11 @@ import {
   TERMINAL_THEME_RESET,
 } from "./theme";
 import { saveTheme } from "./theme-store";
+import {
+  buildInteractiveDirective,
+  saveInteractiveAuto,
+  shouldOfferInteractive,
+} from "./interactive";
 
 export interface TuiContext {
   engine: Engine;
@@ -186,6 +191,7 @@ class Tui {
   private currentActivity: string | null = null; // in-flight tool label, shown on the status line
   private turnPreview: string[] | null = null; // live window: recent work + to-dos + prose preview
   private filesEdited = new Set<string>(); // session-wide, shown on the footer readout
+  private interactiveTipShown = false; // the /interactive offer fires at most once per session
   private lastWorkLog: string | null = null; // the last turn's full work log (ctrl+r expands it)
   private liveTurn: TurnRenderer | null = null; // in-flight renderer (ctrl+r mid-turn)
   private turnSeed = 0; // picks this turn's working word (Cooking…, Brewing…, …)
@@ -377,6 +383,7 @@ class Tui {
       { name: "/rewind", desc: "Roll back the conversation" },
       { name: "/compress", desc: "Summarize & shrink context" },
       { name: "/undo", desc: "Revert the last Berne auto-commit" },
+      { name: "/interactive", desc: "Live dashboard — [focus] · auto on|off · open" },
       { name: "/memory", desc: "System memory — your evergreen profile" },
       { name: "/notebook", desc: "Learned tactics for this workspace" },
       { name: "/bug", desc: "Flag a problem — records the flight trail" },
@@ -1144,6 +1151,7 @@ class Tui {
           ["/rewind", "Roll back the conversation"],
           ["/compress", "Summarize & shrink context"],
           ["/undo", "Revert the last Berne auto-commit"],
+          ["/interactive", "Live dashboard from the last report (auto on|off · open)"],
           ["/memory", "System memory — /memory [update|add|edit|clear|daily|3d|weekly|manual]"],
           ["/notebook", "Learned tactics active for this workspace"],
           ["/bug", "Flag a problem — records the flight trail to the black box"],
@@ -1357,6 +1365,45 @@ class Tui {
         }
         const removed = engine.rewindTo(this.ctx.sessionId, turns[n - 1]!.seq - 1);
         this.print(`  ${ok("✓")} ${muted(`rewound to turn ${n} (removed ${removed})`)}`);
+        return true;
+      }
+      case "interactive": {
+        const [sub = "", ...rest] = arg.split(/\s+/).filter(Boolean);
+        if (sub === "auto") {
+          const v = (rest[0] ?? "").toLowerCase();
+          if (v === "on" || v === "off") {
+            const on = v === "on";
+            engine.setInteractiveAuto(on);
+            saveInteractiveAuto(on);
+            this.print(
+              `  ${ok("✓")} ${muted(`autonomous dashboards ${on ? "on" : "off"}`)} ${faint(
+                on
+                  ? "— Berne builds one when an answer is data-heavy"
+                  : "— dashboards only when you ask (/interactive)",
+              )}`,
+            );
+          } else {
+            this.print(
+              `  ${muted(`Autonomous dashboards: ${engine.isInteractiveAuto() ? "on" : "off"}`)} ${faint(
+                "· toggle: /interactive auto on|off",
+              )}`,
+            );
+          }
+          return true;
+        }
+        if (sub === "open") {
+          const info = engine.openDashboard(rest[0]);
+          this.print(
+            info
+              ? `  ${ok("✓")} ${muted(`opened "${info.title}"`)} ${faint(info.url)}`
+              : `  ${muted("No dashboard yet — run /interactive after a report, or ask for one.")}`,
+          );
+          return true;
+        }
+        // Bare /interactive (or with a focus) rides the normal turn loop so the
+        // model builds the dashboard with full conversation context.
+        const focus = sub === "view" ? rest.join(" ") : arg;
+        await this.runTurn(buildInteractiveDirective(focus || undefined));
         return true;
       }
       case "undo": {
@@ -2557,10 +2604,20 @@ class Tui {
     );
     this.liveTurn = turn;
 
+    // Offer-a-dashboard bookkeeping: the answer text (for the data-density
+    // heuristic) and whether the model already built/updated one this turn.
+    let answerText = "";
+    let dashboardTouched = false;
+
     try {
       for await (const ev of engine.chat(this.ctx.sessionId, input)) {
         turn.onEvent(ev);
         this.currentActivity = turn.activity; // surfaced on the Cooking… line
+        if (ev.type === "text_delta") answerText += ev.text;
+        if (ev.type === "stream_reset") answerText = "";
+        if (ev.type === "tool_call_end" && ev.output?.toolName === "interactive_dashboard") {
+          dashboardTouched = true;
+        }
         // Session-wide edited-files readout on the footer.
         if (
           ev.type === "tool_call_end" &&
@@ -2576,6 +2633,16 @@ class Tui {
       if (!this.aborting) turn.onError(err);
     } finally {
       turn.finish({ aborted: this.aborting });
+      if (
+        !this.aborting &&
+        !dashboardTouched &&
+        !this.interactiveTipShown &&
+        !engine.isInteractiveAuto() &&
+        shouldOfferInteractive(answerText)
+      ) {
+        this.interactiveTipShown = true;
+        this.print(`  ${faint("✦ /interactive — view this as a live dashboard")}`);
+      }
       this.lastWorkLog = turn.fullLog();
       this.liveTurn = null;
       if (this.tick) {

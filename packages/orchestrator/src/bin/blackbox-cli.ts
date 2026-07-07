@@ -3,7 +3,7 @@
 // provider validation, instant. Deliberately plain output: this is the page an
 // annoyed user reads right after something broke.
 
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getAlanHome } from "@alan/shared";
 import type { IncidentRecord } from "@alan/shared";
@@ -71,21 +71,44 @@ export function runDoctor(): void {
     }
   }
 
-  // Crash sentinel: present while an alan session is live OR after a hard kill.
-  if (existsSync(SENTINEL())) {
-    try {
-      const meta = JSON.parse(readFileSync(SENTINEL(), "utf-8")) as { pid?: number };
-      const alive = meta.pid !== undefined && processAlive(meta.pid);
-      console.log(
-        alive
-          ? `  ${ok("✓")} sentinel: armed ${dim(`(alan session running, pid ${meta.pid})`)}`
-          : `  ${warn("!")} sentinel: leftover from a dead process — next \`alan\` run will file a dirty-exit incident`,
-      );
-    } catch {
-      console.log(`  ${warn("!")} sentinel: unreadable (${SENTINEL()})`);
+  // Crash sentinels: pid-scoped markers, present while a session is live OR
+  // after a hard kill. Live pids = running instances; dead pids = crashes the
+  // next startup will file as dirty-exit incidents. The legacy single-file
+  // path is reported too until every install has cycled past it.
+  {
+    const paths: string[] = [];
+    const dir = join(HOME(), "sentinels");
+    if (existsSync(dir)) {
+      try {
+        for (const name of readdirSync(dir)) {
+          if (/^sentinel-\d+\.json$/.test(name)) paths.push(join(dir, name));
+        }
+      } catch {
+        console.log(`  ${warn("!")} sentinels: unreadable (${dir})`);
+      }
     }
-  } else {
-    console.log(`  ${ok("✓")} sentinel: clean (no session running, last exit was clean)`);
+    if (existsSync(SENTINEL())) paths.push(SENTINEL());
+    let live = 0;
+    let stale = 0;
+    for (const p of paths) {
+      try {
+        const meta = JSON.parse(readFileSync(p, "utf-8")) as { pid?: number };
+        if (meta.pid !== undefined && processAlive(meta.pid)) live++;
+        else stale++;
+      } catch {
+        stale++;
+      }
+    }
+    if (paths.length === 0) {
+      console.log(`  ${ok("✓")} sentinels: clean (no session running, last exit was clean)`);
+    } else {
+      if (live > 0)
+        console.log(`  ${ok("✓")} sentinels: ${live} live session${live === 1 ? "" : "s"} running`);
+      if (stale > 0)
+        console.log(
+          `  ${warn("!")} sentinels: ${stale} leftover from dead processes — next \`alan\` run files dirty-exit incident${stale === 1 ? "" : "s"}`,
+        );
+    }
   }
 
   // The recorder's own failures land here — this file should not exist.

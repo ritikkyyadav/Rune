@@ -236,6 +236,11 @@ export class AgentLoop {
     // context window is fixable by compacting — force it and retry instead of
     // burning consecutiveErrors re-sending the same oversized prompt.
     let overflowCompactions = 0;
+    // Empty-completion recovery: a stream that "succeeds" with no text and no
+    // tool calls (Gemini MALFORMED_FUNCTION_CALL, over-eager stops) must never
+    // end the run as a silent no-op — retry bounded, then fail loudly.
+    let emptyCompletions = 0;
+    let anyUsableOutputThisRun = false;
 
     while (turn < this.config.maxTurns) {
       // Check for abort before starting each turn
@@ -460,8 +465,59 @@ export class AgentLoop {
         continue;
       }
 
-      // Record assistant message
-      this.messages.push({ role: "assistant", content: contentBlocks });
+      // ── Empty completion: the stream closed "successfully" with nothing in
+      // it. Two defect shapes, both observed live (2026-07-07, /interactive →
+      // Gemini fallback → 6-second silent turn):
+      //   1. stopReason "tool_use" with ZERO delivered tool calls — the
+      //      provider claimed a call it never encoded (MALFORMED_FUNCTION_CALL
+      //      class defects).
+      //   2. The run tries to end having produced NOTHING at all so far — a
+      //      model never legitimately answers a user with literal nothing.
+      // Ending the turn here would render nothing and explain nothing — the
+      // single worst experience Berne can produce. Retry (the transcript is
+      // untouched: the empty message is NOT pushed), then fail loudly.
+      const producedUsableOutput =
+        pendingToolCalls.length > 0 ||
+        contentBlocks.some((b) => b.type === "text" && b.text.trim().length > 0);
+      if (producedUsableOutput) anyUsableOutputThisRun = true;
+      const claimedToolUseButNone = stopReason === "tool_use" && pendingToolCalls.length === 0;
+      const firstStepSilence =
+        !anyUsableOutputThisRun && stopReason === "end_turn" && !producedUsableOutput;
+      if (!signal?.aborted && (claimedToolUseButNone || firstStepSilence)) {
+        emptyCompletions++;
+        this.report(
+          "provider.empty_completion",
+          emptyCompletions < 3 ? "warn" : "error",
+          "run#emptyCompletion",
+          `${this.config.provider}/${this.config.model} returned an empty completion ` +
+            `(stopReason ${stopReason}, attempt ${emptyCompletions})`,
+        );
+        if (emptyCompletions < 3) {
+          yield {
+            type: "notice",
+            message: `The model returned an empty response — retrying (${emptyCompletions}/2)…`,
+          };
+          this.state = "observing";
+          continue;
+        }
+        this.state = "done";
+        yield {
+          type: "error",
+          error:
+            "The model returned an empty response 3 times in a row " +
+            `(${this.config.provider}/${this.config.model}). Nothing was produced. ` +
+            "Try again, rephrase, or switch models with /model.",
+          recoverable: false,
+        };
+        return;
+      }
+
+      // Record assistant message. Never push an EMPTY assistant message: some
+      // providers reject transcripts containing empty content on the next call,
+      // which would poison every later step of this session.
+      if (contentBlocks.length > 0) {
+        this.messages.push({ role: "assistant", content: contentBlocks });
+      }
 
       // ── max_tokens: the response was cut off by the output-token limit ──
       // Never execute tool calls from a truncated response: their JSON args

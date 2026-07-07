@@ -27,6 +27,7 @@ export const INCIDENT_CLASSES = [
   "provider.truncation",
   "provider.malformed_tool_json_salvaged",
   "provider.malformed_tool_json_fatal",
+  "provider.empty_completion",
   "tool.exec_failure",
   "tool.invalid_input",
   "tool.timeout",

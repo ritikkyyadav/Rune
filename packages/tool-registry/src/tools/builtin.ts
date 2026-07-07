@@ -16,6 +16,7 @@ import { createGlobHandler } from "./glob";
 import { createMultiEditHandler } from "./multi-edit";
 import { createN8nTriggerHandler } from "./n8n";
 import { withSyntaxCheck } from "./diagnostics";
+import { withNetworkPreflight } from "./net-preflight";
 
 const READ_FILE_SCHEMA: ToolSchema = {
   name: "read_file",
@@ -208,7 +209,11 @@ export function registerBuiltinTools(registry: ToolRegistry, binaryPath: string)
 
   for (const { schema, subcommand } of ALL_SCHEMAS) {
     let handler = createRustToolHandler(schema, subcommand, binaryPath);
-    if (schema.name === "bash") handler = withBackgroundSupport(handler, shells);
+    // Order matters: preflight sees the raw args first, so a sandboxed
+    // `npm install` fails in ~0ms instead of hanging to the 120s timeout.
+    if (schema.name === "bash") {
+      handler = withNetworkPreflight(withBackgroundSupport(handler, shells));
+    }
     // Write tools get instant post-edit syntax feedback (inside freshness so
     // the added field never disturbs hash extraction).
     if (schema.category === "write") handler = withSyntaxCheck(handler);

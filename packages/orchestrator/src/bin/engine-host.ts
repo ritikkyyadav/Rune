@@ -173,6 +173,7 @@ function buildEngine(): Engine {
     tiers: config.tiers,
     git: config.git,
     context: config.context,
+    interactive: config.interactive,
     // Black box: same local incident capture as the CLI (config can disable).
     blackbox:
       config.diagnostics?.enabled !== false ? { enabled: true, version: "0.1.0-desktop" } : undefined,
