@@ -114,7 +114,7 @@ export function createWebFetchHandler(): ToolHandler {
         try {
           res = await fetch(url, {
             signal: ctrl.signal,
-            headers: { "User-Agent": "Alan-Agent/1.0" },
+            headers: { "User-Agent": "Berne-Agent/1.0" },
           });
         } finally {
           clearTimeout(timer);

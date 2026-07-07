@@ -11,6 +11,7 @@
 // ports, which deny-net would break) — they are still permission-gated as
 // `bash`, so the user approves the command unless in trust/turing mode.
 
+import { spawn, type ChildProcess } from "node:child_process";
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
 
 /** Cap the retained output per shell — a chatty server must not eat memory. */
@@ -21,7 +22,7 @@ export type ShellStatus = "running" | "completed" | "failed" | "killed";
 interface BackgroundShell {
   id: string;
   command: string;
-  proc: ReturnType<typeof Bun.spawn>;
+  proc: ChildProcess;
   buffer: string;
   /** Where the last bash_output read ended (offset into buffer). */
   readOffset: number;
@@ -43,11 +44,13 @@ export class BackgroundShellManager {
 
   start(command: string, cwd: string): { shellId: string } {
     const id = `shell_${this.nextId++}`;
-    const proc = Bun.spawn(["bash", "-lc", command], {
+    // detached → the shell leads its own process group, so kill() can take
+    // down the ENTIRE tree (bash + the dev server it spawned), not just bash —
+    // a leader-only kill leaves grandchildren running and holding ports.
+    const proc: ChildProcess = spawn("bash", ["-lc", command], {
       cwd,
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "ignore",
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
     });
 
     const shell: BackgroundShell = {
@@ -72,18 +75,18 @@ export class BackgroundShellManager {
         shell.readOffset = Math.max(0, shell.readOffset - cut);
       }
     };
-    const pump = async (stream: ReadableStream<Uint8Array> | null) => {
-      if (!stream) return;
-      const decoder = new TextDecoder();
-      try {
-        for await (const chunk of stream) append(decoder.decode(chunk, { stream: true }));
-      } catch {
-        // Stream closed — fine.
-      }
+    proc.stdout?.on("data", (chunk: Buffer) => append(chunk.toString("utf8")));
+    proc.stderr?.on("data", (chunk: Buffer) => append(chunk.toString("utf8")));
+    // Bun's node:child_process type shim omits the EventEmitter surface; the
+    // runtime implements it fully.
+    const procEvents = proc as unknown as {
+      on(event: "error", cb: (err: Error) => void): void;
+      on(event: "exit", cb: (code: number | null) => void): void;
     };
-    void pump(proc.stdout as ReadableStream<Uint8Array>);
-    void pump(proc.stderr as ReadableStream<Uint8Array>);
-    void proc.exited.then((code) => {
+    procEvents.on("error", () => {
+      if (shell.status === "running") shell.status = "failed";
+    });
+    procEvents.on("exit", (code) => {
       if (shell.status === "running") {
         shell.status = code === 0 ? "completed" : "failed";
       }
@@ -91,6 +94,24 @@ export class BackgroundShellManager {
     });
 
     return { shellId: id };
+  }
+
+  /** Signal the shell's whole process group; falls back to the leader only. */
+  private signalTree(shell: BackgroundShell, signal: NodeJS.Signals): void {
+    const pid = shell.proc.pid;
+    try {
+      if (pid) {
+        process.kill(-pid, signal); // negative pid → whole process group
+        return;
+      }
+    } catch {
+      // Group gone or unsupported — fall through to the leader.
+    }
+    try {
+      shell.proc.kill(signal);
+    } catch {
+      // Already dead.
+    }
   }
 
   /** New output since the last read, plus current status. */
@@ -119,11 +140,7 @@ export class BackgroundShellManager {
     if (!shell) return { found: false };
     if (shell.status === "running") {
       shell.status = "killed";
-      try {
-        shell.proc.kill();
-      } catch {
-        // Already dead.
-      }
+      this.signalTree(shell, "SIGTERM");
     }
     return { found: true, status: shell.status };
   }
@@ -140,11 +157,7 @@ export class BackgroundShellManager {
     for (const shell of this.shells.values()) {
       if (shell.status === "running") {
         shell.status = "killed";
-        try {
-          shell.proc.kill();
-        } catch {
-          // Already dead.
-        }
+        this.signalTree(shell, "SIGTERM");
       }
     }
   }

@@ -403,9 +403,16 @@ export class ContextEngine {
   async compactWorkingSet(
     messages: Message[],
     recentK: number = 6,
+    opts?: {
+      /**
+       * Compact even below the turn threshold (context-overflow recovery:
+       * the request was REJECTED by the provider, so shrinking is mandatory).
+       */
+      force?: boolean;
+    },
   ): Promise<{ messages: Message[]; compacted: boolean }> {
     // ── 1. Below-threshold guard ──
-    if (messages.length < this.summarizeTurnsThreshold) {
+    if (!opts?.force && messages.length < this.summarizeTurnsThreshold) {
       return { messages, compacted: false };
     }
 
@@ -415,8 +422,8 @@ export class ContextEngine {
     // point until we land on a boundary that is safe.
     const safeCutPoint = findSafeCutPoint(messages, recentK);
 
-    // If we can't carve off at least 4 messages to summarise, bail out.
-    if (safeCutPoint < 4) {
+    // If we can't carve off at least 4 messages (2 when forced), bail out.
+    if (safeCutPoint < (opts?.force ? 2 : 4)) {
       return { messages, compacted: false };
     }
 
@@ -424,7 +431,11 @@ export class ContextEngine {
     const toKeep = messages.slice(safeCutPoint);
 
     // ── 3. Summarise the old portion ──
-    const summaryText = await this.generateSummary(toSummarize);
+    // Comprehensive (resume-grade) summary: after compaction this text is the
+    // agent's ONLY record of everything before the kept tail. The old 3-5
+    // bullet summary amnesia'd the run — goals, file paths, and decisions
+    // vanished mid-task.
+    const summaryText = await this.generateSummary(toSummarize, { comprehensive: true });
     if (!summaryText) {
       return { messages, compacted: false };
     }
@@ -525,7 +536,7 @@ export class ContextEngine {
           system,
           model,
           provider,
-          maxTokens: comprehensive ? 1500 : 500,
+          maxTokens: comprehensive ? 2000 : 500,
           stream: false,
         });
         const textBlock = response.content.find((b) => b.type === "text");

@@ -33,6 +33,7 @@ import {
 import type { CustomEndpoint } from "@alan/shared";
 import { AltScreen, BottomRegion } from "./screen";
 import { parseKeys, type Key } from "./keys";
+import { PasteScanner, shouldCollapse, pasteChip, expandPastes, livePasteIds } from "./paste";
 import {
   renderComposer,
   renderPicker,
@@ -141,8 +142,13 @@ class Tui {
   private mode: Mode = "input";
   private slashSel = 0; // highlighted row in the `/` command palette
   private sigintArmed = false;
-  private pasteMode = false;
-  private pasteBuf = "";
+  private paste = new PasteScanner(); // carves bracketed pastes out of the stdin stream (see ./paste)
+  // Large/multi-line pastes are collapsed to a `[Pasted text #N +K lines]` chip in the composer
+  // (Claude-Code idiom): the real content is held here and expanded back in on submit. Pasting the
+  // raw body inline would put newlines into the single-line composer, which breaks the pinned
+  // region's row math (garble) and re-renders megabytes every keystroke (freeze).
+  private pastes = new Map<number, string>();
+  private pasteSeq = 0;
 
   // `/sessions` manager overlay
   private sessionsList: SessionListItem[] = [];
@@ -231,7 +237,7 @@ class Tui {
 
     // The banner is a live header (re-themed every frame), so nothing to seed here.
     // The handler is registered in every mode: the broker short-circuits to "allowed"
-    // under Turing, so it's simply never invoked there — and stays ready the instant
+    // under Hands-Free, so it's simply never invoked there — and stays ready the instant
     // Shift+Tab cycles back to confirm/auto, without re-wiring.
     engine.setPermissionHandler(this.permissionHandler);
     engine.setQuestionHandler(this.questionHandler);
@@ -274,7 +280,7 @@ class Tui {
       const mem = engine.getSystemMemory();
       if (mem.enabled && !mem.content.trim() && mem.scheduleLabel === "manual") {
         this.print(
-          `  ${faint("✦ tip: Alan can learn your style & codebases over time — ")}${info("/memory")}${faint(" (auto-update: /memory weekly)")}`,
+          `  ${faint("✦ tip: Berne can learn your style & codebases over time —")}${info("/memory")}${faint(" (auto-update: /memory weekly)")}`,
         );
       }
       void engine
@@ -335,7 +341,7 @@ class Tui {
     });
   }
 
-  /** Advance the permission mode one step (Shift+Tab / `/turing` / `/mode`) and announce it. */
+  /** Advance the permission mode one step (Shift+Tab / `/hands-free` / `/mode`) and announce it. */
   private cyclePermissionMode(mode?: ReturnType<Engine["getPermissionMode"]>): void {
     let next: ReturnType<Engine["getPermissionMode"]>;
     if (mode) {
@@ -366,16 +372,17 @@ class Tui {
       { name: "/deepresearch", desc: "Deep research — multi-round, long-form" },
       { name: "/cost", desc: "Session cost" },
       { name: "/plan", desc: "Toggle plan mode" },
-      { name: "/turing", desc: "Turing — toggle bypass mode (shift+tab)" },
-      { name: "/mode", desc: "Cycle permission mode (confirm/auto/turing)" },
+      { name: "/hands-free", desc: "Hands-Free — toggle bypass mode (shift+tab)" },
+      { name: "/mode", desc: "Cycle permission mode (confirm/auto/hands-free)" },
       { name: "/rewind", desc: "Roll back the conversation" },
       { name: "/compress", desc: "Summarize & shrink context" },
+      { name: "/undo", desc: "Revert the last Berne auto-commit" },
       { name: "/memory", desc: "System memory — your evergreen profile" },
       { name: "/notebook", desc: "Learned tactics for this workspace" },
       { name: "/bug", desc: "Flag a problem — records the flight trail" },
       { name: "/clear", desc: "Clear the screen" },
       { name: "/help", desc: "Show commands" },
-      { name: "/quit", desc: "Exit Alan" },
+      { name: "/quit", desc: "Exit Berne" },
     ];
     const custom: SlashItem[] = this.ctx.customCommands.map((c) => ({
       name: "/" + c.name,
@@ -536,13 +543,8 @@ class Tui {
       // Inline: completed blocks flow into the terminal's native scrollback above the pinned
       // composer (the terminal owns scrolling from here). printAbove redraws the composer after.
       const lines = block.split("\n").map((l) => withThemeBg(this.bound(l)));
-      const comp = this.composerBlock();
-      this.region.printAbove(
-        lines.join("\r\n"),
-        comp.lines.map((l) => withThemeBg(this.bound(l))),
-        comp.caretRow,
-        comp.caretCol,
-      );
+      const comp = this.pinnedBlock();
+      this.region.printAbove(lines.join("\r\n"), comp.lines, comp.caretRow, comp.caretCol);
       return;
     }
     const added = this.pushLines(block);
@@ -556,12 +558,31 @@ class Tui {
   /** Inline surface only: redraw just the pinned composer block (the transcript lives in the
    *  terminal's own scrollback). The alt-screen surface uses drawComposer() instead. */
   private renderRegion(): void {
+    const comp = this.pinnedBlock();
+    this.region.render(comp.lines, comp.caretRow, comp.caretCol);
+  }
+
+  /** The pinned composer block, themed, width-bounded, and height-clamped to the viewport. The
+   *  inline region draws with *relative* cursor moves, so a block taller than the screen would
+   *  scroll the terminal mid-draw and desync that math (garbled/duplicated footer under heavy
+   *  streaming). Keep the tail — the composer + status the user is actually using — and elide the
+   *  top (the older work/prose preview) behind a marker. */
+  private pinnedBlock(): { lines: string[]; caretRow: number; caretCol: number } {
     const comp = this.composerBlock();
-    this.region.render(
-      comp.lines.map((l) => withThemeBg(this.bound(l))),
-      comp.caretRow,
-      comp.caretCol,
-    );
+    let lines = comp.lines.map((l) => withThemeBg(this.bound(l)));
+    let caretRow = comp.caretRow;
+    const max = Math.max(3, rowsCount() - 1);
+    if (lines.length > max) {
+      const drop = lines.length - max;
+      const marker = withThemeBg(
+        this.bound(
+          `  ${faint(`… ${drop} more line${drop === 1 ? "" : "s"} above (ctrl+r to expand)`)}`,
+        ),
+      );
+      lines = [marker, ...lines.slice(drop + 1)];
+      caretRow = Math.max(0, caretRow - drop);
+    }
+    return { lines, caretRow, caretCol: comp.caretCol };
   }
 
   /** Inline surface: recolour the terminal in the theme, clear to a themed screen, and print the
@@ -726,70 +747,94 @@ class Tui {
   // ── stdin routing ──
 
   private onData(chunk: string): void {
-    for (const key of parseKeys(chunk)) {
-      if (key.type === "paste-start") {
-        this.pasteMode = true;
-        this.pasteBuf = "";
-        continue;
-      }
-      if (key.type === "paste-end") {
-        this.pasteMode = false;
-        this.insertActive(this.pasteBuf);
-        this.pasteBuf = "";
-        this.scheduleDraw();
-        continue;
-      }
-      if (this.pasteMode) {
-        if (key.type === "char") this.pasteBuf += key.value;
-        else if (key.type === "enter") this.pasteBuf += "\n";
-        continue;
-      }
-      // The mouse wheel scrolls the transcript in every mode — even while a turn streams.
-      if (key.type === "wheel-up") {
-        this.scrollLines(SCROLL_STEP);
-        continue;
-      }
-      if (key.type === "wheel-down") {
-        this.scrollLines(-SCROLL_STEP);
-        continue;
-      }
-      // Shift+Tab cycles the permission mode (confirm → auto → Turing → …). Allowed while
-      // typing or mid-turn; ignored over a modal overlay (picker/permission/keys/ask) so it
-      // never hijacks a confirmation the user is answering.
-      if (key.type === "shift-tab") {
-        if (this.mode === "input" || this.mode === "turn") this.cyclePermissionMode();
-        continue;
-      }
-      switch (this.mode) {
-        case "input":
-          this.inputKey(key);
-          break;
-        case "turn":
-          this.turnKey(key);
-          break;
-        case "picker":
-          this.pickerKey(key);
-          break;
-        case "permission":
-          this.permKey(key);
-          break;
-        case "keys":
-          this.keysKey(key);
-          break;
-        case "sessions":
-          this.sessionsKey(key);
-          break;
-        case "memory":
-          this.memoryKey(key);
-          break;
-        case "ask":
-          this.askKey(key);
-          break;
-        case "question":
-          this.questionKey(key);
-          break;
-      }
+    // Bracketed paste is carved out of the stream as substrings (PasteScanner) — never fed through
+    // parseKeys. A multi-megabyte paste (e.g. dumping a large doc) would otherwise allocate one Key
+    // object per character and rebuild an accumulator char-by-char (O(n²)), freezing the UI for
+    // seconds. Here the whole body is one substring, so a huge paste is effectively free.
+    for (const seg of this.paste.push(chunk)) {
+      if (seg.type === "paste") this.endPaste(seg.content);
+      else for (const key of parseKeys(seg.data)) this.routeKey(key);
     }
+  }
+
+  /** Route one decoded key event to the active mode (paste is handled upstream in onData). */
+  private routeKey(key: Key): void {
+    // The mouse wheel scrolls the transcript in every mode — even while a turn streams.
+    if (key.type === "wheel-up") {
+      this.scrollLines(SCROLL_STEP);
+      return;
+    }
+    if (key.type === "wheel-down") {
+      this.scrollLines(-SCROLL_STEP);
+      return;
+    }
+    // Shift+Tab cycles the permission mode (confirm → auto → Hands-Free → …). Allowed while
+    // typing or mid-turn; ignored over a modal overlay (picker/permission/keys/ask) so it
+    // never hijacks a confirmation the user is answering.
+    if (key.type === "shift-tab") {
+      if (this.mode === "input" || this.mode === "turn") this.cyclePermissionMode();
+      return;
+    }
+    switch (this.mode) {
+      case "input":
+        this.inputKey(key);
+        break;
+      case "turn":
+        this.turnKey(key);
+        break;
+      case "picker":
+        this.pickerKey(key);
+        break;
+      case "permission":
+        this.permKey(key);
+        break;
+      case "keys":
+        this.keysKey(key);
+        break;
+      case "sessions":
+        this.sessionsKey(key);
+        break;
+      case "memory":
+        this.memoryKey(key);
+        break;
+      case "ask":
+        this.askKey(key);
+        break;
+      case "question":
+        this.questionKey(key);
+        break;
+    }
+  }
+
+  /** Land a finished paste: small single-line pastes drop in inline; anything multi-line or long
+   *  collapses to a chip so the composer stays a clean single line (see `pastes`). */
+  private endPaste(content: string): void {
+    // Key/URL editor is a single-line field — always inline, newlines stripped by insertActive.
+    if (this.mode === "keys") {
+      this.insertActive(content);
+      this.scheduleDraw();
+      return;
+    }
+    if (shouldCollapse(content)) {
+      const id = ++this.pasteSeq;
+      this.pastes.set(id, content);
+      this.insert(pasteChip(id, content));
+    } else {
+      this.insert(content);
+    }
+    this.scheduleDraw();
+  }
+
+  /** Swap `[Pasted text #N …]` chips back to their stored bodies just before a message is sent. */
+  private expandPastes(s: string): string {
+    return expandPastes(s, this.pastes);
+  }
+
+  /** Drop paste bodies whose chip no longer appears in the composer (consumed or edited away). */
+  private gcPastes(): void {
+    if (this.pastes.size === 0) return;
+    const live = livePasteIds(this.input);
+    for (const id of [...this.pastes.keys()]) if (!live.has(id)) this.pastes.delete(id);
   }
 
   // ── input mode ──
@@ -990,12 +1035,13 @@ class Tui {
   // ── submit ──
 
   private async submit(): Promise<void> {
-    const raw = this.input.trim();
+    const raw = this.expandPastes(this.input).trim();
     this.input = "";
     this.caret = 0;
     this.histIdx = -1;
     this.slashSel = 0;
     this.scroll = 0; // submitting jumps back to the live tail
+    this.gcPastes(); // composer is empty now → release the paste bodies just consumed
     if (!raw) {
       this.scheduleDraw();
       return;
@@ -1043,14 +1089,15 @@ class Tui {
         const entries = engine.getNotebookEntries(10);
         if (entries.length === 0) {
           this.print(
-            `  ${muted("Notebook is empty for this workspace — Alan fills it as it verifies how your repos work.")}`,
+            `  ${muted("Notebook is empty for this workspace — Berne fills it as it verifies how your repos work.")}`,
           );
         } else {
           this.print(
             [
               `  ${bold(text("Notebook — active for this workspace"))}`,
               ...entries.map(
-                (e) => `    ${info(e.id.slice(-8))} ${muted(`[${e.scope}]`)} ${text(e.body.slice(0, 90))}`,
+                (e) =>
+                  `    ${info(e.id.slice(-8))} ${muted(`[${e.scope}]`)} ${text(e.body.slice(0, 90))}`,
               ),
               `    ${muted("manage: alan notebook [show <id>|rm <id>|export]")}`,
             ].join("\n"),
@@ -1092,10 +1139,11 @@ class Tui {
           ["/deepresearch", "Deep research — multi-round, long-form"],
           ["/cost", "Session cost"],
           ["/plan", "Toggle plan mode"],
-          ["/turing", "Turing — toggle bypass mode (shift+tab)"],
-          ["/mode", "Cycle permission mode (confirm/auto/turing)"],
+          ["/hands-free", "Hands-Free — toggle bypass mode (shift+tab)"],
+          ["/mode", "Cycle permission mode (confirm/auto/hands-free)"],
           ["/rewind", "Roll back the conversation"],
           ["/compress", "Summarize & shrink context"],
+          ["/undo", "Revert the last Berne auto-commit"],
           ["/memory", "System memory — /memory [update|add|edit|clear|daily|3d|weekly|manual]"],
           ["/notebook", "Learned tactics active for this workspace"],
           ["/bug", "Flag a problem — records the flight trail to the black box"],
@@ -1217,18 +1265,22 @@ class Tui {
         this.print(`  ${ok("✓")} ${muted(`plan mode ${on ? "on" : "off"}`)}`);
         return true;
       }
-      case "turing": {
-        // Explicit toggle: jump into Turing, or back out to confirm.
+      case "turing": // hidden back-compat alias for /hands-free
+      case "hands-free": {
+        // Explicit toggle: jump into Hands-Free, or back out to confirm.
         this.cyclePermissionMode(engine.getPermissionMode() === "turing" ? "confirm" : "turing");
         return true;
       }
       case "mode": {
+        // "hands-free" is the public name for the internal "turing" bypass mode.
+        const raw = (arg ?? "").toLowerCase();
+        const norm = raw === "hands-free" || raw === "handsfree" ? "turing" : raw;
         const valid = ["confirm", "auto", "turing"] as const;
-        if (arg && (valid as readonly string[]).includes(arg.toLowerCase())) {
-          this.cyclePermissionMode(arg.toLowerCase() as (typeof valid)[number]);
-        } else if (arg) {
+        if (norm && (valid as readonly string[]).includes(norm)) {
+          this.cyclePermissionMode(norm as (typeof valid)[number]);
+        } else if (raw) {
           this.print(
-            `  ${warn("Usage:")} ${info("/mode")} ${faint("[confirm|auto|turing] — empty cycles")}`,
+            `  ${warn("Usage:")} ${info("/mode")} ${faint("[confirm|auto|hands-free] — empty cycles")}`,
           );
         } else {
           this.cyclePermissionMode(); // no arg → advance the cycle, like Shift+Tab
@@ -1305,6 +1357,20 @@ class Tui {
         }
         const removed = engine.rewindTo(this.ctx.sessionId, turns[n - 1]!.seq - 1);
         this.print(`  ${ok("✓")} ${muted(`rewound to turn ${n} (removed ${removed})`)}`);
+        return true;
+      }
+      case "undo": {
+        const r = engine.undoLastAutoCommit();
+        if (r.ok) {
+          this.print(`  ${ok("✓")} ${muted(`reverted ${r.undoneSha}`)} ${faint(`(${r.subject})`)}`);
+        } else {
+          this.print(`  ${muted(`Cannot undo — ${r.reason}`)}`);
+          if (!engine.isAutoCommitEnabled()) {
+            this.print(
+              `  ${faint("Tip: set [git] autoCommit = true in ~/.alan/config.toml so every run lands as a revertible commit.")}`,
+            );
+          }
+        }
         return true;
       }
       case "compress": {
@@ -1412,7 +1478,7 @@ class Tui {
           this.print(
             [
               ...head,
-              `  ${muted("Empty — Alan hasn't built your profile yet.")}`,
+              `  ${muted("Empty — Berne hasn't built your profile yet.")}`,
               `  ${faint("Seed it: /memory update · note: /memory add <…> · auto: /memory weekly")}`,
             ].join("\n"),
           );
@@ -2440,12 +2506,13 @@ class Tui {
     }
     // Enter queues the typed-ahead message; it runs automatically when this turn finishes.
     if (key.type === "enter") {
-      const raw = this.input.trim();
+      const raw = this.expandPastes(this.input).trim();
       if (raw) {
         this.queued.push(raw);
         this.input = "";
         this.caret = 0;
         this.histIdx = -1;
+        this.gcPastes();
       }
       this.scheduleDraw();
       return;
@@ -2690,7 +2757,7 @@ class Tui {
           .replace(/^-+|-+$/g, "")
           .slice(0, 50) || "research";
       const file = join(dir, `${new Date().toISOString().slice(0, 10)}-${slug}.md`);
-      const body = `# Research: ${plan.question}\n\n_Generated by Alan · ${new Date().toISOString()}_\n\n${report.markdown}\n`;
+      const body = `# Research: ${plan.question}\n\n_Generated by Berne · ${new Date().toISOString()}_\n\n${report.markdown}\n`;
       writeFileSync(file, body);
       const shown = file.startsWith(this.ctx.workspaceRoot)
         ? file.slice(this.ctx.workspaceRoot.length).replace(/^[/\\]/, "")

@@ -110,7 +110,7 @@ export function createN8nTriggerHandler(): ToolHandler {
         const init: RequestInit = {
           method,
           signal: ctrl.signal,
-          headers: { "User-Agent": "Alan-Agent/1.0" },
+          headers: { "User-Agent": "Berne-Agent/1.0" },
         };
         if (method === "POST") {
           (init.headers as Record<string, string>)["Content-Type"] = "application/json";

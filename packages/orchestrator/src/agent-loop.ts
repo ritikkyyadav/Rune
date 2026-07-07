@@ -40,6 +40,9 @@ export type AgentTurnEvent =
   | { type: "error"; error: string; recoverable: boolean }
   | { type: "context_warning"; message: string }
   | { type: "notice"; message: string }
+  // The provider stream was abandoned mid-response and is being re-streamed:
+  // UIs must drop any partially-rendered text/thinking for the current turn.
+  | { type: "stream_reset" }
   | {
       type: "todo_updated";
       items: { content: string; status: "pending" | "in_progress" | "completed" }[];
@@ -108,7 +111,7 @@ const DEFAULT_CONFIG: AgentLoopConfig = {
   maxTokens: 32000,
   maxTurns: 50,
   maxConsecutiveErrors: 3,
-  systemPrompt: "You are Alan, an expert software engineering assistant.",
+  systemPrompt: "You are Berne, an expert software engineering assistant.",
 };
 
 // ─── Agent State ───
@@ -229,6 +232,10 @@ export class AgentLoop {
     // Rate-limit recovery: when every provider is throttled, wait out the
     // advertised retry window (bounded) and resume, instead of dying mid-task.
     let rateWaits = 0;
+    // Context-overflow recovery: a request rejected for being over the model's
+    // context window is fixable by compacting — force it and retry instead of
+    // burning consecutiveErrors re-sending the same oversized prompt.
+    let overflowCompactions = 0;
 
     while (turn < this.config.maxTurns) {
       // Check for abort before starting each turn
@@ -311,6 +318,15 @@ export class AgentLoop {
         for await (const event of this.gateway.inferStream(request, streamOpts)) {
           const result = this.processStreamEvent(event, contentBlocks, pendingToolCalls);
           if (result.event) yield result.event;
+          if (result.reset) {
+            // Everything accumulated for this assistant message was discarded;
+            // the gateway is re-streaming it from scratch.
+            stopReason = "end_turn";
+            yield {
+              type: "notice",
+              message: "Response interrupted mid-stream — restarting it.",
+            };
+          }
           if (result.stopReason) stopReason = result.stopReason;
           // Feed REAL token usage back to the context engine so compaction is
           // driven by the provider's authoritative count against the model's
@@ -353,6 +369,37 @@ export class AgentLoop {
               this.state = "error";
               yield { type: "error", error: result.error, recoverable: false };
               return;
+            }
+            // Context overflow: the prompt no longer fits the model's window
+            // (e.g. several parallel 30k tool results landed in one turn).
+            // Re-sending the identical prompt can only fail identically —
+            // force-compact the working set and retry the turn.
+            if (
+              isContextOverflowError(result.error) &&
+              this.config.contextEngine &&
+              overflowCompactions < 2 &&
+              !signal?.aborted
+            ) {
+              overflowCompactions++;
+              this.report(
+                "context.forced_compaction",
+                "warn",
+                "overflow",
+                `provider rejected the prompt as over-limit — force-compacting (attempt ${overflowCompactions}): ${result.error.slice(0, 150)}`,
+              );
+              const r = await this.config.contextEngine.compactWorkingSet(this.messages, 4, {
+                force: true,
+              });
+              if (r.compacted) {
+                this.messages = r.messages;
+                yield {
+                  type: "notice",
+                  message: "Context window exceeded — compacted the conversation and retrying.",
+                };
+                streamErrored = true;
+                break;
+              }
+              // Compaction found nothing to cut — fall through to normal error handling.
             }
             consecutiveErrors++;
             this.report("provider.stream_error", "warn", "inferStream", result.error);
@@ -837,6 +884,7 @@ export class AgentLoop {
     usage?: TokenUsage;
     error?: string;
     retryable?: boolean;
+    reset?: boolean;
   } {
     switch (event.type) {
       case "content_delta":
@@ -928,6 +976,14 @@ export class AgentLoop {
       case "message_stop":
         return { stopReason: event.stopReason, usage: event.usage };
 
+      case "stream_reset":
+        // The gateway abandoned the partial response and will re-stream it.
+        // Drop everything accumulated for this message so the retry doesn't
+        // duplicate text blocks or re-execute half-formed tool calls.
+        contentBlocks.length = 0;
+        pendingToolCalls.length = 0;
+        return { event: { type: "stream_reset" }, reset: true };
+
       case "notice":
         return { event: { type: "notice", message: event.message } };
 
@@ -961,6 +1017,18 @@ export async function mapWithConcurrency<T>(
     }
   };
   await Promise.all(Array.from({ length: Math.min(max, items.length) }, () => worker()));
+}
+
+/**
+ * True when a provider error message says the PROMPT exceeded the model's
+ * context window. Matches the wording used by Anthropic ("prompt is too
+ * long"), OpenAI ("maximum context length", "context_length_exceeded"),
+ * Google ("input token count exceeds"), and generic proxies.
+ */
+export function isContextOverflowError(message: string): boolean {
+  return /prompt is too long|context[ _-]?length|maximum context|context window|input token count exceeds|too many tokens|exceeds the maximum number of tokens|token limit exceeded/i.test(
+    message,
+  );
 }
 
 /**

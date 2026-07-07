@@ -176,8 +176,8 @@ impl Sandbox for MacOsSandbox {
 
             let start = Instant::now();
 
-            let child = Command::new("sandbox-exec")
-                .arg("-p")
+            let mut cmd = Command::new("sandbox-exec");
+            cmd.arg("-p")
                 .arg(&profile)
                 .arg("/bin/sh")
                 .arg("-c")
@@ -187,9 +187,16 @@ impl Sandbox for MacOsSandbox {
                 .envs(&env)
                 .envs(&self.config.env_overrides)
                 .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            // Own process group so a timeout can kill the whole tree — a
+            // dropped wait_with_output future does NOT kill the child, so
+            // without this a timed-out command keeps running forever.
+            cmd.process_group(0);
+
+            let child = cmd
                 .spawn()
                 .map_err(|e| SandboxError::SpawnFailed(e.to_string()))?;
+            let child_pid = child.id();
 
             let output = tokio::time::timeout(
                 std::time::Duration::from_millis(timeout),
@@ -202,6 +209,11 @@ impl Sandbox for MacOsSandbox {
                     timeout_ms = timeout,
                     "sandboxed command timed out"
                 );
+                if let Some(pid) = child_pid {
+                    unsafe {
+                        libc::kill(-(pid as i32), libc::SIGKILL);
+                    }
+                }
                 SandboxError::Timeout(timeout)
             })?
             .map_err(|e| SandboxError::SpawnFailed(e.to_string()))?;

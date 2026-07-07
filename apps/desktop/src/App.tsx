@@ -271,8 +271,8 @@ export default function App() {
         {/* Top bar with connection status, model, and context usage */}
         <div style={styles.topBar} className="no-select">
           <div style={styles.topBarLeft}>
-            <span style={styles.wordmark} title="Alan — Sovereign Agentic Coding Assistant">
-              Alan<span style={styles.wordmarkCursor}>▮</span>
+            <span style={styles.wordmark} title="Berne — Sovereign Agentic Coding Assistant">
+              Berne<span style={styles.wordmarkCursor}>▮</span>
             </span>
             <div style={styles.brandDivider} />
             <div

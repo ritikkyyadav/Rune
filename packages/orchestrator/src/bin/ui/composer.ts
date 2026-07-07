@@ -29,9 +29,11 @@ export interface ComposerStatus {
   filesEdited?: number;
 }
 
-/** Normalize legacy mode aliases onto the current three-mode vocabulary. */
+/** Normalize mode aliases onto the internal three-mode vocabulary. The bypass mode is
+ *  branded "Hands-Free" to users; its internal token stays "turing" (like "yolo"). */
 function normalizeMode(mode?: string): "confirm" | "auto" | "turing" {
-  if (mode === "turing" || mode === "yolo") return "turing";
+  if (mode === "turing" || mode === "yolo" || mode === "hands-free" || mode === "handsfree")
+    return "turing";
   if (mode === "auto" || mode === "trusted") return "auto";
   return "confirm";
 }
@@ -40,7 +42,7 @@ function normalizeMode(mode?: string): "confirm" | "auto" | "turing" {
 export function permissionModeBadge(mode?: string): string {
   switch (normalizeMode(mode)) {
     case "turing":
-      return bold(warn("⚡ TURING")); // the yellow bypass mode
+      return bold(warn("⚡ HANDS-FREE")); // the yellow bypass mode
     case "auto":
       return warn("● auto");
     default:
@@ -65,15 +67,15 @@ export function statusLine(s: ComposerStatus): string {
 
 /**
  * A transient one-liner announcing the active permission mode — printed into the
- * transcript each time Shift+Tab cycles. Turing is loud (bold amber) because it
+ * transcript each time Shift+Tab cycles. Hands-Free is loud (bold amber) because it
  * silences every prompt; the others are calm.
  */
 export function permissionModeBanner(mode?: string): string {
   switch (normalizeMode(mode)) {
     case "turing":
       return (
-        `  ${bold(warn("⚡ Turing mode"))} ${faint("·")} ` +
-        `${text("Alan will read, write & run commands without asking.")} ` +
+        `  ${bold(warn("⚡ Hands-Free mode"))} ${faint("·")} ` +
+        `${text("Berne will read, write & run commands without asking.")} ` +
         `${faint("(shift+tab to cycle)")}`
       );
     case "auto":
@@ -85,7 +87,7 @@ export function permissionModeBanner(mode?: string): string {
     default:
       return (
         `  ${ok("○ Confirm mode")} ${faint("·")} ` +
-        `${muted("Alan asks before writing or running.")} ` +
+        `${muted("Berne asks before writing or running.")} ` +
         `${faint("(shift+tab to cycle)")}`
       );
   }
@@ -143,7 +145,12 @@ export function renderComposer(state: ComposerState): RenderedBlock {
   // Horizontal scroll so the caret stays visible within the window.
   let scroll = 0;
   if (state.caret > textW - 1) scroll = state.caret - textW + 1;
-  const slice = state.input.slice(scroll, scroll + textW);
+  // Newlines/control chars would spill the "single-line" box across rows and break the pinned
+  // region's row math — flatten them to spaces (pastes are collapsed to chips upstream, but a stray
+  // control byte must never desync the frame).
+  const slice = state.input
+    .slice(scroll, scroll + textW)
+    .replace(/[\r\n\t\x00-\x08\x0b-\x1f]/g, " ");
   const body =
     state.input.length === 0
       ? faint(COMPOSER_PLACEHOLDER.padEnd(textW, " ").slice(0, textW))
@@ -402,7 +409,7 @@ export function renderMemoryPanel(
   const lines: string[] = [];
 
   lines.push(
-    `${PAD}${bold(text("System memory"))}   ${faint("a guide Alan tailors to — it never overrides what you ask")}`,
+    `${PAD}${bold(text("System memory"))}   ${faint("a guide Berne tailors to — it never overrides what you ask")}`,
   );
   const empty = !v.content.trim();
   lines.push(
@@ -415,7 +422,7 @@ export function renderMemoryPanel(
   lines.push("");
 
   if (empty) {
-    lines.push(`${PAD}${muted("Alan hasn't learned about you yet.")}`);
+    lines.push(`${PAD}${muted("Berne hasn't learned about you yet.")}`);
     lines.push(
       `${PAD}${faint("Refresh to learn from recent sessions, add a note, or write it yourself.")}`,
     );

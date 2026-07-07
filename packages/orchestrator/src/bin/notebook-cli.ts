@@ -35,7 +35,7 @@ export function runNotebook(positionals: string[], values: Record<string, unknow
     const entries = store.list({ includeRetired: !!values.all, limit: 50 });
     if (entries.length === 0) {
       console.log(
-        dim("  Notebook is empty — Alan fills it as it verifies things about your codebases."),
+        dim("  Notebook is empty — Berne fills it as it verifies things about your codebases."),
       );
     } else {
       console.log(`\n  ${dim("§ TACTICS NOTEBOOK")} ${faint(`(${store.count()} active)`)}\n`);

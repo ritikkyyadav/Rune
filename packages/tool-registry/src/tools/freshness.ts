@@ -11,6 +11,7 @@
 // when the model omits it, and enforces read-before-edit when there's no
 // recorded state at all.
 
+import { realpathSync } from "fs";
 import { isAbsolute, resolve } from "path";
 import type { ToolCallInput, ToolCallOutput, ToolHandler } from "../types";
 
@@ -18,7 +19,17 @@ export class FileFreshness {
   private hashes = new Map<string, string>();
 
   private key(workspaceRoot: string, path: string): string {
-    return isAbsolute(path) ? resolve(path) : resolve(workspaceRoot, path);
+    const resolved = isAbsolute(path) ? resolve(path) : resolve(workspaceRoot, path);
+    // Canonicalize through symlinks: the Rust tools echo canonicalized paths
+    // (/private/var/…) while callers pass the raw workspace (/var/…, /tmp/…,
+    // symlinked project dirs). Keying on the raw string split those into two
+    // entries — and every relative-path edit in a symlinked workspace was
+    // refused with "read the file first" despite the read.
+    try {
+      return realpathSync(resolved);
+    } catch {
+      return resolved; // file may not exist yet (first write) — raw key is fine
+    }
   }
 
   note(workspaceRoot: string, path: string, hash: string): void {

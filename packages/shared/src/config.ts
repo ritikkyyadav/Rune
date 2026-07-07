@@ -156,6 +156,22 @@ export interface AlanConfig {
     /** Injection budget in tokens. Default 600. */
     maxInjectTokens?: number;
   };
+  /**
+   * Git integration. autoCommit: after every successful run that wrote files,
+   * commit exactly those files as one revertible "berne:" commit; revert with
+   * /undo. Default false.
+   */
+  git?: {
+    autoCommit?: boolean;
+  };
+  /**
+   * Context assembly. repoMap: include a compact, cache-stable file-tree map
+   * of the repository in the system prompt so the model knows what exists
+   * without exploratory turns. Default true (auto-skipped for huge repos).
+   */
+  context?: {
+    repoMap?: boolean;
+  };
 }
 
 export interface PermissionRule {

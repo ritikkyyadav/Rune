@@ -40,7 +40,9 @@ export interface Theme {
   slots: ThemeSlots;
 }
 
-export const DEFAULT_THEME = "studio";
+// Production ships two themes only (see PRODUCTION_THEME_NAMES); the default is
+// monochrome black. The full palette set below is kept intact but not surfaced.
+export const DEFAULT_THEME = "mono";
 
 // ─── ANSI-256 nearest-match (xterm cube + grayscale ramp) ───
 
@@ -174,7 +176,7 @@ export const THEMES: Theme[] = [
     line: "#c9c3b4",
   }),
 
-  theme("mono", "Monochrome", "dark", {
+  theme("mono", "Monochrome Black", "dark", {
     bg: "#0a0a0a",
     text: "#e8e8e8",
     muted: "#9a9a9a",
@@ -370,4 +372,21 @@ export const THEMES: Theme[] = [
 /** Look up a theme by its `name`. */
 export function findTheme(name: string): Theme | undefined {
   return THEMES.find((t) => t.name === name);
+}
+
+// ─── Production theme set ───
+// The shipped product exposes exactly two themes — monochrome black and monochrome
+// light. Every other palette above stays in the source (unremoved) but is never
+// offered in the picker, accepted by `/theme`, or honored from env/config. To bring
+// the full set back, widen this list.
+export const PRODUCTION_THEME_NAMES: readonly string[] = ["mono", "mono-light"];
+
+/** Whether `name` is one of the two production themes. */
+export function isProductionTheme(name: string): boolean {
+  return PRODUCTION_THEME_NAMES.includes(name);
+}
+
+/** The production themes, in display order (monochrome black, then light). */
+export function productionThemes(): Theme[] {
+  return PRODUCTION_THEME_NAMES.map((n) => findTheme(n)!).filter(Boolean);
 }
