@@ -17,7 +17,12 @@ export function createRustToolHandler(
       const start = performance.now();
       try {
         const args = ["--workspace", input.workspaceRoot];
-        if (schema.permissionLevel === "sandbox") {
+        // Sandbox-level tools run inside the OS sandbox (deny-net, confined
+        // writes) — EXCEPT when the model explicitly requested network access
+        // (network: true), which escalates to an unsandboxed run. That
+        // escalation is permission-gated upstream: the broker never
+        // auto-approves a network run outside Hands-Free mode.
+        if (schema.permissionLevel === "sandbox" && input.args.network !== true) {
           args.push("--sandbox");
         }
         args.push(subcommand);

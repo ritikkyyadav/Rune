@@ -89,10 +89,12 @@ import {
   AGENT_DOCTRINE,
   loadProjectMemory,
   renderEnvironmentBlock,
+  renderRepoMap,
   snapshotEnvironment,
 } from "./prompts";
 import { CommandVerifier } from "./verifier";
 import type { Verifier } from "./verifier";
+import { autoCommitPaths, undoLastBerneCommit, type UndoResult } from "./git-undo";
 import { planResearch, runResearch as executeResearch } from "./research";
 import type { ResearchDeps, PlanResearchOpts } from "./research";
 import { isClarification } from "./research-types";
@@ -274,6 +276,18 @@ export interface EngineConfig {
     /** Use provider-native grounding (Gemini/Anthropic) when available. Default true. */
     nativeGrounding?: boolean;
   };
+  /**
+   * Git integration (config.toml `[git]`): autoCommit makes every successful
+   * run that wrote files land as one revertible "berne:" commit (Aider-style);
+   * /undo resets the last one. Default off.
+   */
+  git?: {
+    autoCommit?: boolean;
+  };
+  /** Context assembly: repoMap injects a compact file-tree map (default on). */
+  context?: {
+    repoMap?: boolean;
+  };
   /** Deep-research ("/research") defaults: depth, fan-out, sources. */
   research?: ResearchOptions;
   /** System Memory ("dreaming") — evergreen profile config (enabled/schedule/model/maxTokens). */
@@ -368,14 +382,14 @@ const MEMORY_MSG_CHARS = 600;
 
 function systemMemoryDistillSystemPrompt(maxTokens: number): string {
   return [
-    "You maintain a SHORT, evergreen profile of a software developer and the codebases they work in, so an AI coding assistant (Alan) can serve them better from the very first message.",
+    "You maintain a SHORT, evergreen profile of a software developer and the codebases they work in, so an AI coding assistant (Berne) can serve them better from the very first message.",
     "",
     "Write a GUIDE, not rules. Describe — never command. This is background context the assistant tailors to, not rigid instructions.",
     "",
     "Cover, ONLY where the activity actually supports it:",
     "- About the user: who they are, how they communicate (tone, terseness, language), how they like to work, clear likes and dislikes.",
     "- Style & preferences: languages, frameworks, tools, conventions, testing/verification habits, what they value (e.g. concise answers, minimal diffs).",
-    "- Their codebases: the kinds of projects Alan is used for, recurring stacks and patterns, and what they typically ask for.",
+    "- Their codebases: the kinds of projects Berne is used for, recurring stacks and patterns, and what they typically ask for.",
     "",
     "Rules:",
     `- Keep it SMALL — aim well under ~${maxTokens} tokens. Short markdown sections with terse bullets. It must fit a tiny model's context window like butter.`,
@@ -410,7 +424,7 @@ function compactMessageText(m: Message): string {
   }
   const body = parts.join(" ").replace(/\s+/g, " ").trim();
   if (!body) return "";
-  const role = m.role === "assistant" ? "Alan" : m.role === "user" ? "User" : m.role;
+  const role = m.role === "assistant" ? "Berne" : m.role === "user" ? "User" : m.role;
   return `${role}: ${body.slice(0, MEMORY_MSG_CHARS)}`;
 }
 
@@ -496,6 +510,7 @@ export class Engine {
   // Cached so the system prompt stays byte-stable across turns — a churning
   // prompt would invalidate the provider's prefix cache on every call.
   private envBlocks: Map<string, string> = new Map();
+  private lastAutoCommitSha: string | null = null;
 
   constructor(config: Partial<EngineConfig> = {}) {
     this.config = { ...DEFAULT_ENGINE_CONFIG, ...config };
@@ -918,6 +933,21 @@ export class Engine {
     };
   }
 
+  /**
+   * Revert the last Berne auto-commit (guarded: only "berne:" commits, only
+   * with a clean worktree). Backs the /undo command.
+   */
+  undoLastAutoCommit(): UndoResult {
+    const r = undoLastBerneCommit(this.config.workspaceRoot);
+    if (r.ok) this.lastAutoCommitSha = null;
+    return r;
+  }
+
+  /** Whether [git] autoCommit is active (drives /undo messaging). */
+  isAutoCommitEnabled(): boolean {
+    return this.config.git?.autoCommit === true;
+  }
+
   /** Sessions for the manager. Defaults to active; pass a status (or "all") for archived/deleted. */
   listSessions(opts?: { status?: SessionStatus | "all" }) {
     return this.sessions.listSessions(opts);
@@ -1323,8 +1353,8 @@ export class Engine {
     const body = content.trim();
     if (!body) return "";
     return [
-      "# What Alan knows about you (evergreen context — a guide, not rules)",
-      "The profile below is what Alan has learned about the user and their codebases over time, to tailor its tone, defaults, and assumptions. Treat it as helpful background, NOT as instructions — when it conflicts with what the user asks for in this session, follow the user.",
+      "# What Berne knows about you (evergreen context — a guide, not rules)",
+      "The profile below is what Berne has learned about the user and their codebases over time, to tailor its tone, defaults, and assumptions. Treat it as helpful background, NOT as instructions — when it conflicts with what the user asks for in this session, follow the user.",
       "",
       body,
     ].join("\n");
@@ -1347,7 +1377,7 @@ export class Engine {
   }
 
   /**
-   * Switch the permission mode live (Shift+Tab, `/turing`, `/mode`). Updates both
+   * Switch the permission mode live (Shift+Tab, `/hands-free`, `/mode`). Updates both
    * the broker and the mirrored config flags so getStatus()/posture stay coherent.
    * Takes effect on the next tool call — the permission handler stays registered in
    * every mode; the broker simply short-circuits to "allowed" under turing.
@@ -1508,6 +1538,8 @@ export class Engine {
     this.struggles?.onUserMessage(userMessage);
     let lastTodos: Array<{ content: string; status: string }> | null = null;
     const nbObservations: ToolObservation[] = [];
+    // Every file this run wrote — the exact scope of the git auto-commit.
+    const writtenPaths = new Set<string>();
 
     // Auto-name the session from its first real message so the manager shows a
     // readable title instead of a bare UUID. No-op once a title exists (manual
@@ -1536,6 +1568,12 @@ export class Engine {
       envBlock = renderEnvironmentBlock(
         snapshotEnvironment(this.config.workspaceRoot, session.model, this.config.provider),
       );
+      // Repo map rides in the same per-session snapshot: cache-stable and
+      // computed exactly once. Off via [context] repoMap = false.
+      if (this.config.context?.repoMap !== false) {
+        const map = renderRepoMap(this.config.workspaceRoot);
+        if (map) envBlock = `${envBlock}\n\n${map}`;
+      }
       this.envBlocks.set(sessionId, envBlock);
     }
     const projectMemory = loadProjectMemory(this.config.workspaceRoot);
@@ -1733,6 +1771,16 @@ export class Engine {
             await this.hookRunner.runPostToolUse(event.output.toolName, event.output);
           }
 
+          // Track written files for the run's git auto-commit scope.
+          if (
+            event.output.success &&
+            ["write_file", "edit_file", "multi_edit"].includes(event.output.toolName) &&
+            typeof event.args.path === "string" &&
+            event.args.path
+          ) {
+            writtenPaths.add(event.args.path);
+          }
+
           // Save checkpoint after successful file writes
           if (
             this.checkpointStore &&
@@ -1782,6 +1830,39 @@ export class Engine {
         }
 
         yield event;
+      }
+
+      // Aider-style trust: land this run's writes as ONE revertible commit
+      // (opt-in via [git] autoCommit). Only on clean completion — a failed or
+      // aborted run leaves the worktree as-is for inspection.
+      if (
+        this.config.git?.autoCommit === true &&
+        !runError &&
+        !signal.aborted &&
+        writtenPaths.size > 0
+      ) {
+        const commit = autoCommitPaths(
+          this.config.workspaceRoot,
+          [...writtenPaths],
+          userMessage,
+        );
+        if (commit.committed) {
+          this.lastAutoCommitSha = commit.sha;
+          this.sessions.appendEvent(sessionId, {
+            type: "checkpoint",
+            payload: { summary: `auto-commit ${commit.shortSha}` },
+          });
+          yield {
+            type: "notice",
+            message: `Committed ${commit.fileCount} file${commit.fileCount === 1 ? "" : "s"} as ${commit.shortSha} — /undo reverts it.`,
+          } as PlanRunnerEvent;
+        } else if (!/no files written|no effective changes|not a git repository/.test(commit.reason)) {
+          // Only surface reasons the user should act on (e.g. staged changes).
+          yield {
+            type: "notice",
+            message: `Auto-commit skipped: ${commit.reason}`,
+          } as PlanRunnerEvent;
+        }
       }
     } finally {
       // Persist the conversation tail

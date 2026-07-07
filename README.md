@@ -1,12 +1,14 @@
-# Alan
+# Berne
 
 > A local-first, sandboxed, multi-provider agentic coding assistant — a headless engine with CLI and desktop surfaces.
 
-**Status:** early, active development. The engine, CLI, tool suite, and evals work end-to-end; interfaces are still evolving and not all blueprint features are built yet.
+**Status:** early, active development. The engine, CLI, tool suite, and evals work end-to-end; interfaces are still evolving and not all blueprint features are built yet. Current release: **Berne v0.1**.
 
-## What is Alan?
+> _Berne is the product name. **Alan** is the internal codename you'll still see in package names (`@alan/*`), the `~/.alan` data directory, and the `alan-tools` binary — none of it user-facing._
 
-Alan is an agentic coding assistant built around a reusable **engine** (TypeScript) that runs the
+## What is Berne?
+
+Berne is an agentic coding assistant built around a reusable **engine** (TypeScript) that runs the
 agent loop, manages context, enforces permissions and sandboxing, and executes tools. The engine is
 the product — the CLI is one client, a Tauri desktop app is another, and an MCP-server wrapper is
 planned. It is multi-provider (including a fully local path via Ollama) and built to be auditable for
@@ -74,36 +76,46 @@ The engine ⇆ client separation is intentional: the same engine powers the CLI,
 
 ## Install
 
-```bash
-bun install
-# optional native tools (faster file ops); the CLI also works without it
-cargo build --release -p alan-tools
-```
-
-Or use the installer script:
+The installer compiles a standalone CLI + the Rust tools binary into `~/.alan/bin` and
+exposes them as the **`berne`** command:
 
 ```bash
 ./scripts/install.sh
 ```
 
+Then add `~/.alan/bin` to your PATH and just type `berne`:
+
+```bash
+export PATH="$HOME/.alan/bin:$PATH"    # add to ~/.zshrc or ~/.bashrc, then reload
+berne
+```
+
+Or run straight from the source tree without installing:
+
+```bash
+bun install
+cargo build --release -p alan-tools    # optional native tools; the CLI also works without it
+./bin/berne
+```
+
 ## Quickstart
 
-Alan defaults to a **free model (Gemini 2.5 Flash)**. Grab a free
+Berne defaults to a **free model (Gemini 2.5 Flash)**. Grab a free
 [Google AI Studio key](https://aistudio.google.com/apikey), then:
 
 ```bash
 export GOOGLE_API_KEY=...     # free tier — or put it in .env (Bun auto-loads it)
-./bin/alan                    # or: bun packages/orchestrator/src/bin/alan-cli.ts
+berne                         # or, from the source tree: ./bin/berne
 ```
 
 Other **free** options:
 
 ```bash
 export OPENROUTER_API_KEY=...                                   # free models on OpenRouter
-bun packages/orchestrator/src/bin/alan-cli.ts -p openrouter -m deepseek/deepseek-v4-flash:free
+berne -p openrouter -m deepseek/deepseek-v4-flash:free
 
 export OLLAMA_HOST=http://localhost:11434                       # fully local / offline
-bun packages/orchestrator/src/bin/alan-cli.ts -p ollama -m llama3
+berne -p ollama -m llama3
 ```
 
 Paid top-tier (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`) is **optional** — only needed

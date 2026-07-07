@@ -85,7 +85,7 @@ pub fn execute(input: GrepInput, workspace_root: &Path) -> Result<GrepOutput, To
     let mut matches = Vec::new();
     let mut total_matches = 0;
 
-    let files = collect_files(&canonical, &glob_matcher);
+    let files = collect_files(&canonical, &workspace_canonical, &glob_matcher);
 
     for file_path in files {
         let content = match fs::read_to_string(&file_path) {
@@ -158,8 +158,20 @@ fn build_pattern(
     Regex::new(&regex_str).map_err(|e| ToolError::InvalidArgs(format!("Invalid regex: {e}")))
 }
 
+/// Directories that are almost never useful to grep and can be huge.
+const SKIP_DIRS: &[&str] = &[
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    "coverage",
+    "vendor",
+    "__pycache__",
+];
+
 fn collect_files(
     root: &Path,
+    workspace_root: &Path,
     glob_matcher: &Option<globset::GlobMatcher>,
 ) -> Vec<std::path::PathBuf> {
     if root.is_file() {
@@ -175,16 +187,34 @@ fn collect_files(
             }
             // Skip hidden directories and common non-text dirs
             let name = e.file_name().to_string_lossy();
-            !name.starts_with('.') && name != "node_modules" && name != "target"
+            !name.starts_with('.') && !SKIP_DIRS.contains(&name.as_ref())
         })
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
         .filter(|e| {
-            if let Some(matcher) = glob_matcher {
-                matcher.is_match(e.path().file_name().unwrap_or_default())
-            } else {
-                true
+            let Some(matcher) = glob_matcher else {
+                return true;
+            };
+            // Match path globs ("src/**/*.rs") against the path relative to
+            // the workspace AND the search root, plus plain name globs
+            // ("*.rs") against the basename. Matching only the basename (the
+            // old behavior) made every path-shaped glob return zero matches —
+            // which the model reads as "the code doesn't exist".
+            let p = e.path();
+            if matcher.is_match(p.file_name().unwrap_or_default()) {
+                return true;
             }
+            if let Ok(rel) = p.strip_prefix(workspace_root) {
+                if matcher.is_match(rel) {
+                    return true;
+                }
+            }
+            if let Ok(rel) = p.strip_prefix(root) {
+                if matcher.is_match(rel) {
+                    return true;
+                }
+            }
+            false
         })
         .map(|e| e.into_path())
         .collect()
@@ -222,6 +252,49 @@ mod tests {
         assert_eq!(output.total_matches, 1);
         assert_eq!(output.matches[0].line_number, 2);
         assert!(output.matches[0].content.contains("println"));
+    }
+
+    #[test]
+    fn path_glob_matches_nested_files() {
+        let tmp = TempDir::new().unwrap();
+        fs::create_dir_all(tmp.path().join("src/deep")).unwrap();
+        fs::write(tmp.path().join("src/deep/mod.rs"), "needle here\n").unwrap();
+        fs::write(tmp.path().join("top.rs"), "needle here\n").unwrap();
+        fs::write(tmp.path().join("src/deep/skip.txt"), "needle here\n").unwrap();
+
+        // A path-shaped glob must match nested files (old code matched only
+        // the basename, so "src/**/*.rs" returned zero results).
+        let output = execute(
+            GrepInput {
+                pattern: "needle".to_string(),
+                path: None,
+                glob: Some("src/**/*.rs".to_string()),
+                regex: Some(false),
+                case_insensitive: None,
+                max_results: None,
+                context_lines: None,
+            },
+            tmp.path(),
+        )
+        .unwrap();
+        assert_eq!(output.total_matches, 1);
+        assert!(output.matches[0].file.contains("mod.rs"));
+
+        // Plain name globs still work against the basename anywhere.
+        let output = execute(
+            GrepInput {
+                pattern: "needle".to_string(),
+                path: None,
+                glob: Some("*.rs".to_string()),
+                regex: Some(false),
+                case_insensitive: None,
+                max_results: None,
+                context_lines: None,
+            },
+            tmp.path(),
+        )
+        .unwrap();
+        assert_eq!(output.total_matches, 2);
     }
 
     #[test]

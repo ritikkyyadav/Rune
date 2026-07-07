@@ -66,6 +66,7 @@ const { values, positionals } = parseArgs({
     sign: { type: "boolean", default: false },
     out: { type: "string" },
     help: { type: "boolean", short: "h", default: false },
+    version: { type: "boolean", short: "v", default: false },
     tui: { type: "boolean", default: false },
     classic: { type: "boolean", default: false },
     fullscreen: { type: "boolean", default: false },
@@ -79,23 +80,30 @@ const { values, positionals } = parseArgs({
 const command = positionals[0] ?? "chat";
 
 // Single version string — stamped on every black-box incident so regressions
-// are queryable per release (`alan incidents top --by-version`).
-const ALAN_VERSION = "0.1.0";
+// are queryable per release. Mirrors the public brand version (Berne v0.1).
+const ALAN_VERSION = PRODUCT_VERSION;
+
+// ─── Top-level --version ───
+
+if (values.version) {
+  process.stdout.write(`${PRODUCT_LABEL}\n`);
+  process.exit(0);
+}
 
 // ─── Top-level --help ───
 
 if (values.help) {
   process.stdout.write(
-    `\n  alan — AI coding agent\n\n` +
+    `\n  ${PRODUCT_LABEL} — AI coding agent\n\n` +
       `  Usage:\n` +
-      `    alan [chat]                  Start chatting — offers to resume recent work (Enter = new)\n` +
-      `    alan --new                   Skip the picker and start a fresh session\n` +
-      `    alan resume [sessionId]      Resume a session (no id → interactive picker)\n` +
-      `    alan list [--all]            List stored sessions (--all includes archived)\n` +
-      `    alan export <sessionId>      Export a session transcript\n` +
-      `    alan doctor                  Black-box health: recent incidents, crash sentinel, recorder state\n` +
-      `    alan incidents [sub]         Browse recorded failures — list | show <id> | top [--by-version] | export\n` +
-      `    alan notebook [sub]          Learned tactics notebook — list | show <id> | rm <id> | export\n\n` +
+      `    berne [chat]                  Start chatting — offers to resume recent work (Enter = new)\n` +
+      `    berne --new                   Skip the picker and start a fresh session\n` +
+      `    berne resume [sessionId]      Resume a session (no id → interactive picker)\n` +
+      `    berne list [--all]            List stored sessions (--all includes archived)\n` +
+      `    berne export <sessionId>      Export a session transcript\n` +
+      `    berne doctor                  Black-box health: recent incidents, crash sentinel, recorder state\n` +
+      `    berne incidents [sub]         Browse recorded failures — list | show <id> | top [--by-version] | export\n` +
+      `    berne notebook [sub]          Learned tactics notebook — list | show <id> | rm <id> | export\n\n` +
       `  Export options:\n` +
       `    --format md|json             Output format (default: md)\n` +
       `    --sign                       Sign the export with Ed25519\n` +
@@ -106,9 +114,9 @@ if (values.help) {
       `    -w, --workspace <path>       Workspace root directory\n` +
       `    -r, --resume <sessionId>     Resume an existing session\n` +
       `    -n, --new                    Start a fresh session (skip the resume picker)\n` +
-      `    --yolo                       Start in Turing (bypass) mode — skip all permission prompts\n` +
+      `    --yolo                       Start in Hands-Free (bypass) mode — skip all permission prompts\n` +
       `    --trust                      Start in auto mode — approve in-workspace edits & bash (outside still prompts)\n` +
-      `                                 (Shift+Tab cycles confirm → auto → Turing live; also /mode, /turing)\n` +
+      `                                 (Shift+Tab cycles confirm → auto → Hands-Free live; also /mode, /hands-free)\n` +
       `    --planner                    Enable planner+executor mode\n` +
       `    --classic                    Plain readline prompt (default is the pinned composer)\n` +
       `    --tui                        Force the Codex-style pinned composer\n` +
@@ -263,6 +271,7 @@ import {
   TERMINAL_THEME_RESET,
 } from "./colors";
 import { loadSavedTheme, resolveInitialTheme, saveTheme } from "./ui/theme-store";
+import { PRODUCT_VERSION, PRODUCT_LABEL } from "./ui/brand";
 
 /** A compact "2h ago" style age for the session list and pickers. */
 function relTime(iso: string): string {
@@ -499,6 +508,8 @@ async function main() {
     research: config.research,
     memory: config.memory,
     tiers: config.tiers,
+    git: config.git,
+    context: config.context,
     // Black box: on by default for the real CLI (config [diagnostics] can turn
     // it off). Unit tests construct the Engine directly and stay hermetic.
     blackbox:
@@ -747,7 +758,7 @@ async function main() {
       sessionId,
       launchPick,
       workspaceRoot,
-      version: "0.1.0",
+      version: ALAN_VERSION,
       yoloMode: values.yolo as boolean,
       trustWorkspace,
       customCommands,
@@ -788,7 +799,7 @@ async function main() {
       provider: engine.getProvider(),
       sessionId,
       workspace: workspaceRoot,
-      version: "0.1.0",
+      version: ALAN_VERSION,
       sandbox: config.sandbox?.enabled ?? false,
       recentSessions,
     }) + "\n",
@@ -910,9 +921,9 @@ async function main() {
       });
     });
 
-  // Register in every mode. The broker short-circuits to "allowed" under Turing, so the
+  // Register in every mode. The broker short-circuits to "allowed" under Hands-Free, so the
   // handler is simply never called there — but stays wired so cycling back to confirm/auto
-  // (Shift+Tab, /mode, /turing) restores prompts without re-registration.
+  // (Shift+Tab, /mode, /hands-free) restores prompts without re-registration.
   engine.setPermissionHandler(permissionHandler);
 
   // ─── Question Handler (ask_user tool) ───
@@ -969,15 +980,16 @@ async function main() {
     ["/deepresearch", "Deep research — multi-round, long-form"],
     ["/cost", "Session cost"],
     ["/compress", "Summarize & shrink context"],
+    ["/undo", "Revert the last Berne auto-commit ([git] autoCommit)"],
     ["/memory", "System memory — your evergreen profile (update/add/edit/cadence)"],
     ["/notebook", "Learned tactics active for this workspace"],
     ["/bug", "Flag a problem — records the flight trail to the black box"],
     ["/plan", "Toggle plan mode"],
-    ["/turing", "Turing — toggle bypass mode (shift+tab)"],
-    ["/mode", "Cycle permission mode (confirm/auto/turing)"],
+    ["/hands-free", "Hands-Free — toggle bypass mode (shift+tab)"],
+    ["/mode", "Cycle permission mode (confirm/auto/hands-free)"],
     ["/rewind", "Roll back the conversation"],
     ["/help", "Show all commands"],
-    ["/quit", "Exit Alan"],
+    ["/quit", "Exit Berne"],
   ];
 
   function showPrompt() {
@@ -1004,7 +1016,7 @@ async function main() {
   }
 
   /**
-   * Switch the permission mode and re-render the prompt (Shift+Tab / /turing / /mode).
+   * Switch the permission mode and re-render the prompt (Shift+Tab / /hands-free / /mode).
    * The buffer the user is mid-typing is preserved across the reprint.
    */
   function cycleMode(target?: ReturnType<typeof engine.getPermissionMode>) {
@@ -1047,7 +1059,7 @@ async function main() {
     const mem = engine.getSystemMemory();
     if (mem.enabled && !mem.content.trim() && mem.scheduleLabel === "manual") {
       process.stdout.write(
-        `  ${faint("✦ tip: Alan can learn your style & codebases over time — ")}${info("/memory")}${faint(" (auto-update: /memory weekly)")}\n`,
+        `  ${faint("✦ tip: Berne can learn your style & codebases over time — ")}${info("/memory")}${faint(" (auto-update: /memory weekly)")}\n`,
       );
     }
     // Auto-refresh in the background when the chosen cadence is due. Non-blocking;
@@ -1143,12 +1155,13 @@ async function main() {
         ["/deepresearch", "Deep research — multi-round, long-form"],
         ["/cost", "Session cost"],
         ["/compress", "Summarize & shrink context"],
+    ["/undo", "Revert the last Berne auto-commit ([git] autoCommit)"],
         ["/memory", "System memory — /memory [update|add|edit|clear|daily|3d|weekly|manual]"],
         ["/notebook", "Learned tactics active for this workspace"],
         ["/bug", "Flag a problem — records the current flight trail to the black box"],
         ["/plan", "Toggle plan mode"],
-        ["/turing", "Turing — toggle bypass mode (shift+tab)"],
-        ["/mode", "Cycle permission mode (confirm/auto/turing)"],
+        ["/hands-free", "Hands-Free — toggle bypass mode (shift+tab)"],
+        ["/mode", "Cycle permission mode (confirm/auto/hands-free)"],
         ["/rewind", "Roll back the conversation"],
         ["/help", "This reference"],
         ["/quit", "Exit"],
@@ -1183,7 +1196,7 @@ async function main() {
             trustWorkspace: status.trustWorkspace,
             permissionMode: status.permissionMode,
             registeredProviders: status.registeredProviders,
-            version: "0.1.0",
+            version: ALAN_VERSION,
           }) +
           "\n\n",
       );
@@ -1341,8 +1354,11 @@ async function main() {
       const themes = listThemes();
       const arg = input.slice("/theme".length).trim().toLowerCase();
       if (arg) {
-        if (setTheme(arg)) {
-          saveTheme(arg);
+        // Only the two production themes are selectable (listThemes()); anything else
+        // is reported as unknown even though its palette still exists in the source.
+        const match = themes.find((t) => t.name === arg || t.label.toLowerCase() === arg);
+        if (match && setTheme(match.name)) {
+          saveTheme(match.name);
           applyTerminalTheme();
           process.stdout.write(`  ${green("✓")} theme set to ${brass(getTheme().label)}\n\n`);
         } else {
@@ -1604,11 +1620,30 @@ async function main() {
       return;
     }
 
+    if (input === "/undo") {
+      const r = engine.undoLastAutoCommit();
+      if (r.ok) {
+        process.stdout.write(
+          `  ${green("✓")} ${text(`Reverted ${r.undoneSha}`)} ${dim(`(${r.subject})`)}\n\n`,
+        );
+      } else {
+        process.stdout.write(`  ${dim(`Cannot undo — ${r.reason}`)}\n`);
+        if (!engine.isAutoCommitEnabled()) {
+          process.stdout.write(
+            `  ${faint("Tip: set [git] autoCommit = true in ~/.alan/config.toml so every run lands as a revertible commit.")}\n`,
+          );
+        }
+        process.stdout.write("\n");
+      }
+      showPrompt();
+      return;
+    }
+
     if (input === "/notebook") {
       const entries = engine.getNotebookEntries(10);
       if (entries.length === 0) {
         process.stdout.write(
-          `  ${dim("Notebook is empty for this workspace — Alan fills it as it verifies how your repos work.")}\n\n`,
+          `  ${dim("Notebook is empty for this workspace — Berne fills it as it verifies how your repos work.")}\n\n`,
         );
       } else {
         process.stdout.write(`\n  ${dim("§ NOTEBOOK — active for this workspace")}\n\n`);
@@ -1755,7 +1790,7 @@ async function main() {
         process.stdout.write(`  ${green("✓")} ${text("memory cadence:")} ${info(verb)}\n`);
         if (res.label !== "manual") {
           process.stdout.write(
-            `  ${faint("Alan will refresh your profile in the background when it's due.")}\n`,
+            `  ${faint("Berne will refresh your profile in the background when it's due.")}\n`,
           );
         }
         process.stdout.write("\n");
@@ -1774,7 +1809,7 @@ async function main() {
         `  ${faint(`cadence: ${mem.scheduleLabel} · ~${fmtTok(mem.tokens)}/${fmtTok(mem.maxTokens)} tokens · updated ${last} · dreamed ${dreamt}`)}\n\n`,
       );
       if (!mem.content.trim()) {
-        process.stdout.write(`  ${dim("Empty — Alan hasn't built your profile yet.")}\n`);
+        process.stdout.write(`  ${dim("Empty — Berne hasn't built your profile yet.")}\n`);
         process.stdout.write(
           `  ${dim("Seed it with ")}${info("/memory update")}${dim(", jot a note with ")}${info("/memory add <…>")}${dim(",")}\n`,
         );
@@ -1899,15 +1934,16 @@ async function main() {
       engine.setPlannerMode(on);
       process.stdout.write(
         `  ${green("✓")} plan mode ${on ? "on" : "off"} ${dim(
-          on ? "— Alan drafts a step plan before executing" : "— flat agent loop",
+          on ? "— Berne drafts a step plan before executing" : "— flat agent loop",
         )}\n\n`,
       );
       showPrompt();
       return;
     }
 
-    if (input === "/turing") {
-      // Explicit toggle into the bypass mode, or back out to confirm.
+    if (input === "/hands-free" || input === "/turing") {
+      // Explicit toggle into the bypass mode, or back out to confirm. (`/turing` is a
+      // hidden back-compat alias for the same Hands-Free toggle.)
       const target = engine.getPermissionMode() === "turing" ? "confirm" : "turing";
       engine.setPermissionMode(target);
       process.stdout.write(permissionModeBanner(target) + "\n");
@@ -1916,14 +1952,16 @@ async function main() {
     }
 
     if (input === "/mode" || input.startsWith("/mode ")) {
-      const arg = input.slice("/mode".length).trim().toLowerCase();
+      const raw = input.slice("/mode".length).trim().toLowerCase();
+      // "hands-free" is the public name for the internal "turing" bypass mode.
+      const arg = raw === "hands-free" || raw === "handsfree" ? "turing" : raw;
       const valid = ["confirm", "auto", "turing"] as const;
       if (arg && (valid as readonly string[]).includes(arg)) {
         engine.setPermissionMode(arg as (typeof valid)[number]);
         process.stdout.write(permissionModeBanner(arg) + "\n");
-      } else if (arg) {
+      } else if (raw) {
         process.stdout.write(
-          `  ${warn("Usage:")} ${info("/mode")} ${dim("[confirm|auto|turing] — empty cycles")}\n`,
+          `  ${warn("Usage:")} ${info("/mode")} ${dim("[confirm|auto|hands-free] — empty cycles")}\n`,
         );
       } else {
         process.stdout.write(permissionModeBanner(engine.cyclePermissionMode()) + "\n");
@@ -2211,7 +2249,7 @@ async function main() {
                   .replace(/^-+|-+$/g, "")
                   .slice(0, 50) || "research";
               const file = join(dir, `${new Date().toISOString().slice(0, 10)}-${slug}.md`);
-              const body = `# Research: ${plan.question}\n\n_Generated by Alan · ${new Date().toISOString()}_\n\n${report.markdown}\n`;
+              const body = `# Research: ${plan.question}\n\n_Generated by Berne · ${new Date().toISOString()}_\n\n${report.markdown}\n`;
               writeFileSync(file, body);
               const shown = file.startsWith(workspaceRoot)
                 ? file.slice(workspaceRoot.length).replace(/^[/\\]/, "")

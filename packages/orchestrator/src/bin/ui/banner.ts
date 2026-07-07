@@ -5,6 +5,7 @@
 
 import * as os from "os";
 import { bold, text, muted, faint, info, ok } from "./theme";
+import { PRODUCT_NAME } from "./brand";
 
 function shortPath(p: string): string {
   const home = os.homedir();
@@ -22,9 +23,9 @@ export interface BannerOptions {
   recentSessions?: unknown[];
 }
 
-/** The wordmark: `Alan▮` — bold name, signal-teal block cursor. */
+/** The wordmark: `Berne▮` — bold name, signal-teal block cursor. */
 export function wordmark(): string {
-  return `${bold(text("Alan"))}${ok("▮")}`;
+  return `${bold(text(PRODUCT_NAME))}${ok("▮")}`;
 }
 
 export function renderBanner(opts: BannerOptions): string {

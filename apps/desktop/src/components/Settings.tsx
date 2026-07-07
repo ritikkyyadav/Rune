@@ -521,7 +521,7 @@ export function Settings({ status, onSwitchModel, onClose }: SettingsProps) {
               style={styles.memoryArea}
               value={memoryDraft}
               onChange={(e) => setMemoryDraft(e.target.value)}
-              placeholder="Empty — click Refresh to let Alan learn from your recent sessions, or write your own notes here."
+              placeholder="Empty — click Refresh to let Berne learn from your recent sessions, or write your own notes here."
               spellCheck={false}
             />
             <div style={styles.hint}>

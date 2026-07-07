@@ -42,7 +42,7 @@ describe("TurnRenderer — the work hides, the answer stays out", () => {
     h.turn.onEvent({ type: "turn_complete", totalTurns: 1 });
     h.turn.finish();
     const out = h.plain();
-    expect(out).toContain("Alan▮");
+    expect(out).toContain("Berne▮");
     expect(out).toContain("Just an answer.");
     expect(out).not.toContain("⬢ done");
     expect(out).not.toContain("ctrl+r");
@@ -151,7 +151,7 @@ describe("TurnRenderer — the work hides, the answer stays out", () => {
     h.turn.onEvent({ type: "turn_complete", totalTurns: 2 });
     h.turn.finish();
     const out = h.plain();
-    expect(out).toContain("Alan▮");
+    expect(out).toContain("Berne▮");
     expect(out).toContain("Done — everything works.");
   });
 
@@ -164,7 +164,7 @@ describe("TurnRenderer — the work hides, the answer stays out", () => {
     h.turn.onEvent({ type: "text_delta", text: "Actually fixed now." });
     h.turn.finish();
     const out = h.plain();
-    const answerIdx = out.indexOf("Alan▮");
+    const answerIdx = out.indexOf("Berne▮");
     expect(out).toContain("All done!");
     expect(out.slice(answerIdx)).toContain("Actually fixed now.");
     expect(out.slice(answerIdx)).not.toContain("All done!");
@@ -285,7 +285,7 @@ describe("renderReplay — resumed sessions read like they did live", () => {
     expect(out).toContain("▌ fix the bug");
     expect(out).toContain("Looking at the file.");
     expect(out).toContain("more (replayed)");
-    expect(out).toContain("Alan▮");
+    expect(out).toContain("Berne▮");
     expect(out).toContain("Fixed it — the handler was missing.");
   });
 

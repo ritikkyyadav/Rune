@@ -3,6 +3,7 @@
 import * as os from "os";
 import { bold, text, muted, faint, info, warn } from "./theme";
 import { box, kv } from "./render";
+import { PRODUCT_NAME, PRODUCT_VERSION } from "./brand";
 
 function shortPath(p: string): string {
   const home = os.homedir();
@@ -26,13 +27,13 @@ export interface StatusView {
 
 function permissionsLabel(s: StatusView): string {
   const mode = s.permissionMode ?? (s.yoloMode ? "turing" : s.trustWorkspace ? "auto" : "confirm");
-  if (mode === "turing") return bold(warn("⚡ Turing · no prompts"));
+  if (mode === "turing") return bold(warn("⚡ Hands-Free · no prompts"));
   if (mode === "auto") return warn("auto · in-workspace auto-approved");
   return text("confirm · on-request");
 }
 
 export function renderStatus(s: StatusView): string {
-  const header = `${faint(">_")} ${bold(text("Alan"))}  ${muted("(v" + (s.version ?? "0.1.0") + ")")}`;
+  const header = `${faint(">_")} ${bold(text(PRODUCT_NAME))}  ${muted("(v" + (s.version ?? PRODUCT_VERSION) + ")")}`;
 
   const rows: [string, string][] = [
     ["Model", info(s.model)],

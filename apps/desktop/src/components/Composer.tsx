@@ -182,7 +182,7 @@ export function Composer({ onSend, disabled, isProcessing = false, onAbort }: Co
           onKeyDown={handleKeyDown}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
-          placeholder={isProcessing ? "Waiting for response..." : "Ask Alan anything..."}
+          placeholder={isProcessing ? "Waiting for response..." : "Ask Berne anything..."}
           rows={1}
           disabled={disabled}
         />

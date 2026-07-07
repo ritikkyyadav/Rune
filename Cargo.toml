@@ -57,3 +57,5 @@ toml = "0.8"
 dirs = "6"
 # Regex
 regex = "1"
+# Unix process-group control
+libc = "0.2"

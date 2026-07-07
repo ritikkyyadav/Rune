@@ -166,6 +166,11 @@ export type StreamEvent =
   | { type: "tool_use_stop"; toolCallId: string; toolInput: Record<string, unknown> }
   | { type: "message_stop"; stopReason: StopReason; usage: TokenUsage }
   | { type: "notice"; message: string }
+  // The in-flight response was abandoned mid-stream (provider error after
+  // partial output) and will be re-streamed from scratch — consumers MUST
+  // discard everything accumulated for the current assistant message, or the
+  // retry duplicates text and tool calls in the transcript.
+  | { type: "stream_reset" }
   // `retryable: false` marks a terminal failure (bad key, no credits, every
   // provider rate-limited) that re-running won't fix — the agent loop surfaces
   // it immediately instead of retrying through maxConsecutiveErrors.

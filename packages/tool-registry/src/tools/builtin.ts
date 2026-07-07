@@ -15,6 +15,7 @@ import { createTodoWriteHandler } from "./todo-write";
 import { createGlobHandler } from "./glob";
 import { createMultiEditHandler } from "./multi-edit";
 import { createN8nTriggerHandler } from "./n8n";
+import { withSyntaxCheck } from "./diagnostics";
 
 const READ_FILE_SCHEMA: ToolSchema = {
   name: "read_file",
@@ -120,12 +121,20 @@ const BASH_SCHEMA: ToolSchema = {
   name: "bash",
   version: "0.1.0",
   description:
-    "Execute a bash command in the workspace directory. Returns stdout, stderr, and exit code. Has a 120s default timeout. For long-running commands (dev servers, watch builds), set run_in_background: true — you get a shell_id immediately; poll bash_output for output and kill_shell to stop it.",
+    "Execute a bash command in the workspace directory. Returns stdout, stderr, and exit code. Has a 120s default timeout. " +
+    "Commands run in an OS sandbox with NO network access by default. For commands that need the internet or touch files outside the workspace " +
+    "(npm/pip/cargo/brew install, git push/pull/fetch/clone, curl/wget, gh), set network: true — otherwise they fail with DNS/connection errors. " +
+    "For long-running commands (dev servers, watch builds), set run_in_background: true — you get a shell_id immediately; poll bash_output for output and kill_shell to stop it.",
   inputSchema: {
     type: "object",
     properties: {
       command: { type: "string", description: "Bash command to execute" },
       timeout_ms: { type: "number", description: "Timeout in milliseconds" },
+      network: {
+        type: "boolean",
+        description:
+          "Run OUTSIDE the sandbox with full network and filesystem access. Required for package installs, git remote operations, and any command that talks to the internet. Prompts the user for approval unless they enabled Hands-Free mode.",
+      },
       run_in_background: {
         type: "boolean",
         description:
@@ -200,6 +209,9 @@ export function registerBuiltinTools(registry: ToolRegistry, binaryPath: string)
   for (const { schema, subcommand } of ALL_SCHEMAS) {
     let handler = createRustToolHandler(schema, subcommand, binaryPath);
     if (schema.name === "bash") handler = withBackgroundSupport(handler, shells);
+    // Write tools get instant post-edit syntax feedback (inside freshness so
+    // the added field never disturbs hash extraction).
+    if (schema.category === "write") handler = withSyntaxCheck(handler);
     const opts = FRESHNESS_TOOLS[schema.name];
     registry.register(opts ? withFreshness(handler, freshness, opts) : handler);
   }
@@ -212,6 +224,6 @@ export function registerBuiltinTools(registry: ToolRegistry, binaryPath: string)
   registry.register(createAstQueryHandler());
   registry.register(createTodoWriteHandler());
   registry.register(createGlobHandler());
-  registry.register(withFreshness(createMultiEditHandler(), freshness));
+  registry.register(withFreshness(withSyntaxCheck(createMultiEditHandler()), freshness));
   registry.register(createN8nTriggerHandler());
 }

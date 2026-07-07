@@ -12,9 +12,9 @@ import {
   type Pigment,
   type SlotName,
   type Theme,
-  THEMES,
   DEFAULT_THEME,
   findTheme,
+  productionThemes,
 } from "./themes";
 
 // ─── Capability detection ───
@@ -94,9 +94,10 @@ export function getTheme(): Theme {
   return active;
 }
 
-/** All bundled themes, in display order. */
+/** The themes offered to the user, in display order. Production ships the two
+ *  monochrome themes; the rest of THEMES stays in the source but is never listed. */
 export function listThemes(): Theme[] {
-  return THEMES;
+  return productionThemes();
 }
 
 /** Format a string in a named theme's slot *without* changing the active theme. */

@@ -219,7 +219,7 @@ function printIncident(r: IncidentRecord): void {
     for (const [k, v] of ctx) console.log(`    ${faint(`${k}: ${String(v)}`)}`);
   }
   if (r.trail.length > 0) {
-    console.log(`\n  ${dim("trail (what Alan did leading up to this)")}`);
+    console.log(`\n  ${dim("trail (what Berne did leading up to this)")}`);
     for (const t of r.trail) {
       console.log(`    ${dim(String(t.seq).padStart(3))} ${info(t.kind.padEnd(16))} ${faint(t.summary)}`);
     }

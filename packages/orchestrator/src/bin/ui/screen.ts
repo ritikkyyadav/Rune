@@ -31,6 +31,24 @@ export class BottomRegion {
     this.bgFill = seq;
   }
 
+  /**
+   * Last-resort height clamp. All of this class's cursor math is *relative* (`toTop()` walks up
+   * `caretRow` rows), which silently breaks the moment the block is taller than the viewport: drawing
+   * it scrolls the terminal, the top rows slide into scrollback, and the next `toTop()` can no longer
+   * reach the true top — so the old block is never cleared and successive frames interleave (the
+   * "garbled composer" failure seen under heavy streaming). Guaranteeing the block always fits within
+   * `rows-1` keeps that invariant intact. Callers should already trim to fit; this just makes it
+   * impossible to violate. Keeps the tail (composer + status) — the rows the user is actually using.
+   */
+  private fit(lines: string[], caretRow: number): { lines: string[]; caretRow: number } {
+    const rows = process.stdout.rows || 0;
+    if (rows < 2) return { lines, caretRow }; // unknown/absurd size — trust the caller
+    const max = rows - 1; // leave one row so a full-height block never triggers a scroll
+    if (lines.length <= max) return { lines, caretRow };
+    const drop = lines.length - max;
+    return { lines: lines.slice(drop), caretRow: Math.max(0, caretRow - drop) };
+  }
+
   /** Sequence to move the cursor from its parked caret cell to the block's top-left. */
   private toTop(): string {
     return (this.caretRow > 0 ? `\x1b[${this.caretRow}A` : "") + "\r";
@@ -48,6 +66,7 @@ export class BottomRegion {
 
   /** Draw or redraw the pinned block in place. */
   render(lines: string[], caretRow = lines.length - 1, caretCol = 0): void {
+    ({ lines, caretRow } = this.fit(lines, caretRow));
     let s = HIDE;
     if (this.mounted) s += this.toTop() + this.bgFill + CLEAR_BELOW;
     s += this.place(lines, caretRow, caretCol) + SHOW;

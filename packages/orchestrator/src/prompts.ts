@@ -23,7 +23,7 @@ import { join } from "node:path";
 // (read_file, list_dir, grep, glob, write_file, edit_file, multi_edit, bash,
 // symbol_search, task, todo_write, web_search, web_fetch, skill).
 
-export const AGENT_DOCTRINE = `You are Alan, an expert software engineering agent built by Savoir Studio. You are an interactive CLI agent that helps users with coding tasks: fixing bugs, adding features, refactoring, explaining code, and running commands.
+export const AGENT_DOCTRINE = `You are Berne, an expert software engineering agent built by Savoir Studio. You are an interactive CLI agent that helps users with coding tasks: fixing bugs, adding features, refactoring, explaining code, and running commands.
 
 # Tone and style
 - Be concise, direct, and to the point. Your output renders in a monospace terminal.
@@ -59,6 +59,8 @@ When you finish work that produced or changed something runnable, your final mes
 # Tool usage policy
 - Prefer the dedicated tools over bash equivalents: grep (not \`bash grep/rg\`), glob (not \`bash find\`), read_file (not \`bash cat\`), list_dir (not \`bash ls\`), edit_file/write_file (not \`bash sed/echo >\`). The dedicated tools are faster, safer, and don't need permission prompts.
 - Reserve bash for what only a shell can do: builds, tests, package managers, git, and running programs.
+- bash runs in a sandbox with NO network access by default. For commands that need the internet or write outside the workspace — npm/pip/cargo/brew install, git push/pull/fetch/clone, curl/wget, gh — set network: true, or they fail with DNS/connection errors. Don't set it for local work (builds, tests, git status/commit).
+- Never run interactive or watch-mode commands in the foreground (git rebase -i, npx create-* prompts, vitest/jest watch mode, top): they hang until the timeout. Use non-interactive flags (--yes, --no-watch, CI=1) or run_in_background.
 - For long-running commands (dev servers, watch builds), use bash with run_in_background: true, then poll bash_output and stop with kill_shell. Never run a server in the foreground — it will block until timeout.
 - Always read a file before editing it, in this conversation. edit_file rejects stale edits; re-read the file if it changed.
 - Batch independent tool calls in a single response — e.g. read several files at once, or run grep and glob together. Independent reads execute in parallel.
@@ -155,6 +157,66 @@ export function renderEnvironmentBlock(env: EnvironmentInfo): string {
     }
   }
   return lines.join("\n");
+}
+
+// ─── Repo Map ───
+//
+// A compact file-tree of the repository, injected once per session (cache-
+// stable) so the model knows what exists without burning turns on exploratory
+// list_dir/glob calls — Aider's repo-map insight in its cheapest useful form.
+// Tracked files only (git ls-files), deterministic ordering, hard caps so a
+// monorepo can't flood the prompt.
+
+/** Stop rendering the map beyond this many tracked files (monorepo guard). */
+const REPO_MAP_MAX_FILES = 2_000;
+/** At most this many entries are listed per directory before eliding. */
+const REPO_MAP_DIR_CAP = 12;
+/** Hard character budget for the whole block (~1k tokens). */
+const REPO_MAP_MAX_CHARS = 4_000;
+
+/**
+ * Render a compact tree of the repo's tracked files, or "" when unavailable
+ * (not a git repo / git missing / repo too large). Deterministic for a given
+ * commit state — the engine snapshots it once per session for cache stability.
+ */
+export function renderRepoMap(workspaceRoot: string): string {
+  const raw = git(workspaceRoot, ["ls-files"]);
+  if (!raw) return "";
+  const files = raw.split("\n").filter(Boolean);
+  if (files.length === 0 || files.length > REPO_MAP_MAX_FILES) return "";
+
+  // Group files by directory, preserving git's sorted order.
+  const byDir = new Map<string, string[]>();
+  for (const f of files) {
+    const slash = f.lastIndexOf("/");
+    const dir = slash === -1 ? "" : f.slice(0, slash);
+    const name = slash === -1 ? f : f.slice(slash + 1);
+    let list = byDir.get(dir);
+    if (!list) byDir.set(dir, (list = []));
+    list.push(name);
+  }
+
+  const lines: string[] = [];
+  for (const dir of [...byDir.keys()].sort()) {
+    const names = byDir.get(dir)!;
+    const indent = dir === "" ? "" : "  ".repeat(dir.split("/").length);
+    if (dir !== "") lines.push(`${"  ".repeat(dir.split("/").length - 1)}${dir.split("/").pop()}/`);
+    const shown = names.slice(0, REPO_MAP_DIR_CAP);
+    for (const n of shown) lines.push(`${indent}${n}`);
+    if (names.length > shown.length) {
+      lines.push(`${indent}… +${names.length - shown.length} more`);
+    }
+  }
+
+  let body = lines.join("\n");
+  if (body.length > REPO_MAP_MAX_CHARS) {
+    body = `${body.slice(0, REPO_MAP_MAX_CHARS)}\n… (map truncated)`;
+  }
+  return [
+    "# Repository map",
+    `Tracked files (${files.length}) at session start — snapshot, not live:`,
+    body,
+  ].join("\n");
 }
 
 // ─── Project Memory (ALAN.md / CLAUDE.md / AGENTS.md) ───

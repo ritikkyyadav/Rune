@@ -81,6 +81,12 @@ export class LlmGateway {
     // Build ordered list: requested provider first, then fallbacks
     const fallbackOrder = this.getFallbackProviders(request.provider);
 
+    // Tracks whether the consumer received any events for the CURRENT
+    // assistant message. A retry/fallback after a partial stream must emit
+    // stream_reset first, or the consumer's accumulated text/tool calls get
+    // duplicated by the re-streamed response.
+    let yieldedSinceReset = false;
+
     for (const providerName of fallbackOrder) {
       const provider = this.providers.get(providerName);
       if (!provider) continue;
@@ -113,10 +119,15 @@ export class LlmGateway {
             if (event.type === "message_stop") {
               this.recordCost(adjustedRequest.model, providerName, event.usage);
             }
+            yieldedSinceReset = true;
             yield event;
           }
           return; // success — done
         } catch (err) {
+          // User abort: stop dead. Retrying or falling back on an aborted
+          // request wastes calls and delays the Esc response.
+          if (opts?.signal?.aborted) throw err;
+
           lastError = err as Error;
           lastStatus = (err as Record<string, unknown>).status as number | undefined;
 
@@ -138,12 +149,20 @@ export class LlmGateway {
           // delay means we give up cleanly instead of hanging the session.
           if (isRateLimit) {
             if (attempt >= 1 || this.getRetryAfterMs(lastError) > RATE_LIMIT_MAX_WAIT_MS) break;
+            if (yieldedSinceReset) {
+              yieldedSinceReset = false;
+              yield { type: "stream_reset" };
+            }
             await this.backoff(lastError, attempt);
             continue;
           }
 
           // Transient 5xx / network → retry with backoff; hard 4xx → stop.
           if (!this.shouldRetry(lastError, attempt)) break;
+          if (yieldedSinceReset) {
+            yieldedSinceReset = false;
+            yield { type: "stream_reset" };
+          }
           await this.backoff(lastError, attempt);
         }
       }
@@ -155,6 +174,10 @@ export class LlmGateway {
       }
 
       if (shouldFallback && nextProvider) {
+        if (yieldedSinceReset) {
+          yieldedSinceReset = false;
+          yield { type: "stream_reset" };
+        }
         const nextModel = PROVIDER_DEFAULT_MODELS[nextProvider] ?? "default";
         const why = this.failureReason(lastStatus, lastError);
         this.reportIncident({

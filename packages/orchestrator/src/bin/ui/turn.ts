@@ -23,7 +23,7 @@
 //
 //    ⬢ done · 48s · 4 tools · $0.0042              ← the record, one line
 //
-//    Alan▮
+//    Berne▮
 //    <the answer, set as markdown typography>
 //
 // While the turn runs, the TUI pins a LIVE window above the composer (via the
@@ -42,6 +42,7 @@
 // pinned window, so it streams work lines as they happen (streamWork: true).
 
 import { bold, text, muted, faint, info, accent, ok, stripAnsi, line as lineColor } from "./theme";
+import { PRODUCT_NAME } from "./brand";
 import { termWidth, wrap, truncate, visLen } from "./render";
 import { runningLabel, renderToolActivity, type TranscriptLineView } from "./activity";
 import { formatEvent, formatError } from "./events";
@@ -102,9 +103,9 @@ export function userBlock(raw: string): string {
 
 // ── the response: the statement, set down ──
 
-/** The `Alan▮` response header — wordmark + block cursor (the Savoir lockup). */
+/** The `Berne▮` response header — wordmark + block cursor (the Savoir lockup). */
 export function responseHead(): string {
-  return ` ${bold(text("Alan"))}${ok("▮")}`;
+  return ` ${bold(text(PRODUCT_NAME))}${ok("▮")}`;
 }
 
 export function responseBlock(markdown: string): string {
@@ -351,6 +352,16 @@ export class TurnRenderer {
         }
         this.activity = null;
         this.prose += ev.text;
+        this.updateLive();
+        return;
+
+      case "stream_reset":
+        // The provider stream was abandoned and is re-streaming from scratch:
+        // drop the partial prose/thinking or the retry doubles it on screen.
+        this.prose = "";
+        this.think = "";
+        this.thinkOpen = false;
+        this.activity = null;
         this.updateLive();
         return;
 
