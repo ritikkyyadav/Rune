@@ -346,7 +346,10 @@ export interface EngineConfig {
 // The agent loop clamps this to each model's real per-response output cap
 // (getMaxOutputTokens), so smaller models are unaffected.
 const MAX_TOKENS = 32000;
-const MAX_TURNS = 50;
+// 80 agentic rounds: long autonomous builds (scaffold → install → run →
+// fix → verify → polish) legitimately spend 30-50; the cap is a runaway
+// guard, not a work budget. Context compaction keeps long runs viable.
+const MAX_TURNS = 80;
 
 // Per-provider cheap-model routing now lives in @alan/shared tiers.ts
 // (PROVIDER_TIER_DEFAULTS) — resolved via Engine.resolveModelTier("light").
@@ -627,7 +630,15 @@ export class Engine {
     // by the frontend (CLI/TUI) via setQuestionHandler — the closure reads it
     // at execute time, and headless environments degrade to an instructive
     // error instead of stalling. Deliberately NOT in the sub-agent registry.
-    this.registry.register(createAskUserTool(() => this.questionHandler));
+    // In Hands-Free (turing) mode the handler is withheld even when wired:
+    // the whole point of the mode is "no human in the loop", so the tool
+    // degrades to its proceed-on-your-best-judgment error instead of parking
+    // an autonomous run on a question nobody will answer.
+    this.registry.register(
+      createAskUserTool(() =>
+        this.permissions.getMode() === "turing" ? undefined : this.questionHandler,
+      ),
+    );
 
     // interactive_dashboard: live HTML dashboards in the browser. Main
     // registry only — sub-agents are read-only investigators and must not
