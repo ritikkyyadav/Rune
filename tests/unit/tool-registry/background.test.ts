@@ -18,6 +18,17 @@ function makeInput(toolName: string, args: Record<string, unknown>): ToolCallInp
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** Poll until `check` is true or `timeoutMs` elapses (then let the caller's
+ *  own assertion report the real failure) — avoids racing a fixed sleep
+ *  against a background process's timing on a slow/loaded runner. */
+async function waitFor(check: () => boolean, timeoutMs = 5000, intervalMs = 20): Promise<void> {
+  const start = Date.now();
+  while (!check()) {
+    if (Date.now() - start > timeoutMs) return;
+    await sleep(intervalMs);
+  }
+}
+
 describe("BackgroundShellManager", () => {
   test("start → read output → completed", async () => {
     const m = new BackgroundShellManager();
@@ -32,17 +43,35 @@ describe("BackgroundShellManager", () => {
   });
 
   test("read is incremental — second read returns only new output", async () => {
+    // read() drains: each call returns only output new since the previous
+    // call. Polling it must accumulate what each poll drains rather than
+    // assume one final read sees everything — otherwise a poll iteration
+    // could silently consume "first" before the real assertion runs.
     const m = new BackgroundShellManager();
     const { shellId } = m.start("echo first; sleep 0.3; echo second", "/tmp");
-    await sleep(120);
-    const r1 = m.read(shellId);
-    expect(r1.output).toContain("first");
-    expect(r1.output).not.toContain("second");
-    expect(r1.status).toBe("running");
-    await sleep(350);
-    const r2 = m.read(shellId);
-    expect(r2.output).toContain("second");
-    expect(r2.output).not.toContain("first");
+
+    let out1 = "";
+    let status1: string | undefined;
+    await waitFor(() => {
+      const r = m.read(shellId);
+      out1 += r.output ?? "";
+      status1 = r.status;
+      return out1.includes("first");
+    });
+    expect(out1).toContain("first");
+    expect(out1).not.toContain("second");
+    expect(status1).toBe("running");
+
+    let out2 = "";
+    let status2: string | undefined;
+    await waitFor(() => {
+      const r = m.read(shellId);
+      out2 += r.output ?? "";
+      status2 = r.status;
+      return status2 !== "running";
+    });
+    expect(out2).toContain("second");
+    expect(out2).not.toContain("first");
   });
 
   test("kill terminates a running shell", async () => {
