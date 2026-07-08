@@ -191,7 +191,8 @@ fn apply_edit(
     let old_lines: Vec<&str> = old_text.split('\n').collect();
     let new_lines: Vec<&str> = new_text.split('\n').collect();
 
-    let tiers: [(MatchStrategy, fn(&str) -> &str); 2] = [
+    type NormalizeFn = fn(&str) -> &str;
+    let tiers: [(MatchStrategy, NormalizeFn); 2] = [
         (MatchStrategy::Whitespace, rtrim),
         (MatchStrategy::Indentation, str::trim),
     ];
@@ -258,7 +259,12 @@ fn locate_windows(lines: &[&str], norm_old: &[&str], norm: fn(&str) -> &str) -> 
 
 /// Replace each line-window beginning at one of `starts` (each `old_len` lines
 /// long) with `new_lines`, leaving all other lines untouched.
-fn splice_windows(lines: &[&str], starts: &[usize], old_len: usize, new_lines: &[&str]) -> Vec<String> {
+fn splice_windows(
+    lines: &[&str],
+    starts: &[usize],
+    old_len: usize,
+    new_lines: &[&str],
+) -> Vec<String> {
     let start_set: std::collections::HashSet<usize> = starts.iter().copied().collect();
     let mut out: Vec<String> = Vec::new();
     let mut i = 0;

@@ -204,15 +204,15 @@ fn collect_files(
             if matcher.is_match(p.file_name().unwrap_or_default()) {
                 return true;
             }
-            if let Ok(rel) = p.strip_prefix(workspace_root) {
-                if matcher.is_match(rel) {
-                    return true;
-                }
+            if let Ok(rel) = p.strip_prefix(workspace_root)
+                && matcher.is_match(rel)
+            {
+                return true;
             }
-            if let Ok(rel) = p.strip_prefix(root) {
-                if matcher.is_match(rel) {
-                    return true;
-                }
+            if let Ok(rel) = p.strip_prefix(root)
+                && matcher.is_match(rel)
+            {
+                return true;
             }
             false
         })

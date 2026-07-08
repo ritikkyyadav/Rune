@@ -41,7 +41,10 @@ fn blocked_reason(command: &str) -> Option<&'static str> {
         vec![
             (
                 // rm with recursive+force flags aimed at "/" or "/*" (not /path)
-                Regex::new(r"(?i)\brm\s+(-[a-z-]+\s+)*-?-?[a-z]*[rf][a-z]*\s+(--\s+)?/\*?\s*($|[;&|])").unwrap(),
+                Regex::new(
+                    r"(?i)\brm\s+(-[a-z-]+\s+)*-?-?[a-z]*[rf][a-z]*\s+(--\s+)?/\*?\s*($|[;&|])",
+                )
+                .unwrap(),
                 "recursive delete of the filesystem root",
             ),
             (
@@ -88,8 +91,14 @@ pub async fn execute(input: BashInput, workspace_root: &Path) -> Result<BashOutp
     cmd.arg("-c")
         .arg(&input.command)
         .current_dir(workspace_root)
-        .env("TERM", std::env::var("TERM").unwrap_or_else(|_| "xterm-256color".into()))
-        .env("LANG", std::env::var("LANG").unwrap_or_else(|_| "en_US.UTF-8".into()))
+        .env(
+            "TERM",
+            std::env::var("TERM").unwrap_or_else(|_| "xterm-256color".into()),
+        )
+        .env(
+            "LANG",
+            std::env::var("LANG").unwrap_or_else(|_| "en_US.UTF-8".into()),
+        )
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -382,10 +391,7 @@ mod tests {
         let marker = tmp.path().join("grandchild-alive");
         // A grandchild that would outlive a leader-only kill and prove itself
         // by writing a marker file after the timeout fires.
-        let cmd = format!(
-            "(sleep 1 && touch {}) & wait",
-            marker.display()
-        );
+        let cmd = format!("(sleep 1 && touch {}) & wait", marker.display());
         let output = execute(
             BashInput {
                 command: cmd,
@@ -444,7 +450,7 @@ mod tests {
     fn truncation_keeps_head_and_tail() {
         let mut buf = Vec::new();
         buf.extend_from_slice(b"HEAD-MARKER\n");
-        buf.extend(std::iter::repeat(b'x').take(MAX_OUTPUT_BYTES + 4096));
+        buf.extend(std::iter::repeat_n(b'x', MAX_OUTPUT_BYTES + 4096));
         buf.extend_from_slice(b"\nTAIL-MARKER");
         let out = truncate_output(&buf);
         assert!(out.starts_with("HEAD-MARKER"));
