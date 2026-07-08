@@ -107,9 +107,10 @@ export class NotebookStore {
         `SELECT id, provenance_json FROM entries
          WHERE scope = ? AND COALESCE(repo_key,'') = ? AND COALESCE(stack_key,'') = ? AND title = ?`,
       )
-      .get(entry.scope, entry.repoKey ?? "", entry.stackKey ?? "", entry.title) as
-      | { id: string; provenance_json: string }
-      | null;
+      .get(entry.scope, entry.repoKey ?? "", entry.stackKey ?? "", entry.title) as {
+      id: string;
+      provenance_json: string;
+    } | null;
 
     if (existing) {
       const prov = JSON.parse(existing.provenance_json) as { sessions: string[]; note?: string };
@@ -174,9 +175,9 @@ export class NotebookStore {
   list(opts: { includeRetired?: boolean; limit?: number } = {}): NotebookEntry[] {
     const rows = (
       opts.includeRetired
-        ? this.db.query(`SELECT * FROM entries ORDER BY updated_at DESC LIMIT ?`).all(
-            opts.limit ?? 100,
-          )
+        ? this.db
+            .query(`SELECT * FROM entries ORDER BY updated_at DESC LIMIT ?`)
+            .all(opts.limit ?? 100)
         : this.db
             .query(`SELECT * FROM entries WHERE retired = 0 ORDER BY updated_at DESC LIMIT ?`)
             .all(opts.limit ?? 100)

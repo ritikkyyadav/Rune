@@ -159,9 +159,7 @@ export class SkillLoader {
     const { meta, ambiguous } = this.resolve(idOrName);
     if (!meta) {
       if (ambiguous && ambiguous.length > 0) {
-        throw new Error(
-          `Ambiguous skill "${idOrName}". Specify one of: ${ambiguous.join(", ")}`,
-        );
+        throw new Error(`Ambiguous skill "${idOrName}". Specify one of: ${ambiguous.join(", ")}`);
       }
       throw new Error(`Unknown skill "${idOrName}". Use skill(search: "…") to find one.`);
     }
@@ -200,7 +198,13 @@ export class SkillLoader {
         if (desc.includes(t)) score += 1;
       }
       if (score > 0) {
-        hits.push({ id: meta.id, plugin: meta.plugin, name: meta.name, description: meta.description, score });
+        hits.push({
+          id: meta.id,
+          plugin: meta.plugin,
+          name: meta.name,
+          description: meta.description,
+          score,
+        });
       }
     }
     return hits.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id)).slice(0, limit);
@@ -353,7 +357,10 @@ export function splitFrontmatter(raw: string): ParsedFrontmatter {
   // Normalize the alias so callers read `argumentHint`.
   if (fm["argument-hint"] && !fm.argumentHint) fm.argumentHint = fm["argument-hint"];
 
-  const body = lines.slice(close + 1).join("\n").replace(/^\n/, "");
+  const body = lines
+    .slice(close + 1)
+    .join("\n")
+    .replace(/^\n/, "");
   return { frontmatter: fm, body };
 }
 

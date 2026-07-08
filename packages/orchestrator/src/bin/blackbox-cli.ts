@@ -45,9 +45,7 @@ export function runDoctor(): void {
     console.log(`  ${accent("✕")} black box: cannot open ${DB()}`);
   } else {
     const size = existsSync(DB()) ? statSync(DB()).size : 0;
-    console.log(
-      `  ${ok("✓")} black box: ${info(DB())} ${dim(`(${(size / 1024).toFixed(0)} KB)`)}`,
-    );
+    console.log(`  ${ok("✓")} black box: ${info(DB())} ${dim(`(${(size / 1024).toFixed(0)} KB)`)}`);
     const counts = store.counts({ sinceDays: 7 });
     const parts = (["critical", "error", "warn", "debug"] as const)
       .filter((s) => counts[s])
@@ -137,10 +135,7 @@ function processAlive(pid: number): boolean {
 
 // ─── incidents ───
 
-export function runIncidents(
-  positionals: string[],
-  values: Record<string, unknown>,
-): void {
+export function runIncidents(positionals: string[], values: Record<string, unknown>): void {
   const store = openStore();
   if (!store) {
     console.log(dim(`  No black box found at ${DB()} — nothing recorded yet.`));
@@ -157,7 +152,9 @@ export function runIncidents(
     if (rows.length === 0) {
       console.log(dim("  No incidents recorded. That is the good outcome."));
     } else {
-      console.log(`\n  ${dim("§ INCIDENTS")} ${faint(values.all ? "(all)" : "(warn+ — use --all for debug too)")}\n`);
+      console.log(
+        `\n  ${dim("§ INCIDENTS")} ${faint(values.all ? "(all)" : "(warn+ — use --all for debug too)")}\n`,
+      );
       for (const r of rows) {
         console.log(
           `  ${info(r.id.slice(-8))} ${dim(shortTs(r.ts))} ` +
@@ -212,7 +209,9 @@ export function runIncidents(
       )}`,
     );
   } else {
-    console.log(dim("  Usage: alan incidents [list|show <id>|top [--by-version]|export [--out <path>]]"));
+    console.log(
+      dim("  Usage: alan incidents [list|show <id>|top [--by-version]|export [--out <path>]]"),
+    );
   }
   store.close();
 }
@@ -229,7 +228,8 @@ function printIncident(r: IncidentRecord): void {
   row("when", `${shortTs(r.ts)}  ${dim(`v${r.version}`)}`);
   row("what", `${sevPaint(r.severity, r.severity)} ${text(r.class)}`);
   row("where", `${r.component} ${dim("·")} ${faint(r.where)}`);
-  if (r.sessionId) row("session", `${r.sessionId.slice(0, 8)}${r.turn ? dim(` · run ${r.turn}`) : ""}`);
+  if (r.sessionId)
+    row("session", `${r.sessionId.slice(0, 8)}${r.turn ? dim(` · run ${r.turn}`) : ""}`);
   row("outcome", outcomePaint(r.outcome));
   console.log(`\n  ${dim("message")}\n    ${text(r.message)}`);
   if (r.stack) {
@@ -244,7 +244,9 @@ function printIncident(r: IncidentRecord): void {
   if (r.trail.length > 0) {
     console.log(`\n  ${dim("trail (what Berne did leading up to this)")}`);
     for (const t of r.trail) {
-      console.log(`    ${dim(String(t.seq).padStart(3))} ${info(t.kind.padEnd(16))} ${faint(t.summary)}`);
+      console.log(
+        `    ${dim(String(t.seq).padStart(3))} ${info(t.kind.padEnd(16))} ${faint(t.summary)}`,
+      );
     }
   }
   console.log("");

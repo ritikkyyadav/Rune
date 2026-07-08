@@ -106,7 +106,10 @@ function tryJson(raw: string): Record<string, unknown> | null {
 
 /** Non-empty result lines — a cheap proxy for grep match / output counts. */
 function nonEmptyLines(result: string): string[] {
-  return result.split("\n").map((l) => l.trim()).filter(Boolean);
+  return result
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
 }
 
 /** Compact `{k:v}`-ish summary of an unknown/MCP tool's args. */
@@ -192,7 +195,8 @@ export function renderToolActivity(v: ToolActivityView): string {
       const pat = truncate(s(v.args.pattern), 32);
       const where = v.args.path ? faint(` in ${truncate(shortenPath(s(v.args.path)), 20)}`) : "";
       const out = tryJson(v.result);
-      const n = typeof out?.total_matches === "number" ? out.total_matches : nonEmptyLines(v.result).length;
+      const n =
+        typeof out?.total_matches === "number" ? out.total_matches : nonEmptyLines(v.result).length;
       const hits = n === 0 ? faint("· no matches") : faint(`· ${n} match${n === 1 ? "" : "es"}`);
       return `  ${bold(text(verb))}  ${info(`"${pat}"`)}${where}  ${hits}`;
     }
@@ -213,7 +217,10 @@ export function renderToolActivity(v: ToolActivityView): string {
         hintPlain = `exit ${exit}`;
         bad = true;
       } else {
-        const body = (stdout.trim() ? stdout : stderr).split("\n").map((l) => l.trim()).filter(Boolean);
+        const body = (stdout.trim() ? stdout : stderr)
+          .split("\n")
+          .map((l) => l.trim())
+          .filter(Boolean);
         hintPlain = truncate(body.at(-1) ?? "", 40);
       }
       // Budget: 2 indent + "Ran  " (5) + 2 safety, then reserve room for the hint.

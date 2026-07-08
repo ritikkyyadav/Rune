@@ -151,7 +151,9 @@ function validateHookDef(entry: unknown, event: HookEvent, index: number, path: 
   }
   const obj = entry as Record<string, unknown>;
   if (typeof obj.command !== "string" || obj.command.trim() === "") {
-    throw new Error(`Malformed hook config at ${path}: ${where}.command must be a non-empty string`);
+    throw new Error(
+      `Malformed hook config at ${path}: ${where}.command must be a non-empty string`,
+    );
   }
   if (obj.match !== undefined && typeof obj.match !== "string") {
     throw new Error(`Malformed hook config at ${path}: ${where}.match must be a string`);
@@ -238,10 +240,7 @@ export class HookRunner {
    * Non-blocking hooks never block — failures are logged and ignored.
    * Returns { allow: true } when nothing matches.
    */
-  async runPreToolUse(
-    toolName: string,
-    args: Record<string, unknown>,
-  ): Promise<HookGateDecision> {
+  async runPreToolUse(toolName: string, args: Record<string, unknown>): Promise<HookGateDecision> {
     const hooks = this.matching(this.config.preToolUse, toolName);
     if (hooks.length === 0) return { allow: true };
 
@@ -262,7 +261,9 @@ export class HookRunner {
         return { allow: false, reason: this.describeFailure(hook, result) };
       }
       // Non-blocking: report but allow.
-      this.logger(`[hooks] non-blocking preToolUse hook failed: ${this.describeFailure(hook, result)}`);
+      this.logger(
+        `[hooks] non-blocking preToolUse hook failed: ${this.describeFailure(hook, result)}`,
+      );
     }
 
     return { allow: true };
@@ -335,9 +336,7 @@ export class HookRunner {
   ): Promise<HookRunResult> {
     const start = performance.now();
     const timeoutMs =
-      hook.timeoutMs !== undefined && hook.timeoutMs > 0
-        ? hook.timeoutMs
-        : DEFAULT_HOOK_TIMEOUT_MS;
+      hook.timeoutMs !== undefined && hook.timeoutMs > 0 ? hook.timeoutMs : DEFAULT_HOOK_TIMEOUT_MS;
 
     let proc: ReturnType<typeof Bun.spawn>;
     try {
@@ -450,7 +449,5 @@ function snippetOf(text: string): string {
   const trimmed = text.trim();
   if (trimmed === "") return "";
   const collapsed = trimmed.replace(/\s+/g, " ");
-  return collapsed.length > SNIPPET_LIMIT
-    ? collapsed.slice(0, SNIPPET_LIMIT) + "…"
-    : collapsed;
+  return collapsed.length > SNIPPET_LIMIT ? collapsed.slice(0, SNIPPET_LIMIT) + "…" : collapsed;
 }

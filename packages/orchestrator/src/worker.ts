@@ -326,8 +326,7 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
           createWorkerPermissionCheck(registry),
         );
 
-        const fullPrompt =
-          context && context.trim() ? `${context.trim()}\n\n${prompt}` : prompt;
+        const fullPrompt = context && context.trim() ? `${context.trim()}\n\n${prompt}` : prompt;
 
         let report = "";
         let toolCalls = 0;

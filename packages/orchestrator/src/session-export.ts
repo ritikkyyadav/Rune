@@ -143,8 +143,24 @@ export async function exportSession(
     // ── Render ──────────────────────────────────────────────────────────
     const content =
       opts.format === "md"
-        ? renderMarkdown({ session, transcript, toolCalls, fileDiffs, chainResult, chainHead, totalCostUsd })
-        : renderJson({ session, transcript, toolCalls, fileDiffs, chainResult, chainHead, totalCostUsd });
+        ? renderMarkdown({
+            session,
+            transcript,
+            toolCalls,
+            fileDiffs,
+            chainResult,
+            chainHead,
+            totalCostUsd,
+          })
+        : renderJson({
+            session,
+            transcript,
+            toolCalls,
+            fileDiffs,
+            chainResult,
+            chainHead,
+            totalCostUsd,
+          });
 
     // ── Sign ────────────────────────────────────────────────────────────
     if (!opts.sign) {

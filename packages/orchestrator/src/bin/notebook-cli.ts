@@ -41,7 +41,9 @@ export function runNotebook(positionals: string[], values: Record<string, unknow
       console.log(`\n  ${dim("§ TACTICS NOTEBOOK")} ${faint(`(${store.count()} active)`)}\n`);
       for (const e of entries) {
         const record =
-          e.uses > 0 ? faint(` · used ${e.uses}× · ${Math.round((e.wins / e.uses) * 100)}% wins`) : "";
+          e.uses > 0
+            ? faint(` · used ${e.uses}× · ${Math.round((e.wins / e.uses) * 100)}% wins`)
+            : "";
         console.log(
           `  ${info(e.id.slice(-8))} ${warn(e.kind.padEnd(7))} ${dim(scopeLabel(e).padEnd(22))}` +
             `${e.retired ? accent(" retired") : ""}${record}\n           ${text(e.body.slice(0, 100))}`,
@@ -62,7 +64,9 @@ export function runNotebook(positionals: string[], values: Record<string, unknow
       console.log(
         `  ${dim("record")}   used ${e.uses}× · ${e.wins} wins${e.retired ? ` · ${accent("retired")}` : ""}`,
       );
-      console.log(`  ${dim("learned")}  ${e.createdAt.slice(0, 10)} · updated ${e.updatedAt.slice(0, 10)}`);
+      console.log(
+        `  ${dim("learned")}  ${e.createdAt.slice(0, 10)} · updated ${e.updatedAt.slice(0, 10)}`,
+      );
       console.log(
         `  ${dim("from")}     ${e.provenance.sessions.length > 0 ? e.provenance.sessions.map((s) => s.slice(0, 8)).join(", ") : "manual"}\n`,
       );
@@ -82,7 +86,9 @@ export function runNotebook(positionals: string[], values: Record<string, unknow
     writeFileSync(out, entries.map((e) => JSON.stringify(e)).join("\n") + "\n");
     console.log(`  ${ok("✓")} exported ${entries.length} entries → ${info(out)}`);
   } else {
-    console.log(dim("  Usage: alan notebook [list [--all]|show <id>|rm <id>|export [--out <path>]]"));
+    console.log(
+      dim("  Usage: alan notebook [list [--all]|show <id>|rm <id>|export [--out <path>]]"),
+    );
   }
   store.close();
 }

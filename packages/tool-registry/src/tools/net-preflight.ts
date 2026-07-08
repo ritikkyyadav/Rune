@@ -39,7 +39,10 @@ const NETWORK_PATTERNS: Array<{ re: RegExp; what: string }> = [
   { re: /^(curl|wget|http|https)\b/, what: "HTTP request" },
   { re: /^(gh|glab)\s+(?!help\b|--version\b|version\b)\S/, what: "GitHub/GitLab CLI call" },
   { re: /^brew\s+(install|upgrade|update|fetch|tap)\b/, what: "brew install" },
-  { re: /^(apt|apt-get|apk|dnf|yum)\s+(install|update|upgrade|add)\b/, what: "system package install" },
+  {
+    re: /^(apt|apt-get|apk|dnf|yum)\s+(install|update|upgrade|add)\b/,
+    what: "system package install",
+  },
 ];
 
 /**

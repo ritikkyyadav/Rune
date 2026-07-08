@@ -81,7 +81,11 @@ export class StruggleDetector {
         if (n === this.cfg.readThrashCount) {
           this.fire("struggle.thrash_reads", "warn", `read ${path} ${n}× without editing it`);
         }
-      } else if (toolName === "edit_file" || toolName === "write_file" || toolName === "multi_edit") {
+      } else if (
+        toolName === "edit_file" ||
+        toolName === "write_file" ||
+        toolName === "multi_edit"
+      ) {
         const path = str(args.path);
         if (!path) return;
         // an edit legitimately resets the "re-read the same file" signal

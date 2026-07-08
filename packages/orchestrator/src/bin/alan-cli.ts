@@ -1046,9 +1046,7 @@ async function main() {
         q.options.forEach((opt, i) => {
           process.stdout.write(`    ${accent(String(i + 1))} ${text(opt)}\n`);
         });
-        process.stdout.write(
-          `  ${muted("number to choose · or type an answer · Enter = 1")}\n`,
-        );
+        process.stdout.write(`  ${muted("number to choose · or type an answer · Enter = 1")}\n`);
 
         rl.question(`  ${accent("›")} `, (answer) => {
           const a = answer.trim();
@@ -1261,8 +1259,8 @@ async function main() {
         ["/deepresearch", "Deep research — multi-round, long-form"],
         ["/cost", "Session cost"],
         ["/compress", "Summarize & shrink context"],
-    ["/undo", "Revert the last Berne auto-commit ([git] autoCommit)"],
-    ["/interactive", "Live dashboard from the last report (auto on|off · open)"],
+        ["/undo", "Revert the last Berne auto-commit ([git] autoCommit)"],
+        ["/interactive", "Live dashboard from the last report (auto on|off · open)"],
         ["/memory", "System memory — /memory [update|add|edit|clear|daily|3d|weekly|manual]"],
         ["/notebook", "Learned tactics active for this workspace"],
         ["/bug", "Flag a problem — records the current flight trail to the black box"],

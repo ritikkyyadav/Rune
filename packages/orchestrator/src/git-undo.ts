@@ -113,12 +113,14 @@ export function undoLastBerneCommit(root: string): UndoResult {
   if (dirty.out !== "") {
     return {
       ok: false,
-      reason: "worktree has uncommitted changes — commit or stash them first (undo uses reset --hard)",
+      reason:
+        "worktree has uncommitted changes — commit or stash them first (undo uses reset --hard)",
     };
   }
 
   const parent = git(root, ["rev-parse", "--verify", "HEAD~1"]);
-  if (!parent.ok) return { ok: false, reason: "the Berne commit is the only commit — cannot reset past it" };
+  if (!parent.ok)
+    return { ok: false, reason: "the Berne commit is the only commit — cannot reset past it" };
 
   const sha = git(root, ["rev-parse", "HEAD"]).out;
   const reset = git(root, ["reset", "--hard", "HEAD~1"]);

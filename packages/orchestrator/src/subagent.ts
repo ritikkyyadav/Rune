@@ -152,9 +152,8 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
           permissionCheck,
         );
 
-        const fullPrompt = context && context.trim().length > 0
-          ? `${context}\n\n${prompt}`
-          : prompt;
+        const fullPrompt =
+          context && context.trim().length > 0 ? `${context}\n\n${prompt}` : prompt;
 
         let finalText = "";
         let toolCallCount = 0;

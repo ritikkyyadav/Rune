@@ -46,10 +46,7 @@ export class PermissionBroker {
   private trustWorkspace: boolean;
   private workspaceRoot?: string;
 
-  constructor(
-    yoloMode = false,
-    opts: { workspaceRoot?: string; trustWorkspace?: boolean } = {},
-  ) {
+  constructor(yoloMode = false, opts: { workspaceRoot?: string; trustWorkspace?: boolean } = {}) {
     this.yoloMode = yoloMode;
     this.workspaceRoot = opts.workspaceRoot;
     this.trustWorkspace = opts.trustWorkspace ?? false;

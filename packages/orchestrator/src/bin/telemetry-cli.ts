@@ -86,9 +86,7 @@ function cmdStatus(cfg: TelemetryCfg): void {
   console.log(`\n  ${dim("§ BERNE TELEMETRY")}\n`);
   console.log(
     `  ${on ? ok("● ON") : dim("○ OFF")}  ${
-      on
-        ? text("anonymous diagnostics are shared at each launch")
-        : dim("nothing is transmitted")
+      on ? text("anonymous diagnostics are shared at each launch") : dim("nothing is transmitted")
     }`,
   );
 
@@ -118,7 +116,9 @@ function cmdStatus(cfg: TelemetryCfg): void {
 
   const queued = queuedCount();
   if (queued > 0) {
-    console.log(`\n  ${dim("queued:")} ${info(String(queued))} ${dim("report(s) awaiting next launch")}`);
+    console.log(
+      `\n  ${dim("queued:")} ${info(String(queued))} ${dim("report(s) awaiting next launch")}`,
+    );
   }
 
   console.log(
@@ -134,7 +134,9 @@ function cmdStatus(cfg: TelemetryCfg): void {
 function cmdOn(cfg: TelemetryCfg): void {
   const state = setConsent(HOME(), "granted");
   console.log(`\n  ${ok("✓")} ${text("Telemetry opted IN.")} Thank you — this genuinely helps.`);
-  console.log(`  ${dim("install id:")} ${maskId(state.installId)} ${faint("(anonymous, resettable)")}`);
+  console.log(
+    `  ${dim("install id:")} ${maskId(state.installId)} ${faint("(anonymous, resettable)")}`,
+  );
   if (!cfg.endpoint) {
     console.log(
       `\n  ${warn("Note:")} no ${info("[telemetry] endpoint")} is configured, so nothing will actually be sent yet.`,
@@ -168,22 +170,32 @@ function cmdPreview(cfg: TelemetryCfg): void {
   const state = loadTelemetryState(HOME());
   const reporter = previewReporter(cfg, state.installId);
 
-  console.log(`\n  ${dim("§ TELEMETRY PREVIEW")} ${faint("— the complete set of what could ever be sent")}\n`);
-  console.log(`  ${dim("destination:")} ${cfg.endpoint ? info(cfg.endpoint) : warn("(no endpoint configured)")}`);
+  console.log(
+    `\n  ${dim("§ TELEMETRY PREVIEW")} ${faint("— the complete set of what could ever be sent")}\n`,
+  );
+  console.log(
+    `  ${dim("destination:")} ${cfg.endpoint ? info(cfg.endpoint) : warn("(no endpoint configured)")}`,
+  );
   console.log(
     `  ${dim("transport:")}   ${faint("HTTPS POST · at launch only · best-effort · never blocks or retries in-session")}\n`,
   );
 
   const real = recentIncident();
   if (real) {
-    console.log(`  ${bold("1. A crash/error report")} ${faint("(shaped from your most recent local incident):")}`);
+    console.log(
+      `  ${bold("1. A crash/error report")} ${faint("(shaped from your most recent local incident):")}`,
+    );
     console.log(indent(JSON.stringify(toIncidentWire(real, sampleMeta(state.installId)), null, 2)));
   } else {
-    console.log(`  ${bold("1. A crash/error report")} ${faint("(sample — no local incidents yet):")}`);
+    console.log(
+      `  ${bold("1. A crash/error report")} ${faint("(sample — no local incidents yet):")}`,
+    );
     console.log(indent(JSON.stringify(reporter.previewSampleIncident(), null, 2)));
   }
 
-  console.log(`\n  ${bold("2. The daily usage heartbeat")} ${faint("(anonymous counts, at most one per day):")}`);
+  console.log(
+    `\n  ${bold("2. The daily usage heartbeat")} ${faint("(anonymous counts, at most one per day):")}`,
+  );
   console.log(indent(JSON.stringify(reporter.previewHeartbeat(), null, 2)));
 
   console.log(`\n  ${bold("Never included:")}`);
@@ -197,7 +209,9 @@ function cmdPreview(cfg: TelemetryCfg): void {
   }
   const peek = peekUsage(HOME());
   if (Object.keys(peek).length === 0) {
-    console.log(`\n  ${faint("(usage counters are empty right now — they accrue as you use Berne.)")}`);
+    console.log(
+      `\n  ${faint("(usage counters are empty right now — they accrue as you use Berne.)")}`,
+    );
   }
   console.log("");
 }

@@ -50,7 +50,7 @@ export function buildInteractiveDirective(focus?: string): string {
   return (
     "Build an interactive dashboard with the interactive_dashboard tool. " +
     scope +
-    " If a dashboard for this content already exists, update it (action:\"update\") instead of creating another. " +
+    ' If a dashboard for this content already exists, update it (action:"update") instead of creating another. ' +
     "Choose the chart types that fit the data, put every number in `data`, and keep the text reply to a couple of lines plus the URL."
   );
 }

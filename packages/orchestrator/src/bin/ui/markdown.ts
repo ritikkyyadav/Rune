@@ -8,7 +8,17 @@
 // Style follows the Savoir identity: prose is the statement (clean, primary
 // text); code and metadata are the record (gutter, faint hairlines, info tint).
 
-import { bold, text, muted, faint, info, warn, line as lineColor, colorEnabled, stripAnsi } from "./theme";
+import {
+  bold,
+  text,
+  muted,
+  faint,
+  info,
+  warn,
+  line as lineColor,
+  colorEnabled,
+  stripAnsi,
+} from "./theme";
 import { termWidth } from "./render";
 
 const ITALIC_ON = "\x1b[3m";
@@ -249,7 +259,10 @@ export function renderMarkdown(md: string, opts: MarkdownOpts = {}): string[] {
     if (h) {
       const level = h[1]!.length;
       // Headings are set as type, not markup — drop any inline markers.
-      const title = h[2]!.replace(/#+\s*$/, "").replace(/\*\*|__|~~|`/g, "").trim();
+      const title = h[2]!
+        .replace(/#+\s*$/, "")
+        .replace(/\*\*|__|~~|`/g, "")
+        .trim();
       blank();
       emit(bold(text(title.slice(0, width))));
       if (level <= 2) emit(lineColor("─".repeat(Math.max(4, Math.min(title.length, width)))));
@@ -260,7 +273,8 @@ export function renderMarkdown(md: string, opts: MarkdownOpts = {}): string[] {
     // ── blockquote ──
     const bq = raw.match(/^\s*>\s?(.*)$/);
     if (bq) {
-      for (const ln of wrapInline(bq[1]!, width - 2)) emit(`${lineColor("▏")} ${muted(stripAnsi(ln))}`);
+      for (const ln of wrapInline(bq[1]!, width - 2))
+        emit(`${lineColor("▏")} ${muted(stripAnsi(ln))}`);
       continue;
     }
 
