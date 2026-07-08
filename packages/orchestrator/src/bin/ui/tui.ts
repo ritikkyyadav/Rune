@@ -28,11 +28,13 @@ import {
   PROVIDER_PRESETS,
   CUSTOM_PROVIDER_ID,
   saveLastModel,
+  saveSandboxState,
   getSystemMemoryPath,
 } from "@alan/shared";
 import type { CustomEndpoint } from "@alan/shared";
 import { AltScreen, BottomRegion } from "./screen";
 import { parseKeys, type Key } from "./keys";
+import { PasteScanner, shouldCollapse, pasteChip, expandPastes, livePasteIds } from "./paste";
 import {
   renderComposer,
   renderPicker,
@@ -45,6 +47,7 @@ import {
   renderPermissionCard,
   statusLine,
   permissionModeBanner,
+  sandboxModeBanner,
   type RenderedBlock,
   type PickerItem,
   type SlashItem,
@@ -53,9 +56,8 @@ import {
 } from "./composer";
 import { renderBanner } from "./banner";
 import { renderStatus } from "./status";
-import { formatEvent } from "./events";
-import { renderTranscript, stepHead, runningLabel } from "./activity";
-import { truncate } from "./render";
+import { TurnRenderer, userBlock, renderReplay, HEX, cookingVerb } from "./turn";
+import { truncate, clampVisible } from "./render";
 import { renderResearchPlan, renderClarifyingQuestions, formatResearchEvent } from "./research";
 import { isClarification } from "../../research-types";
 import type { ResearchOptions, ResearchPlan, ResearchReport } from "../../research-types";
@@ -77,6 +79,11 @@ import {
   TERMINAL_THEME_RESET,
 } from "./theme";
 import { saveTheme } from "./theme-store";
+import {
+  buildInteractiveDirective,
+  saveInteractiveAuto,
+  shouldOfferInteractive,
+} from "./interactive";
 
 export interface TuiContext {
   engine: Engine;
@@ -106,8 +113,10 @@ type Mode =
 
 type SessionListItem = ReturnType<Engine["listSessions"]>[number];
 
-const cols = () => process.stdout.columns ?? 80;
-const rowsCount = () => process.stdout.rows ?? 24;
+// `columns`/`rows` are 0 (not undefined) on a PTY with no winsize — `||` so a
+// zero-size terminal falls back sanely instead of clamping every line to nothing.
+const cols = () => process.stdout.columns || 80;
+const rowsCount = () => process.stdout.rows || 24;
 const MAX_TRANSCRIPT = 5000; // cap the in-memory scrollback
 const SCROLL_STEP = 3; // lines per mouse-wheel notch
 
@@ -140,8 +149,13 @@ class Tui {
   private mode: Mode = "input";
   private slashSel = 0; // highlighted row in the `/` command palette
   private sigintArmed = false;
-  private pasteMode = false;
-  private pasteBuf = "";
+  private paste = new PasteScanner(); // carves bracketed pastes out of the stdin stream (see ./paste)
+  // Large/multi-line pastes are collapsed to a `[Pasted text #N +K lines]` chip in the composer
+  // (Claude-Code idiom): the real content is held here and expanded back in on submit. Pasting the
+  // raw body inline would put newlines into the single-line composer, which breaks the pinned
+  // region's row math (garble) and re-renders megabytes every keystroke (freeze).
+  private pastes = new Map<number, string>();
+  private pasteSeq = 0;
 
   // `/sessions` manager overlay
   private sessionsList: SessionListItem[] = [];
@@ -176,7 +190,13 @@ class Tui {
   private streamBuf = "";
   private queued: string[] = []; // type-ahead: messages composed mid-turn, run in order on completion
   private aborting = false; // an esc/ctrl-c interrupt is in flight (guards the "interrupting…" flood)
-  private currentActivity: string | null = null; // in-flight tool label, shown on the Working line
+  private currentActivity: string | null = null; // in-flight tool label, shown on the status line
+  private turnPreview: string[] | null = null; // live window: recent work + to-dos + prose preview
+  private filesEdited = new Set<string>(); // session-wide, shown on the footer readout
+  private interactiveTipShown = false; // the /interactive offer fires at most once per session
+  private lastWorkLog: string | null = null; // the last turn's full work log (ctrl+r expands it)
+  private liveTurn: TurnRenderer | null = null; // in-flight renderer (ctrl+r mid-turn)
+  private turnSeed = 0; // picks this turn's working word (Cooking…, Brewing…, …)
 
   // render coalescing — collapse bursts of draw requests into one paint per frame (~60fps), so a
   // streamed token, a held arrow key, or a flick of the mouse wheel never trigger N full repaints.
@@ -225,7 +245,7 @@ class Tui {
 
     // The banner is a live header (re-themed every frame), so nothing to seed here.
     // The handler is registered in every mode: the broker short-circuits to "allowed"
-    // under Turing, so it's simply never invoked there — and stays ready the instant
+    // under Hands-Free, so it's simply never invoked there — and stays ready the instant
     // Shift+Tab cycles back to confirm/auto, without re-wiring.
     engine.setPermissionHandler(this.permissionHandler);
     engine.setQuestionHandler(this.questionHandler);
@@ -268,7 +288,7 @@ class Tui {
       const mem = engine.getSystemMemory();
       if (mem.enabled && !mem.content.trim() && mem.scheduleLabel === "manual") {
         this.print(
-          `  ${faint("✦ tip: Alan can learn your style & codebases over time — ")}${info("/memory")}${faint(" (auto-update: /memory weekly)")}`,
+          `  ${faint("✦ tip: Berne can learn your style & codebases over time —")}${info("/memory")}${faint(" (auto-update: /memory weekly)")}`,
         );
       }
       void engine
@@ -314,14 +334,23 @@ class Tui {
   // ── input rendering ──
 
   private statusStr(): string {
+    let contextPercent: number | undefined;
+    try {
+      contextPercent = this.ctx.engine.getContextUsage().percent;
+    } catch {
+      contextPercent = undefined;
+    }
     return statusLine({
       model: this.ctx.engine.getModel(),
       workspace: this.ctx.workspaceRoot,
       mode: this.ctx.engine.getPermissionMode(),
+      contextPercent,
+      filesEdited: this.filesEdited.size || undefined,
+      sandboxOff: !this.ctx.engine.isSandboxEnabled(),
     });
   }
 
-  /** Advance the permission mode one step (Shift+Tab / `/turing` / `/mode`) and announce it. */
+  /** Advance the permission mode one step (Shift+Tab / `/hands-free` / `/mode`) and announce it. */
   private cyclePermissionMode(mode?: ReturnType<Engine["getPermissionMode"]>): void {
     let next: ReturnType<Engine["getPermissionMode"]>;
     if (mode) {
@@ -352,14 +381,19 @@ class Tui {
       { name: "/deepresearch", desc: "Deep research — multi-round, long-form" },
       { name: "/cost", desc: "Session cost" },
       { name: "/plan", desc: "Toggle plan mode" },
-      { name: "/turing", desc: "Turing — toggle bypass mode (shift+tab)" },
-      { name: "/mode", desc: "Cycle permission mode (confirm/auto/turing)" },
+      { name: "/hands-free", desc: "Hands-Free — toggle bypass mode (shift+tab)" },
+      { name: "/mode", desc: "Cycle permission mode (confirm/auto/hands-free)" },
+      { name: "/sandbox", desc: "OS sandbox for commands — on | off (off = full access)" },
       { name: "/rewind", desc: "Roll back the conversation" },
       { name: "/compress", desc: "Summarize & shrink context" },
+      { name: "/undo", desc: "Revert the last Berne auto-commit" },
+      { name: "/interactive", desc: "Live dashboard — [focus] · auto on|off · open" },
       { name: "/memory", desc: "System memory — your evergreen profile" },
+      { name: "/notebook", desc: "Learned tactics for this workspace" },
+      { name: "/bug", desc: "Flag a problem — records the flight trail" },
       { name: "/clear", desc: "Clear the screen" },
       { name: "/help", desc: "Show commands" },
-      { name: "/quit", desc: "Exit Alan" },
+      { name: "/quit", desc: "Exit Berne" },
     ];
     const custom: SlashItem[] = this.ctx.customCommands.map((c) => ({
       name: "/" + c.name,
@@ -467,7 +501,9 @@ class Tui {
         width: cols(),
         status: this.statusStr(),
       });
-      const head: string[] = [`  ${this.workingText()}`];
+      // The buffered prose run streams live here (it commits to the transcript only
+      // once the turn decides which partition — work rail or response — it belongs to).
+      const head: string[] = [...(this.turnPreview ?? []), `  ${this.workingText()}`];
       for (const q of this.queued) {
         head.push(`  ${faint("↳ queued ·")} ${muted(truncate(q, Math.max(8, cols() - 16)))}`);
       }
@@ -497,9 +533,16 @@ class Tui {
   /** Append a block to the transcript, theming each line in the *current* theme and bounding
    *  the buffer. (Lines keep their theme; switching themes recolours the live composer + new
    *  output, and history stays readable in the theme it was written in.) */
+  /** Hard-bound a line to the terminal width. An over-wide line auto-wraps,
+   *  which breaks the pinned region's row math — and then every repaint leaks
+   *  stale rows into the scrollback (the "duplicated spam" failure mode). */
+  private bound(ln: string): string {
+    return clampVisible(ln, Math.max(8, cols() - 1));
+  }
+
   private pushLines(block: string): number {
     const lines = block.split("\n");
-    for (const ln of lines) this.transcript.push(withThemeBg(ln));
+    for (const ln of lines) this.transcript.push(withThemeBg(this.bound(ln)));
     if (this.transcript.length > MAX_TRANSCRIPT) {
       this.transcript.splice(0, this.transcript.length - MAX_TRANSCRIPT);
     }
@@ -510,14 +553,9 @@ class Tui {
     if (this.inline) {
       // Inline: completed blocks flow into the terminal's native scrollback above the pinned
       // composer (the terminal owns scrolling from here). printAbove redraws the composer after.
-      const lines = block.split("\n").map(withThemeBg);
-      const comp = this.composerBlock();
-      this.region.printAbove(
-        lines.join("\r\n"),
-        comp.lines.map(withThemeBg),
-        comp.caretRow,
-        comp.caretCol,
-      );
+      const lines = block.split("\n").map((l) => withThemeBg(this.bound(l)));
+      const comp = this.pinnedBlock();
+      this.region.printAbove(lines.join("\r\n"), comp.lines, comp.caretRow, comp.caretCol);
       return;
     }
     const added = this.pushLines(block);
@@ -531,8 +569,31 @@ class Tui {
   /** Inline surface only: redraw just the pinned composer block (the transcript lives in the
    *  terminal's own scrollback). The alt-screen surface uses drawComposer() instead. */
   private renderRegion(): void {
+    const comp = this.pinnedBlock();
+    this.region.render(comp.lines, comp.caretRow, comp.caretCol);
+  }
+
+  /** The pinned composer block, themed, width-bounded, and height-clamped to the viewport. The
+   *  inline region draws with *relative* cursor moves, so a block taller than the screen would
+   *  scroll the terminal mid-draw and desync that math (garbled/duplicated footer under heavy
+   *  streaming). Keep the tail — the composer + status the user is actually using — and elide the
+   *  top (the older work/prose preview) behind a marker. */
+  private pinnedBlock(): { lines: string[]; caretRow: number; caretCol: number } {
     const comp = this.composerBlock();
-    this.region.render(comp.lines.map(withThemeBg), comp.caretRow, comp.caretCol);
+    let lines = comp.lines.map((l) => withThemeBg(this.bound(l)));
+    let caretRow = comp.caretRow;
+    const max = Math.max(3, rowsCount() - 1);
+    if (lines.length > max) {
+      const drop = lines.length - max;
+      const marker = withThemeBg(
+        this.bound(
+          `  ${faint(`… ${drop} more line${drop === 1 ? "" : "s"} above (ctrl+r to expand)`)}`,
+        ),
+      );
+      lines = [marker, ...lines.slice(drop + 1)];
+      caretRow = Math.max(0, caretRow - drop);
+    }
+    return { lines, caretRow, caretCol: comp.caretCol };
   }
 
   /** Inline surface: recolour the terminal in the theme, clear to a themed screen, and print the
@@ -556,6 +617,7 @@ class Tui {
         sessionId: this.ctx.sessionId,
         workspace: this.ctx.workspaceRoot,
         version: this.ctx.version,
+        sandbox: engine.isSandboxEnabled(),
       }),
     );
   }
@@ -586,7 +648,7 @@ class Tui {
       version: this.ctx.version,
     })
       .split("\n")
-      .map(withThemeBg);
+      .map((l) => withThemeBg(this.bound(l)));
   }
 
   /** Repaint the whole viewport: live banner header, themed transcript window, composer
@@ -596,7 +658,7 @@ class Tui {
     const R = rowsCount();
     const banner = this.bannerLines();
     const comp = this.composerBlock();
-    const compLines = comp.lines.map(withThemeBg);
+    const compLines = comp.lines.map((l) => withThemeBg(this.bound(l)));
     // When scrolled up, reserve one row above the composer for a "more below" hint so the
     // user knows output isn't frozen and how to catch back up.
     const hintRows = this.scroll > 0 ? 1 : 0;
@@ -683,82 +745,108 @@ class Tui {
   }
 
   private workingText(): string {
-    if (this.aborting) return `${accent("✕")} ${bold(text("Interrupting…"))}`;
-    const secs = Math.floor((Date.now() - this.turnStart) / 1000);
+    if (this.aborting) return `${accent(HEX)} ${bold(text("Interrupting…"))}`;
+    const elapsed = Date.now() - this.turnStart;
+    const secs = Math.floor(elapsed / 1000);
     const t = secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m${secs % 60}s`;
     // The hint adapts: idle composer → how to stop; a typed-ahead draft → how to queue/clear it.
     const hint = this.input.length > 0 ? "enter queues · esc clears" : "esc to interrupt";
     const act = this.currentActivity ? faint(` · ${this.currentActivity}`) : "";
-    return `${accent("•")} ${bold(text("Working"))}${act} ${faint(`(${t} · ${hint})`)}`;
+    const verb = cookingVerb(this.turnSeed, elapsed);
+    return `${ok(HEX)} ${bold(text(`${verb}…`))}${act} ${faint(`(${t} · ${hint})`)}`;
   }
 
   // ── stdin routing ──
 
   private onData(chunk: string): void {
-    for (const key of parseKeys(chunk)) {
-      if (key.type === "paste-start") {
-        this.pasteMode = true;
-        this.pasteBuf = "";
-        continue;
-      }
-      if (key.type === "paste-end") {
-        this.pasteMode = false;
-        this.insertActive(this.pasteBuf);
-        this.pasteBuf = "";
-        this.scheduleDraw();
-        continue;
-      }
-      if (this.pasteMode) {
-        if (key.type === "char") this.pasteBuf += key.value;
-        else if (key.type === "enter") this.pasteBuf += "\n";
-        continue;
-      }
-      // The mouse wheel scrolls the transcript in every mode — even while a turn streams.
-      if (key.type === "wheel-up") {
-        this.scrollLines(SCROLL_STEP);
-        continue;
-      }
-      if (key.type === "wheel-down") {
-        this.scrollLines(-SCROLL_STEP);
-        continue;
-      }
-      // Shift+Tab cycles the permission mode (confirm → auto → Turing → …). Allowed while
-      // typing or mid-turn; ignored over a modal overlay (picker/permission/keys/ask) so it
-      // never hijacks a confirmation the user is answering.
-      if (key.type === "shift-tab") {
-        if (this.mode === "input" || this.mode === "turn") this.cyclePermissionMode();
-        continue;
-      }
-      switch (this.mode) {
-        case "input":
-          this.inputKey(key);
-          break;
-        case "turn":
-          this.turnKey(key);
-          break;
-        case "picker":
-          this.pickerKey(key);
-          break;
-        case "permission":
-          this.permKey(key);
-          break;
-        case "keys":
-          this.keysKey(key);
-          break;
-        case "sessions":
-          this.sessionsKey(key);
-          break;
-        case "memory":
-          this.memoryKey(key);
-          break;
-        case "ask":
-          this.askKey(key);
-          break;
-        case "question":
-          this.questionKey(key);
-          break;
-      }
+    // Bracketed paste is carved out of the stream as substrings (PasteScanner) — never fed through
+    // parseKeys. A multi-megabyte paste (e.g. dumping a large doc) would otherwise allocate one Key
+    // object per character and rebuild an accumulator char-by-char (O(n²)), freezing the UI for
+    // seconds. Here the whole body is one substring, so a huge paste is effectively free.
+    for (const seg of this.paste.push(chunk)) {
+      if (seg.type === "paste") this.endPaste(seg.content);
+      else for (const key of parseKeys(seg.data)) this.routeKey(key);
     }
+  }
+
+  /** Route one decoded key event to the active mode (paste is handled upstream in onData). */
+  private routeKey(key: Key): void {
+    // The mouse wheel scrolls the transcript in every mode — even while a turn streams.
+    if (key.type === "wheel-up") {
+      this.scrollLines(SCROLL_STEP);
+      return;
+    }
+    if (key.type === "wheel-down") {
+      this.scrollLines(-SCROLL_STEP);
+      return;
+    }
+    // Shift+Tab cycles the permission mode (confirm → auto → Hands-Free → …). Allowed while
+    // typing or mid-turn; ignored over a modal overlay (picker/permission/keys/ask) so it
+    // never hijacks a confirmation the user is answering.
+    if (key.type === "shift-tab") {
+      if (this.mode === "input" || this.mode === "turn") this.cyclePermissionMode();
+      return;
+    }
+    switch (this.mode) {
+      case "input":
+        this.inputKey(key);
+        break;
+      case "turn":
+        this.turnKey(key);
+        break;
+      case "picker":
+        this.pickerKey(key);
+        break;
+      case "permission":
+        this.permKey(key);
+        break;
+      case "keys":
+        this.keysKey(key);
+        break;
+      case "sessions":
+        this.sessionsKey(key);
+        break;
+      case "memory":
+        this.memoryKey(key);
+        break;
+      case "ask":
+        this.askKey(key);
+        break;
+      case "question":
+        this.questionKey(key);
+        break;
+    }
+  }
+
+  /** Land a finished paste: small single-line pastes drop in inline; anything multi-line or long
+   *  collapses to a chip so the composer stays a clean single line (see `pastes`). */
+  private endPaste(content: string): void {
+    // Key/URL editor is a single-line field — always inline, newlines stripped by insertActive.
+    if (this.mode === "keys") {
+      this.insertActive(content);
+      this.scheduleDraw();
+      return;
+    }
+    if (shouldCollapse(content)) {
+      const id = ++this.pasteSeq;
+      this.pastes.set(id, content);
+      this.insert(pasteChip(id, content));
+    } else {
+      this.insert(content);
+    }
+    this.scheduleDraw();
+  }
+
+  /** Swap `[Pasted text #N …]` chips back to their stored bodies just before a message is sent. */
+  private expandPastes(s: string): string {
+    return expandPastes(s, this.pastes);
+  }
+
+  /** Drop paste bodies whose chip no longer appears in the composer (consumed or edited away). */
+  private gcPastes(): void {
+    if (this.pastes.size === 0) return;
+    const live = livePasteIds(this.input);
+    for (const id of [...this.pastes.keys()]) if (!live.has(id)) this.pastes.delete(id);
   }
 
   // ── input mode ──
@@ -883,6 +971,9 @@ class Tui {
 
   private ctrlKey(name: string): void {
     switch (name) {
+      case "r":
+        this.expandWorkLog();
+        return;
       case "c":
         if (this.input.length > 0) {
           this.input = "";
@@ -956,12 +1047,13 @@ class Tui {
   // ── submit ──
 
   private async submit(): Promise<void> {
-    const raw = this.input.trim();
+    const raw = this.expandPastes(this.input).trim();
     this.input = "";
     this.caret = 0;
     this.histIdx = -1;
     this.slashSel = 0;
     this.scroll = 0; // submitting jumps back to the live tail
+    this.gcPastes(); // composer is empty now → release the paste bodies just consumed
     if (!raw) {
       this.scheduleDraw();
       return;
@@ -974,8 +1066,10 @@ class Tui {
   private async runInput(raw: string): Promise<void> {
     this.history.push(raw);
 
-    // Echo the prompt into the transcript.
-    this.print(`  ${accent("›")} ${text(raw)}`);
+    // Echo the prompt into the transcript. A slash command is an instruction to the
+    // shell (quiet echo); anything else is the user's message — the loud block.
+    if (raw.startsWith("/")) this.print(`  ${accent("›")} ${text(raw)}`);
+    else this.print(userBlock(raw));
 
     if (raw.startsWith("/")) {
       const handled = await this.handleSlash(raw);
@@ -1003,6 +1097,46 @@ class Tui {
       case "clear":
         this.resetTranscript();
         return true;
+      case "notebook": {
+        const entries = engine.getNotebookEntries(10);
+        if (entries.length === 0) {
+          this.print(
+            `  ${muted("Notebook is empty for this workspace — Berne fills it as it verifies how your repos work.")}`,
+          );
+        } else {
+          this.print(
+            [
+              `  ${bold(text("Notebook — active for this workspace"))}`,
+              ...entries.map(
+                (e) =>
+                  `    ${info(e.id.slice(-8))} ${muted(`[${e.scope}]`)} ${text(e.body.slice(0, 90))}`,
+              ),
+              `    ${muted("manage: alan notebook [show <id>|rm <id>|export]")}`,
+            ].join("\n"),
+          );
+        }
+        return true;
+      }
+      case "bug": {
+        const rec = engine.getRecorder();
+        if (!rec) {
+          this.print(`  ${muted("Diagnostics are disabled ([diagnostics] enabled = false).")}`);
+          return true;
+        }
+        const id = rec.record({
+          class: "ux.user_reported",
+          severity: "warn",
+          component: "tui",
+          where: "slash#bug",
+          message: arg || "user flagged the last exchange (no note given)",
+        });
+        this.print(
+          id
+            ? `  ${text("✦ Logged with the current flight trail.")} ${muted(`alan incidents show ${id.slice(-8)}`)}`
+            : `  ${muted("Could not record — see alan doctor.")}`,
+        );
+        return true;
+      }
       case "help": {
         const cmds: [string, string][] = [
           ["/model", "Switch model/provider"],
@@ -1017,11 +1151,16 @@ class Tui {
           ["/deepresearch", "Deep research — multi-round, long-form"],
           ["/cost", "Session cost"],
           ["/plan", "Toggle plan mode"],
-          ["/turing", "Turing — toggle bypass mode (shift+tab)"],
-          ["/mode", "Cycle permission mode (confirm/auto/turing)"],
+          ["/hands-free", "Hands-Free — toggle bypass mode (shift+tab)"],
+          ["/mode", "Cycle permission mode (confirm/auto/hands-free)"],
+          ["/sandbox", "OS sandbox for commands — on | off (off = full access)"],
           ["/rewind", "Roll back the conversation"],
           ["/compress", "Summarize & shrink context"],
+          ["/undo", "Revert the last Berne auto-commit"],
+          ["/interactive", "Live dashboard from the last report (auto on|off · open)"],
           ["/memory", "System memory — /memory [update|add|edit|clear|daily|3d|weekly|manual]"],
+          ["/notebook", "Learned tactics active for this workspace"],
+          ["/bug", "Flag a problem — records the flight trail to the black box"],
           ["/clear", "Clear the screen"],
           ["/quit", "Exit"],
         ];
@@ -1061,6 +1200,7 @@ class Tui {
             yoloMode: s.yoloMode,
             trustWorkspace: s.trustWorkspace,
             permissionMode: s.permissionMode,
+            sandboxEnabled: s.sandboxEnabled,
             registeredProviders: s.registeredProviders,
             version: this.ctx.version,
           }),
@@ -1140,21 +1280,41 @@ class Tui {
         this.print(`  ${ok("✓")} ${muted(`plan mode ${on ? "on" : "off"}`)}`);
         return true;
       }
-      case "turing": {
-        // Explicit toggle: jump into Turing, or back out to confirm.
+      case "turing": // hidden back-compat alias for /hands-free
+      case "hands-free": {
+        // Explicit toggle: jump into Hands-Free, or back out to confirm.
         this.cyclePermissionMode(engine.getPermissionMode() === "turing" ? "confirm" : "turing");
         return true;
       }
       case "mode": {
+        // "hands-free" is the public name for the internal "turing" bypass mode.
+        const raw = (arg ?? "").toLowerCase();
+        const norm = raw === "hands-free" || raw === "handsfree" ? "turing" : raw;
         const valid = ["confirm", "auto", "turing"] as const;
-        if (arg && (valid as readonly string[]).includes(arg.toLowerCase())) {
-          this.cyclePermissionMode(arg.toLowerCase() as (typeof valid)[number]);
-        } else if (arg) {
+        if (norm && (valid as readonly string[]).includes(norm)) {
+          this.cyclePermissionMode(norm as (typeof valid)[number]);
+        } else if (raw) {
           this.print(
-            `  ${warn("Usage:")} ${info("/mode")} ${faint("[confirm|auto|turing] — empty cycles")}`,
+            `  ${warn("Usage:")} ${info("/mode")} ${faint("[confirm|auto|hands-free] — empty cycles")}`,
           );
         } else {
           this.cyclePermissionMode(); // no arg → advance the cycle, like Shift+Tab
+        }
+        return true;
+      }
+      case "sandbox": {
+        const raw = (arg ?? "").toLowerCase();
+        if (raw === "on" || raw === "off") {
+          const enabled = raw === "on";
+          engine.setSandboxEnabled(enabled);
+          saveSandboxState(enabled); // sticks across sessions, like /theme
+          this.print(sandboxModeBanner(enabled));
+        } else if (raw) {
+          this.print(
+            `  ${warn("Usage:")} ${info("/sandbox")} ${faint("[on|off] — empty shows the current state")}`,
+          );
+        } else {
+          this.print(sandboxModeBanner(engine.isSandboxEnabled()));
         }
         return true;
       }
@@ -1228,6 +1388,59 @@ class Tui {
         }
         const removed = engine.rewindTo(this.ctx.sessionId, turns[n - 1]!.seq - 1);
         this.print(`  ${ok("✓")} ${muted(`rewound to turn ${n} (removed ${removed})`)}`);
+        return true;
+      }
+      case "interactive": {
+        const [sub = "", ...rest] = arg.split(/\s+/).filter(Boolean);
+        if (sub === "auto") {
+          const v = (rest[0] ?? "").toLowerCase();
+          if (v === "on" || v === "off") {
+            const on = v === "on";
+            engine.setInteractiveAuto(on);
+            saveInteractiveAuto(on);
+            this.print(
+              `  ${ok("✓")} ${muted(`autonomous dashboards ${on ? "on" : "off"}`)} ${faint(
+                on
+                  ? "— Berne builds one when an answer is data-heavy"
+                  : "— dashboards only when you ask (/interactive)",
+              )}`,
+            );
+          } else {
+            this.print(
+              `  ${muted(`Autonomous dashboards: ${engine.isInteractiveAuto() ? "on" : "off"}`)} ${faint(
+                "· toggle: /interactive auto on|off",
+              )}`,
+            );
+          }
+          return true;
+        }
+        if (sub === "open") {
+          const info = engine.openDashboard(rest[0]);
+          this.print(
+            info
+              ? `  ${ok("✓")} ${muted(`opened "${info.title}"`)} ${faint(info.url)}`
+              : `  ${muted("No dashboard yet — run /interactive after a report, or ask for one.")}`,
+          );
+          return true;
+        }
+        // Bare /interactive (or with a focus) rides the normal turn loop so the
+        // model builds the dashboard with full conversation context.
+        const focus = sub === "view" ? rest.join(" ") : arg;
+        await this.runTurn(buildInteractiveDirective(focus || undefined));
+        return true;
+      }
+      case "undo": {
+        const r = engine.undoLastAutoCommit();
+        if (r.ok) {
+          this.print(`  ${ok("✓")} ${muted(`reverted ${r.undoneSha}`)} ${faint(`(${r.subject})`)}`);
+        } else {
+          this.print(`  ${muted(`Cannot undo — ${r.reason}`)}`);
+          if (!engine.isAutoCommitEnabled()) {
+            this.print(
+              `  ${faint("Tip: set [git] autoCommit = true in ~/.alan/config.toml so every run lands as a revertible commit.")}`,
+            );
+          }
+        }
         return true;
       }
       case "compress": {
@@ -1335,7 +1548,7 @@ class Tui {
           this.print(
             [
               ...head,
-              `  ${muted("Empty — Alan hasn't built your profile yet.")}`,
+              `  ${muted("Empty — Berne hasn't built your profile yet.")}`,
               `  ${faint("Seed it: /memory update · note: /memory add <…> · auto: /memory weekly")}`,
             ].join("\n"),
           );
@@ -1642,10 +1855,11 @@ class Tui {
   }
 
   /** Render replayed history lines into the transcript (shared by resume + startup seeding).
-   *  Uses the same ● thought-chain renderer as a live turn so a resumed session is faithful. */
+   *  Uses the same two-partition renderer as a live turn so a resumed session is faithful:
+   *  work inside the rail, each turn's final answer outside it. */
   private printTranscriptLines(lines: TranscriptLine[]): void {
     if (lines.length === 0) return;
-    this.print(renderTranscript(lines));
+    this.print(renderReplay(lines));
   }
 
   /**
@@ -2338,6 +2552,11 @@ class Tui {
   // ── turn mode (streaming) ──
 
   private turnKey(key: Key): void {
+    // Ctrl+R mid-turn: print the in-flight work log so far.
+    if (key.type === "ctrl" && key.name === "r") {
+      this.expandWorkLog();
+      return;
+    }
     // Esc / Ctrl-C: clear a typed-ahead draft first; with the composer empty, interrupt the turn.
     if (key.type === "esc" || (key.type === "ctrl" && key.name === "c")) {
       if (this.input.length > 0) {
@@ -2355,14 +2574,26 @@ class Tui {
       }
       return;
     }
-    // Enter queues the typed-ahead message; it runs automatically when this turn finishes.
+    // Enter mid-turn: STEER the live run — the message is folded into the
+    // agent's context at the next tool boundary, so it adapts its plan without
+    // restarting (Claude Code-style). Slash commands can't run mid-turn, and
+    // planner-mode/research runs aren't steerable — those queue and run when
+    // the turn finishes (the previous behaviour).
     if (key.type === "enter") {
-      const raw = this.input.trim();
+      const raw = this.expandPastes(this.input).trim();
       if (raw) {
-        this.queued.push(raw);
+        const steered = !raw.startsWith("/") && this.ctx.engine.interject(raw);
+        if (steered) {
+          this.history.push(raw);
+          this.print(userBlock(raw));
+          this.print(`  ${accent("↪")} ${faint("folded into the running task")}`);
+        } else {
+          this.queued.push(raw);
+        }
         this.input = "";
         this.caret = 0;
         this.histIdx = -1;
+        this.gcPastes();
       }
       this.scheduleDraw();
       return;
@@ -2381,108 +2612,97 @@ class Tui {
     this.mode = "turn";
     this.aborting = false;
     this.turnStart = Date.now();
+    this.turnSeed = Math.floor(Math.random() * 1000);
     this.streamBuf = "";
     this.currentActivity = null;
+    this.turnPreview = null;
     this.scheduleDraw();
     this.tick = setInterval(() => {
       if (this.mode === "turn") this.scheduleDraw();
     }, 250);
 
-    // Each assistant narration run opens with a ● step head; wrapped lines align
-    // beneath it. A tool call (or any other event) closes the run so the next
-    // prose starts a fresh step — that interleaving is the visible thought-chain.
-    let stepOpen = false;
-    const emitProse = (ln: string) => {
-      if (!stepOpen) {
-        if (ln.trim() === "") return; // don't open a step on a leading blank line
-        this.print(stepHead(ln));
-        stepOpen = true;
-      } else {
-        this.print(`    ${text(ln)}`);
-      }
-    };
-    const flush = (final = false) => {
-      let idx: number;
-      while ((idx = this.streamBuf.indexOf("\n")) >= 0) {
-        emitProse(this.streamBuf.slice(0, idx));
-        this.streamBuf = this.streamBuf.slice(idx + 1);
-      }
-      if (final && this.streamBuf.length) {
-        emitProse(this.streamBuf);
-        this.streamBuf = "";
-      }
-    };
+    // Collapsed rendering (see ./turn.ts): narration and the final answer stay in
+    // the open; the heavy work accumulates in a hidden log whose live tail — plus
+    // the to-do checklist and a preview of the streaming prose — shows in the
+    // pinned window above the composer. finish() sets down the collapsed summary,
+    // edit chips, the plan's final state, the record line, and the answer.
+    const turn = new TurnRenderer(
+      {
+        commit: (block) => this.print(block),
+        preview: (lines) => {
+          this.turnPreview = lines;
+          this.scheduleDraw();
+        },
+      },
+      { model: engine.getModel(), getCost: () => engine.getCost() },
+    );
+    this.liveTurn = turn;
 
-    // Reasoning models stream chain-of-thought separately; render it dimmed under
-    // a "✻ Thinking" header so it reads as thinking, not as the answer.
-    let thinkBuf = "";
-    let thinkOpen = false;
-    const emitThink = (ln: string) => {
-      if (!thinkOpen) {
-        if (ln.trim() === "") return;
-        this.print(`  ${faint("✻ Thinking")}`);
-        thinkOpen = true;
-      }
-      this.print(`  ${faint(ln)}`);
-    };
-    const flushThink = (final = false) => {
-      let idx: number;
-      while ((idx = thinkBuf.indexOf("\n")) >= 0) {
-        emitThink(thinkBuf.slice(0, idx));
-        thinkBuf = thinkBuf.slice(idx + 1);
-      }
-      if (final && thinkBuf.length) {
-        emitThink(thinkBuf);
-        thinkBuf = "";
-      }
-    };
+    // Offer-a-dashboard bookkeeping: the answer text (for the data-density
+    // heuristic) and whether the model already built/updated one this turn.
+    let answerText = "";
+    let dashboardTouched = false;
 
     try {
       for await (const ev of engine.chat(this.ctx.sessionId, input)) {
-        if (ev.type === "thinking_delta") {
-          thinkBuf += ev.text;
-          flushThink();
-          continue;
+        turn.onEvent(ev);
+        this.currentActivity = turn.activity; // surfaced on the Cooking… line
+        if (ev.type === "text_delta") answerText += ev.text;
+        if (ev.type === "stream_reset") answerText = "";
+        if (ev.type === "tool_call_end" && ev.output?.toolName === "interactive_dashboard") {
+          dashboardTouched = true;
         }
-        if (ev.type === "text_delta") {
-          if (thinkBuf || thinkOpen) flushThink(true); // close out reasoning before the answer
-          this.currentActivity = null;
-          this.streamBuf += ev.text;
-          flush();
-          continue;
+        // Session-wide edited-files readout on the footer.
+        if (
+          ev.type === "tool_call_end" &&
+          ev.output?.success &&
+          (ev.output.toolName === "edit_file" || ev.output.toolName === "write_file") &&
+          ev.args?.path
+        ) {
+          this.filesEdited.add(String(ev.args.path));
         }
-        if (ev.type === "tool_call_start") {
-          this.currentActivity = runningLabel(ev.toolName); // surfaced on the Working line
-          continue;
-        }
-        flushThink(true);
-        flush(true);
-        // Any non-prose event ends the current narration run and clears the
-        // in-flight tool label; the next text opens a fresh ● step.
-        stepOpen = false;
-        this.currentActivity = null;
-        const block = formatEvent(ev, { cost: engine.getCost() });
-        if (block) this.print(block);
       }
-      flushThink(true);
-      flush(true);
     } catch (err) {
-      flush(true);
       // A user interrupt surfaces as an abort error — that's expected, not a failure to report.
-      if (!this.aborting) {
-        this.print(`  ${accent("✕")} ${text(err instanceof Error ? err.message : String(err))}`);
-      }
+      if (!this.aborting) turn.onError(err);
     } finally {
+      turn.finish({ aborted: this.aborting });
+      if (
+        !this.aborting &&
+        !dashboardTouched &&
+        !this.interactiveTipShown &&
+        !engine.isInteractiveAuto() &&
+        shouldOfferInteractive(answerText)
+      ) {
+        this.interactiveTipShown = true;
+        this.print(`  ${faint("✦ /interactive — view this as a live dashboard")}`);
+      }
+      this.lastWorkLog = turn.fullLog();
+      this.liveTurn = null;
       if (this.tick) {
         clearInterval(this.tick);
         this.tick = null;
       }
       this.currentActivity = null;
+      this.turnPreview = null;
       const wasAborted = this.aborting;
       this.aborting = false;
       this.mode = "input";
       this.drainQueue(wasAborted);
     }
+  }
+
+  /** Ctrl+R: bring the hidden work out — the in-flight log mid-turn, else the
+   *  last turn's. Prints into the transcript (scrollback keeps it). */
+  private expandWorkLog(): void {
+    const log = this.liveTurn?.fullLog() ?? this.lastWorkLog;
+    if (!log) {
+      this.print(`  ${faint("no work log yet")}`);
+      return;
+    }
+    this.print("");
+    this.print(log);
+    this.print("");
   }
 
   /** Close out a finished turn's type-ahead queue. On a clean finish, run the next queued
@@ -2638,7 +2858,7 @@ class Tui {
           .replace(/^-+|-+$/g, "")
           .slice(0, 50) || "research";
       const file = join(dir, `${new Date().toISOString().slice(0, 10)}-${slug}.md`);
-      const body = `# Research: ${plan.question}\n\n_Generated by Alan · ${new Date().toISOString()}_\n\n${report.markdown}\n`;
+      const body = `# Research: ${plan.question}\n\n_Generated by Berne · ${new Date().toISOString()}_\n\n${report.markdown}\n`;
       writeFileSync(file, body);
       const shown = file.startsWith(this.ctx.workspaceRoot)
         ? file.slice(this.ctx.workspaceRoot.length).replace(/^[/\\]/, "")

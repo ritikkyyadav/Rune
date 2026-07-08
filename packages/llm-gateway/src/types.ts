@@ -166,6 +166,11 @@ export type StreamEvent =
   | { type: "tool_use_stop"; toolCallId: string; toolInput: Record<string, unknown> }
   | { type: "message_stop"; stopReason: StopReason; usage: TokenUsage }
   | { type: "notice"; message: string }
+  // The in-flight response was abandoned mid-stream (provider error after
+  // partial output) and will be re-streamed from scratch — consumers MUST
+  // discard everything accumulated for the current assistant message, or the
+  // retry duplicates text and tool calls in the transcript.
+  | { type: "stream_reset" }
   // `retryable: false` marks a terminal failure (bad key, no credits, every
   // provider rate-limited) that re-running won't fix — the agent loop surfaces
   // it immediately instead of retrying through maxConsecutiveErrors.
@@ -250,6 +255,23 @@ export interface GatewayConfig {
   defaultProvider: ProviderName;
   maxRetries: number;
   retryBaseMs: number;
+  /**
+   * Black-box tap: called on provider fallbacks and terminal failures so the
+   * orchestrator's recorder can count them. Fire-and-forget; the gateway
+   * guards every invocation — a throwing handler can never break a stream.
+   */
+  onIncident?: (incident: GatewayIncidentEvent) => void;
+}
+
+/** What the gateway reports to the black box (kept provider-agnostic). */
+export interface GatewayIncidentEvent {
+  kind: "fallback" | "terminal";
+  provider: string;
+  model?: string;
+  status?: number;
+  message: string;
+  /** For kind="fallback": the provider we switched to. */
+  fallbackTo?: string;
 }
 
 export interface ProviderConfig {

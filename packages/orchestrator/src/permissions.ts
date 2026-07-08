@@ -1,4 +1,5 @@
 import { isAbsolute, relative, resolve } from "path";
+import { isSandboxEnabled } from "@alan/tool-registry";
 import type { PermissionLevel, ToolSchema } from "@alan/tool-registry";
 
 export type PermissionScope = "once" | "session" | "project" | "global";
@@ -24,10 +25,11 @@ export type PermissionDecision =
 // ─── Permission modes (the Shift+Tab cycle) ───
 // A single, user-facing knob layered over the broker's two booleans. Shift+Tab
 // cycles confirm → auto → turing → confirm, mirroring the way Claude Code cycles
-// permission modes. "turing" is Alan's bypass mode (Gemini-CLI's yellow YOLO,
-// Claude's bypass-permissions): it reads, writes, and runs commands without ever
-// asking. The names map onto the existing machinery — turing⇒yolo, auto⇒trust —
-// so nothing downstream has to learn a new concept.
+// permission modes. "turing" is the internal token for the bypass mode the product
+// brands "Hands-Free" (Gemini-CLI's yellow YOLO, Claude's bypass-permissions): it
+// reads, writes, and runs commands without ever asking. The names map onto the
+// existing machinery — turing⇒yolo, auto⇒trust — so nothing downstream has to learn a
+// new concept, and the enum value stays "turing" the way yolo stayed yolo.
 export type PermissionMode = "confirm" | "auto" | "turing";
 
 /** Cycle order for Shift+Tab. */
@@ -45,10 +47,7 @@ export class PermissionBroker {
   private trustWorkspace: boolean;
   private workspaceRoot?: string;
 
-  constructor(
-    yoloMode = false,
-    opts: { workspaceRoot?: string; trustWorkspace?: boolean } = {},
-  ) {
+  constructor(yoloMode = false, opts: { workspaceRoot?: string; trustWorkspace?: boolean } = {}) {
     this.yoloMode = yoloMode;
     this.workspaceRoot = opts.workspaceRoot;
     this.trustWorkspace = opts.trustWorkspace ?? false;
@@ -157,13 +156,36 @@ export class PermissionBroker {
    * Whether a confirm/sandbox tool's effect is confined to the workspace and
    * therefore safe to auto-approve under workspace trust. Path-based writes are
    * confined when their target resolves inside the workspace root; `bash` is
-   * always confined because the Rust sandbox is the real containment boundary.
-   * Network-reaching tools (web_fetch, web_search, n8n_trigger) are never
-   * confined and keep prompting.
+   * confined because the Rust sandbox is the real containment boundary —
+   * UNLESS the call escalates out of the sandbox (network: true), which must
+   * keep prompting. Network-reaching tools (web_fetch, web_search,
+   * n8n_trigger) are never confined and keep prompting.
    */
   private isWorkspaceConfined(schema: ToolSchema, args: Record<string, unknown>): boolean {
     if (!this.workspaceRoot) return false;
-    if (schema.name === "bash") return true;
+    // Both escapes leave the sandbox: network:true (explicit escalation) and
+    // run_in_background:true (servers must bind ports, so they run
+    // unsandboxed). Neither may be auto-approved by workspace trust — only
+    // sandbox-confined foreground commands are. And when the user disabled
+    // the sandbox entirely (/sandbox off), NO bash call is contained, so
+    // workspace trust stops auto-approving bash altogether — full access
+    // means every command earns a prompt outside Hands-Free mode.
+    if (schema.name === "bash") {
+      return isSandboxEnabled() && args.network !== true && args.run_in_background !== true;
+    }
+    // A worker's blast radius is exactly the files it owns: confined when
+    // every owned entry resolves inside the workspace (the ownership guard
+    // re-enforces this mechanically at each write).
+    if (schema.name === "worker") {
+      const files = args.files;
+      return (
+        Array.isArray(files) &&
+        files.length > 0 &&
+        files.every(
+          (f) => typeof f === "string" && f.length > 0 && this.isPathInside(this.workspaceRoot!, f),
+        )
+      );
+    }
     if (!PermissionBroker.PATH_CONFINED_TOOLS.has(schema.name)) return false;
     const target = args.path;
     if (typeof target !== "string" || target.length === 0) return false;
@@ -208,8 +230,18 @@ export class PermissionBroker {
       case "write_file":
       case "edit_file":
         return `${tool} ${args.path ?? "unknown path"}`;
-      case "bash":
-        return `bash: ${String(args.command ?? "").slice(0, 100)}`;
+      case "bash": {
+        const net = !isSandboxEnabled()
+          ? " [sandbox off — full host access]"
+          : args.network === true
+            ? " [network — runs outside the sandbox]"
+            : "";
+        return `bash${net}: ${String(args.command ?? "").slice(0, 100)}`;
+      }
+      case "worker": {
+        const files = Array.isArray(args.files) ? (args.files as string[]) : [];
+        return `worker [owns: ${files.slice(0, 6).join(", ")}${files.length > 6 ? ` +${files.length - 6}` : ""}]: ${String(args.prompt ?? "").slice(0, 80)}`;
+      }
       default:
         return `${tool} ${JSON.stringify(args).slice(0, 100)}`;
     }

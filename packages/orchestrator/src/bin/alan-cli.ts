@@ -18,23 +18,39 @@ import {
   SEARCH_KEY_PRESETS,
   loadLastModel,
   saveLastModel,
+  loadSavedSandboxState,
+  resolveInitialSandbox,
+  saveSandboxState,
   getSystemMemoryPath,
+  getAlanHome,
 } from "@alan/shared";
+import {
+  armSentinel,
+  disarmSentinel,
+  sentinelPathFor,
+  sweepDirtyExits,
+  TelemetryReporter,
+  bumpUsage,
+  ensureInstallId,
+  loadTelemetryState,
+  setConsent,
+} from "@alan/telemetry";
+import { rmSync } from "node:fs";
+import { join as joinPath } from "node:path";
 import { parseArgs } from "util";
 import * as readline from "readline";
 import { Spinner } from "./spinner";
 import { renderWelcome } from "./welcome";
-import { renderToolCall } from "./ui/tool-call";
-import { renderTranscript } from "./ui/activity";
+import { TurnRenderer, userBlock, renderReplay } from "./ui/turn";
 import { renderStatus } from "./ui/status";
 import {
   promptString,
   statusLine,
   composerRule,
   permissionModeBanner,
+  sandboxModeBanner,
   permissionView,
 } from "./ui/composer";
-import { formatNotice } from "./ui/events";
 import { truncate } from "./ui/render";
 import { runTui } from "./ui/tui";
 import { exportSession } from "../session-export";
@@ -65,9 +81,14 @@ const { values, positionals } = parseArgs({
     sign: { type: "boolean", default: false },
     out: { type: "string" },
     help: { type: "boolean", short: "h", default: false },
+    version: { type: "boolean", short: "v", default: false },
     tui: { type: "boolean", default: false },
     classic: { type: "boolean", default: false },
     fullscreen: { type: "boolean", default: false },
+    pristine: { type: "boolean", default: false },
+    sandbox: { type: "boolean" },
+    "no-sandbox": { type: "boolean" },
+    "by-version": { type: "boolean", default: false },
   },
   allowPositionals: true,
   strict: false,
@@ -75,17 +96,32 @@ const { values, positionals } = parseArgs({
 
 const command = positionals[0] ?? "chat";
 
+// Single version string — stamped on every black-box incident so regressions
+// are queryable per release. Mirrors the public brand version (Berne v0.1).
+const ALAN_VERSION = PRODUCT_VERSION;
+
+// ─── Top-level --version ───
+
+if (values.version) {
+  process.stdout.write(`${PRODUCT_LABEL}\n`);
+  process.exit(0);
+}
+
 // ─── Top-level --help ───
 
 if (values.help) {
   process.stdout.write(
-    `\n  alan — AI coding agent\n\n` +
+    `\n  ${PRODUCT_LABEL} — AI coding agent\n\n` +
       `  Usage:\n` +
-      `    alan [chat]                  Start chatting — offers to resume recent work (Enter = new)\n` +
-      `    alan --new                   Skip the picker and start a fresh session\n` +
-      `    alan resume [sessionId]      Resume a session (no id → interactive picker)\n` +
-      `    alan list [--all]            List stored sessions (--all includes archived)\n` +
-      `    alan export <sessionId>      Export a session transcript\n\n` +
+      `    berne [chat]                  Start chatting — offers to resume recent work (Enter = new)\n` +
+      `    berne --new                   Skip the picker and start a fresh session\n` +
+      `    berne resume [sessionId]      Resume a session (no id → interactive picker)\n` +
+      `    berne list [--all]            List stored sessions (--all includes archived)\n` +
+      `    berne export <sessionId>      Export a session transcript\n` +
+      `    berne doctor                  Black-box health: recent incidents, crash sentinel, recorder state\n` +
+      `    berne incidents [sub]         Browse recorded failures — list | show <id> | top [--by-version] | export\n` +
+      `    berne notebook [sub]          Learned tactics notebook — list | show <id> | rm <id> | export\n` +
+      `    berne telemetry [sub]         Opt-in diagnostics — status | on | off | preview | reset (off by default)\n\n` +
       `  Export options:\n` +
       `    --format md|json             Output format (default: md)\n` +
       `    --sign                       Sign the export with Ed25519\n` +
@@ -96,15 +132,40 @@ if (values.help) {
       `    -w, --workspace <path>       Workspace root directory\n` +
       `    -r, --resume <sessionId>     Resume an existing session\n` +
       `    -n, --new                    Start a fresh session (skip the resume picker)\n` +
-      `    --yolo                       Start in Turing (bypass) mode — skip all permission prompts\n` +
+      `    --yolo                       Start in Hands-Free (bypass) mode — skip all permission prompts\n` +
       `    --trust                      Start in auto mode — approve in-workspace edits & bash (outside still prompts)\n` +
-      `                                 (Shift+Tab cycles confirm → auto → Turing live; also /mode, /turing)\n` +
+      `                                 (Shift+Tab cycles confirm → auto → Hands-Free live; also /mode, /hands-free)\n` +
       `    --planner                    Enable planner+executor mode\n` +
       `    --classic                    Plain readline prompt (default is the pinned composer)\n` +
       `    --tui                        Force the Codex-style pinned composer\n` +
       `    --fullscreen                 Alt-screen TUI (edge-to-edge theme bg; default is native scroll)\n` +
+      `    --pristine                   Run without the learned tactics notebook (evolution control group)\n` +
+      `    --sandbox / --no-sandbox     Force the OS command sandbox on/off for this run (overrides /sandbox + config)\n` +
       `    -h, --help                   Show this help\n\n`,
   );
+  process.exit(0);
+}
+
+// ─── Black-box surfaces: no Engine, no provider validation — instant ───
+
+if (command === "doctor") {
+  const { runDoctor } = await import("./blackbox-cli");
+  runDoctor();
+  process.exit(0);
+}
+if (command === "incidents") {
+  const { runIncidents } = await import("./blackbox-cli");
+  runIncidents(positionals as string[], values as Record<string, unknown>);
+  process.exit(0);
+}
+if (command === "notebook") {
+  const { runNotebook } = await import("./notebook-cli");
+  runNotebook(positionals as string[], values as Record<string, unknown>);
+  process.exit(0);
+}
+if (command === "telemetry") {
+  const { runTelemetry } = await import("./telemetry-cli");
+  runTelemetry(positionals.slice(1) as string[]);
   process.exit(0);
 }
 
@@ -234,6 +295,13 @@ import {
   TERMINAL_THEME_RESET,
 } from "./colors";
 import { loadSavedTheme, resolveInitialTheme, saveTheme } from "./ui/theme-store";
+import {
+  buildInteractiveDirective,
+  loadInteractiveAuto,
+  saveInteractiveAuto,
+  shouldOfferInteractive,
+} from "./ui/interactive";
+import { PRODUCT_VERSION, PRODUCT_LABEL } from "./ui/brand";
 
 /** A compact "2h ago" style age for the session list and pickers. */
 function relTime(iso: string): string {
@@ -313,19 +381,46 @@ function resolveSessionArg(engine: Engine, arg: string) {
 }
 
 /** Print a session's replayed history to stdout (classic path). Renders the same
- *  ● thought-chain language as a live turn so a resumed session is faithful. */
+ *  two-partition language as a live turn — work inside the rail, each turn's final
+ *  answer outside it — so a resumed session is faithful. */
 function printSessionTranscript(engine: Engine, id: string): void {
   const lines = engine.getTranscript(id);
   if (lines.length === 0) {
     process.stdout.write(`  ${faint("(no earlier messages)")}\n`);
     return;
   }
-  process.stdout.write(renderTranscript(lines) + "\n");
+  process.stdout.write(renderReplay(lines) + "\n");
 }
 
 /** Recolour the whole terminal (fg+bg) to the active theme — only on a real TTY. */
 function applyTerminalTheme(): void {
   if (process.stdout.isTTY) process.stdout.write(terminalThemeSeq());
+}
+
+// ─── Opt-in telemetry: first-run consent prompt ───
+// Asked at most once (persisted in ~/.alan/telemetry.json), only on an
+// interactive TTY, and only when a collector endpoint is configured. Default is
+// NO — a bare Enter, a pipe, or any non-"yes" answer leaves telemetry off.
+async function askTelemetryConsent(): Promise<boolean> {
+  process.stdout.write(
+    `\n  ${bold(text("Help improve Berne?"))}\n` +
+      `  ${dim("Send anonymous, redacted diagnostics — crash/error reports and a daily usage")}\n` +
+      `  ${dim("heartbeat — so bugs get fixed before the next release. Off unless you say yes.")}\n\n` +
+      `  ${faint("· No file contents, prompts, IP address, or device id — ever.")}\n` +
+      `  ${faint("· Inspect the exact payloads any time:")} ${info("berne telemetry preview")}\n` +
+      `  ${faint("· Change your mind any time:")} ${info("berne telemetry on|off")}\n\n`,
+  );
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = await new Promise<string>((resolve) => {
+      rl.question(`  ${text("Share anonymous diagnostics?")} ${dim("[y/N]")} `, resolve);
+    });
+    return /^\s*y(es)?\s*$/i.test(answer);
+  } catch {
+    return false;
+  } finally {
+    rl.close();
+  }
 }
 
 // ─── Main ───
@@ -435,6 +530,14 @@ async function main() {
   // Copy saved Tavily/Brave keys into the env so the web_search backends (used
   // by /research) pick them up; keyless DuckDuckGo remains the fallback.
   applySearchKeysToEnv();
+  // Sandbox posture: flag > ALAN_SANDBOX_ENABLED env > /sandbox sidecar > config > on.
+  const sandboxEnabled = resolveInitialSandbox({
+    flag: values["no-sandbox"] === true ? false : values.sandbox === true ? true : undefined,
+    env: process.env.ALAN_SANDBOX_ENABLED ?? null,
+    saved: loadSavedSandboxState(),
+    configured: config.sandbox?.enabled ?? null,
+  });
+
   const engine = new Engine({
     model,
     provider,
@@ -443,6 +546,7 @@ async function main() {
     toolsBinaryPath: toolsBinary,
     yoloMode: values.yolo as boolean,
     trustWorkspace,
+    sandboxEnabled,
     plannerMode,
     routing: plannerMode
       ? {
@@ -469,6 +573,28 @@ async function main() {
     research: config.research,
     memory: config.memory,
     tiers: config.tiers,
+    git: config.git,
+    context: config.context,
+    // Autonomy toggle precedence: /interactive sidecar > [interactive] auto.
+    interactive: { auto: loadInteractiveAuto() ?? config.interactive?.auto },
+    // Black box: on by default for the real CLI (config [diagnostics] can turn
+    // it off). Unit tests construct the Engine directly and stay hermetic.
+    // The trail spool is pid-scoped so two concurrent Berne instances don't
+    // overwrite each other's flight data (it pairs with the pid-scoped
+    // crash sentinel armed below).
+    blackbox:
+      config.diagnostics?.enabled !== false
+        ? {
+            enabled: true,
+            version: ALAN_VERSION,
+            spoolPath: joinPath(getAlanHome(), `blackbox.spool.${process.pid}.json`),
+          }
+        : undefined,
+    // Tactics notebook: on by default; `--pristine` runs without any learned
+    // context (the control group for measuring evolution lift).
+    notebook: {
+      enabled: !(values.pristine as boolean) && config.notebook?.enabled !== false,
+    },
   });
 
   // ─── DB-only commands — run before provider validation ───
@@ -636,13 +762,123 @@ async function main() {
   }
   const customCommands = await loadCommands(workspaceRoot);
 
+  // ─── Black box: crash forensics for the interactive session ───
+  // Arm a pid-scoped sentinel now; it is removed by the process "exit" hook,
+  // so it only survives a SIGKILL / power-loss class death — exactly the
+  // failure no in-process handler can record. The startup sweep consumes only
+  // markers whose owner pid is DEAD, so concurrent Berne tabs never file
+  // false dirty-exit incidents about each other. Next startup turns real
+  // leftovers into dirty_exit incidents carrying the spooled flight trail.
+  const recorder = engine.getRecorder();
+  const sentinelDir = joinPath(getAlanHome(), "sentinels");
+  const ownSentinel = sentinelPathFor(sentinelDir, process.pid);
+  const ownSpool = joinPath(getAlanHome(), `blackbox.spool.${process.pid}.json`);
+  if (recorder) {
+    // ─── Opt-in telemetry: consent + attach the outbound sink ───
+    // Only when a collector endpoint is actually configured. First-run consent
+    // is asked at most once, only on a TTY, default NO. The sink is attached
+    // BEFORE the dirty-exit sweep below so last run's hard-kill crash report is
+    // forwarded too. All network is deferred to the fire-and-forget flush at the
+    // end of this block, so nothing here waits on connectivity.
+    let telemetryReporter: TelemetryReporter | null = null;
+    const tcfg = config.telemetry;
+    if (tcfg?.enabled && tcfg?.endpoint) {
+      const home = getAlanHome();
+      if (loadTelemetryState(home).decision === null && process.stdin.isTTY) {
+        const granted = await askTelemetryConsent();
+        setConsent(home, granted ? "granted" : "denied");
+      }
+      const installId = ensureInstallId(home); // null unless consent granted
+      if (installId) {
+        telemetryReporter = new TelemetryReporter({
+          home,
+          endpoint: tcfg.endpoint,
+          token: tcfg.token,
+          installId,
+          version: ALAN_VERSION,
+          streams: { crash: tcfg.crashReports !== false, usage: tcfg.usageStats !== false },
+        });
+        recorder.setSink((r) => telemetryReporter?.onIncident(r));
+        bumpUsage(home, "sessions", 1);
+        telemetryReporter.maybeHeartbeat(loadTelemetryState(home));
+      }
+    }
+
+    const dirtyExits = sweepDirtyExits(sentinelDir, {
+      legacyPath: joinPath(getAlanHome(), "blackbox.sentinel.json"),
+    });
+    for (const dirty of dirtyExits.slice(0, 3)) {
+      recorder.seedTrail(dirty.trail);
+      recorder.recordFatal({
+        class: "crash.dirty_exit",
+        severity: "critical",
+        component: "cli",
+        where: "alan-cli#startup",
+        message:
+          `previous run (v${dirty.meta.version}` +
+          `${dirty.meta.sessionId ? `, session ${dirty.meta.sessionId.slice(0, 8)}` : ""}, ` +
+          `started ${dirty.meta.startedAt}) exited without cleanup`,
+      });
+      recorder.seedTrail([]);
+    }
+    // Incidents still pending from long-dead processes can never resolve now.
+    // Only sweep old ones so a concurrently running alan isn't clobbered.
+    recorder.getStore()?.sweepPending(new Date(Date.now() - 2 * 3_600_000).toISOString());
+    armSentinel(ownSentinel, {
+      pid: process.pid,
+      version: ALAN_VERSION,
+      sessionId,
+      startedAt: new Date().toISOString(),
+      spoolPath: ownSpool,
+    });
+    process.on("exit", () => {
+      disarmSentinel(ownSentinel);
+      // Clean exit needs no flight trail — drop the spool so pid-scoped
+      // spools don't accumulate in ~/.alan.
+      try {
+        rmSync(ownSpool, { force: true });
+      } catch {
+        // best-effort
+      }
+    });
+    process.on("uncaughtException", (err: Error) => {
+      recorder.recordFatal({
+        class: "crash.uncaught_exception",
+        severity: "critical",
+        component: "cli",
+        where: "process#uncaughtException",
+        message: err?.message ?? String(err),
+        stack: err?.stack,
+      });
+      console.error(err);
+      process.exit(1); // runs "exit" hooks: terminal restore + sentinel disarm
+    });
+    process.on("unhandledRejection", (reason: unknown) => {
+      recorder.recordFatal({
+        class: "crash.unhandled_rejection",
+        severity: "critical",
+        component: "cli",
+        where: "process#unhandledRejection",
+        message: reason instanceof Error ? reason.message : String(reason),
+        stack: reason instanceof Error ? reason.stack : undefined,
+      });
+      console.error(reason);
+      process.exit(1);
+    });
+
+    // Deliver last run's queued reports + this run's dirty-exit crash + today's
+    // heartbeat. Fire-and-forget with an internal timeout — the session never
+    // waits on it, and a failure just leaves the durable queue for next launch.
+    if (telemetryReporter) void telemetryReporter.flush().catch(() => {});
+  }
+
   if (useTui) {
     await runTui({
       engine,
       sessionId,
       launchPick,
       workspaceRoot,
-      version: "0.1.0",
+      version: ALAN_VERSION,
       yoloMode: values.yolo as boolean,
       trustWorkspace,
       customCommands,
@@ -683,8 +919,8 @@ async function main() {
       provider: engine.getProvider(),
       sessionId,
       workspace: workspaceRoot,
-      version: "0.1.0",
-      sandbox: config.sandbox?.enabled ?? false,
+      version: ALAN_VERSION,
+      sandbox: sandboxEnabled,
       recentSessions,
     }) + "\n",
   );
@@ -714,6 +950,9 @@ async function main() {
   let pasteAccum = "";
   let pasteFlushTimer: ReturnType<typeof setTimeout> | null = null;
   let busy = false;
+  let turnAborted = false; // Ctrl-C mid-turn: close the record as "interrupted"
+  const filesEdited = new Set<string>(); // session-wide, shown on the footer readout
+  let interactiveTipShown = false; // the /interactive offer fires at most once per session
 
   const _origStdinEmit = process.stdin.emit;
   process.stdin.emit = function (event: string | symbol, ...args: unknown[]): boolean {
@@ -803,9 +1042,9 @@ async function main() {
       });
     });
 
-  // Register in every mode. The broker short-circuits to "allowed" under Turing, so the
+  // Register in every mode. The broker short-circuits to "allowed" under Hands-Free, so the
   // handler is simply never called there — but stays wired so cycling back to confirm/auto
-  // (Shift+Tab, /mode, /turing) restores prompts without re-registration.
+  // (Shift+Tab, /mode, /hands-free) restores prompts without re-registration.
   engine.setPermissionHandler(permissionHandler);
 
   // ─── Question Handler (ask_user tool) ───
@@ -823,9 +1062,7 @@ async function main() {
         q.options.forEach((opt, i) => {
           process.stdout.write(`    ${accent(String(i + 1))} ${text(opt)}\n`);
         });
-        process.stdout.write(
-          `  ${muted("number to choose · or type an answer · Enter = 1")}\n`,
-        );
+        process.stdout.write(`  ${muted("number to choose · or type an answer · Enter = 1")}\n`);
 
         rl.question(`  ${accent("›")} `, (answer) => {
           const a = answer.trim();
@@ -862,22 +1099,35 @@ async function main() {
     ["/deepresearch", "Deep research — multi-round, long-form"],
     ["/cost", "Session cost"],
     ["/compress", "Summarize & shrink context"],
+    ["/undo", "Revert the last Berne auto-commit ([git] autoCommit)"],
+    ["/interactive", "Live dashboard from the last report (auto on|off · open)"],
     ["/memory", "System memory — your evergreen profile (update/add/edit/cadence)"],
+    ["/notebook", "Learned tactics active for this workspace"],
+    ["/bug", "Flag a problem — records the flight trail to the black box"],
     ["/plan", "Toggle plan mode"],
-    ["/turing", "Turing — toggle bypass mode (shift+tab)"],
-    ["/mode", "Cycle permission mode (confirm/auto/turing)"],
+    ["/hands-free", "Hands-Free — toggle bypass mode (shift+tab)"],
+    ["/mode", "Cycle permission mode (confirm/auto/hands-free)"],
+    ["/sandbox", "OS sandbox for commands — on | off (off = full access)"],
     ["/rewind", "Roll back the conversation"],
     ["/help", "Show all commands"],
-    ["/quit", "Exit Alan"],
+    ["/quit", "Exit Berne"],
   ];
 
   function showPrompt() {
+    let contextPercent: number | undefined;
+    try {
+      contextPercent = engine.getContextUsage().percent;
+    } catch {
+      contextPercent = undefined;
+    }
     process.stdout.write(
       "\n" +
         statusLine({
           model: engine.getModel(),
           workspace: workspaceRoot,
           mode: engine.getPermissionMode(),
+          contextPercent,
+          filesEdited: filesEdited.size || undefined,
         }) +
         "\n" +
         composerRule() +
@@ -887,7 +1137,7 @@ async function main() {
   }
 
   /**
-   * Switch the permission mode and re-render the prompt (Shift+Tab / /turing / /mode).
+   * Switch the permission mode and re-render the prompt (Shift+Tab / /hands-free / /mode).
    * The buffer the user is mid-typing is preserved across the reprint.
    */
   function cycleMode(target?: ReturnType<typeof engine.getPermissionMode>) {
@@ -930,7 +1180,7 @@ async function main() {
     const mem = engine.getSystemMemory();
     if (mem.enabled && !mem.content.trim() && mem.scheduleLabel === "manual") {
       process.stdout.write(
-        `  ${faint("✦ tip: Alan can learn your style & codebases over time — ")}${info("/memory")}${faint(" (auto-update: /memory weekly)")}\n`,
+        `  ${faint("✦ tip: Berne can learn your style & codebases over time — ")}${info("/memory")}${faint(" (auto-update: /memory weekly)")}\n`,
       );
     }
     // Auto-refresh in the background when the chosen cadence is due. Non-blocking;
@@ -1026,10 +1276,15 @@ async function main() {
         ["/deepresearch", "Deep research — multi-round, long-form"],
         ["/cost", "Session cost"],
         ["/compress", "Summarize & shrink context"],
+        ["/undo", "Revert the last Berne auto-commit ([git] autoCommit)"],
+        ["/interactive", "Live dashboard from the last report (auto on|off · open)"],
         ["/memory", "System memory — /memory [update|add|edit|clear|daily|3d|weekly|manual]"],
+        ["/notebook", "Learned tactics active for this workspace"],
+        ["/bug", "Flag a problem — records the current flight trail to the black box"],
         ["/plan", "Toggle plan mode"],
-        ["/turing", "Turing — toggle bypass mode (shift+tab)"],
-        ["/mode", "Cycle permission mode (confirm/auto/turing)"],
+        ["/hands-free", "Hands-Free — toggle bypass mode (shift+tab)"],
+        ["/mode", "Cycle permission mode (confirm/auto/hands-free)"],
+        ["/sandbox", "OS sandbox for commands — on | off (off = full access)"],
         ["/rewind", "Roll back the conversation"],
         ["/help", "This reference"],
         ["/quit", "Exit"],
@@ -1063,8 +1318,9 @@ async function main() {
             yoloMode: status.yoloMode,
             trustWorkspace: status.trustWorkspace,
             permissionMode: status.permissionMode,
+            sandboxEnabled: status.sandboxEnabled,
             registeredProviders: status.registeredProviders,
-            version: "0.1.0",
+            version: ALAN_VERSION,
           }) +
           "\n\n",
       );
@@ -1222,8 +1478,11 @@ async function main() {
       const themes = listThemes();
       const arg = input.slice("/theme".length).trim().toLowerCase();
       if (arg) {
-        if (setTheme(arg)) {
-          saveTheme(arg);
+        // Only the two production themes are selectable (listThemes()); anything else
+        // is reported as unknown even though its palette still exists in the source.
+        const match = themes.find((t) => t.name === arg || t.label.toLowerCase() === arg);
+        if (match && setTheme(match.name)) {
+          saveTheme(match.name);
           applyTerminalTheme();
           process.stdout.write(`  ${green("✓")} theme set to ${brass(getTheme().label)}\n\n`);
         } else {
@@ -1485,6 +1744,111 @@ async function main() {
       return;
     }
 
+    if (input === "/interactive" || input.startsWith("/interactive ")) {
+      const arg = input.slice("/interactive".length).trim();
+      const [sub = "", ...rest] = arg.split(/\s+/).filter(Boolean);
+      if (sub === "auto") {
+        const v = (rest[0] ?? "").toLowerCase();
+        if (v === "on" || v === "off") {
+          const on = v === "on";
+          engine.setInteractiveAuto(on);
+          saveInteractiveAuto(on);
+          process.stdout.write(
+            `  ${green("✓")} ${text(`autonomous dashboards ${on ? "on" : "off"}`)} ${faint(
+              on
+                ? "— Berne builds one when an answer is data-heavy"
+                : "— dashboards only when you ask (/interactive)",
+            )}\n\n`,
+          );
+        } else {
+          process.stdout.write(
+            `  ${text(`Autonomous dashboards: ${engine.isInteractiveAuto() ? "on" : "off"}`)}\n` +
+              `  ${faint("Toggle: /interactive auto on|off")}\n\n`,
+          );
+        }
+        showPrompt();
+        return;
+      }
+      if (sub === "open") {
+        const info = engine.openDashboard(rest[0]);
+        process.stdout.write(
+          info
+            ? `  ${green("✓")} ${text(`opened "${info.title}"`)}\n  ${faint(info.url)}\n\n`
+            : `  ${dim("No dashboard yet — run /interactive after a report, or ask for one.")}\n\n`,
+        );
+        showPrompt();
+        return;
+      }
+      // Bare /interactive (or "/interactive view <focus>" / "/interactive <focus>")
+      // becomes a normal turn: the model builds the dashboard with full context.
+      const focus = sub === "view" ? rest.join(" ") : arg;
+      input = buildInteractiveDirective(focus || undefined);
+      // …falls through to the turn loop below.
+    }
+
+    if (input === "/undo") {
+      const r = engine.undoLastAutoCommit();
+      if (r.ok) {
+        process.stdout.write(
+          `  ${green("✓")} ${text(`Reverted ${r.undoneSha}`)} ${dim(`(${r.subject})`)}\n\n`,
+        );
+      } else {
+        process.stdout.write(`  ${dim(`Cannot undo — ${r.reason}`)}\n`);
+        if (!engine.isAutoCommitEnabled()) {
+          process.stdout.write(
+            `  ${faint("Tip: set [git] autoCommit = true in ~/.alan/config.toml so every run lands as a revertible commit.")}\n`,
+          );
+        }
+        process.stdout.write("\n");
+      }
+      showPrompt();
+      return;
+    }
+
+    if (input === "/notebook") {
+      const entries = engine.getNotebookEntries(10);
+      if (entries.length === 0) {
+        process.stdout.write(
+          `  ${dim("Notebook is empty for this workspace — Berne fills it as it verifies how your repos work.")}\n\n`,
+        );
+      } else {
+        process.stdout.write(`\n  ${dim("§ NOTEBOOK — active for this workspace")}\n\n`);
+        for (const e of entries) {
+          process.stdout.write(
+            `  ${cyanotype(e.id.slice(-8))} ${dim(`[${e.scope}]`)} ${text(e.body.slice(0, 90))}\n`,
+          );
+        }
+        process.stdout.write(`\n  ${dim("manage: alan notebook [show <id>|rm <id>|export]")}\n\n`);
+      }
+      showPrompt();
+      return;
+    }
+
+    if (input === "/bug" || input.startsWith("/bug ")) {
+      const note = input.slice("/bug".length).trim();
+      const rec = engine.getRecorder();
+      if (!rec) {
+        process.stdout.write(
+          `  ${dim("Diagnostics are disabled ([diagnostics] enabled = false) — nothing recorded.")}\n\n`,
+        );
+      } else {
+        const id = rec.record({
+          class: "ux.user_reported",
+          severity: "warn",
+          component: "cli",
+          where: "slash#bug",
+          message: note || "user flagged the last exchange (no note given)",
+        });
+        process.stdout.write(
+          id
+            ? `  ${green("✦")} ${text("Logged with the current flight trail.")} ${faint(`· alan incidents show ${id.slice(-8)}`)}\n\n`
+            : `  ${dim("Could not record — see alan doctor.")}\n\n`,
+        );
+      }
+      showPrompt();
+      return;
+    }
+
     if (input === "/memory" || input.startsWith("/memory ")) {
       const rest = input.slice("/memory".length).trim();
       const sub = (rest.split(/\s+/)[0] ?? "").toLowerCase();
@@ -1592,7 +1956,7 @@ async function main() {
         process.stdout.write(`  ${green("✓")} ${text("memory cadence:")} ${info(verb)}\n`);
         if (res.label !== "manual") {
           process.stdout.write(
-            `  ${faint("Alan will refresh your profile in the background when it's due.")}\n`,
+            `  ${faint("Berne will refresh your profile in the background when it's due.")}\n`,
           );
         }
         process.stdout.write("\n");
@@ -1611,7 +1975,7 @@ async function main() {
         `  ${faint(`cadence: ${mem.scheduleLabel} · ~${fmtTok(mem.tokens)}/${fmtTok(mem.maxTokens)} tokens · updated ${last} · dreamed ${dreamt}`)}\n\n`,
       );
       if (!mem.content.trim()) {
-        process.stdout.write(`  ${dim("Empty — Alan hasn't built your profile yet.")}\n`);
+        process.stdout.write(`  ${dim("Empty — Berne hasn't built your profile yet.")}\n`);
         process.stdout.write(
           `  ${dim("Seed it with ")}${info("/memory update")}${dim(", jot a note with ")}${info("/memory add <…>")}${dim(",")}\n`,
         );
@@ -1736,15 +2100,16 @@ async function main() {
       engine.setPlannerMode(on);
       process.stdout.write(
         `  ${green("✓")} plan mode ${on ? "on" : "off"} ${dim(
-          on ? "— Alan drafts a step plan before executing" : "— flat agent loop",
+          on ? "— Berne drafts a step plan before executing" : "— flat agent loop",
         )}\n\n`,
       );
       showPrompt();
       return;
     }
 
-    if (input === "/turing") {
-      // Explicit toggle into the bypass mode, or back out to confirm.
+    if (input === "/hands-free" || input === "/turing") {
+      // Explicit toggle into the bypass mode, or back out to confirm. (`/turing` is a
+      // hidden back-compat alias for the same Hands-Free toggle.)
       const target = engine.getPermissionMode() === "turing" ? "confirm" : "turing";
       engine.setPermissionMode(target);
       process.stdout.write(permissionModeBanner(target) + "\n");
@@ -1752,15 +2117,35 @@ async function main() {
       return;
     }
 
+    if (input === "/sandbox" || input.startsWith("/sandbox ")) {
+      const raw = input.slice("/sandbox".length).trim().toLowerCase();
+      if (raw === "on" || raw === "off") {
+        const enabled = raw === "on";
+        engine.setSandboxEnabled(enabled);
+        saveSandboxState(enabled); // sticks across sessions, like /theme
+        process.stdout.write(sandboxModeBanner(enabled) + "\n");
+      } else if (raw) {
+        process.stdout.write(
+          `  ${warn("Usage:")} ${info("/sandbox")} ${dim("[on|off] — empty shows the current state")}\n`,
+        );
+      } else {
+        process.stdout.write(sandboxModeBanner(engine.isSandboxEnabled()) + "\n");
+      }
+      showPrompt();
+      return;
+    }
+
     if (input === "/mode" || input.startsWith("/mode ")) {
-      const arg = input.slice("/mode".length).trim().toLowerCase();
+      const raw = input.slice("/mode".length).trim().toLowerCase();
+      // "hands-free" is the public name for the internal "turing" bypass mode.
+      const arg = raw === "hands-free" || raw === "handsfree" ? "turing" : raw;
       const valid = ["confirm", "auto", "turing"] as const;
       if (arg && (valid as readonly string[]).includes(arg)) {
         engine.setPermissionMode(arg as (typeof valid)[number]);
         process.stdout.write(permissionModeBanner(arg) + "\n");
-      } else if (arg) {
+      } else if (raw) {
         process.stdout.write(
-          `  ${warn("Usage:")} ${info("/mode")} ${dim("[confirm|auto|turing] — empty cycles")}\n`,
+          `  ${warn("Usage:")} ${info("/mode")} ${dim("[confirm|auto|hands-free] — empty cycles")}\n`,
         );
       } else {
         process.stdout.write(permissionModeBanner(engine.cyclePermissionMode()) + "\n");
@@ -2048,7 +2433,7 @@ async function main() {
                   .replace(/^-+|-+$/g, "")
                   .slice(0, 50) || "research";
               const file = join(dir, `${new Date().toISOString().slice(0, 10)}-${slug}.md`);
-              const body = `# Research: ${plan.question}\n\n_Generated by Alan · ${new Date().toISOString()}_\n\n${report.markdown}\n`;
+              const body = `# Research: ${plan.question}\n\n_Generated by Berne · ${new Date().toISOString()}_\n\n${report.markdown}\n`;
               writeFileSync(file, body);
               const shown = file.startsWith(workspaceRoot)
                 ? file.slice(workspaceRoot.length).replace(/^[/\\]/, "")
@@ -2093,243 +2478,73 @@ async function main() {
     }
 
     busy = true;
+    turnAborted = false;
 
-    // Close the composer frame: a matching rule beneath the submitted input.
-    process.stdout.write(composerRule() + "\n\n");
+    // Close the composer frame: a matching rule beneath the submitted input, then
+    // the user's message set down as the loud block (same language as the TUI).
+    process.stdout.write(composerRule() + "\n");
+    process.stdout.write(userBlock(input) + "\n\n");
     spinner.start("thinking");
-    let isStreaming = false;
-    let isThinking = false;
-    let needStepMarker = true; // open the next narration run with a ● step marker
-    let totalTokens = 0;
+
+    // Collapsed rendering (see ./ui/turn.ts): narration and the final answer stay
+    // in the open; work lines stream as they happen (streamWork — readline has no
+    // pinned window to host a live tail, and print can't be retracted). finish()
+    // sets down the edit chips, the plan's final state, the record, the answer.
+    const turn = new TurnRenderer(
+      {
+        commit: (block) => {
+          const wasSpinning = spinner.isRunning();
+          spinner.stop();
+          process.stdout.write(block + "\n");
+          if (wasSpinning) spinner.start("thinking");
+        },
+      },
+      { model: engine.getModel(), getCost: () => engine.getCost(), streamWork: true },
+    );
+
+    // Offer-a-dashboard bookkeeping: the answer text (for the data-density
+    // heuristic) and whether the model already built/updated one this turn.
+    let answerText = "";
+    let dashboardTouched = false;
 
     try {
       for await (const event of engine.chat(sessionId, input)) {
-        switch (event.type) {
-          case "thinking_delta": {
-            // Reasoning models' chain-of-thought — dimmed under a header and kept
-            // visually separate from the answer (and never persisted as part of it).
-            if (!isStreaming) {
-              spinner.stop();
-              isStreaming = true;
-            }
-            if (!isThinking) {
-              process.stdout.write(`\n  ${faint("✻ Thinking")}\n  `);
-              isThinking = true;
-            }
-            process.stdout.write(faint(event.text.replace(/\n/g, "\n  ")));
-            break;
-          }
-
-          case "text_delta": {
-            if (!isStreaming) {
-              spinner.stop();
-              isStreaming = true;
-            }
-            if (isThinking) {
-              process.stdout.write("\n"); // separate reasoning from the answer
-              isThinking = false;
-            }
-            // Open each narration run with a ● step marker (skip leading blanks so
-            // the marker lands on real prose) and align wrapped continuation lines.
-            if (needStepMarker && event.text.trim() !== "") {
-              process.stdout.write(`\n  ${info("●")} `);
-              needStepMarker = false;
-            }
-            process.stdout.write(needStepMarker ? event.text : event.text.replace(/\n/g, "\n    "));
-            totalTokens++;
-            break;
-          }
-
-          case "tool_call_start": {
-            if (isStreaming) {
-              process.stdout.write("\n");
-              isStreaming = false;
-            }
-            if (!spinner.isRunning()) spinner.start("tool_call");
-            spinner.setTool(event.toolName);
-            break;
-          }
-
-          case "tool_call_end": {
-            spinner.stop();
-            process.stdout.write(
-              "\n" +
-                renderToolCall({
-                  toolName: event.output.toolName,
-                  args: event.args,
-                  result: event.output.result,
-                  success: event.output.success,
-                  error: event.output.error,
-                  durationMs: event.output.durationMs,
-                }) +
-                "\n",
-            );
-            needStepMarker = true; // next prose opens a fresh ● step
-            spinner.start("thinking");
-            break;
-          }
-
-          case "todo_updated": {
-            spinner.stop();
-            if (isStreaming) {
-              process.stdout.write("\n");
-              isStreaming = false;
-            }
-            process.stdout.write(`\n  ${muted("•")} ${bold(text("Updated plan"))}\n`);
-            for (const item of event.items) {
-              const marker =
-                item.status === "completed"
-                  ? ok("✓")
-                  : item.status === "in_progress"
-                    ? warn("▸")
-                    : faint("□");
-              const label =
-                item.status === "in_progress" ? text(item.content) : muted(item.content);
-              process.stdout.write(`    ${marker} ${label}\n`);
-            }
-            process.stdout.write("\n");
-            spinner.start("thinking");
-            break;
-          }
-
-          case "plan_created": {
-            spinner.stop();
-            if (isStreaming) {
-              process.stdout.write("\n");
-              isStreaming = false;
-            }
-            process.stdout.write(`\n  ${muted("•")} ${bold(text("Plan"))}\n`);
-            const numerals = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"];
-            for (const step of event.plan.steps) {
-              const num = numerals[step.index] ?? `${step.index + 1}`;
-              const deps =
-                step.dependsOn.length > 0 ? faint(` (after ${step.dependsOn.join(",")})`) : "";
-              process.stdout.write(`    ${warn(`${num}.`)} ${text(step.description)}${deps}\n`);
-            }
-            process.stdout.write("\n");
-            spinner.start("executing");
-            break;
-          }
-
-          case "step_started": {
-            spinner.stop();
-            const numerals = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"];
-            const num = numerals[event.stepIndex] ?? `${event.stepIndex + 1}`;
-            process.stdout.write(
-              `\n  ${muted("\u2022")} ${bold(text(`Step ${num}`))}  ${muted(event.description)}\n`,
-            );
-            spinner.start("executing");
-            break;
-          }
-
-          case "step_completed": {
-            spinner.stop();
-            const mark = event.result.success ? ok("✓") : accent("✕");
-            process.stdout.write(`    ${mark} ${muted(event.result.summary.slice(0, 120))}\n`);
-            break;
-          }
-
-          case "plan_completed": {
-            spinner.stop();
-            const completed = event.plan.steps.filter(
-              (s: { status: string }) => s.status === "completed",
-            ).length;
-            const total = event.plan.steps.length;
-            const status = event.plan.status === "completed" ? ok("completed") : accent("failed");
-            process.stdout.write(
-              `\n  ${muted("•")} ${bold(text("Result"))} ${status} ${faint(`(${completed}/${total} steps)`)}\n`,
-            );
-            break;
-          }
-
-          case "replanning": {
-            spinner.stop();
-            process.stdout.write(
-              `\n  ${warn("•")} ${muted("Replanning after step")} ${warn(String(event.failedStep))} ${muted("failed…")}\n`,
-            );
-            spinner.start("planning");
-            break;
-          }
-
-          case "plan_updated": {
-            spinner.stop();
-            process.stdout.write(
-              `\n  ${muted("•")} ${bold(text("Revised plan"))}  ${faint(event.reason)}\n`,
-            );
-            const numerals = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"];
-            for (const step of event.plan.steps) {
-              const num = numerals[step.index] ?? `${step.index + 1}`;
-              process.stdout.write(`    ${warn(`${num}.`)} ${text(step.description)}\n`);
-            }
-            process.stdout.write("\n");
-            spinner.start("executing");
-            break;
-          }
-
-          case "turn_complete": {
-            spinner.stop();
-            if (isStreaming) {
-              process.stdout.write("\n");
-              isStreaming = false;
-            }
-            const cost = engine.getCost();
-            process.stdout.write(
-              `\n  ${faint(`↳ ${event.totalTurns} turns · $${cost.toFixed(4)}`)}\n\n`,
-            );
-            break;
-          }
-
-          case "notice": {
-            spinner.stop();
-            if (isStreaming) {
-              process.stdout.write("\n");
-              isStreaming = false;
-            }
-            process.stdout.write(`\n${formatNotice(event.message)}\n`);
-            spinner.start("thinking");
-            break;
-          }
-
-          case "error": {
-            spinner.stop();
-            isStreaming = false;
-            const rawErr = event.error ?? "Unknown error";
-            // Extract clean message — strip raw JSON, limit length
-            let errDisplay = rawErr;
-            if (rawErr.includes('"error"') || rawErr.length > 200) {
-              // Try to extract just the message from JSON errors
-              try {
-                const parsed = JSON.parse(rawErr.slice(rawErr.indexOf("{")));
-                errDisplay = parsed.error?.message?.split("\n")[0] ?? rawErr.slice(0, 150);
-              } catch {
-                errDisplay = rawErr.slice(0, 150);
-              }
-            }
-            // Detect rate limit and add suggestion
-            const isRateLimit =
-              rawErr.includes("429") ||
-              rawErr.toLowerCase().includes("rate limit") ||
-              rawErr.toLowerCase().includes("quota");
-            if (isRateLimit) {
-              errDisplay = errDisplay.split("\n")[0].slice(0, 120);
-            }
-            process.stdout.write(`\n  ${accent("✕")} ${text(errDisplay)}\n`);
-            if (isRateLimit) {
-              process.stdout.write(
-                `  ${faint("→")} ${warn("Tip:")} ${muted("Try switching models:")} ${info("/model")}\n`,
-              );
-              process.stdout.write(
-                `  ${faint("  or use:")} ${warn("alan --model gemini-2.5-flash")}\n`,
-              );
-            }
-            process.stdout.write("\n");
-            break;
-          }
+        turn.onEvent(event);
+        if (event.type === "text_delta") answerText += event.text;
+        if (event.type === "stream_reset") answerText = "";
+        if (event.type === "tool_call_start") {
+          if (!spinner.isRunning()) spinner.start("tool_call");
+          spinner.setTool(event.toolName);
+        }
+        if (event.type === "tool_call_end" && event.output?.toolName === "interactive_dashboard") {
+          dashboardTouched = true;
+        }
+        if (
+          event.type === "tool_call_end" &&
+          event.output?.success &&
+          (event.output.toolName === "edit_file" || event.output.toolName === "write_file") &&
+          event.args?.path
+        ) {
+          filesEdited.add(String(event.args.path));
         }
       }
     } catch (err) {
       spinner.stop();
-      console.error(vermillion(`\n  Error: ${err instanceof Error ? err.message : err}\n`));
+      if (!turnAborted) turn.onError(err);
+    }
+
+    spinner.stop();
+    turn.finish({ aborted: turnAborted });
+
+    if (
+      !turnAborted &&
+      !dashboardTouched &&
+      !interactiveTipShown &&
+      !engine.isInteractiveAuto() &&
+      shouldOfferInteractive(answerText)
+    ) {
+      interactiveTipShown = true;
+      process.stdout.write(`  ${faint("✦ /interactive — view this as a live dashboard")}\n\n`);
     }
 
     busy = false;
@@ -2348,6 +2563,7 @@ async function main() {
   process.on("SIGINT", () => {
     if (busy) {
       // Turn is in progress — cancel it without exiting
+      turnAborted = true;
       engine.abort();
       spinner.stop();
       process.stdout.write(`\n  ${vermillion("✕")} ${dim("aborted")}\n`);

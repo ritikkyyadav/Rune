@@ -52,7 +52,7 @@ const DEFAULT_CONFIG: PlanRunnerConfig = {
   maxTurnsPerStep: 20,
   maxStepRetries: 2,
   maxReplanAttempts: 2,
-  systemPrompt: "You are Alan, an expert software engineering assistant.",
+  systemPrompt: "You are Berne, an expert software engineering assistant.",
 };
 
 // ─── Step Execution Prompt ───

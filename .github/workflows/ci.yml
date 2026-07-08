@@ -101,7 +101,15 @@ jobs:
       - run: cargo build --release
       - run: bun run build
       - name: Integration tests
-        run: cargo test --test '*' -- --test-threads=1
+        # cargo errors on an explicit --test '*' glob when zero targets match
+        # (unlike plain `cargo test`, which no-ops cleanly) — guard until the
+        # first crates/*/tests/*.rs file lands.
+        run: |
+          if compgen -G "crates/*/tests/*.rs" > /dev/null; then
+            cargo test --test '*' -- --test-threads=1
+          else
+            echo "No crate-level integration tests (crates/*/tests/*.rs) yet — skipping."
+          fi
 
   # ── Stage 5: Eval Suite (Section 15.2 — blocks merge on regression) ──
   eval:

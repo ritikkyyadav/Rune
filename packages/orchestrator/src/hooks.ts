@@ -151,7 +151,9 @@ function validateHookDef(entry: unknown, event: HookEvent, index: number, path: 
   }
   const obj = entry as Record<string, unknown>;
   if (typeof obj.command !== "string" || obj.command.trim() === "") {
-    throw new Error(`Malformed hook config at ${path}: ${where}.command must be a non-empty string`);
+    throw new Error(
+      `Malformed hook config at ${path}: ${where}.command must be a non-empty string`,
+    );
   }
   if (obj.match !== undefined && typeof obj.match !== "string") {
     throw new Error(`Malformed hook config at ${path}: ${where}.match must be a string`);
@@ -238,10 +240,7 @@ export class HookRunner {
    * Non-blocking hooks never block — failures are logged and ignored.
    * Returns { allow: true } when nothing matches.
    */
-  async runPreToolUse(
-    toolName: string,
-    args: Record<string, unknown>,
-  ): Promise<HookGateDecision> {
+  async runPreToolUse(toolName: string, args: Record<string, unknown>): Promise<HookGateDecision> {
     const hooks = this.matching(this.config.preToolUse, toolName);
     if (hooks.length === 0) return { allow: true };
 
@@ -262,7 +261,9 @@ export class HookRunner {
         return { allow: false, reason: this.describeFailure(hook, result) };
       }
       // Non-blocking: report but allow.
-      this.logger(`[hooks] non-blocking preToolUse hook failed: ${this.describeFailure(hook, result)}`);
+      this.logger(
+        `[hooks] non-blocking preToolUse hook failed: ${this.describeFailure(hook, result)}`,
+      );
     }
 
     return { allow: true };
@@ -335,9 +336,7 @@ export class HookRunner {
   ): Promise<HookRunResult> {
     const start = performance.now();
     const timeoutMs =
-      hook.timeoutMs !== undefined && hook.timeoutMs > 0
-        ? hook.timeoutMs
-        : DEFAULT_HOOK_TIMEOUT_MS;
+      hook.timeoutMs !== undefined && hook.timeoutMs > 0 ? hook.timeoutMs : DEFAULT_HOOK_TIMEOUT_MS;
 
     let proc: ReturnType<typeof Bun.spawn>;
     try {
@@ -348,6 +347,12 @@ export class HookRunner {
         stdin: new Blob([stdin]),
         stdout: "pipe",
         stderr: "pipe",
+        // detached → this shell leads its own process group, so a timeout
+        // can kill the ENTIRE tree, not just the shell — a leader-only kill
+        // orphans any grandchild the command spawned (e.g. `sleep 5` under
+        // `sh -c`), which keeps holding the stdout/stderr pipes open and
+        // stalls the read below until it exits on its own.
+        detached: true,
       });
     } catch (err) {
       return {
@@ -365,9 +370,15 @@ export class HookRunner {
     const timer = setTimeout(() => {
       timedOut = true;
       try {
-        proc.kill("SIGKILL");
+        // Negative pid → signal the whole process group (see detached above).
+        if (proc.pid) process.kill(-proc.pid, "SIGKILL");
+        else proc.kill("SIGKILL");
       } catch {
-        // Process may have already exited — nothing to do.
+        try {
+          proc.kill("SIGKILL");
+        } catch {
+          // Process (group) may have already exited — nothing to do.
+        }
       }
     }, timeoutMs);
 
@@ -450,7 +461,5 @@ function snippetOf(text: string): string {
   const trimmed = text.trim();
   if (trimmed === "") return "";
   const collapsed = trimmed.replace(/\s+/g, " ");
-  return collapsed.length > SNIPPET_LIMIT
-    ? collapsed.slice(0, SNIPPET_LIMIT) + "…"
-    : collapsed;
+  return collapsed.length > SNIPPET_LIMIT ? collapsed.slice(0, SNIPPET_LIMIT) + "…" : collapsed;
 }

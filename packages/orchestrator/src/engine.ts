@@ -7,8 +7,12 @@ import {
   McpDiscovery,
   SkillLoader,
   createSkillTool,
+  DashboardManager,
+  createDashboardTool,
+  isSandboxEnabled,
+  setSandboxMode,
 } from "@alan/tool-registry";
-import type { PluginCatalogEntry, SkillSearchHit } from "@alan/tool-registry";
+import type { DashboardInfo, PluginCatalogEntry, SkillSearchHit } from "@alan/tool-registry";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -33,8 +37,12 @@ import {
   clampToBudget,
   createLogger,
   resolveTier,
+  getAlanHome,
+  setToolArgsSalvageListener,
 } from "@alan/shared";
 import type { ModelTier, TierRef, TiersConfig } from "@alan/shared";
+import type { IncidentClass, IncidentInput, IncidentSeverity } from "@alan/shared";
+import { Recorder } from "@alan/telemetry";
 import type {
   CheckpointStore,
   CheckpointPolicy,
@@ -46,9 +54,20 @@ import type {
 } from "@alan/shared";
 import { buildGateway, providerStatus } from "./provider-registry";
 import type { ProviderStatusRow, BuildGatewayOpts } from "./provider-registry";
-import { AgentLoop } from "./agent-loop";
+import { AgentLoop, parseInterjection } from "./agent-loop";
 import type { PermissionCheck, AgentTurnEvent } from "./agent-loop";
+import { createCompactTool } from "./compact-tool";
+import { createResearchTool } from "./research-tool";
 import { PermissionBroker, nextPermissionMode } from "./permissions";
+import { StruggleDetector } from "./struggle-detector";
+import {
+  NotebookStore,
+  buildNotebookBlock,
+  captureFromRun,
+  repoKey as notebookRepoKey,
+  stackKey as notebookStackKey,
+} from "./notebook";
+import type { NotebookBlock, NotebookEntry, ToolObservation } from "./notebook";
 import type { PermissionScope, PermissionMode } from "./permissions";
 
 export type { PermissionMode } from "./permissions";
@@ -69,6 +88,7 @@ import { EpisodicMemory } from "./memory/episodic";
 import { WorkingMemory } from "./memory/working";
 import { HookRunner } from "./hooks";
 import { createSubagentTool } from "./subagent";
+import { createWorkerTool } from "./worker";
 import { createAskUserTool } from "./ask-user";
 import type { QuestionHandler } from "./ask-user";
 export type { QuestionHandler, UserQuestion } from "./ask-user";
@@ -76,10 +96,13 @@ import {
   AGENT_DOCTRINE,
   loadProjectMemory,
   renderEnvironmentBlock,
+  renderInteractiveDoctrine,
+  renderRepoMap,
   snapshotEnvironment,
 } from "./prompts";
 import { CommandVerifier } from "./verifier";
 import type { Verifier } from "./verifier";
+import { autoCommitPaths, undoLastBerneCommit, type UndoResult } from "./git-undo";
 import { planResearch, runResearch as executeResearch } from "./research";
 import type { ResearchDeps, PlanResearchOpts } from "./research";
 import { isClarification } from "./research-types";
@@ -176,6 +199,13 @@ export function eventsToTranscript(
         lines.push({ role: "note", text: "context compacted earlier in this session" });
         break;
       }
+      case "system_note": {
+        // Why a turn ended abnormally ("agent loop terminated: rate limited…") is
+        // part of the record — hiding it made resumed sessions look silently broken.
+        const content = typeof p.content === "string" ? p.content : "";
+        if (content.trim()) lines.push({ role: "note", text: content });
+        break;
+      }
       default:
         break; // checkpoint, research_*, etc. carry no transcript line
     }
@@ -210,6 +240,12 @@ export interface EngineConfig {
    * writes and network tools still prompt. Default false.
    */
   trustWorkspace?: boolean;
+  /**
+   * Run foreground bash inside the OS sandbox (Seatbelt/Bubblewrap: deny-net,
+   * workspace-confined writes). Default true; false = full host access
+   * (`/sandbox off`, `--no-sandbox`). Process-wide — see tool-registry/sandbox-mode.
+   */
+  sandboxEnabled?: boolean;
   /** Enable Planner-Executor two-tier mode. */
   plannerMode: boolean;
   /** Model routing for planner-executor split. */
@@ -254,6 +290,27 @@ export interface EngineConfig {
     /** Use provider-native grounding (Gemini/Anthropic) when available. Default true. */
     nativeGrounding?: boolean;
   };
+  /**
+   * Git integration (config.toml `[git]`): autoCommit makes every successful
+   * run that wrote files land as one revertible "berne:" commit (Aider-style);
+   * /undo resets the last one. Default off.
+   */
+  git?: {
+    autoCommit?: boolean;
+  };
+  /** Context assembly: repoMap injects a compact file-tree map (default on). */
+  context?: {
+    repoMap?: boolean;
+  };
+  /**
+   * Interactive dashboards (config.toml `[interactive]`): auto lets the model
+   * decide on its own when an answer deserves a live dashboard; off (default)
+   * restricts building to explicit requests (/interactive). Runtime-togglable
+   * via /interactive auto on|off.
+   */
+  interactive?: {
+    auto?: boolean;
+  };
   /** Deep-research ("/research") defaults: depth, fan-out, sources. */
   research?: ResearchOptions;
   /** System Memory ("dreaming") — evergreen profile config (enabled/schedule/model/maxTokens). */
@@ -270,6 +327,29 @@ export interface EngineConfig {
    * summaries, and other internal utility calls.
    */
   tiers?: TiersConfig;
+  /**
+   * Black box (flight recorder): incident capture to ~/.alan/blackbox.db.
+   * OFF unless enabled — unit tests and embedders stay hermetic; the CLI and
+   * engine-host turn it on. `version` stamps every incident for
+   * version-over-version regression queries.
+   */
+  blackbox?: {
+    enabled?: boolean;
+    dbPath?: string;
+    version?: string;
+    spoolPath?: string;
+  };
+  /**
+   * Tactics notebook (evolution loop v1): learned facts/tactics injected into
+   * the system prompt under a hard token budget. Capture is rule-based (zero
+   * model calls). OFF unless enabled; `--pristine` forces it off.
+   */
+  notebook?: {
+    enabled?: boolean;
+    dbPath?: string;
+    /** Injection budget in tokens. Default 600. */
+    maxInjectTokens?: number;
+  };
 }
 
 // Generation budget per step. 8k routinely truncated multi-file edits and
@@ -277,7 +357,10 @@ export interface EngineConfig {
 // The agent loop clamps this to each model's real per-response output cap
 // (getMaxOutputTokens), so smaller models are unaffected.
 const MAX_TOKENS = 32000;
-const MAX_TURNS = 50;
+// 80 agentic rounds: long autonomous builds (scaffold → install → run →
+// fix → verify → polish) legitimately spend 30-50; the cap is a runaway
+// guard, not a work budget. Context compaction keeps long runs viable.
+const MAX_TURNS = 80;
 
 // Per-provider cheap-model routing now lives in @alan/shared tiers.ts
 // (PROVIDER_TIER_DEFAULTS) — resolved via Engine.resolveModelTier("light").
@@ -325,14 +408,14 @@ const MEMORY_MSG_CHARS = 600;
 
 function systemMemoryDistillSystemPrompt(maxTokens: number): string {
   return [
-    "You maintain a SHORT, evergreen profile of a software developer and the codebases they work in, so an AI coding assistant (Alan) can serve them better from the very first message.",
+    "You maintain a SHORT, evergreen profile of a software developer and the codebases they work in, so an AI coding assistant (Berne) can serve them better from the very first message.",
     "",
     "Write a GUIDE, not rules. Describe — never command. This is background context the assistant tailors to, not rigid instructions.",
     "",
     "Cover, ONLY where the activity actually supports it:",
     "- About the user: who they are, how they communicate (tone, terseness, language), how they like to work, clear likes and dislikes.",
     "- Style & preferences: languages, frameworks, tools, conventions, testing/verification habits, what they value (e.g. concise answers, minimal diffs).",
-    "- Their codebases: the kinds of projects Alan is used for, recurring stacks and patterns, and what they typically ask for.",
+    "- Their codebases: the kinds of projects Berne is used for, recurring stacks and patterns, and what they typically ask for.",
     "",
     "Rules:",
     `- Keep it SMALL — aim well under ~${maxTokens} tokens. Short markdown sections with terse bullets. It must fit a tiny model's context window like butter.`,
@@ -367,7 +450,7 @@ function compactMessageText(m: Message): string {
   }
   const body = parts.join(" ").replace(/\s+/g, " ").trim();
   if (!body) return "";
-  const role = m.role === "assistant" ? "Alan" : m.role === "user" ? "User" : m.role;
+  const role = m.role === "assistant" ? "Berne" : m.role === "user" ? "User" : m.role;
   return `${role}: ${body.slice(0, MEMORY_MSG_CHARS)}`;
 }
 
@@ -437,13 +520,85 @@ export class Engine {
   private localBaseUrls: Record<string, string> = {};
   // Guards against overlapping System Memory "dreams" (auto + manual at once).
   private memoryReflecting = false;
+  // Black box: null when disabled (tests, embedders). Created BEFORE the
+  // gateway so gatewayOpts() can hand the tap into every (re)build.
+  private recorder: Recorder | null = null;
+  // Monotonic run counter — the "turn" an incident belongs to.
+  private runCounter = 0;
+  // Behavioral struggle signals (thrash, rephrase, corrections) — recorder-fed.
+  private struggles: StruggleDetector | null = null;
+  // Tactics notebook (evolution loop v1): learned facts injected under budget.
+  private notebookStore: NotebookStore | null = null;
+  private notebookKeys: { repoKey: string; stackKey: string } | null = null;
+  // Per-session injection blocks, cached for prompt-cache stability.
+  private notebookBlocks: Map<string, NotebookBlock> = new Map();
   // Per-session environment snapshot (cwd/platform/git state at session start).
   // Cached so the system prompt stays byte-stable across turns — a churning
   // prompt would invalidate the provider's prefix cache on every call.
   private envBlocks: Map<string, string> = new Map();
+  private lastAutoCommitSha: string | null = null;
+  // Interactive dashboards: loopback SSE server (started lazily on first
+  // create) + the autonomy toggle that shapes the injected doctrine.
+  private dashboards = new DashboardManager();
+  private interactiveAuto = false;
+  // The flat AgentLoop currently running a chat() turn — the target for
+  // mid-turn steering (interject). Null when idle or in planner mode.
+  private liveLoop: AgentLoop | null = null;
 
   constructor(config: Partial<EngineConfig> = {}) {
     this.config = { ...DEFAULT_ENGINE_CONFIG, ...config };
+
+    // Sandbox posture before any tool can run. Process-wide by design (one
+    // real engine per process); default is ON — full access is an opt-out.
+    setSandboxMode(this.config.sandboxEnabled === false ? "off" : "on");
+
+    // Black box first — the gateway build below captures its tap.
+    if (this.config.blackbox?.enabled) {
+      this.recorder = new Recorder({
+        dbPath: this.config.blackbox.dbPath ?? join(getAlanHome(), "blackbox.db"),
+        version: this.config.blackbox.version ?? "dev",
+        spoolPath: this.config.blackbox.spoolPath,
+      });
+      // Salvaged tool-call JSON is a provider defect we recovered from — count
+      // it. Module-global listener; last engine wins, which is fine: one real
+      // engine per process.
+      setToolArgsSalvageListener((info) => {
+        this.recorder?.record({
+          class:
+            info.stage === "gave_up"
+              ? "provider.malformed_tool_json_fatal"
+              : "provider.malformed_tool_json_salvaged",
+          severity: info.stage === "gave_up" ? "warn" : "debug",
+          component: "gateway",
+          where: "json#parseToolArguments",
+          message: `tool args ${info.stage === "gave_up" ? "unsalvageable" : `salvaged via ${info.stage}`}: ${info.snippet}`,
+        });
+      });
+      this.struggles = new StruggleDetector((i) => this.recorder?.record(i));
+    }
+
+    // Tactics notebook — rule-based learning, zero model spend. A corrupt
+    // store must never block startup: quarantine by disabling for the run.
+    if (this.config.notebook?.enabled) {
+      try {
+        this.notebookStore = new NotebookStore(
+          this.config.notebook.dbPath ?? join(getAlanHome(), "notebook.db"),
+        );
+        this.notebookKeys = {
+          repoKey: notebookRepoKey(this.config.workspaceRoot),
+          stackKey: notebookStackKey(this.config.workspaceRoot),
+        };
+      } catch (err) {
+        this.notebookStore = null;
+        this.recorder?.record({
+          class: "crash.store_corruption",
+          severity: "error",
+          component: "notebook",
+          where: "engine#constructor",
+          message: `notebook store failed to open: ${err instanceof Error ? err.message : String(err)}`,
+        });
+      }
+    }
 
     // Seed BYOK key state from config, then build the gateway. The named
     // *ApiKey fields and the generic providerKeys map are merged into one
@@ -493,7 +648,76 @@ export class Engine {
     // by the frontend (CLI/TUI) via setQuestionHandler — the closure reads it
     // at execute time, and headless environments degrade to an instructive
     // error instead of stalling. Deliberately NOT in the sub-agent registry.
-    this.registry.register(createAskUserTool(() => this.questionHandler));
+    // In Hands-Free (turing) mode the handler is withheld even when wired:
+    // the whole point of the mode is "no human in the loop", so the tool
+    // degrades to its proceed-on-your-best-judgment error instead of parking
+    // an autonomous run on a question nobody will answer.
+    this.registry.register(
+      createAskUserTool(() =>
+        this.permissions.getMode() === "turing" ? undefined : this.questionHandler,
+      ),
+    );
+
+    // `worker`: write-capable parallel sub-agents with disjoint file
+    // ownership — the lead splits implementation, workers run concurrently
+    // (parallelSafe + ownership claims), the lead integrates and verifies.
+    // Routed to the STANDARD tier: workers write production code. Main
+    // registry only — workers cannot spawn workers.
+    this.registry.register(
+      createWorkerTool({
+        binaryPath: this.config.toolsBinaryPath,
+        resolve: () => {
+          const std = this.resolveModelTier("standard");
+          return {
+            gateway: this.gateway,
+            model: std.model,
+            provider: std.provider as ProviderName,
+          };
+        },
+      }),
+    );
+
+    // interactive_dashboard: live HTML dashboards in the browser. Main
+    // registry only — sub-agents are read-only investigators and must not
+    // pop browser windows.
+    this.interactiveAuto = this.config.interactive?.auto === true;
+    this.registry.register(createDashboardTool(this.dashboards));
+
+    // `research`: the /research | /deepresearch pipeline as a model-invocable
+    // tool, so "do deep research on X" asked in plain chat runs the real
+    // multi-source engine. Main registry only — a research run fans out its
+    // own investigators and must not nest inside read-only sub-agents.
+    this.registry.register(
+      createResearchTool({
+        binaryPath: this.config.toolsBinaryPath,
+        workspaceRoot: this.config.workspaceRoot,
+        resolve: () => ({
+          gateway: this.gateway,
+          model: this.config.model,
+          provider: this.config.provider,
+        }),
+        defaults: () => this.config.research ?? {},
+        record: (sessionId, type, payload) => {
+          try {
+            this.sessions.appendEvent(sessionId, { type, payload });
+          } catch {
+            // audit persistence is best-effort; never fail the research run
+          }
+        },
+      }),
+    );
+
+    // compact_context: the /compress behaviour as a model-invocable tool —
+    // "compact the conversation" asked in chat schedules a forced working-set
+    // compaction, executed by the agent loop at the next turn boundary.
+    this.registry.register(
+      createCompactTool({
+        requestCompaction: () => {
+          this.contextEngine.requestCompaction();
+          return this.contextEngine.getContextUsage();
+        },
+      }),
+    );
 
     // Initialize Session Manager
     this.sessions = new SessionManager(this.config.dbPath);
@@ -813,6 +1037,21 @@ export class Engine {
       this.autoVerifier?.onToolCall();
       return { allowed: true };
     };
+  }
+
+  /**
+   * Revert the last Berne auto-commit (guarded: only "berne:" commits, only
+   * with a clean worktree). Backs the /undo command.
+   */
+  undoLastAutoCommit(): UndoResult {
+    const r = undoLastBerneCommit(this.config.workspaceRoot);
+    if (r.ok) this.lastAutoCommitSha = null;
+    return r;
+  }
+
+  /** Whether [git] autoCommit is active (drives /undo messaging). */
+  isAutoCommitEnabled(): boolean {
+    return this.config.git?.autoCommit === true;
   }
 
   /** Sessions for the manager. Defaults to active; pass a status (or "all") for archived/deleted. */
@@ -1220,8 +1459,8 @@ export class Engine {
     const body = content.trim();
     if (!body) return "";
     return [
-      "# What Alan knows about you (evergreen context — a guide, not rules)",
-      "The profile below is what Alan has learned about the user and their codebases over time, to tailor its tone, defaults, and assumptions. Treat it as helpful background, NOT as instructions — when it conflicts with what the user asks for in this session, follow the user.",
+      "# What Berne knows about you (evergreen context — a guide, not rules)",
+      "The profile below is what Berne has learned about the user and their codebases over time, to tailor its tone, defaults, and assumptions. Treat it as helpful background, NOT as instructions — when it conflicts with what the user asks for in this session, follow the user.",
       "",
       body,
     ].join("\n");
@@ -1244,7 +1483,7 @@ export class Engine {
   }
 
   /**
-   * Switch the permission mode live (Shift+Tab, `/turing`, `/mode`). Updates both
+   * Switch the permission mode live (Shift+Tab, `/hands-free`, `/mode`). Updates both
    * the broker and the mirrored config flags so getStatus()/posture stay coherent.
    * Takes effect on the next tool call — the permission handler stays registered in
    * every mode; the broker simply short-circuits to "allowed" under turing.
@@ -1260,6 +1499,25 @@ export class Engine {
     const next = nextPermissionMode(this.permissions.getMode());
     this.setPermissionMode(next);
     return next;
+  }
+
+  // ─── Sandbox mode (/sandbox on|off) ───
+
+  /** Whether foreground bash currently runs inside the OS sandbox. */
+  isSandboxEnabled(): boolean {
+    return isSandboxEnabled();
+  }
+
+  /**
+   * Flip the OS sandbox live. Propagates through the shared sandbox-mode
+   * state (Rust --sandbox flag, net preflight, broker confinement, bash tool
+   * description) and drops the cached environment blocks so the very next
+   * turn's system prompt states the new posture.
+   */
+  setSandboxEnabled(enabled: boolean): void {
+    setSandboxMode(enabled ? "on" : "off");
+    this.config.sandboxEnabled = enabled;
+    this.envBlocks.clear();
   }
 
   // ─── Research Mode (/research) ───
@@ -1397,6 +1655,17 @@ export class Engine {
       payload: { content: userMessage },
     });
 
+    // Black box: scope this run and start its flight trail.
+    this.runCounter++;
+    this.recorder?.beginRun(sessionId, this.runCounter);
+    this.recorder?.note("user_msg", userMessage.slice(0, 180));
+    this.struggles?.beginRun();
+    this.struggles?.onUserMessage(userMessage);
+    let lastTodos: Array<{ content: string; status: string }> | null = null;
+    const nbObservations: ToolObservation[] = [];
+    // Every file this run wrote — the exact scope of the git auto-commit.
+    const writtenPaths = new Set<string>();
+
     // Auto-name the session from its first real message so the manager shows a
     // readable title instead of a bare UUID. No-op once a title exists (manual
     // renames and later turns never clobber it).
@@ -1424,18 +1693,32 @@ export class Engine {
       envBlock = renderEnvironmentBlock(
         snapshotEnvironment(this.config.workspaceRoot, session.model, this.config.provider),
       );
+      // Repo map rides in the same per-session snapshot: cache-stable and
+      // computed exactly once. Off via [context] repoMap = false.
+      if (this.config.context?.repoMap !== false) {
+        const map = renderRepoMap(this.config.workspaceRoot);
+        if (map) envBlock = `${envBlock}\n\n${map}`;
+      }
       this.envBlocks.set(sessionId, envBlock);
     }
     const projectMemory = loadProjectMemory(this.config.workspaceRoot);
+    const notebookBlock = this.buildNotebookInjection(sessionId);
     const systemPrompt = [
       SYSTEM_PROMPT,
+      renderInteractiveDoctrine(this.interactiveAuto),
       envBlock,
       projectMemory.block,
       this.buildSystemMemoryBlock(),
+      notebookBlock?.text ?? "",
       this.skillCatalog,
     ]
       .filter((s) => s && s.trim())
       .join("\n\n");
+
+    // Injection = usage. Wins are attributed at run end if the run recovered.
+    if (notebookBlock && notebookBlock.injectedIds.length > 0) {
+      this.notebookStore?.touchUses(notebookBlock.injectedIds);
+    }
 
     const permCheck = this.buildPermissionCheck();
     let turnCount = 0;
@@ -1492,6 +1775,7 @@ export class Engine {
           contextEngine: this.contextEngine,
           verifier: this.verifier ?? undefined,
           nativeGrounding: this.config.search?.nativeGrounding ?? true,
+          onIncident: this.recorder ? (i: IncidentInput) => this.recorder?.record(i) : undefined,
         },
         this.gateway,
         this.registry,
@@ -1502,6 +1786,8 @@ export class Engine {
           loop.run(msg, sid, ws, sig) as AsyncGenerator<PlanRunnerEvent>,
         getMessages: () => loop.getMessages(),
       };
+      // Expose the live loop so interject() can steer this run mid-flight.
+      this.liveLoop = loop;
     }
 
     let runError: string | null = null;
@@ -1544,6 +1830,51 @@ export class Engine {
           });
         }
 
+        // Track the final todo state for the end-of-run unfinished check.
+        if (event.type === "todo_updated") {
+          lastTodos = event.items;
+        }
+
+        // Notebook: observe every tool call (free — the events exist anyway).
+        if (event.type === "tool_call_end" && this.notebookStore && nbObservations.length < 200) {
+          nbObservations.push({
+            toolName: event.output.toolName,
+            args: event.args,
+            success: event.output.success,
+            error: event.output.error,
+          });
+        }
+
+        // Black box: trail + failure classification. One chokepoint sees every
+        // tool result (built-in, MCP, rust bridge) — no per-tool instrumentation.
+        if (event.type === "tool_call_end" && this.recorder) {
+          const out = event.output;
+          this.struggles?.onToolCall(out.toolName, event.args, out.success);
+          this.recorder.note(
+            `tool:${out.toolName}`,
+            out.success
+              ? `ok ${out.durationMs}ms`
+              : `FAIL ${out.durationMs}ms: ${(out.error ?? "").slice(0, 120)}`,
+          );
+          if (!out.success) {
+            const { cls, severity } = classifyToolFailure(out.toolName, out.error ?? "");
+            this.recorder.record({
+              class: cls,
+              severity,
+              component: `tool:${out.toolName}`,
+              where: "engine#toolCallEnd",
+              message: out.error ?? "tool failed without an error message",
+              context: { tool: out.toolName, argsHash: hashArgs(event.args) },
+            });
+          }
+        }
+        if (event.type === "notice" && this.recorder) {
+          this.recorder.note("notice", event.message);
+        }
+        if (event.type === "error" && this.recorder) {
+          this.recorder.note("error", event.error);
+        }
+
         // Audit tool calls with security post-processing
         if (event.type === "tool_call_end") {
           // Redact sensitive data from tool output before persisting
@@ -1566,6 +1897,16 @@ export class Engine {
           // Fire user-defined postToolUse hooks (e.g. auto-format/lint after writes).
           if (this.hookRunner) {
             await this.hookRunner.runPostToolUse(event.output.toolName, event.output);
+          }
+
+          // Track written files for the run's git auto-commit scope.
+          if (
+            event.output.success &&
+            ["write_file", "edit_file", "multi_edit"].includes(event.output.toolName) &&
+            typeof event.args.path === "string" &&
+            event.args.path
+          ) {
+            writtenPaths.add(event.args.path);
           }
 
           // Save checkpoint after successful file writes
@@ -1618,7 +1959,43 @@ export class Engine {
 
         yield event;
       }
+
+      // Aider-style trust: land this run's writes as ONE revertible commit
+      // (opt-in via [git] autoCommit). Only on clean completion — a failed or
+      // aborted run leaves the worktree as-is for inspection.
+      if (
+        this.config.git?.autoCommit === true &&
+        !runError &&
+        !signal.aborted &&
+        writtenPaths.size > 0
+      ) {
+        const commit = autoCommitPaths(this.config.workspaceRoot, [...writtenPaths], userMessage);
+        if (commit.committed) {
+          this.lastAutoCommitSha = commit.sha;
+          this.sessions.appendEvent(sessionId, {
+            type: "checkpoint",
+            payload: { summary: `auto-commit ${commit.shortSha}` },
+          });
+          yield {
+            type: "notice",
+            message: `Committed ${commit.fileCount} file${commit.fileCount === 1 ? "" : "s"} as ${commit.shortSha} — /undo reverts it.`,
+          } as PlanRunnerEvent;
+        } else if (
+          !/no files written|no effective changes|not a git repository/.test(commit.reason)
+        ) {
+          // Only surface reasons the user should act on (e.g. staged changes).
+          yield {
+            type: "notice",
+            message: `Auto-commit skipped: ${commit.reason}`,
+          } as PlanRunnerEvent;
+        }
+      }
     } finally {
+      // Stop accepting steering the moment the run winds down — anything
+      // interjected after this point could never be drained by the loop.
+      const steeredLoop = this.liveLoop;
+      this.liveLoop = null;
+
       // Persist the conversation tail
       const allMessages = runner.getMessages();
       const startIndex = priorMessages.length + 1;
@@ -1639,7 +2016,32 @@ export class Engine {
               payload: r,
             });
           }
+        } else if (m.role === "user") {
+          // Mid-turn interjections are real user turns — persist them at their
+          // true position so resumed sessions replay the same conversation the
+          // live run saw. Synthetic loop nudges (verification prompts, the
+          // evidence gate, compaction summaries) don't carry the interjection
+          // marker and stay unpersisted, exactly as before.
+          const first = m.content.find((b) => b.type === "text");
+          const raw = first && first.type === "text" ? parseInterjection(first.text) : null;
+          if (raw) {
+            this.sessions.appendEvent(sessionId, {
+              type: "user_msg",
+              payload: { content: raw },
+            });
+          }
         }
+      }
+
+      // Steering that arrived too late to be folded in (the run aborted or
+      // errored between boundaries): persist it as user turns at the tail so
+      // nothing the user typed is silently lost — a resumed session replays it
+      // and the next turn picks it up.
+      for (const t of steeredLoop?.takeUndrainedInterjections() ?? []) {
+        this.sessions.appendEvent(sessionId, {
+          type: "user_msg",
+          payload: { content: t },
+        });
       }
       if (runError) {
         this.sessions.appendEvent(sessionId, {
@@ -1653,6 +2055,48 @@ export class Engine {
         type: "checkpoint",
         payload: { summary: "session_ended" },
       });
+
+      // Behavioral signals that only resolve at run end.
+      this.struggles?.onRunEnd(lastTodos);
+
+      // Notebook: distill this run's observations (rule-based, zero tokens)
+      // and attribute a win to whatever was injected if the run ended clean.
+      if (this.notebookStore && this.notebookKeys) {
+        captureFromRun(
+          {
+            store: this.notebookStore,
+            repoKey: this.notebookKeys.repoKey,
+            stackKey: this.notebookKeys.stackKey,
+            sessionId,
+            workspaceRoot: this.config.workspaceRoot,
+          },
+          nbObservations,
+        );
+        const nb = this.notebookBlocks.get(sessionId);
+        if (nb && nb.injectedIds.length > 0 && !runError && !signal.aborted) {
+          this.notebookStore.recordWins(nb.injectedIds);
+        }
+      }
+
+      // Black box: resolve every incident this run produced. A 429 that
+      // recovered is noise; one that killed the run is signal — outcome is
+      // what separates them.
+      if (this.recorder) {
+        if (signal.aborted) {
+          this.recorder.record({
+            class: "loop.user_abort",
+            severity: "debug",
+            component: "engine",
+            where: "engine#chat.finally",
+            message: "run aborted by the user",
+          });
+          this.recorder.endRun("user_interrupted");
+        } else if (runError) {
+          this.recorder.endRun("turn_failed");
+        } else {
+          this.recorder.endRun("recovered");
+        }
+      }
 
       // Episodic memory: extract facts from this run
       if (this.memoryManager && this.config.userId) {
@@ -1673,7 +2117,31 @@ export class Engine {
    * and yield a turn_complete with stopReason "aborted".
    */
   abort(): void {
+    if (this.currentAbort) this.struggles?.onAbort();
     this.currentAbort?.abort();
+  }
+
+  /**
+   * Mid-turn steering: fold a user message into the chat() run currently in
+   * flight. The agent sees it at the next turn boundary — it updates its plan
+   * and keeps working instead of the message waiting for the run to finish —
+   * and the engine persists it as a real user turn at its true position.
+   *
+   * Returns true when a live run accepted the message. Returns false when
+   * there is nothing steerable (idle, planner mode, research, or the run is
+   * already winding down) — callers fall back to queueing for the next turn.
+   */
+  interject(text: string): boolean {
+    const t = text.trim();
+    if (!t) return false;
+    const loop = this.liveLoop;
+    if (!loop) return false;
+    if (!this.currentAbort || this.currentAbort.signal.aborted) return false;
+    const state = loop.getState();
+    if (state === "done" || state === "error") return false;
+    loop.interject(t);
+    this.recorder?.note("interjection", t.slice(0, 180));
+    return true;
   }
 
   getPermissions(): PermissionBroker {
@@ -1742,6 +2210,31 @@ export class Engine {
       disabled: this.disabledProviders,
       localBaseUrls: this.localBaseUrls,
       ollamaBaseUrl: this.config.ollamaBaseUrl,
+      // Closure reads this.recorder lazily, so key-edit rebuilds keep the tap.
+      onIncident: (gi) => {
+        if (!this.recorder) return;
+        const cls: IncidentClass =
+          gi.kind === "fallback"
+            ? "provider.fallback_triggered"
+            : gi.status === 429
+              ? "provider.rate_limit"
+              : gi.status === 401 || gi.status === 403
+                ? "provider.auth"
+                : gi.status === 402
+                  ? "provider.no_credits"
+                  : "provider.terminal";
+        this.recorder.record({
+          class: cls,
+          severity: gi.kind === "fallback" ? "warn" : "error",
+          component: "gateway",
+          where: "gateway#inferStream",
+          message:
+            gi.kind === "fallback"
+              ? `${gi.provider}/${gi.model ?? "?"} → ${gi.fallbackTo}: ${gi.message}`
+              : gi.message,
+          context: { provider: gi.provider, model: gi.model, status: gi.status },
+        });
+      },
     };
   }
 
@@ -1878,6 +2371,7 @@ export class Engine {
     yoloMode: boolean;
     trustWorkspace: boolean;
     permissionMode: PermissionMode;
+    sandboxEnabled: boolean;
     registeredProviders: ProviderName[];
     cost: number;
     sessionId?: string;
@@ -1894,6 +2388,7 @@ export class Engine {
       yoloMode: this.config.yoloMode,
       trustWorkspace: this.permissions.isTrustWorkspace(),
       permissionMode: this.permissions.getMode(),
+      sandboxEnabled: isSandboxEnabled(),
       registeredProviders: this.getRegisteredProviders(),
       cost: this.getCost(),
       sessionId,
@@ -1907,9 +2402,126 @@ export class Engine {
     };
   }
 
+  /** The black-box recorder, or null when disabled. Surfaces (/bug, doctor) use this. */
+  getRecorder(): Recorder | null {
+    return this.recorder;
+  }
+
+  /** The tactics notebook store, or null when disabled (/notebook uses this). */
+  getNotebookStore(): NotebookStore | null {
+    return this.notebookStore;
+  }
+
+  /** Entries active for THIS workspace (repo + matching stack + global), ranked. */
+  getNotebookEntries(limit = 10): NotebookEntry[] {
+    if (!this.notebookStore || !this.notebookKeys) return [];
+    try {
+      return this.notebookStore.retrieve({ ...this.notebookKeys, limit });
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Build (and cache per session) the notebook injection block. Cached so the
+   * system prompt stays byte-stable across a session's turns — churn would
+   * invalidate the provider's prefix cache and cost far more than the notebook
+   * saves. New learnings appear in the NEXT session, which is the contract.
+   */
+  private buildNotebookInjection(sessionId: string): NotebookBlock | null {
+    if (!this.notebookStore || !this.notebookKeys) return null;
+    const cached = this.notebookBlocks.get(sessionId);
+    if (cached) return cached;
+    try {
+      const block = buildNotebookBlock(this.notebookStore, {
+        repoKey: this.notebookKeys.repoKey,
+        stackKey: this.notebookKeys.stackKey,
+        maxTokens: this.config.notebook?.maxInjectTokens ?? 600,
+      });
+      this.notebookBlocks.set(sessionId, block);
+      return block;
+    } catch {
+      return null; // the notebook must never break prompt assembly
+    }
+  }
+
+  // ── Interactive dashboards ──
+
+  /** Whether the model may build dashboards on its own judgment. */
+  isInteractiveAuto(): boolean {
+    return this.interactiveAuto;
+  }
+
+  /** Flip dashboard autonomy; takes effect on the next run's system prompt. */
+  setInteractiveAuto(on: boolean): void {
+    this.interactiveAuto = on;
+  }
+
+  /** The most recently created dashboard (id/title/url), if any. */
+  lastDashboard(): DashboardInfo | null {
+    return this.dashboards.last();
+  }
+
+  /** Re-open the last dashboard (or `id`) in the browser. */
+  openDashboard(id?: string): DashboardInfo | null {
+    return this.dashboards.open(id);
+  }
+
   close(): void {
     // Best-effort: stop MCP subprocesses / sessions on exit.
     this.mcpDiscovery?.stopAll().catch(() => {});
+    this.dashboards.closeAll();
+    if (this.recorder) {
+      setToolArgsSalvageListener(null); // never leave a listener pointing at a closed recorder
+      this.recorder.close();
+    }
+    this.notebookStore?.close();
     this.sessions.close();
   }
+}
+
+// ─── Black-box tool-failure classification ───
+// One text-based classifier at the engine chokepoint covers every tool source
+// (built-in, MCP, rust bridge) without per-tool instrumentation. Patterns are
+// deliberately conservative; anything unrecognized is a plain exec_failure.
+
+export function classifyToolFailure(
+  toolName: string,
+  error: string,
+): { cls: IncidentClass; severity: IncidentSeverity } {
+  const e = error.toLowerCase();
+  if (e.includes("panicked at") || e.includes("rust panic")) {
+    return { cls: "crash.rust_tool_panic", severity: "critical" };
+  }
+  if (e.includes("permission denied") && (e.includes("user") || e.includes("broker"))) {
+    return { cls: "tool.permission_denied", severity: "debug" };
+  }
+  if (e.includes("sandbox") || e.includes("seatbelt") || e.includes("operation not permitted")) {
+    return { cls: "tool.sandbox_denial", severity: "warn" };
+  }
+  if (
+    e.includes("outside the workspace") ||
+    e.includes("outside workspace") ||
+    e.includes("path traversal") ||
+    e.includes("blocked path")
+  ) {
+    return { cls: "tool.path_violation", severity: "warn" };
+  }
+  if (/\btimed?\s?out\b|\btimeout\b/.test(e)) {
+    return { cls: "tool.timeout", severity: "error" };
+  }
+  if (
+    e.includes("invalid arg") ||
+    e.includes("invalid input") ||
+    e.includes("invalid param") ||
+    e.includes("missing required") ||
+    e.includes("schema validation")
+  ) {
+    // The model self-corrects on the schema error it gets back — small but counted.
+    return { cls: "tool.invalid_input", severity: "debug" };
+  }
+  if (toolName.startsWith("mcp_") || e.includes("mcp ")) {
+    return { cls: "tool.mcp_error", severity: "error" };
+  }
+  return { cls: "tool.exec_failure", severity: "error" };
 }

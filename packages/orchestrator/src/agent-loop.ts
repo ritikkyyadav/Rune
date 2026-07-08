@@ -15,6 +15,8 @@ import {
   providerAllowsGroundingWithTools,
 } from "@alan/llm-gateway";
 import { parseToolArguments } from "@alan/shared";
+import type { IncidentContext, IncidentReporter, IncidentSeverity } from "@alan/shared";
+import type { IncidentClass } from "@alan/shared";
 import type { ToolCallInput, ToolCallOutput } from "@alan/tool-registry";
 import { ToolRegistry } from "@alan/tool-registry";
 import type { ContextEngine } from "./context-engine";
@@ -38,6 +40,9 @@ export type AgentTurnEvent =
   | { type: "error"; error: string; recoverable: boolean }
   | { type: "context_warning"; message: string }
   | { type: "notice"; message: string }
+  // The provider stream was abandoned mid-response and is being re-streamed:
+  // UIs must drop any partially-rendered text/thinking for the current turn.
+  | { type: "stream_reset" }
   | {
       type: "todo_updated";
       items: { content: string; status: "pending" | "in_progress" | "completed" }[];
@@ -92,6 +97,12 @@ export interface AgentLoopConfig {
    * coding agents benefit heavily from inter-tool-call reasoning.
    */
   thinking?: boolean;
+  /**
+   * Black-box tap for named loop reliability events (breaker trips, evidence
+   * gate, nudges, verification failures). Guarded — a throwing reporter can
+   * never affect the run.
+   */
+  onIncident?: IncidentReporter;
 }
 
 const DEFAULT_CONFIG: AgentLoopConfig = {
@@ -100,7 +111,7 @@ const DEFAULT_CONFIG: AgentLoopConfig = {
   maxTokens: 32000,
   maxTurns: 50,
   maxConsecutiveErrors: 3,
-  systemPrompt: "You are Alan, an expert software engineering assistant.",
+  systemPrompt: "You are Berne, an expert software engineering assistant.",
 };
 
 // ─── Agent State ───
@@ -130,6 +141,44 @@ export function truncateForTranscript(text: string): string {
   );
 }
 
+// ─── Mid-turn interjections (live steering) ───
+// Messages the user sends WHILE a run is in flight. The frontend queues them
+// via AgentLoop.interject(); the loop folds them into the conversation at the
+// next turn boundary — never mid-stream, so tool_use/tool_result pairing is
+// preserved. The wrapper does two jobs: it tells the model to integrate the
+// message without restarting, and it lets the engine recognize these messages
+// when persisting the run (the raw text is stored as a real user turn).
+
+export const INTERJECTION_MARKER =
+  "[MID-TASK MESSAGE FROM THE USER — arrived while you were working]";
+
+const INTERJECTION_GUIDANCE =
+  "[Integrate this now without losing progress: if it changes the goal or approach, " +
+  "update your todo list and adjust course from here; if it adds information or " +
+  "constraints, apply them to the remaining work; if it is a quick question, answer " +
+  "it briefly in your next reply and continue the task. Do not restart work that is " +
+  "already done, and do not drop the original task unless the user explicitly redirects you.]";
+
+/** Wrap queued interjection texts as the user message the model will see. */
+export function formatInterjection(texts: string[]): string {
+  return `${INTERJECTION_MARKER}\n${texts.join("\n\n")}\n${INTERJECTION_GUIDANCE}`;
+}
+
+/**
+ * Recover the raw user text from a formatted interjection message, or null
+ * when the text is not one (ordinary user turns, synthetic loop nudges,
+ * compaction summaries). Used by the engine to persist interjections as real
+ * user turns in their correct position in the event log.
+ */
+export function parseInterjection(text: string): string | null {
+  if (!text.startsWith(INTERJECTION_MARKER)) return null;
+  let body = text.slice(INTERJECTION_MARKER.length);
+  const guard = body.lastIndexOf(INTERJECTION_GUIDANCE);
+  if (guard >= 0) body = body.slice(0, guard);
+  const raw = body.trim();
+  return raw.length > 0 ? raw : null;
+}
+
 // ─── Agent Loop ───
 
 export class AgentLoop {
@@ -139,6 +188,9 @@ export class AgentLoop {
   private messages: Message[] = [];
   private state: AgentState = "idle";
   private permissionCheck?: PermissionCheck;
+  // Mid-turn steering: user messages queued while the run is in flight,
+  // folded into the transcript at the next turn boundary.
+  private interjections: string[] = [];
 
   constructor(
     config: Partial<AgentLoopConfig>,
@@ -159,8 +211,66 @@ export class AgentLoop {
     return this.state;
   }
 
+  /** Guarded incident report — component fixed to "agent-loop". */
+  private report(
+    cls: IncidentClass,
+    severity: IncidentSeverity,
+    where: string,
+    message: string,
+    context?: IncidentContext,
+  ): void {
+    try {
+      this.config.onIncident?.({
+        class: cls,
+        severity,
+        component: "agent-loop",
+        where: `agent-loop#${where}`,
+        message,
+        context: { model: this.config.model, provider: this.config.provider, ...context },
+      });
+    } catch {
+      // observability must never break the loop
+    }
+  }
+
   getMessages(): Message[] {
     return [...this.messages];
+  }
+
+  /**
+   * Queue a user message typed while this run is in flight (mid-turn
+   * steering). It is folded into the conversation at the next turn boundary —
+   * never mid-stream — so the model integrates it into the ongoing work
+   * instead of it waiting for the whole run to finish.
+   */
+  interject(text: string): void {
+    const t = text.trim();
+    if (t) this.interjections.push(t);
+  }
+
+  hasPendingInterjections(): boolean {
+    return this.interjections.length > 0;
+  }
+
+  /** Drain-and-return interjections the run never got to fold in (abort /
+   *  error paths end the loop between boundaries). The engine persists these
+   *  as user turns so nothing the user typed is ever silently lost. */
+  takeUndrainedInterjections(): string[] {
+    return this.interjections.splice(0);
+  }
+
+  /** Fold every queued interjection into the transcript as ONE user message.
+   *  Returns true when something was folded. Only called at turn boundaries
+   *  (the messages array ends with a user/tool message there, so pushing a
+   *  user text message keeps every provider's transcript valid). */
+  private drainInterjections(): boolean {
+    if (this.interjections.length === 0) return false;
+    const texts = this.interjections.splice(0);
+    this.messages.push({
+      role: "user",
+      content: [{ type: "text", text: formatInterjection(texts) }],
+    });
+    return true;
   }
 
   async *run(
@@ -191,6 +301,23 @@ export class AgentLoop {
     let projectChecksPassed = false;
     let executionNudges = 0;
     const recentToolSignatures: string[] = [];
+    // Repeated-failure circuit breaker: how many times each EXACT call
+    // (tool + args) has failed this run. After 2 identical failures the call is
+    // refused without executing — a failing fetch/command retried verbatim will
+    // fail the same way, and re-hammering it burns turns and floods the log.
+    const failedCalls = new Map<string, number>();
+    // Rate-limit recovery: when every provider is throttled, wait out the
+    // advertised retry window (bounded) and resume, instead of dying mid-task.
+    let rateWaits = 0;
+    // Context-overflow recovery: a request rejected for being over the model's
+    // context window is fixable by compacting — force it and retry instead of
+    // burning consecutiveErrors re-sending the same oversized prompt.
+    let overflowCompactions = 0;
+    // Empty-completion recovery: a stream that "succeeds" with no text and no
+    // tool calls (Gemini MALFORMED_FUNCTION_CALL, over-eager stops) must never
+    // end the run as a silent no-op — retry bounded, then fail loudly.
+    let emptyCompletions = 0;
+    let anyUsableOutputThisRun = false;
 
     while (turn < this.config.maxTurns) {
       // Check for abort before starting each turn
@@ -198,6 +325,16 @@ export class AgentLoop {
         this.state = "done";
         yield { type: "turn_complete", stopReason: "aborted", totalTurns: turn };
         return;
+      }
+
+      // Mid-turn steering: fold in anything the user typed while the previous
+      // step streamed or its tools ran. Every `continue` in this loop passes
+      // through here, so one drain site covers all boundaries.
+      if (this.drainInterjections()) {
+        yield {
+          type: "notice",
+          message: "New message from you folded into the running task.",
+        };
       }
 
       turn++;
@@ -273,6 +410,15 @@ export class AgentLoop {
         for await (const event of this.gateway.inferStream(request, streamOpts)) {
           const result = this.processStreamEvent(event, contentBlocks, pendingToolCalls);
           if (result.event) yield result.event;
+          if (result.reset) {
+            // Everything accumulated for this assistant message was discarded;
+            // the gateway is re-streaming it from scratch.
+            stopReason = "end_turn";
+            yield {
+              type: "notice",
+              message: "Response interrupted mid-stream — restarting it.",
+            };
+          }
           if (result.stopReason) stopReason = result.stopReason;
           // Feed REAL token usage back to the context engine so compaction is
           // driven by the provider's authoritative count against the model's
@@ -286,14 +432,78 @@ export class AgentLoop {
             // the gateway's guidance instead of burning maxConsecutiveErrors
             // re-hammering throttled endpoints.
             if (result.retryable === false) {
+              // Exception: an all-providers rate limit with a known retry window
+              // is TIME-terminal, not task-terminal. Wait it out (bounded, twice
+              // per run, abortable) and resume the turn instead of failing the
+              // whole task at the finish line.
+              const waitSecs = rateLimitWaitSecs(result.error);
+              if (waitSecs != null && rateWaits < 2 && !signal?.aborted) {
+                rateWaits++;
+                this.report(
+                  "provider.rate_limit_wait",
+                  "warn",
+                  "rateWait",
+                  `all providers rate limited — waiting ${waitSecs}s: ${result.error}`,
+                );
+                yield {
+                  type: "notice",
+                  message: `All providers rate limited — waiting ${waitSecs}s, then resuming…`,
+                };
+                await abortableSleep(waitSecs * 1000, signal);
+                if (signal?.aborted) {
+                  this.state = "done";
+                  yield { type: "turn_complete", stopReason: "aborted", totalTurns: turn };
+                  return;
+                }
+                streamErrored = true;
+                break;
+              }
               this.state = "error";
               yield { type: "error", error: result.error, recoverable: false };
               return;
             }
+            // Context overflow: the prompt no longer fits the model's window
+            // (e.g. several parallel 30k tool results landed in one turn).
+            // Re-sending the identical prompt can only fail identically —
+            // force-compact the working set and retry the turn.
+            if (
+              isContextOverflowError(result.error) &&
+              this.config.contextEngine &&
+              overflowCompactions < 2 &&
+              !signal?.aborted
+            ) {
+              overflowCompactions++;
+              this.report(
+                "context.forced_compaction",
+                "warn",
+                "overflow",
+                `provider rejected the prompt as over-limit — force-compacting (attempt ${overflowCompactions}): ${result.error.slice(0, 150)}`,
+              );
+              const r = await this.config.contextEngine.compactWorkingSet(this.messages, 4, {
+                force: true,
+              });
+              if (r.compacted) {
+                this.messages = r.messages;
+                yield {
+                  type: "notice",
+                  message: "Context window exceeded — compacted the conversation and retrying.",
+                };
+                streamErrored = true;
+                break;
+              }
+              // Compaction found nothing to cut — fall through to normal error handling.
+            }
             consecutiveErrors++;
+            this.report("provider.stream_error", "warn", "inferStream", result.error);
             yield { type: "error", error: result.error, recoverable: true };
             if (consecutiveErrors >= this.config.maxConsecutiveErrors) {
               this.state = "error";
+              this.report(
+                "loop.consecutive_errors",
+                "error",
+                "inferStream",
+                `run failed after ${consecutiveErrors} consecutive errors: ${result.error}`,
+              );
               yield {
                 type: "error",
                 error: `Too many consecutive errors (${consecutiveErrors})`,
@@ -314,9 +524,16 @@ export class AgentLoop {
         }
         consecutiveErrors++;
         const msg = err instanceof Error ? err.message : String(err);
+        this.report("provider.stream_error", "warn", "inferStream.catch", msg);
         yield { type: "error", error: msg, recoverable: true };
         if (consecutiveErrors >= this.config.maxConsecutiveErrors) {
           this.state = "error";
+          this.report(
+            "loop.consecutive_errors",
+            "error",
+            "inferStream.catch",
+            `run failed after ${consecutiveErrors} consecutive errors: ${msg}`,
+          );
           yield {
             type: "error",
             error: `Too many consecutive errors (${consecutiveErrors})`,
@@ -335,8 +552,59 @@ export class AgentLoop {
         continue;
       }
 
-      // Record assistant message
-      this.messages.push({ role: "assistant", content: contentBlocks });
+      // ── Empty completion: the stream closed "successfully" with nothing in
+      // it. Two defect shapes, both observed live (2026-07-07, /interactive →
+      // Gemini fallback → 6-second silent turn):
+      //   1. stopReason "tool_use" with ZERO delivered tool calls — the
+      //      provider claimed a call it never encoded (MALFORMED_FUNCTION_CALL
+      //      class defects).
+      //   2. The run tries to end having produced NOTHING at all so far — a
+      //      model never legitimately answers a user with literal nothing.
+      // Ending the turn here would render nothing and explain nothing — the
+      // single worst experience Berne can produce. Retry (the transcript is
+      // untouched: the empty message is NOT pushed), then fail loudly.
+      const producedUsableOutput =
+        pendingToolCalls.length > 0 ||
+        contentBlocks.some((b) => b.type === "text" && b.text.trim().length > 0);
+      if (producedUsableOutput) anyUsableOutputThisRun = true;
+      const claimedToolUseButNone = stopReason === "tool_use" && pendingToolCalls.length === 0;
+      const firstStepSilence =
+        !anyUsableOutputThisRun && stopReason === "end_turn" && !producedUsableOutput;
+      if (!signal?.aborted && (claimedToolUseButNone || firstStepSilence)) {
+        emptyCompletions++;
+        this.report(
+          "provider.empty_completion",
+          emptyCompletions < 3 ? "warn" : "error",
+          "run#emptyCompletion",
+          `${this.config.provider}/${this.config.model} returned an empty completion ` +
+            `(stopReason ${stopReason}, attempt ${emptyCompletions})`,
+        );
+        if (emptyCompletions < 3) {
+          yield {
+            type: "notice",
+            message: `The model returned an empty response — retrying (${emptyCompletions}/2)…`,
+          };
+          this.state = "observing";
+          continue;
+        }
+        this.state = "done";
+        yield {
+          type: "error",
+          error:
+            "The model returned an empty response 3 times in a row " +
+            `(${this.config.provider}/${this.config.model}). Nothing was produced. ` +
+            "Try again, rephrase, or switch models with /model.",
+          recoverable: false,
+        };
+        return;
+      }
+
+      // Record assistant message. Never push an EMPTY assistant message: some
+      // providers reject transcripts containing empty content on the next call,
+      // which would poison every later step of this session.
+      if (contentBlocks.length > 0) {
+        this.messages.push({ role: "assistant", content: contentBlocks });
+      }
 
       // ── max_tokens: the response was cut off by the output-token limit ──
       // Never execute tool calls from a truncated response: their JSON args
@@ -346,6 +614,12 @@ export class AgentLoop {
       // transcript valid) and ask the model to continue — bounded so a model
       // that maxes out every response can't loop forever.
       if (stopReason === "max_tokens") {
+        this.report(
+          "provider.truncation",
+          truncationRetries < 2 ? "warn" : "error",
+          "maxTokens",
+          `response hit the output-token limit (retry ${truncationRetries + 1})`,
+        );
         if (truncationRetries < 2) {
           truncationRetries++;
           if (pendingToolCalls.length > 0) {
@@ -392,6 +666,13 @@ export class AgentLoop {
       // verification (project checks). On failure, feed the report back and
       // continue so the agent self-corrects. Bounded by maxVerifyAttempts.
       if (stopReason !== "tool_use" || pendingToolCalls.length === 0) {
+        // The user steered mid-run while the model was wrapping up: the run is
+        // NOT done — fold the message in (at the top of the next iteration)
+        // and keep going instead of finishing past their new instructions.
+        if (!signal?.aborted && this.hasPendingInterjections()) {
+          this.state = "observing";
+          continue;
+        }
         if (
           this.config.verifier &&
           editsSinceVerify &&
@@ -404,6 +685,12 @@ export class AgentLoop {
           editsSinceVerify = false;
           if (result.ran && result.passed) projectChecksPassed = true;
           if (result.ran && !result.passed) {
+            this.report(
+              "loop.verification_failed",
+              "warn",
+              "verify",
+              `project checks failed after edits (attempt ${verifyAttempts}): ${result.report.slice(0, 300)}`,
+            );
             this.messages.push({
               role: "user",
               content: [
@@ -439,6 +726,12 @@ export class AgentLoop {
           !signal?.aborted
         ) {
           executionNudges++;
+          this.report(
+            "loop.evidence_gate",
+            "warn",
+            "evidenceGate",
+            "files were written but nothing was executed — refused the finish once",
+          );
           this.messages.push({
             role: "user",
             content: [
@@ -471,6 +764,12 @@ export class AgentLoop {
           const r = await this.config.contextEngine.compactWorkingSet(this.messages);
           if (r.compacted) this.messages = r.messages;
         }
+        // A steering message may have arrived while verification / the
+        // evidence gate ran above — a finished turn must never swallow it.
+        if (!signal?.aborted && this.hasPendingInterjections()) {
+          this.state = "observing";
+          continue;
+        }
         this.state = "done";
         yield { type: "turn_complete", stopReason, totalTurns: turn };
         return;
@@ -486,6 +785,12 @@ export class AgentLoop {
       if (duplicateCount >= 3) {
         if (stuckNudges < (this.config.maxStuckNudges ?? 1)) {
           stuckNudges++;
+          this.report(
+            "loop.stuck_nudge",
+            "warn",
+            "loopDetect",
+            `same tool batch repeated ${duplicateCount}×: ${signature.slice(0, 150)}`,
+          );
           recentToolSignatures.length = 0; // reset the detection window
           // Answer the repeated tool_use blocks (keeps the transcript valid),
           // then nudge the model to reconsider instead of silently bailing.
@@ -510,6 +815,12 @@ export class AgentLoop {
           continue;
         }
         this.state = "error";
+        this.report(
+          "loop.infinite_loop",
+          "error",
+          "loopDetect",
+          `bailed: same tool batch repeated after a nudge: ${signature.slice(0, 150)}`,
+        );
         yield {
           type: "error",
           error:
@@ -538,6 +849,7 @@ export class AgentLoop {
         allowed: boolean;
         parallelSafe: boolean;
         isWrite: boolean;
+        callSig: string;
         output?: ToolCallOutput;
       };
 
@@ -577,14 +889,55 @@ export class AgentLoop {
           }
         }
 
-        // Only auto-permission read tools are safe to run concurrently. If the
-        // registry doesn't know the tool, default to serial (safe).
+        // Circuit breaker: this EXACT call already failed twice this run —
+        // refuse it without executing. The refusal is itself an error result,
+        // so the model reads WHY and is pushed to change strategy.
+        const callSig = `${tc.toolName}:${tc.argsJson}`;
+        const priorFails = failedCalls.get(callSig) ?? 0;
+        if (allowed && !denied && priorFails >= 2) {
+          this.report(
+            "loop.repeated_call_refused",
+            "warn",
+            "breaker",
+            `${tc.toolName} refused without running after ${priorFails} identical failures`,
+            { tool: tc.toolName },
+          );
+          denied = {
+            callId: tc.callId,
+            toolName: tc.toolName,
+            success: false,
+            result: "",
+            error:
+              `Refused without running: this exact ${tc.toolName} call already failed ` +
+              `${priorFails} times this run and will fail again. Do NOT repeat it. ` +
+              "Change strategy — different arguments, a different tool, or work around the " +
+              "blocker and finish with an honest report of what remains undone.",
+            durationMs: 0,
+          };
+        }
+
+        // Auto-permission read tools are safe to run concurrently, plus tools
+        // that explicitly opt in (schema.parallelSafe — e.g. `worker`, whose
+        // ownership claims make parallel writers safe). Unknown tools default
+        // to serial (safe).
         const schema = this.registry.get(tc.toolName)?.schema;
         const parallelSafe =
-          allowed && schema?.category === "read" && schema.permissionLevel === "auto";
+          allowed &&
+          !denied &&
+          ((schema?.category === "read" && schema.permissionLevel === "auto") ||
+            schema?.parallelSafe === true);
         const isWrite = schema?.category === "write";
 
-        planned.push({ tc, parsedArgs, input, allowed, parallelSafe, isWrite, output: denied });
+        planned.push({
+          tc,
+          parsedArgs,
+          input,
+          allowed,
+          parallelSafe,
+          isWrite,
+          callSig,
+          output: denied,
+        });
       }
 
       // ── Phase B: execute — parallel-safe reads concurrently (bounded), rest serial ──
@@ -640,6 +993,9 @@ export class AgentLoop {
             isError: !output.success,
           });
           consecutiveErrors = output.success ? 0 : consecutiveErrors + 1;
+          if (!output.success) {
+            failedCalls.set(p.callSig, (failedCalls.get(p.callSig) ?? 0) + 1);
+          }
           if (output.success && p.isWrite) {
             editsSinceVerify = true;
             anyWritesThisRun = true;
@@ -675,6 +1031,12 @@ export class AgentLoop {
 
     // Max turns reached
     this.state = "done";
+    this.report(
+      "loop.max_turns",
+      "warn",
+      "run",
+      `run ended at the ${this.config.maxTurns}-turn ceiling without finishing`,
+    );
     yield {
       type: "turn_complete",
       stopReason: "max_turns",
@@ -692,6 +1054,7 @@ export class AgentLoop {
     usage?: TokenUsage;
     error?: string;
     retryable?: boolean;
+    reset?: boolean;
   } {
     switch (event.type) {
       case "content_delta":
@@ -783,6 +1146,14 @@ export class AgentLoop {
       case "message_stop":
         return { stopReason: event.stopReason, usage: event.usage };
 
+      case "stream_reset":
+        // The gateway abandoned the partial response and will re-stream it.
+        // Drop everything accumulated for this message so the retry doesn't
+        // duplicate text blocks or re-execute half-formed tool calls.
+        contentBlocks.length = 0;
+        pendingToolCalls.length = 0;
+        return { event: { type: "stream_reset" }, reset: true };
+
       case "notice":
         return { event: { type: "notice", message: event.message } };
 
@@ -816,4 +1187,46 @@ export async function mapWithConcurrency<T>(
     }
   };
   await Promise.all(Array.from({ length: Math.min(max, items.length) }, () => worker()));
+}
+
+/**
+ * True when a provider error message says the PROMPT exceeded the model's
+ * context window. Matches the wording used by Anthropic ("prompt is too
+ * long"), OpenAI ("maximum context length", "context_length_exceeded"),
+ * Google ("input token count exceeds"), and generic proxies.
+ */
+export function isContextOverflowError(message: string): boolean {
+  return /prompt is too long|context[ _-]?length|maximum context|context window|input token count exceeds|too many tokens|exceeds the maximum number of tokens|token limit exceeded/i.test(
+    message,
+  );
+}
+
+/**
+ * Parse the wait window out of an all-providers-rate-limited error ("… Retry in
+ * ~53s …"). Returns clamped seconds, or null when the message isn't a rate
+ * limit / has no usable window — those stay terminal.
+ */
+export function rateLimitWaitSecs(message: string): number | null {
+  if (!/rate.?limit/i.test(message)) return null;
+  const m = message.match(/retry in ~?(\d+)\s*s/i);
+  if (!m) return null;
+  const secs = Number(m[1]);
+  if (!Number.isFinite(secs) || secs <= 0) return null;
+  return Math.min(Math.max(secs + 2, 5), 90); // +2s of slack, bounded to 90s
+}
+
+/** Sleep that wakes early on abort (the wait must stay interruptible). */
+export function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve();
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(t);
+        resolve();
+      },
+      { once: true },
+    );
+  });
 }

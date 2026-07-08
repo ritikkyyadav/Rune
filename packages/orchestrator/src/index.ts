@@ -1,6 +1,9 @@
 // ─── Core Agent ───
 export {
   AgentLoop,
+  INTERJECTION_MARKER,
+  formatInterjection,
+  parseInterjection,
   type AgentLoopConfig,
   type AgentState,
   type AgentTurnEvent,
@@ -8,6 +11,8 @@ export {
   type PermissionCheckArgs,
   type PermissionCheckResult,
 } from "./agent-loop";
+export { createResearchTool, RESEARCH_TOOL_SCHEMA, type ResearchToolDeps } from "./research-tool";
+export { createCompactTool, COMPACT_TOOL_SCHEMA, type CompactToolDeps } from "./compact-tool";
 export {
   Engine,
   type EngineConfig,

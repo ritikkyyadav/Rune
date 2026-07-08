@@ -10,6 +10,9 @@
     "lint": "prettier --check src/",
     "test": "bun test"
   },
+  "dependencies": {
+    "@alan/shared": "workspace:*"
+  },
   "devDependencies": {
     "typescript": "^5.8"
   }

@@ -13,9 +13,9 @@ function shortPath(p: string): string {
   return p.startsWith(home) ? "~" + p.slice(home.length) : p;
 }
 
-/** The readline prompt: a single `›` chevron. */
+/** The readline prompt: the follow-up arrow. */
 export function promptString(): string {
-  return `  ${accent("›")} `;
+  return `  ${faint("→")} `;
 }
 
 export interface ComposerStatus {
@@ -23,11 +23,19 @@ export interface ComposerStatus {
   workspace: string;
   /** Permission mode: "confirm" | "auto" | "turing" (legacy "trusted"/"yolo" still accepted). */
   mode?: string;
+  /** Context window usage, 0–100 (shown as "N% context used"). */
+  contextPercent?: number;
+  /** Files edited so far this session (shown as "K files edited"). */
+  filesEdited?: number;
+  /** True when the OS sandbox is disabled (/sandbox off) — shown as a loud badge. */
+  sandboxOff?: boolean;
 }
 
-/** Normalize legacy mode aliases onto the current three-mode vocabulary. */
+/** Normalize mode aliases onto the internal three-mode vocabulary. The bypass mode is
+ *  branded "Hands-Free" to users; its internal token stays "turing" (like "yolo"). */
 function normalizeMode(mode?: string): "confirm" | "auto" | "turing" {
-  if (mode === "turing" || mode === "yolo") return "turing";
+  if (mode === "turing" || mode === "yolo" || mode === "hands-free" || mode === "handsfree")
+    return "turing";
   if (mode === "auto" || mode === "trusted") return "auto";
   return "confirm";
 }
@@ -36,7 +44,7 @@ function normalizeMode(mode?: string): "confirm" | "auto" | "turing" {
 export function permissionModeBadge(mode?: string): string {
   switch (normalizeMode(mode)) {
     case "turing":
-      return bold(warn("⚡ TURING")); // the yellow bypass mode
+      return bold(warn("⚡ HANDS-FREE")); // the yellow bypass mode
     case "auto":
       return warn("● auto");
     default:
@@ -44,26 +52,33 @@ export function permissionModeBadge(mode?: string): string {
   }
 }
 
-/** Dimmed `model · ~/dir` line, with a colored flag for non-default modes. */
+/** The dim two-line footer (Codex-style): the readout, then the key hints.
+ *  `model · 23% context used · 2 files edited` / `/ for commands · …` */
 export function statusLine(s: ComposerStatus): string {
-  const dir = shortPath(s.workspace);
-  let out = faint(`${s.model} · ${dir}`);
+  const parts: string[] = [s.model];
+  if (s.contextPercent != null) parts.push(`${Math.round(s.contextPercent)}% context used`);
+  if (s.filesEdited != null && s.filesEdited > 0)
+    parts.push(`${s.filesEdited} file${s.filesEdited === 1 ? "" : "s"} edited`);
+  if (s.contextPercent == null && s.filesEdited == null) parts.push(shortPath(s.workspace));
+  let readout = faint(parts.join(" · "));
   const badge = permissionModeBadge(s.mode);
-  if (badge) out += faint(" · ") + badge;
-  return `  ${out}`;
+  if (badge) readout += faint(" · ") + badge;
+  if (s.sandboxOff) readout += faint(" · ") + warn("▲ no sandbox");
+  const hints = faint("/ for commands · ctrl+r to review work");
+  return `  ${readout}\n  ${hints}`;
 }
 
 /**
  * A transient one-liner announcing the active permission mode — printed into the
- * transcript each time Shift+Tab cycles. Turing is loud (bold amber) because it
+ * transcript each time Shift+Tab cycles. Hands-Free is loud (bold amber) because it
  * silences every prompt; the others are calm.
  */
 export function permissionModeBanner(mode?: string): string {
   switch (normalizeMode(mode)) {
     case "turing":
       return (
-        `  ${bold(warn("⚡ Turing mode"))} ${faint("·")} ` +
-        `${text("Alan will read, write & run commands without asking.")} ` +
+        `  ${bold(warn("⚡ Hands-Free mode"))} ${faint("·")} ` +
+        `${text("Berne will read, write & run commands without asking.")} ` +
         `${faint("(shift+tab to cycle)")}`
       );
     case "auto":
@@ -75,10 +90,25 @@ export function permissionModeBanner(mode?: string): string {
     default:
       return (
         `  ${ok("○ Confirm mode")} ${faint("·")} ` +
-        `${muted("Alan asks before writing or running.")} ` +
+        `${muted("Berne asks before writing or running.")} ` +
         `${faint("(shift+tab to cycle)")}`
       );
   }
+}
+
+/**
+ * A transient one-liner announcing the sandbox posture — printed when `/sandbox`
+ * toggles (and by `/sandbox` with no argument as a status readout). Off is loud
+ * for the same reason Hands-Free is: it removes a containment layer.
+ */
+export function sandboxModeBanner(enabled: boolean): string {
+  return enabled
+    ? `  ${ok("◆ Sandbox on")} ${faint("·")} ` +
+        `${muted("commands run in an OS sandbox — no network, workspace-confined writes; network: true escalates one call.")} ` +
+        `${faint("(/sandbox off for full access)")}`
+    : `  ${bold(warn("▲ Sandbox off"))} ${faint("·")} ` +
+        `${text("commands run directly on this machine with full network & filesystem access.")} ` +
+        `${faint("(/sandbox on to re-enable)")}`;
 }
 
 /**
@@ -109,13 +139,18 @@ export interface RenderedBlock {
   caretCol: number;
 }
 
-/** The pinned composer: a rounded input box (horizontally scrolled) + status line. */
+/** Placeholder shown in the empty composer (the terminal cursor sits on its first char). */
+export const COMPOSER_PLACEHOLDER = "Add a follow-up";
+
+/** The pinned composer: a hairline box, `→` prompt, placeholder when empty,
+ *  and the dim multi-line footer beneath — the Codex idiom. */
 export function renderComposer(state: ComposerState): RenderedBlock {
   const width = Math.max(28, state.width);
+  const statusLines = state.status ? state.status.split("\n") : [];
 
   if (state.working) {
     return {
-      lines: [`${PAD}${state.working}`, state.status],
+      lines: [`${PAD}${state.working}`, ...statusLines],
       caretRow: 0,
       caretCol: stripAnsi(`${PAD}${state.working}`).length,
     };
@@ -123,20 +158,29 @@ export function renderComposer(state: ComposerState): RenderedBlock {
 
   const boxW = width - 3; // total box width incl. corners — spans the full terminal, like Codex/Claude
   const innerW = boxW - 4; // cols between "│ " and " │"
-  const textW = Math.max(4, innerW - 2); // minus the "› " prefix
+  const textW = Math.max(4, innerW - 2); // minus the "→ " prefix
 
   // Horizontal scroll so the caret stays visible within the window.
   let scroll = 0;
   if (state.caret > textW - 1) scroll = state.caret - textW + 1;
-  const slice = state.input.slice(scroll, scroll + textW);
+  // Newlines/control chars would spill the "single-line" box across rows and break the pinned
+  // region's row math — flatten them to spaces (pastes are collapsed to chips upstream, but a stray
+  // control byte must never desync the frame).
+  const slice = state.input
+    .slice(scroll, scroll + textW)
+    .replace(/[\r\n\t\x00-\x08\x0b-\x1f]/g, " ");
+  const body =
+    state.input.length === 0
+      ? faint(COMPOSER_PLACEHOLDER.padEnd(textW, " ").slice(0, textW))
+      : text(slice.padEnd(textW, " "));
 
   const top = `${PAD}${line("╭" + "─".repeat(boxW - 2) + "╮")}`;
-  const mid = `${PAD}${line("│")} ${accent("›")} ${text(slice.padEnd(textW, " "))} ${line("│")}`;
+  const mid = `${PAD}${line("│")} ${faint("→")} ${body} ${line("│")}`;
   const bot = `${PAD}${line("╰" + "─".repeat(boxW - 2) + "╯")}`;
 
-  // PAD(2) + "│"(1) + " "(1) + "›"(1) + " "(1) = 6 cols before the input text.
+  // PAD(2) + "│"(1) + " "(1) + "→"(1) + " "(1) = 6 cols before the input text.
   const caretCol = 6 + (state.caret - scroll);
-  return { lines: [top, mid, bot, state.status], caretRow: 1, caretCol };
+  return { lines: [top, mid, bot, ...statusLines], caretRow: 1, caretCol };
 }
 
 // ─── Permission request card (TUI) ───
@@ -383,7 +427,7 @@ export function renderMemoryPanel(
   const lines: string[] = [];
 
   lines.push(
-    `${PAD}${bold(text("System memory"))}   ${faint("a guide Alan tailors to — it never overrides what you ask")}`,
+    `${PAD}${bold(text("System memory"))}   ${faint("a guide Berne tailors to — it never overrides what you ask")}`,
   );
   const empty = !v.content.trim();
   lines.push(
@@ -396,7 +440,7 @@ export function renderMemoryPanel(
   lines.push("");
 
   if (empty) {
-    lines.push(`${PAD}${muted("Alan hasn't learned about you yet.")}`);
+    lines.push(`${PAD}${muted("Berne hasn't learned about you yet.")}`);
     lines.push(
       `${PAD}${faint("Refresh to learn from recent sessions, add a note, or write it yourself.")}`,
     );

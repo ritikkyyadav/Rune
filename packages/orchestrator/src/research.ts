@@ -93,24 +93,54 @@ interface DepthPreset {
 const DEPTH_PRESETS: Record<NonNullable<ResearchOptions["depth"]>, DepthPreset> = {
   // Fast, single-pass. For quick lookups where iteration isn't worth the latency.
   quick: {
-    maxRounds: 1, maxSubQuestions: 4, maxFollowupsPerRound: 0, maxTotalSubQuestions: 4,
-    maxParallel: 3, maxSourcesPerStep: 3, maxTurns: 5, maxTotalSources: 12,
-    charsPerSource: 6000, maxSynthesisChars: 32000, investigatorMaxTokens: 3072, synthesisMaxTokens: 6144,
-    maxSections: 1, sectionMaxTokens: 6144,
+    maxRounds: 1,
+    maxSubQuestions: 4,
+    maxFollowupsPerRound: 0,
+    maxTotalSubQuestions: 4,
+    maxParallel: 3,
+    maxSourcesPerStep: 3,
+    maxTurns: 5,
+    maxTotalSources: 12,
+    charsPerSource: 6000,
+    maxSynthesisChars: 32000,
+    investigatorMaxTokens: 3072,
+    synthesisMaxTokens: 6144,
+    maxSections: 1,
+    sectionMaxTokens: 6144,
   },
   // Default: one reflection round, richer sourcing, multi-section long-form report.
   standard: {
-    maxRounds: 2, maxSubQuestions: 6, maxFollowupsPerRound: 3, maxTotalSubQuestions: 12,
-    maxParallel: 4, maxSourcesPerStep: 5, maxTurns: 7, maxTotalSources: 24,
-    charsPerSource: 9000, maxSynthesisChars: 72000, investigatorMaxTokens: 4096, synthesisMaxTokens: 10240,
-    maxSections: 7, sectionMaxTokens: 3584,
+    maxRounds: 2,
+    maxSubQuestions: 6,
+    maxFollowupsPerRound: 3,
+    maxTotalSubQuestions: 12,
+    maxParallel: 4,
+    maxSourcesPerStep: 5,
+    maxTurns: 7,
+    maxTotalSources: 24,
+    charsPerSource: 9000,
+    maxSynthesisChars: 72000,
+    investigatorMaxTokens: 4096,
+    synthesisMaxTokens: 10240,
+    maxSections: 7,
+    sectionMaxTokens: 3584,
   },
   // Heavy: up to two reflection rounds, broad sourcing, book-length sectioned report.
   deep: {
-    maxRounds: 3, maxSubQuestions: 9, maxFollowupsPerRound: 4, maxTotalSubQuestions: 20,
-    maxParallel: 5, maxSourcesPerStep: 7, maxTurns: 10, maxTotalSources: 40,
-    charsPerSource: 12000, maxSynthesisChars: 130000, investigatorMaxTokens: 6144, synthesisMaxTokens: 16384,
-    maxSections: 12, sectionMaxTokens: 4096,
+    maxRounds: 3,
+    maxSubQuestions: 9,
+    maxFollowupsPerRound: 4,
+    maxTotalSubQuestions: 20,
+    maxParallel: 5,
+    maxSourcesPerStep: 7,
+    maxTurns: 10,
+    maxTotalSources: 40,
+    charsPerSource: 12000,
+    maxSynthesisChars: 130000,
+    investigatorMaxTokens: 6144,
+    synthesisMaxTokens: 16384,
+    maxSections: 12,
+    sectionMaxTokens: 4096,
   },
 };
 
@@ -139,7 +169,14 @@ export function resolveSettings(opts?: ResearchOptions): Settings {
 const READ_TOOLS = ["read_file", "list_dir", "grep", "glob", "symbol_search", "ast_query"];
 const WEB_TOOLS = ["web_search", "web_fetch"];
 // Anything that can mutate state or shell out is never available to an investigator.
-const FORBIDDEN_TOOLS = ["write_file", "edit_file", "multi_edit", "bash", "n8n_trigger", "todo_write"];
+const FORBIDDEN_TOOLS = [
+  "write_file",
+  "edit_file",
+  "multi_edit",
+  "bash",
+  "n8n_trigger",
+  "todo_write",
+];
 
 /**
  * A curated registry for a research investigator. Starts from the built-ins,
@@ -254,7 +291,9 @@ export async function planResearch(
   const allowClarify = opts?.allowClarification !== false && !opts?.feedback;
 
   const request: InferenceRequest = {
-    messages: [{ role: "user", content: [{ type: "text", text: plannerUserPrompt(question, opts) }] }],
+    messages: [
+      { role: "user", content: [{ type: "text", text: plannerUserPrompt(question, opts) }] },
+    ],
     system: plannerSystemPrompt(s.maxSubQuestions, allowClarify),
     model: opts?.model ?? deps.model,
     provider: opts?.provider ?? deps.provider,
@@ -464,7 +503,16 @@ export async function* runResearch(
   // each section in its own streamed call, so total length scales with section
   // count instead of a single call's output ceiling. Quick uses one call.
   let report = "";
-  for await (const ev of synthesizeReport(deps, plan, subResults, allSources, s, model, provider, signal)) {
+  for await (const ev of synthesizeReport(
+    deps,
+    plan,
+    subResults,
+    allSources,
+    s,
+    model,
+    provider,
+    signal,
+  )) {
     if (ev.type === "research_report_delta") report += ev.text;
     yield ev;
     if (ev.type === "error") return;
@@ -530,7 +578,13 @@ async function investigate(
       findings += ev.text;
     } else if (ev.type === "tool_call_end") {
       if (ev.output.success) {
-        const added = captureSources(ev.output.toolName, ev.output.result, sq.index, sources, s.maxTotalSources);
+        const added = captureSources(
+          ev.output.toolName,
+          ev.output.result,
+          sq.index,
+          sources,
+          s.maxTotalSources,
+        );
         for (const src of added) {
           newSourceCount++;
           queue.push({
@@ -559,10 +613,23 @@ async function investigate(
 
   const trimmed = findings.trim();
   if (fatal && !trimmed && newSourceCount === 0) {
-    return { index: sq.index, question: sq.question, status: "failed", findings: "", sourceCount: 0, error: fatal };
+    return {
+      index: sq.index,
+      question: sq.question,
+      status: "failed",
+      findings: "",
+      sourceCount: 0,
+      error: fatal,
+    };
   }
   const status: SubQuestionResult["status"] = newSourceCount === 0 ? "empty" : "ok";
-  return { index: sq.index, question: sq.question, status, findings: trimmed, sourceCount: newSourceCount };
+  return {
+    index: sq.index,
+    question: sq.question,
+    status,
+    findings: trimmed,
+    sourceCount: newSourceCount,
+  };
 }
 
 function investigatorSystemPrompt(sq: ResearchSubQuestion, maxSources: number): string {
@@ -784,7 +851,8 @@ function upsertSource(
     if (fetched) existing.fetched = true;
     if (data.text && !existing.text) existing.text = data.text;
     if (data.snippet && !existing.snippet) existing.snippet = data.snippet;
-    if (data.title && (!existing.title || existing.title === existing.url)) existing.title = data.title;
+    if (data.title && (!existing.title || existing.title === existing.url))
+      existing.title = data.title;
     return null;
   }
   if (sources.size >= maxTotal) return null;
@@ -806,7 +874,8 @@ export function normalizeUrl(raw: string): string {
     const u = new URL(raw.trim());
     u.hash = "";
     for (const k of [...u.searchParams.keys()]) {
-      if (/^utm_/i.test(k) || k === "ref" || k === "fbclid" || k === "gclid") u.searchParams.delete(k);
+      if (/^utm_/i.test(k) || k === "ref" || k === "fbclid" || k === "gclid")
+        u.searchParams.delete(k);
     }
     return u.toString().replace(/\/$/, "").toLowerCase();
   } catch {
@@ -909,7 +978,9 @@ function synthesisUserPrompt(
   sources: ResearchSource[],
   s: Settings,
 ): string {
-  const sourceBlocks = selectSynthesisSources(sources, s.charsPerSource, s.maxSynthesisChars).join("\n\n");
+  const sourceBlocks = selectSynthesisSources(sources, s.charsPerSource, s.maxSynthesisChars).join(
+    "\n\n",
+  );
   const fmt = plan.outputFormat ? `\nDesired format: ${plan.outputFormat}` : "";
 
   return `RESEARCH QUESTION:
@@ -967,9 +1038,15 @@ function fallbackOutline(subResults: SubQuestionResult[], maxSections: number): 
   const body: ReportSection[] = [...subResults]
     .sort((a, b) => a.index - b.index)
     .slice(0, Math.max(1, maxSections - 2))
-    .map((r) => ({ title: r.question, focus: "Cover this sub-question in depth using its findings and sources." }));
+    .map((r) => ({
+      title: r.question,
+      focus: "Cover this sub-question in depth using its findings and sources.",
+    }));
   return [
-    { title: "Executive Summary", focus: "Summarize the key findings and the overall answer to the research question." },
+    {
+      title: "Executive Summary",
+      focus: "Summarize the key findings and the overall answer to the research question.",
+    },
     ...body,
     { title: "Conclusion", focus: "Synthesize the implications, trade-offs, and open questions." },
   ].slice(0, maxSections);
@@ -1070,7 +1147,11 @@ async function* streamCall(
   } catch (err) {
     yield {
       type: "error",
-      error: signal?.aborted ? "Research aborted." : err instanceof Error ? err.message : String(err),
+      error: signal?.aborted
+        ? "Research aborted."
+        : err instanceof Error
+          ? err.message
+          : String(err),
       recoverable: false,
     };
   }
@@ -1096,7 +1177,12 @@ export async function* synthesizeReport(
   // Quick: one call.
   if (s.maxSections <= 1) {
     const req: InferenceRequest = {
-      messages: [{ role: "user", content: [{ type: "text", text: synthesisUserPrompt(plan, subResults, sources, s) }] }],
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: synthesisUserPrompt(plan, subResults, sources, s) }],
+        },
+      ],
       system: SYNTHESIS_SYSTEM_PROMPT,
       model,
       provider,
@@ -1136,7 +1222,10 @@ export async function* synthesizeReport(
         {
           role: "user",
           content: [
-            { type: "text", text: sectionUserPrompt(plan, subResults, sourceBlocks, outline, written, i, sec) },
+            {
+              type: "text",
+              text: sectionUserPrompt(plan, subResults, sourceBlocks, outline, written, i, sec),
+            },
           ],
         },
       ],
@@ -1260,7 +1349,9 @@ function tryParse(s: string): unknown {
 
 class AsyncEventQueue<T> {
   private buffer: T[] = [];
-  private waiting: Array<(r: { value: T; done: false } | { value: undefined; done: true }) => void> = [];
+  private waiting: Array<
+    (r: { value: T; done: false } | { value: undefined; done: true }) => void
+  > = [];
   private closed = false;
 
   push(value: T): void {
