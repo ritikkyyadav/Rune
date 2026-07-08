@@ -9,6 +9,8 @@ import {
   createSkillTool,
   DashboardManager,
   createDashboardTool,
+  isSandboxEnabled,
+  setSandboxMode,
 } from "@alan/tool-registry";
 import type { DashboardInfo, PluginCatalogEntry, SkillSearchHit } from "@alan/tool-registry";
 import { existsSync } from "node:fs";
@@ -236,6 +238,12 @@ export interface EngineConfig {
    * writes and network tools still prompt. Default false.
    */
   trustWorkspace?: boolean;
+  /**
+   * Run foreground bash inside the OS sandbox (Seatbelt/Bubblewrap: deny-net,
+   * workspace-confined writes). Default true; false = full host access
+   * (`/sandbox off`, `--no-sandbox`). Process-wide — see tool-registry/sandbox-mode.
+   */
+  sandboxEnabled?: boolean;
   /** Enable Planner-Executor two-tier mode. */
   plannerMode: boolean;
   /** Model routing for planner-executor split. */
@@ -534,6 +542,10 @@ export class Engine {
 
   constructor(config: Partial<EngineConfig> = {}) {
     this.config = { ...DEFAULT_ENGINE_CONFIG, ...config };
+
+    // Sandbox posture before any tool can run. Process-wide by design (one
+    // real engine per process); default is ON — full access is an opt-out.
+    setSandboxMode(this.config.sandboxEnabled === false ? "off" : "on");
 
     // Black box first — the gateway build below captures its tap.
     if (this.config.blackbox?.enabled) {
@@ -1448,6 +1460,25 @@ export class Engine {
     return next;
   }
 
+  // ─── Sandbox mode (/sandbox on|off) ───
+
+  /** Whether foreground bash currently runs inside the OS sandbox. */
+  isSandboxEnabled(): boolean {
+    return isSandboxEnabled();
+  }
+
+  /**
+   * Flip the OS sandbox live. Propagates through the shared sandbox-mode
+   * state (Rust --sandbox flag, net preflight, broker confinement, bash tool
+   * description) and drops the cached environment blocks so the very next
+   * turn's system prompt states the new posture.
+   */
+  setSandboxEnabled(enabled: boolean): void {
+    setSandboxMode(enabled ? "on" : "off");
+    this.config.sandboxEnabled = enabled;
+    this.envBlocks.clear();
+  }
+
   // ─── Research Mode (/research) ───
 
   /** Research defaults (depth, save, outputDir, autoApprove) for the CLI/TUI. */
@@ -2246,6 +2277,7 @@ export class Engine {
     yoloMode: boolean;
     trustWorkspace: boolean;
     permissionMode: PermissionMode;
+    sandboxEnabled: boolean;
     registeredProviders: ProviderName[];
     cost: number;
     sessionId?: string;
@@ -2262,6 +2294,7 @@ export class Engine {
       yoloMode: this.config.yoloMode,
       trustWorkspace: this.permissions.isTrustWorkspace(),
       permissionMode: this.permissions.getMode(),
+      sandboxEnabled: isSandboxEnabled(),
       registeredProviders: this.getRegisteredProviders(),
       cost: this.getCost(),
       sessionId,
