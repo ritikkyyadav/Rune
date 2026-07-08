@@ -362,8 +362,7 @@ function applyEnvOverrides(config: Record<string, unknown>): void {
     ALAN_TELEMETRY: (c) => setNested(c, "telemetry.enabled", process.env.ALAN_TELEMETRY === "true"),
     ALAN_TELEMETRY_ENDPOINT: (c) =>
       setNested(c, "telemetry.endpoint", process.env.ALAN_TELEMETRY_ENDPOINT!),
-    ALAN_TELEMETRY_TOKEN: (c) =>
-      setNested(c, "telemetry.token", process.env.ALAN_TELEMETRY_TOKEN!),
+    ALAN_TELEMETRY_TOKEN: (c) => setNested(c, "telemetry.token", process.env.ALAN_TELEMETRY_TOKEN!),
     ALAN_SEARCH_BACKEND: (c) => setNested(c, "search.provider", process.env.ALAN_SEARCH_BACKEND!),
     ALAN_NATIVE_GROUNDING: (c) =>
       setNested(c, "search.nativeGrounding", process.env.ALAN_NATIVE_GROUNDING !== "false"),

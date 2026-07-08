@@ -39,13 +39,7 @@ export {
   resetTelemetryState,
   todayUtc,
 } from "./consent";
-export {
-  type UsageCounters,
-  usageCountersPath,
-  bumpUsage,
-  takeUsage,
-  peekUsage,
-} from "./counters";
+export { type UsageCounters, usageCountersPath, bumpUsage, takeUsage, peekUsage } from "./counters";
 
 // ─── Legacy sink API (predates the Recorder; kept for compatibility) ───
 

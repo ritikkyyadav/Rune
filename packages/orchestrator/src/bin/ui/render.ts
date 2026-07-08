@@ -82,7 +82,10 @@ export function wrap(value: string, width: number): string[] {
 }
 
 /** Horizontal rule, indented. */
-export function rule(width?: number, opts: { pad?: string; color?: (s: string) => string } = {}): string {
+export function rule(
+  width?: number,
+  opts: { pad?: string; color?: (s: string) => string } = {},
+): string {
   const pad = opts.pad ?? "  ";
   const w = width ?? Math.min(termWidth() - 4, 76);
   return `${pad}${(opts.color ?? lineColor)("─".repeat(Math.max(1, w)))}`;
@@ -165,7 +168,10 @@ export function bar(frac: number, width = 20, opts: BarOpts = {}): string {
 // ─── Bullets & connectors (Codex-style activity rows) ───
 
 /** `• content` — a top-level activity row. */
-export function bullet(content: string, opts: { color?: (s: string) => string; pad?: string } = {}): string {
+export function bullet(
+  content: string,
+  opts: { color?: (s: string) => string; pad?: string } = {},
+): string {
   const pad = opts.pad ?? "  ";
   const c = opts.color ?? muted;
   return `${pad}${c("•")} ${content}`;

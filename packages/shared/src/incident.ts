@@ -164,7 +164,10 @@ export type IncidentReporter = (input: IncidentInput) => void;
 export function normalizeForFingerprint(message: string): string {
   let s = message.toLowerCase();
   // strip quoted payloads first (paths/args often live inside quotes)
-  s = s.replace(/"[^"]*"/g, '"…"').replace(/'[^']*'/g, "'…'").replace(/`[^`]*`/g, "`…`");
+  s = s
+    .replace(/"[^"]*"/g, '"…"')
+    .replace(/'[^']*'/g, "'…'")
+    .replace(/`[^`]*`/g, "`…`");
   // absolute and home-relative paths
   s = s.replace(/(?:~|\/)[\w.@+-]+(?:\/[\w.@+-]+)+/g, "<path>");
   // uuids, long hex (hashes), then remaining digit runs

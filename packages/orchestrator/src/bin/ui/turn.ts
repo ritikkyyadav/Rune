@@ -145,9 +145,7 @@ export function cookingVerb(seed: number, elapsedMs: number): string {
 /** One framed chip naming an edited file: `│ path  +12 -3 │`. */
 export function editChip(path: string, stat: EditStat): string {
   const w = turnWidth();
-  const counts = stat.created
-    ? ok("new")
-    : `${ok(`+${stat.added}`)} ${accent(`-${stat.removed}`)}`;
+  const counts = stat.created ? ok("new") : `${ok(`+${stat.added}`)} ${accent(`-${stat.removed}`)}`;
   const countsW = visLen(counts);
   const shown = truncate(path, Math.max(12, w - countsW - 9));
   const inner = `${info(shown)}  ${counts}`;
@@ -525,7 +523,8 @@ export class TurnRenderer {
 
     // 5 · the answer
     if (answer) this.sink.commit(responseBlock(answer) + "\n");
-    else if (opts.aborted) this.sink.commit(`\n ${accent("▮")} ${muted("interrupted — nothing set down")}\n`);
+    else if (opts.aborted)
+      this.sink.commit(`\n ${accent("▮")} ${muted("interrupted — nothing set down")}\n`);
   }
 }
 

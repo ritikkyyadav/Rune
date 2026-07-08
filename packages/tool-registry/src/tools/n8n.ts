@@ -79,7 +79,11 @@ export function createN8nTriggerHandler(): ToolHandler {
         return { valid: false, error: "method must be either GET or POST" };
       }
       if (args.payload !== undefined) {
-        if (typeof args.payload !== "object" || args.payload === null || Array.isArray(args.payload)) {
+        if (
+          typeof args.payload !== "object" ||
+          args.payload === null ||
+          Array.isArray(args.payload)
+        ) {
           return { valid: false, error: "payload must be an object" };
         }
       }
@@ -125,8 +129,7 @@ export function createN8nTriggerHandler(): ToolHandler {
         }
 
         const rawBody = await res.text();
-        const body =
-          rawBody.length > MAX_BODY_BYTES ? rawBody.slice(0, MAX_BODY_BYTES) : rawBody;
+        const body = rawBody.length > MAX_BODY_BYTES ? rawBody.slice(0, MAX_BODY_BYTES) : rawBody;
 
         if (!res.ok) {
           return {

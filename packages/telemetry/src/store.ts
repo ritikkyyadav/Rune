@@ -165,9 +165,7 @@ export class BlackboxStore {
   }
 
   get(id: string): IncidentRecord | null {
-    const row = this.db.query(`SELECT * FROM incidents WHERE id = ?`).get(id) as
-      | IncidentRow
-      | null;
+    const row = this.db.query(`SELECT * FROM incidents WHERE id = ?`).get(id) as IncidentRow | null;
     return row ? rowToRecord(row) : null;
   }
 
@@ -234,9 +232,9 @@ export class BlackboxStore {
         ? this.db
             .query(`SELECT * FROM fingerprints WHERE last_seen >= ? ORDER BY count DESC LIMIT ?`)
             .all(since, opts.limit ?? 10)
-        : this.db.query(`SELECT * FROM fingerprints ORDER BY count DESC LIMIT ?`).all(
-            opts.limit ?? 10,
-          )
+        : this.db
+            .query(`SELECT * FROM fingerprints ORDER BY count DESC LIMIT ?`)
+            .all(opts.limit ?? 10)
     ) as Array<{
       fingerprint: string;
       class: string;
@@ -325,9 +323,9 @@ export class BlackboxStore {
   }
 
   getMeta(key: string): string | null {
-    const row = this.db.query(`SELECT value FROM meta WHERE key = ?`).get(key) as
-      | { value: string }
-      | null;
+    const row = this.db.query(`SELECT value FROM meta WHERE key = ?`).get(key) as {
+      value: string;
+    } | null;
     return row?.value ?? null;
   }
 

@@ -112,7 +112,10 @@ export function commandsAreVariants(failed: string, succeeded: string): boolean 
   const overlap = shared / Math.max(a.length, b.length);
   // same intent, different invocation: high token overlap OR same trailing args
   // with a different runner (`npm test` vs `bun test` overlaps on "test")
-  return overlap >= 0.5 || (a.length >= 2 && b.length >= 2 && a.slice(1).join(" ") === b.slice(1).join(" "));
+  return (
+    overlap >= 0.5 ||
+    (a.length >= 2 && b.length >= 2 && a.slice(1).join(" ") === b.slice(1).join(" "))
+  );
 }
 
 function captureFailoverTactics(ctx: CaptureContext, observations: ToolObservation[]): string[] {
@@ -152,7 +155,9 @@ function captureMonorepoLayout(ctx: CaptureContext): string[] {
   const pkgPath = join(ctx.workspaceRoot, "package.json");
   if (existsSync(pkgPath)) {
     try {
-      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { workspaces?: string[] | { packages?: string[] } };
+      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as {
+        workspaces?: string[] | { packages?: string[] };
+      };
       const ws = Array.isArray(pkg.workspaces) ? pkg.workspaces : pkg.workspaces?.packages;
       if (ws && ws.length > 0) parts.push(`JS workspaces: ${ws.join(", ")}`);
     } catch {

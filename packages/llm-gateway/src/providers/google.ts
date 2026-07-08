@@ -247,9 +247,7 @@ export class GoogleProvider implements LlmProvider {
 
   private toGeminiRequest(request: InferenceRequest): Record<string, unknown> {
     const tools: Record<string, unknown>[] = [];
-    const functionDeclarations = request.tools?.length
-      ? request.tools.map(toGeminiTool)
-      : [];
+    const functionDeclarations = request.tools?.length ? request.tools.map(toGeminiTool) : [];
     if (functionDeclarations.length > 0) {
       tools.push({ functionDeclarations });
     }

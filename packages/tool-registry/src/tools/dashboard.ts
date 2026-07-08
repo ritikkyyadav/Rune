@@ -22,7 +22,14 @@
 
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
@@ -121,7 +128,9 @@ function csvCell(v: unknown): string {
   if (v === null || v === undefined) return "";
   const raw =
     typeof v === "object"
-      ? String((v as { chip?: unknown; text?: unknown }).chip ?? (v as { text?: unknown }).text ?? "")
+      ? String(
+          (v as { chip?: unknown; text?: unknown }).chip ?? (v as { text?: unknown }).text ?? "",
+        )
       : String(v);
   return /[",\n]/.test(raw) ? `"${raw.replace(/"/g, '""')}"` : raw;
 }
@@ -153,30 +162,43 @@ export function buildCsv(spec: unknown, data: unknown): string | null {
       const title = item.title ? `# ${String(item.title)}` : null;
       if (Array.isArray(item.columns) && Array.isArray(item.rows)) {
         const head = item.columns.map(csvCell).join(",");
-        const rows = item.rows.map((r) => (Array.isArray(r) ? r.map(csvCell).join(",") : csvCell(r)));
+        const rows = item.rows.map((r) =>
+          Array.isArray(r) ? r.map(csvCell).join(",") : csvCell(r),
+        );
         sections.push([title, head, ...rows].filter((x): x is string => x !== null).join("\n"));
       } else if (item.chart?.series && Array.isArray(item.chart.series)) {
         const labels = Array.isArray(item.chart.labels) ? item.chart.labels : [];
         const series = item.chart.series;
-        const head = ["Label", ...series.map((x, i) => csvCell(x.name ?? `Series ${i + 1}`))].join(",");
-        const n = Math.max(labels.length, ...series.map((x) => (Array.isArray(x.data) ? x.data.length : 0)));
+        const head = ["Label", ...series.map((x, i) => csvCell(x.name ?? `Series ${i + 1}`))].join(
+          ",",
+        );
+        const n = Math.max(
+          labels.length,
+          ...series.map((x) => (Array.isArray(x.data) ? x.data.length : 0)),
+        );
         const rows: string[] = [];
         for (let i = 0; i < n; i++) {
-          rows.push([csvCell(labels[i] ?? i), ...series.map((x) => csvCell(x.data?.[i]))].join(","));
+          rows.push(
+            [csvCell(labels[i] ?? i), ...series.map((x) => csvCell(x.data?.[i]))].join(","),
+          );
         }
         sections.push([title, head, ...rows].filter((x): x is string => x !== null).join("\n"));
       } else if ((item.type === "progress" || item.type === "list") && Array.isArray(item.items)) {
         const rows = item.items.map((it) =>
           [it.label ?? it.title, it.value, it.sub].map(csvCell).join(","),
         );
-        sections.push([title, "Label,Value,Detail", ...rows].filter((x): x is string => x !== null).join("\n"));
+        sections.push(
+          [title, "Label,Value,Detail", ...rows].filter((x): x is string => x !== null).join("\n"),
+        );
       }
     }
   }
   if (sections.length === 0 && Array.isArray(data) && data.length > 0) {
     if (data.every((r) => r && typeof r === "object" && !Array.isArray(r))) {
       const keys = [...new Set(data.flatMap((r) => Object.keys(r as object)))];
-      const rows = data.map((r) => keys.map((k) => csvCell((r as Record<string, unknown>)[k])).join(","));
+      const rows = data.map((r) =>
+        keys.map((k) => csvCell((r as Record<string, unknown>)[k])).join(","),
+      );
       sections.push([keys.map(csvCell).join(","), ...rows].join("\n"));
     } else if (data.every((r) => Array.isArray(r))) {
       sections.push(data.map((r) => (r as unknown[]).map(csvCell).join(",")).join("\n"));
@@ -244,7 +266,9 @@ export function printUrlToPdf(browserBin: string, url: string, outPath: string):
       reject(new Error("PDF export timed out after 45s"));
     }, 45_000);
     // Bun's type shim omits ChildProcess.on; the runtime implements it fully.
-    const on = (child as unknown as { on(ev: string, cb: (a?: unknown) => void): void }).on.bind(child);
+    const on = (child as unknown as { on(ev: string, cb: (a?: unknown) => void): void }).on.bind(
+      child,
+    );
     on("error", (err) => {
       clearTimeout(timer);
       reject(err instanceof Error ? err : new Error(String(err)));
@@ -258,7 +282,11 @@ export function printUrlToPdf(browserBin: string, url: string, outPath: string):
 }
 
 /** Confine an export path to the workspace and ensure its directory exists. */
-function resolveExportPath(workspaceRoot: string, path: string | undefined, fallback: string): string {
+function resolveExportPath(
+  workspaceRoot: string,
+  path: string | undefined,
+  fallback: string,
+): string {
   const rel = path && path.trim() ? path.trim() : fallback;
   const abs = isAbsolute(rel) ? resolve(rel) : resolve(workspaceRoot, rel);
   const root = resolve(workspaceRoot);
@@ -647,8 +675,7 @@ export class DashboardManager {
    */
   private buildStandalonePage(rec: DashboardRecord, printBase?: string): string {
     const print = printBase !== undefined;
-    const body =
-      rec.spec !== undefined ? specShellHtml(jsonForScript(rec.spec)) : rec.html;
+    const body = rec.spec !== undefined ? specShellHtml(jsonForScript(rec.spec)) : rec.html;
     // Model-authored full documents: inline the vendor lib + a render-once
     // bootstrap so the exported file works without our server.
     const freeze = print
@@ -857,9 +884,7 @@ ${staticBootstrap}
     if (/^\s*(<!doctype|<html)/i.test(rec.html)) {
       const inject = `<script src="${vendor}"></script><script>${CHART_DEFAULTS_JS}</script>${bootstrap}`;
       const i = rec.html.toLowerCase().lastIndexOf("</body>");
-      return i === -1
-        ? rec.html + inject
-        : rec.html.slice(0, i) + inject + rec.html.slice(i);
+      return i === -1 ? rec.html + inject : rec.html.slice(0, i) + inject + rec.html.slice(i);
     }
 
     return `<!doctype html>
@@ -932,7 +957,8 @@ export const INTERACTIVE_DASHBOARD_SCHEMA: ToolSchema = {
       },
       id: {
         type: "string",
-        description: "Dashboard id (from create). Required for update/close; export/open default to the latest.",
+        description:
+          "Dashboard id (from create). Required for update/close; export/open default to the latest.",
       },
       format: {
         type: "string",
@@ -976,9 +1002,12 @@ export function createDashboardTool(manager: DashboardManager): ToolHandler {
         action !== "close" &&
         action !== "export"
       ) {
-        return { valid: false, error: "action must be one of: create, update, open, close, export" };
+        return {
+          valid: false,
+          error: "action must be one of: create, update, open, close, export",
+        };
       }
-      const specSize = args.spec === undefined ? 0 : JSON.stringify(args.spec)?.length ?? 0;
+      const specSize = args.spec === undefined ? 0 : (JSON.stringify(args.spec)?.length ?? 0);
       if (specSize > MAX_HTML_CHARS) {
         return { valid: false, error: `spec too large (max ${MAX_HTML_CHARS} chars as JSON)` };
       }
@@ -1084,9 +1113,7 @@ export function createDashboardTool(manager: DashboardManager): ToolHandler {
             } else {
               writeFileSync(outPath, manager.exportString(id, format), "utf8");
             }
-            return done(
-              JSON.stringify({ id, exported: outPath, format, title: info.title }),
-            );
+            return done(JSON.stringify({ id, exported: outPath, format, title: info.title }));
           }
           case "open": {
             const info = manager.open(typeof args.id === "string" ? args.id : undefined);

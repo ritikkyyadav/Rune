@@ -131,8 +131,7 @@ export class LlmGateway {
           lastError = err as Error;
           lastStatus = (err as Record<string, unknown>).status as number | undefined;
 
-          const isAuthOrBilling =
-            lastStatus === 401 || lastStatus === 402 || lastStatus === 403;
+          const isAuthOrBilling = lastStatus === 401 || lastStatus === 402 || lastStatus === 403;
           const isRateLimit = lastStatus === 429;
 
           // Another provider is available → switch NOW. A bad key, exhausted
@@ -212,12 +211,7 @@ export class LlmGateway {
       // Terminal (non-retryable) failures get reported to the black box here,
       // where the status code is still known. The retryable else-branch is NOT
       // reported — the agent loop records those as stream errors if they stick.
-      if (
-        lastStatus === 401 ||
-        lastStatus === 402 ||
-        lastStatus === 403 ||
-        lastStatus === 429
-      ) {
+      if (lastStatus === 401 || lastStatus === 402 || lastStatus === 403 || lastStatus === 429) {
         this.reportIncident({
           kind: "terminal",
           provider: providerName,

@@ -99,10 +99,7 @@ export async function loadCommands(workspaceRoot: string): Promise<SlashCommand[
 }
 
 /** Find a command by name, case-insensitively. */
-export function findCommand(
-  commands: SlashCommand[],
-  name: string,
-): SlashCommand | undefined {
+export function findCommand(commands: SlashCommand[], name: string): SlashCommand | undefined {
   // Allow callers to pass either "review" or "/review".
   const target = name.replace(/^\//, "").toLowerCase();
   return commands.find((c) => c.name === target);
@@ -201,7 +198,10 @@ function splitFrontmatter(raw: string): ParsedFrontmatter {
 
   // Body is everything after the closing delimiter. Drop a single leading
   // newline so the prompt doesn't start with a blank line.
-  const body = lines.slice(closeIdx + 1).join("\n").replace(/^\n/, "");
+  const body = lines
+    .slice(closeIdx + 1)
+    .join("\n")
+    .replace(/^\n/, "");
   return { frontmatter, body };
 }
 
@@ -221,9 +221,5 @@ function stripQuotes(value: string): string {
 
 /** True when an fs error indicates a missing path (ENOENT). */
 function isNotFound(err: unknown): boolean {
-  return (
-    typeof err === "object" &&
-    err !== null &&
-    (err as { code?: string }).code === "ENOENT"
-  );
+  return typeof err === "object" && err !== null && (err as { code?: string }).code === "ENOENT";
 }

@@ -61,7 +61,10 @@ export function createTodoWriteHandler(): ToolHandler {
         }
         const obj = item as Record<string, unknown>;
         if (typeof obj.content !== "string" || !obj.content) {
-          return { valid: false, error: `items[${i}].content is required and must be a non-empty string` };
+          return {
+            valid: false,
+            error: `items[${i}].content is required and must be a non-empty string`,
+          };
         }
         if (!VALID_STATUSES.includes(obj.status as TodoStatus)) {
           return {
