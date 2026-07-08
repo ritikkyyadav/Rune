@@ -347,6 +347,12 @@ export class HookRunner {
         stdin: new Blob([stdin]),
         stdout: "pipe",
         stderr: "pipe",
+        // detached → this shell leads its own process group, so a timeout
+        // can kill the ENTIRE tree, not just the shell — a leader-only kill
+        // orphans any grandchild the command spawned (e.g. `sleep 5` under
+        // `sh -c`), which keeps holding the stdout/stderr pipes open and
+        // stalls the read below until it exits on its own.
+        detached: true,
       });
     } catch (err) {
       return {
@@ -364,9 +370,15 @@ export class HookRunner {
     const timer = setTimeout(() => {
       timedOut = true;
       try {
-        proc.kill("SIGKILL");
+        // Negative pid → signal the whole process group (see detached above).
+        if (proc.pid) process.kill(-proc.pid, "SIGKILL");
+        else proc.kill("SIGKILL");
       } catch {
-        // Process may have already exited — nothing to do.
+        try {
+          proc.kill("SIGKILL");
+        } catch {
+          // Process (group) may have already exited — nothing to do.
+        }
       }
     }, timeoutMs);
 
