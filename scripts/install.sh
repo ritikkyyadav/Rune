@@ -100,6 +100,26 @@ echo "  $(green '✓') alan-tools installed: $(dim "$TOOLS_DST")"
 cat > "$INSTALL_DIR/berne" <<'WRAPPER'
 #!/usr/bin/env bash
 # Berne launcher: points the compiled CLI at alan-tools and loads saved keys.
+
+# Stale working-directory self-heal: if this shell's cwd was deleted, moved
+# (e.g. to Trash), or replaced while the tab sat in it, getcwd() fails and the
+# Bun runtime dies at startup with a cryptic "Unexpected" / "low max file
+# descriptors" error before Berne ever runs. Re-resolve $PWD by its path: if
+# the folder exists (again), re-enter it fresh; if it is really gone, say
+# exactly what happened and how to fix it.
+if ! pwd -P >/dev/null 2>&1; then
+  if [ -n "${PWD:-}" ] && [ -d "$PWD" ] && cd "$PWD" 2>/dev/null; then
+    echo "  ! This terminal's working directory was stale (deleted or replaced) — re-entered $PWD" >&2
+  else
+    echo "" >&2
+    echo "  ✗ Berne can't start: this terminal's working directory no longer exists." >&2
+    echo "    It was deleted, moved to Trash, or replaced while this shell was inside it." >&2
+    echo "    Fix: cd to an existing folder and retry — e.g.  cd ~  then cd back to your project." >&2
+    echo "" >&2
+    exit 1
+  fi
+fi
+
 BERNE_BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export ALAN_TOOLS_BIN="$BERNE_BIN_DIR/alan-tools"
 
