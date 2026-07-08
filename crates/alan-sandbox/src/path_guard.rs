@@ -140,7 +140,7 @@ impl PathGuard {
 
     /// Strip quotes from a command string so patterns can match inside quoted args.
     fn strip_quotes(cmd: &str) -> String {
-        cmd.replace('\'', " ").replace('"', " ")
+        cmd.replace(['\'', '"'], " ")
     }
 
     /// Validate a command string for dangerous patterns.

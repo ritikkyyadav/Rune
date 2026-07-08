@@ -68,7 +68,10 @@ impl MacOsSandbox {
             writable.push(format!("    (subpath \"{}\")", escape_sb(&tmpdir)));
         }
         for p in &self.config.extra_write_paths {
-            writable.push(format!("    (subpath \"{}\")", escape_sb(&p.display().to_string())));
+            writable.push(format!(
+                "    (subpath \"{}\")",
+                escape_sb(&p.display().to_string())
+            ));
         }
         let writable = writable.join("\n");
 
@@ -351,7 +354,11 @@ mod tests {
         let ws = tempfile::TempDir::new().unwrap();
         let sb = MacOsSandbox::new(cfg(ws.path().to_path_buf(), false));
         let r = sb
-            .execute(&format!("echo pwned > {}", probe.display()), None, Some(15_000))
+            .execute(
+                &format!("echo pwned > {}", probe.display()),
+                None,
+                Some(15_000),
+            )
             .await
             .expect("sandbox execute failed");
 
