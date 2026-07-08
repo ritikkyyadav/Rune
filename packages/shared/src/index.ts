@@ -49,6 +49,7 @@ export {
   applySearchKeysToEnv,
 } from "./secrets.js";
 export { type LastModel, getModelStatePath, loadLastModel, saveLastModel } from "./model-store.js";
+export { loadSavedSandboxState, resolveInitialSandbox, saveSandboxState } from "./sandbox-store.js";
 export {
   type ModelTier,
   type TierRef,

@@ -27,6 +27,8 @@ export interface ComposerStatus {
   contextPercent?: number;
   /** Files edited so far this session (shown as "K files edited"). */
   filesEdited?: number;
+  /** True when the OS sandbox is disabled (/sandbox off) — shown as a loud badge. */
+  sandboxOff?: boolean;
 }
 
 /** Normalize mode aliases onto the internal three-mode vocabulary. The bypass mode is
@@ -61,6 +63,7 @@ export function statusLine(s: ComposerStatus): string {
   let readout = faint(parts.join(" · "));
   const badge = permissionModeBadge(s.mode);
   if (badge) readout += faint(" · ") + badge;
+  if (s.sandboxOff) readout += faint(" · ") + warn("▲ no sandbox");
   const hints = faint("/ for commands · ctrl+r to review work");
   return `  ${readout}\n  ${hints}`;
 }
@@ -91,6 +94,21 @@ export function permissionModeBanner(mode?: string): string {
         `${faint("(shift+tab to cycle)")}`
       );
   }
+}
+
+/**
+ * A transient one-liner announcing the sandbox posture — printed when `/sandbox`
+ * toggles (and by `/sandbox` with no argument as a status readout). Off is loud
+ * for the same reason Hands-Free is: it removes a containment layer.
+ */
+export function sandboxModeBanner(enabled: boolean): string {
+  return enabled
+    ? `  ${ok("◆ Sandbox on")} ${faint("·")} ` +
+        `${muted("commands run in an OS sandbox — no network, workspace-confined writes; network: true escalates one call.")} ` +
+        `${faint("(/sandbox off for full access)")}`
+    : `  ${bold(warn("▲ Sandbox off"))} ${faint("·")} ` +
+        `${text("commands run directly on this machine with full network & filesystem access.")} ` +
+        `${faint("(/sandbox on to re-enable)")}`;
 }
 
 /**
