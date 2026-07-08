@@ -52,8 +52,10 @@ import type {
 } from "@alan/shared";
 import { buildGateway, providerStatus } from "./provider-registry";
 import type { ProviderStatusRow, BuildGatewayOpts } from "./provider-registry";
-import { AgentLoop } from "./agent-loop";
+import { AgentLoop, parseInterjection } from "./agent-loop";
 import type { PermissionCheck, AgentTurnEvent } from "./agent-loop";
+import { createCompactTool } from "./compact-tool";
+import { createResearchTool } from "./research-tool";
 import { PermissionBroker, nextPermissionMode } from "./permissions";
 import { StruggleDetector } from "./struggle-detector";
 import {
@@ -531,6 +533,9 @@ export class Engine {
   // create) + the autonomy toggle that shapes the injected doctrine.
   private dashboards = new DashboardManager();
   private interactiveAuto = false;
+  // The flat AgentLoop currently running a chat() turn — the target for
+  // mid-turn steering (interject). Null when idle or in planner mode.
+  private liveLoop: AgentLoop | null = null;
 
   constructor(config: Partial<EngineConfig> = {}) {
     this.config = { ...DEFAULT_ENGINE_CONFIG, ...config };
@@ -665,6 +670,42 @@ export class Engine {
     // pop browser windows.
     this.interactiveAuto = this.config.interactive?.auto === true;
     this.registry.register(createDashboardTool(this.dashboards));
+
+    // `research`: the /research | /deepresearch pipeline as a model-invocable
+    // tool, so "do deep research on X" asked in plain chat runs the real
+    // multi-source engine. Main registry only — a research run fans out its
+    // own investigators and must not nest inside read-only sub-agents.
+    this.registry.register(
+      createResearchTool({
+        binaryPath: this.config.toolsBinaryPath,
+        workspaceRoot: this.config.workspaceRoot,
+        resolve: () => ({
+          gateway: this.gateway,
+          model: this.config.model,
+          provider: this.config.provider,
+        }),
+        defaults: () => this.config.research ?? {},
+        record: (sessionId, type, payload) => {
+          try {
+            this.sessions.appendEvent(sessionId, { type, payload });
+          } catch {
+            // audit persistence is best-effort; never fail the research run
+          }
+        },
+      }),
+    );
+
+    // compact_context: the /compress behaviour as a model-invocable tool —
+    // "compact the conversation" asked in chat schedules a forced working-set
+    // compaction, executed by the agent loop at the next turn boundary.
+    this.registry.register(
+      createCompactTool({
+        requestCompaction: () => {
+          this.contextEngine.requestCompaction();
+          return this.contextEngine.getContextUsage();
+        },
+      }),
+    );
 
     // Initialize Session Manager
     this.sessions = new SessionManager(this.config.dbPath);
@@ -1714,6 +1755,8 @@ export class Engine {
           loop.run(msg, sid, ws, sig) as AsyncGenerator<PlanRunnerEvent>,
         getMessages: () => loop.getMessages(),
       };
+      // Expose the live loop so interject() can steer this run mid-flight.
+      this.liveLoop = loop;
     }
 
     let runError: string | null = null;
@@ -1895,11 +1938,7 @@ export class Engine {
         !signal.aborted &&
         writtenPaths.size > 0
       ) {
-        const commit = autoCommitPaths(
-          this.config.workspaceRoot,
-          [...writtenPaths],
-          userMessage,
-        );
+        const commit = autoCommitPaths(this.config.workspaceRoot, [...writtenPaths], userMessage);
         if (commit.committed) {
           this.lastAutoCommitSha = commit.sha;
           this.sessions.appendEvent(sessionId, {
@@ -1910,7 +1949,9 @@ export class Engine {
             type: "notice",
             message: `Committed ${commit.fileCount} file${commit.fileCount === 1 ? "" : "s"} as ${commit.shortSha} — /undo reverts it.`,
           } as PlanRunnerEvent;
-        } else if (!/no files written|no effective changes|not a git repository/.test(commit.reason)) {
+        } else if (
+          !/no files written|no effective changes|not a git repository/.test(commit.reason)
+        ) {
           // Only surface reasons the user should act on (e.g. staged changes).
           yield {
             type: "notice",
@@ -1919,6 +1960,11 @@ export class Engine {
         }
       }
     } finally {
+      // Stop accepting steering the moment the run winds down — anything
+      // interjected after this point could never be drained by the loop.
+      const steeredLoop = this.liveLoop;
+      this.liveLoop = null;
+
       // Persist the conversation tail
       const allMessages = runner.getMessages();
       const startIndex = priorMessages.length + 1;
@@ -1939,7 +1985,32 @@ export class Engine {
               payload: r,
             });
           }
+        } else if (m.role === "user") {
+          // Mid-turn interjections are real user turns — persist them at their
+          // true position so resumed sessions replay the same conversation the
+          // live run saw. Synthetic loop nudges (verification prompts, the
+          // evidence gate, compaction summaries) don't carry the interjection
+          // marker and stay unpersisted, exactly as before.
+          const first = m.content.find((b) => b.type === "text");
+          const raw = first && first.type === "text" ? parseInterjection(first.text) : null;
+          if (raw) {
+            this.sessions.appendEvent(sessionId, {
+              type: "user_msg",
+              payload: { content: raw },
+            });
+          }
         }
+      }
+
+      // Steering that arrived too late to be folded in (the run aborted or
+      // errored between boundaries): persist it as user turns at the tail so
+      // nothing the user typed is silently lost — a resumed session replays it
+      // and the next turn picks it up.
+      for (const t of steeredLoop?.takeUndrainedInterjections() ?? []) {
+        this.sessions.appendEvent(sessionId, {
+          type: "user_msg",
+          payload: { content: t },
+        });
       }
       if (runError) {
         this.sessions.appendEvent(sessionId, {
@@ -2017,6 +2088,29 @@ export class Engine {
   abort(): void {
     if (this.currentAbort) this.struggles?.onAbort();
     this.currentAbort?.abort();
+  }
+
+  /**
+   * Mid-turn steering: fold a user message into the chat() run currently in
+   * flight. The agent sees it at the next turn boundary — it updates its plan
+   * and keeps working instead of the message waiting for the run to finish —
+   * and the engine persists it as a real user turn at its true position.
+   *
+   * Returns true when a live run accepted the message. Returns false when
+   * there is nothing steerable (idle, planner mode, research, or the run is
+   * already winding down) — callers fall back to queueing for the next turn.
+   */
+  interject(text: string): boolean {
+    const t = text.trim();
+    if (!t) return false;
+    const loop = this.liveLoop;
+    if (!loop) return false;
+    if (!this.currentAbort || this.currentAbort.signal.aborted) return false;
+    const state = loop.getState();
+    if (state === "done" || state === "error") return false;
+    loop.interject(t);
+    this.recorder?.note("interjection", t.slice(0, 180));
+    return true;
   }
 
   getPermissions(): PermissionBroker {
