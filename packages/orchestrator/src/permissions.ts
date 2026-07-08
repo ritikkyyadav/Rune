@@ -1,4 +1,5 @@
 import { isAbsolute, relative, resolve } from "path";
+import { isSandboxEnabled } from "@alan/tool-registry";
 import type { PermissionLevel, ToolSchema } from "@alan/tool-registry";
 
 export type PermissionScope = "once" | "session" | "project" | "global";
@@ -165,9 +166,12 @@ export class PermissionBroker {
     // Both escapes leave the sandbox: network:true (explicit escalation) and
     // run_in_background:true (servers must bind ports, so they run
     // unsandboxed). Neither may be auto-approved by workspace trust — only
-    // sandbox-confined foreground commands are.
+    // sandbox-confined foreground commands are. And when the user disabled
+    // the sandbox entirely (/sandbox off), NO bash call is contained, so
+    // workspace trust stops auto-approving bash altogether — full access
+    // means every command earns a prompt outside Hands-Free mode.
     if (schema.name === "bash") {
-      return args.network !== true && args.run_in_background !== true;
+      return isSandboxEnabled() && args.network !== true && args.run_in_background !== true;
     }
     // A worker's blast radius is exactly the files it owns: confined when
     // every owned entry resolves inside the workspace (the ownership guard
@@ -227,7 +231,11 @@ export class PermissionBroker {
       case "edit_file":
         return `${tool} ${args.path ?? "unknown path"}`;
       case "bash": {
-        const net = args.network === true ? " [network — runs outside the sandbox]" : "";
+        const net = !isSandboxEnabled()
+          ? " [sandbox off — full host access]"
+          : args.network === true
+            ? " [network — runs outside the sandbox]"
+            : "";
         return `bash${net}: ${String(args.command ?? "").slice(0, 100)}`;
       }
       case "worker": {

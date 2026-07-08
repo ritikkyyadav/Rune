@@ -21,6 +21,8 @@ export interface StatusView {
   trustWorkspace?: boolean;
   /** Active permission mode; falls back to the yolo/trust booleans when absent. */
   permissionMode?: "confirm" | "auto" | "turing";
+  /** OS command sandbox: true = sandboxed, false = full access. Absent hides the row. */
+  sandboxEnabled?: boolean;
   registeredProviders?: string[];
   version?: string;
 }
@@ -41,6 +43,16 @@ export function renderStatus(s: StatusView): string {
     ["Directory", text(shortPath(s.workspace))],
     ["Mode", text(s.plannerMode ? "planner" : "react")],
     ["Permissions", permissionsLabel(s)],
+    ...(s.sandboxEnabled === undefined
+      ? []
+      : ([
+          [
+            "Sandbox",
+            s.sandboxEnabled
+              ? text("on · commands OS-sandboxed, no network")
+              : bold(warn("▲ off · full host access")),
+          ],
+        ] as [string, string][])),
     ["Session", text(s.sessionId.slice(0, 8))],
     ["Cost", text(`$${s.cost.toFixed(4)}`)],
   ];

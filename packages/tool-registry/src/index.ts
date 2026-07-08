@@ -7,6 +7,13 @@ export type {
   ToolSchema,
 } from "./types";
 export { ToolRegistry } from "./registry";
+export {
+  getSandboxMode,
+  isSandboxEnabled,
+  onSandboxModeChange,
+  setSandboxMode,
+  type SandboxMode,
+} from "./sandbox-mode";
 export { createRustToolHandler } from "./tools/rust-bridge";
 export { registerBuiltinTools } from "./tools/builtin";
 export { CustomToolsLoader } from "./tools/custom-loader";

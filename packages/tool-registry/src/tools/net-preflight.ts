@@ -14,6 +14,7 @@
 // go build) is left to run. Escape hatches: `--offline`-style flags skip the
 // match, and BERNE_NET_PREFLIGHT=0 disables the whole check.
 
+import { isSandboxEnabled } from "../sandbox-mode";
 import type { ToolCallInput, ToolCallOutput, ToolHandler } from "../types";
 
 /** Flags that mean "this package-manager run is intentionally offline". */
@@ -72,7 +73,10 @@ export function withNetworkPreflight(handler: ToolHandler): ToolHandler {
     validate: (args) => handler.validate(args),
     execute: async (input: ToolCallInput): Promise<ToolCallOutput> => {
       const { args } = input;
-      const sandboxed = args.network !== true && args.run_in_background !== true;
+      // When the user disabled the sandbox (/sandbox off), every command has
+      // network — there is nothing to preflight.
+      const sandboxed =
+        isSandboxEnabled() && args.network !== true && args.run_in_background !== true;
       if (sandboxed && process.env.BERNE_NET_PREFLIGHT !== "0") {
         const what = typeof args.command === "string" ? needsNetwork(args.command) : null;
         if (what) {
