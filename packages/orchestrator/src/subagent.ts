@@ -38,7 +38,7 @@ export interface SubagentDeps {
   resolve?: () => { gateway: LlmGateway; model: string; provider: ProviderName };
 }
 
-const DEFAULT_MAX_TURNS = 12;
+const DEFAULT_MAX_TURNS = 16;
 const DEFAULT_MAX_TOKENS = 8192;
 const DEFAULT_SYSTEM_PROMPT =
   "You are a focused sub-agent performing a read-only investigation (exploration, " +
@@ -51,8 +51,9 @@ export const TASK_TOOL_SCHEMA: ToolSchema = {
   version: "0.1.0",
   description:
     "Delegate a focused, read-only sub-task (exploration/search/analysis) to a " +
-    "sub-agent. Returns the sub-agent's final summary. Use for fanning out " +
-    "investigation.",
+    "sub-agent. Returns the sub-agent's final summary. To fan out, issue SEVERAL " +
+    "task calls in ONE response — independent investigations run concurrently " +
+    "and all summaries come back together. One self-contained question per call.",
   inputSchema: {
     type: "object",
     properties: {
@@ -151,9 +152,8 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
           permissionCheck,
         );
 
-        const fullPrompt = context && context.trim().length > 0
-          ? `${context}\n\n${prompt}`
-          : prompt;
+        const fullPrompt =
+          context && context.trim().length > 0 ? `${context}\n\n${prompt}` : prompt;
 
         let finalText = "";
         let toolCallCount = 0;

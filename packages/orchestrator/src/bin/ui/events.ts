@@ -65,7 +65,11 @@ export function formatEvent(ev: any, ctx: { cost?: number } = {}): string | null
       const rows = [`  ${muted("•")} ${bold(text("Updated plan"))}`];
       for (const item of ev.items) {
         const marker =
-          item.status === "completed" ? ok("✓") : item.status === "in_progress" ? warn("▸") : faint("□");
+          item.status === "completed"
+            ? ok("✓")
+            : item.status === "in_progress"
+              ? warn("▸")
+              : faint("□");
         const label = item.status === "in_progress" ? text(item.content) : muted(item.content);
         rows.push(`    ${marker} ${label}`);
       }
@@ -88,7 +92,9 @@ export function formatEvent(ev: any, ctx: { cost?: number } = {}): string | null
       return `    ${ev.result.success ? ok("✓") : accent("✕")} ${muted(ev.result.summary.slice(0, 120))}`;
 
     case "plan_completed": {
-      const completed = ev.plan.steps.filter((s: { status: string }) => s.status === "completed").length;
+      const completed = ev.plan.steps.filter(
+        (s: { status: string }) => s.status === "completed",
+      ).length;
       const total = ev.plan.steps.length;
       const status = ev.plan.status === "completed" ? ok("completed") : accent("failed");
       return `  ${muted("•")} ${bold(text("Result"))} ${status} ${faint(`(${completed}/${total} steps)`)}`;

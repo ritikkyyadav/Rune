@@ -64,8 +64,30 @@ export interface AlanConfig {
     networkDeny: boolean;
     fsAllowlist: string[];
   };
+  /**
+   * Opt-in, transparent telemetry — the ONLY path by which anything leaves the
+   * machine. Off by default; even `enabled = true` transmits nothing until BOTH
+   * an `endpoint` is configured AND the local user has granted consent
+   * (~/.alan/telemetry.json, set by the first-run prompt or `berne telemetry on`).
+   * What ships is the already-redacted Black Box incident stream plus an
+   * anonymous daily usage heartbeat — never file contents, never raw IPs, never
+   * device fingerprints. `berne telemetry preview` prints the exact bytes.
+   */
   telemetry: {
+    /** Master switch / hard kill-switch. Default false. */
     enabled: boolean;
+    /**
+     * Collector URL that reports POST to. Empty/undefined ⇒ no network, ever —
+     * this is the second half of the hard gate. Vendors bake their own
+     * collector URL in here for shipped builds; users/enterprises can blank it.
+     */
+    endpoint?: string;
+    /** Optional bearer token sent to the collector (shared secret). */
+    token?: string;
+    /** Send redacted crash/incident reports. Default true (only when enabled+consented). */
+    crashReports?: boolean;
+    /** Send the anonymous daily usage heartbeat. Default true (only when enabled+consented). */
+    usageStats?: boolean;
   };
   checkpoint?: {
     enabled: boolean;
@@ -137,6 +159,49 @@ export interface AlanConfig {
     model?: string;
     /** Hard cap on the memory size in tokens — keeps it butter-smooth for tiny models. Default 1500. */
     maxTokens?: number;
+  };
+  /**
+   * Black box (flight recorder) — local incident capture to ~/.alan/blackbox.db:
+   * every failure, degradation, and struggle, with trail forensics. Local-only;
+   * nothing is ever transmitted. Default on.
+   */
+  diagnostics?: {
+    enabled?: boolean;
+  };
+  /**
+   * Tactics notebook (evolution loop) — learned facts/tactics from past
+   * sessions, injected under a hard token budget. Capture is rule-based
+   * (zero extra model spend). Default on; `alan --pristine` disables per run.
+   */
+  notebook?: {
+    enabled?: boolean;
+    /** Injection budget in tokens. Default 600. */
+    maxInjectTokens?: number;
+  };
+  /**
+   * Git integration. autoCommit: after every successful run that wrote files,
+   * commit exactly those files as one revertible "berne:" commit; revert with
+   * /undo. Default false.
+   */
+  git?: {
+    autoCommit?: boolean;
+  };
+  /**
+   * Context assembly. repoMap: include a compact, cache-stable file-tree map
+   * of the repository in the system prompt so the model knows what exists
+   * without exploratory turns. Default true (auto-skipped for huge repos).
+   */
+  context?: {
+    repoMap?: boolean;
+  };
+  /**
+   * Interactive dashboards. auto: let the model decide on its own when an
+   * answer deserves a live HTML dashboard (reports, metrics, comparisons).
+   * Default false — dashboards are built only on explicit request
+   * (/interactive). Runtime toggle: /interactive auto on|off.
+   */
+  interactive?: {
+    auto?: boolean;
   };
 }
 
@@ -295,6 +360,9 @@ function applyEnvOverrides(config: Record<string, unknown>): void {
     ALAN_TRUST_WORKSPACE: (c) =>
       setNested(c, "permissions.trustWorkspace", process.env.ALAN_TRUST_WORKSPACE === "true"),
     ALAN_TELEMETRY: (c) => setNested(c, "telemetry.enabled", process.env.ALAN_TELEMETRY === "true"),
+    ALAN_TELEMETRY_ENDPOINT: (c) =>
+      setNested(c, "telemetry.endpoint", process.env.ALAN_TELEMETRY_ENDPOINT!),
+    ALAN_TELEMETRY_TOKEN: (c) => setNested(c, "telemetry.token", process.env.ALAN_TELEMETRY_TOKEN!),
     ALAN_SEARCH_BACKEND: (c) => setNested(c, "search.provider", process.env.ALAN_SEARCH_BACKEND!),
     ALAN_NATIVE_GROUNDING: (c) =>
       setNested(c, "search.nativeGrounding", process.env.ALAN_NATIVE_GROUNDING !== "false"),

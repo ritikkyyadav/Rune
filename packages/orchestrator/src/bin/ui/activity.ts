@@ -15,7 +15,7 @@
 // aggregates consecutive reads into "Read N files"; the live stream can't look
 // ahead, so it shows each read as it lands.
 
-import { bold, text, faint, info, ok, accent, warn } from "./theme";
+import { bold, text, muted, faint, info, ok, accent, warn } from "./theme";
 import { truncate, termWidth } from "./render";
 import { renderUnifiedDiff } from "../diff-render";
 
@@ -49,6 +49,9 @@ const VERB: Record<string, string> = {
   grep: "Searched",
   write_file: "Wrote",
   edit_file: "Edited",
+  interactive_dashboard: "Dashboard",
+  task: "Scouted",
+  worker: "Worker",
 };
 
 /** Present-tense verb for the live "what's running now" status line. */
@@ -59,6 +62,9 @@ const RUNNING: Record<string, string> = {
   grep: "Searching",
   write_file: "Writing",
   edit_file: "Editing",
+  interactive_dashboard: "Building dashboard",
+  task: "Scouting",
+  worker: "Worker building",
 };
 
 /** A short label for an in-flight tool call (args aren't known yet at start). */
@@ -73,6 +79,15 @@ function shortenPath(p: string): string {
   const parts = p.split("/").filter(Boolean);
   if (parts.length <= 3) return p;
   return ".../" + parts.slice(-3).join("/");
+}
+
+/** Looser shortening for the bare-path file listing: workspace-relative paths
+ *  show whole (`src/apps/ipod/ClickWheel.tsx`); only deep/absolute ones cut. */
+function listingPath(p: string): string {
+  const parts = p.split("/").filter(Boolean);
+  if (!p.startsWith("/") && parts.length <= 6) return p;
+  if (parts.length <= 4) return p;
+  return ".../" + parts.slice(-4).join("/");
 }
 
 /** Usable width for an inline target/command, leaving room for the verb + indent. */
@@ -91,7 +106,10 @@ function tryJson(raw: string): Record<string, unknown> | null {
 
 /** Non-empty result lines — a cheap proxy for grep match / output counts. */
 function nonEmptyLines(result: string): string[] {
-  return result.split("\n").map((l) => l.trim()).filter(Boolean);
+  return result
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
 }
 
 /** Compact `{k:v}`-ish summary of an unknown/MCP tool's args. */
@@ -130,11 +148,14 @@ export function stepBlock(prose: string): string[] {
 export function renderToolActivity(v: ToolActivityView): string {
   const verb = VERB[v.toolName] ?? v.toolName;
 
-  // ── Failure: one vermillion line + a short reason ──
+  // ── Failure: one vermillion line + a short reason — hard-bounded, because an
+  // over-wide line breaks the pinned region's row math (the leak failure mode). ──
   if (!v.success) {
-    const tgt = compactTarget(v);
+    const tgt = truncate(compactTarget(v), 48);
+    const headPlain = 2 + verb.length + (tgt ? 2 + tgt.length : 0);
+    const budget = Math.max(12, termWidth() - headPlain - 6);
     const head = `  ${accent(bold(verb))}${tgt ? "  " + accent(tgt) : ""}`;
-    const reason = truncate(firstLine(v.error ?? "failed"), inlineWidth());
+    const reason = truncate(firstLine(v.error ?? "failed"), budget);
     return `${head}  ${faint("· " + reason)}`;
   }
 
@@ -161,18 +182,21 @@ export function renderToolActivity(v: ToolActivityView): string {
 
   // ── Compact one-liners (each component bounded so the line never overflows) ──
   switch (v.toolName) {
+    // Reads render as bare paths (the Codex idiom): a browse through the tree
+    // should look like a quiet file listing, not a wall of repeated verbs.
     case "read_file":
-      return `  ${bold(text(verb))}  ${info(truncate(shortenPath(s(v.args.path)), 64))}`;
+      return `  ${muted(truncate(listingPath(s(v.args.path)), 72))}`;
 
     case "list_dir":
-      return `  ${bold(text(verb))}  ${info(truncate(shortenPath(s(v.args.path) || "."), 64))}`;
+      return `  ${muted(truncate((listingPath(s(v.args.path) || ".") + "/").replace(/\/+$/, "/"), 72))}`;
 
     case "grep": {
       // Result is JSON ({ matches, total_matches, truncated }) — use the real count.
       const pat = truncate(s(v.args.pattern), 32);
       const where = v.args.path ? faint(` in ${truncate(shortenPath(s(v.args.path)), 20)}`) : "";
       const out = tryJson(v.result);
-      const n = typeof out?.total_matches === "number" ? out.total_matches : nonEmptyLines(v.result).length;
+      const n =
+        typeof out?.total_matches === "number" ? out.total_matches : nonEmptyLines(v.result).length;
       const hits = n === 0 ? faint("· no matches") : faint(`· ${n} match${n === 1 ? "" : "es"}`);
       return `  ${bold(text(verb))}  ${info(`"${pat}"`)}${where}  ${hits}`;
     }
@@ -193,7 +217,10 @@ export function renderToolActivity(v: ToolActivityView): string {
         hintPlain = `exit ${exit}`;
         bad = true;
       } else {
-        const body = (stdout.trim() ? stdout : stderr).split("\n").map((l) => l.trim()).filter(Boolean);
+        const body = (stdout.trim() ? stdout : stderr)
+          .split("\n")
+          .map((l) => l.trim())
+          .filter(Boolean);
         hintPlain = truncate(body.at(-1) ?? "", 40);
       }
       // Budget: 2 indent + "Ran  " (5) + 2 safety, then reserve room for the hint.
@@ -211,6 +238,50 @@ export function renderToolActivity(v: ToolActivityView): string {
     case "web_fetch": {
       const u = truncate(s(v.args.url ?? v.args.uri ?? ""), 56);
       return `  ${bold(text("Fetched"))}${u ? "  " + info(u) : ""}`;
+    }
+
+    // The plan tool renders as its checklist elsewhere (todo_updated) — here
+    // just a quiet acknowledgement, never the raw items JSON.
+    case "todo_write": {
+      const items = Array.isArray(v.args.items) ? v.args.items.length : 0;
+      return `  ${bold(text("Updated plan"))}${items ? "  " + faint(`${items} item${items === 1 ? "" : "s"}`) : ""}`;
+    }
+
+    case "bash_output": {
+      const id = s(v.args.shell_id ?? v.args.id ?? "");
+      return `  ${bold(text("Checked shell"))}${id ? "  " + info(id) : ""}`;
+    }
+
+    case "kill_shell": {
+      const id = s(v.args.shell_id ?? v.args.id ?? "");
+      return `  ${bold(text("Stopped shell"))}${id ? "  " + info(id) : ""}`;
+    }
+
+    // Parallel implementation workers: show the contract gist + what changed.
+    case "worker": {
+      const contract = truncate(firstLine(s(v.args.prompt)), 44);
+      const m = /worker changed (\d+) files?[^)]*/.exec(v.result ?? "");
+      const changed = m ? faint(`· ${m[0]}`) : "";
+      return `  ${bold(text("Worker"))}  ${text(`"${contract}"`)}  ${changed}`;
+    }
+
+    // Live dashboards: surface the action + title, and above all the URL —
+    // it's the thing the user clicks.
+    case "interactive_dashboard": {
+      const out = tryJson(v.result);
+      const action = s(v.args.action) || "create";
+      const verb2 =
+        action === "update"
+          ? "Updated dashboard"
+          : action === "open"
+            ? "Opened dashboard"
+            : action === "close"
+              ? "Closed dashboard"
+              : "Built dashboard";
+      const title = truncate(s(out?.title ?? v.args.title ?? ""), 32);
+      const url = s(out?.url ?? "");
+      const head = `  ${bold(text(verb2))}${title ? "  " + text(`"${title}"`) : ""}`;
+      return url ? `${head}  ${info(truncate(url, 60))}` : head;
     }
 
     default: {
@@ -233,6 +304,19 @@ function compactTarget(v: ToolActivityView): string {
       return `"${truncate(s(v.args.pattern), 44)}"`;
     case "bash":
       return truncate(firstLine(s(v.args.command)), inlineWidth());
+    case "web_fetch":
+      return truncate(s(v.args.url ?? v.args.uri ?? ""), 48);
+    case "web_search":
+      return `"${truncate(s(v.args.query ?? v.args.q ?? ""), 40)}"`;
+    case "todo_write":
+      return "plan";
+    case "bash_output":
+    case "kill_shell":
+      return s(v.args.shell_id ?? v.args.id ?? "");
+    case "interactive_dashboard":
+      return s(v.args.title ?? v.args.id ?? v.args.action ?? "");
+    case "worker":
+      return `"${truncate(firstLine(s(v.args.prompt)), 40)}"`;
     default:
       return compactArgs(v.args);
   }

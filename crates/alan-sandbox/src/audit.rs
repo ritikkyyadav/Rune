@@ -207,14 +207,16 @@ impl AuditLog {
         let reader = BufReader::new(file);
         let mut last_hash = String::from("genesis");
 
-        for line in reader.lines() {
-            if let Ok(line) = line {
-                if line.trim().is_empty() {
-                    continue;
-                }
-                if let Ok(entry) = serde_json::from_str::<AuditEntry>(&line) {
-                    last_hash = entry.entry_hash;
-                }
+        // Skip unreadable lines (rare: only on invalid-UTF8/read errors) and keep
+        // scanning — the goal is the hash of the true last entry in the file, not
+        // to stop early and silently fork the hash chain from a stale point.
+        #[allow(clippy::lines_filter_map_ok)]
+        for line in reader.lines().flatten() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            if let Ok(entry) = serde_json::from_str::<AuditEntry>(&line) {
+                last_hash = entry.entry_hash;
             }
         }
 

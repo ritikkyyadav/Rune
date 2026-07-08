@@ -1,12 +1,14 @@
-# Alan
+# Berne
 
 > A local-first, sandboxed, multi-provider agentic coding assistant — a headless engine with CLI and desktop surfaces.
 
-**Status:** early, active development. The engine, CLI, tool suite, and evals work end-to-end; interfaces are still evolving and not all blueprint features are built yet.
+**Status:** early, active development. The engine, CLI, tool suite, and evals work end-to-end; interfaces are still evolving and not all blueprint features are built yet. Current release: **Berne v0.1**.
 
-## What is Alan?
+> _Berne is the product name. **Alan** is the internal codename you'll still see in package names (`@alan/*`), the `~/.alan` data directory, and the `alan-tools` binary — none of it user-facing._
 
-Alan is an agentic coding assistant built around a reusable **engine** (TypeScript) that runs the
+## What is Berne?
+
+Berne is an agentic coding assistant built around a reusable **engine** (TypeScript) that runs the
 agent loop, manages context, enforces permissions and sandboxing, and executes tools. The engine is
 the product — the CLI is one client, a Tauri desktop app is another, and an MCP-server wrapper is
 planned. It is multi-provider (including a fully local path via Ollama) and built to be auditable for
@@ -46,6 +48,10 @@ compliance-sensitive teams.
   `/rewind` to roll the conversation back to an earlier turn.
 - **Auditable export** — export a session transcript (`md`/`json`) with an optional **Ed25519
   signature** for tamper-evident records.
+- **Opt-in diagnostics** — a local Black Box flight recorder (`berne doctor`) captures every
+  failure/degradation with redaction and fingerprinting; an **off-by-default, transparent**
+  channel (`berne telemetry`) can forward redacted crash reports + an anonymous usage heartbeat
+  to a collector you run. `berne telemetry preview` shows the exact bytes; no IPs or device ids.
 - **Context engine** — token-budgeted prompt construction with compaction.
 
 ## Architecture
@@ -74,36 +80,58 @@ The engine ⇆ client separation is intentional: the same engine powers the CLI,
 
 ## Install
 
+**End users — one line, no toolchain** (downloads a prebuilt standalone binary
+for your OS into `~/.alan/bin`):
+
 ```bash
-bun install
-# optional native tools (faster file ops); the CLI also works without it
-cargo build --release -p alan-tools
+curl -fsSL https://YOUR-DOMAIN/install.sh | bash
 ```
 
-Or use the installer script:
+That script is [`scripts/web-install.sh`](scripts/web-install.sh); host it (or the
+raw GitHub URL) and paste the one-liner on your site. Publish the binaries it
+pulls with [`scripts/build-release.sh`](scripts/build-release.sh), which compiles
+`berne-<os>-<arch>` for macOS/Linux via `bun build --compile`.
+
+**From source** — the installer compiles a standalone CLI + the Rust tools binary
+into `~/.alan/bin` and exposes them as the **`berne`** command:
 
 ```bash
 ./scripts/install.sh
 ```
 
+Then add `~/.alan/bin` to your PATH and just type `berne`:
+
+```bash
+export PATH="$HOME/.alan/bin:$PATH"    # add to ~/.zshrc or ~/.bashrc, then reload
+berne
+```
+
+Or run straight from the source tree without installing:
+
+```bash
+bun install
+cargo build --release -p alan-tools    # optional native tools; the CLI also works without it
+./bin/berne
+```
+
 ## Quickstart
 
-Alan defaults to a **free model (Gemini 2.5 Flash)**. Grab a free
+Berne defaults to a **free model (Gemini 2.5 Flash)**. Grab a free
 [Google AI Studio key](https://aistudio.google.com/apikey), then:
 
 ```bash
 export GOOGLE_API_KEY=...     # free tier — or put it in .env (Bun auto-loads it)
-./bin/alan                    # or: bun packages/orchestrator/src/bin/alan-cli.ts
+berne                         # or, from the source tree: ./bin/berne
 ```
 
 Other **free** options:
 
 ```bash
 export OPENROUTER_API_KEY=...                                   # free models on OpenRouter
-bun packages/orchestrator/src/bin/alan-cli.ts -p openrouter -m deepseek/deepseek-v4-flash:free
+berne -p openrouter -m deepseek/deepseek-v4-flash:free
 
 export OLLAMA_HOST=http://localhost:11434                       # fully local / offline
-bun packages/orchestrator/src/bin/alan-cli.ts -p ollama -m llama3
+berne -p ollama -m llama3
 ```
 
 Paid top-tier (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`) is **optional** — only needed
@@ -161,6 +189,23 @@ bun test tests/unit/      # unit tests
 bun run typecheck         # tsc across all packages
 cargo test -p alan-tools  # Rust tool tests
 ```
+
+## Privacy & telemetry
+
+Berne is local-first: **telemetry is off by default and transmits nothing unless
+you opt in.** When enabled (a configured collector endpoint **and** an explicit
+`yes` to the first-run prompt), it sends two minimal, redacted streams — crash /
+error reports drawn from the local Black Box, and an anonymous daily usage
+heartbeat — to a collector **you** run. It never sends file contents, prompts,
+your IP address, or any device fingerprint.
+
+- Inspect the exact bytes: `berne telemetry preview`
+- Opt in / out any time: `berne telemetry on` / `berne telemetry off`
+- Receive it yourself: run [`collector/berne-collector.ts`](collector/README.md)
+  (a single dependency-free Bun server + live dashboard that stores reports to a
+  local SQLite and never persists raw IPs).
+
+Full details in [`PRIVACY.md`](PRIVACY.md).
 
 ## License
 

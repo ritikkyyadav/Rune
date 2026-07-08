@@ -213,24 +213,24 @@ describe("ui/composer renderKeyEditor", () => {
 });
 
 describe("ui/composer statusLine + permission mode", () => {
-  it("flags Turing mode in the status line and omits a badge in confirm mode", () => {
+  it("flags Hands-Free mode in the status line and omits a badge in confirm mode", () => {
     const base = { model: "gemini-2.5-flash", workspace: "/tmp/ws" };
     const confirm = stripAnsi(statusLine({ ...base, mode: "confirm" }));
     expect(confirm).toContain("gemini-2.5-flash");
     expect(confirm).not.toMatch(/turing/i);
 
     const turing = stripAnsi(statusLine({ ...base, mode: "turing" }));
-    expect(turing).toMatch(/TURING/);
+    expect(turing).toMatch(/HANDS-FREE/);
   });
 
   it("accepts the legacy 'yolo'/'trusted' aliases", () => {
-    expect(stripAnsi(statusLine({ model: "m", workspace: "/w", mode: "yolo" }))).toMatch(/TURING/);
+    expect(stripAnsi(statusLine({ model: "m", workspace: "/w", mode: "yolo" }))).toMatch(/HANDS-FREE/);
     expect(stripAnsi(statusLine({ model: "m", workspace: "/w", mode: "trusted" }))).toMatch(/auto/);
   });
 
   it("permissionModeBanner describes each mode and mentions shift+tab", () => {
     const turing = stripAnsi(permissionModeBanner("turing"));
-    expect(turing).toMatch(/Turing/);
+    expect(turing).toMatch(/Hands-Free/);
     expect(turing).toMatch(/without asking/i);
     expect(turing).toMatch(/shift\+tab/i);
 

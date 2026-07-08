@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────
-#  Alan — Install Script
+#  Berne — Install Script
 #  Builds a standalone compiled CLI and the alan-tools Rust binary,
-#  then installs both into ~/.alan/bin/.
+#  then installs both into ~/.alan/bin/ and exposes them as `berne`.
+#  (Internal codename: Alan — the data dir stays ~/.alan and the Rust
+#   tools binary stays alan-tools; only the command you type is `berne`.)
 #
 #  Usage: bash scripts/install.sh
 #         (run from the repo root, or from any path — it self-locates)
@@ -33,7 +35,7 @@ dim()    { printf '\033[38;5;245m%s\033[0m' "$*"; }
 bold()   { printf '\033[1m%s\033[0m' "$*"; }
 
 echo ""
-echo "  $(bold '  Alan Installer')"
+echo "  $(bold '  Berne Installer')  $(dim 'v0.1')"
 echo "  $(dim '──────────────────────────────────────')"
 echo "  $(dim "Repo root: $ALAN_ROOT")"
 echo ""
@@ -48,7 +50,7 @@ elif command -v bun &>/dev/null; then
   BUN="$(command -v bun)"
 else
   echo "  $(red '✗') Bun not found. Install it first: https://bun.sh"
-  echo "     or run: $(bold 'alan setup')"
+  echo "     or run: $(bold 'berne setup')"
   exit 1
 fi
 echo "  $(green '✓') Bun: $(dim "$BUN")"
@@ -58,14 +60,14 @@ if command -v cargo &>/dev/null; then
   CARGO="$(command -v cargo)"
 else
   echo "  $(red '✗') Rust/cargo not found. Install it first: https://rustup.rs"
-  echo "     or run: $(bold 'alan setup')"
+  echo "     or run: $(bold 'berne setup')"
   exit 1
 fi
 echo "  $(green '✓') Cargo: $(dim "$CARGO")"
 
 # ─── 3. Build standalone TypeScript CLI ───
 CLI_ENTRY="$ALAN_ROOT/packages/orchestrator/src/bin/alan-cli.ts"
-CLI_OUT="$INSTALL_DIR/alan"
+CLI_OUT="$INSTALL_DIR/berne-compiled"
 
 echo ""
 echo "  $(dim '...') Compiling TypeScript CLI (bun build --compile)"
@@ -76,7 +78,7 @@ echo "  $(dim "    $BUN build --compile $CLI_ENTRY --outfile $CLI_OUT")"
 
 # Compile to a self-contained executable.
 # The compiled binary reads ALAN_TOOLS_BIN from the environment at runtime
-# (set by the user's shell, or by a wrapper script).
+# (set by the wrapper script written in step 5).
 (cd "$ALAN_ROOT" && "$BUN" build --compile "$CLI_ENTRY" --outfile "$CLI_OUT")
 chmod +x "$CLI_OUT"
 echo "  $(green '✓') Compiled CLI installed: $(dim "$CLI_OUT")"
@@ -92,17 +94,34 @@ cp "$TOOLS_SRC" "$TOOLS_DST"
 chmod +x "$TOOLS_DST"
 echo "  $(green '✓') alan-tools installed: $(dim "$TOOLS_DST")"
 
-# ─── 5. Write a thin launcher that sets ALAN_TOOLS_BIN ───
-# The compiled alan binary needs to know where alan-tools lives.
-# We create a wrapper script `~/.alan/bin/alan` that sets the env var
-# and then execs the compiled binary (renamed to alan-compiled).
-mv "$INSTALL_DIR/alan" "$INSTALL_DIR/alan-compiled"
-
-cat > "$INSTALL_DIR/alan" <<'WRAPPER'
+# ─── 5. Write a thin `berne` launcher that sets ALAN_TOOLS_BIN ───
+# The compiled binary needs to know where alan-tools lives; the wrapper sets the
+# env var, loads saved API keys, and execs the compiled CLI.
+cat > "$INSTALL_DIR/berne" <<'WRAPPER'
 #!/usr/bin/env bash
-# Thin launcher: sets ALAN_TOOLS_BIN so the compiled CLI can find it.
-ALAN_BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export ALAN_TOOLS_BIN="$ALAN_BIN_DIR/alan-tools"
+# Berne launcher: points the compiled CLI at alan-tools and loads saved keys.
+
+# Stale working-directory self-heal: if this shell's cwd was deleted, moved
+# (e.g. to Trash), or replaced while the tab sat in it, getcwd() fails and the
+# Bun runtime dies at startup with a cryptic "Unexpected" / "low max file
+# descriptors" error before Berne ever runs. Re-resolve $PWD by its path: if
+# the folder exists (again), re-enter it fresh; if it is really gone, say
+# exactly what happened and how to fix it.
+if ! pwd -P >/dev/null 2>&1; then
+  if [ -n "${PWD:-}" ] && [ -d "$PWD" ] && cd "$PWD" 2>/dev/null; then
+    echo "  ! This terminal's working directory was stale (deleted or replaced) — re-entered $PWD" >&2
+  else
+    echo "" >&2
+    echo "  ✗ Berne can't start: this terminal's working directory no longer exists." >&2
+    echo "    It was deleted, moved to Trash, or replaced while this shell was inside it." >&2
+    echo "    Fix: cd to an existing folder and retry — e.g.  cd ~  then cd back to your project." >&2
+    echo "" >&2
+    exit 1
+  fi
+fi
+
+BERNE_BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export ALAN_TOOLS_BIN="$BERNE_BIN_DIR/alan-tools"
 
 # Load API keys if present
 ALAN_ENV="$HOME/.alan/.env"
@@ -113,10 +132,14 @@ if [ -f "$ALAN_ENV" ]; then
   set +a
 fi
 
-exec "$ALAN_BIN_DIR/alan-compiled" "$@"
+exec "$BERNE_BIN_DIR/berne-compiled" "$@"
 WRAPPER
-chmod +x "$INSTALL_DIR/alan"
-echo "  $(green '✓') Wrapper launcher written: $(dim "$INSTALL_DIR/alan")"
+chmod +x "$INSTALL_DIR/berne"
+echo "  $(green '✓') Launcher written: $(dim "$INSTALL_DIR/berne")"
+
+# Back-compat: keep an `alan` alias pointing at the same launcher.
+ln -sf "$INSTALL_DIR/berne" "$INSTALL_DIR/alan"
+echo "  $(green '✓') Alias: $(dim "$INSTALL_DIR/alan → berne")"
 
 # ─── 6. Done — PATH instructions ───
 echo ""
@@ -132,5 +155,5 @@ echo "  $(cyan '  export PATH=\"\$HOME/.alan/bin:\$PATH\"')"
 echo ""
 echo "  $(dim '  Then reload your shell: source ~/.zshrc (or open a new terminal)')"
 echo ""
-echo "  $(dim '  After that, simply type:') $(bold 'alan')"
+echo "  $(dim '  After that, simply type:') $(bold 'berne')"
 echo ""

@@ -2,6 +2,7 @@ import type {
   CostEntry,
   CostLedger,
   GatewayConfig,
+  GatewayIncidentEvent,
   InferenceRequest,
   InferenceResponse,
   LlmProvider,
@@ -40,6 +41,15 @@ export class LlmGateway {
     this.providers.set(provider.name, provider);
   }
 
+  /** Guarded black-box tap — an observer bug must never break a stream. */
+  private reportIncident(incident: GatewayIncidentEvent): void {
+    try {
+      this.config.onIncident?.(incident);
+    } catch {
+      // swallow: observability is strictly best-effort here
+    }
+  }
+
   getProvider(name: ProviderName): LlmProvider | undefined {
     return this.providers.get(name);
   }
@@ -70,6 +80,12 @@ export class LlmGateway {
   async *inferStream(request: InferenceRequest, opts?: StreamOpts): AsyncGenerator<StreamEvent> {
     // Build ordered list: requested provider first, then fallbacks
     const fallbackOrder = this.getFallbackProviders(request.provider);
+
+    // Tracks whether the consumer received any events for the CURRENT
+    // assistant message. A retry/fallback after a partial stream must emit
+    // stream_reset first, or the consumer's accumulated text/tool calls get
+    // duplicated by the re-streamed response.
+    let yieldedSinceReset = false;
 
     for (const providerName of fallbackOrder) {
       const provider = this.providers.get(providerName);
@@ -103,15 +119,19 @@ export class LlmGateway {
             if (event.type === "message_stop") {
               this.recordCost(adjustedRequest.model, providerName, event.usage);
             }
+            yieldedSinceReset = true;
             yield event;
           }
           return; // success — done
         } catch (err) {
+          // User abort: stop dead. Retrying or falling back on an aborted
+          // request wastes calls and delays the Esc response.
+          if (opts?.signal?.aborted) throw err;
+
           lastError = err as Error;
           lastStatus = (err as Record<string, unknown>).status as number | undefined;
 
-          const isAuthOrBilling =
-            lastStatus === 401 || lastStatus === 402 || lastStatus === 403;
+          const isAuthOrBilling = lastStatus === 401 || lastStatus === 402 || lastStatus === 403;
           const isRateLimit = lastStatus === 429;
 
           // Another provider is available → switch NOW. A bad key, exhausted
@@ -128,12 +148,20 @@ export class LlmGateway {
           // delay means we give up cleanly instead of hanging the session.
           if (isRateLimit) {
             if (attempt >= 1 || this.getRetryAfterMs(lastError) > RATE_LIMIT_MAX_WAIT_MS) break;
+            if (yieldedSinceReset) {
+              yieldedSinceReset = false;
+              yield { type: "stream_reset" };
+            }
             await this.backoff(lastError, attempt);
             continue;
           }
 
           // Transient 5xx / network → retry with backoff; hard 4xx → stop.
           if (!this.shouldRetry(lastError, attempt)) break;
+          if (yieldedSinceReset) {
+            yieldedSinceReset = false;
+            yield { type: "stream_reset" };
+          }
           await this.backoff(lastError, attempt);
         }
       }
@@ -145,8 +173,20 @@ export class LlmGateway {
       }
 
       if (shouldFallback && nextProvider) {
+        if (yieldedSinceReset) {
+          yieldedSinceReset = false;
+          yield { type: "stream_reset" };
+        }
         const nextModel = PROVIDER_DEFAULT_MODELS[nextProvider] ?? "default";
         const why = this.failureReason(lastStatus, lastError);
+        this.reportIncident({
+          kind: "fallback",
+          provider: providerName,
+          model: adjustedRequest.model,
+          status: lastStatus,
+          message: why || lastError?.message?.slice(0, 150) || "provider unavailable",
+          fallbackTo: nextProvider,
+        });
         // Informational, NOT an error: the agent loop ends the turn on `error`
         // events, so emitting the switch as an error would abandon this
         // generator before the fallback provider streams anything. The reason
@@ -167,6 +207,19 @@ export class LlmGateway {
       // dying with "Too many consecutive errors".
       const cleanMsg = lastError?.message?.split("\n")[0]?.slice(0, 150) ?? "Unknown error";
       const triedList = fallbackOrder.filter((p) => this.providers.has(p)).join(", ");
+
+      // Terminal (non-retryable) failures get reported to the black box here,
+      // where the status code is still known. The retryable else-branch is NOT
+      // reported — the agent loop records those as stream errors if they stick.
+      if (lastStatus === 401 || lastStatus === 402 || lastStatus === 403 || lastStatus === 429) {
+        this.reportIncident({
+          kind: "terminal",
+          provider: providerName,
+          model: adjustedRequest.model,
+          status: lastStatus,
+          message: cleanMsg,
+        });
+      }
 
       if (lastStatus === 401 || lastStatus === 403) {
         const why = this.failureReason(lastStatus, lastError);

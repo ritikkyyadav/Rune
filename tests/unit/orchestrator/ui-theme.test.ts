@@ -30,6 +30,7 @@ import {
 } from "../../../packages/orchestrator/src/bin/ui/theme-store";
 
 const EXPECTED = [
+  "studio",
   "atlas",
   "atlas-light",
   "mono",
@@ -79,7 +80,7 @@ describe("ui/themes registry", () => {
   });
 
   it("default theme exists, unknown lookups return undefined", () => {
-    expect(DEFAULT_THEME).toBe("atlas");
+    expect(DEFAULT_THEME).toBe("mono");
     expect(findTheme(DEFAULT_THEME)).toBeTruthy();
     expect(findTheme("does-not-exist")).toBeUndefined();
   });
@@ -155,8 +156,8 @@ describe("ui/theme active-theme control", () => {
     expect(getTheme().name).toBe("dracula");
   });
 
-  it("listThemes returns the registry in display order", () => {
-    expect(listThemes().map((t) => t.name)).toEqual(EXPECTED);
+  it("listThemes exposes only the two production themes (mono, mono-light)", () => {
+    expect(listThemes().map((t) => t.name)).toEqual(["mono", "mono-light"]);
   });
 
   it("tokens preserve payload and (when colour is on) differ across themes", () => {
@@ -199,17 +200,18 @@ describe("ui/theme-store persistence", () => {
     }
   });
 
-  it("resolveInitialTheme honours env > saved > configured > default", () => {
-    expect(resolveInitialTheme({ env: "matrix", saved: "nord", configured: "dracula" })).toBe(
-      "matrix",
+  it("resolveInitialTheme honours env > saved > configured, restricted to production themes", () => {
+    expect(resolveInitialTheme({ env: "mono-light", saved: "mono", configured: "mono" })).toBe(
+      "mono-light",
     );
-    expect(resolveInitialTheme({ env: undefined, saved: "nord", configured: "dracula" })).toBe(
-      "nord",
+    expect(resolveInitialTheme({ env: undefined, saved: "mono-light", configured: "mono" })).toBe(
+      "mono-light",
     );
-    expect(resolveInitialTheme({ saved: null, configured: "dracula" })).toBe("dracula");
+    expect(resolveInitialTheme({ saved: null, configured: "mono-light" })).toBe("mono-light");
     expect(resolveInitialTheme({})).toBe(DEFAULT_THEME);
-    // unknown names are skipped at each tier
-    expect(resolveInitialTheme({ env: "bogus", saved: "nord" })).toBe("nord");
+    // unknown *and* non-production themes are skipped at each tier (matrix/dracula are hidden now)
+    expect(resolveInitialTheme({ env: "bogus", saved: "mono-light" })).toBe("mono-light");
+    expect(resolveInitialTheme({ env: "matrix", saved: "dracula" })).toBe(DEFAULT_THEME);
     expect(resolveInitialTheme({ configured: "bogus" })).toBe(DEFAULT_THEME);
   });
 });

@@ -184,6 +184,25 @@ describe("ui/BottomRegion inline renderer", () => {
     expect(h.all()).toContain(SHOW);
   });
 
+  it("clamps a block taller than the viewport to its tail (never scrolls the terminal mid-draw)", () => {
+    const orig = Object.getOwnPropertyDescriptor(process.stdout, "rows");
+    Object.defineProperty(process.stdout, "rows", { value: 4, configurable: true }); // tiny viewport
+    try {
+      const h = regionHarness();
+      // A 6-line block into a 4-row terminal: only the last 3 (rows-1) may be drawn, so drawing it
+      // never pushes the cursor past the bottom and desyncs the relative cursor math.
+      h.region.render(["top1", "top2", "top3", "mid", "box", "status"], 5, 0);
+      const out = h.all();
+      expect(out).toContain("status"); // the tail (composer + status) is kept…
+      expect(out).toContain("box");
+      expect(out).not.toContain("top1"); // …and the overflowing top is dropped
+      expect(out).not.toContain("top2");
+      expect(h.region.lineCount).toBe(3); // rows - 1
+    } finally {
+      if (orig) Object.defineProperty(process.stdout, "rows", orig);
+    }
+  });
+
   it("setBgFill makes in-place clears repaint the theme background (Warp/VS Code fallback)", () => {
     const h = regionHarness();
     h.region.setBgFill("\x1b[48;5;235m");

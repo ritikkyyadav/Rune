@@ -63,7 +63,9 @@ function pmx(pm: Pm): string {
 
 function hasTestFiles(workspaceRoot: string): boolean {
   try {
-    return readdirSync(workspaceRoot).some((f) => /\.(test|spec)\.(ts|tsx|js|jsx|mjs|cjs)$/.test(f));
+    return readdirSync(workspaceRoot).some((f) =>
+      /\.(test|spec)\.(ts|tsx|js|jsx|mjs|cjs)$/.test(f),
+    );
   } catch {
     return false;
   }

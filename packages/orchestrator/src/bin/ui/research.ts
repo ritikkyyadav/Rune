@@ -41,7 +41,9 @@ export function renderResearchPlan(plan: ResearchPlan): string {
   rows.push("");
   for (const sq of plan.subQuestions) {
     const head = wrap(sq.question, w - 8);
-    rows.push(`    ${warn(`${num(sq.index)}.`)} ${scopeTag(sq.sourceScope)} ${text(head[0] ?? "")}`);
+    rows.push(
+      `    ${warn(`${num(sq.index)}.`)} ${scopeTag(sq.sourceScope)} ${text(head[0] ?? "")}`,
+    );
     for (const ln of head.slice(1)) rows.push(`        ${text(ln)}`);
     if (sq.rationale) {
       for (const ln of wrap(sq.rationale, w - 8)) rows.push(`        ${faint(ln)}`);

@@ -5,6 +5,7 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "bin": {
+    "berne": "src/bin/alan-cli.ts",
     "alan": "src/bin/alan-cli.ts"
   },
   "scripts": {

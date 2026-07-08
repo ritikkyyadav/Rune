@@ -1,5 +1,6 @@
 import type { ToolSchema } from "../types";
 import type { ToolRegistry } from "../registry";
+import { onSandboxModeChange } from "../sandbox-mode";
 import { createRustToolHandler } from "./rust-bridge";
 import { FileFreshness, withFreshness } from "./freshness";
 import {
@@ -15,6 +16,8 @@ import { createTodoWriteHandler } from "./todo-write";
 import { createGlobHandler } from "./glob";
 import { createMultiEditHandler } from "./multi-edit";
 import { createN8nTriggerHandler } from "./n8n";
+import { withSyntaxCheck } from "./diagnostics";
+import { withNetworkPreflight } from "./net-preflight";
 
 const READ_FILE_SCHEMA: ToolSchema = {
   name: "read_file",
@@ -116,16 +119,38 @@ const EDIT_FILE_SCHEMA: ToolSchema = {
   category: "write",
 };
 
+const BASH_DESC_COMMON =
+  "Execute a bash command in the workspace directory. Returns stdout, stderr, and exit code. Has a 120s default timeout. " +
+  "For long-running commands (dev servers, watch builds), set run_in_background: true — you get a shell_id immediately; poll bash_output for output and kill_shell to stop it.";
+
+const BASH_DESC_SANDBOXED =
+  BASH_DESC_COMMON +
+  " Commands run in an OS sandbox with NO network access by default. For commands that need the internet or touch files outside the workspace " +
+  "(npm/pip/cargo/brew install, git push/pull/fetch/clone, curl/wget, gh), set network: true — otherwise they fail with DNS/connection errors.";
+
+const BASH_DESC_FULL_ACCESS =
+  BASH_DESC_COMMON +
+  " The sandbox is DISABLED for this session: commands run directly on the host with full network and filesystem access. Do not set network: true — it is unnecessary.";
+
+const BASH_NET_DESC_SANDBOXED =
+  "Run OUTSIDE the sandbox with full network and filesystem access. Required for package installs, git remote operations, and any command that talks to the internet. Prompts the user for approval unless they enabled Hands-Free mode.";
+
+const BASH_NET_DESC_FULL_ACCESS =
+  "No effect — the sandbox is disabled, so every command already has full network and filesystem access.";
+
 const BASH_SCHEMA: ToolSchema = {
   name: "bash",
   version: "0.1.0",
-  description:
-    "Execute a bash command in the workspace directory. Returns stdout, stderr, and exit code. Has a 120s default timeout. For long-running commands (dev servers, watch builds), set run_in_background: true — you get a shell_id immediately; poll bash_output for output and kill_shell to stop it.",
+  description: BASH_DESC_SANDBOXED,
   inputSchema: {
     type: "object",
     properties: {
       command: { type: "string", description: "Bash command to execute" },
       timeout_ms: { type: "number", description: "Timeout in milliseconds" },
+      network: {
+        type: "boolean",
+        description: BASH_NET_DESC_SANDBOXED,
+      },
       run_in_background: {
         type: "boolean",
         description:
@@ -137,6 +162,17 @@ const BASH_SCHEMA: ToolSchema = {
   permissionLevel: "sandbox",
   category: "execute",
 };
+
+// The registry and every provider serialization hold this schema object by
+// reference, so swapping the strings in place when /sandbox toggles means the
+// very next model turn sees an accurate contract — no re-registration needed.
+onSandboxModeChange((enabled) => {
+  BASH_SCHEMA.description = enabled ? BASH_DESC_SANDBOXED : BASH_DESC_FULL_ACCESS;
+  const props = BASH_SCHEMA.inputSchema.properties as Record<string, { description?: string }>;
+  if (props.network) {
+    props.network.description = enabled ? BASH_NET_DESC_SANDBOXED : BASH_NET_DESC_FULL_ACCESS;
+  }
+});
 
 const SYMBOL_SEARCH_SCHEMA: ToolSchema = {
   name: "symbol_search",
@@ -199,7 +235,14 @@ export function registerBuiltinTools(registry: ToolRegistry, binaryPath: string)
 
   for (const { schema, subcommand } of ALL_SCHEMAS) {
     let handler = createRustToolHandler(schema, subcommand, binaryPath);
-    if (schema.name === "bash") handler = withBackgroundSupport(handler, shells);
+    // Order matters: preflight sees the raw args first, so a sandboxed
+    // `npm install` fails in ~0ms instead of hanging to the 120s timeout.
+    if (schema.name === "bash") {
+      handler = withNetworkPreflight(withBackgroundSupport(handler, shells));
+    }
+    // Write tools get instant post-edit syntax feedback (inside freshness so
+    // the added field never disturbs hash extraction).
+    if (schema.category === "write") handler = withSyntaxCheck(handler);
     const opts = FRESHNESS_TOOLS[schema.name];
     registry.register(opts ? withFreshness(handler, freshness, opts) : handler);
   }
@@ -212,6 +255,6 @@ export function registerBuiltinTools(registry: ToolRegistry, binaryPath: string)
   registry.register(createAstQueryHandler());
   registry.register(createTodoWriteHandler());
   registry.register(createGlobHandler());
-  registry.register(withFreshness(createMultiEditHandler(), freshness));
+  registry.register(withFreshness(withSyntaxCheck(createMultiEditHandler()), freshness));
   registry.register(createN8nTriggerHandler());
 }

@@ -9,6 +9,12 @@ export interface ToolSchema {
   outputSchema?: Record<string, unknown>;
   permissionLevel: PermissionLevel;
   category: ToolCategory;
+  /**
+   * Explicitly safe to run concurrently with other tool calls. Read+auto
+   * tools get this implicitly; an execute-category tool may opt in when its
+   * own machinery makes parallel runs safe (e.g. `worker` ownership claims).
+   */
+  parallelSafe?: boolean;
 }
 
 export interface ToolCallInput {

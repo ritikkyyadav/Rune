@@ -90,6 +90,9 @@ export class TokenCounter {
     const families: Array<[pattern: string, limit: number]> = [
       ["claude-3-5", 8192],
       ["claude-haiku", 32000],
+      // Opus 4.0 (dated id) and 4.1 cap at 32k; Opus 4.5+ and Sonnet 4.x at 64k.
+      ["opus-4-1", 32000],
+      ["opus-4-2025", 32000],
       ["claude", 64000],
       ["gpt-5", 128000],
       ["gpt-4.1", 32768],

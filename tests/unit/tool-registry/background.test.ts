@@ -18,31 +18,74 @@ function makeInput(toolName: string, args: Record<string, unknown>): ToolCallInp
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** Poll until `check` is true or `timeoutMs` elapses (then let the caller's
+ *  own assertion report the real failure) — avoids racing a fixed sleep
+ *  against a background process's timing on a slow/loaded runner. */
+async function waitFor(
+  check: () => boolean | Promise<boolean>,
+  timeoutMs = 5000,
+  intervalMs = 20,
+): Promise<void> {
+  const start = Date.now();
+  while (!(await check())) {
+    if (Date.now() - start > timeoutMs) return;
+    await sleep(intervalMs);
+  }
+}
+
 describe("BackgroundShellManager", () => {
   test("start → read output → completed", async () => {
     const m = new BackgroundShellManager();
     const { shellId } = m.start("echo hello && echo world", "/tmp");
-    await sleep(150);
-    const r = m.read(shellId);
-    expect(r.found).toBe(true);
-    expect(r.output).toContain("hello");
-    expect(r.output).toContain("world");
-    expect(r.status).toBe("completed");
-    expect(r.exitCode).toBe(0);
+
+    // read() drains — accumulate what each poll returns rather than assume
+    // a read after the loop sees everything (see the note in the next test).
+    let output = "";
+    let status: string | undefined;
+    let exitCode: number | null | undefined;
+    await waitFor(() => {
+      const r = m.read(shellId);
+      output += r.output ?? "";
+      status = r.status;
+      exitCode = r.exitCode;
+      return status !== "running";
+    });
+    expect(output).toContain("hello");
+    expect(output).toContain("world");
+    expect(status).toBe("completed");
+    expect(exitCode).toBe(0);
   });
 
   test("read is incremental — second read returns only new output", async () => {
+    // read() drains: each call returns only output new since the previous
+    // call. Polling it must accumulate what each poll drains rather than
+    // assume one final read sees everything — otherwise a poll iteration
+    // could silently consume "first" before the real assertion runs.
     const m = new BackgroundShellManager();
     const { shellId } = m.start("echo first; sleep 0.3; echo second", "/tmp");
-    await sleep(120);
-    const r1 = m.read(shellId);
-    expect(r1.output).toContain("first");
-    expect(r1.output).not.toContain("second");
-    expect(r1.status).toBe("running");
-    await sleep(350);
-    const r2 = m.read(shellId);
-    expect(r2.output).toContain("second");
-    expect(r2.output).not.toContain("first");
+
+    let out1 = "";
+    let status1: string | undefined;
+    await waitFor(() => {
+      const r = m.read(shellId);
+      out1 += r.output ?? "";
+      status1 = r.status;
+      return out1.includes("first");
+    });
+    expect(out1).toContain("first");
+    expect(out1).not.toContain("second");
+    expect(status1).toBe("running");
+
+    let out2 = "";
+    let status2: string | undefined;
+    await waitFor(() => {
+      const r = m.read(shellId);
+      out2 += r.output ?? "";
+      status2 = r.status;
+      return status2 !== "running";
+    });
+    expect(out2).toContain("second");
+    expect(out2).not.toContain("first");
   });
 
   test("kill terminates a running shell", async () => {
@@ -59,10 +102,16 @@ describe("BackgroundShellManager", () => {
   test("failing command reports failed status", async () => {
     const m = new BackgroundShellManager();
     const { shellId } = m.start("exit 3", "/tmp");
-    await sleep(150);
-    const r = m.read(shellId);
-    expect(r.status).toBe("failed");
-    expect(r.exitCode).toBe(3);
+    let status: string | undefined;
+    let exitCode: number | null | undefined;
+    await waitFor(() => {
+      const r = m.read(shellId);
+      status = r.status;
+      exitCode = r.exitCode;
+      return status !== "running";
+    });
+    expect(status).toBe("failed");
+    expect(exitCode).toBe(3);
   });
 });
 
@@ -91,13 +140,23 @@ describe("tool handlers", () => {
     const { shell_id } = JSON.parse(out.result);
     expect(shell_id).toMatch(/^shell_/);
 
-    await sleep(150);
     const reader = createBashOutputHandler(m);
-    const read = await reader.execute(makeInput("bash_output", { shell_id }));
-    expect(read.success).toBe(true);
-    const parsed = JSON.parse(read.result);
-    expect(parsed.output).toContain("bg-works");
-    expect(parsed.status).toBe("completed");
+    let output = "";
+    let status: string | undefined;
+    let lastSuccess = false;
+    await waitFor(async () => {
+      const read = await reader.execute(makeInput("bash_output", { shell_id }));
+      lastSuccess = read.success;
+      if (read.success) {
+        const parsed = JSON.parse(read.result);
+        output += parsed.output ?? "";
+        status = parsed.status;
+      }
+      return status !== "running";
+    });
+    expect(lastSuccess).toBe(true);
+    expect(output).toContain("bg-works");
+    expect(status).toBe("completed");
   });
 
   test("bash_output on unknown shell lists active shells in the error", async () => {
