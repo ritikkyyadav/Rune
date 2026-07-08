@@ -45,6 +45,11 @@ export class Recorder {
   private pendingRunIds: string[] = [];
   private internalFailures = 0;
   private lastInternalError: string | null = null;
+  // Optional downstream sink (the opt-in TelemetryReporter). Fed the fully
+  // built + redacted record after it is stored. A sink failure is swallowed and
+  // does NOT count toward internalFailures — the outbound channel must never be
+  // able to disable local recording.
+  private sink: ((record: IncidentRecord) => void) | null = null;
 
   constructor(config: RecorderConfig) {
     this.config = { maxTrail: 30, ...config };
@@ -120,6 +125,7 @@ export class Recorder {
       };
       this.store.insert(record);
       this.pendingRunIds.push(record.id);
+      this.emitToSink(record);
       if (this.config.spoolPath) this.spool();
       return record.id;
     } catch (err) {
@@ -150,6 +156,15 @@ export class Recorder {
   /** Direct store access for surfaces (doctor / incidents / bug). Null when disabled. */
   getStore(): BlackboxStore | null {
     return this.store;
+  }
+
+  /**
+   * Attach (or clear, with null) the opt-in outbound sink. Called by the CLI
+   * only after the consent gate passes; the engine and every tap site stay
+   * oblivious. Every stored incident is handed to the sink after insertion.
+   */
+  setSink(sink: ((record: IncidentRecord) => void) | null): void {
+    this.sink = sink;
   }
 
   getTrailSnapshot(): TrailEntry[] {
@@ -184,6 +199,16 @@ export class Recorder {
   }
 
   // ─── internals ───
+
+  private emitToSink(record: IncidentRecord): void {
+    if (!this.sink) return;
+    try {
+      this.sink(record);
+    } catch {
+      // The outbound channel is best-effort and strictly downstream of local
+      // recording. Its failures are swallowed and never disable the recorder.
+    }
+  }
 
   private spool(): void {
     if (!this.config.spoolPath) return;

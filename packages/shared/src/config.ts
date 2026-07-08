@@ -64,8 +64,30 @@ export interface AlanConfig {
     networkDeny: boolean;
     fsAllowlist: string[];
   };
+  /**
+   * Opt-in, transparent telemetry — the ONLY path by which anything leaves the
+   * machine. Off by default; even `enabled = true` transmits nothing until BOTH
+   * an `endpoint` is configured AND the local user has granted consent
+   * (~/.alan/telemetry.json, set by the first-run prompt or `berne telemetry on`).
+   * What ships is the already-redacted Black Box incident stream plus an
+   * anonymous daily usage heartbeat — never file contents, never raw IPs, never
+   * device fingerprints. `berne telemetry preview` prints the exact bytes.
+   */
   telemetry: {
+    /** Master switch / hard kill-switch. Default false. */
     enabled: boolean;
+    /**
+     * Collector URL that reports POST to. Empty/undefined ⇒ no network, ever —
+     * this is the second half of the hard gate. Vendors bake their own
+     * collector URL in here for shipped builds; users/enterprises can blank it.
+     */
+    endpoint?: string;
+    /** Optional bearer token sent to the collector (shared secret). */
+    token?: string;
+    /** Send redacted crash/incident reports. Default true (only when enabled+consented). */
+    crashReports?: boolean;
+    /** Send the anonymous daily usage heartbeat. Default true (only when enabled+consented). */
+    usageStats?: boolean;
   };
   checkpoint?: {
     enabled: boolean;
@@ -338,6 +360,10 @@ function applyEnvOverrides(config: Record<string, unknown>): void {
     ALAN_TRUST_WORKSPACE: (c) =>
       setNested(c, "permissions.trustWorkspace", process.env.ALAN_TRUST_WORKSPACE === "true"),
     ALAN_TELEMETRY: (c) => setNested(c, "telemetry.enabled", process.env.ALAN_TELEMETRY === "true"),
+    ALAN_TELEMETRY_ENDPOINT: (c) =>
+      setNested(c, "telemetry.endpoint", process.env.ALAN_TELEMETRY_ENDPOINT!),
+    ALAN_TELEMETRY_TOKEN: (c) =>
+      setNested(c, "telemetry.token", process.env.ALAN_TELEMETRY_TOKEN!),
     ALAN_SEARCH_BACKEND: (c) => setNested(c, "search.provider", process.env.ALAN_SEARCH_BACKEND!),
     ALAN_NATIVE_GROUNDING: (c) =>
       setNested(c, "search.nativeGrounding", process.env.ALAN_NATIVE_GROUNDING !== "false"),
