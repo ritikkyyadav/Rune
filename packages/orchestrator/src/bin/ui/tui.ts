@@ -617,6 +617,7 @@ class Tui {
         sessionId: this.ctx.sessionId,
         workspace: this.ctx.workspaceRoot,
         version: this.ctx.version,
+        sandbox: engine.isSandboxEnabled(),
       }),
     );
   }
