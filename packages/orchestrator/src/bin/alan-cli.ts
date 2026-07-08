@@ -18,6 +18,9 @@ import {
   SEARCH_KEY_PRESETS,
   loadLastModel,
   saveLastModel,
+  loadSavedSandboxState,
+  resolveInitialSandbox,
+  saveSandboxState,
   getSystemMemoryPath,
   getAlanHome,
 } from "@alan/shared";
@@ -45,6 +48,7 @@ import {
   statusLine,
   composerRule,
   permissionModeBanner,
+  sandboxModeBanner,
   permissionView,
 } from "./ui/composer";
 import { truncate } from "./ui/render";
@@ -82,6 +86,8 @@ const { values, positionals } = parseArgs({
     classic: { type: "boolean", default: false },
     fullscreen: { type: "boolean", default: false },
     pristine: { type: "boolean", default: false },
+    sandbox: { type: "boolean" },
+    "no-sandbox": { type: "boolean" },
     "by-version": { type: "boolean", default: false },
   },
   allowPositionals: true,
@@ -134,6 +140,7 @@ if (values.help) {
       `    --tui                        Force the Codex-style pinned composer\n` +
       `    --fullscreen                 Alt-screen TUI (edge-to-edge theme bg; default is native scroll)\n` +
       `    --pristine                   Run without the learned tactics notebook (evolution control group)\n` +
+      `    --sandbox / --no-sandbox     Force the OS command sandbox on/off for this run (overrides /sandbox + config)\n` +
       `    -h, --help                   Show this help\n\n`,
   );
   process.exit(0);
@@ -523,6 +530,14 @@ async function main() {
   // Copy saved Tavily/Brave keys into the env so the web_search backends (used
   // by /research) pick them up; keyless DuckDuckGo remains the fallback.
   applySearchKeysToEnv();
+  // Sandbox posture: flag > ALAN_SANDBOX_ENABLED env > /sandbox sidecar > config > on.
+  const sandboxEnabled = resolveInitialSandbox({
+    flag: values["no-sandbox"] === true ? false : values.sandbox === true ? true : undefined,
+    env: process.env.ALAN_SANDBOX_ENABLED ?? null,
+    saved: loadSavedSandboxState(),
+    configured: config.sandbox?.enabled ?? null,
+  });
+
   const engine = new Engine({
     model,
     provider,
@@ -531,6 +546,7 @@ async function main() {
     toolsBinaryPath: toolsBinary,
     yoloMode: values.yolo as boolean,
     trustWorkspace,
+    sandboxEnabled,
     plannerMode,
     routing: plannerMode
       ? {
@@ -904,7 +920,7 @@ async function main() {
       sessionId,
       workspace: workspaceRoot,
       version: ALAN_VERSION,
-      sandbox: config.sandbox?.enabled ?? false,
+      sandbox: sandboxEnabled,
       recentSessions,
     }) + "\n",
   );
@@ -1091,6 +1107,7 @@ async function main() {
     ["/plan", "Toggle plan mode"],
     ["/hands-free", "Hands-Free — toggle bypass mode (shift+tab)"],
     ["/mode", "Cycle permission mode (confirm/auto/hands-free)"],
+    ["/sandbox", "OS sandbox for commands — on | off (off = full access)"],
     ["/rewind", "Roll back the conversation"],
     ["/help", "Show all commands"],
     ["/quit", "Exit Berne"],
@@ -1267,6 +1284,7 @@ async function main() {
         ["/plan", "Toggle plan mode"],
         ["/hands-free", "Hands-Free — toggle bypass mode (shift+tab)"],
         ["/mode", "Cycle permission mode (confirm/auto/hands-free)"],
+        ["/sandbox", "OS sandbox for commands — on | off (off = full access)"],
         ["/rewind", "Roll back the conversation"],
         ["/help", "This reference"],
         ["/quit", "Exit"],
@@ -1300,6 +1318,7 @@ async function main() {
             yoloMode: status.yoloMode,
             trustWorkspace: status.trustWorkspace,
             permissionMode: status.permissionMode,
+            sandboxEnabled: status.sandboxEnabled,
             registeredProviders: status.registeredProviders,
             version: ALAN_VERSION,
           }) +
@@ -2094,6 +2113,24 @@ async function main() {
       const target = engine.getPermissionMode() === "turing" ? "confirm" : "turing";
       engine.setPermissionMode(target);
       process.stdout.write(permissionModeBanner(target) + "\n");
+      showPrompt();
+      return;
+    }
+
+    if (input === "/sandbox" || input.startsWith("/sandbox ")) {
+      const raw = input.slice("/sandbox".length).trim().toLowerCase();
+      if (raw === "on" || raw === "off") {
+        const enabled = raw === "on";
+        engine.setSandboxEnabled(enabled);
+        saveSandboxState(enabled); // sticks across sessions, like /theme
+        process.stdout.write(sandboxModeBanner(enabled) + "\n");
+      } else if (raw) {
+        process.stdout.write(
+          `  ${warn("Usage:")} ${info("/sandbox")} ${dim("[on|off] — empty shows the current state")}\n`,
+        );
+      } else {
+        process.stdout.write(sandboxModeBanner(engine.isSandboxEnabled()) + "\n");
+      }
       showPrompt();
       return;
     }

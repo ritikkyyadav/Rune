@@ -41,6 +41,8 @@ import {
   PROVIDER_PRESETS,
   loadLastModel,
   saveLastModel,
+  loadSavedSandboxState,
+  resolveInitialSandbox,
 } from "@alan/shared";
 
 // ─── stdout discipline ───
@@ -158,6 +160,12 @@ function buildEngine(): Engine {
     toolsBinaryPath: process.env.ALAN_TOOLS_BIN || "alan-tools",
     yoloMode: false,
     trustWorkspace: config.permissions?.trustWorkspace ?? false,
+    // Same posture resolution as the CLI, minus CLI flags (desktop has none).
+    sandboxEnabled: resolveInitialSandbox({
+      env: process.env.ALAN_SANDBOX_ENABLED ?? null,
+      saved: loadSavedSandboxState(),
+      configured: config.sandbox?.enabled ?? null,
+    }),
     plannerMode: false,
     // Config-file keys count as "saved" unless they merely echo an env var.
     anthropicApiKey: process.env.ANTHROPIC_API_KEY ? undefined : config.llm.anthropic?.apiKey,

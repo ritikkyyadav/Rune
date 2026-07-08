@@ -1,3 +1,4 @@
+import { isSandboxEnabled } from "../sandbox-mode";
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
 
 /**
@@ -19,10 +20,15 @@ export function createRustToolHandler(
         const args = ["--workspace", input.workspaceRoot];
         // Sandbox-level tools run inside the OS sandbox (deny-net, confined
         // writes) — EXCEPT when the model explicitly requested network access
-        // (network: true), which escalates to an unsandboxed run. That
-        // escalation is permission-gated upstream: the broker never
-        // auto-approves a network run outside Hands-Free mode.
-        if (schema.permissionLevel === "sandbox" && input.args.network !== true) {
+        // (network: true), which escalates to an unsandboxed run, or when the
+        // user disabled the sandbox entirely (/sandbox off, --no-sandbox).
+        // The per-call escalation is permission-gated upstream: the broker
+        // never auto-approves a network run outside Hands-Free mode.
+        if (
+          schema.permissionLevel === "sandbox" &&
+          input.args.network !== true &&
+          isSandboxEnabled()
+        ) {
           args.push("--sandbox");
         }
         args.push(subcommand);

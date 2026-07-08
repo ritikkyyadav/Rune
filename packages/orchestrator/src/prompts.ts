@@ -16,6 +16,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir, platform, release } from "node:os";
 import { join } from "node:path";
+import { isSandboxEnabled } from "@alan/tool-registry";
 
 // ─── Agent Doctrine ───
 //
@@ -208,6 +209,13 @@ export function renderEnvironmentBlock(env: EnvironmentInfo): string {
     `Platform: ${platform()} (${release()})`,
     `Today's date: ${new Date().toISOString().slice(0, 10)}`,
     `Model: ${env.model} (via ${env.provider})`,
+    // Read live, not snapshotted: the engine drops its env-block cache when
+    // /sandbox toggles, so this line always states the actual posture.
+    `Sandbox: ${
+      isSandboxEnabled()
+        ? "enabled — bash runs in an OS sandbox (no network; set network: true to escalate a call)"
+        : "disabled — bash runs with full host and network access (network: true is unnecessary)"
+    }`,
     `Is a git repository: ${env.isGitRepo ? "yes" : "no"}`,
   ];
   if (env.isGitRepo) {

@@ -28,6 +28,7 @@ import {
   PROVIDER_PRESETS,
   CUSTOM_PROVIDER_ID,
   saveLastModel,
+  saveSandboxState,
   getSystemMemoryPath,
 } from "@alan/shared";
 import type { CustomEndpoint } from "@alan/shared";
@@ -46,6 +47,7 @@ import {
   renderPermissionCard,
   statusLine,
   permissionModeBanner,
+  sandboxModeBanner,
   type RenderedBlock,
   type PickerItem,
   type SlashItem,
@@ -344,6 +346,7 @@ class Tui {
       mode: this.ctx.engine.getPermissionMode(),
       contextPercent,
       filesEdited: this.filesEdited.size || undefined,
+      sandboxOff: !this.ctx.engine.isSandboxEnabled(),
     });
   }
 
@@ -380,6 +383,7 @@ class Tui {
       { name: "/plan", desc: "Toggle plan mode" },
       { name: "/hands-free", desc: "Hands-Free — toggle bypass mode (shift+tab)" },
       { name: "/mode", desc: "Cycle permission mode (confirm/auto/hands-free)" },
+      { name: "/sandbox", desc: "OS sandbox for commands — on | off (off = full access)" },
       { name: "/rewind", desc: "Roll back the conversation" },
       { name: "/compress", desc: "Summarize & shrink context" },
       { name: "/undo", desc: "Revert the last Berne auto-commit" },
@@ -613,6 +617,7 @@ class Tui {
         sessionId: this.ctx.sessionId,
         workspace: this.ctx.workspaceRoot,
         version: this.ctx.version,
+        sandbox: engine.isSandboxEnabled(),
       }),
     );
   }
@@ -1148,6 +1153,7 @@ class Tui {
           ["/plan", "Toggle plan mode"],
           ["/hands-free", "Hands-Free — toggle bypass mode (shift+tab)"],
           ["/mode", "Cycle permission mode (confirm/auto/hands-free)"],
+          ["/sandbox", "OS sandbox for commands — on | off (off = full access)"],
           ["/rewind", "Roll back the conversation"],
           ["/compress", "Summarize & shrink context"],
           ["/undo", "Revert the last Berne auto-commit"],
@@ -1194,6 +1200,7 @@ class Tui {
             yoloMode: s.yoloMode,
             trustWorkspace: s.trustWorkspace,
             permissionMode: s.permissionMode,
+            sandboxEnabled: s.sandboxEnabled,
             registeredProviders: s.registeredProviders,
             version: this.ctx.version,
           }),
@@ -1292,6 +1299,22 @@ class Tui {
           );
         } else {
           this.cyclePermissionMode(); // no arg → advance the cycle, like Shift+Tab
+        }
+        return true;
+      }
+      case "sandbox": {
+        const raw = (arg ?? "").toLowerCase();
+        if (raw === "on" || raw === "off") {
+          const enabled = raw === "on";
+          engine.setSandboxEnabled(enabled);
+          saveSandboxState(enabled); // sticks across sessions, like /theme
+          this.print(sandboxModeBanner(enabled));
+        } else if (raw) {
+          this.print(
+            `  ${warn("Usage:")} ${info("/sandbox")} ${faint("[on|off] — empty shows the current state")}`,
+          );
+        } else {
+          this.print(sandboxModeBanner(engine.isSandboxEnabled()));
         }
         return true;
       }
