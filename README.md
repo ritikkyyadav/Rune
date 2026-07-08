@@ -48,6 +48,10 @@ compliance-sensitive teams.
   `/rewind` to roll the conversation back to an earlier turn.
 - **Auditable export** — export a session transcript (`md`/`json`) with an optional **Ed25519
   signature** for tamper-evident records.
+- **Opt-in diagnostics** — a local Black Box flight recorder (`berne doctor`) captures every
+  failure/degradation with redaction and fingerprinting; an **off-by-default, transparent**
+  channel (`berne telemetry`) can forward redacted crash reports + an anonymous usage heartbeat
+  to a collector you run. `berne telemetry preview` shows the exact bytes; no IPs or device ids.
 - **Context engine** — token-budgeted prompt construction with compaction.
 
 ## Architecture
@@ -76,8 +80,20 @@ The engine ⇆ client separation is intentional: the same engine powers the CLI,
 
 ## Install
 
-The installer compiles a standalone CLI + the Rust tools binary into `~/.alan/bin` and
-exposes them as the **`berne`** command:
+**End users — one line, no toolchain** (downloads a prebuilt standalone binary
+for your OS into `~/.alan/bin`):
+
+```bash
+curl -fsSL https://YOUR-DOMAIN/install.sh | bash
+```
+
+That script is [`scripts/web-install.sh`](scripts/web-install.sh); host it (or the
+raw GitHub URL) and paste the one-liner on your site. Publish the binaries it
+pulls with [`scripts/build-release.sh`](scripts/build-release.sh), which compiles
+`berne-<os>-<arch>` for macOS/Linux via `bun build --compile`.
+
+**From source** — the installer compiles a standalone CLI + the Rust tools binary
+into `~/.alan/bin` and exposes them as the **`berne`** command:
 
 ```bash
 ./scripts/install.sh
@@ -173,6 +189,23 @@ bun test tests/unit/      # unit tests
 bun run typecheck         # tsc across all packages
 cargo test -p alan-tools  # Rust tool tests
 ```
+
+## Privacy & telemetry
+
+Berne is local-first: **telemetry is off by default and transmits nothing unless
+you opt in.** When enabled (a configured collector endpoint **and** an explicit
+`yes` to the first-run prompt), it sends two minimal, redacted streams — crash /
+error reports drawn from the local Black Box, and an anonymous daily usage
+heartbeat — to a collector **you** run. It never sends file contents, prompts,
+your IP address, or any device fingerprint.
+
+- Inspect the exact bytes: `berne telemetry preview`
+- Opt in / out any time: `berne telemetry on` / `berne telemetry off`
+- Receive it yourself: run [`collector/berne-collector.ts`](collector/README.md)
+  (a single dependency-free Bun server + live dashboard that stores reports to a
+  local SQLite and never persists raw IPs).
+
+Full details in [`PRIVACY.md`](PRIVACY.md).
 
 ## License
 

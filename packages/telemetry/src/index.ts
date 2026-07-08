@@ -18,6 +18,35 @@ export {
   type DirtyExit,
 } from "./sentinel";
 
+// ─── Opt-in, transparent outbound telemetry (off by default) ───
+export {
+  TelemetryReporter,
+  toIncidentWire,
+  type ReporterOptions,
+  type IncidentWire,
+  type UsageWire,
+  type WireReport,
+} from "./reporter";
+export {
+  type ConsentDecision,
+  type TelemetryState,
+  telemetryStatePath,
+  loadTelemetryState,
+  saveTelemetryState,
+  setConsent,
+  ensureInstallId,
+  markHeartbeat,
+  resetTelemetryState,
+  todayUtc,
+} from "./consent";
+export {
+  type UsageCounters,
+  usageCountersPath,
+  bumpUsage,
+  takeUsage,
+  peekUsage,
+} from "./counters";
+
 // ─── Legacy sink API (predates the Recorder; kept for compatibility) ───
 
 export type TelemetryLevel = "debug" | "info" | "warn" | "error";

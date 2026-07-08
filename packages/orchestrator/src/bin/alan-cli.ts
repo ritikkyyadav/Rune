@@ -21,7 +21,17 @@ import {
   getSystemMemoryPath,
   getAlanHome,
 } from "@alan/shared";
-import { armSentinel, disarmSentinel, sentinelPathFor, sweepDirtyExits } from "@alan/telemetry";
+import {
+  armSentinel,
+  disarmSentinel,
+  sentinelPathFor,
+  sweepDirtyExits,
+  TelemetryReporter,
+  bumpUsage,
+  ensureInstallId,
+  loadTelemetryState,
+  setConsent,
+} from "@alan/telemetry";
 import { rmSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import { parseArgs } from "util";
@@ -104,7 +114,8 @@ if (values.help) {
       `    berne export <sessionId>      Export a session transcript\n` +
       `    berne doctor                  Black-box health: recent incidents, crash sentinel, recorder state\n` +
       `    berne incidents [sub]         Browse recorded failures — list | show <id> | top [--by-version] | export\n` +
-      `    berne notebook [sub]          Learned tactics notebook — list | show <id> | rm <id> | export\n\n` +
+      `    berne notebook [sub]          Learned tactics notebook — list | show <id> | rm <id> | export\n` +
+      `    berne telemetry [sub]         Opt-in diagnostics — status | on | off | preview | reset (off by default)\n\n` +
       `  Export options:\n` +
       `    --format md|json             Output format (default: md)\n` +
       `    --sign                       Sign the export with Ed25519\n` +
@@ -143,6 +154,11 @@ if (command === "incidents") {
 if (command === "notebook") {
   const { runNotebook } = await import("./notebook-cli");
   runNotebook(positionals as string[], values as Record<string, unknown>);
+  process.exit(0);
+}
+if (command === "telemetry") {
+  const { runTelemetry } = await import("./telemetry-cli");
+  runTelemetry(positionals.slice(1) as string[]);
   process.exit(0);
 }
 
@@ -372,6 +388,32 @@ function printSessionTranscript(engine: Engine, id: string): void {
 /** Recolour the whole terminal (fg+bg) to the active theme — only on a real TTY. */
 function applyTerminalTheme(): void {
   if (process.stdout.isTTY) process.stdout.write(terminalThemeSeq());
+}
+
+// ─── Opt-in telemetry: first-run consent prompt ───
+// Asked at most once (persisted in ~/.alan/telemetry.json), only on an
+// interactive TTY, and only when a collector endpoint is configured. Default is
+// NO — a bare Enter, a pipe, or any non-"yes" answer leaves telemetry off.
+async function askTelemetryConsent(): Promise<boolean> {
+  process.stdout.write(
+    `\n  ${bold(text("Help improve Berne?"))}\n` +
+      `  ${dim("Send anonymous, redacted diagnostics — crash/error reports and a daily usage")}\n` +
+      `  ${dim("heartbeat — so bugs get fixed before the next release. Off unless you say yes.")}\n\n` +
+      `  ${faint("· No file contents, prompts, IP address, or device id — ever.")}\n` +
+      `  ${faint("· Inspect the exact payloads any time:")} ${info("berne telemetry preview")}\n` +
+      `  ${faint("· Change your mind any time:")} ${info("berne telemetry on|off")}\n\n`,
+  );
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = await new Promise<string>((resolve) => {
+      rl.question(`  ${text("Share anonymous diagnostics?")} ${dim("[y/N]")} `, resolve);
+    });
+    return /^\s*y(es)?\s*$/i.test(answer);
+  } catch {
+    return false;
+  } finally {
+    rl.close();
+  }
 }
 
 // ─── Main ───
@@ -716,6 +758,36 @@ async function main() {
   const ownSentinel = sentinelPathFor(sentinelDir, process.pid);
   const ownSpool = joinPath(getAlanHome(), `blackbox.spool.${process.pid}.json`);
   if (recorder) {
+    // ─── Opt-in telemetry: consent + attach the outbound sink ───
+    // Only when a collector endpoint is actually configured. First-run consent
+    // is asked at most once, only on a TTY, default NO. The sink is attached
+    // BEFORE the dirty-exit sweep below so last run's hard-kill crash report is
+    // forwarded too. All network is deferred to the fire-and-forget flush at the
+    // end of this block, so nothing here waits on connectivity.
+    let telemetryReporter: TelemetryReporter | null = null;
+    const tcfg = config.telemetry;
+    if (tcfg?.enabled && tcfg?.endpoint) {
+      const home = getAlanHome();
+      if (loadTelemetryState(home).decision === null && process.stdin.isTTY) {
+        const granted = await askTelemetryConsent();
+        setConsent(home, granted ? "granted" : "denied");
+      }
+      const installId = ensureInstallId(home); // null unless consent granted
+      if (installId) {
+        telemetryReporter = new TelemetryReporter({
+          home,
+          endpoint: tcfg.endpoint,
+          token: tcfg.token,
+          installId,
+          version: ALAN_VERSION,
+          streams: { crash: tcfg.crashReports !== false, usage: tcfg.usageStats !== false },
+        });
+        recorder.setSink((r) => telemetryReporter?.onIncident(r));
+        bumpUsage(home, "sessions", 1);
+        telemetryReporter.maybeHeartbeat(loadTelemetryState(home));
+      }
+    }
+
     const dirtyExits = sweepDirtyExits(sentinelDir, {
       legacyPath: joinPath(getAlanHome(), "blackbox.sentinel.json"),
     });
@@ -777,6 +849,11 @@ async function main() {
       console.error(reason);
       process.exit(1);
     });
+
+    // Deliver last run's queued reports + this run's dirty-exit crash + today's
+    // heartbeat. Fire-and-forget with an internal timeout — the session never
+    // waits on it, and a failure just leaves the durable queue for next launch.
+    if (telemetryReporter) void telemetryReporter.flush().catch(() => {});
   }
 
   if (useTui) {
