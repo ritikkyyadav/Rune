@@ -141,6 +141,44 @@ export function truncateForTranscript(text: string): string {
   );
 }
 
+// ─── Mid-turn interjections (live steering) ───
+// Messages the user sends WHILE a run is in flight. The frontend queues them
+// via AgentLoop.interject(); the loop folds them into the conversation at the
+// next turn boundary — never mid-stream, so tool_use/tool_result pairing is
+// preserved. The wrapper does two jobs: it tells the model to integrate the
+// message without restarting, and it lets the engine recognize these messages
+// when persisting the run (the raw text is stored as a real user turn).
+
+export const INTERJECTION_MARKER =
+  "[MID-TASK MESSAGE FROM THE USER — arrived while you were working]";
+
+const INTERJECTION_GUIDANCE =
+  "[Integrate this now without losing progress: if it changes the goal or approach, " +
+  "update your todo list and adjust course from here; if it adds information or " +
+  "constraints, apply them to the remaining work; if it is a quick question, answer " +
+  "it briefly in your next reply and continue the task. Do not restart work that is " +
+  "already done, and do not drop the original task unless the user explicitly redirects you.]";
+
+/** Wrap queued interjection texts as the user message the model will see. */
+export function formatInterjection(texts: string[]): string {
+  return `${INTERJECTION_MARKER}\n${texts.join("\n\n")}\n${INTERJECTION_GUIDANCE}`;
+}
+
+/**
+ * Recover the raw user text from a formatted interjection message, or null
+ * when the text is not one (ordinary user turns, synthetic loop nudges,
+ * compaction summaries). Used by the engine to persist interjections as real
+ * user turns in their correct position in the event log.
+ */
+export function parseInterjection(text: string): string | null {
+  if (!text.startsWith(INTERJECTION_MARKER)) return null;
+  let body = text.slice(INTERJECTION_MARKER.length);
+  const guard = body.lastIndexOf(INTERJECTION_GUIDANCE);
+  if (guard >= 0) body = body.slice(0, guard);
+  const raw = body.trim();
+  return raw.length > 0 ? raw : null;
+}
+
 // ─── Agent Loop ───
 
 export class AgentLoop {
@@ -150,6 +188,9 @@ export class AgentLoop {
   private messages: Message[] = [];
   private state: AgentState = "idle";
   private permissionCheck?: PermissionCheck;
+  // Mid-turn steering: user messages queued while the run is in flight,
+  // folded into the transcript at the next turn boundary.
+  private interjections: string[] = [];
 
   constructor(
     config: Partial<AgentLoopConfig>,
@@ -194,6 +235,42 @@ export class AgentLoop {
 
   getMessages(): Message[] {
     return [...this.messages];
+  }
+
+  /**
+   * Queue a user message typed while this run is in flight (mid-turn
+   * steering). It is folded into the conversation at the next turn boundary —
+   * never mid-stream — so the model integrates it into the ongoing work
+   * instead of it waiting for the whole run to finish.
+   */
+  interject(text: string): void {
+    const t = text.trim();
+    if (t) this.interjections.push(t);
+  }
+
+  hasPendingInterjections(): boolean {
+    return this.interjections.length > 0;
+  }
+
+  /** Drain-and-return interjections the run never got to fold in (abort /
+   *  error paths end the loop between boundaries). The engine persists these
+   *  as user turns so nothing the user typed is ever silently lost. */
+  takeUndrainedInterjections(): string[] {
+    return this.interjections.splice(0);
+  }
+
+  /** Fold every queued interjection into the transcript as ONE user message.
+   *  Returns true when something was folded. Only called at turn boundaries
+   *  (the messages array ends with a user/tool message there, so pushing a
+   *  user text message keeps every provider's transcript valid). */
+  private drainInterjections(): boolean {
+    if (this.interjections.length === 0) return false;
+    const texts = this.interjections.splice(0);
+    this.messages.push({
+      role: "user",
+      content: [{ type: "text", text: formatInterjection(texts) }],
+    });
+    return true;
   }
 
   async *run(
@@ -248,6 +325,16 @@ export class AgentLoop {
         this.state = "done";
         yield { type: "turn_complete", stopReason: "aborted", totalTurns: turn };
         return;
+      }
+
+      // Mid-turn steering: fold in anything the user typed while the previous
+      // step streamed or its tools ran. Every `continue` in this loop passes
+      // through here, so one drain site covers all boundaries.
+      if (this.drainInterjections()) {
+        yield {
+          type: "notice",
+          message: "New message from you folded into the running task.",
+        };
       }
 
       turn++;
@@ -579,6 +666,13 @@ export class AgentLoop {
       // verification (project checks). On failure, feed the report back and
       // continue so the agent self-corrects. Bounded by maxVerifyAttempts.
       if (stopReason !== "tool_use" || pendingToolCalls.length === 0) {
+        // The user steered mid-run while the model was wrapping up: the run is
+        // NOT done — fold the message in (at the top of the next iteration)
+        // and keep going instead of finishing past their new instructions.
+        if (!signal?.aborted && this.hasPendingInterjections()) {
+          this.state = "observing";
+          continue;
+        }
         if (
           this.config.verifier &&
           editsSinceVerify &&
@@ -669,6 +763,12 @@ export class AgentLoop {
         if (this.config.contextEngine && this.config.contextEngine.shouldCompact()) {
           const r = await this.config.contextEngine.compactWorkingSet(this.messages);
           if (r.compacted) this.messages = r.messages;
+        }
+        // A steering message may have arrived while verification / the
+        // evidence gate ran above — a finished turn must never swallow it.
+        if (!signal?.aborted && this.hasPendingInterjections()) {
+          this.state = "observing";
+          continue;
         }
         this.state = "done";
         yield { type: "turn_complete", stopReason, totalTurns: turn };
@@ -828,7 +928,16 @@ export class AgentLoop {
             schema?.parallelSafe === true);
         const isWrite = schema?.category === "write";
 
-        planned.push({ tc, parsedArgs, input, allowed, parallelSafe, isWrite, callSig, output: denied });
+        planned.push({
+          tc,
+          parsedArgs,
+          input,
+          allowed,
+          parallelSafe,
+          isWrite,
+          callSig,
+          output: denied,
+        });
       }
 
       // ── Phase B: execute — parallel-safe reads concurrently (bounded), rest serial ──

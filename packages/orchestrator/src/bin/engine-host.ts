@@ -176,7 +176,9 @@ function buildEngine(): Engine {
     interactive: config.interactive,
     // Black box: same local incident capture as the CLI (config can disable).
     blackbox:
-      config.diagnostics?.enabled !== false ? { enabled: true, version: "0.1.0-desktop" } : undefined,
+      config.diagnostics?.enabled !== false
+        ? { enabled: true, version: "0.1.0-desktop" }
+        : undefined,
     notebook: { enabled: config.notebook?.enabled !== false },
   });
   return engine;
@@ -323,6 +325,12 @@ async function dispatch(cmd: string, args: Record<string, unknown>): Promise<unk
     case "abort_chat":
       engine.abort();
       return null;
+
+    case "interject_chat":
+      // Mid-turn steering: fold a user message into the run in flight.
+      // Returns whether a live run accepted it — on false the frontend
+      // should hold the message and send it as the next turn instead.
+      return { accepted: engine.interject(String(args.text ?? "")) };
 
     case "respond_permission": {
       const requestId = args.requestId as string;

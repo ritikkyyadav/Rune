@@ -115,6 +115,10 @@ export class ContextEngine {
     summarizerProvider?: ProviderName;
   };
   private lastTokenUsage: { used: number; limit: number } | null = null;
+  // Set by requestCompaction() (the compact_context tool / an explicit user
+  // ask): forces the next shouldCompact()/compactWorkingSet() pair to run
+  // regardless of the usage high-water mark. Consumed by compactWorkingSet.
+  private compactRequested = false;
 
   constructor(
     config: {
@@ -275,7 +279,10 @@ export class ContextEngine {
       }
     }
 
-    const auxBudget = Math.max(0, this.budget.maxTokens - systemTokens - toolTokens - messageTokens);
+    const auxBudget = Math.max(
+      0,
+      this.budget.maxTokens - systemTokens - toolTokens - messageTokens,
+    );
     const keptAux: ContextItem[] = [];
     let auxUsed = 0;
     const scoredAux = aux
@@ -411,8 +418,13 @@ export class ContextEngine {
       force?: boolean;
     },
   ): Promise<{ messages: Message[]; compacted: boolean }> {
+    // An explicit request (compact_context tool) forces this attempt, and is
+    // consumed either way so a fruitless compaction can't retrigger forever.
+    const force = opts?.force === true || this.compactRequested;
+    this.compactRequested = false;
+
     // ── 1. Below-threshold guard ──
-    if (!opts?.force && messages.length < this.summarizeTurnsThreshold) {
+    if (!force && messages.length < this.summarizeTurnsThreshold) {
       return { messages, compacted: false };
     }
 
@@ -423,7 +435,7 @@ export class ContextEngine {
     const safeCutPoint = findSafeCutPoint(messages, recentK);
 
     // If we can't carve off at least 4 messages (2 when forced), bail out.
-    if (safeCutPoint < (opts?.force ? 2 : 4)) {
+    if (safeCutPoint < (force ? 2 : 4)) {
       return { messages, compacted: false };
     }
 
@@ -597,10 +609,21 @@ export class ContextEngine {
    * call every turn. Returns false until at least one buildPrompt() has run.
    */
   shouldCompact(highWaterRatio: number = 0.7): boolean {
+    if (this.compactRequested) return true;
     if (!this.lastTokenUsage) return false;
     const { used, limit } = this.lastTokenUsage;
     if (limit <= 0) return false;
     return used / limit >= highWaterRatio;
+  }
+
+  /**
+   * Force the next shouldCompact()/compactWorkingSet() pair to compact
+   * regardless of the usage high-water mark. Backs the model-invocable
+   * compact_context tool ("compact the conversation" asked in plain chat):
+   * the agent loop picks it up at the next turn boundary.
+   */
+  requestCompaction(): void {
+    this.compactRequested = true;
   }
 }
 

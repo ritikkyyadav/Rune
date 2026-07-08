@@ -2551,11 +2551,22 @@ class Tui {
       }
       return;
     }
-    // Enter queues the typed-ahead message; it runs automatically when this turn finishes.
+    // Enter mid-turn: STEER the live run — the message is folded into the
+    // agent's context at the next tool boundary, so it adapts its plan without
+    // restarting (Claude Code-style). Slash commands can't run mid-turn, and
+    // planner-mode/research runs aren't steerable — those queue and run when
+    // the turn finishes (the previous behaviour).
     if (key.type === "enter") {
       const raw = this.expandPastes(this.input).trim();
       if (raw) {
-        this.queued.push(raw);
+        const steered = !raw.startsWith("/") && this.ctx.engine.interject(raw);
+        if (steered) {
+          this.history.push(raw);
+          this.print(userBlock(raw));
+          this.print(`  ${accent("↪")} ${faint("folded into the running task")}`);
+        } else {
+          this.queued.push(raw);
+        }
         this.input = "";
         this.caret = 0;
         this.histIdx = -1;
