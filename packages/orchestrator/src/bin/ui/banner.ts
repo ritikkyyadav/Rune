@@ -4,7 +4,7 @@
 // not a box. ("Know-how, set down.")
 
 import * as os from "os";
-import { bold, text, muted, faint, info, ok } from "./theme";
+import { bold, text, muted, faint, info, ok, warn } from "./theme";
 import { PRODUCT_NAME } from "./brand";
 
 function shortPath(p: string): string {
@@ -18,9 +18,17 @@ export interface BannerOptions {
   version: string;
   workspace: string;
   sessionId?: string;
+  /** OS command sandbox state. Only the OFF case is shown (a removed safety
+   *  layer, worth a loud startup line); ON is the default and stays quiet. */
   sandbox?: boolean;
   /** Kept for call-site back-compat; unused by the banner. */
   recentSessions?: unknown[];
+}
+
+/** The loud one-liner shown at startup when the OS sandbox is disabled. Mirrors
+ *  the way Hands-Free announces itself — a removed guardrail should be visible. */
+function sandboxOffLine(): string {
+  return `  ${bold(warn("▲ sandbox off"))} ${faint("·")} ${muted("commands run with full host & network access")}`;
 }
 
 /** The wordmark: `Berne▮` — bold name, signal-teal block cursor. */
@@ -37,6 +45,7 @@ export function renderBanner(opts: BannerOptions): string {
       "",
       `  ${wordmark()}  ${faint("v" + opts.version)}`,
       `  ${info(opts.model)}  ${muted(dir)}`,
+      ...(opts.sandbox === false ? [sandboxOffLine()] : []),
       `  ${faint("/help for commands")}`,
       "",
     ].join("\n");
@@ -48,6 +57,7 @@ export function renderBanner(opts: BannerOptions): string {
     `  ${faint("know-how, set down.")}`,
     "",
     `  ${info(opts.model)} ${faint("·")} ${muted(dir)}`,
+    ...(opts.sandbox === false ? [sandboxOffLine()] : []),
     `  ${faint("type a task · / for commands · shift+tab for modes")}`,
     "",
   ].join("\n");
