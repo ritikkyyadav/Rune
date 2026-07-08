@@ -18,7 +18,16 @@ import {
 } from "../../../packages/orchestrator/src/worker";
 import type { ToolCallInput } from "../../../packages/tool-registry/src/types";
 
-const RUST_BIN = "/Users/ritikyadav890/Projects/Alan/target/release/alan-tools";
+// Resolve the compiled alan-tools binary the same way the CLI does
+// (bin/alan-cli.ts's findToolsBinary): release build, then debug build,
+// relative to this file — not a hardcoded developer-machine path, which
+// would only ever resolve on the one laptop it was written on. Tests that
+// actually shell out to it skip cleanly (test.skipIf) when it hasn't been
+// built — e.g. CI's ts-lint job runs `bun test` without a `cargo build` step.
+const RUST_RELEASE = join(import.meta.dir, "../../../target/release/alan-tools");
+const RUST_DEBUG = join(import.meta.dir, "../../../target/debug/alan-tools");
+const RUST_BIN = existsSync(RUST_RELEASE) ? RUST_RELEASE : RUST_DEBUG;
+const HAS_RUST_BIN = existsSync(RUST_BIN);
 
 function ws(): string {
   return mkdtempSync(join(tmpdir(), "worker-ws-"));
@@ -70,33 +79,46 @@ describe("worker registry — restricted world", () => {
     expect(names).toContain("grep");
     expect(names).toContain("write_file");
     expect(names).toContain("edit_file");
-    for (const banned of ["bash", "bash_output", "kill_shell", "web_fetch", "web_search", "task", "worker", "interactive_dashboard", "n8n_trigger"]) {
+    for (const banned of [
+      "bash",
+      "bash_output",
+      "kill_shell",
+      "web_fetch",
+      "web_search",
+      "task",
+      "worker",
+      "interactive_dashboard",
+      "n8n_trigger",
+    ]) {
       expect(names).not.toContain(banned);
     }
   });
 
-  test("write inside ownership lands; outside is refused with guidance", async () => {
-    const root = ws();
-    const registry = buildWorkerRegistry(RUST_BIN, new Ownership(root, ["mine.ts"]));
-    const write = (path: string): Promise<any> =>
-      registry.execute({
-        toolName: "write_file",
-        callId: "c",
-        args: { path, content: "export const x = 1;\n" },
-        sessionId: "s",
-        workspaceRoot: root,
-      } as ToolCallInput);
+  test.skipIf(!HAS_RUST_BIN)(
+    "write inside ownership lands; outside is refused with guidance",
+    async () => {
+      const root = ws();
+      const registry = buildWorkerRegistry(RUST_BIN, new Ownership(root, ["mine.ts"]));
+      const write = (path: string): Promise<any> =>
+        registry.execute({
+          toolName: "write_file",
+          callId: "c",
+          args: { path, content: "export const x = 1;\n" },
+          sessionId: "s",
+          workspaceRoot: root,
+        } as ToolCallInput);
 
-    const ok = await write("mine.ts");
-    expect(ok.success).toBe(true);
-    expect(existsSync(join(root, "mine.ts"))).toBe(true);
+      const ok = await write("mine.ts");
+      expect(ok.success).toBe(true);
+      expect(existsSync(join(root, "mine.ts"))).toBe(true);
 
-    const denied = await write("theirs.ts");
-    expect(denied.success).toBe(false);
-    expect(denied.error).toContain("Ownership violation");
-    expect(denied.error).toContain("read-only reference");
-    expect(existsSync(join(root, "theirs.ts"))).toBe(false);
-  });
+      const denied = await write("theirs.ts");
+      expect(denied.success).toBe(false);
+      expect(denied.error).toContain("Ownership violation");
+      expect(denied.error).toContain("read-only reference");
+      expect(existsSync(join(root, "theirs.ts"))).toBe(false);
+    },
+  );
 
   test("permission check allows read/write categories only", async () => {
     const root = ws();
@@ -124,48 +146,59 @@ describe("worker tool — schema + end-to-end run", () => {
     expect(tool.validate({ prompt: "x", files: ["a.ts"] }).valid).toBe(true);
   });
 
-  test("a scripted worker writes its owned file and reports; changes surface in the result", async () => {
-    const root = ws();
-    // Fake gateway: the "model" writes its owned file, then reports.
-    let call = 0;
-    const gateway = {
-      inferStream: async function* () {
-        call++;
-        if (call === 1) {
-          yield { type: "tool_use_start", toolCallId: "t1", toolName: "write_file" };
-          yield {
-            type: "tool_use_stop",
-            toolCallId: "t1",
-            toolInput: { path: "widget.ts", content: "export const widget = () => 42;\n" },
-          };
-          yield { type: "message_stop", stopReason: "tool_use", usage: { inputTokens: 1, outputTokens: 1 } };
-        } else {
-          yield {
-            type: "content_delta",
-            contentIndex: 0,
-            delta: { type: "text_delta", text: "Created widget.ts exporting widget()." },
-          };
-          yield { type: "message_stop", stopReason: "end_turn", usage: { inputTokens: 1, outputTokens: 1 } };
-        }
-      },
-    };
-    const tool = createWorkerTool({
-      binaryPath: RUST_BIN,
-      resolve: () => ({ gateway: gateway as any, model: "m", provider: "google" as any }),
-    });
-    const out = await tool.execute({
-      toolName: "worker",
-      callId: "c1",
-      args: { prompt: "Create widget.ts exporting widget()", files: ["widget.ts"] },
-      sessionId: "s",
-      workspaceRoot: root,
-    } as ToolCallInput);
+  test.skipIf(!HAS_RUST_BIN)(
+    "a scripted worker writes its owned file and reports; changes surface in the result",
+    async () => {
+      const root = ws();
+      // Fake gateway: the "model" writes its owned file, then reports.
+      let call = 0;
+      const gateway = {
+        inferStream: async function* () {
+          call++;
+          if (call === 1) {
+            yield { type: "tool_use_start", toolCallId: "t1", toolName: "write_file" };
+            yield {
+              type: "tool_use_stop",
+              toolCallId: "t1",
+              toolInput: { path: "widget.ts", content: "export const widget = () => 42;\n" },
+            };
+            yield {
+              type: "message_stop",
+              stopReason: "tool_use",
+              usage: { inputTokens: 1, outputTokens: 1 },
+            };
+          } else {
+            yield {
+              type: "content_delta",
+              contentIndex: 0,
+              delta: { type: "text_delta", text: "Created widget.ts exporting widget()." },
+            };
+            yield {
+              type: "message_stop",
+              stopReason: "end_turn",
+              usage: { inputTokens: 1, outputTokens: 1 },
+            };
+          }
+        },
+      };
+      const tool = createWorkerTool({
+        binaryPath: RUST_BIN,
+        resolve: () => ({ gateway: gateway as any, model: "m", provider: "google" as any }),
+      });
+      const out = await tool.execute({
+        toolName: "worker",
+        callId: "c1",
+        args: { prompt: "Create widget.ts exporting widget()", files: ["widget.ts"] },
+        sessionId: "s",
+        workspaceRoot: root,
+      } as ToolCallInput);
 
-    expect(out.success).toBe(true);
-    expect(out.result).toContain("Created widget.ts");
-    expect(out.result).toContain("worker changed 1 file: widget.ts");
-    expect(readFileSync(join(root, "widget.ts"), "utf8")).toContain("widget = () => 42");
-  });
+      expect(out.success).toBe(true);
+      expect(out.result).toContain("Created widget.ts");
+      expect(out.result).toContain("worker changed 1 file: widget.ts");
+      expect(readFileSync(join(root, "widget.ts"), "utf8")).toContain("widget = () => 42");
+    },
+  );
 
   test("two CONCURRENT workers with overlapping ownership: second refused instantly", async () => {
     const root = ws();
@@ -180,7 +213,11 @@ describe("worker tool — schema + end-to-end run", () => {
           contentIndex: 0,
           delta: { type: "text_delta", text: "done" },
         };
-        yield { type: "message_stop", stopReason: "end_turn", usage: { inputTokens: 1, outputTokens: 1 } };
+        yield {
+          type: "message_stop",
+          stopReason: "end_turn",
+          usage: { inputTokens: 1, outputTokens: 1 },
+        };
       },
     };
     const tool = createWorkerTool({
