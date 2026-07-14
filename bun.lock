@@ -47,6 +47,7 @@
       "name": "@alan/orchestrator",
       "version": "0.1.0",
       "bin": {
+        "berne": "src/bin/alan-cli.ts",
         "alan": "src/bin/alan-cli.ts",
       },
       "dependencies": {
@@ -98,6 +99,7 @@
         "@alan/llm-gateway": "workspace:*",
         "@alan/orchestrator": "workspace:*",
         "@alan/shared": "workspace:*",
+        "@alan/telemetry": "workspace:*",
         "@alan/tool-registry": "workspace:*",
       },
       "devDependencies": {
