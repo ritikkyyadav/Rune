@@ -1,4 +1,5 @@
 import type { Message } from "@alan/llm-gateway";
+import { tokenCounter } from "../tokenizer";
 
 /**
  * Working memory management per Section 5.2.
@@ -206,9 +207,11 @@ export class WorkingMemory {
 }
 
 /**
- * Rough token estimation (4 chars per token for English text).
- * Use model's countTokens() for precision when available.
+ * Token estimation delegated to the shared counter so working memory and the
+ * context engine budget with the SAME numbers (including any calibration
+ * learned from real provider usage). Two estimators disagreeing was how
+ * "fits in memory" and "fits in the prompt" drifted apart.
  */
 export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
+  return tokenCounter.countTokens(text);
 }

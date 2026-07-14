@@ -2,7 +2,7 @@
 
 > A local-first, sandboxed, multi-provider agentic coding assistant — a headless engine with CLI and desktop surfaces.
 
-**Status:** early, active development. The engine, CLI, tool suite, and evals work end-to-end; interfaces are still evolving and not all blueprint features are built yet. Current release: **Berne v0.1**.
+**Status:** early, active development. The engine, CLI, tool suite, and evals work end-to-end; interfaces are still evolving and not all blueprint features are built yet. Current release: **Berne v0.2.0**.
 
 > _Berne is the product name. **Alan** is the internal codename you'll still see in package names (`@alan/*`), the `~/.alan` data directory, and the `alan-tools` binary — none of it user-facing._
 
@@ -81,21 +81,33 @@ The engine ⇆ client separation is intentional: the same engine powers the CLI,
 ## Install
 
 **End users — one line, no toolchain** (downloads a prebuilt standalone binary
-for your OS into `~/.alan/bin`):
+for your OS from the [latest GitHub release](https://github.com/ritikkyyadav/Alan/releases)
+into `~/.alan/bin`):
 
 ```bash
-curl -fsSL https://YOUR-DOMAIN/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ritikkyyadav/Alan/main/scripts/web-install.sh | bash
 ```
 
-That script is [`scripts/web-install.sh`](scripts/web-install.sh); host it (or the
-raw GitHub URL) and paste the one-liner on your site. Publish the binaries it
-pulls with [`scripts/build-release.sh`](scripts/build-release.sh), which compiles
-`berne-<os>-<arch>` for macOS/Linux via `bun build --compile`.
-
-**From source** — the installer compiles a standalone CLI + the Rust tools binary
-into `~/.alan/bin` and exposes them as the **`berne`** command:
+While this repo is **private**, anonymous `curl` can't reach it — use the
+authenticated equivalent (one-time `gh auth login` with the [GitHub CLI](https://cli.github.com)):
 
 ```bash
+mkdir -p ~/.alan/bin
+gh release download -R ritikkyyadav/Alan \
+  -p "berne-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/')" \
+  -O ~/.alan/bin/berne --clobber && chmod +x ~/.alan/bin/berne
+```
+
+The one-liner script is [`scripts/web-install.sh`](scripts/web-install.sh); release
+binaries are compiled per-platform by [`scripts/build-release.sh`](scripts/build-release.sh)
+via `bun build --compile`.
+
+**From source** — recommended on any machine with the toolchain (needs [Bun](https://bun.sh)
+and [Rust](https://rustup.rs)); compiles a standalone CLI **plus** the native Rust tools
+binary into `~/.alan/bin` and exposes them as the **`berne`** command:
+
+```bash
+gh repo clone ritikkyyadav/Alan && cd Alan     # or: git clone https://github.com/ritikkyyadav/Alan.git
 ./scripts/install.sh
 ```
 

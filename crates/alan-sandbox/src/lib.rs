@@ -25,7 +25,7 @@ use std::pin::Pin;
 use serde::{Deserialize, Serialize};
 
 pub use crate::error::SandboxError;
-pub use crate::factory::create_sandbox;
+pub use crate::factory::{SandboxProbe, create_sandbox, probe_capability};
 pub use crate::path_guard::PathGuard;
 
 /// Describes the level of sandboxing available on the current platform.

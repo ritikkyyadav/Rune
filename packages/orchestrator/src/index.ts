@@ -108,7 +108,37 @@ export type {
 } from "./memory/index";
 
 // ─── Tokenizer ───
-export { TokenCounter, countTokens, getContextLimit } from "./tokenizer";
+export { TokenCounter, tokenCounter, countTokens, getContextLimit } from "./tokenizer";
+
+// ─── Reliability policy ───
+export { DEFAULT_RELIABILITY, policyForModel, type ReliabilityPolicy } from "./reliability-policy";
+
+// ─── Loop-guard call signatures ───
+export { breakerSignature, batchSignature } from "./call-signature";
+
+// ─── Plugin bundles (.alan/plugins) ───
+export { discoverPlugins, type PluginManifest, type LoadedPlugin } from "./plugins";
+
+// ─── Detach/attach: host client + per-run worktrees ───
+export { HostClient, type HostStreamFrame } from "./host-client";
+export {
+  createRunWorktree,
+  listRunWorktrees,
+  removeRunWorktree,
+  isGitRepo,
+  type RunWorktree,
+} from "./worktree";
+
+// ─── Signed org policy (managed machines) ───
+export {
+  loadOrgPolicy,
+  policyDenial,
+  policyAllowsModel,
+  canonicalPolicyBytes,
+  type OrgPolicy,
+  type LoadedOrgPolicy,
+  type OrgPolicyLoadResult,
+} from "./org-policy";
 
 // ─── Session Replay ───
 export { resumeFromCheckpoint } from "./session-replay";

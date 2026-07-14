@@ -1,8 +1,18 @@
 #!/usr/bin/env bun
+import { readFile } from "fs/promises";
+
 import { runSuite, IS_REAL_MODE } from "./harness";
 import type { EvalTask } from "./harness";
 import { ALL_TASKS } from "./tasks";
-import { buildReport, printReport, writeBaseline, printModelSweep } from "./report";
+import {
+  buildReport,
+  printReport,
+  writeBaseline,
+  printModelSweep,
+  compareToBaseline,
+  printComparison,
+  baselinePathFor,
+} from "./report";
 import type { ModelSweepResult } from "./report";
 
 // ─── Real-mode defaults & key wiring ───
@@ -36,6 +46,10 @@ interface CliArgs {
   minPassRate?: number;
   /** Force-promote the run to baseline.json even if some tasks were throttled. */
   writeBaseline?: boolean;
+  /** Compare against a recorded baseline and fail on regression beyond --noise. */
+  compare?: string;
+  /** Noise band for --compare (fraction of pass-rate). Default 0 mock / 0.05 real. */
+  noise?: number;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -58,6 +72,17 @@ function parseArgs(argv: string[]): CliArgs {
       args.minPassRate = Number(a.slice("--min-pass-rate=".length));
     } else if (a === "--write-baseline") {
       args.writeBaseline = true;
+    } else if (a === "--compare") {
+      // Optional value: bare --compare resolves to the mode-specific baseline
+      // (baseline-mock.json for mock runs, baseline.json for real) in main().
+      const next = argv[i + 1];
+      args.compare = next && !next.startsWith("--") ? argv[++i] : "auto";
+    } else if (a.startsWith("--compare=")) {
+      args.compare = a.slice("--compare=".length);
+    } else if (a === "--noise") {
+      args.noise = Number(argv[++i]);
+    } else if (a.startsWith("--noise=")) {
+      args.noise = Number(a.slice("--noise=".length));
     }
   }
   return args;
@@ -68,9 +93,7 @@ function selectTasks(tasks: EvalTask[], args: CliArgs): EvalTask[] {
   let out = tasks;
   if (args.tasksFilter) {
     const f = args.tasksFilter.toLowerCase();
-    out = out.filter(
-      (t) => t.category.toLowerCase() === f || t.name.toLowerCase().includes(f),
-    );
+    out = out.filter((t) => t.category.toLowerCase() === f || t.name.toLowerCase().includes(f));
   }
   if (args.max != null && Number.isFinite(args.max) && args.max > 0) {
     out = out.slice(0, args.max);
@@ -94,7 +117,10 @@ function parseModelSweep(): Array<{ provider: string; model: string }> | null {
     .map((entry) => {
       const colonIdx = entry.indexOf(":");
       if (colonIdx === -1) {
-        return { provider: process.env.ALAN_EVAL_PROVIDER ?? process.env.ALAN_PROVIDER ?? DEFAULT_PROVIDER, model: entry };
+        return {
+          provider: process.env.ALAN_EVAL_PROVIDER ?? process.env.ALAN_PROVIDER ?? DEFAULT_PROVIDER,
+          model: entry,
+        };
       }
       return { provider: entry.slice(0, colonIdx), model: entry.slice(colonIdx + 1) };
     });
@@ -105,8 +131,7 @@ async function main() {
   // --real flag OR the legacy ALAN_EVAL_REAL=1 env var enables real mode.
   const real = args.real || IS_REAL_MODE;
 
-  const provider =
-    process.env.ALAN_EVAL_PROVIDER ?? process.env.ALAN_PROVIDER ?? DEFAULT_PROVIDER;
+  const provider = process.env.ALAN_EVAL_PROVIDER ?? process.env.ALAN_PROVIDER ?? DEFAULT_PROVIDER;
   const model = process.env.ALAN_EVAL_MODEL ?? process.env.ALAN_MODEL ?? DEFAULT_MODEL;
 
   // ── Fail fast if --real is requested without the relevant API key. ──
@@ -189,7 +214,43 @@ async function main() {
     real ? provider : undefined,
   );
   printReport(report);
-  await writeBaseline(report, args.writeBaseline);
+
+  // ── Baseline regression gate (--compare) ──
+  // Runs BEFORE writeBaseline so the run is judged against the old snapshot,
+  // not against itself. Incompatible baselines (different mode/model) skip
+  // cleanly instead of gating on a measurement of something else.
+  let compareOk = true;
+  if (args.compare) {
+    const comparePath =
+      args.compare === "auto" ? baselinePathFor(real ? "real" : "mock") : args.compare;
+    let baseline: Parameters<typeof compareToBaseline>[1] = null;
+    try {
+      baseline = JSON.parse(await readFile(comparePath, "utf8"));
+    } catch {
+      baseline = null; // missing/corrupt baseline → skip, printComparison explains
+    }
+    const noise = args.noise != null && Number.isFinite(args.noise) ? args.noise : real ? 0.05 : 0;
+    const cmp = compareToBaseline(report, baseline, noise);
+    printComparison(cmp);
+    compareOk = cmp.ok;
+  }
+
+  // Baseline hygiene: a run that failed the regression gate must never become
+  // the new baseline (the regression would vanish on the next run), and a
+  // FILTERED run (--tasks/--max) is a subset, not the suite — promoting it
+  // shrinks the anchor. --write-baseline stays the explicit override.
+  const isSubsetRun = args.tasksFilter != null || args.max != null;
+  if ((compareOk && !isSubsetRun) || args.writeBaseline) {
+    await writeBaseline(report, args.writeBaseline);
+  } else if (isSubsetRun) {
+    console.log(
+      "  \x1b[2mBaseline NOT updated (filtered/subset run; pass --write-baseline to force)\x1b[0m",
+    );
+  } else {
+    console.log(
+      "  \x1b[2mBaseline NOT updated (regression gate failed; pass --write-baseline to re-anchor intentionally)\x1b[0m",
+    );
+  }
 
   // Gate on the CLEAN rate (throttled tasks excluded). With no explicit floor,
   // require every MEASURED task to pass — throttled tasks neither pass nor fail
@@ -198,7 +259,7 @@ async function main() {
     args.minPassRate != null && Number.isFinite(args.minPassRate)
       ? report.cleanPassRate >= args.minPassRate
       : report.passed === report.measured && report.measured > 0;
-  process.exit(ok ? 0 : 1);
+  process.exit(ok && compareOk ? 0 : 1);
 }
 
 main().catch((err) => {
