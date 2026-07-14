@@ -14,6 +14,7 @@
 // go build) is left to run. Escape hatches: `--offline`-style flags skip the
 // match, and BERNE_NET_PREFLIGHT=0 disables the whole check.
 
+import { isOsIsolationAvailable } from "../sandbox-capability";
 import { isSandboxEnabled } from "../sandbox-mode";
 import type { ToolCallInput, ToolCallOutput, ToolHandler } from "../types";
 
@@ -74,9 +75,14 @@ export function withNetworkPreflight(handler: ToolHandler): ToolHandler {
     execute: async (input: ToolCallInput): Promise<ToolCallOutput> => {
       const { args } = input;
       // When the user disabled the sandbox (/sandbox off), every command has
-      // network — there is nothing to preflight.
+      // network — there is nothing to preflight. Same when the machine has no
+      // isolation backend: the degraded (path-guard-only) executor doesn't
+      // deny network, so "this would hang" would be a false claim.
       const sandboxed =
-        isSandboxEnabled() && args.network !== true && args.run_in_background !== true;
+        isSandboxEnabled() &&
+        isOsIsolationAvailable() &&
+        args.network !== true &&
+        args.run_in_background !== true;
       if (sandboxed && process.env.BERNE_NET_PREFLIGHT !== "0") {
         const what = typeof args.command === "string" ? needsNetwork(args.command) : null;
         if (what) {
