@@ -30,6 +30,11 @@ pub struct BashOutput {
     pub exit_code: Option<i32>,
     pub timed_out: bool,
     pub truncated: bool,
+    /// Whether OS-level isolation was ACTUALLY active for this run. The
+    /// sandbox factory silently falls back to a path-guard-only executor when
+    /// seatbelt/bwrap is missing; dropping that fact here is how "sandboxed"
+    /// became a lie upstream. false for the plain (non --sandbox) path too.
+    pub sandboxed: bool,
 }
 
 /// Destructive-command guard. Anchored so it only blocks commands whose
@@ -158,6 +163,7 @@ pub async fn execute(input: BashInput, workspace_root: &Path) -> Result<BashOutp
                 exit_code,
                 timed_out: false,
                 truncated,
+                sandboxed: false,
             })
         }
         Err(_) => {
@@ -171,6 +177,7 @@ pub async fn execute(input: BashInput, workspace_root: &Path) -> Result<BashOutp
                 exit_code: None,
                 timed_out: true,
                 truncated: false,
+                sandboxed: false,
             })
         }
     }
@@ -210,6 +217,9 @@ pub async fn execute_sandboxed(
     };
 
     let sandbox = create_sandbox(config);
+    // The factory may have silently fallen back to the path-guard-only
+    // executor — report what actually ran, not what was asked for.
+    let os_isolated = sandbox.name() != "noop";
 
     match sandbox
         .execute(&input.command, Some(workspace_root), input.timeout_ms)
@@ -225,6 +235,7 @@ pub async fn execute_sandboxed(
                 exit_code: Some(result.exit_code),
                 timed_out: false,
                 truncated,
+                sandboxed: result.sandboxed,
             })
         }
         Err(alan_sandbox::SandboxError::Timeout(ms)) => Ok(BashOutput {
@@ -236,6 +247,7 @@ pub async fn execute_sandboxed(
             exit_code: None,
             timed_out: true,
             truncated: false,
+            sandboxed: os_isolated,
         }),
         Err(e) => Err(ToolError::CommandFailed(e.to_string())),
     }

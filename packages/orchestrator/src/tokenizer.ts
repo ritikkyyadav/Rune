@@ -1,38 +1,81 @@
 // ─── Token Counting Module ───
-// Provides accurate token estimation using word-based heuristics
-// with caching for performance.
+// Heuristic estimation, continuously calibrated against the REAL token counts
+// providers report in their usage blocks. The estimate only has to be good
+// enough to (a) budget prompt assembly before the first provider response and
+// (b) rank items for eviction; every compaction *decision* after turn one runs
+// on provider-authoritative numbers (ContextEngine.noteRealUsage).
 
 export class TokenCounter {
   private cache: Map<string, number> = new Map();
   private maxCacheSize = 1000;
+  // Per-model correction factor learned from provider usage reports
+  // (actual / estimated, EMA). Code, JSON, and non-English text all tokenize
+  // differently per model family — no static formula gets them all right,
+  // but the ratio is stable within a session, so it converges in 1-2 turns.
+  private calibrations: Map<string, number> = new Map();
+  private activeModel: string | null = null;
 
   /**
-   * Count tokens in the given text using a word-based heuristic.
-   * More accurate than the naive `text.length / 4` approach:
-   *  - Splits on whitespace to get word count
-   *  - Multiplies by ~1.3 to account for subword tokenization
-   *  - Counts punctuation/special characters separately (0.5 tokens each)
+   * Count tokens in the given text.
    *
-   * Results are cached for performance.
+   * Base heuristic: max(word-based estimate, chars/4). The word formula
+   * (words × 1.3 + punctuation × 0.5) tracks prose well but collapses on
+   * dense text — a 10KB minified JS line or JSON blob is a handful of
+   * "words" yet thousands of tokens. The chars/4 floor bounds that error.
+   * Skewing HIGH is the safe direction: the worst case is slightly early
+   * compaction, never a provider over-limit rejection.
+   *
+   * The result is scaled by the model's learned calibration (default 1.0).
+   * Raw estimates are cached; calibration is applied per call so a ratio
+   * update never serves stale numbers.
    */
-  countTokens(text: string, _model?: string): number {
-    // Check cache first
+  countTokens(text: string, model?: string): number {
     const cacheKey = text.length > 200 ? text.slice(0, 100) + text.slice(-100) + text.length : text;
-    if (this.cache.has(cacheKey)) return this.cache.get(cacheKey)!;
+    let raw = this.cache.get(cacheKey);
 
-    // Better heuristic: word-based counting
-    // Split on whitespace and punctuation, multiply by ~1.3 for subword tokenization
-    const words = text.split(/[\s]+/).filter((w) => w.length > 0);
-    const punctuation = (text.match(/[{}()\[\]<>:;,."'`!@#$%^&*=+|\\/?~-]/g) || []).length;
-    const tokens = Math.ceil(words.length * 1.3 + punctuation * 0.5);
+    if (raw === undefined) {
+      const words = text.split(/[\s]+/).filter((w) => w.length > 0);
+      const punctuation = (text.match(/[{}()\[\]<>:;,."'`!@#$%^&*=+|\\/?~-]/g) || []).length;
+      raw = Math.max(words.length * 1.3 + punctuation * 0.5, text.length / 4);
 
-    // Cache the result
-    if (this.cache.size >= this.maxCacheSize) {
-      const firstKey = this.cache.keys().next().value;
-      if (firstKey) this.cache.delete(firstKey);
+      if (this.cache.size >= this.maxCacheSize) {
+        const firstKey = this.cache.keys().next().value;
+        if (firstKey) this.cache.delete(firstKey);
+      }
+      this.cache.set(cacheKey, raw);
     }
-    this.cache.set(cacheKey, tokens);
-    return tokens;
+
+    return Math.ceil(raw * this.getCalibration(model));
+  }
+
+  /**
+   * Feed one (estimated, actual) pair from a real provider response.
+   * Ratios are clamped to [0.25, 4] so a mismatched pairing can't poison the
+   * factor, and prompts under 500 estimated tokens are ignored (per-request
+   * scaffolding overhead dominates small prompts — pure noise).
+   */
+  noteCalibration(model: string, estimated: number, actual: number): void {
+    if (!model || estimated < 500 || actual <= 0) return;
+    const ratio = Math.min(4, Math.max(0.25, actual / estimated));
+    const prev = this.calibrations.get(model);
+    const next = prev === undefined ? ratio : prev + 0.3 * (ratio - prev);
+    this.calibrations.set(model, next);
+    this.activeModel = model;
+  }
+
+  /**
+   * The correction factor for a model (1.0 until calibrated). With no model
+   * argument, the most recently calibrated model's factor applies — nearly all
+   * call sites count text for the active session model without naming it.
+   */
+  getCalibration(model?: string): number {
+    const key = model ?? this.activeModel;
+    return (key !== null && this.calibrations.get(key)) || 1;
+  }
+
+  /** Pin which model's calibration applies when countTokens gets no model. */
+  setActiveModel(model: string): void {
+    if (model) this.activeModel = model;
   }
 
   /**
@@ -121,6 +164,12 @@ export class TokenCounter {
   /** Clear the token count cache. */
   clearCache(): void {
     this.cache.clear();
+  }
+
+  /** Forget all learned calibrations (tests; provider-roster resets). */
+  resetCalibrations(): void {
+    this.calibrations.clear();
+    this.activeModel = null;
   }
 }
 

@@ -6,7 +6,12 @@
 
 import { describe, test, expect } from "bun:test";
 import { needsNetwork, withNetworkPreflight } from "../../../packages/tool-registry/src/tools/net-preflight";
+import { setSandboxCapability } from "../../../packages/tool-registry/src/sandbox-capability";
 import type { ToolCallInput, ToolHandler } from "../../../packages/tool-registry/src/types";
+
+// The preflight only fires when deny-net is REAL — model a machine with an
+// OS isolation backend, or every "blocked" expectation would be a false claim.
+setSandboxCapability({ mechanism: "seatbelt", osIsolation: true });
 
 describe("needsNetwork — pattern precision", () => {
   test("catches the well-known network commands", () => {

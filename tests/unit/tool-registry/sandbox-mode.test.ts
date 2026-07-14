@@ -17,6 +17,7 @@ import {
   onSandboxModeChange,
   setSandboxMode,
 } from "../../../packages/tool-registry/src/sandbox-mode";
+import { setSandboxCapability } from "../../../packages/tool-registry/src/sandbox-capability";
 import { ToolRegistry } from "../../../packages/tool-registry/src/registry";
 import { registerBuiltinTools } from "../../../packages/tool-registry/src/tools/builtin";
 import { createRustToolHandler } from "../../../packages/tool-registry/src/tools/rust-bridge";
@@ -28,7 +29,16 @@ import { resolveInitialSandbox } from "../../../packages/shared/src/sandbox-stor
 
 // Global state: every test must leave the default (on) behind, or unrelated
 // suites (net-preflight, permissions-network) would inherit a flipped mode.
-afterEach(() => setSandboxMode("on"));
+// Capability is process-wide too — most tests here model a healthy machine
+// (seatbelt available); the degraded cases set it explicitly.
+function healthyMachine() {
+  setSandboxCapability({ mechanism: "seatbelt", osIsolation: true });
+}
+healthyMachine();
+afterEach(() => {
+  setSandboxMode("on");
+  healthyMachine();
+});
 
 const BASH_SCHEMA: ToolSchema = {
   name: "bash",
