@@ -16,7 +16,7 @@ import type { McpEvent, McpServerInfo } from "./types";
 //     }
 //   }
 
-interface McpServerConfig {
+export interface McpServerConfig {
   /** "stdio" (default when `command` is set) or "http" (default when `url` is set). */
   type?: "stdio" | "http";
   command?: string;
@@ -39,6 +39,9 @@ export interface McpDiscoveryOptions {
   /** Fired after any server's tool set changes (live update / restart). The owner
    *  should reconcile its registry against `getHandlers()`. */
   onToolsChanged?: () => void;
+  /** Built-in servers merged BENEATH mcp.json — a user entry with the same
+   *  name overrides its built-in counterpart (e.g. the `browser` server). */
+  extraServers?: Record<string, McpServerConfig>;
 }
 
 export interface McpServerStatus {
@@ -127,9 +130,15 @@ export class McpDiscovery {
   async discover(): Promise<ToolHandler[]> {
     const { config, error } = await this.loadConfig();
     if (error) this.logger.error(`mcp.json: ${error}`);
-    if (!config?.mcpServers) return [];
+    // Built-ins first, then mcp.json — so a user entry with the same name
+    // (e.g. their own "browser" server) replaces the built-in spec.
+    const servers: Record<string, McpServerConfig> = {
+      ...(this.options.extraServers ?? {}),
+      ...(config?.mcpServers ?? {}),
+    };
+    if (Object.keys(servers).length === 0) return [];
 
-    for (const [name, raw] of Object.entries(config.mcpServers)) {
+    for (const [name, raw] of Object.entries(servers)) {
       const missing = new Set<string>();
       const serverConfig = interpolateEnv(raw, missing);
       if (missing.size > 0) {
