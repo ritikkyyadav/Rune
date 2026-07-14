@@ -5,12 +5,18 @@ import {
   registerBuiltinTools,
   ToolRateLimiter,
   McpDiscovery,
+  BROWSER_SERVER_NAME,
+  buildBrowserServerSpec,
   SkillLoader,
   createSkillTool,
   DashboardManager,
   createDashboardTool,
   isSandboxEnabled,
   setSandboxMode,
+  isOsIsolationAvailable,
+  probeSandboxCapability,
+  setRequireOsIsolation,
+  setLspAutoFeedback,
 } from "@alan/tool-registry";
 import type { DashboardInfo, PluginCatalogEntry, SkillSearchHit } from "@alan/tool-registry";
 import { existsSync } from "node:fs";
@@ -58,8 +64,11 @@ import { AgentLoop, parseInterjection } from "./agent-loop";
 import type { PermissionCheck, AgentTurnEvent } from "./agent-loop";
 import { createCompactTool } from "./compact-tool";
 import { createResearchTool } from "./research-tool";
-import { PermissionBroker, nextPermissionMode } from "./permissions";
+import { PermissionBroker, nextPermissionMode, PERMISSION_MODE_ORDER } from "./permissions";
+import { loadOrgPolicy, policyAllowsModel, type LoadedOrgPolicy } from "./org-policy";
+import { discoverPlugins, type LoadedPlugin } from "./plugins";
 import { StruggleDetector } from "./struggle-detector";
+import { policyForModel, type ReliabilityPolicy } from "./reliability-policy";
 import {
   NotebookStore,
   buildNotebookBlock,
@@ -95,11 +104,12 @@ export type { QuestionHandler, UserQuestion } from "./ask-user";
 import {
   AGENT_DOCTRINE,
   loadProjectMemory,
+  renderBrowserDoctrine,
   renderEnvironmentBlock,
   renderInteractiveDoctrine,
-  renderRepoMap,
   snapshotEnvironment,
 } from "./prompts";
+import { buildRepoMap } from "./repo-map";
 import { CommandVerifier } from "./verifier";
 import type { Verifier } from "./verifier";
 import { autoCommitPaths, undoLastBerneCommit, type UndoResult } from "./git-undo";
@@ -246,6 +256,24 @@ export interface EngineConfig {
    * (`/sandbox off`, `--no-sandbox`). Process-wide — see tool-registry/sandbox-mode.
    */
   sandboxEnabled?: boolean;
+  /**
+   * Refuse sandbox-tier bash instead of silently degrading when no OS
+   * isolation backend exists on this machine (`[sandbox] requireOs = true`).
+   * Default false: degraded runs are allowed but lose auto-approval and are
+   * labelled honestly everywhere.
+   */
+  sandboxRequireOs?: boolean;
+  /**
+   * Pull LSP diagnostics after every successful write/edit on a supported
+   * file and append errors to the tool result (`[lsp] autoFeedback = true`).
+   * Default false.
+   */
+  lspAutoFeedback?: boolean;
+  /**
+   * Field-tunable loop recovery bounds (`[reliability]` in config.toml),
+   * overriding the per-model-family defaults. See reliability-policy.ts.
+   */
+  reliability?: Partial<ReliabilityPolicy>;
   /** Enable Planner-Executor two-tier mode. */
   plannerMode: boolean;
   /** Model routing for planner-executor split. */
@@ -298,9 +326,24 @@ export interface EngineConfig {
   git?: {
     autoCommit?: boolean;
   };
-  /** Context assembly: repoMap injects a compact file-tree map (default on). */
+  /** Context assembly: repoMap injects a bounded, request-aware structural map (default on). */
   context?: {
     repoMap?: boolean;
+  };
+  /**
+   * Agent browser ([browser] in config.toml, /browser on|off at runtime).
+   * When enabled the engine injects a built-in `browser` MCP server — the
+   * official Playwright MCP (bunx @playwright/mcp), headless + isolated,
+   * accessibility-snapshot based — so the model can navigate, read, and
+   * drive real web pages. `enabled` arrives already resolved by the CLI
+   * (flag > env > sidecar > config > off).
+   */
+  browser?: {
+    enabled?: boolean;
+    headless?: boolean;
+    browser?: string;
+    allowedOrigins?: string[];
+    blockedOrigins?: string[];
   };
   /**
    * Interactive dashboards (config.toml `[interactive]`): auto lets the model
@@ -492,6 +535,10 @@ export class Engine {
   private registry: ToolRegistry;
   private sessions: SessionManager;
   private permissions: PermissionBroker;
+  /** Verified org policy (null on unmanaged machines). */
+  private orgPolicy: LoadedOrgPolicy | null = null;
+  /** Plugin bundles, discovered lazily once (null = not yet scanned). */
+  private pluginDiscovery: { plugins: LoadedPlugin[]; errors: string[] } | null = null;
   private config: EngineConfig;
   private permissionHandler?: PermissionHandler;
   private questionHandler?: QuestionHandler;
@@ -541,6 +588,7 @@ export class Engine {
   // create) + the autonomy toggle that shapes the injected doctrine.
   private dashboards = new DashboardManager();
   private interactiveAuto = false;
+  private browserEnabled = false;
   // The flat AgentLoop currently running a chat() turn — the target for
   // mid-turn steering (interject). Null when idle or in planner mode.
   private liveLoop: AgentLoop | null = null;
@@ -551,6 +599,14 @@ export class Engine {
     // Sandbox posture before any tool can run. Process-wide by design (one
     // real engine per process); default is ON — full access is an opt-out.
     setSandboxMode(this.config.sandboxEnabled === false ? "off" : "on");
+    // Capability, not just intent: probe what this machine can actually
+    // isolate with, BEFORE the first permission decision. On the missing-
+    // backend path the probe records "none" and bash loses auto-approval —
+    // silent degradation surfaces as prompts instead of uncontained runs.
+    probeSandboxCapability(this.config.toolsBinaryPath);
+    setRequireOsIsolation(this.config.sandboxRequireOs === true);
+    // Opt-in semantic feedback on the write path ([lsp] autoFeedback).
+    setLspAutoFeedback(this.config.lspAutoFeedback === true);
 
     // Black box first — the gateway build below captures its tap.
     if (this.config.blackbox?.enabled) {
@@ -574,7 +630,10 @@ export class Engine {
           message: `tool args ${info.stage === "gave_up" ? "unsalvageable" : `salvaged via ${info.stage}`}: ${info.snippet}`,
         });
       });
-      this.struggles = new StruggleDetector((i) => this.recorder?.record(i));
+      this.struggles = new StruggleDetector(
+        (i) => this.recorder?.record(i),
+        policyForModel(this.config.model, this.config.reliability),
+      );
     }
 
     // Tactics notebook — rule-based learning, zero model spend. A corrupt
@@ -681,6 +740,7 @@ export class Engine {
     // registry only — sub-agents are read-only investigators and must not
     // pop browser windows.
     this.interactiveAuto = this.config.interactive?.auto === true;
+    this.browserEnabled = this.config.browser?.enabled === true;
     this.registry.register(createDashboardTool(this.dashboards));
 
     // `research`: the /research | /deepresearch pipeline as a model-invocable
@@ -722,10 +782,24 @@ export class Engine {
     // Initialize Session Manager
     this.sessions = new SessionManager(this.config.dbPath);
 
+    // ── Org policy: load + verify BEFORE the broker exists. A managed machine
+    // with a tampered/unsigned policy refuses to start — running unpoliced is
+    // exactly what the signature is there to prevent. No policy = no change.
+    const policyResult = loadOrgPolicy();
+    if (policyResult && !policyResult.ok) {
+      throw new Error(`Refusing to start: ${policyResult.error}`);
+    }
+    this.orgPolicy = policyResult?.ok ? policyResult.loaded : null;
+    if (this.orgPolicy?.policy.forbidPermissionModes?.includes("turing") && this.config.yoloMode) {
+      // A forbidden mode can't be smuggled in via config/flags either.
+      this.config.yoloMode = false;
+    }
+
     // Initialize Permission Broker
     this.permissions = new PermissionBroker(this.config.yoloMode, {
       workspaceRoot: this.config.workspaceRoot,
       trustWorkspace: this.config.trustWorkspace,
+      orgPolicy: this.orgPolicy?.policy ?? null,
     });
 
     // Initialize Context Engine — always on, manages token budgets. Seed the
@@ -819,6 +893,29 @@ export class Engine {
   }
 
   /**
+   * Discover plugin bundles (.alan/plugins/<name>/plugin.json) once per
+   * engine. Each bundle feeds the four extension loaders: skills (auto,
+   * attributed), hooks (merged after user hooks), MCP servers (before user
+   * mcp.json so user entries still override), commands (tagged, user wins).
+   * Refused plugins are warned once with the loader's reason.
+   */
+  private getPlugins(): LoadedPlugin[] {
+    if (this.pluginDiscovery === null) {
+      this.pluginDiscovery = discoverPlugins(this.config.workspaceRoot);
+      for (const error of this.pluginDiscovery.errors) {
+        console.warn(`[plugins] ${error}`);
+      }
+    }
+    return this.pluginDiscovery.plugins;
+  }
+
+  /** Plugin bundles in force (backs `/plugins` and status attribution). */
+  listPlugins(): { plugins: LoadedPlugin[]; errors: string[] } {
+    this.getPlugins();
+    return this.pluginDiscovery ?? { plugins: [], errors: [] };
+  }
+
+  /**
    * Lazily load user-defined hooks from `<workspace>/.alan/hooks.json` once per
    * engine. Missing file → no-op runner. Malformed file → warn once, run without.
    */
@@ -827,7 +924,8 @@ export class Engine {
     this.hooksLoaded = true;
     if (this.config.enableHooks === false) return;
     try {
-      this.hookRunner = await HookRunner.load(this.config.workspaceRoot);
+      const extraHookFiles = this.getPlugins().flatMap((p) => p.hookFiles);
+      this.hookRunner = await HookRunner.load(this.config.workspaceRoot, { extraHookFiles });
     } catch (err) {
       console.warn(`[hooks] failed to load: ${err instanceof Error ? err.message : String(err)}`);
       this.hookRunner = null;
@@ -846,8 +944,22 @@ export class Engine {
     if (this.config.enableMcp === false) return;
     const logger = createLogger("mcp");
     try {
+      // Plugin servers first, then the built-in browser — and the user's own
+      // mcp.json still overrides ANY of them by name (discovery spreads its
+      // config last). Cross-plugin name conflicts were refused at discovery.
+      const pluginServers: Record<string, unknown> = {};
+      for (const plugin of this.getPlugins()) {
+        Object.assign(pluginServers, plugin.mcpServers);
+      }
+      const extraServers = {
+        ...(pluginServers as Record<string, never>),
+        ...(this.browserEnabled
+          ? { [BROWSER_SERVER_NAME]: buildBrowserServerSpec(this.config.browser) }
+          : {}),
+      };
       this.mcpDiscovery = new McpDiscovery(this.config.workspaceRoot, {
         logger,
+        extraServers: Object.keys(extraServers).length > 0 ? extraServers : undefined,
         // Live tool-list changes (or a server restart) reconcile the registry so
         // the model always sees the current tool set without a session restart.
         onToolsChanged: () => this.reconcileMcpTools(),
@@ -932,6 +1044,11 @@ export class Engine {
     }
     const userSkills = join(this.config.workspaceRoot, ".alan", "skills");
     if (existsSync(userSkills)) roots.push(userSkills);
+    // Plugin bundles: <plugins>/<name>/skills/<skill>/SKILL.md — the loader's
+    // path-based attribution names each skill after its plugin directory.
+    if (this.getPlugins().some((p) => p.hasSkills)) {
+      roots.push(join(this.config.workspaceRoot, ".alan", "plugins"));
+    }
     return roots;
   }
 
@@ -1487,18 +1604,29 @@ export class Engine {
    * the broker and the mirrored config flags so getStatus()/posture stay coherent.
    * Takes effect on the next tool call — the permission handler stays registered in
    * every mode; the broker simply short-circuits to "allowed" under turing.
+   * Under an org policy the broker may refuse the mode; the refusal reason is
+   * returned so the UI can say why the cycle skipped.
    */
-  setPermissionMode(mode: PermissionMode): void {
-    this.permissions.setMode(mode);
+  setPermissionMode(mode: PermissionMode): { ok: boolean; reason?: string } {
+    const result = this.permissions.setMode(mode);
+    if (!result.ok) return result;
     this.config.yoloMode = mode === "turing";
     this.config.trustWorkspace = mode === "auto";
+    return result;
   }
 
-  /** Advance to the next mode in the cycle and return it. */
+  /**
+   * Advance to the next mode in the cycle and return it. Modes the org policy
+   * forbids are skipped (the cycle still terminates — "confirm" is never
+   * forbidden by construction of the broker check order).
+   */
   cyclePermissionMode(): PermissionMode {
-    const next = nextPermissionMode(this.permissions.getMode());
-    this.setPermissionMode(next);
-    return next;
+    let mode = this.permissions.getMode();
+    for (let i = 0; i < PERMISSION_MODE_ORDER.length; i++) {
+      mode = nextPermissionMode(mode);
+      if (this.setPermissionMode(mode).ok) return mode;
+    }
+    return this.permissions.getMode();
   }
 
   // ─── Sandbox mode (/sandbox on|off) ───
@@ -1518,6 +1646,36 @@ export class Engine {
     setSandboxMode(enabled ? "on" : "off");
     this.config.sandboxEnabled = enabled;
     this.envBlocks.clear();
+  }
+
+  // ─── Browser mode (/browser on|off) ───
+
+  /** Whether the built-in Playwright-MCP browser server is enabled. */
+  isBrowserEnabled(): boolean {
+    return this.browserEnabled;
+  }
+
+  /**
+   * Flip the agent browser live. When MCP has already been discovered this
+   * restarts discovery so the built-in `browser` server starts or stops and
+   * the tool registry reconciles; before first discovery, flipping the flag
+   * is enough — the lazy MCP load picks it up. The next turn's system prompt
+   * states the new posture (browser doctrine).
+   */
+  async setBrowserEnabled(enabled: boolean): Promise<void> {
+    if (this.browserEnabled === enabled) return;
+    this.browserEnabled = enabled;
+    if (!this.mcpLoaded) return;
+    await this.mcpDiscovery?.stopAll().catch(() => {});
+    // Drop every registered MCP tool before re-discovery: reconcileMcpTools
+    // can only diff against a live discovery, and a failed restart must not
+    // leave phantom browser tools behind.
+    for (const schema of this.registry.list()) {
+      if (schema.name.startsWith("mcp_")) this.registry.unregister(schema.name);
+    }
+    this.mcpDiscovery = null;
+    this.mcpLoaded = false;
+    await this.ensureMcpServers();
   }
 
   // ─── Research Mode (/research) ───
@@ -1643,6 +1801,20 @@ export class Engine {
       return;
     }
 
+    // Org policy model/provider allowlist: enforced per turn (model switches
+    // mid-session must not slip past a start-time-only check).
+    if (this.orgPolicy) {
+      const modelDenial = policyAllowsModel(
+        this.orgPolicy.policy,
+        session.provider ?? this.config.provider,
+        session.model ?? this.config.model,
+      );
+      if (modelDenial) {
+        yield { type: "error", error: modelDenial, recoverable: false };
+        return;
+      }
+    }
+
     const runId = `${sessionId}-${Date.now()}`;
 
     // Load prior conversation history
@@ -1693,19 +1865,25 @@ export class Engine {
       envBlock = renderEnvironmentBlock(
         snapshotEnvironment(this.config.workspaceRoot, session.model, this.config.provider),
       );
-      // Repo map rides in the same per-session snapshot: cache-stable and
-      // computed exactly once. Off via [context] repoMap = false.
-      if (this.config.context?.repoMap !== false) {
-        const map = renderRepoMap(this.config.workspaceRoot);
-        if (map) envBlock = `${envBlock}\n\n${map}`;
-      }
       this.envBlocks.set(sessionId, envBlock);
     }
+    // The map is intentionally per request rather than per session: ranking is
+    // query-aware. It remains outside the cache-sensitive system prompt and is
+    // admitted or evicted by ContextEngine with the rest of retrieved context.
+    const repoMapChunks =
+      this.config.context?.repoMap === false
+        ? []
+        : await buildRepoMap({
+            workspaceRoot: this.config.workspaceRoot,
+            binaryPath: this.config.toolsBinaryPath,
+            query: userMessage,
+          }).then((map) => (map ? [map] : []));
     const projectMemory = loadProjectMemory(this.config.workspaceRoot);
     const notebookBlock = this.buildNotebookInjection(sessionId);
     const systemPrompt = [
       SYSTEM_PROMPT,
       renderInteractiveDoctrine(this.interactiveAuto),
+      renderBrowserDoctrine(this.browserEnabled),
       envBlock,
       projectMemory.block,
       this.buildSystemMemoryBlock(),
@@ -1756,6 +1934,7 @@ export class Engine {
           systemPrompt,
           priorMessages,
           contextEngine: this.contextEngine,
+          retrievedChunks: repoMapChunks,
           verifier: this.verifier ?? undefined,
           nativeGrounding: this.config.search?.nativeGrounding ?? true,
         },
@@ -1764,6 +1943,9 @@ export class Engine {
         permCheck,
       );
     } else {
+      // Recovery bounds resolved per model family + [reliability] overrides —
+      // computed at run start so a /model switch takes effect next run.
+      const reliability = policyForModel(session.model, this.config.reliability);
       const loop = new AgentLoop(
         {
           model: session.model,
@@ -1773,9 +1955,17 @@ export class Engine {
           systemPrompt,
           priorMessages,
           contextEngine: this.contextEngine,
+          retrievedChunks: repoMapChunks,
           verifier: this.verifier ?? undefined,
           nativeGrounding: this.config.search?.nativeGrounding ?? true,
           onIncident: this.recorder ? (i: IncidentInput) => this.recorder?.record(i) : undefined,
+          maxConsecutiveErrors: reliability.maxConsecutiveErrors,
+          maxStuckNudges: reliability.maxStuckNudges,
+          maxRateWaits: reliability.maxRateWaits,
+          maxOverflowCompactions: reliability.maxOverflowCompactions,
+          maxEmptyCompletionRetries: reliability.maxEmptyCompletionRetries,
+          maxTruncationRetries: reliability.maxTruncationRetries,
+          maxVerifyAttempts: reliability.maxVerifyAttempts,
         },
         this.gateway,
         this.registry,
@@ -2372,6 +2562,7 @@ export class Engine {
     trustWorkspace: boolean;
     permissionMode: PermissionMode;
     sandboxEnabled: boolean;
+    sandboxDegraded: boolean;
     registeredProviders: ProviderName[];
     cost: number;
     sessionId?: string;
@@ -2379,6 +2570,7 @@ export class Engine {
     securityPosture: string;
     mcp: { servers: number; tools: number };
     skills: number;
+    orgPolicy: { org?: string; fingerprint: string; source: string } | null;
   } {
     return {
       model: this.config.model,
@@ -2389,6 +2581,7 @@ export class Engine {
       trustWorkspace: this.permissions.isTrustWorkspace(),
       permissionMode: this.permissions.getMode(),
       sandboxEnabled: isSandboxEnabled(),
+      sandboxDegraded: isSandboxEnabled() && !isOsIsolationAvailable(),
       registeredProviders: this.getRegisteredProviders(),
       cost: this.getCost(),
       sessionId,
@@ -2399,6 +2592,13 @@ export class Engine {
         tools: this.getMcpStatus().reduce((n, s) => n + s.toolCount, 0),
       },
       skills: this.getSkillCount(),
+      orgPolicy: this.orgPolicy
+        ? {
+            org: this.orgPolicy.policy.org,
+            fingerprint: this.orgPolicy.fingerprint,
+            source: this.orgPolicy.source,
+          }
+        : null,
     };
   }
 
