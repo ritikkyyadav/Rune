@@ -22,7 +22,8 @@
 // ──────────────────────────────────────────────────────────────────────────
 
 import * as readline from "node:readline";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, unlinkSync } from "node:fs";
+import { dirname } from "node:path";
 
 import {
   Engine,
@@ -64,10 +65,36 @@ console.debug = logErr as typeof console.debug;
 console.warn = logErr as typeof console.warn;
 // console.error already goes to stderr — leave it.
 
+// ─── Transport seam ───
+// Default (stdio): frames go to stdout — the desktop sidecar contract, byte-
+// identical to before. `--socket <path>`: the SAME frames serve over a unix
+// domain socket instead; responses go to the requesting client, stream events
+// broadcast to every connected client, and — the point of the mode — the
+// engine keeps running when the last client disconnects. Reattaching clients
+// recover missed turns from the session store (resume/replay), so nothing is
+// lost while nobody is watching.
+
+const socketArgIdx = process.argv.indexOf("--socket");
+const SOCKET_PATH = socketArgIdx !== -1 ? process.argv[socketArgIdx + 1] : null;
+
+type SocketLike = { write(data: string): unknown };
+const connectedClients = new Set<SocketLike>();
+
 function send(obj: unknown): void {
   rawWrite(JSON.stringify(obj) + "\n");
 }
 function emitStream(stream: string, payload: unknown): void {
+  if (SOCKET_PATH) {
+    const frame = JSON.stringify({ stream, payload }) + "\n";
+    for (const client of connectedClients) {
+      try {
+        client.write(frame);
+      } catch {
+        connectedClients.delete(client);
+      }
+    }
+    return;
+  }
   send({ stream, payload });
 }
 
@@ -244,19 +271,30 @@ engine.setPermissionHandler(permissionHandler);
 
 let activeChat = false;
 
-async function runChat(id: number, frontendSessionId: string, message: string): Promise<void> {
-  // Ack immediately; the turn streams via chat_event and ends with turn_complete.
-  send({ id, ok: true, result: null });
+async function runChat(
+  id: number,
+  frontendSessionId: string,
+  message: string,
+  respond: (obj: unknown) => void,
+): Promise<void> {
   const sid = resolveSession(frontendSessionId);
+  // Ack immediately with the resolved session id — a detaching client needs
+  // it to reattach later. The turn streams via chat_event and ends with
+  // turn_complete; in socket mode events are tagged with the session so
+  // attach clients can filter (the stdio/desktop shape is unchanged).
+  respond({ id, ok: true, result: { sessionId: sid } });
   activeChat = true;
   let sawTurnComplete = false;
+  const emitChat = (event: unknown): void => {
+    emitStream("chat_event", SOCKET_PATH ? { sessionId: sid, event } : event);
+  };
   try {
     for await (const event of engine.chat(sid, message)) {
       if (event.type === "turn_complete") sawTurnComplete = true;
-      emitStream("chat_event", event);
+      emitChat(event);
     }
   } catch (err) {
-    emitStream("chat_event", {
+    emitChat({
       type: "error",
       error: err instanceof Error ? err.message : String(err),
       recoverable: false,
@@ -265,7 +303,7 @@ async function runChat(id: number, frontendSessionId: string, message: string): 
     activeChat = false;
     // Guarantee the UI never hangs in "processing".
     if (!sawTurnComplete) {
-      emitStream("chat_event", { type: "turn_complete", stopReason: "end", totalTurns: 1 });
+      emitChat({ type: "turn_complete", stopReason: "end", totalTurns: 1 });
     }
     emitStream("engine_status", mappedStatus(engine, sid));
   }
@@ -448,13 +486,9 @@ async function dispatch(cmd: string, args: Record<string, unknown>): Promise<unk
   }
 }
 
-// ─── stdin read loop ───
+// ─── Request handling (shared by stdio and socket transports) ───
 
-const rl = readline.createInterface({ input: process.stdin });
-// Access the EventEmitter surface explicitly — Bun's readline typings don't
-// expose `.on` on Interface, but it is an EventEmitter at runtime.
-const rlEvents = rl as unknown as NodeJS.EventEmitter;
-rlEvents.on("line", (line: string) => {
+function handleRequestLine(line: string, respond: (obj: unknown) => void): void {
   const trimmed = line.trim();
   if (!trimmed) return;
   let req: { id?: number; cmd?: string; args?: Record<string, unknown> };
@@ -473,32 +507,118 @@ rlEvents.on("line", (line: string) => {
   // chat_start owns its own response + streaming lifecycle.
   if (cmd === "chat_start") {
     if (activeChat) {
-      send({ id, ok: false, error: "a turn is already in progress" });
+      respond({ id, ok: false, error: "a turn is already in progress" });
       return;
     }
-    void runChat(id, args.sessionId as string, String(args.message ?? ""));
+    void runChat(id, args.sessionId as string, String(args.message ?? ""), respond);
     return;
   }
 
   void dispatch(cmd, args)
-    .then((result) => send({ id, ok: true, result }))
+    .then((result) => respond({ id, ok: true, result }))
     .catch((err) =>
-      send({ id, ok: false, error: err instanceof Error ? err.message : String(err) }),
+      respond({ id, ok: false, error: err instanceof Error ? err.message : String(err) }),
     );
-});
+}
 
-rlEvents.on("close", () => {
+function shutdown(code: number): void {
   try {
     engine.close();
   } catch {
     /* ignore */
   }
-  process.exit(0);
-});
+  if (SOCKET_PATH) {
+    try {
+      unlinkSync(SOCKET_PATH);
+    } catch {
+      /* already gone */
+    }
+  }
+  process.exit(code);
+}
 
-process.on("SIGTERM", () => process.exit(0));
-process.on("SIGINT", () => process.exit(0));
+process.on("SIGTERM", () => shutdown(0));
+process.on("SIGINT", () => shutdown(0));
 
-// Announce readiness with the initial status so the bridge/UI can render immediately.
-emitStream("ready", mappedStatus(engine));
+if (SOCKET_PATH) {
+  // ─── Socket mode: the host outlives its clients ───
+  // A stale socket file from a crashed host would block startup forever, so
+  // probe it: if nothing answers, remove and claim; if a live host answers,
+  // refuse — two hosts on one socket is a corruption factory.
+  mkdirSync(dirname(SOCKET_PATH), { recursive: true });
+  if (existsSync(SOCKET_PATH)) {
+    const live = await new Promise<boolean>((resolveProbe) => {
+      Bun.connect({
+        unix: SOCKET_PATH,
+        socket: {
+          open(s) {
+            resolveProbe(true);
+            s.end();
+          },
+          data() {},
+          error() {
+            resolveProbe(false);
+          },
+          connectError() {
+            resolveProbe(false);
+          },
+        },
+      }).catch(() => resolveProbe(false));
+    });
+    if (live) {
+      logErr(`engine-host: a live host already owns ${SOCKET_PATH} — refusing to start`);
+      process.exit(1);
+    }
+    unlinkSync(SOCKET_PATH);
+  }
+
+  // Per-connection line buffering: unix sockets deliver arbitrary chunks.
+  const buffers = new Map<SocketLike, string>();
+  Bun.listen({
+    unix: SOCKET_PATH,
+    socket: {
+      open(socket) {
+        connectedClients.add(socket);
+        buffers.set(socket, "");
+        // Same readiness contract as stdio, scoped to the new client.
+        socket.write(JSON.stringify({ stream: "ready", payload: mappedStatus(engine) }) + "\n");
+      },
+      data(socket, chunk) {
+        const buffered = (buffers.get(socket) ?? "") + chunk.toString();
+        const lines = buffered.split("\n");
+        buffers.set(socket, lines.pop() ?? "");
+        for (const line of lines) {
+          handleRequestLine(line, (obj) => {
+            try {
+              socket.write(JSON.stringify(obj) + "\n");
+            } catch {
+              /* client vanished mid-response — the run continues regardless */
+            }
+          });
+        }
+      },
+      close(socket) {
+        // THE point of socket mode: dropping a client never stops the engine.
+        connectedClients.delete(socket);
+        buffers.delete(socket);
+      },
+      error(socket) {
+        connectedClients.delete(socket);
+        buffers.delete(socket);
+      },
+    },
+  });
+  logErr(`engine-host: listening on ${SOCKET_PATH}`);
+} else {
+  // ─── stdio mode (desktop sidecar) — unchanged contract ───
+  const rl = readline.createInterface({ input: process.stdin });
+  // Access the EventEmitter surface explicitly — Bun's readline typings don't
+  // expose `.on` on Interface, but it is an EventEmitter at runtime.
+  const rlEvents = rl as unknown as NodeJS.EventEmitter;
+  rlEvents.on("line", (line: string) => handleRequestLine(line, send));
+  rlEvents.on("close", () => shutdown(0));
+
+  // Announce readiness with the initial status so the bridge/UI can render immediately.
+  emitStream("ready", mappedStatus(engine));
+}
 logErr("engine-host: ready");
