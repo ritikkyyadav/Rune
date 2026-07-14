@@ -42,6 +42,8 @@ export interface SlashCommand {
   description: string;
   /** Optional usage hint, from frontmatter `argument-hint` / `argumentHint`. */
   argumentHint?: string;
+  /** Where the command came from: "user" (.alan/commands) or a plugin name. */
+  source?: string;
   /**
    * Expand the prompt template with the given argument string. Every
    * `$ARGUMENTS` occurrence (and the `{{args}}` alias) is replaced with `args`.
@@ -53,22 +55,55 @@ export interface SlashCommand {
 // ─── Loading ───
 
 /**
- * Load custom slash commands from `<workspaceRoot>/.alan/commands/*.md`.
+ * Load custom slash commands from `<workspaceRoot>/.alan/commands/*.md`, plus
+ * any plugin command directories (each tagged with its plugin's name).
  *
  * - Missing `.alan/commands` directory -> returns [] (never throws).
  * - A `.md` file that cannot be read    -> skipped (logged via console.warn).
+ * - Name conflicts: user commands win over plugins; a plugin command whose
+ *   name is already taken is REFUSED with a warning (never silently shadowed).
  *
  * Returned commands are sorted by name for stable, deterministic ordering.
  */
-export async function loadCommands(workspaceRoot: string): Promise<SlashCommand[]> {
-  const dir = join(workspaceRoot, ".alan", "commands");
+export async function loadCommands(
+  workspaceRoot: string,
+  extraDirs: Array<{ dir: string; source: string }> = [],
+): Promise<SlashCommand[]> {
+  const commands = await loadCommandDir(join(workspaceRoot, ".alan", "commands"), "user", true);
 
+  const taken = new Map(commands.map((c) => [c.name, c.source ?? "user"]));
+  for (const { dir, source } of extraDirs) {
+    for (const cmd of await loadCommandDir(dir, source, false)) {
+      const owner = taken.get(cmd.name);
+      if (owner) {
+        console.warn(
+          `[commands] plugin "${source}": /${cmd.name} conflicts with ${owner === "user" ? "a user command" : `plugin "${owner}"`} — not loaded`,
+        );
+        continue;
+      }
+      taken.set(cmd.name, source);
+      commands.push(cmd);
+    }
+  }
+
+  return commands.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+async function loadCommandDir(
+  dir: string,
+  source: string,
+  isDefaultDir: boolean,
+): Promise<SlashCommand[]> {
   let entries: string[];
   try {
     entries = await readdir(dir);
   } catch (err) {
     // Missing directory is the common, expected case — no commands configured.
-    if (isNotFound(err)) return [];
+    if (isNotFound(err) && isDefaultDir) return [];
+    if (isNotFound(err)) {
+      console.warn(`[commands] ${source}: commands dir ${dir} does not exist`);
+      return [];
+    }
     // Any other read failure (e.g. permissions) is also non-fatal: a workspace
     // with no usable commands dir simply has no commands.
     console.warn(
@@ -92,10 +127,12 @@ export async function loadCommands(workspaceRoot: string): Promise<SlashCommand[
       );
       continue;
     }
-    commands.push(buildCommand(file, text));
+    const cmd = buildCommand(file, text);
+    cmd.source = source;
+    commands.push(cmd);
   }
 
-  return commands.sort((a, b) => a.name.localeCompare(b.name));
+  return commands;
 }
 
 /** Find a command by name, case-insensitively. */
