@@ -1,6 +1,6 @@
 {
   "name": "@alan/eval",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "main": "runner.ts",
   "scripts": {
@@ -10,6 +10,7 @@
     "@alan/orchestrator": "workspace:*",
     "@alan/llm-gateway": "workspace:*",
     "@alan/shared": "workspace:*",
+    "@alan/telemetry": "workspace:*",
     "@alan/tool-registry": "workspace:*"
   },
   "devDependencies": {

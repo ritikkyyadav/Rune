@@ -10,6 +10,7 @@ import { FIX_FAILING_TEST_TASKS } from "./tasks-fix-failing-test";
 import { MULTI_FILE_REFACTOR_TASKS } from "./tasks-multi-file-refactor";
 import { NEW_FEATURE_TASKS } from "./tasks-new-feature";
 import { TOOL_DISCIPLINE_TASKS } from "./tasks-tool-discipline";
+import { FROM_INCIDENTS_TASKS } from "./tasks-from-incidents";
 
 // Each task scripts the LLM behavior deterministically and verifies a
 // concrete invariant after execution. No real model calls.
@@ -123,7 +124,10 @@ const multiTurnMemory: EvalTask = {
       // Live model: the second turn must resolve "the auth file" to auth.ts,
       // which only works if prior-turn context was replayed. Judge by content.
       if (!/auth\.ts/i.test(finalText)) {
-        return { pass: false, reason: `multi-turn answer did not reference auth.ts: ${finalText.slice(0, 200)}` };
+        return {
+          pass: false,
+          reason: `multi-turn answer did not reference auth.ts: ${finalText.slice(0, 200)}`,
+        };
       }
       const audit = engine.verifyAuditChain();
       if (!audit.ok) return { pass: false, reason: "audit chain broken" };
@@ -346,4 +350,5 @@ export const ALL_TASKS: EvalTask[] = [
   ...MULTI_FILE_REFACTOR_TASKS,
   ...NEW_FEATURE_TASKS,
   ...TOOL_DISCIPLINE_TASKS,
+  ...FROM_INCIDENTS_TASKS,
 ];

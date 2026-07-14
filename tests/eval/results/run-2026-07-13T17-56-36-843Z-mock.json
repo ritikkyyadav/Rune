@@ -1,0 +1,270 @@
+{
+  "timestamp": "2026-07-13T17:56:36.843Z",
+  "mode": "mock",
+  "passRate": 1,
+  "cleanPassRate": 1,
+  "passed": 33,
+  "measured": 33,
+  "throttled": 0,
+  "total": 33,
+  "totalCost": 0,
+  "avgCostPerTask": 0,
+  "avgDurationMs": 71.39393939393939,
+  "avgTurns": 0.7272727272727273,
+  "categories": [
+    {
+      "category": "core",
+      "passed": 7,
+      "total": 7,
+      "throttled": 0,
+      "passRate": 1,
+      "cleanPassRate": 1,
+      "avgCost": 0
+    },
+    {
+      "category": "comprehension",
+      "passed": 6,
+      "total": 6,
+      "throttled": 0,
+      "passRate": 1,
+      "cleanPassRate": 1,
+      "avgCost": 0
+    },
+    {
+      "category": "fix-failing-test",
+      "passed": 5,
+      "total": 5,
+      "throttled": 0,
+      "passRate": 1,
+      "cleanPassRate": 1,
+      "avgCost": 0
+    },
+    {
+      "category": "multi-file-refactor",
+      "passed": 4,
+      "total": 4,
+      "throttled": 0,
+      "passRate": 1,
+      "cleanPassRate": 1,
+      "avgCost": 0
+    },
+    {
+      "category": "new-feature",
+      "passed": 5,
+      "total": 5,
+      "throttled": 0,
+      "passRate": 1,
+      "cleanPassRate": 1,
+      "avgCost": 0
+    },
+    {
+      "category": "tool-discipline",
+      "passed": 6,
+      "total": 6,
+      "throttled": 0,
+      "passRate": 1,
+      "cleanPassRate": 1,
+      "avgCost": 0
+    }
+  ],
+  "tasks": [
+    {
+      "name": "read_and_grep",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "edit_with_hash",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "multi_turn_memory",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "permission_denied",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "audit_chain_integrity",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "infinite_loop_halts",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "tamper_detection",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "comprehension_find_auth",
+      "category": "comprehension",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "comprehension_find_constant",
+      "category": "comprehension",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "comprehension_find_entry",
+      "category": "comprehension",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "comprehension_find_type",
+      "category": "comprehension",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "comprehension_find_dead_code",
+      "category": "comprehension",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "comprehension_trace_writer",
+      "category": "comprehension",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "fix_off_by_one",
+      "category": "fix-failing-test",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "fix_wrong_operator",
+      "category": "fix-failing-test",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "fix_missing_return",
+      "category": "fix-failing-test",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "fix_empty_reduce",
+      "category": "fix-failing-test",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "fix_wrong_default",
+      "category": "fix-failing-test",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "refactor_rename_function",
+      "category": "multi-file-refactor",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "refactor_rename_class",
+      "category": "multi-file-refactor",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "refactor_rename_constant",
+      "category": "multi-file-refactor",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "refactor_extract_constant",
+      "category": "multi-file-refactor",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "new_feature_validation_util",
+      "category": "new-feature",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "new_feature_logger_module",
+      "category": "new-feature",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "new_feature_config_parser",
+      "category": "new-feature",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "new_feature_rate_limiter",
+      "category": "new-feature",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "new_feature_env_override",
+      "category": "new-feature",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "tool_discipline_read_before_edit",
+      "category": "tool-discipline",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "tool_discipline_hash_used",
+      "category": "tool-discipline",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "tool_discipline_no_blind_write",
+      "category": "tool-discipline",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "tool_discipline_grep_before_edit",
+      "category": "tool-discipline",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "tool_discipline_no_read_thrash",
+      "category": "tool-discipline",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "tool_discipline_parallel_reads",
+      "category": "tool-discipline",
+      "pass": true,
+      "throttled": false
+    }
+  ]
+}
