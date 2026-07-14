@@ -20,7 +20,9 @@ interface AuditRow {
 function getAuditRows(dbPath: string): AuditRow[] {
   const db = new Database(dbPath, { readonly: true });
   const rows = db
-    .prepare("SELECT id, tool_name, args_hash, result_hash, duration_ms, exit_code FROM audit_log ORDER BY id ASC")
+    .prepare(
+      "SELECT id, tool_name, args_hash, result_hash, duration_ms, exit_code FROM audit_log ORDER BY id ASC",
+    )
     .all() as AuditRow[];
   db.close();
   return rows;
@@ -31,8 +33,7 @@ function getAuditRows(dbPath: string): AuditRow[] {
 const readBeforeEdit: EvalTask = {
   name: "tool_discipline_read_before_edit",
   category: "tool-discipline",
-  description:
-    "Agent must call read_file before edit_file. Verify the audit log shows read first.",
+  description: "Agent must call read_file before edit_file. Verify the audit log shows read first.",
   setup: async ({ workspace }) => {
     await writeFile(
       join(workspace, "config.json"),
@@ -175,7 +176,9 @@ const noBlindWrite: EvalTask = {
     },
     { text: "Created new-module.ts." },
   ],
-  prompts: ["Add a new-module.ts file with a NEW export, but first check what files already exist."],
+  prompts: [
+    "Add a new-module.ts file with a NEW export, but first check what files already exist.",
+  ],
   verify: async ({ dbPath, workspace, engine }) => {
     const rows = getAuditRows(dbPath);
 
@@ -211,10 +214,7 @@ const grepBeforeEdit: EvalTask = {
   description:
     "When renaming a symbol, agent should grep first to locate all sites, then edit each.",
   setup: async ({ workspace }) => {
-    await writeFile(
-      join(workspace, "utils.ts"),
-      `export function oldName() { return 42; }\n`,
-    );
+    await writeFile(join(workspace, "utils.ts"), `export function oldName() { return 42; }\n`);
     await writeFile(
       join(workspace, "index.ts"),
       `import { oldName } from './utils';\nconsole.log(oldName());\n`,
@@ -291,9 +291,92 @@ const grepBeforeEdit: EvalTask = {
   },
 };
 
+// ─── Tool-discipline Task 5: no read-thrash (same file at most twice) ───
+
+const noReadThrash: EvalTask = {
+  name: "tool_discipline_no_read_thrash",
+  category: "tool-discipline",
+  description:
+    "Answering two questions about one file must not re-read it over and over — the struggle detector treats 3+ identical reads as thrash.",
+  setup: async ({ workspace }) => {
+    await writeFile(
+      join(workspace, "inventory.ts"),
+      `export const WAREHOUSES = ["north", "south"];
+export const REORDER_THRESHOLD = 12;
+`,
+    );
+  },
+  script: [
+    {
+      text: "Reading inventory.ts once — it answers both questions.",
+      toolCalls: [{ name: "read_file", args: { path: "inventory.ts" } }],
+    },
+    {
+      text: "There are 2 warehouses (north, south) and the reorder threshold is 12.",
+    },
+  ],
+  prompts: ["How many warehouses are configured, and what is the reorder threshold?"],
+  verify: async ({ dbPath, engine }) => {
+    const rows = getAuditRows(dbPath);
+    const reads = rows.filter((r) => r.tool_name === "read_file");
+    // args_hash is stable per identical args — identical hashes = identical reads.
+    const byArgs = new Map<string, number>();
+    for (const r of reads) byArgs.set(r.args_hash, (byArgs.get(r.args_hash) ?? 0) + 1);
+    const worst = Math.max(0, ...byArgs.values());
+    if (worst >= 3) {
+      return { pass: false, reason: `same read_file args issued ${worst}× (read thrash)` };
+    }
+    const audit = engine.verifyAuditChain();
+    if (!audit.ok) return { pass: false, reason: "audit chain broken" };
+    return { pass: true };
+  },
+};
+
+// ─── Tool-discipline Task 6: independent reads batched in one response ───
+
+const parallelReadsBatch: EvalTask = {
+  name: "tool_discipline_parallel_reads",
+  category: "tool-discipline",
+  description:
+    "Two independent file reads issued in ONE model response must both execute (pins the parallel tool-execution path).",
+  setup: async ({ workspace }) => {
+    await writeFile(join(workspace, "left.ts"), `export const LEFT = 1;\n`);
+    await writeFile(join(workspace, "right.ts"), `export const RIGHT = 2;\n`);
+  },
+  script: [
+    {
+      text: "Reading both files in parallel — they are independent.",
+      toolCalls: [
+        { name: "read_file", args: { path: "left.ts" } },
+        { name: "read_file", args: { path: "right.ts" } },
+      ],
+    },
+    { text: "LEFT is 1 and RIGHT is 2." },
+  ],
+  prompts: ["Compare the values exported by left.ts and right.ts."],
+  verify: async ({ dbPath, engine, real, finalText }) => {
+    const rows = getAuditRows(dbPath);
+    const reads = rows.filter((r) => r.tool_name === "read_file");
+    if (reads.length < 2) {
+      return {
+        pass: false,
+        reason: `expected both parallel reads to execute; audit shows ${reads.length}`,
+      };
+    }
+    if (real && !(/\b1\b/.test(finalText) && /\b2\b/.test(finalText))) {
+      return { pass: false, reason: `answer missing the two values: ${finalText.slice(0, 200)}` };
+    }
+    const audit = engine.verifyAuditChain();
+    if (!audit.ok) return { pass: false, reason: "audit chain broken" };
+    return { pass: true };
+  },
+};
+
 export const TOOL_DISCIPLINE_TASKS: EvalTask[] = [
   readBeforeEdit,
   hashUsedOnEdit,
   noBlindWrite,
   grepBeforeEdit,
+  noReadThrash,
+  parallelReadsBatch,
 ];

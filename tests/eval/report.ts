@@ -50,7 +50,14 @@ export interface ModelSweepResult {
   report: SuiteReport;
 }
 
-const BASELINE_PATH = join(__dirname, "baseline.json");
+/**
+ * Baselines are per-mode: mock runs are the deterministic harness-regression
+ * detector, real runs are the capability anchor. One shared file meant a local
+ * mock run silently clobbered the real-model baseline (and vice versa).
+ */
+export function baselinePathFor(mode: "mock" | "real"): string {
+  return join(__dirname, mode === "mock" ? "baseline-mock.json" : "baseline.json");
+}
 const RESULTS_DIR = join(__dirname, "results");
 
 export function buildReport(
@@ -121,15 +128,21 @@ export function buildReport(
 
 export function printReport(report: SuiteReport): void {
   const pct = (report.passRate * 100).toFixed(1);
-  const modeLabel = report.mode === "real"
-    ? ` · ${report.provider ?? "?"}/${report.model ?? "?"}`
-    : " · mock LLM provider";
+  const modeLabel =
+    report.mode === "real"
+      ? ` · ${report.provider ?? "?"}/${report.model ?? "?"}`
+      : " · mock LLM provider";
 
   console.log("\n  \x1b[1mAlan eval suite\x1b[0m" + modeLabel);
   console.log(`  \x1b[2m${report.total} tasks\x1b[0m\n`);
 
   // Per-category breakdown
-  const catHeader = "  Category".padEnd(32) + "Pass".padEnd(12) + "AvgMs".padEnd(12) + "AvgTurns".padEnd(12) + "AvgCost";
+  const catHeader =
+    "  Category".padEnd(32) +
+    "Pass".padEnd(12) +
+    "AvgMs".padEnd(12) +
+    "AvgTurns".padEnd(12) +
+    "AvgCost";
   console.log(`\x1b[2m${catHeader}\x1b[0m`);
   console.log(`\x1b[2m${"─".repeat(80)}\x1b[0m`);
 
@@ -138,7 +151,14 @@ export function printReport(report: SuiteReport): void {
     // rate-limited category doesn't read as red/failed.
     const catMeasured = cat.total - cat.throttled;
     const catPct = (cat.cleanPassRate * 100).toFixed(0);
-    const catTone = catMeasured === 0 ? "33" : cat.cleanPassRate === 1 ? "32" : cat.cleanPassRate >= 0.5 ? "33" : "31";
+    const catTone =
+      catMeasured === 0
+        ? "33"
+        : cat.cleanPassRate === 1
+          ? "32"
+          : cat.cleanPassRate >= 0.5
+            ? "33"
+            : "31";
     const thr = cat.throttled > 0 ? ` \x1b[33m(${cat.throttled} thr)\x1b[0m` : "";
     const passStr = `${cat.passed}/${catMeasured} (${catPct}%)`;
     const costStr = cat.avgCost > 0 ? `$${cat.avgCost.toFixed(4)}` : "-";
@@ -169,7 +189,13 @@ export function printReport(report: SuiteReport): void {
   // Headline = the CLEAN rate over measured tasks. Raw rate shown as context.
   const cleanPct = (report.cleanPassRate * 100).toFixed(1);
   const cleanTone =
-    report.measured === 0 ? "33" : report.cleanPassRate === 1 ? "32" : report.cleanPassRate >= 0.6 ? "33" : "31";
+    report.measured === 0
+      ? "33"
+      : report.cleanPassRate === 1
+        ? "32"
+        : report.cleanPassRate >= 0.6
+          ? "33"
+          : "31";
   console.log(
     `\n  \x1b[${cleanTone}m${report.passed}/${report.measured} measured passed (${cleanPct}%)\x1b[0m` +
       `  \x1b[2m· raw ${report.passed}/${report.total} (${pct}%)\x1b[0m`,
@@ -214,7 +240,135 @@ function baselineShape(report: SuiteReport) {
       cleanPassRate: c.cleanPassRate,
       avgCost: c.avgCost,
     })),
+    // Per-task outcomes make baselines comparable at task granularity — the
+    // suite-level rate can stay flat while one task regresses and another is
+    // newly added, and only this catches it.
+    tasks: report.tasks.map((t) => ({
+      name: t.name,
+      category: t.category,
+      pass: t.pass,
+      throttled: !!t.throttled,
+    })),
   };
+}
+
+// ─── Baseline comparison (--compare): the regression gate ───
+
+export interface BaselineComparison {
+  /** False when the run regressed beyond the noise band. */
+  ok: boolean;
+  /** Non-null when comparison was impossible (no/incompatible baseline) — not a failure. */
+  skipped: string | null;
+  /** cleanPassRate delta (current − baseline); negative = worse. */
+  rateDelta: number;
+  /** Tasks that passed in the baseline and failed (not throttled) in this run. */
+  newlyFailing: string[];
+  /** Tasks in the baseline missing from this run (renamed/removed — surfaced, not fatal). */
+  missing: string[];
+  reasons: string[];
+}
+
+interface BaselineFile {
+  mode?: "mock" | "real";
+  model?: string;
+  provider?: string;
+  cleanPassRate?: number;
+  tasks?: Array<{ name: string; pass: boolean; throttled?: boolean }>;
+}
+
+/**
+ * Compare a run against a recorded baseline. Two gates:
+ *  - rate gate: cleanPassRate must not drop more than `noise` below baseline.
+ *  - task gate (mock only): any task that passed in baseline and fails now is a
+ *    regression regardless of the aggregate — mock runs are deterministic, so
+ *    there is no noise to hide behind. In real mode task flips are reported as
+ *    diagnostics but only the rate gates (single-task flakiness is real).
+ * Comparing across modes or across different real models measures nothing, so
+ * those comparisons are skipped (ok=true, skipped=reason) rather than guessed.
+ */
+export function compareToBaseline(
+  report: SuiteReport,
+  baseline: BaselineFile | null,
+  noise: number,
+): BaselineComparison {
+  const out: BaselineComparison = {
+    ok: true,
+    skipped: null,
+    rateDelta: 0,
+    newlyFailing: [],
+    missing: [],
+    reasons: [],
+  };
+  if (!baseline || typeof baseline.cleanPassRate !== "number") {
+    out.skipped = "no baseline recorded yet (run with --write-baseline to create one)";
+    return out;
+  }
+  if (baseline.mode !== report.mode) {
+    out.skipped = `baseline is a ${baseline.mode} run; this is ${report.mode} — not comparable`;
+    return out;
+  }
+  if (
+    report.mode === "real" &&
+    (baseline.model !== report.model || baseline.provider !== report.provider)
+  ) {
+    out.skipped =
+      `baseline measured ${baseline.provider}/${baseline.model}; ` +
+      `this run is ${report.provider}/${report.model} — not comparable`;
+    return out;
+  }
+
+  out.rateDelta = report.cleanPassRate - baseline.cleanPassRate;
+  if (out.rateDelta < -noise) {
+    out.ok = false;
+    out.reasons.push(
+      `cleanPassRate ${(report.cleanPassRate * 100).toFixed(1)}% fell ` +
+        `${(-out.rateDelta * 100).toFixed(1)}pt below baseline ` +
+        `${(baseline.cleanPassRate * 100).toFixed(1)}% (noise band ${(noise * 100).toFixed(1)}pt)`,
+    );
+  }
+
+  if (Array.isArray(baseline.tasks)) {
+    const current = new Map(report.tasks.map((t) => [t.name, t]));
+    for (const bt of baseline.tasks) {
+      const ct = current.get(bt.name);
+      if (!ct) {
+        out.missing.push(bt.name);
+        continue;
+      }
+      if (bt.pass && !ct.pass && !ct.throttled) out.newlyFailing.push(bt.name);
+    }
+    if (out.newlyFailing.length > 0 && report.mode === "mock") {
+      out.ok = false;
+      out.reasons.push(
+        `deterministic task regression: ${out.newlyFailing.join(", ")} passed in baseline and fail now`,
+      );
+    }
+  }
+  return out;
+}
+
+export function printComparison(cmp: BaselineComparison): void {
+  if (cmp.skipped) {
+    console.log(`  \x1b[2m--compare skipped: ${cmp.skipped}\x1b[0m\n`);
+    return;
+  }
+  const deltaStr = `${cmp.rateDelta >= 0 ? "+" : ""}${(cmp.rateDelta * 100).toFixed(1)}pt`;
+  if (cmp.ok) {
+    console.log(
+      `  \x1b[32m✓ no regression vs baseline\x1b[0m \x1b[2m(clean rate ${deltaStr})\x1b[0m`,
+    );
+  } else {
+    console.log(`  \x1b[31m✗ REGRESSION vs baseline\x1b[0m (clean rate ${deltaStr})`);
+    for (const r of cmp.reasons) console.log(`     \x1b[31m${r}\x1b[0m`);
+  }
+  if (cmp.newlyFailing.length > 0 && cmp.ok) {
+    // Real mode: flips inside the noise band are diagnostics, not verdicts.
+    console.log(`  \x1b[33m⚠ newly failing vs baseline: ${cmp.newlyFailing.join(", ")}\x1b[0m`);
+  }
+  if (cmp.missing.length > 0) {
+    console.log(`  \x1b[2mbaseline tasks not in this run: ${cmp.missing.join(", ")}\x1b[0m`);
+  }
+  console.log();
 }
 
 /**
@@ -227,7 +381,8 @@ function baselineShape(report: SuiteReport) {
 export async function writeBaseline(report: SuiteReport, force = false): Promise<void> {
   const shape = baselineShape(report);
   const stamp = report.timestamp.replace(/[:.]/g, "-");
-  const tag = report.mode === "real" ? `${report.provider}-${report.model}`.replace(/[^\w.-]/g, "_") : "mock";
+  const tag =
+    report.mode === "real" ? `${report.provider}-${report.model}`.replace(/[^\w.-]/g, "_") : "mock";
   const archivePath = join(RESULTS_DIR, `run-${stamp}-${tag}.json`);
   await mkdir(RESULTS_DIR, { recursive: true });
   await writeFile(archivePath, JSON.stringify(shape, null, 2) + "\n");
@@ -238,13 +393,16 @@ export async function writeBaseline(report: SuiteReport, force = false): Promise
     );
     return;
   }
-  await writeFile(BASELINE_PATH, JSON.stringify(shape, null, 2) + "\n");
-  console.log(`  \x1b[2mBaseline written to tests/eval/baseline.json (archived in results/)\x1b[0m`);
+  const baselinePath = baselinePathFor(report.mode);
+  await writeFile(baselinePath, JSON.stringify(shape, null, 2) + "\n");
+  console.log(
+    `  \x1b[2mBaseline written to tests/eval/${report.mode === "mock" ? "baseline-mock.json" : "baseline.json"} (archived in results/)\x1b[0m`,
+  );
 }
 
-export async function loadBaseline(): Promise<SuiteReport | null> {
+export async function loadBaseline(mode: "mock" | "real" = "real"): Promise<SuiteReport | null> {
   try {
-    const raw = await readFile(BASELINE_PATH, "utf8");
+    const raw = await readFile(baselinePathFor(mode), "utf8");
     return JSON.parse(raw) as SuiteReport;
   } catch {
     return null;

@@ -405,9 +405,87 @@ test("blocks calls over limit", () => {
   },
 };
 
+// ─── New-feature Task 5: extend an existing module with env-var override ───
+
+const addEnvOverride: EvalTask = {
+  name: "new_feature_env_override",
+  category: "new-feature",
+  description:
+    "Agent extends an existing config loader so an environment variable overrides the default.",
+  setup: async ({ workspace }) => {
+    await writeFile(
+      join(workspace, "settings.ts"),
+      `export function getPort(): number {
+  return 3000;
+}
+`,
+    );
+    await writeFile(
+      join(workspace, "settings.test.ts"),
+      `import { expect, test } from "bun:test";
+import { getPort } from "./settings";
+test("default port is 3000", () => {
+  delete process.env.APP_PORT;
+  expect(getPort()).toBe(3000);
+});
+test("APP_PORT overrides the default", () => {
+  process.env.APP_PORT = "8080";
+  expect(getPort()).toBe(8080);
+  delete process.env.APP_PORT;
+});
+`,
+    );
+  },
+  script: [
+    {
+      text: "Reading settings.ts and the test that specifies the behavior.",
+      toolCalls: [
+        { name: "read_file", args: { path: "settings.ts" } },
+        { name: "read_file", args: { path: "settings.test.ts" } },
+      ],
+    },
+    {
+      text: "Implementing the APP_PORT override.",
+      toolCalls: [
+        {
+          name: "write_file",
+          args: {
+            path: "settings.ts",
+            content: `export function getPort(): number {
+  const fromEnv = process.env.APP_PORT;
+  if (fromEnv !== undefined) {
+    const parsed = Number(fromEnv);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 3000;
+}
+`,
+          },
+        },
+      ],
+    },
+    { text: "getPort now honors APP_PORT. Both tests should pass." },
+  ],
+  prompts: [
+    "Extend settings.ts so the APP_PORT environment variable overrides the default port. settings.test.ts specifies the exact behavior.",
+  ],
+  verify: async ({ workspace }) => {
+    const content = await readFile(join(workspace, "settings.ts"), "utf8");
+    if (!content.includes("APP_PORT")) {
+      return { pass: false, reason: "settings.ts does not read APP_PORT" };
+    }
+    const { exitCode, output } = runTest(workspace, ["settings.test.ts"]);
+    if (exitCode !== 0) {
+      return { pass: false, reason: `tests failed: ${output.slice(0, 300)}` };
+    }
+    return { pass: true };
+  },
+};
+
 export const NEW_FEATURE_TASKS: EvalTask[] = [
   addValidationUtil,
   addLoggerModule,
   addConfigParser,
   addRateLimiter,
+  addEnvOverride,
 ];

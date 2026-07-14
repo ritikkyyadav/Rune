@@ -60,7 +60,9 @@ export async function validateUser(id: string): Promise<boolean> {
             new_text: "findUserById",
             replace_all: true,
             expected_hash: createHash("sha256")
-              .update(`export async function getUserById(id: string) {\n  return { id, name: 'Alice' };\n}\n`)
+              .update(
+                `export async function getUserById(id: string) {\n  return { id, name: 'Alice' };\n}\n`,
+              )
               .digest("hex"),
           },
         },
@@ -347,8 +349,101 @@ const renameConstant: EvalTask = {
   },
 };
 
+// ─── Refactor Task 4: extract a duplicated magic number into a shared constant ───
+
+const extractSharedConstant: EvalTask = {
+  name: "refactor_extract_constant",
+  category: "multi-file-refactor",
+  description:
+    "Agent extracts a magic number duplicated across two files into a new constants module.",
+  setup: async ({ workspace }) => {
+    await writeFile(
+      join(workspace, "retry.ts"),
+      `export function shouldRetry(attempt: number): boolean {
+  return attempt < 5;
+}
+`,
+    );
+    await writeFile(
+      join(workspace, "backoff.ts"),
+      `export function backoffMs(attempt: number): number {
+  return attempt >= 5 ? 0 : 100 * 2 ** attempt;
+}
+`,
+    );
+  },
+  script: [
+    {
+      text: "Finding every site using the magic retry limit.",
+      toolCalls: [{ name: "grep", args: { pattern: "5", path: "." } }],
+    },
+    {
+      text: "Creating the shared constant.",
+      toolCalls: [
+        {
+          name: "write_file",
+          args: {
+            path: "constants.ts",
+            content: "export const MAX_ATTEMPTS = 5;\n",
+          },
+        },
+      ],
+    },
+    {
+      text: "Rewriting retry.ts to use it.",
+      toolCalls: [
+        {
+          name: "write_file",
+          args: {
+            path: "retry.ts",
+            content: `import { MAX_ATTEMPTS } from './constants';\nexport function shouldRetry(attempt: number): boolean {\n  return attempt < MAX_ATTEMPTS;\n}\n`,
+          },
+        },
+      ],
+    },
+    {
+      text: "Rewriting backoff.ts to use it.",
+      toolCalls: [
+        {
+          name: "write_file",
+          args: {
+            path: "backoff.ts",
+            content: `import { MAX_ATTEMPTS } from './constants';\nexport function backoffMs(attempt: number): number {\n  return attempt >= MAX_ATTEMPTS ? 0 : 100 * 2 ** attempt;\n}\n`,
+          },
+        },
+      ],
+    },
+    { text: "Extracted MAX_ATTEMPTS = 5 into constants.ts and updated both call sites." },
+  ],
+  prompts: [
+    "The retry limit 5 is duplicated in retry.ts and backoff.ts. Extract it into a MAX_ATTEMPTS constant in a new constants.ts and use it in both files.",
+  ],
+  verify: async ({ workspace }) => {
+    const constants = await readFile(join(workspace, "constants.ts"), "utf8").catch(() => null);
+    if (!constants || !/MAX_ATTEMPTS\s*=\s*5/.test(constants)) {
+      return { pass: false, reason: "constants.ts with MAX_ATTEMPTS = 5 not created" };
+    }
+    for (const f of ["retry.ts", "backoff.ts"]) {
+      const content = await readFile(join(workspace, f), "utf8");
+      if (!content.includes("MAX_ATTEMPTS")) {
+        return { pass: false, reason: `${f} does not use MAX_ATTEMPTS` };
+      }
+      if (!/from ['"]\.\/constants['"]/.test(content)) {
+        return { pass: false, reason: `${f} does not import from ./constants` };
+      }
+      // The magic literal must be gone from comparison sites (the constant file
+      // is the one place the 5 may remain).
+      if (/[<>=]\s*5\b/.test(content)) {
+        return { pass: false, reason: `${f} still compares against the literal 5` };
+      }
+    }
+    return { pass: true };
+  },
+};
+
 export const MULTI_FILE_REFACTOR_TASKS: EvalTask[] = [
   renameFunction,
   renameClass,
   renameConstant,
+  extractSharedConstant,
 ];

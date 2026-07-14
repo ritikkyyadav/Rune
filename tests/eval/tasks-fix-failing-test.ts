@@ -79,7 +79,10 @@ test("firstN returns correct count", () => {
     }
     const { exitCode, output } = runTest(workspace, ["slice.test.ts"]);
     if (exitCode !== 0) {
-      return { pass: false, reason: `test still fails (exit ${exitCode}): ${output.slice(0, 300)}` };
+      return {
+        pass: false,
+        reason: `test still fails (exit ${exitCode}): ${output.slice(0, 300)}`,
+      };
     }
     return { pass: true };
   },
@@ -220,8 +223,143 @@ test("parseJson parses correctly", async () => {
   },
 };
 
+// ─── Fix-failing-test Task 4: reduce on empty array crashes ───
+
+const fixEmptyReduce: EvalTask = {
+  name: "fix_empty_reduce",
+  category: "fix-failing-test",
+  description: "Agent fixes a reduce-without-initial-value crash on empty input.",
+  setup: async ({ workspace }) => {
+    await writeFile(
+      join(workspace, "sum.ts"),
+      `export function sum(values: number[]): number {
+  return values.reduce((a, b) => a + b); // BUG: throws on []
+}
+`,
+    );
+    await writeFile(
+      join(workspace, "sum.test.ts"),
+      `import { expect, test } from "bun:test";
+import { sum } from "./sum";
+test("sums numbers", () => {
+  expect(sum([1, 2, 3])).toBe(6);
+});
+test("empty input is zero", () => {
+  expect(sum([])).toBe(0);
+});
+`,
+    );
+  },
+  script: [
+    {
+      text: "Reading sum.ts.",
+      toolCalls: [{ name: "read_file", args: { path: "sum.ts" } }],
+    },
+    {
+      text: "reduce without an initial value throws on an empty array. Adding , 0.",
+      toolCalls: [
+        {
+          name: "edit_file",
+          args: {
+            path: "sum.ts",
+            old_text: "values.reduce((a, b) => a + b)",
+            new_text: "values.reduce((a, b) => a + b, 0)",
+            expected_hash: createHash("sha256")
+              .update(
+                `export function sum(values: number[]): number {\n  return values.reduce((a, b) => a + b); // BUG: throws on []\n}\n`,
+              )
+              .digest("hex"),
+          },
+        },
+      ],
+    },
+    { text: "Added the initial value. Both tests should pass now." },
+  ],
+  prompts: ["sum.test.ts fails on the empty-input case. Fix sum.ts."],
+  verify: async ({ workspace }) => {
+    const content = await readFile(join(workspace, "sum.ts"), "utf8");
+    if (!/reduce\(.*,\s*0\s*\)/.test(content)) {
+      return { pass: false, reason: "initial value not added to reduce" };
+    }
+    const { exitCode, output } = runTest(workspace, ["sum.test.ts"]);
+    if (exitCode !== 0) {
+      return { pass: false, reason: `test still fails: ${output.slice(0, 300)}` };
+    }
+    return { pass: true };
+  },
+};
+
+// ─── Fix-failing-test Task 5: wrong default parameter value ───
+
+const fixWrongDefault: EvalTask = {
+  name: "fix_wrong_default",
+  category: "fix-failing-test",
+  description: "Agent corrects a default parameter that contradicts the documented contract.",
+  setup: async ({ workspace }) => {
+    await writeFile(
+      join(workspace, "paginate.ts"),
+      `/** Returns one page of items. Page size defaults to 10. */
+export function paginate<T>(items: T[], page: number, size = 25): T[] {
+  return items.slice(page * size, (page + 1) * size);
+}
+`,
+    );
+    await writeFile(
+      join(workspace, "paginate.test.ts"),
+      `import { expect, test } from "bun:test";
+import { paginate } from "./paginate";
+test("default page size is 10", () => {
+  const items = Array.from({ length: 30 }, (_, i) => i);
+  expect(paginate(items, 0)).toHaveLength(10);
+});
+`,
+    );
+  },
+  script: [
+    {
+      text: "Reading paginate.ts.",
+      toolCalls: [{ name: "read_file", args: { path: "paginate.ts" } }],
+    },
+    {
+      text: "The doc comment and test say 10; the default is 25. Fixing the default.",
+      toolCalls: [
+        {
+          name: "edit_file",
+          args: {
+            path: "paginate.ts",
+            old_text: "size = 25",
+            new_text: "size = 10",
+            expected_hash: createHash("sha256")
+              .update(
+                `/** Returns one page of items. Page size defaults to 10. */\nexport function paginate<T>(items: T[], page: number, size = 25): T[] {\n  return items.slice(page * size, (page + 1) * size);\n}\n`,
+              )
+              .digest("hex"),
+          },
+        },
+      ],
+    },
+    { text: "Default corrected to 10 per the contract." },
+  ],
+  prompts: [
+    "paginate.test.ts is failing. The doc comment states the intended behavior — fix the code.",
+  ],
+  verify: async ({ workspace }) => {
+    const content = await readFile(join(workspace, "paginate.ts"), "utf8");
+    if (content.includes("size = 25")) {
+      return { pass: false, reason: "wrong default still present" };
+    }
+    const { exitCode, output } = runTest(workspace, ["paginate.test.ts"]);
+    if (exitCode !== 0) {
+      return { pass: false, reason: `test still fails: ${output.slice(0, 300)}` };
+    }
+    return { pass: true };
+  },
+};
+
 export const FIX_FAILING_TEST_TASKS: EvalTask[] = [
   fixOffByOne,
   fixWrongOperator,
   fixMissingReturn,
+  fixEmptyReduce,
+  fixWrongDefault,
 ];
