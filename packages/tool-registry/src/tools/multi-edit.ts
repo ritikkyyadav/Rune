@@ -3,15 +3,15 @@ import { resolve, isAbsolute } from "path";
 import { createHash, randomBytes } from "crypto";
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
 
-interface EditOp {
+export interface EditOp {
   old_text: string;
   new_text: string;
   replace_all?: boolean;
 }
 
-type MatchStrategy = "exact" | "whitespace" | "indentation";
+export type MatchStrategy = "exact" | "whitespace" | "indentation";
 
-interface EditReport {
+export interface EditReport {
   index: number;
   strategy: MatchStrategy;
   replacements: number;
@@ -135,7 +135,10 @@ function spliceWindows(
 // Applies one edit and returns the new content plus which strategy matched.
 // Throws a descriptive Error if the edit cannot be applied unambiguously, so
 // the caller can abort the whole (atomic) operation without writing anything.
-function applyOneEdit(
+// Exported: apply_patch routes its parsed hunks through this same matcher so
+// both edit formats share one application semantics (3-tier fallback,
+// unambiguity-or-error, no partial application).
+export function applyOneEdit(
   content: string,
   edit: EditOp,
   index: number,
