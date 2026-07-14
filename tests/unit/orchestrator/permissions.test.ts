@@ -5,6 +5,11 @@ import {
   PERMISSION_MODE_ORDER,
   type PermissionMode,
 } from "../../../packages/orchestrator/src/permissions";
+import { setSandboxCapability } from "../../../packages/tool-registry/src/sandbox-capability";
+
+// These suites model a healthy machine: bash auto-approval is only justified
+// when OS isolation actually exists, so say so explicitly.
+setSandboxCapability({ mechanism: "seatbelt", osIsolation: true });
 
 describe("PermissionBroker", () => {
   let broker: PermissionBroker;
@@ -138,6 +143,33 @@ describe("PermissionBroker — workspace trust", () => {
   test("reports permissive posture when trust is enabled", () => {
     const broker = new PermissionBroker(false, { workspaceRoot: WS, trustWorkspace: true });
     expect(broker.getSecurityPosture()).toBe("permissive");
+  });
+
+  test("apply_patch: confined when every envelope path is inside the workspace", () => {
+    const broker = new PermissionBroker(false, { workspaceRoot: WS, trustWorkspace: true });
+    const schema = {
+      name: "apply_patch",
+      permissionLevel: "confirm" as const,
+      description: "",
+      parameters: [],
+    };
+    const confined = `*** Begin Patch
+*** Add File: src/new.ts
++x
+*** Update File: src/old.ts
+*** Move to: src/renamed.ts
+ a
+-b
++c
+*** End Patch`;
+    expect(broker.check(schema, { patch: confined }).type).toBe("allowed");
+
+    // ANY path escaping the root (here the move destination) breaks confinement.
+    const escaping = confined.replace("src/renamed.ts", "../outside.ts");
+    expect(broker.check(schema, { patch: escaping }).type).toBe("needs_confirmation");
+
+    // Unparseable patches are never confined (the handler rejects them anyway).
+    expect(broker.check(schema, { patch: "garbage" }).type).toBe("needs_confirmation");
   });
 });
 

@@ -23,6 +23,10 @@ export interface StatusView {
   permissionMode?: "confirm" | "auto" | "turing";
   /** OS command sandbox: true = sandboxed, false = full access. Absent hides the row. */
   sandboxEnabled?: boolean;
+  /** True when the sandbox is on but this machine has no OS isolation backend. */
+  sandboxDegraded?: boolean;
+  /** Verified org policy in force (managed machines). Absent hides the row. */
+  orgPolicy?: { org?: string; fingerprint: string } | null;
   registeredProviders?: string[];
   version?: string;
 }
@@ -48,11 +52,21 @@ export function renderStatus(s: StatusView): string {
       : ([
           [
             "Sandbox",
-            s.sandboxEnabled
-              ? text("on · commands OS-sandboxed, no network")
-              : bold(warn("▲ off · full host access")),
+            !s.sandboxEnabled
+              ? bold(warn("▲ off · full host access"))
+              : s.sandboxDegraded
+                ? bold(warn("▲ on · NOT ISOLATED — no OS backend, path-guard only"))
+                : text("on · commands OS-sandboxed, no network"),
           ],
         ] as [string, string][])),
+    ...(s.orgPolicy
+      ? ([
+          [
+            "Org policy",
+            bold(warn(`⛨ ${s.orgPolicy.org ?? "enforced"} · ${s.orgPolicy.fingerprint}`)),
+          ],
+        ] as [string, string][])
+      : []),
     ["Session", text(s.sessionId.slice(0, 8))],
     ["Cost", text(`$${s.cost.toFixed(4)}`)],
   ];
