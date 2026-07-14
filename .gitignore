@@ -22,6 +22,11 @@ Thumbs.db
 # Alan runtime
 .alan/cache/
 .alan/logs/
+# Local code indexes (rebuilt on demand; WAL/SHM siblings included)
+.alan/symbols.db*
+.alan/search.db*
+# Detached-run worktrees (git worktree checkouts; branches carry the work)
+.alan/worktrees/
 # MCP server config — local, may contain credentials in headers (see mcp.json.example)
 .alan/mcp.json
 
@@ -37,3 +42,6 @@ Thumbs.db
 
 # Test artifacts
 tests/fixtures/tmp/
+
+# Playwright MCP session snapshots (browser tool scratch)
+.playwright-mcp/
