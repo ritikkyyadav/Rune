@@ -1,3 +1,4 @@
+import { isOsIsolationAvailable, isOsIsolationRequired } from "../sandbox-capability";
 import { isSandboxEnabled } from "../sandbox-mode";
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
 
@@ -29,6 +30,22 @@ export function createRustToolHandler(
           input.args.network !== true &&
           isSandboxEnabled()
         ) {
+          // requireOs: the user declared containment mandatory. When this
+          // machine has no isolation backend, refusing beats the factory's
+          // silent path-guard-only degradation.
+          if (isOsIsolationRequired() && !isOsIsolationAvailable()) {
+            return {
+              callId: input.callId,
+              toolName: input.toolName,
+              success: false,
+              result: "",
+              error:
+                "OS sandbox required ([sandbox] requireOs = true) but no isolation backend " +
+                "is available on this machine (sandbox-exec/bwrap missing). Install one, or " +
+                "set requireOs = false to allow degraded (path-guard-only) execution.",
+              durationMs: Math.round(performance.now() - start),
+            };
+          }
           args.push("--sandbox");
         }
         args.push(subcommand);

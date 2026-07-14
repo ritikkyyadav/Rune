@@ -35,7 +35,7 @@ dim()    { printf '\033[38;5;245m%s\033[0m' "$*"; }
 bold()   { printf '\033[1m%s\033[0m' "$*"; }
 
 echo ""
-echo "  $(bold '  Berne Installer')  $(dim 'v0.1')"
+echo "  $(bold '  Berne Installer')  $(dim 'v0.2.0')"
 echo "  $(dim '──────────────────────────────────────')"
 echo "  $(dim "Repo root: $ALAN_ROOT")"
 echo ""

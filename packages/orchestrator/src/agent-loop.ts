@@ -15,11 +15,13 @@ import {
   providerAllowsGroundingWithTools,
 } from "@alan/llm-gateway";
 import { parseToolArguments } from "@alan/shared";
+import { batchSignature, breakerSignature } from "./call-signature";
 import type { IncidentContext, IncidentReporter, IncidentSeverity } from "@alan/shared";
 import type { IncidentClass } from "@alan/shared";
 import type { ToolCallInput, ToolCallOutput } from "@alan/tool-registry";
 import { ToolRegistry } from "@alan/tool-registry";
 import type { ContextEngine } from "./context-engine";
+import type { RetrievedChunk } from "./context-engine";
 import { getMaxOutputTokens } from "./tokenizer";
 import type { Verifier } from "./verifier";
 
@@ -78,6 +80,8 @@ export interface AgentLoopConfig {
   temperature?: number;
   priorMessages?: Message[];
   contextEngine?: ContextEngine;
+  /** Request-specific local context, budgeted alongside all other auxiliary context. */
+  retrievedChunks?: RetrievedChunk[];
   /** Runs project checks after edits; on failure the agent is asked to fix. */
   verifier?: Verifier;
   /** Max times to run verification + re-prompt on failure. Default 2. */
@@ -86,6 +90,14 @@ export interface AgentLoopConfig {
   maxParallelTools?: number;
   /** Max times to nudge a stuck agent before bailing. Default 1. */
   maxStuckNudges?: number;
+  /** Bounded all-providers-throttled waits per run. Default 2. */
+  maxRateWaits?: number;
+  /** Forced compactions after provider over-limit rejections. Default 2. */
+  maxOverflowCompactions?: number;
+  /** Retries of an empty (no text, no tools) completion. Default 3. */
+  maxEmptyCompletionRetries?: number;
+  /** Retries when the response hit the output-token cap. Default 2. */
+  maxTruncationRetries?: number;
   /**
    * Use provider-native web-search grounding (Gemini/Anthropic) instead of the
    * `web_search` function tool when the provider supports it. Default false.
@@ -339,8 +351,10 @@ export class AgentLoop {
 
       turn++;
 
-      // Build inference request
-      const allTools = this.registry.toLlmTools();
+      // Build inference request. Passing the model gates family-specific
+      // tools (apply_patch for the Codex lineage); the model is fixed for the
+      // life of this loop, so the advertised set stays stable per session.
+      const allTools = this.registry.toLlmTools(this.config.model);
       // When the provider can search server-side and native grounding is on,
       // ground through the provider instead of advertising the web_search
       // function tool — otherwise the model may search twice.
@@ -367,6 +381,9 @@ export class AgentLoop {
           this.config.systemPrompt || "",
           tools.length > 0 ? tools : [],
           this.messages,
+          undefined,
+          this.config.retrievedChunks,
+          this.config.model,
         );
         requestMessages = built.messages;
         requestSystemPrompt = built.system;
@@ -437,7 +454,11 @@ export class AgentLoop {
               // per run, abortable) and resume the turn instead of failing the
               // whole task at the finish line.
               const waitSecs = rateLimitWaitSecs(result.error);
-              if (waitSecs != null && rateWaits < 2 && !signal?.aborted) {
+              if (
+                waitSecs != null &&
+                rateWaits < (this.config.maxRateWaits ?? 2) &&
+                !signal?.aborted
+              ) {
                 rateWaits++;
                 this.report(
                   "provider.rate_limit_wait",
@@ -469,7 +490,7 @@ export class AgentLoop {
             if (
               isContextOverflowError(result.error) &&
               this.config.contextEngine &&
-              overflowCompactions < 2 &&
+              overflowCompactions < (this.config.maxOverflowCompactions ?? 2) &&
               !signal?.aborted
             ) {
               overflowCompactions++;
@@ -571,18 +592,19 @@ export class AgentLoop {
       const firstStepSilence =
         !anyUsableOutputThisRun && stopReason === "end_turn" && !producedUsableOutput;
       if (!signal?.aborted && (claimedToolUseButNone || firstStepSilence)) {
+        const maxEmpty = this.config.maxEmptyCompletionRetries ?? 3;
         emptyCompletions++;
         this.report(
           "provider.empty_completion",
-          emptyCompletions < 3 ? "warn" : "error",
+          emptyCompletions < maxEmpty ? "warn" : "error",
           "run#emptyCompletion",
           `${this.config.provider}/${this.config.model} returned an empty completion ` +
             `(stopReason ${stopReason}, attempt ${emptyCompletions})`,
         );
-        if (emptyCompletions < 3) {
+        if (emptyCompletions < maxEmpty) {
           yield {
             type: "notice",
-            message: `The model returned an empty response — retrying (${emptyCompletions}/2)…`,
+            message: `The model returned an empty response — retrying (${emptyCompletions}/${maxEmpty - 1})…`,
           };
           this.state = "observing";
           continue;
@@ -591,7 +613,7 @@ export class AgentLoop {
         yield {
           type: "error",
           error:
-            "The model returned an empty response 3 times in a row " +
+            `The model returned an empty response ${maxEmpty} times in a row ` +
             `(${this.config.provider}/${this.config.model}). Nothing was produced. ` +
             "Try again, rephrase, or switch models with /model.",
           recoverable: false,
@@ -614,13 +636,14 @@ export class AgentLoop {
       // transcript valid) and ask the model to continue — bounded so a model
       // that maxes out every response can't loop forever.
       if (stopReason === "max_tokens") {
+        const maxTrunc = this.config.maxTruncationRetries ?? 2;
         this.report(
           "provider.truncation",
-          truncationRetries < 2 ? "warn" : "error",
+          truncationRetries < maxTrunc ? "warn" : "error",
           "maxTokens",
           `response hit the output-token limit (retry ${truncationRetries + 1})`,
         );
-        if (truncationRetries < 2) {
+        if (truncationRetries < maxTrunc) {
           truncationRetries++;
           if (pendingToolCalls.length > 0) {
             this.messages.push({
@@ -777,7 +800,10 @@ export class AgentLoop {
 
       // Loop detection: if the same tool batch keeps repeating, first NUDGE the
       // agent to change approach; only bail if it's still stuck after the nudge.
-      const signature = pendingToolCalls.map((tc) => `${tc.toolName}:${tc.argsJson}`).join("|");
+      // Signatures are normalized (whitespace, key order, UUIDs/timestamps/
+      // hashes) so cosmetic arg variance can't defeat the detector — but small
+      // numbers stay distinct, or paginated reads would read as a fake loop.
+      const signature = batchSignature(pendingToolCalls);
       recentToolSignatures.push(signature);
       if (recentToolSignatures.length > 10) recentToolSignatures.shift();
 
@@ -889,10 +915,12 @@ export class AgentLoop {
           }
         }
 
-        // Circuit breaker: this EXACT call already failed twice this run —
-        // refuse it without executing. The refusal is itself an error result,
-        // so the model reads WHY and is pushed to change strategy.
-        const callSig = `${tc.toolName}:${tc.argsJson}`;
+        // Circuit breaker: this call already failed twice this run — refuse it
+        // without executing. Keyed on the NORMALIZED signature (whitespace,
+        // key order, numbers, UUIDs/timestamps folded), so mutating a port or
+        // re-rolling a nonce doesn't reset the counter; the refusal text still
+        // shows the model its literal call.
+        const callSig = breakerSignature(tc.toolName, tc.argsJson);
         const priorFails = failedCalls.get(callSig) ?? 0;
         if (allowed && !denied && priorFails >= 2) {
           this.report(
@@ -908,10 +936,11 @@ export class AgentLoop {
             success: false,
             result: "",
             error:
-              `Refused without running: this exact ${tc.toolName} call already failed ` +
-              `${priorFails} times this run and will fail again. Do NOT repeat it. ` +
-              "Change strategy — different arguments, a different tool, or work around the " +
-              "blocker and finish with an honest report of what remains undone.",
+              `Refused without running: this ${tc.toolName} call (or a trivial variant — ` +
+              `changed whitespace, number, or timestamp) already failed ${priorFails} times ` +
+              `this run and will fail again. You sent: ${tc.argsJson.slice(0, 200)}. ` +
+              "Do NOT repeat it. Change strategy — genuinely different arguments, a different " +
+              "tool, or work around the blocker and finish with an honest report of what remains undone.",
             durationMs: 0,
           };
         }

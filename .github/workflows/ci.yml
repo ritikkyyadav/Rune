@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    # Nightly full real-model eval (the capability anchor). Mock evals gate
+    # every PR; this catches drift that only shows against a live provider.
+    - cron: "0 3 * * *"
 
 env:
   CARGO_TERM_COLOR: always
@@ -126,8 +130,11 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: cargo build --release
       - run: bun run build
-      - name: Run eval suite
-        run: bun run eval
+      - name: Run eval suite (regression-gated vs committed mock baseline)
+        # --compare fails the job if any task that passes in baseline-mock.json
+        # fails now (mock runs are deterministic — zero noise band), on top of
+        # the runner's own all-measured-tasks-pass gate.
+        run: bun run eval -- --compare
       - name: Check eval results
         run: |
           # Eval runner exits non-zero if any task fails
@@ -157,5 +164,20 @@ jobs:
             echo "No ANTHROPIC_API_KEY secret configured — skipping real-model eval gate."
             exit 0
           fi
-          # Conservative floor; raise it once a clean ceiling baseline is recorded.
-          bun run tests/eval/runner.ts --real --max 12 --min-pass-rate 0.5
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            # Nightly: the FULL suite, gated against the committed real-model
+            # baseline within a 5pt noise band (skips cleanly if the baseline
+            # was recorded on a different model).
+            bun run tests/eval/runner.ts --real --compare --noise 0.05 --min-pass-rate 0.5
+          else
+            # Per-PR smoke: small, cheap, conservative floor.
+            bun run tests/eval/runner.ts --real --max 12 --min-pass-rate 0.5
+          fi
+      - name: Upload eval run archive
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-real-results-${{ github.run_id }}
+          path: tests/eval/results/
+          retention-days: 30
+          if-no-files-found: ignore

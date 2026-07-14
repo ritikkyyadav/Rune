@@ -9,14 +9,14 @@
 #
 #  Optional env:
 #    BERNE_REPO=owner/repo           GitHub repo hosting the releases
-#    BERNE_VERSION=v0.1              release tag (default: latest)
+#    BERNE_VERSION=v0.2.0            release tag (default: latest)
 #    BERNE_TELEMETRY_ENDPOINT=url    if set, enables the opt-in channel by
 #                                    writing [telemetry] into ~/.alan/config.toml
 #    BERNE_TELEMETRY_TOKEN=secret    collector bearer token (with the above)
 # ──────────────────────────────────────────────────────────
 set -euo pipefail
 
-REPO="${BERNE_REPO:-ritikkyyadav/berne}"
+REPO="${BERNE_REPO:-ritikkyyadav/Alan}"
 VERSION="${BERNE_VERSION:-latest}"
 INSTALL_DIR="$HOME/.alan/bin"
 

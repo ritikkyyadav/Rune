@@ -13,7 +13,13 @@ import { MockProvider, type Script } from "./mock-provider";
 export interface EvalTask {
   name: string;
   description: string;
-  category: "comprehension" | "fix-failing-test" | "multi-file-refactor" | "new-feature" | "tool-discipline" | "core";
+  category:
+    | "comprehension"
+    | "fix-failing-test"
+    | "multi-file-refactor"
+    | "new-feature"
+    | "tool-discipline"
+    | "core";
   /** Required in mock mode; optional in real mode. */
   script?: Script;
   prompts: string[];
@@ -21,6 +27,21 @@ export interface EvalTask {
   setup?: (ctx: { workspace: string }) => Promise<void>;
   /** Customize permission handler responses for this task. Defaults to allow-once. */
   permissionResponses?: UserPermissionDecision[];
+  /**
+   * Hard ceiling on completed turns (one per prompt) for this task. A run that
+   * exceeds a cap is stopped and FAILED — burning unbounded work is itself the
+   * failure, even if the artifact eventually appears.
+   */
+  maxTurns?: number;
+  /**
+   * Hard ceiling on tool calls across the whole task — the intra-turn runaway
+   * guard (turn_complete only fires once per prompt, so a looping model never
+   * trips maxTurns). Defaults: none in mock mode (scripts are finite),
+   * ALAN_EVAL_TASK_MAX_TOOL_CALLS (40) in real mode.
+   */
+  maxToolCalls?: number;
+  /** Hard ceiling on provider spend (USD) for this task; same semantics. */
+  maxCost?: number;
   /** Verify the outcome. Return { pass: false, reason } to fail. */
   verify: (ctx: {
     workspace: string;
@@ -57,6 +78,8 @@ export interface TaskResult {
   errors?: string[];
   /** How many attempts ran (1 = no retry needed). */
   attempts?: number;
+  /** True when the run was stopped by the turn/cost cap (reason says which). */
+  capped?: boolean;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -70,6 +93,18 @@ function isThrottleError(msg: string): boolean {
 const MAX_ATTEMPTS = Math.max(1, Number(process.env.ALAN_EVAL_MAX_RETRIES ?? 3));
 const RETRY_BASE_MS = Math.max(0, Number(process.env.ALAN_EVAL_RETRY_BASE_MS ?? 4000));
 const TASK_DELAY_MS = Math.max(0, Number(process.env.ALAN_EVAL_TASK_DELAY_MS ?? 1500));
+
+/**
+ * Default per-task tool-call cap in REAL mode (mock scripts are finite by
+ * design). A live model burning this many tool calls on a 2-file fixture is a
+ * failure regardless of what it eventually produces.
+ */
+const REAL_DEFAULT_MAX_TOOL_CALLS = Math.max(
+  1,
+  Number(process.env.ALAN_EVAL_TASK_MAX_TOOL_CALLS ?? 40),
+);
+/** Default per-task spend cap (USD) in real mode; 0/unset disables. */
+const REAL_DEFAULT_MAX_COST = Math.max(0, Number(process.env.ALAN_EVAL_TASK_MAX_COST ?? 0));
 
 const TOOLS_BINARY =
   process.env.ALAN_TOOLS_BINARY ?? join(__dirname, "..", "..", "target", "release", "alan-tools");
@@ -90,10 +125,7 @@ export interface RunOptions {
   model?: string;
 }
 
-export async function runTask(
-  task: EvalTask,
-  opts: RunOptions = {},
-): Promise<TaskResult> {
+export async function runTask(task: EvalTask, opts: RunOptions = {}): Promise<TaskResult> {
   const real = opts.real ?? IS_REAL_MODE;
 
   // Mock mode needs a deterministic script; fail fast without spinning up.
@@ -130,11 +162,7 @@ export async function runTask(
 }
 
 /** One full attempt at a task: fresh workspace, engine, chat, verify. */
-async function attemptTask(
-  task: EvalTask,
-  opts: RunOptions,
-  real: boolean,
-): Promise<TaskResult> {
+async function attemptTask(task: EvalTask, opts: RunOptions, real: boolean): Promise<TaskResult> {
   const start = performance.now();
   const tmpRoot = await mkdtemp(join(tmpdir(), "alan-eval-"));
   const workspace = join(tmpRoot, "workspace");
@@ -143,8 +171,7 @@ async function attemptTask(
 
   const provider =
     opts.provider ?? process.env.ALAN_EVAL_PROVIDER ?? process.env.ALAN_PROVIDER ?? "anthropic";
-  const model =
-    opts.model ?? process.env.ALAN_EVAL_MODEL ?? process.env.ALAN_MODEL ?? "mock-model";
+  const model = opts.model ?? process.env.ALAN_EVAL_MODEL ?? process.env.ALAN_MODEL ?? "mock-model";
   const errors: string[] = [];
 
   try {
@@ -187,7 +214,15 @@ async function attemptTask(
     let turns = 0;
     let finalText = "";
 
-    for (const prompt of task.prompts) {
+    // Resolve caps: per-task values win; real mode gets a global default so a
+    // looping live model can't burn a whole budget on one fixture.
+    const maxToolCalls = task.maxToolCalls ?? (real ? REAL_DEFAULT_MAX_TOOL_CALLS : undefined);
+    const maxCost =
+      task.maxCost ?? (real && REAL_DEFAULT_MAX_COST > 0 ? REAL_DEFAULT_MAX_COST : undefined);
+    let toolCalls = 0;
+    let cappedReason: string | null = null;
+
+    outer: for (const prompt of task.prompts) {
       // Drain the chat generator. Count one turn per agent round-trip
       // (turn_complete), accumulate streamed assistant text so verify() can
       // judge by content, and capture provider error events so a throttle
@@ -195,12 +230,42 @@ async function attemptTask(
       for await (const event of engine.chat(sessionId, prompt)) {
         const ev = event as any;
         if (ev.type === "turn_complete") turns++;
+        if (ev.type === "tool_call_end") toolCalls++;
         if (ev.type === "text_delta" && typeof ev.text === "string") finalText += ev.text;
         if (ev.type === "error" && typeof ev.error === "string") errors.push(ev.error);
+        if (task.maxTurns !== undefined && turns >= task.maxTurns) {
+          cappedReason = `exceeded turn cap (${task.maxTurns})`;
+          break outer; // breaking the for-await closes the generator cleanly
+        }
+        if (maxToolCalls !== undefined && toolCalls > maxToolCalls) {
+          cappedReason = `exceeded tool-call cap (${maxToolCalls})`;
+          break outer;
+        }
+        if (maxCost !== undefined && engine.getCost() > maxCost) {
+          cappedReason = `exceeded cost cap ($${maxCost.toFixed(2)}; spent $${engine.getCost().toFixed(4)})`;
+          break outer;
+        }
       }
     }
 
     const cost = engine.getCost();
+
+    if (cappedReason) {
+      engine.close();
+      return {
+        name: task.name,
+        category: task.category,
+        pass: false,
+        reason: cappedReason,
+        durationMs: Math.round(performance.now() - start),
+        cost,
+        turns,
+        model: real ? model : "mock-model",
+        provider: real ? provider : "mock",
+        capped: true,
+        errors: errors.length ? errors : undefined,
+      };
+    }
 
     const verifyResult = await task.verify({
       workspace,
@@ -216,8 +281,7 @@ async function attemptTask(
 
     // A run that produced no completed turn AND hit a throttle error is
     // throttle-contaminated, not a measured failure. Surface the real cause.
-    const throttled =
-      !verifyResult.pass && turns === 0 && errors.some(isThrottleError);
+    const throttled = !verifyResult.pass && turns === 0 && errors.some(isThrottleError);
     const reason = throttled
       ? `rate-limited: ${errors.find(isThrottleError)}`
       : verifyResult.reason;
@@ -275,11 +339,7 @@ export async function runSuite(tasks: EvalTask[], opts: RunOptions = {}): Promis
 function printResult(r: TaskResult): void {
   // Throttled runs get a distinct ⚠ marker so they read as "not measured",
   // never as a capability failure.
-  const mark = r.pass
-    ? "\x1b[32m✓\x1b[0m"
-    : r.throttled
-      ? "\x1b[33m⚠\x1b[0m"
-      : "\x1b[31m✗\x1b[0m";
+  const mark = r.pass ? "\x1b[32m✓\x1b[0m" : r.throttled ? "\x1b[33m⚠\x1b[0m" : "\x1b[31m✗\x1b[0m";
   const time = `\x1b[2m${r.durationMs}ms\x1b[0m`;
   const retry = (r.attempts ?? 1) > 1 ? `\x1b[2m ×${r.attempts}\x1b[0m` : "";
   const tag = `\x1b[2m${r.name}\x1b[0m`;

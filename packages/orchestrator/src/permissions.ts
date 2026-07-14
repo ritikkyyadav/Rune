@@ -1,6 +1,7 @@
 import { isAbsolute, relative, resolve } from "path";
-import { isSandboxEnabled } from "@alan/tool-registry";
+import { isOsIsolationAvailable, isSandboxEnabled, patchTargetPaths } from "@alan/tool-registry";
 import type { PermissionLevel, ToolSchema } from "@alan/tool-registry";
+import { policyDenial, type OrgPolicy } from "./org-policy";
 
 export type PermissionScope = "once" | "session" | "project" | "global";
 
@@ -46,11 +47,16 @@ export class PermissionBroker {
   private yoloMode: boolean;
   private trustWorkspace: boolean;
   private workspaceRoot?: string;
+  private orgPolicy: OrgPolicy | null;
 
-  constructor(yoloMode = false, opts: { workspaceRoot?: string; trustWorkspace?: boolean } = {}) {
+  constructor(
+    yoloMode = false,
+    opts: { workspaceRoot?: string; trustWorkspace?: boolean; orgPolicy?: OrgPolicy | null } = {},
+  ) {
     this.yoloMode = yoloMode;
     this.workspaceRoot = opts.workspaceRoot;
     this.trustWorkspace = opts.trustWorkspace ?? false;
+    this.orgPolicy = opts.orgPolicy ?? null;
   }
 
   setYoloMode(enabled: boolean): void {
@@ -68,10 +74,17 @@ export class PermissionBroker {
   /**
    * Set the active permission mode — the single knob the Shift+Tab cycle drives.
    * Mapped onto the two underlying booleans: turing⇒yolo, auto⇒trust, confirm⇒neither.
+   * Org policy can forbid modes outright (e.g. no Hands-Free on managed
+   * machines) — a forbidden mode is refused, the current mode stands, and the
+   * return value tells the caller why.
    */
-  setMode(mode: PermissionMode): void {
+  setMode(mode: PermissionMode): { ok: boolean; reason?: string } {
+    if (this.orgPolicy?.forbidPermissionModes?.includes(mode)) {
+      return { ok: false, reason: `org policy forbids "${mode}" mode on this machine` };
+    }
     this.yoloMode = mode === "turing";
     this.trustWorkspace = mode === "auto";
+    return { ok: true };
   }
 
   /** The active permission mode, derived from the underlying booleans. */
@@ -82,6 +95,14 @@ export class PermissionBroker {
   }
 
   check(schema: ToolSchema, args: Record<string, unknown>): PermissionDecision {
+    // ── Org policy: FIRST, before every shortcut. A signed policy denial is
+    // terminal — turing mode, workspace trust, and session grants cannot
+    // override it, or the policy would be advisory. ──
+    if (this.orgPolicy) {
+      const denial = policyDenial(this.orgPolicy, schema.name, args);
+      if (denial) return { type: "denied", reason: denial };
+    }
+
     // Yolo mode — allow everything
     if (this.yoloMode) {
       console.warn(
@@ -170,8 +191,27 @@ export class PermissionBroker {
     // the sandbox entirely (/sandbox off), NO bash call is contained, so
     // workspace trust stops auto-approving bash altogether — full access
     // means every command earns a prompt outside Hands-Free mode.
+    //
+    // Intent is not capability: "sandbox on" only justifies auto-approval when
+    // this MACHINE can actually isolate (seatbelt/bwrap present). On the
+    // silent-fallback path the Rust executor is path-guard-only — nothing is
+    // contained, so bash must earn a prompt exactly as if the sandbox were off.
     if (schema.name === "bash") {
-      return isSandboxEnabled() && args.network !== true && args.run_in_background !== true;
+      return (
+        isSandboxEnabled() &&
+        isOsIsolationAvailable() &&
+        args.network !== true &&
+        args.run_in_background !== true
+      );
+    }
+    // apply_patch's blast radius is every path named in its envelope: confined
+    // when ALL of them (including move destinations) resolve inside the
+    // workspace. patchTargetPaths returns [] for unparseable patches, which
+    // fails confinement here — and the handler itself re-rejects any
+    // out-of-workspace path at execution, so this gates the prompt only.
+    if (schema.name === "apply_patch") {
+      const paths = patchTargetPaths(typeof args.patch === "string" ? args.patch : "");
+      return paths.length > 0 && paths.every((p) => this.isPathInside(this.workspaceRoot!, p));
     }
     // A worker's blast radius is exactly the files it owns: confined when
     // every owned entry resolves inside the workspace (the ownership guard

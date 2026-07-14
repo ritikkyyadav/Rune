@@ -1,6 +1,7 @@
 import type { ToolSchema } from "../types";
 import type { ToolRegistry } from "../registry";
-import { onSandboxModeChange } from "../sandbox-mode";
+import { isOsIsolationAvailable, onSandboxCapabilityChange } from "../sandbox-capability";
+import { isSandboxEnabled, onSandboxModeChange } from "../sandbox-mode";
 import { createRustToolHandler } from "./rust-bridge";
 import { FileFreshness, withFreshness } from "./freshness";
 import {
@@ -15,7 +16,11 @@ import { createAstQueryHandler } from "./ast-query";
 import { createTodoWriteHandler } from "./todo-write";
 import { createGlobHandler } from "./glob";
 import { createMultiEditHandler } from "./multi-edit";
+import { createApplyPatchHandler } from "./apply-patch";
+import { withLspFeedback } from "./lsp/feedback";
 import { createN8nTriggerHandler } from "./n8n";
+import { createLspHandler } from "./lsp/tool";
+import { LspServerManager } from "./lsp/manager";
 import { withSyntaxCheck } from "./diagnostics";
 import { withNetworkPreflight } from "./net-preflight";
 
@@ -132,6 +137,10 @@ const BASH_DESC_FULL_ACCESS =
   BASH_DESC_COMMON +
   " The sandbox is DISABLED for this session: commands run directly on the host with full network and filesystem access. Do not set network: true — it is unnecessary.";
 
+const BASH_DESC_DEGRADED =
+  BASH_DESC_COMMON +
+  " The sandbox is ON but this machine has NO OS isolation backend: commands run with path-guard checks only — full network and host filesystem access, nothing is contained. Do not set network: true — it is unnecessary. Treat every command as running directly on the user's machine.";
+
 const BASH_NET_DESC_SANDBOXED =
   "Run OUTSIDE the sandbox with full network and filesystem access. Required for package installs, git remote operations, and any command that talks to the internet. Prompts the user for approval unless they enabled Hands-Free mode.";
 
@@ -164,15 +173,27 @@ const BASH_SCHEMA: ToolSchema = {
 };
 
 // The registry and every provider serialization hold this schema object by
-// reference, so swapping the strings in place when /sandbox toggles means the
-// very next model turn sees an accurate contract — no re-registration needed.
-onSandboxModeChange((enabled) => {
-  BASH_SCHEMA.description = enabled ? BASH_DESC_SANDBOXED : BASH_DESC_FULL_ACCESS;
+// reference, so swapping the strings in place when /sandbox toggles (or the
+// capability probe lands) means the very next model turn sees an accurate
+// contract — no re-registration needed. Three truthful states: sandboxed
+// (on + isolation available), degraded (on + no backend on this machine),
+// full access (off).
+function refreshBashDescriptions(): void {
+  const enabled = isSandboxEnabled();
+  const isolated = isOsIsolationAvailable();
+  BASH_SCHEMA.description = !enabled
+    ? BASH_DESC_FULL_ACCESS
+    : isolated
+      ? BASH_DESC_SANDBOXED
+      : BASH_DESC_DEGRADED;
   const props = BASH_SCHEMA.inputSchema.properties as Record<string, { description?: string }>;
   if (props.network) {
-    props.network.description = enabled ? BASH_NET_DESC_SANDBOXED : BASH_NET_DESC_FULL_ACCESS;
+    props.network.description =
+      enabled && isolated ? BASH_NET_DESC_SANDBOXED : BASH_NET_DESC_FULL_ACCESS;
   }
-});
+}
+onSandboxModeChange(refreshBashDescriptions);
+onSandboxCapabilityChange(refreshBashDescriptions);
 
 const SYMBOL_SEARCH_SCHEMA: ToolSchema = {
   name: "symbol_search",
@@ -204,6 +225,32 @@ const SYMBOL_SEARCH_SCHEMA: ToolSchema = {
   category: "read",
 };
 
+const SEARCH_CODE_SCHEMA: ToolSchema = {
+  name: "search_code",
+  version: "0.1.0",
+  description:
+    "Ranked full-text search over the codebase — ask it QUESTIONS, not exact strings. " +
+    "Use for 'where do we handle X' / 'which code does Y' queries where grep's literal matching fails; " +
+    "results are function/class-sized chunks ranked by relevance (BM25 over symbol-chunked content), " +
+    "each with path, symbol, line, and a snippet. The index refreshes incrementally on every call, so " +
+    "results are never stale. Prefer grep for exact identifiers you already know; prefer symbol_search " +
+    "for name lookups; prefer this for concept and behavior questions.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      query: {
+        type: "string",
+        description:
+          "Natural-language or keyword query, e.g. 'where are stripe webhook retries handled'",
+      },
+      limit: { type: "number", description: "Max results (default 10, cap 50)" },
+    },
+    required: ["query"],
+  },
+  permissionLevel: "auto",
+  category: "read",
+};
+
 const ALL_SCHEMAS: Array<{ schema: ToolSchema; subcommand: string }> = [
   { schema: READ_FILE_SCHEMA, subcommand: "read-file" },
   { schema: LIST_DIR_SCHEMA, subcommand: "list-dir" },
@@ -212,6 +259,7 @@ const ALL_SCHEMAS: Array<{ schema: ToolSchema; subcommand: string }> = [
   { schema: EDIT_FILE_SCHEMA, subcommand: "edit-file" },
   { schema: BASH_SCHEMA, subcommand: "bash" },
   { schema: SYMBOL_SEARCH_SCHEMA, subcommand: "symbol-search" },
+  { schema: SEARCH_CODE_SCHEMA, subcommand: "search-code" },
 ];
 
 /**
@@ -233,6 +281,11 @@ export function registerBuiltinTools(registry: ToolRegistry, binaryPath: string)
   // monitor and stop them. One manager per registry (killed on process exit).
   const shells = new BackgroundShellManager();
 
+  // ONE language-server manager for the whole registry: the on-demand `lsp`
+  // tool and the opt-in post-edit feedback share its servers — two managers
+  // would mean two typescript-language-servers per workspace.
+  const lspManager = new LspServerManager();
+
   for (const { schema, subcommand } of ALL_SCHEMAS) {
     let handler = createRustToolHandler(schema, subcommand, binaryPath);
     // Order matters: preflight sees the raw args first, so a sandboxed
@@ -240,9 +293,12 @@ export function registerBuiltinTools(registry: ToolRegistry, binaryPath: string)
     if (schema.name === "bash") {
       handler = withNetworkPreflight(withBackgroundSupport(handler, shells));
     }
-    // Write tools get instant post-edit syntax feedback (inside freshness so
-    // the added field never disturbs hash extraction).
-    if (schema.category === "write") handler = withSyntaxCheck(handler);
+    // Write tools get instant post-edit syntax feedback, plus semantic LSP
+    // feedback when [lsp] autoFeedback is on (both inside freshness so the
+    // added fields never disturb hash extraction).
+    if (schema.category === "write") {
+      handler = withLspFeedback(withSyntaxCheck(handler), lspManager);
+    }
     const opts = FRESHNESS_TOOLS[schema.name];
     registry.register(opts ? withFreshness(handler, freshness, opts) : handler);
   }
@@ -253,8 +309,21 @@ export function registerBuiltinTools(registry: ToolRegistry, binaryPath: string)
   registry.register(createWebFetchHandler());
   registry.register(createWebSearchHandler());
   registry.register(createAstQueryHandler());
+  // Real language servers, lazily spawned per language on first use; the
+  // manager guarantees teardown (graceful on stopAll, SIGKILL on exit).
+  registry.register(createLspHandler(lspManager));
   registry.register(createTodoWriteHandler());
   registry.register(createGlobHandler());
-  registry.register(withFreshness(withSyntaxCheck(createMultiEditHandler()), freshness));
+  registry.register(
+    withFreshness(
+      withLspFeedback(withSyntaxCheck(createMultiEditHandler()), lspManager),
+      freshness,
+    ),
+  );
+  // Codex-family edit format. Registered for everyone (execution is model-
+  // agnostic) but only ADVERTISED to models trained on it — see
+  // ToolRegistry.toLlmTools(forModel). Does its own per-file syntax pass
+  // (withSyntaxCheck is single-path; a patch touches many).
+  registry.register(createApplyPatchHandler());
   registry.register(createN8nTriggerHandler());
 }

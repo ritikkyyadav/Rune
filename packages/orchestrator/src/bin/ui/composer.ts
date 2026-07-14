@@ -5,6 +5,7 @@
 // Vermillion/brass flag the looser permission modes so risk is visible at a glance.
 
 import * as os from "os";
+import { isOsIsolationAvailable, getSandboxCapability } from "@alan/tool-registry";
 import { accent, faint, warn, text, muted, line, bold, stripAnsi, info, ok } from "./theme";
 import { truncate, rule, visLen } from "./render";
 
@@ -102,13 +103,44 @@ export function permissionModeBanner(mode?: string): string {
  * for the same reason Hands-Free is: it removes a containment layer.
  */
 export function sandboxModeBanner(enabled: boolean): string {
+  if (!enabled) {
+    return (
+      `  ${bold(warn("▲ Sandbox off"))} ${faint("·")} ` +
+      `${text("commands run directly on this machine with full network & filesystem access.")} ` +
+      `${faint("(/sandbox on to re-enable)")}`
+    );
+  }
+  // "On" is only an isolation claim when this machine can actually isolate.
+  // On the degraded path (no seatbelt/bwrap) the banner must be as loud as
+  // "off" — the user is trusting a containment layer that does not exist.
+  if (!isOsIsolationAvailable()) {
+    return (
+      `  ${bold(warn("▲ Sandbox on — NOT ISOLATED"))} ${faint("·")} ` +
+      `${text("no OS sandbox backend on this machine (" + getSandboxCapability().mechanism + "): commands run with path-guard checks only, full network & host access; bash prompts for approval.")} ` +
+      `${faint("(install sandbox-exec/bwrap for real isolation)")}`
+    );
+  }
+  return (
+    `  ${ok("◆ Sandbox on")} ${faint("·")} ` +
+    `${muted("commands run in an OS sandbox — no network, workspace-confined writes; network: true escalates one call.")} ` +
+    `${faint("(/sandbox off for full access)")}`
+  );
+}
+
+/**
+ * A transient one-liner announcing the agent-browser posture — printed when
+ * `/browser` toggles (and by `/browser` with no argument as a status readout).
+ * First enable is chatty on purpose: bunx fetches @playwright/mcp, so the
+ * tools can take a few seconds to appear.
+ */
+export function browserModeBanner(enabled: boolean): string {
   return enabled
-    ? `  ${ok("◆ Sandbox on")} ${faint("·")} ` +
-        `${muted("commands run in an OS sandbox — no network, workspace-confined writes; network: true escalates one call.")} ` +
-        `${faint("(/sandbox off for full access)")}`
-    : `  ${bold(warn("▲ Sandbox off"))} ${faint("·")} ` +
-        `${text("commands run directly on this machine with full network & filesystem access.")} ` +
-        `${faint("(/sandbox on to re-enable)")}`;
+    ? `  ${ok("◆ Browser on")} ${faint("·")} ` +
+        `${muted("Berne can drive a headless, isolated browser (Playwright MCP) — navigate, read, fill, click; first use fetches @playwright/mcp (and a managed Chromium if none is installed).")} ` +
+        `${faint("(/browser off to disable)")}`
+    : `  ${text("◇ Browser off")} ${faint("·")} ` +
+        `${muted("no agent browser — web_fetch/web_search only.")} ` +
+        `${faint("(/browser on to enable)")}`;
 }
 
 /**

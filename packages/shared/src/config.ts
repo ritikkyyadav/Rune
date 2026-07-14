@@ -63,6 +63,38 @@ export interface AlanConfig {
     enabled: boolean;
     networkDeny: boolean;
     fsAllowlist: string[];
+    /**
+     * Refuse sandbox-tier bash instead of degrading when this machine has no
+     * OS isolation backend (sandbox-exec/bwrap). Default false: degraded runs
+     * are allowed but lose auto-approval and are labelled honestly.
+     */
+    requireOs?: boolean;
+  };
+  /**
+   * Language-server integration. `autoFeedback = true` pulls LSP diagnostics
+   * after every successful write/edit on a supported file (1.5s budget,
+   * errors only, appended to the tool result). Default false until
+   * eval-proven — servers are heavyweight where edits are hot.
+   */
+  lsp?: {
+    autoFeedback?: boolean;
+  };
+  /**
+   * Loop recovery bounds — how many times the agent retries/waits/nudges
+   * before giving up. Absent fields use per-model-family defaults
+   * (orchestrator/reliability-policy.ts). All plain integers, e.g.
+   * `[reliability] maxConsecutiveErrors = 5`.
+   */
+  reliability?: {
+    maxConsecutiveErrors?: number;
+    maxStuckNudges?: number;
+    maxRateWaits?: number;
+    maxOverflowCompactions?: number;
+    maxEmptyCompletionRetries?: number;
+    maxTruncationRetries?: number;
+    maxVerifyAttempts?: number;
+    readThrashCount?: number;
+    editChurnCount?: number;
   };
   /**
    * Opt-in, transparent telemetry — the ONLY path by which anything leaves the
@@ -187,12 +219,31 @@ export interface AlanConfig {
     autoCommit?: boolean;
   };
   /**
-   * Context assembly. repoMap: include a compact, cache-stable file-tree map
-   * of the repository in the system prompt so the model knows what exists
-   * without exploratory turns. Default true (auto-skipped for huge repos).
+   * Context assembly. repoMap: include a bounded, request-aware structural
+   * map as retrieval context so the model knows what exists without
+   * exploratory turns. Default true (falls back to a tracked file tree).
    */
   context?: {
     repoMap?: boolean;
+  };
+  /**
+   * Agent web browser. When enabled, Berne mounts the official Playwright
+   * MCP server (bunx @playwright/mcp) as a built-in `browser` MCP server:
+   * headless, isolated (fresh profile), accessibility-snapshot based.
+   * `/browser on|off` toggles it at runtime and persists to
+   * ~/.alan/browser.json; --browser/--no-browser force it for one run.
+   * Default off.
+   */
+  browser?: {
+    enabled?: boolean;
+    /** Run headless (default true); set false to watch the browser work. */
+    headless?: boolean;
+    /** Browser: chromium (managed, default) | chrome | firefox | webkit | msedge. */
+    browser?: string;
+    /** Origins the browser may navigate to; everything else is blocked. */
+    allowedOrigins?: string[];
+    /** Origins the browser must never touch. */
+    blockedOrigins?: string[];
   };
   /**
    * Interactive dashboards. auto: let the model decide on its own when an

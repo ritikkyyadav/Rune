@@ -4,6 +4,7 @@ import { ToolRegistry } from "@alan/tool-registry";
 import { AgentLoop } from "./agent-loop";
 import type { AgentTurnEvent, PermissionCheck } from "./agent-loop";
 import type { ContextEngine } from "./context-engine";
+import type { RetrievedChunk } from "./context-engine";
 import { Planner } from "./planner";
 import type { PlannerEvent } from "./planner";
 import type { ModelRouting, Plan, Step, StepResult } from "./types";
@@ -36,6 +37,8 @@ export interface PlanRunnerConfig {
   systemPrompt: string;
   priorMessages?: Message[];
   contextEngine?: ContextEngine;
+  /** Request-specific retrieval passed through to each executor step. */
+  retrievedChunks?: RetrievedChunk[];
   verifier?: Verifier;
   /** Use provider-native web-search grounding in executor steps. Default false. */
   nativeGrounding?: boolean;
@@ -136,7 +139,9 @@ export class PlanRunner {
       this.gateway,
     );
 
-    const tools = this.registry.toLlmTools();
+    // The planner only DESCRIBES tools in its plan; gate by the planner model
+    // anyway so a Codex-family planner sees the same surface its executor will.
+    const tools = this.registry.toLlmTools(this.config.routing.planner);
     let plan: Plan | null = null;
     let plannerTextAccum = "";
 
@@ -334,6 +339,7 @@ export class PlanRunner {
         maxTurns: this.config.maxTurnsPerStep,
         systemPrompt: stepPrompt,
         contextEngine: this.config.contextEngine,
+        retrievedChunks: this.config.retrievedChunks,
         verifier: this.config.verifier,
         nativeGrounding: this.config.nativeGrounding,
       },

@@ -152,6 +152,38 @@ describe("ContextEngine", () => {
     expect((first as { text: string }).text).toContain("[Pinned: /src/main.ts]");
   });
 
+  test("retrieved structural context is injected and remains budgeted", () => {
+    const engine = new ContextEngine({ budget: { maxTokens: 1_000 } }, createMockGateway());
+    const result = engine.buildPrompt(
+      "System",
+      [],
+      [{ role: "user", content: [{ type: "text", text: "fix the service" }] }],
+      undefined,
+      [{ content: "# Repository map\n- src/service.ts:4 — function startService", relevance: 0.96 }],
+    );
+    const first = result.messages[0].content[0];
+    expect(first.type).toBe("text");
+    expect((first as { text: string }).text).toContain("# Repository map");
+    expect(result.evictedCount).toBe(0);
+  });
+
+  test("oversized retrieved context is evicted instead of conversation history", () => {
+    const engine = new ContextEngine(
+      { budget: { maxTokens: 50, workingSetRatio: 0.5, sessionMemoryRatio: 0.25, retrievalRatio: 0.25 } },
+      createMockGateway(),
+    );
+    const result = engine.buildPrompt(
+      "System",
+      [],
+      [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+      undefined,
+      [{ content: "structural ".repeat(500), relevance: 0.96 }],
+    );
+    expect(result.evictedCount).toBe(1);
+    expect(JSON.stringify(result.messages)).toContain("hello");
+    expect(JSON.stringify(result.messages)).not.toContain("structural structural");
+  });
+
   test("system prompt is returned byte-identical (cache stability)", () => {
     const engine = new ContextEngine({}, createMockGateway());
     engine.addDiscovery("Uses TypeScript", "read_file");
