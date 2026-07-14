@@ -12,6 +12,7 @@
 
 import { describe, test, expect, mock } from "bun:test";
 import { AgentLoop } from "../../../packages/orchestrator/src/agent-loop";
+import { ContextEngine } from "../../../packages/orchestrator/src/context-engine";
 import type { ProviderName, InferenceRequest } from "../../../packages/llm-gateway";
 
 function ev(type: string, extra: Record<string, unknown> = {}) {
@@ -87,5 +88,28 @@ describe("AgentLoop — native grounding vs. function tools", () => {
     const names = (req.tools ?? []).map((t) => t.name);
     expect(names).not.toContain("web_search"); // replaced by server-side grounding
     expect(names).toContain("read_file"); // other tools coexist with grounding
+  });
+
+  test("request-specific repository context reaches the model through ContextEngine", async () => {
+    const captured: { req?: InferenceRequest } = {};
+    const gateway = makeCapturingGateway(captured);
+    const contextEngine = new ContextEngine({ budget: { maxTokens: 10_000 } }, gateway);
+    const loop = new AgentLoop(
+      {
+        model: "m",
+        provider: "anthropic",
+        maxTokens: 100,
+        maxTurns: 1,
+        systemPrompt: "s",
+        contextEngine,
+        retrievedChunks: [
+          { content: "# Repository map\n- src/auth.ts:4 — function validateToken", relevance: 0.96 },
+        ],
+      },
+      gateway,
+      makeRegistry(),
+    );
+    await collect(loop.run("fix auth", "sess", "/ws"));
+    expect(JSON.stringify(captured.req?.messages)).toContain("validateToken");
   });
 });

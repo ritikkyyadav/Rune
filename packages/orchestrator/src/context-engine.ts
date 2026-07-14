@@ -1,7 +1,7 @@
 import type { Message, ContentBlock, ToolDefinition } from "@alan/llm-gateway";
 import { LlmGateway } from "@alan/llm-gateway";
 import type { ProviderName } from "@alan/llm-gateway";
-import { TokenCounter, countTokens, getContextLimit } from "./tokenizer";
+import { TokenCounter, tokenCounter, countTokens, getContextLimit } from "./tokenizer";
 
 // ─── Context Budget Configuration ───
 
@@ -67,6 +67,12 @@ export interface ContextItem {
   source?: Message | Record<string, unknown>;
 }
 
+/** A bounded, relevance-ranked piece of workspace context. */
+export interface RetrievedChunk {
+  content: string;
+  relevance: number;
+}
+
 // ─── Session Memory ───
 
 export interface SessionMemory {
@@ -115,6 +121,14 @@ export class ContextEngine {
     summarizerProvider?: ProviderName;
   };
   private lastTokenUsage: { used: number; limit: number } | null = null;
+  // Whether the user explicitly configured maxTokens. When they didn't, the
+  // build budget tracks the active model's real context window instead of the
+  // one-size default (an 8k local model must never be sent a 100k prompt).
+  private budgetExplicit: boolean;
+  // The heuristic total from the most recent buildPrompt(), held until the
+  // provider reports the request's REAL count — the pair calibrates the
+  // token counter for this model (see TokenCounter.noteCalibration).
+  private lastHeuristicTotal: number | null = null;
   // Set by requestCompaction() (the compact_context tool / an explicit user
   // ask): forces the next shouldCompact()/compactWorkingSet() pair to run
   // regardless of the usage high-water mark. Consumed by compactWorkingSet.
@@ -131,12 +145,16 @@ export class ContextEngine {
   ) {
     this.config = config;
     this.budget = { ...DEFAULT_BUDGET, ...config.budget };
+    this.budgetExplicit = config.budget?.maxTokens != null;
     this.memory = { summaries: [], discoveries: [] };
     this.summarizeTurnsThreshold = config.summarizeTurnsThreshold ?? 10;
     this.gateway = gateway;
     this.summarizerModel = config.summarizerModel ?? "claude-haiku-4-5-20251001";
     this.summarizerProvider = config.summarizerProvider ?? "anthropic";
-    this.tokenCounter = new TokenCounter();
+    // The SHARED counter, not a private one: calibration learned here from
+    // real provider usage must apply everywhere tokens are estimated
+    // (working memory, system-memory budgets), or the subsystems drift apart.
+    this.tokenCounter = tokenCounter;
   }
 
   /**
@@ -210,7 +228,8 @@ export class ContextEngine {
     tools: ToolDefinition[],
     messages: Message[],
     plan?: { description: string; tokens: number },
-    retrievedChunks?: Array<{ content: string; relevance: number }>,
+    retrievedChunks?: RetrievedChunk[],
+    model?: string,
   ): BuiltPrompt {
     // ── Invariants (learned the hard way) ──
     // 1. Conversation messages are NEVER individually evicted. Dropping one
@@ -226,6 +245,9 @@ export class ContextEngine {
     // competes for the leftover budget and is delivered as a single context
     // message BEFORE the conversation, so it stays cache-stable relative to
     // the growing suffix.
+
+    if (model) this.tokenCounter.setActiveModel(model);
+    const maxTokens = this.effectiveMaxTokens(model);
 
     const systemTokens = this.tokenCounter.countTokens(systemPrompt);
     const toolTokens = this.tokenCounter.countTokens(JSON.stringify(tools));
@@ -279,10 +301,7 @@ export class ContextEngine {
       }
     }
 
-    const auxBudget = Math.max(
-      0,
-      this.budget.maxTokens - systemTokens - toolTokens - messageTokens,
-    );
+    const auxBudget = Math.max(0, maxTokens - systemTokens - toolTokens - messageTokens);
     const keptAux: ContextItem[] = [];
     let auxUsed = 0;
     const scoredAux = aux
@@ -314,11 +333,13 @@ export class ContextEngine {
     const totalTokens = systemTokens + toolTokens + messageTokens + auxUsed;
 
     // Heuristic estimate — overwritten by noteRealUsage() as soon as the
-    // provider reports authoritative counts for the request we send.
+    // provider reports authoritative counts for the request we send. The
+    // heuristic total is also parked so that report can calibrate the counter.
     this.lastTokenUsage = {
       used: totalTokens,
-      limit: this.budget.maxTokens,
+      limit: maxTokens,
     };
+    this.lastHeuristicTotal = totalTokens;
 
     return {
       messages: finalMessages,
@@ -343,7 +364,25 @@ export class ContextEngine {
     const used =
       usage.inputTokens + (usage.cacheReadTokens ?? 0) + (usage.cacheCreationTokens ?? 0);
     if (used <= 0) return;
+    // Pair this authoritative count with the heuristic made for the same
+    // request — the ratio tunes every subsequent estimate for this model.
+    if (this.lastHeuristicTotal != null) {
+      this.tokenCounter.noteCalibration(model, this.lastHeuristicTotal, used);
+      this.lastHeuristicTotal = null;
+    }
     this.lastTokenUsage = { used, limit: getContextLimit(model) };
+  }
+
+  /**
+   * The prompt-assembly budget actually in effect. An explicitly configured
+   * maxTokens is respected verbatim; the default budget is additionally capped
+   * to 85% of the active model's context window (headroom for the reply and
+   * residual estimate error), so small-window models get prompts that fit
+   * instead of guaranteed provider rejections.
+   */
+  private effectiveMaxTokens(model?: string): number {
+    if (this.budgetExplicit || !model) return this.budget.maxTokens;
+    return Math.min(this.budget.maxTokens, Math.floor(getContextLimit(model) * 0.85));
   }
 
   // ─── Rolling Summarization ───
@@ -447,7 +486,24 @@ export class ContextEngine {
     // agent's ONLY record of everything before the kept tail. The old 3-5
     // bullet summary amnesia'd the run — goals, file paths, and decisions
     // vanished mid-task.
-    const summaryText = await this.generateSummary(toSummarize, { comprehensive: true });
+    //
+    // Summary-of-summary guard: when an earlier compaction already ran, the
+    // head of toSummarize IS its summary message. Re-summarizing that prose as
+    // ordinary transcript is recursively lossy (each pass paraphrases the
+    // paraphrase — by the third compaction the session's original goals are
+    // gone). Instead the prior summary is extracted and MERGED: the summarizer
+    // receives it as accumulated state to update with the new segment's facts,
+    // never as text to compress again.
+    const priorState = toSummarize.length > 0 ? priorSummaryText(toSummarize[0]) : null;
+    const transcriptMessages = priorState !== null ? toSummarize.slice(1) : toSummarize;
+    if (transcriptMessages.length === 0) {
+      // Only the previous summary would be "compacted" — nothing new to fold in.
+      return { messages, compacted: false };
+    }
+    const summaryText = await this.generateSummary(transcriptMessages, {
+      comprehensive: true,
+      priorState: priorState ?? undefined,
+    });
     if (!summaryText) {
       return { messages, compacted: false };
     }
@@ -463,13 +519,18 @@ export class ContextEngine {
       ],
     };
 
-    // Also persist to session memory so buildPrompt() can use it.
-    this.memory.summaries.push({
-      fromSeq: 0,
-      toSeq: safeCutPoint,
-      summary: summaryText,
-      tokens: this.tokenCounter.countTokens(summaryText),
-    });
+    // Keep only the LATEST summary in session memory. The merged summary
+    // already contains everything still relevant from its predecessors, and
+    // buildPrompt() never injects this array — accumulating every generation
+    // was unbounded growth with no reader.
+    this.memory.summaries = [
+      {
+        fromSeq: 0,
+        toSeq: safeCutPoint,
+        summary: summaryText,
+        tokens: this.tokenCounter.countTokens(summaryText),
+      },
+    ];
 
     return {
       messages: [summaryMessage, ...toKeep],
@@ -509,7 +570,7 @@ export class ContextEngine {
 
   private async generateSummary(
     messages: Message[],
-    opts?: { instructions?: string; comprehensive?: boolean },
+    opts?: { instructions?: string; comprehensive?: boolean; priorState?: string },
   ): Promise<string | null> {
     const transcript = messages.map((m) => `${m.role}: ${messageToString(m)}`).join("\n\n");
 
@@ -518,24 +579,35 @@ export class ContextEngine {
       : "";
 
     const comprehensive = opts?.comprehensive ?? false;
+    const priorState = opts?.priorState?.trim();
     const system = comprehensive
-      ? "You are compacting a conversation so it can continue with far less context. Preserve every detail needed to resume the work: the user's goals, decisions made, files and code touched, commands run, errors encountered, and the exact current state and next step. Use short labelled sections. Never drop the most recent task."
+      ? "You are compacting a conversation so it can continue with far less context. Preserve every detail needed to resume the work: the user's goals, decisions made, files and code touched, commands run, errors encountered, and the exact current state and next step. Use exactly the labelled sections you are asked for. Never drop the most recent task."
       : "You are a conversation summarizer. Be concise — 3-5 bullet points.";
 
+    // Fixed section labels: successive compactions MERGE into this structure
+    // (state update), so the labels must be stable run-to-run — free-form prose
+    // is what made repeated compaction recursively lossy.
+    const sections = `## Goals & requirements
+## Key facts & codebase knowledge
+## Actions taken & outcomes (files touched, commands run)
+## Decisions & open questions
+## Current state & next step`;
+
     const instructionText = comprehensive
-      ? `Write a structured summary of the conversation below so the work can continue from the summary alone. Cover:
-- Goals & requirements the user stated
-- Key facts learned about the codebase
-- Actions taken (files read/edited, commands run) and their outcomes
-- Decisions made and open questions
-- Current state and the immediate next step${focus}`
+      ? priorState
+        ? `Below is the PRIOR STATE — the accumulated record of everything that happened before the new conversation segment — followed by the segment itself. Update the prior state with the segment's new facts: keep every entry that is still relevant, revise what changed, add what is new, and only drop items that are now clearly obsolete. Output ONLY the updated state, using exactly these sections:
+${sections}${focus}`
+        : `Write a structured summary of the conversation below so the work can continue from the summary alone. Use exactly these sections:
+${sections}${focus}`
       : `Summarize this conversation segment concisely. Focus on:
 - What was discussed and decided
 - Key facts learned about the codebase
 - Actions taken (files read, edited, commands run)
 - Outcomes and current state${focus}`;
 
-    const userText = `${instructionText}\n\nConversation:\n${transcript}`;
+    const userText = priorState
+      ? `${instructionText}\n\nPRIOR STATE:\n${priorState}\n\nNew conversation segment:\n${transcript}`
+      : `${instructionText}\n\nConversation:\n${transcript}`;
 
     // Try the active provider/model first, then any other registered provider.
     // `infer` (non-streaming) does no cross-provider fallback of its own, so if
@@ -707,4 +779,28 @@ function messageToString(msg: Message): string {
       return "";
     })
     .join("\n");
+}
+
+/**
+ * Both summary-message producers in the codebase: rolling compaction
+ * (compactWorkingSet, above) and the /compress replay path
+ * (session-replay.ts eventsToMessages). Either one at the head of a
+ * to-be-compacted window is accumulated STATE, not transcript.
+ */
+const COMPACTION_MARKERS = ["[Earlier conversation summary]", "[Conversation summary]"] as const;
+
+/**
+ * When `message` is a summary produced by an earlier compaction, return its
+ * body (marker stripped); otherwise null. Deliberately strict — single text
+ * block, user role, marker at position 0 — so genuine user text can't be
+ * mistaken for engine state.
+ */
+function priorSummaryText(message: Message): string | null {
+  if (message.role !== "user" || message.content.length !== 1) return null;
+  const block = message.content[0];
+  if (block.type !== "text") return null;
+  for (const marker of COMPACTION_MARKERS) {
+    if (block.text.startsWith(marker)) return block.text.slice(marker.length).trimStart();
+  }
+  return null;
 }
