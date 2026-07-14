@@ -82,13 +82,38 @@ const SNIPPET_LIMIT = 500;
 // ─── Config loading ───
 
 /**
- * Load hook configuration from `<workspaceRoot>/.alan/hooks.json`.
+ * Load hook configuration from `<workspaceRoot>/.alan/hooks.json`, plus any
+ * extra hook files (plugin bundles). Event arrays concatenate — workspace
+ * hooks first, then each extra file in order, so user hooks always run before
+ * plugin hooks for the same event.
  *
  * - Missing file  -> returns {} (a full no-op; never throws).
- * - Malformed JSON -> throws a clear, actionable error.
+ * - Malformed JSON -> throws a clear, actionable error (plugin files too —
+ *   a plugin that ships broken hooks should fail loudly, not silently).
  */
-export async function loadHookConfig(workspaceRoot: string): Promise<HookConfig> {
-  const path = join(workspaceRoot, ".alan", "hooks.json");
+export async function loadHookConfig(
+  workspaceRoot: string,
+  extraFiles: string[] = [],
+): Promise<HookConfig> {
+  const base = await loadHookFile(join(workspaceRoot, ".alan", "hooks.json"));
+  let merged = base;
+  for (const extra of extraFiles) {
+    merged = mergeHookConfigs(merged, await loadHookFile(extra));
+  }
+  return merged;
+}
+
+function mergeHookConfigs(a: HookConfig, b: HookConfig): HookConfig {
+  const events: HookEvent[] = ["preToolUse", "postToolUse", "sessionStart", "sessionEnd"];
+  const out: HookConfig = {};
+  for (const event of events) {
+    const list = [...(a[event] ?? []), ...(b[event] ?? [])];
+    if (list.length > 0) out[event] = list;
+  }
+  return out;
+}
+
+async function loadHookFile(path: string): Promise<HookConfig> {
   const file = Bun.file(path);
 
   if (!(await file.exists())) {
@@ -216,9 +241,9 @@ export class HookRunner {
   /** Convenience: load `<workspaceRoot>/.alan/hooks.json` then build a runner. */
   static async load(
     workspaceRoot: string,
-    options?: { logger?: (message: string) => void },
+    options?: { logger?: (message: string) => void; extraHookFiles?: string[] },
   ): Promise<HookRunner> {
-    const config = await loadHookConfig(workspaceRoot);
+    const config = await loadHookConfig(workspaceRoot, options?.extraHookFiles ?? []);
     return new HookRunner(config, workspaceRoot, options);
   }
 
