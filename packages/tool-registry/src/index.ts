@@ -14,17 +14,52 @@ export {
   setSandboxMode,
   type SandboxMode,
 } from "./sandbox-mode";
+export {
+  getSandboxCapability,
+  isOsIsolationAvailable,
+  isOsIsolationRequired,
+  onSandboxCapabilityChange,
+  probeSandboxCapability,
+  resetSandboxCapabilityForTest,
+  setRequireOsIsolation,
+  setSandboxCapability,
+  type SandboxCapability,
+} from "./sandbox-capability";
 export { createRustToolHandler } from "./tools/rust-bridge";
 export { registerBuiltinTools } from "./tools/builtin";
+export { LspServerManager } from "./tools/lsp/manager";
+export { createLspHandler, LSP_SCHEMA } from "./tools/lsp/tool";
+export {
+  withLspFeedback,
+  setLspAutoFeedback,
+  isLspAutoFeedbackEnabled,
+} from "./tools/lsp/feedback";
+export {
+  createApplyPatchHandler,
+  parsePatch,
+  patchTargetPaths,
+  APPLY_PATCH_SCHEMA,
+  type PatchOp,
+} from "./tools/apply-patch";
+export { modelUsesApplyPatch } from "./registry";
 export { CustomToolsLoader } from "./tools/custom-loader";
-export { McpClient, McpDiscovery, McpRpcError, McpSessionExpiredError } from "./mcp/index";
+export {
+  McpClient,
+  McpDiscovery,
+  McpRpcError,
+  McpSessionExpiredError,
+  BROWSER_SERVER_NAME,
+  buildBrowserServerSpec,
+} from "./mcp/index";
 export type {
   McpClientConfig,
   McpDiscoveryOptions,
   McpServerStatus,
+  McpServerConfig,
   McpEvent,
   McpServerInfo,
   McpServerCapabilities,
+  BrowserServerOptions,
 } from "./mcp/index";
 export { SkillLoader, createSkillTool } from "./skills/index";
 export type {

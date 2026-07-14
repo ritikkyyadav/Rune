@@ -21,6 +21,9 @@ import {
   loadSavedSandboxState,
   resolveInitialSandbox,
   saveSandboxState,
+  loadSavedBrowserState,
+  resolveInitialBrowser,
+  saveBrowserState,
   getSystemMemoryPath,
   getAlanHome,
 } from "@alan/shared";
@@ -49,6 +52,7 @@ import {
   composerRule,
   permissionModeBanner,
   sandboxModeBanner,
+  browserModeBanner,
   permissionView,
 } from "./ui/composer";
 import { truncate } from "./ui/render";
@@ -88,7 +92,11 @@ const { values, positionals } = parseArgs({
     pristine: { type: "boolean", default: false },
     sandbox: { type: "boolean" },
     "no-sandbox": { type: "boolean" },
+    browser: { type: "boolean" },
+    "no-browser": { type: "boolean" },
     "by-version": { type: "boolean", default: false },
+    // `berne detach --worktree`: isolate the run in a git worktree checkout.
+    worktree: { type: "boolean", default: false },
   },
   allowPositionals: true,
   strict: false,
@@ -118,6 +126,8 @@ if (values.help) {
       `    berne resume [sessionId]      Resume a session (no id → interactive picker)\n` +
       `    berne list [--all]            List stored sessions (--all includes archived)\n` +
       `    berne export <sessionId>      Export a session transcript\n` +
+      `    berne detach "<prompt>"       Start a background run that survives this terminal (--worktree isolates it)\n` +
+      `    berne attach [session|latest] Reattach to a detached run — replay, live-stream, Ctrl+C detaches again\n` +
       `    berne doctor                  Black-box health: recent incidents, crash sentinel, recorder state\n` +
       `    berne incidents [sub]         Browse recorded failures — list | show <id> | top [--by-version] | export\n` +
       `    berne notebook [sub]          Learned tactics notebook — list | show <id> | rm <id> | export\n` +
@@ -141,6 +151,7 @@ if (values.help) {
       `    --fullscreen                 Alt-screen TUI (edge-to-edge theme bg; default is native scroll)\n` +
       `    --pristine                   Run without the learned tactics notebook (evolution control group)\n` +
       `    --sandbox / --no-sandbox     Force the OS command sandbox on/off for this run (overrides /sandbox + config)\n` +
+      `    --browser / --no-browser     Force the agent browser (Playwright MCP) on/off for this run (overrides /browser + config)\n` +
       `    -h, --help                   Show this help\n\n`,
   );
   process.exit(0);
@@ -166,6 +177,16 @@ if (command === "notebook") {
 if (command === "telemetry") {
   const { runTelemetry } = await import("./telemetry-cli");
   runTelemetry(positionals.slice(1) as string[]);
+  process.exit(0);
+}
+if (command === "detach") {
+  const { runDetach } = await import("./detach-cli");
+  await runDetach(positionals as string[], values as Record<string, unknown>);
+  process.exit(0);
+}
+if (command === "attach") {
+  const { runAttach } = await import("./detach-cli");
+  await runAttach(positionals as string[]);
   process.exit(0);
 }
 
@@ -537,6 +558,13 @@ async function main() {
     saved: loadSavedSandboxState(),
     configured: config.sandbox?.enabled ?? null,
   });
+  // Browser posture: flag > ALAN_BROWSER_ENABLED env > /browser sidecar > config > off.
+  const browserEnabled = resolveInitialBrowser({
+    flag: values["no-browser"] === true ? false : values.browser === true ? true : undefined,
+    env: process.env.ALAN_BROWSER_ENABLED ?? null,
+    saved: loadSavedBrowserState(),
+    configured: config.browser?.enabled ?? null,
+  });
 
   const engine = new Engine({
     model,
@@ -547,6 +575,10 @@ async function main() {
     yoloMode: values.yolo as boolean,
     trustWorkspace,
     sandboxEnabled,
+    sandboxRequireOs: config.sandbox?.requireOs === true,
+    lspAutoFeedback: config.lsp?.autoFeedback === true,
+    reliability: config.reliability,
+    browser: { ...config.browser, enabled: browserEnabled },
     plannerMode,
     routing: plannerMode
       ? {
@@ -760,7 +792,12 @@ async function main() {
   } else {
     sessionId = engine.createSession();
   }
-  const customCommands = await loadCommands(workspaceRoot);
+  // User commands plus plugin-bundled ones (tagged with their plugin; user
+  // names win on conflict — the loader refuses shadowing with a warning).
+  const pluginCommandDirs = engine
+    .listPlugins()
+    .plugins.flatMap((p) => p.commandDirs.map((dir) => ({ dir, source: p.name })));
+  const customCommands = await loadCommands(workspaceRoot, pluginCommandDirs);
 
   // ─── Black box: crash forensics for the interactive session ───
   // Arm a pid-scoped sentinel now; it is removed by the process "exit" hook,
@@ -1108,6 +1145,7 @@ async function main() {
     ["/hands-free", "Hands-Free — toggle bypass mode (shift+tab)"],
     ["/mode", "Cycle permission mode (confirm/auto/hands-free)"],
     ["/sandbox", "OS sandbox for commands — on | off (off = full access)"],
+    ["/browser", "Agent web browser — on | off (Playwright, headless)"],
     ["/rewind", "Roll back the conversation"],
     ["/help", "Show all commands"],
     ["/quit", "Exit Berne"],
@@ -1143,8 +1181,9 @@ async function main() {
   function cycleMode(target?: ReturnType<typeof engine.getPermissionMode>) {
     let next: ReturnType<typeof engine.getPermissionMode>;
     if (target) {
-      engine.setPermissionMode(target);
-      next = target;
+      const res = engine.setPermissionMode(target);
+      if (!res.ok && res.reason) process.stdout.write(`\r\x1b[2K${res.reason}\n`);
+      next = engine.getPermissionMode(); // the actual mode, not the wish
     } else {
       next = engine.cyclePermissionMode();
     }
@@ -1285,6 +1324,7 @@ async function main() {
         ["/hands-free", "Hands-Free — toggle bypass mode (shift+tab)"],
         ["/mode", "Cycle permission mode (confirm/auto/hands-free)"],
         ["/sandbox", "OS sandbox for commands — on | off (off = full access)"],
+        ["/browser", "Agent web browser — on | off (Playwright, headless)"],
         ["/rewind", "Roll back the conversation"],
         ["/help", "This reference"],
         ["/quit", "Exit"],
@@ -1319,6 +1359,8 @@ async function main() {
             trustWorkspace: status.trustWorkspace,
             permissionMode: status.permissionMode,
             sandboxEnabled: status.sandboxEnabled,
+            sandboxDegraded: status.sandboxDegraded,
+            orgPolicy: status.orgPolicy,
             registeredProviders: status.registeredProviders,
             version: ALAN_VERSION,
           }) +
@@ -2111,8 +2153,9 @@ async function main() {
       // Explicit toggle into the bypass mode, or back out to confirm. (`/turing` is a
       // hidden back-compat alias for the same Hands-Free toggle.)
       const target = engine.getPermissionMode() === "turing" ? "confirm" : "turing";
-      engine.setPermissionMode(target);
-      process.stdout.write(permissionModeBanner(target) + "\n");
+      const res = engine.setPermissionMode(target);
+      if (!res.ok && res.reason) process.stdout.write(`${res.reason}\n`);
+      process.stdout.write(permissionModeBanner(engine.getPermissionMode()) + "\n");
       showPrompt();
       return;
     }
@@ -2135,14 +2178,33 @@ async function main() {
       return;
     }
 
+    if (input === "/browser" || input.startsWith("/browser ")) {
+      const raw = input.slice("/browser".length).trim().toLowerCase();
+      if (raw === "on" || raw === "off") {
+        const enabled = raw === "on";
+        await engine.setBrowserEnabled(enabled); // restarts MCP discovery when needed
+        saveBrowserState(enabled); // sticks across sessions, like /sandbox
+        process.stdout.write(browserModeBanner(enabled) + "\n");
+      } else if (raw) {
+        process.stdout.write(
+          `  ${warn("Usage:")} ${info("/browser")} ${dim("[on|off] — empty shows the current state")}\n`,
+        );
+      } else {
+        process.stdout.write(browserModeBanner(engine.isBrowserEnabled()) + "\n");
+      }
+      showPrompt();
+      return;
+    }
+
     if (input === "/mode" || input.startsWith("/mode ")) {
       const raw = input.slice("/mode".length).trim().toLowerCase();
       // "hands-free" is the public name for the internal "turing" bypass mode.
       const arg = raw === "hands-free" || raw === "handsfree" ? "turing" : raw;
       const valid = ["confirm", "auto", "turing"] as const;
       if (arg && (valid as readonly string[]).includes(arg)) {
-        engine.setPermissionMode(arg as (typeof valid)[number]);
-        process.stdout.write(permissionModeBanner(arg) + "\n");
+        const res = engine.setPermissionMode(arg as (typeof valid)[number]);
+        if (!res.ok && res.reason) process.stdout.write(`  ${res.reason}\n`);
+        process.stdout.write(permissionModeBanner(engine.getPermissionMode()) + "\n");
       } else if (raw) {
         process.stdout.write(
           `  ${warn("Usage:")} ${info("/mode")} ${dim("[confirm|auto|hands-free] — empty cycles")}\n`,
