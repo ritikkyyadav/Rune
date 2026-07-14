@@ -33,6 +33,12 @@ enum Commands {
     Bash,
     /// Search indexed symbols in the workspace
     SymbolSearch,
+    /// Ranked BM25 full-text search over symbol-chunked code (FTS5)
+    SearchCode,
+    /// Build a compact structural repository map for automatic context
+    RepoMap,
+    /// Report which sandbox backend is available on this machine
+    SandboxCheck,
 }
 
 fn read_stdin() -> String {
@@ -127,6 +133,25 @@ async fn main() {
                     std::process::exit(2);
                 });
             output_result(alan_tools::symbol_search::execute(input, &workspace));
+        }
+        Commands::SearchCode => {
+            let input: alan_tools::search_code::SearchCodeInput = serde_json::from_str(&input_json)
+                .unwrap_or_else(|e| {
+                    eprintln!("Invalid input JSON: {e}");
+                    std::process::exit(2);
+                });
+            output_result(alan_tools::search_code::execute(input, &workspace));
+        }
+        Commands::RepoMap => {
+            let input: alan_tools::repo_map::RepoMapInput = serde_json::from_str(&input_json)
+                .unwrap_or_else(|e| {
+                    eprintln!("Invalid input JSON: {e}");
+                    std::process::exit(2);
+                });
+            output_result(alan_tools::repo_map::execute(input, &workspace));
+        }
+        Commands::SandboxCheck => {
+            output_result::<alan_sandbox::SandboxProbe>(Ok(alan_sandbox::probe_capability()));
         }
     }
 }
