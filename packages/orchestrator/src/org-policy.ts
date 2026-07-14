@@ -1,0 +1,211 @@
+// ─── Signed org policy: admin-enforced constraints the end user cannot lift ───
+//
+// The compliance primitives (sandbox, redaction, signed exports) mean nothing
+// to a regulated buyer if the end user can toggle them off. This module loads
+// a policy file from a ROOT-OWNED system path, verifies its Ed25519 signature
+// against a separately installed org public key, and hands the result to the
+// PermissionBroker, which checks it BEFORE every mode shortcut — a policy
+// denial is terminal even in Hands-Free (turing) mode.
+//
+// Trust model:
+//  - /etc/berne/policy.json + /etc/berne/org.pub (also the macOS
+//    /Library/Application Support/Berne/ pair) are writable only by root.
+//    The signature stops on-disk tampering; the path ownership stops
+//    replacement. The key ships SEPARATELY from the policy — a file that
+//    carried its own key would verify any forgery.
+//  - BERNE_POLICY_FILE / BERNE_POLICY_PUBKEY env overrides are consulted ONLY
+//    when no system-path policy exists (dev/test). They can never shadow an
+//    installed org policy.
+//  - A policy that exists but fails verification is an ERROR, not an absence:
+//    the engine refuses to start rather than running unpoliced.
+//
+// Signing a policy (org admin, offline):
+//   bun run scripts/sign-policy.ts <policy.json> <out-dir>   # emits signed file + keys
+
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+
+import { verifySignature } from "./signing";
+import type { PermissionMode } from "./permissions";
+
+export interface OrgPolicy {
+  version: 1;
+  /** Display name shown in /status. */
+  org?: string;
+  /** Tools that may never run. Checked before every mode/grant/trust path. */
+  toolsDeny?: string[];
+  /** When present, ONLY these tools may run (allowlist mode). */
+  toolsAllow?: string[];
+  /** Permission modes the user may not enter (e.g. ["turing"]). */
+  forbidPermissionModes?: PermissionMode[];
+  /** Deny bash network escalation and network-reaching tools outright. */
+  networkDefaultDeny?: boolean;
+  /** When present, only these providers may serve inference. */
+  providerAllow?: string[];
+  /** When present, only these models may run. Entries may end with '*' (prefix). */
+  modelAllow?: string[];
+  /** Pin the telemetry endpoint (any other configured endpoint is refused). */
+  telemetryEndpoint?: string;
+}
+
+export interface LoadedOrgPolicy {
+  policy: OrgPolicy;
+  /** sha256 of the signed policy bytes — the fingerprint /status displays. */
+  fingerprint: string;
+  /** Which file the policy came from. */
+  source: string;
+}
+
+export type OrgPolicyLoadResult =
+  | { ok: true; loaded: LoadedOrgPolicy }
+  | { ok: false; error: string }
+  | null; // no policy anywhere — unmanaged machine, behavior unchanged
+
+interface SignedPolicyFile {
+  policy: OrgPolicy;
+  /** base64 Ed25519 signature over the canonical JSON of `policy`. */
+  signature: string;
+}
+
+/** Canonical bytes that get signed: stable-key-order JSON of the policy. */
+export function canonicalPolicyBytes(policy: OrgPolicy): string {
+  const sort = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(sort);
+    if (v !== null && typeof v === "object") {
+      const out: Record<string, unknown> = {};
+      for (const k of Object.keys(v as Record<string, unknown>).sort()) {
+        out[k] = sort((v as Record<string, unknown>)[k]);
+      }
+      return out;
+    }
+    return v;
+  };
+  return JSON.stringify(sort(policy));
+}
+
+const SYSTEM_LOCATIONS: Array<{ policy: string; pubkey: string }> = [
+  { policy: "/etc/berne/policy.json", pubkey: "/etc/berne/org.pub" },
+  {
+    policy: "/Library/Application Support/Berne/policy.json",
+    pubkey: "/Library/Application Support/Berne/org.pub",
+  },
+];
+
+/**
+ * Load and verify the org policy. Resolution order: system paths (always win),
+ * then the env-var pair when NO system policy exists. Returns null when no
+ * policy is installed anywhere.
+ */
+export function loadOrgPolicy(): OrgPolicyLoadResult {
+  const candidates = [...SYSTEM_LOCATIONS];
+  const systemPresent = SYSTEM_LOCATIONS.some((l) => existsSync(l.policy));
+  if (!systemPresent && process.env.BERNE_POLICY_FILE) {
+    candidates.push({
+      policy: process.env.BERNE_POLICY_FILE,
+      pubkey: process.env.BERNE_POLICY_PUBKEY ?? "",
+    });
+  }
+
+  for (const location of candidates) {
+    if (!existsSync(location.policy)) continue;
+
+    let raw: string;
+    try {
+      raw = readFileSync(location.policy, "utf8");
+    } catch (err) {
+      return { ok: false, error: `org policy at ${location.policy} is unreadable: ${err}` };
+    }
+
+    let parsed: SignedPolicyFile;
+    try {
+      parsed = JSON.parse(raw) as SignedPolicyFile;
+    } catch {
+      return { ok: false, error: `org policy at ${location.policy} is not valid JSON` };
+    }
+    if (!parsed || typeof parsed !== "object" || !parsed.policy || !parsed.signature) {
+      return {
+        ok: false,
+        error: `org policy at ${location.policy} is missing policy/signature fields`,
+      };
+    }
+
+    if (!location.pubkey || !existsSync(location.pubkey)) {
+      return {
+        ok: false,
+        error:
+          `org policy found at ${location.policy} but no org public key at ` +
+          `${location.pubkey || "(unset)"} — install the key or remove the policy`,
+      };
+    }
+    const publicKeyPem = readFileSync(location.pubkey, "utf8");
+    const bytes = canonicalPolicyBytes(parsed.policy);
+    if (!verifySignature(bytes, parsed.signature, publicKeyPem)) {
+      return {
+        ok: false,
+        error:
+          `org policy at ${location.policy} failed signature verification — ` +
+          `the file was modified after signing, or the wrong org key is installed`,
+      };
+    }
+
+    return {
+      ok: true,
+      loaded: {
+        policy: parsed.policy,
+        fingerprint: createHash("sha256").update(bytes).digest("hex").slice(0, 16),
+        source: location.policy,
+      },
+    };
+  }
+
+  return null;
+}
+
+/** Tools that reach the network regardless of args (for networkDefaultDeny). */
+const NETWORK_TOOLS = new Set(["web_fetch", "web_search", "n8n_trigger"]);
+
+/**
+ * The single policy evaluation the broker calls before any mode shortcut.
+ * Returns a denial reason, or null when the policy has no objection.
+ */
+export function policyDenial(
+  policy: OrgPolicy,
+  toolName: string,
+  args: Record<string, unknown>,
+): string | null {
+  if (policy.toolsAllow && !policy.toolsAllow.includes(toolName)) {
+    return `org policy: tool "${toolName}" is not on the allowlist`;
+  }
+  if (policy.toolsDeny?.includes(toolName)) {
+    return `org policy: tool "${toolName}" is denied`;
+  }
+  if (policy.networkDefaultDeny) {
+    if (NETWORK_TOOLS.has(toolName)) {
+      return `org policy: network access is default-deny (tool "${toolName}")`;
+    }
+    if (toolName === "bash" && args.network === true) {
+      return "org policy: network access is default-deny (bash network escalation)";
+    }
+  }
+  return null;
+}
+
+/** Whether the policy allows this provider/model pair to serve inference. */
+export function policyAllowsModel(
+  policy: OrgPolicy,
+  provider: string,
+  model: string,
+): string | null {
+  if (policy.providerAllow && !policy.providerAllow.includes(provider)) {
+    return `org policy: provider "${provider}" is not on the allowlist (${policy.providerAllow.join(", ")})`;
+  }
+  if (policy.modelAllow) {
+    const ok = policy.modelAllow.some((entry) =>
+      entry.endsWith("*") ? model.startsWith(entry.slice(0, -1)) : model === entry,
+    );
+    if (!ok) {
+      return `org policy: model "${model}" is not on the allowlist (${policy.modelAllow.join(", ")})`;
+    }
+  }
+  return null;
+}
