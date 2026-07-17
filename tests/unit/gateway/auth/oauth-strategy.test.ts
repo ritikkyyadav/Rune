@@ -372,6 +372,22 @@ describe("Anthropic subscription flow (Claude Pro/Max)", () => {
     expect(u.searchParams.get("client_id")).toBeTruthy();
   });
 
+  it("encodes the scope's spaces as %20 — claude.ai rejects the form-style + as 'Invalid request format'", () => {
+    // Raw-string assertion on purpose: URLSearchParams.get() decodes + and %20
+    // identically, which is exactly how the live regression slipped past the
+    // parsed-param checks above.
+    const raw = anthropicOAuthFlow.authorizeUrl({
+      redirectUri: "https://console.anthropic.com/oauth/code/callback",
+      codeChallenge: "CHAL",
+      state: "STATE",
+    });
+    expect(raw).toContain("scope=org%3Acreate_api_key%20user%3Aprofile%20user%3Ainference");
+    expect(raw.split("?")[1]).not.toContain("+");
+    expect(raw).toContain(
+      "redirect_uri=https%3A%2F%2Fconsole.anthropic.com%2Foauth%2Fcode%2Fcallback",
+    );
+  });
+
   it("exchanges an authorization code for a refreshable bearer", async () => {
     let sent: Record<string, unknown> = {};
     globalThis.fetch = (async (_url: string, init: RequestInit) => {

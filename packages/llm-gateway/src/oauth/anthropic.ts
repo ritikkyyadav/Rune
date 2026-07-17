@@ -61,17 +61,24 @@ export const anthropicOAuthFlow: OAuthFlow = {
   manualRedirectUri: REDIRECT_URI,
 
   authorizeUrl({ redirectUri, codeChallenge, state }) {
-    const u = new URL(AUTHORIZE_URL);
-    // `code=true` asks Anthropic to render the code on the page for manual copy.
-    u.searchParams.set("code", "true");
-    u.searchParams.set("client_id", CLIENT_ID);
-    u.searchParams.set("response_type", "code");
-    u.searchParams.set("redirect_uri", redirectUri);
-    u.searchParams.set("scope", SCOPES);
-    u.searchParams.set("code_challenge", codeChallenge);
-    u.searchParams.set("code_challenge_method", "S256");
-    u.searchParams.set("state", state);
-    return u.toString();
+    // Built by hand with encodeURIComponent, NOT URLSearchParams: the form
+    // serializer encodes the scope's spaces as `+`, and claude.ai's authorize
+    // endpoint parses `+` literally — the request bounces with "Authorization
+    // failed: Invalid request format". `%20` is what the first-party client
+    // sends and the only encoding this endpoint accepts. (Live-verified.)
+    const params: [string, string][] = [
+      // `code=true` asks Anthropic to render the code on the page for manual copy.
+      ["code", "true"],
+      ["client_id", CLIENT_ID],
+      ["response_type", "code"],
+      ["redirect_uri", redirectUri],
+      ["scope", SCOPES],
+      ["code_challenge", codeChallenge],
+      ["code_challenge_method", "S256"],
+      ["state", state],
+    ];
+    const query = params.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
+    return `${AUTHORIZE_URL}?${query}`;
   },
 
   exchange({ code, codeVerifier, redirectUri, state }): Promise<ExchangeResult> {

@@ -82,19 +82,25 @@ export const codexOAuthFlow: OAuthFlow = {
   loopbackPath: LOOPBACK_PATH,
 
   authorizeUrl({ redirectUri, codeChallenge, state }) {
-    const u = new URL(AUTHORIZE_URL);
-    u.searchParams.set("response_type", "code");
-    u.searchParams.set("client_id", CLIENT_ID);
-    u.searchParams.set("redirect_uri", redirectUri);
-    u.searchParams.set("scope", SCOPES);
-    u.searchParams.set("code_challenge", codeChallenge);
-    u.searchParams.set("code_challenge_method", "S256");
-    u.searchParams.set("state", state);
-    // Codex-specific: return an id_token carrying the account so it can serve
-    // inference, and use the simplified CLI consent screen.
-    u.searchParams.set("id_token_add_organizations", "true");
-    u.searchParams.set("codex_cli_simplified_flow", "true");
-    return u.toString();
+    // Hand-encoded (%20 for the scope's spaces), not URLSearchParams — the form
+    // serializer's `+` reads as a literal plus on strict authorize endpoints.
+    // Anthropic's endpoint live-rejected `+` ("Invalid request format"); encode
+    // uniformly here too so Codex never trips the same parser class.
+    const params: [string, string][] = [
+      ["response_type", "code"],
+      ["client_id", CLIENT_ID],
+      ["redirect_uri", redirectUri],
+      ["scope", SCOPES],
+      ["code_challenge", codeChallenge],
+      ["code_challenge_method", "S256"],
+      ["state", state],
+      // Codex-specific: return an id_token carrying the account so it can serve
+      // inference, and use the simplified CLI consent screen.
+      ["id_token_add_organizations", "true"],
+      ["codex_cli_simplified_flow", "true"],
+    ];
+    const query = params.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
+    return `${AUTHORIZE_URL}?${query}`;
   },
 
   exchange({ code, codeVerifier, redirectUri }): Promise<ExchangeResult> {

@@ -94,6 +94,16 @@ describe("codexOAuthFlow", () => {
     expect(u.searchParams.get("id_token_add_organizations")).toBe("true");
     expect(u.searchParams.get("codex_cli_simplified_flow")).toBe("true");
     expect(u.searchParams.get("redirect_uri")).toBe("http://localhost:1455/auth/callback");
+
+    // Wire encoding: scope spaces must be %20, never the form-style + (strict
+    // authorize endpoints parse + literally — Anthropic's live-rejected it).
+    const raw = codexOAuthFlow.authorizeUrl({
+      redirectUri: "http://localhost:1455/auth/callback",
+      codeChallenge: "CHAL",
+      state: "STATE",
+    });
+    expect(raw).toContain("scope=openid%20profile%20email%20offline_access");
+    expect(raw.split("?")[1]).not.toContain("+");
   });
 
   it("exchanges a code for a bearer and captures the account id from the id_token", async () => {
