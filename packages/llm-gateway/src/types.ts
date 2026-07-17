@@ -23,7 +23,13 @@ export type ContentBlock =
   // when thinking is enabled. Providers that don't understand thinking skip
   // these blocks during conversion.
   | { type: "thinking"; thinking: string; signature?: string }
-  | { type: "redacted_thinking"; data: string };
+  // Opaque provider reasoning state that must round-trip verbatim within a
+  // tool-use loop (Anthropic redacted-thinking; Codex/Responses reasoning items
+  // with encrypted_content). `provider` tags the ORIGIN so a block is only ever
+  // replayed back to the same provider — every other provider drops it, so
+  // switching providers mid-conversation can never leak one provider's opaque
+  // state into another's request. Absent = legacy Anthropic (its own block).
+  | { type: "redacted_thinking"; data: string; provider?: string };
 
 export interface Message {
   role: Role;
@@ -49,6 +55,10 @@ export type ProviderName =
   | "groq"
   | "xai"
   | "deepseek"
+  // Subscription-backed transports (own endpoints, not the vendor's public API):
+  // GitHub Copilot and the ChatGPT-backend Codex "responses" API.
+  | "copilot"
+  | "codex"
   | "custom";
 
 /**
@@ -120,8 +130,12 @@ export interface InferenceRequest {
    * thinking). Providers pick the right wire form per model — adaptive on
    * models that support it, budgeted extended thinking otherwise — and ignore
    * the flag on models with no thinking support.
+   *
+   * `effort` maps to the provider's reasoning-depth dial where one exists
+   * (OpenAI `reasoning_effort`; others approximate via budget). Agentic work
+   * defaults to "high": shallow reasoning is how tasks get half-done fast.
    */
-  thinking?: { enabled: boolean; budgetTokens?: number };
+  thinking?: { enabled: boolean; budgetTokens?: number; effort?: "low" | "medium" | "high" };
   stream: boolean;
 }
 
@@ -159,8 +173,9 @@ export type StreamEvent =
   // in the assistant message so it can be replayed verbatim on the next
   // request — required for Anthropic tool-use loops with thinking enabled.
   | { type: "thinking_stop"; thinking: string; signature?: string }
-  // Opaque redacted thinking block — must round-trip untouched.
-  | { type: "redacted_thinking"; data: string }
+  // Opaque provider reasoning state that must round-trip untouched. `provider`
+  // tags the origin so it's only ever replayed to the same provider.
+  | { type: "redacted_thinking"; data: string; provider?: string }
   | { type: "tool_use_start"; toolCallId: string; toolName: string }
   | { type: "tool_use_delta"; toolCallId: string; partialJson: string }
   | { type: "tool_use_stop"; toolCallId: string; toolInput: Record<string, unknown> }
@@ -182,12 +197,28 @@ export interface StreamOpts {
   signal?: AbortSignal;
 }
 
+/** A model exposed by a provider's discovery endpoint (or its static preset list). */
+export interface ModelInfo {
+  id: string;
+  /** Human label if the provider supplies one; otherwise the id. */
+  label?: string;
+  /** True when this came from the provider's live endpoint vs. a static fallback. */
+  live?: boolean;
+}
+
 export interface LlmProvider {
   name: ProviderName;
   infer(request: InferenceRequest): Promise<InferenceResponse>;
   inferStream(request: InferenceRequest, opts?: StreamOpts): AsyncGenerator<StreamEvent>;
   countTokens(messages: Message[], tools?: ToolDefinition[]): Promise<number>;
   healthCheck(): Promise<boolean>;
+  /**
+   * OPTIONAL live model discovery. Implemented by adapters with a real listing
+   * endpoint (Ollama /api/tags, OpenAI-compat /v1/models, …). Optional so every
+   * existing adapter compiles untouched; callers fall back to the static preset
+   * `models` list when this is absent or throws.
+   */
+  listModels?(): Promise<ModelInfo[]>;
 }
 
 // ─── Cost Tracking ───

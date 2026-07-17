@@ -42,6 +42,50 @@ export function nextPermissionMode(mode: PermissionMode): PermissionMode {
   return PERMISSION_MODE_ORDER[(i + 1) % PERMISSION_MODE_ORDER.length]!;
 }
 
+/** The user-facing config spelling for a permission mode ("turing" → "hands-free"). */
+export type ConfigPermissionMode = "confirm" | "auto" | "hands-free";
+
+/**
+ * Map the config's user-facing mode spelling onto the internal PermissionMode.
+ * The config file says "hands-free" (readable); the engine's enum value is
+ * "turing" (the historical bypass token). Unknown/absent ⇒ undefined so callers
+ * can fall back to flags/defaults.
+ */
+export function configModeToPermissionMode(mode: string | undefined): PermissionMode | undefined {
+  switch (mode) {
+    case "hands-free":
+      return "turing";
+    case "auto":
+      return "auto";
+    case "confirm":
+      return "confirm";
+    default:
+      return undefined;
+  }
+}
+
+/** Map the internal PermissionMode back to the config's user-facing spelling. */
+export function permissionModeToConfig(mode: PermissionMode): ConfigPermissionMode {
+  return mode === "turing" ? "hands-free" : mode;
+}
+
+/**
+ * Resolve the mode a session should START in, folding config + explicit flags
+ * into the broker's two booleans. Explicit `--yolo` / `--trust` flags win over
+ * the persisted `[permissions] mode`; absent everything ⇒ confirm (neither).
+ */
+export function resolveStartupPermissionFlags(opts: {
+  yoloFlag?: boolean;
+  trustFlag?: boolean;
+  configMode?: string;
+  configTrustWorkspace?: boolean;
+}): { yoloMode: boolean; trustWorkspace: boolean } {
+  const configMode = configModeToPermissionMode(opts.configMode);
+  const yoloMode = !!opts.yoloFlag || configMode === "turing";
+  const trustWorkspace = !!opts.trustFlag || !!opts.configTrustWorkspace || configMode === "auto";
+  return { yoloMode, trustWorkspace };
+}
+
 export class PermissionBroker {
   private sessionGrants: PermissionRule[] = [];
   private yoloMode: boolean;

@@ -296,15 +296,30 @@ export function isAllowedEgress(url: string, allowlist: string[]): boolean {
   }
 }
 
+/** Loopback hosts are always allowed egress: verification loops (curl the dev
+ * server you just started) and local tooling depend on them, and they never
+ * leave the machine. */
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]", "0.0.0.0"]);
+
 /**
  * Create a reusable egress guard function.
- * Falls back to DEFAULT_EGRESS_ALLOWLIST when no custom list is provided.
+ *
+ * Semantics match `isAllowedEgress`: NO configured allowlist means NO
+ * restriction. Egress limits are an opt-in hardening feature (org policy,
+ * `egressAllowlist` in the engine config) — they must never be the silent
+ * default, or every web_fetch/research/localhost-verification call in a normal
+ * session dies with "Egress blocked" and the agent learns to answer from
+ * memory instead of evidence. (That exact failure shipped once: the old
+ * fallback-to-DEFAULT_EGRESS_ALLOWLIST behavior blocked the entire internet
+ * except six package registries, including `curl http://127.0.0.1:3000`.)
  */
 export function createEgressGuard(allowlist?: string[]): (url: string) => boolean {
-  const list = allowlist && allowlist.length > 0 ? allowlist : DEFAULT_EGRESS_ALLOWLIST;
+  const list = allowlist ?? [];
   return (url: string) => {
     try {
       const hostname = new URL(url).hostname;
+      if (LOOPBACK_HOSTS.has(hostname)) return true;
+      if (list.length === 0) return true; // no allowlist configured = unrestricted
       return list.some((allowed) => hostname === allowed || hostname.endsWith("." + allowed));
     } catch {
       return false; // Invalid URL = blocked

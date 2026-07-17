@@ -6,6 +6,8 @@ import {
   renderSlashPalette,
   renderKeysPanel,
   renderKeyEditor,
+  renderKeyManagerPanel,
+  formatKeyDate,
   renderMemoryPanel,
   MEMORY_ACTION_COUNT,
   renderPermissionCard,
@@ -122,7 +124,65 @@ describe("ui/composer renderKeysPanel", () => {
     expect(plain.find((l) => l.includes("Anthropic"))!).toContain("sk-a…1f2a");
     expect(plain.find((l) => l.includes("Groq"))!).toContain("not set");
     expect(plain.find((l) => l.includes("OpenAI"))!).toContain("off"); // toggled off
-    expect(plain.at(-1)).toContain("enter edit"); // hint footer
+    expect(plain.at(-1)).toContain("manage keys"); // hint footer
+  });
+
+  it("shows a +N badge when a provider has a multi-account pool", () => {
+    const pooled = [
+      {
+        id: "ollama-turbo",
+        label: "Ollama Turbo",
+        masked: "sk-o…aaaa",
+        source: "saved" as const,
+        keyCount: 10,
+        active: false,
+        disabled: false,
+      },
+    ];
+    const plain = renderKeysPanel(pooled, 0, 100).lines.map(stripAnsi);
+    expect(plain.find((l) => l.includes("Ollama Turbo"))!).toContain("+9"); // 10 keys → "+9 more"
+  });
+});
+
+describe("ui/composer renderKeyManagerPanel", () => {
+  const keys = [
+    {
+      id: "k1",
+      masked: "key1…aaaa",
+      label: "personal",
+      addedAt: "2026-07-01T10:00:00Z",
+      active: false,
+    },
+    { id: "k2", masked: "key2…bbbb", label: "work", addedAt: "2026-07-10T10:00:00Z", active: true },
+  ];
+
+  it("lists every stored key with its date and marks the active one", () => {
+    const r = renderKeyManagerPanel("Ollama Turbo", keys, 1, 100);
+    const plain = r.lines.map(stripAnsi);
+    expect(plain[0]).toContain("Ollama Turbo");
+    expect(plain[0]).toContain("2 keys configured");
+    expect(plain.find((l) => l.includes("personal"))!).toContain("2026-07-01");
+    expect(plain.find((l) => l.includes("work"))!).toContain("active");
+    expect(plain.some((l) => l.includes("❯") && l.includes("work"))).toBe(true); // selected index 1
+    expect(plain.at(-1)).toContain("a add key");
+    // Never leaks a raw secret.
+    expect(plain.join("\n")).not.toContain("SECRET");
+  });
+
+  it("shows an empty-state prompt when no keys are stored", () => {
+    const plain = renderKeyManagerPanel("Groq", [], 0, 100).lines.map(stripAnsi);
+    expect(plain[0]).toContain("none configured");
+    expect(plain.some((l) => l.includes("Press a to add"))).toBe(true);
+  });
+});
+
+describe("ui/composer formatKeyDate", () => {
+  it("formats an ISO date as YYYY-MM-DD", () => {
+    expect(formatKeyDate("2026-07-10T10:00:00Z")).toBe("2026-07-10");
+  });
+  it("shows an em-dash for unknown or bad dates", () => {
+    expect(formatKeyDate(undefined)).toBe("—");
+    expect(formatKeyDate("not-a-date")).toBe("—");
   });
 });
 
@@ -224,7 +284,9 @@ describe("ui/composer statusLine + permission mode", () => {
   });
 
   it("accepts the legacy 'yolo'/'trusted' aliases", () => {
-    expect(stripAnsi(statusLine({ model: "m", workspace: "/w", mode: "yolo" }))).toMatch(/HANDS-FREE/);
+    expect(stripAnsi(statusLine({ model: "m", workspace: "/w", mode: "yolo" }))).toMatch(
+      /HANDS-FREE/,
+    );
     expect(stripAnsi(statusLine({ model: "m", workspace: "/w", mode: "trusted" }))).toMatch(/auto/);
   });
 

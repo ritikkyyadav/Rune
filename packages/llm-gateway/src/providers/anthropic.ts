@@ -5,6 +5,7 @@ import type {
   InferenceResponse,
   LlmProvider,
   Message,
+  ModelInfo,
   StreamEvent,
   StopReason,
   StreamOpts,
@@ -13,24 +14,48 @@ import type {
 } from "../types";
 import { parseToolArguments } from "@alan/shared";
 
+// ─── Subscription OAuth (Claude Pro/Max) ───
+// A Claude Pro/Max login yields a bearer *access token*, not an API key. The
+// subscription backend accepts it only when the request presents as Claude Code:
+// the `anthropic-beta: oauth-2025-04-20` header AND this exact identity as the
+// first system block. This is the same handshake the official CLI performs; we
+// send the user's OWN token (no key minting, no scraping).
+const CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude.";
+const OAUTH_BETA = "oauth-2025-04-20";
+const INTERLEAVED_BETA = "interleaved-thinking-2025-05-14";
+
+export interface AnthropicAuthOpts {
+  /** The credential is a subscription OAuth bearer token, not an x-api-key. */
+  oauth?: boolean;
+}
+
 export class AnthropicProvider implements LlmProvider {
   readonly name = "anthropic" as const;
   private client: Anthropic;
+  /** Subscription-OAuth mode: authenticate with Bearer + Claude-Code identity. */
+  private readonly oauth: boolean;
 
-  constructor(apiKey?: string, baseUrl?: string) {
+  constructor(apiKey?: string, baseUrl?: string, auth?: AnthropicAuthOpts) {
+    this.oauth = auth?.oauth ?? false;
     this.client = new Anthropic({
-      apiKey: apiKey ?? process.env.ANTHROPIC_API_KEY,
+      // OAuth: send Authorization: Bearer (authToken) and suppress x-api-key by
+      // nulling apiKey — with both set, the SDK prefers x-api-key. API-key mode
+      // is unchanged.
+      ...(this.oauth
+        ? { authToken: apiKey ?? null, apiKey: null }
+        : { apiKey: apiKey ?? process.env.ANTHROPIC_API_KEY }),
       ...(baseUrl && { baseURL: baseUrl }),
     });
   }
 
   async infer(request: InferenceRequest): Promise<InferenceResponse> {
     const { thinking, needsInterleavedBeta } = this.buildThinkingParam(request);
+    const headers = this.betaHeader(needsInterleavedBeta);
     const response = await this.client.messages.create(
       {
         model: request.model,
         max_tokens: request.maxTokens,
-        system: request.system ? this.toSystemWithCache(request.system) : undefined,
+        system: this.toSystemBlocks(request.system),
         messages: this.toAnthropicMessagesWithCache(request.messages),
         tools: request.tools ? this.toAnthropicToolsWithCache(request.tools) : undefined,
         // Anthropic rejects sampling params alongside thinking.
@@ -39,9 +64,7 @@ export class AnthropicProvider implements LlmProvider {
         stop_sequences: request.stopSequences,
         ...(thinking ? { thinking: thinking as never } : {}),
       },
-      needsInterleavedBeta
-        ? { headers: { "anthropic-beta": "interleaved-thinking-2025-05-14" } }
-        : undefined,
+      headers ? { headers } : undefined,
     );
 
     const usage = response.usage as unknown as Record<string, number>;
@@ -61,11 +84,12 @@ export class AnthropicProvider implements LlmProvider {
 
   async *inferStream(request: InferenceRequest, opts?: StreamOpts): AsyncGenerator<StreamEvent> {
     const { thinking, needsInterleavedBeta } = this.buildThinkingParam(request);
+    const headers = this.betaHeader(needsInterleavedBeta);
     const stream = this.client.messages.stream(
       {
         model: request.model,
         max_tokens: request.maxTokens,
-        system: request.system ? this.toSystemWithCache(request.system) : undefined,
+        system: this.toSystemBlocks(request.system),
         messages: this.toAnthropicMessagesWithCache(request.messages),
         tools: this.buildTools(request),
         // Anthropic rejects sampling params alongside thinking.
@@ -76,9 +100,7 @@ export class AnthropicProvider implements LlmProvider {
       },
       {
         signal: opts?.signal,
-        ...(needsInterleavedBeta
-          ? { headers: { "anthropic-beta": "interleaved-thinking-2025-05-14" } }
-          : {}),
+        ...(headers ? { headers } : {}),
       },
     );
 
@@ -205,11 +227,15 @@ export class AnthropicProvider implements LlmProvider {
   }
 
   async countTokens(messages: Message[], tools?: ToolDefinition[]): Promise<number> {
-    const result = await this.client.messages.countTokens({
-      model: "claude-sonnet-4-6",
-      messages: this.toAnthropicMessages(messages),
-      tools: tools ? this.toAnthropicTools(tools) : undefined,
-    });
+    const result = await this.client.messages.countTokens(
+      {
+        model: "claude-sonnet-4-6",
+        messages: this.toAnthropicMessages(messages),
+        tools: tools ? this.toAnthropicTools(tools) : undefined,
+      },
+      // Subscription tokens need the oauth beta on every endpoint they touch.
+      this.oauth ? { headers: { "anthropic-beta": OAUTH_BETA } } : undefined,
+    );
     return result.input_tokens;
   }
 
@@ -224,6 +250,16 @@ export class AnthropicProvider implements LlmProvider {
     } catch {
       return false;
     }
+  }
+
+  /** Live model discovery via Anthropic's /v1/models. */
+  async listModels(): Promise<ModelInfo[]> {
+    const page = await this.client.models.list({ limit: 100 });
+    return (page.data ?? []).map((m) => ({
+      id: m.id,
+      label: (m as { display_name?: string }).display_name ?? m.id,
+      live: true,
+    }));
   }
 
   // ─── Thinking ───
@@ -270,6 +306,34 @@ export class AnthropicProvider implements LlmProvider {
 
   // ─── Translation Helpers ───
 
+  /**
+   * Compose the `anthropic-beta` header: the OAuth beta (always, in subscription
+   * mode) plus interleaved-thinking when budget-mode thinking + tools need it.
+   * Undefined when neither applies (the API-key, non-interleaved default) so the
+   * request is byte-identical to before BYOP.
+   */
+  private betaHeader(needsInterleaved: boolean): Record<string, string> | undefined {
+    const betas: string[] = [];
+    if (this.oauth) betas.push(OAUTH_BETA);
+    if (needsInterleaved) betas.push(INTERLEAVED_BETA);
+    return betas.length ? { "anthropic-beta": betas.join(",") } : undefined;
+  }
+
+  /**
+   * System blocks for the request. In subscription-OAuth mode the FIRST block
+   * must be the Claude Code identity (the backend rejects the token otherwise);
+   * the real system prompt follows and carries the cache breakpoint. In API-key
+   * mode this is exactly today's single cached system block (or none).
+   */
+  private toSystemBlocks(system?: string): Anthropic.TextBlockParam[] | undefined {
+    if (this.oauth) {
+      const identity: Anthropic.TextBlockParam = { type: "text", text: CLAUDE_CODE_IDENTITY };
+      if (!system) return [{ ...identity, cache_control: { type: "ephemeral" } }];
+      return [identity, { type: "text", text: system, cache_control: { type: "ephemeral" } }];
+    }
+    return system ? this.toSystemWithCache(system) : undefined;
+  }
+
   /** Wraps the system prompt in a text block array with ephemeral cache_control. */
   private toSystemWithCache(system: string): Anthropic.TextBlockParam[] {
     return [
@@ -282,6 +346,20 @@ export class AnthropicProvider implements LlmProvider {
   }
 
   /**
+   * Drop opaque reasoning blocks that belong to ANOTHER provider — e.g. a Codex
+   * reasoning item (`redacted_thinking` tagged `provider:"codex"`) carried over
+   * after switching providers mid-conversation. Sending one to Anthropic would
+   * 400 (it isn't an Anthropic redacted-thinking blob). Anthropic's own blocks
+   * are untagged (`provider === undefined`) or tagged "anthropic".
+   */
+  private ownContent(content: ContentBlock[]): ContentBlock[] {
+    return content.filter(
+      (b) =>
+        b.type !== "redacted_thinking" || b.provider === undefined || b.provider === "anthropic",
+    );
+  }
+
+  /**
    * Converts messages and adds cache_control to the last content block of the
    * last message so the full conversation prefix is eligible for caching.
    */
@@ -289,8 +367,9 @@ export class AnthropicProvider implements LlmProvider {
     const filtered = messages.filter((m) => m.role !== "system");
     return filtered.map((msg, msgIdx) => {
       const isLast = msgIdx === filtered.length - 1;
-      const blocks = msg.content.map((block, blkIdx) => {
-        const isLastBlock = blkIdx === msg.content.length - 1;
+      const own = this.ownContent(msg.content);
+      const blocks = own.map((block, blkIdx) => {
+        const isLastBlock = blkIdx === own.length - 1;
         const base = this.toAnthropicBlock(block);
         // thinking blocks cannot carry cache_control (API rejects it).
         const cacheable = block.type !== "thinking" && block.type !== "redacted_thinking";
@@ -312,7 +391,7 @@ export class AnthropicProvider implements LlmProvider {
       .filter((m) => m.role !== "system")
       .map((msg) => ({
         role: msg.role === "tool" ? "user" : (msg.role as "user" | "assistant"),
-        content: msg.content.map((block) => this.toAnthropicBlock(block)),
+        content: this.ownContent(msg.content).map((block) => this.toAnthropicBlock(block)),
       }));
   }
 

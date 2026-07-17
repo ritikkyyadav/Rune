@@ -172,3 +172,116 @@ describe("LlmGateway streaming fallback", () => {
     expect(text).toBe("recovered");
   });
 });
+
+// ─── Model-gone pruning + usage-cap cooldowns ───
+//
+// Forensic regression (2026-07-16): openrouter's fallback default
+// (qwen/qwen3-coder:free) was retired upstream; every turn re-walked
+// codex-429 → openrouter-410 → … until the agent loop died with "Too many
+// consecutive errors" and 5/6 todos unfinished. A dead model must prune its
+// provider for the session, and a plan-cap 429 must cool the provider so the
+// next turn skips it instantly.
+
+async function* fail410Retired(): AsyncGenerator<StreamEvent> {
+  throw new ApiError({
+    status: 410,
+    provider: "openrouter",
+    message: 'qwen3-coder:480b was retired at 2026-07-15 00:00:00 -0700 PDT',
+  });
+}
+
+async function* fail429UsageCap(): AsyncGenerator<StreamEvent> {
+  throw new ApiError({
+    status: 429,
+    provider: "google",
+    message: "Codex request failed (429): The usage limit has been reached",
+  });
+}
+
+describe("LlmGateway model-gone pruning", () => {
+  test("a retired fallback model prunes its provider — next call never touches it", async () => {
+    const gw = gateway();
+    const google = new FakeProvider("google", fail410Retired);
+    const openrouter = new FakeProvider("openrouter", okText("healthy"));
+    gw.registerProvider(google);
+    gw.registerProvider(openrouter);
+
+    // First call: primary 410s (model gone) → pruned → fallback succeeds.
+    const first = await collect(gw.inferStream(req));
+    expect(errorEvent(first)).toBeUndefined();
+    expect(google.calls).toBe(1);
+    expect(gw.getProviderHealth().pruned).toContain("google");
+
+    // Second call: pruned provider is skipped up front, with an honest notice.
+    const second = await collect(gw.inferStream(req));
+    expect(google.calls).toBe(1); // never re-tried
+    const notice = second.find(
+      (e): e is Extract<StreamEvent, { type: "notice" }> => e.type === "notice",
+    );
+    expect(notice?.message).toContain("Skipping google");
+    expect(notice?.message).toContain("/model");
+    expect(errorEvent(second)).toBeUndefined();
+  });
+
+  test("sole provider with a retired model → one terminal, non-retryable error naming /model", async () => {
+    const gw = gateway();
+    gw.registerProvider(new FakeProvider("google", fail410Retired));
+
+    const events = await collect(gw.inferStream(req));
+    const errors = events.filter((e) => e.type === "error");
+    expect(errors.length).toBe(1); // no retry-ladder burn, no consecutive-error death
+    const err = errorEvent(events)!;
+    expect(err.retryable).toBe(false);
+    expect(err.error).toContain("retired");
+    expect(err.error).toContain("/model");
+  });
+});
+
+describe("LlmGateway usage-cap cooldown", () => {
+  test("a plan-cap 429 cools the provider — next call skips it instantly", async () => {
+    const gw = gateway();
+    const google = new FakeProvider("google", fail429UsageCap);
+    const openrouter = new FakeProvider("openrouter", okText("via fallback"));
+    gw.registerProvider(google);
+    gw.registerProvider(openrouter);
+
+    // First call: 429 → cooldown recorded → fallback streams fine.
+    const first = await collect(gw.inferStream(req));
+    expect(errorEvent(first)).toBeUndefined();
+    expect(google.calls).toBe(1);
+    const cooling = gw.getProviderHealth().cooling;
+    expect(cooling.some((c) => c.provider === "google")).toBe(true);
+    // Usage caps cool for minutes, not seconds — re-hammering a weekly cap
+    // at the top of every turn is pure cascade spam.
+    const entry = cooling.find((c) => c.provider === "google")!;
+    expect(entry.untilMs - Date.now()).toBeGreaterThan(5 * 60_000);
+
+    // Second call: the cooled primary is skipped without a network attempt.
+    const second = await collect(gw.inferStream(req));
+    expect(google.calls).toBe(1);
+    const notice = second.find(
+      (e): e is Extract<StreamEvent, { type: "notice" }> => e.type === "notice",
+    );
+    expect(notice?.message).toContain("Skipping google");
+    expect(errorEvent(second)).toBeUndefined();
+  });
+
+  test("when everything is unusable, the primary is retried alone and errors cleanly (self-heal path)", async () => {
+    const gw = gateway();
+    const google = new FakeProvider("google", fail429UsageCap);
+    gw.registerProvider(google);
+
+    const first = await collect(gw.inferStream(req));
+    expect(errorEvent(first)?.retryable).toBe(false);
+
+    // Cooldown is active, but with no alternative the primary must still be
+    // attempted (it's how the gateway notices the limit reset) — never a
+    // false "No providers available".
+    const second = await collect(gw.inferStream(req));
+    expect(google.calls).toBe(2);
+    const err = errorEvent(second);
+    expect(err).toBeDefined();
+    expect(err?.retryable).toBe(false);
+    expect(err?.error).not.toContain("No providers available");
+  });
+});

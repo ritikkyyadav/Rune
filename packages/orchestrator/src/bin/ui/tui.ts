@@ -19,7 +19,11 @@ import type {
 import { findCommand, type SlashCommand } from "../../commands";
 import {
   setProviderKey as persistKey,
+  addProviderKey as persistAddKey,
+  removeProviderKey as persistRemoveKey,
+  setActiveProviderKey as persistSetActiveKey,
   clearProviderKey as persistClearKey,
+  providerKeyEntries as readProviderKeyEntries,
   setCustomEndpoint as persistCustom,
   clearCustomEndpoint as persistClearCustom,
   setProviderDisabled as persistDisabled,
@@ -41,6 +45,7 @@ import {
   renderSlashPalette,
   renderKeysPanel,
   renderKeyEditor,
+  renderKeyManagerPanel,
   renderSessionsPanel,
   renderMemoryPanel,
   MEMORY_ACTION_COUNT,
@@ -172,14 +177,21 @@ class Tui {
   // `/keys` BYOK panel
   private keysSel = 0;
   private keysRows: KeyRow[] = [];
+  // Per-provider key manager: which provider's pool is open + the selected entry.
+  // null = the provider list is showing. Rows are read live from keysRows so the
+  // manager reflects adds/removes without a stale copy.
+  private keysManage: { id: string; label: string; sel: number } | null = null;
   private keysEdit: {
     id: string;
     label: string;
-    field: "key" | "baseUrl" | "model";
+    field: "key" | "baseUrl" | "model" | "label";
     value: string;
     caret: number;
     masked: boolean;
-    pending: { baseUrl?: string; model?: string };
+    // "add" appends a new key to the provider's pool; "replace"/undefined is the
+    // single-key / endpoint edit.
+    mode?: "add";
+    pending: { baseUrl?: string; model?: string; newKey?: string };
     title: string;
     subtitle?: string;
   } | null = null;
@@ -464,6 +476,15 @@ class Tui {
           width: cols(),
           masked: e.masked,
         });
+      }
+      if (this.keysManage) {
+        const row = this.keysRows.find((r) => r.id === this.keysManage!.id);
+        return renderKeyManagerPanel(
+          this.keysManage.label,
+          row?.savedKeys ?? [],
+          this.keysManage.sel,
+          cols(),
+        );
       }
       return renderKeysPanel(this.keysRows, this.keysSel, cols());
     }
@@ -1217,13 +1238,28 @@ class Tui {
         if ((op === "on" || op === "off") && a[1]) {
           const id = a[1].toLowerCase();
           if (!getPreset(id) && id !== CUSTOM_PROVIDER_ID) {
-            this.print(`  ${warn("Unknown provider")} ${info(id)}`);
+            this.print(
+              `  ${warn("Unknown provider")} ${info(id)} ${faint("(one word, no spaces — e.g. openai)")}`,
+            );
+            this.print(
+              `  ${faint("Providers: ")}${faint(PROVIDER_PRESETS.map((p) => p.id).join(", "))}`,
+            );
             return true;
           }
           const disabled = op === "off";
           persistDisabled(id, disabled);
           const res = engine.setProviderDisabled(id, disabled, this.ctx.sessionId);
           this.print(`  ${ok("✓")} ${info(id)} ${muted(disabled ? "disabled" : "enabled")}`);
+          // Enabling only re-includes an already-credentialed provider — it does
+          // NOT add a key. If it has none, point the user at how to add one.
+          if (!disabled) {
+            const row = engine.getProviderStatus().find((r) => r.id === id);
+            if (row && !row.hasKey && !row.local) {
+              this.print(
+                `  ${warn("→")} ${muted(`${id} has no key yet — add one:`)} ${info(`/keys set ${id} <key>`)} ${muted("or")} ${info(`berne login ${id}`)}`,
+              );
+            }
+          }
           if (res.switchedTo) {
             this.print(
               `  ${warn("→")} ${muted("active provider was off — now on")} ${info(`${res.switchedTo.provider}/${res.switchedTo.model}`)}`,
@@ -1248,7 +1284,10 @@ class Tui {
               : r.hasKey
                 ? muted("ready")
                 : faint("no key");
-          const src = r.source === "none" ? "" : faint(`  ${r.source === "env" ? "env" : "key"}`);
+          // Show the real credential source so the panel never lies about what
+          // the gateway uses: oauth / keychain / env, or "key" for a saved key.
+          const srcLabel = r.source === "none" ? "" : r.source === "saved" ? "key" : r.source; // env | oauth | keychain
+          const src = srcLabel ? faint(`  ${srcLabel}`) : "";
           return `    ${dot} ${c(r.id.padEnd(13))} ${st}${src}`;
         });
         this.print(
@@ -2192,17 +2231,19 @@ class Tui {
     this.keysRows = this.buildKeyRows();
     this.keysSel = 0;
     this.keysEdit = null;
+    this.keysManage = null;
     this.mode = "keys";
     this.scheduleDraw();
   }
 
   private buildKeyRows(): KeyRow[] {
-    // getProviderStatus() returns a superset of KeyRow (adds hasKey).
+    // getProviderStatus() returns a superset of KeyRow (adds hasKey + pools).
     return this.ctx.engine.getProviderStatus();
   }
 
   private closeKeys(): void {
     this.keysEdit = null;
+    this.keysManage = null;
     this.mode = "input";
     this.scheduleDraw();
   }
@@ -2210,6 +2251,10 @@ class Tui {
   private keysKey(key: Key): void {
     if (this.keysEdit) {
       this.keysEditKey(key);
+      return;
+    }
+    if (this.keysManage) {
+      this.keysManageKey(key);
       return;
     }
     const n = this.keysRows.length;
@@ -2226,9 +2271,14 @@ class Tui {
         this.keysSel = (this.keysSel + 1) % n;
         this.scheduleDraw();
         break;
-      case "enter":
-        this.startKeyEdit();
+      case "enter": {
+        // Cloud providers open the multi-key manager; local runtimes and the
+        // custom endpoint keep their single base-URL/key edit flow.
+        const row = this.keysRows[this.keysSel];
+        if (row && !row.local && row.id !== CUSTOM_PROVIDER_ID) this.openKeyManager(row);
+        else this.startKeyEdit();
         break;
+      }
       case "delete":
         this.clearSelectedKey();
         break;
@@ -2243,6 +2293,108 @@ class Tui {
         if (key.name === "c") this.closeKeys();
         break;
     }
+  }
+
+  /** Open the per-provider key manager for the selected cloud provider. */
+  private openKeyManager(row: KeyRow): void {
+    this.keysManage = { id: row.id, label: row.label, sel: 0 };
+    this.scheduleDraw();
+  }
+
+  private keysManageKey(key: Key): void {
+    const mgr = this.keysManage;
+    if (!mgr) return;
+    const row = this.keysRows.find((r) => r.id === mgr.id);
+    const rows = row?.savedKeys ?? [];
+    const n = rows.length;
+    switch (key.type) {
+      case "up":
+        if (n) mgr.sel = (mgr.sel - 1 + n) % n;
+        this.scheduleDraw();
+        break;
+      case "down":
+        if (n) mgr.sel = (mgr.sel + 1) % n;
+        this.scheduleDraw();
+        break;
+      case "enter":
+        // On an empty pool, enter adds the first key; otherwise it activates.
+        if (n === 0) this.startKeyAdd(mgr);
+        else this.setActiveManagedKey(rows[mgr.sel]!.id);
+        break;
+      case "delete":
+        if (n) this.removeManagedKey(rows[mgr.sel]!.id);
+        break;
+      case "char":
+        if (key.value === "a" || key.value === "A") this.startKeyAdd(mgr);
+        else if (key.value === " ") {
+          if (n) this.setActiveManagedKey(rows[mgr.sel]!.id);
+        } else if (key.value === "d" || key.value === "D") {
+          if (n) this.removeManagedKey(rows[mgr.sel]!.id);
+        }
+        break;
+      case "esc":
+        this.keysManage = null;
+        this.scheduleDraw();
+        break;
+      case "ctrl":
+        if (key.name === "c") {
+          this.keysManage = null;
+          this.scheduleDraw();
+        }
+        break;
+    }
+  }
+
+  /** Begin adding a NEW key to a provider's pool (append, not replace). */
+  private startKeyAdd(mgr: { id: string; label: string }): void {
+    const preset = getPreset(mgr.id);
+    this.keysEdit = {
+      id: mgr.id,
+      label: mgr.label,
+      field: "key",
+      value: "",
+      caret: 0,
+      masked: true,
+      mode: "add",
+      pending: {},
+      title: `Add API key — ${mgr.label}`,
+      subtitle: preset?.docsUrl ? `paste a key from any account · ${preset.docsUrl}` : undefined,
+    };
+    this.scheduleDraw();
+  }
+
+  /** Make one pooled key active (the one the gateway uses), persist + apply live. */
+  private setActiveManagedKey(entryId: string): void {
+    const mgr = this.keysManage;
+    if (!mgr) return;
+    const file = persistSetActiveKey(mgr.id, entryId);
+    const res = this.ctx.engine.setProviderKeys(
+      mgr.id,
+      readProviderKeyEntries(file, mgr.id),
+      file.activeKeyId?.[mgr.id],
+      this.ctx.sessionId,
+    );
+    this.noteForcedSwitch(res);
+    this.keysRows = this.buildKeyRows();
+    this.scheduleDraw();
+  }
+
+  /** Remove one pooled key, persist + apply live, and keep the cursor in range. */
+  private removeManagedKey(entryId: string): void {
+    const mgr = this.keysManage;
+    if (!mgr) return;
+    const file = persistRemoveKey(mgr.id, entryId);
+    const res = this.ctx.engine.setProviderKeys(
+      mgr.id,
+      readProviderKeyEntries(file, mgr.id),
+      file.activeKeyId?.[mgr.id],
+      this.ctx.sessionId,
+    );
+    this.noteForcedSwitch(res);
+    this.keysRows = this.buildKeyRows();
+    const remaining = this.keysRows.find((r) => r.id === mgr.id)?.savedKeys?.length ?? 0;
+    mgr.sel = Math.max(0, Math.min(mgr.sel, remaining - 1));
+    this.scheduleDraw();
   }
 
   private startKeyEdit(): void {
@@ -2358,6 +2510,44 @@ class Tui {
     if (!e) return;
     const val = e.value.trim();
     const { engine } = this.ctx;
+
+    // ── Add a key to a provider's multi-account pool (append, not replace) ──
+    if (e.mode === "add") {
+      if (e.field === "key") {
+        if (!val) {
+          this.keysEdit = null; // nothing pasted → back to the manager
+          this.scheduleDraw();
+          return;
+        }
+        e.pending.newKey = val;
+        e.field = "label";
+        e.value = "";
+        e.caret = 0;
+        e.masked = false;
+        e.title = `Label this key — ${e.label}`;
+        e.subtitle = "optional · name the account (e.g. work, personal) · enter to skip";
+        this.scheduleDraw();
+        return;
+      }
+      // field === "label" → commit the add
+      const file = persistAddKey(e.id, e.pending.newKey ?? "", val || undefined).file;
+      const res = engine.setProviderKeys(
+        e.id,
+        readProviderKeyEntries(file, e.id),
+        file.activeKeyId?.[e.id],
+        this.ctx.sessionId,
+      );
+      this.noteForcedSwitch(res);
+      this.keysEdit = null;
+      this.keysRows = this.buildKeyRows();
+      const count = this.keysRows.find((r) => r.id === e.id)?.savedKeys?.length ?? 0;
+      if (this.keysManage?.id === e.id) this.keysManage.sel = Math.max(0, count - 1);
+      this.print(
+        `  ${ok("✓")} ${muted("added key for")} ${info(e.label)}${val ? faint(` · ${val}`) : ""} ${faint(`· ${count} configured`)}`,
+      );
+      this.scheduleDraw();
+      return;
+    }
 
     if (e.id === CUSTOM_PROVIDER_ID) {
       if (e.field === "baseUrl") {

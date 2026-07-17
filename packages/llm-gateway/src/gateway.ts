@@ -13,14 +13,21 @@ import type {
 } from "./types";
 import { MODEL_PRICING as PRICING } from "./types";
 
-// Default model for each provider, used during fallback
+// Default model for each provider, used during fallback.
+//
+// ROT WARNING: hosted free-tier models get retired without notice (qwen/
+// qwen3-coder:free and qwen3-coder:480b both died 2026-07-15 and took every
+// fallback chain down with them — 13 consecutive 410s per run). Keep these
+// current when providers announce retirements; the model-gone pruning below is
+// the safety net that keeps a stale entry from killing runs in the meantime.
 const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
   google: "gemini-2.5-flash",
   anthropic: "claude-sonnet-4-6",
   openai: "gpt-4o",
-  openrouter: "qwen/qwen3-coder:free",
+  openrouter: "deepseek/deepseek-v4-flash:free",
   ollama: "llama3",
-  "ollama-turbo": "qwen3-coder:480b",
+  "ollama-turbo": "qwen3-coder-next",
+  codex: "gpt-5.6-terra",
 };
 
 // Cap how long we'll wait on a single rate-limited attempt. A free-tier quota
@@ -28,13 +35,66 @@ const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
 // providers or surfacing a clear, actionable error.
 const RATE_LIMIT_MAX_WAIT_MS = 8_000;
 
+// A model that no longer exists (retired, renamed, never valid). Retrying it
+// can only fail identically, so the provider is pruned for the session.
+const MODEL_GONE_RE =
+  /retired|decommission|deprecat|model.{0,32}(not.?(found|exist|available)|unknown|invalid)|does not exist|no such model/i;
+
+// A 429 that is a PLAN/QUOTA cap ("usage limit reached", weekly caps), not a
+// per-minute throttle. Waiting seconds won't clear it — cool the provider down
+// for a long window instead of re-hammering it at the top of every turn.
+const USAGE_CAP_RE = /usage limit|quota|weekly|plan limit|credit/i;
+
+/** Cooldown for a plan/quota-capped provider when no Retry-After is given. */
+const USAGE_CAP_COOLDOWN_MS = 15 * 60_000;
+/** Cooldown for a plain rate-limited provider when no Retry-After is given. */
+const RATE_LIMIT_COOLDOWN_MS = 60_000;
+/** Never cool a provider longer than this, whatever Retry-After claims. */
+const MAX_COOLDOWN_MS = 60 * 60_000;
+
 export class LlmGateway {
   private providers: Map<ProviderName, LlmProvider> = new Map();
   private config: GatewayConfig;
   private ledger: CostLedger = { entries: [], totalCostUsd: 0 };
+  /**
+   * Providers whose model is GONE (404/410/"retired"), pruned for this
+   * gateway's lifetime — a retired model does not come back mid-session.
+   * Without this, a rotted fallback default re-410s on every turn until the
+   * agent loop's consecutive-error breaker kills the whole run mid-task.
+   */
+  private prunedProviders = new Set<ProviderName>();
+  /** Providers cooling down after a rate/usage cap: epoch ms when usable again. */
+  private cooldownUntil = new Map<ProviderName, number>();
 
   constructor(config: GatewayConfig) {
     this.config = config;
+  }
+
+  /** Cool a provider down after a 429; usage-cap 429s cool much longer. */
+  private coolDown(provider: ProviderName, err: Error | undefined): number {
+    const retryAfter = this.getRetryAfterMs(err);
+    const isCap = USAGE_CAP_RE.test(err?.message ?? "");
+    const base = isCap ? USAGE_CAP_COOLDOWN_MS : RATE_LIMIT_COOLDOWN_MS;
+    const waitMs = Math.min(Math.max(retryAfter, base), MAX_COOLDOWN_MS);
+    this.cooldownUntil.set(provider, Date.now() + waitMs);
+    return waitMs;
+  }
+
+  /** True when the failure means the MODEL is gone (not a transient fault). */
+  private isModelGone(status: number | undefined, err: Error | undefined): boolean {
+    if (status === 404 || status === 410) return true;
+    return MODEL_GONE_RE.test(err?.message ?? "");
+  }
+
+  /** Introspection for /status-style UIs and tests. */
+  getProviderHealth(): { pruned: ProviderName[]; cooling: Array<{ provider: ProviderName; untilMs: number }> } {
+    const now = Date.now();
+    return {
+      pruned: [...this.prunedProviders],
+      cooling: [...this.cooldownUntil.entries()]
+        .filter(([, until]) => until > now)
+        .map(([provider, untilMs]) => ({ provider, untilMs })),
+    };
   }
 
   registerProvider(provider: LlmProvider): void {
@@ -80,6 +140,22 @@ export class LlmGateway {
   async *inferStream(request: InferenceRequest, opts?: StreamOpts): AsyncGenerator<StreamEvent> {
     // Build ordered list: requested provider first, then fallbacks
     const fallbackOrder = this.getFallbackProviders(request.provider);
+
+    // The user's chosen provider is being skipped (pruned model / cooling
+    // down). Say so up front — a silent per-turn model swap is worse than the
+    // failure it papers over.
+    if (fallbackOrder[0] !== request.provider && this.providers.has(request.provider)) {
+      const until = this.cooldownUntil.get(request.provider) ?? 0;
+      const why = this.prunedProviders.has(request.provider)
+        ? "its model is no longer available (pick a new one with /model)"
+        : `it hit its usage/rate limit — retrying it in ~${Math.max(1, Math.ceil((until - Date.now()) / 60_000))}m`;
+      yield {
+        type: "notice",
+        message: `Skipping ${request.provider} — ${why}. Using ${fallbackOrder[0]}/${
+          PROVIDER_DEFAULT_MODELS[fallbackOrder[0]] ?? "default"
+        } for now…`,
+      };
+    }
 
     // Tracks whether the consumer received any events for the CURRENT
     // assistant message. A retry/fallback after a partial stream must emit
@@ -134,6 +210,29 @@ export class LlmGateway {
           const isAuthOrBilling = lastStatus === 401 || lastStatus === 402 || lastStatus === 403;
           const isRateLimit = lastStatus === 429;
 
+          // The model itself is gone (retired / renamed / never existed).
+          // Re-trying is guaranteed-identical failure: prune the provider for
+          // the session and move on. This is what keeps one rotted model id
+          // from burning the agent loop's whole error budget turn after turn.
+          if (this.isModelGone(lastStatus, lastError)) {
+            this.prunedProviders.add(providerName);
+            this.reportIncident({
+              kind: "terminal",
+              provider: providerName,
+              model: adjustedRequest.model,
+              status: lastStatus,
+              message: `model gone — provider pruned for this session: ${lastError?.message?.slice(0, 120)}`,
+            });
+            if (hasNext) {
+              shouldFallback = true;
+            }
+            break;
+          }
+
+          // Rate/usage-limited: remember it so the NEXT turn skips this
+          // provider instantly instead of re-walking a doomed cascade.
+          if (isRateLimit) this.coolDown(providerName, lastError);
+
           // Another provider is available → switch NOW. A bad key, exhausted
           // credits, or an over-quota 429 won't clear by retrying the same
           // provider, so falling back immediately is both faster and likelier
@@ -146,8 +245,15 @@ export class LlmGateway {
           // No fallback left. For a sole rate-limited provider, do at most one
           // short, capped retry honoring Retry-After — a long server-advised
           // delay means we give up cleanly instead of hanging the session.
+          // A PLAN/QUOTA cap never gets that retry: "usage limit reached"
+          // does not clear in seconds, so the retry is pure added latency.
           if (isRateLimit) {
-            if (attempt >= 1 || this.getRetryAfterMs(lastError) > RATE_LIMIT_MAX_WAIT_MS) break;
+            if (
+              attempt >= 1 ||
+              USAGE_CAP_RE.test(lastError?.message ?? "") ||
+              this.getRetryAfterMs(lastError) > RATE_LIMIT_MAX_WAIT_MS
+            )
+              break;
             if (yieldedSinceReset) {
               yieldedSinceReset = false;
               yield { type: "stream_reset" };
@@ -221,7 +327,16 @@ export class LlmGateway {
         });
       }
 
-      if (lastStatus === 401 || lastStatus === 403) {
+      if (this.isModelGone(lastStatus, lastError)) {
+        const why = this.failureReason(lastStatus, lastError);
+        yield {
+          type: "error",
+          error: `${providerName}/${adjustedRequest.model} is gone${
+            why ? ` — ${why}` : ""
+          }. The model was retired or renamed: pick a current one with /model.`,
+          retryable: false,
+        };
+      } else if (lastStatus === 401 || lastStatus === 403) {
         const why = this.failureReason(lastStatus, lastError);
         yield {
           type: "error",
@@ -262,12 +377,20 @@ export class LlmGateway {
 
   /**
    * Returns an ordered list of providers to try: primary first, then fallbacks.
+   *
+   * Pruned providers (model gone) and providers inside a rate/usage cooldown
+   * are skipped — with one exception: when EVERY registered provider is
+   * unusable, the primary is returned alone so the attempt produces a clean,
+   * actionable terminal error (and self-heals the moment the limit resets)
+   * instead of a lying "No providers available".
    */
   private getFallbackProviders(primary: ProviderName): ProviderName[] {
+    const now = Date.now();
+    const usable = (p: ProviderName) =>
+      !this.prunedProviders.has(p) && (this.cooldownUntil.get(p) ?? 0) <= now;
     const all = [...this.providers.keys()];
-    // Put primary first, then remaining registered providers
-    const rest = all.filter((p) => p !== primary);
-    if (this.providers.has(primary)) {
+    const rest = all.filter((p) => p !== primary && usable(p));
+    if (this.providers.has(primary) && usable(primary)) {
       return [primary, ...rest];
     }
     return rest.length > 0 ? rest : [primary];
