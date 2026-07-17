@@ -22,9 +22,44 @@ export interface CustomEndpoint {
   label?: string;
 }
 
+/**
+ * One stored API key for a provider, with the metadata the `/keys` panel shows:
+ * a stable id (to select/remove it), an optional human label (e.g. "work
+ * account"), and when it was added. `addedAt` is an ISO-8601 timestamp; it is
+ * absent for keys that predate multi-key storage (we don't fabricate a date for
+ * a key we didn't watch get added — the panel shows "—" for those).
+ */
+export interface StoredKey {
+  /** Stable id for this entry, e.g. "k_lz4f8a2c". */
+  id: string;
+  /** The secret. */
+  key: string;
+  /** Optional user label to tell accounts apart. */
+  label?: string;
+  /** ISO-8601 time the key was added; absent for pre-multi-key entries. */
+  addedAt?: string;
+}
+
 export interface SecretsFile {
-  /** providerId → apiKey for the named presets. */
+  /**
+   * providerId → the ACTIVE apiKey for the named presets. This is the mirror the
+   * gateway reads: it always equals the active entry in `keyEntries[id]` when a
+   * provider has a multi-key pool. Single-key providers (and the non-provider
+   * search keys, ids "tavily"/"brave") live here alone with no `keyEntries`.
+   */
   keys: Record<string, string>;
+  /**
+   * providerId → every key stored for that provider, in the order they were
+   * added. Present only for providers the user manages as a pool (added a second
+   * key, or opened the per-provider manager). Absent ⇒ the single `keys[id]` (if
+   * any) is the only key. This is where dates/labels/counts come from.
+   */
+  keyEntries?: Record<string, StoredKey[]>;
+  /**
+   * providerId → the id of the active `StoredKey`. Absent ⇒ the first entry is
+   * active. Kept in sync with the `keys` mirror on every mutation.
+   */
+  activeKeyId?: Record<string, string>;
   /** Single user-defined OpenAI-compatible endpoint. */
   custom?: CustomEndpoint;
   /** Provider ids the user toggled off (key kept, excluded from use). */
@@ -71,15 +106,51 @@ export function loadSecrets(): SecretsFile {
         if (typeof v === "string" && v) endpoints[k] = v;
       }
     }
-    return {
+    const keyEntries = parseKeyEntries(raw?.keyEntries);
+    const activeKeyId: Record<string, string> = {};
+    if (raw?.activeKeyId && typeof raw.activeKeyId === "object") {
+      for (const [k, v] of Object.entries(raw.activeKeyId as Record<string, unknown>)) {
+        if (typeof v === "string" && v) activeKeyId[k] = v;
+      }
+    }
+    const file: SecretsFile = {
       keys,
+      ...(Object.keys(keyEntries).length ? { keyEntries } : {}),
+      ...(Object.keys(activeKeyId).length ? { activeKeyId } : {}),
       ...(custom ? { custom } : {}),
       ...(disabled && disabled.length ? { disabled } : {}),
       ...(Object.keys(endpoints).length ? { endpoints } : {}),
     };
+    // Repair the mirror in-memory so every consumer sees keys[id] === active
+    // entry, even if the file was hand-edited. Never writes back here.
+    normalizeMirror(file);
+    return file;
   } catch {
     return { keys: {} };
   }
+}
+
+/** Parse the persisted `keyEntries` map leniently — drop anything malformed. */
+function parseKeyEntries(raw: unknown): Record<string, StoredKey[]> {
+  const out: Record<string, StoredKey[]> = {};
+  if (!raw || typeof raw !== "object") return out;
+  for (const [id, list] of Object.entries(raw as Record<string, unknown>)) {
+    if (!Array.isArray(list)) continue;
+    const entries: StoredKey[] = [];
+    for (const item of list) {
+      if (!item || typeof item !== "object") continue;
+      const e = item as Record<string, unknown>;
+      if (typeof e.key !== "string" || !e.key) continue;
+      entries.push({
+        id: typeof e.id === "string" && e.id ? e.id : genKeyId(),
+        key: e.key,
+        ...(typeof e.label === "string" && e.label ? { label: e.label } : {}),
+        ...(typeof e.addedAt === "string" && e.addedAt ? { addedAt: e.addedAt } : {}),
+      });
+    }
+    if (entries.length) out[id] = entries;
+  }
+  return out;
 }
 
 /** Persist the secrets file with locked-down permissions (0600). */
@@ -88,10 +159,18 @@ export function saveSecrets(s: SecretsFile): void {
   const dir = dirname(path);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
 
+  // Guarantee the on-disk mirror is coherent (keys[id] === active entry) and
+  // drop empty pools so the file stays tidy.
+  normalizeMirror(s);
+
   const body =
     JSON.stringify(
       {
         keys: s.keys ?? {},
+        ...(s.keyEntries && Object.keys(s.keyEntries).length ? { keyEntries: s.keyEntries } : {}),
+        ...(s.activeKeyId && Object.keys(s.activeKeyId).length
+          ? { activeKeyId: s.activeKeyId }
+          : {}),
         ...(s.custom ? { custom: s.custom } : {}),
         ...(s.disabled && s.disabled.length ? { disabled: s.disabled } : {}),
         ...(s.endpoints && Object.keys(s.endpoints).length ? { endpoints: s.endpoints } : {}),
@@ -109,24 +188,196 @@ export function saveSecrets(s: SecretsFile): void {
   }
 }
 
-// ─── Mutators (load → modify → save) ───
+// ─── Multi-key store ───
+// A provider can hold a POOL of keys (e.g. 10 Ollama Cloud keys from different
+// accounts). The pool lives in `keyEntries[id]`; one entry is active, mirrored
+// into `keys[id]` so the whole gateway/resolution path (which reads the single
+// `keys[id]`) is unchanged. These helpers keep the mirror honest and expose the
+// pool with dates for the panel.
 
-/** Save (or overwrite) a named provider's key and clear its disabled flag. */
-export function setProviderKey(id: string, key: string): SecretsFile {
-  const s = loadSecrets();
-  s.keys[id] = key.trim();
+/** A short, collision-resistant id for a stored key ("k_" + time/rand base36). */
+export function genKeyId(): string {
+  const t = Date.now().toString(36);
+  const r = Math.random().toString(36).slice(2, 8);
+  return `k_${t}${r}`;
+}
+
+/**
+ * The DETERMINISTIC entry id for a provider's migrated single key. Both the
+ * read-only view (`providerKeyEntries`) and the in-place promotion
+ * (`materializePool`) use it, so a legacy key shows the same id before and after
+ * it's first mutated — the panel can select/remove it without an id mismatch.
+ */
+function legacyEntryId(providerId: string): string {
+  return `legacy_${providerId}`;
+}
+
+/** The active entry of a pool: the one `activeKeyId` names, else the first. */
+function activeEntry(entries: StoredKey[], activeId?: string): StoredKey | undefined {
+  if (!entries.length) return undefined;
+  if (activeId) {
+    const found = entries.find((e) => e.id === activeId);
+    if (found) return found;
+  }
+  return entries[0];
+}
+
+/**
+ * Re-derive the `keys[id]` mirror from each pool's active entry, and prune empty
+ * pools / stale active-ids. Providers WITHOUT a pool (`keyEntries[id]` absent)
+ * are left untouched — that's how single legacy keys and the search-backend keys
+ * (tavily/brave) keep working without being dragged into the pool model.
+ */
+function normalizeMirror(s: SecretsFile): void {
+  if (!s.keys) s.keys = {};
+  if (!s.keyEntries) return;
+  for (const id of Object.keys(s.keyEntries)) {
+    const entries = s.keyEntries[id]!;
+    if (!entries.length) {
+      // Empty pool — collapse it back to "no key for this provider".
+      delete s.keyEntries[id];
+      delete s.keys[id];
+      if (s.activeKeyId) delete s.activeKeyId[id];
+      continue;
+    }
+    const active = activeEntry(entries, s.activeKeyId?.[id]);
+    if (active) {
+      s.keys[id] = active.key;
+      // Persist the resolved active id so first-entry-wins is explicit and stable.
+      s.activeKeyId = { ...(s.activeKeyId ?? {}), [id]: active.id };
+    }
+  }
+  if (s.keyEntries && Object.keys(s.keyEntries).length === 0) delete s.keyEntries;
+  if (s.activeKeyId && Object.keys(s.activeKeyId).length === 0) delete s.activeKeyId;
+}
+
+/**
+ * The pool for a provider as the panel should show it: the stored entries if the
+ * provider has a pool, otherwise a single synthesized entry from the legacy
+ * `keys[id]` (with no date — we don't know when it was added), otherwise empty.
+ * Read-only; does not mutate the store.
+ */
+export function providerKeyEntries(s: SecretsFile, id: string): StoredKey[] {
+  const pool = s.keyEntries?.[id];
+  if (pool && pool.length) return pool;
+  const single = s.keys?.[id];
+  if (single) return [{ id: legacyEntryId(id), key: single }];
+  return [];
+}
+
+/**
+ * Materialize a provider's pool in place: if it only had a legacy single key,
+ * turn that into the first entry so subsequent adds append rather than clobber.
+ * Returns the (now guaranteed) entries array held inside `s`.
+ */
+function materializePool(s: SecretsFile, id: string): StoredKey[] {
+  if (!s.keyEntries) s.keyEntries = {};
+  if (!s.keyEntries[id] || !s.keyEntries[id]!.length) {
+    const single = s.keys?.[id];
+    s.keyEntries[id] = single ? [{ id: legacyEntryId(id), key: single }] : [];
+  }
+  return s.keyEntries[id]!;
+}
+
+function clearDisabled(s: SecretsFile, id: string): void {
   if (s.disabled) {
     s.disabled = s.disabled.filter((d) => d !== id);
     if (s.disabled.length === 0) delete s.disabled;
+  }
+}
+
+// ─── Mutators (load → modify → save) ───
+
+/**
+ * Set a named provider's key, REPLACING any existing key(s) with this single one
+ * and clearing its disabled flag. This is the "this is now the key" primitive —
+ * `addProviderKey` is the one that grows a multi-account pool. Records the add
+ * time so the panel can show it.
+ */
+export function setProviderKey(id: string, key: string): SecretsFile {
+  const s = loadSecrets();
+  const trimmed = key.trim();
+  const entry: StoredKey = { id: genKeyId(), key: trimmed, addedAt: new Date().toISOString() };
+  if (!s.keyEntries) s.keyEntries = {};
+  s.keyEntries[id] = [entry];
+  s.keys[id] = trimmed;
+  s.activeKeyId = { ...(s.activeKeyId ?? {}), [id]: entry.id };
+  clearDisabled(s, id);
+  saveSecrets(s);
+  return s;
+}
+
+/**
+ * Add ANOTHER key to a provider's pool (e.g. a second Ollama Cloud account) and
+ * make it the active one, keeping the existing keys. Clears the disabled flag.
+ * Use this — not `setProviderKey` — when the user is collecting keys from several
+ * accounts. Returns the updated store and the new entry.
+ */
+export function addProviderKey(
+  id: string,
+  key: string,
+  label?: string,
+): { file: SecretsFile; entry: StoredKey } {
+  const s = loadSecrets();
+  const pool = materializePool(s, id);
+  const entry: StoredKey = {
+    id: genKeyId(),
+    key: key.trim(),
+    ...(label && label.trim() ? { label: label.trim() } : {}),
+    addedAt: new Date().toISOString(),
+  };
+  pool.push(entry);
+  s.activeKeyId = { ...(s.activeKeyId ?? {}), [id]: entry.id };
+  s.keys[id] = entry.key;
+  clearDisabled(s, id);
+  saveSecrets(s);
+  return { file: s, entry };
+}
+
+/**
+ * Remove one key from a provider's pool by entry id. If it was the active key,
+ * the first remaining key becomes active; if it was the last key, the provider
+ * goes back to having no key at all. No-op if the entry isn't found.
+ */
+export function removeProviderKey(id: string, entryId: string): SecretsFile {
+  const s = loadSecrets();
+  const pool = materializePool(s, id);
+  const next = pool.filter((e) => e.id !== entryId);
+  if (next.length === pool.length) return s; // nothing matched
+  if (next.length === 0) {
+    delete s.keyEntries![id];
+    delete s.keys[id];
+    if (s.activeKeyId) delete s.activeKeyId[id];
+  } else {
+    s.keyEntries![id] = next;
+    if (s.activeKeyId?.[id] === entryId || !s.activeKeyId?.[id]) {
+      s.activeKeyId = { ...(s.activeKeyId ?? {}), [id]: next[0]!.id };
+    }
+    s.keys[id] = activeEntry(next, s.activeKeyId?.[id])!.key;
   }
   saveSecrets(s);
   return s;
 }
 
-/** Remove a named provider's key. */
+/** Choose which key in a provider's pool is active (the one the gateway uses). */
+export function setActiveProviderKey(id: string, entryId: string): SecretsFile {
+  const s = loadSecrets();
+  const pool = materializePool(s, id);
+  const found = pool.find((e) => e.id === entryId);
+  if (!found) return s;
+  s.activeKeyId = { ...(s.activeKeyId ?? {}), [id]: entryId };
+  s.keys[id] = found.key;
+  clearDisabled(s, id);
+  saveSecrets(s);
+  return s;
+}
+
+/** Remove ALL of a named provider's keys (the whole pool). */
 export function clearProviderKey(id: string): SecretsFile {
   const s = loadSecrets();
   delete s.keys[id];
+  if (s.keyEntries) delete s.keyEntries[id];
+  if (s.activeKeyId) delete s.activeKeyId[id];
   saveSecrets(s);
   return s;
 }

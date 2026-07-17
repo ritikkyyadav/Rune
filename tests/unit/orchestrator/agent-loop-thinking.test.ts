@@ -79,7 +79,9 @@ describe("AgentLoop thinking preservation", () => {
     for await (const _ of on.run("q", "s", "/tmp")) {
       /* drain */
     }
-    expect(requests[0].thinking).toEqual({ enabled: true });
+    // Effort defaults HIGH: agentic planning/diagnosis at medium is the
+    // rushed-shallow failure mode (2026-07-16 audit).
+    expect(requests[0].thinking).toEqual({ enabled: true, effort: "high" });
 
     const off = new AgentLoop(
       { model: "m", provider: "anthropic", thinking: false },
@@ -89,7 +91,17 @@ describe("AgentLoop thinking preservation", () => {
     for await (const _ of off.run("q", "s", "/tmp")) {
       /* drain */
     }
-    expect(requests[1].thinking).toEqual({ enabled: false });
+    expect(requests[1].thinking).toEqual({ enabled: false, effort: "high" });
+
+    const low = new AgentLoop(
+      { model: "m", provider: "anthropic", thinkingEffort: "low" },
+      gateway,
+      readRegistry,
+    );
+    for await (const _ of low.run("q", "s", "/tmp")) {
+      /* drain */
+    }
+    expect(requests[2].thinking).toEqual({ enabled: true, effort: "low" });
   });
 });
 

@@ -3,6 +3,7 @@ import type {
   InferenceResponse,
   LlmProvider,
   Message,
+  ModelInfo,
   StreamEvent,
   StreamOpts,
   ToolDefinition,
@@ -44,5 +45,13 @@ export class OpenRouterProvider implements LlmProvider {
     } catch {
       return false;
     }
+  }
+
+  /** Live model discovery via OpenRouter's public /models catalog. */
+  async listModels(): Promise<ModelInfo[]> {
+    const res = await fetch(`${OPENROUTER_BASE_URL}/models`);
+    if (!res.ok) throw new Error(`OpenRouter /models failed (${res.status})`);
+    const json = (await res.json()) as { data?: { id: string; name?: string }[] };
+    return (json.data ?? []).map((m) => ({ id: m.id, label: m.name ?? m.id, live: true }));
   }
 }

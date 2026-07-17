@@ -360,6 +360,17 @@ export function renderSlashPalette(items: SlashItem[], selected: number, width: 
 
 // ─── API keys panel (TUI: `/keys` BYOK) ───
 
+/** One stored key as the per-provider manager lists it (masked + dated). */
+export interface KeyManagerRow {
+  id: string;
+  masked: string;
+  label?: string;
+  /** ISO add-date, or undefined for keys that predate multi-key storage. */
+  addedAt?: string;
+  /** The active key of the pool — the one the gateway uses. */
+  active: boolean;
+}
+
 export interface KeyRow {
   /** Provider id. */
   id: string;
@@ -367,10 +378,14 @@ export interface KeyRow {
   label: string;
   /** Masked key for display (never the raw secret); "" when unset. */
   masked: string;
-  /** Where the key came from. */
-  source: "saved" | "env" | "none";
+  /** Where the credential in use comes from (BYOP-aware: keychain/oauth too). */
+  source: "keychain" | "oauth" | "saved" | "env" | "none";
   /** Usable now (has a key, or a configured/active local runtime). */
   hasKey?: boolean;
+  /** How many keys are stored (0/1, or >1 for a multi-account pool). */
+  keyCount?: number;
+  /** The stored keys for the per-provider manager (masked + dated). */
+  savedKeys?: KeyManagerRow[];
   /** Toggled off (key kept but excluded). */
   disabled: boolean;
   /** The session's active provider. */
@@ -379,6 +394,21 @@ export interface KeyRow {
   local?: boolean;
   /** Resolved base URL for a local runtime (shown in place of a key). */
   endpoint?: string;
+}
+
+/**
+ * Format an ISO add-date for the keys panel: a compact `YYYY-MM-DD`, or "—" when
+ * the key predates multi-key storage (we never fabricate a date). Bad input also
+ * degrades to "—" rather than throwing in the render path.
+ */
+export function formatKeyDate(iso?: string): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 /**
@@ -402,24 +432,80 @@ export function renderKeysPanel(rows: KeyRow[], selected: number, width: number)
     const marker = on ? accent("❯") : " ";
     const dot = r.disabled ? faint("○") : r.active ? ok("●") : ready ? info("●") : faint("○");
     const name = (on ? text : muted)(r.label.padEnd(labelW));
+    // For a multi-account pool, show the active key plus a "+N" badge so the
+    // count is visible at a glance; the per-provider manager lists them all.
+    const poolBadge = !r.local && (r.keyCount ?? 0) > 1 ? ` +${(r.keyCount ?? 1) - 1}` : "";
+    const keyShown = truncate(r.masked || "set", Math.max(4, keyW - poolBadge.length));
+    const keyPad = " ".repeat(Math.max(0, keyW - keyShown.length - poolBadge.length));
     const keyCell = r.local
       ? faint(truncate(r.endpoint || "—", keyW).padEnd(keyW))
       : r.source === "none"
         ? faint("not set".padEnd(keyW))
-        : text(truncate(r.masked || "set", keyW).padEnd(keyW));
+        : text(keyShown) + (poolBadge ? accent(poolBadge) : "") + keyPad;
+    // "secure" = an api key held in the OS keychain; "oauth" = an OAuth session.
+    const srcLabel: Record<string, string> = {
+      saved: "saved",
+      env: "env",
+      oauth: "oauth",
+      keychain: "secure",
+    };
     const srcCell = r.local
       ? faint("local".padEnd(6))
-      : r.source === "saved"
-        ? faint("saved".padEnd(6))
-        : r.source === "env"
-          ? faint("env".padEnd(6))
-          : faint(" ".repeat(6));
+      : r.source === "none"
+        ? faint(" ".repeat(6))
+        : faint((srcLabel[r.source] ?? r.source).padEnd(6));
     const toggle = r.disabled ? warn("off") : ready ? ok("on") : faint("·");
     lines.push(`${PAD}${marker} ${dot} ${name} ${keyCell} ${srcCell} ${toggle}`);
   });
 
-  lines.push(`${PAD}${faint("↑↓ move · enter edit · space on/off · d clear · esc close")}`);
+  lines.push(`${PAD}${faint("↑↓ move · enter manage keys · space on/off · d clear · esc close")}`);
   return { lines, caretRow: sel + 1, caretCol: 0 };
+}
+
+/**
+ * The per-provider key manager: every key stored for one provider, masked, with
+ * the date it was added and an optional account label. A filled dot + "active"
+ * tag marks the key the gateway uses. This is the view that answers "how many
+ * keys do I have configured, and which is which" — reached by pressing enter on a
+ * provider row. Reveals no raw secrets.
+ */
+export function renderKeyManagerPanel(
+  providerLabel: string,
+  rows: KeyManagerRow[],
+  selected: number,
+  width: number,
+): RenderedBlock {
+  const sel = rows.length ? Math.max(0, Math.min(selected, rows.length - 1)) : 0;
+  const count = rows.length;
+  const lines: string[] = [
+    `${PAD}${bold(text(`${providerLabel} · keys`))}   ${faint(
+      count === 0 ? "none configured" : `${count} key${count === 1 ? "" : "s"} configured`,
+    )}`,
+  ];
+
+  if (count === 0) {
+    lines.push("");
+    lines.push(`${PAD}${muted("No keys saved for this provider yet.")}`);
+    lines.push(`${PAD}${faint("Press a to add one — paste a key from any account.")}`);
+  } else {
+    const maskW = Math.min(22, Math.max(8, ...rows.map((r) => r.masked.length)));
+    const labelW = Math.min(16, Math.max(0, ...rows.map((r) => (r.label ?? "").length)));
+    rows.forEach((r, i) => {
+      const on = i === sel;
+      const marker = on ? accent("❯") : " ";
+      const dot = r.active ? ok("●") : faint("○");
+      const mask = (on ? text : muted)(truncate(r.masked, maskW).padEnd(maskW));
+      const label = labelW > 0 ? "  " + faint(truncate(r.label ?? "", labelW).padEnd(labelW)) : "";
+      const date = "  " + faint(`added ${formatKeyDate(r.addedAt)}`);
+      const activeTag = r.active ? "  " + ok("active") : "";
+      lines.push(`${PAD}${marker} ${dot} ${mask}${label}${date}${activeTag}`);
+    });
+  }
+
+  lines.push("");
+  lines.push(`${PAD}${faint("a add key · enter/space set active · d remove · esc back")}`);
+  const caretRow = count === 0 ? 2 : sel + 1;
+  return { lines, caretRow, caretCol: 0 };
 }
 
 // ─── System Memory panel (TUI: `/memory`) ───

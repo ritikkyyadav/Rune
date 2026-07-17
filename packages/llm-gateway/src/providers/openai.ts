@@ -5,6 +5,7 @@ import type {
   InferenceResponse,
   LlmProvider,
   Message,
+  ModelInfo,
   ProviderName,
   StreamEvent,
   StopReason,
@@ -21,7 +22,18 @@ export class OpenAIProvider implements LlmProvider {
 
   // `name` lets OpenAI-compatible hosts (Groq, xAI, DeepSeek, a custom endpoint,
   // OpenRouter) register under their own identity while sharing this adapter.
-  constructor(apiKey?: string, baseUrl?: string, name: ProviderName = "openai") {
+  // `opts.fetch`/`opts.defaultHeaders` let a subscription transport (GitHub
+  // Copilot) reuse this whole translation layer while injecting a rotating bearer
+  // token and its required editor headers on every request.
+  constructor(
+    apiKey?: string,
+    baseUrl?: string,
+    name: ProviderName = "openai",
+    opts?: {
+      fetch?: (url: string | URL | Request, init?: RequestInit) => Promise<Response>;
+      defaultHeaders?: Record<string, string>;
+    },
+  ) {
     this.name = name;
     const resolvedKey = apiKey ?? process.env.OPENAI_API_KEY ?? "dummy";
     this.client = new OpenAI({
@@ -29,6 +41,9 @@ export class OpenAIProvider implements LlmProvider {
       ...(baseUrl && { baseURL: baseUrl }),
       timeout: 60_000,
       maxRetries: 0,
+      // Cast: the SDK's Fetch type isn't exported; the shapes are compatible.
+      ...(opts?.fetch && { fetch: opts.fetch as never }),
+      ...(opts?.defaultHeaders && { defaultHeaders: opts.defaultHeaders }),
     });
   }
 
@@ -49,7 +64,12 @@ export class OpenAIProvider implements LlmProvider {
     if (this.isOpenAIReasoningModel(request.model)) {
       return {
         max_completion_tokens: request.maxTokens,
-        ...(request.thinking?.enabled !== false ? { reasoning_effort: "medium" } : {}),
+        // Depth dial: honor the caller's effort, defaulting HIGH — an agent
+        // that plans/diagnoses at "medium" rushes to shallow conclusions
+        // (the exact daily-driver complaint this replaces).
+        ...(request.thinking?.enabled !== false
+          ? { reasoning_effort: request.thinking?.effort ?? "high" }
+          : {}),
       };
     }
     return {
@@ -261,6 +281,12 @@ export class OpenAIProvider implements LlmProvider {
     }
   }
 
+  /** Live model discovery via the OpenAI-compatible /v1/models endpoint. */
+  async listModels(): Promise<ModelInfo[]> {
+    const res = await this.client.models.list();
+    return (res.data ?? []).map((m) => ({ id: m.id, label: m.id, live: true }));
+  }
+
   // ─── Translation Helpers ───
 
   private toOpenAIMessages(
@@ -315,11 +341,47 @@ export class OpenAIProvider implements LlmProvider {
         const textParts = msg.content
           .filter((b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text")
           .map((b) => b.text);
-        result.push({ role: "user", content: textParts.join("\n") });
+        const imageBlocks = msg.content.filter(
+          (b): b is Extract<ContentBlock, { type: "image" }> => b.type === "image",
+        );
+
+        if (imageBlocks.length > 0 && this.supportsVision()) {
+          // Vision: images ride as data-URL image_url parts, before the text.
+          result.push({
+            role: "user",
+            content: [
+              ...imageBlocks.map((b) => ({
+                type: "image_url" as const,
+                image_url: { url: `data:${b.mediaType};base64,${b.data}` },
+              })),
+              { type: "text" as const, text: textParts.join("\n") },
+            ],
+          });
+        } else {
+          // Hosts with unknown model catalogs (OpenRouter free tiers, local
+          // runtimes) may 400 on image parts. Drop the pixels but SAY so —
+          // the model must report "I couldn't view it", never guess.
+          const note =
+            imageBlocks.length > 0
+              ? `\n\n[${imageBlocks.length} attached image(s) omitted: the ${this.name} transport does not send images to this host — tell the user you could not view them]`
+              : "";
+          result.push({ role: "user", content: textParts.join("\n") + note });
+        }
       }
     }
 
     return result;
+  }
+
+  /**
+   * Whether this adapter sends image blocks on the wire. First-party OpenAI
+   * models are vision-capable across the board; OpenAI-COMPATIBLE hosts
+   * (OpenRouter, Groq, local runtimes, custom endpoints) serve arbitrary
+   * models where an image part risks a hard 400 — those get an honest
+   * text placeholder instead.
+   */
+  protected supportsVision(): boolean {
+    return this.name === "openai";
   }
 
   private toOpenAITools(tools: ToolDefinition[]): OpenAI.ChatCompletionTool[] {

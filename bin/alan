@@ -78,6 +78,11 @@ Commands:
   berne "your question"     Ask a one-shot question
   berne --list              List past sessions
   berne --resume <id>       Resume a session
+  berne login [provider]    Sign in to a provider (API key, or OAuth where supported)
+  berne logout <provider>   Remove a provider's stored key/OAuth from the secure store
+  berne providers           List providers, auth method, and credential status
+  berne use <provider>      Set the active provider for new sessions
+  berne models [provider]   List a provider's models (live discovery + fallback)
   berne setup               First-time setup (build + install)
   berne desktop             Launch the Berne desktop app (GUI)
   berne desktop build       Build a native macOS .app + .dmg installer

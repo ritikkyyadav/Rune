@@ -4,6 +4,7 @@ import type {
   InferenceResponse,
   LlmProvider,
   Message,
+  ModelInfo,
   StreamEvent,
   StopReason,
   StreamOpts,
@@ -22,6 +23,10 @@ interface GeminiPart {
   functionResponse?: {
     name: string;
     response: Record<string, unknown>;
+  };
+  inlineData?: {
+    mimeType: string;
+    data: string;
   };
 }
 
@@ -224,6 +229,28 @@ export class GoogleProvider implements LlmProvider {
     }
   }
 
+  /** Live model discovery via Gemini's models.list (generateContent-capable only). */
+  async listModels(): Promise<ModelInfo[]> {
+    if (!this.apiKey) throw new Error("GOOGLE_API_KEY is required to list models");
+    const res = await fetch(
+      `${this.baseUrl}/models?pageSize=200&key=${encodeURIComponent(this.apiKey)}`,
+    );
+    if (!res.ok) throw new Error(`Google models.list failed (${res.status})`);
+    const json = (await res.json()) as {
+      models?: { name?: string; displayName?: string; supportedGenerationMethods?: string[] }[];
+    };
+    return (json.models ?? [])
+      .filter(
+        (m) =>
+          !m.supportedGenerationMethods || m.supportedGenerationMethods.includes("generateContent"),
+      )
+      .map((m) => {
+        const id = (m.name ?? "").replace(/^models\//, "");
+        return { id, label: m.displayName ?? id, live: true };
+      })
+      .filter((m) => m.id.length > 0);
+  }
+
   private async post<T>(model: string, method: string, body: unknown): Promise<T> {
     if (!this.apiKey) {
       throw new Error("GOOGLE_API_KEY is required for the Google provider");
@@ -294,6 +321,9 @@ export class GoogleProvider implements LlmProvider {
         role: message.role === "assistant" ? "model" : "user",
         parts: message.content.flatMap((block): GeminiPart[] => {
           if (block.type === "text") return [{ text: block.text }];
+          if (block.type === "image") {
+            return [{ inlineData: { mimeType: block.mediaType, data: block.data } }];
+          }
           if (block.type === "tool_result") {
             return [
               {

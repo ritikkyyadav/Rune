@@ -1,5 +1,5 @@
 import { LlmGateway, CostTracker } from "@alan/llm-gateway";
-import type { Message, ProviderName } from "@alan/llm-gateway";
+import type { Message, ProviderName, ResolvedCredential } from "@alan/llm-gateway";
 import {
   ToolRegistry,
   registerBuiltinTools,
@@ -54,6 +54,7 @@ import type {
   CheckpointPolicy,
   RunState,
   CustomEndpoint,
+  StoredKey,
   SessionStatus,
   SessionInfoInternal,
   SystemMemoryMeta,
@@ -63,8 +64,15 @@ import type { ProviderStatusRow, BuildGatewayOpts } from "./provider-registry";
 import { AgentLoop, parseInterjection } from "./agent-loop";
 import type { PermissionCheck, AgentTurnEvent } from "./agent-loop";
 import { createCompactTool } from "./compact-tool";
+import { createUpdateConfigTool } from "./update-config-tool";
 import { createResearchTool } from "./research-tool";
-import { PermissionBroker, nextPermissionMode, PERMISSION_MODE_ORDER } from "./permissions";
+import {
+  PermissionBroker,
+  nextPermissionMode,
+  PERMISSION_MODE_ORDER,
+  configModeToPermissionMode,
+  permissionModeToConfig,
+} from "./permissions";
 import { loadOrgPolicy, policyAllowsModel, type LoadedOrgPolicy } from "./org-policy";
 import { discoverPlugins, type LoadedPlugin } from "./plugins";
 import { StruggleDetector } from "./struggle-detector";
@@ -284,6 +292,14 @@ export interface EngineConfig {
   googleApiKey?: string;
   /** Keys for additional providers by id (groq/xai/deepseek/…), e.g. from the BYOK store. */
   providerKeys?: Record<string, string>;
+  /**
+   * Multi-account key pools by provider id (from secrets.json). The gateway only
+   * ever uses the active key (mirrored into `providerKeys`); these carry the full
+   * pool + dates so the `/keys` panel can show and manage them.
+   */
+  providerKeyEntries?: Record<string, StoredKey[]>;
+  /** Active entry id per provider (which pool key is live). */
+  activeKeyId?: Record<string, string>;
   /** User-defined OpenAI-compatible endpoint registered as the "custom" provider. */
   customEndpoint?: CustomEndpoint;
   /** Provider ids toggled off — kept configured but excluded from the gateway. */
@@ -292,6 +308,12 @@ export interface EngineConfig {
   localBaseUrls?: Record<string, string>;
   /** Base URL for a local Ollama server (default http://localhost:11434). */
   ollamaBaseUrl?: string;
+  /**
+   * BYOP: credentials pre-resolved by the auth layer at boot (keychain keys,
+   * OAuth bearer tokens). Threaded into every gateway (re)build. Absent ⇒ the
+   * gateway resolves keys exactly as before BYOP.
+   */
+  credentials?: Record<string, ResolvedCredential>;
   contextBudget?: Partial<ContextBudget>;
   enableSecurity?: boolean;
   enableRateLimiting?: boolean;
@@ -561,10 +583,17 @@ export class Engine {
   private skillCatalog = "";
   // BYOK key state — the single source of truth the gateway is (re)built from.
   private providerKeys: Record<string, string> = {};
+  // Full multi-account pools + which entry is active, for the `/keys` panel. The
+  // gateway never reads these; it reads the active-key mirror above.
+  private providerKeyEntries: Record<string, StoredKey[]> = {};
+  private activeProviderKeyId: Record<string, string> = {};
   private customEndpoint?: CustomEndpoint;
   private disabledProviders: Set<string> = new Set();
   // Base URLs for local runtimes (ollama / lmstudio), live-editable via /keys.
   private localBaseUrls: Record<string, string> = {};
+  // BYOP: credentials resolved by the auth layer (keychain / OAuth). Seeded at
+  // boot and refreshed on login/logout; handed into every gateway (re)build.
+  private resolvedCredentials: Record<string, ResolvedCredential> = {};
   // Guards against overlapping System Memory "dreams" (auto + manual at once).
   private memoryReflecting = false;
   // Black box: null when disabled (tests, embedders). Created BEFORE the
@@ -670,9 +699,12 @@ export class Engine {
       ...(this.config.googleApiKey ? { google: this.config.googleApiKey } : {}),
       ...(this.config.providerKeys ?? {}),
     };
+    this.providerKeyEntries = structuredClone(this.config.providerKeyEntries ?? {});
+    this.activeProviderKeyId = { ...(this.config.activeKeyId ?? {}) };
     this.customEndpoint = this.config.customEndpoint;
     this.disabledProviders = new Set(this.config.disabledProviders ?? []);
     this.localBaseUrls = { ...(this.config.localBaseUrls ?? {}) };
+    this.resolvedCredentials = { ...(this.config.credentials ?? {}) };
     this.gateway = buildGateway(this.gatewayOpts());
 
     // Initialize Tool Registry with built-in tools
@@ -776,6 +808,17 @@ export class Engine {
           this.contextEngine.requestCompaction();
           return this.contextEngine.getContextUsage();
         },
+      }),
+    );
+
+    // update_config: change Berne's own settings from plain-language requests
+    // ("switch to hands-free mode", "turn the sandbox off") — applied live and
+    // persisted to ~/.alan/config.toml. Main registry only: sub-agents are
+    // read-only investigators and must not reconfigure the host session.
+    this.registry.register(
+      createUpdateConfigTool({
+        applyLive: (key, value) => this.applyConfigSetting(key, value),
+        readSetting: (key) => this.readConfigSetting(key),
       }),
     );
 
@@ -1648,6 +1691,57 @@ export class Engine {
     this.envBlocks.clear();
   }
 
+  /**
+   * Toggle [git] autoCommit live. The run-completion path reads
+   * `this.config.git.autoCommit` each time, so this takes effect from the next
+   * successful run in this session (and callers persist it to config.toml so it
+   * sticks).
+   */
+  setAutoCommit(enabled: boolean): void {
+    this.config.git = { ...(this.config.git ?? {}), autoCommit: enabled };
+  }
+
+  // ─── Config settings (the `update_config` tool / `/config`) ───
+
+  /**
+   * Apply one already-validated config setting live. The `update_config` tool
+   * calls this after the shared catalog has normalized the value; the engine owns
+   * how each setting takes effect. Returns whether it took and, if not, why (e.g.
+   * an org policy forbidding hands-free) so the caller can avoid persisting a
+   * setting the machine won't honor.
+   */
+  applyConfigSetting(key: string, canonicalValue: string): { ok: boolean; reason?: string } {
+    switch (key) {
+      case "permission_mode": {
+        const mode = configModeToPermissionMode(canonicalValue);
+        if (!mode) return { ok: false, reason: `unknown mode "${canonicalValue}"` };
+        return this.setPermissionMode(mode);
+      }
+      case "sandbox":
+        this.setSandboxEnabled(canonicalValue === "true");
+        return { ok: true };
+      case "auto_commit":
+        this.setAutoCommit(canonicalValue === "true");
+        return { ok: true };
+      default:
+        return { ok: false, reason: `no live handler for "${key}"` };
+    }
+  }
+
+  /** The current canonical value of a settable config, for the tool's reports. */
+  readConfigSetting(key: string): string | undefined {
+    switch (key) {
+      case "permission_mode":
+        return permissionModeToConfig(this.getPermissionMode());
+      case "sandbox":
+        return this.isSandboxEnabled() ? "true" : "false";
+      case "auto_commit":
+        return this.isAutoCommitEnabled() ? "true" : "false";
+      default:
+        return undefined;
+    }
+  }
+
   // ─── Browser mode (/browser on|off) ───
 
   /** Whether the built-in Playwright-MCP browser server is enabled. */
@@ -2400,6 +2494,7 @@ export class Engine {
       disabled: this.disabledProviders,
       localBaseUrls: this.localBaseUrls,
       ollamaBaseUrl: this.config.ollamaBaseUrl,
+      credentials: this.resolvedCredentials,
       // Closure reads this.recorder lazily, so key-edit rebuilds keep the tap.
       onIncident: (gi) => {
         if (!this.recorder) return;
@@ -2445,8 +2540,65 @@ export class Engine {
    * unusable, so the caller can tell the user we moved them.
    */
   setProviderKey(id: string, key: string | null, sessionId?: string): ProviderChangeResult {
-    if (key && key.trim()) this.providerKeys[id] = key.trim();
-    else delete this.providerKeys[id];
+    if (key && key.trim()) {
+      const trimmed = key.trim();
+      this.providerKeys[id] = trimmed;
+      // Keep the pool coherent: a bare "set" replaces the pool with one entry so
+      // getProviderStatus (which reads the pool) matches the live key.
+      const entryId = `legacy_${id}`;
+      this.providerKeyEntries[id] = [{ id: entryId, key: trimmed }];
+      this.activeProviderKeyId[id] = entryId;
+    } else {
+      delete this.providerKeys[id];
+      delete this.providerKeyEntries[id];
+      delete this.activeProviderKeyId[id];
+    }
+    this.rebuildGateway();
+    return { switchedTo: this.reconcileActiveProvider(sessionId) };
+  }
+
+  /**
+   * Adopt a provider's full key pool as the source of truth — the uniform live
+   * counterpart to the secrets-store mutators (add / remove / set-active). The
+   * caller persists to secrets.json (which mints the entry ids + dates) and hands
+   * the resulting pool here; the engine mirrors the active key into the gateway
+   * and rebuilds. Passing an empty pool drops the provider's key entirely.
+   * Returns a forced model switch if the change left the active provider unusable.
+   */
+  setProviderKeys(
+    id: string,
+    entries: StoredKey[],
+    activeId?: string,
+    sessionId?: string,
+  ): ProviderChangeResult {
+    if (!entries.length) {
+      delete this.providerKeys[id];
+      delete this.providerKeyEntries[id];
+      delete this.activeProviderKeyId[id];
+    } else {
+      const active = (activeId && entries.find((e) => e.id === activeId)) || entries[0]!;
+      this.providerKeyEntries[id] = entries.map((e) => ({ ...e }));
+      this.activeProviderKeyId[id] = active.id;
+      this.providerKeys[id] = active.key;
+    }
+    this.rebuildGateway();
+    return { switchedTo: this.reconcileActiveProvider(sessionId) };
+  }
+
+  /**
+   * BYOP: apply (or, with null, drop) a credential resolved by the auth layer —
+   * e.g. right after `berne login` mints an OAuth token — and rebuild the gateway
+   * so it takes effect immediately. Persistence lives in the credential store;
+   * this only touches in-memory state. Returns a forced switch if dropping the
+   * credential left the active provider unusable.
+   */
+  setResolvedCredential(
+    id: string,
+    cred: ResolvedCredential | null,
+    sessionId?: string,
+  ): ProviderChangeResult {
+    if (cred) this.resolvedCredentials[id] = cred;
+    else delete this.resolvedCredentials[id];
     this.rebuildGateway();
     return { switchedTo: this.reconcileActiveProvider(sessionId) };
   }
@@ -2510,9 +2662,12 @@ export class Engine {
   getProviderStatus(): ProviderStatusRow[] {
     return providerStatus({
       keys: this.providerKeys,
+      keyEntries: this.providerKeyEntries,
+      activeKeyId: this.activeProviderKeyId,
       customEndpoint: this.customEndpoint,
       disabled: this.disabledProviders,
       localBaseUrls: this.localBaseUrls,
+      credentials: this.resolvedCredentials,
       active: this.config.provider,
     });
   }

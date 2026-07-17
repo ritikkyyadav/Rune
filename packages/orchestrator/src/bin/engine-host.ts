@@ -35,6 +35,7 @@ import type { ProviderName } from "@alan/llm-gateway";
 import {
   loadConfig,
   loadSecrets,
+  providerKeyEntries,
   applySearchKeysToEnv,
   setProviderKey as persistProviderKey,
   clearProviderKey as persistClearKey,
@@ -201,6 +202,12 @@ function buildEngine(): Engine {
     googleApiKey: process.env.GOOGLE_API_KEY ? undefined : config.llm.google?.apiKey,
     // BYOK keys + custom endpoint + toggles from ~/.alan/secrets.json (win over config.toml).
     providerKeys: secrets.keys,
+    providerKeyEntries: Object.fromEntries(
+      PROVIDER_PRESETS.map((p) => [p.id, providerKeyEntries(secrets, p.id)]).filter(
+        ([, e]) => (e as unknown[]).length,
+      ),
+    ),
+    activeKeyId: secrets.activeKeyId,
     customEndpoint: secrets.custom,
     disabledProviders: secrets.disabled,
     search: config.search,

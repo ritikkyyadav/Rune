@@ -776,6 +776,11 @@ function messageToString(msg: Message): string {
       if (block.type === "tool_use")
         return `[tool: ${block.toolName}(${JSON.stringify(block.toolInput).slice(0, 200)})]`;
       if (block.type === "tool_result") return `[result: ${block.toolResultContent.slice(0, 500)}]`;
+      // NEVER serialize image base64 into the estimate — megabytes of data
+      // would explode a chars/4 heuristic and trigger false forced
+      // compactions. A fixed placeholder under-counts (~1.6k real tokens per
+      // image), which the per-model calibration from real usage absorbs.
+      if (block.type === "image") return "[image attachment]";
       return "";
     })
     .join("\n");

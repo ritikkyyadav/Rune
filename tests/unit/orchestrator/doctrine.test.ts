@@ -39,3 +39,49 @@ describe("AGENT_DOCTRINE — agency layer", () => {
     expect(AGENT_DOCTRINE).toContain('never claim "done" to escape a hard problem');
   });
 });
+
+// Doctrine v3 — the investigation layer. Added after the 2026-07-16 audit of
+// rushed/shallow behavior (fake image "inspection", diagnosis-by-guess,
+// missing-data cop-outs, silent egress-block workarounds). Each phrase anchors
+// one observed failure mode; losing one regresses a real incident.
+describe("AGENT_DOCTRINE — investigation layer", () => {
+  test("investigate-before-acting section leads, right after agency", () => {
+    expect(AGENT_DOCTRINE).toContain("# Investigate before you act");
+    expect(AGENT_DOCTRINE.indexOf("# Investigate before you act")).toBeLessThan(
+      AGENT_DOCTRINE.indexOf("# Tone and style"),
+    );
+    // Unknown territory → discover first, memory is not a source.
+    expect(AGENT_DOCTRINE).toContain("find out FIRST");
+    expect(AGENT_DOCTRINE).toContain("hypothesis to check, not a source to cite");
+  });
+
+  test("diagnosis means evidence → hypothesis → confirmation", () => {
+    expect(AGENT_DOCTRINE).toContain("VERIFIED explanation, not a plausible story");
+    expect(AGENT_DOCTRINE).toContain("CONFIRM it before you write the diagnosis");
+  });
+
+  test("missing data must be explained, not reported as a wall", () => {
+    expect(AGENT_DOCTRINE).toContain("Missing data is a finding to explain");
+    expect(AGENT_DOCTRINE).toContain("before the market closed");
+  });
+
+  test("brevity is for prose, never for the work", () => {
+    expect(AGENT_DOCTRINE).toContain("Brevity applies to your PROSE, never to your work");
+  });
+
+  test("todos complete only with evidence from this session", () => {
+    expect(AGENT_DOCTRINE).toContain('"Completed" requires evidence from THIS session');
+    expect(AGENT_DOCTRINE).toContain("Never mark a todo complete to keep moving");
+  });
+
+  test("never fabricate observations; blocked calls escalate honestly", () => {
+    expect(AGENT_DOCTRINE).toContain("Never fabricate an observation you could not make");
+    expect(AGENT_DOCTRINE).toContain('"Egress blocked"');
+    expect(AGENT_DOCTRINE).toContain("pretends the blocked data existed");
+  });
+
+  test("interruptions resume the original goal, never a downgraded deliverable", () => {
+    expect(AGENT_DOCTRINE).toContain("continuing the ORIGINAL task from the last verified todo");
+    expect(AGENT_DOCTRINE).toContain("Never quietly downgrade the deliverable");
+  });
+});

@@ -4,7 +4,11 @@ import type { PermissionHandler, UserPermissionDecision } from "../engine";
 import {
   loadConfig,
   loadSecrets,
+  providerKeyEntries,
   setProviderKey as persistKey,
+  addProviderKey as persistAddKey,
+  removeProviderKey as persistRemoveKey,
+  setActiveProviderKey as persistSetActiveKey,
   clearProviderKey as persistClearKey,
   setCustomEndpoint as persistCustom,
   clearCustomEndpoint as persistClearCustom,
@@ -26,7 +30,12 @@ import {
   saveBrowserState,
   getSystemMemoryPath,
   getAlanHome,
+  openCredentialStore,
 } from "@alan/shared";
+import type { ProviderName, ResolvedCredential } from "@alan/llm-gateway";
+import { resolveStartupPermissionFlags } from "../permissions";
+import { resolveProviderCredentials } from "../provider-registry";
+import { buildSavedKeys, readAuthOverrides } from "./byop-cli-shared";
 import {
   armSentinel,
   disarmSentinel,
@@ -94,6 +103,9 @@ const { values, positionals } = parseArgs({
     "no-sandbox": { type: "boolean" },
     browser: { type: "boolean" },
     "no-browser": { type: "boolean" },
+    // `berne login`: pick an auth method / migrate legacy keys.
+    method: { type: "string" },
+    migrate: { type: "boolean", default: false },
     "by-version": { type: "boolean", default: false },
     // `berne detach --worktree`: isolate the run in a git worktree checkout.
     worktree: { type: "boolean", default: false },
@@ -128,6 +140,11 @@ if (values.help) {
       `    berne export <sessionId>      Export a session transcript\n` +
       `    berne detach "<prompt>"       Start a background run that survives this terminal (--worktree isolates it)\n` +
       `    berne attach [session|latest] Reattach to a detached run — replay, live-stream, Ctrl+C detaches again\n` +
+      `    berne login [provider]        Authenticate a provider — API key, or OAuth where supported (--method, --no-browser, --migrate)\n` +
+      `    berne logout <provider>       Remove a provider's stored key/OAuth from the secure store\n` +
+      `    berne providers               List providers, their auth method, and credential status\n` +
+      `    berne use <provider> [model]  Set the active provider (+ model) for new sessions\n` +
+      `    berne models [provider]       List a provider's models (live discovery, static fallback)\n` +
       `    berne doctor                  Black-box health: recent incidents, crash sentinel, recorder state\n` +
       `    berne incidents [sub]         Browse recorded failures — list | show <id> | top [--by-version] | export\n` +
       `    berne notebook [sub]          Learned tactics notebook — list | show <id> | rm <id> | export\n` +
@@ -188,6 +205,34 @@ if (command === "attach") {
   const { runAttach } = await import("./detach-cli");
   await runAttach(positionals as string[]);
   process.exit(0);
+}
+
+// ─── BYOP: provider authentication surfaces (no Engine boot) ───
+
+if (command === "login") {
+  const { runLogin } = await import("./login-cli");
+  await runLogin(positionals.slice(1) as string[], values as Record<string, unknown>);
+  process.exit(process.exitCode ?? 0);
+}
+if (command === "logout") {
+  const { runLogout } = await import("./login-cli");
+  await runLogout(positionals.slice(1) as string[]);
+  process.exit(process.exitCode ?? 0);
+}
+if (command === "providers") {
+  const { runProviders } = await import("./providers-cli");
+  await runProviders();
+  process.exit(process.exitCode ?? 0);
+}
+if (command === "use") {
+  const { runUse } = await import("./providers-cli");
+  await runUse(positionals.slice(1) as string[]);
+  process.exit(process.exitCode ?? 0);
+}
+if (command === "models") {
+  const { runModels } = await import("./providers-cli");
+  await runModels(positionals.slice(1) as string[]);
+  process.exit(process.exitCode ?? 0);
 }
 
 type CliProvider =
@@ -257,6 +302,23 @@ function resolveLocalBaseUrls(
   if (config.llm.lmstudio?.baseUrl) out.lmstudio = config.llm.lmstudio.baseUrl;
   for (const [id, url] of Object.entries(secrets.endpoints ?? {})) {
     if (url) out[id] = url;
+  }
+  return out;
+}
+
+/**
+ * The full key pool per provider for the `/keys` panel, built from secrets so a
+ * provider that has ANY saved key (a single legacy key or a multi-account pool)
+ * gets a stable-id entry list with dates. Restricted to real provider presets so
+ * the non-provider search keys (tavily/brave) don't leak into the panel.
+ */
+function providerKeyEntryMap(
+  secrets: ReturnType<typeof loadSecrets>,
+): Record<string, import("@alan/shared").StoredKey[]> {
+  const out: Record<string, import("@alan/shared").StoredKey[]> = {};
+  for (const preset of PROVIDER_PRESETS) {
+    const entries = providerKeyEntries(secrets, preset.id);
+    if (entries.length) out[preset.id] = entries;
   }
   return out;
 }
@@ -537,8 +599,14 @@ async function main() {
   }
 
   const plannerMode = values.planner as boolean;
-  // Workspace trust: --trust flag OR permissions.trustWorkspace in .alan/config.toml.
-  const trustWorkspace = (values.trust as boolean) || (config.permissions?.trustWorkspace ?? false);
+  // Startup permission mode: the persisted [permissions] mode ("switch to
+  // hands-free mode" writes this), with explicit --yolo / --trust flags winning.
+  const { yoloMode, trustWorkspace } = resolveStartupPermissionFlags({
+    yoloFlag: values.yolo as boolean,
+    trustFlag: values.trust as boolean,
+    configMode: config.permissions?.mode,
+    configTrustWorkspace: config.permissions?.trustWorkspace,
+  });
   // Make the [search].provider config visible to the env-based backend selector
   // used by the web_search tool (keys themselves already come from the env).
   if (
@@ -566,13 +634,32 @@ async function main() {
     configured: config.browser?.enabled ?? null,
   });
 
+  // ─── BYOP: resolve stored credentials (keychain / OAuth) before boot ───
+  // Best-effort: any failure yields an empty map, and the gateway then falls back
+  // to today's exact env/secrets key resolution — so this is byte-identical to
+  // pre-BYOP for anyone who never runs `berne login`.
+  let credentials: Record<string, ResolvedCredential> = {};
+  try {
+    const store = await openCredentialStore();
+    credentials = await resolveProviderCredentials({
+      store,
+      keys: buildSavedKeys(config, secrets),
+      active: provider as ProviderName,
+      disabled: new Set(secrets.disabled ?? []),
+      localBaseUrls: resolveLocalBaseUrls(config, secrets),
+      authOverrides: readAuthOverrides(config),
+    });
+  } catch {
+    credentials = {};
+  }
+
   const engine = new Engine({
     model,
     provider,
     workspaceRoot,
     dbPath: config.engine.dbPath,
     toolsBinaryPath: toolsBinary,
-    yoloMode: values.yolo as boolean,
+    yoloMode,
     trustWorkspace,
     sandboxEnabled,
     sandboxRequireOs: config.sandbox?.requireOs === true,
@@ -595,8 +682,13 @@ async function main() {
     openaiApiKey: process.env.OPENAI_API_KEY ? undefined : config.llm.openai?.apiKey,
     openrouterApiKey: process.env.OPENROUTER_API_KEY ? undefined : config.llm.openrouter?.apiKey,
     googleApiKey: process.env.GOOGLE_API_KEY ? undefined : config.llm.google?.apiKey,
+    // BYOP: credentials resolved from the secure store (keychain) + OAuth tokens.
+    credentials,
     // BYOK keys + custom endpoint + toggles from ~/.alan/secrets.json (win over config.toml).
     providerKeys: secrets.keys,
+    // Multi-account pools + active selection so the panel can show every key + date.
+    providerKeyEntries: providerKeyEntryMap(secrets),
+    activeKeyId: secrets.activeKeyId,
     customEndpoint: secrets.custom,
     disabledProviders: secrets.disabled,
     // Local runtime base URLs (ollama / lmstudio): config.toml defaults + /keys edits.
@@ -916,7 +1008,7 @@ async function main() {
       launchPick,
       workspaceRoot,
       version: ALAN_VERSION,
-      yoloMode: values.yolo as boolean,
+      yoloMode,
       trustWorkspace,
       customCommands,
       fullscreen: fullscreenTui,
@@ -975,7 +1067,6 @@ async function main() {
   }
 
   const spinner = new Spinner();
-  const yoloMode = values.yolo as boolean;
 
   // ─── Paste Interception ───
   // Intercept stdin BEFORE readline to prevent echo flood on large pastes.
@@ -1499,7 +1590,7 @@ async function main() {
         const keyState =
           r.source === "none"
             ? faint("no key".padEnd(10))
-            : muted((r.source === "env" ? "env" : "key").padEnd(10));
+            : muted((r.source === "saved" ? "key" : r.source).padEnd(10));
         const state = r.disabled
           ? warn("off")
           : r.active
@@ -1567,7 +1658,8 @@ async function main() {
 
       const printTable = () => {
         process.stdout.write(
-          `  ${bold(text("API keys"))} ${faint("· saved to ~/.alan/secrets.json, applied live")}\n\n`,
+          `  ${bold(text("API keys"))} ${faint("· saved to ~/.alan/secrets.json, applied live")}\n` +
+            `  ${faint("· OAuth & OS-keychain storage:")} ${info("berne login <provider>")} ${faint("· status:")} ${info("berne providers")}\n\n`,
         );
         for (const r of engine.getProviderStatus()) {
           const hasKey = r.hasKey;

@@ -21,6 +21,7 @@ import type { IncidentClass } from "@alan/shared";
 import type { ToolCallInput, ToolCallOutput } from "@alan/tool-registry";
 import { ToolRegistry } from "@alan/tool-registry";
 import type { ContextEngine } from "./context-engine";
+import { buildUserContent } from "./image-attach";
 import type { RetrievedChunk } from "./context-engine";
 import { getMaxOutputTokens } from "./tokenizer";
 import type { Verifier } from "./verifier";
@@ -109,6 +110,13 @@ export interface AgentLoopConfig {
    * coding agents benefit heavily from inter-tool-call reasoning.
    */
   thinking?: boolean;
+  /**
+   * Reasoning depth passed to providers with an effort dial (OpenAI
+   * `reasoning_effort`). Default "high": agentic planning and diagnosis at
+   * medium effort produces exactly the shallow, rushed behavior users report.
+   * Turn it down only for latency-critical, trivial workloads.
+   */
+  thinkingEffort?: "low" | "medium" | "high";
   /**
    * Black-box tap for named loop reliability events (breaker trips, evidence
    * gate, nudges, verification failures). Guarded — a throwing reporter can
@@ -203,6 +211,8 @@ export class AgentLoop {
   // Mid-turn steering: user messages queued while the run is in flight,
   // folded into the transcript at the next turn boundary.
   private interjections: string[] = [];
+  /** Workspace root of the current run — base dir for relative image paths. */
+  private workspaceRoot = process.cwd();
 
   constructor(
     config: Partial<AgentLoopConfig>,
@@ -278,9 +288,11 @@ export class AgentLoop {
   private drainInterjections(): boolean {
     if (this.interjections.length === 0) return false;
     const texts = this.interjections.splice(0);
+    // Mid-task steering can reference images too ("match THIS screenshot") —
+    // attach them exactly like an initial message would.
     this.messages.push({
       role: "user",
-      content: [{ type: "text", text: formatInterjection(texts) }],
+      content: buildUserContent(formatInterjection(texts), this.workspaceRoot),
     });
     return true;
   }
@@ -292,11 +304,13 @@ export class AgentLoop {
     signal?: AbortSignal,
   ): AsyncGenerator<AgentTurnEvent> {
     this.state = "thinking";
+    this.workspaceRoot = workspaceRoot;
 
-    // Add user message
+    // Add user message. Image files the user references become real image
+    // blocks here (vision), so the model sees pixels — not a path to guess at.
     this.messages.push({
       role: "user",
-      content: [{ type: "text", text: userMessage }],
+      content: buildUserContent(userMessage, workspaceRoot),
     });
 
     let turn = 0;
@@ -408,7 +422,10 @@ export class AgentLoop {
         maxTokens: Math.min(this.config.maxTokens, getMaxOutputTokens(this.config.model)),
         temperature: this.config.temperature,
         enableWebSearch: useNativeSearch ? true : undefined,
-        thinking: { enabled: this.config.thinking !== false },
+        thinking: {
+          enabled: this.config.thinking !== false,
+          effort: this.config.thinkingEffort ?? "high",
+        },
         stream: true,
       };
 
@@ -1122,8 +1139,14 @@ export class AgentLoop {
         return {};
 
       case "redacted_thinking":
-        // Opaque block — must round-trip untouched.
-        contentBlocks.push({ type: "redacted_thinking", data: event.data });
+        // Opaque provider reasoning state — round-trip untouched, keeping the
+        // origin `provider` tag so only that provider replays it (e.g. Codex
+        // reasoning items; every other provider drops it).
+        contentBlocks.push({
+          type: "redacted_thinking",
+          data: event.data,
+          provider: event.provider,
+        });
         return {};
 
       case "tool_use_start":

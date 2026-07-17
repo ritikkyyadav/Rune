@@ -1,0 +1,189 @@
+// ─── `berne providers` / `berne use` / `berne models` ───
+// Non-interactive provider surfaces, dispatched standalone like telemetry/doctor.
+//   providers — list every provider, its auth method, and credential status
+//   use        — set the active provider (+ optional model) in ~/.alan/model.json
+//   models     — live model discovery for a provider, with static fallback
+
+import {
+  loadConfig,
+  loadSecrets,
+  getPreset,
+  getProviderDescriptor,
+  PROVIDER_PRESETS,
+  CUSTOM_PROVIDER_ID,
+  openCredentialStore,
+  loadLastModel,
+  saveLastModel,
+  describeCredentialBackend,
+  type AlanConfig,
+  type SecretsFile,
+} from "@alan/shared";
+import type { ProviderName, ModelInfo, ResolvedCredential } from "@alan/llm-gateway";
+import { buildGateway, resolveProviderCredentials } from "../provider-registry";
+import { accent, bold, dim, faint, info, ok, text, warn } from "./ui/theme";
+import { buildSavedKeys, readAuthOverrides, insecureNoticeLine } from "./byop-cli-shared";
+
+const pad = "  ";
+const out = (line = "") => process.stdout.write(`${pad}${line}\n`);
+
+/** Active provider = last-used sidecar, else the configured default. */
+function activeProvider(config: AlanConfig): string {
+  return loadLastModel()?.provider ?? config.llm.defaultProvider;
+}
+
+function mergeLocalBaseUrls(config: AlanConfig, secrets: SecretsFile): Record<string, string> {
+  const o: Record<string, string> = {};
+  if (config.llm.ollama?.baseUrl) o.ollama = config.llm.ollama.baseUrl;
+  if (config.llm.lmstudio?.baseUrl) o.lmstudio = config.llm.lmstudio.baseUrl;
+  for (const [id, url] of Object.entries(secrets.endpoints ?? {})) if (url) o[id] = url;
+  return o;
+}
+
+async function resolveAll(config: AlanConfig, secrets: SecretsFile, active: string) {
+  const store = await openCredentialStore();
+  const savedKeys = buildSavedKeys(config, secrets);
+  const credentials = await resolveProviderCredentials({
+    store,
+    keys: savedKeys,
+    active: active as ProviderName,
+    disabled: new Set(secrets.disabled ?? []),
+    localBaseUrls: mergeLocalBaseUrls(config, secrets),
+    authOverrides: readAuthOverrides(config),
+  });
+  return { store, savedKeys, credentials };
+}
+
+// ─── berne providers ───
+
+export async function runProviders(): Promise<void> {
+  const config = loadConfig(process.cwd());
+  const secrets = loadSecrets();
+  const active = activeProvider(config);
+  const { store, credentials } = await resolveAll(config, secrets, active);
+
+  out(bold(text("Providers")) + faint(`   credentials: ${describeCredentialBackend(store)}`));
+  const insecure = insecureNoticeLine(store);
+  if (insecure) out(warn(insecure));
+  out();
+
+  for (const preset of PROVIDER_PRESETS) {
+    const d = getProviderDescriptor(preset.id)!;
+    const isActive = preset.id === active;
+    const marker = isActive ? ok("●") : faint("○");
+    const cred = credentials[preset.id];
+    const method = cred?.meta?.method ?? d.auth[0];
+    let status: string;
+    if (preset.local) {
+      const endpoint = mergeLocalBaseUrls(config, secrets)[preset.id] ?? preset.baseUrl ?? "";
+      status = faint(`local · ${endpoint}`);
+    } else if (cred) {
+      const src = cred.meta?.source ?? (method === "oauth" ? "oauth" : "saved");
+      status = ok(`signed in · ${src}`);
+    } else {
+      status = dim("—");
+    }
+    const name = (isActive ? bold(text(preset.label)) : text(preset.label)).padEnd(
+      isActive ? 30 : 22,
+    );
+    out(`${marker} ${name} ${faint(method.padEnd(8))} ${status}`);
+  }
+  out();
+  out(
+    faint("Sign in with ") +
+      info("berne login <provider>") +
+      faint(" · switch with ") +
+      info("berne use <provider>"),
+  );
+}
+
+// ─── berne use ───
+
+export async function runUse(args: string[]): Promise<void> {
+  const providerId = args[0];
+  const modelArg = args[1];
+  if (!providerId) {
+    out(accent("Usage: ") + info("berne use <provider> [model]"));
+    out(faint("Providers: ") + PROVIDER_PRESETS.map((p) => p.id).join(", "));
+    process.exitCode = 1;
+    return;
+  }
+  const preset = getPreset(providerId);
+  if (!preset && providerId !== CUSTOM_PROVIDER_ID) {
+    out(accent(`Unknown provider "${providerId}".`));
+    out(dim(`Known: ${PROVIDER_PRESETS.map((p) => p.id).join(", ")}`));
+    process.exitCode = 1;
+    return;
+  }
+  const model = modelArg ?? preset?.defaultModel ?? loadLastModel()?.model ?? "";
+  saveLastModel({ provider: providerId, model });
+  out(ok(`✓ Active provider set to ${bold(text(preset?.label ?? providerId))}`));
+  out(`${faint("model")} ${info(model)}  ${faint("(next `berne` session uses this)")}`);
+}
+
+// ─── berne models ───
+
+export async function runModels(args: string[]): Promise<void> {
+  const config = loadConfig(process.cwd());
+  const secrets = loadSecrets();
+  const active = activeProvider(config);
+  const providerId = args[0] ?? active;
+
+  const preset = getPreset(providerId);
+  if (!preset) {
+    out(accent(`Unknown provider "${providerId}".`));
+    out(dim(`Known: ${PROVIDER_PRESETS.map((p) => p.id).join(", ")}`));
+    process.exitCode = 1;
+    return;
+  }
+
+  const { savedKeys, credentials } = await resolveAll(config, secrets, providerId);
+  const gw = buildGateway({
+    provider: providerId as ProviderName,
+    keys: savedKeys,
+    credentials,
+    customEndpoint: secrets.custom,
+    disabled: new Set(secrets.disabled ?? []),
+    localBaseUrls: mergeLocalBaseUrls(config, secrets),
+  });
+
+  const provider = gw.getProvider(providerId as ProviderName);
+  const staticModels: ModelInfo[] = (preset.models ?? []).map((m) => ({
+    id: m.id,
+    label: m.label,
+  }));
+
+  let models = staticModels;
+  let live = false;
+  if (provider?.listModels) {
+    try {
+      const discovered = await provider.listModels();
+      if (discovered.length) {
+        models = discovered;
+        live = true;
+      }
+    } catch {
+      // fall back to the curated preset list
+    }
+  }
+
+  out(
+    bold(text(`${preset.label} models`)) +
+      faint(live ? "  (live)" : "  (curated — sign in for live discovery)"),
+  );
+  out();
+  if (models.length === 0) {
+    out(dim("No models to show. Pull/load one, or check credentials."));
+    return;
+  }
+  for (const m of models) {
+    const label = m.label && m.label !== m.id ? faint(`  ${m.label}`) : "";
+    out(`${info(providerId + "/" + m.id)}${label}`);
+  }
+  out();
+  out(
+    faint("Use one with ") +
+      info(`berne use ${providerId} <model>`) +
+      faint(" or ") +
+      info(`berne -m ${providerId}/<model>`),
+  );
+}

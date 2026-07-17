@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from "fs";
-import { join } from "path";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { join, dirname } from "path";
+import type { AuthMethod } from "./providers.js";
 
 // ─── Config Types ───
 
@@ -11,34 +12,62 @@ export interface AlanConfig {
     maxSessions: number;
   };
   llm: {
-    defaultProvider: "anthropic" | "openai" | "openrouter" | "ollama" | "ollama-turbo" | "google";
+    // Full ProviderName set (was missing groq/xai/deepseek/lmstudio/custom, which
+    // are valid providers — widened so config.toml can name any of them).
+    defaultProvider:
+      | "anthropic"
+      | "openai"
+      | "openrouter"
+      | "ollama"
+      | "ollama-turbo"
+      | "lmstudio"
+      | "google"
+      | "groq"
+      | "xai"
+      | "deepseek"
+      | "custom";
+    /**
+     * Optional default auth method for all providers when a provider block omits
+     * its own. When unset, the method is auto-selected (see the auth resolver):
+     * the first supported method with stored credentials, else the provider's
+     * default (api_key for cloud, local for runtimes). Additive — no existing
+     * config needs it.
+     */
+    authentication?: AuthMethod;
     anthropic?: {
       apiKey: string;
       model: string;
       maxTokens: number;
+      /** Override the auth method for this provider (api_key | oauth | device | local). */
+      authentication?: AuthMethod;
     };
     openai?: {
       apiKey: string;
       model: string;
       maxTokens: number;
+      authentication?: AuthMethod;
     };
     openrouter?: {
       apiKey: string;
       model: string;
       maxTokens: number;
+      authentication?: AuthMethod;
     };
     google?: {
       apiKey: string;
       model: string;
       maxTokens: number;
+      authentication?: AuthMethod;
     };
     ollama?: {
       baseUrl: string;
       model: string;
+      authentication?: AuthMethod;
     };
     lmstudio?: {
       baseUrl: string;
       model: string;
+      authentication?: AuthMethod;
     };
     planner?: {
       provider: string;
@@ -52,6 +81,16 @@ export interface AlanConfig {
   permissions: {
     defaultLevel: "auto" | "confirm" | "sandbox";
     rules: PermissionRule[];
+    /**
+     * The permission mode the session STARTS in — the persisted counterpart of
+     * the Shift+Tab cycle (and of "switch to hands-free mode" spoken in chat):
+     *   confirm    — ask before writes / commands (default, safest)
+     *   auto       — auto-approve in-workspace edits + sandboxed bash, prompt outside
+     *   hands-free — never prompt (maps to the internal "turing"/bypass mode)
+     * Explicit `--yolo` / `--trust` flags still override this at launch. Absent ⇒
+     * confirm. Org policy can forbid modes regardless of what is written here.
+     */
+    mode?: "confirm" | "auto" | "hands-free";
     /**
      * Auto-approve in-workspace writes/edits and bash without prompting. Out-of-workspace
      * writes and network tools still prompt. Default false. Intended for trusted, sandboxed
@@ -477,8 +516,8 @@ function setNested(obj: Record<string, unknown>, path: string, value: unknown): 
 export function loadConfig(workspaceRoot?: string): AlanConfig {
   let merged: Record<string, unknown> = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
 
-  // Global config
-  const globalConfig = join(alanHome, "config.toml");
+  // Global config (ALAN_CONFIG_PATH overrides ~/.alan/config.toml — see the writer).
+  const globalConfig = globalConfigPath();
   if (existsSync(globalConfig)) {
     try {
       const text = readFileSync(globalConfig, "utf-8");
@@ -512,4 +551,142 @@ export function loadConfig(workspaceRoot?: string): AlanConfig {
  */
 export function getAlanHome(): string {
   return alanHome;
+}
+
+// ─── Config Writer ───
+// Persist a single setting back into config.toml so a change made at runtime
+// (Shift+Tab, `/config`, or "switch to hands-free mode" spoken in chat) survives
+// the next launch. This is deliberately a LINE-ORIENTED editor, not a
+// serialize-the-whole-object writer: it rewrites only the one key's line and
+// leaves every comment, blank line, and unrelated key exactly as the user wrote
+// them. The reader above stays the source of truth for precedence/merging.
+
+export type ConfigScope = "global" | "project";
+
+/** The config.toml path for a scope: global = ~/.alan, project = <root>/.alan. */
+export function getConfigFilePath(scope: ConfigScope, workspaceRoot?: string): string {
+  if (scope === "project") {
+    if (!workspaceRoot) throw new Error("project config scope requires a workspaceRoot");
+    return join(workspaceRoot, ".alan", "config.toml");
+  }
+  // ALAN_CONFIG_PATH overrides the global file (tests + advanced setups); the
+  // loader honors the same override so reader and writer never disagree.
+  return globalConfigPath();
+}
+
+/** The effective global config.toml path (honors ALAN_CONFIG_PATH). */
+function globalConfigPath(): string {
+  return process.env.ALAN_CONFIG_PATH || join(alanHome, "config.toml");
+}
+
+/** Render a JS value as a TOML scalar/array literal. */
+function toTomlValue(value: string | number | boolean | string[]): string {
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "number") return String(value);
+  if (Array.isArray(value)) return `[${value.map((v) => tomlString(v)).join(", ")}]`;
+  return tomlString(value);
+}
+
+/** Quote a string as a TOML basic string, escaping the essentials. */
+function tomlString(s: string): string {
+  return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+/** Is this line the `[section.path]` header we're looking for? */
+function isSectionHeader(line: string): string | null {
+  const m = line.trim().match(/^\[([^\]]+)\]$/);
+  return m ? m[1].trim() : null;
+}
+
+export interface SetConfigResult {
+  /** The file that was written. */
+  path: string;
+  /** The value the key held before (undefined if it was newly added). */
+  previousRaw?: string;
+  /** Whether a brand-new key/section was created vs an in-place replace. */
+  created: boolean;
+}
+
+/**
+ * Set one dotted key (e.g. `permissions.mode`, `sandbox.enabled`) in a
+ * config.toml, creating the file / section / key as needed and preserving
+ * everything else byte-for-byte. The final path segment is the key; the rest is
+ * the (possibly dotted) section. Returns what changed so callers can report it.
+ */
+export function setConfigValue(
+  dottedKey: string,
+  value: string | number | boolean | string[],
+  opts: { scope?: ConfigScope; workspaceRoot?: string } = {},
+): SetConfigResult {
+  const parts = dottedKey.split(".").filter(Boolean);
+  if (parts.length < 2) {
+    throw new Error(`config key must be "<section>.<key>" (got "${dottedKey}")`);
+  }
+  const key = parts[parts.length - 1]!;
+  const section = parts.slice(0, -1).join(".");
+  const rendered = toTomlValue(value);
+  const path = getConfigFilePath(opts.scope ?? "global", opts.workspaceRoot);
+
+  const existing = existsSync(path) ? readFileSync(path, "utf-8") : "";
+  const hadTrailingNewline = existing.endsWith("\n") || existing === "";
+  const lines = existing === "" ? [] : existing.replace(/\n$/, "").split("\n");
+
+  // Locate the target section's line range (header index → next-header index).
+  let sectionStart = -1;
+  let sectionEnd = lines.length;
+  for (let i = 0; i < lines.length; i++) {
+    const hdr = isSectionHeader(lines[i]!);
+    if (hdr === null) continue;
+    if (sectionStart === -1 && hdr === section) {
+      sectionStart = i;
+    } else if (sectionStart !== -1) {
+      sectionEnd = i;
+      break;
+    }
+  }
+
+  const keyLineRe = new RegExp(`^(\\s*)${escapeRegExp(key)}\\s*=`);
+  let previousRaw: string | undefined;
+  let created: boolean;
+
+  if (sectionStart === -1) {
+    // Section absent — append a fresh block at EOF.
+    if (lines.length && lines[lines.length - 1]!.trim() !== "") lines.push("");
+    lines.push(`[${section}]`);
+    lines.push(`${key} = ${rendered}`);
+    created = true;
+  } else {
+    // Search for the key within the section body.
+    let keyLine = -1;
+    for (let i = sectionStart + 1; i < sectionEnd; i++) {
+      if (keyLineRe.test(lines[i]!)) {
+        keyLine = i;
+        break;
+      }
+    }
+    if (keyLine === -1) {
+      // Key absent — insert at the end of the section body (after the last
+      // non-blank line so we don't strand it past trailing blanks).
+      let insertAt = sectionEnd;
+      while (insertAt - 1 > sectionStart && lines[insertAt - 1]!.trim() === "") insertAt--;
+      lines.splice(insertAt, 0, `${key} = ${rendered}`);
+      created = true;
+    } else {
+      const indent = lines[keyLine]!.match(/^(\s*)/)![1] ?? "";
+      previousRaw = lines[keyLine]!.slice(indent.length + key.length)
+        .replace(/^\s*=\s*/, "")
+        .trim();
+      lines[keyLine] = `${indent}${key} = ${rendered}`;
+      created = false;
+    }
+  }
+
+  const dir = dirname(path);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(path, lines.join("\n") + (hadTrailingNewline ? "\n" : ""));
+  return { path, previousRaw, created };
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

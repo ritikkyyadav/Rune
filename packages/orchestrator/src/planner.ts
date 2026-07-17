@@ -332,6 +332,18 @@ function accumulateStreamEvent(
       return {};
     }
 
+    case "redacted_thinking":
+      // Preserve opaque provider reasoning state (Codex reasoning items) so a
+      // store:false tool loop can replay it back to the same provider. Other
+      // providers drop it. Without this, a planner-driven Codex tool loop 400s
+      // with "No tool output found for function call".
+      contentBlocks.push({
+        type: "redacted_thinking",
+        data: event.data,
+        provider: event.provider,
+      });
+      return {};
+
     default:
       return {};
   }

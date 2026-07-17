@@ -7,7 +7,6 @@ import {
   createToolExecutionGuard,
   tagUntrustedInput,
   tagToolResult,
-  DEFAULT_EGRESS_ALLOWLIST,
 } from "../../../packages/orchestrator/src/security";
 
 describe("scanForInjection", () => {
@@ -114,17 +113,33 @@ describe("isAllowedEgress", () => {
 });
 
 describe("createEgressGuard", () => {
-  test("uses default allowlist when none provided", () => {
+  // Regression guard: the old fallback-to-DEFAULT_EGRESS_ALLOWLIST behavior
+  // silently blocked the entire internet (web_fetch, research fetches, even
+  // curl on loopback) in every default session. No allowlist = no restriction,
+  // matching isAllowedEgress.
+  test("unrestricted when no allowlist is configured", () => {
     const guard = createEgressGuard();
     expect(guard("https://registry.npmjs.org/pkg")).toBe(true);
-    expect(guard("https://api.github.com/repos")).toBe(true);
-    expect(guard("https://evil.example.com")).toBe(false);
+    expect(guard("https://savoir.services/")).toBe(true);
+    expect(guard("https://upload.wikimedia.org/x.svg")).toBe(true);
+    expect(createEgressGuard([])("https://anything.com")).toBe(true);
   });
 
   test("uses custom allowlist", () => {
     const guard = createEgressGuard(["myapi.com"]);
     expect(guard("https://myapi.com/data")).toBe(true);
     expect(guard("https://registry.npmjs.org/pkg")).toBe(false);
+  });
+
+  test("loopback is always allowed, even under an allowlist", () => {
+    const guard = createEgressGuard(["myapi.com"]);
+    expect(guard("http://127.0.0.1:3000/health")).toBe(true);
+    expect(guard("http://localhost:5173/")).toBe(true);
+    expect(createEgressGuard()("http://127.0.0.1:64396/t/abc")).toBe(true);
+  });
+
+  test("invalid URLs stay blocked", () => {
+    expect(createEgressGuard(["myapi.com"])("not-a-url")).toBe(false);
   });
 });
 

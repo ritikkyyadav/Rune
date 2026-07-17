@@ -4,6 +4,7 @@ import type {
   InferenceResponse,
   LlmProvider,
   Message,
+  ModelInfo,
   StopReason,
   StreamEvent,
   StreamOpts,
@@ -143,6 +144,17 @@ export class OllamaProvider implements LlmProvider {
     } catch {
       return false;
     }
+  }
+
+  /** Live model discovery via Ollama's /api/tags (locally pulled models). */
+  async listModels(): Promise<ModelInfo[]> {
+    const r = await fetch(`${this.baseUrl}/api/tags`);
+    if (!r.ok) throw new Error(`ollama /api/tags failed (${r.status})`);
+    const json = (await r.json()) as { models?: { name?: string; model?: string }[] };
+    return (json.models ?? [])
+      .map((m) => m.name ?? m.model)
+      .filter((n): n is string => !!n)
+      .map((id) => ({ id, label: id, live: true }));
   }
 
   // ── internals ──
