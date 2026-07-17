@@ -14,9 +14,15 @@
 
 import type { OAuthFlow, ExchangeResult } from "../auth/oauth-strategy";
 
-const AUTHORIZE_URL = "https://claude.ai/oauth/authorize";
-const TOKEN_URL = "https://console.anthropic.com/v1/oauth/token";
-const REDIRECT_URI = "https://console.anthropic.com/oauth/code/callback";
+// Endpoint hosts as of Claude Code 2.1.198 (read from the first-party client):
+// Anthropic migrated the OAuth surface off claude.ai/console.anthropic.com —
+// the legacy claude.ai/oauth/authorize now bounces every request with
+// "Authorization failed: Invalid request format". The Claude-account (Pro/Max)
+// authorize lives at claude.com/cai/…; token + the manual-code callback moved
+// to platform.claude.com.
+const AUTHORIZE_URL = "https://claude.com/cai/oauth/authorize";
+const TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
+const REDIRECT_URI = "https://platform.claude.com/oauth/code/callback";
 const CLIENT_ID =
   process.env.GEAR_ANTHROPIC_OAUTH_CLIENT_ID ??
   process.env.BERNE_ANTHROPIC_OAUTH_CLIENT_ID ??

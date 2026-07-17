@@ -352,18 +352,18 @@ describe("Anthropic subscription flow (Claude Pro/Max)", () => {
     expect(anthropicOAuthFlow.credentialKind).toBe("bearer");
     expect(anthropicOAuthFlow.redirect).toBe("manual");
     expect(anthropicOAuthFlow.usesState).toBe(true);
-    expect(anthropicOAuthFlow.manualRedirectUri).toContain("console.anthropic.com");
+    expect(anthropicOAuthFlow.manualRedirectUri).toContain("platform.claude.com");
   });
 
   it("authorize URL carries PKCE (S256), the user:inference scope, and code=true", () => {
     const u = new URL(
       anthropicOAuthFlow.authorizeUrl({
-        redirectUri: "https://console.anthropic.com/oauth/code/callback",
+        redirectUri: "https://platform.claude.com/oauth/code/callback",
         codeChallenge: "CHAL",
         state: "STATE",
       }),
     );
-    expect(u.origin + u.pathname).toBe("https://claude.ai/oauth/authorize");
+    expect(u.origin + u.pathname).toBe("https://claude.com/cai/oauth/authorize");
     expect(u.searchParams.get("code")).toBe("true");
     expect(u.searchParams.get("code_challenge")).toBe("CHAL");
     expect(u.searchParams.get("code_challenge_method")).toBe("S256");
@@ -377,14 +377,14 @@ describe("Anthropic subscription flow (Claude Pro/Max)", () => {
     // identically, which is exactly how the live regression slipped past the
     // parsed-param checks above.
     const raw = anthropicOAuthFlow.authorizeUrl({
-      redirectUri: "https://console.anthropic.com/oauth/code/callback",
+      redirectUri: "https://platform.claude.com/oauth/code/callback",
       codeChallenge: "CHAL",
       state: "STATE",
     });
     expect(raw).toContain("scope=org%3Acreate_api_key%20user%3Aprofile%20user%3Ainference");
     expect(raw.split("?")[1]).not.toContain("+");
     expect(raw).toContain(
-      "redirect_uri=https%3A%2F%2Fconsole.anthropic.com%2Foauth%2Fcode%2Fcallback",
+      "redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback",
     );
   });
 
@@ -400,7 +400,7 @@ describe("Anthropic subscription flow (Claude Pro/Max)", () => {
     const result = await anthropicOAuthFlow.exchange({
       code: "c",
       codeVerifier: "v",
-      redirectUri: "https://console.anthropic.com/oauth/code/callback",
+      redirectUri: "https://platform.claude.com/oauth/code/callback",
       state: "s",
     });
     expect(result).toMatchObject({ secret: "at", refreshToken: "rt", expiresInSec: 3600 });
