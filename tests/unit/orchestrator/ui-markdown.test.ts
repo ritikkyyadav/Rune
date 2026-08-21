@@ -5,7 +5,11 @@
  */
 
 import { describe, it, expect } from "bun:test";
-import { renderMarkdown, wrapInline, parseInline } from "../../../packages/orchestrator/src/bin/ui/markdown";
+import {
+  renderMarkdown,
+  wrapInline,
+  parseInline,
+} from "../../../packages/orchestrator/src/bin/ui/markdown";
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
 
 const plain = (lines: string[]): string[] => lines.map(stripAnsi);
@@ -37,7 +41,8 @@ describe("renderMarkdown — block structure", () => {
   });
 
   it("renders list items with real bullets and hanging indents", () => {
-    const md = "- first item that is long enough to wrap onto a second line for sure here\n- second";
+    const md =
+      "- first item that is long enough to wrap onto a second line for sure here\n- second";
     const out = plain(renderMarkdown(md, { width: 40, indent: "" }));
     expect(out[0]!.startsWith("• ")).toBe(true);
     // continuation aligns under the text, not under the bullet
@@ -66,7 +71,9 @@ describe("renderMarkdown — block structure", () => {
 
 describe("inline styling", () => {
   it("strips **bold**, `code` and [link](url) markers", () => {
-    const out = stripAnsi(wrapInline("Use **npm** and `bun test` then [docs](https://x.dev)", 80).join("\n"));
+    const out = stripAnsi(
+      wrapInline("Use **npm** and `bun test` then [docs](https://x.dev)", 80).join("\n"),
+    );
     expect(out).not.toContain("**");
     expect(out).not.toContain("`");
     expect(out).toContain("npm");

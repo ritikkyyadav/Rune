@@ -79,9 +79,7 @@ export interface SecretsFile {
  */
 export function getSecretsPath(): string {
   const override =
-    process.env.GEAR_SECRETS_PATH ??
-    process.env.ELIO_SECRETS_PATH ??
-    process.env.ALAN_SECRETS_PATH;
+    process.env.GEAR_SECRETS_PATH ?? process.env.ELIO_SECRETS_PATH ?? process.env.ALAN_SECRETS_PATH;
   if (override) return override;
   const home = process.env.HOME ?? process.env.USERPROFILE ?? ".";
   return join(home, ".alan", "secrets.json");

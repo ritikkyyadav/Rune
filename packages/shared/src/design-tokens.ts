@@ -1,6 +1,6 @@
 // ─── Gear design tokens — the ONE pigment source ───
 //
-// `gear-customizer-v2.html` (repo root) is the product contract; this module is
+// `docs/design/gear-customizer-v2.html` is the product contract; this module is
 // its machine-readable form. Every surface derives from here:
 //
 //   • CLI/TUI:   packages/orchestrator/src/bin/ui/themes.ts builds the ten
@@ -150,7 +150,10 @@ export function hexToRgbTuple(hex: string): Rgb {
 }
 
 export function rgbTupleToHex([r, g, b]: Rgb): string {
-  const part = (v: number) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, "0");
+  const part = (v: number) =>
+    Math.round(Math.max(0, Math.min(255, v)))
+      .toString(16)
+      .padStart(2, "0");
   return `#${part(r)}${part(g)}${part(b)}`.toUpperCase();
 }
 
@@ -162,7 +165,9 @@ export function rgbTupleToHex([r, g, b]: Rgb): string {
 export function solidOver(cssColor: string, baseHex: string): string {
   const trimmed = cssColor.trim();
   if (trimmed.startsWith("#")) return trimmed.toUpperCase();
-  const match = trimmed.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)/);
+  const match = trimmed.match(
+    /rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)/,
+  );
   if (!match) return baseHex.toUpperCase();
   const [, r, g, b, a] = match;
   const alpha = a === undefined ? 1 : Number(a);

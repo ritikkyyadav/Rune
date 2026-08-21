@@ -1,7 +1,7 @@
 // ─── Activity rendering: the thought-chain visual language ───
 // The single source of truth for how a turn reads on screen, shared by the live
 // stream and the session-resume replay so a resumed session looks just like
-// watching it happen. It transcribes the `gear-customizer-v2.html` stream:
+// watching it happen. It transcribes the `docs/design/gear-customizer-v2.html` stream:
 //
 //   ● Plan: <one paragraph of intent>          ← plan bullet
 //   ● Searching src/bin/ui/ · grep             ← tool bullet: verb + target + meta

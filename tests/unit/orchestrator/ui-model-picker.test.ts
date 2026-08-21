@@ -3,7 +3,7 @@
 // env vs endpoint vs custom), model marks (current/default), live listing for
 // local runtimes, and the themed line renderers.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "bun:test";
 import {
   providerChoices,
   accountChoices,

@@ -53,7 +53,10 @@ export function findImagePathCandidates(text: string): string[] {
 
   // Quoted paths first; remember their spans so the unquoted scan skips them.
   const quotedSpans: Array<[number, number]> = [];
-  for (const quoteRe of [/"([^"\n]+?\.(?:png|jpe?g|gif|webp))"/gi, /'([^'\n]+?\.(?:png|jpe?g|gif|webp))'/gi]) {
+  for (const quoteRe of [
+    /"([^"\n]+?\.(?:png|jpe?g|gif|webp))"/gi,
+    /'([^'\n]+?\.(?:png|jpe?g|gif|webp))'/gi,
+  ]) {
     for (const m of text.matchAll(quoteRe)) {
       found.push(m[1]!);
       quotedSpans.push([m.index!, m.index! + m[0]!.length]);
@@ -69,7 +72,11 @@ export function findImagePathCandidates(text: string): string[] {
     // Extension must terminate the token (end of text / break char / closing
     // punctuation), not sit mid-word like "a.pngx".
     const next = text[end];
-    if (next !== undefined && !TOKEN_BREAK.has(next) && ![")", "]", ",", ";", ":", "!", "?"].includes(next)) {
+    if (
+      next !== undefined &&
+      !TOKEN_BREAK.has(next) &&
+      ![")", "]", ",", ";", ":", "!", "?"].includes(next)
+    ) {
       continue;
     }
     if (inQuoted(m.index!)) continue;

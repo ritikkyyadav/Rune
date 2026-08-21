@@ -45,3 +45,8 @@ tests/fixtures/tmp/
 
 # Playwright MCP session snapshots (browser tool scratch)
 .playwright-mcp/
+
+# local scratch — never commit
+_to_delete/
+*.tgz
+*.tar.gz

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "bun:test";
 import { ApiKeyStrategy } from "../../../../packages/llm-gateway/src/auth/api-key-strategy";
 import type { AuthContext } from "../../../../packages/llm-gateway/src/auth/types";
 import {

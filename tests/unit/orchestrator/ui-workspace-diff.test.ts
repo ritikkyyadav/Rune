@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { formatWorkspaceDiff } from "../../../packages/orchestrator/src/bin/ui/workspace-diff";
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
 
