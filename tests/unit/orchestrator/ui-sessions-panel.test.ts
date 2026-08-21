@@ -14,10 +14,12 @@ function rows(n: number): SessionRowView[] {
 }
 
 describe("ui/composer renderSessionsPanel", () => {
-  it("renders a heading, one line per session, and a footer hint", () => {
+  it("renders the Gear timeline header, two-row session cards, search, and actions", () => {
     const r = renderSessionsPanel(rows(3), 0, { view: "active", pendingDelete: false }, 80);
     const plain = r.lines.map(stripAnsi);
     expect(plain[0]).toContain("Sessions");
+    expect(plain[0]).not.toContain("◉");
+    expect(plain[1]).toContain("Search");
     expect(plain.some((l) => l.includes("session 1"))).toBe(true);
     expect(plain.some((l) => l.includes("session 3"))).toBe(true);
     expect(plain[plain.length - 1]).toContain("resume");
@@ -25,9 +27,8 @@ describe("ui/composer renderSessionsPanel", () => {
 
   it("marks the selected row with a caret and parks the caret on it", () => {
     const r = renderSessionsPanel(rows(4), 2, { view: "active", pendingDelete: false }, 80);
-    // header is row 0; selection index 2 → caretRow 3
-    expect(r.caretRow).toBe(3);
-    expect(stripAnsi(r.lines[3])).toContain("❯");
+    expect(stripAnsi(r.lines[r.caretRow])).toContain("›");
+    expect(stripAnsi(r.lines[r.caretRow])).toContain("session 3");
   });
 
   it("shows an empty state with no rows", () => {
@@ -36,14 +37,23 @@ describe("ui/composer renderSessionsPanel", () => {
     expect(plain).toContain("No sessions yet");
   });
 
-  it("windows a long list to at most 12 visible rows + a range note", () => {
+  it("windows a long list to at most 12 two-row cards + a range note", () => {
     const r = renderSessionsPanel(rows(50), 40, { view: "active", pendingDelete: false }, 80);
     const plain = r.lines.map(stripAnsi);
-    // 1 heading + 12 rows + 1 range note + 1 footer = 15 lines max
-    expect(r.lines.length).toBeLessThanOrEqual(15);
+    // heading + search + hairline + 12 two-row cards + range note + footer
+    expect(r.lines.length).toBeLessThanOrEqual(29);
     expect(plain.some((l) => l.includes("of 50"))).toBe(true);
     // selection (index 40) stays visible within the window
     expect(plain.some((l) => l.includes("session 41"))).toBe(true);
+  });
+
+  it("keeps heading, selection, range, and actions visible in a short terminal", () => {
+    const r = renderSessionsPanel(rows(50), 40, { view: "active", pendingDelete: false }, 40, 8);
+    const plain = r.lines.map(stripAnsi);
+    expect(r.lines.length).toBeLessThanOrEqual(8);
+    expect(plain[0]).toContain("Sessions");
+    expect(plain.some((line) => line.includes("session 41"))).toBe(true);
+    expect(plain.at(-1)).toContain("resume");
   });
 
   it("swaps in a confirm hint while a delete is armed", () => {
@@ -70,5 +80,29 @@ describe("ui/composer renderSessionsPanel", () => {
     );
     const liveLine = r.lines.map(stripAnsi).find((l) => l.includes("live"))!;
     expect(liveLine).toContain("●");
+  });
+
+  it("shows chronological groups, paths, and the live search query", () => {
+    const r = renderSessionsPanel(
+      [
+        {
+          id: "abcdef123456",
+          title: "polish composer",
+          meta: "18 events · model-x",
+          workspace: "/tmp/gear",
+          updatedAt: "2026-08-20T09:30:00Z",
+          group: "Today",
+          current: true,
+        },
+      ],
+      0,
+      { view: "active", pendingDelete: false, query: "composer", searching: true },
+      100,
+    );
+    const plain = r.lines.map(stripAnsi).join("\n");
+    expect(plain).toContain("composer");
+    expect(plain).toContain("TODAY");
+    expect(plain).toContain("abcdef12");
+    expect(plain).toContain("/tmp/gear");
   });
 });

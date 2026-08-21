@@ -1,6 +1,6 @@
 /**
- * Unit tests for the thought-chain activity renderer — the compact one-line-per-tool
- * language shared by the live stream and the session-resume replay.
+ * Unit tests for the customizer activity renderer shared by the live stream and
+ * session-resume replay.
  */
 
 import { describe, it, expect } from "bun:test";
@@ -8,6 +8,7 @@ import {
   renderToolActivity,
   renderTranscript,
   stepHead,
+  planBlock,
   runningLabel,
   STEP,
   type ToolActivityView,
@@ -21,10 +22,12 @@ function tool(over: Partial<ToolActivityView>): ToolActivityView {
   return { toolName: "bash", args: {}, result: "", success: true, ...over };
 }
 
-describe("renderToolActivity — compact one-liners", () => {
-  it("renders a read as a bare path (the quiet file-listing idiom)", () => {
-    const out = plain(renderToolActivity(tool({ toolName: "read_file", args: { path: "src/engine.ts" } })));
-    expect(out).toBe("  src/engine.ts");
+describe("renderToolActivity — reference cards and bullets", () => {
+  it("renders a read as an explicit Reading activity", () => {
+    const out = plain(
+      renderToolActivity(tool({ toolName: "read_file", args: { path: "src/engine.ts" } })),
+    );
+    expect(out).toBe("  ● Reading src/engine.ts");
     expect(out.split("\n")).toHaveLength(1);
   });
 
@@ -40,7 +43,7 @@ describe("renderToolActivity — compact one-liners", () => {
         }),
       ),
     );
-    expect(out).toContain("Searched");
+    expect(out).toContain("Searching");
     expect(out).toContain('"ProviderName"');
     expect(out).toContain("3 matches");
     expect(out).not.toContain("total_matches"); // the JSON is parsed, not dumped
@@ -49,7 +52,11 @@ describe("renderToolActivity — compact one-liners", () => {
   it("says `no matches` for a zero-match grep", () => {
     const out = plain(
       renderToolActivity(
-        tool({ toolName: "grep", args: { pattern: "zzz" }, result: JSON.stringify({ total_matches: 0, matches: [] }) }),
+        tool({
+          toolName: "grep",
+          args: { pattern: "zzz" },
+          result: JSON.stringify({ total_matches: 0, matches: [] }),
+        }),
       ),
     );
     expect(out).toContain("no matches");
@@ -61,11 +68,18 @@ describe("renderToolActivity — compact one-liners", () => {
         tool({
           toolName: "bash",
           args: { command: "bun test" },
-          result: JSON.stringify({ stdout: "...\n531 pass", stderr: "", exit_code: 0, timed_out: false }),
+          result: JSON.stringify({
+            stdout: "...\n531 pass",
+            stderr: "",
+            exit_code: 0,
+            timed_out: false,
+          }),
         }),
       ),
     );
-    expect(out).toContain("Ran");
+    expect(out).toContain("Verifying bun test"); // a test runner is evidence, not just a command
+    expect(out).toContain("└ $ bun test");
+    expect(out).toContain("· bash"); // posture meta after the header
     expect(out).toContain("bun test");
     expect(out).toContain("531 pass");
     expect(out).not.toContain("exit_code"); // parsed, not dumped
@@ -82,16 +96,18 @@ describe("renderToolActivity — compact one-liners", () => {
         }),
       ),
     );
-    expect(out).toContain("Ran");
+    expect(out).toContain("Command failed");
     expect(out).toContain("ls -la");
     expect(out).toContain("exit 1");
   });
 
   it("renders web_search with its query (not raw args JSON)", () => {
     const out = plain(
-      renderToolActivity(tool({ toolName: "web_search", args: { query: "what is today's date" }, result: "[]" })),
+      renderToolActivity(
+        tool({ toolName: "web_search", args: { query: "what is today's date" }, result: "[]" }),
+      ),
     );
-    expect(out).toContain("Searched web");
+    expect(out).toContain("Searching web");
     expect(out).toContain("what is today's date");
     expect(out).not.toContain("{"); // no raw JSON args
   });
@@ -99,10 +115,14 @@ describe("renderToolActivity — compact one-liners", () => {
   it("renders a write with its byte count", () => {
     const out = plain(
       renderToolActivity(
-        tool({ toolName: "write_file", args: { path: "a.ts" }, result: '{"path":"a.ts","bytes_written":42}' }),
+        tool({
+          toolName: "write_file",
+          args: { path: "a.ts" },
+          result: '{"path":"a.ts","bytes_written":42}',
+        }),
       ),
     );
-    expect(out).toContain("Wrote");
+    expect(out).toContain("Writing");
     expect(out).toContain("a.ts");
     expect(out).toContain("42 bytes");
   });
@@ -113,14 +133,18 @@ describe("renderToolActivity — compact one-liners", () => {
         tool({
           toolName: "edit_file",
           args: { path: "src/engine.ts" },
-          result: JSON.stringify({ path: "src/engine.ts", diff: "@@ -1 +1 @@\n-const a = 1;\n+const a = 2;" }),
+          result: JSON.stringify({
+            path: "src/engine.ts",
+            diff: "@@ -1 +1 @@\n-const a = 1;\n+const a = 2;",
+          }),
         }),
       ),
     );
-    expect(out).toContain("Edited");
+    expect(out).toContain("Editing");
     expect(out).toContain("src/engine.ts");
     expect(out).toContain("+1");
-    expect(out).toContain("-1");
+    expect(out).toContain("−1");
+    expect(out).toContain("lines 1–1");
     expect(out).toContain("const a = 1;"); // the diff body is present, not collapsed
     expect(out).toContain("const a = 2;");
   });
@@ -128,7 +152,12 @@ describe("renderToolActivity — compact one-liners", () => {
   it("renders a failure on one line with the reason (no 6-line preview)", () => {
     const out = plain(
       renderToolActivity(
-        tool({ toolName: "read_file", args: { path: "missing.ts" }, success: false, error: "ENOENT: no such file" }),
+        tool({
+          toolName: "read_file",
+          args: { path: "missing.ts" },
+          success: false,
+          error: "ENOENT: no such file",
+        }),
       ),
     );
     expect(out).toContain("Read");
@@ -142,11 +171,19 @@ describe("renderToolActivity — compact one-liners", () => {
       tool({
         toolName: "bash",
         args: { command: "echo " + "x".repeat(300) },
-        result: JSON.stringify({ stdout: "ok " + "y".repeat(200), stderr: "", exit_code: 0, timed_out: false }),
+        result: JSON.stringify({
+          stdout: "ok " + "y".repeat(200),
+          stderr: "",
+          exit_code: 0,
+          timed_out: false,
+        }),
       }),
     );
     const longPath = renderToolActivity(
-      tool({ toolName: "read_file", args: { path: "/" + Array(20).fill("segment").join("/") + "/file.ts" } }),
+      tool({
+        toolName: "read_file",
+        args: { path: "/" + Array(20).fill("segment").join("/") + "/file.ts" },
+      }),
     );
     for (const block of [longCmd, longPath]) {
       for (const line of block.split("\n")) expect(plain(line).length).toBeLessThanOrEqual(80);
@@ -155,7 +192,9 @@ describe("renderToolActivity — compact one-liners", () => {
 });
 
 describe("renderTranscript — batch replay", () => {
-  const L = (over: Partial<TranscriptLineView> & { role: TranscriptLineView["role"] }): TranscriptLineView => ({
+  const L = (
+    over: Partial<TranscriptLineView> & { role: TranscriptLineView["role"] },
+  ): TranscriptLineView => ({
     text: "",
     ...over,
   });
@@ -174,20 +213,20 @@ describe("renderTranscript — batch replay", () => {
   it("collapses a run of consecutive reads into `Read N files`", () => {
     const reads = (p: string): TranscriptLineView =>
       L({ role: "tool", toolName: "read_file", args: { path: p }, result: "x" });
-    const out = plain(
-      renderTranscript([reads("a.ts"), reads("b.ts"), reads("c.ts")]),
-    );
+    const out = plain(renderTranscript([reads("a.ts"), reads("b.ts"), reads("c.ts")]));
     expect(out).toBe("  Read  3 files");
   });
 
-  it("keeps a single read as its bare path (no collapse)", () => {
+  it("keeps a single read as an explicit Reading row", () => {
     const out = plain(
-      renderTranscript([L({ role: "tool", toolName: "read_file", args: { path: "only.ts" }, result: "x" })]),
+      renderTranscript([
+        L({ role: "tool", toolName: "read_file", args: { path: "only.ts" }, result: "x" }),
+      ]),
     );
-    expect(out).toBe("  only.ts");
+    expect(out).toBe("  ● Reading only.ts");
   });
 
-  it("interleaves prose → tools → prose as two distinct ● steps", () => {
+  it("interleaves prose → tool card → prose as three distinct ● rows", () => {
     const out = plain(
       renderTranscript([
         L({ role: "assistant", text: "First I look." }),
@@ -195,8 +234,8 @@ describe("renderTranscript — batch replay", () => {
         L({ role: "assistant", text: "Now I fix." }),
       ]),
     ).split("\n");
-    expect(out.filter((l) => l.startsWith(`  ${STEP} `))).toHaveLength(2);
-    expect(out[1]).toContain("Ran");
+    expect(out.filter((l) => l.startsWith(`  ${STEP} `))).toHaveLength(3);
+    expect(out[1]).toContain("Running command");
   });
 
   it("renders a compaction note", () => {
@@ -208,6 +247,12 @@ describe("renderTranscript — batch replay", () => {
 describe("helpers", () => {
   it("stepHead prefixes the ● marker", () => {
     expect(plain(stepHead("hello"))).toBe(`  ${STEP} hello`);
+  });
+
+  it("never duplicates an authored Plan label", () => {
+    expect(stripAnsi(planBlock("Plan: Trace the request path.").join("\n"))).toBe(
+      "  ● Plan: Trace the request path.",
+    );
   });
 
   it("runningLabel gives a present-tense verb for the live status", () => {

@@ -18,13 +18,12 @@ import {
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
 
 describe("ui/composer renderComposer", () => {
-  it("renders a 4-line block with a uniform-width box and caret on the input row", () => {
+  it("renders the reference's 3-line open surface with one hairline and caret on the input row", () => {
     const r = renderComposer({ input: "hello", caret: 5, width: 80, status: "  status" });
-    expect(r.lines).toHaveLength(4); // top, input, bottom, status
-    const box = r.lines.slice(0, 3).map((l) => stripAnsi(l).length);
-    expect(new Set(box).size).toBe(1); // top/mid/bottom equal width
+    expect(r.lines).toHaveLength(3); // hairline, input, status
+    expect(stripAnsi(r.lines[0]).length).toBe(stripAnsi(r.lines[1]).length);
     expect(r.caretRow).toBe(1);
-    expect(r.caretCol).toBe(11); // 6 chrome cols + caret index 5
+    expect(r.caretCol).toBe(9); // 4 chrome cols + caret index 5
   });
 
   it("never produces a line at or beyond the terminal width (no auto-wrap)", () => {
@@ -37,6 +36,11 @@ describe("ui/composer renderComposer", () => {
     // caret column stays inside the box, not off-screen
     expect(r.caretCol).toBeLessThan(60);
     expect(r.caretCol).toBeGreaterThan(5);
+  });
+
+  it("fits its frame inside a narrow terminal instead of assuming 28 columns", () => {
+    const r = renderComposer({ input: "hello", caret: 5, width: 20, status: "  status" });
+    for (const line of r.lines.slice(0, 3)) expect(stripAnsi(line).length).toBeLessThan(20);
   });
 
   it("shows a working indicator instead of the box when set", () => {
@@ -71,20 +75,28 @@ describe("ui/composer renderSlashPalette", () => {
 
   it("highlights the selected row and lists names + descriptions", () => {
     const plain = renderSlashPalette(items, 1, 100).map(stripAnsi);
-    expect(plain.some((l) => l.includes("❯") && l.includes("/theme"))).toBe(true); // selected = index 1
+    expect(plain.some((l) => l.includes("›") && l.includes("/theme"))).toBe(true); // selected = index 1
     expect(plain.find((l) => l.includes("/model"))!.startsWith("    ")).toBe(true); // unselected = no marker
     expect(plain.join("\n")).toContain("Switch model / provider");
-    expect(plain.at(-1)).toContain("tab complete"); // hint footer
+    expect(plain[0]).toContain("COMMANDS"); // v2 uppercase header carries the hints
+    expect(plain[0]).toContain("tab complete");
   });
 
   it("returns nothing for an empty list", () => {
     expect(renderSlashPalette([], 0, 100)).toEqual([]);
   });
 
-  it("windows a long list to at most 8 rows + a hint, keeping the selection in view", () => {
+  it("windows a long list to a header, at most 8 rows, and a hint", () => {
     const many = Array.from({ length: 30 }, (_, i) => ({ name: "/c" + i, desc: "d" + i }));
     const lines = renderSlashPalette(many, 20, 100);
-    expect(lines.length).toBeLessThanOrEqual(9); // 8 rows + 1 hint
+    expect(lines.length).toBeLessThanOrEqual(10); // header + 8 rows + hint
+    expect(stripAnsi(lines.join("\n"))).toContain("/c20");
+  });
+
+  it("accepts a smaller viewport budget and keeps the selected command visible", () => {
+    const many = Array.from({ length: 30 }, (_, i) => ({ name: "/c" + i, desc: "d" + i }));
+    const lines = renderSlashPalette(many, 20, 40, 3);
+    expect(lines).toHaveLength(4); // header + 3 commands (hints live in the header)
     expect(stripAnsi(lines.join("\n"))).toContain("/c20");
   });
 });
@@ -273,31 +285,70 @@ describe("ui/composer renderKeyEditor", () => {
 });
 
 describe("ui/composer statusLine + permission mode", () => {
-  it("flags Hands-Free mode in the status line and omits a badge in confirm mode", () => {
+  it("keeps the safe default and every gear visible", () => {
     const base = { model: "gemini-2.5-flash", workspace: "/tmp/ws" };
-    const confirm = stripAnsi(statusLine({ ...base, mode: "confirm" }));
-    expect(confirm).toContain("gemini-2.5-flash");
-    expect(confirm).not.toMatch(/turing/i);
+    const confirm = stripAnsi(statusLine({ ...base, mode: "confirm" }, 120));
+    expect(confirm).toContain("▸ 1st gear");
+    expect(confirm).toContain("every action asks first");
+    expect(confirm).toContain("shift+tab mode");
+    expect(confirm).toContain("← sessions");
+    expect(confirm).toContain("? shortcuts");
+    expect(confirm).not.toMatch(/autonomy/i);
 
-    const turing = stripAnsi(statusLine({ ...base, mode: "turing" }));
-    expect(turing).toMatch(/HANDS-FREE/);
+    expect(stripAnsi(statusLine({ ...base, mode: "autonomy-i" }, 120))).toContain("▸▸ 2nd gear");
+    expect(stripAnsi(statusLine({ ...base, mode: "autonomy-ii" }, 120))).toContain("▸▸▸ 3rd gear");
+    expect(stripAnsi(statusLine({ ...base, mode: "autonomy-iii" }, 120))).toContain(
+      "▸▸▸▸ 4th gear",
+    );
+    expect(stripAnsi(statusLine({ ...base, mode: "auto" }, 120))).toContain("◆ auto");
+  });
+
+  it("stays on one line in a narrow terminal by dropping the description first", () => {
+    const line = stripAnsi(statusLine({ model: "m", workspace: "/w", mode: "autonomy-i" }, 60));
+    expect(line).toContain("2nd gear");
+    expect(line).not.toContain("\n");
+    expect(line.length).toBeLessThan(60);
   });
 
   it("accepts the legacy 'yolo'/'trusted' aliases", () => {
-    expect(stripAnsi(statusLine({ model: "m", workspace: "/w", mode: "yolo" }))).toMatch(
-      /HANDS-FREE/,
+    expect(stripAnsi(statusLine({ model: "m", workspace: "/w", mode: "yolo" }))).toContain(
+      "4th gear",
     );
-    expect(stripAnsi(statusLine({ model: "m", workspace: "/w", mode: "trusted" }))).toMatch(/auto/);
+    expect(stripAnsi(statusLine({ model: "m", workspace: "/w", mode: "trusted" }))).toContain(
+      "◆ auto",
+    );
   });
 
-  it("permissionModeBanner describes each mode and mentions shift+tab", () => {
-    const turing = stripAnsi(permissionModeBanner("turing"));
-    expect(turing).toMatch(/Hands-Free/);
-    expect(turing).toMatch(/without asking/i);
-    expect(turing).toMatch(/shift\+tab/i);
+  it("keeps an active session loop visible in the compact footer", () => {
+    const line = stripAnsi(
+      statusLine({ model: "m", workspace: "/w", mode: "confirm", loop: "2 loops · in 5m" }),
+    );
+    expect(line).toContain("↻ 2 loops · in 5m");
+  });
 
-    expect(stripAnsi(permissionModeBanner("auto"))).toMatch(/Auto mode/i);
-    expect(stripAnsi(permissionModeBanner("confirm"))).toMatch(/Confirm mode/i);
+  it("leaves light/dark state to the theme picker", () => {
+    const line = stripAnsi(
+      statusLine({ model: "m", workspace: "/w", mode: "confirm", theme: "dark" }, 100),
+    );
+    expect(line).not.toContain("◐ dark");
+    expect(line).toContain("esc interrupt");
+  });
+
+  it("permissionModeBanner names each gear and mentions shift+tab", () => {
+    const fourth = stripAnsi(permissionModeBanner("autonomy-iii"));
+    expect(fourth).toMatch(/4th gear/);
+    expect(fourth).toMatch(/full system access/i);
+    expect(fourth).toMatch(/shift\+tab/i);
+
+    expect(stripAnsi(permissionModeBanner("autonomy-i"))).toMatch(/2nd gear.*workspace edits/i);
+    expect(stripAnsi(permissionModeBanner("autonomy-ii"))).toMatch(
+      /3rd gear.*sandboxed local commands/i,
+    );
+
+    const auto = stripAnsi(permissionModeBanner("auto"));
+    expect(auto).toMatch(/◆ auto/);
+    expect(auto).toMatch(/isolated classifier/i);
+    expect(stripAnsi(permissionModeBanner("confirm"))).toMatch(/1st gear/);
   });
 });
 
@@ -323,40 +374,75 @@ describe("ui/composer permissionView", () => {
 });
 
 describe("ui/composer renderPermissionCard", () => {
-  it("frames a uniform-width box with the action title, clean detail, and allow/session/deny keys", () => {
+  it("renders an open approval rail with explicit scope, choices, shortcuts, and guard state", () => {
     const r = renderPermissionCard("bash", "bash: ls -R", 80);
     const plain = r.lines.map(stripAnsi);
     expect(plain[0]).toBe(""); // leading blank separates it from the activity stream
-    const box = plain.slice(1, 4).map((l) => l.length);
-    expect(new Set(box).size).toBe(1); // top / mid / bottom equal width
     const joined = plain.join("\n");
-    expect(joined).toContain("Run shell command");
-    expect(joined).toContain("ls -R");
-    expect(joined).not.toMatch(/bash.*bash/); // no redundant "bash — bash:"
-    const keys = plain.at(-1)!;
-    expect(keys).toContain("enter");
-    expect(keys).toContain("session");
-    expect(keys).toContain("deny");
-    expect(r.caretRow).toBe(4); // parked on the keys line
+    expect(joined).toContain("Permission required");
+    expect(joined).toMatch(/bash · (sandboxed|host)/); // the tag chip states the posture
+    expect(joined).toContain("$ ls -R");
+    expect(joined).not.toMatch(/bash: bash/); // no redundant "bash — bash:"
+    expect(joined).toContain("Allow once");
+    expect(joined).toContain("Allow for session");
+    expect(joined).toContain("Deny");
+    expect(joined).toContain("No action taken yet");
+    // The footnote wraps across rail rows; read it as one sentence.
+    const flat = plain.map((l) => l.replace(/^\s*▌\s*/, "").trim()).join(" ");
+    expect(flat).toContain("tamper-evident audit trail");
+    expect(plain[r.caretRow]).toContain("Allow once");
   });
 
   it("never overflows the terminal width, even with a long command or tool name", () => {
     const r = renderPermissionCard("bash", "bash: " + "echo hi && ".repeat(40), 70);
     for (const l of r.lines) expect(stripAnsi(l).length).toBeLessThan(70);
-    // A pathologically long (unknown) tool name must not blow out the titled border.
+    // A pathologically long (unknown) tool name must not blow out the approval rail.
     const long = renderPermissionCard("some_" + "x".repeat(80) + "_tool", "{}", 70);
-    const box = long.lines.slice(1, 4).map((l) => stripAnsi(l).length);
-    expect(new Set(box).size).toBe(1);
     for (const l of long.lines) expect(stripAnsi(l).length).toBeLessThan(70);
   });
 
-  it("falls back to a compact two-line form on a narrow terminal", () => {
+  it("keeps all three decisions visible on a narrow terminal", () => {
     const r = renderPermissionCard("bash", "bash: ls", 40);
-    expect(r.lines).toHaveLength(3); // blank + question + keys
     const joined = stripAnsi(r.lines.join("\n"));
-    expect(joined).toContain("Run shell command");
-    expect(joined).toContain("ls");
+    expect(joined).toContain("Permission required");
+    expect(joined).toContain("$ ls");
+    expect(joined).toContain("Allow once");
+    expect(joined).toContain("Allow for session");
+    expect(joined).toContain("Deny");
     for (const l of r.lines) expect(stripAnsi(l).length).toBeLessThan(40);
+  });
+
+  it("shows a line-numbered change preview and parks the caret on the selected decision", () => {
+    const r = renderPermissionCard("edit_file", "edit_file src/palette.ts", 92, {
+      selected: 1,
+      preview: {
+        question: "Apply this edit to src/palette.ts?",
+        scope: "workspace · reversible",
+        target: "src/palette.ts",
+        lines: [
+          { kind: "context", text: "const delay = 42;", oldLine: 11, newLine: 11 },
+          { kind: "remove", text: "filterSoon(query);", oldLine: 12 },
+          { kind: "add", text: "filterNow(query);", newLine: 12 },
+        ],
+        added: 1,
+        removed: 1,
+        truncated: false,
+        guard: "Working tree unchanged · review before write",
+        choices: [
+          "Yes, apply this edit",
+          "Yes, allow file edits for this session",
+          "No, tell Gear what to change",
+        ],
+      },
+    });
+    const plain = r.lines.map(stripAnsi);
+    const joined = plain.join("\n");
+    expect(joined).toContain("src/palette.ts  +1 −1");
+    expect(joined).toContain("11   const delay = 42;");
+    expect(joined).toContain("12 - filterSoon(query);");
+    expect(joined).toContain("12 + filterNow(query);");
+    expect(joined).toContain("Working tree unchanged");
+    expect(plain[r.caretRow]).toContain("Allow for session");
   });
 });
 
@@ -368,10 +454,19 @@ describe("ui/composer renderPicker", () => {
       1,
       80,
     );
-    expect(stripAnsi(r.lines[0])).toContain("Model");
-    expect(stripAnsi(r.lines[2])).toContain("❯"); // selected = index 1 → line 2
-    expect(stripAnsi(r.lines[1])).not.toContain("❯");
-    expect(stripAnsi(r.lines.at(-1)!)).toContain("enter confirm");
+    expect(stripAnsi(r.lines[0])).toContain("MODEL"); // v2 uppercase overlay header
+    expect(stripAnsi(r.lines[0])).toContain("esc close");
+    expect(stripAnsi(r.lines[2])).toContain("›"); // selected = index 1 → line 2
+    expect(stripAnsi(r.lines[1])).not.toContain("›");
+    expect(stripAnsi(r.lines.at(-1)!)).toContain("⏎ select");
     expect(r.caretRow).toBe(2);
+  });
+
+  it("windows tall pickers to the terminal height and retains the selected row", () => {
+    const items = Array.from({ length: 30 }, (_, i) => ({ label: `item ${i}` }));
+    const r = renderPicker("Pick", items, 23, 40, 7);
+    expect(r.lines).toHaveLength(7);
+    expect(stripAnsi(r.lines.join("\n"))).toContain("item 23");
+    expect(stripAnsi(r.lines[r.caretRow]!)).toContain("›");
   });
 });

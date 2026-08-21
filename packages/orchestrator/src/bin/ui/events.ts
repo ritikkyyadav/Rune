@@ -4,7 +4,8 @@
 // tool_call_start only flips the activity word). Used by the TUI; the readline
 // path keeps its own inline copy for now (same visual language).
 
-import { bold, text, muted, faint, info, ok, accent, warn } from "./theme";
+import { bold, text, muted, faint, info, ok, accent, warn, tintSurface } from "./theme";
+import { meterGlyphs, railCard, termWidth, visLen, wrap } from "./render";
 import { renderToolCall } from "./tool-call";
 import { formatResearchEvent } from "./research";
 
@@ -46,6 +47,122 @@ export function formatNotice(message: string): string {
     return `  ${faint("↻")} ${muted(from)} ${faint("→")} ${info(to)}${why}`;
   }
   return `  ${warn("•")} ${muted(message)}`;
+}
+
+export const fmtTokens = (n: number): string =>
+  n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n);
+
+/** Reading measure shared by the fallback card and compaction receipt. */
+function cardWidth(): number {
+  return Math.max(16, Math.min(100, termWidth() - 3));
+}
+
+/**
+ * The v2 provider-fallback card (`.fallback-card`): a red-railed, red-washed
+ * block stating what degraded, the chain the gateway walked, where the stream
+ * resumed, and the honest promise that the turn continues. Built from the
+ * gateway's structured event, never from regex-parsed prose.
+ */
+export function formatFallback(ev: {
+  from: { provider: string; model: string };
+  to: { provider: string; model: string };
+  status?: number;
+  reason?: string;
+  chain?: string[];
+}): string {
+  const status = ev.status === 429 ? "429 (rate limited)" : ev.status ? String(ev.status) : "";
+  // Skip the reason when the status text already says the same thing
+  // ("429 (rate limited) — rate limited" reads like a stutter).
+  const reason =
+    ev.reason && !status.toLowerCase().includes(ev.reason.toLowerCase().slice(0, 12))
+      ? ev.reason
+      : "";
+  const from = `${ev.from.provider}/${ev.from.model}`;
+  const to = `${ev.to.provider}/${ev.to.model}`;
+  const what = status
+    ? `${from} returned ${status}${reason ? ` — ${reason}` : ""}.`
+    : reason
+      ? `${from} failed — ${reason}.`
+      : `${from} is unavailable.`;
+  const rest = (ev.chain ?? []).filter((p) => p !== ev.to.provider && p !== ev.from.provider);
+  const chain = [ev.from.provider, ev.to.provider, ...rest].join(" → ");
+  const width = cardWidth();
+  const inner = width - 3;
+  // Rows wrap rather than truncate: every clause of the card is a promise the
+  // user should be able to read in full, even at 80 columns.
+  const rows = [
+    `${accent("◆")} ${bold(accent("Provider degraded — gateway fallback engaged"))}`,
+    ...wrap(`${what} Falling back per provider chain.`, inner).map((line) => muted(line)),
+    ...packRow(
+      [
+        `${faint("chain:")} ${muted(chain)}`,
+        `${ok("✓")} ${bold(ok(`resumed on ${to}`))}`,
+        faint("turn continues · nothing lost"),
+      ],
+      inner,
+    ),
+  ];
+  return railCard(rows, {
+    rail: accent,
+    surface: (value) => tintSurface("accent", value),
+    width,
+  }).join("\n");
+}
+
+/** Pack painted clauses onto as few rows as fit, three cells apart. */
+function packRow(parts: string[], width: number): string[] {
+  const rows: string[] = [];
+  let row = "";
+  for (const part of parts) {
+    const candidate = row ? `${row}   ${part}` : part;
+    if (row && visLen(candidate) > width) {
+      rows.push(row);
+      row = part;
+    } else {
+      row = candidate;
+    }
+  }
+  if (row) rows.push(row);
+  return rows;
+}
+
+/**
+ * The v2 compaction receipt (`.ctx-compact`, settled state): one accent-washed
+ * row per compaction — what was summarized, the before/after occupancy, the
+ * five-cell meter at the new level, and the tokens recovered. Percentages
+ * derive from the same budget the engine compacts against.
+ */
+export function formatCompaction(ev: {
+  beforeTokens: number;
+  afterTokens: number;
+  limitTokens: number;
+  summarizedCount?: number;
+  forced?: boolean;
+}): string {
+  const pct = (tokens: number): string =>
+    ev.limitTokens > 0
+      ? `${Math.round((tokens / ev.limitTokens) * 100)}%`
+      : `~${fmtTokens(tokens)}`;
+  const saved = Math.max(0, ev.beforeTokens - ev.afterTokens);
+  const scope =
+    ev.summarizedCount && ev.summarizedCount > 0
+      ? `${ev.summarizedCount} older ${ev.summarizedCount === 1 ? "message" : "messages"} summarized`
+      : "older messages summarized";
+  const label = ev.forced ? "compacted (window exceeded)" : "compacted";
+  const afterPct = ev.limitTokens > 0 ? (ev.afterTokens / ev.limitTokens) * 100 : 0;
+  const width = cardWidth();
+  const delta = faint(`−${fmtTokens(saved)} tokens`);
+  const range = `context ${pct(ev.beforeTokens)} → ${pct(ev.afterTokens)}`;
+  // Degrade gracefully on narrow terminals: drop the meter, then the scope —
+  // the occupancy change and the tokens recovered are the facts that matter.
+  const candidates = [
+    `${ok("✓")} ${bold(ok(label))}  ${muted(`${scope} · ${range}`)}${ev.limitTokens > 0 ? `  ${info(meterGlyphs(afterPct))}` : ""}  ${delta}`,
+    `${ok("✓")} ${bold(ok(label))}  ${muted(`${scope} · ${range}`)}  ${delta}`,
+    `${ok("✓")} ${bold(ok(label))}  ${muted(range)}  ${delta}`,
+  ];
+  const row = candidates.find((candidate) => visLen(candidate) <= width - 2) ?? candidates.at(-1)!;
+  const fill = " ".repeat(Math.max(0, width - 2 - visLen(row)));
+  return `  ${tintSurface("brand", ` ${row}${fill} `)}`;
 }
 
 /** A completed engine event rendered as transcript text, or null if none. */
@@ -117,6 +234,16 @@ export function formatEvent(ev: any, ctx: { cost?: number } = {}): string | null
     case "notice":
     case "context_warning":
       return formatNotice(ev.message);
+
+    case "fallback":
+      return formatFallback(ev);
+
+    case "compaction":
+      return formatCompaction(ev);
+
+    case "usage":
+    case "checkpoint_saved":
+      return null; // live meters / summary strip, not transcript lines
 
     case "research_step_start":
     case "research_source":

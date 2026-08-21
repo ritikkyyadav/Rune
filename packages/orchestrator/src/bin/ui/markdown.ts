@@ -18,6 +18,8 @@ import {
   line as lineColor,
   colorEnabled,
   stripAnsi,
+  codeSurface,
+  panel,
 } from "./theme";
 import { termWidth } from "./render";
 
@@ -28,11 +30,17 @@ const STYLE_OFF = "\x1b[0m";
 const italic = (v: string): string => (colorEnabled ? `${ITALIC_ON}${v}${STYLE_OFF}` : v);
 const strike = (v: string): string => (colorEnabled ? `${STRIKE_ON}${v}${STYLE_OFF}` : v);
 
+/** The customizer's response voice: the headline is bold primary text, the
+ * detail is the secondary tone, and plain prose elsewhere is primary. */
+export type MarkdownTone = "primary" | "secondary" | "headline";
+
 export interface MarkdownOpts {
   /** Total column budget for each rendered line (indent included). Default: min(term-2, 100). */
   width?: number;
   /** Left indent prepended to every line. Default "  ". */
   indent?: string;
+  /** Base paint for plain prose. Default "primary". */
+  tone?: MarkdownTone;
 }
 
 // ── inline styling ──
@@ -44,10 +52,20 @@ interface Seg {
   paint: (s: string) => string;
 }
 
-const plain = (s: string): string => text(s);
+type Painter = (s: string) => string;
+
+const TONE_PAINT: Record<MarkdownTone, Painter> = {
+  primary: (s) => text(s),
+  secondary: (s) => muted(s),
+  headline: (s) => bold(text(s)),
+};
+
+/** Inline `code` as the v2 code tag: primary weight on the bar surface. */
+const codeTag = (s: string): string => panel(bold(text(s)));
 
 /** `**bold**`, `*em*`, `_em_`, `` `code` ``, `~~strike~~`, `[label](url)`. */
-export function parseInline(src: string): Seg[] {
+export function parseInline(src: string, tone: MarkdownTone = "primary"): Seg[] {
+  const plain = TONE_PAINT[tone];
   const segs: Seg[] = [];
   let i = 0;
   let buf = "";
@@ -61,7 +79,7 @@ export function parseInline(src: string): Seg[] {
     const code = rest.match(/^`([^`]+)`/);
     if (code) {
       flush();
-      segs.push({ t: code[1]!, paint: info });
+      segs.push({ t: code[1]!, paint: codeTag });
       i += code[0].length;
       continue;
     }
@@ -161,9 +179,14 @@ function splitUnit(u: Unit, max: number): Unit[] {
   return out;
 }
 
-export function wrapInline(src: string, width: number, hang = ""): string[] {
+export function wrapInline(
+  src: string,
+  width: number,
+  hang = "",
+  tone: MarkdownTone = "primary",
+): string[] {
   const maxChunk = Math.max(4, width - hang.length);
-  const units = toUnits(parseInline(src)).flatMap((u) =>
+  const units = toUnits(parseInline(src, tone)).flatMap((u) =>
     u.len > maxChunk ? splitUnit(u, maxChunk) : [u],
   );
   if (units.length === 0) return [""];
@@ -192,9 +215,13 @@ export function wrapInline(src: string, width: number, hang = ""): string[] {
 /** Render a markdown document to themed terminal lines. */
 export function renderMarkdown(md: string, opts: MarkdownOpts = {}): string[] {
   const indent = opts.indent ?? "  ";
+  const tone = opts.tone ?? "primary";
   const width = Math.max(24, (opts.width ?? Math.min(termWidth() - 2, 100)) - indent.length);
   const out: string[] = [];
   const src = md.replace(/\r\n/g, "\n").split("\n");
+
+  const codeRow = (plainText: string, painted: string): string =>
+    codeSurface(`${painted}${" ".repeat(Math.max(0, width - plainText.length))}`);
 
   let inFence = false;
   let fenceMark = "```";
@@ -218,14 +245,15 @@ export function renderMarkdown(md: string, opts: MarkdownOpts = {}): string[] {
       inFence = true;
       fenceMark = fence[1]!.startsWith("~") ? "~~~" : "```";
       blank();
-      const lang = fence[2] ? faint(fence[2]) : "";
-      emit(`${lineColor("╭─")} ${lang}`);
+      const langRaw = fence[2] ?? "";
+      const plainHead = `╭─ ${langRaw}`;
+      emit(codeRow(plainHead, `${lineColor("╭─")} ${langRaw ? faint(langRaw) : ""}`));
       continue;
     }
     if (inFence) {
       if (raw.trim().startsWith(fenceMark)) {
         inFence = false;
-        emit(lineColor("╰─"));
+        emit(codeRow("╰─", lineColor("╰─")));
         blank();
         continue;
       }
@@ -233,7 +261,8 @@ export function renderMarkdown(md: string, opts: MarkdownOpts = {}): string[] {
       const codeWidth = width - 2;
       let ln = raw.replace(/\t/g, "  ");
       do {
-        emit(`${lineColor("│")} ${info(ln.slice(0, codeWidth))}`);
+        const chunk = ln.slice(0, codeWidth);
+        emit(codeRow(`│ ${chunk}`, `${lineColor("│")} ${info(chunk)}`));
         ln = ln.slice(codeWidth);
       } while (ln.length > 0);
       continue;
@@ -273,7 +302,7 @@ export function renderMarkdown(md: string, opts: MarkdownOpts = {}): string[] {
     // ── blockquote ──
     const bq = raw.match(/^\s*>\s?(.*)$/);
     if (bq) {
-      for (const ln of wrapInline(bq[1]!, width - 2))
+      for (const ln of wrapInline(bq[1]!, width - 2, "", tone))
         emit(`${lineColor("▏")} ${muted(stripAnsi(ln))}`);
       continue;
     }
@@ -287,7 +316,7 @@ export function renderMarkdown(md: string, opts: MarkdownOpts = {}): string[] {
       const markerW = ul ? 1 : ol![2]!.length + 1;
       const body = ul ? ul[2]! : ol![3]!;
       const hang = lead + " ".repeat(markerW + 1);
-      const wrapped = wrapInline(body, width, hang);
+      const wrapped = wrapInline(body, width, hang, tone);
       emit(`${lead}${marker} ${wrapped[0] ?? ""}`);
       for (const ln of wrapped.slice(1)) emit(ln);
       continue;
@@ -298,7 +327,7 @@ export function renderMarkdown(md: string, opts: MarkdownOpts = {}): string[] {
       if (/^\s*\|[\s\-:|]+\|\s*$/.test(raw)) {
         emit(lineColor(t.slice(0, width)));
       } else {
-        emit(text(t.slice(0, width)).replace(/\|/g, lineColor("|")));
+        emit(TONE_PAINT[tone](t.slice(0, width)).replace(/\|/g, lineColor("|")));
       }
       continue;
     }
@@ -323,7 +352,7 @@ export function renderMarkdown(md: string, opts: MarkdownOpts = {}): string[] {
       para += " " + nt;
       li++;
     }
-    for (const ln of wrapInline(para, width)) emit(ln);
+    for (const ln of wrapInline(para, width, "", tone)) emit(ln);
   }
 
   // Close an unterminated fence so the frame never dangles.
