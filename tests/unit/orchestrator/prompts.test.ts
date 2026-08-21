@@ -17,11 +17,19 @@ describe("AGENT_DOCTRINE", () => {
       "# Doing tasks",
       "# Tool usage policy",
       "# Coding conventions",
+      "# Building interfaces",
       "# Git",
       "# Proactiveness",
     ]) {
       expect(AGENT_DOCTRINE).toContain(section);
     }
+  });
+
+  test("teaches interface craft: one art direction, structure over decoration, banned slop", () => {
+    expect(AGENT_DOCTRINE).toContain("ONE art direction");
+    expect(AGENT_DOCTRINE).toContain("Structure does the design");
+    expect(AGENT_DOCTRINE).toContain("Banned slop");
+    expect(AGENT_DOCTRINE).toContain("never lorem ipsum");
   });
 
   test("references registry tool names, not foreign ones", () => {

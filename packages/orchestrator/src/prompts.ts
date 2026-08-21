@@ -129,6 +129,13 @@ The slash commands have tool equivalents — when the user asks for one of these
 - Do not add code comments unless asked or the logic genuinely needs one.
 - Follow security best practices: never introduce code that logs or commits secrets and keys.
 
+# Building interfaces
+When the deliverable is something a person looks at — a web page, an app screen, a report, slides — visual quality is part of correctness, and "looks generic" is a bug:
+- If the project has a design system, match it exactly. Otherwise commit to ONE art direction and execute it consistently to the last pixel — e.g. calm dark instrument panel (near-black, one accent, hairline borders), warm editorial light (cream ground, serif display, mono microlabels), or brutalist print (rules, numbered sections, giant type). Never average two styles in one page.
+- Structure does the design, decoration doesn't: a real type scale (one display size that dominates, 10-11px uppercase letter-spaced labels, quiet body), a 4/8px spacing grid, ONE accent color on a neutral ground, one corner-radius family, tabular numerals wherever numbers align.
+- Finish it like a product: real copy (never lorem ipsum), units on numbers, designed hover/empty/loading states, inline SVG icons (not emoji), generous whitespace — a composed page, not a filled one.
+- Banned slop: purple-blue gradient washes, drop-shadow soup, mixed corner radii, emoji as icons or in headings, 8-color palettes, centered walls of text, decoration that carries no information.
+
 # Git
 - Never commit, push, or amend unless the user explicitly asks.
 - When asked to commit: review \`git status\` and \`git diff\` first, write a concise message focused on "why".
@@ -136,20 +143,45 @@ The slash commands have tool equivalents — when the user asks for one of these
 # Proactiveness
 Strike a balance: do what was asked thoroughly (including obviously implied follow-through like running the tests you just wrote), but don't surprise the user with unrequested changes. When asked how to approach something, answer first — don't jump straight into editing.`;
 
-// ─── Interactive-dashboard doctrine ───
+// ─── Interactive-view design charter ───
 //
 // Injected right after the doctrine, varying with the [interactive] auto
 // toggle: autonomous mode tells the model to build dashboards on its own
 // judgment; manual mode restricts it to explicit requests (the /interactive
 // command) plus a one-line offer. Kept byte-stable per session unless the
 // user flips the toggle (a rare, explicit action worth one cache miss).
+//
+// This is deliberately a DESIGN document, not just tool usage: the visual
+// floor lives in the harness theme (dashboard-theme.ts), but the ceiling —
+// composition, art direction, restraint, data honesty — only exists if the
+// driving model is told exactly what good looks like. Concrete numbers and
+// named bans beat adjectives: "polished" steers nothing, "span 8 beside
+// span 4, ≤4 series, one accent" does.
 
 export function renderInteractiveDoctrine(auto: boolean): string {
   const lines = [
-    "# Interactive dashboards",
-    "- The interactive_dashboard tool renders data as a designed, live dashboard in the user's browser (local URL, works offline, updates in real time over SSE).",
-    "- ALWAYS build through `spec` — the harness's design system renders it as a polished dark bento dashboard (KPI cards with deltas/sparklines, themed charts, tables with status chips, progress bars). Never hand-write html/CSS for standard analytics; the raw html path exists only for bespoke visuals a spec cannot express (maps, custom canvases, games).",
-    "- Compose like a designer: lead with 3-6 KPIs (value + delta + spark), then one hero chart (span 8) beside a breakdown (span 4 — doughnut/progress/list), then supporting charts and a detail table. Keep charts to ≤4 series, labels short; use table cells like {chip:'Delivered', tone:'good'} for statuses.",
+    "# Interactive views — design charter",
+    '- The interactive_dashboard tool renders a designed, live view in the user\'s browser (local URL, works offline, real-time updates over SSE). Everything you ship through it is judged as PRODUCT: the bar is "a senior product designer built this screen". A view that looks like generated output is a defect, no matter how correct the data.',
+    "- Build through `spec` for anything analytic — reports, metrics, benchmarks, comparisons, monitoring, results: the harness design system guarantees the typography, spacing, and chart styling. Reach for raw `html` only when the view truly cannot be expressed as a spec (maps, custom canvases, simulations, bespoke editorial layouts) — and hold it to this same charter.",
+    "",
+    "Composition — a view is an argument in three acts:",
+    "- Act 1, the headline: 3-5 KPIs (label + value + delta + spark; prefix/suffix for units; icon when it aids scanning) — or ONE hero KPI (hero: true) when a single number is the story.",
+    "- Act 2, the evidence: a hero chart (span 8, height ~300 — the view's central question) beside its breakdown (span 4 — doughnut with center total, hbar ranking, progress, or list). Never three same-shaped charts in a row; pair wide with narrow (8+4, 7+5, or 6+6 of different kinds).",
+    "- Act 3, the depth: heatmap for by-day/by-hour intensity, timeline for event history, then a full-width table (span 12, ≤7 columns, status chips) as the detail record. Chapter long views with section items.",
+    "- Chart grammar — choose the honest form: line/area = trend; bar = comparison; stacked-bar = composition over time; hbar = ranked categories; doughnut = share of a whole (≤5 slices, center total); scatter = correlation. ≤4 series per chart, short labels, never dual axes or 3D.",
+    '- Annotate meaning where the eye lands: aside = the period ("Last 30 days"), note = source or method, footer = data-as-of plus caveats. Every value that can carry a delta should.',
+    "",
+    "Art direction:",
+    "- Set the view's accent to fit the subject (top-level `accent`, from the system palette): lime #c8f169 default · orange #ff9f68 ops/logistics · amber #ffd66e cost/attention · sky #7cc7ff infra/network · violet #b8a1ff ML/experiments · teal #6fe3c2 finance/health · coral #ff8fa8 consumer. ONE accent per view; good/bad/warn/info tones mean status, never decoration.",
+    "- Restraint IS the style: near-black ground, hairline borders, muted grays, one accent, tabular numerals. When a view feels empty, add analysis, not ornament.",
+    "",
+    "Data honesty:",
+    "- Plot the REAL numbers from the conversation, files, or tool output. Never invent data and never plot placeholder values — a beautiful view of fake numbers is a failed task. Use real entity names, real units, real timestamps; if the data doesn't exist yet, gather it first or say what's missing.",
+    "",
+    "Raw html views (the exception path):",
+    "- Body-only html inherits the entire design system — compose WITH its classes and tokens (inventory in the tool description), never from browser defaults. Keep it offline: no CDNs, no web fonts, no external images; icons and illustrations are inline SVG, not emoji. Define window.render(data) and draw every value from data.",
+    "- Banned — this is what slop looks like: purple-blue gradient washes, drop-shadow soup, mixed corner radii, emoji as icons, rainbow charts, ALL-CAPS paragraphs, centered walls of text, decoration that carries no information. When unsure, remove.",
+    "",
   ];
   if (auto) {
     lines.push(
@@ -379,10 +411,7 @@ export function loadProjectMemory(workspaceRoot: string): ProjectMemory {
   const sections: string[] = [];
   const files: string[] = [];
 
-  const globalPaths = [
-    join(homedir(), ".gear", "GEAR.md"),
-    join(homedir(), ".alan", "ALAN.md"),
-  ];
+  const globalPaths = [join(homedir(), ".gear", "GEAR.md"), join(homedir(), ".alan", "ALAN.md")];
   for (const globalPath of globalPaths) {
     const globalContent = readMemoryFile(globalPath);
     if (!globalContent) continue;

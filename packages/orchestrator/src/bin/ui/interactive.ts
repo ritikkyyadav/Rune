@@ -51,7 +51,9 @@ export function buildInteractiveDirective(focus?: string): string {
     "Build an interactive dashboard with the interactive_dashboard tool. " +
     scope +
     ' If a dashboard for this content already exists, update it (action:"update") instead of creating another. ' +
-    "Choose the chart types that fit the data, put every number in `data`, and keep the text reply to a couple of lines plus the URL."
+    "Compose it per the design charter — headline KPIs, a hero chart beside its breakdown, then depth — " +
+    "set an accent that fits the subject, choose the chart types that fit the data, " +
+    "and keep the text reply to a couple of lines plus the URL."
   );
 }
 

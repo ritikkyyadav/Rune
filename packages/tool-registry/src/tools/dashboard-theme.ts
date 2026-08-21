@@ -1,11 +1,14 @@
 // ─── Dashboard design system ───
 //
 // The visual floor for interactive_dashboard is guaranteed HERE, by the
-// harness, not by the driving model: a dark bento-grid theme (cards, KPIs,
-// chips, tables, progress bars), tuned Chart.js defaults (muted grids,
-// rounded bars, gradient area fills, palette auto-assignment), and a
-// declarative spec renderer so a model describes CONTENT and the page comes
-// out looking designed regardless of which model wrote it.
+// harness, not by the driving model: a dark bento-grid theme (cards, KPIs
+// incl. hero/icon variants, chips, tables, progress bars, heatmaps,
+// timelines, section dividers), per-view accent theming, tuned Chart.js
+// defaults (muted grids, rounded bars, gradient area fills, palette
+// auto-assignment), and a declarative spec renderer so a model describes
+// CONTENT and the page comes out looking designed regardless of which model
+// wrote it. The ceiling — composition, art direction, restraint — is taught
+// by the design charter in orchestrator/src/prompts.ts; keep the two in sync.
 //
 // All three exports are raw strings injected into dashboard pages:
 //   THEME_CSS          — design tokens + component classes (+ print styles)
@@ -28,6 +31,7 @@ export const THEME_CSS = `
   --muted: #969ca8;
   --faint: #686f7d;
   --accent: #c8f169;
+  --accent-soft: rgba(200, 241, 105, 0.15);
   --up: #8ce99a;
   --down: #ff8896;
   --warn: #ffd66e;
@@ -98,6 +102,16 @@ body {
 .kpi-value { font-size: 30px; font-weight: 650; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; line-height: 1.05; }
 .kpi-value .unit { font-size: 16px; font-weight: 550; color: var(--muted); margin: 0 2px; }
 .kpi-foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; min-height: 18px; }
+.kpi-icon {
+  position: absolute; top: 14px; right: 16px; width: 34px; height: 34px;
+  display: flex; align-items: center; justify-content: center; font-size: 15px;
+  border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line);
+}
+.card.has-icon .kpi-label { padding-right: 44px; }
+/* Hero KPI: display-size number for single-figure stories. */
+.card.kpi-hero .kpi-value { font-size: 46px; letter-spacing: -0.035em; }
+.card.kpi-hero .kpi-value .unit { font-size: 22px; }
+.card.kpi-hero .kpi-spark { width: 150px; height: 46px; }
 /* Fixed, positioned container: Chart.js sizes the canvas to THIS box, so
    sparklines can never overflow their card. */
 .kpi-spark { position: relative; width: 96px; height: 34px; flex: none; overflow: hidden; }
@@ -112,7 +126,7 @@ body {
   border: 1px solid var(--line);
   white-space: nowrap; font-variant-numeric: tabular-nums;
 }
-.chip.accent { color: #1a2005; background: var(--accent); border-color: transparent; }
+.chip.accent { color: #0b0c0f; background: var(--accent); border-color: transparent; }
 .chip.good { color: var(--up); background: rgba(140, 233, 154, 0.12); border-color: transparent; }
 .chip.bad { color: var(--down); background: rgba(255, 136, 150, 0.12); border-color: transparent; }
 .chip.warn { color: var(--warn); background: rgba(255, 214, 110, 0.12); border-color: transparent; }
@@ -156,6 +170,36 @@ table.tbl th.num, table.tbl td.num { text-align: right; }
 .prog-value { color: var(--muted); font-variant-numeric: tabular-nums; }
 .prog-track { height: 6px; border-radius: 999px; background: var(--panel-2); overflow: hidden; }
 .prog-fill { height: 100%; border-radius: 999px; background: var(--accent); transition: width 0.6s cubic-bezier(0.2, 0.7, 0.3, 1); }
+
+/* ── Heatmap ── */
+.hm { display: grid; gap: 4px; align-items: stretch; }
+.hm-row-label { font-size: 10px; color: var(--faint); align-self: center; padding-right: 8px; white-space: nowrap; }
+.hm-cell { height: 20px; border-radius: 5px; background: var(--panel-2); min-width: 0; }
+.hm-col-label { font-size: 9.5px; color: var(--faint); text-align: center; padding-top: 3px; overflow: hidden; white-space: nowrap; }
+
+/* ── Timeline ── */
+.tl { display: flex; flex-direction: column; padding: 2px 0; }
+.tl-item { display: flex; gap: 12px; position: relative; padding: 2px 0 16px; }
+.tl-item:last-child { padding-bottom: 2px; }
+.tl-rail { width: 12px; flex: none; position: relative; }
+.tl-dot { position: absolute; left: 50%; top: 5px; width: 8px; height: 8px; border-radius: 50%; transform: translateX(-50%); background: rgba(255, 255, 255, 0.28); }
+.tl-dot.accent { background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+.tl-dot.good { background: var(--up); } .tl-dot.bad { background: var(--down); }
+.tl-dot.warn { background: var(--warn); } .tl-dot.info { background: var(--info); }
+.tl-item:not(:last-child) .tl-rail::after {
+  content: ""; position: absolute; left: 50%; top: 17px; bottom: -3px; width: 1px;
+  transform: translateX(-50%); background: var(--line-strong);
+}
+.tl-main { flex: 1; min-width: 0; }
+.tl-title { font-size: 12.5px; font-weight: 550; }
+.tl-sub { font-size: 11px; color: var(--faint); margin-top: 2px; line-height: 1.45; }
+.tl-time { font-size: 10.5px; color: var(--faint); font-family: var(--mono); white-space: nowrap; padding-top: 2px; }
+
+/* ── Section dividers ── */
+.sec { grid-column: span 12; display: flex; align-items: center; gap: 12px; margin: 12px 2px -2px; }
+.sec-title { font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); white-space: nowrap; }
+.sec-rule { flex: 1; height: 1px; background: var(--line); }
+.sec-aside { font-size: 11px; color: var(--faint); white-space: nowrap; }
 
 /* ── Text blocks ── */
 .prose { font-size: 13px; line-height: 1.65; color: var(--muted); }
@@ -310,17 +354,21 @@ export const CHART_DEFAULTS_JS = `
     id: "gearTheme",
     beforeInit: function (chart) {
       try {
+        // Read the live palette: the spec renderer rotates window.GEAR.palette
+        // when a view sets its own accent, and auto-coloring must follow.
+        var PAL = (window.GEAR && window.GEAR.palette && window.GEAR.palette.length)
+          ? window.GEAR.palette : PALETTE;
         var type = chart.config.type;
         var ds = (chart.config.data && chart.config.data.datasets) || [];
         for (var i = 0; i < ds.length; i++) {
           var d = ds[i];
           var dtype = d.type || type;
-          var color = PALETTE[i % PALETTE.length];
+          var color = PAL[i % PAL.length];
           if (dtype === "doughnut" || dtype === "pie" || dtype === "polarArea") {
             if (!d.backgroundColor) {
-              var n = (d.data || []).length || PALETTE.length;
+              var n = (d.data || []).length || PAL.length;
               var arr = [];
-              for (var j = 0; j < n; j++) arr.push(PALETTE[j % PALETTE.length]);
+              for (var j = 0; j < n; j++) arr.push(PAL[j % PAL.length]);
               d.backgroundColor = arr;
             }
             continue;
@@ -350,6 +398,33 @@ export const SPEC_RENDERER_JS = `
   var charts = [];
   var keyed = {}; // key -> { kind, el, chart, item }
   var firstRender = true;
+  var ACCENT = "#c8f169";
+  var BASE_PALETTE = null; // window.GEAR.palette before any accent rotation
+
+  // Per-view art direction: a spec-level accent recolors the CSS tokens and
+  // rotates the chart palette so the accent leads series/slice assignment.
+  // Absent or invalid accents restore the defaults (updates can de-theme).
+  function applyAccent(accent) {
+    var doc = document.documentElement;
+    if (window.GEAR && !BASE_PALETTE) BASE_PALETTE = window.GEAR.palette.slice();
+    var ok = typeof accent === "string" && /^#[0-9a-fA-F]{6}$/.test(accent);
+    ACCENT = ok ? accent : "#c8f169";
+    if (ok) {
+      doc.style.setProperty("--accent", accent);
+      if (window.GEAR) {
+        doc.style.setProperty("--accent-soft", window.GEAR.rgba(accent, 0.16));
+        var rest = [];
+        for (var i = 0; i < (BASE_PALETTE || []).length; i++) {
+          if (BASE_PALETTE[i].toLowerCase() !== accent.toLowerCase()) rest.push(BASE_PALETTE[i]);
+        }
+        window.GEAR.palette = [accent].concat(rest);
+      }
+    } else {
+      doc.style.removeProperty("--accent");
+      doc.style.removeProperty("--accent-soft");
+      if (window.GEAR && BASE_PALETTE) window.GEAR.palette = BASE_PALETTE.slice();
+    }
+  }
 
   function el(tag, cls, text) {
     var e = document.createElement(tag);
@@ -485,7 +560,11 @@ export const SPEC_RENDERER_JS = `
 
   // ── blocks ──
   function renderKpi(k, i) {
-    var card = el("div", "card span-" + (k.span || 3));
+    var cls = "card span-" + (k.span || (k.hero ? 4 : 3));
+    if (k.hero) cls += " kpi-hero";
+    if (k.icon) cls += " has-icon";
+    var card = el("div", cls);
+    if (k.icon) card.appendChild(el("div", "kpi-icon", k.icon));
     card.appendChild(el("div", "kpi-label", k.label || "Metric"));
     var row = el("div", "kpi-row");
     var val = el("div", "kpi-value");
@@ -496,7 +575,9 @@ export const SPEC_RENDERER_JS = `
       var sc = el("canvas");
       wrap.appendChild(sc);
       row.appendChild(wrap);
-      var color = k.color || (window.GEAR ? window.GEAR.palette[i % window.GEAR.palette.length] : "#c8f169");
+      // Sparks follow the view accent (charter: one accent per view), not the
+      // rotating series palette — KPI rows must read as one instrument.
+      var color = k.color || ACCENT;
       requestAnimationFrame(function () { var ch = sparkline(sc, k.spark, color); if (k.key) keyed[k.key].spark = ch; });
     }
     card.appendChild(row);
@@ -633,6 +714,72 @@ export const SPEC_RENDERER_JS = `
     if (item.key) keyed[item.key] = { kind: "progress", box: box, item: item };
     return card;
   }
+  function renderHeatmap(item) {
+    var card = cardShell(item, 6);
+    var rows = item.rows || [];
+    var cols = item.cols || [];
+    var values = item.values || [];
+    var max = typeof item.max === "number" && item.max > 0 ? item.max : 0;
+    if (!max) {
+      for (var r = 0; r < values.length; r++) {
+        var vr = values[r] || [];
+        for (var c = 0; c < vr.length; c++) {
+          if (typeof vr[c] === "number" && isFinite(vr[c]) && vr[c] > max) max = vr[c];
+        }
+      }
+    }
+    var grid = el("div", "hm");
+    grid.style.gridTemplateColumns = "auto repeat(" + Math.max(cols.length, 1) + ", 1fr)";
+    for (var ri = 0; ri < rows.length; ri++) {
+      grid.appendChild(el("div", "hm-row-label", rows[ri]));
+      for (var ci = 0; ci < cols.length; ci++) {
+        var v = (values[ri] || [])[ci];
+        var cell = el("div", "hm-cell");
+        if (typeof v === "number" && isFinite(v) && v > 0 && max > 0) {
+          var t = Math.max(0, Math.min(1, v / max));
+          if (window.GEAR) cell.style.background = window.GEAR.rgba(ACCENT, 0.07 + 0.88 * t);
+        }
+        cell.title = rows[ri] + " \\u00b7 " + cols[ci] + ": " + (v === undefined || v === null ? "\\u2014" : fmt(v));
+        grid.appendChild(cell);
+      }
+    }
+    if (cols.length) {
+      grid.appendChild(el("div"));
+      var step = Math.max(1, Math.ceil(cols.length / 12));
+      for (var li = 0; li < cols.length; li++) {
+        grid.appendChild(el("div", "hm-col-label", li % step === 0 ? cols[li] : ""));
+      }
+    }
+    card.appendChild(grid);
+    if (item.note) card.appendChild(el("div", "card-note", item.note));
+    return card;
+  }
+  function renderTimeline(item) {
+    var card = cardShell(item, 4);
+    var box = el("div", "tl");
+    (item.items || []).forEach(function (it) {
+      var row = el("div", "tl-item");
+      var rail = el("div", "tl-rail");
+      rail.appendChild(el("span", "tl-dot " + toneClass(it.tone)));
+      row.appendChild(rail);
+      var main = el("div", "tl-main");
+      main.appendChild(el("div", "tl-title", it.title));
+      if (it.sub) main.appendChild(el("div", "tl-sub", it.sub));
+      row.appendChild(main);
+      if (it.time !== undefined && it.time !== null) row.appendChild(el("div", "tl-time", it.time));
+      box.appendChild(row);
+    });
+    card.appendChild(box);
+    if (item.note) card.appendChild(el("div", "card-note", item.note));
+    return card;
+  }
+  function renderSection(item) {
+    var sec = el("div", "sec");
+    sec.appendChild(el("div", "sec-title", item.title || ""));
+    sec.appendChild(el("div", "sec-rule"));
+    if (item.aside) sec.appendChild(el("div", "sec-aside", item.aside));
+    return sec;
+  }
   function renderText(item) {
     var card = cardShell(item, 6);
     var prose = el("div", "prose");
@@ -657,6 +804,7 @@ export const SPEC_RENDERER_JS = `
     charts.forEach(function (c) { try { c.destroy(); } catch (e) {} });
     charts = [];
     keyed = {};
+    applyAccent(spec.accent); // before any chart exists: palette must lead
     var root = document.getElementById("gear-root");
     if (!root) return;
     root.textContent = "";
@@ -682,11 +830,14 @@ export const SPEC_RENDERER_JS = `
     var grid = el("div", "grid");
     (spec.kpis || []).forEach(function (k, i) { grid.appendChild(renderKpi(k, i)); });
     (spec.items || []).forEach(function (item) {
-      var t = item.type || (item.chart ? "chart" : item.columns ? "table" : "text");
+      var t = item.type || (item.chart ? "chart" : item.columns ? "table" : item.values ? "heatmap" : "text");
       if (t === "chart") grid.appendChild(renderChart(item));
       else if (t === "table") grid.appendChild(renderTable(item));
       else if (t === "list") grid.appendChild(renderList(item));
       else if (t === "progress") grid.appendChild(renderProgress(item));
+      else if (t === "heatmap") grid.appendChild(renderHeatmap(item));
+      else if (t === "timeline") grid.appendChild(renderTimeline(item));
+      else if (t === "section") grid.appendChild(renderSection(item));
       else if (t === "kpi") grid.appendChild(renderKpi(item, 0));
       else grid.appendChild(renderText(item));
     });
