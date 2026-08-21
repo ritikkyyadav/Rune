@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach } from "bun:test";
 import { LocalEndpointStrategy } from "../../../../packages/llm-gateway/src/auth/local-endpoint-strategy";
 import type { AuthContext } from "../../../../packages/llm-gateway/src/auth/types";
 import { getPreset, type CredentialStore } from "../../../../packages/shared/src/index";

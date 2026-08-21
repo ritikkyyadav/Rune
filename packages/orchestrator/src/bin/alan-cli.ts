@@ -901,7 +901,7 @@ async function main() {
   }
 
   // ─── Composer mode decision (needed before session resolution) ───
-  // The TUI — the focused terminal workbench from gear-customizer.html — is the default on
+  // The TUI — the focused terminal workbench from docs/design/gear-customizer.html — is the default on
   // interactive terminals. The customizer's browser navigation and page canvas are deliberately
   // excluded. `--inline` remains a compatibility escape hatch for users who value native terminal
   // scrollback over the product surface. Piped/non-TTY stdin and `--classic` / ALAN_CLASSIC fall

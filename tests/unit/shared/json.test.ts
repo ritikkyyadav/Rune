@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "bun:test";
 import { parseToolArguments, tryParseJson } from "../../../packages/shared/src/json";
 
 describe("shared/json parseToolArguments", () => {

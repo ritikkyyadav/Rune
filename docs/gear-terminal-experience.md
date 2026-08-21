@@ -1,7 +1,7 @@
 # Gear terminal experience
 
 Gear is a calm coding workbench, not a feed of agent internals. The supplied
-`gear-customizer.html` is the authoritative visual map for the terminal's
+`docs/design/gear-customizer.html` is the authoritative visual map for the terminal's
 hierarchy, spacing, palette, typography, activity ledger, diff treatment, and
 interaction language. The browser navigation, theme controls, sage page canvas,
 demo copy, version, model, paths, and fabricated session data are customizer

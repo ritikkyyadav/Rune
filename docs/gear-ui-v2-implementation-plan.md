@@ -1,6 +1,6 @@
 # Gear UI v2 — Implementation Plan
 
-**Contract:** `gear-customizer-v2.html` (repo root) · **Repo state audited:** 2026-08-20 · **Target:** Gear v0.2.x → v0.3.0
+**Contract:** `docs/design/gear-customizer-v2.html` · **Repo state audited:** 2026-08-20 · **Target:** Gear v0.2.x → v0.3.0
 
 The customizer HTML is already treated as the product contract — `packages/orchestrator/src/bin/ui/themes.ts` says so explicitly and ports its exact pigments. This plan upgrades that contract to v2 and closes the gap on two surfaces, in order: the terminal TUI first (primary product surface), the Tauri desktop app second. It is a gap-closure plan, not a greenfield build: the audit below shows most of the v1 mockup already exists in the TUI.
 
@@ -46,7 +46,7 @@ The pigments currently live in three places by hand: the HTML, `themes.ts`, and 
 
 1. Add `packages/shared/src/design-tokens.ts`: bases (light/dark), 5 accents, semantic slots (text-main/sub/muted/faint, bar, hairline, code, diff, green/red/ochre + bgs, accent + glow/bg/bd), spacing/type scale constants. Pure data, no deps.
 2. Generators: (a) `themes.ts` builds its 10 `gear*` themes from the tokens instead of literals; (b) a small script emits `apps/desktop/src/styles/tokens.css` (CSS custom properties per `[data-theme-base][data-accent]`, same attribute API as the prototype).
-3. Parity test in `tests/unit/`: tokens ↔ the hex values in `gear-customizer-v2.html` (regex-extract), so the contract can't silently diverge again.
+3. Parity test in `tests/unit/`: tokens ↔ the hex values in `docs/design/gear-customizer-v2.html` (regex-extract), so the contract can't silently diverge again.
 
 **Acceptance:** one edit to a pigment propagates to CLI + desktop + test; `bun run typecheck` and unit suite green.
 

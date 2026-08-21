@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "bun:test";
 import { parseKeys, type Key } from "../../../packages/orchestrator/src/bin/ui/keys";
 
 const types = (data: string) => parseKeys(data).map((k) => k.type);

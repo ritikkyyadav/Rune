@@ -395,7 +395,8 @@ export async function buildPermissionPreview(
   if (input.toolName === "bash") {
     const command = clean(args.command) || stripToolPrefix(input.toolName, input.argsSummary);
     const network = args.network === true;
-    const timeoutMs = Number(args.timeout_ms) > 0 ? Number(args.timeout_ms) : BASH_DEFAULT_TIMEOUT_MS;
+    const timeoutMs =
+      Number(args.timeout_ms) > 0 ? Number(args.timeout_ms) : BASH_DEFAULT_TIMEOUT_MS;
     const runtimeSecs = Math.ceil(timeoutMs / 1000);
     const bashRisk: PermissionRiskFact[] = [
       network

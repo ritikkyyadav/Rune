@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "bun:test";
 import { AltScreen, BottomRegion } from "../../../packages/orchestrator/src/bin/ui/screen";
 
 // Control sequences the renderer emits (kept in sync with screen.ts).

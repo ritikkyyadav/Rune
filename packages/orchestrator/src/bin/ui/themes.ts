@@ -9,11 +9,7 @@
 // Themes are authored as hex; the ANSI-256 fallback is derived automatically
 // (nearestAnsi256). The `atlas` (brand) theme keeps its original hand-tuned pigments.
 
-import {
-  GEAR_ACCENT_LABELS,
-  gearTerminalPalette,
-  gearAccentHex,
-} from "@alan/shared";
+import { GEAR_ACCENT_LABELS, gearTerminalPalette, gearAccentHex } from "@alan/shared";
 
 export interface Pigment {
   /** Brand-exact 24-bit RGB. */
@@ -340,7 +336,7 @@ const ATLAS: Theme = {
 
 // ─── Gear customizer palettes ───
 // Pigments live in ONE place: packages/shared/src/design-tokens.ts, the
-// machine-readable form of gear-customizer-v2.html. This module derives the
+// machine-readable form of docs/design/gear-customizer-v2.html. This module derives the
 // ten gear themes from those tokens; a parity test locks tokens ↔ HTML, so a
 // contract change propagates here (and to the desktop CSS emitter) from a
 // single edit instead of three hand-synced copies.

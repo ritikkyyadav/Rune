@@ -7,7 +7,7 @@
  * All network is mocked; no real GitHub calls.
  */
 
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach } from "bun:test";
 import { CopilotProvider } from "../../../packages/llm-gateway/src/providers/copilot";
 import { githubCopilotDeviceFlow } from "../../../packages/llm-gateway/src/oauth/github-copilot";
 import { DeviceCodeStrategy } from "../../../packages/llm-gateway/src/auth/device-code-strategy";

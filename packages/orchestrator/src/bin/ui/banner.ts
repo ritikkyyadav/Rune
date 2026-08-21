@@ -1,5 +1,5 @@
 // ─── Gear identity header ───
-// Terminal-native transcription of the header in gear-customizer-v2.html. The
+// Terminal-native transcription of the header in docs/design/gear-customizer-v2.html. The
 // browser comp uses a 48px SVG beside three metadata rows and two environment
 // badges. A four-row Braille raster preserves the reference mark's detail in a
 // real monospace terminal; the compact fallback keeps U+2699 for narrow

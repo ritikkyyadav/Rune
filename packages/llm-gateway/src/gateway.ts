@@ -87,7 +87,10 @@ export class LlmGateway {
   }
 
   /** Introspection for /status-style UIs and tests. */
-  getProviderHealth(): { pruned: ProviderName[]; cooling: Array<{ provider: ProviderName; untilMs: number }> } {
+  getProviderHealth(): {
+    pruned: ProviderName[];
+    cooling: Array<{ provider: ProviderName; untilMs: number }>;
+  } {
     const now = Date.now();
     return {
       pruned: [...this.prunedProviders],
