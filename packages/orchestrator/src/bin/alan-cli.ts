@@ -65,6 +65,16 @@ import {
   renderPermissionCard,
 } from "./ui/composer";
 import { buildPermissionPreview } from "./ui/permission-preview";
+import {
+  providerChoices,
+  accountChoices,
+  modelChoices,
+  fetchLiveModels,
+  treeHeadline,
+  formatProviderLine,
+  formatAccountLine,
+  formatModelLine,
+} from "./ui/model-picker";
 import { renderWorkspaceDiff } from "./ui/workspace-diff";
 import { truncate } from "./ui/render";
 import { runTui } from "./ui/tui";
@@ -2388,104 +2398,202 @@ async function main() {
       }
 
       if (input === "/model") {
-        // Show current model and interactive picker
-        const current = engine.getModel();
-        const currentProvider = engine.getProvider();
-        const registered = engine.getRegisteredProviders();
+        // ── The model tree: providers → accounts/endpoints → models ──
+        // Level 1 shows only configured providers; level 2 the real access paths
+        // for the chosen one (skipped when there's just one); level 3 the models
+        // under that account — live-listed for local runtimes. A number switches
+        // this session; `d<n>` also sets the startup default (model.json).
+        const ask = (q: string): Promise<string> =>
+          new Promise((res) => rl.question(q, (a) => res(a.trim())));
 
-        process.stdout.write(
-          `  ${bold(text("Model"))}  ${faint("current:")} ${info(currentProvider + "/" + current)}\n\n`,
-        );
-
-        // Data-driven from the provider presets: every registered provider with a
-        // curated `models` list contributes its models, so adding a provider is a
-        // one-line preset edit. Local runtimes (ollama / lmstudio) are listed even
-        // when not yet active so they're discoverable — picking one switches to it.
-        // Free-form `/model <provider>/<id>` still works.
-        const localIds = PROVIDER_PRESETS.filter((p) => p.local).map((p) => p.id);
-        const pickerIds = [
-          ...registered,
-          ...localIds.filter((id) => !registered.includes(id as any)),
-        ];
-        const presets: { key: string; provider: string; model: string; label: string }[] = [];
-        for (const id of pickerIds) {
-          const preset = getPreset(id);
-          if (!preset?.models?.length) continue;
-          for (const m of preset.models) {
-            presets.push({
-              key: `${presets.length + 1}`,
-              provider: id,
-              model: m.id,
-              label: m.label,
-            });
-          }
-        }
-
-        for (const p of presets) {
-          const isCurrent = p.provider === currentProvider && p.model === current;
-          const active = isCurrent ? ` ${ok("◂ current")}` : "";
-          process.stdout.write(
-            `    ${warn(`[${p.key}]`)} ${info(p.provider)}${faint("/")}${text(p.label)}${active}\n`,
-          );
-        }
-        process.stdout.write(`    ${warn("[c]")} ${faint("custom provider/model")}\n\n`);
-
-        rl.question(`  ${info("\u203A")} `, (answer) => {
-          const a = answer.trim().toLowerCase();
-
-          if (a === "c") {
-            rl.question(`  ${dim("provider")} ${info("\u203A")} `, (provAnswer) => {
-              const prov = provAnswer.trim();
-              rl.question(`  ${dim("model")}    ${info("\u203A")} `, (modAnswer) => {
-                const mod = modAnswer.trim();
-                if (prov && mod) {
-                  engine.switchModel(mod, prov as any, sessionId);
-                  saveLastModel({ provider: engine.getProvider(), model: engine.getModel() });
-                  process.stdout.write(
-                    `  ${green("✓")} switched to ${cyanotype(prov)}${dim("/")}${brass(mod)}\n\n`,
-                  );
-                } else {
-                  process.stdout.write(`  ${vermillion("✕")} ${dim("cancelled")}\n\n`);
-                }
-                showPrompt();
-              });
-            });
-            return;
-          }
-
-          const preset = presets.find((p) => p.key === a);
-          if (preset) {
-            engine.switchModel(preset.model, preset.provider as any, sessionId);
+        const applySwitch = (prov: string, model: string, asDefault: boolean) => {
+          engine.switchModel(model, prov as any, sessionId);
+          const now = `${engine.getProvider()}/${engine.getModel()}`;
+          if (asDefault) {
             saveLastModel({ provider: engine.getProvider(), model: engine.getModel() });
             process.stdout.write(
-              `  ${green("✓")} switched to ${cyanotype(preset.provider)}${dim("/")}${brass(preset.label)}\n\n`,
+              `  ${accent("◆")} default set — ${info(now)} ${dim("(used at startup)")}\n\n`,
             );
           } else {
-            process.stdout.write(`  ${dim("no change")}\n\n`);
+            process.stdout.write(
+              `  ${green("✓")} switched to ${info(now)} ${dim("· session only — d<n> in /model sets the default")}\n\n`,
+            );
           }
-          showPrompt();
-        });
+        };
+
+        void (async () => {
+          try {
+            const statusRows = engine.getProviderStatus();
+            const customEp = engine.getCustomEndpoint();
+            const current = { provider: engine.getProvider() as string, model: engine.getModel() };
+            const def = loadLastModel();
+
+            // ── Level 1: providers ──
+            const provs = providerChoices(statusRows, customEp, process.env, getPreset);
+            process.stdout.write(`  ${bold(text("Model"))}\n`);
+            process.stdout.write(treeHeadline(current, def).join("\n") + "\n\n");
+            if (provs.length === 0) {
+              process.stdout.write(
+                `  ${dim("No providers configured yet — add a key with")} ${info("/keys")}${dim(", or type one below.")}\n`,
+              );
+            }
+            provs.forEach((p, i) => process.stdout.write(formatProviderLine(i + 1, p) + "\n"));
+            process.stdout.write(`    ${warn("[t]")} ${faint("type provider/model directly")}\n\n`);
+            process.stdout.write(
+              `  ${faint("subscriptions (Claude Pro/Max · ChatGPT · Copilot):")} ${info("gear login")}\n`,
+            );
+
+            const a1 = (await ask(`  ${info("›")} `)).toLowerCase();
+            if (a1 === "t" || a1 === "c") {
+              const prov = await ask(`  ${dim("provider")} ${info("›")} `);
+              const mod = await ask(`  ${dim("model")}    ${info("›")} `);
+              if (prov && mod) applySwitch(prov, mod, false);
+              else process.stdout.write(`  ${dim("no change")}\n\n`);
+              return;
+            }
+            const chosen = provs[Number(a1) - 1];
+            if (!a1 || !chosen) {
+              if (a1) process.stdout.write(`  ${dim("no change")}\n\n`);
+              return;
+            }
+
+            const row = statusRows.find((r) => r.id === chosen.id)!;
+            const preset = getPreset(chosen.id);
+            const accounts = accountChoices(preset, row, customEp, process.env);
+
+            // ── Level 2: accounts / endpoints (skipped when only one path) ──
+            let account = accounts[0];
+            if (accounts.length > 1) {
+              process.stdout.write(`\n  ${bold(text(`Model · ${chosen.label}`))}\n\n`);
+              accounts.forEach((ac, i) =>
+                process.stdout.write(formatAccountLine(i + 1, ac) + "\n"),
+              );
+              process.stdout.write(`    ${warn("[b]")} ${faint("back")}\n\n`);
+              const a2 = (await ask(`  ${info("›")} `)).toLowerCase();
+              if (a2 === "b" || !a2) return;
+              account = accounts[Number(a2) - 1];
+              if (!account) {
+                process.stdout.write(`  ${dim("no change")}\n\n`);
+                return;
+              }
+              // Picking a pooled key makes it the ACTIVE key — persisted and
+              // applied to the live gateway, same as the /keys manager.
+              if (account.kind === "key" && account.entryId && !account.active) {
+                const file = persistSetActiveKey(chosen.id, account.entryId);
+                engine.setProviderKeys(
+                  chosen.id,
+                  providerKeyEntries(file, chosen.id),
+                  file.activeKeyId?.[chosen.id],
+                  sessionId,
+                );
+                process.stdout.write(
+                  `  ${green("✓")} ${dim("active key now")} ${text(account.label)} ${dim(account.detail)}\n`,
+                );
+              }
+              // Honest wire note: selecting a path that BYOP outranks.
+              if (row.source === "oauth" || row.source === "keychain") {
+                if (account.kind === "key" || account.kind === "env") {
+                  process.stdout.write(
+                    `  ${dim(`note: the signed-in ${row.source} credential wins on the wire —`)} ${info(`gear logout ${chosen.id}`)} ${dim("to use API keys")}\n`,
+                  );
+                }
+              } else if (account.kind === "env" && accounts.some((x) => x.kind === "key")) {
+                process.stdout.write(
+                  `  ${dim("note: the saved key wins on the wire —")} ${info(`/keys clear ${chosen.id}`)} ${dim("to use the env key")}\n`,
+                );
+              }
+            }
+
+            // ── Level 3: models under that account ──
+            let live: string[] | null = null;
+            if (preset && (chosen.local || account?.kind === "endpoint")) {
+              live = await fetchLiveModels(preset.kind, row.endpoint ?? preset.baseUrl ?? "");
+            }
+            const models = modelChoices(preset, chosen.id, {
+              live,
+              custom: customEp,
+              current,
+              def,
+            });
+
+            const crumb =
+              accounts.length > 1 && account
+                ? `Model · ${chosen.label} · ${account.label.replace("API key · ", "key ")}`
+                : `Model · ${chosen.label}`;
+            process.stdout.write(`\n  ${bold(text(crumb))}\n`);
+            if (chosen.local && !live) {
+              process.stdout.write(
+                `  ${dim(`endpoint ${row.endpoint ?? ""} not reachable — showing suggestions`)}\n`,
+              );
+            }
+            process.stdout.write("\n");
+            models.forEach((m, i) => process.stdout.write(formatModelLine(i + 1, m) + "\n"));
+            process.stdout.write(`    ${warn("[m]")} ${faint("type a model id")}\n\n`);
+            process.stdout.write(
+              `  ${faint("number = use now · d<number> = set as default · b = back")}\n`,
+            );
+
+            const a3 = (await ask(`  ${info("›")} `)).toLowerCase();
+            if (a3 === "b" || !a3) return;
+            if (a3 === "m") {
+              const mod = await ask(`  ${dim("model id")} ${info("›")} `);
+              if (mod) applySwitch(chosen.id, mod, false);
+              else process.stdout.write(`  ${dim("no change")}\n\n`);
+              return;
+            }
+            const asDefault = a3.startsWith("d");
+            const pick = models[Number(asDefault ? a3.slice(1) : a3) - 1];
+            if (!pick) {
+              process.stdout.write(`  ${dim("no change")}\n\n`);
+              return;
+            }
+            applySwitch(chosen.id, pick.id, asDefault);
+          } finally {
+            showPrompt();
+          }
+        })();
         return;
       }
 
       if (input.startsWith("/model ")) {
-        // Quick switch: /model provider/model
+        // Quick switches: `/model provider/model` (session only) and
+        // `/model default [provider/model]` (persist the startup default).
         const arg = input.slice(7).trim();
-        const slashIdx = arg.indexOf("/");
-        if (slashIdx > 0) {
-          const prov = arg.slice(0, slashIdx);
-          const mod = arg.slice(slashIdx + 1);
+
+        if (arg === "default" || arg.startsWith("default ")) {
+          const rest = arg.slice("default".length).trim();
+          if (!rest) {
+            const def = loadLastModel();
+            process.stdout.write(
+              def
+                ? `  ${accent("◆")} default: ${info(`${def.provider}/${def.model}`)} ${dim("· change: /model default <provider>/<model>")}\n\n`
+                : `  ${dim("no default set — /model default <provider>/<model>, or d<n> in /model")}\n\n`,
+            );
+            showPrompt();
+            return;
+          }
+          const si = rest.indexOf("/");
+          const prov = si > 0 ? rest.slice(0, si) : engine.getProvider();
+          const mod = si > 0 ? rest.slice(si + 1) : rest;
           engine.switchModel(mod, prov as any, sessionId);
           saveLastModel({ provider: engine.getProvider(), model: engine.getModel() });
           process.stdout.write(
-            `  ${green("✓")} switched to ${cyanotype(prov)}${dim("/")}${brass(mod)}\n\n`,
+            `  ${accent("◆")} default set — ${info(`${engine.getProvider()}/${engine.getModel()}`)} ${dim("(used at startup)")}\n\n`,
           );
+          showPrompt();
+          return;
+        }
+
+        const slashIdx = arg.indexOf("/");
+        if (slashIdx > 0) {
+          engine.switchModel(arg.slice(slashIdx + 1), arg.slice(0, slashIdx) as any, sessionId);
         } else {
           // Treat as model name with current provider
           engine.switchModel(arg, undefined, sessionId);
-          saveLastModel({ provider: engine.getProvider(), model: engine.getModel() });
-          process.stdout.write(`  ${green("✓")} switched to ${brass(arg)}\n\n`);
         }
+        process.stdout.write(
+          `  ${green("✓")} switched to ${info(`${engine.getProvider()}/${engine.getModel()}`)} ${dim("· session only — /model default to persist")}\n\n`,
+        );
         showPrompt();
         return;
       }
