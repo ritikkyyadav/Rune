@@ -145,7 +145,7 @@ describe("PermissionBroker under org policy", () => {
     const res = broker.setMode("turing");
     expect(res.ok).toBe(false);
     expect(res.reason).toMatch(/forbids/);
-    expect(broker.getMode()).toBe("confirm");
+    expect(broker.getMode()).toBe("gear-1");
     // Allowed modes still work.
     expect(broker.setMode("auto").ok).toBe(true);
     expect(broker.getMode()).toBe("auto");
@@ -155,7 +155,7 @@ describe("PermissionBroker under org policy", () => {
     const broker = new PermissionBroker(true, {});
     expect(broker.check(webSchema, { url: "https://x" }).type).toBe("allowed");
     expect(broker.setMode("turing").ok).toBe(true);
-    expect(broker.getMode()).toBe("autonomy-iii");
+    expect(broker.getMode()).toBe("gear-4");
   });
 });
 

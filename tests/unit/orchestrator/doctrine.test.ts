@@ -20,8 +20,8 @@ describe("AGENT_DOCTRINE — agency layer", () => {
     expect(AGENT_DOCTRINE).toContain("Act on reasonable assumptions");
   });
 
-  test("Autonomy III means no human mid-task", () => {
-    expect(AGENT_DOCTRINE).toContain("In Autonomy III there is no human mid-task");
+  test("4th gear means no human mid-task", () => {
+    expect(AGENT_DOCTRINE).toContain("In 4th gear (full autonomy) there is no human mid-task");
   });
 
   test("delegation teaches parallel fan-out", () => {

@@ -3,6 +3,7 @@
 // and a footer that keeps control state visible. Readline and raw-mode TUI use the
 // same language so switching surfaces never feels like switching products.
 
+import { configModeToPermissionMode, type PermissionMode } from "../../permissions";
 import * as os from "os";
 import {
   isOsIsolationAvailable,
@@ -59,22 +60,11 @@ export interface ComposerStatus {
   theme?: "light" | "dark" | "auto" | string;
 }
 
-export type PermissionModeId = "confirm" | "autonomy-i" | "autonomy-ii" | "autonomy-iii" | "auto";
+export type PermissionModeId = PermissionMode;
 
-/** Normalize historical bypass spellings onto the five-mode ladder. */
+/** Normalize any spelling (canonical ids, legacy autonomy/hands-free names) onto the five gears. */
 export function normalizeMode(mode?: string): PermissionModeId {
-  if (
-    mode === "autonomy-iii" ||
-    mode === "turing" ||
-    mode === "yolo" ||
-    mode === "hands-free" ||
-    mode === "handsfree"
-  )
-    return "autonomy-iii";
-  if (mode === "autonomy-ii") return "autonomy-ii";
-  if (mode === "autonomy-i") return "autonomy-i";
-  if (mode === "auto" || mode === "trusted") return "auto";
-  return "confirm";
+  return configModeToPermissionMode(mode) ?? "gear-1";
 }
 
 /**
@@ -101,9 +91,9 @@ export interface ModeInfo {
 
 export function modeInfo(mode?: string): ModeInfo {
   switch (normalizeMode(mode)) {
-    case "autonomy-i":
+    case "gear-2":
       return {
-        id: "autonomy-i",
+        id: "gear-2",
         label: "2nd gear",
         arrows: "▸▸",
         desc: "workspace edits proceed",
@@ -112,9 +102,9 @@ export function modeInfo(mode?: string): ModeInfo {
         paint: warn,
         loud: false,
       };
-    case "autonomy-ii":
+    case "gear-3":
       return {
-        id: "autonomy-ii",
+        id: "gear-3",
         label: "3rd gear",
         arrows: "▸▸▸",
         desc: "edits + sandboxed shell",
@@ -123,13 +113,13 @@ export function modeInfo(mode?: string): ModeInfo {
         paint: warn,
         loud: false,
       };
-    case "autonomy-iii":
+    case "gear-4":
       return {
-        id: "autonomy-iii",
+        id: "gear-4",
         label: "4th gear",
         arrows: "▸▸▸▸",
-        desc: "full access · no prompts",
-        detail: "full system access; sandbox off; Gear acts without permission prompts.",
+        desc: "full autonomy · no prompts",
+        detail: "Gear acts without permission prompts; the OS sandbox is unchanged (see /sandbox).",
         paint: warn,
         loud: true,
       };
@@ -145,7 +135,7 @@ export function modeInfo(mode?: string): ModeInfo {
       };
     default:
       return {
-        id: "confirm",
+        id: "gear-1",
         label: "1st gear",
         arrows: "▸",
         desc: "every action asks first",

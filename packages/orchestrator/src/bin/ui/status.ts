@@ -1,5 +1,6 @@
 // ─── /status — Gear session card ───
 
+import type { PermissionMode } from "../../permissions";
 import * as os from "os";
 import { bold, text, muted, faint, info, warn } from "./theme";
 import { box, kv } from "./render";
@@ -20,7 +21,7 @@ export interface StatusView {
   yoloMode?: boolean;
   trustWorkspace?: boolean;
   /** Active permission mode; falls back to the yolo/trust booleans when absent. */
-  permissionMode?: "confirm" | "autonomy-i" | "autonomy-ii" | "autonomy-iii" | "auto";
+  permissionMode?: PermissionMode;
   /** OS command sandbox: true = sandboxed, false = full access. Absent hides the row. */
   sandboxEnabled?: boolean;
   /** True when the sandbox is on but this machine has no OS isolation backend. */
@@ -42,13 +43,13 @@ export interface StatusView {
 }
 
 function permissionsLabel(s: StatusView): string {
-  const mode =
-    s.permissionMode ?? (s.yoloMode ? "autonomy-iii" : s.trustWorkspace ? "auto" : "confirm");
-  if (mode === "autonomy-iii") return bold(warn("⚡ Autonomy III · full system access"));
-  if (mode === "autonomy-ii") return warn("Autonomy II · sandboxed execution");
-  if (mode === "autonomy-i") return warn("Autonomy I · workspace edits");
-  if (mode === "auto") return warn("auto · classifier-reviewed");
-  return text("confirm · on-request");
+  const mode: PermissionMode =
+    s.permissionMode ?? (s.yoloMode ? "gear-4" : s.trustWorkspace ? "gear-3" : "gear-1");
+  if (mode === "gear-4") return bold(warn("▸▸▸▸ 4th gear · full autonomy, no prompts"));
+  if (mode === "gear-3") return warn("▸▸▸ 3rd gear · edits + sandboxed shell");
+  if (mode === "gear-2") return warn("▸▸ 2nd gear · workspace edits");
+  if (mode === "auto") return warn("◆ auto · classifier-reviewed");
+  return text("▸ 1st gear · guided");
 }
 
 export function renderStatus(s: StatusView): string {
@@ -121,8 +122,7 @@ export function renderStatus(s: StatusView): string {
   }
   if (s.providerHealth && (s.providerHealth.pruned.length || s.providerHealth.cooling.length)) {
     const bits: string[] = [];
-    if (s.providerHealth.pruned.length)
-      bits.push(`pruned: ${s.providerHealth.pruned.join(", ")}`);
+    if (s.providerHealth.pruned.length) bits.push(`pruned: ${s.providerHealth.pruned.join(", ")}`);
     for (const c of s.providerHealth.cooling) {
       const secs = Math.max(0, Math.ceil((c.untilMs - Date.now()) / 1000));
       bits.push(`${c.provider} cooling ${secs}s`);

@@ -17,8 +17,8 @@ import {
  * value; this tool validates them against a fixed catalog (so it can only touch
  * known settings), applies the change, then persists it.
  *
- * It is a `confirm`-level tool on purpose: switching to Autonomy III or turning the
- * sandbox off removes a guardrail, so outside Autonomy III the user sees a
+ * It is a `confirm`-level tool on purpose: shifting to 4th gear or turning the
+ * sandbox off removes a guardrail, so outside 4th gear the user sees a
  * permission prompt first — an errant/injected instruction can't silently weaken
  * the setup.
  */
@@ -46,13 +46,14 @@ export const UPDATE_CONFIG_TOOL_SCHEMA: ToolSchema = {
       setting: {
         type: "string",
         description:
-          "Which setting to change: permission_mode, sandbox, or auto_commit (aliases like " +
-          '"mode" work). Omit to list all current settings.',
+          "Which setting to change: gear, sandbox, or auto_commit (aliases like " +
+          '"mode" or "permission_mode" work). Omit to list all current settings.',
       },
       value: {
         type: "string",
         description:
-          'The new value, e.g. "autonomy-i" / "autonomy-iii" / "auto" for permission_mode, or ' +
+          'The new value, e.g. "1" / "2" / "3" / "4" / "auto" for gear (1 guided · 2 edits · ' +
+          "3 workspace + sandboxed shell · 4 full autonomy · auto classifier), or " +
           '"on"/"off" for sandbox and auto_commit. Omit to read the current value.',
       },
     },
@@ -178,8 +179,8 @@ export function createUpdateConfigTool(deps: UpdateConfigDeps): ToolHandler {
 
 /** A short, honest caution when a change removes a guardrail. */
 function sensitivityNote(key: string, canonical: string): string {
-  if (key === "permission_mode" && canonical === "autonomy-iii") {
-    return " ⚠ Autonomy III gives Gear full host access and removes permission prompts.";
+  if ((key === "gear" || key === "permission_mode") && canonical === "4") {
+    return " ⚠ 4th gear removes every permission prompt (the sandbox switch is separate).";
   }
   if (key === "sandbox" && canonical === "false") {
     return " ⚠ Sandbox off means shell commands have full host + network access.";

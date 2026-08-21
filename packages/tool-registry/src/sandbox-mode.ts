@@ -16,7 +16,7 @@
 //                filesystem access. Nothing is contained, so the permission
 //                broker stops treating bash as auto-approvable under
 //                workspace trust — in auto mode every command prompts, and
-//                only Hands-Free skips prompts (its existing contract).
+//                only 4th gear (full autonomy) skips prompts.
 
 export type SandboxMode = "on" | "off";
 

@@ -142,7 +142,7 @@ const BASH_DESC_DEGRADED =
   " The sandbox is ON but this machine has NO OS isolation backend: commands run with path-guard checks only — full network and host filesystem access, nothing is contained. Do not set network: true — it is unnecessary. Treat every command as running directly on the user's machine.";
 
 const BASH_NET_DESC_SANDBOXED =
-  "Run OUTSIDE the sandbox with full network and filesystem access. Required for package installs, git remote operations, and any command that talks to the internet. Prompts the user for approval unless they enabled Hands-Free mode.";
+  "Run OUTSIDE the sandbox with full network and filesystem access. Required for package installs, git remote operations, and any command that talks to the internet. Prompts the user for approval unless the session is in 4th gear (full autonomy).";
 
 const BASH_NET_DESC_FULL_ACCESS =
   "No effect — the sandbox is disabled, so every command already has full network and filesystem access.";

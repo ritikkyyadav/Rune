@@ -52,6 +52,7 @@ import {
   resolveStartupPermissionFlags,
   permissionModeToConfig,
 } from "../permissions";
+import type { PermissionMode } from "../permissions";
 
 // ─── stdout discipline ───
 // Grab the real writer FIRST, then route every console.* to stderr so nothing
@@ -193,6 +194,7 @@ function buildEngine(): Engine {
   applySearchKeysToEnv();
 
   const permissionFlags = resolveStartupPermissionFlags({
+    configGear: config.permissions?.gear,
     configMode: config.permissions?.mode,
     configTrustWorkspace: config.permissions?.trustWorkspace,
   });
@@ -461,19 +463,24 @@ async function dispatch(cmd: string, args: Record<string, unknown>): Promise<unk
 
       const permissionLevel = args.permissionLevel as string | undefined;
       if (permissionLevel) {
-        const mode =
+        // Desktop vocabulary: "auto_allow" was workspace trust (3rd gear), "ask"
+        // is 1st gear; anything else is a gear spelling. The change applies to
+        // THIS engine only — a desktop toggle must not silently rewrite the
+        // CLI's global config.toml (pass `persist: true` to opt in).
+        const mode: PermissionMode | undefined =
           permissionLevel === "auto_allow"
-            ? "auto"
+            ? "gear-3"
             : permissionLevel === "ask"
-              ? "confirm"
+              ? "gear-1"
               : configModeToPermissionMode(permissionLevel);
         if (mode) {
           const changed = engine.setPermissionMode(mode);
-          if (!changed.ok)
-            throw new Error(changed.reason ?? `permission mode ${mode} is unavailable`);
-          setConfigValue("permissions.mode", permissionModeToConfig(mode), {
-            scope: "global",
-          });
+          if (!changed.ok) throw new Error(changed.reason ?? `gear ${mode} is unavailable`);
+          if (args.persist === true) {
+            setConfigValue("permissions.gear", permissionModeToConfig(mode), {
+              scope: "global",
+            });
+          }
         }
       }
 

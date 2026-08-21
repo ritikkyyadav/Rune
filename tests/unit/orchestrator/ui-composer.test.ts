@@ -314,8 +314,12 @@ describe("ui/composer statusLine + permission mode", () => {
     expect(stripAnsi(statusLine({ model: "m", workspace: "/w", mode: "yolo" }))).toContain(
       "4th gear",
     );
+    // legacy "trusted" = the old workspace trust = 3rd gear, never the classifier
     expect(stripAnsi(statusLine({ model: "m", workspace: "/w", mode: "trusted" }))).toContain(
-      "◆ auto",
+      "3rd gear",
+    );
+    expect(stripAnsi(statusLine({ model: "m", workspace: "/w", mode: "gear-4" }))).toContain(
+      "4th gear",
     );
   });
 
@@ -337,7 +341,8 @@ describe("ui/composer statusLine + permission mode", () => {
   it("permissionModeBanner names each gear and mentions shift+tab", () => {
     const fourth = stripAnsi(permissionModeBanner("autonomy-iii"));
     expect(fourth).toMatch(/4th gear/);
-    expect(fourth).toMatch(/full system access/i);
+    expect(fourth).toMatch(/without permission prompts/i);
+    expect(stripAnsi(permissionModeBanner("gear-4"))).toBe(fourth);
     expect(fourth).toMatch(/shift\+tab/i);
 
     expect(stripAnsi(permissionModeBanner("autonomy-i"))).toMatch(/2nd gear.*workspace edits/i);

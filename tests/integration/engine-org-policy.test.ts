@@ -68,11 +68,11 @@ describe("Engine under org policy", () => {
         expect(status.orgPolicy?.org).toBe("Acme");
         expect(status.orgPolicy?.fingerprint).toHaveLength(16);
         // yoloMode:true in config was stripped by the forbidden-mode rule.
-        expect(engine.getPermissionMode()).not.toBe("autonomy-iii");
+        expect(engine.getPermissionMode()).not.toBe("gear-4");
         // The Shift+Tab cycle can never land on the forbidden mode.
         const seen = new Set<string>();
         for (let i = 0; i < 6; i++) seen.add(engine.cyclePermissionMode());
-        expect(seen.has("autonomy-iii")).toBe(false);
+        expect(seen.has("gear-4")).toBe(false);
         expect(engine.setPermissionMode("turing").ok).toBe(false);
       } finally {
         engine.close();
@@ -84,7 +84,7 @@ describe("Engine under org policy", () => {
     const engine = makeEngine();
     try {
       expect(engine.getStatus().orgPolicy).toBeNull();
-      expect(engine.getPermissionMode()).toBe("autonomy-iii");
+      expect(engine.getPermissionMode()).toBe("gear-4");
     } finally {
       engine.close();
     }

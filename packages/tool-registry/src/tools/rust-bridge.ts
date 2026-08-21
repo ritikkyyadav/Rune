@@ -24,7 +24,7 @@ export function createRustToolHandler(
         // (network: true), which escalates to an unsandboxed run, or when the
         // user disabled the sandbox entirely (/sandbox off, --no-sandbox).
         // The per-call escalation is permission-gated upstream: the broker
-        // never auto-approves a network run outside Hands-Free mode.
+        // never auto-approves a network run outside 4th gear.
         if (
           schema.permissionLevel === "sandbox" &&
           input.args.network !== true &&

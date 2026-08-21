@@ -55,19 +55,22 @@ const call = (args: Record<string, unknown>) => ({
 
 describe("config-settings catalog", () => {
   it("resolves a setting by canonical key and aliases", () => {
-    expect(resolveSetting("permission_mode")?.key).toBe("permission_mode");
-    expect(resolveSetting("mode")?.key).toBe("permission_mode");
-    expect(resolveSetting("Permissions")?.key).toBe("permission_mode");
+    expect(resolveSetting("gear")?.key).toBe("gear");
+    expect(resolveSetting("permission_mode")?.key).toBe("gear");
+    expect(resolveSetting("mode")?.key).toBe("gear");
+    expect(resolveSetting("Permissions")?.key).toBe("gear");
     expect(resolveSetting("auto commit")?.key).toBe("auto_commit");
     expect(resolveSetting("nonsense")).toBeUndefined();
   });
 
   it("normalizes enum values and their aliases", () => {
-    const mode = resolveSetting("permission_mode")!;
-    expect(normalizeSettingValue(mode, "hands-free")).toEqual({ value: "autonomy-iii" });
-    expect(normalizeSettingValue(mode, "yolo")).toEqual({ value: "autonomy-iii" });
-    expect(normalizeSettingValue(mode, "normal")).toEqual({ value: "confirm" });
-    expect(normalizeSettingValue(mode, "trusted")).toEqual({ value: "auto" });
+    const mode = resolveSetting("gear")!;
+    expect(normalizeSettingValue(mode, "hands-free")).toEqual({ value: "4" });
+    expect(normalizeSettingValue(mode, "yolo")).toEqual({ value: "4" });
+    expect(normalizeSettingValue(mode, "4th gear")).toEqual({ value: "4" });
+    expect(normalizeSettingValue(mode, "normal")).toEqual({ value: "1" });
+    expect(normalizeSettingValue(mode, "trusted")).toEqual({ value: "3" });
+    expect(normalizeSettingValue(mode, "auto")).toEqual({ value: "auto" });
     expect("error" in normalizeSettingValue(mode, "banana")).toBe(true);
   });
 
@@ -81,19 +84,19 @@ describe("config-settings catalog", () => {
 });
 
 describe("update_config tool", () => {
-  it("migrates hands-free to Autonomy III: applied live AND persisted", async () => {
+  it("migrates hands-free to 4th gear: applied live AND persisted", async () => {
     const { deps, applied } = fakeDeps();
     const tool = createUpdateConfigTool(deps);
     const out = await tool.execute(call({ setting: "mode", value: "hands-free" }));
     expect(out.success).toBe(true);
-    expect(applied).toEqual([{ key: "permission_mode", value: "autonomy-iii" }]);
-    // Written to the (redirected) config file.
+    expect(applied).toEqual([{ key: "gear", value: "4" }]);
+    // Written to the (redirected) config file — under the new key.
     expect(existsSync(configPath)).toBe(true);
     const toml = readFileSync(configPath, "utf-8");
     expect(toml).toContain("[permissions]");
-    expect(toml).toContain('mode = "autonomy-iii"');
+    expect(toml).toContain('gear = "4"');
     // The result warns about the removed guardrail.
-    expect(out.result).toContain("Autonomy III");
+    expect(out.result).toContain("4th gear");
   });
 
   it("turns the sandbox off and writes a real boolean", async () => {

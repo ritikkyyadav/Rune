@@ -6,6 +6,10 @@ import {
   PERMISSION_MODE_ORDER,
   resolveStartupPermissionFlags,
   type PermissionMode,
+  legacyConfigModeToPermissionMode,
+  permissionModeToConfig,
+  gearLabel,
+  GEAR_MODES,
 } from "../../../packages/orchestrator/src/permissions";
 import { setSandboxCapability } from "../../../packages/tool-registry/src/sandbox-capability";
 
@@ -54,7 +58,7 @@ describe("PermissionBroker", () => {
     expect(result.type).toBe("allowed");
   });
 
-  test("legacy yolo startup logs an Autonomy III warning", () => {
+  test("legacy yolo startup logs a 4th-gear warning", () => {
     const warnSpy = spyOn(console, "warn");
     const yoloBroker = new PermissionBroker(true);
     const schema = {
@@ -66,7 +70,7 @@ describe("PermissionBroker", () => {
     yoloBroker.check(schema, {});
     expect(warnSpy).toHaveBeenCalled();
     const msg = warnSpy.mock.calls[0]?.[0] as string;
-    expect(msg).toContain("Autonomy III");
+    expect(msg).toContain("4th gear");
     warnSpy.mockRestore();
   });
 
@@ -214,43 +218,84 @@ describe("PermissionBroker — permission modes (the Shift+Tab cycle)", () => {
     parameters: [],
   };
 
-  test("nextPermissionMode cycles confirm → Autonomy I → II → III → Auto", () => {
-    expect(nextPermissionMode("confirm")).toBe("autonomy-i");
-    expect(nextPermissionMode("autonomy-i")).toBe("autonomy-ii");
-    expect(nextPermissionMode("autonomy-ii")).toBe("autonomy-iii");
-    expect(nextPermissionMode("autonomy-iii")).toBe("auto");
-    expect(nextPermissionMode("auto")).toBe("confirm");
+  test("nextPermissionMode shifts up 1st → 2nd → 3rd → 4th → auto and wraps", () => {
+    expect(nextPermissionMode("gear-1")).toBe("gear-2");
+    expect(nextPermissionMode("gear-2")).toBe("gear-3");
+    expect(nextPermissionMode("gear-3")).toBe("gear-4");
+    expect(nextPermissionMode("gear-4")).toBe("auto");
+    expect(nextPermissionMode("auto")).toBe("gear-1");
     // Five full steps return to the start.
-    let m: PermissionMode = "confirm";
+    let m: PermissionMode = "gear-1";
     for (const _ of PERMISSION_MODE_ORDER) m = nextPermissionMode(m);
-    expect(m).toBe("confirm");
+    expect(m).toBe("gear-1");
   });
 
-  test("startup config and legacy aliases preserve the selected autonomy level", () => {
-    expect(configModeToPermissionMode("Autonomy II")).toBe("autonomy-ii");
-    expect(configModeToPermissionMode("hands-free")).toBe("autonomy-iii");
-    expect(resolveStartupPermissionFlags({ configMode: "autonomy-i" }).permissionMode).toBe(
-      "autonomy-i",
+  test("gear grammar: numbers, ordinals, ids, words — and the legacy 'auto' means 3rd gear only on the old key", () => {
+    for (const v of ["1", "1st", "first", "gear-1", "gear 1", "g1", "confirm", "guided"])
+      expect(configModeToPermissionMode(v)).toBe("gear-1");
+    for (const v of ["2", "2nd", "second", "gear-2", "autonomy-i", "Autonomy I", "edits"])
+      expect(configModeToPermissionMode(v)).toBe("gear-2");
+    for (const v of ["3", "3rd", "third", "gear-3", "autonomy-ii", "trusted", "auto-approve"])
+      expect(configModeToPermissionMode(v)).toBe("gear-3");
+    for (const v of [
+      "4",
+      "4th",
+      "fourth",
+      "gear-4",
+      "autonomy-iii",
+      "hands-free",
+      "turing",
+      "yolo",
+    ])
+      expect(configModeToPermissionMode(v)).toBe("gear-4");
+    for (const v of ["auto", "automatic", "classifier"])
+      expect(configModeToPermissionMode(v)).toBe("auto");
+    expect(configModeToPermissionMode("banana")).toBeUndefined();
+    // The OLD [permissions] mode = "auto" meant workspace trust → 3rd gear.
+    expect(legacyConfigModeToPermissionMode("auto")).toBe("gear-3");
+    expect(resolveStartupPermissionFlags({ configMode: "auto" }).permissionMode).toBe("gear-3");
+    // The NEW [permissions] gear = "auto" is the classifier.
+    expect(resolveStartupPermissionFlags({ configGear: "auto" }).permissionMode).toBe("auto");
+    expect(resolveStartupPermissionFlags({ configGear: 4 }).permissionMode).toBe("gear-4");
+    // Precedence: --gear beats everything, then legacy --autonomy, --yolo, --trust, config.
+    expect(
+      resolveStartupPermissionFlags({ gearFlag: "2", modeFlag: "III", yoloFlag: true })
+        .permissionMode,
+    ).toBe("gear-2");
+    expect(resolveStartupPermissionFlags({ trustFlag: true, configGear: "4" }).permissionMode).toBe(
+      "gear-3",
     );
-    expect(resolveStartupPermissionFlags({ modeFlag: "III" }).permissionMode).toBe("autonomy-iii");
-    expect(resolveStartupPermissionFlags({ trustFlag: true }).permissionMode).toBe("auto");
+    expect(permissionModeToConfig("gear-3")).toBe("3");
+    expect(permissionModeToConfig("auto")).toBe("auto");
+    expect(gearLabel("gear-4")).toBe("4th gear");
+    expect(GEAR_MODES).toEqual(["gear-1", "gear-2", "gear-3", "gear-4", "auto"]);
   });
 
-  test("setMode tracks all five levels and legacy turing maps to Autonomy III", () => {
+  test("startup config and legacy aliases resolve to the intended gear", () => {
+    expect(configModeToPermissionMode("Autonomy II")).toBe("gear-3");
+    expect(configModeToPermissionMode("hands-free")).toBe("gear-4");
+    expect(resolveStartupPermissionFlags({ configMode: "autonomy-i" }).permissionMode).toBe(
+      "gear-2",
+    );
+    expect(resolveStartupPermissionFlags({ modeFlag: "III" }).permissionMode).toBe("gear-4");
+    expect(resolveStartupPermissionFlags({ trustFlag: true }).permissionMode).toBe("gear-3");
+  });
+
+  test("setMode tracks all five gears and legacy turing maps to 4th gear", () => {
     const broker = new PermissionBroker(false, { workspaceRoot: WS });
-    expect(broker.getMode()).toBe("confirm");
+    expect(broker.getMode()).toBe("gear-1");
 
     broker.setMode("autonomy-i");
-    expect(broker.getMode()).toBe("autonomy-i");
+    expect(broker.getMode()).toBe("gear-2");
     expect(broker.isTrustWorkspace()).toBe(true);
     expect(broker.isYoloMode()).toBe(false);
 
     broker.setMode("autonomy-ii");
-    expect(broker.getMode()).toBe("autonomy-ii");
+    expect(broker.getMode()).toBe("gear-3");
     expect(broker.isTrustWorkspace()).toBe(true);
 
     broker.setMode("turing"); // migration alias
-    expect(broker.getMode()).toBe("autonomy-iii");
+    expect(broker.getMode()).toBe("gear-4");
     expect(broker.isYoloMode()).toBe(true);
     expect(broker.isTrustWorkspace()).toBe(false);
 
@@ -260,7 +305,7 @@ describe("PermissionBroker — permission modes (the Shift+Tab cycle)", () => {
     expect(broker.isYoloMode()).toBe(false);
 
     broker.setMode("confirm");
-    expect(broker.getMode()).toBe("confirm");
+    expect(broker.getMode()).toBe("gear-1");
     expect(broker.isYoloMode()).toBe(false);
     expect(broker.isTrustWorkspace()).toBe(false);
   });

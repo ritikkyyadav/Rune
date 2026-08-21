@@ -11,13 +11,13 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-describe("Engine five-state Shift+Tab permission cycle", () => {
-  test("four presses from Confirm reach classifier Auto after Autonomy I, II, and III", () => {
-    const root = mkdtempSync(join(tmpdir(), "elio-autonomy-cycle-"));
+describe("Engine five-gear Shift+Tab cycle", () => {
+  test("four shifts from 1st gear reach auto via 2nd, 3rd, and 4th — the sandbox never moves", () => {
+    const root = mkdtempSync(join(tmpdir(), "gear-cycle-"));
     roots.push(root);
     const engine = new Engine({
       workspaceRoot: root,
-      dbPath: join(root, "elio.db"),
+      dbPath: join(root, "gear.db"),
       sandboxEnabled: true,
       enableMcp: false,
       enableSkills: false,
@@ -25,39 +25,70 @@ describe("Engine five-state Shift+Tab permission cycle", () => {
     });
 
     try {
-      expect(engine.getPermissionMode()).toBe("confirm");
+      expect(engine.getPermissionMode()).toBe("gear-1");
       expect(engine.isSandboxEnabled()).toBe(true);
 
-      expect(engine.cyclePermissionMode()).toBe("autonomy-i");
-      expect(engine.cyclePermissionMode()).toBe("autonomy-ii");
-      expect(engine.cyclePermissionMode()).toBe("autonomy-iii");
-      expect(engine.isSandboxEnabled()).toBe(false);
+      expect(engine.cyclePermissionMode()).toBe("gear-2");
+      expect(engine.cyclePermissionMode()).toBe("gear-3");
+      expect(engine.cyclePermissionMode()).toBe("gear-4");
+      // 4th gear removes the prompts, not the containment: the OS sandbox is
+      // an independent switch and must stay exactly as the user left it.
+      expect(engine.isSandboxEnabled()).toBe(true);
 
-      // The fourth Shift+Tab enters Auto and restores containment.
       expect(engine.cyclePermissionMode()).toBe("auto");
       expect(engine.isSandboxEnabled()).toBe(true);
 
-      expect(engine.cyclePermissionMode()).toBe("confirm");
+      expect(engine.cyclePermissionMode()).toBe("gear-1");
     } finally {
       engine.close();
     }
   });
 
-  test("legacy Hands-Free/turing input is canonicalized to Autonomy III", () => {
-    const root = mkdtempSync(join(tmpdir(), "elio-autonomy-alias-"));
+  test("a session started with the sandbox off keeps it off through 4th gear and back", () => {
+    const root = mkdtempSync(join(tmpdir(), "gear-cycle-nosandbox-"));
     roots.push(root);
     const engine = new Engine({
       workspaceRoot: root,
-      dbPath: join(root, "elio.db"),
+      dbPath: join(root, "gear.db"),
+      sandboxEnabled: false,
+      enableMcp: false,
+      enableSkills: false,
+      enableVerification: false,
+    });
+    try {
+      expect(engine.isSandboxEnabled()).toBe(false);
+      expect(engine.setPermissionMode("4").ok).toBe(true);
+      expect(engine.isSandboxEnabled()).toBe(false);
+      expect(engine.setPermissionMode("1st gear").ok).toBe(true);
+      expect(engine.isSandboxEnabled()).toBe(false);
+    } finally {
+      engine.close();
+    }
+  });
+
+  test("legacy spellings canonicalize: turing/hands-free/yolo/autonomy-iii → 4th gear, confirm → 1st", () => {
+    const root = mkdtempSync(join(tmpdir(), "gear-alias-"));
+    roots.push(root);
+    const engine = new Engine({
+      workspaceRoot: root,
+      dbPath: join(root, "gear.db"),
       enableMcp: false,
       enableSkills: false,
       enableVerification: false,
     });
 
     try {
-      expect(engine.setPermissionMode("turing").ok).toBe(true);
-      expect(engine.getPermissionMode()).toBe("autonomy-iii");
-      expect(engine.setPermissionMode("confirm").ok).toBe(true);
+      for (const legacy of ["turing", "hands-free", "yolo", "autonomy-iii", "4th", "gear 4"]) {
+        expect(engine.setPermissionMode(legacy).ok).toBe(true);
+        expect(engine.getPermissionMode()).toBe("gear-4");
+        expect(engine.setPermissionMode("confirm").ok).toBe(true);
+        expect(engine.getPermissionMode()).toBe("gear-1");
+      }
+      expect(engine.setPermissionMode("autonomy-i").ok).toBe(true);
+      expect(engine.getPermissionMode()).toBe("gear-2");
+      expect(engine.setPermissionMode("autonomy-ii").ok).toBe(true);
+      expect(engine.getPermissionMode()).toBe("gear-3");
+      expect(engine.setPermissionMode("nonsense").ok).toBe(false);
     } finally {
       engine.close();
     }
