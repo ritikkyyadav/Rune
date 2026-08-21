@@ -96,7 +96,7 @@ export function useSession() {
 
   // ─── Select / resume session ───
 
-  const selectSession = useCallback(async (sessionId: string) => {
+  const selectSession = useCallback(async (sessionId: string): Promise<ChatMessage[]> => {
     setState((prev) => ({
       ...prev,
       activeSessionId: sessionId,
@@ -116,16 +116,18 @@ export function useSession() {
           messages: history,
           isLoading: false,
         }));
-      } else {
-        // Tauri not available -- just clear loading
-        setState((prev) => ({ ...prev, isLoading: false }));
+        return history;
       }
+      // Tauri not available -- just clear loading
+      setState((prev) => ({ ...prev, isLoading: false }));
+      return [];
     } catch (err) {
       setState((prev) => ({
         ...prev,
         isLoading: false,
         error: err instanceof Error ? err.message : "Failed to load session history",
       }));
+      return [];
     }
   }, []);
 

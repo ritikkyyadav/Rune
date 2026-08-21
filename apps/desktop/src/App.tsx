@@ -1,448 +1,625 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BrandMark } from "./components/BrandMark";
-import { Composer, type ComposerAttachment } from "./components/Composer";
-import { EnvironmentPanel, summarizeChanges } from "./components/EnvironmentPanel";
-import {
-  ChatIcon,
-  ChevronDownIcon,
-  ComposeIcon,
-  FolderIcon,
-  MoreIcon,
-  PanelIcon,
-  ReviewIcon,
-  SearchIcon,
-  SettingsIcon,
-  SidebarIcon,
-  UserIcon,
-} from "./components/Icons";
-import { MessageStream } from "./components/MessageStream";
-import { PermissionModal } from "./components/PermissionModal";
-import { PlanPane } from "./components/PlanPane";
-import { ReviewWorkspace } from "./components/ReviewWorkspace";
-import { SessionList } from "./components/SessionList";
-import { Settings } from "./components/Settings";
-import { useEngine } from "./hooks/useEngine";
+import { Titlebar } from "./components/Titlebar";
+import { Sidebar } from "./components/Sidebar";
+import { Transcript } from "./components/Transcript";
+import { Composer, type CommandItem } from "./components/Composer";
+import { TraceRail } from "./components/TraceRail";
+import { GearPicker, ModelPicker, ThemePicker, Toast } from "./components/Overlays";
+import { isTauriRuntime, useEngine, type ProviderListing } from "./hooks/useEngine";
 import { useSession } from "./hooks/useSession";
-import type { ConnectionState, PermissionDecision, PermissionPrompt } from "./lib/types";
+import { useTurns } from "./hooks/useTurns";
+import { applyTheme, loadTheme, type ThemeChoice } from "./lib/theme";
+import { gearInfo, nextGear, normalizeGear, type GearId } from "./lib/gears";
+import { DEMO_TASK, demoSteps, type DemoStep } from "./lib/demo";
+import type { ChatMessage, EngineStatus, PermissionDecision } from "./lib/types";
 
-type WorkspaceView = "chat" | "review";
+type Overlay = null | "model" | "theme" | "gear";
 
-const connectionLabels: Record<ConnectionState, string> = {
-  connecting: "Connecting",
-  connected: "Ready",
-  disconnected: "Offline",
-  error: "Needs attention",
-};
+const VERSION = "0.2.0";
 
-function friendlyModelName(model: string): string {
-  const known: Record<string, string> = {
-    "gpt-5.6-sol": "GPT-5.6 Sol",
-    "gpt-5.6-terra": "GPT-5.6 Terra",
-    "gpt-5.6-luna": "GPT-5.6 Luna",
-  };
-  if (known[model]) return known[model];
-  const short = model.split("/").pop() ?? model;
-  return short
-    .replace(/:free$/i, "")
-    .split("-")
-    .map((part) => (part.length <= 3 ? part.toUpperCase() : part[0].toUpperCase() + part.slice(1)))
-    .join(" ");
+function escapeHtml(s: string): string {
+  return s.replace(
+    /[&<>"']/g,
+    (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" })[m]!,
+  );
 }
 
-function workspaceLabel(path: string): string {
-  if (!path || path === "~") return "Local workspace";
-  const segments = path.split("/").filter(Boolean);
-  return segments.at(-1) ?? path;
-}
-
-function buildEnginePrompt(message: string, attachments: ComposerAttachment[]): string {
-  if (attachments.length === 0) return message;
-  const files = attachments
-    .map(
-      (attachment) =>
-        `<attached_file name="${attachment.name}" type="${attachment.type}">\n${attachment.content}\n</attached_file>`,
-    )
-    .join("\n\n");
-  return `${message}\n\nThe user attached these text files:\n\n${files}`;
+/** Sandbox posture from the engine status; tolerant of the host's shapes. */
+function sandboxOf(status: EngineStatus): boolean | null {
+  const p = status.securityPosture as unknown;
+  if (p == null) return null;
+  if (typeof p === "string") return !/off|host|disabled|none/i.test(p);
+  if (typeof p === "object") {
+    const o = p as Record<string, unknown>;
+    if (typeof o.sandbox === "boolean") return o.sandbox;
+    if (typeof o.sandboxEnabled === "boolean") return o.sandboxEnabled;
+    if (typeof o.osIsolation === "boolean") return o.osIsolation;
+  }
+  return null;
 }
 
 export default function App() {
-  const session = useSession();
-  const [activeView, setActiveView] = useState<WorkspaceView>("chat");
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [environmentOpen, setEnvironmentOpen] = useState(() => window.innerWidth >= 1120);
-  const [showPlanPane, setShowPlanPane] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
+  // ── theme ──
+  const [theme, setThemeState] = useState<ThemeChoice>(() => loadTheme());
+  const setTheme = useCallback((next: ThemeChoice) => {
+    setThemeState(next);
+    applyTheme(next);
+  }, []);
+  useEffect(() => {
+    const mq = window.matchMedia?.("(prefers-color-scheme: dark)");
+    if (!mq) return;
+    const follow = () => applyTheme(loadTheme());
+    mq.addEventListener("change", follow);
+    return () => mq.removeEventListener("change", follow);
+  }, []);
+
+  // ── chrome state ──
+  const [sideOpen, setSideOpen] = useState(true);
+  const [railOpen, setRailOpen] = useState(true);
+  const [overlay, setOverlay] = useState<Overlay>(null);
+  const [toast, setToastState] = useState<string | null>(null);
+  const toastTimer = useRef<number | null>(null);
+  const showToast = useCallback((html: string) => {
+    setToastState(html);
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToastState(null), 2600);
+  }, []);
+  const [query, setQuery] = useState("");
+  const [selectedSpan, setSelectedSpan] = useState<string | null>(null);
+  const [selectedTurn, setSelectedTurn] = useState<number | null>(null);
+  const [queued, setQueued] = useState<string[]>([]);
+  const [listing, setListing] = useState<ProviderListing | null>(null);
+  const [now, setNow] = useState(() => Date.now());
   const searchRef = useRef<HTMLInputElement>(null);
-  const [permissionRequest, setPermissionRequest] = useState<{
-    prompt: PermissionPrompt;
-    resolve: (decision: PermissionDecision) => void;
-  } | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  // ── engine + turns ──
+  const turns = useTurns();
+  const turnsRef = useRef(turns);
+  turnsRef.current = turns;
+  const session = useSession();
   const engine = useEngine({
-    onTextDelta: session.appendAssistantText,
-    onToolCallStart: (callId, toolName) => {
-      session.addToolCall({ callId, toolName, args: {}, status: "running" });
-    },
-    onToolCallEnd: session.updateToolCall,
-    onPlanCreated: (plan) => {
-      session.setPlan(plan);
-      setShowPlanPane(true);
-    },
-    onPlanUpdated: session.setPlan,
-    onTurnComplete: () => session.setLoading(false),
-    onError: (error) => {
-      session.appendAssistantText(`\n\nGear hit a problem: ${error}`);
-      session.setLoading(false);
-    },
-    onPermissionRequest: (prompt) =>
-      new Promise<PermissionDecision>((resolve) => setPermissionRequest({ prompt, resolve })),
+    onEvent: (ev) => turnsRef.current.event(ev),
+    onPermissionRequest: (id, prompt) => turnsRef.current.permissionRequest(id, prompt),
+    onStatus: (s) =>
+      turnsRef.current.setPosture(
+        sandboxOf(s) === false ? "host" : "sandboxed",
+        s.provider,
+        s.model,
+      ),
+    onError: (msg) => showToast(`<b>engine</b> — ${escapeHtml(msg)}`),
   });
+  const { status } = engine;
+  const gear = gearInfo(status.permissionMode);
+  const sandboxOn = sandboxOf(status);
+  const liveTurn =
+    turns.stream.current != null ? (turns.stream.turns[turns.stream.current] ?? null) : null;
+  const processing = engine.isProcessing || liveTurn != null;
 
-  const activeSession = useMemo(
-    () => session.sessions.find((item) => item.id === session.activeSessionId) ?? null,
-    [session.activeSessionId, session.sessions],
-  );
-  const allToolCalls = useMemo(
-    () => session.messages.flatMap((message) => message.toolCalls ?? []),
-    [session.messages],
-  );
-  const changes = useMemo(() => summarizeChanges(allToolCalls), [allToolCalls]);
-  const workspace = activeSession?.workspace ?? engine.status.workspace ?? "~";
-
-  const createPersistedSession = useCallback(async () => {
-    const engineSessionId = await engine.createSession(engine.status.model);
-    return session.createSession({
-      id: engineSessionId,
-      model: engine.status.model,
-      workspace: engine.status.workspace ?? "~",
-    });
-  }, [engine.createSession, engine.status.model, engine.status.workspace, session.createSession]);
-
-  const handleSend = useCallback(
-    async (message: string, attachments: ComposerAttachment[] = []) => {
-      if (!message.trim() && attachments.length === 0) return;
-      const sessionId = session.activeSessionId ?? (await createPersistedSession());
-      session.addUserMessage(
-        message || "Please review the attached file.",
-        attachments.map(({ name, size, type }) => ({ name, size, type })),
-      );
-      setActiveView("chat");
-      await engine.sendMessage(sessionId, buildEnginePrompt(message, attachments));
-    },
-    [createPersistedSession, engine.sendMessage, session.activeSessionId, session.addUserMessage],
-  );
-
-  const handleNewSession = useCallback(() => {
-    setActiveView("chat");
-    setSearchOpen(false);
-    setSearchQuery("");
-    void createPersistedSession();
-  }, [createPersistedSession]);
-
-  const handleSelectSession = useCallback(
-    (sessionId: string) => {
-      setActiveView("chat");
-      void session.selectSession(sessionId);
-    },
-    [session.selectSession],
-  );
-
-  const handlePermissionDecision = useCallback(
-    (decision: PermissionDecision) => {
-      permissionRequest?.resolve(decision);
-      setPermissionRequest(null);
-    },
-    [permissionRequest],
-  );
-
+  // The status rung ticks while a turn runs.
   useEffect(() => {
-    if (searchOpen) searchRef.current?.focus();
-  }, [searchOpen]);
+    if (!processing) return;
+    const id = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(id);
+  }, [processing]);
 
+  // ── demo (browser preview only) ──
+  const demoRef = useRef<{
+    steps: DemoStep[];
+    i: number;
+    timer: number | null;
+    waiting: string | null;
+  } | null>(null);
+  const playDemo = useCallback(() => {
+    const d = demoRef.current;
+    if (!d) return;
+    if (d.i >= d.steps.length) {
+      demoRef.current = null;
+      engine.setIsProcessing(false);
+      return;
+    }
+    const step = d.steps[d.i]!;
+    const prevAt = d.i > 0 ? d.steps[d.i - 1]!.at : 0;
+    d.timer = window.setTimeout(
+      () => {
+        d.i += 1;
+        if ("permission" in step) {
+          d.waiting = step.permission.requestId;
+          turnsRef.current.permissionRequest(step.permission.requestId, step.permission.prompt);
+          return;
+        }
+        turnsRef.current.event(step.event);
+        playDemo();
+      },
+      Math.max(0, step.at - prevAt),
+    );
+  }, [engine]);
+  const runDemo = useCallback(() => {
+    if (demoRef.current) return;
+    demoRef.current = { steps: demoSteps(), i: 0, timer: null, waiting: null };
+    engine.setIsProcessing(true);
+    turns.turnStart(DEMO_TASK);
+    playDemo();
+  }, [engine, playDemo, turns]);
+
+  // ── sessions ──
+  const replayHistory = useCallback(
+    (history: ChatMessage[]) => {
+      turns.reset();
+      let open = false;
+      for (const msg of history) {
+        if (msg.role === "user") {
+          if (open)
+            turnsRef.current.event({
+              type: "turn_complete",
+              stopReason: "end_turn",
+              totalTurns: 0,
+            });
+          turnsRef.current.turnStart(msg.content);
+          open = true;
+          continue;
+        }
+        if (msg.role !== "assistant") continue;
+        if (!open) {
+          turnsRef.current.turnStart("(resumed)");
+          open = true;
+        }
+        for (const tc of msg.toolCalls ?? []) {
+          turnsRef.current.event({
+            type: "tool_call_end",
+            callId: tc.callId,
+            args: tc.args ?? {},
+            output: {
+              toolName: tc.toolName,
+              success: tc.status !== "error",
+              result: tc.result ?? "",
+              error: tc.error,
+              durationMs: tc.durationMs ?? 0,
+            },
+          });
+        }
+        if (msg.content) turnsRef.current.event({ type: "text_delta", text: msg.content });
+      }
+      if (open)
+        turnsRef.current.event({ type: "turn_complete", stopReason: "end_turn", totalTurns: 0 });
+    },
+    [turns],
+  );
+  const openSession = useCallback(
+    async (id: string) => {
+      if (processing) {
+        showToast("finish or interrupt the running turn first");
+        return;
+      }
+      const history = await session.selectSession(id);
+      replayHistory(history);
+      setSelectedSpan(null);
+      setSelectedTurn(null);
+    },
+    [processing, replayHistory, session, showToast],
+  );
+  const newTask = useCallback(async () => {
+    if (processing) {
+      showToast("finish or interrupt the running turn first");
+      return;
+    }
+    const id = await engine.createSession(status.model);
+    session.createSession({ id, model: status.model, workspace: status.workspace ?? "~" });
+    turns.reset();
+    setSelectedSpan(null);
+    setSelectedTurn(null);
+    setQueued([]);
+    inputRef.current?.focus();
+  }, [engine, processing, session, showToast, status.model, status.workspace, turns]);
+
+  // ── send / steer / queue ──
+  const send = useCallback(
+    async (text: string) => {
+      if (processing) {
+        const accepted = isTauriRuntime() ? await engine.interject(text) : false;
+        if (accepted) {
+          showToast(
+            "<b>folded into the running task</b> — the agent adapts at its next tool boundary",
+          );
+          return;
+        }
+        setQueued((q) => [...q, text]);
+        return;
+      }
+      let sid = session.activeSessionId;
+      if (!sid) {
+        const id = await engine.createSession(status.model);
+        sid = session.createSession({
+          id,
+          model: status.model,
+          workspace: status.workspace ?? "~",
+        });
+      }
+      session.addUserMessage(text);
+      turns.turnStart(text);
+      setSelectedTurn(null);
+      await engine.sendMessage(sid, text);
+    },
+    [engine, processing, session, showToast, status.model, status.workspace, turns],
+  );
+  // Drain the queue in order when a turn completes.
   useEffect(() => {
-    const handleShortcut = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey)) {
-        if (event.key === "Escape") {
-          setSearchOpen(false);
-          setShowPlanPane(false);
+    if (processing || queued.length === 0) return;
+    const [next, ...rest] = queued;
+    setQueued(rest);
+    void send(next!);
+  }, [processing, queued, send]);
+
+  const interrupt = useCallback(() => {
+    if (demoRef.current) {
+      if (demoRef.current.timer) window.clearTimeout(demoRef.current.timer);
+      demoRef.current = null;
+      engine.setIsProcessing(false);
+      turns.abort();
+      showToast("interrupted — partial work kept");
+      return;
+    }
+    if (!processing) return;
+    void engine.abort();
+    turns.abort();
+    showToast("interrupted — partial work kept · /rewind restores the last checkpoint");
+  }, [engine, processing, showToast, turns]);
+
+  const decide = useCallback(
+    (requestId: string, decision: PermissionDecision) => {
+      turns.permissionDecided(requestId, decision);
+      const d = demoRef.current;
+      if (d && d.waiting === requestId) {
+        d.waiting = null;
+        if (decision === "deny") {
+          if (d.timer) window.clearTimeout(d.timer);
+          demoRef.current = null;
+          turnsRef.current.event({
+            type: "text_delta",
+            text: "Stopped before the shell step. The edit is staged but unverified — re-run with approval, shift up a gear, or ask me to verify another way.",
+          });
+          turnsRef.current.event({ type: "turn_complete", stopReason: "end_turn", totalTurns: 0 });
+          engine.setIsProcessing(false);
+        } else {
+          playDemo();
         }
         return;
       }
-      if (event.key.toLowerCase() === "n") {
-        event.preventDefault();
-        handleNewSession();
-      } else if (event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        setSidebarOpen(true);
-        setSearchOpen(true);
-      } else if (event.key === ",") {
-        event.preventDefault();
-        setShowSettings(true);
+      void engine.respondPermission(requestId, decision);
+    },
+    [engine, playDemo, turns],
+  );
+
+  // ── gears / model / theme ──
+  const cycleGear = useCallback(async () => {
+    const next = nextGear(status.permissionMode);
+    await engine.setGear(next);
+    const info = gearInfo(next);
+    showToast(`<b>${info.label}</b> — ${escapeHtml(info.desc)}`);
+  }, [engine, showToast, status.permissionMode]);
+  const pickGear = useCallback(
+    async (id: GearId) => {
+      setOverlay(null);
+      await engine.setGear(id);
+      showToast(`<b>${gearInfo(id).label}</b> — ${escapeHtml(gearInfo(id).desc)}`);
+    },
+    [engine, showToast],
+  );
+  const openModelPicker = useCallback(async () => {
+    setOverlay("model");
+    setListing(await engine.listProviders());
+  }, [engine]);
+  const pickModel = useCallback(
+    async (provider: string, model: string) => {
+      setOverlay(null);
+      await engine.switchModel(model, provider);
+      showToast(`model → <b>${escapeHtml(provider)}/${escapeHtml(model)}</b> · this session`);
+    },
+    [engine, showToast],
+  );
+
+  // ── commands ──
+  const commands = useMemo<CommandItem[]>(
+    () => [
+      { id: "model", name: "/model", desc: "Switch provider, account & model", tag: "settings" },
+      {
+        id: "gear",
+        name: "/gear",
+        desc: "Shift gears — 1st · 2nd · 3rd · 4th · auto",
+        tag: "shift+tab",
+      },
+      { id: "theme", name: "/theme", desc: "Accent colors & light/dark", tag: "cosmetic" },
+      { id: "trace", name: "/trace", desc: "Toggle the trace rail", tag: "⌘T" },
+      { id: "new", name: "/new", desc: "Start a new task", tag: "⌘N" },
+      { id: "sessions", name: "/sessions", desc: "Search sessions", tag: "⌘K" },
+      { id: "cost", name: "/cost", desc: "Session cost so far" },
+      { id: "status", name: "/status", desc: "Engine, model, gear & sandbox" },
+      ...(!isTauriRuntime()
+        ? [
+            {
+              id: "demo",
+              name: "/demo",
+              desc: "Run the recorded demo turn (browser preview)",
+              tag: "preview",
+            },
+          ]
+        : []),
+    ],
+    [],
+  );
+  const runCommand = useCallback(
+    (id: string) => {
+      switch (id) {
+        case "model":
+          void openModelPicker();
+          break;
+        case "gear":
+          setOverlay("gear");
+          break;
+        case "theme":
+          setOverlay("theme");
+          break;
+        case "trace":
+          setRailOpen((v) => !v);
+          break;
+        case "new":
+          void newTask();
+          break;
+        case "sessions":
+          setSideOpen(true);
+          window.setTimeout(() => searchRef.current?.focus(), 50);
+          break;
+        case "cost":
+          showToast(`session cost so far: <b>$${status.totalCost.toFixed(4)}</b>`);
+          break;
+        case "status":
+          showToast(
+            `<b>${escapeHtml(status.provider)}/${escapeHtml(status.model)}</b> · ${gear.label} · sandbox ${sandboxOn == null ? "unknown" : sandboxOn ? "on" : "off"} · ctx ${status.contextMax ? Math.round((status.contextUsed / status.contextMax) * 100) : 0}% · engine ${engine.connectionState}`,
+          );
+          break;
+        case "demo":
+          runDemo();
+          break;
+      }
+    },
+    [
+      engine.connectionState,
+      gear.label,
+      newTask,
+      openModelPicker,
+      runDemo,
+      sandboxOn,
+      showToast,
+      status,
+    ],
+  );
+
+  // ── keyboard ──
+  const pendingPermission = liveTurn?.pendingPermission ?? null;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const typing = target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement;
+      const composerEmpty = !(inputRef.current?.value ?? "").length;
+      if (e.key === "Tab" && e.shiftKey) {
+        e.preventDefault();
+        void cycleGear();
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && !e.altKey) {
+        const k = e.key.toLowerCase();
+        if (k === "n") {
+          e.preventDefault();
+          void newTask();
+        } else if (k === "k") {
+          e.preventDefault();
+          setSideOpen(true);
+          window.setTimeout(() => searchRef.current?.focus(), 50);
+        } else if (k === "t") {
+          e.preventDefault();
+          setRailOpen((v) => !v);
+        } else if (k === "b") {
+          e.preventDefault();
+          setSideOpen((v) => !v);
+        } else if (e.key === ",") {
+          e.preventDefault();
+          setOverlay("theme");
+        }
+        return;
+      }
+      if (e.key === "Escape") {
+        if (overlay) {
+          setOverlay(null);
+          return;
+        }
+        if (!typing && processing) interrupt();
+        return;
+      }
+      if (pendingPermission && (!typing || (target === inputRef.current && composerEmpty))) {
+        if (e.key === "y") {
+          e.preventDefault();
+          decide(pendingPermission, "allow_once");
+        } else if (e.key === "a") {
+          e.preventDefault();
+          decide(pendingPermission, "allow_session");
+        } else if (e.key === "n") {
+          e.preventDefault();
+          decide(pendingPermission, "deny");
+        }
       }
     };
-    window.addEventListener("keydown", handleShortcut);
-    return () => window.removeEventListener("keydown", handleShortcut);
-  }, [handleNewSession]);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [cycleGear, decide, interrupt, newTask, overlay, pendingPermission, processing]);
 
-  const isTauriRuntime = "__TAURI_INTERNALS__" in window;
-  const taskTitle = activeSession?.title || "New task";
-  const modelName = friendlyModelName(engine.status.model);
+  // ── derived ──
+  const activeSession = session.sessions.find((s) => s.id === session.activeSessionId) ?? null;
+  const lastTurn = turns.stream.turns.at(-1) ?? null;
+  const taskTitle =
+    activeSession?.title && activeSession.title !== "New task"
+      ? activeSession.title
+      : (lastTurn?.task ?? "New task");
+  const turnLabel = lastTurn
+    ? [
+        `turn ${lastTurn.turn}`,
+        lastTurn.checkpoint ? `checkpoint v${lastTurn.checkpoint.version}` : "",
+        status.workspace ? status.workspace.replace(/^\/Users\/[^/]+/, "~") : "",
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : status.workspace?.replace(/^\/Users\/[^/]+/, "~");
+  const reviewCount = useMemo(
+    () => new Set(turns.stream.turns.flatMap((t) => t.files.map((f) => f.path))).size,
+    [turns.stream.turns],
+  );
+  const ctxPercent =
+    lastTurn?.contextPercent ??
+    (status.contextMax > 0 && status.contextUsed > 0
+      ? (status.contextUsed / status.contextMax) * 100
+      : undefined);
+  const currentTraceTurn =
+    selectedTurn != null
+      ? turns.trace.turns.find((t) => t.turn === selectedTurn)
+      : turns.trace.turns.at(-1);
+  const highlightCallId =
+    currentTraceTurn?.spans.find((s) => s.id === selectedSpan)?.tool?.callId ?? null;
+  const showInTrace = useCallback(
+    (callId: string) => {
+      const t = turns.trace.turns
+        .slice()
+        .reverse()
+        .find((turn) => turn.spans.some((s) => s.tool?.callId === callId));
+      const span = t?.spans.find((s) => s.tool?.callId === callId);
+      if (!t || !span) return;
+      setSelectedTurn(t.turn);
+      setSelectedSpan(span.id);
+      setRailOpen(true);
+    },
+    [turns.trace.turns],
+  );
+  const exportTrace = useCallback(() => {
+    const t = currentTraceTurn;
+    if (!t) return;
+    const payload = {
+      gear: VERSION,
+      exportedAt: new Date().toISOString(),
+      session: session.activeSessionId,
+      model: `${status.provider}/${status.model}`,
+      gearMode: gear.id,
+      sandbox: sandboxOn,
+      turn: t,
+    };
+    void navigator.clipboard?.writeText(JSON.stringify(payload, null, 2));
+    showToast(
+      `trace for turn ${t.turn} copied as JSON — <b>${t.spans.length} spans</b> (signed export lands with the audit-log exporter)`,
+    );
+  }, [
+    currentTraceTurn,
+    gear.id,
+    sandboxOn,
+    session.activeSessionId,
+    showToast,
+    status.model,
+    status.provider,
+  ]);
 
   return (
-    <div
-      className={`app-shell ${sidebarOpen ? "app-shell--sidebar" : ""} ${
-        environmentOpen ? "app-shell--environment" : ""
-      } ${isTauriRuntime ? "app-shell--tauri" : "app-shell--browser"}`}
-    >
-      {sidebarOpen ? (
-        <aside className="sidebar no-select">
-          <div className="sidebar-titlebar" data-tauri-drag-region>
-            <div className="traffic-lights" aria-hidden="true">
-              <i />
-              <i />
-              <i />
-            </div>
-            <div className="sidebar-brand">
-              <BrandMark size={25} />
-              <strong>Gear</strong>
-              <ChevronDownIcon />
-            </div>
-            <div className="sidebar-title-actions">
-              <button
-                type="button"
-                onClick={() => setSearchOpen((open) => !open)}
-                title="Search tasks (⌘K)"
-                aria-label="Search tasks"
-              >
-                <SearchIcon />
-              </button>
-              <button
-                type="button"
-                onClick={() => setSidebarOpen(false)}
-                title="Hide sidebar"
-                aria-label="Hide sidebar"
-              >
-                <SidebarIcon />
-              </button>
-            </div>
-          </div>
-
-          {searchOpen ? (
-            <label className="sidebar-search">
-              <SearchIcon />
-              <input
-                ref={searchRef}
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder="Search tasks…"
-                aria-label="Search tasks"
-              />
-              <kbd>esc</kbd>
-            </label>
-          ) : null}
-
-          <nav className="primary-nav" aria-label="Main navigation">
-            <button type="button" className="new-task-button" onClick={handleNewSession}>
-              <ComposeIcon />
-              <span>New task</span>
-              <kbd>⌘N</kbd>
-            </button>
-            <button
-              type="button"
-              className={`nav-item ${activeView === "chat" ? "nav-item--active" : ""}`}
-              onClick={() => setActiveView("chat")}
-            >
-              <ChatIcon />
-              <span>All tasks</span>
-            </button>
-            <button
-              type="button"
-              className={`nav-item ${activeView === "review" ? "nav-item--active" : ""}`}
-              onClick={() => setActiveView("review")}
-            >
-              <ReviewIcon />
-              <span>Review changes</span>
-              {changes.calls.length > 0 ? <b>{changes.calls.length}</b> : null}
-            </button>
-          </nav>
-
-          <SessionList
-            sessions={session.sessions}
-            activeSessionId={session.activeSessionId}
-            onSelect={handleSelectSession}
-            onNewSession={handleNewSession}
-            onDeleteSession={session.deleteSession}
-            isLoading={session.sessionsLoading}
-            searchQuery={searchQuery}
-          />
-
-          <footer className="sidebar-footer">
-            <button type="button" className="account-button" onClick={() => setShowSettings(true)}>
-              <span className="account-avatar">
-                <UserIcon />
-              </span>
-              <span>
-                <strong>Local workspace</strong>
-                <small>{workspaceLabel(workspace)}</small>
-              </span>
-              <SettingsIcon />
-            </button>
-          </footer>
-        </aside>
-      ) : null}
-
-      <section className="workbench">
-        <header className="workspace-header no-select" data-tauri-drag-region>
-          <div className="workspace-heading">
-            {!sidebarOpen ? (
-              <button
-                type="button"
-                className="chrome-button"
-                onClick={() => setSidebarOpen(true)}
-                title="Show sidebar"
-                aria-label="Show sidebar"
-              >
-                <SidebarIcon />
-              </button>
-            ) : null}
-            <span className="workspace-heading-icon">
-              <FolderIcon />
-            </span>
-            <h1>{taskTitle}</h1>
-            <button
-              type="button"
-              className="title-more"
-              title="Task options"
-              aria-label="Task options"
-            >
-              <MoreIcon />
-            </button>
-            <span className={`connection-state connection-state--${engine.connectionState}`}>
-              <i />
-              {connectionLabels[engine.connectionState]}
-            </span>
-          </div>
-          <div className="workspace-actions">
-            <button
-              type="button"
-              className="chrome-button"
-              onClick={() => setShowSettings(true)}
-              title="Settings (⌘,)"
-              aria-label="Open settings"
-            >
-              <SettingsIcon />
-            </button>
-            <button
-              type="button"
-              className={`chrome-button ${environmentOpen ? "chrome-button--active" : ""}`}
-              onClick={() => setEnvironmentOpen((open) => !open)}
-              title="Toggle environment"
-              aria-label="Toggle environment panel"
-              aria-pressed={environmentOpen}
-            >
-              <PanelIcon />
-            </button>
-          </div>
-        </header>
-
-        <div className="view-tabs no-select">
-          <div role="tablist" aria-label="Task views">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeView === "chat"}
-              className={activeView === "chat" ? "view-tab--active" : ""}
-              onClick={() => setActiveView("chat")}
-            >
-              Conversation
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeView === "review"}
-              className={activeView === "review" ? "view-tab--active" : ""}
-              onClick={() => setActiveView("review")}
-            >
-              Review
-              {changes.calls.length > 0 ? <b>{changes.calls.length}</b> : null}
-            </button>
-          </div>
-          <span className="view-workspace-label" title={workspace}>
-            <FolderIcon />
-            {workspaceLabel(workspace)}
-          </span>
-        </div>
-
-        {session.error ? (
-          <div className="error-banner" role="alert">
-            <span>{session.error}</span>
-            <button type="button" onClick={session.clearError} aria-label="Dismiss error">
-              ×
-            </button>
-          </div>
-        ) : null}
-
-        <div className="workbench-body">
-          <main className="stage" role="tabpanel">
-            {activeView === "chat" ? (
-              <>
-                <MessageStream
-                  messages={session.messages}
-                  isLoading={session.isLoading}
-                  onSuggestion={(message) => void handleSend(message)}
-                />
-                <Composer
-                  onSend={handleSend}
-                  disabled={engine.isProcessing}
-                  isProcessing={engine.isProcessing}
-                  onAbort={engine.abort}
-                  modelName={modelName}
-                  onOpenSettings={() => setShowSettings(true)}
-                />
-              </>
-            ) : (
-              <ReviewWorkspace
-                toolCalls={allToolCalls}
-                onBackToChat={() => setActiveView("chat")}
-              />
-            )}
-          </main>
-
-          {environmentOpen ? (
-            <EnvironmentPanel
-              status={engine.status}
-              connectionState={engine.connectionState}
-              workspace={workspace}
-              toolCalls={allToolCalls}
-              plan={session.activePlan}
-              planOpen={showPlanPane}
-              onReview={() => setActiveView("review")}
-              onTogglePlan={() => setShowPlanPane((open) => !open)}
-            />
-          ) : null}
-
-          {showPlanPane && session.activePlan ? (
-            <aside className="plan-drawer" aria-label="Task plan">
-              <PlanPane plan={session.activePlan} onClose={() => setShowPlanPane(false)} />
-            </aside>
-          ) : null}
-        </div>
-      </section>
-
-      {permissionRequest ? (
-        <PermissionModal prompt={permissionRequest.prompt} onDecision={handlePermissionDecision} />
-      ) : null}
-
-      {showSettings ? (
-        <Settings
-          status={engine.status}
-          onSwitchModel={engine.switchModel}
-          onClose={() => setShowSettings(false)}
+    <div className={`app ${sideOpen ? "" : "side-closed"} ${railOpen ? "" : "rail-closed"}`}>
+      <Titlebar
+        version={VERSION}
+        task={taskTitle}
+        turnLabel={turnLabel}
+        sandboxOn={sandboxOn}
+        gear={gear}
+        connection={engine.connectionState}
+        railOpen={railOpen}
+        sideOpen={sideOpen}
+        reviewCount={reviewCount}
+        onToggleRail={() => setRailOpen((v) => !v)}
+        onToggleSide={() => setSideOpen((v) => !v)}
+        onOpenSettings={() => setOverlay("theme")}
+        onOpenReview={() =>
+          showToast(
+            reviewCount
+              ? `${reviewCount} file${reviewCount === 1 ? "" : "s"} changed this session — the Review workspace lands in M2; every edit's diff is in the transcript and the trace`
+              : "no changes yet",
+          )
+        }
+      />
+      <Sidebar
+        sessions={session.sessions}
+        activeId={session.activeSessionId}
+        loading={session.sessionsLoading}
+        query={query}
+        onQuery={setQuery}
+        onSelect={(id) => void openSession(id)}
+        onNew={() => void newTask()}
+        reviewCount={reviewCount}
+        onReview={() =>
+          showToast("Review workspace lands in M2 — diffs are in the transcript and the trace")
+        }
+        env={{ gear, model: status.model, ctxPercent, workspace: status.workspace ?? "~" }}
+        onOpenSettings={() => setOverlay("theme")}
+        searchRef={searchRef}
+      />
+      <section className="main">
+        <Transcript
+          turns={turns.stream.turns}
+          now={now}
+          sandboxed={sandboxOn !== false}
+          gearLabel={gear.label}
+          highlightCallId={highlightCallId}
+          onDecide={decide}
+          onShowInTrace={showInTrace}
+          onStarter={(prompt) => void send(prompt)}
+          demo={!isTauriRuntime() ? { available: true, onRun: runDemo } : undefined}
+          workspace={status.workspace}
         />
-      ) : null}
+        {overlay === "model" ? (
+          <ModelPicker
+            listing={listing}
+            current={{ provider: status.provider, model: status.model }}
+            onPick={(p, m) => void pickModel(p, m)}
+            onClose={() => setOverlay(null)}
+          />
+        ) : null}
+        {overlay === "theme" ? (
+          <ThemePicker choice={theme} onChoice={setTheme} onClose={() => setOverlay(null)} />
+        ) : null}
+        {overlay === "gear" ? (
+          <GearPicker
+            current={normalizeGear(status.permissionMode)}
+            onPick={(g) => void pickGear(g)}
+            onClose={() => setOverlay(null)}
+          />
+        ) : null}
+        <Composer
+          processing={processing}
+          gear={gear}
+          ctxPercent={ctxPercent}
+          queued={queued}
+          commands={commands}
+          onSubmit={(text) => void send(text)}
+          onInterrupt={interrupt}
+          onUnqueue={(i) => setQueued((q) => q.filter((_, k) => k !== i))}
+          onCycleGear={() => void cycleGear()}
+          onCommand={runCommand}
+          inputRef={inputRef}
+        />
+      </section>
+      <TraceRail
+        trace={turns.trace}
+        selectedTurn={selectedTurn}
+        onSelectTurn={setSelectedTurn}
+        selectedSpanId={selectedSpan}
+        onSelectSpan={setSelectedSpan}
+        onExport={exportTrace}
+        onShowInTranscript={(callId) =>
+          showToast(`highlighted in the transcript: ${escapeHtml(callId)}`)
+        }
+        now={now}
+      />
+      <Toast message={toast} />
     </div>
   );
 }
