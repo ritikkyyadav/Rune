@@ -1,8 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicedoc/schemas/main/tauri/2/tauri.conf.json",
-  "productName": "Alan",
+  "productName": "Gear",
   "version": "0.2.0",
-  "identifier": "com.savoirstudio.alan",
+  "identifier": "com.savoirstudio.gear",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -13,10 +13,10 @@
     "windows": [
       {
         "label": "main",
-        "title": "Alan",
-        "width": 1200,
-        "height": 800,
-        "minWidth": 900,
+        "title": "Gear",
+        "width": 1440,
+        "height": 920,
+        "minWidth": 960,
         "minHeight": 600,
         "resizable": true,
         "decorations": true,

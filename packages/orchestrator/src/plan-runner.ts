@@ -2,7 +2,7 @@ import type { Message, ProviderName, ToolDefinition } from "@alan/llm-gateway";
 import { LlmGateway } from "@alan/llm-gateway";
 import { ToolRegistry } from "@alan/tool-registry";
 import { AgentLoop } from "./agent-loop";
-import type { AgentTurnEvent, PermissionCheck } from "./agent-loop";
+import type { AgentTurnEvent, PermissionCheck, ToolResultProcessor } from "./agent-loop";
 import type { ContextEngine } from "./context-engine";
 import type { RetrievedChunk } from "./context-engine";
 import { Planner } from "./planner";
@@ -42,6 +42,8 @@ export interface PlanRunnerConfig {
   verifier?: Verifier;
   /** Use provider-native web-search grounding in executor steps. Default false. */
   nativeGrounding?: boolean;
+  /** Prompt-injection probe shared with the parent engine. */
+  toolResultProcessor?: ToolResultProcessor;
 }
 
 const DEFAULT_CONFIG: PlanRunnerConfig = {
@@ -55,7 +57,7 @@ const DEFAULT_CONFIG: PlanRunnerConfig = {
   maxTurnsPerStep: 20,
   maxStepRetries: 2,
   maxReplanAttempts: 2,
-  systemPrompt: "You are Berne, an expert software engineering assistant.",
+  systemPrompt: "You are Gear, an expert software engineering assistant.",
 };
 
 // ─── Step Execution Prompt ───
@@ -342,6 +344,7 @@ export class PlanRunner {
         retrievedChunks: this.config.retrievedChunks,
         verifier: this.config.verifier,
         nativeGrounding: this.config.nativeGrounding,
+        toolResultProcessor: this.config.toolResultProcessor,
       },
       this.gateway,
       this.registry,

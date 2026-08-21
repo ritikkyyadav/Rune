@@ -115,7 +115,7 @@ describe("gateway stream_reset on mid-stream failure", () => {
     expect(events.at(-1)?.type).toBe("message_stop");
   });
 
-  test("cross-provider fallback after partial output emits stream_reset before the notice", async () => {
+  test("cross-provider fallback after partial output emits stream_reset before the fallback event", async () => {
     const err = Object.assign(new Error("rate limited"), { status: 429 });
     const dying = flakyProvider("anthropic", {
       failCalls: 99,
@@ -134,9 +134,9 @@ describe("gateway stream_reset on mid-stream failure", () => {
     const events = await collect(gw.inferStream(REQ));
     const types = events.map((e) => e.type);
     const resetIdx = types.indexOf("stream_reset");
-    const noticeIdx = types.indexOf("notice");
+    const fallbackIdx = types.indexOf("fallback");
     expect(resetIdx).toBeGreaterThan(-1);
-    expect(noticeIdx).toBeGreaterThan(resetIdx);
+    expect(fallbackIdx).toBeGreaterThan(resetIdx);
     expect(types.at(-1)).toBe("message_stop");
   });
 

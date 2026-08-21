@@ -22,7 +22,11 @@ import { ToolRegistry } from "../../../packages/tool-registry/src/registry";
 import { registerBuiltinTools } from "../../../packages/tool-registry/src/tools/builtin";
 import { createRustToolHandler } from "../../../packages/tool-registry/src/tools/rust-bridge";
 import { withNetworkPreflight } from "../../../packages/tool-registry/src/tools/net-preflight";
-import type { ToolCallInput, ToolHandler, ToolSchema } from "../../../packages/tool-registry/src/types";
+import type {
+  ToolCallInput,
+  ToolHandler,
+  ToolSchema,
+} from "../../../packages/tool-registry/src/types";
 import { PermissionBroker } from "../../../packages/orchestrator/src/permissions";
 import { renderEnvironmentBlock } from "../../../packages/orchestrator/src/prompts";
 import { resolveInitialSandbox } from "../../../packages/shared/src/sandbox-store";
@@ -104,7 +108,10 @@ describe("rust bridge --sandbox flag follows the mode", () => {
   function fakeToolsBinary(): string {
     const dir = mkdtempSync(join(tmpdir(), "alan-sbx-"));
     const bin = join(dir, "fake-tools.sh");
-    writeFileSync(bin, `#!/bin/sh\ncat > /dev/null\necho "{\\"success\\":true,\\"result\\":{\\"argv\\":\\"$*\\"}}"\n`);
+    writeFileSync(
+      bin,
+      `#!/bin/sh\ncat > /dev/null\necho "{\\"success\\":true,\\"result\\":{\\"argv\\":\\"$*\\"}}"\n`,
+    );
     chmodSync(bin, 0o755);
     return bin;
   }
@@ -170,7 +177,7 @@ describe("permission broker confinement follows the mode", () => {
     }
   });
 
-  test("Hands-Free (turing) still approves everything with the sandbox off", () => {
+  test("Autonomy III still approves everything with the sandbox off", () => {
     setSandboxMode("off");
     const broker = new PermissionBroker(true, { workspaceRoot: "/tmp/ws" });
     expect(broker.check(BASH_SCHEMA, { command: "ls" }).type).toBe("allowed");
@@ -191,8 +198,12 @@ describe("environment block states the posture", () => {
 describe("resolveInitialSandbox precedence", () => {
   test("flag > env > saved > configured > on", () => {
     // Flag wins over everything.
-    expect(resolveInitialSandbox({ flag: false, env: "true", saved: true, configured: true })).toBe(false);
-    expect(resolveInitialSandbox({ flag: true, env: "false", saved: false, configured: false })).toBe(true);
+    expect(resolveInitialSandbox({ flag: false, env: "true", saved: true, configured: true })).toBe(
+      false,
+    );
+    expect(
+      resolveInitialSandbox({ flag: true, env: "false", saved: false, configured: false }),
+    ).toBe(true);
     // Env beats the sidecar and config.
     expect(resolveInitialSandbox({ env: "false", saved: true, configured: true })).toBe(false);
     expect(resolveInitialSandbox({ env: "true", saved: false, configured: false })).toBe(true);

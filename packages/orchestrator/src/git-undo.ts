@@ -1,23 +1,24 @@
 // ─── Git Auto-Commit + /undo ───
 //
 // Aider-grade trust story, opt-in via `[git] autoCommit = true`: after every
-// successful run that wrote files, Berne commits EXACTLY the files it touched
-// (message "berne: <task>"), and `/undo` reverts the last such commit. Every
+// successful run that wrote files, Gear commits EXACTLY the files it touched
+// (message "gear: <task>"), and `/undo` reverts the last such commit. Every
 // AI change becomes one revertible unit — the strongest undo primitive a
 // coding agent can offer, using plumbing the user already trusts.
 //
 // Safety rules (each one exists because the naive version eats user work):
 //  - Never commit when the user already has STAGED changes — `git add` would
 //    sweep their half-built commit into ours.
-//  - Stage only the paths Berne wrote this run, never `-A` on the repo.
-//  - `/undo` only resets a commit whose subject says "berne: ", only when the
+//  - Stage only the paths Gear wrote this run, never `-A` on the repo.
+//  - `/undo` only resets a Gear (or migration-era legacy) commit, only when the
 //    worktree is otherwise clean, and only when a parent commit exists.
 //  - Everything is best-effort: a git failure degrades to "not committed",
 //    never to a broken run.
 
 import { execFileSync } from "node:child_process";
 
-export const BERNE_COMMIT_PREFIX = "berne: ";
+export const GEAR_COMMIT_PREFIX = "gear: ";
+const LEGACY_COMMIT_PREFIXES = ["elio: ", "berne: ", "alan: "] as const;
 
 function git(root: string, args: string[]): { ok: boolean; out: string } {
   try {
@@ -43,7 +44,7 @@ export type AutoCommitResult =
   | { committed: false; reason: string };
 
 /**
- * Commit the given paths as one "berne:" commit. Returns why when it declines
+ * Commit the given paths as one "gear:" commit. Returns why when it declines
  * — every decline reason is safe-by-design, not an error.
  */
 export function autoCommitPaths(
@@ -61,7 +62,7 @@ export function autoCommitPaths(
     return { committed: false, reason: "you have staged changes — skipped to protect them" };
   }
 
-  // Stage only what Berne touched. -A scoped to the paths handles deletions.
+  // Stage only what Gear touched. -A scoped to the paths handles deletions.
   const add = git(root, ["add", "-A", "--", ...paths]);
   if (!add.ok) return { committed: false, reason: `git add failed: ${add.out}` };
 
@@ -72,7 +73,7 @@ export function autoCommitPaths(
   }
 
   const summary = taskSummary.replace(/\s+/g, " ").trim().slice(0, 72) || "changes";
-  const commit = git(root, ["commit", "--no-verify", "-m", `${BERNE_COMMIT_PREFIX}${summary}`]);
+  const commit = git(root, ["commit", "--no-verify", "-m", `${GEAR_COMMIT_PREFIX}${summary}`]);
   if (!commit.ok) {
     // Leave nothing half-staged behind on failure.
     git(root, ["reset", "--quiet", "--", ...paths]);
@@ -93,18 +94,19 @@ export type UndoResult =
   | { ok: false; reason: string };
 
 /**
- * Undo the last Berne auto-commit via `git reset --hard HEAD~1` — guarded so
- * it can ONLY discard a commit Berne made, and never uncommitted user work.
+ * Undo the last Gear auto-commit via `git reset --hard HEAD~1` — guarded so it
+ * can ONLY discard a Gear or migration-era legacy commit, never user work.
  */
-export function undoLastBerneCommit(root: string): UndoResult {
+export function undoLastGearCommit(root: string): UndoResult {
   if (!isGitRepo(root)) return { ok: false, reason: "not a git repository" };
 
   const subject = git(root, ["log", "-1", "--pretty=%s"]);
   if (!subject.ok) return { ok: false, reason: `git unavailable: ${subject.out}` };
-  if (!subject.out.startsWith(BERNE_COMMIT_PREFIX)) {
+  const managedPrefixes = [GEAR_COMMIT_PREFIX, ...LEGACY_COMMIT_PREFIXES];
+  if (!managedPrefixes.some((prefix) => subject.out.startsWith(prefix))) {
     return {
       ok: false,
-      reason: `HEAD is not a Berne commit ("${subject.out.slice(0, 60)}") — nothing to undo`,
+      reason: `HEAD is not a Gear-managed commit ("${subject.out.slice(0, 60)}") — nothing to undo`,
     };
   }
 
@@ -120,7 +122,10 @@ export function undoLastBerneCommit(root: string): UndoResult {
 
   const parent = git(root, ["rev-parse", "--verify", "HEAD~1"]);
   if (!parent.ok)
-    return { ok: false, reason: "the Berne commit is the only commit — cannot reset past it" };
+    return {
+      ok: false,
+      reason: "the Gear-managed commit is the only commit — cannot reset past it",
+    };
 
   const sha = git(root, ["rev-parse", "HEAD"]).out;
   const reset = git(root, ["reset", "--hard", "HEAD~1"]);

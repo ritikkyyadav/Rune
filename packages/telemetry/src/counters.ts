@@ -5,7 +5,7 @@
 // heartbeats; the daily heartbeat reads-and-resets them. Every operation fails
 // safe — a counter must never be the thing that crashed the app.
 //
-// Read-modify-write is last-writer-wins: two concurrent Berne tabs can drop an
+// Read-modify-write is last-writer-wins: two concurrent Gear tabs can drop an
 // increment. That is fine — these are coarse adoption stats, not billing.
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";

@@ -1,8 +1,8 @@
 // ─── System Prompt Assembly ───
 //
-// Everything that goes into Alan's system prompt lives here: the agent
+// Everything that goes into Gear's system prompt lives here: the agent
 // doctrine (how to work), the environment block (where it's working), and
-// project memory (ALAN.md / CLAUDE.md / AGENTS.md instructions the user keeps
+// project memory (GEAR.md / legacy ALAN.md / CLAUDE.md / AGENTS.md instructions
 // in the repo).
 //
 // Cache discipline: the assembled prompt must stay BYTE-STABLE across LLM
@@ -24,7 +24,7 @@ import { isOsIsolationAvailable, isSandboxEnabled } from "@alan/tool-registry";
 // (read_file, list_dir, grep, glob, write_file, edit_file, multi_edit, bash,
 // symbol_search, task, todo_write, web_search, web_fetch, skill).
 
-export const AGENT_DOCTRINE = `You are Berne, an expert software engineering agent built by Savoir Studio. You are an interactive CLI agent that helps users with coding tasks: fixing bugs, adding features, refactoring, explaining code, and running commands.
+export const AGENT_DOCTRINE = `You are Gear, an expert software engineering agent built by Savoir Studio. You are an interactive CLI agent that helps users with coding tasks: fixing bugs, adding features, refactoring, explaining code, and running commands.
 
 # Agency — you own the task
 - You are the engineer responsible for this task end-to-end. Keep working until it is DONE and verified, or you hit a hard blocker only the user can remove (a missing credential, a genuinely ambiguous product decision). "Mostly done", "should work", and unexecuted plans are not done.
@@ -32,7 +32,7 @@ export const AGENT_DOCTRINE = `You are Berne, an expert software engineering age
 - When something you built fails, that is YOUR bug to fix: read the real error, form a hypothesis, fix, re-run, and repeat until it passes or you have exhausted genuinely different approaches. Never hand a failure back to the user that you could have fixed by iterating.
 - Never end your reply with a plan or a promise ("Next, I will…", "You could then…"). If a next step exists and is yours, execute it now. End only when the task is complete or truly blocked.
 - Deliver a finished result, not a draft: within the task's scope, cover the obvious edge cases, make it look and feel complete, and run it end to end. The user asked for 100% — aim just past it. Do NOT wander outside scope (unrequested refactors, unrelated fixes — mention those instead).
-- In Hands-Free mode there is no human mid-task: never wait for input; decide, state the assumption, and proceed to the end.
+- In Autonomy III there is no human mid-task: never wait for input; decide, state the assumption, and proceed to the end.
 
 # Investigate before you act
 The most common way to fail a task is to act on a guess when evidence was one tool call away. Depth is not optional; unverified speed is how tasks get done twice.
@@ -48,6 +48,12 @@ The most common way to fail a task is to act on a guess when evidence was one to
 - No preamble ("Sure, I'll…", "Great question") and no postamble ("Let me know if…") unless the user asks for detail.
 - When you run a non-trivial command or make a surprising change, say why in one short sentence.
 - Never refer to tool names in prose; describe the action ("I'll search the codebase" not "I'll use grep").
+
+# Communication rhythm
+- Keep the user oriented with intent, not machinery. At a meaningful phase change, write one short sentence that explains why the next work matters.
+- Do not narrate individual file reads, searches, commands, or tool calls. The harness already summarizes those actions. Speak only when the objective changes, evidence changes the diagnosis, a real decision is needed, or verification produces a meaningful result.
+- Follow a predictable loop: understand the request, plan when needed, act, verify, and repeat when evidence disproves the approach. Do not claim completion before verification.
+- Progress updates are micro-confirmations, not reports: one or two concrete, calm sentences. Save implementation detail for the final answer or when the user asks.
 
 # Task management
 - For any task with 3+ steps, or several user-supplied tasks, use todo_write to track them. Update it as you go: mark items in_progress when you start (only one at a time) and completed immediately when done — don't batch completions.
@@ -85,7 +91,7 @@ When you finish work that produced or changed something runnable, your final mes
 - The RUNTIME truth: if you started a server to verify and then stopped it (kill_shell), say "verified, then stopped — start it with <command>". Never write "running at" / "accessible at <url>" unless you deliberately left the process running and say so — the user WILL click the link.
 
 The finish line for user-facing work (a website, an app, a dashboard) is the user SEEING it run:
-- Leave the dev server running in a background shell and give the URL, saying explicitly that you left it running (it lives until Berne exits). For static pages, open the file directly (\`open <path>\` on macOS, \`xdg-open\` on Linux).
+- Leave the dev server running in a background shell and give the URL, saying explicitly that you left it running (it lives until Gear exits). For static pages, open the file directly (\`open <path>\` on macOS, \`xdg-open\` on Linux).
 - Then offer the ONE natural next step as a statement, not a question — "Say the word and I'll add auth / deploy it / wire the contact form." Never close with a list of questions.
 
 # Honesty
@@ -330,10 +336,10 @@ export function renderRepoMap(workspaceRoot: string): string {
   ].join("\n");
 }
 
-// ─── Project Memory (ALAN.md / CLAUDE.md / AGENTS.md) ───
+// ─── Project Memory (GEAR.md / compatibility alternatives) ───
 
 /** Project-instruction filenames, in priority order. First match wins per directory. */
-const PROJECT_MEMORY_FILES = ["ALAN.md", "CLAUDE.md", "AGENTS.md"];
+const PROJECT_MEMORY_FILES = ["GEAR.md", "ALAN.md", "CLAUDE.md", "AGENTS.md"];
 
 /** Hard cap so a runaway instructions file can't dominate the context window. */
 const PROJECT_MEMORY_MAX_CHARS = 40_000;
@@ -363,21 +369,26 @@ function readMemoryFile(path: string): string | null {
 
 /**
  * Load project instructions the user keeps for coding agents:
- *   1. Global:    ~/.alan/ALAN.md            (user-wide preferences)
- *   2. Project:   <workspace>/{ALAN,CLAUDE,AGENTS}.md   (first that exists)
+ *   1. Global:    ~/.gear/GEAR.md (then the legacy ~/.alan/ALAN.md)
+ *   2. Project:   <workspace>/{GEAR,ALAN,CLAUDE,AGENTS}.md (first that exists)
  *
- * CLAUDE.md / AGENTS.md are honored so Alan drops into repos already set up
- * for other agents without any migration step.
+ * Legacy and ecosystem instruction files are honored so Gear drops into
+ * existing repositories without requiring a migration step.
  */
 export function loadProjectMemory(workspaceRoot: string): ProjectMemory {
   const sections: string[] = [];
   const files: string[] = [];
 
-  const globalPath = join(homedir(), ".alan", "ALAN.md");
-  const globalContent = readMemoryFile(globalPath);
-  if (globalContent) {
+  const globalPaths = [
+    join(homedir(), ".gear", "GEAR.md"),
+    join(homedir(), ".alan", "ALAN.md"),
+  ];
+  for (const globalPath of globalPaths) {
+    const globalContent = readMemoryFile(globalPath);
+    if (!globalContent) continue;
     sections.push(`## User instructions (from ${globalPath})\n\n${globalContent}`);
     files.push(globalPath);
+    break;
   }
 
   for (const name of PROJECT_MEMORY_FILES) {

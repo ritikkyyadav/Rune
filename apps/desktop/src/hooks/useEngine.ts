@@ -65,6 +65,10 @@ const DEFAULT_STATUS: EngineStatus = {
 const MAX_BACKOFF_MS = 30_000;
 const BASE_BACKOFF_MS = 1_000;
 
+function isTauriRuntime(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
 export function useEngine(options: UseEngineOptions) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
@@ -91,6 +95,7 @@ export function useEngine(options: UseEngineOptions) {
 
       case "tool_call_end":
         opts.onToolCallEnd(event.callId, {
+          args: event.args,
           status: event.output.success ? "success" : "error",
           result: event.output.result,
           error: event.output.error,
@@ -230,16 +235,16 @@ export function useEngine(options: UseEngineOptions) {
       try {
         // Start the chat -- the engine emits streaming events via the
         // "chat_event" channel which our listener picks up.
-        const result = await safeInvoke<null>("chat_start", {
+        await safeInvoke<null>("chat_start", {
           sessionId,
           message,
         });
 
-        // If Tauri is not available, simulate a response for development
-        if (result === null && connectionState !== "connected") {
+        // Keep browser previews interactive without implying native tools are running.
+        if (!isTauriRuntime()) {
           handleEvent({
             type: "text_delta",
-            text: "Tauri backend not available. Running in browser dev mode.",
+            text: "This is Gear's browser preview. Launch the native desktop app to run local tools, edit files, and use your configured models.",
           });
           handleEvent({
             type: "turn_complete",
@@ -252,7 +257,7 @@ export function useEngine(options: UseEngineOptions) {
         setIsProcessing(false);
       }
     },
-    [connectionState, handleEvent],
+    [handleEvent],
   );
 
   // ─── Model switching ───

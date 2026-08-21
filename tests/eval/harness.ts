@@ -90,9 +90,18 @@ function isThrottleError(msg: string): boolean {
 }
 
 /** Real-mode retry/pacing knobs (env-overridable). */
-const MAX_ATTEMPTS = Math.max(1, Number(process.env.ALAN_EVAL_MAX_RETRIES ?? 3));
-const RETRY_BASE_MS = Math.max(0, Number(process.env.ALAN_EVAL_RETRY_BASE_MS ?? 4000));
-const TASK_DELAY_MS = Math.max(0, Number(process.env.ALAN_EVAL_TASK_DELAY_MS ?? 1500));
+const MAX_ATTEMPTS = Math.max(
+  1,
+  Number(process.env.GEAR_EVAL_MAX_RETRIES ?? process.env.ALAN_EVAL_MAX_RETRIES ?? 3),
+);
+const RETRY_BASE_MS = Math.max(
+  0,
+  Number(process.env.GEAR_EVAL_RETRY_BASE_MS ?? process.env.ALAN_EVAL_RETRY_BASE_MS ?? 4000),
+);
+const TASK_DELAY_MS = Math.max(
+  0,
+  Number(process.env.GEAR_EVAL_TASK_DELAY_MS ?? process.env.ALAN_EVAL_TASK_DELAY_MS ?? 1500),
+);
 
 /**
  * Default per-task tool-call cap in REAL mode (mock scripts are finite by
@@ -101,20 +110,27 @@ const TASK_DELAY_MS = Math.max(0, Number(process.env.ALAN_EVAL_TASK_DELAY_MS ?? 
  */
 const REAL_DEFAULT_MAX_TOOL_CALLS = Math.max(
   1,
-  Number(process.env.ALAN_EVAL_TASK_MAX_TOOL_CALLS ?? 40),
+  Number(
+    process.env.GEAR_EVAL_TASK_MAX_TOOL_CALLS ?? process.env.ALAN_EVAL_TASK_MAX_TOOL_CALLS ?? 40,
+  ),
 );
 /** Default per-task spend cap (USD) in real mode; 0/unset disables. */
-const REAL_DEFAULT_MAX_COST = Math.max(0, Number(process.env.ALAN_EVAL_TASK_MAX_COST ?? 0));
+const REAL_DEFAULT_MAX_COST = Math.max(
+  0,
+  Number(process.env.GEAR_EVAL_TASK_MAX_COST ?? process.env.ALAN_EVAL_TASK_MAX_COST ?? 0),
+);
 
 const TOOLS_BINARY =
-  process.env.ALAN_TOOLS_BINARY ?? join(__dirname, "..", "..", "target", "release", "alan-tools");
+  process.env.GEAR_TOOLS_BINARY ??
+  process.env.ALAN_TOOLS_BINARY ??
+  join(__dirname, "..", "..", "target", "release", "alan-tools");
 
 /**
  * Legacy/default real-mode signal via env var. The runner now drives mode
  * explicitly through RunOptions.real, but we keep this export so callers that
  * only set the env var (e.g. the model-sweep path) still behave as before.
  */
-const IS_REAL_MODE = process.env.ALAN_EVAL_REAL === "1";
+const IS_REAL_MODE = (process.env.GEAR_EVAL_REAL ?? process.env.ALAN_EVAL_REAL) === "1";
 
 export interface RunOptions {
   /** Drive a live model through the real engine/gateway instead of the mock. */
@@ -170,8 +186,19 @@ async function attemptTask(task: EvalTask, opts: RunOptions, real: boolean): Pro
   const dbPath = join(tmpRoot, "alan.db");
 
   const provider =
-    opts.provider ?? process.env.ALAN_EVAL_PROVIDER ?? process.env.ALAN_PROVIDER ?? "anthropic";
-  const model = opts.model ?? process.env.ALAN_EVAL_MODEL ?? process.env.ALAN_MODEL ?? "mock-model";
+    opts.provider ??
+    process.env.GEAR_EVAL_PROVIDER ??
+    process.env.ALAN_EVAL_PROVIDER ??
+    process.env.GEAR_PROVIDER ??
+    process.env.ALAN_PROVIDER ??
+    "anthropic";
+  const model =
+    opts.model ??
+    process.env.GEAR_EVAL_MODEL ??
+    process.env.ALAN_EVAL_MODEL ??
+    process.env.GEAR_MODEL ??
+    process.env.ALAN_MODEL ??
+    "mock-model";
   const errors: string[] = [];
 
   try {

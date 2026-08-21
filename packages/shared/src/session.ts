@@ -23,6 +23,7 @@ interface SessionRow {
   title: string | null;
   status: string;
   event_count: number;
+  last_tokens: number | null;
 }
 
 export interface SessionInfoInternal {
@@ -36,6 +37,8 @@ export interface SessionInfoInternal {
   eventCount: number;
   title: string | null;
   status: SessionStatus;
+  /** Last reported context-window occupancy in tokens (null before any report). */
+  lastTokens: number | null;
 }
 
 // ─── Schema (mirrors crates/alan-core/src/session.rs exactly) ───
@@ -116,6 +119,7 @@ function rowToSessionInfo(r: SessionRow): SessionInfoInternal {
     eventCount: r.event_count,
     title: r.title,
     status: (r.status as SessionStatus) ?? "active",
+    lastTokens: r.last_tokens ?? null,
   };
 }
 
@@ -154,6 +158,21 @@ export class SessionManager {
     if (!cols.some((c) => c.name === "provider")) {
       this.db.exec("ALTER TABLE sessions ADD COLUMN provider TEXT");
     }
+    if (!cols.some((c) => c.name === "last_tokens")) {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN last_tokens INTEGER");
+    }
+  }
+
+  /**
+   * Record the session's current context-window occupancy (provider-reported).
+   * Metadata for the sessions manager only — deliberately does NOT touch
+   * updated_at, so a token report never reorders the recency-sorted list.
+   */
+  noteContextTokens(sessionId: string, tokens: number): void {
+    if (!Number.isFinite(tokens) || tokens <= 0) return;
+    this.db
+      .prepare("UPDATE sessions SET last_tokens = ? WHERE id = ?")
+      .run(Math.round(tokens), sessionId);
   }
 
   createSession(workspaceRoot: string, model: string, provider?: string): SessionInfoInternal {
@@ -176,6 +195,7 @@ export class SessionManager {
       eventCount: 0,
       title: null,
       status: "active",
+      lastTokens: null,
     };
   }
 
@@ -259,7 +279,7 @@ export class SessionManager {
     const status = opts?.status ?? "active";
     const where = status === "all" ? "" : "WHERE s.status = ?";
     const stmt = this.db.prepare(
-      `SELECT s.id, s.created_at, s.updated_at, s.workspace_root, s.model, s.provider, s.title, s.status,
+      `SELECT s.id, s.created_at, s.updated_at, s.workspace_root, s.model, s.provider, s.title, s.status, s.last_tokens,
               (SELECT COUNT(*) FROM events WHERE session_id = s.id) as event_count
        FROM sessions s
        ${where}
@@ -313,7 +333,7 @@ export class SessionManager {
   getSession(sessionId: string): SessionInfoInternal | null {
     const row = this.db
       .prepare(
-        `SELECT s.id, s.created_at, s.updated_at, s.workspace_root, s.model, s.provider, s.title, s.status,
+        `SELECT s.id, s.created_at, s.updated_at, s.workspace_root, s.model, s.provider, s.title, s.status, s.last_tokens,
                 (SELECT COUNT(*) FROM events WHERE session_id = s.id) as event_count
          FROM sessions s WHERE s.id = ? AND s.status = 'active'`,
       )
@@ -327,7 +347,7 @@ export class SessionManager {
   getSessionInfo(sessionId: string): SessionInfoInternal | null {
     const row = this.db
       .prepare(
-        `SELECT s.id, s.created_at, s.updated_at, s.workspace_root, s.model, s.provider, s.title, s.status,
+        `SELECT s.id, s.created_at, s.updated_at, s.workspace_root, s.model, s.provider, s.title, s.status, s.last_tokens,
                 (SELECT COUNT(*) FROM events WHERE session_id = s.id) as event_count
          FROM sessions s WHERE s.id = ?`,
       )

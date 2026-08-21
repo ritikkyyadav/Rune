@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from "bun:test";
-import { clampVisible } from "../../../packages/orchestrator/src/bin/ui/render";
+import { clampVisible, visLen } from "../../../packages/orchestrator/src/bin/ui/render";
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
 import { renderToolActivity } from "../../../packages/orchestrator/src/bin/ui/activity";
 
@@ -33,20 +33,30 @@ describe("clampVisible", () => {
     expect(stripAnsi(clampVisible("abcde", 5))).toBe("abcde");
   });
 
+  it("never splits CJK, combining marks, or joined emoji", () => {
+    const styled = `\x1b[36m界面👩🏽‍💻e\u0301tail\x1b[0m`;
+    const out = clampVisible(styled, 8);
+    expect(stripAnsi(out)).toBe("界面👩🏽‍💻e\u0301…");
+    expect(visLen(out)).toBe(8);
+    expect(out.endsWith("\x1b[0m")).toBe(true);
+  });
+
   it("tool failure lines stay inside the terminal width", () => {
     const prev = process.stdout.columns;
     Object.defineProperty(process.stdout, "columns", { value: 100, configurable: true });
     try {
       const line = renderToolActivity({
         toolName: "web_fetch",
-        args: { url: "https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard.min.js" },
+        args: {
+          url: "https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard.min.js",
+        },
         result: "",
         success: false,
         error:
           "Egress blocked: https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard.min.js — network access is disabled for this tool in this workspace",
       });
       for (const ln of line.split("\n")) {
-        expect(stripAnsi(ln).length).toBeLessThanOrEqual(100);
+        expect(visLen(ln)).toBeLessThanOrEqual(100);
       }
       // The URL (not raw JSON) names the target.
       expect(stripAnsi(line)).toContain("https://cdnjs.cloudflare.com");
@@ -60,12 +70,17 @@ describe("clampVisible", () => {
     const todo = stripAnsi(
       renderToolActivity({
         toolName: "todo_write",
-        args: { items: [{ content: "a", status: "pending" }, { content: "b", status: "pending" }] },
+        args: {
+          items: [
+            { content: "a", status: "pending" },
+            { content: "b", status: "pending" },
+          ],
+        },
         result: "{}",
         success: true,
       }),
     );
-    expect(todo).toContain("Updated plan");
+    expect(todo).toContain("Plan updated");
     expect(todo).toContain("2 items");
     expect(todo).not.toContain('{"items"');
 
@@ -77,7 +92,7 @@ describe("clampVisible", () => {
         success: true,
       }),
     );
-    expect(shell).toContain("Checked shell");
+    expect(shell).toContain("Checking shell");
     expect(shell).toContain("shell_1");
     expect(shell).not.toContain('{"shell_id"');
   });

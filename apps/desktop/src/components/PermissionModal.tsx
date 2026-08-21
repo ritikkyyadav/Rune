@@ -10,12 +10,12 @@ const styles: Record<string, React.CSSProperties> = {
   overlay: {
     position: "fixed",
     inset: 0,
-    background: "rgba(0, 0, 0, 0.6)",
+    background: "var(--overlay)",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     zIndex: 1000,
-    backdropFilter: "blur(4px)",
+    backdropFilter: "blur(2px)",
   },
   modal: {
     background: "var(--bg-secondary)",
@@ -23,7 +23,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: "var(--radius-lg)",
     width: 480,
     maxWidth: "90vw",
-    boxShadow: "0 20px 60px rgba(0, 0, 0, 0.4)",
+    boxShadow: "var(--shadow-md)",
   },
   header: {
     padding: "20px 24px 16px",
@@ -171,7 +171,7 @@ export function PermissionModal({ prompt, onDecision }: PermissionModalProps) {
         <div style={styles.header}>
           <div style={styles.headerTitle}>
             <span style={styles.headerIcon}>&#9888;</span>
-            Permission Required
+            {prompt.safety ? "Auto mode paused" : "Permission Required"}
           </div>
         </div>
 
@@ -185,6 +185,29 @@ export function PermissionModal({ prompt, onDecision }: PermissionModalProps) {
             <div style={styles.fieldLabel}>Summary</div>
             <div style={styles.fieldValue}>{prompt.argsSummary}</div>
           </div>
+
+          {prompt.safety ? (
+            <>
+              <div style={styles.fieldRow}>
+                <div style={styles.fieldLabel}>Safety review</div>
+                <div style={styles.fieldValue}>
+                  {prompt.safety.risk.toUpperCase()} · {prompt.safety.tier} · {prompt.safety.source}
+                </div>
+              </div>
+              <div style={styles.fieldRow}>
+                <div style={styles.fieldLabel}>Why it paused</div>
+                <div style={styles.argsValue}>{prompt.safety.reason}</div>
+              </div>
+              {prompt.safety.reviewer ? (
+                <div style={styles.fieldRow}>
+                  <div style={styles.fieldLabel}>Independent reviewer</div>
+                  <div style={styles.fieldValue}>
+                    {prompt.safety.reviewer.provider}/{prompt.safety.reviewer.model}
+                  </div>
+                </div>
+              ) : null}
+            </>
+          ) : null}
 
           {Object.keys(prompt.rawArgs).length > 0 && (
             <div style={styles.fieldRow}>
@@ -207,7 +230,7 @@ export function PermissionModal({ prompt, onDecision }: PermissionModalProps) {
             onClick={() => handleDecision("allow_session")}
             disabled={submitting}
           >
-            Allow Session (A)
+            {prompt.exactSessionGrant ? "Allow Exact Action (A)" : "Allow Session (A)"}
           </button>
           <button
             style={buttonStyle(styles.allowOnceButton)}
@@ -219,7 +242,8 @@ export function PermissionModal({ prompt, onDecision }: PermissionModalProps) {
         </div>
 
         <div style={styles.shortcutHint}>
-          Press Y to allow once, A to allow for session, N or Esc to deny
+          Press Y to allow once, A to allow{" "}
+          {prompt.exactSessionGrant ? "this exact action" : "for session"}, N or Esc to deny
         </div>
       </div>
     </div>

@@ -1,170 +1,81 @@
-import { useState, useCallback } from "react";
-import { SessionList } from "./components/SessionList";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BrandMark } from "./components/BrandMark";
+import { Composer, type ComposerAttachment } from "./components/Composer";
+import { EnvironmentPanel, summarizeChanges } from "./components/EnvironmentPanel";
+import {
+  ChatIcon,
+  ChevronDownIcon,
+  ComposeIcon,
+  FolderIcon,
+  MoreIcon,
+  PanelIcon,
+  ReviewIcon,
+  SearchIcon,
+  SettingsIcon,
+  SidebarIcon,
+  UserIcon,
+} from "./components/Icons";
 import { MessageStream } from "./components/MessageStream";
-import { Composer } from "./components/Composer";
-import { PlanPane } from "./components/PlanPane";
 import { PermissionModal } from "./components/PermissionModal";
+import { PlanPane } from "./components/PlanPane";
+import { ReviewWorkspace } from "./components/ReviewWorkspace";
+import { SessionList } from "./components/SessionList";
 import { Settings } from "./components/Settings";
-import { useSession } from "./hooks/useSession";
 import { useEngine } from "./hooks/useEngine";
-import type { PermissionPrompt, PermissionDecision, ConnectionState } from "./lib/types";
+import { useSession } from "./hooks/useSession";
+import type { ConnectionState, PermissionDecision, PermissionPrompt } from "./lib/types";
 
-// ─── Connection status dot colours ───
-const connectionColors: Record<ConnectionState, string> = {
-  connecting: "var(--warning)",
-  connected: "var(--success)",
-  disconnected: "var(--text-muted)",
-  error: "var(--error)",
-};
+type WorkspaceView = "chat" | "review";
 
 const connectionLabels: Record<ConnectionState, string> = {
-  connecting: "Connecting...",
-  connected: "Connected",
-  disconnected: "Disconnected",
-  error: "Connection error",
+  connecting: "Connecting",
+  connected: "Ready",
+  disconnected: "Offline",
+  error: "Needs attention",
 };
 
-// ─── Layout styles ───
+function friendlyModelName(model: string): string {
+  const known: Record<string, string> = {
+    "gpt-5.6-sol": "GPT-5.6 Sol",
+    "gpt-5.6-terra": "GPT-5.6 Terra",
+    "gpt-5.6-luna": "GPT-5.6 Luna",
+  };
+  if (known[model]) return known[model];
+  const short = model.split("/").pop() ?? model;
+  return short
+    .replace(/:free$/i, "")
+    .split("-")
+    .map((part) => (part.length <= 3 ? part.toUpperCase() : part[0].toUpperCase() + part.slice(1)))
+    .join(" ");
+}
 
-const styles: Record<string, React.CSSProperties> = {
-  container: {
-    display: "flex",
-    height: "100vh",
-    width: "100vw",
-    overflow: "hidden",
-  },
-  leftRail: {
-    width: 250,
-    minWidth: 250,
-    borderRight: "1px solid var(--border)",
-    display: "flex",
-    flexDirection: "column",
-    background: "var(--bg-secondary)",
-  },
-  center: {
-    flex: 1,
-    display: "flex",
-    flexDirection: "column",
-    minWidth: 0,
-  },
-  rightRail: {
-    width: 300,
-    minWidth: 300,
-    borderLeft: "1px solid var(--border)",
-    display: "flex",
-    flexDirection: "column",
-    background: "var(--bg-secondary)",
-  },
-  topBar: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: "8px 16px",
-    borderBottom: "1px solid var(--border)",
-    background: "var(--bg-secondary)",
-    minHeight: 40,
-    gap: 12,
-  },
-  topBarLeft: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    fontSize: 13,
-    color: "var(--text-secondary)",
-  },
-  wordmark: {
-    display: "flex",
-    alignItems: "center",
-    fontFamily: "var(--font-mono)",
-    fontSize: 14,
-    fontWeight: 600,
-    color: "var(--text-primary)",
-    letterSpacing: "0.02em",
-  },
-  wordmarkCursor: {
-    color: "var(--accent)",
-    marginLeft: 1,
-  },
-  brandDivider: {
-    width: 1,
-    height: 16,
-    background: "var(--border)",
-    margin: "0 4px",
-  },
-  topBarRight: {
-    display: "flex",
-    alignItems: "center",
-    gap: 12,
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: "50%",
-    flexShrink: 0,
-  },
-  modelLabel: {
-    fontFamily: "var(--font-mono)",
-    fontSize: 12,
-    color: "var(--text-muted)",
-    padding: "2px 8px",
-    background: "var(--bg-primary)",
-    borderRadius: "var(--radius-sm)",
-    border: "1px solid var(--border)",
-  },
-  contextBarOuter: {
-    width: 100,
-    height: 6,
-    background: "var(--bg-primary)",
-    borderRadius: 3,
-    overflow: "hidden",
-    border: "1px solid var(--border)",
-  },
-  contextBarInner: {
-    height: "100%",
-    borderRadius: 3,
-    transition: "width 0.3s ease",
-  },
-  contextLabel: {
-    fontSize: 11,
-    color: "var(--text-muted)",
-    fontFamily: "var(--font-mono)",
-  },
-  settingsButton: {
-    background: "transparent",
-    border: "1px solid var(--border)",
-    color: "var(--text-secondary)",
-    cursor: "pointer",
-    fontSize: 14,
-    padding: "4px 8px",
-    borderRadius: "var(--radius-sm)",
-    lineHeight: 1,
-    transition: "background 0.15s",
-  },
-  errorBanner: {
-    padding: "8px 16px",
-    background: "rgba(248, 113, 113, 0.1)",
-    borderBottom: "1px solid var(--error)",
-    color: "var(--error)",
-    fontSize: 13,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  errorDismiss: {
-    background: "transparent",
-    border: "none",
-    color: "var(--error)",
-    cursor: "pointer",
-    fontSize: 16,
-    lineHeight: 1,
-    padding: "0 4px",
-  },
-};
+function workspaceLabel(path: string): string {
+  if (!path || path === "~") return "Local workspace";
+  const segments = path.split("/").filter(Boolean);
+  return segments.at(-1) ?? path;
+}
+
+function buildEnginePrompt(message: string, attachments: ComposerAttachment[]): string {
+  if (attachments.length === 0) return message;
+  const files = attachments
+    .map(
+      (attachment) =>
+        `<attached_file name="${attachment.name}" type="${attachment.type}">\n${attachment.content}\n</attached_file>`,
+    )
+    .join("\n\n");
+  return `${message}\n\nThe user attached these text files:\n\n${files}`;
+}
 
 export default function App() {
   const session = useSession();
+  const [activeView, setActiveView] = useState<WorkspaceView>("chat");
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [environmentOpen, setEnvironmentOpen] = useState(() => window.innerWidth >= 1120);
   const [showPlanPane, setShowPlanPane] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
   const [permissionRequest, setPermissionRequest] = useState<{
     prompt: PermissionPrompt;
     resolve: (decision: PermissionDecision) => void;
@@ -173,189 +84,365 @@ export default function App() {
   const engine = useEngine({
     onTextDelta: session.appendAssistantText,
     onToolCallStart: (callId, toolName) => {
-      session.addToolCall({
-        callId,
-        toolName,
-        args: {},
-        status: "running",
-      });
+      session.addToolCall({ callId, toolName, args: {}, status: "running" });
     },
-    onToolCallEnd: (callId, update) => {
-      session.updateToolCall(callId, update);
-    },
+    onToolCallEnd: session.updateToolCall,
     onPlanCreated: (plan) => {
       session.setPlan(plan);
       setShowPlanPane(true);
     },
-    onPlanUpdated: (plan) => {
-      session.setPlan(plan);
-    },
-    onTurnComplete: () => {
-      session.setLoading(false);
-    },
+    onPlanUpdated: session.setPlan,
+    onTurnComplete: () => session.setLoading(false),
     onError: (error) => {
-      session.appendAssistantText(`\n\nError: ${error}`);
+      session.appendAssistantText(`\n\nGear hit a problem: ${error}`);
       session.setLoading(false);
     },
-    onPermissionRequest: (prompt) => {
-      return new Promise<PermissionDecision>((resolve) => {
-        setPermissionRequest({ prompt, resolve });
-      });
-    },
+    onPermissionRequest: (prompt) =>
+      new Promise<PermissionDecision>((resolve) => setPermissionRequest({ prompt, resolve })),
   });
 
-  // ─── Handlers ───
+  const activeSession = useMemo(
+    () => session.sessions.find((item) => item.id === session.activeSessionId) ?? null,
+    [session.activeSessionId, session.sessions],
+  );
+  const allToolCalls = useMemo(
+    () => session.messages.flatMap((message) => message.toolCalls ?? []),
+    [session.messages],
+  );
+  const changes = useMemo(() => summarizeChanges(allToolCalls), [allToolCalls]);
+  const workspace = activeSession?.workspace ?? engine.status.workspace ?? "~";
+
+  const createPersistedSession = useCallback(async () => {
+    const engineSessionId = await engine.createSession(engine.status.model);
+    return session.createSession({
+      id: engineSessionId,
+      model: engine.status.model,
+      workspace: engine.status.workspace ?? "~",
+    });
+  }, [engine.createSession, engine.status.model, engine.status.workspace, session.createSession]);
 
   const handleSend = useCallback(
-    async (message: string) => {
-      if (!message.trim()) return;
-
-      let sid = session.activeSessionId;
-      if (!sid) {
-        sid = session.createSession();
-      }
-
-      session.addUserMessage(message);
-      await engine.sendMessage(sid, message);
+    async (message: string, attachments: ComposerAttachment[] = []) => {
+      if (!message.trim() && attachments.length === 0) return;
+      const sessionId = session.activeSessionId ?? (await createPersistedSession());
+      session.addUserMessage(
+        message || "Please review the attached file.",
+        attachments.map(({ name, size, type }) => ({ name, size, type })),
+      );
+      setActiveView("chat");
+      await engine.sendMessage(sessionId, buildEnginePrompt(message, attachments));
     },
-    [session, engine],
+    [createPersistedSession, engine.sendMessage, session.activeSessionId, session.addUserMessage],
+  );
+
+  const handleNewSession = useCallback(() => {
+    setActiveView("chat");
+    setSearchOpen(false);
+    setSearchQuery("");
+    void createPersistedSession();
+  }, [createPersistedSession]);
+
+  const handleSelectSession = useCallback(
+    (sessionId: string) => {
+      setActiveView("chat");
+      void session.selectSession(sessionId);
+    },
+    [session.selectSession],
   );
 
   const handlePermissionDecision = useCallback(
     (decision: PermissionDecision) => {
-      if (permissionRequest) {
-        permissionRequest.resolve(decision);
-        setPermissionRequest(null);
-      }
+      permissionRequest?.resolve(decision);
+      setPermissionRequest(null);
     },
     [permissionRequest],
   );
 
-  const handleNewSession = useCallback(() => {
-    session.createSession();
-  }, [session]);
+  useEffect(() => {
+    if (searchOpen) searchRef.current?.focus();
+  }, [searchOpen]);
 
-  const handleDeleteSession = useCallback(
-    (sessionId: string) => {
-      session.deleteSession(sessionId);
-    },
-    [session],
-  );
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) {
+        if (event.key === "Escape") {
+          setSearchOpen(false);
+          setShowPlanPane(false);
+        }
+        return;
+      }
+      if (event.key.toLowerCase() === "n") {
+        event.preventDefault();
+        handleNewSession();
+      } else if (event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setSidebarOpen(true);
+        setSearchOpen(true);
+      } else if (event.key === ",") {
+        event.preventDefault();
+        setShowSettings(true);
+      }
+    };
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, [handleNewSession]);
 
-  // ─── Context usage bar ───
-
-  const contextPercent =
-    engine.status.contextMax > 0
-      ? Math.min(Math.round((engine.status.contextUsed / engine.status.contextMax) * 100), 100)
-      : 0;
-
-  const contextBarColor =
-    contextPercent > 90 ? "var(--error)" : contextPercent > 70 ? "var(--warning)" : "var(--accent)";
+  const isTauriRuntime = "__TAURI_INTERNALS__" in window;
+  const taskTitle = activeSession?.title || "New task";
+  const modelName = friendlyModelName(engine.status.model);
 
   return (
-    <div style={styles.container}>
-      {/* Left rail: session list */}
-      <div style={styles.leftRail} className="no-select">
-        <SessionList
-          sessions={session.sessions}
-          activeSessionId={session.activeSessionId}
-          onSelect={session.selectSession}
-          onNewSession={handleNewSession}
-          onDeleteSession={handleDeleteSession}
-          isLoading={session.sessionsLoading}
-        />
-      </div>
-
-      {/* Center: top bar + message stream + composer */}
-      <div style={styles.center}>
-        {/* Top bar with connection status, model, and context usage */}
-        <div style={styles.topBar} className="no-select">
-          <div style={styles.topBarLeft}>
-            <span style={styles.wordmark} title="Berne — Sovereign Agentic Coding Assistant">
-              Berne<span style={styles.wordmarkCursor}>▮</span>
-            </span>
-            <div style={styles.brandDivider} />
-            <div
-              style={{
-                ...styles.statusDot,
-                background: connectionColors[engine.connectionState],
-              }}
-              title={connectionLabels[engine.connectionState]}
-            />
-            <span>{connectionLabels[engine.connectionState]}</span>
-          </div>
-
-          <div style={styles.topBarRight}>
-            {/* Model label */}
-            <span style={styles.modelLabel}>{engine.status.model}</span>
-
-            {/* Context usage bar */}
-            <div
-              style={{ display: "flex", alignItems: "center", gap: 6 }}
-              title={`Context: ${engine.status.contextUsed.toLocaleString()} / ${engine.status.contextMax.toLocaleString()} tokens`}
-            >
-              <div style={styles.contextBarOuter}>
-                <div
-                  style={{
-                    ...styles.contextBarInner,
-                    width: `${contextPercent}%`,
-                    background: contextBarColor,
-                  }}
-                />
-              </div>
-              <span style={styles.contextLabel}>{contextPercent}%</span>
+    <div
+      className={`app-shell ${sidebarOpen ? "app-shell--sidebar" : ""} ${
+        environmentOpen ? "app-shell--environment" : ""
+      } ${isTauriRuntime ? "app-shell--tauri" : "app-shell--browser"}`}
+    >
+      {sidebarOpen ? (
+        <aside className="sidebar no-select">
+          <div className="sidebar-titlebar" data-tauri-drag-region>
+            <div className="traffic-lights" aria-hidden="true">
+              <i />
+              <i />
+              <i />
             </div>
+            <div className="sidebar-brand">
+              <BrandMark size={25} />
+              <strong>Gear</strong>
+              <ChevronDownIcon />
+            </div>
+            <div className="sidebar-title-actions">
+              <button
+                type="button"
+                onClick={() => setSearchOpen((open) => !open)}
+                title="Search tasks (⌘K)"
+                aria-label="Search tasks"
+              >
+                <SearchIcon />
+              </button>
+              <button
+                type="button"
+                onClick={() => setSidebarOpen(false)}
+                title="Hide sidebar"
+                aria-label="Hide sidebar"
+              >
+                <SidebarIcon />
+              </button>
+            </div>
+          </div>
 
-            {/* Settings */}
+          {searchOpen ? (
+            <label className="sidebar-search">
+              <SearchIcon />
+              <input
+                ref={searchRef}
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search tasks…"
+                aria-label="Search tasks"
+              />
+              <kbd>esc</kbd>
+            </label>
+          ) : null}
+
+          <nav className="primary-nav" aria-label="Main navigation">
+            <button type="button" className="new-task-button" onClick={handleNewSession}>
+              <ComposeIcon />
+              <span>New task</span>
+              <kbd>⌘N</kbd>
+            </button>
             <button
-              style={styles.settingsButton}
-              onClick={() => setShowSettings(true)}
-              title="Settings"
+              type="button"
+              className={`nav-item ${activeView === "chat" ? "nav-item--active" : ""}`}
+              onClick={() => setActiveView("chat")}
             >
-              &#9881;
+              <ChatIcon />
+              <span>All tasks</span>
+            </button>
+            <button
+              type="button"
+              className={`nav-item ${activeView === "review" ? "nav-item--active" : ""}`}
+              onClick={() => setActiveView("review")}
+            >
+              <ReviewIcon />
+              <span>Review changes</span>
+              {changes.calls.length > 0 ? <b>{changes.calls.length}</b> : null}
+            </button>
+          </nav>
+
+          <SessionList
+            sessions={session.sessions}
+            activeSessionId={session.activeSessionId}
+            onSelect={handleSelectSession}
+            onNewSession={handleNewSession}
+            onDeleteSession={session.deleteSession}
+            isLoading={session.sessionsLoading}
+            searchQuery={searchQuery}
+          />
+
+          <footer className="sidebar-footer">
+            <button type="button" className="account-button" onClick={() => setShowSettings(true)}>
+              <span className="account-avatar">
+                <UserIcon />
+              </span>
+              <span>
+                <strong>Local workspace</strong>
+                <small>{workspaceLabel(workspace)}</small>
+              </span>
+              <SettingsIcon />
+            </button>
+          </footer>
+        </aside>
+      ) : null}
+
+      <section className="workbench">
+        <header className="workspace-header no-select" data-tauri-drag-region>
+          <div className="workspace-heading">
+            {!sidebarOpen ? (
+              <button
+                type="button"
+                className="chrome-button"
+                onClick={() => setSidebarOpen(true)}
+                title="Show sidebar"
+                aria-label="Show sidebar"
+              >
+                <SidebarIcon />
+              </button>
+            ) : null}
+            <span className="workspace-heading-icon">
+              <FolderIcon />
+            </span>
+            <h1>{taskTitle}</h1>
+            <button
+              type="button"
+              className="title-more"
+              title="Task options"
+              aria-label="Task options"
+            >
+              <MoreIcon />
+            </button>
+            <span className={`connection-state connection-state--${engine.connectionState}`}>
+              <i />
+              {connectionLabels[engine.connectionState]}
+            </span>
+          </div>
+          <div className="workspace-actions">
+            <button
+              type="button"
+              className="chrome-button"
+              onClick={() => setShowSettings(true)}
+              title="Settings (⌘,)"
+              aria-label="Open settings"
+            >
+              <SettingsIcon />
+            </button>
+            <button
+              type="button"
+              className={`chrome-button ${environmentOpen ? "chrome-button--active" : ""}`}
+              onClick={() => setEnvironmentOpen((open) => !open)}
+              title="Toggle environment"
+              aria-label="Toggle environment panel"
+              aria-pressed={environmentOpen}
+            >
+              <PanelIcon />
             </button>
           </div>
+        </header>
+
+        <div className="view-tabs no-select">
+          <div role="tablist" aria-label="Task views">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeView === "chat"}
+              className={activeView === "chat" ? "view-tab--active" : ""}
+              onClick={() => setActiveView("chat")}
+            >
+              Conversation
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeView === "review"}
+              className={activeView === "review" ? "view-tab--active" : ""}
+              onClick={() => setActiveView("review")}
+            >
+              Review
+              {changes.calls.length > 0 ? <b>{changes.calls.length}</b> : null}
+            </button>
+          </div>
+          <span className="view-workspace-label" title={workspace}>
+            <FolderIcon />
+            {workspaceLabel(workspace)}
+          </span>
         </div>
 
-        {/* Error banner */}
-        {session.error && (
-          <div style={styles.errorBanner}>
+        {session.error ? (
+          <div className="error-banner" role="alert">
             <span>{session.error}</span>
-            <button style={styles.errorDismiss} onClick={session.clearError}>
-              &#215;
+            <button type="button" onClick={session.clearError} aria-label="Dismiss error">
+              ×
             </button>
           </div>
-        )}
+        ) : null}
 
-        <MessageStream messages={session.messages} isLoading={session.isLoading} />
-        <Composer
-          onSend={handleSend}
-          disabled={engine.isProcessing}
-          isProcessing={engine.isProcessing}
-          onAbort={engine.abort}
-        />
-      </div>
+        <div className="workbench-body">
+          <main className="stage" role="tabpanel">
+            {activeView === "chat" ? (
+              <>
+                <MessageStream
+                  messages={session.messages}
+                  isLoading={session.isLoading}
+                  onSuggestion={(message) => void handleSend(message)}
+                />
+                <Composer
+                  onSend={handleSend}
+                  disabled={engine.isProcessing}
+                  isProcessing={engine.isProcessing}
+                  onAbort={engine.abort}
+                  modelName={modelName}
+                  onOpenSettings={() => setShowSettings(true)}
+                />
+              </>
+            ) : (
+              <ReviewWorkspace
+                toolCalls={allToolCalls}
+                onBackToChat={() => setActiveView("chat")}
+              />
+            )}
+          </main>
 
-      {/* Right rail: plan pane (collapsible) */}
-      {showPlanPane && session.activePlan && (
-        <div style={styles.rightRail}>
-          <PlanPane plan={session.activePlan} onClose={() => setShowPlanPane(false)} />
+          {environmentOpen ? (
+            <EnvironmentPanel
+              status={engine.status}
+              connectionState={engine.connectionState}
+              workspace={workspace}
+              toolCalls={allToolCalls}
+              plan={session.activePlan}
+              planOpen={showPlanPane}
+              onReview={() => setActiveView("review")}
+              onTogglePlan={() => setShowPlanPane((open) => !open)}
+            />
+          ) : null}
+
+          {showPlanPane && session.activePlan ? (
+            <aside className="plan-drawer" aria-label="Task plan">
+              <PlanPane plan={session.activePlan} onClose={() => setShowPlanPane(false)} />
+            </aside>
+          ) : null}
         </div>
-      )}
+      </section>
 
-      {/* Permission modal overlay */}
-      {permissionRequest && (
+      {permissionRequest ? (
         <PermissionModal prompt={permissionRequest.prompt} onDecision={handlePermissionDecision} />
-      )}
+      ) : null}
 
-      {/* Settings panel */}
-      {showSettings && (
+      {showSettings ? (
         <Settings
           status={engine.status}
           onSwitchModel={engine.switchModel}
           onClose={() => setShowSettings(false)}
         />
-      )}
+      ) : null}
     </div>
   );
 }

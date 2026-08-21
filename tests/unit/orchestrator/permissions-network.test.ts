@@ -2,7 +2,7 @@
  * Sandbox-escape permission consistency: bash calls that leave the OS sandbox
  * (network: true, run_in_background: true) must NOT be auto-approved by
  * workspace trust ("auto" mode) — only sandbox-confined foreground commands
- * are. Hands-Free ("turing") still approves everything.
+ * are. Autonomy III still approves everything.
  */
 
 import { describe, test, expect } from "bun:test";
@@ -46,7 +46,7 @@ describe("PermissionBroker — bash sandbox escapes", () => {
     expect(d.type).toBe("needs_confirmation");
   });
 
-  test("turing mode approves network bash", () => {
+  test("Autonomy III approves network bash", () => {
     const b = new PermissionBroker(true, { workspaceRoot: "/ws" });
     const d = b.check(BASH, { command: "git push", network: true });
     expect(d.type).toBe("allowed");

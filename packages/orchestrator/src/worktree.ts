@@ -13,7 +13,7 @@ import { join } from "node:path";
 export interface RunWorktree {
   /** Absolute path of the isolated checkout. */
   path: string;
-  /** The branch the run's commits land on (berne/run-<id>). */
+  /** The branch the run's commits land on (gear/run-<id>). */
   branch: string;
 }
 
@@ -33,7 +33,7 @@ export function isGitRepo(dir: string): boolean {
 
 /**
  * Create an isolated worktree for a run at `.alan/worktrees/<runId>`, on a
- * fresh `berne/run-<runId>` branch off the current HEAD. Throws with the git
+ * fresh `gear/run-<runId>` branch off the current HEAD. Throws with the git
  * error on failure — a run that THINKS it is isolated but isn't would be
  * worse than one that refuses to start.
  */
@@ -50,7 +50,7 @@ export function createRunWorktree(repoRoot: string, runId: string): RunWorktree 
   if (existsSync(path)) {
     throw new Error(`worktree already exists for run ${safeId}: ${path}`);
   }
-  const branch = `berne/run-${safeId}`;
+  const branch = `gear/run-${safeId}`;
   const res = git(repoRoot, ["worktree", "add", "-b", branch, path, "HEAD"]);
   if (!res.ok) {
     throw new Error(`git worktree add failed: ${res.stderr || res.stdout}`);

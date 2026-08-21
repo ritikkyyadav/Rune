@@ -87,7 +87,7 @@ describe("LlmGateway streaming fallback", () => {
   // Regression: a provider switch must NOT be an `error` event. The agent loop
   // ends the turn on `error`, so an error-typed switch abandons the fallback
   // generator and the turn produces nothing (the "Switching to…" hang).
-  test("on 429, emits a non-fatal notice and streams the fallback provider", async () => {
+  test("on 429, emits a non-fatal structured fallback and streams the fallback provider", async () => {
     const gw = gateway();
     gw.registerProvider(new FakeProvider("google", fail429));
     gw.registerProvider(new FakeProvider("openrouter", okText("hello from fallback")));
@@ -95,10 +95,12 @@ describe("LlmGateway streaming fallback", () => {
     const events = await collect(gw.inferStream(req));
 
     expect(events.some((e) => e.type === "error")).toBe(false);
-    const notice = events.find(
-      (e): e is Extract<StreamEvent, { type: "notice" }> => e.type === "notice",
+    const fallback = events.find(
+      (e): e is Extract<StreamEvent, { type: "fallback" }> => e.type === "fallback",
     );
-    expect(notice?.message).toContain("Switching to");
+    expect(fallback?.from.provider).toBe("google");
+    expect(fallback?.to.provider).toBe("openrouter");
+    expect(fallback?.status).toBe(429);
 
     const text = events
       .filter((e): e is Extract<StreamEvent, { type: "content_delta" }> => e.type === "content_delta")
@@ -133,7 +135,7 @@ describe("LlmGateway streaming fallback", () => {
 
     expect(google.calls).toBe(1); // fast fallback — no wasted retry on the dead primary
     expect(events.some((e) => e.type === "error")).toBe(false);
-    expect(events.some((e) => e.type === "notice")).toBe(true);
+    expect(events.some((e) => e.type === "fallback")).toBe(true);
   });
 
   // The confusing failure: when every provider is throttled, the user got 3×

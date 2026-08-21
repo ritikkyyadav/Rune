@@ -10,15 +10,15 @@ import {
 } from "./config-settings";
 
 /**
- * `update_config` — change one of Berne's own settings from a plain-language
- * request ("switch to hands-free mode", "turn the sandbox off", "enable auto
+ * `update_config` — change one of Gear's own settings from a plain-language
+ * request ("switch to Autonomy III", "turn the sandbox off", "enable auto
  * commit"). The change is applied live AND written back to ~/.alan/config.toml so
  * it survives the next launch. The model maps the user's words to a setting +
  * value; this tool validates them against a fixed catalog (so it can only touch
  * known settings), applies the change, then persists it.
  *
- * It is a `confirm`-level tool on purpose: switching to hands-free or turning the
- * sandbox off removes a guardrail, so outside hands-free mode the user sees a
+ * It is a `confirm`-level tool on purpose: switching to Autonomy III or turning the
+ * sandbox off removes a guardrail, so outside Autonomy III the user sees a
  * permission prompt first — an errant/injected instruction can't silently weaken
  * the setup.
  */
@@ -34,8 +34,8 @@ export const UPDATE_CONFIG_TOOL_SCHEMA: ToolSchema = {
   name: "update_config",
   version: "0.1.0",
   description:
-    "Change one of Berne's own settings when the user asks (e.g. \"switch to hands-free " +
-    'mode", "turn the sandbox off", "enable auto commit"). The change applies immediately ' +
+    'Change one of Gear\'s own settings when the user asks (e.g. "switch to Autonomy III", ' +
+    '"turn the sandbox off", "enable auto commit"). The change applies immediately ' +
     "and is saved to ~/.alan/config.toml so it persists across restarts. Call with `setting` " +
     "and `value`. Omit `value` to read the current value; omit both to list every setting. " +
     "Only these settings can be changed:\n" +
@@ -52,7 +52,7 @@ export const UPDATE_CONFIG_TOOL_SCHEMA: ToolSchema = {
       value: {
         type: "string",
         description:
-          'The new value, e.g. "hands-free" / "confirm" / "auto" for permission_mode, or ' +
+          'The new value, e.g. "autonomy-i" / "autonomy-iii" / "auto" for permission_mode, or ' +
           '"on"/"off" for sandbox and auto_commit. Omit to read the current value.',
       },
     },
@@ -90,7 +90,7 @@ function reportAll(deps: UpdateConfigDeps): string {
     const shown = cur !== undefined ? displaySettingValue(s, cur) : "unknown";
     return `- ${s.key}: ${shown}`;
   });
-  return `Current settings:\n${lines.join("\n")}\n\nSay e.g. "switch to hands-free mode" to change one.`;
+  return `Current settings:\n${lines.join("\n")}\n\nSay e.g. "switch to Autonomy II" to change one.`;
 }
 
 export function createUpdateConfigTool(deps: UpdateConfigDeps): ToolHandler {
@@ -139,7 +139,7 @@ export function createUpdateConfigTool(deps: UpdateConfigDeps): ToolHandler {
         const already = deps.readSetting(setting.key);
 
         // Apply live FIRST. If the machine won't honor it (e.g. org policy forbids
-        // hands-free), report the refusal and DON'T persist a dead setting.
+        // Autonomy III), report the refusal and DON'T persist a dead setting.
         const applied = deps.applyLive(setting.key, canonical);
         if (!applied.ok) {
           return fail(
@@ -178,8 +178,8 @@ export function createUpdateConfigTool(deps: UpdateConfigDeps): ToolHandler {
 
 /** A short, honest caution when a change removes a guardrail. */
 function sensitivityNote(key: string, canonical: string): string {
-  if (key === "permission_mode" && canonical === "hands-free") {
-    return " ⚠ Hands-free means Berne will run commands and edit files without asking.";
+  if (key === "permission_mode" && canonical === "autonomy-iii") {
+    return " ⚠ Autonomy III gives Gear full host access and removes permission prompts.";
   }
   if (key === "sandbox" && canonical === "false") {
     return " ⚠ Sandbox off means shell commands have full host + network access.";

@@ -103,12 +103,12 @@ function selectTasks(tasks: EvalTask[], args: CliArgs): EvalTask[] {
 
 /**
  * MODEL_SWEEP: comma-separated list of "provider:model" pairs.
- * Example: ALAN_MODEL_SWEEP="anthropic:claude-haiku-4-5-20251001,openai:gpt-4o-mini"
+ * Example: GEAR_MODEL_SWEEP="anthropic:claude-haiku-4-5-20251001,openai:gpt-4o-mini"
  *
  * Sweeps only run in real mode — in mock mode every task uses the mock provider.
  */
 function parseModelSweep(): Array<{ provider: string; model: string }> | null {
-  const raw = process.env.ALAN_MODEL_SWEEP;
+  const raw = process.env.GEAR_MODEL_SWEEP ?? process.env.ALAN_MODEL_SWEEP;
   if (!raw) return null;
   return raw
     .split(",")
@@ -118,7 +118,12 @@ function parseModelSweep(): Array<{ provider: string; model: string }> | null {
       const colonIdx = entry.indexOf(":");
       if (colonIdx === -1) {
         return {
-          provider: process.env.ALAN_EVAL_PROVIDER ?? process.env.ALAN_PROVIDER ?? DEFAULT_PROVIDER,
+          provider:
+            process.env.GEAR_EVAL_PROVIDER ??
+            process.env.ALAN_EVAL_PROVIDER ??
+            process.env.GEAR_PROVIDER ??
+            process.env.ALAN_PROVIDER ??
+            DEFAULT_PROVIDER,
           model: entry,
         };
       }
@@ -131,8 +136,18 @@ async function main() {
   // --real flag OR the legacy ALAN_EVAL_REAL=1 env var enables real mode.
   const real = args.real || IS_REAL_MODE;
 
-  const provider = process.env.ALAN_EVAL_PROVIDER ?? process.env.ALAN_PROVIDER ?? DEFAULT_PROVIDER;
-  const model = process.env.ALAN_EVAL_MODEL ?? process.env.ALAN_MODEL ?? DEFAULT_MODEL;
+  const provider =
+    process.env.GEAR_EVAL_PROVIDER ??
+    process.env.ALAN_EVAL_PROVIDER ??
+    process.env.GEAR_PROVIDER ??
+    process.env.ALAN_PROVIDER ??
+    DEFAULT_PROVIDER;
+  const model =
+    process.env.GEAR_EVAL_MODEL ??
+    process.env.ALAN_EVAL_MODEL ??
+    process.env.GEAR_MODEL ??
+    process.env.ALAN_MODEL ??
+    DEFAULT_MODEL;
 
   // ── Fail fast if --real is requested without the relevant API key. ──
   // Never touch the network or hang waiting on input.
@@ -140,7 +155,7 @@ async function main() {
     const keyEnv = PROVIDER_KEY_ENV[provider];
     if (!keyEnv) {
       console.error(
-        `\n  \x1b[31mUnknown provider "${provider}".\x1b[0m Set ALAN_EVAL_PROVIDER to one of: ` +
+        `\n  \x1b[31mUnknown provider "${provider}".\x1b[0m Set GEAR_EVAL_PROVIDER to one of: ` +
           `${Object.keys(PROVIDER_KEY_ENV).join(", ")}\n`,
       );
       process.exit(1);
@@ -151,7 +166,7 @@ async function main() {
           `  Provider: ${provider}   Model: ${model}\n\n` +
           `  Set the key and retry, e.g.:\n` +
           `    \x1b[2m${keyEnv}=sk-... bun run tests/eval/runner.ts --real\x1b[0m\n\n` +
-          `  Optional overrides: ALAN_EVAL_PROVIDER, ALAN_EVAL_MODEL, --tasks <cat|name>, --max <n>\n`,
+          `  Optional overrides: GEAR_EVAL_PROVIDER, GEAR_EVAL_MODEL, --tasks <cat|name>, --max <n>\n`,
       );
       process.exit(1);
     }
@@ -175,7 +190,7 @@ async function main() {
   }
 
   const modeLabel = real ? `real (${provider}/${model})` : "mock LLM provider";
-  console.log("\n  \x1b[1mAlan eval suite\x1b[0m");
+  console.log("\n  \x1b[1mGear eval suite\x1b[0m");
   console.log(`  \x1b[2m${tasks.length} tasks · ${modeLabel}\x1b[0m\n`);
 
   const sweepConfig = real ? parseModelSweep() : null;

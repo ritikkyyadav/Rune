@@ -1,248 +1,325 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ChatMessage } from "../lib/types";
+import { BrandMark } from "./BrandMark";
+import { CodeIcon, CopyIcon, FolderIcon, SparkIcon, ThumbsDownIcon, ThumbsUpIcon } from "./Icons";
 import { ToolCard } from "./ToolCard";
 
 interface MessageStreamProps {
   messages: ChatMessage[];
   isLoading: boolean;
+  onSuggestion?: (message: string) => void;
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  container: {
-    flex: 1,
-    overflowY: "auto",
-    padding: "24px 32px",
-    display: "flex",
-    flexDirection: "column",
-    gap: 16,
+const SUGGESTIONS = [
+  {
+    label: "Understand",
+    title: "Explore this codebase",
+    description: "Map the architecture, runtime, and unfinished areas.",
+    prompt:
+      "Explore this codebase and explain the architecture, runtime flow, and unfinished areas.",
+    icon: FolderIcon,
   },
-  emptyState: {
-    flex: 1,
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 12,
-    color: "var(--text-muted)",
+  {
+    label: "Build",
+    title: "Ship a polished feature",
+    description: "Implement an idea end to end and verify the real flow.",
+    prompt:
+      "Help me design and implement a polished feature in this project, then verify it end to end.",
+    icon: SparkIcon,
   },
-  logo: {
-    fontSize: 32,
-    fontWeight: 700,
-    color: "var(--accent)",
-    fontFamily: "var(--font-mono)",
-    letterSpacing: "-0.02em",
+  {
+    label: "Improve",
+    title: "Review the current UI",
+    description: "Find the highest-impact product and engineering improvements.",
+    prompt:
+      "Review the current UI and code quality, then prioritize and implement the highest-impact improvements.",
+    icon: CodeIcon,
   },
-  subtitle: {
-    fontSize: 14,
-    color: "var(--text-secondary)",
-  },
-  messageRow: {
-    display: "flex",
-    gap: 12,
-    maxWidth: "100%",
-  },
-  userRow: {
-    justifyContent: "flex-end",
-  },
-  assistantRow: {
-    justifyContent: "flex-start",
-  },
-  bubble: {
-    maxWidth: "75%",
-    padding: "10px 14px",
-    borderRadius: "var(--radius-lg)",
-    fontSize: 14,
-    lineHeight: 1.6,
-    whiteSpace: "pre-wrap" as const,
-    wordBreak: "break-word" as const,
-  },
-  userBubble: {
-    background: "var(--bg-tertiary)",
-    color: "var(--text-primary)",
-    borderBottomRightRadius: "var(--radius-sm)",
-  },
-  assistantBubble: {
-    background: "var(--bg-surface)",
-    color: "var(--text-primary)",
-    borderBottomLeftRadius: "var(--radius-sm)",
-    border: "1px solid var(--border)",
-  },
-  toolCallsContainer: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 8,
-    maxWidth: "75%",
-  },
-  loadingDots: {
-    display: "flex",
-    gap: 4,
-    padding: "12px 16px",
-  },
-  dot: {
-    width: 6,
-    height: 6,
-    borderRadius: "50%",
-    background: "var(--accent)",
-  },
-  timestamp: {
-    fontSize: 10,
-    color: "var(--text-muted)",
-    marginTop: 4,
-    fontFamily: "var(--font-mono)",
-  },
-  streamingCursor: {
-    display: "inline-block",
-    width: 2,
-    height: 16,
-    background: "var(--accent)",
-    marginLeft: 2,
-    verticalAlign: "text-bottom",
-    animation: "blink 1s step-end infinite",
-  },
-};
+] as const;
 
-// Simple loading indicator
-function LoadingIndicator() {
+const INLINE_TOKEN_PATTERN = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\(https?:\/\/[^)]+\))/g;
+
+function renderInline(text: string): ReactNode[] {
+  return text.split(INLINE_TOKEN_PATTERN).map((part, index) => {
+    if (part.startsWith("`") && part.endsWith("`")) {
+      return <code key={`${index}-${part}`}>{part.slice(1, -1)}</code>;
+    }
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={`${index}-${part}`}>{part.slice(2, -2)}</strong>;
+    }
+    const link = part.match(/^\[([^\]]+)\]\((https?:\/\/[^)]+)\)$/);
+    if (link) {
+      return (
+        <a key={`${index}-${part}`} href={link[2]} target="_blank" rel="noreferrer">
+          {link[1]}
+        </a>
+      );
+    }
+    return part;
+  });
+}
+
+function renderTextLines(text: string, keyPrefix: string): ReactNode[] {
+  const lines = text.split("\n");
+  const nodes: ReactNode[] = [];
+  let paragraph: string[] = [];
+  let unordered: string[] = [];
+  let ordered: string[] = [];
+
+  const flushParagraph = () => {
+    if (paragraph.length === 0) return;
+    const copy = paragraph.join(" ");
+    nodes.push(<p key={`${keyPrefix}-p-${nodes.length}`}>{renderInline(copy)}</p>);
+    paragraph = [];
+  };
+  const flushUnordered = () => {
+    if (unordered.length === 0) return;
+    nodes.push(
+      <ul key={`${keyPrefix}-ul-${nodes.length}`}>
+        {unordered.map((item, index) => (
+          <li key={`${index}-${item}`}>{renderInline(item)}</li>
+        ))}
+      </ul>,
+    );
+    unordered = [];
+  };
+  const flushOrdered = () => {
+    if (ordered.length === 0) return;
+    nodes.push(
+      <ol key={`${keyPrefix}-ol-${nodes.length}`}>
+        {ordered.map((item, index) => (
+          <li key={`${index}-${item}`}>{renderInline(item)}</li>
+        ))}
+      </ol>,
+    );
+    ordered = [];
+  };
+  const flushAll = () => {
+    flushParagraph();
+    flushUnordered();
+    flushOrdered();
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      flushAll();
+      continue;
+    }
+    const heading = line.match(/^(#{1,3})\s+(.+)$/);
+    if (heading) {
+      flushAll();
+      const level = Math.min(heading[1].length + 2, 5);
+      const Tag = `h${level}` as "h3" | "h4" | "h5";
+      nodes.push(<Tag key={`${keyPrefix}-h-${nodes.length}`}>{renderInline(heading[2])}</Tag>);
+      continue;
+    }
+    const bullet = line.match(/^[-*]\s+(.+)$/);
+    if (bullet) {
+      flushParagraph();
+      flushOrdered();
+      unordered.push(bullet[1]);
+      continue;
+    }
+    const numbered = line.match(/^\d+[.)]\s+(.+)$/);
+    if (numbered) {
+      flushParagraph();
+      flushUnordered();
+      ordered.push(numbered[1]);
+      continue;
+    }
+    flushUnordered();
+    flushOrdered();
+    paragraph.push(line);
+  }
+  flushAll();
+  return nodes;
+}
+
+function RichText({ content }: { content: string }) {
+  const sections = content.split(/(```[\s\S]*?```)/g).filter(Boolean);
   return (
-    <div style={{ ...styles.messageRow, ...styles.assistantRow }}>
-      <div style={styles.loadingDots}>
-        <div
-          style={{
-            ...styles.dot,
-            animation: "pulse 1.4s ease-in-out infinite",
-          }}
-        />
-        <div
-          style={{
-            ...styles.dot,
-            animation: "pulse 1.4s ease-in-out 0.2s infinite",
-          }}
-        />
-        <div
-          style={{
-            ...styles.dot,
-            animation: "pulse 1.4s ease-in-out 0.4s infinite",
-          }}
-        />
-        <style>{`
-          @keyframes pulse {
-            0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
-            40% { opacity: 1; transform: scale(1); }
-          }
-          @keyframes blink {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0; }
-          }
-        `}</style>
-      </div>
+    <div className="assistant-prose">
+      {sections.map((section, index) => {
+        if (section.startsWith("```") && section.endsWith("```")) {
+          const raw = section.slice(3, -3).replace(/^\n/, "");
+          const firstBreak = raw.indexOf("\n");
+          const possibleLanguage = firstBreak >= 0 ? raw.slice(0, firstBreak).trim() : "";
+          const hasLanguage = /^[\w+#.-]{1,18}$/.test(possibleLanguage);
+          const code = hasLanguage ? raw.slice(firstBreak + 1) : raw;
+          return (
+            <div className="message-code" key={`code-${index}`}>
+              <header>{hasLanguage ? possibleLanguage : "Code"}</header>
+              <pre>
+                <code>{code}</code>
+              </pre>
+            </div>
+          );
+        }
+        return renderTextLines(section, `text-${index}`);
+      })}
     </div>
   );
 }
 
 function formatTimestamp(iso: string): string {
-  const date = new Date(iso);
-  return date.toLocaleTimeString(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
+  return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
-export function MessageStream({ messages, isLoading }: MessageStreamProps) {
+function MessageActions({ content }: { content: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    await navigator.clipboard.writeText(content);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1200);
+  };
+
+  return (
+    <div className="message-actions" aria-label="Message actions">
+      <button type="button" onClick={copy} title="Copy response">
+        <CopyIcon />
+        <span>{copied ? "Copied" : "Copy"}</span>
+      </button>
+      <button type="button" title="Helpful" aria-label="Mark response helpful">
+        <ThumbsUpIcon />
+      </button>
+      <button type="button" title="Not helpful" aria-label="Mark response not helpful">
+        <ThumbsDownIcon />
+      </button>
+    </div>
+  );
+}
+
+function LoadingTurn() {
+  return (
+    <div className="assistant-turn assistant-turn--loading">
+      <div className="assistant-avatar">
+        <BrandMark size={18} />
+      </div>
+      <div className="thinking-state">
+        <span />
+        <span />
+        <span />
+        <b>Gear is working</b>
+      </div>
+    </div>
+  );
+}
+
+export function MessageStream({ messages, isLoading, onSuggestion }: MessageStreamProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, isLoading]);
 
   if (messages.length === 0 && !isLoading) {
     return (
-      <div style={styles.container}>
-        <div style={styles.emptyState}>
-          <div style={styles.logo}>alan</div>
-          <div style={styles.subtitle}>Sovereign agentic coding assistant</div>
-          <div
-            style={{
-              fontSize: 13,
-              color: "var(--text-muted)",
-              marginTop: 8,
-            }}
-          >
-            Type a message below to start a conversation
+      <div className="message-stream message-stream--empty">
+        <div className="welcome-view">
+          <div className="welcome-mark">
+            <BrandMark size={34} />
+          </div>
+          <span className="welcome-kicker">Gear desktop</span>
+          <h2>What should we work on?</h2>
+          <p>
+            Plan, build, investigate, and review with a local agent that keeps every action visible.
+          </p>
+          <div className="suggestion-grid">
+            {SUGGESTIONS.map((suggestion) => {
+              const Icon = suggestion.icon;
+              return (
+                <button
+                  className="suggestion-card"
+                  type="button"
+                  key={suggestion.title}
+                  onClick={() => onSuggestion?.(suggestion.prompt)}
+                >
+                  <span className="suggestion-icon">
+                    <Icon />
+                  </span>
+                  <span className="suggestion-copy">
+                    <small>{suggestion.label}</small>
+                    <strong>{suggestion.title}</strong>
+                    <span>{suggestion.description}</span>
+                  </span>
+                  <i>↗</i>
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
     );
   }
 
-  // Determine if the last assistant message is still being streamed
-  const lastMsg = messages[messages.length - 1];
-  const isStreaming = isLoading && lastMsg?.role === "assistant";
+  const lastMessage = messages.at(-1);
+  const isStreaming = isLoading && lastMessage?.role === "assistant";
 
   return (
-    <div style={styles.container}>
-      {messages.map((msg, idx) => {
-        const isLastAssistant = idx === messages.length - 1 && msg.role === "assistant";
-        const showCursor = isStreaming && isLastAssistant;
+    <div className="message-stream">
+      <div className="conversation-thread">
+        {messages.map((message, index) => {
+          const showCursor = isStreaming && index === messages.length - 1;
+          if (message.role === "system") {
+            return (
+              <div className="system-message" key={message.id}>
+                {message.content}
+              </div>
+            );
+          }
+          if (message.role === "user") {
+            return (
+              <article className="user-turn" key={message.id}>
+                <div className="user-message">{message.content}</div>
+                {message.attachments && message.attachments.length > 0 ? (
+                  <div className="message-attachments">
+                    {message.attachments.map((attachment) => (
+                      <span key={`${message.id}-${attachment.name}`}>
+                        <CodeIcon />
+                        {attachment.name}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+                <time>{formatTimestamp(message.timestamp)}</time>
+              </article>
+            );
+          }
 
-        return (
-          <div key={msg.id}>
-            {/* Message bubble */}
-            {msg.content && (
-              <div
-                style={{
-                  ...styles.messageRow,
-                  ...(msg.role === "user" ? styles.userRow : styles.assistantRow),
-                }}
-              >
-                <div
-                  style={{
-                    ...styles.bubble,
-                    ...(msg.role === "user" ? styles.userBubble : styles.assistantBubble),
-                  }}
-                >
-                  {msg.content}
-                  {showCursor && <span style={styles.streamingCursor} />}
+          return (
+            <article className="assistant-turn" key={message.id}>
+              <div className="assistant-avatar">
+                <BrandMark size={18} />
+              </div>
+              <div className="assistant-content">
+                <div className="assistant-meta">
+                  <strong>Gear</strong>
+                  <time>{formatTimestamp(message.timestamp)}</time>
                 </div>
+                {message.content ? (
+                  <>
+                    <RichText content={message.content} />
+                    {showCursor ? <span className="streaming-cursor" /> : null}
+                  </>
+                ) : null}
+                {message.toolCalls && message.toolCalls.length > 0 ? (
+                  <div className="tool-stack">
+                    {message.toolCalls.map((toolCall) => (
+                      <ToolCard key={toolCall.callId} toolCall={toolCall} />
+                    ))}
+                  </div>
+                ) : null}
+                {!showCursor && message.content ? (
+                  <MessageActions content={message.content} />
+                ) : null}
               </div>
-            )}
-
-            {/* Tool calls */}
-            {msg.toolCalls && msg.toolCalls.length > 0 && (
-              <div
-                style={{
-                  ...styles.messageRow,
-                  ...styles.assistantRow,
-                  marginTop: msg.content ? 8 : 0,
-                }}
-              >
-                <div style={styles.toolCallsContainer}>
-                  {msg.toolCalls.map((tc) => (
-                    <ToolCard key={tc.callId} toolCall={tc} />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Timestamp */}
-            {msg.timestamp && (
-              <div
-                style={{
-                  ...styles.timestamp,
-                  textAlign: msg.role === "user" ? "right" : "left",
-                }}
-              >
-                {formatTimestamp(msg.timestamp)}
-              </div>
-            )}
-          </div>
-        );
-      })}
-
-      {/* Show loading dots only when waiting for first response token */}
-      {isLoading && !isStreaming && <LoadingIndicator />}
-
-      <div ref={bottomRef} />
+            </article>
+          );
+        })}
+        {isLoading && !isStreaming ? <LoadingTurn /> : null}
+        <div ref={bottomRef} />
+      </div>
     </div>
   );
 }

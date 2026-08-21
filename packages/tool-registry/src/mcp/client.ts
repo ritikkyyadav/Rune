@@ -176,7 +176,7 @@ export class McpClient {
       {
         protocolVersion: LATEST_PROTOCOL_VERSION,
         capabilities: {},
-        clientInfo: { name: "alan", version: "0.1.0" },
+        clientInfo: { name: "gear", version: "0.1.0" },
       },
       { timeoutMs: INIT_TIMEOUT_MS, allowReinit: false },
     )) as McpInitializeResult;
@@ -414,7 +414,7 @@ export class McpClient {
       {
         protocolVersion: LATEST_PROTOCOL_VERSION,
         capabilities: {},
-        clientInfo: { name: "alan", version: "0.1.0" },
+        clientInfo: { name: "gear", version: "0.1.0" },
       },
       { timeoutMs: INIT_TIMEOUT_MS, allowReinit: false },
     )) as McpInitializeResult;

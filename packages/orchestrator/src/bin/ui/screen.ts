@@ -112,6 +112,8 @@ const ALT_EXIT = "\x1b[?1049l";
 const SYNC_BEGIN = "\x1b[?2026h";
 const SYNC_END = "\x1b[?2026l";
 const HOME = "\x1b[H";
+const BLOCK_CURSOR = "\x1b[2 q"; // DECSCUSR: steady block, as in the reference composer
+const RESET_CURSOR = "\x1b[0 q";
 const SCROLL_EXPOSED = "\x00"; // sentinel marking band rows freshly exposed by a region scroll
 
 export class AltScreen {
@@ -138,14 +140,14 @@ export class AltScreen {
   enter(bgFill = ""): void {
     if (this.active) return;
     // Pre-paint the whole alt-screen in the theme bg so the first frame doesn't flash.
-    this.write(ALT_ENTER + HIDE + bgFill + "\x1b[2J" + HOME);
+    this.write(ALT_ENTER + HIDE + BLOCK_CURSOR + bgFill + "\x1b[2J" + HOME);
     this.active = true;
     this.prev = null; // first frame after entering is always a full paint
   }
 
   exit(): void {
     if (!this.active) return;
-    this.write(SHOW + ALT_EXIT);
+    this.write(RESET_CURSOR + SHOW + ALT_EXIT);
     this.active = false;
   }
 

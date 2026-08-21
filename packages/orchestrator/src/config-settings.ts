@@ -1,6 +1,6 @@
 // ─── Settable config catalog ───
-// The curated allowlist of settings Berne will change on a plain-language
-// request ("switch to hands-free mode", "turn the sandbox off"). It maps the
+// The curated allowlist of settings Gear will change on a plain-language
+// request ("switch to Autonomy III", "turn the sandbox off"). It maps the
 // words a user is likely to say onto a canonical setting + value, and onto the
 // dotted config.toml key the writer persists. Keeping this list small and
 // explicit is deliberate: the `update_config` tool can only ever touch what's
@@ -24,7 +24,7 @@ export interface ConfigSetting {
   /** Whether a change takes effect immediately (vs only on next launch). */
   live: boolean;
   /**
-   * Security-relevant: relaxing it (hands-free, sandbox off) removes a guardrail,
+   * Security-relevant: relaxing it (Autonomy III, sandbox off) removes a guardrail,
    * so the tool always says so plainly. The confirmation prompt is the real gate.
    */
   sensitive?: boolean;
@@ -35,10 +35,11 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
     key: "permission_mode",
     tomlPath: "permissions.mode",
     description:
-      "How Berne asks before acting: confirm (prompt before writes/commands), auto " +
-      "(auto-approve in-workspace edits + sandboxed commands), or hands-free (never prompt).",
+      "How Gear acts: confirm prompts; Autonomy I permits confined edits; Autonomy II " +
+      "also permits sandboxed commands; Autonomy III takes full host access; Auto uses " +
+      "the isolated action classifier.",
     kind: "enum",
-    values: ["confirm", "auto", "hands-free"],
+    values: ["confirm", "autonomy-i", "autonomy-ii", "autonomy-iii", "auto"],
     valueAliases: {
       normal: "confirm",
       standard: "confirm",
@@ -50,12 +51,20 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
       trust: "auto",
       "auto-approve": "auto",
       autoapprove: "auto",
-      handsfree: "hands-free",
-      "hands free": "hands-free",
-      yolo: "hands-free",
-      bypass: "hands-free",
-      autonomous: "hands-free",
-      full: "hands-free",
+      "autonomy 1": "autonomy-i",
+      "autonomy i": "autonomy-i",
+      "autonomy 2": "autonomy-ii",
+      "autonomy ii": "autonomy-ii",
+      "autonomy 3": "autonomy-iii",
+      "autonomy iii": "autonomy-iii",
+      handsfree: "autonomy-iii",
+      "hands free": "autonomy-iii",
+      "hands-free": "autonomy-iii",
+      turing: "autonomy-iii",
+      yolo: "autonomy-iii",
+      bypass: "autonomy-iii",
+      autonomous: "autonomy-iii",
+      full: "autonomy-iii",
     },
     nameAliases: ["mode", "permission", "permissions", "permission mode", "permissions mode"],
     live: true,
@@ -77,7 +86,7 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
     tomlPath: "git.autoCommit",
     description:
       "After each successful run that changed files, commit exactly those files as one " +
-      'revertible "berne:" commit (undo with /undo).',
+      'revertible "gear:" commit (undo with /undo).',
     kind: "boolean",
     nameAliases: ["autocommit", "auto commit", "git auto commit", "commit on save"],
     live: true,
@@ -114,7 +123,7 @@ export function resolveSetting(name: string): ConfigSetting | undefined {
 }
 
 /**
- * Fold a raw value onto the setting's canonical form (e.g. "yolo" → "hands-free",
+ * Fold a raw value onto the setting's canonical form (e.g. "yolo" → "autonomy-iii",
  * "on" → "true"), or return an error listing what's accepted. Canonical booleans
  * come back as the strings "true"/"false".
  */

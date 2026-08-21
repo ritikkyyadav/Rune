@@ -1,8 +1,10 @@
 import { describe, test, expect, beforeEach, spyOn } from "bun:test";
 import {
   PermissionBroker,
+  configModeToPermissionMode,
   nextPermissionMode,
   PERMISSION_MODE_ORDER,
+  resolveStartupPermissionFlags,
   type PermissionMode,
 } from "../../../packages/orchestrator/src/permissions";
 import { setSandboxCapability } from "../../../packages/tool-registry/src/sandbox-capability";
@@ -19,37 +21,62 @@ describe("PermissionBroker", () => {
   });
 
   test("auto-permits read-only tools", () => {
-    const schema = { name: "read_file", permissionLevel: "auto" as const, description: "", parameters: [] };
+    const schema = {
+      name: "read_file",
+      permissionLevel: "auto" as const,
+      description: "",
+      parameters: [],
+    };
     const result = broker.check(schema, {});
     expect(result.type).toBe("allowed");
   });
 
   test("requires confirmation for dangerous tools", () => {
-    const schema = { name: "bash", permissionLevel: "confirm" as const, description: "", parameters: [] };
+    const schema = {
+      name: "bash",
+      permissionLevel: "confirm" as const,
+      description: "",
+      parameters: [],
+    };
     const result = broker.check(schema, { command: "rm -rf /" });
     expect(result.type).toBe("needs_confirmation");
   });
 
   test("yolo mode bypasses all checks", () => {
     const yoloBroker = new PermissionBroker(true);
-    const schema = { name: "bash", permissionLevel: "confirm" as const, description: "", parameters: [] };
+    const schema = {
+      name: "bash",
+      permissionLevel: "confirm" as const,
+      description: "",
+      parameters: [],
+    };
     const result = yoloBroker.check(schema, { command: "rm -rf /" });
     expect(result.type).toBe("allowed");
   });
 
-  test("yolo mode logs a warning", () => {
+  test("legacy yolo startup logs an Autonomy III warning", () => {
     const warnSpy = spyOn(console, "warn");
     const yoloBroker = new PermissionBroker(true);
-    const schema = { name: "bash", permissionLevel: "confirm" as const, description: "", parameters: [] };
+    const schema = {
+      name: "bash",
+      permissionLevel: "confirm" as const,
+      description: "",
+      parameters: [],
+    };
     yoloBroker.check(schema, {});
     expect(warnSpy).toHaveBeenCalled();
     const msg = warnSpy.mock.calls[0]?.[0] as string;
-    expect(msg).toContain("Yolo mode");
+    expect(msg).toContain("Autonomy III");
     warnSpy.mockRestore();
   });
 
   test("session grant allows subsequent calls", () => {
-    const schema = { name: "bash", permissionLevel: "confirm" as const, description: "", parameters: [] };
+    const schema = {
+      name: "bash",
+      permissionLevel: "confirm" as const,
+      description: "",
+      parameters: [],
+    };
     // First call should need confirmation
     const first = broker.check(schema, {});
     expect(first.type).toBe("needs_confirmation");
@@ -63,7 +90,12 @@ describe("PermissionBroker", () => {
   });
 
   test("setYoloMode toggles runtime", () => {
-    const schema = { name: "bash", permissionLevel: "confirm" as const, description: "", parameters: [] };
+    const schema = {
+      name: "bash",
+      permissionLevel: "confirm" as const,
+      description: "",
+      parameters: [],
+    };
 
     expect(broker.check(schema, {}).type).toBe("needs_confirmation");
     broker.setYoloMode(true);
@@ -182,48 +214,91 @@ describe("PermissionBroker — permission modes (the Shift+Tab cycle)", () => {
     parameters: [],
   };
 
-  test("nextPermissionMode cycles confirm → auto → turing → confirm", () => {
-    expect(nextPermissionMode("confirm")).toBe("auto");
-    expect(nextPermissionMode("auto")).toBe("turing");
-    expect(nextPermissionMode("turing")).toBe("confirm");
-    // Three full steps return to the start.
+  test("nextPermissionMode cycles confirm → Autonomy I → II → III → Auto", () => {
+    expect(nextPermissionMode("confirm")).toBe("autonomy-i");
+    expect(nextPermissionMode("autonomy-i")).toBe("autonomy-ii");
+    expect(nextPermissionMode("autonomy-ii")).toBe("autonomy-iii");
+    expect(nextPermissionMode("autonomy-iii")).toBe("auto");
+    expect(nextPermissionMode("auto")).toBe("confirm");
+    // Five full steps return to the start.
     let m: PermissionMode = "confirm";
     for (const _ of PERMISSION_MODE_ORDER) m = nextPermissionMode(m);
     expect(m).toBe("confirm");
   });
 
-  test("setMode maps onto the underlying booleans, getMode reads them back", () => {
+  test("startup config and legacy aliases preserve the selected autonomy level", () => {
+    expect(configModeToPermissionMode("Autonomy II")).toBe("autonomy-ii");
+    expect(configModeToPermissionMode("hands-free")).toBe("autonomy-iii");
+    expect(resolveStartupPermissionFlags({ configMode: "autonomy-i" }).permissionMode).toBe(
+      "autonomy-i",
+    );
+    expect(resolveStartupPermissionFlags({ modeFlag: "III" }).permissionMode).toBe("autonomy-iii");
+    expect(resolveStartupPermissionFlags({ trustFlag: true }).permissionMode).toBe("auto");
+  });
+
+  test("setMode tracks all five levels and legacy turing maps to Autonomy III", () => {
     const broker = new PermissionBroker(false, { workspaceRoot: WS });
     expect(broker.getMode()).toBe("confirm");
+
+    broker.setMode("autonomy-i");
+    expect(broker.getMode()).toBe("autonomy-i");
+    expect(broker.isTrustWorkspace()).toBe(true);
+    expect(broker.isYoloMode()).toBe(false);
+
+    broker.setMode("autonomy-ii");
+    expect(broker.getMode()).toBe("autonomy-ii");
+    expect(broker.isTrustWorkspace()).toBe(true);
+
+    broker.setMode("turing"); // migration alias
+    expect(broker.getMode()).toBe("autonomy-iii");
+    expect(broker.isYoloMode()).toBe(true);
+    expect(broker.isTrustWorkspace()).toBe(false);
 
     broker.setMode("auto");
     expect(broker.getMode()).toBe("auto");
     expect(broker.isTrustWorkspace()).toBe(true);
     expect(broker.isYoloMode()).toBe(false);
 
-    broker.setMode("turing");
-    expect(broker.getMode()).toBe("turing");
-    expect(broker.isYoloMode()).toBe(true);
-    expect(broker.isTrustWorkspace()).toBe(false);
-
     broker.setMode("confirm");
     expect(broker.getMode()).toBe("confirm");
     expect(broker.isYoloMode()).toBe(false);
     expect(broker.isTrustWorkspace()).toBe(false);
   });
 
-  test("Turing mode bypasses confirmation; confirm restores it", () => {
+  test("Autonomy III bypasses confirmation; confirm restores it", () => {
     const broker = new PermissionBroker(false, { workspaceRoot: WS });
     expect(broker.check(bashSchema, { command: "rm -rf build" }).type).toBe("needs_confirmation");
 
-    broker.setMode("turing");
+    broker.setMode("autonomy-iii");
     expect(broker.check(bashSchema, { command: "rm -rf build" }).type).toBe("allowed");
 
     broker.setMode("confirm");
     expect(broker.check(bashSchema, { command: "rm -rf build" }).type).toBe("needs_confirmation");
   });
 
-  test("auto mode auto-approves in-workspace bash but not the network", () => {
+  test("Autonomy I permits confined edits but still prompts for shell", () => {
+    const broker = new PermissionBroker(false, { workspaceRoot: WS });
+    broker.setMode("autonomy-i");
+    const writeSchema = {
+      name: "write_file",
+      permissionLevel: "confirm" as const,
+      description: "",
+      parameters: [],
+    };
+    expect(broker.check(writeSchema, { path: "src/a.ts" }).type).toBe("allowed");
+    expect(broker.check(bashSchema, { command: "bun test" }).type).toBe("needs_confirmation");
+  });
+
+  test("Autonomy II additionally permits sandboxed local shell", () => {
+    const broker = new PermissionBroker(false, { workspaceRoot: WS });
+    broker.setMode("autonomy-ii");
+    expect(broker.check(bashSchema, { command: "bun test" }).type).toBe("allowed");
+    expect(broker.check(bashSchema, { command: "bun install", network: true }).type).toBe(
+      "needs_confirmation",
+    );
+  });
+
+  test("auto-mode broker marks confined bash as a candidate but not network access", () => {
     const broker = new PermissionBroker(false, { workspaceRoot: WS });
     broker.setMode("auto");
     expect(broker.check(bashSchema, { command: "ls" }).type).toBe("allowed");

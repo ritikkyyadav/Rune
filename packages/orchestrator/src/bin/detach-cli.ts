@@ -1,8 +1,8 @@
-// ─── berne detach / attach: runs that survive the terminal ───
+// ─── gear detach / attach: runs that survive the terminal ───
 //
-// `berne detach "<prompt>"` starts a per-run engine host on a unix socket,
+// `gear detach "<prompt>"` starts a per-run engine host on a unix socket,
 // hands it the prompt, prints the session id, and EXITS — the host keeps
-// working. `berne attach <session|latest>` reconnects: prior turns replay
+// working. `gear attach <session|latest>` reconnects: prior turns replay
 // from the session store, live events stream if the run is still going, and
 // Ctrl+C detaches again without stopping anything.
 //
@@ -62,7 +62,7 @@ export async function runDetach(
 ): Promise<void> {
   const prompt = positionals.slice(1).join(" ").trim();
   if (!prompt) {
-    console.error('Usage: berne detach "<prompt>" [--worktree] [-w <workspace>]');
+    console.error('Usage: gear detach "<prompt>" [--worktree] [-w <workspace>]');
     process.exit(2);
   }
 
@@ -116,7 +116,7 @@ export async function runDetach(
   console.log(`detached run started`);
   console.log(`  session:   ${sessionId}`);
   console.log(`  workspace: ${workspace}`);
-  console.log(`  attach:    berne attach ${sessionId.slice(0, 8)}`);
+  console.log(`  attach:    gear attach ${sessionId.slice(0, 8)}`);
   console.log(`  host log:  ${logPath}`);
   process.exit(0);
 }
@@ -126,7 +126,7 @@ export async function runAttach(positionals: string[]): Promise<void> {
   const reg = loadRegistry();
   const entries = Object.values(reg).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
   if (entries.length === 0) {
-    console.error('no detached runs recorded — start one with: berne detach "<prompt>"');
+    console.error('no detached runs recorded — start one with: gear detach "<prompt>"');
     process.exit(1);
   }
   const entry =
@@ -147,7 +147,7 @@ export async function runAttach(positionals: string[]): Promise<void> {
   } catch {
     console.error(
       `host for ${entry.sessionId.slice(0, 8)} is no longer running.\n` +
-        `The transcript is in the session store: berne resume ${entry.sessionId}`,
+        `The transcript is in the session store: gear resume ${entry.sessionId}`,
     );
     process.exit(1);
   }
@@ -187,7 +187,7 @@ export async function runAttach(positionals: string[]): Promise<void> {
   process.on("SIGINT", () => {
     client.close();
     console.log(
-      "\ndetached — the run continues. Reattach with: berne attach " + entry.sessionId.slice(0, 8),
+      "\ndetached — the run continues. Reattach with: gear attach " + entry.sessionId.slice(0, 8),
     );
     process.exit(0);
   });

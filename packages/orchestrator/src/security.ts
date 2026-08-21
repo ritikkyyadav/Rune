@@ -52,6 +52,27 @@ const INJECTION_PATTERNS: Array<{ pattern: RegExp; name: string; confidence: "me
     { pattern: /you\s+are\s+now\s+(a\s+)?/i, name: "role_injection", confidence: "medium" },
     { pattern: /new\s+instructions?:\s/i, name: "instruction_injection", confidence: "medium" },
     { pattern: /system\s*:\s*you\s+are/i, name: "system_prompt_injection", confidence: "high" },
+    {
+      pattern: /(?:system|developer)\s+(?:message|instruction|prompt)\s*:/i,
+      name: "privileged_message_spoofing",
+      confidence: "high",
+    },
+    {
+      pattern: /(?:do\s+not|never)\s+(?:tell|show|mention|reveal)\s+(?:the\s+)?user/i,
+      name: "concealment_instruction",
+      confidence: "high",
+    },
+    {
+      pattern: /(?:call|invoke|use|run)\s+(?:the\s+)?(?:tool|function)\b/i,
+      name: "tool_steering",
+      confidence: "medium",
+    },
+    {
+      pattern:
+        /(?:read|open|print|upload|exfiltrate)\s+[^\n]{0,80}(?:\.env|credentials?|private\s*key|api\s*key|secret|token)/i,
+      name: "credential_steering",
+      confidence: "high",
+    },
 
     // Data exfiltration
     {
@@ -91,6 +112,12 @@ const INJECTION_PATTERNS: Array<{ pattern: RegExp; name: string; confidence: "me
       name: "restriction_bypass",
       confidence: "high",
     },
+    {
+      pattern:
+        /(?:bypass|disable|override)\s+(?:the\s+)?(?:safety|security|permission|policy|classifier|guardrail)/i,
+      name: "safety_bypass",
+      confidence: "high",
+    },
   ];
 
 /**
@@ -101,13 +128,22 @@ export function scanForInjection(input: string): InjectionScanResult {
   const findings: ScanFinding[] = [];
   let maxConfidence: "low" | "medium" | "high" = "low";
 
+  // Normalize compatibility glyphs and remove common invisible separators so
+  // trivial full-width/zero-width obfuscation does not bypass the probe.
+  const normalized = input
+    .normalize("NFKC")
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
+    .replace(/(?:&nbsp;|&#x?0*20;)/gi, " ");
+
   for (const { pattern, name, confidence } of INJECTION_PATTERNS) {
-    if (pattern.test(input)) {
+    pattern.lastIndex = 0;
+    const matched = pattern.exec(normalized);
+    if (matched) {
       matches.push(name);
       findings.push({
         type: name,
-        match: input.slice(0, 50),
-        position: 0,
+        match: matched[0].slice(0, 120),
+        position: matched.index,
         confidence,
       });
       if (confidence === "high") maxConfidence = "high";
@@ -118,9 +154,9 @@ export function scanForInjection(input: string): InjectionScanResult {
   return {
     detected: matches.length > 0,
     confidence: matches.length > 0 ? maxConfidence : "low",
-    patterns: matches,
+    patterns: [...new Set(matches)],
     findings,
-    input: input.slice(0, 200),
+    input: normalized.slice(0, 200),
   };
 }
 
@@ -180,6 +216,22 @@ const SENSITIVE_PATTERNS: Array<{ pattern: RegExp; type: string; replacement: st
   },
   { pattern: /\b(xoxb-[a-zA-Z0-9-]+)\b/g, type: "slack_token", replacement: "[REDACTED_TOKEN]" },
   { pattern: /\b(AKIA[0-9A-Z]{16})\b/g, type: "aws_access_key", replacement: "[REDACTED_AWS_KEY]" },
+  {
+    pattern: /\bBearer\s+[a-zA-Z0-9._~+/=-]{12,}/gi,
+    type: "bearer_token",
+    replacement: "Bearer [REDACTED_TOKEN]",
+  },
+  {
+    pattern: /\bBasic\s+[a-zA-Z0-9+/=]{12,}/gi,
+    type: "basic_auth",
+    replacement: "Basic [REDACTED_CREDENTIAL]",
+  },
+  {
+    pattern:
+      /\b(api[_-]?key|access[_-]?token|auth(?:orization)?[_-]?token|client[_-]?secret|secret[_-]?key|session[_-]?token)\s*[:=]\s*["']?([a-zA-Z0-9._~+/=-]{8,})["']?/gi,
+    type: "named_secret",
+    replacement: "$1=[REDACTED_SECRET]",
+  },
 
   // Private keys
   {
@@ -348,7 +400,11 @@ export function createToolExecutionGuard(config: {
   return {
     preExecution: (toolName, args) => {
       // Check for URLs in args and validate egress
-      if (config.scanInputs !== false) {
+      // Tool-result probing is the primary indirect-injection layer. This
+      // pre-execution check is restricted to executable/network payloads so
+      // Gear can still write tests and documentation *about* prompt injection
+      // without its file contents being mistaken for a live attack.
+      if (config.scanInputs !== false && ["bash", "n8n_trigger"].includes(toolName)) {
         const inputStr = JSON.stringify(args);
         const injection = scanForInjection(inputStr);
         if (

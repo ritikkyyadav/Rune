@@ -7,7 +7,7 @@ import type {
   ToolSchema,
 } from "@alan/tool-registry";
 import { AgentLoop } from "./agent-loop";
-import type { PermissionCheck } from "./agent-loop";
+import type { PermissionCheck, ToolResultProcessor } from "./agent-loop";
 
 /**
  * Dependencies the orchestrator must supply when constructing the `task` tool.
@@ -36,6 +36,8 @@ export interface SubagentDeps {
    * snapshot taken at startup would go stale.
    */
   resolve?: () => { gateway: LlmGateway; model: string; provider: ProviderName };
+  /** Same prompt-injection probe used by the parent agent. */
+  toolResultProcessor?: ToolResultProcessor;
 }
 
 const DEFAULT_MAX_TURNS = 16;
@@ -146,6 +148,7 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
             maxTokens,
             maxTurns,
             systemPrompt,
+            toolResultProcessor: deps.toolResultProcessor,
           },
           live.gateway,
           deps.registry,

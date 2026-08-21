@@ -1,4 +1,4 @@
-# Berne eval suite
+# Gear eval suite
 
 The measurement layer every reliability claim rests on. Three tiers, cheapest first:
 
@@ -9,7 +9,7 @@ The measurement layer every reliability claim rests on. Three tiers, cheapest fi
    live provider. This measures *capability* (ours + the model's). Nightly in CI when a
    key is configured; the clean rate over measured tasks is the number that matters.
 3. **External anchors** — SWE-bench Lite / Terminal-Bench via a headless adapter
-   (not yet built; tracked in `Berne-Prescription-Plan.md` P1). Monthly, for calibration
+   (not yet built; tracked in the prescription plan, P1). Monthly, for calibration
    against the field — never leaderboard-chasing.
 
 ## Commands
@@ -23,8 +23,8 @@ bun run eval -- --real --compare --noise 0.05
 bun run tests/eval/from-incidents.ts  # mine the black box for uncovered failure classes
 ```
 
-Real-mode env: `ALAN_EVAL_PROVIDER` / `ALAN_EVAL_MODEL` (default google/gemini-2.5-flash),
-`ALAN_MODEL_SWEEP="prov:model,prov:model"` for side-by-side runs.
+Real-mode env: `GEAR_EVAL_PROVIDER` / `GEAR_EVAL_MODEL` (default google/gemini-2.5-flash),
+`GEAR_MODEL_SWEEP="prov:model,prov:model"` for side-by-side runs.
 
 ## The rules the numbers depend on
 

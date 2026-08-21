@@ -1,7 +1,7 @@
 import type { McpServerConfig } from "./discovery";
 
 // ─── Built-in browser server ───
-// Berne's agent browser rides the MCP layer: when browser mode is on
+// Gear's agent browser rides the MCP layer: when browser mode is on
 // (`/browser on`, `[browser] enabled = true`, or --browser), the engine
 // injects this spec as a built-in `browser` stdio server — merged BENEATH
 // .alan/mcp.json, so a user entry named "browser" overrides it. It runs the

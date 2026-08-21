@@ -126,3 +126,17 @@ export {
   SqliteCheckpointStore,
 } from "./state.js";
 export { CHECKPOINT_INDEXES, AUDIT_INDEXES, SESSION_INDEXES, applyIndexes } from "./schema.js";
+export {
+  type GearAccentName,
+  type GearBaseName,
+  type GearBaseCss,
+  type GearTerminalPalette,
+  GEAR_ACCENT_NAMES,
+  GEAR_ACCENT_LABELS,
+  GEAR_BASE_CSS,
+  GEAR_ACCENT_CSS,
+  GEAR_SCALE,
+  gearTerminalPalette,
+  gearAccentHex,
+  solidOver,
+} from "./design-tokens.js";

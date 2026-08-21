@@ -1,5 +1,5 @@
 // ─── System Memory store ("dreaming") ───
-// Alan's evergreen profile of the user and the codebases they work in — a small,
+// Gear's evergreen profile of the user and the codebases they work in — a small,
 // narrative GUIDE (not a list of rules) that gets injected into the system prompt
 // so even tiny models get useful, personalised context cheaply. Two sidecars in
 // ~/.alan/, same lenient pattern as model-store.ts / secrets.ts (a missing or
@@ -52,7 +52,11 @@ export interface SystemMemory {
  * override always takes effect.
  */
 export function getSystemMemoryPath(): string {
-  if (process.env.ALAN_SYSTEM_MEMORY_PATH) return process.env.ALAN_SYSTEM_MEMORY_PATH;
+  const override =
+    process.env.GEAR_SYSTEM_MEMORY_PATH ??
+    process.env.ELIO_SYSTEM_MEMORY_PATH ??
+    process.env.ALAN_SYSTEM_MEMORY_PATH;
+  if (override) return override;
   const home = process.env.HOME ?? process.env.USERPROFILE ?? ".";
   return join(home, ".alan", "system-memory.md");
 }

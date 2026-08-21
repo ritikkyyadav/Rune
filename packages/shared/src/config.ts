@@ -83,20 +83,50 @@ export interface AlanConfig {
     rules: PermissionRule[];
     /**
      * The permission mode the session STARTS in — the persisted counterpart of
-     * the Shift+Tab cycle (and of "switch to hands-free mode" spoken in chat):
-     *   confirm    — ask before writes / commands (default, safest)
-     *   auto       — auto-approve in-workspace edits + sandboxed bash, prompt outside
-     *   hands-free — never prompt (maps to the internal "turing"/bypass mode)
+     * the Shift+Tab cycle:
+     *   confirm      — ask before writes / commands (default, safest)
+     *   autonomy-i   — confined workspace edits without prompts
+     *   autonomy-ii  — also allow sandboxed commands and confined delegation
+     *   autonomy-iii — full host access with no permission prompts
+     *   auto         — independently classify risky actions against user intent
      * Explicit `--yolo` / `--trust` flags still override this at launch. Absent ⇒
      * confirm. Org policy can forbid modes regardless of what is written here.
+     * Legacy `hands-free` and `turing` values are still accepted by the runtime.
      */
-    mode?: "confirm" | "auto" | "hands-free";
+    mode?:
+      | "confirm"
+      | "autonomy-i"
+      | "autonomy-ii"
+      | "autonomy-iii"
+      | "auto"
+      | "hands-free"
+      | "turing";
     /**
-     * Auto-approve in-workspace writes/edits and bash without prompting. Out-of-workspace
-     * writes and network tools still prompt. Default false. Intended for trusted, sandboxed
-     * test workspaces — set per-project in `<workspace>/.alan/config.toml`.
+     * Legacy storage flag for starting in Auto mode. The Engine still routes
+     * risky commands, external actions, and protected writes through the
+     * independent Auto reviewer; this flag is not a classifier bypass.
      */
     trustWorkspace?: boolean;
+    /**
+     * Classifier-backed Auto mode. Semantic policy text shapes the isolated
+     * reviewer; *Rules are mechanical tool/glob gates evaluated deny -> ask -> allow.
+     */
+    autoMode?: {
+      enabled?: boolean;
+      classifierProvider?: string;
+      classifierModel?: string;
+      environment?: string[];
+      allow?: string[];
+      softDeny?: string[];
+      hardDeny?: string[];
+      allowRules?: string[];
+      askRules?: string[];
+      denyRules?: string[];
+      timeoutMs?: number;
+      maxAutomaticDenials?: number;
+      failClosed?: boolean;
+      probeToolResults?: boolean;
+    };
   };
   sandbox: {
     enabled: boolean;
@@ -139,10 +169,10 @@ export interface AlanConfig {
    * Opt-in, transparent telemetry — the ONLY path by which anything leaves the
    * machine. Off by default; even `enabled = true` transmits nothing until BOTH
    * an `endpoint` is configured AND the local user has granted consent
-   * (~/.alan/telemetry.json, set by the first-run prompt or `berne telemetry on`).
+   * (~/.alan/telemetry.json, set by the first-run prompt or `gear telemetry on`).
    * What ships is the already-redacted Black Box incident stream plus an
    * anonymous daily usage heartbeat — never file contents, never raw IPs, never
-   * device fingerprints. `berne telemetry preview` prints the exact bytes.
+   * device fingerprints. `gear telemetry preview` prints the exact bytes.
    */
   telemetry: {
     /** Master switch / hard kill-switch. Default false. */
@@ -210,7 +240,7 @@ export interface AlanConfig {
     light?: string;
   };
   /**
-   * System Memory ("dreaming") — Alan's evergreen, narrative profile of the user and the
+   * System Memory ("dreaming") — Gear's evergreen, narrative profile of the user and the
    * codebases they work in, injected into the system prompt so even small models get cheap,
    * personalised context. Stored at ~/.alan/system-memory.md (see shared/system-memory.ts).
    */
@@ -251,7 +281,7 @@ export interface AlanConfig {
   };
   /**
    * Git integration. autoCommit: after every successful run that wrote files,
-   * commit exactly those files as one revertible "berne:" commit; revert with
+   * commit exactly those files as one revertible "gear:" commit; revert with
    * /undo. Default false.
    */
   git?: {
@@ -266,7 +296,7 @@ export interface AlanConfig {
     repoMap?: boolean;
   };
   /**
-   * Agent web browser. When enabled, Berne mounts the official Playwright
+   * Agent web browser. When enabled, Gear mounts the official Playwright
    * MCP server (bunx @playwright/mcp) as a built-in `browser` MCP server:
    * headless, isolated (fresh profile), accessibility-snapshot based.
    * `/browser on|off` toggles it at runtime and persists to
@@ -449,6 +479,39 @@ function applyEnvOverrides(config: Record<string, unknown>): void {
       setNested(c, "sandbox.networkDeny", process.env.ALAN_SANDBOX_NETWORK !== "allow"),
     ALAN_TRUST_WORKSPACE: (c) =>
       setNested(c, "permissions.trustWorkspace", process.env.ALAN_TRUST_WORKSPACE === "true"),
+    ALAN_PERMISSION_MODE: (c) =>
+      setNested(c, "permissions.mode", process.env.ALAN_PERMISSION_MODE!),
+    ALAN_AUTO_CLASSIFIER_PROVIDER: (c) =>
+      setNested(
+        c,
+        "permissions.autoMode.classifierProvider",
+        process.env.ALAN_AUTO_CLASSIFIER_PROVIDER!,
+      ),
+    ALAN_AUTO_CLASSIFIER_MODEL: (c) =>
+      setNested(c, "permissions.autoMode.classifierModel", process.env.ALAN_AUTO_CLASSIFIER_MODEL!),
+    ALAN_AUTO_FAIL_CLOSED: (c) =>
+      setNested(
+        c,
+        "permissions.autoMode.failClosed",
+        process.env.ALAN_AUTO_FAIL_CLOSED !== "false",
+      ),
+    // Elio variables remain as migration aliases.
+    ELIO_PERMISSION_MODE: (c) =>
+      setNested(c, "permissions.mode", process.env.ELIO_PERMISSION_MODE!),
+    ELIO_AUTO_CLASSIFIER_PROVIDER: (c) =>
+      setNested(
+        c,
+        "permissions.autoMode.classifierProvider",
+        process.env.ELIO_AUTO_CLASSIFIER_PROVIDER!,
+      ),
+    ELIO_AUTO_CLASSIFIER_MODEL: (c) =>
+      setNested(c, "permissions.autoMode.classifierModel", process.env.ELIO_AUTO_CLASSIFIER_MODEL!),
+    ELIO_AUTO_FAIL_CLOSED: (c) =>
+      setNested(
+        c,
+        "permissions.autoMode.failClosed",
+        process.env.ELIO_AUTO_FAIL_CLOSED !== "false",
+      ),
     ALAN_TELEMETRY: (c) => setNested(c, "telemetry.enabled", process.env.ALAN_TELEMETRY === "true"),
     ALAN_TELEMETRY_ENDPOINT: (c) =>
       setNested(c, "telemetry.endpoint", process.env.ALAN_TELEMETRY_ENDPOINT!),
@@ -473,6 +536,64 @@ function applyEnvOverrides(config: Record<string, unknown>): void {
     ALAN_MEMORY_MODEL: (c) => setNested(c, "memory.model", process.env.ALAN_MEMORY_MODEL!),
     ALAN_MEMORY_MAX_TOKENS: (c) =>
       setNested(c, "memory.maxTokens", Number(process.env.ALAN_MEMORY_MAX_TOKENS!)),
+    // Gear is the forward identity. These are intentionally last so they win
+    // whenever both current and legacy variables are present.
+    GEAR_PROVIDER: (c) => setNested(c, "llm.defaultProvider", process.env.GEAR_PROVIDER!),
+    GEAR_MODEL: (c) => {
+      const provider = getDefaultProvider(c);
+      setNested(c, `llm.${provider}.model`, process.env.GEAR_MODEL!);
+    },
+    GEAR_MAX_TOKENS: (c) =>
+      setNested(c, `llm.${getDefaultProvider(c)}.maxTokens`, Number(process.env.GEAR_MAX_TOKENS!)),
+    GEAR_DB_PATH: (c) => setNested(c, "engine.dbPath", process.env.GEAR_DB_PATH!),
+    GEAR_SOCKET_PATH: (c) => setNested(c, "engine.socketPath", process.env.GEAR_SOCKET_PATH!),
+    GEAR_LOG_DIR: (c) => setNested(c, "engine.logDir", process.env.GEAR_LOG_DIR!),
+    GEAR_SANDBOX_ENABLED: (c) =>
+      setNested(c, "sandbox.enabled", process.env.GEAR_SANDBOX_ENABLED === "true"),
+    GEAR_SANDBOX_NETWORK: (c) =>
+      setNested(c, "sandbox.networkDeny", process.env.GEAR_SANDBOX_NETWORK !== "allow"),
+    GEAR_TRUST_WORKSPACE: (c) =>
+      setNested(c, "permissions.trustWorkspace", process.env.GEAR_TRUST_WORKSPACE === "true"),
+    GEAR_PERMISSION_MODE: (c) =>
+      setNested(c, "permissions.mode", process.env.GEAR_PERMISSION_MODE!),
+    GEAR_AUTO_CLASSIFIER_PROVIDER: (c) =>
+      setNested(
+        c,
+        "permissions.autoMode.classifierProvider",
+        process.env.GEAR_AUTO_CLASSIFIER_PROVIDER!,
+      ),
+    GEAR_AUTO_CLASSIFIER_MODEL: (c) =>
+      setNested(c, "permissions.autoMode.classifierModel", process.env.GEAR_AUTO_CLASSIFIER_MODEL!),
+    GEAR_AUTO_FAIL_CLOSED: (c) =>
+      setNested(
+        c,
+        "permissions.autoMode.failClosed",
+        process.env.GEAR_AUTO_FAIL_CLOSED !== "false",
+      ),
+    GEAR_TELEMETRY: (c) => setNested(c, "telemetry.enabled", process.env.GEAR_TELEMETRY === "true"),
+    GEAR_TELEMETRY_ENDPOINT: (c) =>
+      setNested(c, "telemetry.endpoint", process.env.GEAR_TELEMETRY_ENDPOINT!),
+    GEAR_TELEMETRY_TOKEN: (c) => setNested(c, "telemetry.token", process.env.GEAR_TELEMETRY_TOKEN!),
+    GEAR_SEARCH_BACKEND: (c) => setNested(c, "search.provider", process.env.GEAR_SEARCH_BACKEND!),
+    GEAR_NATIVE_GROUNDING: (c) =>
+      setNested(c, "search.nativeGrounding", process.env.GEAR_NATIVE_GROUNDING !== "false"),
+    GEAR_RESEARCH_DEPTH: (c) => setNested(c, "research.depth", process.env.GEAR_RESEARCH_DEPTH!),
+    GEAR_RESEARCH_MAX_ROUNDS: (c) =>
+      setNested(c, "research.maxRounds", Number(process.env.GEAR_RESEARCH_MAX_ROUNDS!)),
+    GEAR_RESEARCH_MAX_PARALLEL: (c) =>
+      setNested(c, "research.maxParallel", Number(process.env.GEAR_RESEARCH_MAX_PARALLEL!)),
+    GEAR_RESEARCH_MAX_SUBQUESTIONS: (c) =>
+      setNested(c, "research.maxSubQuestions", Number(process.env.GEAR_RESEARCH_MAX_SUBQUESTIONS!)),
+    GEAR_RESEARCH_AUTO_APPROVE: (c) =>
+      setNested(c, "research.autoApprove", process.env.GEAR_RESEARCH_AUTO_APPROVE === "true"),
+    GEAR_RESEARCH_SAVE: (c) =>
+      setNested(c, "research.save", process.env.GEAR_RESEARCH_SAVE !== "false"),
+    GEAR_MEMORY_ENABLED: (c) =>
+      setNested(c, "memory.enabled", process.env.GEAR_MEMORY_ENABLED !== "false"),
+    GEAR_MEMORY_SCHEDULE: (c) => setNested(c, "memory.schedule", process.env.GEAR_MEMORY_SCHEDULE!),
+    GEAR_MEMORY_MODEL: (c) => setNested(c, "memory.model", process.env.GEAR_MEMORY_MODEL!),
+    GEAR_MEMORY_MAX_TOKENS: (c) =>
+      setNested(c, "memory.maxTokens", Number(process.env.GEAR_MEMORY_MAX_TOKENS!)),
     ANTHROPIC_API_KEY: (c) => setNested(c, "llm.anthropic.apiKey", process.env.ANTHROPIC_API_KEY!),
     OPENAI_API_KEY: (c) => setNested(c, "llm.openai.apiKey", process.env.OPENAI_API_KEY!),
     OPENROUTER_API_KEY: (c) =>
@@ -507,7 +628,7 @@ function setNested(obj: Record<string, unknown>, path: string, value: unknown): 
 // ─── Config Loader ───
 
 /**
- * Load Alan configuration with this precedence (later wins):
+ * Load Gear configuration with this precedence (later wins):
  * 1. Built-in defaults
  * 2. ~/.alan/config.toml (global)
  * 3. <workspace>/.alan/config.toml (project)
@@ -547,7 +668,7 @@ export function loadConfig(workspaceRoot?: string): AlanConfig {
 }
 
 /**
- * Resolve the Alan home directory (~/.alan).
+ * Resolve Gear's legacy-compatible data home (~/.alan).
  */
 export function getAlanHome(): string {
   return alanHome;
@@ -555,7 +676,7 @@ export function getAlanHome(): string {
 
 // ─── Config Writer ───
 // Persist a single setting back into config.toml so a change made at runtime
-// (Shift+Tab, `/config`, or "switch to hands-free mode" spoken in chat) survives
+// (Shift+Tab, `/config`, or "switch to Autonomy III" spoken in chat) survives
 // the next launch. This is deliberately a LINE-ORIENTED editor, not a
 // serialize-the-whole-object writer: it rewrites only the one key's line and
 // leaves every comment, blank line, and unrelated key exactly as the user wrote
@@ -576,7 +697,12 @@ export function getConfigFilePath(scope: ConfigScope, workspaceRoot?: string): s
 
 /** The effective global config.toml path (honors ALAN_CONFIG_PATH). */
 function globalConfigPath(): string {
-  return process.env.ALAN_CONFIG_PATH || join(alanHome, "config.toml");
+  return (
+    process.env.GEAR_CONFIG_PATH ||
+    process.env.ELIO_CONFIG_PATH ||
+    process.env.ALAN_CONFIG_PATH ||
+    join(alanHome, "config.toml")
+  );
 }
 
 /** Render a JS value as a TOML scalar/array literal. */

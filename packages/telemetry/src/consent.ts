@@ -8,9 +8,9 @@
 //  - installId is a random UUIDv7, minted lazily and ONLY after consent. It is
 //    NOT derived from the machine (no MAC address, hostname, serial, or any
 //    fingerprint) — it identifies an *install*, never a person or device, and
-//    `berne telemetry reset` throws it away and mints a new one.
+//    `gear telemetry reset` throws it away and mints a new one.
 //  - decision defaults to null ("never asked"). It is only ever flipped by an
-//    explicit user action — the first-run prompt or `berne telemetry on/off`.
+//    explicit user action — the first-run prompt or `gear telemetry on/off`.
 //    No code path sets it to "granted" implicitly, and a corrupt/unreadable
 //    file fails SAFE (treated as "never consented" ⇒ nothing is sent).
 

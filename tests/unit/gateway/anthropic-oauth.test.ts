@@ -106,14 +106,14 @@ describe("AnthropicProvider — foreign opaque-block isolation", () => {
 describe("AnthropicProvider — toSystemBlocks identity injection", () => {
   test("oauth mode prepends the Claude Code identity, real system keeps the cache breakpoint", () => {
     const p = new AnthropicProvider("tok", undefined, { oauth: true });
-    const blocks = priv(p).toSystemBlocks("You are Berne, a coding agent.") as Array<
+    const blocks = priv(p).toSystemBlocks("You are Gear, a coding agent.") as Array<
       Record<string, unknown>
     >;
     expect(blocks).toHaveLength(2);
     expect(blocks[0]).toEqual({ type: "text", text: IDENTITY }); // identity first, uncached
     expect(blocks[1]).toEqual({
       type: "text",
-      text: "You are Berne, a coding agent.",
+      text: "You are Gear, a coding agent.",
       cache_control: { type: "ephemeral" },
     });
   });
@@ -131,11 +131,11 @@ describe("AnthropicProvider — toSystemBlocks identity injection", () => {
 
   test("api-key mode never injects the identity block (unchanged single cached block)", () => {
     const p = new AnthropicProvider("sk-ant-123");
-    const blocks = priv(p).toSystemBlocks("You are Berne.") as Array<Record<string, unknown>>;
+    const blocks = priv(p).toSystemBlocks("You are Gear.") as Array<Record<string, unknown>>;
     expect(blocks).toHaveLength(1);
     expect(blocks[0]).toEqual({
       type: "text",
-      text: "You are Berne.",
+      text: "You are Gear.",
       cache_control: { type: "ephemeral" },
     });
   });

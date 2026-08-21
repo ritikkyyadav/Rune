@@ -12,14 +12,16 @@ describe("AGENT_DOCTRINE — agency layer", () => {
   test("agency section leads: ownership, iterate-on-failure, no promised next steps", () => {
     expect(AGENT_DOCTRINE).toContain("# Agency — you own the task");
     // Agency must come BEFORE tone: a model reads priorities in order.
-    expect(AGENT_DOCTRINE.indexOf("# Agency")).toBeLessThan(AGENT_DOCTRINE.indexOf("# Tone and style"));
+    expect(AGENT_DOCTRINE.indexOf("# Agency")).toBeLessThan(
+      AGENT_DOCTRINE.indexOf("# Tone and style"),
+    );
     expect(AGENT_DOCTRINE).toContain("that is YOUR bug to fix");
     expect(AGENT_DOCTRINE).toContain("Never end your reply with a plan or a promise");
     expect(AGENT_DOCTRINE).toContain("Act on reasonable assumptions");
   });
 
-  test("hands-free means no human mid-task", () => {
-    expect(AGENT_DOCTRINE).toContain("In Hands-Free mode there is no human mid-task");
+  test("Autonomy III means no human mid-task", () => {
+    expect(AGENT_DOCTRINE).toContain("In Autonomy III there is no human mid-task");
   });
 
   test("delegation teaches parallel fan-out", () => {

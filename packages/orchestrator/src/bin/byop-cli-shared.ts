@@ -1,6 +1,6 @@
 // ─── Shared helpers for the BYOP CLI verbs (login / providers / use / models) ───
 // Single source of truth for the credential-merge and interactive I/O these verbs
-// need, so `berne login`, `berne providers`, and the boot path in alan-cli all
+// need, so `gear login`, `gear providers`, and the boot path in alan-cli all
 // resolve keys the same way (no drift). No Engine boot — these run standalone,
 // like the telemetry/doctor subcommands.
 

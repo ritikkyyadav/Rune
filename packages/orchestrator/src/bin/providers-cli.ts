@@ -1,4 +1,4 @@
-// ─── `berne providers` / `berne use` / `berne models` ───
+// ─── `gear providers` / `gear use` / `gear models` ───
 // Non-interactive provider surfaces, dispatched standalone like telemetry/doctor.
 //   providers — list every provider, its auth method, and credential status
 //   use        — set the active provider (+ optional model) in ~/.alan/model.json
@@ -53,7 +53,7 @@ async function resolveAll(config: AlanConfig, secrets: SecretsFile, active: stri
   return { store, savedKeys, credentials };
 }
 
-// ─── berne providers ───
+// ─── gear providers ───
 
 export async function runProviders(): Promise<void> {
   const config = loadConfig(process.cwd());
@@ -90,19 +90,19 @@ export async function runProviders(): Promise<void> {
   out();
   out(
     faint("Sign in with ") +
-      info("berne login <provider>") +
+      info("gear login <provider>") +
       faint(" · switch with ") +
-      info("berne use <provider>"),
+      info("gear use <provider>"),
   );
 }
 
-// ─── berne use ───
+// ─── gear use ───
 
 export async function runUse(args: string[]): Promise<void> {
   const providerId = args[0];
   const modelArg = args[1];
   if (!providerId) {
-    out(accent("Usage: ") + info("berne use <provider> [model]"));
+    out(accent("Usage: ") + info("gear use <provider> [model]"));
     out(faint("Providers: ") + PROVIDER_PRESETS.map((p) => p.id).join(", "));
     process.exitCode = 1;
     return;
@@ -117,10 +117,10 @@ export async function runUse(args: string[]): Promise<void> {
   const model = modelArg ?? preset?.defaultModel ?? loadLastModel()?.model ?? "";
   saveLastModel({ provider: providerId, model });
   out(ok(`✓ Active provider set to ${bold(text(preset?.label ?? providerId))}`));
-  out(`${faint("model")} ${info(model)}  ${faint("(next `berne` session uses this)")}`);
+  out(`${faint("model")} ${info(model)}  ${faint("(next `gear` session uses this)")}`);
 }
 
-// ─── berne models ───
+// ─── gear models ───
 
 export async function runModels(args: string[]): Promise<void> {
   const config = loadConfig(process.cwd());
@@ -182,8 +182,8 @@ export async function runModels(args: string[]): Promise<void> {
   out();
   out(
     faint("Use one with ") +
-      info(`berne use ${providerId} <model>`) +
+      info(`gear use ${providerId} <model>`) +
       faint(" or ") +
-      info(`berne -m ${providerId}/<model>`),
+      info(`gear -m ${providerId}/<model>`),
   );
 }

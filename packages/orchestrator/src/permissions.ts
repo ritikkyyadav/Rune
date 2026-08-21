@@ -9,12 +9,17 @@ export interface PermissionRule {
   tool: string;
   scope: PermissionScope;
   pattern?: string; // regex pattern on args
+  /** Stable serialized args for a narrow, exact-action grant. */
+  exactArgs?: string;
   grantedAt: Date;
   expiresAt?: Date;
 }
 
 export type PermissionDecision =
-  | { type: "allowed" }
+  | {
+      type: "allowed";
+      basis: "bypass" | "safe_tool" | "workspace" | "grant" | "exact_grant";
+    }
   | { type: "denied"; reason: string }
   | {
       type: "needs_confirmation";
@@ -24,17 +29,27 @@ export type PermissionDecision =
     };
 
 // ─── Permission modes (the Shift+Tab cycle) ───
-// A single, user-facing knob layered over the broker's two booleans. Shift+Tab
-// cycles confirm → auto → turing → confirm, mirroring the way Claude Code cycles
-// permission modes. "turing" is the internal token for the bypass mode the product
-// brands "Hands-Free" (Gemini-CLI's yellow YOLO, Claude's bypass-permissions): it
-// reads, writes, and runs commands without ever asking. The names map onto the
-// existing machinery — turing⇒yolo, auto⇒trust — so nothing downstream has to learn a
-// new concept, and the enum value stays "turing" the way yolo stayed yolo.
-export type PermissionMode = "confirm" | "auto" | "turing";
+// The five states are deliberately behaviorally distinct:
+//   confirm       — prompt before writes and commands
+//   autonomy-i    — confined workspace edits proceed; commands still prompt
+//   autonomy-ii   — add sandboxed local commands and confined delegation
+//   autonomy-iii  — full permission bypass (the renamed legacy Hands-Free mode)
+//   auto          — independent classifier review at risky action boundaries
+//
+// The Engine owns the classifier layer for Auto and the sandbox transition for
+// Autonomy III. The broker remains the deterministic capability boundary.
+export type PermissionMode = "confirm" | "autonomy-i" | "autonomy-ii" | "autonomy-iii" | "auto";
+export type LegacyPermissionMode = "turing" | "hands-free";
+export type PermissionModeInput = PermissionMode | LegacyPermissionMode;
 
 /** Cycle order for Shift+Tab. */
-export const PERMISSION_MODE_ORDER: readonly PermissionMode[] = ["confirm", "auto", "turing"];
+export const PERMISSION_MODE_ORDER: readonly PermissionMode[] = [
+  "confirm",
+  "autonomy-i",
+  "autonomy-ii",
+  "autonomy-iii",
+  "auto",
+];
 
 /** The next mode in the Shift+Tab cycle (wraps around). */
 export function nextPermissionMode(mode: PermissionMode): PermissionMode {
@@ -42,19 +57,41 @@ export function nextPermissionMode(mode: PermissionMode): PermissionMode {
   return PERMISSION_MODE_ORDER[(i + 1) % PERMISSION_MODE_ORDER.length]!;
 }
 
-/** The user-facing config spelling for a permission mode ("turing" → "hands-free"). */
-export type ConfigPermissionMode = "confirm" | "auto" | "hands-free";
+/** Canonical user-facing config spellings. */
+export type ConfigPermissionMode = PermissionMode;
 
 /**
- * Map the config's user-facing mode spelling onto the internal PermissionMode.
- * The config file says "hands-free" (readable); the engine's enum value is
- * "turing" (the historical bypass token). Unknown/absent ⇒ undefined so callers
- * can fall back to flags/defaults.
+ * Map config/CLI spellings onto the canonical PermissionMode. Historical
+ * Hands-Free/turing/yolo spellings remain read-compatible and migrate to
+ * Autonomy III the next time the value is persisted.
  */
 export function configModeToPermissionMode(mode: string | undefined): PermissionMode | undefined {
-  switch (mode) {
+  const normalized = mode
+    ?.trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, "-");
+  switch (normalized) {
     case "hands-free":
-      return "turing";
+    case "handsfree":
+    case "turing":
+    case "yolo":
+    case "bypass":
+    case "full":
+    case "autonomy-3":
+    case "autonomy-iii":
+    case "iii":
+    case "3":
+      return "autonomy-iii";
+    case "autonomy-2":
+    case "autonomy-ii":
+    case "ii":
+    case "2":
+      return "autonomy-ii";
+    case "autonomy-1":
+    case "autonomy-i":
+    case "i":
+    case "1":
+      return "autonomy-i";
     case "auto":
       return "auto";
     case "confirm":
@@ -66,113 +103,147 @@ export function configModeToPermissionMode(mode: string | undefined): Permission
 
 /** Map the internal PermissionMode back to the config's user-facing spelling. */
 export function permissionModeToConfig(mode: PermissionMode): ConfigPermissionMode {
-  return mode === "turing" ? "hands-free" : mode;
+  return mode;
+}
+
+/** Signed policies may still carry the historical `turing`/`hands-free` value. */
+export function isPermissionModeForbidden(
+  policy: OrgPolicy | null | undefined,
+  mode: PermissionMode,
+): boolean {
+  return (
+    policy?.forbidPermissionModes?.some((entry) => configModeToPermissionMode(entry) === mode) ??
+    false
+  );
 }
 
 /**
- * Resolve the mode a session should START in, folding config + explicit flags
- * into the broker's two booleans. Explicit `--yolo` / `--trust` flags win over
- * the persisted `[permissions] mode`; absent everything ⇒ confirm (neither).
+ * Resolve the mode a session should start in. An explicit `--autonomy` value
+ * wins, followed by legacy `--yolo`, `--trust`, persisted mode, and the legacy
+ * trustWorkspace boolean. Absent everything ⇒ Confirm.
  */
 export function resolveStartupPermissionFlags(opts: {
   yoloFlag?: boolean;
   trustFlag?: boolean;
+  modeFlag?: string;
   configMode?: string;
   configTrustWorkspace?: boolean;
-}): { yoloMode: boolean; trustWorkspace: boolean } {
+}): { yoloMode: boolean; trustWorkspace: boolean; permissionMode: PermissionMode } {
   const configMode = configModeToPermissionMode(opts.configMode);
-  const yoloMode = !!opts.yoloFlag || configMode === "turing";
-  const trustWorkspace = !!opts.trustFlag || !!opts.configTrustWorkspace || configMode === "auto";
-  return { yoloMode, trustWorkspace };
+  const explicitMode = configModeToPermissionMode(opts.modeFlag);
+  const permissionMode =
+    explicitMode ??
+    (opts.yoloFlag
+      ? "autonomy-iii"
+      : opts.trustFlag
+        ? "auto"
+        : (configMode ?? (opts.configTrustWorkspace ? "auto" : "confirm")));
+  return {
+    yoloMode: permissionMode === "autonomy-iii",
+    trustWorkspace: permissionMode === "auto",
+    permissionMode,
+  };
 }
 
 export class PermissionBroker {
   private sessionGrants: PermissionRule[] = [];
-  private yoloMode: boolean;
-  private trustWorkspace: boolean;
+  private mode: PermissionMode;
   private workspaceRoot?: string;
   private orgPolicy: OrgPolicy | null;
 
   constructor(
     yoloMode = false,
-    opts: { workspaceRoot?: string; trustWorkspace?: boolean; orgPolicy?: OrgPolicy | null } = {},
+    opts: {
+      workspaceRoot?: string;
+      trustWorkspace?: boolean;
+      initialMode?: PermissionMode;
+      orgPolicy?: OrgPolicy | null;
+    } = {},
   ) {
-    this.yoloMode = yoloMode;
     this.workspaceRoot = opts.workspaceRoot;
-    this.trustWorkspace = opts.trustWorkspace ?? false;
     this.orgPolicy = opts.orgPolicy ?? null;
+    const requested =
+      opts.initialMode ?? (yoloMode ? "autonomy-iii" : opts.trustWorkspace ? "auto" : "confirm");
+    this.mode = isPermissionModeForbidden(this.orgPolicy, requested) ? "confirm" : requested;
   }
 
   setYoloMode(enabled: boolean): void {
-    this.yoloMode = enabled;
+    if (enabled) void this.setMode("autonomy-iii");
+    else if (this.mode === "autonomy-iii") void this.setMode("confirm");
   }
 
   setTrustWorkspace(enabled: boolean): void {
-    this.trustWorkspace = enabled;
+    if (enabled) void this.setMode("auto");
+    else if (this.mode === "auto") void this.setMode("confirm");
   }
 
   isTrustWorkspace(): boolean {
-    return this.trustWorkspace;
+    return ["autonomy-i", "autonomy-ii", "auto"].includes(this.mode);
   }
 
   /**
    * Set the active permission mode — the single knob the Shift+Tab cycle drives.
-   * Mapped onto the two underlying booleans: turing⇒yolo, auto⇒trust, confirm⇒neither.
-   * Org policy can forbid modes outright (e.g. no Hands-Free on managed
+   * Org policy can forbid modes outright (e.g. no Autonomy III on managed
    * machines) — a forbidden mode is refused, the current mode stands, and the
    * return value tells the caller why.
    */
-  setMode(mode: PermissionMode): { ok: boolean; reason?: string } {
-    if (this.orgPolicy?.forbidPermissionModes?.includes(mode)) {
-      return { ok: false, reason: `org policy forbids "${mode}" mode on this machine` };
+  setMode(mode: PermissionModeInput): { ok: boolean; reason?: string } {
+    const canonical = configModeToPermissionMode(mode);
+    if (!canonical) return { ok: false, reason: `unknown permission mode "${mode}"` };
+    if (isPermissionModeForbidden(this.orgPolicy, canonical)) {
+      return { ok: false, reason: `org policy forbids "${canonical}" mode on this machine` };
     }
-    this.yoloMode = mode === "turing";
-    this.trustWorkspace = mode === "auto";
+    this.mode = canonical;
     return { ok: true };
   }
 
-  /** The active permission mode, derived from the underlying booleans. */
+  /** The active permission mode. */
   getMode(): PermissionMode {
-    if (this.yoloMode) return "turing";
-    if (this.trustWorkspace) return "auto";
-    return "confirm";
+    return this.mode;
   }
 
   check(schema: ToolSchema, args: Record<string, unknown>): PermissionDecision {
     // ── Org policy: FIRST, before every shortcut. A signed policy denial is
-    // terminal — turing mode, workspace trust, and session grants cannot
+    // terminal — Autonomy III, workspace autonomy, and session grants cannot
     // override it, or the policy would be advisory. ──
     if (this.orgPolicy) {
       const denial = policyDenial(this.orgPolicy, schema.name, args);
       if (denial) return { type: "denied", reason: denial };
     }
 
-    // Yolo mode — allow everything
-    if (this.yoloMode) {
+    // Autonomy III — allow everything after signed policy/security checks.
+    if (this.mode === "autonomy-iii") {
       console.warn(
-        `[SECURITY] Yolo mode active — all permission checks bypassed for: ${schema.name}`,
+        `[SECURITY] Autonomy III active — all interactive permission checks bypassed for: ${schema.name}`,
       );
-      return { type: "allowed" };
+      return { type: "allowed", basis: "bypass" };
     }
 
     // Auto-permitted tools (read-only)
     if (schema.permissionLevel === "auto") {
-      return { type: "allowed" };
+      return { type: "allowed", basis: "safe_tool" };
     }
 
-    // Workspace trust — when enabled, auto-approve confirm/sandbox tools whose
-    // effects stay inside the workspace root. `bash` is contained by the Rust
-    // sandbox (no network, blocked destructive patterns, workspace cwd), and
-    // path-based writes are confined when their target resolves inside the root.
-    // Anything that reaches outside the folder still falls through to a prompt.
-    if (this.trustWorkspace && this.isWorkspaceConfined(schema, args)) {
-      return { type: "allowed" };
+    // Autonomy I permits only deterministic, workspace-confined edits. It does
+    // not approve shell commands or delegated workers.
+    if (this.mode === "autonomy-i" && this.isWorkspaceEditConfined(schema, args)) {
+      return { type: "allowed", basis: "workspace" };
+    }
+
+    // Autonomy II adds OS-sandboxed local commands and workspace-confined
+    // delegation. Auto uses the same deterministic preliminary boundary, then
+    // Engine independently classifies every risky action tier.
+    if (
+      (this.mode === "autonomy-ii" || this.mode === "auto") &&
+      this.isWorkspaceConfined(schema, args)
+    ) {
+      return { type: "allowed", basis: "workspace" };
     }
 
     // Check session grants
     const grant = this.findGrant(schema.name, args);
     if (grant) {
-      return { type: "allowed" };
+      return { type: "allowed", basis: grant.exactArgs ? "exact_grant" : "grant" };
     }
 
     // Needs confirmation
@@ -197,13 +268,28 @@ export class PermissionBroker {
     });
   }
 
+  /**
+   * Approve only one canonical tool payload for the session. Auto mode uses
+   * this for "allow session" on a risky classifier escalation; a blanket bash
+   * grant would otherwise let later, unrelated commands skip the reviewer.
+   */
+  grantExact(tool: string, args: Record<string, unknown>, scope: PermissionScope): void {
+    this.sessionGrants.push({
+      tool,
+      scope,
+      exactArgs: stableArgs(args),
+      grantedAt: new Date(),
+    });
+  }
+
   isYoloMode(): boolean {
-    return this.yoloMode;
+    return this.mode === "autonomy-iii";
   }
 
   getSecurityPosture(): "strict" | "standard" | "permissive" | "yolo" {
-    if (this.yoloMode) return "yolo";
-    if (this.trustWorkspace) return "permissive";
+    if (this.mode === "autonomy-iii") return "yolo";
+    if (this.mode === "autonomy-ii" || this.mode === "auto") return "permissive";
+    if (this.mode === "autonomy-i") return "standard";
     const grantedCount = this.sessionGrants?.length ?? 0;
     if (grantedCount === 0) return "strict";
     if (grantedCount > 10) return "permissive";
@@ -216,6 +302,22 @@ export class PermissionBroker {
 
   /** Tools whose blast radius is a single `path` argument. */
   private static readonly PATH_CONFINED_TOOLS = new Set(["write_file", "edit_file", "multi_edit"]);
+
+  /** The narrower Autonomy I boundary: file edits only, never shell/delegation. */
+  private isWorkspaceEditConfined(schema: ToolSchema, args: Record<string, unknown>): boolean {
+    if (!this.workspaceRoot) return false;
+    if (schema.name === "apply_patch") {
+      const paths = patchTargetPaths(typeof args.patch === "string" ? args.patch : "");
+      return paths.length > 0 && paths.every((p) => this.isPathInside(this.workspaceRoot!, p));
+    }
+    if (!PermissionBroker.PATH_CONFINED_TOOLS.has(schema.name)) return false;
+    const target = args.path;
+    return (
+      typeof target === "string" &&
+      target.length > 0 &&
+      this.isPathInside(this.workspaceRoot, target)
+    );
+  }
 
   /**
    * Whether a confirm/sandbox tool's effect is confined to the workspace and
@@ -234,7 +336,7 @@ export class PermissionBroker {
     // sandbox-confined foreground commands are. And when the user disabled
     // the sandbox entirely (/sandbox off), NO bash call is contained, so
     // workspace trust stops auto-approving bash altogether — full access
-    // means every command earns a prompt outside Hands-Free mode.
+    // means every command earns a prompt outside Autonomy III.
     //
     // Intent is not capability: "sandbox on" only justifies auto-approval when
     // this MACHINE can actually isolate (seatbelt/bwrap present). On the
@@ -253,10 +355,7 @@ export class PermissionBroker {
     // workspace. patchTargetPaths returns [] for unparseable patches, which
     // fails confinement here — and the handler itself re-rejects any
     // out-of-workspace path at execution, so this gates the prompt only.
-    if (schema.name === "apply_patch") {
-      const paths = patchTargetPaths(typeof args.patch === "string" ? args.patch : "");
-      return paths.length > 0 && paths.every((p) => this.isPathInside(this.workspaceRoot!, p));
-    }
+    if (schema.name === "apply_patch") return this.isWorkspaceEditConfined(schema, args);
     // A worker's blast radius is exactly the files it owns: confined when
     // every owned entry resolves inside the workspace (the ownership guard
     // re-enforces this mechanically at each write).
@@ -270,10 +369,7 @@ export class PermissionBroker {
         )
       );
     }
-    if (!PermissionBroker.PATH_CONFINED_TOOLS.has(schema.name)) return false;
-    const target = args.path;
-    if (typeof target !== "string" || target.length === 0) return false;
-    return this.isPathInside(this.workspaceRoot, target);
+    return this.isWorkspaceEditConfined(schema, args);
   }
 
   /**
@@ -294,6 +390,10 @@ export class PermissionBroker {
 
       // Check expiration
       if (grant.expiresAt && new Date() > grant.expiresAt) return false;
+
+      if (grant.exactArgs !== undefined) {
+        return grant.exactArgs === stableArgs(args);
+      }
 
       // Check pattern match on args
       if (grant.pattern) {
@@ -329,5 +429,24 @@ export class PermissionBroker {
       default:
         return `${tool} ${JSON.stringify(args).slice(0, 100)}`;
     }
+  }
+}
+
+function stableArgs(value: unknown): string {
+  const sort = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(sort);
+    if (v && typeof v === "object") {
+      const out: Record<string, unknown> = {};
+      for (const key of Object.keys(v as Record<string, unknown>).sort()) {
+        out[key] = sort((v as Record<string, unknown>)[key]);
+      }
+      return out;
+    }
+    return v;
+  };
+  try {
+    return JSON.stringify(sort(value));
+  } catch {
+    return "[unserializable]";
   }
 }

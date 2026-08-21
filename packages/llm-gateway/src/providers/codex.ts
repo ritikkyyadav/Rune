@@ -38,7 +38,7 @@ const CODEX_PROVIDER = "codex";
 
 // ─── Request translation (pure, exported for tests) ───
 
-/** Map Berne messages to Responses API `input` items (system goes to `instructions`). */
+/** Map Gear messages to Responses API `input` items (system goes to `instructions`). */
 export function toResponsesInput(messages: Message[]): unknown[] {
   const items: unknown[] = [];
   for (const msg of messages) {
@@ -139,8 +139,8 @@ export function toResponsesBody(
 // ─── SSE parsing (pure, exported for tests) ───
 
 /**
- * Parse a Responses API `text/event-stream` into Berne StreamEvents. Handles the
- * event types Berne needs: text deltas, function-call items + argument deltas,
+ * Parse a Responses API `text/event-stream` into Gear StreamEvents. Handles the
+ * event types Gear needs: text deltas, function-call items + argument deltas,
  * reasoning-summary deltas, and completion (with usage). Unknown events are
  * ignored so the stream is resilient to additive backend event types.
  */

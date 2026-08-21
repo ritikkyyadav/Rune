@@ -4,14 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { Engine } from "../../packages/orchestrator/src/engine";
-import {
-  canonicalPolicyBytes,
-  type OrgPolicy,
-} from "../../packages/orchestrator/src/org-policy";
-import {
-  generateEd25519KeyPair,
-  signBytes,
-} from "../../packages/orchestrator/src/signing";
+import { canonicalPolicyBytes, type OrgPolicy } from "../../packages/orchestrator/src/org-policy";
+import { generateEd25519KeyPair, signBytes } from "../../packages/orchestrator/src/signing";
 
 const RUST_RELEASE = join(import.meta.dir, "../../target/release/alan-tools");
 const RUST_DEBUG = join(import.meta.dir, "../../target/debug/alan-tools");
@@ -62,7 +56,7 @@ describe("Engine under org policy", () => {
   });
 
   test.skipIf(!HAS_RUST_BIN)(
-    "valid policy: enforced in status, turing stripped, mode cycle skips it",
+    "valid policy: enforced in status, Autonomy III stripped, mode cycle skips it",
     () => {
       install(
         { version: 1, org: "Acme", forbidPermissionModes: ["turing"], networkDefaultDeny: true },
@@ -74,11 +68,11 @@ describe("Engine under org policy", () => {
         expect(status.orgPolicy?.org).toBe("Acme");
         expect(status.orgPolicy?.fingerprint).toHaveLength(16);
         // yoloMode:true in config was stripped by the forbidden-mode rule.
-        expect(engine.getPermissionMode()).not.toBe("turing");
+        expect(engine.getPermissionMode()).not.toBe("autonomy-iii");
         // The Shift+Tab cycle can never land on the forbidden mode.
         const seen = new Set<string>();
         for (let i = 0; i < 6; i++) seen.add(engine.cyclePermissionMode());
-        expect(seen.has("turing")).toBe(false);
+        expect(seen.has("autonomy-iii")).toBe(false);
         expect(engine.setPermissionMode("turing").ok).toBe(false);
       } finally {
         engine.close();
@@ -90,7 +84,7 @@ describe("Engine under org policy", () => {
     const engine = makeEngine();
     try {
       expect(engine.getStatus().orgPolicy).toBeNull();
-      expect(engine.getPermissionMode()).toBe("turing");
+      expect(engine.getPermissionMode()).toBe("autonomy-iii");
     } finally {
       engine.close();
     }

@@ -19,8 +19,15 @@ export interface ChatMessage {
   role: MessageRole;
   content: string;
   timestamp: string;
+  attachments?: MessageAttachment[];
   toolCalls?: ToolCallInfo[];
   plan?: Plan;
+}
+
+export interface MessageAttachment {
+  name: string;
+  size: number;
+  type: string;
 }
 
 // ─── Tool Call Types ───
@@ -111,6 +118,14 @@ export interface PermissionPrompt {
   toolName: string;
   argsSummary: string;
   rawArgs: Record<string, unknown>;
+  safety?: {
+    reason: string;
+    risk: string;
+    tier: string;
+    source: string;
+    reviewer?: { provider: string; model: string };
+  };
+  exactSessionGrant?: boolean;
 }
 
 export type PermissionDecision = "allow_once" | "allow_session" | "deny";
@@ -123,9 +138,34 @@ export interface EngineStatus {
   state: ConnectionState;
   model: string;
   provider: string;
+  workspace?: string;
   contextUsed: number;
   contextMax: number;
   totalCost: number;
+  permissionMode?: "confirm" | "autonomy-i" | "autonomy-ii" | "autonomy-iii" | "auto";
+  securityPosture?: string;
+  autoMode?: {
+    enabled: boolean;
+    failClosed: boolean;
+    reviewer: { provider: string; model: string; isolatedContext: true } | null;
+    policy: {
+      environmentEntries: number;
+      hardRules: number;
+      askRules: number;
+      allowRules: number;
+    };
+    stats: {
+      decisions: number;
+      allowed: number;
+      asked: number;
+      denied: number;
+      classifierCalls: number;
+      classifierFailures: number;
+      probeScans: number;
+      injectionsFlagged: number;
+      lastDecisionAt: string | null;
+    };
+  };
 }
 
 // ─── Settings Types ───

@@ -1,4 +1,4 @@
-// ─── `alan doctor` + `alan incidents`: the black box's terminal surfaces ───
+// ─── `gear doctor` + `gear incidents`: the black box's terminal surfaces ───
 // Both open ~/.alan/blackbox.db directly (read-only usage) — no Engine boot, no
 // provider validation, instant. Deliberately plain output: this is the page an
 // annoyed user reads right after something broke.
@@ -37,7 +37,7 @@ function sevPaint(severity: string, s: string): string {
 // ─── doctor ───
 
 export function runDoctor(): void {
-  console.log(`\n  ${dim("§ ALAN DOCTOR")}\n`);
+  console.log(`\n  ${dim("§ GEAR DOCTOR")}\n`);
 
   // Recorder store health
   const store = openStore();
@@ -104,7 +104,7 @@ export function runDoctor(): void {
         console.log(`  ${ok("✓")} sentinels: ${live} live session${live === 1 ? "" : "s"} running`);
       if (stale > 0)
         console.log(
-          `  ${warn("!")} sentinels: ${stale} leftover from dead processes — next \`alan\` run files dirty-exit incident${stale === 1 ? "" : "s"}`,
+          `  ${warn("!")} sentinels: ${stale} leftover from dead processes — next \`gear\` run files dirty-exit incident${stale === 1 ? "" : "s"}`,
         );
     }
   }
@@ -119,7 +119,7 @@ export function runDoctor(): void {
   }
 
   console.log(
-    `\n  ${dim("browse:")} ${info("alan incidents")} ${dim("·")} ${info("alan incidents top")} ${dim("·")} ${info("alan incidents show <id>")}\n`,
+    `\n  ${dim("browse:")} ${info("gear incidents")} ${dim("·")} ${info("gear incidents top")} ${dim("·")} ${info("gear incidents show <id>")}\n`,
   );
   store?.close();
 }
@@ -163,12 +163,12 @@ export function runIncidents(positionals: string[], values: Record<string, unkno
             `           ${faint(r.message.replace(/\s+/g, " ").slice(0, 96))}`,
         );
       }
-      console.log(`\n  ${dim("details:")} ${info("alan incidents show <id>")}\n`);
+      console.log(`\n  ${dim("details:")} ${info("gear incidents show <id>")}\n`);
     }
   } else if (sub === "show") {
     const prefix = positionals[2];
     if (!prefix) {
-      console.log(dim("  Usage: alan incidents show <id-prefix>"));
+      console.log(dim("  Usage: gear incidents show <id-prefix>"));
     } else {
       const r = store.getByPrefix(prefix);
       if (!r) {
@@ -199,7 +199,7 @@ export function runIncidents(positionals: string[], values: Record<string, unkno
   } else if (sub === "export") {
     const out =
       (values.out as string | undefined) ??
-      join(process.cwd(), `alan-incidents-${new Date().toISOString().slice(0, 10)}.jsonl`);
+      join(process.cwd(), `gear-incidents-${new Date().toISOString().slice(0, 10)}.jsonl`);
     const rows = store.list({ limit: 10_000, minSeverity: "debug" });
     // Everything was redacted at capture time; export as-is, newest first.
     writeFileSync(out, rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
@@ -210,7 +210,7 @@ export function runIncidents(positionals: string[], values: Record<string, unkno
     );
   } else {
     console.log(
-      dim("  Usage: alan incidents [list|show <id>|top [--by-version]|export [--out <path>]]"),
+      dim("  Usage: gear incidents [list|show <id>|top [--by-version]|export [--out <path>]]"),
     );
   }
   store.close();
@@ -242,7 +242,7 @@ function printIncident(r: IncidentRecord): void {
     for (const [k, v] of ctx) console.log(`    ${faint(`${k}: ${String(v)}`)}`);
   }
   if (r.trail.length > 0) {
-    console.log(`\n  ${dim("trail (what Berne did leading up to this)")}`);
+    console.log(`\n  ${dim("trail (what Gear did leading up to this)")}`);
     for (const t of r.trail) {
       console.log(
         `    ${dim(String(t.seq).padStart(3))} ${info(t.kind.padEnd(16))} ${faint(t.summary)}`,

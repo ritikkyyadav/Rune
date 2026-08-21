@@ -12,7 +12,7 @@
 // Deliberately a precision list, not a heuristic: a false positive would
 // block an offline-capable command, so anything ambiguous (npx, cargo build,
 // go build) is left to run. Escape hatches: `--offline`-style flags skip the
-// match, and BERNE_NET_PREFLIGHT=0 disables the whole check.
+// match, and GEAR_NET_PREFLIGHT=0 disables the whole check.
 
 import { isOsIsolationAvailable } from "../sandbox-capability";
 import { isSandboxEnabled } from "../sandbox-mode";
@@ -83,7 +83,10 @@ export function withNetworkPreflight(handler: ToolHandler): ToolHandler {
         isOsIsolationAvailable() &&
         args.network !== true &&
         args.run_in_background !== true;
-      if (sandboxed && process.env.BERNE_NET_PREFLIGHT !== "0") {
+      if (
+        sandboxed &&
+        (process.env.GEAR_NET_PREFLIGHT ?? process.env.BERNE_NET_PREFLIGHT) !== "0"
+      ) {
         const what = typeof args.command === "string" ? needsNetwork(args.command) : null;
         if (what) {
           return {

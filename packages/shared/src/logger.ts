@@ -34,7 +34,9 @@ const LEVEL_ORDER: Record<Exclude<LogLevel, "silent">, number> = {
 /** Resolve the active threshold from the environment (re-read each call so tests
  * and runtime toggles take effect without a restart). */
 function threshold(): number {
-  const raw = (process.env.ALAN_LOG ?? "").toLowerCase().trim();
+  const raw = (process.env.GEAR_LOG ?? process.env.ELIO_LOG ?? process.env.ALAN_LOG ?? "")
+    .toLowerCase()
+    .trim();
   if (raw === "silent") return Number.POSITIVE_INFINITY;
   if (raw in LEVEL_ORDER) return LEVEL_ORDER[raw as keyof typeof LEVEL_ORDER];
   if (process.env.DEBUG && process.env.DEBUG !== "0" && process.env.DEBUG !== "false") {
@@ -46,15 +48,15 @@ function threshold(): number {
 let fileSinkChecked = false;
 let fileSinkPath: string | null = null;
 
-/** Resolve (once) the optional file sink under ALAN_LOG_DIR. Never throws. */
+/** Resolve (once) the optional file sink under GEAR_LOG_DIR. Never throws. */
 function fileSink(): string | null {
   if (fileSinkChecked) return fileSinkPath;
   fileSinkChecked = true;
-  const dir = process.env.ALAN_LOG_DIR;
+  const dir = process.env.GEAR_LOG_DIR ?? process.env.ELIO_LOG_DIR ?? process.env.ALAN_LOG_DIR;
   if (!dir) return (fileSinkPath = null);
   try {
     mkdirSync(dir, { recursive: true });
-    fileSinkPath = join(dir, "alan.log");
+    fileSinkPath = join(dir, "gear.log");
   } catch {
     fileSinkPath = null; // unwritable dir — silently drop the file sink
   }

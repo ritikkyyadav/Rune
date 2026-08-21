@@ -22,7 +22,9 @@ export interface LastModel {
  * otherwise `~/.alan/model.json`. Computed per-call so the env override always takes effect.
  */
 export function getModelStatePath(): string {
-  if (process.env.ALAN_MODEL_PATH) return process.env.ALAN_MODEL_PATH;
+  const override =
+    process.env.GEAR_MODEL_PATH ?? process.env.ELIO_MODEL_PATH ?? process.env.ALAN_MODEL_PATH;
+  if (override) return override;
   const home = process.env.HOME ?? process.env.USERPROFILE ?? ".";
   return join(home, ".alan", "model.json");
 }

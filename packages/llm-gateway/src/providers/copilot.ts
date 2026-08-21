@@ -29,8 +29,14 @@ const TOKEN_URL = "https://api.github.com/copilot_internal/v2/token";
 const COPILOT_BASE = "https://api.githubcopilot.com";
 // Present as an approved Copilot client; the endpoint checks these. Overridable
 // via env so a required version bump doesn't need a rebuild.
-const EDITOR_VERSION = process.env.BERNE_COPILOT_EDITOR_VERSION ?? "vscode/1.95.0";
-const PLUGIN_VERSION = process.env.BERNE_COPILOT_PLUGIN_VERSION ?? "copilot-chat/0.23.0";
+const EDITOR_VERSION =
+  process.env.GEAR_COPILOT_EDITOR_VERSION ??
+  process.env.BERNE_COPILOT_EDITOR_VERSION ??
+  "vscode/1.95.0";
+const PLUGIN_VERSION =
+  process.env.GEAR_COPILOT_PLUGIN_VERSION ??
+  process.env.BERNE_COPILOT_PLUGIN_VERSION ??
+  "copilot-chat/0.23.0";
 const INTEGRATION_ID = "vscode-chat";
 /** Refresh the short-lived Copilot token this far before it actually expires. */
 const TOKEN_SKEW_MS = 120_000;

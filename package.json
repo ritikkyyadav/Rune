@@ -1,5 +1,5 @@
 {
-  "name": "alan-workspace",
+  "name": "gear-workspace",
   "private": true,
   "packageManager": "bun@1.3.14",
   "workspaces": [
@@ -13,7 +13,8 @@
     "test:unit": "bun test tests/unit/",
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",
-    "eval": "bun run tests/eval/runner.ts"
+    "eval": "bun run tests/eval/runner.ts",
+    "eval:auto-safety": "bun run tests/eval/auto-mode-safety.ts"
   },
   "devDependencies": {
     "turbo": "^2",

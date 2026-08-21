@@ -77,7 +77,7 @@ async function capture(fn: () => Promise<void> | void): Promise<string> {
   return buf;
 }
 
-describe("berne use", () => {
+describe("gear use", () => {
   it("writes the active provider + default model to model.json", async () => {
     await capture(() => runUse(["openrouter"]));
     expect(loadLastModel()).toEqual({ provider: "openrouter", model: "qwen/qwen3-coder:free" });
@@ -97,12 +97,12 @@ describe("berne use", () => {
 
   it("prints usage when no provider is given", async () => {
     const out = await capture(() => runUse([]));
-    expect(out).toMatch(/berne use <provider>/);
+    expect(out).toMatch(/gear use <provider>/);
     expect(process.exitCode).toBe(1);
   });
 });
 
-describe("berne providers", () => {
+describe("gear providers", () => {
   it("lists every provider with its auth method + credential backend", async () => {
     const out = await capture(() => runProviders());
     expect(out).toMatch(/Providers/);
@@ -120,7 +120,7 @@ describe("berne providers", () => {
   });
 });
 
-describe("berne models", () => {
+describe("gear models", () => {
   it("falls back to the curated preset list when there is no live endpoint", async () => {
     // No env key + file store → provider isn't registered → static fallback, offline.
     const out = await capture(() => runModels(["anthropic"]));
@@ -135,7 +135,7 @@ describe("berne models", () => {
   });
 });
 
-describe("berne login --migrate", () => {
+describe("gear login --migrate", () => {
   it("copies legacy secrets.json keys into the credential store", async () => {
     setProviderKey("openrouter", "sk-or-legacy-abcdef");
     const out = await capture(() => runLogin([], { migrate: true }));
@@ -146,12 +146,12 @@ describe("berne login --migrate", () => {
 
   it("prints usage for `login` with no provider on a non-TTY", async () => {
     const out = await capture(() => runLogin([], {}));
-    expect(out).toMatch(/berne login/);
+    expect(out).toMatch(/gear login/);
     expect(out).toMatch(/Providers:/);
   });
 });
 
-describe("berne logout", () => {
+describe("gear logout", () => {
   it("removes a stored key AND oauth session, leaving env/config to fall back", async () => {
     const store = await openCredentialStore({ forceBackend: "file", env: process.env });
     await store.set(apiKeyAccount("openrouter"), "sk-stored");

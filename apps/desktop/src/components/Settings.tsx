@@ -48,7 +48,7 @@ interface ProvidersResponse {
   active: { provider: string; model: string };
 }
 
-type PermissionLevel = "ask" | "auto_allow" | "auto_deny";
+type PermissionLevel = NonNullable<EngineStatus["permissionMode"]>;
 
 interface MemoryData {
   content: string;
@@ -72,12 +72,12 @@ const styles: Record<string, React.CSSProperties> = {
   overlay: {
     position: "fixed",
     inset: 0,
-    background: "rgba(0, 0, 0, 0.6)",
+    background: "var(--overlay)",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     zIndex: 1000,
-    backdropFilter: "blur(4px)",
+    backdropFilter: "blur(2px)",
   },
   panel: {
     background: "var(--bg-secondary)",
@@ -87,7 +87,7 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: "90vw",
     maxHeight: "82vh",
     overflowY: "auto",
-    boxShadow: "0 20px 60px rgba(0, 0, 0, 0.4)",
+    boxShadow: "var(--shadow-md)",
   },
   header: {
     display: "flex",
@@ -189,6 +189,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   toggleActive: { background: "var(--accent)", color: "white", borderColor: "var(--accent)" },
   toggleInactive: { background: "transparent", color: "var(--text-secondary)" },
+  disabledButton: { opacity: 0.45, cursor: "not-allowed" },
   costDisplay: {
     fontFamily: "var(--font-mono)",
     fontSize: 14,
@@ -260,7 +261,9 @@ export function Settings({ status, onSwitchModel, onClose }: SettingsProps) {
   const [data, setData] = useState<ProvidersResponse | null>(null);
   const [selectedProvider, setSelectedProvider] = useState(status.provider);
   const [selectedModel, setSelectedModel] = useState(status.model);
-  const [permissionLevel, setPermissionLevel] = useState<PermissionLevel>("ask");
+  const [permissionLevel, setPermissionLevel] = useState<PermissionLevel>(
+    status.permissionMode ?? "confirm",
+  );
   // Newly-typed keys, keyed by provider id or search-backend id. Empty = unchanged.
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -281,7 +284,7 @@ export function Settings({ status, onSwitchModel, onClose }: SettingsProps) {
       setSelectedModel(res.active.model);
       setLoadError(null);
     } else {
-      setLoadError("Engine not connected — start the app via `alan desktop`.");
+      setLoadError("Engine not connected — launch the native Gear app to configure providers.");
     }
   }, []);
 
@@ -378,6 +381,7 @@ export function Settings({ status, onSwitchModel, onClose }: SettingsProps) {
 
   const contextPercent =
     status.contextMax > 0 ? Math.round((status.contextUsed / status.contextMax) * 100) : 0;
+  const autoDisabledByPolicy = status.autoMode?.enabled === false;
 
   return (
     <div style={styles.overlay} onClick={onClose}>
@@ -430,7 +434,8 @@ export function Settings({ status, onSwitchModel, onClose }: SettingsProps) {
           <div style={styles.section}>
             <div style={styles.sectionTitle}>Provider Keys</div>
             <div style={styles.hint}>
-              Shared with the CLI — stored in ~/.alan/secrets.json (mode 600). Leave blank to keep.
+              Stored locally in Gear's protected credential store. Leave blank to keep an existing
+              key.
             </div>
             {providers.map((p) => (
               <div key={p.id} style={styles.fieldRow}>
@@ -473,20 +478,70 @@ export function Settings({ status, onSwitchModel, onClose }: SettingsProps) {
           {/* Permission Level */}
           <div style={styles.section}>
             <div style={styles.sectionTitle}>Permissions</div>
+            <div style={styles.hint}>
+              Shift+Tab follows the same order in the CLI: Confirm → Autonomy I → II → III → Auto.
+              Autonomy III is full-system access; Auto independently reviews risky actions against
+              your request.
+            </div>
             <div style={styles.toggle}>
-              {(["ask", "auto_allow"] as PermissionLevel[]).map((level) => (
+              {(
+                [
+                  "confirm",
+                  "autonomy-i",
+                  "autonomy-ii",
+                  "autonomy-iii",
+                  "auto",
+                ] as PermissionLevel[]
+              ).map((level) => (
                 <button
                   key={level}
                   style={{
                     ...styles.toggleButton,
                     ...(permissionLevel === level ? styles.toggleActive : styles.toggleInactive),
+                    ...(level === "auto" && autoDisabledByPolicy ? styles.disabledButton : {}),
                   }}
-                  onClick={() => setPermissionLevel(level)}
+                  onClick={() => {
+                    if (level !== "auto" || !autoDisabledByPolicy) setPermissionLevel(level);
+                  }}
+                  disabled={level === "auto" && autoDisabledByPolicy}
                 >
-                  {level === "ask" ? "Ask before tools" : "Auto-approve"}
+                  {level === "confirm"
+                    ? "Confirm"
+                    : level === "auto"
+                      ? "Auto"
+                      : level.replace("autonomy-", "Autonomy ").toUpperCase()}
                 </button>
               ))}
             </div>
+            {permissionLevel === "autonomy-i" ? (
+              <div style={styles.hint}>Confined workspace edits proceed; commands still ask.</div>
+            ) : null}
+            {permissionLevel === "autonomy-ii" ? (
+              <div style={styles.hint}>
+                Adds sandboxed local commands and confined delegation; external access still asks.
+              </div>
+            ) : null}
+            {permissionLevel === "autonomy-iii" ? (
+              <div style={{ ...styles.hint, color: "var(--warning)" }}>
+                Full system access: the command sandbox is disabled and permission prompts are
+                bypassed until you leave this mode.
+              </div>
+            ) : null}
+            {permissionLevel === "auto" ? (
+              <div style={styles.hint}>
+                {status.autoMode?.reviewer
+                  ? `Reviewer: ${status.autoMode.reviewer.provider}/${status.autoMode.reviewer.model} · separate context · ${status.autoMode.failClosed ? "fail closed" : "fail open"}`
+                  : "No reviewer is currently available; risky actions will pause for you."}
+                {status.autoMode
+                  ? ` · ${status.autoMode.stats.allowed} allowed, ${status.autoMode.stats.denied} blocked, ${status.autoMode.stats.asked} escalated`
+                  : ""}
+              </div>
+            ) : null}
+            {autoDisabledByPolicy ? (
+              <div style={{ ...styles.hint, color: "var(--warning)" }}>
+                Auto review is disabled by managed policy on this machine.
+              </div>
+            ) : null}
           </div>
 
           {/* System Memory ("dreaming") */}
@@ -494,7 +549,7 @@ export function Settings({ status, onSwitchModel, onClose }: SettingsProps) {
             <div style={styles.sectionTitle}>System Memory</div>
             <div style={styles.hint}>
               An evergreen profile of you and your codebases, injected so models tailor to you — a
-              guide, not rules. Shared with the CLI (~/.alan/system-memory.md).
+              guide, not rules. Shared with Gear's local engine.
             </div>
             <div style={styles.fieldRow}>
               <span style={styles.label}>Auto-update</span>
@@ -521,7 +576,7 @@ export function Settings({ status, onSwitchModel, onClose }: SettingsProps) {
               style={styles.memoryArea}
               value={memoryDraft}
               onChange={(e) => setMemoryDraft(e.target.value)}
-              placeholder="Empty — click Refresh to let Berne learn from your recent sessions, or write your own notes here."
+              placeholder="Empty — click Refresh to let Gear learn from your recent tasks, or write your own notes here."
               spellCheck={false}
             />
             <div style={styles.hint}>

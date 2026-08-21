@@ -257,7 +257,7 @@ export class BlackboxStore {
     }));
   }
 
-  /** Fingerprints grouped per version — feeds `alan incidents top --by-version`. */
+  /** Fingerprints grouped per version — feeds `gear incidents top --by-version`. */
   byVersion(): Map<string, FingerprintRow[]> {
     const all = this.top({ limit: 10_000 });
     const out = new Map<string, FingerprintRow[]>();
@@ -271,7 +271,7 @@ export class BlackboxStore {
     return out;
   }
 
-  /** Counts by severity within a window — feeds `alan doctor`. */
+  /** Counts by severity within a window — feeds `gear doctor`. */
   counts(opts: { sinceDays?: number } = {}): Record<string, number> {
     const since = daysAgoIso(opts.sinceDays ?? 7);
     const rows = this.db

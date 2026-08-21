@@ -1,5 +1,5 @@
-// ─── `alan notebook`: inspect and manage the tactics notebook ───
-// Auditability is the contract: everything Alan has learned is listable,
+// ─── `gear notebook`: inspect and manage the tactics notebook ───
+// Auditability is the contract: everything Gear has learned is listable,
 // explainable (provenance), and deletable. No Engine boot needed.
 
 import { writeFileSync } from "node:fs";
@@ -35,7 +35,7 @@ export function runNotebook(positionals: string[], values: Record<string, unknow
     const entries = store.list({ includeRetired: !!values.all, limit: 50 });
     if (entries.length === 0) {
       console.log(
-        dim("  Notebook is empty — Berne fills it as it verifies things about your codebases."),
+        dim("  Notebook is empty — Gear fills it as it verifies things about your codebases."),
       );
     } else {
       console.log(`\n  ${dim("§ TACTICS NOTEBOOK")} ${faint(`(${store.count()} active)`)}\n`);
@@ -50,13 +50,13 @@ export function runNotebook(positionals: string[], values: Record<string, unknow
         );
       }
       console.log(
-        `\n  ${dim("manage:")} ${info("alan notebook show <id>")} ${dim("·")} ${info("alan notebook rm <id>")}\n`,
+        `\n  ${dim("manage:")} ${info("gear notebook show <id>")} ${dim("·")} ${info("gear notebook rm <id>")}\n`,
       );
     }
   } else if (sub === "show") {
     const e = positionals[2] ? store.getByPrefix(positionals[2]) : null;
     if (!e) {
-      console.log(dim("  Usage: alan notebook show <id-prefix> (no unique match)"));
+      console.log(dim("  Usage: gear notebook show <id-prefix> (no unique match)"));
     } else {
       console.log(`\n  ${dim("§ ENTRY")} ${info(e.id)}\n`);
       console.log(`  ${text(e.body)}\n`);
@@ -74,20 +74,20 @@ export function runNotebook(positionals: string[], values: Record<string, unknow
   } else if (sub === "rm") {
     const e = positionals[2] ? store.getByPrefix(positionals[2]) : null;
     if (!e) {
-      console.log(dim("  Usage: alan notebook rm <id-prefix> (no unique match)"));
+      console.log(dim("  Usage: gear notebook rm <id-prefix> (no unique match)"));
     } else {
       store.remove(e.id);
       console.log(`  ${ok("✓")} removed: ${faint(e.body.slice(0, 70))}`);
     }
   } else if (sub === "export") {
     const out =
-      (values.out as string | undefined) ?? join(process.cwd(), "alan-notebook-export.jsonl");
+      (values.out as string | undefined) ?? join(process.cwd(), "gear-notebook-export.jsonl");
     const entries = store.list({ includeRetired: true, limit: 10_000 });
     writeFileSync(out, entries.map((e) => JSON.stringify(e)).join("\n") + "\n");
     console.log(`  ${ok("✓")} exported ${entries.length} entries → ${info(out)}`);
   } else {
     console.log(
-      dim("  Usage: alan notebook [list [--all]|show <id>|rm <id>|export [--out <path>]]"),
+      dim("  Usage: gear notebook [list [--all]|show <id>|rm <id>|export [--out <path>]]"),
     );
   }
   store.close();

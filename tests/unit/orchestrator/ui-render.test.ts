@@ -9,22 +9,40 @@ import {
   bullet,
   connector,
 } from "../../../packages/orchestrator/src/bin/ui/render";
-import { stripAnsi, info, faint, text, muted } from "../../../packages/orchestrator/src/bin/ui/theme";
+import {
+  stripAnsi,
+  info,
+  faint,
+  text,
+  muted,
+} from "../../../packages/orchestrator/src/bin/ui/theme";
 
 describe("ui/render primitives", () => {
-  it("visLen ignores ANSI escapes", () => {
+  it("visLen ignores ANSI escapes and counts terminal cells", () => {
     expect(visLen("abc")).toBe(3);
     expect(visLen(info("abc"))).toBe(3);
+    expect(visLen("界面")).toBe(4);
+    expect(visLen("e\u0301")).toBe(1);
+    expect(visLen("👩🏽‍💻")).toBe(2);
+    expect(visLen("🇮🇳")).toBe(2);
+    expect(visLen(info("界👩🏽‍💻"))).toBe(4);
   });
 
   it("truncate clamps to visible width with an ellipsis", () => {
     expect(truncate("hello", 10)).toBe("hello");
     expect(truncate("hello world", 5)).toBe("hell…");
     expect(stripAnsi(truncate("hello world", 5)).length).toBe(5);
+    expect(truncate("界面設計", 5)).toBe("界面…");
+    expect(truncate("👩🏽‍💻abc", 4)).toBe("👩🏽‍💻a…");
+    const styled = truncate(info("界面設計"), 5);
+    expect(stripAnsi(styled)).toBe("界面…");
+    expect(visLen(styled)).toBe(5);
   });
 
   it("wrap breaks on word boundaries within width", () => {
     expect(wrap("the quick brown fox", 9)).toEqual(["the quick", "brown fox"]);
+    expect(wrap("你好世界 hello", 4)).toEqual(["你好", "世界", "hell", "o"]);
+    expect(wrap("go 👩🏽‍💻 now", 5)).toEqual(["go 👩🏽‍💻", "now"]);
     expect(wrap("", 10)).toEqual([""]);
   });
 
@@ -39,9 +57,14 @@ describe("ui/render primitives", () => {
     expect(widths.size).toBe(1); // every row is the same visible width
   });
 
+  it("box rows stay cell-aligned with wide and combining graphemes", () => {
+    const lines = box(["界面", "e\u0301 + 👩🏽‍💻"]).split("\n");
+    expect(new Set(lines.map(visLen)).size).toBe(1);
+  });
+
   it("box stays uniform with colored, nested, and non-ASCII content (status-card shapes)", () => {
     const rows = [
-      `${faint(">_")} ${text("Alan")}  ${muted("(v0.1.0)")}`,
+      `${faint(">_")} ${text("Gear")}  ${muted("(v0.1.0)")}`,
       "",
       `${muted("Model".padEnd(12))}  ${info("gemini-2.5-flash")}`,
       `${muted("Permissions".padEnd(12))}  ${text("confirm · on-request")}`,
@@ -68,6 +91,16 @@ describe("ui/render primitives", () => {
     // label column padded to the longest label ("directory" = 9) + 2 spaces
     expect(plain[0]).toBe("model      gemini");
     expect(plain[1]).toBe("directory  ~/x");
+  });
+
+  it("kv aligns labels by terminal cells rather than code units", () => {
+    const plain = kv([
+      ["界", "wide"],
+      ["abc", "ascii"],
+    ]).map(stripAnsi);
+    expect(plain).toEqual(["界   wide", "abc  ascii"]);
+    expect(visLen(plain[0]!.slice(0, plain[0]!.indexOf("wide")))).toBe(5);
+    expect(visLen(plain[1]!.slice(0, plain[1]!.indexOf("ascii")))).toBe(5);
   });
 
   it("bar reflects the fraction and total width", () => {

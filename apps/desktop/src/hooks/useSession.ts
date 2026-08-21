@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import type { SessionInfo, ChatMessage, ToolCallInfo, Plan } from "../lib/types";
+import type { SessionInfo, ChatMessage, MessageAttachment, ToolCallInfo, Plan } from "../lib/types";
 
 // ─── Safe Tauri invoke wrapper ───
 async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T | null> {
@@ -69,27 +69,30 @@ export function useSession() {
 
   // ─── Create session ───
 
-  const createSession = useCallback(() => {
-    const id = `session-${Date.now()}`;
-    const session: SessionInfo = {
-      id,
-      title: "New Session",
-      model: "deepseek/deepseek-v4-flash:free",
-      workspace: "~",
-      eventCount: 0,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    setState((prev) => ({
-      ...prev,
-      sessions: [session, ...prev.sessions],
-      activeSessionId: id,
-      messages: [],
-      activePlan: null,
-      error: null,
-    }));
-    return id;
-  }, []);
+  const createSession = useCallback(
+    (options?: { id?: string; model?: string; workspace?: string }) => {
+      const id = options?.id ?? `session-${Date.now()}`;
+      const session: SessionInfo = {
+        id,
+        title: "New task",
+        model: options?.model ?? "deepseek/deepseek-v4-flash:free",
+        workspace: options?.workspace ?? "~",
+        eventCount: 0,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      setState((prev) => ({
+        ...prev,
+        sessions: [session, ...prev.sessions],
+        activeSessionId: id,
+        messages: [],
+        activePlan: null,
+        error: null,
+      }));
+      return id;
+    },
+    [],
+  );
 
   // ─── Select / resume session ───
 
@@ -149,15 +152,30 @@ export function useSession() {
 
   // ─── Message management ───
 
-  const addUserMessage = useCallback((content: string) => {
+  const addUserMessage = useCallback((content: string, attachments?: MessageAttachment[]) => {
+    const timestamp = new Date().toISOString();
     const msg: ChatMessage = {
       id: generateId(),
       role: "user",
       content,
-      timestamp: new Date().toISOString(),
+      timestamp,
+      attachments,
     };
     setState((prev) => ({
       ...prev,
+      sessions: prev.sessions.map((session) =>
+        session.id === prev.activeSessionId
+          ? {
+              ...session,
+              title:
+                session.title === "New task" || session.title === "New Session"
+                  ? content.replace(/\s+/g, " ").trim().slice(0, 54) || "New task"
+                  : session.title,
+              eventCount: session.eventCount + 1,
+              updatedAt: timestamp,
+            }
+          : session,
+      ),
       messages: [...prev.messages, msg],
       isLoading: true,
       error: null,

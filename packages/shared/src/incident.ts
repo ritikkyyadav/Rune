@@ -100,7 +100,7 @@ export type IncidentOutcome =
   | "abandoned"
   | "crash";
 
-/** One compact entry in the flight trail: what Alan did leading up to an incident. */
+/** One compact entry in the flight trail: what Gear did leading up to an incident. */
 export interface TrailEntry {
   /** Monotonic position within the run's trail (not the session event seq). */
   seq: number;

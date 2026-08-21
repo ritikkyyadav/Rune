@@ -28,7 +28,7 @@ import {
   type ToolSchema,
 } from "@alan/tool-registry";
 import { AgentLoop } from "./agent-loop";
-import type { PermissionCheck } from "./agent-loop";
+import type { PermissionCheck, ToolResultProcessor } from "./agent-loop";
 
 const DEFAULT_MAX_TURNS = 24;
 const DEFAULT_MAX_TOKENS = 12_000;
@@ -56,6 +56,8 @@ export interface WorkerDeps {
   resolve: () => { gateway: LlmGateway; model: string; provider: ProviderName };
   maxTurns?: number;
   maxTokens?: number;
+  /** Same prompt-injection probe used by the lead agent. */
+  toolResultProcessor?: ToolResultProcessor;
 }
 
 export const WORKER_TOOL_SCHEMA: ToolSchema = {
@@ -242,7 +244,7 @@ export function createWorkerPermissionCheck(registry: ToolRegistry): PermissionC
 
 function workerSystemPrompt(ownedList: string): string {
   return [
-    "You are a Berne implementation worker: a focused engineer executing one contract inside a larger build.",
+    "You are a Gear implementation worker: a focused engineer executing one contract inside a larger build.",
     `You EXCLUSIVELY own these files (relative to the workspace): ${ownedList}`,
     "Rules:",
     "- Create/edit ONLY the files you own — the harness mechanically refuses everything else. All other files are read-only reference: read them freely to match interfaces and style.",
@@ -320,6 +322,7 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
             maxTokens,
             maxTurns,
             systemPrompt: workerSystemPrompt(ownership.describe(input.workspaceRoot)),
+            toolResultProcessor: deps.toolResultProcessor,
           },
           live.gateway,
           registry,

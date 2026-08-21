@@ -1,5 +1,5 @@
 // ─── Generic OAuth strategy (Authorization Code + PKCE, loopback redirect) ───
-// The reusable engine behind `berne login <provider>` for OAuth providers. It
+// The reusable engine behind `gear login <provider>` for OAuth providers. It
 // owns the security-critical mechanics — PKCE (S256), a `state` nonce, an
 // ephemeral 127.0.0.1 loopback to capture the redirect — and delegates only the
 // provider-specific URL shape and token exchange to an injected `OAuthFlow`.
@@ -113,7 +113,7 @@ export interface Loopback {
 }
 
 const SUCCESS_HTML =
-  "<!doctype html><meta charset=utf-8><title>Berne</title>" +
+  "<!doctype html><meta charset=utf-8><title>Gear</title>" +
   "<body style='font-family:system-ui;max-width:32rem;margin:4rem auto;text-align:center'>" +
   "<h2>✓ Authorized</h2><p>You can close this tab and return to your terminal.</p></body>";
 
@@ -230,7 +230,7 @@ export class OAuthStrategy implements AuthenticationStrategy {
         providerId: ctx.providerId,
         method: this.method,
         message: `OAuth login failed: ${errMsg(err)}`,
-        recovery: `run: berne login ${ctx.providerId}`,
+        recovery: `run: gear login ${ctx.providerId}`,
       });
     }
   }
@@ -281,7 +281,7 @@ export class OAuthStrategy implements AuthenticationStrategy {
         providerId: ctx.providerId,
         method: this.method,
         message: `${ctx.preset.label} sign-in needs an interactive terminal to paste the code.`,
-        recovery: `run: berne login ${ctx.providerId}`,
+        recovery: `run: gear login ${ctx.providerId}`,
       });
     }
     const { verifier, challenge } = generatePkce();
@@ -298,7 +298,7 @@ export class OAuthStrategy implements AuthenticationStrategy {
         providerId: ctx.providerId,
         method: this.method,
         message: "No authorization code entered.",
-        recovery: `run: berne login ${ctx.providerId}`,
+        recovery: `run: gear login ${ctx.providerId}`,
       });
     }
     // Anthropic returns `code#state`; split it. Lenient state check: verify only
@@ -333,7 +333,7 @@ export class OAuthStrategy implements AuthenticationStrategy {
       providerId: ctx.providerId,
       method: this.method,
       message: "OAuth state mismatch — aborting (possible CSRF).",
-      recovery: `run: berne login ${ctx.providerId}`,
+      recovery: `run: gear login ${ctx.providerId}`,
     });
   }
 
