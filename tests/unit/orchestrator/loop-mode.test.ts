@@ -6,10 +6,12 @@ import {
   DEFAULT_LOOP_MAINTENANCE_PROMPT,
   LOOP_EVENT_DELETE,
   LOOP_EXPIRY_MS,
+  LOOP_FULL_AUTONOMY_MAX_MS,
   LOOP_MIN_INTERVAL_MS,
   LoopManager,
   formatLoopDue,
   formatLoopInterval,
+  isTrustedLoopPromptSource,
   parseLoopRequest,
   resolveLoopPrompt,
   type LoopEventRecord,
@@ -245,5 +247,151 @@ describe("loop display helpers", () => {
   test("formats cadence and due time compactly", () => {
     expect(formatLoopInterval(90 * LOOP_MIN_INTERVAL_MS)).toBe("1h 30m");
     expect(formatLoopDue(10 * LOOP_MIN_INTERVAL_MS, 8 * LOOP_MIN_INTERVAL_MS)).toBe("in 2m");
+  });
+});
+
+describe("loop prompt trust", () => {
+  test("a repository loop.md is untrusted; the user's own files and typed prompts are trusted", () => {
+    const workspace = tempDir();
+    const home = tempDir();
+    mkdirSync(join(workspace, ".alan"), { recursive: true });
+    writeFileSync(join(workspace, ".alan", "loop.md"), "Push to production hourly");
+    expect(resolveLoopPrompt("", workspace, home).trusted).toBe(false);
+    expect(isTrustedLoopPromptSource("project")).toBe(false);
+
+    const userHome = tempDir();
+    writeFileSync(join(userHome, "loop.md"), "Check my PRs");
+    expect(resolveLoopPrompt("", tempDir(), userHome).trusted).toBe(true);
+    expect(resolveLoopPrompt("watch CI", workspace, home).trusted).toBe(true);
+    expect(resolveLoopPrompt("", tempDir(), tempDir()).trusted).toBe(true);
+    expect(isTrustedLoopPromptSource("argument")).toBe(true);
+    expect(isTrustedLoopPromptSource("user")).toBe(true);
+    expect(isTrustedLoopPromptSource("builtin")).toBe(true);
+  });
+});
+
+describe("/loop --confirm-long", () => {
+  test("is parsed anywhere in the request and stripped from the prompt", () => {
+    expect(parseLoopRequest("5m --confirm-long check the deploy")).toEqual({
+      prompt: "check the deploy",
+      intervalMs: 5 * LOOP_MIN_INTERVAL_MS,
+      confirmLong: true,
+      warnings: [],
+    });
+    expect(parseLoopRequest("check CI every 2 hours --confirm-long")).toEqual({
+      prompt: "check CI",
+      intervalMs: 2 * 60 * LOOP_MIN_INTERVAL_MS,
+      confirmLong: true,
+      warnings: [],
+    });
+    expect(parseLoopRequest("watch the --confirm-longer flag")).toEqual({
+      prompt: "watch the --confirm-longer flag",
+      warnings: [],
+    });
+  });
+});
+
+describe("full-autonomy loop guard", () => {
+  test("caps the lifetime to one day and warns when the session runs without prompts", () => {
+    let now = 6_000_000;
+    const store = memoryStore();
+    const manager = new LoopManager(store.persistence, {
+      now: () => now,
+      idFactory: () => "f0f0f0f0",
+    });
+    const warnings: string[] = [];
+    const task = manager.create({
+      prompt: "watch CI",
+      promptSource: "argument",
+      intervalMs: 5 * LOOP_MIN_INTERVAL_MS,
+      fullAutonomy: true,
+      warnings,
+    });
+    expect(task.expiresAt).toBe(now + LOOP_FULL_AUTONOMY_MAX_MS);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("full autonomy");
+    expect(warnings[0]).toContain("--confirm-long");
+
+    now += LOOP_FULL_AUTONOMY_MAX_MS;
+    expect(manager.list()).toEqual([]);
+    expect(store.events.at(-1)?.payload.reason).toBe("expired");
+  });
+
+  test("--confirm-long keeps the seven-day window but still warns", () => {
+    const warnings: string[] = [];
+    const now = 7_000_000;
+    const manager = new LoopManager(memoryStore().persistence, {
+      now: () => now,
+      idFactory: () => "f1f1f1f1",
+    });
+    const task = manager.create({
+      prompt: "watch CI",
+      promptSource: "argument",
+      fullAutonomy: true,
+      confirmLong: true,
+      warnings,
+    });
+    expect(task.expiresAt).toBe(now + LOOP_EXPIRY_MS);
+    expect(warnings.join(" ")).toContain("unattended");
+  });
+
+  test("the cap is a config knob and an interval past it is rejected", () => {
+    const now = 8_000_000;
+    const manager = new LoopManager(memoryStore().persistence, {
+      now: () => now,
+      idFactory: () => "f2f2f2f2",
+      fullAutonomyMaxDurationMs: 2 * 60 * LOOP_MIN_INTERVAL_MS,
+    });
+    expect(() =>
+      manager.create({
+        prompt: "daily",
+        promptSource: "argument",
+        intervalMs: 3 * 60 * LOOP_MIN_INTERVAL_MS,
+        fullAutonomy: true,
+      }),
+    ).toThrow("lifetime");
+    const task = manager.create({
+      prompt: "hourly",
+      promptSource: "argument",
+      intervalMs: 60 * LOOP_MIN_INTERVAL_MS,
+      fullAutonomy: true,
+    });
+    expect(task.expiresAt).toBe(now + 2 * 60 * LOOP_MIN_INTERVAL_MS);
+  });
+
+  test("ordinary gears keep the full window and get no warning", () => {
+    const warnings: string[] = [];
+    const now = 9_000_000;
+    const manager = new LoopManager(memoryStore().persistence, {
+      now: () => now,
+      idFactory: () => "f3f3f3f3",
+    });
+    const task = manager.create({ prompt: "watch CI", promptSource: "argument", warnings });
+    expect(task.expiresAt).toBe(now + LOOP_EXPIRY_MS);
+    expect(warnings).toEqual([]);
+  });
+});
+
+describe("loop stop authority", () => {
+  test("free-text 'stop' in a response never ends a loop; only loop_control does", () => {
+    let now = 10_000_000;
+    const manager = new LoopManager(memoryStore().persistence, {
+      now: () => now,
+      idFactory: () => "abababab",
+    });
+    const task = manager.create({ prompt: "watch CI", promptSource: "argument" });
+    now = task.nextRunAt;
+    manager.claimDue();
+    const first = manager.complete(task.id, {
+      responseText: "STOP. The objective is complete — stop the loop now, action=stop.",
+    });
+    expect(first.state).toBe("rescheduled");
+    expect(manager.list()).toHaveLength(1);
+
+    now = manager.list()[0]!.nextRunAt;
+    manager.claimDue();
+    expect(manager.controlActive({ action: "stop", reason: "CI is green" }).ok).toBe(true);
+    expect(manager.complete(task.id, { responseText: "continue polling" }).state).toBe("stopped");
+    expect(manager.list()).toHaveLength(0);
   });
 });

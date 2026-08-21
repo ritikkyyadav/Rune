@@ -16,6 +16,8 @@ import { tryParseJson } from "@alan/shared";
 
 interface GeminiPart {
   text?: string;
+  /** True on thought-summary parts (only present when includeThoughts is requested). */
+  thought?: boolean;
   functionCall?: {
     name: string;
     args?: Record<string, unknown>;
@@ -291,6 +293,7 @@ export class GoogleProvider implements LlmProvider {
       tools.push({ googleSearch: {} });
     }
 
+    const thinkingConfig = geminiThinkingConfig(request);
     return {
       contents: this.toGeminiContents(request.messages),
       ...(request.system && { systemInstruction: { parts: [{ text: request.system }] } }),
@@ -300,6 +303,7 @@ export class GoogleProvider implements LlmProvider {
         temperature: request.temperature,
         topP: request.topP,
         stopSequences: request.stopSequences,
+        ...(thinkingConfig && { thinkingConfig }),
       },
     };
   }
@@ -343,7 +347,9 @@ export class GoogleProvider implements LlmProvider {
   }
 
   private fromGeminiCandidate(candidate: GeminiCandidate | undefined): ContentBlock[] {
-    const parts = candidate?.content?.parts ?? [];
+    // Thought summaries (`thought: true` parts) are reasoning, not the answer;
+    // they only appear when includeThoughts is requested, which Gear never does.
+    const parts = (candidate?.content?.parts ?? []).filter((part) => !part.thought);
     return parts.map((part, index) => {
       if (part.functionCall) {
         return {
@@ -392,6 +398,39 @@ export class GoogleProvider implements LlmProvider {
         return hasToolUse ? "tool_use" : "end_turn";
     }
   }
+}
+
+/**
+ * Gemini thinking dial for the request's provider-neutral `thinking` flag.
+ * Only models that actually support the field receive it (an unknown
+ * generationConfig key is a 400 on older models):
+ *   - thinking disabled → 2.5 Flash/Flash-Lite: thinkingBudget 0 (off);
+ *     2.5 Pro cannot switch thinking off — 128 is its documented floor;
+ *     Gemini 3.x uses thinkingLevel, whose floor is "low".
+ *   - thinking enabled with an explicit budget → 2.5 family thinkingBudget.
+ *   - otherwise the model's own default (dynamic thinking) is left alone.
+ * Thought summaries are never requested (includeThoughts false).
+ */
+export function geminiThinkingConfig(
+  request: Pick<InferenceRequest, "model" | "thinking">,
+): Record<string, unknown> | undefined {
+  const model = request.model.toLowerCase();
+  const is25 = /^gemini-2\.5-/.test(model);
+  const is25Pro = /^gemini-2\.5-pro/.test(model);
+  const is3 = /^gemini-3/.test(model);
+  if (request.thinking?.enabled === false) {
+    if (is25) return { thinkingBudget: is25Pro ? 128 : 0, includeThoughts: false };
+    if (is3) return { thinkingLevel: "low", includeThoughts: false };
+    return undefined;
+  }
+  if (request.thinking?.enabled && request.thinking.budgetTokens && is25) {
+    const floor = is25Pro ? 128 : 0;
+    return {
+      thinkingBudget: Math.max(floor, Math.floor(request.thinking.budgetTokens)),
+      includeThoughts: false,
+    };
+  }
+  return undefined;
 }
 
 // Finish reasons whose responses carry no usable output. MALFORMED/UNEXPECTED
