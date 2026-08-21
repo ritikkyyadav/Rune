@@ -88,7 +88,7 @@ describe("DashboardManager — pages & token guard", () => {
     const page = await res.text();
     expect(page).toContain("<title>GPU Overview</title>");
     expect(page).toContain('<div id="root">');
-    expect(page).toContain('window.__BERNE_DATA__ = {"gpus":24}');
+    expect(page).toContain('window.__GEAR_DATA__ = {"gpus":24}');
     expect(page).toContain("EventSource");
     expect(page).toContain("/vendor/chart.umd.js");
   });
@@ -185,7 +185,12 @@ describe("DashboardManager — live updates over SSE", () => {
 
   test("update(html) pushes a reload event and bumps the served page", async () => {
     const m = makeManager();
-    const info = await m.create({ title: "v", html: "<div>one</div>", workspaceRoot: ws(), open: false });
+    const info = await m.create({
+      title: "v",
+      html: "<div>one</div>",
+      workspaceRoot: ws(),
+      open: false,
+    });
 
     const buf = await readSse(
       `${info.url}/events`,

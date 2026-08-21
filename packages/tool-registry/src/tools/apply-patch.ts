@@ -5,7 +5,7 @@
 // string-replace edit_file fights their training and measurably degrades edit
 // success. This tool accepts that envelope natively. The FORMAT is theirs
 // (implemented fresh for interoperability — see THIRD_PARTY_NOTICES.md); the
-// application semantics are Berne's: every hunk routes through multi-edit's
+// application semantics are Gear's: every hunk routes through multi-edit's
 // applyOneEdit (exact → whitespace → indentation matching, unambiguous-or-
 // error), the whole patch validates in memory before anything is written, and
 // writes are temp+rename with best-effort rollback. Nothing lands partially.

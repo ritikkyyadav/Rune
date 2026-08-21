@@ -16,7 +16,7 @@
 // store with `secure=false`, and every caller is expected to surface the notice.
 //
 // Everything is testable: the shell-out backends take an injectable command
-// runner, and backend selection honors BERNE_CREDENTIAL_BACKEND so tests never
+// runner, and backend selection honors GEAR_CREDENTIAL_BACKEND so tests never
 // touch the real keychain.
 
 import { existsSync, readFileSync, writeFileSync, chmodSync, mkdirSync } from "fs";
@@ -42,8 +42,9 @@ export interface CredentialStore {
   list(): Promise<string[]>;
 }
 
-/** Default keychain service namespace; every account is scoped under it. */
-export const CREDENTIAL_SERVICE = "berne";
+/** Current keychain service namespace; every account is scoped under it. */
+export const CREDENTIAL_SERVICE = "gear";
+const LEGACY_CREDENTIAL_SERVICES = ["elio", "berne", "alan"] as const;
 
 // ─── Injectable command runner (so shell-out backends are unit-testable) ───
 
@@ -92,7 +93,12 @@ function alanDir(env: NodeJS.ProcessEnv): string {
 }
 
 function credentialsFilePath(env: NodeJS.ProcessEnv): string {
-  return env.BERNE_CREDENTIALS_PATH ?? join(alanDir(env), "credentials.json");
+  return (
+    env.GEAR_CREDENTIALS_PATH ??
+    env.ELIO_CREDENTIALS_PATH ??
+    env.BERNE_CREDENTIALS_PATH ??
+    join(alanDir(env), "credentials.json")
+  );
 }
 
 /**
@@ -101,7 +107,12 @@ function credentialsFilePath(env: NodeJS.ProcessEnv): string {
  * account names only (e.g. "provider:openrouter:oauth"), never secrets.
  */
 function indexFilePath(env: NodeJS.ProcessEnv): string {
-  return env.BERNE_CREDENTIAL_INDEX_PATH ?? join(alanDir(env), "credentials.index.json");
+  return (
+    env.GEAR_CREDENTIAL_INDEX_PATH ??
+    env.ELIO_CREDENTIAL_INDEX_PATH ??
+    env.BERNE_CREDENTIAL_INDEX_PATH ??
+    join(alanDir(env), "credentials.index.json")
+  );
 }
 
 function readJsonMap(path: string): Record<string, string> {
@@ -196,6 +207,7 @@ class KeychainStore implements CredentialStore {
     private readonly service: string,
     private readonly run: CredentialCommandRunner,
     private readonly env: NodeJS.ProcessEnv,
+    private readonly legacyServices: readonly string[] = [],
   ) {}
 
   async get(account: string): Promise<string | null> {
@@ -203,17 +215,21 @@ class KeychainStore implements CredentialStore {
     // listed, skip the (subprocess) keychain lookup — this keeps startup free of
     // `security` calls in the common "nothing stored yet" case (fresh users).
     if (!readIndex(this.env).has(account)) return null;
-    const r = await this.run("security", [
-      "find-generic-password",
-      "-a",
-      account,
-      "-s",
-      this.service,
-      "-w",
-    ]);
-    if (r.code !== 0) return null;
-    // `-w` prints just the password; strip the trailing newline `security` adds.
-    return r.stdout.replace(/\n$/, "");
+    for (const service of [this.service, ...this.legacyServices]) {
+      const r = await this.run("security", [
+        "find-generic-password",
+        "-a",
+        account,
+        "-s",
+        service,
+        "-w",
+      ]);
+      if (r.code === 0) {
+        // `-w` prints just the password; strip the trailing newline it adds.
+        return r.stdout.replace(/\n$/, "");
+      }
+    }
+    return null;
   }
 
   async set(account: string, secret: string): Promise<void> {
@@ -239,7 +255,9 @@ class KeychainStore implements CredentialStore {
   }
 
   async delete(account: string): Promise<void> {
-    await this.run("security", ["delete-generic-password", "-a", account, "-s", this.service]);
+    for (const service of [this.service, ...this.legacyServices]) {
+      await this.run("security", ["delete-generic-password", "-a", account, "-s", service]);
+    }
     const idx = readIndex(this.env);
     if (idx.delete(account)) writeIndex(this.env, idx);
   }
@@ -259,21 +277,20 @@ class SecretServiceStore implements CredentialStore {
     private readonly service: string,
     private readonly run: CredentialCommandRunner,
     private readonly env: NodeJS.ProcessEnv,
+    private readonly legacyServices: readonly string[] = [],
   ) {}
 
   async get(account: string): Promise<string | null> {
     // Fast path via the index — skip the subprocess when nothing is stored.
     if (!readIndex(this.env).has(account)) return null;
-    const r = await this.run("secret-tool", [
-      "lookup",
-      "service",
-      this.service,
-      "account",
-      account,
-    ]);
-    if (r.code !== 0) return null;
-    // secret-tool lookup prints the secret with no trailing newline.
-    return r.stdout.length ? r.stdout.replace(/\n$/, "") : null;
+    for (const service of [this.service, ...this.legacyServices]) {
+      const r = await this.run("secret-tool", ["lookup", "service", service, "account", account]);
+      if (r.code === 0) {
+        // secret-tool lookup prints the secret with no trailing newline.
+        return r.stdout.length ? r.stdout.replace(/\n$/, "") : null;
+      }
+    }
+    return null;
   }
 
   async set(account: string, secret: string): Promise<void> {
@@ -300,7 +317,9 @@ class SecretServiceStore implements CredentialStore {
   }
 
   async delete(account: string): Promise<void> {
-    await this.run("secret-tool", ["clear", "service", this.service, "account", account]);
+    for (const service of [this.service, ...this.legacyServices]) {
+      await this.run("secret-tool", ["clear", "service", service, "account", account]);
+    }
     const idx = readIndex(this.env);
     if (idx.delete(account)) writeIndex(this.env, idx);
   }
@@ -325,8 +344,11 @@ class WinCredStore implements CredentialStore {
     // DPAPI encrypts to a per-user blob; we store the ciphertext (never plaintext)
     // in a file. Distinct from the plaintext FileCredentialStore path.
     this.path =
-      env.BERNE_CREDENTIALS_PATH?.replace(/\.json$/, ".win.json") ??
-      join(alanDir(env), "credentials.win.json");
+      (
+        env.GEAR_CREDENTIALS_PATH ??
+        env.ELIO_CREDENTIALS_PATH ??
+        env.BERNE_CREDENTIALS_PATH
+      )?.replace(/\.json$/, ".win.json") ?? join(alanDir(env), "credentials.win.json");
   }
 
   private async ps(script: string, stdin?: string): Promise<CredentialCommandResult> {
@@ -394,7 +416,7 @@ async function toolAvailable(
 }
 
 export interface OpenCredentialStoreOpts {
-  /** Keychain service namespace (default "berne"). */
+  /** Keychain service namespace (default "gear"). */
   service?: string;
   /** Injected env for path + selection overrides (default process.env). */
   env?: NodeJS.ProcessEnv;
@@ -408,7 +430,7 @@ export interface OpenCredentialStoreOpts {
  * Open the best available credential store for this machine. Never throws —
  * on any failure it returns the plaintext FileCredentialStore with `secure=false`
  * so the caller can warn the user rather than crash. Honors
- * `BERNE_CREDENTIAL_BACKEND` (e.g. "file") for forcing a backend in tests.
+ * `GEAR_CREDENTIAL_BACKEND` (e.g. "file") for forcing a backend in tests.
  */
 export async function openCredentialStore(
   opts: OpenCredentialStoreOpts = {},
@@ -416,21 +438,25 @@ export async function openCredentialStore(
   const env = opts.env ?? process.env;
   const run = opts.runner ?? defaultRunner;
   const service = opts.service ?? CREDENTIAL_SERVICE;
+  const legacyServices = opts.service ? [] : LEGACY_CREDENTIAL_SERVICES;
   const forced =
-    opts.forceBackend ?? (env.BERNE_CREDENTIAL_BACKEND as CredentialBackend | undefined);
+    opts.forceBackend ??
+    ((env.GEAR_CREDENTIAL_BACKEND ??
+      env.ELIO_CREDENTIAL_BACKEND ??
+      env.BERNE_CREDENTIAL_BACKEND) as CredentialBackend | undefined);
 
   if (forced === "file") return new FileCredentialStore(env);
-  if (forced === "keychain") return new KeychainStore(service, run, env);
-  if (forced === "secret-service") return new SecretServiceStore(service, run, env);
+  if (forced === "keychain") return new KeychainStore(service, run, env, legacyServices);
+  if (forced === "secret-service") return new SecretServiceStore(service, run, env, legacyServices);
   if (forced === "wincred") return new WinCredStore(service, run, env);
 
   try {
     if (process.platform === "darwin") {
       if (await toolAvailable(run, "security", ["help"]))
-        return new KeychainStore(service, run, env);
+        return new KeychainStore(service, run, env, legacyServices);
     } else if (process.platform === "linux") {
       if (await toolAvailable(run, "secret-tool", ["--version"]))
-        return new SecretServiceStore(service, run, env);
+        return new SecretServiceStore(service, run, env, legacyServices);
     } else if (process.platform === "win32") {
       if (
         await toolAvailable(run, "powershell", [

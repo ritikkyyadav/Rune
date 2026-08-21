@@ -9,8 +9,8 @@
 //
 // All three exports are raw strings injected into dashboard pages:
 //   THEME_CSS          — design tokens + component classes (+ print styles)
-//   CHART_DEFAULTS_JS  — Chart.js global defaults + berneTheme plugin + window.BERNE helpers
-//   SPEC_RENDERER_JS   — renders window.__BERNE_SPEC__ into #berne-root and
+//   CHART_DEFAULTS_JS  — Chart.js global defaults + gearTheme plugin + window.GEAR helpers
+//   SPEC_RENDERER_JS   — renders window.__GEAR_SPEC__ into #gear-root and
 //                        implements window.render(payload) (full spec re-render
 //                        or key-bound live data application)
 //
@@ -78,14 +78,14 @@ body {
   min-width: 0;
   position: relative;
   overflow: hidden;
-  animation: berne-in 0.45s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+  animation: gear-in 0.45s cubic-bezier(0.2, 0.7, 0.3, 1) both;
 }
 .grid > .card:nth-child(2) { animation-delay: 0.04s; }
 .grid > .card:nth-child(3) { animation-delay: 0.08s; }
 .grid > .card:nth-child(4) { animation-delay: 0.12s; }
 .grid > .card:nth-child(5) { animation-delay: 0.16s; }
 .grid > .card:nth-child(n+6) { animation-delay: 0.2s; }
-@keyframes berne-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes gear-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .card { animation: none; } }
 .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
 .card-title { font-size: 13px; font-weight: 600; color: var(--ink); letter-spacing: 0.01em; margin: 0; }
@@ -176,26 +176,26 @@ table.tbl th.num, table.tbl td.num { text-align: right; }
 // <style> so it works on model-authored full-document pages that never load
 // THEME_CSS. Self-contained: no var() dependencies.
 export const FAB_CSS = `
-.berne-fab { position: fixed; top: 14px; right: 16px; z-index: 2147483000; display: flex; align-items: center; gap: 8px;
+.gear-fab { position: fixed; top: 14px; right: 16px; z-index: 2147483000; display: flex; align-items: center; gap: 8px;
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-.berne-fab .berne-live { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; line-height: 1;
+.gear-fab .gear-live { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; line-height: 1;
   letter-spacing: 0.06em; padding: 6px 11px; border-radius: 999px; color: #c8f169;
   background: rgba(20, 22, 27, 0.85); border: 1px solid rgba(255, 255, 255, 0.13); backdrop-filter: blur(10px); }
-.berne-live-dot { width: 7px; height: 7px; border-radius: 50%; background: #c8f169; animation: berne-pulse 1.6s ease-in-out infinite; }
-@keyframes berne-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
-.berne-export { position: relative; }
-.berne-export > button { all: unset; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+.gear-live-dot { width: 7px; height: 7px; border-radius: 50%; background: #c8f169; animation: gear-pulse 1.6s ease-in-out infinite; }
+@keyframes gear-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+.gear-export { position: relative; }
+.gear-export > button { all: unset; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
   font-family: inherit; font-size: 11px; font-weight: 600; line-height: 1; padding: 6px 11px; border-radius: 999px;
   background: rgba(20, 22, 27, 0.85); color: #f0f2f5; border: 1px solid rgba(255, 255, 255, 0.13); backdrop-filter: blur(10px); }
-.berne-export > button:hover { border-color: rgba(255, 255, 255, 0.3); }
-.berne-export-menu { position: absolute; right: 0; top: calc(100% + 6px); min-width: 200px;
+.gear-export > button:hover { border-color: rgba(255, 255, 255, 0.3); }
+.gear-export-menu { position: absolute; right: 0; top: calc(100% + 6px); min-width: 200px;
   background: #1a1d24; border: 1px solid rgba(255, 255, 255, 0.13); border-radius: 12px; padding: 5px;
   display: none; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5); }
-.berne-export.open .berne-export-menu { display: block; }
-.berne-export-menu a, .berne-export-menu button { all: unset; display: block; width: 100%; cursor: pointer; box-sizing: border-box;
+.gear-export.open .gear-export-menu { display: block; }
+.gear-export-menu a, .gear-export-menu button { all: unset; display: block; width: 100%; cursor: pointer; box-sizing: border-box;
   font-family: inherit; font-size: 12px; color: #f0f2f5; padding: 8px 10px; border-radius: 8px; text-decoration: none; }
-.berne-export-menu a:hover, .berne-export-menu button:hover { background: rgba(255, 255, 255, 0.07); }
-@media print { .berne-fab { display: none !important; } }
+.gear-export-menu a:hover, .gear-export-menu button:hover { background: rgba(255, 255, 255, 0.07); }
+@media print { .gear-fab { display: none !important; } }
 `;
 
 // Palette shared with the client (kept in one place; CSS uses --accent).
@@ -243,7 +243,7 @@ export const CHART_DEFAULTS_JS = `
     if (Number.isInteger(v)) return v.toLocaleString();
     return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
   }
-  window.BERNE = { palette: PALETTE, rgba: hexToRgba, gradient: areaGradient, fmt: fmtNum };
+  window.GEAR = { palette: PALETTE, rgba: hexToRgba, gradient: areaGradient, fmt: fmtNum };
 
   C.defaults.color = MUTED;
   C.defaults.font.family = "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
@@ -303,11 +303,11 @@ export const CHART_DEFAULTS_JS = `
   T.titleFont = { weight: 600, size: 12 };
   if (C.defaults.plugins.colors) C.defaults.plugins.colors.enabled = false;
 
-  // berneTheme plugin: palette auto-assignment for uncolored datasets, gradient
+  // gearTheme plugin: palette auto-assignment for uncolored datasets, gradient
   // area fills, calm axes (no x grid, sparse muted y ticks). Everything is
   // "only if the author didn't set it" so explicit configs stay in control.
   C.register({
-    id: "berneTheme",
+    id: "gearTheme",
     beforeInit: function (chart) {
       try {
         var type = chart.config.type;
@@ -344,7 +344,7 @@ export const CHART_DEFAULTS_JS = `
 })();
 `;
 
-// Renders window.__BERNE_SPEC__ into #berne-root and exposes window.render.
+// Renders window.__GEAR_SPEC__ into #gear-root and exposes window.render.
 export const SPEC_RENDERER_JS = `
 (function () {
   var charts = [];
@@ -357,7 +357,7 @@ export const SPEC_RENDERER_JS = `
     if (text !== undefined && text !== null) e.textContent = String(text);
     return e;
   }
-  function fmt(v) { return window.BERNE ? window.BERNE.fmt(v) : String(v); }
+  function fmt(v) { return window.GEAR ? window.GEAR.fmt(v) : String(v); }
   function toneClass(t) {
     return t === "good" || t === "bad" || t === "warn" || t === "info" || t === "accent" ? t : "";
   }
@@ -382,7 +382,7 @@ export const SPEC_RENDERER_JS = `
 
   // ── charts from the simple shape ──
   function seriesColor(s, i) {
-    return s.color || (window.BERNE ? window.BERNE.palette[i % window.BERNE.palette.length] : undefined);
+    return s.color || (window.GEAR ? window.GEAR.palette[i % window.GEAR.palette.length] : undefined);
   }
   function chartConfig(c) {
     if (c.raw) return c.raw; // full Chart.js config escape hatch
@@ -439,7 +439,7 @@ export const SPEC_RENDERER_JS = `
   }
   function centerTextPlugin(center) {
     return {
-      id: "berneCenter",
+      id: "gearCenter",
       afterDraw: function (chart) {
         var area = chart.chartArea;
         if (!area) return;
@@ -471,7 +471,7 @@ export const SPEC_RENDERER_JS = `
   function sparkline(canvas, data, color) {
     var chart = new window.Chart(canvas.getContext("2d"), {
       type: "line",
-      data: { labels: data.map(function (_, i) { return i; }), datasets: [{ data: data, borderColor: color, borderWidth: 1.75, fill: true, backgroundColor: window.BERNE ? window.BERNE.gradient(color) : undefined }] },
+      data: { labels: data.map(function (_, i) { return i; }), datasets: [{ data: data, borderColor: color, borderWidth: 1.75, fill: true, backgroundColor: window.GEAR ? window.GEAR.gradient(color) : undefined }] },
       options: {
         animation: firstRender ? { duration: 400 } : false,
         plugins: { legend: { display: false }, tooltip: { enabled: false } },
@@ -496,7 +496,7 @@ export const SPEC_RENDERER_JS = `
       var sc = el("canvas");
       wrap.appendChild(sc);
       row.appendChild(wrap);
-      var color = k.color || (window.BERNE ? window.BERNE.palette[i % window.BERNE.palette.length] : "#c8f169");
+      var color = k.color || (window.GEAR ? window.GEAR.palette[i % window.GEAR.palette.length] : "#c8f169");
       requestAnimationFrame(function () { var ch = sparkline(sc, k.spark, color); if (k.key) keyed[k.key].spark = ch; });
     }
     card.appendChild(row);
@@ -623,7 +623,7 @@ export const SPEC_RENDERER_JS = `
       var fill = el("div", "prog-fill");
       fill.style.width = v + "%";
       if (it.color) fill.style.background = it.color;
-      else if (window.BERNE && item.multicolor) fill.style.background = window.BERNE.palette[i % window.BERNE.palette.length];
+      else if (window.GEAR && item.multicolor) fill.style.background = window.GEAR.palette[i % window.GEAR.palette.length];
       track.appendChild(fill);
       p.appendChild(track);
       fills.push({ fill: fill, top: top });
@@ -657,7 +657,7 @@ export const SPEC_RENDERER_JS = `
     charts.forEach(function (c) { try { c.destroy(); } catch (e) {} });
     charts = [];
     keyed = {};
-    var root = document.getElementById("berne-root");
+    var root = document.getElementById("gear-root");
     if (!root) return;
     root.textContent = "";
     var dash = el("div", "dash");
@@ -673,7 +673,7 @@ export const SPEC_RENDERER_JS = `
       else meta.appendChild(chip(b.text, b.tone));
     });
     var updated = el("span", "chip");
-    updated.id = "berne-updated";
+    updated.id = "gear-updated";
     updated.style.display = "none";
     meta.appendChild(updated);
     header.appendChild(meta);
@@ -701,7 +701,7 @@ export const SPEC_RENDERER_JS = `
   }
 
   function stampUpdated() {
-    var s = document.getElementById("berne-updated");
+    var s = document.getElementById("gear-updated");
     if (!s) return;
     s.style.display = "";
     s.textContent = "updated " + new Date().toLocaleTimeString();
@@ -765,14 +765,14 @@ export const SPEC_RENDERER_JS = `
   window.render = function (payload) {
     if (isSpec(payload)) {
       var wasFirst = firstRender;
-      window.__BERNE_SPEC__ = payload;
+      window.__GEAR_SPEC__ = payload;
       renderSpec(payload);
       if (!wasFirst) stampUpdated();
       return;
     }
-    if (window.__BERNE_SPEC__) {
-      var root = document.getElementById("berne-root");
-      if (root && !root.firstChild) renderSpec(window.__BERNE_SPEC__);
+    if (window.__GEAR_SPEC__) {
+      var root = document.getElementById("gear-root");
+      if (root && !root.firstChild) renderSpec(window.__GEAR_SPEC__);
       applyData(payload);
     }
   };
@@ -781,7 +781,7 @@ export const SPEC_RENDERER_JS = `
 
 /** Body fragment for spec-driven dashboards: root node + renderer. */
 export function specShellHtml(specJson: string): string {
-  return `<div id="berne-root"></div>
-<script>window.__BERNE_SPEC__ = ${specJson};</script>
+  return `<div id="gear-root"></div>
+<script>window.__GEAR_SPEC__ = ${specJson};</script>
 <script>${SPEC_RENDERER_JS}</script>`;
 }

@@ -62,8 +62,21 @@ describe("scanOutput", () => {
     expect(result.redacted).toContain("[REDACTED_TOKEN]");
   });
 
+  test("redacts generic bearer and named credentials", () => {
+    const result = scanOutput(
+      "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.signature api_key=ordinaryOpaqueSecret123",
+    );
+    expect(result.redacted).not.toContain("eyJhbGciOiJIUzI1NiJ9");
+    expect(result.redacted).not.toContain("ordinaryOpaqueSecret123");
+    expect(result.redacted).toContain("Bearer [REDACTED_TOKEN]");
+    expect(result.redacted).toContain("api_key=[REDACTED_SECRET]");
+  });
+
   test("redacts private keys", () => {
-    const result = scanOutput("-----BEGIN PRIVATE KEY-----\nMIIBVAIB\n-----END PRIVATE KEY-----", true);
+    const result = scanOutput(
+      "-----BEGIN PRIVATE KEY-----\nMIIBVAIB\n-----END PRIVATE KEY-----",
+      true,
+    );
     expect(result.clean).toBe(false);
     expect(result.redacted).toContain("[REDACTED_PRIVATE_KEY]");
   });

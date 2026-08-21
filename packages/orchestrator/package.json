@@ -5,6 +5,8 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "bin": {
+    "gear": "src/bin/alan-cli.ts",
+    "elio": "src/bin/alan-cli.ts",
     "berne": "src/bin/alan-cli.ts",
     "alan": "src/bin/alan-cli.ts"
   },

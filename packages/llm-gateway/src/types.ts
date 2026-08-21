@@ -181,6 +181,23 @@ export type StreamEvent =
   | { type: "tool_use_stop"; toolCallId: string; toolInput: Record<string, unknown> }
   | { type: "message_stop"; stopReason: StopReason; usage: TokenUsage }
   | { type: "notice"; message: string }
+  // The gateway abandoned `from` and is about to stream from `to` instead.
+  // Structured (provider/model/status/backoff) so UIs can render a real
+  // fallback banner instead of regex-parsing an English sentence. Emitted in
+  // place of the old prose notice; informational, never terminal — the turn
+  // continues on `to` and nothing already streamed is lost (a stream_reset
+  // precedes this event when a partial response must be discarded).
+  | {
+      type: "fallback";
+      from: { provider: string; model: string };
+      to: { provider: string; model: string };
+      /** HTTP status that triggered the switch, when one exists (e.g. 429). */
+      status?: number;
+      /** Short human reason, e.g. "rate limited" or "invalid API key". */
+      reason?: string;
+      /** Providers remaining after `to`, for rendering the full chain. */
+      chain?: string[];
+    }
   // The in-flight response was abandoned mid-stream (provider error after
   // partial output) and will be re-streamed from scratch — consumers MUST
   // discard everything accumulated for the current assistant message, or the

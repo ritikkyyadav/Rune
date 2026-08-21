@@ -26,13 +26,18 @@ function makeBackend(name: SearchBackendName): SearchBackend {
  * Return the available backends to try, in priority order. The first is the
  * primary; the rest are fallbacks the web_search tool walks on failure.
  *
- * `preferred` (from `[search].provider` config or ALAN_SEARCH_BACKEND) moves one
+ * `preferred` (from `[search].provider` config or GEAR_SEARCH_BACKEND) moves one
  * backend to the front; "auto"/unset keeps the default order. Unavailable
  * backends (missing API key) are dropped — DuckDuckGo is always available, so
  * the list is never empty.
  */
 export function selectBackends(preferred?: string): SearchBackend[] {
-  const pref = (preferred ?? process.env.ALAN_SEARCH_BACKEND ?? "auto").toLowerCase();
+  const pref = (
+    preferred ??
+    process.env.GEAR_SEARCH_BACKEND ??
+    process.env.ALAN_SEARCH_BACKEND ??
+    "auto"
+  ).toLowerCase();
 
   let order = [...DEFAULT_ORDER];
   if (pref !== "auto" && (DEFAULT_ORDER as string[]).includes(pref)) {

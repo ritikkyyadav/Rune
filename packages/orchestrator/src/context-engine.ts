@@ -456,7 +456,15 @@ export class ContextEngine {
        */
       force?: boolean;
     },
-  ): Promise<{ messages: Message[]; compacted: boolean }> {
+  ): Promise<{
+    messages: Message[];
+    compacted: boolean;
+    /** Estimated working-set size before/after (present when compacted). */
+    beforeTokens?: number;
+    afterTokens?: number;
+    /** How many older messages were folded into the summary. */
+    summarizedCount?: number;
+  }> {
     // An explicit request (compact_context tool) forces this attempt, and is
     // consumed either way so a fruitless compaction can't retrigger forever.
     const force = opts?.force === true || this.compactRequested;
@@ -532,9 +540,18 @@ export class ContextEngine {
       },
     ];
 
+    // Honest before/after estimates for the UI's compaction line. Same
+    // heuristic counter buildPrompt uses; the next provider report re-calibrates
+    // it, so these are labeled approximate at the render layer ("~").
+    const countSet = (set: Message[]) =>
+      set.reduce((sum, m) => sum + this.tokenCounter.countTokens(messageToString(m)), 0);
+
     return {
       messages: [summaryMessage, ...toKeep],
       compacted: true,
+      beforeTokens: countSet(messages),
+      afterTokens: countSet([summaryMessage, ...toKeep]),
+      summarizedCount: transcriptMessages.length,
     };
   }
 

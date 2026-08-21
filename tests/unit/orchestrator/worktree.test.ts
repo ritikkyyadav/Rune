@@ -41,7 +41,7 @@ describe("per-run worktree isolation", () => {
     const runB = createRunWorktree(repo, "run-b");
 
     expect(runA.path).not.toBe(runB.path);
-    expect(runA.branch).toBe("berne/run-run-a");
+    expect(runA.branch).toBe("gear/run-run-a");
     // Both see the committed base…
     expect(readFileSync(join(runA.path, "shared.txt"), "utf8")).toBe("base content\n");
     expect(readFileSync(join(runB.path, "shared.txt"), "utf8")).toBe("base content\n");
@@ -52,7 +52,7 @@ describe("per-run worktree isolation", () => {
     expect(existsSync(join(repo, "only-a.txt"))).toBe(false);
 
     const listed = listRunWorktrees(repo);
-    expect(listed.map((w) => w.branch).sort()).toEqual(["berne/run-run-a", "berne/run-run-b"]);
+    expect(listed.map((w) => w.branch).sort()).toEqual(["gear/run-run-a", "gear/run-run-b"]);
   });
 
   test("commits in a run worktree land on the run branch, mergeable later", () => {

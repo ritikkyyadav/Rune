@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
 // ──────────────────────────────────────────────────────────────────────────
-//  Alan — Engine Host (desktop sidecar)
+//  Gear — Engine Host (desktop sidecar)
 //
 //  A headless bridge that runs the SAME orchestrator Engine the CLI runs and
 //  exposes it over line-delimited JSON on stdio. The Tauri desktop app spawns
 //  this process and pumps its stdin/stdout, so the GUI gets the exact same
-//  models, providers, BYOK keys (~/.alan/secrets.json), web search (Brave/
-//  Tavily), MCP servers and skills as `alan` on the terminal — for free,
+//  models, providers, BYOK keys, web search (Brave/Tavily), MCP servers and
+//  skills as `gear` on the terminal — for free,
 //  because it is literally the same engine reading the same key files.
 //
 //  Protocol (one JSON object per line, UTF-8):
@@ -45,7 +45,13 @@ import {
   saveLastModel,
   loadSavedSandboxState,
   resolveInitialSandbox,
+  setConfigValue,
 } from "@alan/shared";
+import {
+  configModeToPermissionMode,
+  resolveStartupPermissionFlags,
+  permissionModeToConfig,
+} from "../permissions";
 
 // ─── stdout discipline ───
 // Grab the real writer FIRST, then route every console.* to stderr so nothing
@@ -131,7 +137,12 @@ function ensureDataDir(): string {
 
 function buildEngine(): Engine {
   ensureDataDir();
-  const workspaceRoot = process.env.ALAN_WORKSPACE || process.env.HOME || process.cwd();
+  const workspaceRoot =
+    process.env.GEAR_WORKSPACE ||
+    process.env.ELIO_WORKSPACE ||
+    process.env.ALAN_WORKSPACE ||
+    process.env.HOME ||
+    process.cwd();
   const config = loadConfig(workspaceRoot);
   const secrets = loadSecrets();
 
@@ -174,23 +185,39 @@ function buildEngine(): Engine {
   if (
     config.search?.provider &&
     config.search.provider !== "auto" &&
+    !process.env.GEAR_SEARCH_BACKEND &&
     !process.env.ALAN_SEARCH_BACKEND
   ) {
-    process.env.ALAN_SEARCH_BACKEND = config.search.provider;
+    process.env.GEAR_SEARCH_BACKEND = config.search.provider;
   }
   applySearchKeysToEnv();
+
+  const permissionFlags = resolveStartupPermissionFlags({
+    configMode: config.permissions?.mode,
+    configTrustWorkspace: config.permissions?.trustWorkspace,
+  });
 
   const engine = new Engine({
     model,
     provider: provider as ProviderName,
     workspaceRoot,
     dbPath: config.engine.dbPath,
-    toolsBinaryPath: process.env.ALAN_TOOLS_BIN || "alan-tools",
-    yoloMode: false,
-    trustWorkspace: config.permissions?.trustWorkspace ?? false,
+    toolsBinaryPath:
+      process.env.GEAR_TOOLS_BIN ||
+      process.env.ELIO_TOOLS_BIN ||
+      process.env.ALAN_TOOLS_BIN ||
+      "alan-tools",
+    yoloMode: permissionFlags.yoloMode,
+    trustWorkspace: permissionFlags.trustWorkspace,
+    permissionMode: permissionFlags.permissionMode,
+    autoMode: config.permissions?.autoMode,
     // Same posture resolution as the CLI, minus CLI flags (desktop has none).
     sandboxEnabled: resolveInitialSandbox({
-      env: process.env.ALAN_SANDBOX_ENABLED ?? null,
+      env:
+        process.env.GEAR_SANDBOX_ENABLED ??
+        process.env.ELIO_SANDBOX_ENABLED ??
+        process.env.ALAN_SANDBOX_ENABLED ??
+        null,
       saved: loadSavedSandboxState(),
       configured: config.sandbox?.enabled ?? null,
     }),
@@ -237,6 +264,10 @@ function mappedStatus(engine: Engine, sessionId?: string) {
     contextUsed: s.contextUsage.used,
     contextMax: s.contextUsage.limit,
     totalCost: s.cost,
+    workspace: s.workspace,
+    permissionMode: s.permissionMode,
+    securityPosture: s.securityPosture,
+    autoMode: s.autoMode,
   };
 }
 
@@ -271,6 +302,8 @@ const permissionHandler: PermissionHandler = (prompt: PermissionPrompt) =>
         toolName: prompt.toolName,
         argsSummary: prompt.argsSummary,
         rawArgs: prompt.rawArgs,
+        safety: prompt.safety,
+        exactSessionGrant: prompt.exactSessionGrant,
       },
     });
   });
@@ -429,13 +462,18 @@ async function dispatch(cmd: string, args: Record<string, unknown>): Promise<unk
       const permissionLevel = args.permissionLevel as string | undefined;
       if (permissionLevel) {
         const mode =
-          permissionLevel === "auto_allow" ? "auto" : permissionLevel === "ask" ? "confirm" : null;
+          permissionLevel === "auto_allow"
+            ? "auto"
+            : permissionLevel === "ask"
+              ? "confirm"
+              : configModeToPermissionMode(permissionLevel);
         if (mode) {
-          try {
-            engine.setPermissionMode(mode as never);
-          } catch {
-            /* unknown mode — ignore */
-          }
+          const changed = engine.setPermissionMode(mode);
+          if (!changed.ok)
+            throw new Error(changed.reason ?? `permission mode ${mode} is unavailable`);
+          setConfigValue("permissions.mode", permissionModeToConfig(mode), {
+            scope: "global",
+          });
         }
       }
 

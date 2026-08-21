@@ -6,7 +6,7 @@
 // recorder mirrors to disk as the flight data.
 //
 // Sentinels are PID-SCOPED files in a directory, not one shared file: with a
-// single file, a second concurrent Berne instance would "consume" the first
+// single file, a second concurrent Gear instance would "consume" the first
 // instance's live sentinel as a dirty exit (false positive, observed live
 // 2026-07-07 with two terminal tabs), overwrite it, and then have its own
 // marker deleted by the first instance's exit hook. The sweep checks pid
@@ -65,7 +65,7 @@ export function isPidAlive(pid: number): boolean {
 /**
  * Sweep the sentinel directory (plus the legacy single-file path, if given)
  * for markers left by DEAD processes. Live instances' markers are skipped —
- * a concurrently running Berne is not a crash. Each consumed marker yields
+ * a concurrently running Gear is not a crash. Each consumed marker yields
  * one DirtyExit with whatever trail its spool preserved.
  */
 export function sweepDirtyExits(
@@ -89,7 +89,7 @@ export function sweepDirtyExits(
   for (const path of candidates) {
     try {
       const meta = JSON.parse(readFileSync(path, "utf-8")) as SentinelMeta;
-      if (alive(meta.pid)) continue; // another Berne is running — leave its marker
+      if (alive(meta.pid)) continue; // another Gear is running — leave its marker
       const dirty = consumeDirtyExit(path);
       if (dirty) found.push(dirty);
     } catch {

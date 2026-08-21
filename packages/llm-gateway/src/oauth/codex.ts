@@ -9,13 +9,16 @@
 // ChatGPT plan; no scraping, no session-cookie extraction.
 //
 // The client id is Codex's public CLI client (not a secret); override with
-// BERNE_CODEX_CLIENT_ID if OpenAI rotates it.
+// GEAR_CODEX_CLIENT_ID if OpenAI rotates it (the older variable remains supported).
 
 import type { OAuthFlow, ExchangeResult } from "../auth/oauth-strategy";
 
 const AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize";
 const TOKEN_URL = "https://auth.openai.com/oauth/token";
-const CLIENT_ID = process.env.BERNE_CODEX_CLIENT_ID ?? "app_EMoamEEZ73f0CkXaXp7hrann";
+const CLIENT_ID =
+  process.env.GEAR_CODEX_CLIENT_ID ??
+  process.env.BERNE_CODEX_CLIENT_ID ??
+  "app_EMoamEEZ73f0CkXaXp7hrann";
 const LOOPBACK_PORT = 1455;
 const LOOPBACK_PATH = "/auth/callback";
 const SCOPES = "openid profile email offline_access";

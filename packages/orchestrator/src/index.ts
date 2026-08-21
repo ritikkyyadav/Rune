@@ -10,9 +10,34 @@ export {
   type PermissionCheck,
   type PermissionCheckArgs,
   type PermissionCheckResult,
+  type ToolResultProcessArgs,
+  type ToolResultProcessor,
 } from "./agent-loop";
 export { createResearchTool, RESEARCH_TOOL_SCHEMA, type ResearchToolDeps } from "./research-tool";
 export { createCompactTool, COMPACT_TOOL_SCHEMA, type CompactToolDeps } from "./compact-tool";
+export {
+  LoopManager,
+  parseLoopRequest,
+  resolveLoopPrompt,
+  formatLoopInterval,
+  formatLoopDue,
+  loopPromptPreview,
+  renderLoopRunDoctrine,
+  DEFAULT_LOOP_MAINTENANCE_PROMPT,
+  LOOP_MIN_INTERVAL_MS,
+  LOOP_EXPIRY_MS,
+  LOOP_MAX_TASKS,
+  type LoopTask,
+  type LoopCadence,
+  type LoopRunOutcome,
+  type LoopCompletion,
+  type LoopCancelResult,
+} from "./loop-mode";
+export {
+  createLoopControlTool,
+  LOOP_CONTROL_SCHEMA,
+  type LoopControlToolDeps,
+} from "./loop-control-tool";
 export {
   Engine,
   type EngineConfig,
@@ -22,7 +47,13 @@ export {
 } from "./engine";
 export {
   PermissionBroker,
+  PERMISSION_MODE_ORDER,
+  configModeToPermissionMode,
+  nextPermissionMode,
+  permissionModeToConfig,
   type PermissionDecision,
+  type PermissionMode,
+  type PermissionModeInput,
   type PermissionRule,
   type PermissionScope,
 } from "./permissions";
@@ -96,6 +127,27 @@ export {
   DEFAULT_EGRESS_ALLOWLIST,
 } from "./security";
 export type { InjectionScanResult, OutputScanResult, SecurityContext } from "./security";
+export {
+  AutoModeSafetyController,
+  GatewayActionClassifier,
+  resolveAutoModeConfig,
+  classifyAutoModeTier,
+  assessActionRisk,
+  ruleMatches,
+  DEFAULT_AUTO_MODE_ENVIRONMENT,
+} from "./auto-mode";
+export type {
+  AutoModePolicyConfig,
+  ResolvedAutoModeConfig,
+  AutoModeAction,
+  AutoModeReview,
+  AutoModeRisk,
+  AutoModeTier,
+  AutoModeVerdict,
+  AutoModeStats,
+  ActionClassifier,
+  ClassifierCall,
+} from "./auto-mode";
 
 // ─── Memory (Section 5) ───
 export { EpisodicMemory, WorkingMemory, estimateTokens } from "./memory/index";

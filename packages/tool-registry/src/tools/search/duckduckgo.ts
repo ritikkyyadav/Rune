@@ -25,7 +25,7 @@ export class DuckDuckGoBackend implements SearchBackend {
     try {
       const res = await fetch(url, {
         signal: ctrl.signal,
-        headers: { "User-Agent": "Berne-Agent/1.0" },
+        headers: { "User-Agent": "Gear-Agent/1.0" },
       });
       const html = await res.text();
 

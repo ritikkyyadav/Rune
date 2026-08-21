@@ -88,7 +88,7 @@ export class AuthError extends Error {
   readonly providerId: string;
   readonly method: AuthMethod;
   readonly retryable: boolean;
-  /** Actionable next step, e.g. "run: berne login openrouter". */
+  /** Actionable next step, e.g. "run: gear login openrouter". */
   readonly recovery?: string;
 
   constructor(opts: {

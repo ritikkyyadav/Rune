@@ -1,5 +1,5 @@
 /**
- * Pid-scoped crash sentinels: concurrent Berne instances must not consume each
+ * Pid-scoped crash sentinels: concurrent Gear instances must not consume each
  * other's LIVE markers as dirty exits (false positive observed live 2026-07-07
  * with two terminal tabs), while genuinely dead processes' markers still turn
  * into dirty-exit incidents.
@@ -38,7 +38,7 @@ describe("sentinel sweep — pid liveness", () => {
 
     expect(dirty.length).toBe(1);
     expect(dirty[0]!.meta.sessionId).toBe("dead-session");
-    expect(existsSync(livePath)).toBe(true); // untouched — that Berne is running
+    expect(existsSync(livePath)).toBe(true); // untouched — that Gear is running
     expect(existsSync(deadPath)).toBe(false); // consumed
   });
 

@@ -4,7 +4,7 @@
 // correlate request ids to responses, surface notifications. Deliberately no
 // dependency on vscode-jsonrpc — the framing is ~40 lines and owning it means
 // the failure modes (partial frames, garbage on stdout, dead server) are OUR
-// failure modes, handled the way the rest of Berne handles them: bounded
+// failure modes, handled the way the rest of Gear handles them: bounded
 // timeouts, errors as values, never a hang.
 
 export interface RpcError {

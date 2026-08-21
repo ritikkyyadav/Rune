@@ -18,7 +18,7 @@ import type { InferenceRequest, ProviderName } from "@alan/llm-gateway";
 import { LlmGateway } from "@alan/llm-gateway";
 import { ToolRegistry, registerBuiltinTools } from "@alan/tool-registry";
 import { AgentLoop, mapWithConcurrency } from "./agent-loop";
-import type { PermissionCheck } from "./agent-loop";
+import type { PermissionCheck, ToolResultProcessor } from "./agent-loop";
 import type {
   ResearchClarification,
   ResearchEvent,
@@ -41,6 +41,8 @@ export interface ResearchDeps {
   provider: ProviderName;
   workspaceRoot: string;
   sessionId: string;
+  /** Same tool-result prompt-injection boundary used by every other agent loop. */
+  toolResultProcessor?: ToolResultProcessor;
 }
 
 export interface PlanResearchOpts extends ResearchOptions {
@@ -561,6 +563,7 @@ async function investigate(
       // Force the explicit web tools (never provider-native grounding) so we can
       // capture sources from tool I/O — and so it works on every provider.
       nativeGrounding: false,
+      toolResultProcessor: deps.toolResultProcessor,
     },
     deps.gateway,
     registry,

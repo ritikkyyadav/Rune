@@ -4,6 +4,7 @@ import {
   ToolRegistry,
   registerBuiltinTools,
   ToolRateLimiter,
+  DEFAULT_RATE_LIMIT,
   McpDiscovery,
   BROWSER_SERVER_NAME,
   buildBrowserServerSpec,
@@ -62,7 +63,12 @@ import type {
 import { buildGateway, providerStatus } from "./provider-registry";
 import type { ProviderStatusRow, BuildGatewayOpts } from "./provider-registry";
 import { AgentLoop, parseInterjection } from "./agent-loop";
-import type { PermissionCheck, AgentTurnEvent } from "./agent-loop";
+import type {
+  PermissionCheck,
+  AgentTurnEvent,
+  ToolResultProcessArgs,
+  ToolResultProcessor,
+} from "./agent-loop";
 import { createCompactTool } from "./compact-tool";
 import { createUpdateConfigTool } from "./update-config-tool";
 import { createResearchTool } from "./research-tool";
@@ -71,6 +77,7 @@ import {
   nextPermissionMode,
   PERMISSION_MODE_ORDER,
   configModeToPermissionMode,
+  isPermissionModeForbidden,
   permissionModeToConfig,
 } from "./permissions";
 import { loadOrgPolicy, policyAllowsModel, type LoadedOrgPolicy } from "./org-policy";
@@ -85,7 +92,7 @@ import {
   stackKey as notebookStackKey,
 } from "./notebook";
 import type { NotebookBlock, NotebookEntry, ToolObservation } from "./notebook";
-import type { PermissionScope, PermissionMode } from "./permissions";
+import type { PermissionScope, PermissionMode, PermissionModeInput } from "./permissions";
 
 export type { PermissionMode } from "./permissions";
 import { PlanRunner } from "./plan-runner";
@@ -100,6 +107,13 @@ import {
 import { ContextEngine } from "./context-engine";
 import type { ContextBudget } from "./context-engine";
 import { createToolExecutionGuard } from "./security";
+import {
+  AutoModeSafetyController,
+  GatewayActionClassifier,
+  resolveAutoModeConfig,
+  type AutoModePolicyConfig,
+  type AutoModeReview,
+} from "./auto-mode";
 import { MemoryManager } from "./memory/manager";
 import { EpisodicMemory } from "./memory/episodic";
 import { WorkingMemory } from "./memory/working";
@@ -109,6 +123,17 @@ import { createWorkerTool } from "./worker";
 import { createAskUserTool } from "./ask-user";
 import type { QuestionHandler } from "./ask-user";
 export type { QuestionHandler, UserQuestion } from "./ask-user";
+import { createLoopControlTool } from "./loop-control-tool";
+import {
+  LoopManager,
+  parseLoopRequest,
+  renderLoopRunDoctrine,
+  resolveLoopPrompt,
+  type LoopCancelResult,
+  type LoopCompletion,
+  type LoopRunOutcome,
+  type LoopTask,
+} from "./loop-mode";
 import {
   AGENT_DOCTRINE,
   loadProjectMemory,
@@ -120,7 +145,7 @@ import {
 import { buildRepoMap } from "./repo-map";
 import { CommandVerifier } from "./verifier";
 import type { Verifier } from "./verifier";
-import { autoCommitPaths, undoLastBerneCommit, type UndoResult } from "./git-undo";
+import { autoCommitPaths, undoLastGearCommit, type UndoResult } from "./git-undo";
 import { planResearch, runResearch as executeResearch } from "./research";
 import type { ResearchDeps, PlanResearchOpts } from "./research";
 import { isClarification } from "./research-types";
@@ -139,6 +164,26 @@ export interface PermissionPrompt {
   argsSummary: string;
   suggestedScope: PermissionScope;
   rawArgs: Record<string, unknown>;
+  /** Present when classifier-backed Auto mode paused for human review. */
+  safety?: {
+    reason: string;
+    risk: string;
+    tier: string;
+    source: string;
+    reviewer?: { provider: string; model: string };
+  };
+  /** "Allow session" is deliberately narrowed to this exact payload in Auto. */
+  exactSessionGrant?: boolean;
+  /** Live per-minute rate-limit occupancy for this tool, for the risk row. */
+  rateLimit?: { used: number; limit: number };
+}
+
+/** Payload for the inline ⛨ auto-approved chip (Auto mode, classifier allow). */
+export interface AutoApprovalNotice {
+  toolName: string;
+  argsSummary: string;
+  risk: string;
+  tier: string;
 }
 
 export type UserPermissionDecision =
@@ -253,11 +298,15 @@ export interface EngineConfig {
   dbPath: string;
   toolsBinaryPath: string;
   yoloMode: boolean;
+  /** Canonical startup mode. Takes precedence over legacy yolo/trust flags. */
+  permissionMode?: PermissionMode;
   /**
    * Auto-approve in-workspace writes/edits and bash without prompting. Out-of-workspace
    * writes and network tools still prompt. Default false.
    */
   trustWorkspace?: boolean;
+  /** Independent reviewer + trust-boundary configuration for Auto mode. */
+  autoMode?: AutoModePolicyConfig;
   /**
    * Run foreground bash inside the OS sandbox (Seatbelt/Bubblewrap: deny-net,
    * workspace-confined writes). Default true; false = full host access
@@ -342,7 +391,7 @@ export interface EngineConfig {
   };
   /**
    * Git integration (config.toml `[git]`): autoCommit makes every successful
-   * run that wrote files land as one revertible "berne:" commit (Aider-style);
+   * run that wrote files land as one revertible "gear:" commit (Aider-style);
    * /undo resets the last one. Default off.
    */
   git?: {
@@ -473,14 +522,14 @@ const MEMORY_MSG_CHARS = 600;
 
 function systemMemoryDistillSystemPrompt(maxTokens: number): string {
   return [
-    "You maintain a SHORT, evergreen profile of a software developer and the codebases they work in, so an AI coding assistant (Berne) can serve them better from the very first message.",
+    "You maintain a SHORT, evergreen profile of a software developer and the codebases they work in, so an AI coding assistant (Gear) can serve them better from the very first message.",
     "",
     "Write a GUIDE, not rules. Describe — never command. This is background context the assistant tailors to, not rigid instructions.",
     "",
     "Cover, ONLY where the activity actually supports it:",
     "- About the user: who they are, how they communicate (tone, terseness, language), how they like to work, clear likes and dislikes.",
     "- Style & preferences: languages, frameworks, tools, conventions, testing/verification habits, what they value (e.g. concise answers, minimal diffs).",
-    "- Their codebases: the kinds of projects Berne is used for, recurring stacks and patterns, and what they typically ask for.",
+    "- Their codebases: the kinds of projects Gear is used for, recurring stacks and patterns, and what they typically ask for.",
     "",
     "Rules:",
     `- Keep it SMALL — aim well under ~${maxTokens} tokens. Short markdown sections with terse bullets. It must fit a tiny model's context window like butter.`,
@@ -515,7 +564,7 @@ function compactMessageText(m: Message): string {
   }
   const body = parts.join(" ").replace(/\s+/g, " ").trim();
   if (!body) return "";
-  const role = m.role === "assistant" ? "Berne" : m.role === "user" ? "User" : m.role;
+  const role = m.role === "assistant" ? "Gear" : m.role === "user" ? "User" : m.role;
   return `${role}: ${body.slice(0, MEMORY_MSG_CHARS)}`;
 }
 
@@ -563,11 +612,14 @@ export class Engine {
   private pluginDiscovery: { plugins: LoadedPlugin[]; errors: string[] } | null = null;
   private config: EngineConfig;
   private permissionHandler?: PermissionHandler;
+  private autoApprovalNotifier?: (notice: AutoApprovalNotice) => void;
   private questionHandler?: QuestionHandler;
   private contextEngine: ContextEngine;
   private costTracker: CostTracker;
   private rateLimiter: ToolRateLimiter | null = null;
   private securityGuard: ReturnType<typeof createToolExecutionGuard> | null = null;
+  /** Classifier action gate + tool-result prompt-injection probe. */
+  private autoModeSafety!: AutoModeSafetyController;
   private checkpointStore: CheckpointStore | null = null;
   private checkpointPolicy: CheckpointPolicy;
   private memoryManager: MemoryManager | null = null;
@@ -618,9 +670,14 @@ export class Engine {
   private dashboards = new DashboardManager();
   private interactiveAuto = false;
   private browserEnabled = false;
+  /** Sandbox posture to restore after leaving Autonomy III. */
+  private sandboxBeforeAutonomyThree: boolean | null = null;
   // The flat AgentLoop currently running a chat() turn — the target for
   // mid-turn steering (interject). Null when idle or in planner mode.
   private liveLoop: AgentLoop | null = null;
+  // Session-scoped /loop schedulers. Definitions are persisted as ordinary
+  // session events; this map is only the live replay/claim state.
+  private loopManagers: Map<string, LoopManager> = new Map();
 
   constructor(config: Partial<EngineConfig> = {}) {
     this.config = { ...DEFAULT_ENGINE_CONFIG, ...config };
@@ -732,6 +789,7 @@ export class Engine {
             provider: light.provider as ProviderName,
           };
         },
+        toolResultProcessor: (ctx) => this.processToolResult(ctx),
       }),
     );
 
@@ -739,13 +797,13 @@ export class Engine {
     // by the frontend (CLI/TUI) via setQuestionHandler — the closure reads it
     // at execute time, and headless environments degrade to an instructive
     // error instead of stalling. Deliberately NOT in the sub-agent registry.
-    // In Hands-Free (turing) mode the handler is withheld even when wired:
+    // In Autonomy III the handler is withheld even when wired:
     // the whole point of the mode is "no human in the loop", so the tool
     // degrades to its proceed-on-your-best-judgment error instead of parking
     // an autonomous run on a question nobody will answer.
     this.registry.register(
       createAskUserTool(() =>
-        this.permissions.getMode() === "turing" ? undefined : this.questionHandler,
+        this.permissions.getMode() === "autonomy-iii" ? undefined : this.questionHandler,
       ),
     );
 
@@ -765,6 +823,7 @@ export class Engine {
             provider: std.provider as ProviderName,
           };
         },
+        toolResultProcessor: (ctx) => this.processToolResult(ctx),
       }),
     );
 
@@ -789,6 +848,7 @@ export class Engine {
           provider: this.config.provider,
         }),
         defaults: () => this.config.research ?? {},
+        toolResultProcessor: (ctx) => this.processToolResult(ctx),
         record: (sessionId, type, payload) => {
           try {
             this.sessions.appendEvent(sessionId, { type, payload });
@@ -811,8 +871,17 @@ export class Engine {
       }),
     );
 
-    // update_config: change Berne's own settings from plain-language requests
-    // ("switch to hands-free mode", "turn the sandbox off") — applied live and
+    // Adaptive /loop iterations use this once at the end to pick their next
+    // delay or stop themselves. Outside a claimed adaptive iteration it fails
+    // closed with a plain explanatory tool error.
+    this.registry.register(
+      createLoopControlTool({
+        control: (sessionId, request) => this.getLoopManager(sessionId).controlActive(request),
+      }),
+    );
+
+    // update_config: change Gear's own settings from plain-language requests
+    // ("switch to Autonomy III", "turn the sandbox off") — applied live and
     // persisted to ~/.alan/config.toml. Main registry only: sub-agents are
     // read-only investigators and must not reconfigure the host session.
     this.registry.register(
@@ -833,17 +902,66 @@ export class Engine {
       throw new Error(`Refusing to start: ${policyResult.error}`);
     }
     this.orgPolicy = policyResult?.ok ? policyResult.loaded : null;
-    if (this.orgPolicy?.policy.forbidPermissionModes?.includes("turing") && this.config.yoloMode) {
-      // A forbidden mode can't be smuggled in via config/flags either.
-      this.config.yoloMode = false;
-    }
+    const requestedPermissionMode =
+      this.config.permissionMode ??
+      (this.config.yoloMode ? "autonomy-iii" : this.config.trustWorkspace ? "auto" : "confirm");
+    const initialPermissionMode = isPermissionModeForbidden(
+      this.orgPolicy?.policy,
+      requestedPermissionMode,
+    )
+      ? "confirm"
+      : requestedPermissionMode;
 
     // Initialize Permission Broker
     this.permissions = new PermissionBroker(this.config.yoloMode, {
       workspaceRoot: this.config.workspaceRoot,
       trustWorkspace: this.config.trustWorkspace,
+      initialMode: initialPermissionMode,
       orgPolicy: this.orgPolicy?.policy ?? null,
     });
+    this.config.permissionMode = initialPermissionMode;
+    this.config.yoloMode = initialPermissionMode === "autonomy-iii";
+    this.config.trustWorkspace = initialPermissionMode === "auto";
+
+    // Autonomy III is the explicit full-system tier: no permission prompts and
+    // no command sandbox. Remember the prior posture so the fourth Shift+Tab
+    // transition into classifier-backed Auto restores containment.
+    if (initialPermissionMode === "autonomy-iii") {
+      this.sandboxBeforeAutonomyThree = isSandboxEnabled();
+      this.setSandboxEnabled(false);
+    }
+
+    // Independent Auto reviewer. It uses a separate inference request with a
+    // stripped transcript (trusted user messages + tool calls only). The heavy
+    // tier is the default reviewer; organizations can pin a distinct provider
+    // and model in signed policy. Missing/misconfigured reviewers fail closed.
+    const autoConfig = resolveAutoModeConfig(this.config.autoMode, this.orgPolicy?.policy.autoMode);
+    if (!autoConfig.enabled && this.permissions.getMode() === "auto") {
+      this.permissions.setMode("confirm");
+      this.config.permissionMode = "confirm";
+      this.config.trustWorkspace = false;
+    }
+    this.autoModeSafety = new AutoModeSafetyController(
+      autoConfig,
+      new GatewayActionClassifier(),
+      () => {
+        const heavy = this.resolveModelTier("heavy");
+        const provider = (autoConfig.classifierProvider ?? heavy.provider) as ProviderName;
+        const model =
+          autoConfig.classifierModel ??
+          (provider === heavy.provider
+            ? heavy.model
+            : (getPreset(provider)?.defaultModel ?? this.config.model));
+        if (!this.gateway.getProvider(provider)) {
+          throw new Error(`classifier provider "${provider}" is not configured`);
+        }
+        if (this.orgPolicy) {
+          const denial = policyAllowsModel(this.orgPolicy.policy, provider, model);
+          if (denial) throw new Error(`classifier rejected by ${denial}`);
+        }
+        return { gateway: this.gateway, provider, model };
+      },
+    );
 
     // Initialize Context Engine — always on, manages token budgets. Seed the
     // summarizer with the LIGHT model tier (summarization is utility work —
@@ -928,6 +1046,37 @@ export class Engine {
 
   setPermissionHandler(handler: PermissionHandler): void {
     this.permissionHandler = handler;
+  }
+
+  /** Wire the UI chip for Auto mode's silent classifier approvals. */
+  setAutoApprovalNotifier(notifier: ((notice: AutoApprovalNotice) => void) | null): void {
+    this.autoApprovalNotifier = notifier ?? undefined;
+  }
+
+  /** Current-minute occupancy vs. the per-tool ceiling, for the permission card. */
+  private toolRateUsage(toolName: string): { used: number; limit: number } | undefined {
+    if (!this.rateLimiter) return undefined;
+    try {
+      const used = this.rateLimiter.getStats()[toolName] ?? 0;
+      const limit =
+        toolName === "bash"
+          ? DEFAULT_RATE_LIMIT.bashMaxPerMinute
+          : ["write_file", "edit_file"].includes(toolName)
+            ? DEFAULT_RATE_LIMIT.writeMaxPerMinute
+            : DEFAULT_RATE_LIMIT.perToolMaxPerMinute;
+      return { used, limit };
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Gateway provider health (pruned / cooling providers) for /status. */
+  getProviderHealth(): { pruned: string[]; cooling: { provider: string; untilMs: number }[] } {
+    try {
+      return this.gateway.getProviderHealth();
+    } catch {
+      return { pruned: [], cooling: [] };
+    }
   }
 
   /** Wire the frontend's blocking-question UI for the ask_user tool. */
@@ -1066,14 +1215,14 @@ export class Engine {
   /**
    * Resolve which directories to scan for skills. Explicit `skillRoots` win;
    * otherwise use the bundled catalog (resolved relative to this module, with an
-   * ALAN_SKILLS_DIR / cwd fallback) plus the workspace's `.alan/skills`.
+   * GEAR_SKILLS_DIR / cwd fallback) plus the workspace's `.alan/skills`.
    */
   private resolveSkillRoots(): string[] {
     if (this.config.skillRoots && this.config.skillRoots.length > 0) {
       return this.config.skillRoots.filter((r) => existsSync(r));
     }
     const candidates = [
-      process.env.ALAN_SKILLS_DIR,
+      process.env.GEAR_SKILLS_DIR ?? process.env.ELIO_SKILLS_DIR ?? process.env.ALAN_SKILLS_DIR,
       join(import.meta.dir, "../../../skills"), // packages/orchestrator/src → repo root
       join(process.cwd(), "skills"),
     ].filter((c): c is string => typeof c === "string" && c.length > 0);
@@ -1117,8 +1266,16 @@ export class Engine {
     return this.mcpDiscovery?.getStatus() ?? [];
   }
 
-  private buildPermissionCheck(): PermissionCheck {
-    return async ({ toolName, args }) => {
+  private buildPermissionCheck(context: {
+    sessionId: string;
+    userMessages: string[];
+  }): PermissionCheck {
+    // One stripped action transcript per user run. It accumulates tool calls,
+    // including Tier-1/2 calls that skip model review, but never assistant prose
+    // or tool output.
+    const autoRun = this.autoModeSafety.startRun(context.userMessages);
+
+    return async ({ callId, toolName, args }) => {
       // Rate limiter check
       if (this.rateLimiter) {
         const rateResult = this.rateLimiter.checkLimit(toolName);
@@ -1161,37 +1318,100 @@ export class Engine {
       }
 
       const decision = this.permissions.check(handler.schema, args);
+      if (decision.type === "denied") {
+        return { allowed: false, reason: decision.reason };
+      }
 
-      if (decision.type === "allowed") {
-        // Record rate limiter call on approval
+      let autoReview: AutoModeReview | undefined;
+      if (this.permissions.getMode() === "auto") {
+        autoReview = await autoRun.review({
+          callId,
+          toolName,
+          args,
+          schema: handler.schema,
+          workspaceRoot: this.config.workspaceRoot,
+          exactGrant: decision.type === "allowed" && decision.basis === "exact_grant",
+        });
+        this.recordAutoModeDecision(context.sessionId, toolName, args, autoReview);
+
+        if (autoReview.verdict === "allow") {
+          this.rateLimiter?.recordCall(toolName);
+          this.autoVerifier?.onToolCall();
+          // Auto mode's approvals are silent by design at the broker level;
+          // the notifier lets a UI print the ⛨ auto-approved chip inline so
+          // classifier decisions stay visible without pausing the run.
+          try {
+            this.autoApprovalNotifier?.({
+              toolName,
+              argsSummary: `${toolName} ${JSON.stringify(args).slice(0, 120)}`,
+              risk: autoReview.risk,
+              tier: autoReview.tier,
+            });
+          } catch {
+            // Presentation only — never block the approval path.
+          }
+          return { allowed: true };
+        }
+        if (autoReview.verdict === "deny") {
+          return {
+            allowed: false,
+            reason: `Auto mode blocked this action: ${autoReview.reason}`,
+          };
+        }
+        // `ask` falls through to the same human permission handler Manual mode
+        // uses, with the classifier evidence attached to the prompt.
+      } else if (decision.type === "allowed") {
         this.rateLimiter?.recordCall(toolName);
         this.autoVerifier?.onToolCall();
         return { allowed: true };
-      }
-      if (decision.type === "denied") {
-        return { allowed: false, reason: decision.reason };
       }
 
       if (!this.permissionHandler) {
         return {
           allowed: false,
-          reason: `Tool "${toolName}" requires confirmation but no handler is registered`,
+          reason: autoReview
+            ? `Auto mode requires human confirmation but no handler is registered: ${autoReview.reason}`
+            : `Tool "${toolName}" requires confirmation but no handler is registered`,
         };
       }
 
+      const argsSummary =
+        decision.type === "needs_confirmation"
+          ? decision.argsSummary
+          : `${toolName} ${JSON.stringify(args).slice(0, 180)}`;
+      const suggestedScope =
+        decision.type === "needs_confirmation" ? decision.suggestedScope : "once";
+
       const userDecision = await this.permissionHandler({
-        toolName: decision.tool,
-        argsSummary: decision.argsSummary,
-        suggestedScope: decision.suggestedScope,
+        toolName,
+        argsSummary,
+        suggestedScope,
         rawArgs: args,
+        rateLimit: this.toolRateUsage(toolName),
+        safety: autoReview
+          ? {
+              reason: autoReview.reason,
+              risk: autoReview.risk,
+              tier: autoReview.tier,
+              source: autoReview.source,
+              reviewer: autoReview.reviewer,
+            }
+          : undefined,
+        exactSessionGrant: autoReview?.tier === "classifier",
       });
 
       if (userDecision.kind === "deny") {
+        autoRun.noteHumanDecision();
         return { allowed: false, reason: "User denied" };
       }
       if (userDecision.kind === "allow_session") {
-        this.permissions.grantTool(toolName, "session");
+        if (autoReview?.tier === "classifier") {
+          this.permissions.grantExact(toolName, args, "session");
+        } else {
+          this.permissions.grantTool(toolName, "session");
+        }
       }
+      autoRun.noteHumanDecision();
       // Record rate limiter call on approval
       this.rateLimiter?.recordCall(toolName);
       this.autoVerifier?.onToolCall();
@@ -1199,12 +1419,102 @@ export class Engine {
     };
   }
 
+  /** Persist a queryable event plus a tamper-evident hash-chain entry. */
+  private recordAutoModeDecision(
+    sessionId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+    review: AutoModeReview,
+  ): void {
+    const reason = this.securityGuard
+      ? this.securityGuard.postExecution(review.reason)
+      : review.reason;
+    try {
+      this.sessions.appendEvent(sessionId, {
+        type: "safety_decision",
+        payload: {
+          toolName,
+          argsHash: hashArgs(args),
+          verdict: review.verdict,
+          tier: review.tier,
+          risk: review.risk,
+          source: review.source,
+          stage: review.stage,
+          reason,
+          reviewer: review.reviewer,
+          matchedRule: review.matchedRule,
+          durationMs: review.durationMs,
+        },
+      });
+      this.sessions.appendAuditEntry({
+        sessionId,
+        toolName: `safety:${toolName}`,
+        argsHash: hashArgs(args),
+        resultHash: hashResult({
+          verdict: review.verdict,
+          tier: review.tier,
+          risk: review.risk,
+          source: review.source,
+          reason,
+        }),
+        durationMs: review.durationMs,
+        exitCode: review.verdict === "allow" ? 0 : review.verdict === "deny" ? 1 : 2,
+      });
+      this.recorder?.note(
+        `safety:${toolName}`,
+        `${review.verdict} ${review.risk} ${review.source}: ${reason.slice(0, 120)}`,
+      );
+    } catch (error) {
+      // A write failure cannot silently turn a denied call into an allowed one;
+      // the decision already exists in memory. Surface it in diagnostics.
+      this.recorder?.record({
+        class: "crash.store_corruption",
+        severity: "warn",
+        component: "auto-mode-audit",
+        where: "engine#recordAutoModeDecision",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /** Shared by the lead loop, planner executors, read-only tasks and workers. */
+  private processToolResult: ToolResultProcessor = (ctx: ToolResultProcessArgs) => {
+    const screened = this.autoModeSafety.screenToolResult(ctx.toolName, ctx.output);
+    if (!screened.warningAdded) return screened.output;
+
+    try {
+      const payload = {
+        toolName: ctx.toolName,
+        argsHash: hashArgs(ctx.args),
+        confidence: screened.scan.confidence,
+        patterns: screened.scan.patterns,
+      };
+      this.sessions.appendEvent(ctx.sessionId, { type: "security_probe", payload });
+      this.sessions.appendAuditEntry({
+        sessionId: ctx.sessionId,
+        toolName: `probe:${ctx.toolName}`,
+        argsHash: hashArgs(ctx.args),
+        resultHash: hashResult(payload),
+        durationMs: 0,
+        exitCode: 2,
+      });
+      this.recorder?.note(
+        `probe:${ctx.toolName}`,
+        `prompt injection warning: ${screened.scan.patterns.slice(0, 5).join(", ")}`,
+      );
+    } catch {
+      // The warning is already attached to the model-visible result. Audit
+      // persistence is defense-in-depth and must not remove that warning.
+    }
+    return screened.output;
+  };
+
   /**
-   * Revert the last Berne auto-commit (guarded: only "berne:" commits, only
+   * Revert the last Gear auto-commit (guarded: only "gear:" commits, only
    * with a clean worktree). Backs the /undo command.
    */
   undoLastAutoCommit(): UndoResult {
-    const r = undoLastBerneCommit(this.config.workspaceRoot);
+    const r = undoLastGearCommit(this.config.workspaceRoot);
     if (r.ok) this.lastAutoCommitSha = null;
     return r;
   }
@@ -1246,6 +1556,7 @@ export class Engine {
 
   /** Permanently destroy a session and every event/file/permission it owns. Irreversible. */
   purgeSession(sessionId: string): number {
+    this.loopManagers.delete(sessionId);
     return this.sessions.purgeSession(sessionId);
   }
 
@@ -1307,7 +1618,87 @@ export class Engine {
 
   /** Roll a session's history back, removing everything after `afterSeq`. */
   rewindTo(sessionId: string, afterSeq: number): number {
-    return this.sessions.deleteEventsAfter(sessionId, afterSeq);
+    const deleted = this.sessions.deleteEventsAfter(sessionId, afterSeq);
+    // Loop definitions are events too. Replay after a rewind so a task created
+    // in the truncated tail cannot remain alive in memory.
+    this.loopManagers.delete(sessionId);
+    return deleted;
+  }
+
+  // ─── Session loops (/loop, /loops) ───
+
+  /** Parse and create one recurring task for this conversation. */
+  scheduleLoop(
+    sessionId: string,
+    raw: string,
+  ): { task: LoopTask; warnings: string[]; promptPath?: string } {
+    if (!this.sessions.getSession(sessionId))
+      throw new Error("Cannot schedule a loop for this session.");
+    const parsed = parseLoopRequest(raw);
+    const resolved = resolveLoopPrompt(parsed.prompt, this.config.workspaceRoot, getAlanHome());
+    const task = this.getLoopManager(sessionId).create({
+      prompt: resolved.prompt,
+      promptSource: resolved.source,
+      ...(parsed.intervalMs !== undefined ? { intervalMs: parsed.intervalMs } : {}),
+    });
+    const warnings = [...parsed.warnings];
+    if (resolved.warning) warnings.push(resolved.warning);
+    return {
+      task,
+      warnings,
+      ...(resolved.path ? { promptPath: resolved.path } : {}),
+    };
+  }
+
+  listLoopTasks(sessionId: string): LoopTask[] {
+    return this.getLoopManager(sessionId).list();
+  }
+
+  getLoopStatus(sessionId: string): { count: number; nextRunAt: number | null } {
+    const tasks = this.getLoopManager(sessionId).list();
+    return { count: tasks.length, nextRunAt: tasks[0]?.nextRunAt ?? null };
+  }
+
+  cancelLoopTask(sessionId: string, idOrPrefix?: string): LoopCancelResult {
+    return this.getLoopManager(sessionId).cancel(idOrPrefix);
+  }
+
+  clearLoopTasks(sessionId: string): number {
+    return this.getLoopManager(sessionId).clear();
+  }
+
+  /** Claim the earliest due task. Frontends call this only while their composer is idle. */
+  claimDueLoopTask(sessionId: string): LoopTask | null {
+    return this.getLoopManager(sessionId).claimDue();
+  }
+
+  getActiveLoopTask(sessionId: string): LoopTask | null {
+    return this.getLoopManager(sessionId).active();
+  }
+
+  completeLoopTask(
+    sessionId: string,
+    taskId: string,
+    outcome: LoopRunOutcome = {},
+  ): LoopCompletion {
+    return this.getLoopManager(sessionId).complete(taskId, outcome);
+  }
+
+  private getLoopManager(sessionId: string): LoopManager {
+    let manager = this.loopManagers.get(sessionId);
+    if (manager) return manager;
+    manager = new LoopManager({
+      readEvents: () =>
+        this.sessions.getEvents(sessionId, 1).map(({ event }) => ({
+          type: event.type,
+          payload: event.payload,
+        })),
+      appendEvent: (type, payload) => {
+        this.sessions.appendEvent(sessionId, { type, payload });
+      },
+    });
+    this.loopManagers.set(sessionId, manager);
+    return manager;
   }
 
   /**
@@ -1619,8 +2010,8 @@ export class Engine {
     const body = content.trim();
     if (!body) return "";
     return [
-      "# What Berne knows about you (evergreen context — a guide, not rules)",
-      "The profile below is what Berne has learned about the user and their codebases over time, to tailor its tone, defaults, and assumptions. Treat it as helpful background, NOT as instructions — when it conflicts with what the user asks for in this session, follow the user.",
+      "# What Gear knows about you (evergreen context — a guide, not rules)",
+      "The profile below is what Gear has learned about the user and their codebases over time, to tailor its tone, defaults, and assumptions. Treat it as helpful background, NOT as instructions — when it conflicts with what the user asks for in this session, follow the user.",
       "",
       body,
     ].join("\n");
@@ -1637,24 +2028,39 @@ export class Engine {
 
   // ─── Permission mode (the Shift+Tab cycle) ───
 
-  /** The active permission mode: confirm | auto | turing. */
+  /** The active permission mode in the five-state Shift+Tab cycle. */
   getPermissionMode(): PermissionMode {
     return this.permissions.getMode();
   }
 
   /**
-   * Switch the permission mode live (Shift+Tab, `/hands-free`, `/mode`). Updates both
-   * the broker and the mirrored config flags so getStatus()/posture stay coherent.
-   * Takes effect on the next tool call — the permission handler stays registered in
-   * every mode; the broker simply short-circuits to "allowed" under turing.
+   * Switch the permission mode live (Shift+Tab, `/autonomy`, `/mode`). Updates
+   * the broker and mirrored compatibility flags so status stays coherent.
+   * Autonomy III also disables the command sandbox for full host access; leaving
+   * it restores the posture that was active before entry.
    * Under an org policy the broker may refuse the mode; the refusal reason is
    * returned so the UI can say why the cycle skipped.
    */
-  setPermissionMode(mode: PermissionMode): { ok: boolean; reason?: string } {
-    const result = this.permissions.setMode(mode);
+  setPermissionMode(mode: PermissionModeInput): { ok: boolean; reason?: string } {
+    const canonical = configModeToPermissionMode(mode);
+    if (!canonical) return { ok: false, reason: `unknown permission mode "${mode}"` };
+    if (canonical === "auto" && !this.autoModeSafety.getConfig().enabled) {
+      return { ok: false, reason: "classifier-backed Auto mode is disabled by policy" };
+    }
+    const previous = this.permissions.getMode();
+    const result = this.permissions.setMode(canonical);
     if (!result.ok) return result;
-    this.config.yoloMode = mode === "turing";
-    this.config.trustWorkspace = mode === "auto";
+    if (previous !== "autonomy-iii" && canonical === "autonomy-iii") {
+      this.sandboxBeforeAutonomyThree = isSandboxEnabled();
+      this.setSandboxEnabled(false);
+    } else if (previous === "autonomy-iii" && canonical !== "autonomy-iii") {
+      const restore = this.sandboxBeforeAutonomyThree;
+      this.sandboxBeforeAutonomyThree = null;
+      if (restore !== null) this.setSandboxEnabled(restore);
+    }
+    this.config.permissionMode = canonical;
+    this.config.yoloMode = canonical === "autonomy-iii";
+    this.config.trustWorkspace = canonical === "auto";
     return result;
   }
 
@@ -1707,7 +2113,7 @@ export class Engine {
    * Apply one already-validated config setting live. The `update_config` tool
    * calls this after the shared catalog has normalized the value; the engine owns
    * how each setting takes effect. Returns whether it took and, if not, why (e.g.
-   * an org policy forbidding hands-free) so the caller can avoid persisting a
+   * an org policy forbidding Autonomy III) so the caller can avoid persisting a
    * setting the machine won't honor.
    */
   applyConfigSetting(key: string, canonicalValue: string): { ok: boolean; reason?: string } {
@@ -1846,6 +2252,7 @@ export class Engine {
       provider: this.config.provider,
       workspaceRoot: this.config.workspaceRoot,
       sessionId,
+      toolResultProcessor: this.processToolResult,
     };
 
     let report: ResearchReport | null = null;
@@ -1974,10 +2381,12 @@ export class Engine {
           }).then((map) => (map ? [map] : []));
     const projectMemory = loadProjectMemory(this.config.workspaceRoot);
     const notebookBlock = this.buildNotebookInjection(sessionId);
+    const activeLoop = this.getActiveLoopTask(sessionId);
     const systemPrompt = [
       SYSTEM_PROMPT,
       renderInteractiveDoctrine(this.interactiveAuto),
       renderBrowserDoctrine(this.browserEnabled),
+      activeLoop ? renderLoopRunDoctrine(activeLoop) : "",
       envBlock,
       projectMemory.block,
       this.buildSystemMemoryBlock(),
@@ -1992,7 +2401,12 @@ export class Engine {
       this.notebookStore?.touchUses(notebookBlock.injectedIds);
     }
 
-    const permCheck = this.buildPermissionCheck();
+    const trustedUserMessages = priorEvents
+      .filter(({ event }) => event.type === "user_msg")
+      .map(({ event }) => (typeof event.payload.content === "string" ? event.payload.content : ""))
+      .filter(Boolean);
+    trustedUserMessages.push(userMessage);
+    const permCheck = this.buildPermissionCheck({ sessionId, userMessages: trustedUserMessages });
     let turnCount = 0;
 
     // Create a per-turn AbortController for cancellation
@@ -2031,6 +2445,7 @@ export class Engine {
           retrievedChunks: repoMapChunks,
           verifier: this.verifier ?? undefined,
           nativeGrounding: this.config.search?.nativeGrounding ?? true,
+          toolResultProcessor: this.processToolResult,
         },
         this.gateway,
         this.registry,
@@ -2060,6 +2475,7 @@ export class Engine {
           maxEmptyCompletionRetries: reliability.maxEmptyCompletionRetries,
           maxTruncationRetries: reliability.maxTruncationRetries,
           maxVerifyAttempts: reliability.maxVerifyAttempts,
+          toolResultProcessor: this.processToolResult,
         },
         this.gateway,
         this.registry,
@@ -2103,6 +2519,10 @@ export class Engine {
                 updatedAt: new Date().toISOString(),
               };
               this.checkpointStore.save(runId, state);
+              const saved = this.checkpointStore.load(runId);
+              if (saved) {
+                yield { type: "checkpoint_saved", runId, version: saved.version, turnCount };
+              }
             } catch {
               // Checkpoint save failed — non-fatal
             }
@@ -2211,6 +2631,10 @@ export class Engine {
                 updatedAt: new Date().toISOString(),
               };
               this.checkpointStore.save(runId, state);
+              const saved = this.checkpointStore.load(runId);
+              if (saved) {
+                yield { type: "checkpoint_saved", runId, version: saved.version, turnCount };
+              }
             } catch {
               // Non-fatal
             }
@@ -2239,6 +2663,16 @@ export class Engine {
               result: event.result,
             },
           });
+        }
+
+        // Keep the session row's context-size readout current (sessions
+        // manager metadata). Cheap column update, throttled to real reports.
+        if (event.type === "usage" && event.context && event.context.used > 0) {
+          try {
+            this.sessions.noteContextTokens(sessionId, event.context.used);
+          } catch {
+            // Metadata only — never let it interrupt the stream.
+          }
         }
 
         yield event;
@@ -2587,7 +3021,7 @@ export class Engine {
 
   /**
    * BYOP: apply (or, with null, drop) a credential resolved by the auth layer —
-   * e.g. right after `berne login` mints an OAuth token — and rebuild the gateway
+   * e.g. right after `gear login` mints an OAuth token — and rebuild the gateway
    * so it takes effect immediately. Persistence lives in the credential store;
    * this only touches in-memory state. Returns a forced switch if dropping the
    * credential left the active provider unusable.
@@ -2694,7 +3128,7 @@ export class Engine {
   }
 
   getSecurityPosture(): "strict" | "standard" | "permissive" | "yolo" {
-    if (this.config.yoloMode) return "yolo";
+    if (this.permissions.getMode() === "autonomy-iii") return "yolo";
     if (this.securityGuard && this.rateLimiter) return "strict";
     if (this.securityGuard || this.rateLimiter) return "standard";
     return "permissive";
@@ -2702,6 +3136,10 @@ export class Engine {
 
   getAuditStats() {
     return this.autoVerifier?.getStats() ?? { totalCalls: 0, lastVerified: null, isValid: true };
+  }
+
+  getAutoModeStatus(): ReturnType<AutoModeSafetyController["getStatus"]> {
+    return this.autoModeSafety.getStatus();
   }
 
   getCostBreakdown() {
@@ -2726,6 +3164,7 @@ export class Engine {
     mcp: { servers: number; tools: number };
     skills: number;
     orgPolicy: { org?: string; fingerprint: string; source: string } | null;
+    autoMode: ReturnType<AutoModeSafetyController["getStatus"]>;
   } {
     return {
       model: this.config.model,
@@ -2754,6 +3193,7 @@ export class Engine {
             source: this.orgPolicy.source,
           }
         : null,
+      autoMode: this.autoModeSafety.getStatus(),
     };
   }
 
@@ -2823,6 +3263,12 @@ export class Engine {
   }
 
   close(): void {
+    // Do not leak Autonomy III's process-wide sandbox override into another
+    // Engine instance in the same host (notably desktop restarts and tests).
+    if (this.permissions.getMode() === "autonomy-iii" && this.sandboxBeforeAutonomyThree !== null) {
+      setSandboxMode(this.sandboxBeforeAutonomyThree ? "on" : "off");
+      this.sandboxBeforeAutonomyThree = null;
+    }
     // Best-effort: stop MCP subprocesses / sessions on exit.
     this.mcpDiscovery?.stopAll().catch(() => {});
     this.dashboards.closeAll();

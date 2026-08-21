@@ -64,8 +64,8 @@ describe("config-settings catalog", () => {
 
   it("normalizes enum values and their aliases", () => {
     const mode = resolveSetting("permission_mode")!;
-    expect(normalizeSettingValue(mode, "hands-free")).toEqual({ value: "hands-free" });
-    expect(normalizeSettingValue(mode, "yolo")).toEqual({ value: "hands-free" });
+    expect(normalizeSettingValue(mode, "hands-free")).toEqual({ value: "autonomy-iii" });
+    expect(normalizeSettingValue(mode, "yolo")).toEqual({ value: "autonomy-iii" });
     expect(normalizeSettingValue(mode, "normal")).toEqual({ value: "confirm" });
     expect(normalizeSettingValue(mode, "trusted")).toEqual({ value: "auto" });
     expect("error" in normalizeSettingValue(mode, "banana")).toBe(true);
@@ -81,19 +81,19 @@ describe("config-settings catalog", () => {
 });
 
 describe("update_config tool", () => {
-  it("switches permission mode to hands-free: applied live AND persisted", async () => {
+  it("migrates hands-free to Autonomy III: applied live AND persisted", async () => {
     const { deps, applied } = fakeDeps();
     const tool = createUpdateConfigTool(deps);
     const out = await tool.execute(call({ setting: "mode", value: "hands-free" }));
     expect(out.success).toBe(true);
-    expect(applied).toEqual([{ key: "permission_mode", value: "hands-free" }]);
+    expect(applied).toEqual([{ key: "permission_mode", value: "autonomy-iii" }]);
     // Written to the (redirected) config file.
     expect(existsSync(configPath)).toBe(true);
     const toml = readFileSync(configPath, "utf-8");
     expect(toml).toContain("[permissions]");
-    expect(toml).toContain('mode = "hands-free"');
+    expect(toml).toContain('mode = "autonomy-iii"');
     // The result warns about the removed guardrail.
-    expect(out.result).toContain("Hands-free");
+    expect(out.result).toContain("Autonomy III");
   });
 
   it("turns the sandbox off and writes a real boolean", async () => {

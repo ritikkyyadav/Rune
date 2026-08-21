@@ -1,5 +1,5 @@
 // ─── Provider presets ───
-// The single source of truth for which LLM providers Alan can talk to and how to
+// The single source of truth for which LLM providers Gear can talk to and how to
 // reach each one. The `/keys` panel, the engine's gateway builder, and
 // `/providers` all read from this list, so adding a provider is a one-line edit.
 //
@@ -20,7 +20,7 @@ export type ProviderKind =
 // How a provider proves who you are. This is the ONE canonical definition of the
 // set; `@alan/llm-gateway`'s auth layer re-exports it so the strategy code and the
 // preset metadata never drift. Adding a method here is the first step to teaching
-// Berne a new way to sign in — the rest of the system asks for an *authenticated*
+// Gear a new way to sign in — the rest of the system asks for an *authenticated*
 // provider and never learns which of these produced it.
 //
 //   api_key  — a bearer secret pasted/env-supplied (today's only path).
@@ -138,7 +138,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     docsUrl: "https://openrouter.ai/keys",
     keyHint: "sk-or-…",
     // OpenRouter documents a PKCE OAuth flow that mints a normal API key —
-    // Berne's fully-working OAuth reference. API key stays the fallback.
+    // Gear's fully-working OAuth reference. API key stays the fallback.
     auth: ["oauth", "api_key"],
     models: [
       { id: "qwen/qwen3-coder:free", label: "Qwen3 Coder (free)" },
@@ -233,7 +233,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     // key); the CopilotProvider mints short-lived Copilot tokens from the GitHub
     // token and talks to api.githubcopilot.com (OpenAI-compatible). Model ids are
     // Copilot's own catalog (plan-dependent) — pick with `/model copilot/<id>`,
-    // or list live with `berne models copilot`.
+    // or list live with `gear models copilot`.
     id: "copilot",
     label: "GitHub Copilot",
     kind: "copilot",
@@ -335,7 +335,7 @@ export function effectiveAuthMethods(
 /**
  * Coarse capability derivation. Provider-level capabilities are fuzzy (real
  * truth is per-model), so this returns broad strokes for display: everything
- * Berne talks to streams and calls tools; vision/reasoning come from a small
+ * Gear talks to streams and calls tools; vision/reasoning come from a small
  * known set. A preset may override via `capabilities`.
  */
 const VISION_PROVIDERS: ReadonlySet<string> = new Set(["anthropic", "openai", "google"]);
@@ -378,7 +378,7 @@ export function accountLoginLabel(providerId: string): string | undefined {
   }
 }
 
-/** Friendly, pi-style label for an auth method in the `berne login` picker. */
+/** Friendly, pi-style label for an auth method in the `gear login` picker. */
 export function authMethodLabel(method: AuthMethod, providerId?: string): string {
   switch (method) {
     case "oauth":

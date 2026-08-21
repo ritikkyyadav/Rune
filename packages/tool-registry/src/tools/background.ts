@@ -38,7 +38,7 @@ export class BackgroundShellManager {
   private nextId = 1;
 
   constructor() {
-    // Never leave orphaned servers behind when Alan exits.
+    // Never leave orphaned servers behind when Gear exits.
     process.on("exit", () => this.killAll());
   }
 

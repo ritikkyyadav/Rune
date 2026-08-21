@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, existsSync, statSync } from "fs";
+import { mkdtempSync, rmSync, existsSync, statSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
@@ -147,6 +147,24 @@ describe("keychain backend (macOS security, faked)", () => {
     // Nothing stored → index absent → get must not spawn `security` at all.
     expect(await store.get(apiKeyAccount("unset"))).toBeNull();
     expect(calls).toBe(0);
+  });
+
+  it("reads credentials saved under the migration-era service namespace", async () => {
+    const account = apiKeyAccount("openrouter");
+    writeFileSync(env.BERNE_CREDENTIAL_INDEX_PATH!, JSON.stringify({ accounts: [account] }));
+    const services: string[] = [];
+    const runner: CredentialCommandRunner = async (_cmd, args) => {
+      const service = args[args.indexOf("-s") + 1]!;
+      services.push(service);
+      return service === "berne"
+        ? { code: 0, stdout: "legacy-secret\n", stderr: "" }
+        : { code: 44, stdout: "", stderr: "not found" };
+    };
+    const store = await openCredentialStore({ forceBackend: "keychain", runner, env });
+
+    expect(await store.get(account)).toBe("legacy-secret");
+    expect(services[0]).toBe("gear");
+    expect(services).toContain("berne");
   });
 
   it("set() throws when the backend hard-fails", async () => {

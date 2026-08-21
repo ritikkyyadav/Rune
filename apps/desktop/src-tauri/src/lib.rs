@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────────────────────────────────
-//  Alan Desktop — Tauri ↔ Engine bridge
+//  Gear Desktop — Tauri ↔ Engine bridge
 //
-//  The desktop app runs the SAME orchestrator engine the `alan` CLI runs. On
+//  The desktop app runs the same local orchestrator engine as the CLI. On
 //  startup we spawn the TypeScript "engine-host" sidecar (via bun) and pump its
 //  stdin/stdout. The webview's existing `invoke()`/`listen()` calls are bridged
 //  to the host over line-delimited JSON:
@@ -9,7 +9,7 @@
 //    invoke("chat_start", {...})  →  {"id":N,"cmd":"chat_start","args":{...}}  →  host
 //    host streams {"stream":"chat_event","payload":{...}}  →  emit("chat_event", …)  →  webview
 //
-//  Because it is the real engine reading ~/.alan/secrets.json + ~/.alan/.env,
+//  Because it is the real local engine reading the user's existing configuration,
 //  every model, BYOK key, web-search backend (Brave/Tavily), MCP server and
 //  skill available on the CLI is available here too — no separate config.
 // ──────────────────────────────────────────────────────────────────────────
@@ -79,32 +79,50 @@ impl Bridge {
 }
 
 /// Resolve how to launch the engine host: the bun binary, the repo root, the
-/// Rust tools binary, and the extra env (API keys from ~/.alan/.env).
-///
-/// Order: `ALAN_ROOT` env (set when launched via `alan desktop`) → ~/.alan/desktop.json
-/// (written by `alan desktop`, so Finder launches work afterwards too).
+/// Rust tools binary, and the extra environment used by the local engine.
+/// Gear-prefixed configuration is preferred while legacy Elio/Alan locations
+/// remain readable so an upgrade never strands sessions, settings, or credentials.
 fn resolve_host() -> Result<(String, String, String, Vec<(String, String)>), String> {
     let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
 
-    let (alan_root, bun_hint, tools_hint) = if let Ok(root) = std::env::var("ALAN_ROOT") {
+    let (engine_root, bun_hint, tools_hint) = if let Ok(root) = std::env::var("GEAR_ROOT")
+        .or_else(|_| std::env::var("ELIO_ROOT"))
+        .or_else(|_| std::env::var("ALAN_ROOT"))
+    {
         (
             root,
-            std::env::var("ALAN_BUN").ok(),
-            std::env::var("ALAN_TOOLS_BIN").ok(),
+            std::env::var("GEAR_BUN")
+                .or_else(|_| std::env::var("ELIO_BUN"))
+                .or_else(|_| std::env::var("ALAN_BUN"))
+                .ok(),
+            std::env::var("GEAR_TOOLS_BIN")
+                .or_else(|_| std::env::var("ELIO_TOOLS_BIN"))
+                .or_else(|_| std::env::var("ALAN_TOOLS_BIN"))
+                .ok(),
         )
     } else {
-        let pointer = format!("{home}/.alan/desktop.json");
+        let gear_pointer = format!("{home}/.gear/desktop.json");
+        let pointer = [
+            gear_pointer.clone(),
+            format!("{home}/.elio/desktop.json"),
+            format!("{home}/.alan/desktop.json"),
+        ]
+        .into_iter()
+        .find(|candidate| Path::new(candidate).exists())
+        .unwrap_or(gear_pointer);
         let txt = std::fs::read_to_string(&pointer).map_err(|_| {
             format!(
-                "Alan engine not configured. Launch once with `alan desktop` from the repo \
-                 (no ALAN_ROOT env and no {pointer})."
+                "Gear's local engine is not configured. Launch it once from the source checkout \
+                 (no GEAR_ROOT value and no {pointer})."
             )
         })?;
         let v: Value = serde_json::from_str(&txt).map_err(|e| format!("bad {pointer}: {e}"))?;
         let root = v
-            .get("alanRoot")
+            .get("gearRoot")
+            .or_else(|| v.get("elioRoot"))
+            .or_else(|| v.get("alanRoot"))
             .and_then(|x| x.as_str())
-            .ok_or_else(|| format!("{pointer} is missing \"alanRoot\""))?
+            .ok_or_else(|| format!("{pointer} is missing \"gearRoot\""))?
             .to_string();
         (
             root,
@@ -130,19 +148,27 @@ fn resolve_host() -> Result<(String, String, String, Vec<(String, String)>), Str
     let tools = tools_hint
         .filter(|p| exists(p))
         .or_else(|| {
-            let p = format!("{alan_root}/target/release/alan-tools");
+            let p = format!("{engine_root}/target/release/alan-tools");
             exists(&p).then_some(p)
         })
         .or_else(|| {
-            let p = format!("{alan_root}/target/debug/alan-tools");
+            let p = format!("{engine_root}/target/debug/alan-tools");
             exists(&p).then_some(p)
         })
         .unwrap_or_else(|| "alan-tools".to_string());
 
-    // Load ~/.alan/.env (global API keys) so a Finder launch — which inherits no
-    // shell env — still gets OPENROUTER_API_KEY / GOOGLE_API_KEY / etc.
+    // Prefer Gear's key file and fall back to legacy locations during migration.
     let mut env = Vec::new();
-    if let Ok(txt) = std::fs::read_to_string(format!("{home}/.alan/.env")) {
+    let gear_env = format!("{home}/.gear/.env");
+    let env_path = [
+        gear_env.clone(),
+        format!("{home}/.elio/.env"),
+        format!("{home}/.alan/.env"),
+    ]
+    .into_iter()
+    .find(|candidate| Path::new(candidate).exists())
+    .unwrap_or(gear_env);
+    if let Ok(txt) = std::fs::read_to_string(env_path) {
         for raw in txt.lines() {
             let line = raw.trim();
             if line.is_empty() || line.starts_with('#') {
@@ -164,25 +190,34 @@ fn resolve_host() -> Result<(String, String, String, Vec<(String, String)>), Str
         }
     }
 
-    Ok((bun, alan_root, tools, env))
+    Ok((bun, engine_root, tools, env))
 }
 
 /// Spawn the engine host child with piped stdio.
 fn spawn_host() -> Result<Child, String> {
-    let (bun, alan_root, tools, env) = resolve_host()?;
-    let script = format!("{alan_root}/packages/orchestrator/src/bin/engine-host.ts");
+    let (bun, engine_root, tools, env) = resolve_host()?;
+    let script = format!("{engine_root}/packages/orchestrator/src/bin/engine-host.ts");
     if !Path::new(&script).exists() {
         return Err(format!("engine host not found at {script}"));
     }
     let home = std::env::var("HOME").unwrap_or_default();
-    let workspace = std::env::var("ALAN_WORKSPACE").unwrap_or(home);
+    let workspace = std::env::var("GEAR_WORKSPACE")
+        .or_else(|_| std::env::var("ELIO_WORKSPACE"))
+        .or_else(|_| std::env::var("ALAN_WORKSPACE"))
+        .unwrap_or(home);
 
     let mut cmd = Command::new(&bun);
     cmd.arg("run")
         .arg(&script)
-        .env("ALAN_ROOT", &alan_root)
+        .env("GEAR_ROOT", &engine_root)
+        .env("ELIO_ROOT", &engine_root)
+        .env("ALAN_ROOT", &engine_root)
+        .env("GEAR_TOOLS_BIN", &tools)
+        .env("ELIO_TOOLS_BIN", &tools)
         .env("ALAN_TOOLS_BIN", &tools)
-        .env("ALAN_WORKSPACE", workspace)
+        .env("GEAR_WORKSPACE", &workspace)
+        .env("ELIO_WORKSPACE", &workspace)
+        .env("ALAN_WORKSPACE", &workspace)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -269,7 +304,10 @@ fn chat_start(
     session_id: String,
     message: String,
 ) -> Result<Value, String> {
-    bridge.call("chat_start", json!({ "sessionId": session_id, "message": message }))
+    bridge.call(
+        "chat_start",
+        json!({ "sessionId": session_id, "message": message }),
+    )
 }
 
 #[tauri::command]
@@ -283,7 +321,10 @@ fn switch_model(
     model: String,
     provider: Option<String>,
 ) -> Result<Value, String> {
-    bridge.call("switch_model", json!({ "model": model, "provider": provider }))
+    bridge.call(
+        "switch_model",
+        json!({ "model": model, "provider": provider }),
+    )
 }
 
 #[tauri::command]
@@ -393,7 +434,7 @@ pub fn run() {
                     }
                 }
                 Err(err) => {
-                    eprintln!("[alan-desktop] engine failed to start: {err}");
+                    eprintln!("[gear-desktop] engine failed to start: {err}");
                     Bridge {
                         stdin: Mutex::new(None),
                         pending,
@@ -427,5 +468,5 @@ pub fn run() {
             clear_system_memory,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Alan desktop");
+        .expect("error while running Gear desktop");
 }

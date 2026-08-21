@@ -133,7 +133,7 @@ export function printReport(report: SuiteReport): void {
       ? ` · ${report.provider ?? "?"}/${report.model ?? "?"}`
       : " · mock LLM provider";
 
-  console.log("\n  \x1b[1mAlan eval suite\x1b[0m" + modeLabel);
+  console.log("\n  \x1b[1mGear eval suite\x1b[0m" + modeLabel);
   console.log(`  \x1b[2m${report.total} tasks\x1b[0m\n`);
 
   // Per-category breakdown

@@ -101,7 +101,7 @@ describe("auto-approval requires capability, not just intent", () => {
     expect(autoBroker().check(BASH_SCHEMA, { command: "ls" }).type).toBe("allowed");
   });
 
-  test("Hands-Free still approves (its explicit contract) even when degraded", () => {
+  test("Autonomy III still approves (its explicit contract) even when degraded", () => {
     setSandboxCapability({ mechanism: "none", osIsolation: false });
     const broker = new PermissionBroker(true, { workspaceRoot: "/tmp/ws" });
     expect(broker.check(BASH_SCHEMA, { command: "ls" }).type).toBe("allowed");

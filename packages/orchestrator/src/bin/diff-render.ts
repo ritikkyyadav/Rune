@@ -1,7 +1,15 @@
 // ─── Diff Renderer ───
 // Unified diff with green/vermillion coloring matching the terminal design
 
-import { bold, dim, vermillion as red, cyanotype as cyan, green } from "./colors";
+import {
+  bold,
+  muted as dim,
+  accent as red,
+  info as cyan,
+  ok as green,
+  positiveSurface,
+  negativeSurface,
+} from "./ui/theme";
 
 const MAX_DIFF_LINES = 60;
 
@@ -21,35 +29,36 @@ export function renderUnifiedDiff(diff: string, indent = "  "): RenderedDiff {
   const rendered: string[] = [];
   let added = 0;
   let removed = 0;
-  let bodyLineCount = 0;
+  let visibleLineCount = 0;
   let truncated = false;
 
   for (const line of lines) {
     if (line.startsWith("--- ") || line.startsWith("+++ ")) {
       continue;
     }
-    if (line.startsWith("@@")) {
-      rendered.push(`${indent}${cyan(line)}`);
-      continue;
-    }
 
-    if (bodyLineCount >= MAX_DIFF_LINES) {
+    // Count the complete diff even after the visible window fills, so the
+    // receipt remains truthful on large workspaces.
+    if (line.startsWith("+")) added++;
+    else if (line.startsWith("-")) removed++;
+
+    // The cap applies to every rendered row, including file and hunk headers.
+    // Otherwise a repository with many small hunks can still flood scrollback.
+    if (visibleLineCount >= MAX_DIFF_LINES) {
       truncated = true;
       continue;
     }
 
-    if (line.startsWith("+")) {
-      rendered.push(`${indent}${green(line)}`);
-      added++;
-      bodyLineCount++;
+    if (line.startsWith("@@")) {
+      rendered.push(`${indent}${cyan(line)}`);
+    } else if (line.startsWith("+")) {
+      rendered.push(positiveSurface(`${indent}${green(line)}`));
     } else if (line.startsWith("-")) {
-      rendered.push(`${indent}${red(line)}`);
-      removed++;
-      bodyLineCount++;
+      rendered.push(negativeSurface(`${indent}${red(line)}`));
     } else {
       rendered.push(`${indent}${dim(line)}`);
-      bodyLineCount++;
     }
+    visibleLineCount++;
   }
 
   if (truncated) {

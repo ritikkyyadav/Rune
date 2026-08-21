@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability: lets the Alan webview use the event system (listen/emit) to receive streaming engine events, plus open external links.",
+  "description": "Default capability: lets the Gear webview use the event system (listen/emit) to receive streaming engine events, plus open external links.",
   "windows": ["main"],
   "permissions": ["core:default", "shell:allow-open"]
 }

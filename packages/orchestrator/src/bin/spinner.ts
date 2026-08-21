@@ -1,10 +1,9 @@
-// ─── Alan Status Spinner ───
-// The live status line: "⬢ Cooking… (12s · ctrl+c to interrupt)". The hexagon
-// stays steady; the working word is drawn per run and slowly rotates
-// (Claude-style) so a long turn reads as alive — and a little fun.
+// ─── Gear status line ───
+// The wording is stable and phase-specific. Progress should feel predictable,
+// not like a slot machine cycling through novelty verbs.
 
 import { bold, text, faint, ok, stripAnsi } from "./ui/theme";
-import { HEX, cookingVerb } from "./ui/turn";
+import { HEX } from "./ui/turn";
 
 type ActivityType =
   | "thinking"
@@ -13,6 +12,7 @@ type ActivityType =
   | "executing"
   | "searching"
   | "planning"
+  | "verifying"
   | "tool_call";
 
 // Map tool names to activity types (kept for callers that drive the spinner).
@@ -47,15 +47,11 @@ export class Spinner {
   private lastLineLen = 0;
   private running = false;
   private activity: ActivityType = "thinking";
-  private seed = Math.floor(Math.random() * 1000);
 
   start(activity: ActivityType = "thinking"): void {
     if (this.running) this.stop();
     this.running = true;
     this.activity = activity;
-    // Keep the SAME working word across the stop/start churn of one turn: the
-    // seed is time-stable, so restarting a second later doesn't reroll it.
-    this.seed = Math.floor(Date.now() / 120_000);
     this.startTime = Date.now();
     this.tokens = 0;
     this.render();
@@ -94,8 +90,17 @@ export class Spinner {
     const elapsed = formatTime(ms);
     const tokenPart = this.tokens > 0 ? ` · ${this.tokens} tokens` : "";
     const meta = `${elapsed}${tokenPart} · ctrl+c to interrupt`;
-    const verb = cookingVerb(this.seed, ms);
-    const line = `  ${ok(HEX)} ${bold(text(`${verb}…`))} ${faint(`(${meta})`)}`;
+    const labels: Record<ActivityType, string> = {
+      thinking: "Understanding",
+      reading: "Reading context",
+      writing: "Applying changes",
+      executing: "Running command",
+      searching: "Searching",
+      planning: "Planning",
+      verifying: "Verifying",
+      tool_call: "Working",
+    };
+    const line = `  ${ok(HEX)} ${bold(text(labels[this.activity]))} ${faint(`· ${meta}`)}`;
     this.clearLine();
     process.stderr.write(line);
     this.lastLineLen = stripAnsi(line).length;

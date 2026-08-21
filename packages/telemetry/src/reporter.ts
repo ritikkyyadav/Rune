@@ -250,7 +250,7 @@ export class TelemetryReporter {
     // The queue and counters are already durable on disk; nothing to flush.
   }
 
-  // ─── preview surface (for `berne telemetry preview`) ───
+  // ─── preview surface (for `gear telemetry preview`) ───
 
   /** The exact wire payload a report of this kind would take. */
   previewSampleIncident(): IncidentWire {

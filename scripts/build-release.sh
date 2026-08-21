@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────
-#  Berne — Release builder
+#  Gear — Release builder
 #  Compiles the CLI into self-contained, standalone executables for each
 #  platform via `bun build --compile`, so end users can download ONE file and
 #  run it — no Bun, no source tree, no install step required.
@@ -10,7 +10,7 @@
 #   scripts/install.sh. The release binaries are the portable CLI.)
 #
 #  Usage: bash scripts/build-release.sh
-#  Output: dist/berne-<os>-<arch>  +  dist/SHA256SUMS
+#  Output: dist/gear-<os>-<arch>  +  dist/SHA256SUMS
 # ──────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -38,7 +38,7 @@ TARGETS=(
   "bun-windows-x64:windows-x64.exe"
 )
 
-echo "  Berne release builder"
+echo "  Gear release builder"
 echo "  ─────────────────────"
 echo "  entry : $ENTRY"
 echo "  out   : $OUT"
@@ -50,7 +50,7 @@ mkdir -p "$OUT"
 for pair in "${TARGETS[@]}"; do
   target="${pair%%:*}"
   suffix="${pair##*:}"
-  outfile="$OUT/berne-$suffix"
+  outfile="$OUT/gear-$suffix"
   printf "  building %-22s → %s\n" "$target" "$(basename "$outfile")"
   ( cd "$ROOT" && "$BUN" build --compile --minify --target="$target" "$ENTRY" --outfile "$outfile" ) \
     || { echo "    ✗ failed ($target) — skipping"; continue; }
@@ -58,7 +58,7 @@ done
 
 echo ""
 echo "  checksums → dist/SHA256SUMS"
-( cd "$OUT" && { command -v shasum >/dev/null && shasum -a 256 berne-* || sha256sum berne-*; } > SHA256SUMS )
+( cd "$OUT" && { command -v shasum >/dev/null && shasum -a 256 gear-* || sha256sum gear-*; } > SHA256SUMS )
 
 echo ""
 echo "  ✓ Done. Upload dist/* to your GitHub release (tag = the version)."

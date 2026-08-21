@@ -5,17 +5,17 @@
 // a policy file from a ROOT-OWNED system path, verifies its Ed25519 signature
 // against a separately installed org public key, and hands the result to the
 // PermissionBroker, which checks it BEFORE every mode shortcut — a policy
-// denial is terminal even in Hands-Free (turing) mode.
+// denial is terminal even in Autonomy III (the legacy turing mode).
 //
 // Trust model:
-//  - /etc/berne/policy.json + /etc/berne/org.pub (also the macOS
-//    /Library/Application Support/Berne/ pair) are writable only by root.
+//  - /etc/gear/policy.json + /etc/gear/org.pub (also the macOS
+//    /Library/Application Support/Gear/ pair) are writable only by root.
 //    The signature stops on-disk tampering; the path ownership stops
 //    replacement. The key ships SEPARATELY from the policy — a file that
 //    carried its own key would verify any forgery.
-//  - BERNE_POLICY_FILE / BERNE_POLICY_PUBKEY env overrides are consulted ONLY
+//  - GEAR_POLICY_FILE / GEAR_POLICY_PUBKEY env overrides are consulted ONLY
 //    when no system-path policy exists (dev/test). They can never shadow an
-//    installed org policy.
+//    installed org policy. Elio/Alan/Berne spellings remain migration fallbacks.
 //  - A policy that exists but fails verification is an ERROR, not an absence:
 //    the engine refuses to start rather than running unpoliced.
 //
@@ -27,6 +27,7 @@ import { existsSync, readFileSync } from "node:fs";
 
 import { verifySignature } from "./signing";
 import type { PermissionMode } from "./permissions";
+import type { AutoModePolicyConfig } from "./auto-mode";
 
 export interface OrgPolicy {
   version: 1;
@@ -36,8 +37,8 @@ export interface OrgPolicy {
   toolsDeny?: string[];
   /** When present, ONLY these tools may run (allowlist mode). */
   toolsAllow?: string[];
-  /** Permission modes the user may not enter (e.g. ["turing"]). */
-  forbidPermissionModes?: PermissionMode[];
+  /** Permission modes the user may not enter. Legacy signed values remain valid. */
+  forbidPermissionModes?: Array<PermissionMode | "turing" | "hands-free">;
   /** Deny bash network escalation and network-reaching tools outright. */
   networkDefaultDeny?: boolean;
   /** When present, only these providers may serve inference. */
@@ -46,6 +47,8 @@ export interface OrgPolicy {
   modelAllow?: string[];
   /** Pin the telemetry endpoint (any other configured endpoint is refused). */
   telemetryEndpoint?: string;
+  /** Signed, admin-owned additions to the classifier-backed Auto policy. */
+  autoMode?: AutoModePolicyConfig;
 }
 
 export interface LoadedOrgPolicy {
@@ -84,6 +87,17 @@ export function canonicalPolicyBytes(policy: OrgPolicy): string {
 }
 
 const SYSTEM_LOCATIONS: Array<{ policy: string; pubkey: string }> = [
+  { policy: "/etc/gear/policy.json", pubkey: "/etc/gear/org.pub" },
+  {
+    policy: "/Library/Application Support/Gear/policy.json",
+    pubkey: "/Library/Application Support/Gear/org.pub",
+  },
+  // Legacy locations remain valid during the Elio/Alan/Berne -> Gear migration.
+  { policy: "/etc/elio/policy.json", pubkey: "/etc/elio/org.pub" },
+  {
+    policy: "/Library/Application Support/Elio/policy.json",
+    pubkey: "/Library/Application Support/Elio/org.pub",
+  },
   { policy: "/etc/berne/policy.json", pubkey: "/etc/berne/org.pub" },
   {
     policy: "/Library/Application Support/Berne/policy.json",
@@ -99,10 +113,20 @@ const SYSTEM_LOCATIONS: Array<{ policy: string; pubkey: string }> = [
 export function loadOrgPolicy(): OrgPolicyLoadResult {
   const candidates = [...SYSTEM_LOCATIONS];
   const systemPresent = SYSTEM_LOCATIONS.some((l) => existsSync(l.policy));
-  if (!systemPresent && process.env.BERNE_POLICY_FILE) {
+  const envPolicy =
+    process.env.GEAR_POLICY_FILE ??
+    process.env.ELIO_POLICY_FILE ??
+    process.env.ALAN_POLICY_FILE ??
+    process.env.BERNE_POLICY_FILE;
+  const envPubkey =
+    process.env.GEAR_POLICY_PUBKEY ??
+    process.env.ELIO_POLICY_PUBKEY ??
+    process.env.ALAN_POLICY_PUBKEY ??
+    process.env.BERNE_POLICY_PUBKEY;
+  if (!systemPresent && envPolicy) {
     candidates.push({
-      policy: process.env.BERNE_POLICY_FILE,
-      pubkey: process.env.BERNE_POLICY_PUBKEY ?? "",
+      policy: envPolicy,
+      pubkey: envPubkey ?? "",
     });
   }
 

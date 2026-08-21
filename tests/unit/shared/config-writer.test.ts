@@ -87,6 +87,32 @@ describe("setConfigValue", () => {
     expect(out).toContain('model = "gpt-5"');
   });
 
+  it("loads classifier-backed Auto mode policy from a nested TOML section", () => {
+    writeFileSync(
+      projectPath(),
+      [
+        "[permissions]",
+        'mode = "auto"',
+        "",
+        "[permissions.autoMode]",
+        'classifierProvider = "anthropic"',
+        'classifierModel = "reviewer-model"',
+        "failClosed = true",
+        'askRules = ["bash(git push *)"]',
+        'environment = ["Internal GitHub org: example-inc."]',
+        "",
+      ].join("\n"),
+    );
+
+    const cfg = loadConfig(root);
+    expect(cfg.permissions.mode).toBe("auto");
+    expect(cfg.permissions.autoMode?.classifierProvider).toBe("anthropic");
+    expect(cfg.permissions.autoMode?.classifierModel).toBe("reviewer-model");
+    expect(cfg.permissions.autoMode?.failClosed).toBe(true);
+    expect(cfg.permissions.autoMode?.askRules).toEqual(["bash(git push *)"]);
+    expect(cfg.permissions.autoMode?.environment).toEqual(["Internal GitHub org: example-inc."]);
+  });
+
   it("writes each value type as valid TOML that loadConfig reads back", () => {
     setConfigValue("permissions.mode", "hands-free", { scope: "project", workspaceRoot: root });
     setConfigValue("sandbox.enabled", false, { scope: "project", workspaceRoot: root });

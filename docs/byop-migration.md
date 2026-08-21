@@ -1,7 +1,7 @@
 # BYOP migration notes
 
 **No action is required for existing users.** The BYOP authentication layer is
-purely additive. If you never run `berne login`, Berne resolves provider keys
+purely additive. If you never run `gear login`, Gear resolves provider keys
 exactly as it did before.
 
 ## Backward-compatibility guarantees
@@ -43,18 +43,18 @@ before — `secrets.json → config.toml → env`.
 If no OS keychain is available (`security` / `secret-tool` / PowerShell all
 missing or non-functional), the credential store falls back to
 `~/.alan/credentials.json` (mode `0600`, plaintext) and reports `secure = false`.
-In that state Berne:
+In that state Gear:
 
 - prints a one-line notice on every credential write, and
-- shows a persistent notice in `berne providers`:
+- shows a persistent notice in `gear providers`:
   `⚠ credentials stored unencrypted at ~/.alan/credentials.json (no OS keychain available)`
 
-Berne never silently writes a secret to plaintext when a secure store is
+Gear never silently writes a secret to plaintext when a secure store is
 available.
 
 ## Opt-in migration
 
-`berne login --migrate` copies API keys from `~/.alan/secrets.json` into the
+`gear login --migrate` copies API keys from `~/.alan/secrets.json` into the
 secure store:
 
 - It only writes accounts **not already present** in the store.
@@ -63,4 +63,4 @@ secure store:
   aren't provider keys, or carry a base URL + model the store can't hold).
 
 OAuth is strictly additive: it does not exist until you run
-`berne login <provider>` for a provider that supports it.
+`gear login <provider>` for a provider that supports it.

@@ -1,0 +1,363 @@
+#!/usr/bin/env bash
+# ──────────────────────────────────────────────────────────
+#  Gear — Sovereign Agentic Coding Assistant by Savoir Studio
+#  Just type `gear` from any directory to start.
+#  Legacy engine paths remain supported so upgrades keep existing local data.
+# ──────────────────────────────────────────────────────────
+set -euo pipefail
+
+# ─── Stale working-directory self-heal ───
+# If this shell's cwd was deleted, moved (e.g. to Trash), or replaced while
+# the tab sat in it, getcwd() fails and the Bun runtime dies at startup with
+# a cryptic "Unexpected" / "low max file descriptors" error before Gear ever
+# runs. Re-resolve $PWD by its path: if the folder exists (again), re-enter it
+# fresh; if it is really gone, say exactly what happened and how to fix it.
+if ! pwd -P >/dev/null 2>&1; then
+  if [ -n "${PWD:-}" ] && [ -d "$PWD" ] && cd "$PWD" 2>/dev/null; then
+    echo "  ! This terminal's working directory was stale (deleted or replaced) — re-entered $PWD" >&2
+  else
+    echo "" >&2
+    echo "  ✗ Gear can't start: this terminal's working directory no longer exists." >&2
+    echo "    It was deleted, moved to Trash, or replaced while this shell was inside it." >&2
+    echo "    Fix: cd to an existing folder and retry — e.g.  cd ~  then cd back to your project." >&2
+    echo "" >&2
+    exit 1
+  fi
+fi
+
+# ─── Resolve the repository root from this script's real location ───
+# Follow symlinks so `bin/gear` and its compatibility aliases work anywhere.
+_resolve_script_dir() {
+  local src="${BASH_SOURCE[0]}"
+  # Follow symlinks until we reach the real file
+  while [ -L "$src" ]; do
+    local dir
+    dir="$(cd -P "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    # If the symlink target is relative, resolve it against the link's directory
+    [[ "$src" != /* ]] && src="$dir/$src"
+  done
+  cd -P "$(dirname "$src")" && pwd
+}
+
+SCRIPT_DIR="$(_resolve_script_dir)"
+ALAN_ROOT="$(cd -P "$SCRIPT_DIR/.." && pwd)"
+
+GEAR_DATA="$HOME/.gear"
+ALAN_DATA="$HOME/.alan"
+ALAN_ENV="$ALAN_DATA/.env"
+
+# ─── Colors (Savoir Studio / L'Atlas Theme) ───
+red()    { printf '\033[38;5;166m%s\033[0m' "$*"; } # vermillion
+green()  { printf '\033[38;5;65m%s\033[0m' "$*"; }  # green (#5a8a5a)
+yellow() { printf '\033[38;5;179m%s\033[0m' "$*"; } # brass
+cyan()   { printf '\033[38;5;24m%s\033[0m' "$*"; }  # cyanotype (#1f5d7a)
+dim()    { printf '\033[38;5;245m%s\033[0m' "$*"; } # graphite-3 (#8a8a82)
+bold()   { printf '\033[1m%s\033[0m' "$*"; }
+
+# ─── Handle --help / --version before anything else ───
+for arg in "$@"; do
+  case "$arg" in
+    --help|-h)
+      cat <<'USAGE'
+Usage: gear [options] [message]
+
+Options:
+  -m, --model <model>       LLM model (default: config/provider default)
+  -p, --provider <name>     Provider: openrouter, anthropic, openai, google
+  -w, --workspace <path>    Workspace root (default: current directory)
+  --yolo                    Start in Hands-Free mode — auto-approve all tool calls
+  --classic                 Plain readline prompt (default is the pinned composer)
+  --planner                 Use planner-executor mode
+  --planner-model <model>   Model for the planner
+  --executor-model <model>  Model for the executor
+  -r, --resume <id>         Resume a session by ID
+  -l, --list                List sessions
+
+Commands:
+  gear                      Start interactive chat (CLI agent)
+  gear "your question"      Ask a one-shot question
+  gear --list               List past sessions
+  gear --resume <id>        Resume a session
+  gear login [provider]     Sign in to a provider (API key, or OAuth where supported)
+  gear logout <provider>    Remove a provider's stored key/OAuth from the secure store
+  gear providers            List providers, auth method, and credential status
+  gear use <provider>       Set the active provider for new sessions
+  gear models [provider]    List a provider's models (live discovery + fallback)
+  gear setup                First-time setup (build + install)
+  gear desktop              Launch the Gear desktop app (GUI)
+  gear desktop build        Build a native macOS .app + .dmg installer
+  gear desktop dev          Run the desktop app in dev mode (live reload)
+
+Config: ~/.alan/config.toml
+API keys: ~/.alan/.env
+USAGE
+      exit 0
+      ;;
+    --version|-v|-V)
+      echo "Gear v0.2.0"
+      exit 0
+      ;;
+  esac
+done
+
+# ─── Resolve Bun ───
+find_bun() {
+  if [ -x "$HOME/.bun/bin/bun" ]; then
+    echo "$HOME/.bun/bin/bun"
+  elif command -v bun &>/dev/null; then
+    command -v bun
+  else
+    return 1
+  fi
+}
+
+# ─── First-time setup check ───
+setup() {
+  echo ""
+  echo "  $(bold '  Gear Setup')"
+  echo "  $(dim '──────────────────────────────────────')"
+  echo ""
+
+  # 1. Check Bun
+  if BUN=$(find_bun); then
+    echo "  $(green '✓') Bun found: $(dim "$BUN")"
+  else
+    echo "  $(yellow '⚡') Installing Bun..."
+    curl -fsSL https://bun.sh/install | bash
+    export PATH="$HOME/.bun/bin:$PATH"
+    BUN="$HOME/.bun/bin/bun"
+    echo "  $(green '✓') Bun installed"
+  fi
+
+  # 2. Check Rust
+  if command -v cargo &>/dev/null; then
+    echo "  $(green '✓') Rust toolchain found"
+  else
+    echo "  $(yellow '⚡') Installing Rust..."
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    source "$HOME/.cargo/env"
+    echo "  $(green '✓') Rust installed"
+  fi
+
+  # 3. Install TS dependencies
+  echo "  $(dim '...') Installing dependencies"
+  (cd "$ALAN_ROOT" && "$BUN" install --frozen-lockfile 2>&1 | tail -1)
+  echo "  $(green '✓') Dependencies installed"
+
+  # 4. Build Rust tools binary
+  echo "  $(dim '...') Building tools (this may take a minute)"
+  (cd "$ALAN_ROOT" && cargo build --release 2>&1 | tail -1)
+  echo "  $(green '✓') Rust tools built"
+
+  # 5. Ensure data directory
+  mkdir -p "$ALAN_DATA"
+
+  # 6. Create config if missing
+  if [ ! -f "$ALAN_DATA/config.toml" ]; then
+    cat > "$ALAN_DATA/config.toml" <<'TOML'
+# Gear Configuration
+[llm]
+defaultProvider = "openrouter"
+
+[llm.openrouter]
+model = "deepseek/deepseek-v4-flash:free"
+maxTokens = 8192
+
+# To use Google/Gemini instead:
+# defaultProvider = "google"
+#
+# [llm.google]
+# model = "gemini-2.5-flash"
+# maxTokens = 8192
+
+[permissions]
+defaultLevel = "confirm"
+TOML
+    echo "  $(green '✓') Config created: $(dim '~/.alan/config.toml')"
+  else
+    echo "  $(green '✓') Config exists"
+  fi
+
+  # 7. Create .env if missing
+  if [ ! -f "$ALAN_ENV" ]; then
+    cat > "$ALAN_ENV" <<'ENV'
+# Uncomment and fill in your API keys:
+# OPENROUTER_API_KEY=sk-or-v1-...
+# ANTHROPIC_API_KEY=sk-ant-...
+# OPENAI_API_KEY=sk-...
+# GOOGLE_API_KEY=...
+ENV
+    echo "  $(green '✓') API key file: $(dim '~/.alan/.env')"
+    echo ""
+    echo "  $(yellow '→') Add your API key to $(bold '~/.alan/.env') to get started"
+    echo "    $(dim 'Free models work without a key via OpenRouter')"
+  else
+    echo "  $(green '✓') API keys file exists"
+  fi
+
+  echo ""
+  echo "  $(green '✓') $(bold 'Setup complete!') Type $(cyan 'gear') to start."
+  echo ""
+}
+
+# Handle `gear setup` command
+if [ "${1:-}" = "setup" ]; then
+  setup
+  exit 0
+fi
+
+# ─── Desktop app: gear desktop [build|dev|open] ───
+# The desktop GUI runs the SAME engine as this CLI — it spawns the TypeScript
+# engine-host sidecar, which reads ~/.alan/secrets.json + ~/.alan/.env, so it
+# inherits every model, BYOK key and web-search backend the CLI has.
+launch_desktop() {
+  local sub="${1:-}"
+  local BUN
+  BUN=$(find_bun) || {
+    echo ""
+    echo "  $(red '✗') Bun not found. Run: $(bold 'gear setup')"
+    echo ""
+    exit 1
+  }
+
+  # Rust tools binary the engine host uses for file/bash/search tools.
+  local TOOLS_BIN="$ALAN_ROOT/target/release/alan-tools"
+  [ -x "$TOOLS_BIN" ] || TOOLS_BIN="$ALAN_ROOT/target/debug/alan-tools"
+
+  # Persist a pointer so a Finder/double-click launch of Gear.app can locate
+  # the engine even when it was not opened from this terminal.
+  mkdir -p "$GEAR_DATA"
+  cat > "$GEAR_DATA/desktop.json" <<JSON
+{
+  "gearRoot": "$ALAN_ROOT",
+  "bun": "$BUN",
+  "toolsBin": "$TOOLS_BIN"
+}
+JSON
+
+  # Export current names plus legacy aliases for older engine builds.
+  export GEAR_ROOT="$ALAN_ROOT" GEAR_BUN="$BUN" GEAR_TOOLS_BIN="$TOOLS_BIN"
+  export ALAN_ROOT ALAN_BUN="$BUN" ALAN_TOOLS_BIN="$TOOLS_BIN"
+
+  local APP="$ALAN_ROOT/apps/desktop/src-tauri/target/release/bundle/macos/Gear.app"
+
+  case "$sub" in
+    build)
+      echo ""
+      echo "  $(dim '...') Building Gear.app + .dmg installer (first build takes a few minutes)"
+      # tauri's dmg step (bundle_dmg.sh) drives Finder via AppleScript and is
+      # unreliable when run non-interactively — but the .app always builds. So
+      # don't let its failure abort us; we package the .dmg ourselves below.
+      if ! ( cd "$ALAN_ROOT/apps/desktop" && "$BUN" run tauri build ); then
+        echo "  $(yellow '!') tauri's dmg step failed — packaging the .dmg directly."
+      fi
+
+      local BUNDLE="$ALAN_ROOT/apps/desktop/src-tauri/target/release/bundle"
+      local APP_BUILT="$BUNDLE/macos/Gear.app"
+      local DMG="$BUNDLE/dmg/Gear_0.2.0_aarch64.dmg"
+
+      if [ ! -f "$DMG" ] && [ -d "$APP_BUILT" ]; then
+        echo "  $(dim '...') Packaging .dmg with hdiutil (no Finder automation)"
+        # Clear any stale temp volumes/images bundle_dmg.sh may have left mounted.
+        for v in /Volumes/dmg.*; do [ -d "$v" ] && hdiutil detach "$v" -force >/dev/null 2>&1; done
+        rm -f "$BUNDLE"/macos/rw.*.dmg
+        local STAGING
+        STAGING="$(mktemp -d)"
+        cp -R "$APP_BUILT" "$STAGING/"
+        ln -s /Applications "$STAGING/Applications"
+        mkdir -p "$BUNDLE/dmg"
+        hdiutil create -volname "Gear" -srcfolder "$STAGING" -ov -format UDZO "$DMG" >/dev/null \
+          && echo "  $(green '✓') Packaged $(dim "$DMG")"
+        rm -rf "$STAGING"
+      fi
+
+      echo ""
+      if [ -f "$DMG" ]; then
+        echo "  $(green '✓') $(bold 'Build complete.') Installer:"
+        echo "      $DMG"
+        echo "  $(dim '  Open it, drag Gear to Applications, and launch — the agent starts on open.')"
+      else
+        echo "  $(red '✗') Build did not produce a .dmg (Gear.app may still be at $APP_BUILT)."
+        exit 1
+      fi
+      ;;
+    dev)
+      echo ""
+      echo "  $(dim '...') Launching Gear desktop (dev mode)"
+      ( cd "$ALAN_ROOT/apps/desktop" && "$BUN" run tauri dev )
+      ;;
+    ""|open)
+      if [ -d "$APP" ]; then
+        echo "  $(green '✓') Opening $(bold 'Gear') $(dim "($APP)")"
+        open "$APP"
+      else
+        echo "  $(yellow '!') No built app found — launching dev mode instead."
+        echo "    $(dim "Tip: run 'gear desktop build' once to get an installable Gear.app / .dmg.")"
+        ( cd "$ALAN_ROOT/apps/desktop" && "$BUN" run tauri dev )
+      fi
+      ;;
+    *)
+      echo "  $(red '✗') Unknown command: $(bold "gear desktop $sub")  $(dim '(use: build | dev | open)')"
+      exit 1
+      ;;
+  esac
+  exit 0
+}
+
+if [ "${1:-}" = "desktop" ]; then
+  shift
+  launch_desktop "${1:-}"
+fi
+
+# ─── Ensure everything is ready ───
+BUN=$(find_bun) || {
+  echo ""
+  echo "  $(red '✗') Bun not found. Run: $(bold 'gear setup')"
+  echo ""
+  exit 1
+}
+
+TOOLS_BIN="$ALAN_ROOT/target/release/alan-tools"
+if [ ! -x "$TOOLS_BIN" ]; then
+  # Try debug build as fallback
+  TOOLS_BIN="$ALAN_ROOT/target/debug/alan-tools"
+  if [ ! -x "$TOOLS_BIN" ]; then
+    echo ""
+    echo "  $(yellow '!') Tools binary not found. Running first-time setup..."
+    echo ""
+    setup
+    TOOLS_BIN="$ALAN_ROOT/target/release/alan-tools"
+    BUN=$(find_bun)
+  fi
+fi
+
+# ─── Load API keys (global ~/.alan/.env then project .env) ───
+if [ -f "$ALAN_ENV" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ALAN_ENV"
+  set +a
+fi
+# Project-local .env (Bun also auto-loads this, but export here so the
+# Rust tools binary and any subprocesses inherit the keys too).
+if [ -f "$ALAN_ROOT/.env" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ALAN_ROOT/.env"
+  set +a
+fi
+
+# ─── Ensure data dir ───
+mkdir -p "$ALAN_DATA"
+
+# ─── Export for TS CLI ───
+export ALAN_TOOLS_BIN="$TOOLS_BIN"
+export ALAN_ROOT
+export GEAR_TOOLS_BIN="$TOOLS_BIN"
+export GEAR_ROOT="$ALAN_ROOT"
+
+# ─── Launch ───
+exec "$BUN" run "$ALAN_ROOT/packages/orchestrator/src/bin/alan-cli.ts" \
+  --workspace "${PWD}" \
+  "$@"

@@ -11,7 +11,7 @@ import {
 import { ToolRegistry, modelUsesApplyPatch } from "../../../packages/tool-registry/src/registry";
 import type { ToolHandler } from "../../../packages/tool-registry/src/types";
 
-// P3: apply_patch — the Codex-family edit envelope, applied through Berne's
+// P3: apply_patch — the Codex-family edit envelope, applied through Gear's
 // own matcher with validate-everything-then-write semantics. The acceptance
 // list from the prescription plan: multi-hunk, create/delete file, context
 // mismatch → clean error, NEVER partial application.

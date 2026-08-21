@@ -1,4 +1,4 @@
-// ─── Alan Terminal Themes ───
+// ─── Gear Terminal Themes ───
 // Pure data + types for the bundled colour themes. No runtime dependency on theme.ts
 // (the dependency is one-way: theme.ts imports this), so there's no import cycle.
 //
@@ -8,6 +8,12 @@
 // (not just newly-printed text) and light themes are readable on a dark terminal.
 // Themes are authored as hex; the ANSI-256 fallback is derived automatically
 // (nearestAnsi256). The `atlas` (brand) theme keeps its original hand-tuned pigments.
+
+import {
+  GEAR_ACCENT_LABELS,
+  gearTerminalPalette,
+  gearAccentHex,
+} from "@alan/shared";
 
 export interface Pigment {
   /** Brand-exact 24-bit RGB. */
@@ -29,6 +35,20 @@ export interface ThemeSlots {
   line: Pigment; // borders / rules
 }
 
+/** Exact surface tokens from the Gear visual specification. Terminals cannot
+ * render CSS shadows or translucency, but they can reproduce every solid
+ * surface, border, and semantic foreground with 24-bit ANSI colour. */
+export interface ThemeSurfaces {
+  card: Pigment;
+  bar: Pigment;
+  barActive: Pigment;
+  code: Pigment;
+  diff: Pigment;
+  diffHeader: Pigment;
+  popover: Pigment;
+  hairline: Pigment;
+}
+
 export interface Theme {
   /** Stable id (kebab-case) used by /theme and persistence. */
   name: string;
@@ -37,12 +57,41 @@ export interface Theme {
   appearance: "dark" | "light";
   /** Terminal background — applied via OSC 11 so the whole window recolours. */
   bg: Pigment;
+  /** Canvas behind the centered terminal card. Explicit Gear themes use the
+   *  sage/black customizer canvas; legacy themes simply fall back to `bg`. */
+  canvas?: Pigment;
+  /** Card, task-bar, code, diff, and popover fills from the HTML contract. */
+  surfaces?: ThemeSurfaces;
+  /** Exact cosmetic signal used for the Gear mark, selection dots, and active
+   *  controls. It is intentionally separate from `info`: some supplied accent
+   *  colours are decorative-only on a light surface, while paths and links must
+   *  retain text-level contrast. */
+  brand: Pigment;
   slots: ThemeSlots;
+  /** Gear customizer metadata. Absent on legacy/community palettes. */
+  gearAccent?: GearAccent;
+  /** Follow-terminal mode keeps the host terminal's own surface instead of repainting it. */
+  preserveTerminal?: boolean;
+  /** No trustworthy background was detected, so emitting our own foreground
+   *  colors could make text unreadable. Use the terminal's native colors. */
+  useNativeColors?: boolean;
 }
 
-// Production ships two themes only (see PRODUCTION_THEME_NAMES); the default is
-// monochrome black. The full palette set below is kept intact but not surfaced.
-export const DEFAULT_THEME = "mono";
+export type GearAccent = "cobalt" | "orange" | "violet" | "emerald" | "mono";
+
+export const GEAR_ACCENTS: readonly GearAccent[] = [
+  "cobalt",
+  "orange",
+  "violet",
+  "emerald",
+  "mono",
+];
+
+// Gear opens on its own calm, warm-ivory surface. Follow-terminal remains
+// available for people who want to keep a custom terminal profile untouched.
+// The approved product comp opens in Light + Cyber Orange (image 2). Keep the
+// other four accents and Dark as first-class runtime choices.
+export const DEFAULT_THEME = "gear-orange";
 
 // ─── ANSI-256 nearest-match (xterm cube + grayscale ramp) ───
 
@@ -106,12 +155,40 @@ function pig(hex: string): Pigment {
 
 type Hexes = Record<SlotName, string> & { bg: string };
 
-function theme(name: string, label: string, appearance: "dark" | "light", hex: Hexes): Theme {
+type SurfaceHexes = Record<keyof ThemeSurfaces, string>;
+
+function theme(
+  name: string,
+  label: string,
+  appearance: "dark" | "light",
+  hex: Hexes,
+  options: {
+    brand?: string;
+    gearAccent?: GearAccent;
+    canvas?: string;
+    surfaces?: SurfaceHexes;
+  } = {},
+): Theme {
   return {
     name,
     label,
     appearance,
     bg: pig(hex.bg),
+    canvas: options.canvas ? pig(options.canvas) : undefined,
+    surfaces: options.surfaces
+      ? {
+          card: pig(options.surfaces.card),
+          bar: pig(options.surfaces.bar),
+          barActive: pig(options.surfaces.barActive),
+          code: pig(options.surfaces.code),
+          diff: pig(options.surfaces.diff),
+          diffHeader: pig(options.surfaces.diffHeader),
+          popover: pig(options.surfaces.popover),
+          hairline: pig(options.surfaces.hairline),
+        }
+      : undefined,
+    brand: pig(options.brand ?? hex.info),
+    gearAccent: options.gearAccent,
     slots: {
       text: pig(hex.text),
       muted: pig(hex.muted),
@@ -125,6 +202,122 @@ function theme(name: string, label: string, appearance: "dark" | "light", hex: H
   };
 }
 
+type Rgb = [number, number, number];
+
+const PRIMARY_TEXT_CONTRAST = 7;
+const SECONDARY_TEXT_CONTRAST = 4.5;
+const DECORATIVE_CONTRAST = 3;
+
+function channelLuminance(value: number): number {
+  const channel = value / 255;
+  return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+}
+
+export function relativeLuminance([r, g, b]: Rgb): number {
+  return 0.2126 * channelLuminance(r) + 0.7152 * channelLuminance(g) + 0.0722 * channelLuminance(b);
+}
+
+export function contrastRatio(a: Rgb, b: Rgb): number {
+  const lighter = Math.max(relativeLuminance(a), relativeLuminance(b));
+  const darker = Math.min(relativeLuminance(a), relativeLuminance(b));
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+function mix(from: Rgb, to: Rgb, amount: number): Rgb {
+  return from.map((value, index) => Math.round(value + (to[index]! - value) * amount)) as Rgb;
+}
+
+function readable(base: Rgb, background: Rgb, toward: Rgb, minimum = 3): Rgb {
+  if (contrastRatio(base, background) >= minimum) return base;
+  for (let amount = 0.1; amount <= 1; amount += 0.1) {
+    const candidate = mix(base, toward, amount);
+    if (contrastRatio(candidate, background) >= minimum) return candidate;
+  }
+  return toward;
+}
+
+function rgbPigment(rgb: Rgb): Pigment {
+  return { rgb, ansi: nearestAnsi256(rgb) };
+}
+
+/** Build Follow-terminal mode from the terminal's reported colors.
+ *
+ * The background is the one piece of information required to choose safe
+ * foreground colors. If it is unknown, every semantic token passes through
+ * uncolored so the terminal's own foreground/background pair remains intact.
+ * With a known background, saturated custom surfaces (red, blue, etc.) keep
+ * their identity while semantic colors move toward a high-contrast pole. */
+export function adaptiveTheme(colors: { background?: Rgb; foreground?: Rgb } = {}): Theme {
+  // Use the true contrast poles here, not the warmer explicit-theme neutrals:
+  // Follow terminal must remain readable even on saturated custom surfaces.
+  const white: Rgb = [255, 255, 255];
+  const black: Rgb = [0, 0, 0];
+  const background = colors.background;
+
+  if (!background) {
+    // These pigments are inert while useNativeColors is true. Keeping a
+    // complete Theme object avoids special cases in pickers and persistence.
+    return {
+      name: "auto",
+      label: "Auto · follows terminal",
+      appearance: "dark",
+      preserveTerminal: true,
+      useNativeColors: true,
+      bg: rgbPigment(black),
+      brand: rgbPigment(white),
+      slots: {
+        text: rgbPigment(white),
+        muted: rgbPigment(white),
+        faint: rgbPigment(white),
+        accent: rgbPigment(white),
+        info: rgbPigment(white),
+        warn: rgbPigment(white),
+        ok: rgbPigment(white),
+        line: rgbPigment(white),
+      },
+    };
+  }
+
+  const contrastPole =
+    contrastRatio(white, background) >= contrastRatio(black, background) ? white : black;
+  const foreground = colors.foreground;
+  const textColor =
+    foreground && contrastRatio(foreground, background) >= PRIMARY_TEXT_CONTRAST
+      ? foreground
+      : contrastPole;
+  const appearance = relativeLuminance(background) < 0.42 ? "dark" : "light";
+
+  return {
+    name: "auto",
+    label: `Auto · follows terminal (${appearance})`,
+    appearance,
+    preserveTerminal: true,
+    useNativeColors: false,
+    bg: rgbPigment(background),
+    brand: rgbPigment(readable([77, 112, 255], background, contrastPole, SECONDARY_TEXT_CONTRAST)),
+    slots: {
+      text: rgbPigment(textColor),
+      muted: rgbPigment(
+        readable(mix(textColor, background, 0.28), background, textColor, SECONDARY_TEXT_CONTRAST),
+      ),
+      faint: rgbPigment(
+        readable(mix(textColor, background, 0.45), background, textColor, SECONDARY_TEXT_CONTRAST),
+      ),
+      accent: rgbPigment(
+        readable([77, 112, 255], background, contrastPole, SECONDARY_TEXT_CONTRAST),
+      ),
+      info: rgbPigment(readable([67, 156, 232], background, contrastPole, SECONDARY_TEXT_CONTRAST)),
+      warn: rgbPigment(readable([211, 154, 62], background, contrastPole, SECONDARY_TEXT_CONTRAST)),
+      ok: rgbPigment(readable([64, 166, 112], background, contrastPole, SECONDARY_TEXT_CONTRAST)),
+      line: rgbPigment(
+        readable(mix(textColor, background, 0.68), background, textColor, DECORATIVE_CONTRAST),
+      ),
+    },
+  };
+}
+
+export const AUTO_THEME: Theme = adaptiveTheme();
+
 // ─── atlas (brand) — exact existing pigments, never auto-derived ───
 
 const ATLAS: Theme = {
@@ -132,6 +325,7 @@ const ATLAS: Theme = {
   label: "Atlas (brand)",
   appearance: "dark",
   bg: { rgb: [22, 19, 13], ansi: 233 }, // #16130d  warm near-black ground
+  brand: { rgb: [31, 93, 122], ansi: 31 }, // #1f5d7a
   slots: {
     text: { rgb: [242, 239, 230], ansi: 255 }, // #f2efe6
     muted: { rgb: [138, 138, 130], ansi: 244 }, // #8a8a82
@@ -144,9 +338,61 @@ const ATLAS: Theme = {
   },
 };
 
+// ─── Gear customizer palettes ───
+// Pigments live in ONE place: packages/shared/src/design-tokens.ts, the
+// machine-readable form of gear-customizer-v2.html. This module derives the
+// ten gear themes from those tokens; a parity test locks tokens ↔ HTML, so a
+// contract change propagates here (and to the desktop CSS emitter) from a
+// single edit instead of three hand-synced copies.
+
+const GEAR_ACCENT_LABEL: Record<GearAccent, string> = GEAR_ACCENT_LABELS;
+
+/** Stable persisted id for one customizer base/accent combination. The original
+ *  `gear` and `gear-dark` ids remain the cobalt pair so existing installs migrate
+ *  without a visible surprise. */
+export function gearThemeName(appearance: "light" | "dark", accent: GearAccent): string {
+  if (accent === "cobalt") return appearance === "light" ? "gear" : "gear-dark";
+  return appearance === "light" ? `gear-${accent}` : `gear-${accent}-dark`;
+}
+
+function gearTheme(appearance: "light" | "dark", accentName: GearAccent): Theme {
+  // Exact customizer pigments, derived from the shared token source. The HTML
+  // is the product contract, including its distinction between semantic text
+  // and the cosmetic accent; translucent contract values arrive here already
+  // composited to solid terminal colors.
+  const palette = gearTerminalPalette(appearance);
+  const brand = gearAccentHex(appearance, accentName);
+  const label = `${GEAR_ACCENT_LABEL[accentName]} · ${appearance === "light" ? "Light" : "Dark"}`;
+  return theme(
+    gearThemeName(appearance, accentName),
+    label,
+    appearance,
+    {
+      bg: palette.bg,
+      text: palette.text,
+      muted: palette.muted,
+      faint: palette.faint,
+      accent: palette.red,
+      info: brand,
+      warn: palette.ochre,
+      ok: palette.green,
+      line: palette.line,
+    },
+    {
+      brand,
+      gearAccent: accentName,
+      canvas: palette.canvas,
+      surfaces: palette.surfaces,
+    },
+  );
+}
+
 // ─── The bundled themes (display order) ───
 
 export const THEMES: Theme[] = [
+  ...GEAR_ACCENTS.map((accentName) => gearTheme("light", accentName)),
+  ...GEAR_ACCENTS.map((accentName) => gearTheme("dark", accentName)),
+
   // studio — the default: a dark instrument panel (Codex-style). Near-black ground
   // with a faint green cast, grey mono text, one teal-green signal for live state
   // and diff adds; errors keep a single warm red. Quiet by design.
@@ -371,22 +617,41 @@ export const THEMES: Theme[] = [
 
 /** Look up a theme by its `name`. */
 export function findTheme(name: string): Theme | undefined {
-  return THEMES.find((t) => t.name === name);
+  if (name === "auto") return AUTO_THEME;
+  const normalized = name.trim().toLowerCase();
+  const accentAlias = /^(cobalt|orange|violet|emerald|mono)(?:-(light|dark))?$/.exec(normalized);
+  const canonical = accentAlias
+    ? gearThemeName(
+        (accentAlias[2] as "light" | "dark" | undefined) ?? "light",
+        accentAlias[1] as GearAccent,
+      )
+    : normalized === "elio" || normalized === "light"
+      ? "gear"
+      : normalized === "elio-dark" || normalized === "dark"
+        ? "gear-dark"
+        : normalized === "system"
+          ? "auto"
+          : normalized;
+  if (canonical === "auto") return AUTO_THEME;
+  return THEMES.find((t) => t.name === canonical);
 }
 
 // ─── Production theme set ───
-// The shipped product exposes exactly two themes — monochrome black and monochrome
-// light. Every other palette above stays in the source (unremoved) but is never
-// offered in the picker, accepted by `/theme`, or honored from env/config. To bring
-// the full set back, widen this list.
-export const PRODUCTION_THEME_NAMES: readonly string[] = ["mono", "mono-light"];
+// The production picker mirrors the supplied customizer: five cosmetic accents
+// across matching light and dark bases, followed by a host-terminal escape hatch.
+export const PRODUCTION_THEME_NAMES: readonly string[] = [
+  ...GEAR_ACCENTS.map((accentName) => gearThemeName("light", accentName)),
+  ...GEAR_ACCENTS.map((accentName) => gearThemeName("dark", accentName)),
+  "auto",
+];
 
-/** Whether `name` is one of the two production themes. */
+/** Whether `name` is one of the production theme modes. */
 export function isProductionTheme(name: string): boolean {
-  return PRODUCTION_THEME_NAMES.includes(name);
+  const resolved = findTheme(name);
+  return resolved != null && PRODUCTION_THEME_NAMES.includes(resolved.name);
 }
 
-/** The production themes, in display order (monochrome black, then light). */
+/** The production theme modes, in customizer display order (light, dark, host). */
 export function productionThemes(): Theme[] {
   return PRODUCTION_THEME_NAMES.map((n) => findTheme(n)!).filter(Boolean);
 }

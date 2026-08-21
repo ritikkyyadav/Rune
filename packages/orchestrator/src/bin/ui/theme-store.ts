@@ -9,7 +9,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { getAlanHome } from "@alan/shared";
-import { DEFAULT_THEME, isProductionTheme } from "./themes";
+import { DEFAULT_THEME, findTheme, isProductionTheme } from "./themes";
 
 function themeFile(dir: string): string {
   return join(dir, "theme.json");
@@ -38,8 +38,8 @@ export function loadSavedTheme(dir: string = getAlanHome()): string | null {
   }
 }
 
-/** Resolve the startup theme: env > saved > configured > default. Only the two
- *  production themes are honored — a value naming any other (or a stale/typo'd one)
+/** Resolve the startup theme: env > saved > configured > default. Only the small
+ *  production theme set is honored — a value naming any other (or a stale/typo'd one)
  *  is skipped and falls through to the next source, ultimately the default. */
 export function resolveInitialTheme(opts: {
   env?: string | null;
@@ -47,7 +47,9 @@ export function resolveInitialTheme(opts: {
   configured?: string | null;
 }): string {
   for (const candidate of [opts.env, opts.saved, opts.configured]) {
-    if (candidate && isProductionTheme(candidate)) return candidate;
+    if (candidate && isProductionTheme(candidate)) {
+      return findTheme(candidate)!.name;
+    }
   }
   return DEFAULT_THEME;
 }

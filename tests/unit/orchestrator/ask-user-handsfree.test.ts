@@ -1,5 +1,5 @@
 /**
- * Hands-Free (turing) must never park a run on a human question: the engine
+ * Autonomy III must never park a run on a human question: the engine
  * withholds the ask_user handler in that mode, so the tool degrades to its
  * proceed-on-your-best-judgment error instead of blocking forever.
  */
@@ -44,8 +44,8 @@ describe("ask_user under permission modes", () => {
     expect(out.result).toBe("answered: Which database?");
   });
 
-  test("hands-free (turing): handler is withheld — instructive error, no block", async () => {
-    engine.setPermissionMode("turing");
+  test("Autonomy III: handler is withheld — instructive error, no block", async () => {
+    engine.setPermissionMode("autonomy-iii");
     const out = await askViaRegistry();
     expect(out.success).toBe(false);
     expect(out.error).toContain("best judgment");

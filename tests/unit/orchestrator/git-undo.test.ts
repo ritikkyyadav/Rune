@@ -1,6 +1,6 @@
 /**
  * Git auto-commit + /undo: every successful run's writes land as ONE
- * revertible "berne:" commit, and undo can only ever discard a Berne commit —
+ * revertible "gear:" commit, and undo can only ever discard a Gear commit —
  * never user work. Each guard here corresponds to a way the naive version
  * would eat someone's changes.
  */
@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import {
   autoCommitPaths,
-  undoLastBerneCommit,
+  undoLastGearCommit,
   isGitRepo,
 } from "../../../packages/orchestrator/src/git-undo";
 
@@ -37,14 +37,14 @@ beforeEach(() => {
 });
 
 describe("autoCommitPaths", () => {
-  test("commits exactly the written paths with a berne: subject", () => {
+  test("commits exactly the written paths with a gear: subject", () => {
     writeFileSync(join(root, "a.ts"), "export const a = 1;\n");
     writeFileSync(join(root, "unrelated.txt"), "user's own uncommitted file\n");
 
     const r = autoCommitPaths(root, ["a.ts"], "add the a constant");
     expect(r.committed).toBe(true);
     if (!r.committed) return;
-    expect(git(root, ["log", "-1", "--pretty=%s"])).toBe("berne: add the a constant");
+    expect(git(root, ["log", "-1", "--pretty=%s"])).toBe("gear: add the a constant");
     // Only a.ts landed; the user's file stays untracked and untouched.
     expect(git(root, ["show", "--name-only", "--pretty=format:", "HEAD"]).trim()).toBe("a.ts");
     expect(git(root, ["status", "--porcelain"])).toContain("unrelated.txt");
@@ -53,9 +53,9 @@ describe("autoCommitPaths", () => {
   test("refuses when the user has STAGED changes (protects their half-built commit)", () => {
     writeFileSync(join(root, "user.txt"), "user work\n");
     git(root, ["add", "user.txt"]);
-    writeFileSync(join(root, "berne.txt"), "agent work\n");
+    writeFileSync(join(root, "gear.txt"), "agent work\n");
 
-    const r = autoCommitPaths(root, ["berne.txt"], "task");
+    const r = autoCommitPaths(root, ["gear.txt"], "task");
     expect(r.committed).toBe(false);
     if (r.committed) return;
     expect(r.reason).toContain("staged changes");
@@ -80,26 +80,35 @@ describe("autoCommitPaths", () => {
   });
 });
 
-describe("undoLastBerneCommit", () => {
-  test("resets a berne commit and restores the file state", () => {
+describe("undoLastGearCommit", () => {
+  test("resets a gear commit and restores the file state", () => {
     writeFileSync(join(root, "a.ts"), "broken\n");
     const c = autoCommitPaths(root, ["a.ts"], "bad change");
     expect(c.committed).toBe(true);
 
-    const r = undoLastBerneCommit(root);
+    const r = undoLastGearCommit(root);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.subject).toBe("berne: bad change");
+    expect(r.subject).toBe("gear: bad change");
     expect(git(root, ["log", "-1", "--pretty=%s"])).toBe("seed");
-    // The berne-written file is gone from the worktree again.
+    // The gear-written file is gone from the worktree again.
     expect(() => readFileSync(join(root, "a.ts"))).toThrow();
   });
 
-  test("refuses when HEAD is not a berne commit", () => {
-    const r = undoLastBerneCommit(root); // HEAD = "seed"
+  test("refuses when HEAD is not a gear commit", () => {
+    const r = undoLastGearCommit(root); // HEAD = "seed"
     expect(r.ok).toBe(false);
     if (r.ok) return;
-    expect(r.reason).toContain("not a Berne commit");
+    expect(r.reason).toContain("not a Gear-managed commit");
+  });
+
+  test("still recognizes migration-era managed commits", () => {
+    writeFileSync(join(root, "legacy.txt"), "legacy\n");
+    git(root, ["add", "legacy.txt"]);
+    git(root, ["commit", "-qm", "berne: migration-era change"]);
+
+    const r = undoLastGearCommit(root);
+    expect(r.ok).toBe(true);
   });
 
   test("refuses when the worktree is dirty (reset --hard would eat user edits)", () => {
@@ -108,7 +117,7 @@ describe("undoLastBerneCommit", () => {
     // User edits after the commit:
     writeFileSync(join(root, "seed.txt"), "user edited this\n");
 
-    const r = undoLastBerneCommit(root);
+    const r = undoLastGearCommit(root);
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.reason).toContain("uncommitted changes");
@@ -116,7 +125,7 @@ describe("undoLastBerneCommit", () => {
     expect(readFileSync(join(root, "seed.txt"), "utf8")).toBe("user edited this\n");
   });
 
-  test("refuses when the berne commit has no parent", () => {
+  test("refuses when the gear commit has no parent", () => {
     const bare = mkdtempSync(join(tmpdir(), "git-undo-root-"));
     git(bare, ["init", "-q"]);
     git(bare, ["config", "user.email", "t@t"]);
@@ -124,7 +133,7 @@ describe("undoLastBerneCommit", () => {
     writeFileSync(join(bare, "only.txt"), "x\n");
     expect(autoCommitPaths(bare, ["only.txt"], "first ever").committed).toBe(true);
 
-    const r = undoLastBerneCommit(bare);
+    const r = undoLastGearCommit(bare);
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.reason).toContain("only commit");

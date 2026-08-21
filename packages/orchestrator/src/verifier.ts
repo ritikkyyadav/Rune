@@ -103,7 +103,7 @@ export function detectVerifyCommands(workspaceRoot: string): string[] {
   if (scripts.test && !/no test specified/i.test(scripts.test)) {
     cmds.push(`${pm === "npm" ? "npm test" : `${pm} test`}`);
   } else if (!scripts.test && hasTestFiles(workspaceRoot)) {
-    // Manifest-less / scriptless project with raw test files — Alan runs on Bun,
+    // Manifest-less / scriptless project with raw test files — Gear runs on Bun,
     // which can execute bun:test files directly.
     cmds.push("bun test");
   }

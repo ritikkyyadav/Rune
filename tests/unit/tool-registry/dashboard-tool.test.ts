@@ -23,7 +23,13 @@ const root = realpathSync(mkdtempSync(join(tmpdir(), "dash-tool-")));
 afterAll(() => manager.closeAll());
 
 function input(args: Record<string, unknown>): ToolCallInput {
-  return { toolName: "interactive_dashboard", callId: "c1", args, sessionId: "s", workspaceRoot: root };
+  return {
+    toolName: "interactive_dashboard",
+    callId: "c1",
+    args,
+    sessionId: "s",
+    workspaceRoot: root,
+  };
 }
 
 describe("interactive_dashboard — schema", () => {
@@ -62,7 +68,13 @@ describe("interactive_dashboard — validation", () => {
 describe("interactive_dashboard — actions", () => {
   test("create returns id + url and the page is live", async () => {
     const out = await tool.execute(
-      input({ action: "create", title: "Report", html: "<div>r</div>", data: { a: 1 }, open: false }),
+      input({
+        action: "create",
+        title: "Report",
+        html: "<div>r</div>",
+        data: { a: 1 },
+        open: false,
+      }),
     );
     expect(out.success).toBe(true);
     const parsed = JSON.parse(out.result) as { id: string; url: string; note: string };
@@ -83,7 +95,8 @@ describe("interactive_dashboard — actions", () => {
 
   test("update pushes; open re-reports the url; close tears down", async () => {
     const created = JSON.parse(
-      (await tool.execute(input({ action: "create", title: "u", html: "<div/>", open: false }))).result,
+      (await tool.execute(input({ action: "create", title: "u", html: "<div/>", open: false })))
+        .result,
     ) as { id: string; url: string };
 
     const upd = await tool.execute(input({ action: "update", id: created.id, data: { x: 9 } }));
@@ -127,7 +140,12 @@ describe("interactive_dashboard — spec mode", () => {
         key: "weekly",
         chart: { kind: "area", labels: ["Mon", "Tue"], series: [{ name: "Count", data: [4, 9] }] },
       },
-      { type: "table", title: "Orders", columns: ["Id", "Status"], rows: [["#1", { chip: "Done", tone: "good" }]] },
+      {
+        type: "table",
+        title: "Orders",
+        columns: ["Id", "Status"],
+        rows: [["#1", { chip: "Done", tone: "good" }]],
+      },
     ],
   };
 
@@ -136,10 +154,10 @@ describe("interactive_dashboard — spec mode", () => {
     expect(out.success).toBe(true);
     const { url, id } = JSON.parse(out.result) as { url: string; id: string };
     const page = await (await fetch(url)).text();
-    expect(page).toContain("__BERNE_SPEC__");
-    expect(page).toContain("berne-root");
+    expect(page).toContain("__GEAR_SPEC__");
+    expect(page).toContain("gear-root");
     expect(page).toContain("--accent"); // THEME_CSS present
-    expect(page).toContain("berneTheme"); // chart defaults plugin present
+    expect(page).toContain("gearTheme"); // chart defaults plugin present
     expect(page).toContain('"Deliveries"');
 
     // spec update re-renders live (data channel), no version bump / reload
@@ -152,14 +170,16 @@ describe("interactive_dashboard — spec mode", () => {
   });
 
   test("exports: standalone html, json, and csv routes + files", async () => {
-    const out = await tool.execute(input({ action: "create", title: "Export Me", spec, open: false }));
+    const out = await tool.execute(
+      input({ action: "create", title: "Export Me", spec, open: false }),
+    );
     const { url, id } = JSON.parse(out.result) as { url: string; id: string };
 
     const html = await fetch(`${url}/export/html`);
     expect(html.status).toBe(200);
     expect(html.headers.get("content-disposition")).toContain("export-me.html");
     const doc = await html.text();
-    expect(doc).toContain("__BERNE_STANDALONE__");
+    expect(doc).toContain("__GEAR_STANDALONE__");
     expect(doc).not.toContain("EventSource"); // no live channel in the artifact
     expect(doc.length).toBeGreaterThan(200_000); // Chart.js inlined
 
@@ -191,7 +211,7 @@ describe("interactive_dashboard — spec mode", () => {
     expect(fileOut.success).toBe(true);
     const written = JSON.parse(fileOut.result) as { exported: string };
     expect(written.exported).toBe(join(root, "reports/fleet.html"));
-    expect(readFileSync(written.exported, "utf8")).toContain("__BERNE_STANDALONE__");
+    expect(readFileSync(written.exported, "utf8")).toContain("__GEAR_STANDALONE__");
 
     const escape = await tool.execute(
       input({ action: "export", id, format: "json", path: "../outside.json" }),
@@ -204,7 +224,9 @@ describe("interactive_dashboard — spec mode", () => {
     const prev = process.env.BERNE_BROWSER_BIN;
     process.env.BERNE_BROWSER_BIN = "/nonexistent/browser";
     try {
-      const created = await tool.execute(input({ action: "create", title: "p", spec, open: false }));
+      const created = await tool.execute(
+        input({ action: "create", title: "p", spec, open: false }),
+      );
       const { id } = JSON.parse(created.result) as { id: string };
       const out = await tool.execute(input({ action: "export", id, format: "pdf" }));
       expect(out.success).toBe(false);

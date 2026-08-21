@@ -78,7 +78,11 @@ export interface SecretsFile {
  * env override always takes effect.
  */
 export function getSecretsPath(): string {
-  if (process.env.ALAN_SECRETS_PATH) return process.env.ALAN_SECRETS_PATH;
+  const override =
+    process.env.GEAR_SECRETS_PATH ??
+    process.env.ELIO_SECRETS_PATH ??
+    process.env.ALAN_SECRETS_PATH;
+  if (override) return override;
   const home = process.env.HOME ?? process.env.USERPROFILE ?? ".";
   return join(home, ".alan", "secrets.json");
 }

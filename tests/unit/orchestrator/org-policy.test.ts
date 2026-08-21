@@ -10,10 +10,7 @@ import {
   canonicalPolicyBytes,
   type OrgPolicy,
 } from "../../../packages/orchestrator/src/org-policy";
-import {
-  generateEd25519KeyPair,
-  signBytes,
-} from "../../../packages/orchestrator/src/signing";
+import { generateEd25519KeyPair, signBytes } from "../../../packages/orchestrator/src/signing";
 import { PermissionBroker } from "../../../packages/orchestrator/src/permissions";
 import { setSandboxCapability } from "../../../packages/tool-registry/src/sandbox-capability";
 
@@ -110,8 +107,10 @@ describe("PermissionBroker under org policy", () => {
     parameters: [],
   };
 
-  test("policy denies bash network escalation even in turing (yolo) mode", () => {
-    const broker = new PermissionBroker(true, { orgPolicy: POLICY });
+  test("policy denies bash network escalation even in Autonomy III", () => {
+    const broker = new PermissionBroker(true, {
+      orgPolicy: { ...POLICY, forbidPermissionModes: [] },
+    });
     const decision = broker.check(bashSchema, { command: "curl x", network: true });
     expect(decision.type).toBe("denied");
     if (decision.type !== "denied") throw new Error("unreachable");
@@ -156,6 +155,7 @@ describe("PermissionBroker under org policy", () => {
     const broker = new PermissionBroker(true, {});
     expect(broker.check(webSchema, { url: "https://x" }).type).toBe("allowed");
     expect(broker.setMode("turing").ok).toBe(true);
+    expect(broker.getMode()).toBe("autonomy-iii");
   });
 });
 

@@ -298,11 +298,15 @@ export class LlmGateway {
         // generator before the fallback provider streams anything. The reason
         // is included so a fallback (e.g. a subscription-gated model) is never a
         // silent swap to a different model — the user sees WHY it switched.
+        // Structured, so UIs render a real banner (provider chain, status,
+        // "turn continues") instead of regex-parsing a sentence.
         yield {
-          type: "notice",
-          message: `${providerName}/${adjustedRequest.model} unavailable${
-            why ? ` — ${why}` : ""
-          }. Switching to ${nextProvider}/${nextModel}…`,
+          type: "fallback",
+          from: { provider: providerName, model: adjustedRequest.model },
+          to: { provider: nextProvider, model: nextModel },
+          status: lastStatus,
+          reason: why || lastError?.message?.slice(0, 120) || undefined,
+          chain: fallbackOrder.slice(idx + 1).filter((p) => this.providers.has(p)),
         };
         continue;
       }
