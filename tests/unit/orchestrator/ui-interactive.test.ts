@@ -53,9 +53,16 @@ describe("interactive doctrine", () => {
     const manual = renderInteractiveDoctrine(false);
     expect(manual).toContain("ONLY when the user asks");
     expect(manual).toContain("/interactive");
-    // Both teach spec-first composition, the real-time path, and exports.
+    // Both carry the full design charter: spec-first, composition acts, art
+    // direction, data honesty, the governed html path, real-time, exports.
     for (const s of [auto, manual]) {
-      expect(s).toContain("ALWAYS build through `spec`");
+      expect(s).toContain("design charter");
+      expect(s).toContain("Build through `spec` for anything analytic");
+      expect(s).toContain("three acts");
+      expect(s).toContain("Chart grammar");
+      expect(s).toContain("accent");
+      expect(s).toContain("Never invent data");
+      expect(s).toContain("what slop looks like");
       expect(s).toContain("watch_file");
       expect(s).toContain('action:"export"');
     }

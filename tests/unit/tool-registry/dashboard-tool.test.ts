@@ -47,6 +47,18 @@ describe("interactive_dashboard — schema", () => {
     expect(d).toContain("watch_file");
     expect(d).toContain("action:'export'");
   });
+
+  test("description carries the charter surface: accent, hero KPIs, heatmap/timeline/section, inherited theme classes", () => {
+    const d = INTERACTIVE_DASHBOARD_SCHEMA.description;
+    expect(d).toContain("accent?");
+    expect(d).toContain("hero?");
+    expect(d).toContain("'heatmap'|'timeline'|'section'");
+    expect(d).toContain("heatmap items:");
+    expect(d).toContain("timeline items:");
+    expect(d).toContain("INHERITS the design system");
+    expect(d).toContain(".card.span-N");
+    expect(d).toContain("--accent-soft");
+  });
 });
 
 describe("interactive_dashboard — validation", () => {
@@ -218,6 +230,61 @@ describe("interactive_dashboard — spec mode", () => {
     );
     expect(escape.success).toBe(false);
     expect(escape.error).toContain("inside the workspace");
+  });
+
+  test("charter primitives: accent, hero KPI, heatmap, timeline, section render + export", async () => {
+    const charterSpec = {
+      title: "Ops",
+      accent: "#ff9f68",
+      kpis: [{ label: "Throughput", value: 12400, hero: true, icon: "⚡", spark: [3, 5, 4, 8] }],
+      items: [
+        { type: "section", title: "Activity", aside: "Last 7 days" },
+        {
+          type: "heatmap",
+          title: "Deploys",
+          rows: ["Mon", "Tue"],
+          cols: ["00", "06", "12"],
+          values: [
+            [0, 3, 9],
+            [1, 4, 2],
+          ],
+        },
+        {
+          type: "timeline",
+          title: "History",
+          items: [{ title: "Rollout", sub: "canary 5%", time: "14:02", tone: "accent" }],
+        },
+      ],
+    };
+    const out = await tool.execute(
+      input({ action: "create", title: "Ops", spec: charterSpec, open: false }),
+    );
+    expect(out.success).toBe(true);
+    const { url } = JSON.parse(out.result) as { url: string };
+    const page = await (await fetch(url)).text();
+    // Renderer + theme carry the new blocks, and the baked spec keeps the knobs.
+    for (const marker of [
+      "applyAccent",
+      "renderHeatmap",
+      "renderTimeline",
+      "renderSection",
+      ".hm-cell",
+      ".tl-dot",
+      ".sec-title",
+      ".kpi-hero",
+      ".kpi-icon",
+      '"#ff9f68"',
+    ]) {
+      expect(page).toContain(marker);
+    }
+
+    // CSV export understands the new tabular shapes.
+    const csvText = await (await fetch(`${url}/export/csv`)).text();
+    expect(csvText).toContain("# Deploys");
+    expect(csvText).toContain(",00,06,12");
+    expect(csvText).toContain("Mon,0,3,9");
+    expect(csvText).toContain("# History");
+    expect(csvText).toContain("Rollout,14:02,canary 5%");
   });
 
   test("pdf export without a browser fails with guidance (not a hang)", async () => {

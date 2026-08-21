@@ -147,9 +147,17 @@ export function buildCsv(spec: unknown, data: unknown): string | null {
       type?: string;
       title?: unknown;
       columns?: unknown[];
-      rows?: unknown[][];
+      rows?: unknown[][] | unknown[];
+      cols?: unknown[];
+      values?: unknown[][];
       chart?: { labels?: unknown[]; series?: Array<{ name?: unknown; data?: unknown[] }> };
-      items?: Array<{ label?: unknown; value?: unknown; title?: unknown; sub?: unknown }>;
+      items?: Array<{
+        label?: unknown;
+        value?: unknown;
+        title?: unknown;
+        sub?: unknown;
+        time?: unknown;
+      }>;
     }>;
   } | null;
 
@@ -183,13 +191,27 @@ export function buildCsv(spec: unknown, data: unknown): string | null {
           );
         }
         sections.push([title, head, ...rows].filter((x): x is string => x !== null).join("\n"));
-      } else if ((item.type === "progress" || item.type === "list") && Array.isArray(item.items)) {
+      } else if (
+        (item.type === "progress" || item.type === "list" || item.type === "timeline") &&
+        Array.isArray(item.items)
+      ) {
         const rows = item.items.map((it) =>
-          [it.label ?? it.title, it.value, it.sub].map(csvCell).join(","),
+          [it.label ?? it.title, it.value ?? it.time, it.sub].map(csvCell).join(","),
         );
         sections.push(
           [title, "Label,Value,Detail", ...rows].filter((x): x is string => x !== null).join("\n"),
         );
+      } else if (
+        item.type === "heatmap" &&
+        Array.isArray(item.values) &&
+        Array.isArray(item.cols)
+      ) {
+        const head = ["", ...item.cols.map(csvCell)].join(",");
+        const labels = Array.isArray(item.rows) ? (item.rows as unknown[]) : [];
+        const body = item.values.map((vr, ri) =>
+          [csvCell(labels[ri] ?? ri), ...(Array.isArray(vr) ? vr : []).map(csvCell)].join(","),
+        );
+        sections.push([title, head, ...body].filter((x): x is string => x !== null).join("\n"));
       }
     }
   }
@@ -910,22 +932,24 @@ ${bootstrap}
 
 export const INTERACTIVE_DASHBOARD_SCHEMA: ToolSchema = {
   name: "interactive_dashboard",
-  version: "0.2.0",
+  version: "0.3.0",
   description:
-    "Render a designed, interactive dashboard in the user's browser (local URL, offline, LIVE updates over SSE) — for reports, metrics, benchmarks, comparisons, timelines. " +
-    "PREFER `spec` over `html`: the built-in design system renders it as a polished dark bento-grid dashboard (KPI cards, charts, tables, lists, progress bars) — never hand-write CSS for standard analytics. " +
-    "Spec shape: { title, subtitle?, badges?: [string|{text,tone}], kpis?: [{label, value, prefix?, suffix?, delta? (+/- number = % chip), spark?: [nums], note?, key?}], " +
-    "items: [{type:'chart'|'table'|'list'|'progress'|'text', title?, aside?, span? (grid columns of 12; charts default 6, tables 6, lists/progress 4), note?, key?, ...}], footer? }. " +
-    "chart items: {chart: {kind:'line'|'area'|'bar'|'stacked-bar'|'hbar'|'doughnut'|'pie'|'radar'|'scatter', labels:[...], series:[{name, data:[...], color?, fill?, dashed?}], stacked?, max?, center?:{value,label} (doughnut), raw?: full Chart.js config escape hatch}, height?: px}. " +
+    "Render a designed, interactive dashboard in the user's browser (local URL, offline, LIVE updates over SSE) — for reports, metrics, benchmarks, comparisons, timelines, monitoring. " +
+    "PREFER `spec` over `html`: the built-in design system renders it as a polished dark bento-grid dashboard with guaranteed typography, spacing, and chart theming — never hand-write CSS for standard analytics. " +
+    "Spec shape: { title, subtitle?, accent? ('#rrggbb' — the view's ONE accent; pick from the palette to fit the subject: lime #c8f169 default, orange #ff9f68 ops, amber #ffd66e cost, sky #7cc7ff infra, violet #b8a1ff ML, teal #6fe3c2 finance, coral #ff8fa8 consumer), badges?: [string|{text,tone}], " +
+    "kpis?: [{label, value, prefix?, suffix? (units), delta? (+/- number = % chip), spark?: [8-24 nums], icon? (single emoji tile), hero? (true = display-size number for THE headline figure), note?, key?}], " +
+    "items: [{type:'chart'|'table'|'list'|'progress'|'heatmap'|'timeline'|'section'|'text', title?, aside? (period, e.g. 'Last 30 days'), span? (of 12 — hero chart 8 beside breakdown 4; table 12; charts default 6, lists/progress/timeline 4), note? (source/method), key?, ...}], footer? (data-as-of + caveats) }. " +
+    "chart items: {chart: {kind:'line'|'area'|'bar'|'stacked-bar'|'hbar'|'doughnut'|'pie'|'radar'|'scatter', labels:[...], series:[{name, data:[...], color?, fill?, dashed?}], stacked?, max?, center?:{value,label} (doughnut total), raw?: full Chart.js config escape hatch}, height?: px (hero ~300, support ~240)} — line/area=trend, bar=comparison, stacked-bar=composition, hbar=ranking, doughnut=share (≤5 slices); ≤4 series, short labels. " +
     "table items: {columns:[...], rows:[[cell,...]]} — number cells auto-format + right-align; {chip:'text', tone:'good'|'bad'|'warn'|'info'|'accent'} renders a status pill. " +
-    "list items: {items:[{title, sub?, value?|chip?, tone?, icon? (emoji)}]}. progress items: {items:[{label, value (0-100), display?, color?}], multicolor?}. text items: {body} ('- ' lines become bullets). " +
-    "Tone: 3-6 KPIs first (value + delta + spark), then a hero chart (span 8) beside a breakdown (span 4), then supporting cards; ≤4 series per chart; short labels. " +
+    "list items: {items:[{title, sub?, value?|chip?, tone?, icon? (emoji)}]}. progress items: {items:[{label, value (0-100), display?, color?}], multicolor?}. " +
+    "heatmap items: {rows:['Mon',...], cols:['00',...], values:[[...]], max?} — intensity grid (by-day/by-hour activity) shaded in the view accent. " +
+    "timeline items: {items:[{title, sub?, time?, tone? ('accent' highlights current)}]} — event history on a dot rail. section items: {title, aside?} — full-width chapter divider. text items: {body} ('- ' lines become bullets). " +
     "Actions: create (spec or html; opens browser) | update (id + new spec/data re-renders the open page instantly, NO reload — use for real-time/progress) | open | close | export. " +
     "LIVE data: set watch_file (workspace JSON file streamed to the page on change) and give items `key`s — payload {<key>: value} updates just those blocks: kpi key → number or {value, delta, spark}; chart key → {labels?, series: [[...],...]}; table key → {rows}; progress key → [values]. Or push action:'update' yourself. " +
     "EXPORT: every page has an Export menu (PDF via print, standalone HTML, JSON, CSV). action:'export' {format:'pdf'|'html'|'json'|'csv', path?} writes the file into the workspace and is how you deliver report files. " +
-    "Raw html escape hatch (bespoke visuals only): body-only HTML, self-contained/offline (no CDNs); Chart.js v" +
+    "Raw html escape hatch (bespoke visuals a spec can't express): body-only HTML, self-contained/offline (no CDNs, no web fonts, no external images — inline SVG icons). The page INHERITS the design system: compose with .dash > .grid > .card.span-N, .card-head/.card-title/.card-aside, .kpi-label/.kpi-value/.kpi-foot, .chip.good|bad|warn|info|accent, table.tbl, .rows/.row-item, .prog, .tl, .hm, .sec, .prose and tokens var(--bg,--panel,--panel-2,--line,--line-strong,--ink,--muted,--faint,--accent,--accent-soft,--up,--down,--warn,--info,--font,--mono) — never restyle from browser defaults. Chart.js v" +
     CHART_UMD_VERSION +
-    " is preloaded as `Chart` with themed defaults + window.GEAR {palette, fmt, gradient}; define window.render(data) and draw from data, never hardcode numbers in markup.",
+    " is preloaded as `Chart` with themed defaults + window.GEAR {palette, rgba, fmt, gradient}; define window.render(data) and draw from data, never hardcode numbers in markup.",
   inputSchema: {
     type: "object",
     properties: {
