@@ -670,8 +670,6 @@ export class Engine {
   private dashboards = new DashboardManager();
   private interactiveAuto = false;
   private browserEnabled = false;
-  /** Sandbox posture to restore after leaving Autonomy III. */
-  private sandboxBeforeAutonomyThree: boolean | null = null;
   // The flat AgentLoop currently running a chat() turn — the target for
   // mid-turn steering (interject). Null when idle or in planner mode.
   private liveLoop: AgentLoop | null = null;
@@ -797,13 +795,13 @@ export class Engine {
     // by the frontend (CLI/TUI) via setQuestionHandler — the closure reads it
     // at execute time, and headless environments degrade to an instructive
     // error instead of stalling. Deliberately NOT in the sub-agent registry.
-    // In Autonomy III the handler is withheld even when wired:
-    // the whole point of the mode is "no human in the loop", so the tool
+    // In 4th gear the handler is withheld even when wired:
+    // the whole point of the gear is "no human in the loop", so the tool
     // degrades to its proceed-on-your-best-judgment error instead of parking
     // an autonomous run on a question nobody will answer.
     this.registry.register(
       createAskUserTool(() =>
-        this.permissions.getMode() === "autonomy-iii" ? undefined : this.questionHandler,
+        this.permissions.getMode() === "gear-4" ? undefined : this.questionHandler,
       ),
     );
 
@@ -881,7 +879,7 @@ export class Engine {
     );
 
     // update_config: change Gear's own settings from plain-language requests
-    // ("switch to Autonomy III", "turn the sandbox off") — applied live and
+    // ("shift to 4th gear", "turn the sandbox off") — applied live and
     // persisted to ~/.alan/config.toml. Main registry only: sub-agents are
     // read-only investigators and must not reconfigure the host session.
     this.registry.register(
@@ -902,14 +900,14 @@ export class Engine {
       throw new Error(`Refusing to start: ${policyResult.error}`);
     }
     this.orgPolicy = policyResult?.ok ? policyResult.loaded : null;
-    const requestedPermissionMode =
+    const requestedPermissionMode: PermissionMode =
       this.config.permissionMode ??
-      (this.config.yoloMode ? "autonomy-iii" : this.config.trustWorkspace ? "auto" : "confirm");
-    const initialPermissionMode = isPermissionModeForbidden(
+      (this.config.yoloMode ? "gear-4" : this.config.trustWorkspace ? "gear-3" : "gear-1");
+    const initialPermissionMode: PermissionMode = isPermissionModeForbidden(
       this.orgPolicy?.policy,
       requestedPermissionMode,
     )
-      ? "confirm"
+      ? "gear-1"
       : requestedPermissionMode;
 
     // Initialize Permission Broker
@@ -920,16 +918,12 @@ export class Engine {
       orgPolicy: this.orgPolicy?.policy ?? null,
     });
     this.config.permissionMode = initialPermissionMode;
-    this.config.yoloMode = initialPermissionMode === "autonomy-iii";
-    this.config.trustWorkspace = initialPermissionMode === "auto";
-
-    // Autonomy III is the explicit full-system tier: no permission prompts and
-    // no command sandbox. Remember the prior posture so the fourth Shift+Tab
-    // transition into classifier-backed Auto restores containment.
-    if (initialPermissionMode === "autonomy-iii") {
-      this.sandboxBeforeAutonomyThree = isSandboxEnabled();
-      this.setSandboxEnabled(false);
-    }
+    this.config.yoloMode = initialPermissionMode === "gear-4";
+    this.config.trustWorkspace = initialPermissionMode === "gear-3";
+    // NOTE: gears never touch the OS sandbox. 4th gear removes the permission
+    // prompts; whether commands run contained is the separate `/sandbox`
+    // switch (config, --sandbox/--no-sandbox). Coupling them silently widened
+    // the blast radius of every legacy hands-free user — never again.
 
     // Independent Auto reviewer. It uses a separate inference request with a
     // stripped transcript (trusted user messages + tool calls only). The heavy
@@ -937,8 +931,8 @@ export class Engine {
     // and model in signed policy. Missing/misconfigured reviewers fail closed.
     const autoConfig = resolveAutoModeConfig(this.config.autoMode, this.orgPolicy?.policy.autoMode);
     if (!autoConfig.enabled && this.permissions.getMode() === "auto") {
-      this.permissions.setMode("confirm");
-      this.config.permissionMode = "confirm";
+      this.permissions.setMode("gear-1");
+      this.config.permissionMode = "gear-1";
       this.config.trustWorkspace = false;
     }
     this.autoModeSafety = new AutoModeSafetyController(
@@ -2034,40 +2028,30 @@ export class Engine {
   }
 
   /**
-   * Switch the permission mode live (Shift+Tab, `/autonomy`, `/mode`). Updates
-   * the broker and mirrored compatibility flags so status stays coherent.
-   * Autonomy III also disables the command sandbox for full host access; leaving
-   * it restores the posture that was active before entry.
-   * Under an org policy the broker may refuse the mode; the refusal reason is
+   * Shift gears live (Shift+Tab, `/gear`, `/mode`). Updates the broker and the
+   * mirrored compatibility flags so status stays coherent. Gears never change
+   * the OS sandbox posture — that is the independent `/sandbox` switch.
+   * Under an org policy the broker may refuse the gear; the refusal reason is
    * returned so the UI can say why the cycle skipped.
    */
   setPermissionMode(mode: PermissionModeInput): { ok: boolean; reason?: string } {
     const canonical = configModeToPermissionMode(mode);
-    if (!canonical) return { ok: false, reason: `unknown permission mode "${mode}"` };
+    if (!canonical) return { ok: false, reason: `unknown gear "${mode}"` };
     if (canonical === "auto" && !this.autoModeSafety.getConfig().enabled) {
-      return { ok: false, reason: "classifier-backed Auto mode is disabled by policy" };
+      return { ok: false, reason: "classifier-backed auto gear is disabled by policy" };
     }
-    const previous = this.permissions.getMode();
     const result = this.permissions.setMode(canonical);
     if (!result.ok) return result;
-    if (previous !== "autonomy-iii" && canonical === "autonomy-iii") {
-      this.sandboxBeforeAutonomyThree = isSandboxEnabled();
-      this.setSandboxEnabled(false);
-    } else if (previous === "autonomy-iii" && canonical !== "autonomy-iii") {
-      const restore = this.sandboxBeforeAutonomyThree;
-      this.sandboxBeforeAutonomyThree = null;
-      if (restore !== null) this.setSandboxEnabled(restore);
-    }
     this.config.permissionMode = canonical;
-    this.config.yoloMode = canonical === "autonomy-iii";
-    this.config.trustWorkspace = canonical === "auto";
+    this.config.yoloMode = canonical === "gear-4";
+    this.config.trustWorkspace = canonical === "gear-3";
     return result;
   }
 
   /**
-   * Advance to the next mode in the cycle and return it. Modes the org policy
-   * forbids are skipped (the cycle still terminates — "confirm" is never
-   * forbidden by construction of the broker check order).
+   * Shift up to the next gear and return it. Gears the org policy forbids are
+   * skipped (the cycle still terminates — 1st gear is never forbidden by
+   * construction of the broker check order).
    */
   cyclePermissionMode(): PermissionMode {
     let mode = this.permissions.getMode();
@@ -2113,14 +2097,15 @@ export class Engine {
    * Apply one already-validated config setting live. The `update_config` tool
    * calls this after the shared catalog has normalized the value; the engine owns
    * how each setting takes effect. Returns whether it took and, if not, why (e.g.
-   * an org policy forbidding Autonomy III) so the caller can avoid persisting a
+   * an org policy forbidding 4th gear) so the caller can avoid persisting a
    * setting the machine won't honor.
    */
   applyConfigSetting(key: string, canonicalValue: string): { ok: boolean; reason?: string } {
     switch (key) {
+      case "gear":
       case "permission_mode": {
         const mode = configModeToPermissionMode(canonicalValue);
-        if (!mode) return { ok: false, reason: `unknown mode "${canonicalValue}"` };
+        if (!mode) return { ok: false, reason: `unknown gear "${canonicalValue}"` };
         return this.setPermissionMode(mode);
       }
       case "sandbox":
@@ -2137,6 +2122,7 @@ export class Engine {
   /** The current canonical value of a settable config, for the tool's reports. */
   readConfigSetting(key: string): string | undefined {
     switch (key) {
+      case "gear":
       case "permission_mode":
         return permissionModeToConfig(this.getPermissionMode());
       case "sandbox":
@@ -3128,7 +3114,7 @@ export class Engine {
   }
 
   getSecurityPosture(): "strict" | "standard" | "permissive" | "yolo" {
-    if (this.permissions.getMode() === "autonomy-iii") return "yolo";
+    if (this.permissions.getMode() === "gear-4") return "yolo";
     if (this.securityGuard && this.rateLimiter) return "strict";
     if (this.securityGuard || this.rateLimiter) return "standard";
     return "permissive";
@@ -3263,12 +3249,6 @@ export class Engine {
   }
 
   close(): void {
-    // Do not leak Autonomy III's process-wide sandbox override into another
-    // Engine instance in the same host (notably desktop restarts and tests).
-    if (this.permissions.getMode() === "autonomy-iii" && this.sandboxBeforeAutonomyThree !== null) {
-      setSandboxMode(this.sandboxBeforeAutonomyThree ? "on" : "off");
-      this.sandboxBeforeAutonomyThree = null;
-    }
     // Best-effort: stop MCP subprocesses / sessions on exit.
     this.mcpDiscovery?.stopAll().catch(() => {});
     this.dashboards.closeAll();

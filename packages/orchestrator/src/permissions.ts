@@ -28,85 +28,204 @@ export type PermissionDecision =
       suggestedScope: PermissionScope;
     };
 
-// ─── Permission modes (the Shift+Tab cycle) ───
-// The five states are deliberately behaviorally distinct:
-//   confirm       — prompt before writes and commands
-//   autonomy-i    — confined workspace edits proceed; commands still prompt
-//   autonomy-ii   — add sandboxed local commands and confined delegation
-//   autonomy-iii  — full permission bypass (the renamed legacy Hands-Free mode)
-//   auto          — independent classifier review at risky action boundaries
+// ─── Permission modes: the gearbox (the Shift+Tab cycle) ───
+// Five states, each behaviorally distinct. Shift+Tab "shifts up" and wraps:
+//   gear-1 — guided: prompt before writes and commands (the safe default)
+//   gear-2 — workspace file edits proceed; commands and delegation still prompt
+//   gear-3 — adds OS-sandboxed local commands and workspace-confined delegation
+//   gear-4 — full autonomy: every interactive permission prompt is bypassed.
+//            The OS sandbox is an independent knob and is NOT touched by gears.
+//   auto   — automatic: an independent classifier reviews risky actions
 //
-// The Engine owns the classifier layer for Auto and the sandbox transition for
-// Autonomy III. The broker remains the deterministic capability boundary.
-export type PermissionMode = "confirm" | "autonomy-i" | "autonomy-ii" | "autonomy-iii" | "auto";
-export type LegacyPermissionMode = "turing" | "hands-free";
-export type PermissionModeInput = PermissionMode | LegacyPermissionMode;
+// The broker is the deterministic capability boundary; the Engine owns the
+// classifier layer for `auto`.
+export type PermissionMode = "gear-1" | "gear-2" | "gear-3" | "gear-4" | "auto";
+/** Historical spellings still accepted on input (config, CLI, policy, chat). */
+export type LegacyPermissionMode =
+  | "confirm"
+  | "autonomy-i"
+  | "autonomy-ii"
+  | "autonomy-iii"
+  | "turing"
+  | "hands-free"
+  | "yolo";
+export type PermissionModeInput = PermissionMode | LegacyPermissionMode | (string & {});
 
-/** Cycle order for Shift+Tab. */
-export const PERMISSION_MODE_ORDER: readonly PermissionMode[] = [
-  "confirm",
-  "autonomy-i",
-  "autonomy-ii",
-  "autonomy-iii",
+/** The five gears in Shift+Tab order. */
+export const GEAR_MODES: readonly PermissionMode[] = [
+  "gear-1",
+  "gear-2",
+  "gear-3",
+  "gear-4",
   "auto",
 ];
+/** Cycle order for Shift+Tab (alias kept for existing callers). */
+export const PERMISSION_MODE_ORDER: readonly PermissionMode[] = GEAR_MODES;
 
-/** The next mode in the Shift+Tab cycle (wraps around). */
+/** The next mode in the Shift+Tab cycle — "shift up" — wrapping after auto. */
 export function nextPermissionMode(mode: PermissionMode): PermissionMode {
   const i = PERMISSION_MODE_ORDER.indexOf(mode);
   return PERMISSION_MODE_ORDER[(i + 1) % PERMISSION_MODE_ORDER.length]!;
 }
 
-/** Canonical user-facing config spellings. */
-export type ConfigPermissionMode = PermissionMode;
+/** Human label: "1st gear" … "4th gear", "auto". */
+export function gearLabel(mode: PermissionMode): string {
+  switch (mode) {
+    case "gear-1":
+      return "1st gear";
+    case "gear-2":
+      return "2nd gear";
+    case "gear-3":
+      return "3rd gear";
+    case "gear-4":
+      return "4th gear";
+    default:
+      return "auto";
+  }
+}
+
+/** 1–4 for the manual gears, "auto" for the automatic one. */
+export function gearNumber(mode: PermissionMode): 1 | 2 | 3 | 4 | "auto" {
+  switch (mode) {
+    case "gear-1":
+      return 1;
+    case "gear-2":
+      return 2;
+    case "gear-3":
+      return 3;
+    case "gear-4":
+      return 4;
+    default:
+      return "auto";
+  }
+}
+
+/** One-line behavior summary per gear, for help/status/picker surfaces. */
+export const GEAR_DESCRIPTIONS: Readonly<Record<PermissionMode, string>> = {
+  "gear-1": "guided — asks before every write and command",
+  "gear-2": "workspace file edits proceed; commands and delegation still ask",
+  "gear-3": "adds sandboxed commands and workspace-confined delegation",
+  "gear-4": "full autonomy — no prompts (the sandbox is a separate switch)",
+  auto: "automatic — a separate classifier reviews risky actions",
+};
+
+export function gearDescription(mode: PermissionMode): string {
+  return GEAR_DESCRIPTIONS[mode];
+}
+
+/** Persisted spelling for `[permissions] gear` in config.toml. */
+export type ConfigPermissionMode = "1" | "2" | "3" | "4" | "auto";
 
 /**
- * Map config/CLI spellings onto the canonical PermissionMode. Historical
- * Hands-Free/turing/yolo spellings remain read-compatible and migrate to
- * Autonomy III the next time the value is persisted.
+ * Map any accepted spelling onto the canonical PermissionMode. Gears read as
+ * numbers ("3"), ordinals ("3rd", "third"), ids ("gear-3"), or the historical
+ * names ("autonomy-ii", "hands-free", "turing", "yolo"). Returns undefined for
+ * anything unrecognized.
+ *
+ * `opts.legacyAuto` exists for the OLD `[permissions] mode` key and the old
+ * `--trust` / `trustWorkspace` inputs, where "auto" meant "auto-approve
+ * workspace work" (today's 3rd gear) — NOT the classifier. New-style inputs
+ * (`gear = "auto"`, `--gear auto`, `/mode auto`) mean the classifier.
  */
-export function configModeToPermissionMode(mode: string | undefined): PermissionMode | undefined {
-  const normalized = mode
-    ?.trim()
+export function configModeToPermissionMode(
+  mode: string | number | undefined | null,
+  opts: { legacyAuto?: PermissionMode } = {},
+): PermissionMode | undefined {
+  if (mode === undefined || mode === null) return undefined;
+  const normalized = String(mode)
+    .trim()
     .toLowerCase()
-    .replace(/[\s_]+/g, "-");
+    .replace(/[\s_]+/g, "-")
+    .replace(/^gear-?(?=\S)/, "gear-")
+    .replace(/-gear$/, "")
+    .replace(/^g(\d)$/, "gear-$1");
   switch (normalized) {
+    case "1":
+    case "01":
+    case "gear-1":
+    case "1st":
+    case "first":
+    case "one":
+    case "confirm":
+    case "guided":
+    case "ask":
+    case "prompt":
+    case "safe":
+    case "normal":
+    case "standard":
+    case "default":
+      return "gear-1";
+    case "2":
+    case "gear-2":
+    case "2nd":
+    case "second":
+    case "two":
+    case "autonomy-i":
+    case "autonomy-1":
+    case "i":
+    case "edits":
+    case "edit":
+      return "gear-2";
+    case "3":
+    case "gear-3":
+    case "3rd":
+    case "third":
+    case "three":
+    case "autonomy-ii":
+    case "autonomy-2":
+    case "ii":
+    case "workspace":
+    case "trust":
+    case "trusted":
+    case "auto-approve":
+    case "autoapprove":
+      return "gear-3";
+    case "4":
+    case "gear-4":
+    case "4th":
+    case "fourth":
+    case "four":
+    case "autonomy-iii":
+    case "autonomy-3":
+    case "iii":
     case "hands-free":
     case "handsfree":
     case "turing":
     case "yolo":
     case "bypass":
     case "full":
-    case "autonomy-3":
-    case "autonomy-iii":
-    case "iii":
-    case "3":
-      return "autonomy-iii";
-    case "autonomy-2":
-    case "autonomy-ii":
-    case "ii":
-    case "2":
-      return "autonomy-ii";
-    case "autonomy-1":
-    case "autonomy-i":
-    case "i":
-    case "1":
-      return "autonomy-i";
+    case "autonomous":
+      return "gear-4";
     case "auto":
+      return opts.legacyAuto ?? "auto";
+    case "automatic":
+    case "classifier":
+    case "auto-review":
+    case "gear-auto":
       return "auto";
-    case "confirm":
-      return "confirm";
     default:
       return undefined;
   }
 }
 
-/** Map the internal PermissionMode back to the config's user-facing spelling. */
-export function permissionModeToConfig(mode: PermissionMode): ConfigPermissionMode {
-  return mode;
+/**
+ * Resolve the OLD `[permissions] mode` key (and its env aliases). Same grammar
+ * as `configModeToPermissionMode`, except the historical "auto" value means
+ * "auto-approve workspace work", i.e. 3rd gear — never the classifier.
+ */
+export function legacyConfigModeToPermissionMode(
+  mode: string | undefined | null,
+): PermissionMode | undefined {
+  return configModeToPermissionMode(mode, { legacyAuto: "gear-3" });
 }
 
-/** Signed policies may still carry the historical `turing`/`hands-free` value. */
+/** Map the internal PermissionMode to the persisted `[permissions] gear` value. */
+export function permissionModeToConfig(mode: PermissionMode): ConfigPermissionMode {
+  const n = gearNumber(mode);
+  return n === "auto" ? "auto" : (String(n) as ConfigPermissionMode);
+}
+
+/** Signed policies may carry historical values (`turing`, `hands-free`, `autonomy-iii`). */
 export function isPermissionModeForbidden(
   policy: OrgPolicy | null | undefined,
   mode: PermissionMode,
@@ -118,29 +237,33 @@ export function isPermissionModeForbidden(
 }
 
 /**
- * Resolve the mode a session should start in. An explicit `--autonomy` value
- * wins, followed by legacy `--yolo`, `--trust`, persisted mode, and the legacy
- * trustWorkspace boolean. Absent everything ⇒ Confirm.
+ * Resolve the gear a session should start in. Precedence: explicit `--gear`,
+ * the legacy `--autonomy`, `--yolo` (4th), `--trust` (3rd), the persisted
+ * `[permissions] gear`, the legacy `[permissions] mode` (where "auto" = 3rd),
+ * the legacy `trustWorkspace` boolean (3rd). Absent everything ⇒ 1st gear.
  */
 export function resolveStartupPermissionFlags(opts: {
+  gearFlag?: string | number;
+  modeFlag?: string;
   yoloFlag?: boolean;
   trustFlag?: boolean;
-  modeFlag?: string;
+  configGear?: string | number;
   configMode?: string;
   configTrustWorkspace?: boolean;
 }): { yoloMode: boolean; trustWorkspace: boolean; permissionMode: PermissionMode } {
-  const configMode = configModeToPermissionMode(opts.configMode);
-  const explicitMode = configModeToPermissionMode(opts.modeFlag);
-  const permissionMode =
-    explicitMode ??
+  const permissionMode: PermissionMode =
+    configModeToPermissionMode(opts.gearFlag) ??
+    configModeToPermissionMode(opts.modeFlag) ??
     (opts.yoloFlag
-      ? "autonomy-iii"
+      ? "gear-4"
       : opts.trustFlag
-        ? "auto"
-        : (configMode ?? (opts.configTrustWorkspace ? "auto" : "confirm")));
+        ? "gear-3"
+        : (configModeToPermissionMode(opts.configGear) ??
+          legacyConfigModeToPermissionMode(opts.configMode) ??
+          (opts.configTrustWorkspace ? "gear-3" : "gear-1")));
   return {
-    yoloMode: permissionMode === "autonomy-iii",
-    trustWorkspace: permissionMode === "auto",
+    yoloMode: permissionMode === "gear-4",
+    trustWorkspace: permissionMode === "gear-3",
     permissionMode,
   };
 }
@@ -163,35 +286,41 @@ export class PermissionBroker {
     this.workspaceRoot = opts.workspaceRoot;
     this.orgPolicy = opts.orgPolicy ?? null;
     const requested =
-      opts.initialMode ?? (yoloMode ? "autonomy-iii" : opts.trustWorkspace ? "auto" : "confirm");
-    this.mode = isPermissionModeForbidden(this.orgPolicy, requested) ? "confirm" : requested;
+      opts.initialMode ?? (yoloMode ? "gear-4" : opts.trustWorkspace ? "gear-3" : "gear-1");
+    this.mode = isPermissionModeForbidden(this.orgPolicy, requested) ? "gear-1" : requested;
   }
 
+  /** Legacy helper: full autonomy on ⇒ 4th gear, off ⇒ back to 1st. */
   setYoloMode(enabled: boolean): void {
-    if (enabled) void this.setMode("autonomy-iii");
-    else if (this.mode === "autonomy-iii") void this.setMode("confirm");
+    if (enabled) void this.setMode("gear-4");
+    else if (this.mode === "gear-4") void this.setMode("gear-1");
   }
 
+  /** Legacy helper: "workspace trust" on ⇒ 3rd gear, off ⇒ back to 1st. */
   setTrustWorkspace(enabled: boolean): void {
-    if (enabled) void this.setMode("auto");
-    else if (this.mode === "auto") void this.setMode("confirm");
+    if (enabled) void this.setMode("gear-3");
+    else if (this.mode === "gear-3") void this.setMode("gear-1");
   }
 
+  /** True in every gear that auto-approves workspace-confined work (2nd, 3rd, auto). */
   isTrustWorkspace(): boolean {
-    return ["autonomy-i", "autonomy-ii", "auto"].includes(this.mode);
+    return ["gear-2", "gear-3", "auto"].includes(this.mode);
   }
 
   /**
    * Set the active permission mode — the single knob the Shift+Tab cycle drives.
-   * Org policy can forbid modes outright (e.g. no Autonomy III on managed
-   * machines) — a forbidden mode is refused, the current mode stands, and the
+   * Org policy can forbid gears outright (e.g. no 4th gear on managed
+   * machines) — a forbidden gear is refused, the current one stands, and the
    * return value tells the caller why.
    */
   setMode(mode: PermissionModeInput): { ok: boolean; reason?: string } {
     const canonical = configModeToPermissionMode(mode);
-    if (!canonical) return { ok: false, reason: `unknown permission mode "${mode}"` };
+    if (!canonical) return { ok: false, reason: `unknown gear "${mode}"` };
     if (isPermissionModeForbidden(this.orgPolicy, canonical)) {
-      return { ok: false, reason: `org policy forbids "${canonical}" mode on this machine` };
+      return {
+        ok: false,
+        reason: `org policy forbids ${gearLabel(canonical)} on this machine`,
+      };
     }
     this.mode = canonical;
     return { ok: true };
@@ -211,10 +340,10 @@ export class PermissionBroker {
       if (denial) return { type: "denied", reason: denial };
     }
 
-    // Autonomy III — allow everything after signed policy/security checks.
-    if (this.mode === "autonomy-iii") {
+    // 4th gear — allow everything after signed policy/security checks.
+    if (this.mode === "gear-4") {
       console.warn(
-        `[SECURITY] Autonomy III active — all interactive permission checks bypassed for: ${schema.name}`,
+        `[SECURITY] 4th gear active — all interactive permission checks bypassed for: ${schema.name}`,
       );
       return { type: "allowed", basis: "bypass" };
     }
@@ -224,17 +353,17 @@ export class PermissionBroker {
       return { type: "allowed", basis: "safe_tool" };
     }
 
-    // Autonomy I permits only deterministic, workspace-confined edits. It does
+    // 2nd gear permits only deterministic, workspace-confined edits. It does
     // not approve shell commands or delegated workers.
-    if (this.mode === "autonomy-i" && this.isWorkspaceEditConfined(schema, args)) {
+    if (this.mode === "gear-2" && this.isWorkspaceEditConfined(schema, args)) {
       return { type: "allowed", basis: "workspace" };
     }
 
-    // Autonomy II adds OS-sandboxed local commands and workspace-confined
+    // 3rd gear adds OS-sandboxed local commands and workspace-confined
     // delegation. Auto uses the same deterministic preliminary boundary, then
     // Engine independently classifies every risky action tier.
     if (
-      (this.mode === "autonomy-ii" || this.mode === "auto") &&
+      (this.mode === "gear-3" || this.mode === "auto") &&
       this.isWorkspaceConfined(schema, args)
     ) {
       return { type: "allowed", basis: "workspace" };
@@ -282,14 +411,15 @@ export class PermissionBroker {
     });
   }
 
+  /** Legacy name: true in 4th gear (full autonomy). */
   isYoloMode(): boolean {
-    return this.mode === "autonomy-iii";
+    return this.mode === "gear-4";
   }
 
   getSecurityPosture(): "strict" | "standard" | "permissive" | "yolo" {
-    if (this.mode === "autonomy-iii") return "yolo";
-    if (this.mode === "autonomy-ii" || this.mode === "auto") return "permissive";
-    if (this.mode === "autonomy-i") return "standard";
+    if (this.mode === "gear-4") return "yolo";
+    if (this.mode === "gear-3" || this.mode === "auto") return "permissive";
+    if (this.mode === "gear-2") return "standard";
     const grantedCount = this.sessionGrants?.length ?? 0;
     if (grantedCount === 0) return "strict";
     if (grantedCount > 10) return "permissive";
@@ -303,7 +433,7 @@ export class PermissionBroker {
   /** Tools whose blast radius is a single `path` argument. */
   private static readonly PATH_CONFINED_TOOLS = new Set(["write_file", "edit_file", "multi_edit"]);
 
-  /** The narrower Autonomy I boundary: file edits only, never shell/delegation. */
+  /** The narrower 2nd-gear boundary: file edits only, never shell/delegation. */
   private isWorkspaceEditConfined(schema: ToolSchema, args: Record<string, unknown>): boolean {
     if (!this.workspaceRoot) return false;
     if (schema.name === "apply_patch") {
@@ -336,7 +466,7 @@ export class PermissionBroker {
     // sandbox-confined foreground commands are. And when the user disabled
     // the sandbox entirely (/sandbox off), NO bash call is contained, so
     // workspace trust stops auto-approving bash altogether — full access
-    // means every command earns a prompt outside Autonomy III.
+    // means every command earns a prompt outside 4th gear.
     //
     // Intent is not capability: "sandbox on" only justifies auto-approval when
     // this MACHINE can actually isolate (seatbelt/bwrap present). On the

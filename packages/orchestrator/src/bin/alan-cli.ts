@@ -89,6 +89,7 @@ const { values, positionals } = parseArgs({
     model: { type: "string", short: "m" },
     provider: { type: "string", short: "p" },
     workspace: { type: "string", short: "w" },
+    gear: { type: "string" },
     yolo: { type: "boolean", default: false },
     trust: { type: "boolean", default: false },
     autonomy: { type: "string" },
@@ -170,10 +171,11 @@ if (values.help) {
       `    -w, --workspace <path>       Workspace root directory\n` +
       `    -r, --resume <sessionId>     Resume an existing session\n` +
       `    -n, --new                    Start a fresh session (skip the resume picker)\n` +
-      `    --autonomy <I|II|III>        Start at a specific autonomy level (III = full system access)\n` +
-      `    --yolo                       Legacy alias for --autonomy III\n` +
-      `    --trust                      Start in Auto review — safe workspace work proceeds; risky actions are classified\n` +
-      `                                 (Shift+Tab: confirm → Autonomy I → II → III → Auto)\n` +
+      `    --gear <1|2|3|4|auto>        Start in a gear: 1 guided · 2 workspace edits · 3 + sandboxed shell · 4 full autonomy · auto classifier\n` +
+      `                                 (Shift+Tab shifts up: 1st → 2nd → 3rd → 4th → auto)\n` +
+      `    --autonomy <I|II|III>        Legacy alias for --gear 2|3|4\n` +
+      `    --yolo                       Legacy alias for --gear 4\n` +
+      `    --trust                      Legacy alias for --gear 3 (workspace trust)\n` +
       `    --planner                    Enable planner+executor mode\n` +
       `    --classic                    Plain readline prompt (default is the pinned composer)\n` +
       `    --tui                        Force the Codex-style pinned composer\n` +
@@ -638,19 +640,26 @@ async function main() {
   }
 
   const plannerMode = values.planner as boolean;
-  // Explicit CLI mode flags win over the persisted five-state permission mode.
+  // Explicit CLI gear flags win over the persisted gear.
+  const gearFlag = values.gear !== undefined ? String(values.gear) : undefined;
+  if (gearFlag !== undefined && !configModeToPermissionMode(gearFlag)) {
+    throw new Error(`Invalid --gear "${gearFlag}"; use 1, 2, 3, 4, or auto`);
+  }
+  // Legacy --autonomy I|II|III → 2nd|3rd|4th gear.
   const autonomyFlag = values.autonomy
     ? String(values.autonomy).toLowerCase().startsWith("autonomy")
       ? String(values.autonomy)
       : `autonomy-${String(values.autonomy)}`
     : undefined;
-  if (autonomyFlag && !configModeToPermissionMode(autonomyFlag)?.startsWith("autonomy-")) {
-    throw new Error(`Invalid --autonomy level "${values.autonomy}"; use I, II, or III`);
+  if (autonomyFlag && !configModeToPermissionMode(autonomyFlag)) {
+    throw new Error(`Invalid --autonomy level "${values.autonomy}"; use I, II, or III (or --gear)`);
   }
   const { yoloMode, trustWorkspace, permissionMode } = resolveStartupPermissionFlags({
+    gearFlag,
     yoloFlag: values.yolo as boolean,
     trustFlag: values.trust as boolean,
     modeFlag: autonomyFlag,
+    configGear: config.permissions?.gear,
     configMode: config.permissions?.mode,
     configTrustWorkspace: config.permissions?.trustWorkspace,
   });
@@ -1311,7 +1320,7 @@ async function main() {
     ["/notebook", "Learned tactics active for this workspace"],
     ["/bug", "Flag a problem — records the flight trail to the black box"],
     ["/plan", "Toggle plan mode"],
-    ["/autonomy", "Set autonomy level — /autonomy I | II | III"],
+    ["/gear", "Shift gears — /gear 1 | 2 | 3 | 4 | auto (empty shifts up)"],
     ["/sandbox", "OS sandbox for commands — on | off (off = full access)"],
     ["/browser", "Agent web browser — on | off (Playwright, headless)"],
     ["/rewind", "Roll back the conversation"],
@@ -2493,11 +2502,32 @@ async function main() {
         return;
       }
 
+      if (input === "/gear" || input.startsWith("/gear ")) {
+        const raw = input.slice("/gear".length).trim();
+        const target = configModeToPermissionMode(raw || undefined);
+        if (raw && !target) {
+          process.stdout.write(
+            `  ${warn("Usage:")} ${info("/gear")} ${dim("[1|2|3|4|auto] — empty shifts up")}\n`,
+          );
+        } else if (!target) {
+          process.stdout.write(permissionModeBanner(engine.cyclePermissionMode()) + "\n");
+        } else {
+          const res = engine.setPermissionMode(target);
+          if (!res.ok && res.reason) process.stdout.write(`${res.reason}\n`);
+          process.stdout.write(permissionModeBanner(engine.getPermissionMode()) + "\n");
+        }
+        showPrompt();
+        return;
+      }
+
       if (input === "/autonomy" || input.startsWith("/autonomy ")) {
+        // Legacy alias: /autonomy I|II|III → 2nd|3rd|4th gear.
         const raw = input.slice("/autonomy".length).trim();
         const target = configModeToPermissionMode(raw ? `autonomy-${raw}` : undefined);
-        if (!target || !target.startsWith("autonomy-")) {
-          process.stdout.write(`  ${warn("Usage:")} ${info("/autonomy")} ${dim("[I|II|III]")}\n`);
+        if (!target) {
+          process.stdout.write(
+            `  ${warn("Usage:")} ${info("/autonomy")} ${dim("[I|II|III] — or use /gear 1|2|3|4|auto")}\n`,
+          );
         } else {
           const res = engine.setPermissionMode(target);
           if (!res.ok && res.reason) process.stdout.write(`${res.reason}\n`);
@@ -2508,8 +2538,8 @@ async function main() {
       }
 
       if (input === "/hands-free" || input === "/turing") {
-        // Hidden compatibility aliases now point to Autonomy III.
-        const target = engine.getPermissionMode() === "autonomy-iii" ? "confirm" : "autonomy-iii";
+        // Hidden compatibility aliases: toggle 4th gear.
+        const target = engine.getPermissionMode() === "gear-4" ? "gear-1" : "gear-4";
         const res = engine.setPermissionMode(target);
         if (!res.ok && res.reason) process.stdout.write(`${res.reason}\n`);
         process.stdout.write(permissionModeBanner(engine.getPermissionMode()) + "\n");
@@ -2562,7 +2592,7 @@ async function main() {
           process.stdout.write(permissionModeBanner(engine.getPermissionMode()) + "\n");
         } else if (raw) {
           process.stdout.write(
-            `  ${warn("Usage:")} ${info("/mode")} ${dim("[confirm|autonomy-i|autonomy-ii|autonomy-iii|auto] — empty cycles")}\n`,
+            `  ${warn("Usage:")} ${info("/mode")} ${dim("[1|2|3|4|auto] — empty shifts up (same as /gear)")}\n`,
           );
         } else {
           process.stdout.write(permissionModeBanner(engine.cyclePermissionMode()) + "\n");

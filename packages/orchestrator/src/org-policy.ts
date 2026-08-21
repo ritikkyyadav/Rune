@@ -5,7 +5,7 @@
 // a policy file from a ROOT-OWNED system path, verifies its Ed25519 signature
 // against a separately installed org public key, and hands the result to the
 // PermissionBroker, which checks it BEFORE every mode shortcut — a policy
-// denial is terminal even in Autonomy III (the legacy turing mode).
+// denial is terminal even in 4th gear (the legacy turing / hands-free mode).
 //
 // Trust model:
 //  - /etc/gear/policy.json + /etc/gear/org.pub (also the macOS
@@ -26,7 +26,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 
 import { verifySignature } from "./signing";
-import type { PermissionMode } from "./permissions";
+import type { PermissionMode, LegacyPermissionMode } from "./permissions";
 import type { AutoModePolicyConfig } from "./auto-mode";
 
 export interface OrgPolicy {
@@ -37,8 +37,8 @@ export interface OrgPolicy {
   toolsDeny?: string[];
   /** When present, ONLY these tools may run (allowlist mode). */
   toolsAllow?: string[];
-  /** Permission modes the user may not enter. Legacy signed values remain valid. */
-  forbidPermissionModes?: Array<PermissionMode | "turing" | "hands-free">;
+  /** Gears the user may not enter. Legacy signed values (turing, hands-free, autonomy-iii…) remain valid. */
+  forbidPermissionModes?: Array<PermissionMode | LegacyPermissionMode>;
   /** Deny bash network escalation and network-reaching tools outright. */
   networkDefaultDeny?: boolean;
   /** When present, only these providers may serve inference. */

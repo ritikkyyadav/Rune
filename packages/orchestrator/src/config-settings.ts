@@ -1,6 +1,6 @@
 // ─── Settable config catalog ───
 // The curated allowlist of settings Gear will change on a plain-language
-// request ("switch to Autonomy III", "turn the sandbox off"). It maps the
+// request ("shift to 4th gear", "turn the sandbox off"). It maps the
 // words a user is likely to say onto a canonical setting + value, and onto the
 // dotted config.toml key the writer persists. Keeping this list small and
 // explicit is deliberate: the `update_config` tool can only ever touch what's
@@ -24,7 +24,7 @@ export interface ConfigSetting {
   /** Whether a change takes effect immediately (vs only on next launch). */
   live: boolean;
   /**
-   * Security-relevant: relaxing it (Autonomy III, sandbox off) removes a guardrail,
+   * Security-relevant: relaxing it (4th gear, sandbox off) removes a guardrail,
    * so the tool always says so plainly. The confirmation prompt is the real gate.
    */
   sensitive?: boolean;
@@ -32,41 +32,91 @@ export interface ConfigSetting {
 
 export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
   {
-    key: "permission_mode",
-    tomlPath: "permissions.mode",
+    key: "gear",
+    tomlPath: "permissions.gear",
     description:
-      "How Gear acts: confirm prompts; Autonomy I permits confined edits; Autonomy II " +
-      "also permits sandboxed commands; Autonomy III takes full host access; Auto uses " +
-      "the isolated action classifier.",
+      "Which gear Gear runs in: 1 = guided (asks before writes and commands); 2 = workspace " +
+      "file edits proceed; 3 = also sandboxed commands and confined delegation; 4 = full " +
+      "autonomy, no prompts; auto = a separate classifier reviews risky actions.",
     kind: "enum",
-    values: ["confirm", "autonomy-i", "autonomy-ii", "autonomy-iii", "auto"],
+    values: ["1", "2", "3", "4", "auto"],
     valueAliases: {
-      normal: "confirm",
-      standard: "confirm",
-      default: "confirm",
-      ask: "confirm",
-      prompt: "confirm",
-      safe: "confirm",
-      trusted: "auto",
-      trust: "auto",
-      "auto-approve": "auto",
-      autoapprove: "auto",
-      "autonomy 1": "autonomy-i",
-      "autonomy i": "autonomy-i",
-      "autonomy 2": "autonomy-ii",
-      "autonomy ii": "autonomy-ii",
-      "autonomy 3": "autonomy-iii",
-      "autonomy iii": "autonomy-iii",
-      handsfree: "autonomy-iii",
-      "hands free": "autonomy-iii",
-      "hands-free": "autonomy-iii",
-      turing: "autonomy-iii",
-      yolo: "autonomy-iii",
-      bypass: "autonomy-iii",
-      autonomous: "autonomy-iii",
-      full: "autonomy-iii",
+      // 1st gear
+      "gear 1": "1",
+      "gear-1": "1",
+      "1st": "1",
+      "1st gear": "1",
+      first: "1",
+      "first gear": "1",
+      confirm: "1",
+      guided: "1",
+      normal: "1",
+      standard: "1",
+      default: "1",
+      ask: "1",
+      prompt: "1",
+      safe: "1",
+      // 2nd gear
+      "gear 2": "2",
+      "gear-2": "2",
+      "2nd": "2",
+      "2nd gear": "2",
+      second: "2",
+      "second gear": "2",
+      "autonomy-i": "2",
+      "autonomy 1": "2",
+      "autonomy i": "2",
+      edits: "2",
+      // 3rd gear (legacy "auto-approve"/"trusted" = workspace trust)
+      "gear 3": "3",
+      "gear-3": "3",
+      "3rd": "3",
+      "3rd gear": "3",
+      third: "3",
+      "third gear": "3",
+      "autonomy-ii": "3",
+      "autonomy 2": "3",
+      "autonomy ii": "3",
+      workspace: "3",
+      trusted: "3",
+      trust: "3",
+      "auto-approve": "3",
+      autoapprove: "3",
+      // 4th gear
+      "gear 4": "4",
+      "gear-4": "4",
+      "4th": "4",
+      "4th gear": "4",
+      fourth: "4",
+      "fourth gear": "4",
+      "autonomy-iii": "4",
+      "autonomy 3": "4",
+      "autonomy iii": "4",
+      handsfree: "4",
+      "hands free": "4",
+      "hands-free": "4",
+      turing: "4",
+      yolo: "4",
+      bypass: "4",
+      autonomous: "4",
+      full: "4",
+      // automatic
+      automatic: "auto",
+      classifier: "auto",
+      "auto review": "auto",
+      "auto-review": "auto",
     },
-    nameAliases: ["mode", "permission", "permissions", "permission mode", "permissions mode"],
+    nameAliases: [
+      "gears",
+      "mode",
+      "permission_mode",
+      "permission",
+      "permissions",
+      "permission mode",
+      "permissions mode",
+      "autonomy",
+      "autonomy level",
+    ],
     live: true,
     sensitive: true,
   },

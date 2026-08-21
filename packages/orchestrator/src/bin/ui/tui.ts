@@ -487,7 +487,7 @@ class Tui {
     );
   }
 
-  /** Advance the permission mode one step (Shift+Tab / `/autonomy` / `/mode`) and announce it. */
+  /** Shift up one gear (Shift+Tab / `/gear` / `/mode`) — or straight to `target` — and announce it. */
   private cyclePermissionMode(mode?: ReturnType<Engine["getPermissionMode"]>): void {
     let next: ReturnType<Engine["getPermissionMode"]>;
     if (mode) {
@@ -498,8 +498,8 @@ class Tui {
       next = this.ctx.engine.cyclePermissionMode();
     }
     // Keep the ctx mirror current for any other reader of these flags.
-    this.ctx.yoloMode = next === "autonomy-iii";
-    this.ctx.trustWorkspace = next === "auto";
+    this.ctx.yoloMode = next === "gear-4";
+    this.ctx.trustWorkspace = next === "gear-3";
     this.print(permissionModeBanner(next));
   }
 
@@ -525,7 +525,8 @@ class Tui {
       { name: "/deepresearch", desc: "Deep research — multi-round, long-form" },
       { name: "/cost", desc: "Session cost" },
       { name: "/plan", desc: "Toggle plan mode" },
-      { name: "/autonomy", desc: "Set the gear directly — I | II | III" },
+      { name: "/gear", desc: "Shift gears — /gear 1 | 2 | 3 | 4 | auto (empty shifts up)" },
+      { name: "/autonomy", desc: "Legacy alias — /autonomy I | II | III = 2nd | 3rd | 4th gear" },
       { name: "/sandbox", desc: "OS sandbox for commands — on | off (off = full access)" },
       { name: "/browser", desc: "Agent web browser — on | off" },
       { name: "/rewind", desc: "Roll back the conversation" },
@@ -1646,17 +1647,30 @@ class Tui {
         this.print(`  ${ok("✓")} ${muted(`plan mode ${on ? "on" : "off"}`)}`);
         return true;
       }
-      case "autonomy": {
-        const target = configModeToPermissionMode(arg ? `autonomy-${arg}` : undefined);
-        if (target?.startsWith("autonomy-")) this.cyclePermissionMode(target);
-        else this.print(`  ${warn("Usage:")} ${info("/autonomy")} ${faint("[I|II|III]")}`);
+      case "gear": {
+        // /gear          → shift up one gear
+        // /gear 3 | 3rd | auto → shift straight to that gear
+        const target = configModeToPermissionMode(arg || undefined);
+        if (arg && !target) {
+          this.print(
+            `  ${warn("Usage:")} ${info("/gear")} ${faint("[1|2|3|4|auto] — empty shifts up")}`,
+          );
+        } else this.cyclePermissionMode(target);
         return true;
       }
-      case "turing": // hidden compatibility aliases for Autonomy III
+      case "autonomy": {
+        // Legacy alias: /autonomy I|II|III → 2nd|3rd|4th gear.
+        const target = configModeToPermissionMode(arg ? `autonomy-${arg}` : undefined);
+        if (target) this.cyclePermissionMode(target);
+        else
+          this.print(
+            `  ${warn("Usage:")} ${info("/autonomy")} ${faint("[I|II|III] — or /gear 1|2|3|4|auto")}`,
+          );
+        return true;
+      }
+      case "turing": // hidden compatibility aliases: toggle 4th gear
       case "hands-free": {
-        this.cyclePermissionMode(
-          engine.getPermissionMode() === "autonomy-iii" ? "confirm" : "autonomy-iii",
-        );
+        this.cyclePermissionMode(engine.getPermissionMode() === "gear-4" ? "gear-1" : "gear-4");
         return true;
       }
       case "mode": {
@@ -1666,7 +1680,7 @@ class Tui {
           this.cyclePermissionMode(mode);
         } else if (raw) {
           this.print(
-            `  ${warn("Usage:")} ${info("/mode")} ${faint("[confirm|autonomy-i|autonomy-ii|autonomy-iii|auto] — empty cycles")}`,
+            `  ${warn("Usage:")} ${info("/mode")} ${faint("[1|2|3|4|auto] — empty shifts up (same as /gear)")}`,
           );
         } else {
           this.cyclePermissionMode(); // no arg → advance the cycle, like Shift+Tab

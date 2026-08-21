@@ -82,16 +82,24 @@ export interface AlanConfig {
     defaultLevel: "auto" | "confirm" | "sandbox";
     rules: PermissionRule[];
     /**
-     * The permission mode the session STARTS in — the persisted counterpart of
-     * the Shift+Tab cycle:
-     *   confirm      — ask before writes / commands (default, safest)
-     *   autonomy-i   — confined workspace edits without prompts
-     *   autonomy-ii  — also allow sandboxed commands and confined delegation
-     *   autonomy-iii — full host access with no permission prompts
-     *   auto         — independently classify risky actions against user intent
-     * Explicit `--yolo` / `--trust` flags still override this at launch. Absent ⇒
-     * confirm. Org policy can forbid modes regardless of what is written here.
-     * Legacy `hands-free` and `turing` values are still accepted by the runtime.
+     * The gear the session STARTS in — the persisted counterpart of the
+     * Shift+Tab cycle ("shift up"):
+     *   1 | "1"   — 1st gear: guided — ask before writes and commands (default)
+     *   2 | "2"   — 2nd gear: workspace file edits proceed; commands still ask
+     *   3 | "3"   — 3rd gear: also sandboxed commands and confined delegation
+     *   4 | "4"   — 4th gear: full autonomy, no permission prompts
+     *               (the OS sandbox is the separate [sandbox] switch)
+     *   "auto"    — automatic: a separate classifier reviews risky actions
+     * Ordinals ("3rd"), ids ("gear-3") and the legacy autonomy names are read
+     * too. Explicit `--gear` / `--yolo` / `--trust` flags override this at
+     * launch. Absent ⇒ 1st gear. Org policy can forbid gears regardless.
+     */
+    gear?: 1 | 2 | 3 | 4 | "1" | "2" | "3" | "4" | "auto" | (string & {});
+    /**
+     * LEGACY key (pre-gear). Still read when `gear` is absent. Historical
+     * values: confirm → 1st gear; autonomy-i/ii/iii → 2nd/3rd/4th;
+     * hands-free/turing → 4th; and the OLD meaning of "auto" (auto-approve
+     * workspace work) → 3rd gear — never the classifier.
      */
     mode?:
       | "confirm"
@@ -102,9 +110,8 @@ export interface AlanConfig {
       | "hands-free"
       | "turing";
     /**
-     * Legacy storage flag for starting in Auto mode. The Engine still routes
-     * risky commands, external actions, and protected writes through the
-     * independent Auto reviewer; this flag is not a classifier bypass.
+     * LEGACY storage flag for the old "workspace trust" (today's 3rd gear).
+     * Read when neither `gear` nor `mode` is set.
      */
     trustWorkspace?: boolean;
     /**
@@ -556,6 +563,8 @@ function applyEnvOverrides(config: Record<string, unknown>): void {
       setNested(c, "permissions.trustWorkspace", process.env.GEAR_TRUST_WORKSPACE === "true"),
     GEAR_PERMISSION_MODE: (c) =>
       setNested(c, "permissions.mode", process.env.GEAR_PERMISSION_MODE!),
+    // New-style: the gear itself (1|2|3|4|auto). `auto` here = the classifier.
+    GEAR_GEAR: (c) => setNested(c, "permissions.gear", process.env.GEAR_GEAR!),
     GEAR_AUTO_CLASSIFIER_PROVIDER: (c) =>
       setNested(
         c,
@@ -676,7 +685,7 @@ export function getAlanHome(): string {
 
 // ─── Config Writer ───
 // Persist a single setting back into config.toml so a change made at runtime
-// (Shift+Tab, `/config`, or "switch to Autonomy III" spoken in chat) survives
+// (Shift+Tab, `/config`, or "shift to 4th gear" spoken in chat) survives
 // the next launch. This is deliberately a LINE-ORIENTED editor, not a
 // serialize-the-whole-object writer: it rewrites only the one key's line and
 // leaves every comment, blank line, and unrelated key exactly as the user wrote
