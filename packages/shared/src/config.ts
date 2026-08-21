@@ -131,7 +131,17 @@ export interface AlanConfig {
       denyRules?: string[];
       timeoutMs?: number;
       maxAutomaticDenials?: number;
+      /**
+       * Default true. `false` (reviewer outage = allow everything) is honored
+       * only when the signed org policy permits fail-open (`autoMode.allowFailOpen`
+       * or its own `failClosed = false`); otherwise it is ignored with a loud
+       * one-time warning and reported in /status as `failOpenAllowed = false`.
+       */
       failClosed?: boolean;
+      /**
+       * Default true. Screens UNTRUSTED-SOURCE tool results (web, MCP, browser,
+       * shell stdout, webhooks) for prompt injection; workspace reads are never probed.
+       */
       probeToolResults?: boolean;
     };
   };

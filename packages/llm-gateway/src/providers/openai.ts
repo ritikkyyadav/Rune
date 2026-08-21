@@ -59,6 +59,22 @@ export class OpenAIProvider implements LlmProvider {
     return /^(gpt-5|o[134])(-|:|$)/.test(model.toLowerCase());
   }
 
+  /**
+   * The cheapest reasoning dial a first-party reasoning model accepts when the
+   * caller asked for NO thinking (Auto-mode fast classifier, utility calls).
+   * Omitting `reasoning_effort` is not "off" — gpt-5/o-series default to
+   * medium and spend the whole small completion budget on hidden reasoning,
+   * returning empty content. Per the model pages: gpt-5/-mini/-nano accept
+   * "minimal"; gpt-5.1+ replaced it with "none"; gpt-5-codex and the o-series
+   * bottom out at "low".
+   */
+  static minimalReasoningEffort(model: string): "minimal" | "none" | "low" {
+    const m = model.toLowerCase();
+    if (/^gpt-5(?:-mini|-nano|-chat)?(?:-|$)/.test(m) && !m.includes("codex")) return "minimal";
+    if (/^gpt-5\.\d/.test(m) && !m.includes("codex")) return "none";
+    return "low";
+  }
+
   /** Token/sampling/reasoning params appropriate for the target model family. */
   private buildTuningParams(request: InferenceRequest): Record<string, unknown> {
     if (this.isOpenAIReasoningModel(request.model)) {
@@ -66,10 +82,13 @@ export class OpenAIProvider implements LlmProvider {
         max_completion_tokens: request.maxTokens,
         // Depth dial: honor the caller's effort, defaulting HIGH — an agent
         // that plans/diagnoses at "medium" rushes to shallow conclusions
-        // (the exact daily-driver complaint this replaces).
-        ...(request.thinking?.enabled !== false
-          ? { reasoning_effort: request.thinking?.effort ?? "high" }
-          : {}),
+        // (the exact daily-driver complaint this replaces). Thinking explicitly
+        // disabled maps to the model's floor so a small max_completion_tokens
+        // budget is spent on the answer, not on hidden reasoning.
+        reasoning_effort:
+          request.thinking?.enabled === false
+            ? OpenAIProvider.minimalReasoningEffort(request.model)
+            : (request.thinking?.effort ?? "high"),
       };
     }
     return {

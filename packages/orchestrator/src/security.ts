@@ -16,6 +16,8 @@ export interface ScanFinding {
   match: string;
   position: number;
   confidence?: "low" | "medium" | "high";
+  /** Which pattern family produced the finding (see InjectionPatternFamily). */
+  family?: InjectionPatternFamily;
 }
 
 export interface InjectionScanResult {
@@ -27,106 +29,250 @@ export interface InjectionScanResult {
 }
 
 /**
+ * Pattern families.
+ *
+ * - `override`: instruction override / privileged-message spoofing / jailbreak
+ *   phrasing. These are meaningful both in tool RESULTS (indirect injection)
+ *   and in tool ARGUMENTS (an agent relaying an injection onward through a
+ *   shell, webhook or MCP call), so the pre-execution guard scans for them.
+ * - `output`: exfiltration, credential steering and concealment phrasing that
+ *   only makes sense as instructions smuggled INTO the agent's context. They
+ *   collide with ordinary code and prose far too often to veto a tool call, so
+ *   they are used by the result probe only.
+ */
+export type InjectionPatternFamily = "override" | "output";
+
+export interface InjectionScanOptions {
+  /** Restrict the scan to these families. Default: every family. */
+  families?: InjectionPatternFamily[];
+}
+
+interface InjectionPattern {
+  pattern: RegExp;
+  name: string;
+  confidence: "medium" | "high";
+  family: InjectionPatternFamily;
+  /**
+   * Skip a match that sits on a line of code or inside a fenced code block.
+   * Used for credential steering, whose verbs ("read", "open", "send") and
+   * nouns ("token", "secret", ".env") are everyday programming vocabulary.
+   */
+  ignoreCodeIdioms?: boolean;
+}
+
+const CREDENTIAL_NOUN =
+  "(?:\\.env\\b|\\benv\\s+file|credentials?|private\\s+keys?|api[\\s_-]?keys?|secrets?|tokens?|passwords?|ssh\\s+keys?)";
+const EXFIL_VERB =
+  "(?:upload|send|post|exfiltrate|email|transmit|leak|forward|paste|publish|share|submit)";
+const DETERMINER =
+  "(?:the\\s+|your\\s+|all\\s+|any\\s+|every\\s+|its\\s+|their\\s+|my\\s+|our\\s+)?";
+const DESTINATION =
+  "(?:https?:\\/\\/|[\\w.-]+\\.(?:com|net|org|io|dev|app|xyz|sh|co|me|ai|ru|cn|to|cc|gg)\\b|(?:the|this|that|my|our|an?)\\s+(?:server|endpoint|url|webhook|address|attacker|link|bucket|paste|service|email|inbox|channel|bot|form|api)\\b|\\S+@\\S+\\.\\w+)";
+
+/**
  * Known prompt injection patterns.
  * Defense-in-depth: this catches known patterns but has false negatives.
  * Not a primary mitigation — tool surface restriction is the primary defense.
+ *
+ * Confidence discipline: `high` patterns must read as an instruction aimed at
+ * an AI agent; phrasing that is also everyday code or documentation vocabulary
+ * stays `medium` (informational — it never trips the probe on its own).
  */
-const INJECTION_PATTERNS: Array<{ pattern: RegExp; name: string; confidence: "medium" | "high" }> =
-  [
-    // Direct instruction override
-    {
-      pattern: /ignore\s+(all\s+)?previous\s+(instructions|prompts)/i,
-      name: "instruction_override",
-      confidence: "high",
-    },
-    {
-      pattern: /disregard\s+(all\s+)?prior\s+(instructions|context)/i,
-      name: "instruction_override",
-      confidence: "high",
-    },
-    {
-      pattern: /forget\s+(everything|all|your)\s+(instructions|rules|constraints)/i,
-      name: "instruction_override",
-      confidence: "high",
-    },
-    { pattern: /you\s+are\s+now\s+(a\s+)?/i, name: "role_injection", confidence: "medium" },
-    { pattern: /new\s+instructions?:\s/i, name: "instruction_injection", confidence: "medium" },
-    { pattern: /system\s*:\s*you\s+are/i, name: "system_prompt_injection", confidence: "high" },
-    {
-      pattern: /(?:system|developer)\s+(?:message|instruction|prompt)\s*:/i,
-      name: "privileged_message_spoofing",
-      confidence: "high",
-    },
-    {
-      pattern: /(?:do\s+not|never)\s+(?:tell|show|mention|reveal)\s+(?:the\s+)?user/i,
-      name: "concealment_instruction",
-      confidence: "high",
-    },
-    {
-      pattern: /(?:call|invoke|use|run)\s+(?:the\s+)?(?:tool|function)\b/i,
-      name: "tool_steering",
-      confidence: "medium",
-    },
-    {
-      pattern:
-        /(?:read|open|print|upload|exfiltrate)\s+[^\n]{0,80}(?:\.env|credentials?|private\s*key|api\s*key|secret|token)/i,
-      name: "credential_steering",
-      confidence: "high",
-    },
+const INJECTION_PATTERNS: InjectionPattern[] = [
+  // Direct instruction override
+  {
+    pattern:
+      /\bignore\s+(?:all\s+|any\s+|the\s+|your\s+|my\s+)?(?:previous|prior|earlier|above|preceding|foregoing)\s+(?:instructions?|prompts?|directions?|rules?|guidance|context|messages?)\b/i,
+    name: "instruction_override",
+    confidence: "high",
+    family: "override",
+  },
+  {
+    pattern:
+      /\bdisregard\s+(?:all\s+|any\s+|the\s+|your\s+)?(?:previous|prior|earlier|above|preceding)\s+(?:instructions?|prompts?|directions?|rules?|context|messages?)\b/i,
+    name: "instruction_override",
+    confidence: "high",
+    family: "override",
+  },
+  {
+    pattern:
+      /\bforget\s+(?:everything\s+|all\s+(?:of\s+)?(?:your\s+|the\s+)?|your\s+|the\s+)(?:previous\s+|prior\s+|earlier\s+)?(?:instructions|rules|constraints|guidelines|system\s+prompt)\b/i,
+    name: "instruction_override",
+    confidence: "high",
+    family: "override",
+  },
+  {
+    pattern: /\byou\s+are\s+now\s+(?:a|an)\s+\w+/i,
+    name: "role_injection",
+    confidence: "medium",
+    family: "override",
+  },
+  {
+    pattern:
+      /\byou\s+are\s+now\s+(?:unrestricted|unfiltered|uncensored|unlocked|jailbroken|free\s+(?:of|from)\s+(?:all\s+|any\s+)?(?:restrictions|rules|limitations|guidelines|filters))\b/i,
+    name: "restriction_bypass",
+    confidence: "high",
+    family: "override",
+  },
+  {
+    pattern: /\bnew\s+instructions?:\s/i,
+    name: "instruction_injection",
+    confidence: "medium",
+    family: "override",
+  },
+  {
+    pattern: /\bsystem\s*:\s*you\s+are\b/i,
+    name: "system_prompt_injection",
+    confidence: "high",
+    family: "override",
+  },
+  // A spoofed privileged header is only high-confidence when it is followed
+  // by an imperative; a bare "System prompt:" is ordinary documentation.
+  {
+    pattern:
+      /(?:^|\n)[ \t]*(?:\[|<|#+\s*|\*\*|>\s*)?(?:system|developer|admin(?:istrator)?)\s*(?:message|instructions?|prompt|note|override)\s*(?:\]|>|\*\*)?\s*:\s*(?:you\s+(?:are|must|should|will|may\s+now|can\s+now|have\s+to)|ignore|disregard|always|never|from\s+now|do\s+not|don['’]t|new\s+|stop\s+|immediately)/i,
+    name: "privileged_message_spoofing",
+    confidence: "high",
+    family: "override",
+  },
+  {
+    pattern: /\b(?:system|developer)\s+(?:message|instruction|prompt)\s*:/i,
+    name: "privileged_message_spoofing",
+    confidence: "medium",
+    family: "override",
+  },
 
-    // Data exfiltration
-    {
-      pattern: /send\s+(this|the|all)\s+(data|information|content)\s+to/i,
-      name: "exfiltration_attempt",
-      confidence: "high",
-    },
-    {
-      pattern: /email\s+(this|the|all)\s+(data|information|content)\s+to/i,
-      name: "exfiltration_attempt",
-      confidence: "high",
-    },
-    {
-      pattern: /post\s+(this|the|all)\s+(data|information|content)\s+to/i,
-      name: "exfiltration_attempt",
-      confidence: "high",
-    },
-    {
-      pattern: /fetch\s*\(\s*["']https?:\/\/[^"']*["']\s*,\s*\{[^}]*body/i,
-      name: "exfiltration_via_fetch",
-      confidence: "high",
-    },
+  // Concealment: telling the agent to hide its actions from the person.
+  // "the user" is required (not "user emails" / "the user's id"), and the
+  // object must not be the user's own possession (product copy such as
+  // "...show the user their raw email" passes; "...tell the user about this
+  // message" does not).
+  {
+    pattern:
+      /\b(?:do\s+not|don['’]t|never)\s+(?:tell|show|mention|reveal|disclose|inform|alert|notify|warn)\s+(?:this\s+to\s+|it\s+to\s+|that\s+to\s+|anything\s+to\s+)?the\s+user\b(?!['’]s\b|\s+(?:their|his|her|its|your|own)\b)/i,
+    name: "concealment_instruction",
+    confidence: "high",
+    family: "output",
+  },
 
-    // Encoded injection
-    { pattern: /base64[_\s]*decode/i, name: "encoded_injection", confidence: "medium" },
-    { pattern: /eval\s*\(/i, name: "code_injection", confidence: "medium" },
+  // Credential steering: an imperative exfiltration verb, a credential noun,
+  // and a destination — or read-the-secret-then-send-it. Plain "read the
+  // token" / "open .env" is everyday shell and code vocabulary.
+  {
+    pattern: new RegExp(
+      `\\b${EXFIL_VERB}\\s+(?:me\\s+|us\\s+|them\\s+)?${DETERMINER}(?:contents?\\s+of\\s+(?:the\\s+)?)?[^\\n]{0,40}?\\b${CREDENTIAL_NOUN}\\b[^\\n]{0,60}?\\b(?:to|into|at|via)\\s+${DESTINATION}`,
+      "i",
+    ),
+    name: "credential_steering",
+    confidence: "high",
+    family: "output",
+    ignoreCodeIdioms: true,
+  },
+  {
+    pattern: new RegExp(
+      `\\b(?:read|open|cat|print|dump|reveal|extract|collect|gather|grab|copy|find|locate)\\s+(?:out\\s+)?${DETERMINER}(?:contents?\\s+of\\s+(?:the\\s+)?)?[^\\n]{0,40}?\\b${CREDENTIAL_NOUN}\\b[^\\n]{0,80}?\\b(?:and|then)\\s+(?:${EXFIL_VERB}|include\\s+(?:it|them)\\s+in|put\\s+(?:it|them)\\s+in)\\b`,
+      "i",
+    ),
+    name: "credential_steering",
+    confidence: "high",
+    family: "output",
+    ignoreCodeIdioms: true,
+  },
 
-    // Jailbreak patterns
-    { pattern: /\bDAN\b.*\bmode\b/i, name: "dan_jailbreak", confidence: "high" },
-    {
-      pattern: /developer\s+mode\s+(enabled|activated|on)/i,
-      name: "developer_mode_jailbreak",
-      confidence: "high",
-    },
-    {
-      pattern: /act\s+as\s+if\s+(you\s+)?(have\s+)?(no\s+)?(restrictions|limitations|boundaries)/i,
-      name: "restriction_bypass",
-      confidence: "high",
-    },
-    {
-      pattern:
-        /(?:bypass|disable|override)\s+(?:the\s+)?(?:safety|security|permission|policy|classifier|guardrail)/i,
-      name: "safety_bypass",
-      confidence: "high",
-    },
-  ];
+  // Data exfiltration
+  {
+    pattern:
+      /\b(?:send|email|post|forward|transmit|exfiltrate)\s+(?:all\s+(?:of\s+)?)?(?:this|the|these|those|every|any|our|your|my|all)\s+(?:(?:user|customer|private|internal|collected|gathered|session|conversation)\s+)?(?:data|information|content|contents|conversation|transcript|history)\s+(?:to|into)\s+/i,
+    name: "exfiltration_attempt",
+    confidence: "high",
+    family: "output",
+  },
+  // A literal fetch(url, {body}) is ordinary JavaScript; informational only.
+  {
+    pattern: /fetch\s*\(\s*["']https?:\/\/[^"']*["']\s*,\s*\{[^}]*body/i,
+    name: "exfiltration_via_fetch",
+    confidence: "medium",
+    family: "output",
+  },
+
+  // Encoded injection (code vocabulary — informational only)
+  {
+    pattern: /base64[_\s]*decode/i,
+    name: "encoded_injection",
+    confidence: "medium",
+    family: "output",
+  },
+  { pattern: /\beval\s*\(/i, name: "code_injection", confidence: "medium", family: "output" },
+
+  // Jailbreak patterns
+  {
+    pattern:
+      /\bDAN\s+mode\b|\b(?:enable|enter|activate|switch\s+to)\s+DAN\b|\bdo\s+anything\s+now\b/i,
+    name: "dan_jailbreak",
+    confidence: "high",
+    family: "override",
+  },
+  {
+    pattern: /\bdeveloper\s+mode\s+(?:enabled|activated|on)\b/i,
+    name: "developer_mode_jailbreak",
+    confidence: "high",
+    family: "override",
+  },
+  {
+    pattern:
+      /\b(?:act|behave|respond)\s+as\s+if\s+(?:you\s+)?(?:have\s+|had\s+|there\s+(?:are|were)\s+)?(?:no\s+)?(?:restrictions|limitations|boundaries|rules|guidelines|filters)\b|\bpretend\s+(?:that\s+)?you\s+have\s+no\s+(?:restrictions|limitations|rules|guidelines|filters)\b/i,
+    name: "restriction_bypass",
+    confidence: "high",
+    family: "override",
+  },
+  // Imperative only: "Bypass the safety checks." / "You must disable the
+  // sandbox." — never "rules cannot bypass the classifier" in a design doc.
+  {
+    pattern:
+      /(?:^|[.!?:]\s*|\n\s*|\b(?:please|now|then|and|first|immediately|you\s+(?:must|should|need\s+to|have\s+to|will|can\s+now|may\s+now))\s+)(?:bypass|disable|override|turn\s+off|switch\s+off|circumvent)\s+(?:the\s+|all\s+|any\s+|your\s+|its\s+|gear['’]s\s+)?(?:safety|security|permission|policy|classifier|guardrail|sandbox|content\s+filter|safeguard|restriction)s?\b/i,
+    name: "safety_bypass",
+    confidence: "high",
+    family: "override",
+  },
+];
+
+const CODE_IDIOM_LINE =
+  /process\.env|os\.environ|getenv\(|\.env\.example|dotenv|import\s|require\(|=>|^\s*(?:\/\/|#|\*|--)|[{};]\s*$|\bconst\s|\blet\s|\bvar\s|\bfn\s|\bdef\s|\bfunction\s/;
+
+/** Byte ranges of fenced code blocks (``` … ```) so code samples are not read as instructions. */
+function fencedRanges(text: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  const fence = /(?:^|\n)[ \t]*(```|~~~)/g;
+  let open: number | null = null;
+  let m: RegExpExecArray | null;
+  while ((m = fence.exec(text)) !== null) {
+    if (open === null) open = m.index;
+    else {
+      ranges.push([open, m.index + m[0].length]);
+      open = null;
+    }
+  }
+  if (open !== null) ranges.push([open, text.length]);
+  return ranges;
+}
+
+function lineAt(text: string, position: number): string {
+  const start = text.lastIndexOf("\n", position) + 1;
+  const end = text.indexOf("\n", position);
+  return text.slice(start, end === -1 ? text.length : end);
+}
 
 /**
  * Scan input for known prompt injection patterns.
  */
-export function scanForInjection(input: string): InjectionScanResult {
+export function scanForInjection(
+  input: string,
+  options: InjectionScanOptions = {},
+): InjectionScanResult {
   const matches: string[] = [];
   const findings: ScanFinding[] = [];
   let maxConfidence: "low" | "medium" | "high" = "low";
+  const families = options.families ? new Set(options.families) : null;
 
   // Normalize compatibility glyphs and remove common invisible separators so
   // trivial full-width/zero-width obfuscation does not bypass the probe.
@@ -134,17 +280,37 @@ export function scanForInjection(input: string): InjectionScanResult {
     .normalize("NFKC")
     .replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
     .replace(/(?:&nbsp;|&#x?0*20;)/gi, " ");
+  let fences: Array<[number, number]> | null = null;
 
-  for (const { pattern, name, confidence } of INJECTION_PATTERNS) {
-    pattern.lastIndex = 0;
-    const matched = pattern.exec(normalized);
-    if (matched) {
+  for (const { pattern, name, confidence, family, ignoreCodeIdioms } of INJECTION_PATTERNS) {
+    if (families && !families.has(family)) continue;
+    // Walk every occurrence: the first hit of a code-idiom pattern may sit in
+    // a code block while a later one is a real instruction.
+    const scanner = new RegExp(
+      pattern.source,
+      pattern.flags.includes("g") ? pattern.flags : pattern.flags + "g",
+    );
+    let matched: RegExpExecArray | null;
+    let recorded = false;
+    while (!recorded && (matched = scanner.exec(normalized)) !== null) {
+      if (matched[0].length === 0) {
+        scanner.lastIndex++;
+        continue;
+      }
+      if (ignoreCodeIdioms) {
+        fences ??= fencedRanges(normalized);
+        const at = matched.index;
+        if (fences.some(([from, to]) => at >= from && at < to)) continue;
+        if (CODE_IDIOM_LINE.test(lineAt(normalized, at))) continue;
+      }
+      recorded = true;
       matches.push(name);
       findings.push({
         type: name,
-        match: matched[0].slice(0, 120),
+        match: matched[0].trim().slice(0, 120),
         position: matched.index,
         confidence,
+        family,
       });
       if (confidence === "high") maxConfidence = "high";
       else if (confidence === "medium" && maxConfidence !== "high") maxConfidence = "medium";
@@ -158,6 +324,11 @@ export function scanForInjection(input: string): InjectionScanResult {
     findings,
     input: normalized.slice(0, 200),
   };
+}
+
+/** True when a scan holds at least one high-confidence finding (the probe's bar). */
+export function hasHighConfidenceFinding(scan: InjectionScanResult): boolean {
+  return scan.findings.some((finding) => finding.confidence === "high");
 }
 
 // ─── Untrusted Input Tagging (Section 9.2) ───
@@ -381,6 +552,31 @@ export function createEgressGuard(allowlist?: string[]): (url: string) => boolea
 
 // ─── Tool Execution Guard ───
 
+/** Tools whose arguments leave the process (shell, webhooks, network, MCP). */
+const ARG_SCAN_TOOLS = new Set(["bash", "n8n_trigger", "web_fetch", "web_search", "research"]);
+
+/** True when a tool's arguments are scanned for override/jailbreak phrasing before execution. */
+export function isArgScanTool(toolName: string): boolean {
+  return (
+    ARG_SCAN_TOOLS.has(toolName) || toolName.startsWith("mcp_") || toolName.startsWith("browser_")
+  );
+}
+
+/** Every string value in a (possibly nested) argument object, depth-first. */
+export function collectStringLeaves(value: unknown, out: string[] = [], depth = 0): string[] {
+  if (depth > 8 || out.length > 256) return out;
+  if (typeof value === "string") {
+    if (value.trim()) out.push(value);
+  } else if (Array.isArray(value)) {
+    for (const item of value) collectStringLeaves(item, out, depth + 1);
+  } else if (value && typeof value === "object") {
+    for (const item of Object.values(value as Record<string, unknown>)) {
+      collectStringLeaves(item, out, depth + 1);
+    }
+  }
+  return out;
+}
+
 /**
  * Create a composable tool execution guard with pre/post execution hooks.
  * Combines egress filtering, injection scanning, and output redaction.
@@ -399,23 +595,25 @@ export function createToolExecutionGuard(config: {
   const egressCheck = createEgressGuard(config.egressAllowlist);
   return {
     preExecution: (toolName, args) => {
-      // Check for URLs in args and validate egress
-      // Tool-result probing is the primary indirect-injection layer. This
-      // pre-execution check is restricted to executable/network payloads so
-      // Gear can still write tests and documentation *about* prompt injection
-      // without its file contents being mistaken for a live attack.
-      if (config.scanInputs !== false && ["bash", "n8n_trigger"].includes(toolName)) {
-        const inputStr = JSON.stringify(args);
-        const injection = scanForInjection(inputStr);
-        if (
-          injection.findings.length > 0 &&
-          injection.findings.some((f) => f.confidence === "high")
-        ) {
-          return {
-            allowed: false,
-            reason: "Prompt injection detected in tool args",
-            findings: injection.findings,
-          };
+      // Argument scanning is restricted to the override/jailbreak family and to
+      // executable, network and MCP payloads. The output-oriented patterns
+      // (exfiltration, credential steering, concealment) collide with ordinary
+      // shell/code vocabulary ("read -p 'Enter token: '", "open .env") and with
+      // Gear writing tests or docs ABOUT prompt injection, so they never veto a
+      // tool call — the tool-result probe is the indirect-injection layer.
+      if (config.scanInputs !== false && isArgScanTool(toolName)) {
+        // Scan every string leaf on its own rather than the JSON blob: JSON
+        // escaping turns newlines into "\\n" and prefixes values with quotes,
+        // which defeats the line-anchored privileged-header patterns.
+        for (const text of collectStringLeaves(args)) {
+          const injection = scanForInjection(text, { families: ["override"] });
+          if (hasHighConfidenceFinding(injection)) {
+            return {
+              allowed: false,
+              reason: "Prompt injection detected in tool args",
+              findings: injection.findings,
+            };
+          }
         }
       }
       // Check egress for network tools

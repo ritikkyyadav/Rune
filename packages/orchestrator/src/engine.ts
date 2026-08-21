@@ -126,11 +126,13 @@ export type { QuestionHandler, UserQuestion } from "./ask-user";
 import { createLoopControlTool } from "./loop-control-tool";
 import {
   LoopManager,
+  isTrustedLoopPromptSource,
   parseLoopRequest,
   renderLoopRunDoctrine,
   resolveLoopPrompt,
   type LoopCancelResult,
   type LoopCompletion,
+  type LoopPromptSource,
   type LoopRunOutcome,
   type LoopTask,
 } from "./loop-mode";
@@ -1263,11 +1265,15 @@ export class Engine {
   private buildPermissionCheck(context: {
     sessionId: string;
     userMessages: string[];
+    /** Prompts that drive the run but were not typed by the user (repo loop.md). */
+    untrustedPrompts?: string[];
   }): PermissionCheck {
     // One stripped action transcript per user run. It accumulates tool calls,
     // including Tier-1/2 calls that skip model review, but never assistant prose
-    // or tool output.
-    const autoRun = this.autoModeSafety.startRun(context.userMessages);
+    // or tool output. File-sourced loop prompts ride along as evidence only.
+    const autoRun = this.autoModeSafety.startRun(context.userMessages, {
+      untrustedPrompts: context.untrustedPrompts ?? [],
+    });
 
     return async ({ callId, toolName, args }) => {
       // Rate limiter check
@@ -1473,7 +1479,11 @@ export class Engine {
 
   /** Shared by the lead loop, planner executors, read-only tasks and workers. */
   private processToolResult: ToolResultProcessor = (ctx: ToolResultProcessArgs) => {
-    const screened = this.autoModeSafety.screenToolResult(ctx.toolName, ctx.output);
+    const screened = this.autoModeSafety.screenToolResult(ctx.toolName, ctx.output, {
+      args: ctx.args,
+      workspaceRoot: ctx.workspaceRoot,
+      permissionMode: this.getPermissionMode(),
+    });
     if (!screened.warningAdded) return screened.output;
 
     try {
@@ -1630,13 +1640,18 @@ export class Engine {
       throw new Error("Cannot schedule a loop for this session.");
     const parsed = parseLoopRequest(raw);
     const resolved = resolveLoopPrompt(parsed.prompt, this.config.workspaceRoot, getAlanHome());
+    const warnings = [...parsed.warnings];
+    if (resolved.warning) warnings.push(resolved.warning);
     const task = this.getLoopManager(sessionId).create({
       prompt: resolved.prompt,
       promptSource: resolved.source,
       ...(parsed.intervalMs !== undefined ? { intervalMs: parsed.intervalMs } : {}),
+      // 4th gear = no permission prompts at all; an unattended loop there is
+      // capped to a day unless the user passed --confirm-long (see LoopManager).
+      fullAutonomy: this.getPermissionMode() === "gear-4",
+      ...(parsed.confirmLong ? { confirmLong: true } : {}),
+      warnings,
     });
-    const warnings = [...parsed.warnings];
-    if (resolved.warning) warnings.push(resolved.warning);
     return {
       task,
       warnings,
@@ -2308,10 +2323,21 @@ export class Engine {
     const priorEvents = this.sessions.getEvents(sessionId, 1);
     const priorMessages: Message[] = eventsToMessages(priorEvents);
 
+    // A claimed loop iteration arrives through the same door as a typed
+    // message. Record where its prompt came from: a repository loop.md is not
+    // the user's own words, and the Auto reviewer must not read it as such.
+    const activeLoop = this.getActiveLoopTask(sessionId);
+    const loopPromptTrusted = activeLoop
+      ? isTrustedLoopPromptSource(activeLoop.promptSource)
+      : true;
+
     // Persist user message
     this.sessions.appendEvent(sessionId, {
       type: "user_msg",
-      payload: { content: userMessage },
+      payload: {
+        content: userMessage,
+        ...(activeLoop ? { loopId: activeLoop.id, loopPromptSource: activeLoop.promptSource } : {}),
+      },
     });
 
     // Black box: scope this run and start its flight trail.
@@ -2367,7 +2393,6 @@ export class Engine {
           }).then((map) => (map ? [map] : []));
     const projectMemory = loadProjectMemory(this.config.workspaceRoot);
     const notebookBlock = this.buildNotebookInjection(sessionId);
-    const activeLoop = this.getActiveLoopTask(sessionId);
     const systemPrompt = [
       SYSTEM_PROMPT,
       renderInteractiveDoctrine(this.interactiveAuto),
@@ -2387,12 +2412,23 @@ export class Engine {
       this.notebookStore?.touchUses(notebookBlock.injectedIds);
     }
 
-    const trustedUserMessages = priorEvents
-      .filter(({ event }) => event.type === "user_msg")
-      .map(({ event }) => (typeof event.payload.content === "string" ? event.payload.content : ""))
-      .filter(Boolean);
-    trustedUserMessages.push(userMessage);
-    const permCheck = this.buildPermissionCheck({ sessionId, userMessages: trustedUserMessages });
+    const trustedUserMessages: string[] = [];
+    const untrustedPrompts: string[] = [];
+    for (const { event } of priorEvents) {
+      if (event.type !== "user_msg") continue;
+      const content = typeof event.payload.content === "string" ? event.payload.content : "";
+      if (!content) continue;
+      const source = event.payload.loopPromptSource;
+      const trusted =
+        typeof source === "string" ? isTrustedLoopPromptSource(source as LoopPromptSource) : true;
+      (trusted ? trustedUserMessages : untrustedPrompts).push(content);
+    }
+    (loopPromptTrusted ? trustedUserMessages : untrustedPrompts).push(userMessage);
+    const permCheck = this.buildPermissionCheck({
+      sessionId,
+      userMessages: trustedUserMessages,
+      untrustedPrompts,
+    });
     let turnCount = 0;
 
     // Create a per-turn AbortController for cancellation

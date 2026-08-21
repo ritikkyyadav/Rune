@@ -193,6 +193,11 @@ export class OllamaProvider implements LlmProvider {
       messages: this.toOllamaMessages(request.messages, request.system),
       stream,
       ...(request.tools?.length && { tools: request.tools.map(toOllamaTool) }),
+      // Thinking explicitly disabled → top-level `think: false` so a reasoning
+      // model (qwen3, deepseek-r1, gemma) answers directly instead of spending
+      // a small num_predict budget on <think>. Ollama only rejects the field
+      // when it is TRUTHY on a non-thinking model, so false is safe everywhere.
+      ...(request.thinking?.enabled === false && { think: false }),
       options: {
         temperature: request.temperature,
         top_p: request.topP,
