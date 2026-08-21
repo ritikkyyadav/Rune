@@ -1,14 +1,16 @@
 // ─── TUI controller (raw mode) ───
-// Codex/Claude-Code-style terminal UI: a pinned composer at the bottom, transcript
-// scrolling above it. Two render surfaces share every renderer + the engine:
-//   • inline (default) — prints the transcript into the terminal's NORMAL buffer and pins
+// Gear's customizer-backed terminal UI: the supplied terminal card becomes the
+// terminal itself — a warm-ivory/near-black full-window surface with a centered
+// reading column. The browser-only canvas, nav pills, and swatches are not copied
+// into production. Two render surfaces share every renderer + the engine:
+//   • inline (explicit compatibility mode) — prints the transcript into the terminal's NORMAL buffer and pins
 //     only the composer (BottomRegion). The terminal owns scrolling, so you get native
 //     momentum smooth-scroll, real scrollback, and copy/paste for free; the theme bg is set
 //     via OSC 11 (+ per-line SGR fallback for terminals that ignore it, e.g. Warp).
 //   • alt-screen (ctx.fullscreen) — takes the alternate screen and repaints the whole
 //     viewport each frame (AltScreen), painting the theme bg edge-to-edge at the cost of a
 //     self-managed (non-native) scroll.
-// Selected over the readline path with `--tui` / ALAN_TUI=1; `--fullscreen` picks alt-screen.
+// Selected over the readline path with `--tui` / ALAN_TUI=1; `--inline` keeps native scrollback.
 
 import type {
   Engine,
@@ -33,11 +35,14 @@ import {
   CUSTOM_PROVIDER_ID,
   saveLastModel,
   saveSandboxState,
+  saveBrowserState,
   getSystemMemoryPath,
 } from "@alan/shared";
 import type { CustomEndpoint } from "@alan/shared";
+import { configModeToPermissionMode } from "../../permissions";
 import { AltScreen, BottomRegion } from "./screen";
 import { parseKeys, type Key } from "./keys";
+import { fmtTokens } from "./events";
 import { PasteScanner, shouldCollapse, pasteChip, expandPastes, livePasteIds } from "./paste";
 import {
   renderComposer,
@@ -48,42 +53,61 @@ import {
   renderKeyManagerPanel,
   renderSessionsPanel,
   renderMemoryPanel,
+  renderWorkReview,
+  workReviewPageSize,
   MEMORY_ACTION_COUNT,
   renderPermissionCard,
+  renderQueueStrip,
+  sessionGroupLabel,
   statusLine,
   permissionModeBanner,
+  autoApprovedChip,
+  waitingRung,
   sandboxModeBanner,
+  browserModeBanner,
   type RenderedBlock,
   type PickerItem,
   type SlashItem,
   type KeyRow,
   type SessionRowView,
 } from "./composer";
-import { renderBanner } from "./banner";
+import { GEAR_MARK, renderBanner } from "./banner";
 import { renderStatus } from "./status";
-import { TurnRenderer, userBlock, renderReplay, HEX, cookingVerb } from "./turn";
-import { truncate, clampVisible } from "./render";
+import { TurnRenderer, userBlock, renderReplay, HEX } from "./turn";
+import { truncate, clampVisible, setTermWidthOverride } from "./render";
 import { renderResearchPlan, renderClarifyingQuestions, formatResearchEvent } from "./research";
 import { isClarification } from "../../research-types";
 import type { ResearchOptions, ResearchPlan, ResearchReport } from "../../research-types";
+import {
+  formatLoopDue,
+  formatLoopInterval,
+  loopPromptPreview,
+  type LoopCompletion,
+  type LoopTask,
+} from "../../loop-mode";
 import {
   bold,
   text,
   muted,
   faint,
   info,
+  brand,
   ok,
   accent,
   warn,
   setTheme,
   getTheme,
   listThemes,
+  paintBrandWith,
   withThemeBg,
   themeBgSeq,
   terminalThemeSeq,
+  stripAnsi,
   TERMINAL_THEME_RESET,
 } from "./theme";
 import { saveTheme } from "./theme-store";
+import { buildPermissionPreview, type PermissionPreview } from "./permission-preview";
+import { renderWorkspaceDiff } from "./workspace-diff";
 import {
   buildInteractiveDirective,
   saveInteractiveAuto,
@@ -100,8 +124,7 @@ export interface TuiContext {
   customCommands: SlashCommand[];
   /** Show the "resume a session" picker on launch (default flow with prior history). */
   launchPick?: boolean;
-  /** Use the alternate-screen full-window renderer (edge-to-edge theme bg) instead of the
-   *  default inline renderer (native scrollback + momentum scroll, like Codex/Claude Code). */
+  /** Use the customizer-backed alternate-screen product surface. This is the default from CLI. */
   fullscreen?: boolean;
 }
 
@@ -114,9 +137,64 @@ type Mode =
   | "ask"
   | "question"
   | "sessions"
-  | "memory";
+  | "memory"
+  | "review";
+
+export interface PermissionKeyAction {
+  selected: number;
+  decision?: UserPermissionDecision;
+  handled: boolean;
+}
+
+/** Pure reducer so the highlighted approval row and the resolved action cannot drift apart. */
+export function permissionKeyAction(key: Key, selected: number): PermissionKeyAction {
+  const current = Math.max(0, Math.min(2, selected));
+  if (key.type === "up" || key.type === "left") {
+    return { selected: (current + 2) % 3, handled: true };
+  }
+  if (key.type === "down" || key.type === "right" || key.type === "tab") {
+    return { selected: (current + 1) % 3, handled: true };
+  }
+
+  let decision: UserPermissionDecision | undefined;
+  if (key.type === "char" && /^[123]$/.test(key.value)) {
+    const choice = Number(key.value) - 1;
+    decision =
+      choice === 0
+        ? { kind: "allow_once" }
+        : choice === 1
+          ? { kind: "allow_session" }
+          : { kind: "deny" };
+  } else if (key.type === "char" && (key.value === "n" || key.value === "N")) {
+    decision = { kind: "deny" };
+  } else if (
+    key.type === "shift-tab" ||
+    // `a` = "allow for session" per the v2 card's printed shortcut; `s`
+    // (session) remains for muscle memory from earlier releases.
+    (key.type === "char" && /^[sSaA]$/.test(key.value))
+  ) {
+    decision = { kind: "allow_session" };
+  } else if (key.type === "char" && (key.value === "y" || key.value === "Y")) {
+    decision = { kind: "allow_once" };
+  } else if (key.type === "enter") {
+    decision =
+      current === 0
+        ? { kind: "allow_once" }
+        : current === 1
+          ? { kind: "allow_session" }
+          : { kind: "deny" };
+  } else if (key.type === "esc") {
+    decision = { kind: "deny" };
+  }
+  return { selected: current, decision, handled: decision != null };
+}
 
 type SessionListItem = ReturnType<Engine["listSessions"]>[number];
+
+/** Empty launch placeholders are implementation detail, not conversation history. */
+function isMeaningfulSession(session: SessionListItem): boolean {
+  return session.eventCount > 0 || Boolean(session.title?.trim());
+}
 
 // `columns`/`rows` are 0 (not undefined) on a PTY with no winsize — `||` so a
 // zero-size terminal falls back sanely instead of clamping every line to nothing.
@@ -130,9 +208,9 @@ export async function runTui(ctx: TuiContext): Promise<void> {
 }
 
 class Tui {
-  private screen = new AltScreen(); // alt-screen surface (ctx.fullscreen)
-  private region = new BottomRegion(); // inline surface (default): pinned composer over native scrollback
-  /** Inline (native-scrollback) renderer is the default; alt-screen is opt-in via ctx.fullscreen. */
+  private screen = new AltScreen(); // focused full-window product surface
+  private region = new BottomRegion(); // explicit inline compatibility surface
+  /** False for the default full Gear card; true only through --inline / GEAR_INLINE. */
   private readonly inline: boolean;
   private transcript: string[] = []; // alt-screen only: themed lines, self-managed scrollback window
   private scroll = 0; // alt-screen only: lines scrolled up from the bottom (0 = following latest)
@@ -143,6 +221,7 @@ class Tui {
       return;
     }
     // Alt-screen: a resize reflows/clears the terminal, so the diff baseline is stale — repaint.
+    setTermWidthOverride(this.contentCols());
     this.screen.invalidate();
     this.scheduleDraw();
   };
@@ -167,6 +246,8 @@ class Tui {
   private sessionsSel = 0;
   private sessionsView: "active" | "archived" = "active";
   private sessionsPendingDelete: string | null = null; // id armed for two-step delete
+  private sessionsQuery = "";
+  private sessionsSearching = false;
 
   // `/memory` System Memory panel
   private memorySel = 0;
@@ -202,13 +283,19 @@ class Tui {
   private streamBuf = "";
   private queued: string[] = []; // type-ahead: messages composed mid-turn, run in order on completion
   private aborting = false; // an esc/ctrl-c interrupt is in flight (guards the "interrupting…" flood)
-  private currentActivity: string | null = null; // in-flight tool label, shown on the status line
-  private turnPreview: string[] | null = null; // live window: recent work + to-dos + prose preview
+  private turnPreview: string[] | null = null; // one live intent row + one evidence row
   private filesEdited = new Set<string>(); // session-wide, shown on the footer readout
   private interactiveTipShown = false; // the /interactive offer fires at most once per session
   private lastWorkLog: string | null = null; // the last turn's full work log (ctrl+r expands it)
   private liveTurn: TurnRenderer | null = null; // in-flight renderer (ctrl+r mid-turn)
-  private turnSeed = 0; // picks this turn's working word (Cooking…, Brewing…, …)
+  private loopPoll: ReturnType<typeof setInterval> | null = null;
+  private activeLoopId: string | null = null;
+
+  // Temporary work-details view. It replaces the pinned region and disappears
+  // on Esc/Ctrl+R, so inspecting work never duplicates it into scrollback.
+  private reviewLog: string | null = null;
+  private reviewTop = 0;
+  private reviewReturnMode: "input" | "turn" = "input";
 
   // render coalescing — collapse bursts of draw requests into one paint per frame (~60fps), so a
   // streamed token, a held arrow key, or a flick of the mouse wheel never trigger N full repaints.
@@ -230,11 +317,14 @@ class Tui {
     title: string;
     resolve: (i: number | null) => void;
     onPreview?: (i: number) => void;
+    footnote?: string;
   } | null = null;
   private perm: {
     resolve: (d: UserPermissionDecision) => void;
     toolName: string;
     argsSummary: string;
+    preview: PermissionPreview;
+    sel: number;
   } | null = null;
   // transient single-line text prompt (used by /research clarify & revise)
   private askState: { resolve: (s: string | null) => void; title: string } | null = null;
@@ -248,6 +338,19 @@ class Tui {
 
   constructor(private ctx: TuiContext) {
     this.inline = !ctx.fullscreen;
+    setTermWidthOverride(this.inline ? null : this.contentCols());
+  }
+
+  /**
+   * The supplied 860px card has 44px side padding and a ~14px mono face,
+   * yielding roughly a 100-cell reading measure. The terminal surface itself
+   * is full-window; only the readable content column is capped and centered.
+   */
+  private contentCols(): number {
+    const width = cols();
+    if (this.inline) return width;
+    if (width < 24) return Math.max(8, width - 2);
+    return Math.min(104, width - 8);
   }
 
   // ── lifecycle ──
@@ -257,10 +360,17 @@ class Tui {
 
     // The banner is a live header (re-themed every frame), so nothing to seed here.
     // The handler is registered in every mode: the broker short-circuits to "allowed"
-    // under Hands-Free, so it's simply never invoked there — and stays ready the instant
+    // under Autonomy III, so it is never invoked there — and stays ready the instant
     // Shift+Tab cycles back to confirm/auto, without re-wiring.
     engine.setPermissionHandler(this.permissionHandler);
+    // Auto mode's classifier approvals are silent at the broker; the chip
+    // keeps them visible in the transcript without pausing the run (v2 spec).
+    engine.setAutoApprovalNotifier?.((notice) => this.print(autoApprovedChip(notice)));
     engine.setQuestionHandler(this.questionHandler);
+
+    // Poll cheaply; claimDueLoopTask() returns null while nothing is due and
+    // runDueLoopTask() itself refuses to start unless the composer is idle.
+    this.loopPoll = setInterval(() => void this.runDueLoopTask(), 1_000);
 
     const stdin = process.stdin;
     stdin.setEncoding("utf8");
@@ -274,7 +384,7 @@ class Tui {
     process.once("exit", () => {
       try {
         process.stdout.write(
-          "\x1b[?1000l\x1b[?1006l\x1b[?2004l" + TERMINAL_THEME_RESET + "\x1b[?25h",
+          "\x1b[?1000l\x1b[?1006l\x1b[?2004l\x1b[0 q" + TERMINAL_THEME_RESET + "\x1b[?25h",
         );
       } catch {
         /* terminal already gone */
@@ -286,7 +396,7 @@ class Tui {
     else this.screen.enter(themeBgSeq());
     process.stdout.on("resize", this.onResize);
     // Replay prior conversation when launched straight into a session (--resume /
-    // `alan resume <id>`). When launchPick is set, the picker runs once input is
+    // `gear resume <id>`). When launchPick is set, the picker runs once input is
     // live (below) instead — a fresh session has nothing to seed.
     if (!this.ctx.launchPick) this.seedFromHistory();
     // First frame synchronous so the composer (and, inline, the banner) appears instantly.
@@ -300,7 +410,7 @@ class Tui {
       const mem = engine.getSystemMemory();
       if (mem.enabled && !mem.content.trim() && mem.scheduleLabel === "manual") {
         this.print(
-          `  ${faint("✦ tip: Berne can learn your style & codebases over time —")}${info("/memory")}${faint(" (auto-update: /memory weekly)")}`,
+          `  ${faint("✦ tip: Gear can learn your style & codebases over time —")}${info("/memory")}${faint(" (auto-update: /memory weekly)")}`,
         );
       }
       void engine
@@ -323,6 +433,10 @@ class Tui {
       this.exit = (code = 0) => {
         stdin.off("data", onData);
         process.stdout.off("resize", this.onResize);
+        if (this.loopPoll) {
+          clearInterval(this.loopPoll);
+          this.loopPoll = null;
+        }
         process.stdout.write("\x1b[?2004l"); // bracketed paste off
         if (!this.inline) process.stdout.write("\x1b[?1000l\x1b[?1006l"); // mouse tracking off
         if (this.drawTimer) clearTimeout(this.drawTimer); // cancel any pending coalesced paint
@@ -333,7 +447,9 @@ class Tui {
           this.screen.exit(); // restore the main screen + the user's own colours
         }
         if (stdin.isTTY) stdin.setRawMode(false);
+        setTermWidthOverride(null);
         process.stdout.write(`  ${muted("Goodbye.")}\n`);
+        this.discardSessionIfEmpty(this.ctx.sessionId);
         engine.close();
         resolve();
         process.exit(code);
@@ -352,27 +468,37 @@ class Tui {
     } catch {
       contextPercent = undefined;
     }
-    return statusLine({
-      model: this.ctx.engine.getModel(),
-      workspace: this.ctx.workspaceRoot,
-      mode: this.ctx.engine.getPermissionMode(),
-      contextPercent,
-      filesEdited: this.filesEdited.size || undefined,
-      sandboxOff: !this.ctx.engine.isSandboxEnabled(),
-    });
+    const loop = this.ctx.engine.getLoopStatus(this.ctx.sessionId);
+    return statusLine(
+      {
+        model: this.ctx.engine.getModel(),
+        workspace: this.ctx.workspaceRoot,
+        mode: this.ctx.engine.getPermissionMode(),
+        contextPercent,
+        filesEdited: this.filesEdited.size || undefined,
+        sandboxOff: !this.ctx.engine.isSandboxEnabled(),
+        theme: getTheme().name === "auto" ? "auto" : getTheme().appearance,
+        loop:
+          loop.count > 0 && loop.nextRunAt !== null
+            ? `${loop.count === 1 ? "loop" : `${loop.count} loops`} · ${formatLoopDue(loop.nextRunAt)}`
+            : undefined,
+      },
+      this.contentCols(),
+    );
   }
 
-  /** Advance the permission mode one step (Shift+Tab / `/hands-free` / `/mode`) and announce it. */
+  /** Advance the permission mode one step (Shift+Tab / `/autonomy` / `/mode`) and announce it. */
   private cyclePermissionMode(mode?: ReturnType<Engine["getPermissionMode"]>): void {
     let next: ReturnType<Engine["getPermissionMode"]>;
     if (mode) {
-      this.ctx.engine.setPermissionMode(mode);
-      next = mode;
+      const result = this.ctx.engine.setPermissionMode(mode);
+      if (!result.ok && result.reason) this.print(`  ${warn(result.reason)}`);
+      next = this.ctx.engine.getPermissionMode();
     } else {
       next = this.ctx.engine.cyclePermissionMode();
     }
     // Keep the ctx mirror current for any other reader of these flags.
-    this.ctx.yoloMode = next === "turing";
+    this.ctx.yoloMode = next === "autonomy-iii";
     this.ctx.trustWorkspace = next === "auto";
     this.print(permissionModeBanner(next));
   }
@@ -381,31 +507,37 @@ class Tui {
 
   private slashCatalog(): SlashItem[] {
     const builtins: SlashItem[] = [
-      { name: "/model", desc: "Switch model / provider" },
-      { name: "/theme", desc: "Themes — switch color theme" },
-      { name: "/sessions", desc: "Browse, resume, rename, archive & delete sessions" },
+      { name: "/theme", desc: "Switch accent colors and light / dark mode", tag: "cosmetic" },
+      { name: "/model", desc: "Choose model, provider, and effort", tag: "settings" },
+      { name: "/sessions", desc: "Browse, resume, rename, archive & delete", tag: "history" },
+      { name: "/mode", desc: "Shift gears — 1st · 2nd · 3rd · 4th · auto", tag: "shift+tab" },
+      { name: "/diff", desc: "Inspect staged and uncommitted workspace changes", tag: "git" },
+      { name: "/loop", desc: "Repeat a prompt while this session stays open" },
+      { name: "/loops", desc: "List and manage this session's loops" },
       { name: "/resume", desc: "Open the session picker to continue past work" },
       { name: "/rename", desc: "Rename the current session" },
       { name: "/status", desc: "Session status" },
       { name: "/providers", desc: "List providers" },
       { name: "/keys", desc: "Manage API keys" },
+      { name: "/mcp", desc: "Connected MCP servers and tools" },
+      { name: "/skills", desc: "Browse or search available skills" },
       { name: "/research", desc: "Research — propose a plan, then a cited report" },
       { name: "/deepresearch", desc: "Deep research — multi-round, long-form" },
       { name: "/cost", desc: "Session cost" },
       { name: "/plan", desc: "Toggle plan mode" },
-      { name: "/hands-free", desc: "Hands-Free — toggle bypass mode (shift+tab)" },
-      { name: "/mode", desc: "Cycle permission mode (confirm/auto/hands-free)" },
+      { name: "/autonomy", desc: "Set the gear directly — I | II | III" },
       { name: "/sandbox", desc: "OS sandbox for commands — on | off (off = full access)" },
+      { name: "/browser", desc: "Agent web browser — on | off" },
       { name: "/rewind", desc: "Roll back the conversation" },
       { name: "/compress", desc: "Summarize & shrink context" },
-      { name: "/undo", desc: "Revert the last Berne auto-commit" },
+      { name: "/undo", desc: "Revert the last Gear auto-commit" },
       { name: "/interactive", desc: "Live dashboard — [focus] · auto on|off · open" },
       { name: "/memory", desc: "System memory — your evergreen profile" },
       { name: "/notebook", desc: "Learned tactics for this workspace" },
       { name: "/bug", desc: "Flag a problem — records the flight trail" },
       { name: "/clear", desc: "Clear the screen" },
       { name: "/help", desc: "Show commands" },
-      { name: "/quit", desc: "Exit Berne" },
+      { name: "/quit", desc: "Exit Gear" },
     ];
     const custom: SlashItem[] = this.ctx.customCommands.map((c) => ({
       name: "/" + c.name,
@@ -427,16 +559,42 @@ class Tui {
 
   private composerBlock(): RenderedBlock {
     if (this.mode === "picker" && this.picker) {
-      return renderPicker(this.picker.title, this.picker.items, this.picker.sel, cols());
+      return renderPicker(
+        this.picker.title,
+        this.picker.items,
+        this.picker.sel,
+        this.contentCols(),
+        Math.max(3, rowsCount() - 1),
+        { footnote: this.picker.footnote },
+      );
     }
     if (this.mode === "permission" && this.perm) {
-      return renderPermissionCard(this.perm.toolName, this.perm.argsSummary, cols());
+      const card = renderPermissionCard(
+        this.perm.toolName,
+        this.perm.argsSummary,
+        this.contentCols(),
+        {
+          preview: this.perm.preview,
+          selected: this.perm.sel,
+          maxPreviewLines: Math.max(2, Math.min(7, rowsCount() - 15)),
+        },
+      );
+      // v2 status ladder: the run is paused on a human decision — say so in
+      // the ochre "Waiting on approval…" rung above the card, with the live
+      // elapsed receipt and the gear the decision is needed in.
+      const waitSecs = Math.max(0, Math.floor((Date.now() - this.turnStart) / 1000));
+      const head = waitingRung(waitSecs, this.perm.toolName, this.ctx.engine.getPermissionMode());
+      return {
+        lines: [head, ...card.lines],
+        caretRow: card.caretRow + 1,
+        caretCol: card.caretCol,
+      };
     }
     if (this.mode === "ask" && this.askState) {
       const base = renderComposer({
         input: this.input,
         caret: this.caret,
-        width: cols(),
+        width: this.contentCols(),
         status: this.statusStr(),
       });
       const title = `  ${info("?")} ${text(this.askState.title)} ${faint("(Enter = ok · Esc = skip)")}`;
@@ -451,7 +609,7 @@ class Tui {
       const base = renderComposer({
         input: this.input,
         caret: this.caret,
-        width: cols(),
+        width: this.contentCols(),
         status: this.statusStr(),
       });
       const head = [
@@ -473,7 +631,7 @@ class Tui {
           subtitle: e.subtitle,
           value: e.value,
           caret: e.caret,
-          width: cols(),
+          width: this.contentCols(),
           masked: e.masked,
         });
       }
@@ -483,17 +641,23 @@ class Tui {
           this.keysManage.label,
           row?.savedKeys ?? [],
           this.keysManage.sel,
-          cols(),
+          this.contentCols(),
         );
       }
-      return renderKeysPanel(this.keysRows, this.keysSel, cols());
+      return renderKeysPanel(this.keysRows, this.keysSel, this.contentCols());
     }
     if (this.mode === "sessions") {
       return renderSessionsPanel(
         this.sessionsList.map((s) => this.sessionRowView(s)),
         this.sessionsSel,
-        { view: this.sessionsView, pendingDelete: this.sessionsPendingDelete != null },
-        cols(),
+        {
+          view: this.sessionsView,
+          pendingDelete: this.sessionsPendingDelete != null,
+          query: this.sessionsQuery,
+          searching: this.sessionsSearching,
+        },
+        this.contentCols(),
+        Math.max(4, rowsCount() - 1),
       );
     }
     if (this.mode === "memory") {
@@ -510,7 +674,16 @@ class Tui {
           pendingClear: this.memoryPendingClear,
         },
         this.memorySel,
-        cols(),
+        this.contentCols(),
+      );
+    }
+    if (this.mode === "review") {
+      const log = this.liveTurn?.fullLog() ?? this.reviewLog ?? `  ${faint("No work details yet")}`;
+      return renderWorkReview(
+        log,
+        this.reviewTop,
+        this.contentCols(),
+        Math.max(4, rowsCount() - 1),
       );
     }
     if (this.mode === "turn") {
@@ -519,15 +692,13 @@ class Tui {
       const base = renderComposer({
         input: this.input,
         caret: this.caret,
-        width: cols(),
+        width: this.contentCols(),
         status: this.statusStr(),
       });
       // The buffered prose run streams live here (it commits to the transcript only
       // once the turn decides which partition — work rail or response — it belongs to).
-      const head: string[] = [...(this.turnPreview ?? []), `  ${this.workingText()}`];
-      for (const q of this.queued) {
-        head.push(`  ${faint("↳ queued ·")} ${muted(truncate(q, Math.max(8, cols() - 16)))}`);
-      }
+      const head = this.turnStateLines();
+      head.push(...renderQueueStrip(this.queued, this.contentCols()));
       return {
         lines: [...head, ...base.lines],
         caretRow: base.caretRow + head.length,
@@ -537,13 +708,19 @@ class Tui {
     const base = renderComposer({
       input: this.input,
       caret: this.caret,
-      width: cols(),
+      width: this.contentCols(),
       status: this.statusStr(),
     });
     const matches = this.slashMatches();
     if (matches.length === 0) return base;
     // Float the palette above the input box; the caret stays in the box.
-    const palette = renderSlashPalette(matches, this.slashSel, cols());
+    const palette = renderSlashPalette(
+      matches,
+      this.slashSel,
+      this.contentCols(),
+      Math.max(1, rowsCount() - base.lines.length - 2),
+      this.slashCatalog().length,
+    );
     return {
       lines: [...palette, ...base.lines],
       caretRow: base.caretRow + palette.length,
@@ -558,12 +735,14 @@ class Tui {
    *  which breaks the pinned region's row math — and then every repaint leaks
    *  stale rows into the scrollback (the "duplicated spam" failure mode). */
   private bound(ln: string): string {
-    return clampVisible(ln, Math.max(8, cols() - 1));
+    return clampVisible(ln, Math.max(8, this.contentCols() - 1));
   }
 
   private pushLines(block: string): number {
     const lines = block.split("\n");
-    for (const ln of lines) this.transcript.push(withThemeBg(this.bound(ln)));
+    // Store semantic ANSI only. Card/canvas backgrounds are applied per frame,
+    // so a light/dark or accent change recolours the whole existing timeline.
+    for (const ln of lines) this.transcript.push(this.bound(ln));
     if (this.transcript.length > MAX_TRANSCRIPT) {
       this.transcript.splice(0, this.transcript.length - MAX_TRANSCRIPT);
     }
@@ -623,8 +802,37 @@ class Tui {
     this.region.setBgFill(themeBgSeq());
     // OSC 10/11 sets the terminal's default fg/bg (themed margins where honoured); the SGR bg +
     // clear paints the visible screen now so the first frame isn't drawn over the old colours.
-    process.stdout.write(terminalThemeSeq() + themeBgSeq() + "\x1b[2J\x1b[3J\x1b[H\x1b[0m");
+    process.stdout.write(terminalThemeSeq() + themeBgSeq() + "\x1b[2J\x1b[H\x1b[0m");
     this.printBanner();
+  }
+
+  /** Apply a runtime theme change to the terminal surface as well as future tokens. */
+  private refreshThemeSurface(): void {
+    if (this.inline) {
+      // Reset first so switching from an explicit palette back to Auto truly hands
+      // foreground/background control back to the host terminal.
+      process.stdout.write(TERMINAL_THEME_RESET + terminalThemeSeq());
+      this.region.setBgFill(themeBgSeq());
+    } else {
+      this.screen.invalidate();
+    }
+    this.scheduleDraw();
+  }
+
+  /** The preset's human label for the active model ("Gemini 2.5 Flash"), when known. */
+  private modelLabel(): string | undefined {
+    const { engine } = this.ctx;
+    const model = engine.getModel();
+    return getPreset(engine.getProvider())?.models?.find((m) => m.id === model)?.label;
+  }
+
+  /** Connected MCP servers, for the header badge. */
+  private mcpServerCount(): number {
+    try {
+      return this.ctx.engine.getMcpStatus().length;
+    } catch {
+      return 0;
+    }
   }
 
   /** Print the banner into the transcript (inline surface). The alt-screen surface renders it
@@ -634,11 +842,13 @@ class Tui {
     this.print(
       renderBanner({
         model: engine.getModel(),
+        modelLabel: this.modelLabel(),
         provider: engine.getProvider(),
         sessionId: this.ctx.sessionId,
         workspace: this.ctx.workspaceRoot,
         version: this.ctx.version,
         sandbox: engine.isSandboxEnabled(),
+        mcpServers: this.mcpServerCount(),
       }),
     );
   }
@@ -663,27 +873,41 @@ class Tui {
     const { engine } = this.ctx;
     return renderBanner({
       model: engine.getModel(),
+      modelLabel: this.modelLabel(),
       provider: engine.getProvider(),
       sessionId: this.ctx.sessionId,
       workspace: this.ctx.workspaceRoot,
       version: this.ctx.version,
+      sandbox: engine.isSandboxEnabled(),
+      mcpServers: this.mcpServerCount(),
     })
       .split("\n")
-      .map((l) => withThemeBg(this.bound(l)));
+      .map((l) => this.bound(l));
   }
 
-  /** Repaint the whole viewport: live banner header, themed transcript window, composer
-   *  pinned at the bottom — every row filled edge-to-edge in the theme bg. */
+  /**
+   * Repaint the supplied terminal composition itself: exact card base,
+   * centered reading measure, identity, transcript, and anchored composer.
+   * The customizer page surrounding the card is deliberately absent.
+   */
   private drawComposer(): void {
     if (!this.screen.isActive) return;
     const R = rowsCount();
+    const C = cols();
+    const contentWidth = this.contentCols();
+    const left = Math.max(0, Math.floor((C - contentWidth) / 2));
     const banner = this.bannerLines();
     const comp = this.composerBlock();
-    const compLines = comp.lines.map((l) => withThemeBg(this.bound(l)));
+    const compLines = comp.lines.map((l) => clampVisible(l, contentWidth));
+    const topRows = R >= 20 ? 1 : 0;
+    const bottomRows = R >= 20 ? 1 : 0;
     // When scrolled up, reserve one row above the composer for a "more below" hint so the
     // user knows output isn't frozen and how to catch back up.
     const hintRows = this.scroll > 0 ? 1 : 0;
-    const transH = Math.max(0, R - banner.length - compLines.length - hintRows);
+    const transH = Math.max(
+      0,
+      R - topRows - bottomRows - banner.length - compLines.length - hintRows,
+    );
 
     const total = this.transcript.length;
     const maxScroll = Math.max(0, total - transH);
@@ -691,45 +915,38 @@ class Tui {
     const end = total - this.scroll;
     const visible = this.transcript.slice(Math.max(0, end - transH), end);
 
-    const rows: string[] = [...banner];
-    for (let i = 0; i < transH - visible.length; i++) rows.push(withThemeBg("")); // padding
-    rows.push(...visible);
+    const content: string[] = [...banner];
+    for (let i = 0; i < transH - visible.length; i++) content.push("");
+    content.push(...visible);
     if (hintRows) {
-      rows.push(
+      content.push(
         this.scroll > 0
-          ? withThemeBg(
-              `  ${faint(`↓ ${this.scroll} more line${this.scroll === 1 ? "" : "s"} below · scroll down to resume`)}`,
-            )
-          : withThemeBg(""),
+          ? `  ${faint(`↓ ${this.scroll} more line${this.scroll === 1 ? "" : "s"} below · scroll down to resume`)}`
+          : "",
       );
     }
-    rows.push(...compLines);
-    // Keep exactly R rows (guards tiny terminals / an oversized composer).
-    while (rows.length < R) rows.push(withThemeBg(""));
-    if (rows.length > R) rows.splice(banner.length, rows.length - R);
+    content.push(...compLines);
 
-    // Detect a clean vertical shift of the transcript band (a streamed append or a scroll) so the
-    // renderer can hardware-scroll instead of rewriting every row. The band geometry must be
-    // unchanged frame-to-frame; AltScreen re-verifies the shift and falls back safely otherwise.
-    const bandTop = banner.length;
-    let scrollHint: { top: number; bottom: number; delta: number } | undefined;
-    if (
-      this.prevEnd >= 0 &&
-      transH > 1 &&
-      bandTop === this.prevBandTop &&
-      transH === this.prevTransH &&
-      end !== this.prevEnd &&
-      Math.abs(this.prevEnd - end) < transH
-    ) {
-      // delta > 0 → window moved toward older output (content shifts down); < 0 → toward newer.
-      scrollHint = { top: bandTop, bottom: bandTop + transH - 1, delta: this.prevEnd - end };
-    }
+    const contentRow = (line: string): string =>
+      withThemeBg(" ".repeat(left) + clampVisible(line, contentWidth));
+
+    const rows: string[] = [];
+    for (let i = 0; i < topRows; i++) rows.push(withThemeBg(""));
+    rows.push(...content.map(contentRow));
+    for (let i = 0; i < bottomRows; i++) rows.push(withThemeBg(""));
+
+    // Keep exactly R rows (guards tiny terminals / an oversized overlay).
+    while (rows.length < R) rows.push(withThemeBg(""));
+    if (rows.length > R) rows.splice(topRows + banner.length, rows.length - R);
+
+    const bandTop = topRows + banner.length;
     this.prevEnd = end;
     this.prevBandTop = bandTop;
     this.prevTransH = transH;
 
-    const caretRow = Math.min(R - 1, banner.length + transH + hintRows + comp.caretRow);
-    this.screen.frame(rows, caretRow, comp.caretCol, scrollHint);
+    const caretRow = Math.min(R - 1, bandTop + transH + hintRows + comp.caretRow);
+    const caretCol = Math.min(C - 1, left + comp.caretCol);
+    this.screen.frame(rows, caretRow, caretCol);
   }
 
   /** Request a repaint, coalesced to at most one paint per ~16ms (60fps). Almost every input and
@@ -772,9 +989,22 @@ class Tui {
     const t = secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m${secs % 60}s`;
     // The hint adapts: idle composer → how to stop; a typed-ahead draft → how to queue/clear it.
     const hint = this.input.length > 0 ? "enter queues · esc clears" : "esc to interrupt";
-    const act = this.currentActivity ? faint(` · ${this.currentActivity}`) : "";
-    const verb = cookingVerb(this.turnSeed, elapsed);
-    return `${ok(HEX)} ${bold(text(`${verb}…`))}${act} ${faint(`(${t} · ${hint})`)}`;
+    return faint(`${t} · ${hint}`);
+  }
+
+  /** The v2 status ladder rung directly above the composer: the TurnRenderer's
+   *  live lines (label + receipt, then a faint detail row) — or the
+   *  interrupting state while an abort drains. */
+  private turnStateLines(): string[] {
+    if (this.aborting) return [`  ${this.workingText()}`];
+    const lines = [...(this.turnPreview ?? [])];
+    if (lines.length === 0) {
+      const secs = Math.max(0, Math.floor((Date.now() - this.turnStart) / 1000));
+      return [
+        `  ${brand(GEAR_MARK)} ${bold(brand("Thinking"))}${faint("…")} ${faint(`(${secs}s)`)}`,
+      ];
+    }
+    return lines.slice(0, 2).map((line) => clampVisible(line, Math.max(8, cols() - 1)));
   }
 
   // ── stdin routing ──
@@ -792,6 +1022,10 @@ class Tui {
 
   /** Route one decoded key event to the active mode (paste is handled upstream in onData). */
   private routeKey(key: Key): void {
+    if (this.mode === "review" && (key.type === "wheel-up" || key.type === "wheel-down")) {
+      this.moveWorkReview(key.type === "wheel-up" ? -SCROLL_STEP : SCROLL_STEP);
+      return;
+    }
     // The mouse wheel scrolls the transcript in every mode — even while a turn streams.
     if (key.type === "wheel-up") {
       this.scrollLines(SCROLL_STEP);
@@ -801,11 +1035,12 @@ class Tui {
       this.scrollLines(-SCROLL_STEP);
       return;
     }
-    // Shift+Tab cycles the permission mode (confirm → auto → Hands-Free → …). Allowed while
-    // typing or mid-turn; ignored over a modal overlay (picker/permission/keys/ask) so it
-    // never hijacks a confirmation the user is answering.
+    // Shift+Tab cycles confirm → Autonomy I → II → III → Auto → confirm while composing.
+    // Inside an approval ask it is the explicit "allow for session" shortcut printed
+    // beside choice 2, so the visible contract and the keyboard behavior stay identical.
     if (key.type === "shift-tab") {
-      if (this.mode === "input" || this.mode === "turn") this.cyclePermissionMode();
+      if (this.mode === "permission") this.permKey(key);
+      else if (this.mode === "input" || this.mode === "turn") this.cyclePermissionMode();
       return;
     }
     switch (this.mode) {
@@ -835,6 +1070,9 @@ class Tui {
         break;
       case "question":
         this.questionKey(key);
+        break;
+      case "review":
+        this.workReviewKey(key);
         break;
     }
   }
@@ -929,6 +1167,19 @@ class Tui {
   }
 
   private inputKey(key: Key): void {
+    // Reference-card shortcuts: left from an empty composer opens history; `?`
+    // opens the same live command palette as `/` without submitting a message.
+    if (key.type === "left" && this.input.length === 0) {
+      this.openSessions();
+      return;
+    }
+    if (key.type === "char" && key.value === "?" && this.input.length === 0) {
+      this.input = "/";
+      this.caret = 1;
+      this.slashSel = 0;
+      this.scheduleDraw();
+      return;
+    }
     // When the `/` palette is open, ↑/↓ navigate it and tab/enter pick from it.
     const sm = this.slashMatches();
     if (sm.length > 0) {
@@ -980,9 +1231,18 @@ class Tui {
         this.historyNext();
         break;
       case "esc":
-        this.input = "";
-        this.caret = 0;
-        this.scheduleDraw();
+        if (this.input.length === 0) {
+          const cancelled = this.ctx.engine.cancelLoopTask(this.ctx.sessionId);
+          if (cancelled.ok && cancelled.task) {
+            this.print(
+              `  ${accent("✕")} ${muted("stopped loop")} ${info(cancelled.task.id)} ${faint(loopPromptPreview(cancelled.task.prompt, 56))}`,
+            );
+          }
+        } else {
+          this.input = "";
+          this.caret = 0;
+          this.scheduleDraw();
+        }
         break;
       case "ctrl":
         this.ctrlKey(key.name);
@@ -1082,24 +1342,52 @@ class Tui {
     await this.runInput(raw);
   }
 
+  /** The latest durable checkpoint this window has seen, keyed by session so a
+   *  resumed session never inherits another session's receipt. */
+  private lastCheckpoint: { sessionId: string; label: string } | null = null;
+
+  /** The v2 task-bar receipt: the turn about to run and the latest checkpoint. */
+  private taskBarMeta(): { turn?: number; checkpoint?: string } {
+    let turn: number | undefined;
+    try {
+      turn = this.ctx.engine.listUserTurns(this.ctx.sessionId).length + 1;
+    } catch {
+      turn = undefined;
+    }
+    const checkpoint =
+      this.lastCheckpoint?.sessionId === this.ctx.sessionId ? this.lastCheckpoint.label : undefined;
+    return { turn, checkpoint };
+  }
+
   /** Echo, record, and execute one line of input — a slash command or a model turn. Shared by
    *  submit() and the type-ahead queue drained when a turn completes, so both run identically. */
-  private async runInput(raw: string): Promise<void> {
-    this.history.push(raw);
+  private async runInput(raw: string, scheduledLoop?: LoopTask): Promise<void> {
+    if (!scheduledLoop) this.history.push(raw);
 
     // Echo the prompt into the transcript. A slash command is an instruction to the
     // shell (quiet echo); anything else is the user's message — the loud block.
-    if (raw.startsWith("/")) this.print(`  ${accent("›")} ${text(raw)}`);
-    else this.print(userBlock(raw));
+    if (scheduledLoop) {
+      this.print(
+        `  ${warn("↻")} ${bold(text("Loop"))} ${info(scheduledLoop.id)} ${faint(`· iteration ${scheduledLoop.runCount + 1} · ${scheduledLoop.cadence}`)}`,
+      );
+      this.print(userBlock(raw, this.taskBarMeta()));
+    } else if (raw.startsWith("/")) this.print(`  ${info("›")} ${text(raw)}`);
+    else this.print(userBlock(raw, this.taskBarMeta()));
 
-    if (raw.startsWith("/")) {
+    if (!scheduledLoop && raw.startsWith("/")) {
       const handled = await this.handleSlash(raw);
       if (handled) {
         this.scheduleDraw();
         return;
       }
     }
-    await this.runTurn(raw);
+    let agentInput = raw;
+    if (scheduledLoop && raw.startsWith("/") && !raw.startsWith("/ ")) {
+      const [name, ...args] = raw.slice(1).split(" ");
+      const custom = findCommand(this.ctx.customCommands, name);
+      if (custom) agentInput = custom.render(args.join(" "));
+    }
+    await this.runTurn(agentInput, scheduledLoop);
     this.scheduleDraw();
   }
 
@@ -1122,7 +1410,7 @@ class Tui {
         const entries = engine.getNotebookEntries(10);
         if (entries.length === 0) {
           this.print(
-            `  ${muted("Notebook is empty for this workspace — Berne fills it as it verifies how your repos work.")}`,
+            `  ${muted("Notebook is empty for this workspace — Gear fills it as it verifies how your repos work.")}`,
           );
         } else {
           this.print(
@@ -1132,7 +1420,7 @@ class Tui {
                 (e) =>
                   `    ${info(e.id.slice(-8))} ${muted(`[${e.scope}]`)} ${text(e.body.slice(0, 90))}`,
               ),
-              `    ${muted("manage: alan notebook [show <id>|rm <id>|export]")}`,
+              `    ${muted("manage: gear notebook [show <id>|rm <id>|export]")}`,
             ].join("\n"),
           );
         }
@@ -1153,44 +1441,19 @@ class Tui {
         });
         this.print(
           id
-            ? `  ${text("✦ Logged with the current flight trail.")} ${muted(`alan incidents show ${id.slice(-8)}`)}`
-            : `  ${muted("Could not record — see alan doctor.")}`,
+            ? `  ${text("✦ Logged with the current flight trail.")} ${muted(`gear incidents show ${id.slice(-8)}`)}`
+            : `  ${muted("Could not record — see gear doctor.")}`,
         );
         return true;
       }
       case "help": {
-        const cmds: [string, string][] = [
-          ["/model", "Switch model/provider"],
-          ["/theme", "Themes — switch color theme"],
-          ["/sessions", "Browse, resume, rename, archive & delete sessions"],
-          ["/resume", "Open the session picker to continue past work"],
-          ["/rename", "Rename the current session"],
-          ["/status", "Session status"],
-          ["/providers", "List providers"],
-          ["/keys", "Manage API keys"],
-          ["/research", "Research — propose a plan, then a cited report"],
-          ["/deepresearch", "Deep research — multi-round, long-form"],
-          ["/cost", "Session cost"],
-          ["/plan", "Toggle plan mode"],
-          ["/hands-free", "Hands-Free — toggle bypass mode (shift+tab)"],
-          ["/mode", "Cycle permission mode (confirm/auto/hands-free)"],
-          ["/sandbox", "OS sandbox for commands — on | off (off = full access)"],
-          ["/rewind", "Roll back the conversation"],
-          ["/compress", "Summarize & shrink context"],
-          ["/undo", "Revert the last Berne auto-commit"],
-          ["/interactive", "Live dashboard from the last report (auto on|off · open)"],
-          ["/memory", "System memory — /memory [update|add|edit|clear|daily|3d|weekly|manual]"],
-          ["/notebook", "Learned tactics active for this workspace"],
-          ["/bug", "Flag a problem — records the flight trail to the black box"],
-          ["/clear", "Clear the screen"],
-          ["/quit", "Exit"],
-        ];
-        this.print(
-          [
-            `  ${bold(text("Commands"))}`,
-            ...cmds.map(([c, d]) => `    ${info(c.padEnd(12))}${muted(d)}`),
-          ].join("\n"),
-        );
+        const commands = this.slashCatalog();
+        const nameWidth = Math.max(...commands.map((item) => item.name.length)) + 2;
+        const rows =
+          cols() < 64
+            ? commands.flatMap((item) => [`    ${info(item.name)}`, `      ${muted(item.desc)}`])
+            : commands.map((item) => `    ${info(item.name.padEnd(nameWidth))}${muted(item.desc)}`);
+        this.print([`  ${bold(text("Commands"))}`, ...rows].join("\n"));
         return true;
       }
       case "sessions":
@@ -1224,12 +1487,18 @@ class Tui {
             sandboxEnabled: s.sandboxEnabled,
             registeredProviders: s.registeredProviders,
             version: this.ctx.version,
+            contextUsage: engine.getContextUsage(),
+            providerHealth: engine.getProviderHealth(),
           }),
         );
         return true;
       }
       case "cost":
         this.print(`  ${muted(`$${engine.getCost().toFixed(4)}`)}`);
+        return true;
+      case "loop":
+      case "loops":
+        this.handleLoopSlash(cmd, arg);
         return true;
       case "providers": {
         const a = arg.split(/\s+/).filter(Boolean);
@@ -1256,7 +1525,7 @@ class Tui {
             const row = engine.getProviderStatus().find((r) => r.id === id);
             if (row && !row.hasKey && !row.local) {
               this.print(
-                `  ${warn("→")} ${muted(`${id} has no key yet — add one:`)} ${info(`/keys set ${id} <key>`)} ${muted("or")} ${info(`berne login ${id}`)}`,
+                `  ${warn("→")} ${muted(`${id} has no key yet — add one:`)} ${info(`/keys set ${id} <key>`)} ${muted("or")} ${info(`gear login ${id}`)}`,
               );
             }
           }
@@ -1302,6 +1571,64 @@ class Tui {
       case "keys":
         this.openKeys();
         return true;
+      case "mcp": {
+        const servers = await engine.listMcpServers();
+        const lines = [`  ${bold(text("MCP servers"))}`];
+        if (servers.length === 0) {
+          lines.push(
+            `    ${muted("None configured. Add servers in ")}${info(".alan/mcp.json")}${muted(".")}`,
+          );
+        } else {
+          for (const server of servers) {
+            const dot =
+              server.health === "healthy"
+                ? ok("●")
+                : server.health === "degraded"
+                  ? warn("●")
+                  : faint("○");
+            lines.push(
+              `    ${dot} ${text(server.name)} ${muted(`(${server.kind}, ${server.toolCount} tools)`)}`,
+            );
+            if (server.tools.length) lines.push(`      ${faint(server.tools.join(", "))}`);
+            if (server.lastError) lines.push(`      ${warn("⚠")} ${faint(server.lastError)}`);
+          }
+        }
+        this.print(lines.join("\n"));
+        return true;
+      }
+      case "skills": {
+        if (arg) {
+          const hits = await engine.searchSkills(arg);
+          this.print(
+            [
+              `  ${bold(text("Skills"))} ${muted(`matching “${arg}”`)}`,
+              ...(hits.length
+                ? hits.flatMap((hit) => [
+                    `    ${info(hit.id)}`,
+                    ...(hit.description ? [`      ${faint(hit.description)}`] : []),
+                  ])
+                : [`    ${muted("No matches.")}`]),
+            ].join("\n"),
+          );
+          return true;
+        }
+        const catalog = await engine.listSkills();
+        this.print(
+          [
+            `  ${bold(text("Skills"))} ${muted(`(${catalog.total} across ${catalog.plugins.length} domains)`)}`,
+            ...(catalog.total
+              ? catalog.plugins.flatMap((plugin) => [
+                  `    ${ok("●")} ${text(plugin.plugin)} ${muted(`(${plugin.skills.length})`)}`,
+                  `      ${faint(plugin.skills.map((skill) => skill.name).join(", "))}`,
+                ])
+              : [
+                  `    ${muted("None found. Add skills under ")}${info("skills/")}${muted(" or ")}${info(".alan/skills/")}${muted(".")}`,
+                ]),
+            `  ${faint("Skills load automatically when a request matches · search with /skills <keywords>")}`,
+          ].join("\n"),
+        );
+        return true;
+      }
       case "research":
       case "deepresearch": {
         const deep = cmd === "deepresearch";
@@ -1319,22 +1646,27 @@ class Tui {
         this.print(`  ${ok("✓")} ${muted(`plan mode ${on ? "on" : "off"}`)}`);
         return true;
       }
-      case "turing": // hidden back-compat alias for /hands-free
+      case "autonomy": {
+        const target = configModeToPermissionMode(arg ? `autonomy-${arg}` : undefined);
+        if (target?.startsWith("autonomy-")) this.cyclePermissionMode(target);
+        else this.print(`  ${warn("Usage:")} ${info("/autonomy")} ${faint("[I|II|III]")}`);
+        return true;
+      }
+      case "turing": // hidden compatibility aliases for Autonomy III
       case "hands-free": {
-        // Explicit toggle: jump into Hands-Free, or back out to confirm.
-        this.cyclePermissionMode(engine.getPermissionMode() === "turing" ? "confirm" : "turing");
+        this.cyclePermissionMode(
+          engine.getPermissionMode() === "autonomy-iii" ? "confirm" : "autonomy-iii",
+        );
         return true;
       }
       case "mode": {
-        // "hands-free" is the public name for the internal "turing" bypass mode.
         const raw = (arg ?? "").toLowerCase();
-        const norm = raw === "hands-free" || raw === "handsfree" ? "turing" : raw;
-        const valid = ["confirm", "auto", "turing"] as const;
-        if (norm && (valid as readonly string[]).includes(norm)) {
-          this.cyclePermissionMode(norm as (typeof valid)[number]);
+        const mode = configModeToPermissionMode(raw);
+        if (mode) {
+          this.cyclePermissionMode(mode);
         } else if (raw) {
           this.print(
-            `  ${warn("Usage:")} ${info("/mode")} ${faint("[confirm|auto|hands-free] — empty cycles")}`,
+            `  ${warn("Usage:")} ${info("/mode")} ${faint("[confirm|autonomy-i|autonomy-ii|autonomy-iii|auto] — empty cycles")}`,
           );
         } else {
           this.cyclePermissionMode(); // no arg → advance the cycle, like Shift+Tab
@@ -1357,32 +1689,79 @@ class Tui {
         }
         return true;
       }
+      case "browser": {
+        const raw = (arg ?? "").toLowerCase();
+        if (raw === "on" || raw === "off") {
+          const enabled = raw === "on";
+          await engine.setBrowserEnabled(enabled);
+          saveBrowserState(enabled);
+          this.print(browserModeBanner(enabled));
+        } else if (raw) {
+          this.print(
+            `  ${warn("Usage:")} ${info("/browser")} ${faint("[on|off] — empty shows the current state")}`,
+          );
+        } else {
+          this.print(browserModeBanner(engine.isBrowserEnabled()));
+        }
+        return true;
+      }
+      case "diff": {
+        this.print(renderWorkspaceDiff(this.ctx.workspaceRoot));
+        return true;
+      }
       case "theme": {
         const themes = listThemes();
         if (arg) {
           if (setTheme(arg)) {
-            saveTheme(arg);
+            this.refreshThemeSurface();
+            saveTheme(getTheme().name);
             this.print(`  ${ok("✓")} ${muted("theme set to")} ${warn(getTheme().label)}`);
           } else this.print(`  ${accent("✕")} ${muted("unknown theme:")} ${faint(arg)}`);
           return true;
         }
         // Live-preview: navigating the picker repaints the whole screen in the theme; Esc reverts.
         const original = getTheme().name;
+        // The v2 theme selector: accent name, its one-line character, and the
+        // persisted theme id as the quiet tag.
+        const ACCENT_DESC: Record<string, string> = {
+          cobalt: "Signature blueprint blue",
+          orange: "High-contrast amber",
+          violet: "Modern editorial purple",
+          emerald: "Terminal phosphor green",
+          mono: "Minimalist grayscale",
+        };
         const items: PickerItem[] = themes.map((t) => ({
           label: t.label,
-          hint: t.appearance + (t.name === original ? " · current" : ""),
+          hint:
+            t.name === "auto"
+              ? "follows your terminal's own colors"
+              : (t.gearAccent && ACCENT_DESC[t.gearAccent]) || `${t.appearance} surface`,
+          prefix: paintBrandWith(t.name, "●"),
+          current: t.name === original,
+          tags: [t.name],
         }));
         const start = Math.max(
           0,
           themes.findIndex((t) => t.name === original),
         );
-        const i = await this.pick("Themes", items, start, (idx) => setTheme(themes[idx]!.name));
+        const i = await this.pick(
+          `Accent palette · ${getTheme().appearance}`,
+          items,
+          start,
+          (idx) => {
+            setTheme(themes[idx]!.name);
+            this.refreshThemeSurface();
+          },
+          "Light or dark: /theme light · /theme dark · persisted to ~/.alan/theme.json",
+        );
         if (i != null) {
           setTheme(themes[i]!.name);
+          this.refreshThemeSurface();
           saveTheme(themes[i]!.name);
           this.print(`  ${ok("✓")} ${muted("theme set to")} ${warn(getTheme().label)}`);
         } else {
           setTheme(original); // revert the live preview on cancel
+          this.refreshThemeSurface();
         }
         return true;
       }
@@ -1396,10 +1775,21 @@ class Tui {
           this.print(`  ${ok("✓")} ${muted("switched to")} ${info(arg)}`);
           return true;
         }
-        const items: PickerItem[] = presets.map((p) => ({ label: `${p.provider}/${p.label}` }));
         const cur = `${engine.getProvider()}/${engine.getModel()}`;
+        const items: PickerItem[] = presets.map((p) => ({
+          label: p.label,
+          hint: `${p.provider}/${p.model}`,
+          current: `${p.provider}/${p.model}` === cur,
+          tags: this.modelTags(p),
+        }));
         const start = presets.findIndex((p) => `${p.provider}/${p.model}` === cur);
-        const i = await this.pick("Model", items, start < 0 ? 0 : start);
+        const i = await this.pick(
+          "Select model & provider",
+          items,
+          start < 0 ? 0 : start,
+          undefined,
+          "Gateway retries & falls back automatically · keys via /keys · /model <provider>/<id> for anything not listed",
+        );
         if (i != null) {
           const p = presets[i]!;
           engine.switchModel(p.model, p.provider as any, this.ctx.sessionId);
@@ -1440,7 +1830,7 @@ class Tui {
             this.print(
               `  ${ok("✓")} ${muted(`autonomous dashboards ${on ? "on" : "off"}`)} ${faint(
                 on
-                  ? "— Berne builds one when an answer is data-heavy"
+                  ? "— Gear builds one when an answer is data-heavy"
                   : "— dashboards only when you ask (/interactive)",
               )}`,
             );
@@ -1587,7 +1977,7 @@ class Tui {
           this.print(
             [
               ...head,
-              `  ${muted("Empty — Berne hasn't built your profile yet.")}`,
+              `  ${muted("Empty — Gear hasn't built your profile yet.")}`,
               `  ${faint("Seed it: /memory update · note: /memory add <…> · auto: /memory weekly")}`,
             ].join("\n"),
           );
@@ -1616,6 +2006,94 @@ class Tui {
     }
   }
 
+  private handleLoopSlash(command: "loop" | "loops", arg: string): void {
+    const tokens = arg.split(/\s+/).filter(Boolean);
+    const operation = (tokens[0] ?? "").toLowerCase();
+    const shouldList =
+      (command === "loops" && !arg) ||
+      operation === "list" ||
+      operation === "ls" ||
+      operation === "status";
+
+    if (shouldList) {
+      const tasks = this.ctx.engine.listLoopTasks(this.ctx.sessionId);
+      if (tasks.length === 0) {
+        this.print(
+          `  ${muted("No loops are active in this session.")} ${faint("Try /loop 5m check CI")}`,
+        );
+        return;
+      }
+      this.print(
+        [
+          `  ${bold(text(`Loops — ${tasks.length} active`))}`,
+          ...tasks.map(
+            (task) =>
+              `    ${warn("↻")} ${info(task.id)} ${text(task.cadence === "fixed" ? `every ${formatLoopInterval(task.intervalMs)}` : `adaptive ${formatLoopInterval(task.intervalMs)}`)} ${faint(`· ${formatLoopDue(task.nextRunAt)} · ${loopPromptPreview(task.prompt, 54)}`)}`,
+          ),
+          `  ${faint("/loop cancel <id> · /loop clear · Esc stops the newest loop")}`,
+        ].join("\n"),
+      );
+      return;
+    }
+
+    if (["cancel", "stop", "off", "delete", "rm"].includes(operation)) {
+      const result = this.ctx.engine.cancelLoopTask(this.ctx.sessionId, tokens[1]);
+      if (!result.ok || !result.task) {
+        this.print(`  ${accent("✕")} ${muted(result.error ?? "Could not stop that loop.")}`);
+      } else {
+        this.print(
+          `  ${accent("✕")} ${muted("stopped loop")} ${info(result.task.id)} ${faint(loopPromptPreview(result.task.prompt, 58))}`,
+        );
+      }
+      return;
+    }
+
+    if (["clear", "cancel-all", "stop-all"].includes(operation)) {
+      const count = this.ctx.engine.clearLoopTasks(this.ctx.sessionId);
+      this.print(
+        count > 0
+          ? `  ${accent("✕")} ${muted(`stopped ${count} ${count === 1 ? "loop" : "loops"}`)}`
+          : `  ${muted("No loops are active in this session.")}`,
+      );
+      return;
+    }
+
+    if (operation === "help") {
+      this.print(
+        [
+          `  ${bold(text("Loop mode"))}`,
+          `    ${info("/loop 5m check the deploy")} ${faint("fixed interval")}`,
+          `    ${info("/loop check CI and review comments")} ${faint("adaptive 1–60m cadence")}`,
+          `    ${info("/loop")} ${faint("built-in maintenance prompt, or .alan/loop.md")}`,
+          `    ${info("/loops")} ${faint("list active tasks")}`,
+          `    ${info("/loop cancel <id>")} ${faint("stop one · /loop clear stops all")}`,
+        ].join("\n"),
+      );
+      return;
+    }
+
+    try {
+      const result = this.ctx.engine.scheduleLoop(this.ctx.sessionId, arg);
+      const task = result.task;
+      const cadence =
+        task.cadence === "fixed"
+          ? `every ${formatLoopInterval(task.intervalMs)}`
+          : `adaptive · first check ${formatLoopDue(task.nextRunAt)}`;
+      this.print(
+        [
+          `  ${ok("✓")} ${text("loop scheduled")} ${info(task.id)} ${faint(`· ${cadence} · expires in 7d`)}`,
+          `    ${faint("└")} ${muted(loopPromptPreview(task.prompt, Math.max(36, cols() - 10)))}`,
+          ...(result.promptPath ? [`    ${faint(`prompt: ${result.promptPath}`)}`] : []),
+          ...result.warnings.map((warning) => `    ${warn("•")} ${muted(warning)}`),
+        ].join("\n"),
+      );
+    } catch (error) {
+      this.print(
+        `  ${accent("✕")} ${muted(error instanceof Error ? error.message : String(error))}`,
+      );
+    }
+  }
+
   private modelPresets(reg: string[]): { provider: string; model: string; label: string }[] {
     // Data-driven from the provider presets: every registered provider with a
     // curated `models` list contributes its models, so adding a provider is a
@@ -1633,6 +2111,18 @@ class Tui {
     return out;
   }
 
+  /** v2 picker chips: provider name, plus real free/local markers from the presets. */
+  private modelTags(p: { provider: string; model: string; label: string }): string[] {
+    const tags: string[] = [];
+    const preset = getPreset(p.provider);
+    if (preset?.local) tags.push("local");
+    if (/:free$/i.test(p.model) || /\(free\)/i.test(p.label) || /\bfree\b/i.test(p.label)) {
+      tags.push("free");
+    }
+    tags.push(p.provider);
+    return tags;
+  }
+
   // ── picker mode ──
 
   private pick(
@@ -1640,9 +2130,10 @@ class Tui {
     items: PickerItem[],
     start: number,
     onPreview?: (i: number) => void,
+    footnote?: string,
   ): Promise<number | null> {
     return new Promise((resolve) => {
-      this.picker = { title, items, sel: Math.max(0, start), resolve, onPreview };
+      this.picker = { title, items, sel: Math.max(0, start), resolve, onPreview, footnote };
       this.mode = "picker";
       this.scheduleDraw();
     });
@@ -1660,6 +2151,9 @@ class Tui {
       p.sel = (p.sel + 1) % p.items.length;
       p.onPreview?.(p.sel);
       this.scheduleDraw();
+    } else if (key.type === "char" && /^[1-9]$/.test(key.value)) {
+      const picked = Number(key.value) - 1;
+      if (picked < p.items.length) this.closePicker(picked);
     } else if (key.type === "enter") {
       this.closePicker(p.sel);
     } else if (key.type === "esc" || (key.type === "ctrl" && key.name === "c")) {
@@ -1757,21 +2251,65 @@ class Tui {
     return id.slice(0, 8);
   }
 
+  private sessionGroup(iso: string): string {
+    return sessionGroupLabel(iso, new Date(), { withDate: true });
+  }
+
+  /** Permanently discard only untouched, unnamed launch placeholders. */
+  private discardSessionIfEmpty(id: string): void {
+    const session = this.ctx.engine.getSessionInfo(id);
+    if (!session || session.eventCount > 0 || session.title?.trim()) return;
+    try {
+      this.ctx.engine.purgeSession(id);
+    } catch {
+      // Cleanup is best-effort; it must never prevent exit or resume.
+    }
+  }
+
   private sessionRowView(s: SessionListItem): SessionRowView {
     const title = s.title && s.title.trim() ? s.title.trim() : "untitled";
-    const parts = [this.relTime(s.updatedAt), s.model];
+    const parts = [s.model];
     if (s.eventCount > 0) parts.push(`${s.eventCount} events`);
+    if (s.lastTokens && s.lastTokens > 0) parts.push(`${fmtTokens(s.lastTokens)} tokens`);
     return {
+      id: s.id,
       title,
       meta: parts.filter(Boolean).join(" · "),
+      workspace: s.workspaceRoot,
+      updatedAt: s.updatedAt,
+      group: this.sessionGroup(s.updatedAt),
       current: s.id === this.ctx.sessionId,
     };
   }
 
+  private filteredSessions(view: "active" | "archived"): SessionListItem[] {
+    const all = this.ctx.engine
+      .listSessions({ status: view })
+      .filter((session) => session.id === this.ctx.sessionId || isMeaningfulSession(session));
+    const query = this.sessionsQuery.trim().toLowerCase();
+    if (!query) return all;
+    return all.filter((session) =>
+      [
+        session.id,
+        session.title ?? "",
+        session.workspaceRoot,
+        session.model,
+        session.provider ?? "",
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(query),
+    );
+  }
+
   private openSessions(view: "active" | "archived" = "active"): void {
+    if (this.mode !== "sessions") {
+      this.sessionsQuery = "";
+      this.sessionsSearching = false;
+    }
     this.sessionsView = view;
     this.sessionsPendingDelete = null;
-    this.sessionsList = this.ctx.engine.listSessions({ status: view });
+    this.sessionsList = this.filteredSessions(view);
     const cur = this.sessionsList.findIndex((s) => s.id === this.ctx.sessionId);
     this.sessionsSel = cur >= 0 ? cur : 0;
     this.mode = "sessions";
@@ -1780,7 +2318,7 @@ class Tui {
 
   /** Reload the list for the current view after a mutation, keeping the cursor in range. */
   private refreshSessions(): void {
-    this.sessionsList = this.ctx.engine.listSessions({ status: this.sessionsView });
+    this.sessionsList = this.filteredSessions(this.sessionsView);
     if (this.sessionsSel >= this.sessionsList.length) {
       this.sessionsSel = Math.max(0, this.sessionsList.length - 1);
     }
@@ -1789,12 +2327,44 @@ class Tui {
 
   private closeSessions(): void {
     this.sessionsPendingDelete = null;
+    this.sessionsSearching = false;
     this.mode = "input";
     this.scheduleDraw();
   }
 
   private sessionsKey(key: Key): void {
     const n = this.sessionsList.length;
+    if (key.type === "ctrl" && key.name === "n") {
+      this.startNewSession();
+      return;
+    }
+    if (key.type === "ctrl" && key.name === "d") {
+      this.deleteSelected();
+      return;
+    }
+    if (this.sessionsSearching) {
+      if (key.type === "char") {
+        this.sessionsQuery += key.value;
+        this.sessionsSel = 0;
+        this.refreshSessions();
+        return;
+      }
+      if (key.type === "backspace") {
+        this.sessionsQuery = this.sessionsQuery.slice(0, -1);
+        this.sessionsSel = 0;
+        this.refreshSessions();
+        return;
+      }
+      if (key.type === "esc") {
+        this.sessionsSearching = false;
+        this.scheduleDraw();
+        return;
+      }
+    } else if (key.type === "char" && key.value === "/") {
+      this.sessionsSearching = true;
+      this.scheduleDraw();
+      return;
+    }
     // Any navigation/action other than a confirming second 'd' disarms a pending delete.
     const disarm = () => {
       if (this.sessionsPendingDelete) this.sessionsPendingDelete = null;
@@ -1843,6 +2413,19 @@ class Tui {
     }
   }
 
+  private startNewSession(): void {
+    const previous = this.ctx.sessionId;
+    const next = this.ctx.engine.createSession();
+    this.ctx.sessionId = next;
+    if (previous !== next) this.discardSessionIfEmpty(previous);
+    this.sessionsPendingDelete = null;
+    this.sessionsSearching = false;
+    this.sessionsQuery = "";
+    this.mode = "input";
+    this.resetTranscript();
+    this.print(`  ${ok("✓")} ${muted("started a new session")}`);
+  }
+
   /** Load the selected session's history into the transcript and continue it. */
   private resumeSelected(): void {
     const s = this.sessionsList[this.sessionsSel];
@@ -1871,7 +2454,9 @@ class Tui {
     res: { switched: boolean; providerKnown: boolean },
   ): void {
     const lines = this.ctx.engine.getTranscript(id);
+    const previous = this.ctx.sessionId;
     this.ctx.sessionId = id; // set before resetTranscript so the reprinted banner shows this session
+    if (previous !== id) this.discardSessionIfEmpty(previous);
     this.resetTranscript();
 
     const title = s.title && s.title.trim() ? s.title.trim() : "untitled";
@@ -1903,7 +2488,7 @@ class Tui {
 
   /**
    * On launch, if the session already has history (started with `--resume` /
-   * `alan resume`), replay it into the viewport so the user lands where they left
+   * `gear resume`), replay it into the viewport so the user lands where they left
    * off instead of on a blank screen.
    */
   private seedFromHistory(): void {
@@ -1928,7 +2513,7 @@ class Tui {
     const fresh = this.ctx.sessionId;
     const recent = this.ctx.engine
       .listSessions({ status: "active" })
-      .filter((s) => s.id !== fresh)
+      .filter((s) => s.id !== fresh && isMeaningfulSession(s))
       .slice(0, 12);
     if (recent.length === 0) return; // nothing to resume — stay in the fresh session
 
@@ -1948,14 +2533,6 @@ class Tui {
     if (!res) {
       this.print(`  ${accent("✕")} ${muted("could not open that session")}`);
       return;
-    }
-    // Discard the throwaway session we created to land in (only if untouched).
-    if (this.ctx.engine.getTranscript(fresh).length === 0) {
-      try {
-        this.ctx.engine.deleteSession(fresh);
-      } catch {
-        /* non-fatal — a lingering empty session is harmless */
-      }
     }
     this.replayTranscript(s.id, s, res);
   }
@@ -2663,12 +3240,28 @@ class Tui {
 
   // ── permission mode ──
 
-  private permissionHandler: PermissionHandler = (prompt) =>
-    new Promise<UserPermissionDecision>((resolve) => {
-      this.perm = { resolve, toolName: prompt.toolName, argsSummary: prompt.argsSummary };
+  private permissionHandler: PermissionHandler = async (prompt) => {
+    const preview = await buildPermissionPreview({
+      toolName: prompt.toolName,
+      argsSummary: prompt.argsSummary,
+      rawArgs: prompt.rawArgs,
+      workspaceRoot: this.ctx.workspaceRoot,
+      safety: prompt.safety,
+      exactSessionGrant: prompt.exactSessionGrant,
+      rateLimit: prompt.rateLimit,
+    });
+    return new Promise<UserPermissionDecision>((resolve) => {
+      this.perm = {
+        resolve,
+        toolName: prompt.toolName,
+        argsSummary: prompt.argsSummary,
+        preview,
+        sel: 0,
+      };
       this.mode = "permission";
       this.scheduleDraw();
     });
+  };
 
   // ── ask_user question mode ──
 
@@ -2716,25 +3309,21 @@ class Tui {
 
   private permKey(key: Key): void {
     if (!this.perm) return;
-    let decision: UserPermissionDecision | null = null;
-    if (key.type === "char" && (key.value === "n" || key.value === "N"))
-      decision = { kind: "deny" };
-    else if (key.type === "char" && (key.value === "s" || key.value === "S"))
-      decision = { kind: "allow_session" };
-    else if (
-      key.type === "enter" ||
-      (key.type === "char" && (key.value === "y" || key.value === "Y"))
-    )
-      decision = { kind: "allow_once" };
-    else if (key.type === "esc") decision = { kind: "deny" };
-    if (!decision) return;
+    const action = permissionKeyAction(key, this.perm.sel);
+    if (!action.handled) return;
+    if (!action.decision) {
+      this.perm.sel = action.selected;
+      this.scheduleDraw();
+      return;
+    }
+    const decision = action.decision;
     const r = this.perm.resolve;
     this.perm = null;
     this.mode = "turn"; // return to the in-flight turn
     const label =
       decision.kind === "deny"
-        ? accent("✕ denied")
-        : ok(decision.kind === "allow_session" ? "✓ session" : "✓ allowed");
+        ? muted("◇ declined · no action taken")
+        : ok(decision.kind === "allow_session" ? "✓ approved for session" : "✓ approved once");
     this.print(`  ${label}`);
     r(decision);
   }
@@ -2756,12 +3345,24 @@ class Tui {
         return;
       }
       if (!this.aborting) {
+        if (this.activeLoopId) {
+          const cancelled = this.ctx.engine.cancelLoopTask(this.ctx.sessionId, this.activeLoopId);
+          if (cancelled.ok)
+            this.print(`  ${accent("✕")} ${muted(`loop ${this.activeLoopId} stopped`)}`);
+        }
         // Guard the flood: one interrupt request per turn, however many times esc is pressed.
         this.aborting = true;
         this.ctx.engine.abort();
         this.print(`  ${accent("✕")} ${muted("interrupting…")}`);
         this.scheduleDraw();
       }
+      return;
+    }
+    // Backspace with an empty composer removes the most recently queued
+    // message — the strip advertises this, so queueing stays reversible.
+    if (key.type === "backspace" && this.input.length === 0 && this.queued.length > 0) {
+      this.queued.pop();
+      this.scheduleDraw();
       return;
     }
     // Enter mid-turn: STEER the live run — the message is folded into the
@@ -2776,7 +3377,7 @@ class Tui {
         if (steered) {
           this.history.push(raw);
           this.print(userBlock(raw));
-          this.print(`  ${accent("↪")} ${faint("folded into the running task")}`);
+          this.print(`  ${info("↪")} ${faint("folded into the running task")}`);
         } else {
           this.queued.push(raw);
         }
@@ -2797,19 +3398,14 @@ class Tui {
     if (this.editComposer(key)) this.scheduleDraw();
   }
 
-  private async runTurn(input: string): Promise<void> {
+  private async runTurn(input: string, scheduledLoop?: LoopTask): Promise<void> {
     const { engine } = this.ctx;
     this.mode = "turn";
     this.aborting = false;
     this.turnStart = Date.now();
-    this.turnSeed = Math.floor(Math.random() * 1000);
     this.streamBuf = "";
-    this.currentActivity = null;
     this.turnPreview = null;
     this.scheduleDraw();
-    this.tick = setInterval(() => {
-      if (this.mode === "turn") this.scheduleDraw();
-    }, 250);
 
     // Collapsed rendering (see ./turn.ts): narration and the final answer stay in
     // the open; the heavy work accumulates in a hidden log whose live tail — plus
@@ -2827,20 +3423,40 @@ class Tui {
       { model: engine.getModel(), getCost: () => engine.getCost() },
     );
     this.liveTurn = turn;
+    // The web comp rotates the gear continuously. Terminals cannot rotate a
+    // glyph, so the same mark pulses at eight frames/second while the elapsed
+    // receipt advances. This preserves motion without swapping the logo.
+    this.tick = setInterval(() => {
+      if (this.mode === "turn") {
+        this.turnPreview = turn.liveLines();
+        this.scheduleDraw();
+      }
+    }, 125);
 
     // Offer-a-dashboard bookkeeping: the answer text (for the data-density
     // heuristic) and whether the model already built/updated one this turn.
     let answerText = "";
     let dashboardTouched = false;
+    let toolCalls = 0;
+    let toolErrors = 0;
+    let filesChanged = 0;
+    let turnFailed = false;
+    this.activeLoopId = scheduledLoop?.id ?? null;
 
     try {
       for await (const ev of engine.chat(this.ctx.sessionId, input)) {
         turn.onEvent(ev);
-        this.currentActivity = turn.activity; // surfaced on the Cooking… line
         if (ev.type === "text_delta") answerText += ev.text;
         if (ev.type === "stream_reset") answerText = "";
+        if (ev.type === "tool_call_end") {
+          toolCalls++;
+          if (!ev.output?.success) toolErrors++;
+        }
         if (ev.type === "tool_call_end" && ev.output?.toolName === "interactive_dashboard") {
           dashboardTouched = true;
+        }
+        if (ev.type === "checkpoint_saved") {
+          this.lastCheckpoint = { sessionId: this.ctx.sessionId, label: `v${ev.version}` };
         }
         // Session-wide edited-files readout on the footer.
         if (
@@ -2850,11 +3466,15 @@ class Tui {
           ev.args?.path
         ) {
           this.filesEdited.add(String(ev.args.path));
+          filesChanged++;
         }
       }
     } catch (err) {
       // A user interrupt surfaces as an abort error — that's expected, not a failure to report.
-      if (!this.aborting) turn.onError(err);
+      if (!this.aborting) {
+        turnFailed = true;
+        turn.onError(err);
+      }
     } finally {
       turn.finish({ aborted: this.aborting });
       if (
@@ -2873,26 +3493,106 @@ class Tui {
         clearInterval(this.tick);
         this.tick = null;
       }
-      this.currentActivity = null;
       this.turnPreview = null;
       const wasAborted = this.aborting;
+      if (scheduledLoop) {
+        const completion = engine.completeLoopTask(this.ctx.sessionId, scheduledLoop.id, {
+          responseText: answerText,
+          toolCalls,
+          toolErrors: toolErrors + (turnFailed ? 1 : 0),
+          filesChanged,
+          aborted: wasAborted,
+        });
+        this.print(this.renderLoopCompletion(scheduledLoop, completion));
+      }
+      this.activeLoopId = null;
       this.aborting = false;
       this.mode = "input";
       this.drainQueue(wasAborted);
     }
   }
 
-  /** Ctrl+R: bring the hidden work out — the in-flight log mid-turn, else the
-   *  last turn's. Prints into the transcript (scrollback keeps it). */
+  private renderLoopCompletion(task: LoopTask, completion: LoopCompletion): string {
+    if (completion.state === "rescheduled" && completion.task) {
+      return `  ${warn("↻")} ${muted(`loop ${task.id} next ${formatLoopDue(completion.task.nextRunAt)}`)} ${faint(`· ${completion.reason}`)}`;
+    }
+    if (completion.state === "stopped") {
+      return `  ${ok("✓")} ${muted(`loop ${task.id} complete`)} ${faint(`· ${completion.reason}`)}`;
+    }
+    if (completion.state === "expired") {
+      return `  ${muted(`loop ${task.id} expired`)} ${faint(`· ${completion.reason}`)}`;
+    }
+    return `  ${muted(`loop ${task.id} stopped`)}`;
+  }
+
+  private async runDueLoopTask(): Promise<void> {
+    if (this.mode !== "input" || this.queued.length > 0 || this.activeLoopId) return;
+    const task = this.ctx.engine.claimDueLoopTask(this.ctx.sessionId);
+    if (!task) return;
+    try {
+      await this.runInput(task.prompt, task);
+    } catch (error) {
+      // Do not strand the manager's in-flight claim if rendering or persistence
+      // throws outside the normal runTurn error boundary.
+      try {
+        if (this.ctx.engine.getActiveLoopTask(this.ctx.sessionId)?.id === task.id) {
+          this.ctx.engine.completeLoopTask(this.ctx.sessionId, task.id, { toolErrors: 1 });
+        }
+      } catch {
+        /* the original failure is the actionable one */
+      }
+      this.activeLoopId = null;
+      this.mode = "input";
+      this.print(
+        `  ${accent("✕")} ${muted(`loop failed: ${error instanceof Error ? error.message : String(error)}`)}`,
+      );
+      this.scheduleDraw();
+    }
+  }
+
+  /** Ctrl+R opens a reversible details surface; nothing is copied into scrollback. */
   private expandWorkLog(): void {
     const log = this.liveTurn?.fullLog() ?? this.lastWorkLog;
     if (!log) {
       this.print(`  ${faint("no work log yet")}`);
       return;
     }
-    this.print("");
-    this.print(log);
-    this.print("");
+    this.reviewLog = log;
+    this.reviewReturnMode = this.liveTurn ? "turn" : "input";
+    const body = Math.max(0, log.split("\n").filter((line) => stripAnsi(line).trim()).length - 1);
+    this.reviewTop = Math.max(0, body - workReviewPageSize(Math.max(4, rowsCount() - 1)));
+    this.mode = "review";
+    this.scheduleDraw();
+  }
+
+  private moveWorkReview(delta: number): void {
+    const log = this.liveTurn?.fullLog() ?? this.reviewLog ?? "";
+    const body = Math.max(0, log.split("\n").filter((line) => stripAnsi(line).trim()).length - 1);
+    const maxTop = Math.max(0, body - workReviewPageSize(Math.max(4, rowsCount() - 1)));
+    this.reviewTop = Math.max(0, Math.min(maxTop, this.reviewTop + delta));
+    this.scheduleDraw();
+  }
+
+  private closeWorkReview(): void {
+    this.mode = this.reviewReturnMode === "turn" && this.liveTurn ? "turn" : "input";
+    this.reviewLog = null;
+    this.reviewTop = 0;
+    this.scheduleDraw();
+  }
+
+  private workReviewKey(key: Key): void {
+    const page = workReviewPageSize(Math.max(4, rowsCount() - 1));
+    if (key.type === "up") this.moveWorkReview(-1);
+    else if (key.type === "down") this.moveWorkReview(1);
+    else if (key.type === "pageup") this.moveWorkReview(-page);
+    else if (key.type === "pagedown") this.moveWorkReview(page);
+    else if (
+      key.type === "esc" ||
+      key.type === "enter" ||
+      (key.type === "ctrl" && (key.name === "r" || key.name === "c"))
+    ) {
+      this.closeWorkReview();
+    }
   }
 
   /** Close out a finished turn's type-ahead queue. On a clean finish, run the next queued
@@ -3048,7 +3748,7 @@ class Tui {
           .replace(/^-+|-+$/g, "")
           .slice(0, 50) || "research";
       const file = join(dir, `${new Date().toISOString().slice(0, 10)}-${slug}.md`);
-      const body = `# Research: ${plan.question}\n\n_Generated by Berne · ${new Date().toISOString()}_\n\n${report.markdown}\n`;
+      const body = `# Research: ${plan.question}\n\n_Generated by Gear · ${new Date().toISOString()}_\n\n${report.markdown}\n`;
       writeFileSync(file, body);
       const shown = file.startsWith(this.ctx.workspaceRoot)
         ? file.slice(this.ctx.workspaceRoot.length).replace(/^[/\\]/, "")
