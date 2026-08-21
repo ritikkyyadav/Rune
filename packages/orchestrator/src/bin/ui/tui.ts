@@ -33,12 +33,14 @@ import {
   getPreset,
   PROVIDER_PRESETS,
   CUSTOM_PROVIDER_ID,
+  loadLastModel,
   saveLastModel,
   saveSandboxState,
   saveBrowserState,
   getSystemMemoryPath,
 } from "@alan/shared";
 import type { CustomEndpoint } from "@alan/shared";
+import { providerChoices, accountChoices, modelChoices, fetchLiveModels } from "./model-picker";
 import { configModeToPermissionMode } from "../../permissions";
 import { AltScreen, BottomRegion } from "./screen";
 import { parseKeys, type Key } from "./keys";
@@ -315,9 +317,11 @@ class Tui {
     items: PickerItem[];
     sel: number;
     title: string;
-    resolve: (i: number | null) => void;
+    resolve: (i: number | null, alt?: boolean) => void;
     onPreview?: (i: number) => void;
     footnote?: string;
+    /** Optional second action key (e.g. `d` = "select as default") — resolves with alt=true. */
+    altKey?: string;
   } | null = null;
   private perm: {
     resolve: (d: UserPermissionDecision) => void;
@@ -1780,36 +1784,35 @@ class Tui {
         return true;
       }
       case "model": {
-        const reg = engine.getRegisteredProviders();
-        const presets = this.modelPresets(reg);
-        if (arg.includes("/")) {
-          const [p, ...m] = arg.split("/");
-          engine.switchModel(m.join("/"), p as any, this.ctx.sessionId);
-          saveLastModel({ provider: engine.getProvider(), model: engine.getModel() });
-          this.print(`  ${ok("✓")} ${muted("switched to")} ${info(arg)}`);
+        // Quick forms: `/model <provider>/<model>` (this session only),
+        // `/model default` (show) and `/model default <provider>/<model>` (persist).
+        if (arg === "default" || arg.startsWith("default ")) {
+          const rest = arg.slice("default".length).trim();
+          if (!rest) {
+            const def = loadLastModel();
+            this.print(
+              def
+                ? `  ${accent("◆")} ${muted("default:")} ${info(`${def.provider}/${def.model}`)} ${faint("· change: /model default <provider>/<model>, or d in /model")}`
+                : `  ${muted("no default set —")} ${info("/model default <provider>/<model>")}${muted(", or press d on a model in /model")}`,
+            );
+            return true;
+          }
+          const si = rest.indexOf("/");
+          const prov = si > 0 ? rest.slice(0, si) : engine.getProvider();
+          const mod = si > 0 ? rest.slice(si + 1) : rest;
+          this.applyModelSwitch(String(prov), mod, true);
           return true;
         }
-        const cur = `${engine.getProvider()}/${engine.getModel()}`;
-        const items: PickerItem[] = presets.map((p) => ({
-          label: p.label,
-          hint: `${p.provider}/${p.model}`,
-          current: `${p.provider}/${p.model}` === cur,
-          tags: this.modelTags(p),
-        }));
-        const start = presets.findIndex((p) => `${p.provider}/${p.model}` === cur);
-        const i = await this.pick(
-          "Select model & provider",
-          items,
-          start < 0 ? 0 : start,
-          undefined,
-          "Gateway retries & falls back automatically · keys via /keys · /model <provider>/<id> for anything not listed",
-        );
-        if (i != null) {
-          const p = presets[i]!;
-          engine.switchModel(p.model, p.provider as any, this.ctx.sessionId);
-          saveLastModel({ provider: engine.getProvider(), model: engine.getModel() });
-          this.print(`  ${ok("✓")} ${muted("switched to")} ${info(`${p.provider}/${p.label}`)}`);
+        if (arg.includes("/")) {
+          const [p, ...m] = arg.split("/");
+          this.applyModelSwitch(p!, m.join("/"), false);
+          return true;
         }
+        if (arg) {
+          this.applyModelSwitch(engine.getProvider(), arg, false);
+          return true;
+        }
+        await this.modelTree();
         return true;
       }
       case "rewind": {
@@ -2137,6 +2140,184 @@ class Tui {
     return tags;
   }
 
+  /** Switch provider/model for this session; `asDefault` also persists it as the startup default. */
+  private applyModelSwitch(prov: string, model: string, asDefault: boolean): void {
+    const engine = this.ctx.engine;
+    engine.switchModel(model, prov as any, this.ctx.sessionId);
+    const now = `${engine.getProvider()}/${engine.getModel()}`;
+    if (asDefault) {
+      saveLastModel({ provider: engine.getProvider(), model: engine.getModel() });
+      this.print(
+        `  ${accent("◆")} ${muted("default set —")} ${info(now)} ${faint("(used at startup)")}`,
+      );
+    } else {
+      this.print(
+        `  ${ok("✓")} ${muted("switched to")} ${info(now)} ${faint("· this session only — d in /model, or /model default, sets the startup default")}`,
+      );
+    }
+  }
+
+  /**
+   * The /model tree: providers → accounts/endpoints → models.
+   * Level 1 lists only configured providers (plus local runtimes); level 2 the
+   * real access paths for the chosen one (skipped when there is just one);
+   * level 3 the models under that account — live-listed for local runtimes.
+   * ⏎ switches this session; `d` also makes the pick the startup default.
+   */
+  private async modelTree(): Promise<void> {
+    const engine = this.ctx.engine;
+    const rows = engine.getProviderStatus();
+    const customEp = engine.getCustomEndpoint();
+    const current = { provider: String(engine.getProvider()), model: engine.getModel() };
+    const def = loadLastModel();
+    const defNote = def ? ` · default ${def.provider}/${def.model}` : "";
+
+    // ── Level 1: providers ──
+    const provs = providerChoices(rows, customEp, process.env, getPreset);
+    const typeItem: PickerItem = { label: "Type provider/model…", hint: "anything not listed" };
+    const l1: PickerItem[] = [
+      ...provs.map((p) => ({
+        label: p.label,
+        hint: stripAnsi(p.hint),
+        current: p.id === current.provider,
+        tags: p.local ? ["local"] : [],
+      })),
+      typeItem,
+    ];
+    const l1start = Math.max(
+      0,
+      provs.findIndex((p) => p.id === current.provider),
+    );
+    const a1 = await this.pick(
+      `Model · current ${current.provider}/${current.model}${defNote}`,
+      l1,
+      l1start,
+      undefined,
+      provs.length
+        ? "subscriptions (Claude Pro/Max · ChatGPT · Copilot): gear login · keys: /keys"
+        : "no providers configured yet — add a key with /keys or sign in with gear login",
+    );
+    if (a1 == null) return;
+    if (a1 >= provs.length) {
+      const typed = await this.promptLine("provider/model");
+      if (!typed) return;
+      const si = typed.indexOf("/");
+      if (si <= 0) {
+        this.print(`  ${warn("Use the form")} ${info("provider/model")}`);
+        return;
+      }
+      this.applyModelSwitch(typed.slice(0, si), typed.slice(si + 1), false);
+      return;
+    }
+    const chosen = provs[a1]!;
+    const row = rows.find((r) => r.id === chosen.id)!;
+    const preset = getPreset(chosen.id);
+    const accounts = accountChoices(preset, row, customEp, process.env);
+
+    // ── Level 2: accounts / endpoints (skipped when only one path) ──
+    let account = accounts[0];
+    if (accounts.length > 1) {
+      const l2: PickerItem[] = [
+        ...accounts.map((ac) => ({
+          label: ac.label,
+          hint: ac.detail,
+          current: ac.active === true,
+        })),
+        { label: "Back", hint: "choose another provider" },
+      ];
+      const a2 = await this.pick(
+        `Model · ${chosen.label} · account`,
+        l2,
+        Math.max(
+          0,
+          accounts.findIndex((ac) => ac.active),
+        ),
+        undefined,
+        "the selected credential becomes the active one for this provider",
+      );
+      if (a2 == null) return;
+      if (a2 >= accounts.length) return this.modelTree();
+      account = accounts[a2];
+      if (account?.kind === "key" && account.entryId && !account.active) {
+        // Picking a pooled key makes it the ACTIVE key — persisted and applied
+        // to the live gateway, same as the /keys manager.
+        const file = persistSetActiveKey(chosen.id, account.entryId);
+        engine.setProviderKeys(
+          chosen.id,
+          readProviderKeyEntries(file, chosen.id),
+          file.activeKeyId?.[chosen.id],
+          this.ctx.sessionId,
+        );
+        this.print(
+          `  ${ok("✓")} ${muted("active key now")} ${text(account.label)} ${faint(account.detail)}`,
+        );
+      }
+      if (row.source === "oauth" || row.source === "keychain") {
+        if (account?.kind === "key" || account?.kind === "env") {
+          this.print(
+            `  ${faint(`note: the signed-in ${row.source} credential wins on the wire —`)} ${info(`gear logout ${chosen.id}`)} ${faint("to use API keys")}`,
+          );
+        }
+      } else if (account?.kind === "env" && accounts.some((x) => x.kind === "key")) {
+        this.print(
+          `  ${faint("note: the saved key wins on the wire —")} ${info(`/keys clear ${chosen.id}`)} ${faint("to use the env key")}`,
+        );
+      }
+    }
+
+    // ── Level 3: models under that account ──
+    let live: string[] | null = null;
+    if (preset && (chosen.local || account?.kind === "endpoint")) {
+      live = await fetchLiveModels(preset.kind, row.endpoint ?? preset.baseUrl ?? "");
+    }
+    const models = modelChoices(preset, chosen.id, { live, custom: customEp, current, def });
+    const l3: PickerItem[] = [
+      ...models.map((m) => ({
+        label: m.label,
+        hint: m.label !== m.id ? m.id : undefined,
+        current: m.current,
+        tags: [
+          ...(m.isDefault ? ["default"] : []),
+          ...(/:free$/i.test(m.id) || /\bfree\b/i.test(m.label) ? ["free"] : []),
+          ...(chosen.local ? ["local"] : []),
+        ],
+      })),
+      { label: "Type a model id…", hint: "anything not listed" },
+      {
+        label: "Back",
+        hint: accounts.length > 1 ? "choose another account" : "choose another provider",
+      },
+    ];
+    const crumb =
+      accounts.length > 1 && account
+        ? `Model · ${chosen.label} · ${account.label.replace("API key · ", "key ")}`
+        : `Model · ${chosen.label}`;
+    if (chosen.local && !live) {
+      this.print(
+        `  ${faint(`endpoint ${row.endpoint ?? ""} not reachable — showing suggestions`)}`,
+      );
+    }
+    const a3 = await this.pickAlt(
+      crumb,
+      l3,
+      Math.max(
+        0,
+        models.findIndex((m) => m.current),
+      ),
+      "⏎ use now (this session) · d = use now and make it the startup default · esc back",
+      "d",
+    );
+    if (a3 == null) return;
+    if (a3.index === models.length) {
+      const typed = await this.promptLine("model id");
+      if (typed) this.applyModelSwitch(chosen.id, typed, a3.alt);
+      return;
+    }
+    if (a3.index > models.length) return this.modelTree();
+    const pickM = models[a3.index]!;
+    this.applyModelSwitch(chosen.id, pickM.id, a3.alt);
+  }
+
   // ── picker mode ──
 
   private pick(
@@ -2147,7 +2328,40 @@ class Tui {
     footnote?: string,
   ): Promise<number | null> {
     return new Promise((resolve) => {
-      this.picker = { title, items, sel: Math.max(0, start), resolve, onPreview, footnote };
+      this.picker = {
+        title,
+        items,
+        sel: Math.max(0, start),
+        resolve: (i) => resolve(i),
+        onPreview,
+        footnote,
+      };
+      this.mode = "picker";
+      this.scheduleDraw();
+    });
+  }
+
+  /**
+   * A picker with a second action key: ⏎ resolves `{ index, alt: false }`,
+   * `altKey` resolves `{ index, alt: true }` (the /model tree uses `d` for
+   * "use now AND make it the startup default"). esc → null.
+   */
+  private pickAlt(
+    title: string,
+    items: PickerItem[],
+    start: number,
+    footnote: string,
+    altKey: string,
+  ): Promise<{ index: number; alt: boolean } | null> {
+    return new Promise((resolve) => {
+      this.picker = {
+        title,
+        items,
+        sel: Math.max(0, start),
+        resolve: (i, alt) => resolve(i == null ? null : { index: i, alt: alt === true }),
+        footnote,
+        altKey,
+      };
       this.mode = "picker";
       this.scheduleDraw();
     });
@@ -2168,6 +2382,8 @@ class Tui {
     } else if (key.type === "char" && /^[1-9]$/.test(key.value)) {
       const picked = Number(key.value) - 1;
       if (picked < p.items.length) this.closePicker(picked);
+    } else if (key.type === "char" && p.altKey && key.value.toLowerCase() === p.altKey) {
+      this.closePicker(p.sel, true);
     } else if (key.type === "enter") {
       this.closePicker(p.sel);
     } else if (key.type === "esc" || (key.type === "ctrl" && key.name === "c")) {
@@ -2175,11 +2391,11 @@ class Tui {
     }
   }
 
-  private closePicker(result: number | null): void {
+  private closePicker(result: number | null, alt = false): void {
     const p = this.picker;
     this.picker = null;
     this.mode = "input";
-    p?.resolve(result); // the resolver (or a following print/redraw) repaints
+    p?.resolve(result, alt); // the resolver (or a following print/redraw) repaints
   }
 
   // ── ask mode (transient single-line text prompt; used by /research) ──

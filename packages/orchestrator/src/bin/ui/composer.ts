@@ -650,6 +650,7 @@ export interface PickerOptions {
 function pickerTag(tag: string): string {
   if (tag === "free") return chip("ok", " free ");
   if (tag === "local") return chip("warn", " local ");
+  if (tag === "default") return chip("brand", " ◆ default ");
   return chip("muted", ` ${tag} `);
 }
 
