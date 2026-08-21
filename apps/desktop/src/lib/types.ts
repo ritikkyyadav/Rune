@@ -102,7 +102,44 @@ export type EngineEvent =
       result: StepResult;
     }
   | { type: "plan_completed"; plan: Plan }
-  | { type: "replanning"; failedStep: number; reason: string };
+  | { type: "replanning"; failedStep: number; reason: string }
+  // ── v2 events the engine host forwards verbatim (trace + transcript) ──
+  | { type: "thinking_delta"; text: string }
+  | { type: "stream_reset" }
+  | {
+      type: "usage";
+      inputTokens: number;
+      outputTokens: number;
+      context?: { used: number; limit: number; percent: number };
+    }
+  | {
+      type: "fallback";
+      from: { provider: string; model: string };
+      to: { provider: string; model: string };
+      status?: number;
+      reason?: string;
+      chain?: string[];
+    }
+  | {
+      type: "compaction";
+      beforeTokens: number;
+      afterTokens: number;
+      limitTokens: number;
+      summarizedCount?: number;
+      forced?: boolean;
+    }
+  | { type: "checkpoint_saved"; runId: string; version: number; turnCount?: number }
+  | { type: "todo_updated"; items: { content: string; status: string }[] }
+  | { type: "verification_started"; attempt: number }
+  | {
+      type: "verification_completed";
+      attempt: number;
+      ran: boolean;
+      passed: boolean;
+      report: string;
+    }
+  | { type: "notice"; message: string }
+  | { type: "context_warning"; message: string };
 
 export interface ToolCallOutput {
   toolName: string;
@@ -126,7 +163,12 @@ export interface PermissionPrompt {
     reviewer?: { provider: string; model: string };
   };
   exactSessionGrant?: boolean;
+  /** Live per-minute rate-limit occupancy for this tool (v2 risk row). */
+  rateLimit?: { used: number; limit: number };
 }
+
+/** The gear ladder (mirrors packages/orchestrator/src/permissions.ts). */
+export type PermissionMode = "gear-1" | "gear-2" | "gear-3" | "gear-4" | "auto";
 
 export type PermissionDecision = "allow_once" | "allow_session" | "deny";
 
@@ -142,7 +184,8 @@ export interface EngineStatus {
   contextUsed: number;
   contextMax: number;
   totalCost: number;
-  permissionMode?: "confirm" | "autonomy-i" | "autonomy-ii" | "autonomy-iii" | "auto";
+  /** Gear ladder id ("gear-1" … "gear-4" | "auto"); legacy spellings may still arrive. */
+  permissionMode?: PermissionMode | string;
   securityPosture?: string;
   autoMode?: {
     enabled: boolean;

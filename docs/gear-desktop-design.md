@@ -55,7 +55,7 @@ The user's "deep six harness" is, as far as the web shows, LangChain's **DeepAge
 
 The rail answers the three questions the user asked for: *for what answer → which tools → which system facts (prompt, policy, sandbox, model) were used.*
 
-## 3. Desktop design contract (interactive half: `gear-desktop-v1.html`)
+## 3. Desktop design contract (interactive half: `docs/design/gear-desktop-v1.html`)
 
 **Window**: one card-less canvas (the customizer's card becomes the window). Three regions, all resizable/collapsible:
 
@@ -137,6 +137,17 @@ New: `TraceRail` + `TraceInspector` + `useTrace` (event→span reducer), `Status
 Milestones: **M1** tokens + shell + stream + trace rail fed by live events (dev mode) · **M2** inline permission card, fallback/compaction/queue, overlays, gears footer · **M3** inspector detail (prompt assembly via host call), evidence links, export · **M4** `.dmg` build, icon, first-run, auto-update later.
 
 Out of scope for v1: collaboration, cloud sync, Windows/Linux packaging.
+
+## 5b. Status (2026-08-21, end of day)
+
+**M1 is built** in `apps/desktop` (React 19 + Vite + Tauri 2, the existing engine-host sidecar):
+- `src/lib/stream.ts` — transcript reducer (v2 grammar: task bar, ledger, Plan bullet, tool bullets with cmd tree / diff card, status ladder, permission / fallback / compaction cards, headline + detail answer, summary strips); `src/lib/trace.ts` — trace reducer (run tree: model calls → tools → permissions, checkpoints, fallbacks, compactions, verification, narration/response; totals); both pure, tested in `tests/unit/desktop/stream-trace.test.ts` (11 tests).
+- `src/hooks/useTurns.ts` (one event stream → both views), `src/hooks/useEngine.ts` (raw `chat_event` passthrough, inline `permission_request` → `respond_permission`, `interject_chat`, `switch_model`, `list_providers`, `save_settings` for gears), `src/hooks/useSession.ts` (sessions list + resume → replayed into the transcript).
+- Components: `Titlebar`, `Sidebar` (day-grouped sessions), `Transcript`, `Composer` (block caret, slash palette, queue strip, gears footer with ctx meter), `TraceRail` (+ inspector, filters, totals, export-as-JSON), `Overlays` (model tree picker, theme picker, gear picker, toast), `GearMark`; `App.tsx` wires keyboard (⌘N/⌘K/⌘T/⌘B/⌘,/Shift+Tab/y·a·n/Esc), steering vs queueing, demo mode.
+- Styling: `src/styles/tokens.css` (generated from `packages/shared/src/design-tokens.ts`) + `src/styles/desktop.css` (the contract's rules). `main.tsx` applies the persisted theme before first paint.
+- Browser preview (`gear desktop dev`, no engine) offers **Run the demo turn** — the recorded reference turn replayed through the real reducers — so the UI can be reviewed without a model.
+
+Not yet (M2–M4): Review workspace (the old `ReviewWorkspace`/`EnvironmentPanel` are kept but unwired), prompt-assembly inspector for model spans (needs a host call), evidence ledger linking answer sentences to spans (v1 highlights the tool a span belongs to), signed trace export, Settings/keys panel in-app (keys stay in the CLI `/keys`), first-run, auto-update.
 
 ## 6. Open questions for the user
 1. Trace rail default: open on every session, or open on demand (`⌘T`)? (Draft: open, collapsible.)

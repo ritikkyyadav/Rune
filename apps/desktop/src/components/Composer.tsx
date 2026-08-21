@@ -1,262 +1,223 @@
-import { useCallback, useRef, useState } from "react";
-import {
-  ArrowUpIcon,
-  ChevronDownIcon,
-  MicIcon,
-  PaperclipIcon,
-  PlusIcon,
-  ShieldIcon,
-  StopIcon,
-} from "./Icons";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { GearInfo } from "../lib/gears";
 
-export interface ComposerAttachment {
+export interface CommandItem {
   id: string;
   name: string;
-  size: number;
-  type: string;
-  content: string;
+  desc: string;
+  tag?: string;
 }
 
-interface ComposerProps {
-  onSend: (message: string, attachments: ComposerAttachment[]) => void | Promise<void>;
-  disabled: boolean;
-  isProcessing?: boolean;
-  onAbort?: () => void;
-  modelName?: string;
-  onOpenSettings?: () => void;
-}
-
-const MAX_ATTACHMENTS = 4;
-const MAX_FILE_BYTES = 512 * 1024;
-const TEXT_EXTENSIONS = new Set([
-  "txt",
-  "md",
-  "json",
-  "ts",
-  "tsx",
-  "js",
-  "jsx",
-  "css",
-  "html",
-  "py",
-  "rs",
-  "toml",
-  "yaml",
-  "yml",
-  "sh",
-  "sql",
-  "xml",
-  "csv",
-]);
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-}
-
-function canReadAsText(file: File): boolean {
-  const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+/** ctx ▮▮▯▯▯ 41% — quiet below 70%, ochre ≥70%, red ≥90%. */
+function CtxMeter({ percent }: { percent?: number }) {
+  if (!percent || !Number.isFinite(percent) || percent <= 0) return null;
+  const pct = Math.max(0, Math.min(100, Math.round(percent)));
   return (
-    file.type.startsWith("text/") || file.type.includes("json") || TEXT_EXTENSIONS.has(extension)
+    <div
+      className={`ctx-meter ${pct >= 90 ? "hot" : pct >= 70 ? "warn" : ""}`}
+      title="Context window usage"
+    >
+      <span>ctx</span>
+      <div className="bar">
+        <i style={{ width: `${pct}%` }} />
+      </div>
+      <span>{pct}%</span>
+    </div>
   );
 }
 
-export function Composer({
-  onSend,
-  disabled,
-  isProcessing = false,
-  onAbort,
-  modelName = "Gear",
-  onOpenSettings,
-}: ComposerProps) {
+export function Composer(props: {
+  processing: boolean;
+  gear: GearInfo;
+  ctxPercent?: number;
+  queued: string[];
+  commands: CommandItem[];
+  onSubmit: (text: string) => void;
+  onInterrupt: () => void;
+  onUnqueue: (index: number) => void;
+  onCycleGear: () => void;
+  onCommand: (id: string) => void;
+  onOpenStates?: () => void;
+  inputRef?: React.RefObject<HTMLTextAreaElement | null>;
+}) {
   const [value, setValue] = useState("");
-  const [focused, setFocused] = useState(false);
-  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
-  const [attachmentError, setAttachmentError] = useState("");
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [sel, setSel] = useState(0);
+  const localRef = useRef<HTMLTextAreaElement>(null);
+  const ref = props.inputRef ?? localRef;
 
-  const resizeTextarea = useCallback((element: HTMLTextAreaElement) => {
-    element.style.height = "auto";
-    element.style.height = `${Math.min(element.scrollHeight, 180)}px`;
-  }, []);
+  const slashOpen = value.startsWith("/") && !/\s/.test(value);
+  const matches = useMemo(() => {
+    if (!slashOpen) return [];
+    const q = value.slice(1).toLowerCase();
+    const pref = props.commands.filter((c) => c.name.slice(1).toLowerCase().startsWith(q));
+    return pref.length
+      ? pref
+      : props.commands.filter((c) => c.name.slice(1).toLowerCase().includes(q));
+  }, [props.commands, slashOpen, value]);
 
-  const handleSubmit = useCallback(() => {
-    const message = value.trim();
-    if ((!message && attachments.length === 0) || disabled) return;
-    void onSend(message || "Please review the attached file.", attachments);
+  useEffect(() => {
+    setSel(0);
+  }, [value]);
+
+  // Auto-grow the textarea to its content (max-height in CSS).
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(160, el.scrollHeight)}px`;
+  }, [value, ref]);
+
+  const submit = () => {
+    const text = value.trim();
+    if (!text) return;
+    if (slashOpen && matches.length > 0) {
+      props.onCommand(matches[Math.min(sel, matches.length - 1)]!.id);
+      setValue("");
+      return;
+    }
+    props.onSubmit(text);
     setValue("");
-    setAttachments([]);
-    setAttachmentError("");
-    if (textareaRef.current) textareaRef.current.style.height = "auto";
-  }, [attachments, disabled, onSend, value]);
+  };
 
-  const handleKeyDown = useCallback(
-    (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-        event.preventDefault();
-        handleSubmit();
-      }
-    },
-    [handleSubmit],
-  );
-
-  const handleFiles = useCallback(
-    async (event: React.ChangeEvent<HTMLInputElement>) => {
-      const selectedFiles = [...(event.target.files ?? [])];
-      event.target.value = "";
-      if (selectedFiles.length === 0) return;
-
-      const slots = Math.max(0, MAX_ATTACHMENTS - attachments.length);
-      const accepted: ComposerAttachment[] = [];
-      let error =
-        selectedFiles.length > slots ? `You can attach up to ${MAX_ATTACHMENTS} files.` : "";
-
-      for (const file of selectedFiles.slice(0, slots)) {
-        if (file.size > MAX_FILE_BYTES) {
-          error = `${file.name} is larger than 512 KB.`;
-          continue;
-        }
-        if (!canReadAsText(file)) {
-          error = `${file.name} is not a supported text or code file.`;
-          continue;
-        }
-        accepted.push({
-          id: `${file.name}-${file.lastModified}-${Math.random().toString(36).slice(2, 7)}`,
-          name: file.name,
-          size: file.size,
-          type: file.type || "text/plain",
-          content: await file.text(),
-        });
-      }
-
-      setAttachments((current) => [...current, ...accepted]);
-      setAttachmentError(error);
-    },
-    [attachments.length],
-  );
-
-  const canSend = (value.trim().length > 0 || attachments.length > 0) && !disabled;
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (slashOpen && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+      e.preventDefault();
+      if (!matches.length) return;
+      setSel((s) => (s + (e.key === "ArrowDown" ? 1 : matches.length - 1)) % matches.length);
+      return;
+    }
+    if (e.key === "Tab" && slashOpen && matches.length > 0 && !e.shiftKey) {
+      e.preventDefault();
+      setValue(matches[sel]!.name);
+      return;
+    }
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      submit();
+      return;
+    }
+    if (e.key === "Escape") {
+      if (value) setValue("");
+      else if (props.processing) props.onInterrupt();
+    }
+  };
 
   return (
-    <div className="composer-area">
-      <div className={`composer ${focused ? "composer--focused" : ""}`}>
-        {attachments.length > 0 ? (
-          <div className="attachment-strip">
-            {attachments.map((attachment) => (
-              <span className="attachment-chip" key={attachment.id}>
-                <PaperclipIcon />
-                <span>
-                  <strong>{attachment.name}</strong>
-                  <small>{formatBytes(attachment.size)}</small>
+    <div className="composer">
+      <div className="composer-inner">
+        {slashOpen ? (
+          <div className="overlay" role="menu" aria-label="Slash commands">
+            <div className="overlay-header">
+              <span>
+                Commands{" "}
+                <span className="overlay-sub">
+                  · {matches.length} of {props.commands.length}
                 </span>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setAttachments((current) => current.filter((item) => item.id !== attachment.id))
-                  }
-                  aria-label={`Remove ${attachment.name}`}
-                >
-                  ×
-                </button>
               </span>
+              <span className="overlay-sub">↑↓ navigate · tab complete · ⏎ run · esc close</span>
+            </div>
+            <div className="overlay-list">
+              {matches.length === 0 ? (
+                <div className="palette-empty">No command matches "{value}"</div>
+              ) : null}
+              {matches.map((c, i) => (
+                <button
+                  key={c.id}
+                  className={`overlay-item ${i === sel ? "selected" : ""}`}
+                  role="menuitem"
+                  onMouseEnter={() => setSel(i)}
+                  onClick={() => {
+                    props.onCommand(c.id);
+                    setValue("");
+                  }}
+                >
+                  <span className="oi-cmd">{c.name}</span>
+                  <span className="oi-desc">{c.desc}</span>
+                  {c.tag ? <span className="oi-tag">{c.tag}</span> : null}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {props.queued.length > 0 ? (
+          <div className="queue-strip">
+            <div className="queue-head">Queued · sends when this turn completes</div>
+            {props.queued.map((q, i) => (
+              <div className="queue-item" key={i}>
+                <span className="q-idx">{i + 1}</span> {q}
+                <button className="q-x" title="remove" onClick={() => props.onUnqueue(i)}>
+                  ✕
+                </button>
+              </div>
             ))}
           </div>
         ) : null}
-
-        <textarea
-          ref={textareaRef}
-          value={value}
-          onChange={(event) => {
-            setValue(event.target.value);
-            resizeTextarea(event.target);
-          }}
-          onKeyDown={handleKeyDown}
-          onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
-          placeholder={
-            isProcessing ? "Gear is working…" : "Ask Gear to build, explain, or investigate"
-          }
-          rows={1}
-          disabled={disabled}
-          aria-label="Message Gear"
-        />
-
-        <div className="composer-toolbar">
-          <div className="composer-tools">
-            <input
-              ref={fileInputRef}
-              className="visually-hidden"
-              type="file"
-              multiple
-              accept=".txt,.md,.json,.ts,.tsx,.js,.jsx,.css,.html,.py,.rs,.toml,.yaml,.yml,.sh,.sql,.xml,.csv,text/*,application/json"
-              onChange={handleFiles}
-              tabIndex={-1}
+        <div className="input-row" onClick={() => ref.current?.focus()}>
+          <span className="input-prompt">›</span>
+          <div className="input-shell">
+            <textarea
+              ref={ref}
+              className={`input-field ${value ? "has-text" : ""}`}
+              rows={1}
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={onKeyDown}
+              spellCheck={false}
+              autoComplete="off"
+              aria-label="Give Gear a coding task"
             />
-            <button
-              type="button"
-              className="composer-icon-button"
-              onClick={() => fileInputRef.current?.click()}
-              title="Attach text or code files"
-              aria-label="Attach files"
-            >
-              <PlusIcon />
-            </button>
-            <span className="composer-access" title="Tools ask before sensitive actions">
-              <ShieldIcon />
-              Permissioned
-            </span>
-          </div>
-
-          <div className="composer-actions">
-            <button
-              type="button"
-              className="composer-model"
-              onClick={onOpenSettings}
-              title="Change model"
-            >
-              <span>{modelName}</span>
-              <ChevronDownIcon />
-            </button>
-            <button
-              type="button"
-              className="composer-icon-button composer-mic"
-              disabled
-              title="Voice input is not available yet"
-              aria-label="Voice input unavailable"
-            >
-              <MicIcon />
-            </button>
-            {isProcessing && onAbort ? (
-              <button
-                type="button"
-                className="send-button send-button--stop"
-                onClick={onAbort}
-                title="Stop Gear"
-                aria-label="Stop generation"
-              >
-                <StopIcon />
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="send-button"
-                onClick={handleSubmit}
-                disabled={!canSend}
-                title="Send message"
-                aria-label="Send message"
-              >
-                <ArrowUpIcon />
-              </button>
-            )}
+            {!value ? (
+              <>
+                <span className="block-caret blink" aria-hidden="true" />
+                <div className="input-placeholder">
+                  {props.processing
+                    ? "Type to steer or queue the next message (or / for commands)…"
+                    : "Give Gear a coding task (or / for commands)…"}
+                </div>
+              </>
+            ) : null}
           </div>
         </div>
-      </div>
-      <div className="composer-caption">
-        <span className={attachmentError ? "composer-error" : ""}>
-          {attachmentError || "Enter to send · Shift+Enter for a new line"}
-        </span>
-        <span>Gear can make mistakes. Review changes before shipping.</span>
+        <footer className="footer-strip">
+          <button
+            className="mode-indicator"
+            data-level={props.gear.id}
+            onClick={props.onCycleGear}
+            title="Shift+Tab shifts up: 1st → 2nd → 3rd → 4th → auto"
+          >
+            <span>{props.gear.arrows}</span>
+            <span>{props.gear.label}</span>
+          </button>
+          <span className="mode-desc">{props.gear.desc}</span>
+          <span className="footer-sep">·</span>
+          <CtxMeter percent={props.ctxPercent} />
+          {props.ctxPercent ? <span className="footer-sep">·</span> : null}
+          <span className="footer-hint">
+            <kbd>shift+tab</kbd> mode
+          </span>
+          <span className="footer-hint">
+            <kbd>esc</kbd> interrupt
+          </span>
+          <span className="footer-hint">
+            <kbd>⌘T</kbd> trace
+          </span>
+          <div className="footer-right">
+            {props.onOpenStates ? (
+              <button className="footer-link" onClick={props.onOpenStates}>
+                ? states
+              </button>
+            ) : null}
+            <button
+              className="footer-link"
+              onClick={() => {
+                setValue("/");
+                ref.current?.focus();
+              }}
+            >
+              / commands
+            </button>
+          </div>
+        </footer>
       </div>
     </div>
   );
