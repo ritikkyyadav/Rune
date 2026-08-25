@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::time::Instant;
 
-use alan_index::{CodeSearch, SearchHit};
+use gear_index::{CodeSearch, SearchHit};
 use serde::{Deserialize, Serialize};
 
 use crate::error::ToolError;
@@ -24,7 +24,7 @@ pub struct SearchCodeOutput {
 }
 
 /// Ranked BM25 search over symbol chunks. The index lives at
-/// `.alan/search.db` and refreshes incrementally on every call — an unchanged
+/// `.gear/search.db` and refreshes incrementally on every call — an unchanged
 /// tree costs one stat pass (well under the 500ms budget), so results are
 /// never stale and no background watcher is needed.
 pub fn execute(input: SearchCodeInput, workspace: &Path) -> Result<SearchCodeOutput, ToolError> {
@@ -35,7 +35,7 @@ pub fn execute(input: SearchCodeInput, workspace: &Path) -> Result<SearchCodeOut
     }
     let limit = input.limit.unwrap_or(10).clamp(1, 50) as usize;
 
-    let db_path = workspace.join(".alan").join("search.db");
+    let db_path = workspace.join(".gear").join("search.db");
     let mut search = CodeSearch::open(&db_path)
         .map_err(|e| ToolError::CommandFailed(format!("open search index: {e}")))?;
 

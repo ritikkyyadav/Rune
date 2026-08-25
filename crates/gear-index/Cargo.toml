@@ -1,5 +1,5 @@
 [package]
-name = "alan-index"
+name = "gear-index"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

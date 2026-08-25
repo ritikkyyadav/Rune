@@ -27,7 +27,7 @@ pub struct AuditEntry {
 /// Hash-chained JSONL audit log.
 ///
 /// Each entry's `entry_hash` is computed as `SHA-256(prev_hash|fields...)`,
-/// forming a tamper-evident chain. The log file lives at `~/.alan/audit.jsonl`
+/// forming a tamper-evident chain. The log file lives at `~/.gear/audit.jsonl`
 /// by default.
 pub struct AuditLog {
     path: PathBuf,
@@ -237,7 +237,7 @@ mod tests {
 
     #[test]
     fn hash_chain_round_trip() {
-        let dir = std::env::temp_dir().join("alan_audit_test");
+        let dir = std::env::temp_dir().join("gear_audit_test");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("audit.jsonl");

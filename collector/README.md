@@ -15,11 +15,11 @@ Then open <http://localhost:8787/> for the dashboard.
 
 ### Environment
 
-| Var | Default | Purpose |
-| --- | --- | --- |
-| `GEAR_COLLECTOR_PORT` | `8787` | Port to listen on |
-| `GEAR_COLLECTOR_TOKEN` | *(none)* | Shared bearer token; if set, `POST /ingest` requires it |
-| `GEAR_COLLECTOR_DB` | `~/.gear-collector/reports.db` | Where reports are stored |
+| Var                    | Default                        | Purpose                                                 |
+| ---------------------- | ------------------------------ | ------------------------------------------------------- |
+| `GEAR_COLLECTOR_PORT`  | `8787`                         | Port to listen on                                       |
+| `GEAR_COLLECTOR_TOKEN` | _(none)_                       | Shared bearer token; if set, `POST /ingest` requires it |
+| `GEAR_COLLECTOR_DB`    | `~/.gear-collector/reports.db` | Where reports are stored                                |
 
 ### Endpoints
 
@@ -30,7 +30,7 @@ Then open <http://localhost:8787/> for the dashboard.
 
 ## Point a Gear build at it
 
-In the client's `~/.alan/config.toml` (the web installer can write this for you):
+In the client's `~/.gear/config.toml` (the web installer can write this for you):
 
 ```toml
 [telemetry]

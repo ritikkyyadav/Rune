@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use alan_index::{Indexer, SymbolKind, SymbolQuery, SymbolStore};
+use gear_index::{Indexer, SymbolKind, SymbolQuery, SymbolStore};
 use serde::{Deserialize, Serialize};
 
 use crate::error::ToolError;
@@ -47,9 +47,9 @@ pub fn execute(
     input: SymbolSearchInput,
     workspace: &Path,
 ) -> Result<SymbolSearchOutput, ToolError> {
-    let db_path = workspace.join(".alan").join("symbols.db");
+    let db_path = workspace.join(".gear").join("symbols.db");
 
-    // Ensure .alan directory exists
+    // Ensure .gear directory exists
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| ToolError::CommandFailed(e.to_string()))?;
     }

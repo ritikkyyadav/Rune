@@ -1,21 +1,21 @@
 [package]
-name = "alan-tools"
+name = "gear-tools"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
 [[bin]]
-name = "alan-tools"
+name = "gear-tools"
 path = "src/main.rs"
 
 [lib]
-name = "alan_tools"
+name = "gear_tools"
 path = "src/lib.rs"
 
 [dependencies]
-alan-index = { path = "../alan-index" }
-alan-sandbox = { path = "../alan-sandbox" }
+gear-index = { path = "../gear-index" }
+gear-sandbox = { path = "../gear-sandbox" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

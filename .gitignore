@@ -19,16 +19,25 @@ bun.lockb
 .DS_Store
 Thumbs.db
 
-# Alan runtime
-.alan/cache/
-.alan/logs/
+# Retired pre-rename project dir (config migrated to .gear/; local index DBs only)
+.alan/
+
+# Codex CLI session scratch
+.codex/
+
+# Eval run archives (CI uploads them as artifacts; baseline-mock.json is the committed gate)
+tests/eval/results/run-*.json
+
+# Gear runtime
+.gear/cache/
+.gear/logs/
 # Local code indexes (rebuilt on demand; WAL/SHM siblings included)
-.alan/symbols.db*
-.alan/search.db*
+.gear/symbols.db*
+.gear/search.db*
 # Detached-run worktrees (git worktree checkouts; branches carry the work)
-.alan/worktrees/
+.gear/worktrees/
 # MCP server config — local, may contain credentials in headers (see mcp.json.example)
-.alan/mcp.json
+.gear/mcp.json
 
 # Environment
 .env

@@ -21,18 +21,18 @@ impl PathGuard {
     ///
     /// By default, writes are allowed to:
     /// - The workspace root and its children
-    /// - `~/.alan/cache`
+    /// - `~/.gear/cache`
     /// - `/tmp` (and `/private/tmp` on macOS)
     ///
     /// Blocked paths include system-critical directories that must never be
     /// written to by tool execution.
     pub fn new(workspace_root: PathBuf) -> Self {
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/nonexistent"));
-        let alan_cache = home.join(".alan").join("cache");
+        let gear_cache = home.join(".gear").join("cache");
 
         let allowed_write = vec![
             workspace_root.clone(),
-            alan_cache,
+            gear_cache,
             PathBuf::from("/tmp"),
             #[cfg(target_os = "macos")]
             PathBuf::from("/private/tmp"),
@@ -307,7 +307,7 @@ impl PathGuard {
 
         // Workspace-scoped overrides.
         env.insert(
-            "ALAN_WORKSPACE".to_string(),
+            "GEAR_WORKSPACE".to_string(),
             self.workspace_root.display().to_string(),
         );
         env.insert("NO_COLOR".to_string(), "1".to_string());
@@ -369,7 +369,7 @@ mod tests {
     fn curate_env_contains_workspace() {
         let guard = PathGuard::new(PathBuf::from("/tmp/ws"));
         let env = guard.curate_env();
-        assert_eq!(env.get("ALAN_WORKSPACE").unwrap(), "/tmp/ws");
+        assert_eq!(env.get("GEAR_WORKSPACE").unwrap(), "/tmp/ws");
         assert_eq!(env.get("NO_COLOR").unwrap(), "1");
     }
 }
