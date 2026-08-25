@@ -2,7 +2,7 @@
 
 > A local-first, sandboxed, multi-provider agentic coding assistant — a headless engine with CLI and desktop surfaces.
 
-**Status:** early, active development. The engine, CLI, tool suite, and evals work end-to-end; interfaces are still evolving and not all blueprint features are built yet. Current release: **Gear v0.2.0**.
+**Status:** early, active development. The engine, CLI, tool suite, and evals work end-to-end; interfaces are still evolving and not all blueprint features are built yet. Current release: **Gear v0.3.0**.
 
 > _Gear is the sole public product identity. Older internal identifiers remain only as migration-compatible package, data, and launcher aliases._
 
@@ -34,8 +34,8 @@ compliance-sensitive teams.
   In the CLI, Shift+Tab cycles Confirm → Autonomy I → II → III → Auto; the fourth press from
   Confirm enters classifier-backed Auto after the three autonomy levels.
 - **Hooks** — run shell commands automatically around tool use and session lifecycle via
-  `.alan/hooks.json` (e.g. format/lint after edits, block protected paths).
-- **MCP** — project-scoped tool discovery via `.alan/mcp.json`.
+  `.gear/hooks.json` (e.g. format/lint after edits, block protected paths).
+- **MCP** — project-scoped tool discovery via `.gear/mcp.json`.
 - **Research mode (`/research`, `/deepresearch`)** — ChatGPT/Claude-style Deep Research: the agent
   proposes a decomposed research plan (asking a couple of clarifying questions first when the request
   is vague), **you approve, revise, or cancel**, then it runs an **iterative** loop — bounded parallel
@@ -43,14 +43,14 @@ compliance-sensitive teams.
   a supervisor reflects on the findings to spot gaps and spins up follow-up questions, and a
   synthesizer writes a **cited** markdown report. `/research` is the standard preset; `/deepresearch`
   runs more rounds, sources, and a longer report. Sources are captured from the investigators' tool
-  calls (not hallucinated), and the report streams to the terminal, saves under `.alan/research/`, and
+  calls (not hallucinated), and the report streams to the terminal, saves under `.gear/research/`, and
   stays in the session for follow-ups. Set a **Tavily/Brave** key via `/keys` for higher-quality
   search; keyless DuckDuckGo is the fallback.
 - **Skills** — 181 bundled expert playbooks (code review, debugging, architecture, data analysis,
   PDF handling, and more) surfaced by progressive disclosure: a compact catalog rides in the system
   prompt and the model loads a skill's full instructions on demand via the `skill` tool. Browse with
-  `/skills`; add your own under `.alan/skills/`. See [`skills/`](skills/README.md).
-- **Custom slash commands** — drop `.alan/commands/*.md` files to add your own `/commands`.
+  `/skills`; add your own under `.gear/skills/`. See [`skills/`](skills/README.md).
+- **Custom slash commands** — drop `.gear/commands/*.md` files to add your own `/commands`.
 - **Session loops (`/loop`)** — repeat a prompt while the current terminal session is open. Use a
   fixed cadence (`/loop 5m check the deploy`) or let Gear adapt between one minute and one hour
   (`/loop check CI`). Loops wait for the active turn, resume with the same conversation, inherit its
@@ -71,29 +71,31 @@ Bun workspaces + Turbo monorepo:
 
 ```
 packages/
-  orchestrator/   Engine: agent loop, planner-executor, context engine, permissions,
-                  memory, hooks, sub-agent, session export — plus the CLI (bin/alan-cli.ts)
+  orchestrator/   Engine: agent loop, task spine, context engine, permissions,
+                  memory, hooks, sub-agent, session export — plus the CLI (bin/gear-cli.ts)
   llm-gateway/    Provider adapters + gateway (retry / fallback / cost tracking)
   tool-registry/  Tool schemas, registry, built-in tools, MCP client, skills loader
   shared/         Sessions, checkpoints, config, protocol
   telemetry/      Telemetry
 skills/           Bundled skills catalog (21 plugins, 181 SKILL.md playbooks)
 crates/
-  alan-tools/     Fast Rust tool binary (read/grep/edit/bash/symbol_search/...)
-  alan-index/     Code symbol index
-  alan-sandbox/   Sandbox primitives
+  gear-tools/     Fast Rust tool binary (read/grep/edit/bash/symbol_search/...)
+  gear-index/     Code symbol index
+  gear-sandbox/   Sandbox primitives
 apps/
-  desktop/        Tauri + React desktop client
+  desktop/        Tauri + React desktop client (developer preview — runs from a source checkout)
 ```
 
 The engine ⇆ client separation is intentional: the same engine powers the CLI, the desktop app, and
-(planned) an MCP-server wrapper.
+(planned) an MCP-server wrapper. The desktop app is a **developer preview**: it launches the engine
+from this source checkout (Bun required) and is not part of the release assets yet.
 
 ## Install
 
-**End users — one line, no toolchain** (downloads a prebuilt standalone binary
-for your OS from the [latest GitHub release](https://github.com/ritikkyyadav/Alan/releases)
-into `~/.alan/bin`):
+**End users — one line, no toolchain** (downloads the prebuilt CLI **and** its
+native `gear-tools` executor for your OS from the
+[latest GitHub release](https://github.com/ritikkyyadav/Alan/releases) into
+`~/.gear/bin`; file, search, and shell tools depend on `gear-tools`):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ritikkyyadav/Alan/main/scripts/web-install.sh | bash
@@ -103,10 +105,11 @@ While this repo is **private**, anonymous `curl` can't reach it — use the
 authenticated equivalent (one-time `gh auth login` with the [GitHub CLI](https://cli.github.com)):
 
 ```bash
-mkdir -p ~/.alan/bin
-gh release download -R ritikkyyadav/Alan \
-  -p "gear-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/')" \
-  -O ~/.alan/bin/gear --clobber && chmod +x ~/.alan/bin/gear
+mkdir -p ~/.gear/bin
+os="$(uname -s | tr '[:upper:]' '[:lower:]')" arch="$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/')"
+gh release download -R ritikkyyadav/Alan -p "gear-$os-$arch" -O ~/.gear/bin/gear --clobber
+gh release download -R ritikkyyadav/Alan -p "gear-tools-$os-$arch" -O ~/.gear/bin/gear-tools --clobber
+chmod +x ~/.gear/bin/gear ~/.gear/bin/gear-tools
 ```
 
 The one-liner script is [`scripts/web-install.sh`](scripts/web-install.sh); release
@@ -115,17 +118,17 @@ via `bun build --compile`.
 
 **From source** — recommended on any machine with the toolchain (needs [Bun](https://bun.sh)
 and [Rust](https://rustup.rs)); compiles a standalone CLI **plus** the native Rust tools
-binary into `~/.alan/bin` and exposes them as the **`gear`** command:
+binary into `~/.gear/bin` and exposes them as the **`gear`** command:
 
 ```bash
 gh repo clone ritikkyyadav/Alan && cd Alan     # or: git clone https://github.com/ritikkyyadav/Alan.git
 ./scripts/install.sh
 ```
 
-Then add `~/.alan/bin` to your PATH and just type `gear`:
+Then add `~/.gear/bin` to your PATH and just type `gear`:
 
 ```bash
-export PATH="$HOME/.alan/bin:$PATH"    # add to ~/.zshrc or ~/.bashrc, then reload
+export PATH="$HOME/.gear/bin:$PATH"    # add to ~/.zshrc or ~/.bashrc, then reload
 gear
 ```
 
@@ -133,7 +136,7 @@ Or run straight from the source tree without installing:
 
 ```bash
 bun install
-cargo build --release -p alan-tools    # optional native tools; the CLI also works without it
+cargo build --release -p gear-tools    # required — file, search, and shell tools run through it
 ./bin/gear
 ```
 
@@ -161,7 +164,7 @@ Paid top-tier (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`) is **optional** — only 
 for a later production-grade validation pass. See `.env.example`.
 
 Common flags: `-m/--model`, `-p/--provider`, `-w/--workspace <dir>`,
-`--autonomy <I|II|III>`, `--trust` (Auto), `--planner`, `-r/--resume <sessionId>`, `-l/--list`.
+`--autonomy <I|II|III>`, `--trust` (Auto), `-r/--resume <sessionId>`, `-l/--list`.
 
 ## Configuration
 
@@ -176,12 +179,17 @@ trust boundary under `[permissions.autoMode]`. Deployment overrides are
 [`docs/auto-mode.md`](docs/auto-mode.md). A labeled live reviewer smoke gate is available through
 `bun run eval:auto-safety` (`--list` makes no model calls).
 
-**Research defaults** live under `[research]` in `.alan/config.toml`: `depth` (`quick`/`standard`/`deep`),
+**Verification:** post-edit checks are auto-detected (typecheck/tests/lint across JS/TS, Rust,
+Go — including monorepo roots and single nested apps); point them at your real commands with
+`[verify] commands = ["bun run lint", "bun test tests/unit/"]`, tune `timeoutSecs`, or disable
+with `enabled = false`.
+
+**Research defaults** live under `[research]` in `.gear/config.toml`: `depth` (`quick`/`standard`/`deep`),
 `maxSubQuestions`, `maxParallel`, `maxSourcesPerStep`, `autoApprove`, `save`, and `outputDir`. Env
 overrides: `GEAR_RESEARCH_DEPTH`, `GEAR_RESEARCH_MAX_PARALLEL`, `GEAR_RESEARCH_MAX_SUBQUESTIONS`,
 `GEAR_RESEARCH_AUTO_APPROVE`, `GEAR_RESEARCH_SAVE`.
 
-**Project files (under `.alan/` in your workspace):**
+**Project files (under `.gear/` in your workspace):**
 
 - `hooks.json` — pre/post tool-use and session lifecycle hooks.
 - `mcp.json` — project-scoped MCP servers.
@@ -189,13 +197,13 @@ overrides: `GEAR_RESEARCH_DEPTH`, `GEAR_RESEARCH_MAX_PARALLEL`, `GEAR_RESEARCH_M
   template, with `$ARGUMENTS` (or `{{args}}`) replaced by whatever you type after the command.
   Optional `--- description: ... ---` frontmatter.
 - `loop.md` — optional default prompt for a bare `/loop`. Project-level instructions override
-  `~/.alan/loop.md`.
+  `~/.gear/loop.md`.
 
 ## Slash commands
 
 `/model`, `/effort`, `/status`, `/providers`, `/keys`, `/mcp`, `/skills`, `/research`,
 `/deepresearch`, `/cost`, `/loop`, `/loops`, `/compress`, `/plan`, `/rewind`, `/help`, `/quit` — plus any custom
-commands you define in `.alan/commands/`.
+commands you define in `.gear/commands/`.
 `/skills` lists the bundled skill catalog; `/skills <keywords>` searches it.
 `/research <question>` runs research: it proposes a plan, waits for your approval (Enter to run,
 `r` to revise, `n` to cancel), then iteratively fans out and writes a cited report. `/deepresearch
@@ -221,7 +229,7 @@ ANTHROPIC_API_KEY=sk-... \
 bun install
 bun test tests/unit/      # unit tests
 bun run typecheck         # tsc across all packages
-cargo test -p alan-tools  # Rust tool tests
+cargo test -p gear-tools  # Rust tool tests
 ```
 
 ## Privacy & telemetry

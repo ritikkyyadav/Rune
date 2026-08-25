@@ -1,27 +1,24 @@
 {
-  "name": "@alan/orchestrator",
-  "version": "0.2.0",
+  "name": "@gear/orchestrator",
+  "version": "0.3.0",
   "private": true,
   "main": "src/index.ts",
   "types": "src/index.ts",
   "bin": {
-    "gear": "src/bin/alan-cli.ts",
-    "elio": "src/bin/alan-cli.ts",
-    "berne": "src/bin/alan-cli.ts",
-    "alan": "src/bin/alan-cli.ts"
+    "gear": "src/bin/gear-cli.ts"
   },
   "scripts": {
     "build": "bun build ./src/index.ts --outdir ./dist --target bun",
     "typecheck": "tsc --noEmit",
     "lint": "prettier --check src/",
     "test": "bun test",
-    "start": "bun run src/bin/alan-cli.ts"
+    "start": "bun run src/bin/gear-cli.ts"
   },
   "dependencies": {
-    "@alan/shared": "workspace:*",
-    "@alan/llm-gateway": "workspace:*",
-    "@alan/tool-registry": "workspace:*",
-    "@alan/telemetry": "workspace:*"
+    "@gear/shared": "workspace:*",
+    "@gear/llm-gateway": "workspace:*",
+    "@gear/tool-registry": "workspace:*",
+    "@gear/telemetry": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.8"

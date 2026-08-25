@@ -2,8 +2,9 @@
 # ──────────────────────────────────────────────────────────
 #  Gear — Install Script
 #  Builds a standalone compiled CLI and its native Rust tools,
-#  then installs both into ~/.alan/bin/ and exposes them as `gear`.
-#  Existing data paths and older launch commands remain compatible.
+#  then installs both into ~/.gear/bin/ and exposes them as `gear`.
+#  An old ~/.alan data dir is moved to ~/.gear once (symlink left behind); the
+#  pre-rename launchers (alan/berne/elio) are removed from ~/.gear/bin.
 #
 #  Usage: bash scripts/install.sh
 #         (run from the repo root, or from any path — it self-locates)
@@ -23,7 +24,7 @@ _resolve_script_dir() {
 }
 
 SCRIPT_DIR="$(_resolve_script_dir)"
-ALAN_ROOT="$(cd -P "$SCRIPT_DIR/.." && pwd)"
+GEAR_ROOT="$(cd -P "$SCRIPT_DIR/.." && pwd)"
 
 # ─── Colors ───
 red()    { printf '\033[38;5;166m%s\033[0m' "$*"; }
@@ -34,12 +35,23 @@ dim()    { printf '\033[38;5;245m%s\033[0m' "$*"; }
 bold()   { printf '\033[1m%s\033[0m' "$*"; }
 
 echo ""
-echo "  $(bold '  Gear Installer')  $(dim 'v0.2.0')"
+echo "  $(bold '  Gear Installer')  $(dim 'v0.3.0')"
 echo "  $(dim '──────────────────────────────────────')"
-echo "  $(dim "Repo root: $ALAN_ROOT")"
+echo "  $(dim "Repo root: $GEAR_ROOT")"
 echo ""
 
-INSTALL_DIR="$HOME/.alan/bin"
+# ─── Rename migration: ~/.alan → ~/.gear (once; symlink keeps old paths alive) ───
+migrate_home() {
+  if [ ! -e "$HOME/.gear" ] && [ -d "$HOME/.alan" ] && [ ! -L "$HOME/.alan" ]; then
+    if mv "$HOME/.alan" "$HOME/.gear" 2>/dev/null; then
+      ln -s "$HOME/.gear" "$HOME/.alan" 2>/dev/null || true
+      echo "  · moved ~/.alan → ~/.gear (a symlink ~/.alan → ~/.gear keeps old paths working)" >&2
+    fi
+  fi
+}
+migrate_home
+
+INSTALL_DIR="$HOME/.gear/bin"
 mkdir -p "$INSTALL_DIR"
 
 # ─── 1. Find / verify Bun ───
@@ -65,7 +77,7 @@ fi
 echo "  $(green '✓') Cargo: $(dim "$CARGO")"
 
 # ─── 3. Build standalone TypeScript CLI ───
-CLI_ENTRY="$ALAN_ROOT/packages/orchestrator/src/bin/alan-cli.ts"
+CLI_ENTRY="$GEAR_ROOT/packages/orchestrator/src/bin/gear-cli.ts"
 CLI_OUT="$INSTALL_DIR/gear-compiled"
 
 echo ""
@@ -73,32 +85,40 @@ echo "  $(dim '...') Compiling TypeScript CLI (bun build --compile)"
 echo "  $(dim "    $BUN build --compile $CLI_ENTRY --outfile $CLI_OUT")"
 
 # Install bun dependencies first so the build can resolve imports
-(cd "$ALAN_ROOT" && "$BUN" install --frozen-lockfile 2>&1 | tail -2)
+(cd "$GEAR_ROOT" && "$BUN" install --frozen-lockfile 2>&1 | tail -2)
 
 # Compile to a self-contained executable.
-# The compiled binary reads ALAN_TOOLS_BIN from the environment at runtime
+# The compiled binary reads GEAR_TOOLS_BIN from the environment at runtime
 # (set by the wrapper script written in step 5).
-(cd "$ALAN_ROOT" && "$BUN" build --compile "$CLI_ENTRY" --outfile "$CLI_OUT")
+(cd "$GEAR_ROOT" && "$BUN" build --compile "$CLI_ENTRY" --outfile "$CLI_OUT")
 chmod +x "$CLI_OUT"
 echo "  $(green '✓') Compiled CLI installed: $(dim "$CLI_OUT")"
 
-# ─── 4. Build Rust alan-tools binary ───
+# Record where this binary came from, so the launcher can detect the classic
+# trap: a fix lands in the TypeScript but the installed binary predates it,
+# and "nothing changed" until someone remembers to rebuild.
+cat > "$INSTALL_DIR/gear-compiled.meta" <<META
+GEAR_SOURCE_ROOT=$GEAR_ROOT
+GEAR_BUILT_AT=$(date +%s)
+META
+
+# ─── 4. Build Rust gear-tools binary ───
 echo ""
 echo "  $(dim '...') Building Rust tools binary (cargo build --release)"
-(cd "$ALAN_ROOT" && "$CARGO" build --release -p alan-tools 2>&1 | tail -3)
+(cd "$GEAR_ROOT" && "$CARGO" build --release -p gear-tools 2>&1 | tail -3)
 
-TOOLS_SRC="$ALAN_ROOT/target/release/alan-tools"
-TOOLS_DST="$INSTALL_DIR/alan-tools"
+TOOLS_SRC="$GEAR_ROOT/target/release/gear-tools"
+TOOLS_DST="$INSTALL_DIR/gear-tools"
 cp "$TOOLS_SRC" "$TOOLS_DST"
 chmod +x "$TOOLS_DST"
-echo "  $(green '✓') alan-tools installed: $(dim "$TOOLS_DST")"
+echo "  $(green '✓') gear-tools installed: $(dim "$TOOLS_DST")"
 
-# ─── 5. Write a thin `gear` launcher that sets ALAN_TOOLS_BIN ───
-# The compiled binary needs to know where alan-tools lives; the wrapper sets the
+# ─── 5. Write a thin `gear` launcher that sets GEAR_TOOLS_BIN ───
+# The compiled binary needs to know where gear-tools lives; the wrapper sets the
 # env var, loads saved API keys, and execs the compiled CLI.
 cat > "$INSTALL_DIR/gear" <<'WRAPPER'
 #!/usr/bin/env bash
-# Gear launcher: points the compiled CLI at alan-tools and loads saved keys.
+# Gear launcher: points the compiled CLI at gear-tools and loads saved keys.
 
 # Stale working-directory self-heal: if this shell's cwd was deleted, moved
 # (e.g. to Trash), or replaced while the tab sat in it, getcwd() fails and the
@@ -120,15 +140,32 @@ if ! pwd -P >/dev/null 2>&1; then
 fi
 
 GEAR_BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export GEAR_TOOLS_BIN="$GEAR_BIN_DIR/alan-tools"
-export ALAN_TOOLS_BIN="$GEAR_BIN_DIR/alan-tools"
+export GEAR_TOOLS_BIN="$GEAR_BIN_DIR/gear-tools"
+
+# Build freshness: warn when this compiled binary is older than the source
+# tree it was built from. `find -newer … -print -quit` stops at the FIRST
+# newer file, so the check costs milliseconds.
+META_FILE="$GEAR_BIN_DIR/gear-compiled.meta"
+if [ -f "$META_FILE" ]; then
+  # shellcheck disable=SC1090
+  source "$META_FILE"
+  if [ -n "${GEAR_SOURCE_ROOT:-}" ] && [ -d "$GEAR_SOURCE_ROOT/packages" ]; then
+    NEWER="$(find "$GEAR_SOURCE_ROOT/packages" -name '*.ts' \
+      -not -path '*/node_modules/*' -not -path '*/dist/*' \
+      -newer "$GEAR_BIN_DIR/gear-compiled" -print -quit 2>/dev/null)"
+    if [ -n "$NEWER" ]; then
+      echo "  ! This gear build is older than its source tree — changes there are NOT live." >&2
+      echo "    Rebuild:  cd $GEAR_SOURCE_ROOT && ./scripts/install.sh" >&2
+    fi
+  fi
+fi
 
 # Load API keys if present
-ALAN_ENV="$HOME/.alan/.env"
-if [ -f "$ALAN_ENV" ]; then
+GEAR_ENV="$HOME/.gear/.env"
+if [ -f "$GEAR_ENV" ]; then
   set -a
   # shellcheck disable=SC1090
-  source "$ALAN_ENV"
+  source "$GEAR_ENV"
   set +a
 fi
 
@@ -137,31 +174,30 @@ WRAPPER
 chmod +x "$INSTALL_DIR/gear"
 echo "  $(green '✓') Launcher written: $(dim "$INSTALL_DIR/gear")"
 
-# Back-compat: keep the prior public/internal commands as aliases.
-ln -sf "$INSTALL_DIR/gear" "$INSTALL_DIR/elio"
-ln -sf "$INSTALL_DIR/gear" "$INSTALL_DIR/berne"
-ln -sf "$INSTALL_DIR/gear" "$INSTALL_DIR/alan"
-echo "  $(green '✓') Compatibility aliases installed for existing setups"
+# Prune the pre-rename launchers (they pointed at the same binary).
+for old in elio berne alan; do
+  [ -L "$INSTALL_DIR/$old" ] && rm -f "$INSTALL_DIR/$old"
+done
 
 # ─── 6. Done — PATH instructions ───
 echo ""
 echo "  $(green '✓') $(bold 'Installation complete!')"
 echo ""
-# Skip the PATH lecture when ~/.alan/bin is already on PATH (re-installs).
+# Skip the PATH lecture when ~/.gear/bin is already on PATH (re-installs).
 case ":$PATH:" in
-  *":$HOME/.alan/bin:"*)
-    echo "  $(green '✓') ~/.alan/bin is already on your PATH — just type: $(bold 'gear')"
+  *":$HOME/.gear/bin:"*)
+    echo "  $(green '✓') ~/.gear/bin is already on your PATH — just type: $(bold 'gear')"
     echo "  $(dim '  (running terminals keep the old binary; start a fresh tab or rerun gear)')"
     echo ""
     ;;
   *)
-    echo "  $(bold 'Add ~/.alan/bin to your PATH:')"
+    echo "  $(bold 'Add ~/.gear/bin to your PATH:')"
     echo ""
     echo "  $(yellow '  # bash — add to ~/.bashrc or ~/.bash_profile')"
-    echo "  $(cyan '  export PATH="$HOME/.alan/bin:$PATH"')"
+    echo "  $(cyan '  export PATH="$HOME/.gear/bin:$PATH"')"
     echo ""
     echo "  $(yellow '  # zsh  — add to ~/.zshrc')"
-    echo "  $(cyan '  export PATH="$HOME/.alan/bin:$PATH"')"
+    echo "  $(cyan '  export PATH="$HOME/.gear/bin:$PATH"')"
     echo ""
     echo "  $(dim '  Then reload your shell: source ~/.zshrc (or open a new terminal)')"
     echo ""

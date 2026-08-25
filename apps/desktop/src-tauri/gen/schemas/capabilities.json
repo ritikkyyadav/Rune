@@ -1,1 +1,9 @@
-{"default":{"identifier":"default","description":"Default capability: lets the Gear webview use the event system (listen/emit) to receive streaming engine events, plus open external links.","local":true,"windows":["main"],"permissions":["core:default","shell:allow-open"]}}
+{
+  "default": {
+    "identifier": "default",
+    "description": "Default capability: lets the Gear webview use the event system (listen/emit) to receive streaming engine events, plus open external links.",
+    "local": true,
+    "windows": ["main"],
+    "permissions": ["core:default", "shell:allow-open"]
+  }
+}

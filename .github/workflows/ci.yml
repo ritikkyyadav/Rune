@@ -19,7 +19,7 @@ jobs:
   rust-lint:
     strategy:
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        os: [macos-latest, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -50,13 +50,17 @@ jobs:
         run: bun run lint
       - name: Unit tests
         run: bun test tests/unit/
+      - name: Repo-wide format check
+        run: bun run format:check
+      - name: Dependency audit (fails on known vulnerabilities)
+        run: bun audit
 
   # ── Stage 2: Unit Tests (Section 15.2) ──
   rust-test:
     needs: [rust-lint]
     strategy:
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        os: [macos-latest, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -70,7 +74,7 @@ jobs:
     needs: [rust-test, ts-lint]
     strategy:
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        os: [macos-latest, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -85,8 +89,8 @@ jobs:
       - name: Upload Rust binary
         uses: actions/upload-artifact@v4
         with:
-          name: alan-tools-${{ matrix.os }}
-          path: target/release/alan-tools
+          name: gear-tools-${{ matrix.os }}
+          path: target/release/gear-tools*
           retention-days: 1
 
   # ── Stage 4: Integration Tests ──
@@ -114,6 +118,79 @@ jobs:
           else
             echo "No crate-level integration tests (crates/*/tests/*.rs) yet — skipping."
           fi
+      - name: TypeScript integration tests (real engine + real gear-tools)
+        env:
+          GEAR_TOOLS_BIN: ${{ github.workspace }}/target/release/gear-tools
+        run: bun test tests/integration/
+
+  # ── Stage 4b: Windows TypeScript typecheck ──
+  # Unit-test enablement on Windows is tracked separately; typecheck is the
+  # honest first gate (the suite has POSIX-shell assumptions to burn down).
+  ts-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install
+        run: bun install --frozen-lockfile
+      - name: Typecheck
+        run: bun run typecheck
+
+  # ── Stage 4c: Packaged-binary E2E — the artifact users actually download ──
+  packaged-e2e:
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: oven-sh/setup-bun@v2
+      - uses: Swatinem/rust-cache@v2
+      - run: bun install --frozen-lockfile
+      - run: cargo build --release -p gear-tools
+      - name: Compile standalone CLI (same command as release builds)
+        run: bun build --compile packages/orchestrator/src/bin/gear-cli.ts --outfile ./gear-packaged
+      - name: Packaged smoke — version, help, tools discovery
+        env:
+          GEAR_TOOLS_BIN: ${{ github.workspace }}/target/release/gear-tools
+        run: |
+          ./gear-packaged --version | grep -E "Gear v[0-9]"
+          ./gear-packaged --help > /dev/null
+
+  # ── Stage 4d: Desktop app (developer preview — must keep compiling) ──
+  desktop:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Frontend typecheck + build
+        run: bun run --filter @gear/desktop build
+      - name: Tauri shell compiles
+        run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
+
+  # ── Stage 4e: Script + Rust supply-chain hygiene ──
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shellcheck installer + release scripts
+        # info-level findings (SC2016 single-quoted PATH instructions, SC2015
+        # deliberate fallbacks) are intentional; warnings and up gate.
+        run: shellcheck --severity=warning scripts/*.sh
+
+  cargo-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@cargo-audit
+      - name: Rust dependency audit
+        run: cargo audit
 
   # ── Stage 5: Eval Suite (Section 15.2 — blocks merge on regression) ──
   eval:
@@ -157,8 +234,8 @@ jobs:
       - name: Real-model eval gate (skipped if no ANTHROPIC_API_KEY secret)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          ALAN_EVAL_PROVIDER: anthropic
-          ALAN_EVAL_MODEL: claude-sonnet-4-20250514
+          GEAR_EVAL_PROVIDER: anthropic
+          GEAR_EVAL_MODEL: claude-sonnet-4-20250514
         run: |
           if [ -z "$ANTHROPIC_API_KEY" ]; then
             echo "No ANTHROPIC_API_KEY secret configured — skipping real-model eval gate."
