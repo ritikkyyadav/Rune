@@ -400,7 +400,7 @@ export class CodexProvider implements LlmProvider {
     let id = "codex";
     const toolArgs = new Map<string, { name: string; json: string }>();
 
-    for await (const ev of this.inferStream(request)) {
+    for await (const ev of this.inferStream(request, { signal: request.signal })) {
       if (ev.type === "message_start") id = ev.messageId;
       else if (ev.type === "content_delta") text += ev.delta.text;
       else if (ev.type === "tool_use_start")

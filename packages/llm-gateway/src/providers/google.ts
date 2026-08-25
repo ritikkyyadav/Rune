@@ -77,6 +77,7 @@ export class GoogleProvider implements LlmProvider {
       request.model,
       "generateContent",
       this.toGeminiRequest(request),
+      request.signal,
     );
 
     const candidate = response.candidates?.[0];
@@ -264,7 +265,12 @@ export class GoogleProvider implements LlmProvider {
       .filter((m) => m.id.length > 0);
   }
 
-  private async post<T>(model: string, method: string, body: unknown): Promise<T> {
+  private async post<T>(
+    model: string,
+    method: string,
+    body: unknown,
+    signal?: AbortSignal,
+  ): Promise<T> {
     if (!this.apiKey) {
       throw new Error("GOOGLE_API_KEY is required for the Google provider");
     }
@@ -275,6 +281,7 @@ export class GoogleProvider implements LlmProvider {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
+        signal,
       },
     );
 

@@ -1,0 +1,4 @@
+2026-08-25T10:14:02Z 200 GET /v1/models token=redacted ua=gear/0.3.0
+2026-08-25T10:14:07Z 201 POST /v1/sessions token=redacted body=182b
+2026-08-25T10:14:31Z 429 POST /v1/infer token=redacted retry-after=8
+2026-08-25T10:15:11Z 200 POST /v1/infer token=redacted latency=2140ms

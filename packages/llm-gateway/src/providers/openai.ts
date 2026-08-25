@@ -100,13 +100,16 @@ export class OpenAIProvider implements LlmProvider {
   }
 
   async infer(request: InferenceRequest): Promise<InferenceResponse> {
-    const response = await this.client.chat.completions.create({
-      model: request.model,
-      messages: this.toOpenAIMessages(request.messages, request.system),
-      tools: request.tools ? this.toOpenAITools(request.tools) : undefined,
-      stop: request.stopSequences,
-      ...(this.buildTuningParams(request) as object),
-    } as Parameters<typeof this.client.chat.completions.create>[0] & { stream?: false });
+    const response = await this.client.chat.completions.create(
+      {
+        model: request.model,
+        messages: this.toOpenAIMessages(request.messages, request.system),
+        tools: request.tools ? this.toOpenAITools(request.tools) : undefined,
+        stop: request.stopSequences,
+        ...(this.buildTuningParams(request) as object),
+      } as Parameters<typeof this.client.chat.completions.create>[0] & { stream?: false },
+      { signal: request.signal },
+    );
 
     const choice = response.choices[0];
     const content = this.fromOpenAIChoice(choice);

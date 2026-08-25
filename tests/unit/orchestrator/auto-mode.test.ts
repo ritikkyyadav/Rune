@@ -4,6 +4,7 @@ import type { LlmGateway } from "@gear/llm-gateway";
 import type { ToolSchema } from "@gear/tool-registry";
 import {
   AutoModeSafetyController,
+  GatewayActionClassifier,
   classifyAutoModeTier,
   isSelfProtectionPath,
   parseFastDecision,
@@ -724,6 +725,21 @@ describe("Self-protection paths are relative to the workspace", () => {
     }
   });
 
+  test("a relative reach-up into an ancestor control dir is caught without naming .gear", () => {
+    // From ~/.gear/worktrees/<run>, "../../hooks/pre.sh" lands in ~/.gear/hooks
+    // while its relative segments are just ["..", "..", "hooks", "pre.sh"] —
+    // the escape scan reads the ABSOLUTE segments so the ancestor .gear counts.
+    expect(isSelfProtectionPath(WORKTREE, "../../hooks/pre-tool.sh")).toBe(true);
+    expect(isSelfProtectionPath(WORKTREE, "../../config.toml")).toBe(true);
+    expect(isSelfProtectionPath(WORKTREE, "../../policy.json")).toBe(true);
+    // Escapes that do NOT land under a control directory stay ordinary…
+    expect(isSelfProtectionPath(WORKTREE, "../../../other-project/src/x.ts")).toBe(false);
+    expect(isSelfProtectionPath("/tmp/plain-workspace", "../sibling/notes.md")).toBe(false);
+    // …and in-workspace paths keep the relative-only scan (a workspace under
+    // .gear/ remains ordinary project territory).
+    expect(isSelfProtectionPath(WORKTREE, "src/hooks/use-thing.ts")).toBe(false);
+  });
+
   test("a write to the workspace's own hooks file still asks", async () => {
     const { controller, classifier } = setup(["ALLOW"]);
     const review = await controller.startRun(["Improve the project hooks."]).review({
@@ -1104,5 +1120,32 @@ describe("askRules vs session grants", () => {
     // Even grant-in-hand, a catastrophic action re-asks every time.
     expect(review.verdict).toBe("ask");
     expect(review.source).toBe("critical_circuit_breaker");
+  });
+});
+
+describe("reviewer abort propagation", () => {
+  test("the reviewer's HTTP request carries the controller's abort signal", async () => {
+    const seen: Array<AbortSignal | undefined> = [];
+    const gateway = {
+      infer: async (req: { signal?: AbortSignal }) => {
+        seen.push(req.signal);
+        return { content: [{ type: "text", text: "ALLOW" }] };
+      },
+    } as unknown as LlmGateway;
+    const abort = new AbortController();
+
+    const classifier = new GatewayActionClassifier();
+    const text = await classifier.classify({
+      stage: "fast",
+      system: "reviewer",
+      prompt: "evaluate",
+      reviewer: { gateway, provider: "anthropic", model: "isolated-reviewer" },
+      signal: abort.signal,
+    });
+
+    // The timeout's abort() now reaches the provider fetch/SDK call instead
+    // of letting the abandoned request complete into the void.
+    expect(text).toBe("ALLOW");
+    expect(seen[0]).toBe(abort.signal);
   });
 });

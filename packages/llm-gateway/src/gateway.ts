@@ -132,6 +132,9 @@ export class LlmGateway {
         return response;
       } catch (err) {
         lastError = err as Error;
+        // An aborted request is a caller decision (timeout fail-closed, user
+        // cancel) — retrying it would resurrect work the caller abandoned.
+        if (request.signal?.aborted) break;
         if (!this.shouldRetry(err as Error, attempt)) break;
         await this.backoff(lastError, attempt);
       }
