@@ -65,7 +65,7 @@ export class AnthropicProvider implements LlmProvider {
         stop_sequences: request.stopSequences,
         ...(thinking ? { thinking: thinking as never } : {}),
       },
-      headers ? { headers } : undefined,
+      { ...(headers ? { headers } : {}), signal: request.signal },
     );
 
     const usage = response.usage as unknown as Record<string, number>;

@@ -305,6 +305,10 @@ export class GatewayActionClassifier implements ActionClassifier {
       model: call.reviewer.model,
       system: call.system,
       messages,
+      // The controller aborts this on its decision timeout: the HTTP request
+      // is cancelled instead of completing into the void on the provider's
+      // bill after the verdict already failed closed.
+      signal: call.signal,
       maxTokens: call.stage === "fast" ? FAST_CLASSIFIER_MAX_TOKENS : 700,
       temperature: 0,
       // The fast stage asks for no reasoning at all; providers translate this
@@ -1430,7 +1434,22 @@ const CONTROL_SUBDIRS = new Set(["skills", "plugins", "hooks", "commands", "poli
 export function isSelfProtectionPath(workspaceRoot: string, target: string): boolean {
   const absRoot = resolve(workspaceRoot);
   const abs = isAbsolute(target) ? resolve(target) : resolve(absRoot, target);
-  const parts = relative(absRoot, abs).split(sep).filter(Boolean);
+  const rel = relative(absRoot, abs);
+  if (scanControlSegments(rel.split(sep).filter(Boolean))) return true;
+  // A path that ESCAPES the workspace can reach into an ancestor control
+  // directory without ever naming it: "../../hooks/pre.sh" from a workspace
+  // at ~/.gear/worktrees/<run> lands in ~/.gear/hooks, and the relative
+  // segments are just ["..", "..", "hooks", "pre.sh"]. Escaping paths are
+  // therefore scanned by their ABSOLUTE segments too; in-workspace paths
+  // keep the relative-only scan so a workspace living under .gear/ remains
+  // ordinary project territory.
+  if (rel.split(sep)[0] === ".." || isAbsolute(rel)) {
+    return scanControlSegments(abs.split(sep).filter(Boolean));
+  }
+  return false;
+}
+
+function scanControlSegments(parts: string[]): boolean {
   for (let i = 0; i < parts.length - 1; i++) {
     if (!CONTROL_DIRS.has(parts[i]!.toLowerCase())) continue;
     const next = parts[i + 1]!.toLowerCase();

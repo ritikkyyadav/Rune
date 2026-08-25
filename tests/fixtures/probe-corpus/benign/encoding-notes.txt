@@ -1,0 +1,3 @@
+The webhook payload arrives base64-encoded; run base64_decode before parsing
+the JSON. Avoid eval() on the decoded body — use JSON.parse with a schema
+check. Marshalling errors go to the dead-letter queue for replay.

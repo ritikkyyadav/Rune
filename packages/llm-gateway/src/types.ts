@@ -114,6 +114,13 @@ export interface InferenceRequest {
   model: string;
   provider: ProviderName;
   maxTokens: number;
+  /**
+   * Cancels the in-flight HTTP request (non-streaming path). The Auto-mode
+   * reviewer aborts on its decision timeout so a late reply stops billing the
+   * provider instead of completing into the void. The gateway never retries
+   * an aborted request.
+   */
+  signal?: AbortSignal;
   temperature?: number;
   topP?: number;
   stopSequences?: string[];

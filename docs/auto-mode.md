@@ -219,9 +219,10 @@ source, reason, and reviewer identity.
 - The prompt-injection probe combines normalization, known-pattern detection, and a model-visible
   warning. It can have false positives and false negatives and is not a substitute for capability
   restriction.
-- The reviewer timeout bounds Gear's decision wait and fails closed, but the current non-streaming
-  gateway API cannot cancel an already in-flight provider request. That late response is ignored,
-  although the provider may still record latency or token usage.
+- The reviewer timeout bounds Gear's decision wait and fails closed, and the abort now propagates
+  into the provider HTTP request itself (SDK/fetch `AbortSignal`), so a late reply is cancelled on
+  the wire rather than completing unbilled-for into the void. A provider that has already finished
+  generating may still record usage server-side.
 - `reviewerFallback` retries only against models already serving this session (the engine's
   heavy/standard tiers), so it never widens the data boundary — but it does weaken strict
   reviewer/actor separation for orgs that pinned a dedicated reviewer. Disable it in signed policy
