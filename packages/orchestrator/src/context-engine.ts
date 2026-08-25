@@ -695,7 +695,8 @@ ${sections}${focus}`
   private async recoverWithLiveModels(
     attempt: (provider: ProviderName, model: string) => Promise<string | null>,
   ): Promise<string | null> {
-    const MAX_LIVE_ATTEMPTS = 8;
+    const MAX_LIVE_ATTEMPTS = 12;
+    const MAX_PER_PROVIDER = 4;
     let tried = 0;
     const providers: ProviderName[] = [
       this.summarizerProvider,
@@ -704,6 +705,7 @@ ${sections}${focus}`
       ),
     ];
     for (const name of providers) {
+      if (tried >= MAX_LIVE_ATTEMPTS) break;
       const provider = this.gateway.getProvider?.(name);
       if (!provider?.listModels) continue;
       let live: Array<{ id: string }>;
@@ -712,11 +714,22 @@ ${sections}${focus}`
       } catch {
         continue; // discovery itself failed — try the next provider
       }
-      for (const m of live) {
-        if (tried >= MAX_LIVE_ATTEMPTS) return null;
+      // Free-tier ids first (OpenRouter's ":free" suffix convention). A
+      // creditless account otherwise burns the whole attempt budget on the
+      // paid models at the head of the catalog — observed live: eight paid
+      // 402s and compaction still dead, one ":free" entry away from working.
+      // The sort is stable, so providers without the convention (Ollama
+      // Cloud) keep their catalog order.
+      const ordered = [...live].sort(
+        (a, b) => Number(b.id.endsWith(":free")) - Number(a.id.endsWith(":free")),
+      );
+      let providerTried = 0;
+      for (const m of ordered) {
+        if (tried >= MAX_LIVE_ATTEMPTS || providerTried >= MAX_PER_PROVIDER) break;
         const key = `${name}/${m.id}`;
         if (this.deadSummarizers.has(key)) continue;
         tried++;
+        providerTried++;
         const out = await attempt(name, m.id);
         if (out) {
           // Self-heal: point the summarizer at the model that just worked.
@@ -740,13 +753,14 @@ ${sections}${focus}`
 
   /**
    * Ordered provider/model pairs to attempt for summarization: the configured
-   * (light-tier) one, its provider's stock light default, the ACTIVE SESSION
-   * model — guaranteed alive, it is serving the main loop — then every other
-   * registered provider with a safe default. Pairs that already failed as
-   * summarizers this session are skipped. In normal use the first candidate
-   * succeeds immediately; the depth exists because a rotted tier table once
-   * pinned compaction to a retired model while the session model worked fine,
-   * and that session could never compact again.
+   * summarizer (normally the session model itself; a [tiers].light override
+   * when the user set one), the ACTIVE SESSION pair — guaranteed alive, it is
+   * serving the main loop — then the provider's stock light default, then
+   * every other registered provider with a safe default. Pairs that already
+   * failed as summarizers this session are skipped. In normal use the first
+   * candidate succeeds immediately; the depth exists because rotted static
+   * tables (retired, withdrawn-to-paid, gated ids) repeatedly pinned
+   * compaction to corpses while the session model worked fine.
    */
   private summarizerCandidates(): Array<{ provider: ProviderName; model: string }> {
     const out: Array<{ provider: ProviderName; model: string }> = [];
@@ -759,8 +773,10 @@ ${sections}${focus}`
       out.push({ provider, model });
     };
     push(this.summarizerProvider, this.summarizerModel);
-    push(this.summarizerProvider, summaryFallbackModel(this.summarizerProvider));
+    // Session model BEFORE the static light default: the session pair is
+    // proven alive every turn, the table entry is hearsay.
     push(this.sessionProvider, this.sessionModel);
+    push(this.summarizerProvider, summaryFallbackModel(this.summarizerProvider));
     for (const name of this.gateway.getRegisteredProviderNames?.() ?? []) {
       if (name === this.summarizerProvider) continue;
       push(name, summaryFallbackModel(name) ?? this.summarizerModel);

@@ -81,7 +81,9 @@ async function capture(fn: () => Promise<void> | void): Promise<string> {
 describe("gear use", () => {
   it("writes the active provider + default model to model.json", async () => {
     await capture(() => runUse(["openrouter"]));
-    expect(loadLastModel()).toEqual({ provider: "openrouter", model: "qwen/qwen3-coder:free" });
+    // The catalog default tracks OpenRouter's live free tier (qwen3-coder:free
+    // was retired 2026-07-15).
+    expect(loadLastModel()).toEqual({ provider: "openrouter", model: "minimax/minimax-m3:free" });
   });
 
   it("honors an explicit model argument", async () => {

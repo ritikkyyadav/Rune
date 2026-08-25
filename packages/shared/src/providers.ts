@@ -134,16 +134,19 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     kind: "openai-compat",
     envVar: "OPENROUTER_API_KEY",
     baseUrl: "https://openrouter.ai/api/v1",
-    defaultModel: "qwen/qwen3-coder:free",
+    defaultModel: "minimax/minimax-m3:free",
     docsUrl: "https://openrouter.ai/keys",
     keyHint: "sk-or-…",
     // OpenRouter documents a PKCE OAuth flow that mints a normal API key —
     // Gear's fully-working OAuth reference. API key stays the fallback.
     auth: ["oauth", "api_key"],
+    // Free-tier churn is brutal here (qwen3-coder:free retired, the deepseek
+    // :free variants withdrawn to paid). Every id below completed a live call
+    // on 2026-08-26. Stealth models are ephemeral by nature — keep ox-alpha
+    // while it lasts, but never make it the default.
     models: [
-      { id: "qwen/qwen3-coder:free", label: "Qwen3 Coder (free)" },
-      { id: "deepseek/deepseek-v4-flash:free", label: "DeepSeek V4 (free)" },
-      { id: "meta-llama/llama-3.3-70b-instruct:free", label: "Llama 3.3 70B (free)" },
+      { id: "minimax/minimax-m3:free", label: "MiniMax M3 (free)" },
+      { id: "nvidia/nemotron-3-ultra-550b-a55b:free", label: "Nemotron 3 Ultra (free)" },
       { id: "stealth/ox-alpha", label: "Ox Alpha (free)" },
     ],
   },

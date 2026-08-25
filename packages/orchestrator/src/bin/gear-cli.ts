@@ -280,9 +280,10 @@ type CliProvider =
 const DEFAULT_MODELS: Record<CliProvider, string> = {
   anthropic: "claude-sonnet-4-6",
   openai: "gpt-4o",
-  // qwen/qwen3-coder:free and qwen3-coder:480b were retired 2026-07-15;
+  // qwen/qwen3-coder:free and qwen3-coder:480b were retired 2026-07-15, and
+  // deepseek-v4-flash:free was withdrawn from the free tier 2026-08-26;
   // these mirror the gateway's refreshed, live-verified defaults.
-  openrouter: "deepseek/deepseek-v4-flash:free",
+  openrouter: "minimax/minimax-m3:free",
   google: "gemini-2.5-flash",
   "ollama-turbo": "gpt-oss:120b",
   ollama: "llama3.1",

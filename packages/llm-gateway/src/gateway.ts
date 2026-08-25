@@ -24,7 +24,9 @@ const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
   google: "gemini-2.5-flash",
   anthropic: "claude-sonnet-4-6",
   openai: "gpt-4o",
-  openrouter: "deepseek/deepseek-v4-flash:free",
+  // deepseek-v4-flash:free was withdrawn from OpenRouter's free tier
+  // ("paid version available now" 404, observed 2026-08-26).
+  openrouter: "minimax/minimax-m3:free",
   ollama: "llama3",
   // qwen3-coder-next (the previous refresh) was itself retired 2026-07-15.
   // gpt-oss:120b verified live + tool-capable on the keyed free tier 2026-08-26.
