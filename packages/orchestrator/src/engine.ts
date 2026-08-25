@@ -1,5 +1,5 @@
-import { LlmGateway, CostTracker } from "@alan/llm-gateway";
-import type { Message, ProviderName, ResolvedCredential } from "@alan/llm-gateway";
+import { LlmGateway, CostTracker } from "@gear/llm-gateway";
+import type { Message, ProviderName, ResolvedCredential } from "@gear/llm-gateway";
 import {
   ToolRegistry,
   registerBuiltinTools,
@@ -18,8 +18,8 @@ import {
   probeSandboxCapability,
   setRequireOsIsolation,
   setLspAutoFeedback,
-} from "@alan/tool-registry";
-import type { DashboardInfo, PluginCatalogEntry, SkillSearchHit } from "@alan/tool-registry";
+} from "@gear/tool-registry";
+import type { DashboardInfo, PluginCatalogEntry, SkillSearchHit } from "@gear/tool-registry";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -44,12 +44,13 @@ import {
   clampToBudget,
   createLogger,
   resolveTier,
-  getAlanHome,
+  getGearHome,
+  workspaceConfigPath,
   setToolArgsSalvageListener,
-} from "@alan/shared";
-import type { ModelTier, TierRef, TiersConfig } from "@alan/shared";
-import type { IncidentClass, IncidentInput, IncidentSeverity } from "@alan/shared";
-import { Recorder } from "@alan/telemetry";
+} from "@gear/shared";
+import type { ModelTier, TierRef, TiersConfig } from "@gear/shared";
+import type { IncidentClass, IncidentInput, IncidentSeverity } from "@gear/shared";
+import { Recorder } from "@gear/telemetry";
 import type {
   CheckpointStore,
   CheckpointPolicy,
@@ -59,7 +60,7 @@ import type {
   SessionStatus,
   SessionInfoInternal,
   SystemMemoryMeta,
-} from "@alan/shared";
+} from "@gear/shared";
 import { buildGateway, providerStatus } from "./provider-registry";
 import type { ProviderStatusRow, BuildGatewayOpts } from "./provider-registry";
 import { AgentLoop, parseInterjection } from "./agent-loop";
@@ -83,6 +84,7 @@ import {
 import { loadOrgPolicy, policyAllowsModel, type LoadedOrgPolicy } from "./org-policy";
 import { discoverPlugins, type LoadedPlugin } from "./plugins";
 import { StruggleDetector } from "./struggle-detector";
+import { TaskStateStore } from "./task-state";
 import { policyForModel, type ReliabilityPolicy } from "./reliability-policy";
 import {
   NotebookStore,
@@ -95,9 +97,6 @@ import type { NotebookBlock, NotebookEntry, ToolObservation } from "./notebook";
 import type { PermissionScope, PermissionMode, PermissionModeInput } from "./permissions";
 
 export type { PermissionMode } from "./permissions";
-import { PlanRunner } from "./plan-runner";
-import type { PlanRunnerEvent } from "./plan-runner";
-import type { ModelRouting } from "./types";
 import {
   eventsToMessages,
   messageToAssistantPayload,
@@ -189,9 +188,7 @@ export interface AutoApprovalNotice {
 }
 
 export type UserPermissionDecision =
-  | { kind: "allow_once" }
-  | { kind: "allow_session" }
-  | { kind: "deny" };
+  { kind: "allow_once" } | { kind: "allow_session" } | { kind: "deny" };
 
 export type PermissionHandler = (prompt: PermissionPrompt) => Promise<UserPermissionDecision>;
 
@@ -334,9 +331,6 @@ export interface EngineConfig {
    */
   reliability?: Partial<ReliabilityPolicy>;
   /** Enable Planner-Executor two-tier mode. */
-  plannerMode: boolean;
-  /** Model routing for planner-executor split. */
-  routing?: Partial<ModelRouting>;
   anthropicApiKey?: string;
   openaiApiKey?: string;
   openrouterApiKey?: string;
@@ -370,16 +364,18 @@ export interface EngineConfig {
   enableRateLimiting?: boolean;
   enableCheckpoints?: boolean;
   enableHooks?: boolean;
-  /** Discover and load MCP servers from <workspace>/.alan/mcp.json. Default on. */
+  /** Discover and load MCP servers from <workspace>/.gear/mcp.json. Default on. */
   enableMcp?: boolean;
-  /** Load skills (bundled `skills/` + <workspace>/.alan/skills) and the `skill` tool. Default on. */
+  /** Load skills (bundled `skills/` + <workspace>/.gear/skills) and the `skill` tool. Default on. */
   enableSkills?: boolean;
-  /** Explicit skill root dirs; when set, bundled + .alan/skills auto-detection is skipped. */
+  /** Explicit skill root dirs; when set, bundled + .gear/skills auto-detection is skipped. */
   skillRoots?: string[];
   /** Run project checks (typecheck/test/cargo) after edits so the agent self-corrects. Default on. */
   enableVerification?: boolean;
   /** Explicit verification commands; when set, project auto-detection is skipped. */
   verifyCommand?: string[];
+  /** Per-check-command timeout in ms (default 120_000). */
+  verifyTimeoutMs?: number;
   checkpointPolicy?: Partial<CheckpointPolicy>;
   egressAllowlist?: string[];
   redactOutputs?: boolean;
@@ -444,7 +440,7 @@ export interface EngineConfig {
    */
   tiers?: TiersConfig;
   /**
-   * Black box (flight recorder): incident capture to ~/.alan/blackbox.db.
+   * Black box (flight recorder): incident capture to ~/.gear/blackbox.db.
    * OFF unless enabled — unit tests and embedders stay hermetic; the CLI and
    * engine-host turn it on. `version` stamps every incident for
    * version-over-version regression queries.
@@ -478,7 +474,7 @@ const MAX_TOKENS = 32000;
 // guard, not a work budget. Context compaction keeps long runs viable.
 const MAX_TURNS = 80;
 
-// Per-provider cheap-model routing now lives in @alan/shared tiers.ts
+// Per-provider cheap-model routing now lives in @gear/shared tiers.ts
 // (PROVIDER_TIER_DEFAULTS) — resolved via Engine.resolveModelTier("light").
 
 const DEFAULT_ENGINE_CONFIG: EngineConfig = {
@@ -488,11 +484,10 @@ const DEFAULT_ENGINE_CONFIG: EngineConfig = {
   model: "gemini-2.5-flash",
   provider: "google",
   workspaceRoot: process.cwd(),
-  dbPath: `${process.env.HOME}/.alan/alan.db`,
-  toolsBinaryPath: "alan-tools",
+  dbPath: join(getGearHome(), "gear.db"),
+  toolsBinaryPath: "gear-tools",
   yoloMode: false,
   trustWorkspace: false,
-  plannerMode: false,
 };
 
 // ─── System Prompt ───
@@ -673,8 +668,13 @@ export class Engine {
   private interactiveAuto = false;
   private browserEnabled = false;
   // The flat AgentLoop currently running a chat() turn — the target for
-  // mid-turn steering (interject). Null when idle or in planner mode.
+  // mid-turn steering (interject). Null when idle.
   private liveLoop: AgentLoop | null = null;
+  // Task spines per session: the run's goal/todos/ledger/handoff, kept outside
+  // the transcript and persisted as `task_state` session events (latest wins).
+  private taskStates = new Map<string, TaskStateStore>();
+  // Struggle nudges remaining for the CURRENT run (reset each chat()).
+  private struggleNudgesLeft = 0;
   // Session-scoped /loop schedulers. Definitions are persisted as ordinary
   // session events; this map is only the live replay/claim state.
   private loopManagers: Map<string, LoopManager> = new Map();
@@ -697,7 +697,7 @@ export class Engine {
     // Black box first — the gateway build below captures its tap.
     if (this.config.blackbox?.enabled) {
       this.recorder = new Recorder({
-        dbPath: this.config.blackbox.dbPath ?? join(getAlanHome(), "blackbox.db"),
+        dbPath: this.config.blackbox.dbPath ?? join(getGearHome(), "blackbox.db"),
         version: this.config.blackbox.version ?? "dev",
         spoolPath: this.config.blackbox.spoolPath,
       });
@@ -719,6 +719,26 @@ export class Engine {
       this.struggles = new StruggleDetector(
         (i) => this.recorder?.record(i),
         policyForModel(this.config.model, this.config.reliability),
+        // Actionable signals reach the LIVE RUN, not just the database: edit
+        // churn / search thrash become one bounded in-context nudge. This is
+        // the detector's graduation from filing cabinet to feedback loop.
+        (sig) => {
+          if (this.struggleNudgesLeft <= 0 || !this.liveLoop) return;
+          this.struggleNudgesLeft--;
+          this.recorder?.record({
+            class: "loop.struggle_nudge",
+            severity: "warn",
+            component: "engine",
+            where: "engine#struggleSignal",
+            message: `injected corrective note: ${sig.message}`,
+          });
+          this.liveLoop.injectHarnessNote(sig.advice, {
+            replanReason:
+              sig.cls === "struggle.thrash_edits"
+                ? "repeated edits to the same file"
+                : "the same search keeps repeating",
+          });
+        },
       );
     }
 
@@ -727,7 +747,7 @@ export class Engine {
     if (this.config.notebook?.enabled) {
       try {
         this.notebookStore = new NotebookStore(
-          this.config.notebook.dbPath ?? join(getAlanHome(), "notebook.db"),
+          this.config.notebook.dbPath ?? join(getGearHome(), "notebook.db"),
         );
         this.notebookKeys = {
           repoKey: notebookRepoKey(this.config.workspaceRoot),
@@ -797,15 +817,15 @@ export class Engine {
     // by the frontend (CLI/TUI) via setQuestionHandler — the closure reads it
     // at execute time, and headless environments degrade to an instructive
     // error instead of stalling. Deliberately NOT in the sub-agent registry.
-    // In 4th gear the handler is withheld even when wired:
-    // the whole point of the gear is "no human in the loop", so the tool
-    // degrades to its proceed-on-your-best-judgment error instead of parking
-    // an autonomous run on a question nobody will answer.
-    this.registry.register(
-      createAskUserTool(() =>
-        this.permissions.getMode() === "gear-4" ? undefined : this.questionHandler,
-      ),
-    );
+    // The handler's PRESENCE is the interactivity truth in every gear, 4th
+    // included: 4th gear means autonomous execution (no permission stops, no
+    // mid-task waiting), NOT that an up-front product question gets thrown
+    // away while the user watches. (It used to be withheld in 4th gear — a
+    // live run's perfect clarify round died with "no interactive user is
+    // available" while the user sat in the TUI.) Fire-and-forget stays safe:
+    // the TUI's picker auto-continues on a timeout in 4th gear, and headless
+    // frontends simply never wire a handler.
+    this.registry.register(createAskUserTool(() => this.questionHandler));
 
     // `worker`: write-capable parallel sub-agents with disjoint file
     // ownership — the lead splits implementation, workers run concurrently
@@ -882,7 +902,7 @@ export class Engine {
 
     // update_config: change Gear's own settings from plain-language requests
     // ("shift to 4th gear", "turn the sandbox off") — applied live and
-    // persisted to ~/.alan/config.toml. Main registry only: sub-agents are
+    // persisted to ~/.gear/config.toml. Main registry only: sub-agents are
     // read-only investigators and must not reconfigure the host session.
     this.registry.register(
       createUpdateConfigTool({
@@ -979,6 +999,7 @@ export class Engine {
       this.verifier = new CommandVerifier({
         workspaceRoot: this.config.workspaceRoot,
         commands: this.config.verifyCommand,
+        timeoutMs: this.config.verifyTimeoutMs,
       });
     }
 
@@ -1081,7 +1102,7 @@ export class Engine {
   }
 
   /**
-   * Discover plugin bundles (.alan/plugins/<name>/plugin.json) once per
+   * Discover plugin bundles (.gear/plugins/<name>/plugin.json) once per
    * engine. Each bundle feeds the four extension loaders: skills (auto,
    * attributed), hooks (merged after user hooks), MCP servers (before user
    * mcp.json so user entries still override), commands (tagged, user wins).
@@ -1104,7 +1125,7 @@ export class Engine {
   }
 
   /**
-   * Lazily load user-defined hooks from `<workspace>/.alan/hooks.json` once per
+   * Lazily load user-defined hooks from `<workspace>/.gear/hooks.json` once per
    * engine. Missing file → no-op runner. Malformed file → warn once, run without.
    */
   private async ensureHookRunner(): Promise<void> {
@@ -1121,7 +1142,7 @@ export class Engine {
   }
 
   /**
-   * Lazily discover MCP servers from `<workspace>/.alan/mcp.json` once per
+   * Lazily discover MCP servers from `<workspace>/.gear/mcp.json` once per
    * engine and register their tools into the main registry. Missing file →
    * no-op. A server that fails to start is logged and skipped (mirrors hooks).
    * MCP tools are NOT added to the read-only sub-agent registry.
@@ -1184,7 +1205,7 @@ export class Engine {
 
   /**
    * Lazily load skills once per engine: discover SKILL.md files from the bundled
-   * `skills/` catalog and `<workspace>/.alan/skills`, register the `skill` tool,
+   * `skills/` catalog and `<workspace>/.gear/skills`, register the `skill` tool,
    * and build the compact catalog injected into the system prompt. Missing dirs →
    * no-op. Any failure is logged and skipped (mirrors hooks/MCP) — skills never
    * break a session. Not added to the read-only sub-agent registry.
@@ -1211,14 +1232,14 @@ export class Engine {
   /**
    * Resolve which directories to scan for skills. Explicit `skillRoots` win;
    * otherwise use the bundled catalog (resolved relative to this module, with an
-   * GEAR_SKILLS_DIR / cwd fallback) plus the workspace's `.alan/skills`.
+   * GEAR_SKILLS_DIR / cwd fallback) plus the workspace's `.gear/skills`.
    */
   private resolveSkillRoots(): string[] {
     if (this.config.skillRoots && this.config.skillRoots.length > 0) {
       return this.config.skillRoots.filter((r) => existsSync(r));
     }
     const candidates = [
-      process.env.GEAR_SKILLS_DIR ?? process.env.ELIO_SKILLS_DIR ?? process.env.ALAN_SKILLS_DIR,
+      process.env.GEAR_SKILLS_DIR,
       join(import.meta.dir, "../../../skills"), // packages/orchestrator/src → repo root
       join(process.cwd(), "skills"),
     ].filter((c): c is string => typeof c === "string" && c.length > 0);
@@ -1230,12 +1251,12 @@ export class Engine {
         break; // one bundled catalog is enough
       }
     }
-    const userSkills = join(this.config.workspaceRoot, ".alan", "skills");
+    const userSkills = workspaceConfigPath(this.config.workspaceRoot, "skills");
     if (existsSync(userSkills)) roots.push(userSkills);
     // Plugin bundles: <plugins>/<name>/skills/<skill>/SKILL.md — the loader's
     // path-based attribution names each skill after its plugin directory.
     if (this.getPlugins().some((p) => p.hasSkills)) {
-      roots.push(join(this.config.workspaceRoot, ".alan", "plugins"));
+      roots.push(workspaceConfigPath(this.config.workspaceRoot, "plugins"));
     }
     return roots;
   }
@@ -1477,14 +1498,33 @@ export class Engine {
     }
   }
 
-  /** Shared by the lead loop, planner executors, read-only tasks and workers. */
-  private processToolResult: ToolResultProcessor = (ctx: ToolResultProcessArgs) => {
+  /** Shared by the lead loop, read-only tasks and workers. */
+  private processToolResult: ToolResultProcessor = async (ctx: ToolResultProcessArgs) => {
     const screened = this.autoModeSafety.screenToolResult(ctx.toolName, ctx.output, {
       args: ctx.args,
       workspaceRoot: ctx.workspaceRoot,
       permissionMode: this.getPermissionMode(),
     });
-    if (!screened.warningAdded) return screened.output;
+
+    // postToolUse hooks run HERE — before the result enters the transcript —
+    // so a format/lint hook's findings actually reach the model instead of a
+    // log file. Hook failures never break the tool result.
+    let withHooks = screened.output;
+    if (this.hookRunner && withHooks.success) {
+      try {
+        const hookOut = await this.hookRunner.runPostToolUse(ctx.toolName, withHooks);
+        if (hookOut) {
+          withHooks = {
+            ...withHooks,
+            result: `${withHooks.result}\n\n[post-tool hook output]\n${hookOut}`,
+          };
+        }
+      } catch {
+        // hook machinery must never affect the run
+      }
+    }
+
+    if (!screened.warningAdded) return withHooks;
 
     try {
       const payload = {
@@ -1510,7 +1550,7 @@ export class Engine {
       // The warning is already attached to the model-visible result. Audit
       // persistence is defense-in-depth and must not remove that warning.
     }
-    return screened.output;
+    return withHooks;
   };
 
   /**
@@ -1639,7 +1679,7 @@ export class Engine {
     if (!this.sessions.getSession(sessionId))
       throw new Error("Cannot schedule a loop for this session.");
     const parsed = parseLoopRequest(raw);
-    const resolved = resolveLoopPrompt(parsed.prompt, this.config.workspaceRoot, getAlanHome());
+    const resolved = resolveLoopPrompt(parsed.prompt, this.config.workspaceRoot, getGearHome());
     const warnings = [...parsed.warnings];
     if (resolved.warning) warnings.push(resolved.warning);
     const task = this.getLoopManager(sessionId).create({
@@ -1773,7 +1813,7 @@ export class Engine {
   // ─── System Memory ("dreaming") ───
   //
   // An evergreen, narrative profile of the user and their codebases, stored at
-  // ~/.alan/system-memory.md (see @alan/shared system-memory.ts) and injected into
+  // ~/.gear/system-memory.md (see @gear/shared system-memory.ts) and injected into
   // every session's system prompt. Small by design so even tiny models load it
   // cheaply. Refreshed manually (`/memory update`) or automatically on a cadence.
 
@@ -2024,15 +2064,6 @@ export class Engine {
       "",
       body,
     ].join("\n");
-  }
-
-  /** Toggle planner-executor mode for subsequent turns. */
-  setPlannerMode(enabled: boolean): void {
-    this.config.plannerMode = enabled;
-  }
-
-  isPlannerMode(): boolean {
-    return this.config.plannerMode;
   }
 
   // ─── Permission mode (the Shift+Tab cycle) ───
@@ -2293,10 +2324,10 @@ export class Engine {
   }
 
   /**
-   * Chat with the agent. Uses the Planner-Executor architecture if plannerMode
+   * Chat with the agent. One default loop — the task spine carries planning
    * is enabled; otherwise falls back to the flat ReAct loop.
    */
-  async *chat(sessionId: string, userMessage: string): AsyncGenerator<PlanRunnerEvent> {
+  async *chat(sessionId: string, userMessage: string): AsyncGenerator<AgentTurnEvent> {
     const session = this.sessions.getSession(sessionId);
     if (!session) {
       yield { type: "error", error: "Session not found", recoverable: false };
@@ -2322,6 +2353,26 @@ export class Engine {
     // Load prior conversation history
     const priorEvents = this.sessions.getEvents(sessionId, 1);
     const priorMessages: Message[] = eventsToMessages(priorEvents);
+
+    // Task spine: reuse the live store, else restore the latest snapshot from
+    // the session log (resume across engine restarts), else start fresh. This
+    // single line is the whole resume story — task state no longer depends on
+    // transcript fidelity.
+    const taskState =
+      this.taskStates.get(sessionId) ??
+      TaskStateStore.fromEvents(priorEvents) ??
+      new TaskStateStore();
+    this.taskStates.set(sessionId, taskState);
+    const persistTaskState = (): void => {
+      try {
+        this.sessions.appendEvent(sessionId, {
+          type: "task_state",
+          payload: { state: taskState.snapshot() },
+        });
+      } catch {
+        // persistence of the spine must never break the run
+      }
+    };
 
     // A claimed loop iteration arrives through the same door as a typed
     // message. Record where its prompt came from: a repository loop.md is not
@@ -2436,81 +2487,84 @@ export class Engine {
     this.currentAbort = abortController;
     const signal = abortController.signal;
 
-    // Choose agent mode
-    let runner: {
-      run: (...args: [string, string, string, AbortSignal?]) => AsyncGenerator<PlanRunnerEvent>;
-      getMessages: () => Message[];
+    // ONE loop. (The separate opt-in PlanRunner mode was retired in the task-
+    // spine work: it was default-off, untested, replaced the doctrine with
+    // step prompts, planned without reading the codebase, and never actually
+    // re-planned. Planning is now a property of the default loop — the task
+    // spine + todo discipline + replan nudges — not a mode you switch into.)
+    // Recovery bounds resolved per model family + [reliability] overrides —
+    // computed at run start so a /model switch takes effect next run.
+    const reliability = policyForModel(session.model, this.config.reliability);
+    const loop = new AgentLoop(
+      {
+        model: session.model,
+        provider: this.config.provider,
+        maxTokens: MAX_TOKENS,
+        maxTurns: MAX_TURNS,
+        systemPrompt,
+        priorMessages,
+        contextEngine: this.contextEngine,
+        retrievedChunks: repoMapChunks,
+        verifier: this.verifier ?? undefined,
+        nativeGrounding: this.config.search?.nativeGrounding ?? true,
+        onIncident: this.recorder ? (i: IncidentInput) => this.recorder?.record(i) : undefined,
+        maxConsecutiveErrors: reliability.maxConsecutiveErrors,
+        maxStuckNudges: reliability.maxStuckNudges,
+        maxRateWaits: reliability.maxRateWaits,
+        maxOverflowCompactions: reliability.maxOverflowCompactions,
+        maxEmptyCompletionRetries: reliability.maxEmptyCompletionRetries,
+        maxTruncationRetries: reliability.maxTruncationRetries,
+        maxVerifyAttempts: reliability.maxVerifyAttempts,
+        taskState,
+        maxPlanNudges: reliability.maxPlanNudges,
+        maxReplanNudges: reliability.maxReplanNudges,
+        maxGreenfieldNudges: reliability.maxGreenfieldNudges,
+        toolResultProcessor: this.processToolResult,
+      },
+      this.gateway,
+      this.registry,
+      permCheck,
+    );
+    this.struggleNudgesLeft = reliability.maxStruggleNudges;
+    const runner = {
+      run: (msg: string, sid: string, ws: string, sig?: AbortSignal) => loop.run(msg, sid, ws, sig),
+      getMessages: () => loop.getMessages(),
+      takePendingPersist: () => loop.takePendingPersist(),
     };
+    // Expose the live loop so interject() can steer this run mid-flight.
+    this.liveLoop = loop;
 
-    if (this.config.plannerMode) {
-      // Planner keeps the session's (stronger) model; executor steps default to
-      // the light tier — cross-provider when the user's [tiers] config says so.
-      const lightTier = this.resolveModelTier("light");
-      const routing: ModelRouting = {
-        planner: this.config.routing?.planner ?? session.model,
-        executor: this.config.routing?.executor ?? lightTier.model,
-        plannerProvider: this.config.routing?.plannerProvider ?? this.config.provider,
-        executorProvider:
-          this.config.routing?.executorProvider ?? (lightTier.provider as ProviderName),
-      };
-
-      runner = new PlanRunner(
-        {
-          routing,
-          maxTokens: MAX_TOKENS,
-          maxTurnsPerStep: Math.min(MAX_TURNS, 20),
-          maxStepRetries: 2,
-          maxReplanAttempts: 2,
-          systemPrompt,
-          priorMessages,
-          contextEngine: this.contextEngine,
-          retrievedChunks: repoMapChunks,
-          verifier: this.verifier ?? undefined,
-          nativeGrounding: this.config.search?.nativeGrounding ?? true,
-          toolResultProcessor: this.processToolResult,
-        },
-        this.gateway,
-        this.registry,
-        permCheck,
-      );
-    } else {
-      // Recovery bounds resolved per model family + [reliability] overrides —
-      // computed at run start so a /model switch takes effect next run.
-      const reliability = policyForModel(session.model, this.config.reliability);
-      const loop = new AgentLoop(
-        {
-          model: session.model,
-          provider: this.config.provider,
-          maxTokens: MAX_TOKENS,
-          maxTurns: MAX_TURNS,
-          systemPrompt,
-          priorMessages,
-          contextEngine: this.contextEngine,
-          retrievedChunks: repoMapChunks,
-          verifier: this.verifier ?? undefined,
-          nativeGrounding: this.config.search?.nativeGrounding ?? true,
-          onIncident: this.recorder ? (i: IncidentInput) => this.recorder?.record(i) : undefined,
-          maxConsecutiveErrors: reliability.maxConsecutiveErrors,
-          maxStuckNudges: reliability.maxStuckNudges,
-          maxRateWaits: reliability.maxRateWaits,
-          maxOverflowCompactions: reliability.maxOverflowCompactions,
-          maxEmptyCompletionRetries: reliability.maxEmptyCompletionRetries,
-          maxTruncationRetries: reliability.maxTruncationRetries,
-          maxVerifyAttempts: reliability.maxVerifyAttempts,
-          toolResultProcessor: this.processToolResult,
-        },
-        this.gateway,
-        this.registry,
-        permCheck,
-      );
-      runner = {
-        run: (msg: string, sid: string, ws: string, sig?: AbortSignal) =>
-          loop.run(msg, sid, ws, sig) as AsyncGenerator<PlanRunnerEvent>,
-        getMessages: () => loop.getMessages(),
-      };
-      // Expose the live loop so interject() can steer this run mid-flight.
-      this.liveLoop = loop;
-    }
+    // ── Incremental persistence ──
+    // Session events are written as the run PRODUCES them, not in one sweep at
+    // the end. The old sweep indexed `priorMessages.length + 1` into the
+    // loop's live array — after any auto-compaction shrank that array, the
+    // whole run's assistant/tool history silently vanished from the session
+    // log; and a crash never reached the sweep at all. The filters are
+    // unchanged: empty assistant messages are dropped, synthetic loop nudges
+    // (verification prompts, evidence gate, compaction summaries, the initial
+    // user message — persisted separately above) don't carry the interjection
+    // marker and stay unpersisted.
+    const persistOne = (m: Message): void => {
+      if (m.role === "assistant") {
+        const payload = messageToAssistantPayload(m);
+        if (payload.content.length > 0 || payload.toolUses.length > 0) {
+          this.sessions.appendEvent(sessionId, { type: "assistant_msg", payload });
+        }
+      } else if (m.role === "tool") {
+        for (const r of messageToToolResultPayloads(m)) {
+          this.sessions.appendEvent(sessionId, { type: "tool_result", payload: r });
+        }
+      } else if (m.role === "user") {
+        const first = m.content.find((b) => b.type === "text");
+        const raw = first && first.type === "text" ? parseInterjection(first.text) : null;
+        if (raw) {
+          this.sessions.appendEvent(sessionId, { type: "user_msg", payload: { content: raw } });
+        }
+      }
+    };
+    const persistPending = (): void => {
+      for (const m of runner.takePendingPersist()) persistOne(m);
+    };
 
     let runError: string | null = null;
     try {
@@ -2556,9 +2610,39 @@ export class Engine {
           });
         }
 
-        // Track the final todo state for the end-of-run unfinished check.
+        // Track the final todo state for the end-of-run unfinished check —
+        // and persist a spine snapshot at every state-bearing moment (todo
+        // change, verification result, handoff). Latest-wins, a few small
+        // rows per run.
         if (event.type === "todo_updated") {
           lastTodos = event.items;
+          persistTaskState();
+        }
+        if (event.type === "verification_completed" || event.type === "handoff") {
+          persistTaskState();
+        }
+        // Record auto-compactions as session METADATA (distinct from the
+        // /compress "compaction" event, whose replay semantics squash the
+        // whole history). Before this, auto-compaction left no durable trace
+        // at all — a session's history could shrink with nothing recording
+        // when or by how much.
+        if (event.type === "compaction") {
+          this.sessions.appendEvent(sessionId, {
+            type: "auto_compaction",
+            payload: {
+              beforeTokens: event.beforeTokens,
+              afterTokens: event.afterTokens,
+              summarizedCount: event.summarizedCount ?? 0,
+              forced: event.forced === true,
+            },
+          });
+        }
+        if (event.type === "turn_complete" && event.stopReason === "end_turn") {
+          // A clean finish consumes any pending resume note.
+          if (taskState.snapshot().handoff) {
+            taskState.clearHandoff();
+            persistTaskState();
+          }
         }
 
         // Notebook: observe every tool call (free — the events exist anyway).
@@ -2620,10 +2704,8 @@ export class Engine {
             exitCode: event.output.success ? 0 : 1,
           });
 
-          // Fire user-defined postToolUse hooks (e.g. auto-format/lint after writes).
-          if (this.hookRunner) {
-            await this.hookRunner.runPostToolUse(event.output.toolName, event.output);
-          }
+          // (postToolUse hooks now run inside processToolResult — BEFORE the
+          // result enters the transcript — so their findings reach the model.)
 
           // Track written files for the run's git auto-commit scope.
           if (
@@ -2633,6 +2715,17 @@ export class Engine {
             event.args.path
           ) {
             writtenPaths.add(event.args.path);
+          }
+          // Worker-authored files are writes too — without this the git
+          // auto-commit scope silently excluded everything workers built.
+          if (
+            event.output.success &&
+            event.output.toolName === "worker" &&
+            Array.isArray(event.args.files)
+          ) {
+            for (const f of event.args.files) {
+              if (typeof f === "string" && f) writtenPaths.add(f);
+            }
           }
 
           // Save checkpoint after successful file writes
@@ -2663,30 +2756,6 @@ export class Engine {
           }
         }
 
-        // Persist plan events
-        if (event.type === "plan_created") {
-          this.sessions.appendEvent(sessionId, {
-            type: "plan_created",
-            payload: { plan: event.plan },
-          });
-        }
-        if (event.type === "plan_updated") {
-          this.sessions.appendEvent(sessionId, {
-            type: "plan_updated",
-            payload: { plan: event.plan },
-          });
-        }
-        if (event.type === "step_completed") {
-          this.sessions.appendEvent(sessionId, {
-            type: "step_completed",
-            payload: {
-              planId: "",
-              stepIndex: event.stepIndex,
-              result: event.result,
-            },
-          });
-        }
-
         // Keep the session row's context-size readout current (sessions
         // manager metadata). Cheap column update, throttled to real reports.
         if (event.type === "usage" && event.context && event.context.used > 0) {
@@ -2696,6 +2765,12 @@ export class Engine {
             // Metadata only — never let it interrupt the stream.
           }
         }
+
+        // Persist whatever this event's turn appended BEFORE handing the
+        // event on — a crash at any later point loses at most the in-flight
+        // turn, and compaction can no longer erase history that was already
+        // written.
+        persistPending();
 
         yield event;
       }
@@ -2719,7 +2794,7 @@ export class Engine {
           yield {
             type: "notice",
             message: `Committed ${commit.fileCount} file${commit.fileCount === 1 ? "" : "s"} as ${commit.shortSha} — /undo reverts it.`,
-          } as PlanRunnerEvent;
+          } as AgentTurnEvent;
         } else if (
           !/no files written|no effective changes|not a git repository/.test(commit.reason)
         ) {
@@ -2727,7 +2802,7 @@ export class Engine {
           yield {
             type: "notice",
             message: `Auto-commit skipped: ${commit.reason}`,
-          } as PlanRunnerEvent;
+          } as AgentTurnEvent;
         }
       }
     } finally {
@@ -2736,42 +2811,9 @@ export class Engine {
       const steeredLoop = this.liveLoop;
       this.liveLoop = null;
 
-      // Persist the conversation tail
-      const allMessages = runner.getMessages();
-      const startIndex = priorMessages.length + 1;
-      for (let i = startIndex; i < allMessages.length; i++) {
-        const m = allMessages[i];
-        if (m.role === "assistant") {
-          const payload = messageToAssistantPayload(m);
-          if (payload.content.length > 0 || payload.toolUses.length > 0) {
-            this.sessions.appendEvent(sessionId, {
-              type: "assistant_msg",
-              payload,
-            });
-          }
-        } else if (m.role === "tool") {
-          for (const r of messageToToolResultPayloads(m)) {
-            this.sessions.appendEvent(sessionId, {
-              type: "tool_result",
-              payload: r,
-            });
-          }
-        } else if (m.role === "user") {
-          // Mid-turn interjections are real user turns — persist them at their
-          // true position so resumed sessions replay the same conversation the
-          // live run saw. Synthetic loop nudges (verification prompts, the
-          // evidence gate, compaction summaries) don't carry the interjection
-          // marker and stay unpersisted, exactly as before.
-          const first = m.content.find((b) => b.type === "text");
-          const raw = first && first.type === "text" ? parseInterjection(first.text) : null;
-          if (raw) {
-            this.sessions.appendEvent(sessionId, {
-              type: "user_msg",
-              payload: { content: raw },
-            });
-          }
-        }
-      }
+      // Final drain: persist anything produced after the last in-loop drain
+      // (abort/error paths can exit between drains).
+      persistPending();
 
       // Steering that arrived too late to be folded in (the run aborted or
       // errored between boundaries): persist it as user turns at the tail so
@@ -2789,6 +2831,18 @@ export class Engine {
           payload: { content: `agent loop terminated: ${runError}` },
         });
       }
+
+      // Spine safety net: a run that died without emitting its handoff (hard
+      // throw between boundaries) still records one, so resume knows exactly
+      // where the work stood. Then a final latest-wins snapshot either way.
+      if (
+        (runError || signal.aborted) &&
+        taskState.hasOpenTodos() &&
+        !taskState.snapshot().handoff
+      ) {
+        taskState.setHandoff(signal.aborted ? "aborted" : "error");
+      }
+      persistTaskState();
 
       // Mark session as cleanly ended
       this.sessions.appendEvent(sessionId, {
@@ -2868,7 +2922,7 @@ export class Engine {
    * and the engine persists it as a real user turn at its true position.
    *
    * Returns true when a live run accepted the message. Returns false when
-   * there is nothing steerable (idle, planner mode, research, or the run is
+   * there is nothing steerable (idle, research, or the run is
    * already winding down) — callers fall back to queueing for the next turn.
    */
   interject(text: string): boolean {
@@ -3172,7 +3226,6 @@ export class Engine {
     model: string;
     provider: ProviderName;
     workspace: string;
-    plannerMode: boolean;
     yoloMode: boolean;
     trustWorkspace: boolean;
     permissionMode: PermissionMode;
@@ -3192,7 +3245,6 @@ export class Engine {
       model: this.config.model,
       provider: this.config.provider,
       workspace: this.config.workspaceRoot,
-      plannerMode: this.config.plannerMode,
       yoloMode: this.config.yoloMode,
       trustWorkspace: this.permissions.isTrustWorkspace(),
       permissionMode: this.permissions.getMode(),

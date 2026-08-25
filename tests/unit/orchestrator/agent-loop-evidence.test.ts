@@ -53,15 +53,22 @@ describe("execution-evidence gate", () => {
           yield ev("message_stop", { stopReason: "tool_use" });
         } else if (turn === 2) {
           // Model tries to finish without running anything
-          yield ev("content_delta", { delta: { type: "text_delta", text: "Done! Chess game ready." } });
+          yield ev("content_delta", {
+            delta: { type: "text_delta", text: "Done! Chess game ready." },
+          });
           yield ev("message_stop", { stopReason: "end_turn" });
         } else if (turn === 3) {
           // After the nudge, the model runs it
           yield ev("tool_use_start", { toolCallId: "b1", toolName: "bash" });
-          yield ev("tool_use_stop", { toolCallId: "b1", toolInput: { command: "python chess.py --selftest" } });
+          yield ev("tool_use_stop", {
+            toolCallId: "b1",
+            toolInput: { command: "python chess.py --selftest" },
+          });
           yield ev("message_stop", { stopReason: "tool_use" });
         } else {
-          yield ev("content_delta", { delta: { type: "text_delta", text: "Verified. Run: python chess.py" } });
+          yield ev("content_delta", {
+            delta: { type: "text_delta", text: "Verified. Run: python chess.py" },
+          });
           yield ev("message_stop", { stopReason: "end_turn" });
         }
       }),

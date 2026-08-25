@@ -4,14 +4,14 @@
 
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { getAlanHome } from "@alan/shared";
+import { getGearHome } from "@gear/shared";
 import { NotebookStore } from "../notebook/store";
 import type { NotebookEntry } from "../notebook/store";
 import { accent, dim, faint, info, ok, text, warn } from "./ui/theme";
 
 function openStore(): NotebookStore | null {
   try {
-    return new NotebookStore(join(getAlanHome(), "notebook.db"));
+    return new NotebookStore(join(getGearHome(), "notebook.db"));
   } catch {
     return null;
   }
@@ -26,7 +26,7 @@ function scopeLabel(e: NotebookEntry): string {
 export function runNotebook(positionals: string[], values: Record<string, unknown>): void {
   const store = openStore();
   if (!store) {
-    console.log(dim("  Could not open ~/.alan/notebook.db"));
+    console.log(dim("  Could not open ~/.gear/notebook.db"));
     return;
   }
   const sub = positionals[1] ?? "list";

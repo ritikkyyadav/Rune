@@ -73,7 +73,8 @@ describe("AgentLoop — provider error handling", () => {
   test("a retryable:false error fails fast — one error, no re-hammer", async () => {
     const gateway = makeErrorGateway({
       type: "error",
-      error: "All providers rate limited (google, openrouter). Wait a moment, or switch models with /model.",
+      error:
+        "All providers rate limited (google, openrouter). Wait a moment, or switch models with /model.",
       retryable: false,
     });
 

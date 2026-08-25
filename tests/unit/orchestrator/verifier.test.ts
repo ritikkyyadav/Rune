@@ -5,7 +5,7 @@ import { join } from "path";
 import { CommandVerifier, detectVerifyCommands } from "../../../packages/orchestrator/src/verifier";
 
 async function tmpWorkspace(files: Record<string, string>): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "alan-verify-"));
+  const dir = await mkdtemp(join(tmpdir(), "gear-verify-"));
   for (const [name, content] of Object.entries(files)) {
     await writeFile(join(dir, name), content);
   }

@@ -6,10 +6,7 @@
  */
 
 import { describe, test, expect, mock } from "bun:test";
-import {
-  AgentLoop,
-  truncateForTranscript,
-} from "../../../packages/orchestrator/src/agent-loop";
+import { AgentLoop, truncateForTranscript } from "../../../packages/orchestrator/src/agent-loop";
 
 function ev(type: string, extra: Record<string, unknown> = {}) {
   return { type, ...extra };

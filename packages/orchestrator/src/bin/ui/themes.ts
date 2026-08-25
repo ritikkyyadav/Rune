@@ -9,7 +9,7 @@
 // Themes are authored as hex; the ANSI-256 fallback is derived automatically
 // (nearestAnsi256). The `atlas` (brand) theme keeps its original hand-tuned pigments.
 
-import { GEAR_ACCENT_LABELS, gearTerminalPalette, gearAccentHex } from "@alan/shared";
+import { GEAR_ACCENT_LABELS, gearTerminalPalette, gearAccentHex } from "@gear/shared";
 
 export interface Pigment {
   /** Brand-exact 24-bit RGB. */
@@ -87,7 +87,7 @@ export const GEAR_ACCENTS: readonly GearAccent[] = [
 // available for people who want to keep a custom terminal profile untouched.
 // The approved product comp opens in Light + Cyber Orange (image 2). Keep the
 // other four accents and Dark as first-class runtime choices.
-export const DEFAULT_THEME = "gear-orange";
+export const DEFAULT_THEME = "flow";
 
 // ─── ANSI-256 nearest-match (xterm cube + grayscale ramp) ───
 
@@ -386,6 +386,41 @@ function gearTheme(appearance: "light" | "dark", accentName: GearAccent): Theme 
 // ─── The bundled themes (display order) ───
 
 export const THEMES: Theme[] = [
+  // flow — the default. A coding agent's terminal, recorded from the real
+  // program under a pty: one dark ground, a cool-gray text ramp, and exactly
+  // four signals (teal identity, green added, red removed, amber caution).
+  // Nothing here paints a card: every surface resolves to the ground, because
+  // the design owns the last four lines, never the screen.
+  theme(
+    "flow",
+    "Flow (default)",
+    "dark",
+    {
+      bg: "#14171d",
+      text: "#d5dae1", // prose, tool names, the thing you read
+      muted: "#7b7f86", // arguments, metrics, context lines
+      faint: "#565b61", // rails, gutters, elisions
+      accent: "#cf8579", // removed lines, failures, errors
+      info: "#64b7bc", // identity, branches, paths, option keys
+      warn: "#d3ab68", // approval prompts, caution
+      ok: "#8fbc7f", // added lines, passes
+      line: "#6b6f76", // header rules
+    },
+    {
+      brand: "#64b7bc",
+      surfaces: {
+        card: "#14171d",
+        bar: "#14171d",
+        barActive: "#1e242b", // the one lift: a selected row in a picker
+        code: "#14171d",
+        diff: "#14171d",
+        diffHeader: "#14171d",
+        popover: "#14171d",
+        hairline: "#2a2f36",
+      },
+    },
+  ),
+
   ...GEAR_ACCENTS.map((accentName) => gearTheme("light", accentName)),
   ...GEAR_ACCENTS.map((accentName) => gearTheme("dark", accentName)),
 
@@ -621,9 +656,9 @@ export function findTheme(name: string): Theme | undefined {
         (accentAlias[2] as "light" | "dark" | undefined) ?? "light",
         accentAlias[1] as GearAccent,
       )
-    : normalized === "elio" || normalized === "light"
+    : normalized === "light"
       ? "gear"
-      : normalized === "elio-dark" || normalized === "dark"
+      : normalized === "dark"
         ? "gear-dark"
         : normalized === "system"
           ? "auto"
@@ -636,6 +671,7 @@ export function findTheme(name: string): Theme | undefined {
 // The production picker mirrors the supplied customizer: five cosmetic accents
 // across matching light and dark bases, followed by a host-terminal escape hatch.
 export const PRODUCTION_THEME_NAMES: readonly string[] = [
+  "flow",
   ...GEAR_ACCENTS.map((accentName) => gearThemeName("light", accentName)),
   ...GEAR_ACCENTS.map((accentName) => gearThemeName("dark", accentName)),
   "auto",

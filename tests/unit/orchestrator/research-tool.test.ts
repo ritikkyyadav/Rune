@@ -8,7 +8,11 @@
 
 import { describe, test, expect } from "bun:test";
 import { LlmGateway } from "../../../packages/llm-gateway/src/gateway";
-import type { InferenceResponse, LlmProvider, StreamEvent } from "../../../packages/llm-gateway/src/types";
+import type {
+  InferenceResponse,
+  LlmProvider,
+  StreamEvent,
+} from "../../../packages/llm-gateway/src/types";
 import {
   createResearchTool,
   RESEARCH_TOOL_SCHEMA,
@@ -22,8 +26,16 @@ class JsonProvider implements LlmProvider {
     throw new Error("not used");
   }
   async *inferStream(): AsyncGenerator<StreamEvent> {
-    yield { type: "content_delta", contentIndex: 0, delta: { type: "text_delta", text: this.body } };
-    yield { type: "message_stop", stopReason: "end_turn", usage: { inputTokens: 1, outputTokens: 1 } };
+    yield {
+      type: "content_delta",
+      contentIndex: 0,
+      delta: { type: "text_delta", text: this.body },
+    };
+    yield {
+      type: "message_stop",
+      stopReason: "end_turn",
+      usage: { inputTokens: 1, outputTokens: 1 },
+    };
   }
   async countTokens(): Promise<number> {
     return 1;
@@ -34,14 +46,22 @@ class JsonProvider implements LlmProvider {
 }
 
 function gatewayWith(body: string): LlmGateway {
-  const gw = new LlmGateway({ providers: {}, defaultProvider: "anthropic", maxRetries: 0, retryBaseMs: 1 });
+  const gw = new LlmGateway({
+    providers: {},
+    defaultProvider: "anthropic",
+    maxRetries: 0,
+    retryBaseMs: 1,
+  });
   gw.registerProvider(new JsonProvider(body));
   return gw;
 }
 
-function toolWith(body: string, recorded: Array<{ type: string; payload: Record<string, unknown> }>) {
+function toolWith(
+  body: string,
+  recorded: Array<{ type: string; payload: Record<string, unknown> }>,
+) {
   return createResearchTool({
-    binaryPath: "alan-tools",
+    binaryPath: "gear-tools",
     workspaceRoot: "/tmp/nonexistent-ws",
     resolve: () => ({ gateway: gatewayWith(body), model: "test-model", provider: "anthropic" }),
     defaults: () => ({ save: false }),

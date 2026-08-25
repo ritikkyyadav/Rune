@@ -102,7 +102,9 @@ describe("OllamaProvider", () => {
     );
     const events = await collect(
       new OllamaProvider().inferStream(
-        baseReq({ tools: [{ name: "grep", description: "search", inputSchema: { type: "object" } }] }),
+        baseReq({
+          tools: [{ name: "grep", description: "search", inputSchema: { type: "object" } }],
+        }),
       ),
     );
     expect(pick(events, "tool_use_start")[0].toolName).toBe("grep");

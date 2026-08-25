@@ -69,15 +69,18 @@ export const PROVIDER_TIER_DEFAULTS: Record<
     standard: "grok-4",
     light: "grok-4-fast",
   },
+  // qwen/qwen3-coder:free and qwen3-coder:480b were retired upstream on
+  // 2026-07-15 (see gateway.ts's model-gone handling) — these entries mirror
+  // the gateway's refreshed defaults so a tier can never resolve to a corpse.
   openrouter: {
-    heavy: "qwen/qwen3-coder:free",
-    standard: "qwen/qwen3-coder:free",
-    light: "qwen/qwen3-coder:free",
+    heavy: "deepseek/deepseek-r1:free",
+    standard: "deepseek/deepseek-v4-flash:free",
+    light: "deepseek/deepseek-v4-flash:free",
   },
   "ollama-turbo": {
-    heavy: "qwen3-coder:480b",
-    standard: "qwen3-coder:480b",
-    light: "qwen3-coder:480b",
+    heavy: "qwen3-coder-next",
+    standard: "qwen3-coder-next",
+    light: "qwen3-coder-next",
   },
 };
 

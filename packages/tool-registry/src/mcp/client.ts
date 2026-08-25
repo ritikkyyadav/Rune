@@ -1,4 +1,4 @@
-import { type Logger, createLogger } from "@alan/shared";
+import { type Logger, createLogger } from "@gear/shared";
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
 import { HttpTransport, McpSessionExpiredError, StdioTransport } from "./transport";
 import {

@@ -41,8 +41,7 @@ async function collect(gen: AsyncGenerator<StreamEvent>): Promise<StreamEvent[]>
 }
 const toolStop = (events: StreamEvent[]) =>
   events.find((e) => e.type === "tool_use_stop") as
-    | Extract<StreamEvent, { type: "tool_use_stop" }>
-    | undefined;
+    Extract<StreamEvent, { type: "tool_use_stop" }> | undefined;
 
 const req: InferenceRequest = {
   messages: [{ role: "user", content: [{ type: "text", text: "read it" }] }],

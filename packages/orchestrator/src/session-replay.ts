@@ -1,6 +1,6 @@
-import type { ContentBlock, Message } from "@alan/llm-gateway";
-import type { SessionEvent } from "@alan/shared";
-import type { CheckpointStore, RunState } from "@alan/shared";
+import type { ContentBlock, Message } from "@gear/llm-gateway";
+import type { SessionEvent } from "@gear/shared";
+import type { CheckpointStore, RunState } from "@gear/shared";
 
 interface ToolUseRecord {
   callId: string;

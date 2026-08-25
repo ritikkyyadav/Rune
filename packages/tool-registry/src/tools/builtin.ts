@@ -264,7 +264,7 @@ const ALL_SCHEMAS: Array<{ schema: ToolSchema; subcommand: string }> = [
 
 /**
  * Register all built-in tools with the registry.
- * @param binaryPath - Path to the compiled alan-tools binary
+ * @param binaryPath - Path to the compiled gear-tools binary
  */
 export function registerBuiltinTools(registry: ToolRegistry, binaryPath: string): void {
   // Harness-side file-state tracking: read_file/write_file/edit_file/multi_edit

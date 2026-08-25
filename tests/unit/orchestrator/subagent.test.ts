@@ -44,7 +44,11 @@ class TextProvider implements LlmProvider {
   async *inferStream(_req: InferenceRequest): AsyncGenerator<StreamEvent> {
     yield { type: "message_start", messageId: "m1" };
     yield { type: "content_start", contentIndex: 0 };
-    yield { type: "content_delta", contentIndex: 0, delta: { type: "text_delta", text: this.text } };
+    yield {
+      type: "content_delta",
+      contentIndex: 0,
+      delta: { type: "text_delta", text: this.text },
+    };
     yield { type: "content_stop", contentIndex: 0 };
     yield {
       type: "message_stop",

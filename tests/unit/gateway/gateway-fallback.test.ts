@@ -103,7 +103,9 @@ describe("LlmGateway streaming fallback", () => {
     expect(fallback?.status).toBe(429);
 
     const text = events
-      .filter((e): e is Extract<StreamEvent, { type: "content_delta" }> => e.type === "content_delta")
+      .filter(
+        (e): e is Extract<StreamEvent, { type: "content_delta" }> => e.type === "content_delta",
+      )
       .map((e) => e.delta.text)
       .join("");
     expect(text).toBe("hello from fallback");
@@ -168,7 +170,9 @@ describe("LlmGateway streaming fallback", () => {
 
     expect(events.some((e) => e.type === "error")).toBe(false);
     const text = events
-      .filter((e): e is Extract<StreamEvent, { type: "content_delta" }> => e.type === "content_delta")
+      .filter(
+        (e): e is Extract<StreamEvent, { type: "content_delta" }> => e.type === "content_delta",
+      )
       .map((e) => e.delta.text)
       .join("");
     expect(text).toBe("recovered");
@@ -188,7 +192,7 @@ async function* fail410Retired(): AsyncGenerator<StreamEvent> {
   throw new ApiError({
     status: 410,
     provider: "openrouter",
-    message: 'qwen3-coder:480b was retired at 2026-07-15 00:00:00 -0700 PDT',
+    message: "qwen3-coder:480b was retired at 2026-07-15 00:00:00 -0700 PDT",
   });
 }
 

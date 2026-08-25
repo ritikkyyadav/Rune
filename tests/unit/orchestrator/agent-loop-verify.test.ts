@@ -133,7 +133,11 @@ describe("AgentLoop — verification loop (Phase 2)", () => {
     // The failure report was fed back as a user message.
     const hasFailureMsg = loop
       .getMessages()
-      .some((m) => m.role === "user" && m.content.some((b) => b.type === "text" && b.text.includes("FAIL: tests broken")));
+      .some(
+        (m) =>
+          m.role === "user" &&
+          m.content.some((b) => b.type === "text" && b.text.includes("FAIL: tests broken")),
+      );
     expect(hasFailureMsg).toBe(true);
 
     // And it ultimately completed.
@@ -159,8 +163,11 @@ describe("AgentLoop — verification loop (Phase 2)", () => {
     expect(events.some((e) => e.type === "turn_complete")).toBe(true);
   });
 
-  test("bounded: stops re-prompting after maxVerifyAttempts", async () => {
-    // Always fails; with maxVerifyAttempts=1 it should verify once then give up.
+  test("bounded: verify attempts, then ONE replan round, then give up", async () => {
+    // Always fails. New contract: after maxVerifyAttempts (1) fix rounds the
+    // loop demands a genuinely different approach ONCE (`replanning` event,
+    // verify budget reset), so total verify runs are bounded at
+    // maxVerifyAttempts × (maxReplanNudges + 1) = 2 — and the run still ends.
     const gateway = makeScriptedGateway([
       { tool: "write_file" },
       { text: "a" },
@@ -172,7 +179,10 @@ describe("AgentLoop — verification loop (Phase 2)", () => {
     const verifier = makeVerifier([{ passed: false, ran: true }]);
     const events = await collect(loopWith(gateway, verifier, 1).run("go", "s", "/ws"));
 
-    expect((verifier.verify as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+    expect((verifier.verify as ReturnType<typeof mock>).mock.calls.length).toBe(2);
+    const replans = events.filter((e) => e.type === "replanning");
+    expect(replans).toHaveLength(1);
+    expect((replans[0] as { trigger?: string }).trigger).toBe("verification");
     expect(events.some((e) => e.type === "turn_complete")).toBe(true);
   });
 });

@@ -14,9 +14,9 @@
 // Pure-function style (mirrors subagent.ts). The Engine wraps these with session
 // persistence; nothing here touches the DB.
 
-import type { InferenceRequest, ProviderName } from "@alan/llm-gateway";
-import { LlmGateway } from "@alan/llm-gateway";
-import { ToolRegistry, registerBuiltinTools } from "@alan/tool-registry";
+import type { InferenceRequest, ProviderName } from "@gear/llm-gateway";
+import { LlmGateway } from "@gear/llm-gateway";
+import { ToolRegistry, registerBuiltinTools } from "@gear/tool-registry";
 import { AgentLoop, mapWithConcurrency } from "./agent-loop";
 import type { PermissionCheck, ToolResultProcessor } from "./agent-loop";
 import type {
@@ -35,7 +35,7 @@ import type {
 
 export interface ResearchDeps {
   gateway: LlmGateway;
-  /** Path to the compiled alan-tools binary (for built-in read tools). */
+  /** Path to the compiled gear-tools binary (for built-in read tools). */
   binaryPath: string;
   model: string;
   provider: ProviderName;

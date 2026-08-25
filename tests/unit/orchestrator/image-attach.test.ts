@@ -30,7 +30,7 @@ const PNG_BYTES = Buffer.from(
 let root: string;
 
 beforeAll(() => {
-  root = join(tmpdir(), `alan-image-attach-${process.pid}`);
+  root = join(tmpdir(), `gear-image-attach-${process.pid}`);
   // Directory with a TRAILING SPACE plus a file with spaces + parens — the
   // exact drag-and-drop shape from the incident.
   mkdirSync(join(root, "Sample images "), { recursive: true });

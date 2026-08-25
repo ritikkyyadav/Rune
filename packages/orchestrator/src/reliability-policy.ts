@@ -29,6 +29,14 @@ export interface ReliabilityPolicy {
   readThrashCount: number;
   /** Edits to the same file in one run → struggle incident. */
   editChurnCount: number;
+  /** Plan-discipline nudges per run (multi-file writes with no todo list). */
+  maxPlanNudges: number;
+  /** Change-approach rounds after verification keeps failing per run. */
+  maxReplanNudges: number;
+  /** Struggle-signal nudges injected into the live run (edit churn etc.). */
+  maxStruggleNudges: number;
+  /** Clarify-first nudges when a NEW project starts with zero questions asked. */
+  maxGreenfieldNudges: number;
 }
 
 /** Today's shipped behavior, verbatim — the baseline every override starts from. */
@@ -42,6 +50,10 @@ export const DEFAULT_RELIABILITY: ReliabilityPolicy = {
   maxVerifyAttempts: 2,
   readThrashCount: 3,
   editChurnCount: 4,
+  maxPlanNudges: 1,
+  maxReplanNudges: 1,
+  maxStruggleNudges: 1,
+  maxGreenfieldNudges: 1,
 };
 
 // Open-weight / budget-tier families fail differently than frontier models:

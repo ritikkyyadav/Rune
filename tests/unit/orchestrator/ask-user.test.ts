@@ -9,7 +9,7 @@
 import { describe, test, expect } from "bun:test";
 import { createAskUserTool, ASK_USER_SCHEMA } from "../../../packages/orchestrator/src/ask-user";
 import type { QuestionHandler } from "../../../packages/orchestrator/src/ask-user";
-import type { ToolCallInput } from "@alan/tool-registry";
+import type { ToolCallInput } from "@gear/tool-registry";
 
 function makeInput(args: Record<string, unknown>): ToolCallInput {
   return { toolName: "ask_user", callId: "c1", args, sessionId: "s1", workspaceRoot: "/tmp" };

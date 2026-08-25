@@ -20,7 +20,7 @@ import { bumpUsage, peekUsage } from "../../../packages/telemetry/src/counters";
 
 let dir: string;
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "alan-telemetry-"));
+  dir = mkdtempSync(join(tmpdir(), "gear-telemetry-"));
 });
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });

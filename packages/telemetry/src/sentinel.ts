@@ -14,7 +14,7 @@
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { TrailEntry } from "@alan/shared";
+import type { TrailEntry } from "@gear/shared";
 
 export interface SentinelMeta {
   pid: number;

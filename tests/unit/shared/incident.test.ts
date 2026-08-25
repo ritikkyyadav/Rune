@@ -29,12 +29,12 @@ describe("fingerprinting", () => {
     const a = fingerprintIncident(
       "tool.exec_failure",
       "tool:bash",
-      'Command failed with exit 1: cd /Users/alice/proj/x && npm test (took 4123ms, run 42)',
+      "Command failed with exit 1: cd /Users/alice/proj/x && npm test (took 4123ms, run 42)",
     );
     const b = fingerprintIncident(
       "tool.exec_failure",
       "tool:bash",
-      'Command failed with exit 2: cd /home/bob/other/repo && npm test (took 99ms, run 7)',
+      "Command failed with exit 2: cd /home/bob/other/repo && npm test (took 99ms, run 7)",
     );
     expect(a).toBe(b);
   });

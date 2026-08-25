@@ -2,10 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { mkdtemp, mkdir, writeFile, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
-import {
-  createGlobHandler,
-  globToRegExp,
-} from "../../../packages/tool-registry/src/tools/glob";
+import { createGlobHandler, globToRegExp } from "../../../packages/tool-registry/src/tools/glob";
 
 describe("globToRegExp", () => {
   test("* does not cross path separators", () => {
@@ -37,7 +34,7 @@ function inputFor(ws: string, args: Record<string, unknown>) {
 
 let ws: string;
 beforeEach(async () => {
-  ws = await mkdtemp(join(tmpdir(), "alan-glob-"));
+  ws = await mkdtemp(join(tmpdir(), "gear-glob-"));
 });
 afterEach(async () => {
   await rm(ws, { recursive: true, force: true });

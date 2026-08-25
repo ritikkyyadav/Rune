@@ -8,7 +8,10 @@
  */
 
 import { describe, test, expect } from "bun:test";
-import { createCompactTool, COMPACT_TOOL_SCHEMA } from "../../../packages/orchestrator/src/compact-tool";
+import {
+  createCompactTool,
+  COMPACT_TOOL_SCHEMA,
+} from "../../../packages/orchestrator/src/compact-tool";
 import { ContextEngine } from "../../../packages/orchestrator/src/context-engine";
 import type { Message } from "../../../packages/llm-gateway/src/types";
 
@@ -31,13 +34,23 @@ function summarizerGateway() {
   } as any;
 }
 
-const input = { toolName: "compact_context", callId: "c1", args: {}, sessionId: "s", workspaceRoot: "/ws" };
+const input = {
+  toolName: "compact_context",
+  callId: "c1",
+  args: {},
+  sessionId: "s",
+  workspaceRoot: "/ws",
+};
 
 describe("compact_context tool", () => {
   test("schema: auto-permission, instant, no args", () => {
     expect(COMPACT_TOOL_SCHEMA.name).toBe("compact_context");
     expect(COMPACT_TOOL_SCHEMA.permissionLevel).toBe("auto");
-    expect(COMPACT_TOOL_SCHEMA.inputSchema).toEqual({ type: "object", properties: {}, required: [] });
+    expect(COMPACT_TOOL_SCHEMA.inputSchema).toEqual({
+      type: "object",
+      properties: {},
+      required: [],
+    });
   });
 
   test("execute flags the engine and reports usage", async () => {

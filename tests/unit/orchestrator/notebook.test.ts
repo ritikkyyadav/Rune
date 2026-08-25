@@ -16,7 +16,7 @@ let dir: string;
 let store: NotebookStore;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "alan-notebook-"));
+  dir = mkdtempSync(join(tmpdir(), "gear-notebook-"));
   store = new NotebookStore(join(dir, "nb.db"));
 });
 
@@ -58,7 +58,13 @@ describe("NotebookStore", () => {
 
   test("retrieve ranks repo > stack > global and respects win rate", () => {
     store.upsert({ kind: "fact", scope: "global", title: "g", body: "global note" });
-    store.upsert({ kind: "fact", scope: "stack", stackKey: "bun+ts", title: "s", body: "stack note" });
+    store.upsert({
+      kind: "fact",
+      scope: "stack",
+      stackKey: "bun+ts",
+      title: "s",
+      body: "stack note",
+    });
     store.upsert({ kind: "fact", scope: "repo", repoKey: "r1", title: "r", body: "repo note" });
     // a different repo's entry must never appear
     store.upsert({ kind: "fact", scope: "repo", repoKey: "OTHER", title: "x", body: "other repo" });
@@ -93,7 +99,7 @@ describe("fingerprint", () => {
   test("stack key detects bun+rust+ts+turbo shape", () => {
     writeFileSync(join(dir, "bun.lock"), "");
     writeFileSync(join(dir, "tsconfig.json"), "{}");
-    writeFileSync(join(dir, "Cargo.toml"), "[workspace]\nmembers=[\"crates/x\"]");
+    writeFileSync(join(dir, "Cargo.toml"), '[workspace]\nmembers=["crates/x"]');
     writeFileSync(join(dir, "turbo.json"), "{}");
     expect(stackKey(dir)).toBe("bun+rust+ts+turbo");
   });
@@ -227,10 +233,9 @@ describe("engine integration", () => {
       model: "gemini-2.5-flash",
       provider: "google",
       workspaceRoot: dir,
-      dbPath: join(dir, "alan.db"),
-      toolsBinaryPath: "alan-tools",
+      dbPath: join(dir, "gear.db"),
+      toolsBinaryPath: "gear-tools",
       yoloMode: false,
-      plannerMode: false,
       enableCheckpoints: false,
       enableSecurity: false,
       enableRateLimiting: false,
@@ -252,10 +257,9 @@ describe("engine integration", () => {
       model: "gemini-2.5-flash",
       provider: "google",
       workspaceRoot: dir,
-      dbPath: join(dir, "alan2.db"),
-      toolsBinaryPath: "alan-tools",
+      dbPath: join(dir, "gear2.db"),
+      toolsBinaryPath: "gear-tools",
       yoloMode: false,
-      plannerMode: false,
       enableCheckpoints: false,
       enableSecurity: false,
       enableRateLimiting: false,

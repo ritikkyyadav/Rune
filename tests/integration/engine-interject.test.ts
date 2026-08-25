@@ -26,9 +26,7 @@ function sse(text: string): string {
       model: "fake-model",
       choices: [{ index: 0, delta, finish_reason: finish }],
     })}\n\n`;
-  return (
-    chunk({ role: "assistant", content: text }, null) + chunk({}, "stop") + "data: [DONE]\n\n"
-  );
+  return chunk({ role: "assistant", content: text }, null) + chunk({}, "stop") + "data: [DONE]\n\n";
 }
 
 describe("Engine mid-turn steering (end-to-end, fake provider)", () => {
@@ -36,7 +34,7 @@ describe("Engine mid-turn steering (end-to-end, fake provider)", () => {
   let server: ReturnType<typeof Bun.serve> | null = null;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "alan-interject-"));
+    dir = mkdtempSync(join(tmpdir(), "gear-interject-"));
   });
 
   afterEach(() => {
@@ -66,11 +64,14 @@ describe("Engine mid-turn steering (end-to-end, fake provider)", () => {
       model: "fake-model",
       provider: "custom" as ProviderName,
       workspaceRoot: dir,
-      dbPath: join(dir, "alan.db"),
-      toolsBinaryPath: "alan-tools",
+      dbPath: join(dir, "gear.db"),
+      toolsBinaryPath: "gear-tools",
       yoloMode: false,
-      plannerMode: false,
-      customEndpoint: { baseUrl: `http://127.0.0.1:${server.port}/v1`, model: "fake-model", key: "test" },
+      customEndpoint: {
+        baseUrl: `http://127.0.0.1:${server.port}/v1`,
+        model: "fake-model",
+        key: "test",
+      },
       enableCheckpoints: false,
       enableSecurity: false,
       enableRateLimiting: false,

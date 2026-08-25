@@ -7,7 +7,11 @@
  */
 
 import { describe, test, expect, mock, beforeEach } from "bun:test";
-import type { InferenceRequest, Message, ToolDefinition } from "../../../packages/llm-gateway/src/types";
+import type {
+  InferenceRequest,
+  Message,
+  ToolDefinition,
+} from "../../../packages/llm-gateway/src/types";
 import { AnthropicProvider } from "../../../packages/llm-gateway/src/providers/anthropic";
 import { GoogleProvider } from "../../../packages/llm-gateway/src/providers/google";
 import { OpenAIProvider } from "../../../packages/llm-gateway/src/providers/openai";
@@ -80,11 +84,26 @@ describe("AnthropicProvider — prompt caching", () => {
 
   test("toAnthropicMessagesWithCache attaches cache_control only to last block of last message", () => {
     const msgs: Message[] = [
-      { role: "user", content: [{ type: "text", text: "first" }, { type: "text", text: "second" }] },
-      { role: "user", content: [{ type: "text", text: "last-first" }, { type: "text", text: "last-last" }] },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "first" },
+          { type: "text", text: "second" },
+        ],
+      },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "last-first" },
+          { type: "text", text: "last-last" },
+        ],
+      },
     ];
 
-    const result = callPrivate<Array<Record<string, unknown>>>("toAnthropicMessagesWithCache", msgs);
+    const result = callPrivate<Array<Record<string, unknown>>>(
+      "toAnthropicMessagesWithCache",
+      msgs,
+    );
 
     // First message — no cache_control on any block
     const firstMsgContent = result[0].content as Array<Record<string, unknown>>;
@@ -99,7 +118,10 @@ describe("AnthropicProvider — prompt caching", () => {
   });
 
   test("toAnthropicToolsWithCache attaches cache_control only to the last tool", () => {
-    const result = callPrivate<Array<Record<string, unknown>>>("toAnthropicToolsWithCache", baseTools);
+    const result = callPrivate<Array<Record<string, unknown>>>(
+      "toAnthropicToolsWithCache",
+      baseTools,
+    );
 
     expect(result).toHaveLength(2);
     // First tool — no cache_control
@@ -122,10 +144,11 @@ describe("AnthropicProvider — prompt caching", () => {
   });
 
   test("toAnthropicMessagesWithCache handles a single message with single block", () => {
-    const msgs: Message[] = [
-      { role: "user", content: [{ type: "text", text: "hello" }] },
-    ];
-    const result = callPrivate<Array<Record<string, unknown>>>("toAnthropicMessagesWithCache", msgs);
+    const msgs: Message[] = [{ role: "user", content: [{ type: "text", text: "hello" }] }];
+    const result = callPrivate<Array<Record<string, unknown>>>(
+      "toAnthropicMessagesWithCache",
+      msgs,
+    );
     const content = result[0].content as Array<Record<string, unknown>>;
     expect(content[0].cache_control).toEqual({ type: "ephemeral" });
   });
@@ -192,7 +215,9 @@ describe("GoogleProvider — inferStream AbortSignal", () => {
 
   test("inferStream can be called without opts (backward compat)", () => {
     const provider = new GoogleProvider("test-key");
-    const gen = provider.inferStream(makeRequest({ provider: "google", model: "gemini-2.5-flash" }));
+    const gen = provider.inferStream(
+      makeRequest({ provider: "google", model: "gemini-2.5-flash" }),
+    );
     expect(gen).toBeDefined();
     expect(typeof gen[Symbol.asyncIterator]).toBe("function");
   });
@@ -234,10 +259,9 @@ describe("OpenAIProvider — inferStream AbortSignal", () => {
   test("inferStream can be called with an AbortSignal", () => {
     const provider = new OpenAIProvider("test-key");
     const controller = new AbortController();
-    const gen = provider.inferStream(
-      makeRequest({ provider: "openai", model: "gpt-4o" }),
-      { signal: controller.signal },
-    );
+    const gen = provider.inferStream(makeRequest({ provider: "openai", model: "gpt-4o" }), {
+      signal: controller.signal,
+    });
     expect(gen).toBeDefined();
     expect(typeof gen[Symbol.asyncIterator]).toBe("function");
   });
@@ -247,10 +271,9 @@ describe("OpenAIProvider — inferStream AbortSignal", () => {
     const controller = new AbortController();
     controller.abort(); // pre-abort
 
-    const gen = provider.inferStream(
-      makeRequest({ provider: "openai", model: "gpt-4o" }),
-      { signal: controller.signal },
-    );
+    const gen = provider.inferStream(makeRequest({ provider: "openai", model: "gpt-4o" }), {
+      signal: controller.signal,
+    });
 
     try {
       await gen.next();

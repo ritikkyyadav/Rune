@@ -6,8 +6,8 @@ import { join } from "node:path";
 import { HostClient } from "../../packages/orchestrator/src/host-client";
 
 const HOST_SCRIPT = join(import.meta.dir, "../../packages/orchestrator/src/bin/engine-host.ts");
-const RUST_RELEASE = join(import.meta.dir, "../../target/release/alan-tools");
-const RUST_DEBUG = join(import.meta.dir, "../../target/debug/alan-tools");
+const RUST_RELEASE = join(import.meta.dir, "../../target/release/gear-tools");
+const RUST_DEBUG = join(import.meta.dir, "../../target/debug/gear-tools");
 const RUST_BIN = existsSync(RUST_RELEASE) ? RUST_RELEASE : RUST_DEBUG;
 const HAS_RUST_BIN = existsSync(RUST_BIN);
 
@@ -29,7 +29,7 @@ describe("engine-host --socket (detach/attach transport)", () => {
   let host: ReturnType<typeof Bun.spawn> | null = null;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "alan-host-"));
+    dir = mkdtempSync(join(tmpdir(), "gear-host-"));
   });
 
   afterEach(async () => {
@@ -43,9 +43,9 @@ describe("engine-host --socket (detach/attach transport)", () => {
     return Bun.spawn(["bun", HOST_SCRIPT, "--socket", socketPath], {
       env: {
         ...process.env,
-        ALAN_WORKSPACE: dir,
-        ALAN_DB_PATH: join(dir, "alan.db"),
-        ALAN_TOOLS_BIN: RUST_BIN,
+        GEAR_WORKSPACE: dir,
+        GEAR_DB_PATH: join(dir, "gear.db"),
+        GEAR_TOOLS_BIN: RUST_BIN,
       },
       stdout: "ignore",
       stderr: "pipe",

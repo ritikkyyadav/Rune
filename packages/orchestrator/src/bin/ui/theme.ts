@@ -334,9 +334,25 @@ export const warn = slot("warn"); // warnings, prompts, bar fill
 export const ok = slot("ok"); // success ✓
 export const line = slot("line"); // borders / rules
 
+/**
+ * A colour part-way between two slots. The live rung is the only caller, and it
+ * exists for one reason: a mark that snaps between two pigments reads as a
+ * blink, and a blink is how a terminal says *something is wrong* — it is the
+ * grammar of a smoke alarm, not of a colleague working. Easing along a ramp
+ * instead reads as breathing, which is what a process that is fine but busy
+ * should look like. On a 256-colour terminal the ramp quantises to a handful of
+ * steps and simply breathes more coarsely; under NO_COLOR it is inert, like
+ * every other token here.
+ */
+export function between(from: SlotName, to: SlotName, amount: number): (value: string) => string {
+  const ratio = Math.max(0, Math.min(1, amount));
+  return (value: string) =>
+    fmt(blendPigment(active.slots[from], active.slots[to], ratio), value, active.useNativeColors);
+}
+
 // ─── Back-compat raw pigment names (now mapped onto theme slots) ───
-// welcome.ts, spinner.ts, diff-render.ts and alan-cli.ts import these; routing them
-// through slots means diffs, the spinner and the provider list recolour with the
+// welcome.ts, diff-render.ts and gear-cli.ts import these; routing them
+// through slots means diffs and the provider list recolour with the
 // active theme too, with no changes at their call sites.
 
 export const paper = slot("text");

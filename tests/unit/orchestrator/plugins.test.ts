@@ -23,7 +23,7 @@ function installPlugin(
     skill?: { id: string; description: string };
   } = {},
 ): string {
-  const root = join(workspace, ".alan", "plugins", name);
+  const root = join(workspace, ".gear", "plugins", name);
   mkdirSync(root, { recursive: true });
   writeFileSync(
     join(root, "plugin.json"),
@@ -55,7 +55,7 @@ function installPlugin(
 }
 
 beforeEach(() => {
-  workspace = mkdtempSync(join(tmpdir(), "alan-plugins-"));
+  workspace = mkdtempSync(join(tmpdir(), "gear-plugins-"));
 });
 
 afterEach(() => {
@@ -94,7 +94,7 @@ describe("discoverPlugins", () => {
   test("manifest/dir name mismatch, missing declared files, and bad JSON all refuse", () => {
     installPlugin("wrong-name", { manifest: { name: "other-name" } });
     installPlugin("missing-hooks", { manifest: { hooks: "nope.json" } });
-    const badRoot = join(workspace, ".alan", "plugins", "bad-json");
+    const badRoot = join(workspace, ".gear", "plugins", "bad-json");
     mkdirSync(badRoot, { recursive: true });
     writeFileSync(join(badRoot, "plugin.json"), "{not json");
 
@@ -125,9 +125,9 @@ describe("discoverPlugins", () => {
 
 describe("loader merges", () => {
   test("plugin hooks concatenate AFTER workspace hooks", async () => {
-    mkdirSync(join(workspace, ".alan"), { recursive: true });
+    mkdirSync(join(workspace, ".gear"), { recursive: true });
     writeFileSync(
-      join(workspace, ".alan", "hooks.json"),
+      join(workspace, ".gear", "hooks.json"),
       JSON.stringify({ postToolUse: [{ command: "echo user-hook" }] }),
     );
     installPlugin("hooky", { hooks: { postToolUse: [{ command: "echo plugin-hook" }] } });
@@ -141,8 +141,8 @@ describe("loader merges", () => {
   });
 
   test("plugin commands are tagged; user names win; plugin conflicts refuse", async () => {
-    mkdirSync(join(workspace, ".alan", "commands"), { recursive: true });
-    writeFileSync(join(workspace, ".alan", "commands", "ship.md"), "user ship");
+    mkdirSync(join(workspace, ".gear", "commands"), { recursive: true });
+    writeFileSync(join(workspace, ".gear", "commands", "ship.md"), "user ship");
     installPlugin("shipper", {
       command: { file: "ship.md", body: "plugin ship" },
     });

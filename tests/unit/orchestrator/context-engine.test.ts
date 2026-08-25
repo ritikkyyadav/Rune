@@ -32,28 +32,18 @@ describe("ContextEngine", () => {
     expect(result.evictedCount).toBeGreaterThanOrEqual(0);
   });
 
-  test("pinFile adds context that survives budget pass", () => {
+  test("retrieved chunks ride as one [Session context] message before the history", () => {
     const engine = new ContextEngine({}, createMockGateway());
-    engine.pinFile("/src/main.ts", "export function main() { console.log('hello'); }");
-
-    const result = engine.buildPrompt("System", [], []);
-    expect(result.system).toContain("System");
-    // Pinned file should contribute to token count
-    expect(result.totalTokens).toBeGreaterThan(0);
-  });
-
-  test("addDiscovery deduplicates", () => {
-    const engine = new ContextEngine({}, createMockGateway());
-    engine.addDiscovery("Uses TypeScript", "read_file");
-    engine.addDiscovery("Uses TypeScript", "read_file");
-    expect(engine.getDiscoveries()).toHaveLength(1);
-  });
-
-  test("addDiscovery allows different facts", () => {
-    const engine = new ContextEngine({}, createMockGateway());
-    engine.addDiscovery("Uses TypeScript", "read_file");
-    engine.addDiscovery("Uses React", "read_file");
-    expect(engine.getDiscoveries()).toHaveLength(2);
+    const result = engine.buildPrompt(
+      "System",
+      [],
+      [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+      [{ content: "repo map: src/main.ts exports main()", relevance: 0.9 }],
+    );
+    const first = result.messages[0];
+    const text = first.content.find((b: any) => b.type === "text");
+    expect((text as any).text).toContain("[Session context]");
+    expect((text as any).text).toContain("repo map: src/main.ts");
   });
 
   test("getContextUsage starts at zero", () => {
@@ -65,15 +55,28 @@ describe("ContextEngine", () => {
 
   test("getContextUsage updates after buildPrompt", () => {
     const engine = new ContextEngine(
-      { budget: { maxTokens: 500, workingSetRatio: 0.5, sessionMemoryRatio: 0.25, retrievalRatio: 0.25 } },
+      {
+        budget: {
+          maxTokens: 500,
+          workingSetRatio: 0.5,
+          sessionMemoryRatio: 0.25,
+          retrievalRatio: 0.25,
+        },
+      },
       createMockGateway(),
     );
     engine.buildPrompt(
       "You are a very helpful and detailed assistant with extensive capabilities.",
       [],
       [
-        { role: "user", content: [{ type: "text", text: "Hello world, please help me with this complex task" }] },
-        { role: "assistant", content: [{ type: "text", text: "Sure, I would be happy to help you with that task" }] },
+        {
+          role: "user",
+          content: [{ type: "text", text: "Hello world, please help me with this complex task" }],
+        },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "Sure, I would be happy to help you with that task" }],
+        },
       ],
     );
     const usage = engine.getContextUsage();
@@ -110,29 +113,49 @@ describe("ContextEngine", () => {
     // providers reject with a 400. Shrinking history is compactWorkingSet()'s
     // job. Even over a tiny budget, every message must survive buildPrompt.
     const engine = new ContextEngine(
-      { budget: { maxTokens: 100, workingSetRatio: 0.5, sessionMemoryRatio: 0.25, retrievalRatio: 0.25 } },
+      {
+        budget: {
+          maxTokens: 100,
+          workingSetRatio: 0.5,
+          sessionMemoryRatio: 0.25,
+          retrievalRatio: 0.25,
+        },
+      },
       createMockGateway(),
     );
     const messages = Array.from({ length: 50 }, (_, i) => ({
       role: "user" as const,
-      content: [{ type: "text" as const, text: `This is message number ${i} with some extra text to consume tokens` }],
+      content: [
+        {
+          type: "text" as const,
+          text: `This is message number ${i} with some extra text to consume tokens`,
+        },
+      ],
     }));
     const result = engine.buildPrompt("System", [], messages);
     expect(result.messages.length).toBe(50);
     expect(result.evictedCount).toBe(0);
   });
 
-  test("auxiliary context (pinned files) is evicted when over budget, not messages", () => {
+  test("auxiliary context (retrieved chunks) is evicted when over budget, not messages", () => {
     const engine = new ContextEngine(
-      { budget: { maxTokens: 50, workingSetRatio: 0.5, sessionMemoryRatio: 0.25, retrievalRatio: 0.25 } },
+      {
+        budget: {
+          maxTokens: 50,
+          workingSetRatio: 0.5,
+          sessionMemoryRatio: 0.25,
+          retrievalRatio: 0.25,
+        },
+      },
       createMockGateway(),
     );
-    engine.pinFile("/big.ts", "word ".repeat(500)); // far over the 50-token budget
     const messages = [
       { role: "user" as const, content: [{ type: "text" as const, text: "hello" }] },
     ];
-    const result = engine.buildPrompt("System", [], messages);
-    expect(result.evictedCount).toBe(1); // the pinned file was dropped
+    const result = engine.buildPrompt("System", [], messages, [
+      { content: "word ".repeat(500), relevance: 0.9 }, // far over the 50-token budget
+    ]);
+    expect(result.evictedCount).toBe(1); // the oversized chunk was dropped
     // The conversation message is still there (possibly alone).
     const texts = result.messages.flatMap((m) =>
       m.content.filter((b) => b.type === "text").map((b) => (b as { text: string }).text),
@@ -142,14 +165,16 @@ describe("ContextEngine", () => {
 
   test("aux context that fits is delivered ahead of the conversation", () => {
     const engine = new ContextEngine({ budget: { maxTokens: 100000 } }, createMockGateway());
-    engine.pinFile("/src/main.ts", "export function main() {}");
-    const result = engine.buildPrompt("System", [], [
-      { role: "user", content: [{ type: "text", text: "hi" }] },
-    ]);
+    const result = engine.buildPrompt(
+      "System",
+      [],
+      [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+      [{ content: "[Repo map] export function main()", relevance: 0.9 }],
+    );
     expect(result.messages.length).toBe(2);
     const first = result.messages[0].content[0];
     expect(first.type).toBe("text");
-    expect((first as { text: string }).text).toContain("[Pinned: /src/main.ts]");
+    expect((first as { text: string }).text).toContain("[Repo map]");
   });
 
   test("retrieved structural context is injected and remains budgeted", () => {
@@ -158,8 +183,12 @@ describe("ContextEngine", () => {
       "System",
       [],
       [{ role: "user", content: [{ type: "text", text: "fix the service" }] }],
-      undefined,
-      [{ content: "# Repository map\n- src/service.ts:4 — function startService", relevance: 0.96 }],
+      [
+        {
+          content: "# Repository map\n- src/service.ts:4 — function startService",
+          relevance: 0.96,
+        },
+      ],
     );
     const first = result.messages[0].content[0];
     expect(first.type).toBe("text");
@@ -169,14 +198,20 @@ describe("ContextEngine", () => {
 
   test("oversized retrieved context is evicted instead of conversation history", () => {
     const engine = new ContextEngine(
-      { budget: { maxTokens: 50, workingSetRatio: 0.5, sessionMemoryRatio: 0.25, retrievalRatio: 0.25 } },
+      {
+        budget: {
+          maxTokens: 50,
+          workingSetRatio: 0.5,
+          sessionMemoryRatio: 0.25,
+          retrievalRatio: 0.25,
+        },
+      },
       createMockGateway(),
     );
     const result = engine.buildPrompt(
       "System",
       [],
       [{ role: "user", content: [{ type: "text", text: "hello" }] }],
-      undefined,
       [{ content: "structural ".repeat(500), relevance: 0.96 }],
     );
     expect(result.evictedCount).toBe(1);
@@ -186,19 +221,18 @@ describe("ContextEngine", () => {
 
   test("system prompt is returned byte-identical (cache stability)", () => {
     const engine = new ContextEngine({}, createMockGateway());
-    engine.addDiscovery("Uses TypeScript", "read_file");
     const system = "You are a helpful assistant.";
-    const result = engine.buildPrompt(system, [], [
-      { role: "user", content: [{ type: "text", text: "hi" }] },
-    ]);
+    const result = engine.buildPrompt(
+      system,
+      [],
+      [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+    );
     expect(result.system).toBe(system);
   });
 
   test("noteRealUsage overrides the heuristic with provider-reported counts", () => {
     const engine = new ContextEngine({ budget: { maxTokens: 100000 } }, createMockGateway());
-    engine.buildPrompt("System", [], [
-      { role: "user", content: [{ type: "text", text: "hi" }] },
-    ]);
+    engine.buildPrompt("System", [], [{ role: "user", content: [{ type: "text", text: "hi" }] }]);
     expect(engine.shouldCompact()).toBe(false);
 
     // Provider reports 180k real input tokens on a 200k-context Claude model
@@ -211,25 +245,28 @@ describe("ContextEngine", () => {
 
   test("noteRealUsage ignores empty usage reports", () => {
     const engine = new ContextEngine({ budget: { maxTokens: 100000 } }, createMockGateway());
-    engine.buildPrompt("System", [], [
-      { role: "user", content: [{ type: "text", text: "hi" }] },
-    ]);
+    engine.buildPrompt("System", [], [{ role: "user", content: [{ type: "text", text: "hi" }] }]);
     const before = engine.getContextUsage();
     engine.noteRealUsage({ inputTokens: 0 }, "claude-sonnet-4-5");
     expect(engine.getContextUsage()).toEqual(before);
   });
 
-  test("getMemory returns summaries and discoveries", () => {
+  test("getMemory starts empty (summaries populate on compaction)", () => {
     const engine = new ContextEngine({}, createMockGateway());
-    engine.addDiscovery("Project uses Bun runtime", "read_file package.json");
     const memory = engine.getMemory();
-    expect(memory.discoveries).toHaveLength(1);
-    expect(memory.discoveries[0].fact).toBe("Project uses Bun runtime");
+    expect(memory.summaries).toHaveLength(0);
   });
 
   test("shouldCompact: false before buildPrompt, true once over the high-water mark", () => {
     const engine = new ContextEngine(
-      { budget: { maxTokens: 100, workingSetRatio: 0.5, sessionMemoryRatio: 0.25, retrievalRatio: 0.25 } },
+      {
+        budget: {
+          maxTokens: 100,
+          workingSetRatio: 0.5,
+          sessionMemoryRatio: 0.25,
+          retrievalRatio: 0.25,
+        },
+      },
       createMockGateway(),
     );
     // No buildPrompt has run yet → unknown usage → must not compact.
@@ -246,9 +283,11 @@ describe("ContextEngine", () => {
 
   test("shouldCompact stays false when usage is well under budget", () => {
     const engine = new ContextEngine({ budget: { maxTokens: 100000 } }, createMockGateway());
-    engine.buildPrompt("Short system", [], [
-      { role: "user", content: [{ type: "text", text: "hi" }] },
-    ]);
+    engine.buildPrompt(
+      "Short system",
+      [],
+      [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+    );
     expect(engine.shouldCompact()).toBe(false);
   });
 });

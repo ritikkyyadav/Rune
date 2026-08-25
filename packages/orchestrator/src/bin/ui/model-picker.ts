@@ -11,13 +11,13 @@
 //                           from local runtimes (/api/tags, /models), the
 //                           curated preset list otherwise. A plain number
 //                           switches this session; `d<n>` sets the startup
-//                           default (~/.alan/model.json).
+//                           default (~/.gear/model.json).
 //
 // Everything here is pure (no readline, no engine): the CLI feeds it status
 // rows and prints the lines it returns, so every level is unit-testable.
 
-import type { ProviderPreset, CustomEndpoint, LastModel } from "@alan/shared";
-import { CUSTOM_PROVIDER_ID, maskKey } from "@alan/shared";
+import type { ProviderPreset, CustomEndpoint, LastModel } from "@gear/shared";
+import { CUSTOM_PROVIDER_ID, maskKey } from "@gear/shared";
 import type { ProviderStatusRow } from "../../provider-registry";
 import { text, muted, faint, accent, info, warn, ok } from "./theme";
 

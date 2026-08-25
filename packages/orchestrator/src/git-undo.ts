@@ -18,7 +18,6 @@
 import { execFileSync } from "node:child_process";
 
 export const GEAR_COMMIT_PREFIX = "gear: ";
-const LEGACY_COMMIT_PREFIXES = ["elio: ", "berne: ", "alan: "] as const;
 
 function git(root: string, args: string[]): { ok: boolean; out: string } {
   try {
@@ -90,8 +89,7 @@ export function autoCommitPaths(
 }
 
 export type UndoResult =
-  | { ok: true; undoneSha: string; subject: string }
-  | { ok: false; reason: string };
+  { ok: true; undoneSha: string; subject: string } | { ok: false; reason: string };
 
 /**
  * Undo the last Gear auto-commit via `git reset --hard HEAD~1` — guarded so it
@@ -102,7 +100,7 @@ export function undoLastGearCommit(root: string): UndoResult {
 
   const subject = git(root, ["log", "-1", "--pretty=%s"]);
   if (!subject.ok) return { ok: false, reason: `git unavailable: ${subject.out}` };
-  const managedPrefixes = [GEAR_COMMIT_PREFIX, ...LEGACY_COMMIT_PREFIXES];
+  const managedPrefixes = [GEAR_COMMIT_PREFIX];
   if (!managedPrefixes.some((prefix) => subject.out.startsWith(prefix))) {
     return {
       ok: false,

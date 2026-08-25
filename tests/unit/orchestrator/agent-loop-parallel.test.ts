@@ -107,7 +107,9 @@ describe("AgentLoop — parallel tool execution (Phase 1b)", () => {
 
     // tool_call_end events appear in the ORIGINAL order a,b,c
     const endIds = events
-      .filter((e): e is Extract<AgentTurnEvent, { type: "tool_call_end" }> => e.type === "tool_call_end")
+      .filter(
+        (e): e is Extract<AgentTurnEvent, { type: "tool_call_end" }> => e.type === "tool_call_end",
+      )
       .map((e) => e.callId);
     expect(endIds).toEqual(["a", "b", "c"]);
   });
@@ -158,7 +160,14 @@ describe("AgentLoop — stream-error retry (Bug 2)", () => {
     const registry = makeProbeRegistry("read", "auto");
 
     const loop = new AgentLoop(
-      { model: "m", provider: "anthropic", maxTokens: 100, maxTurns: 5, maxConsecutiveErrors: 3, systemPrompt: "s" },
+      {
+        model: "m",
+        provider: "anthropic",
+        maxTokens: 100,
+        maxTurns: 5,
+        maxConsecutiveErrors: 3,
+        systemPrompt: "s",
+      },
       gateway,
       registry,
     );
@@ -193,7 +202,14 @@ describe("AgentLoop — bounded fan-out concurrency (Phase 3)", () => {
     ]);
     const registry = makeProbeRegistry("read", "auto");
     const loop = new AgentLoop(
-      { model: "m", provider: "anthropic", maxTokens: 100, maxTurns: 5, systemPrompt: "s", maxParallelTools: 2 },
+      {
+        model: "m",
+        provider: "anthropic",
+        maxTokens: 100,
+        maxTurns: 5,
+        systemPrompt: "s",
+        maxParallelTools: 2,
+      },
       gateway,
       registry,
     );
@@ -226,7 +242,14 @@ describe("AgentLoop — stuck-detection nudge (Phase 3)", () => {
     } as any;
     const registry = makeProbeRegistry("read", "auto");
     const loop = new AgentLoop(
-      { model: "m", provider: "anthropic", maxTokens: 100, maxTurns: 30, maxStuckNudges: 1, systemPrompt: "s" },
+      {
+        model: "m",
+        provider: "anthropic",
+        maxTokens: 100,
+        maxTurns: 30,
+        maxStuckNudges: 1,
+        systemPrompt: "s",
+      },
       gateway,
       registry,
     );

@@ -2,7 +2,7 @@
 // Gear's evergreen profile of the user and the codebases they work in — a small,
 // narrative GUIDE (not a list of rules) that gets injected into the system prompt
 // so even tiny models get useful, personalised context cheaply. Two sidecars in
-// ~/.alan/, same lenient pattern as model-store.ts / secrets.ts (a missing or
+// ~/.gear/, same lenient pattern as model-store.ts / secrets.ts (a missing or
 // malformed file is treated as empty and never throws):
 //
 //   • system-memory.md   — the human-readable guide (the text actually injected)
@@ -14,6 +14,7 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { dirname, join } from "path";
+import { getGearHome } from "./paths.js";
 
 // ─── Types ───
 
@@ -47,18 +48,14 @@ export interface SystemMemory {
 // ─── Paths ───
 
 /**
- * Resolve the memory file path. Honors `ALAN_SYSTEM_MEMORY_PATH` (tests / advanced
- * setups); otherwise `~/.alan/system-memory.md`. Computed per-call so the env
+ * Resolve the memory file path. Honors `GEAR_SYSTEM_MEMORY_PATH` (tests / advanced
+ * setups); otherwise `~/.gear/system-memory.md`. Computed per-call so the env
  * override always takes effect.
  */
 export function getSystemMemoryPath(): string {
-  const override =
-    process.env.GEAR_SYSTEM_MEMORY_PATH ??
-    process.env.ELIO_SYSTEM_MEMORY_PATH ??
-    process.env.ALAN_SYSTEM_MEMORY_PATH;
+  const override = process.env.GEAR_SYSTEM_MEMORY_PATH;
   if (override) return override;
-  const home = process.env.HOME ?? process.env.USERPROFILE ?? ".";
-  return join(home, ".alan", "system-memory.md");
+  return join(getGearHome(), "system-memory.md");
 }
 
 /** The meta sidecar sits next to the md so the env override relocates both. */

@@ -201,26 +201,31 @@ impl Sandbox for MacOsSandbox {
                 .spawn()
                 .map_err(|e| SandboxError::SpawnFailed(e.to_string()))?;
             let child_pid = child.id();
+            // Register for gear-tools' SIGTERM handler: an interrupt (Esc in
+            // the CLI) must kill this group, not orphan it.
+            crate::active_child::set(child_pid, true);
 
-            let output = tokio::time::timeout(
+            let waited = tokio::time::timeout(
                 std::time::Duration::from_millis(timeout),
                 child.wait_with_output(),
             )
-            .await
-            .map_err(|_| {
-                warn!(
-                    command = command,
-                    timeout_ms = timeout,
-                    "sandboxed command timed out"
-                );
-                if let Some(pid) = child_pid {
-                    unsafe {
-                        libc::kill(-(pid as i32), libc::SIGKILL);
+            .await;
+            crate::active_child::clear();
+            let output = waited
+                .map_err(|_| {
+                    warn!(
+                        command = command,
+                        timeout_ms = timeout,
+                        "sandboxed command timed out"
+                    );
+                    if let Some(pid) = child_pid {
+                        unsafe {
+                            libc::kill(-(pid as i32), libc::SIGKILL);
+                        }
                     }
-                }
-                SandboxError::Timeout(timeout)
-            })?
-            .map_err(|e| SandboxError::SpawnFailed(e.to_string()))?;
+                    SandboxError::Timeout(timeout)
+                })?
+                .map_err(|e| SandboxError::SpawnFailed(e.to_string()))?;
 
             let duration_ms = start.elapsed().as_millis() as u64;
             let exit_code = output.status.code().unwrap_or(-1);

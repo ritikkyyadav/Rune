@@ -42,7 +42,10 @@ function makeRepeatingFailureGateway(turns: number) {
           toolInput: { url: "https://blocked.example/lib.js" },
         });
         yield ev("tool_use_start", { toolCallId: `read-${turn}`, toolName: "read_file" });
-        yield ev("tool_use_stop", { toolCallId: `read-${turn}`, toolInput: { path: `f${turn}.ts` } });
+        yield ev("tool_use_stop", {
+          toolCallId: `read-${turn}`,
+          toolInput: { path: `f${turn}.ts` },
+        });
         yield ev("message_stop", { stopReason: "tool_use" });
       } else {
         yield ev("content_delta", { delta: { type: "text_delta", text: "done" } });

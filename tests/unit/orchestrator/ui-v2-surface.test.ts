@@ -30,22 +30,22 @@ const FALLBACK = {
   chain: ["openrouter", "ollama"],
 };
 
-describe("fallback banner", () => {
-  test("renders the degraded provider, the chain, and the continuity promise", () => {
+describe("provider reroute note", () => {
+  test("names what degraded, the chain, and the continuity promise", () => {
     const out = stripAnsi(formatFallback(FALLBACK));
-    expect(out).toContain("Provider degraded — gateway fallback engaged");
-    expect(out).toContain("anthropic/claude-x");
-    expect(out).toContain("429 (rate limited)");
-    expect(out).toContain("anthropic → openrouter → ollama");
-    expect(out).toContain("resumed on openrouter/qwen/qwen3-coder:free");
-    expect(out).toContain("turn continues · nothing lost");
-    expect(out.split("\n").length).toBeLessThanOrEqual(6); // wraps (80 cols), never truncates
+    const flat = out.replace(/\s+/g, " ");
+    expect(out).toContain("provider degraded — rerouted mid-turn");
+    expect(flat).toContain("anthropic/claude-x returned 429 (rate limited)");
+    expect(flat).toContain("anthropic → openrouter → ollama");
+    expect(flat).toContain("Resumed on openrouter/qwen/qwen3-coder:free");
+    expect(flat).toContain("the turn continues and nothing was lost");
+    // It wraps to the measure; every clause here is owed to the reader in full.
     for (const line of out.split("\n")) expect(line.trimEnd()).not.toMatch(/…$/);
   });
 
-  test("formatEvent routes the typed fallback event to the banner", () => {
+  test("formatEvent routes the typed fallback event to the note", () => {
     const out = stripAnsi(formatEvent({ type: "fallback", ...FALLBACK }) ?? "");
-    expect(out).toContain("Provider degraded");
+    expect(out).toContain("provider degraded");
   });
 
   test("renders without status or chain (reason-only degradation)", () => {
@@ -56,8 +56,8 @@ describe("fallback banner", () => {
         reason: "invalid API key",
       }),
     );
-    expect(out).toContain("invalid API key");
-    expect(out).toContain("google → ollama");
+    expect(out.replace(/\s+/g, " ")).toContain("invalid API key");
+    expect(out.replace(/\s+/g, " ")).toContain("google → ollama");
   });
 });
 
@@ -72,7 +72,7 @@ describe("compaction line", () => {
       }),
     );
     expect(out).toContain("✓ compacted");
-    expect(out).toContain("context 82% → 51%");
+    expect(out).toContain("82% → 51%");
     expect(out).toContain("−31k tokens");
     expect(out).toContain("14 older messages summarized");
   });
@@ -100,24 +100,22 @@ describe("footer context meter", () => {
     expect(contextMeter(Number.NaN)).toBeNull();
   });
 
-  test("shows pct and a 5-cell bar; fill tracks the percentage", () => {
-    const at40 = stripAnsi(contextMeter(41) ?? "");
-    expect(at40).toContain("ctx");
-    expect(at40).toContain("41%");
-    expect(at40).toContain("▮▮▯▯▯");
-    const at95 = stripAnsi(contextMeter(95) ?? "");
-    expect(at95).toContain("▮▮▮▮▮");
-    expect(at95).toContain("95%");
+  test("stays quiet until the number is worth acting on, then states it plainly", () => {
+    // Below half full there is nothing to decide, so there is nothing to show.
+    expect(contextMeter(41)).toBeNull();
+    expect(stripAnsi(contextMeter(73) ?? "")).toBe("73% context");
+    expect(stripAnsi(contextMeter(95) ?? "")).toBe("95% context");
+    // No meter glyphs: five cells said less than the number and cost more room.
+    expect(stripAnsi(contextMeter(95) ?? "")).not.toContain("▮");
   });
 
-  test("statusLine carries the meter once a percentage is known", () => {
+  test("statusLine carries the readout once it matters", () => {
     const withMeter = stripAnsi(
       statusLine({ model: "m", workspace: "/w", mode: "confirm", contextPercent: 73 }, 140),
     );
-    expect(withMeter).toContain("ctx");
-    expect(withMeter).toContain("73%");
+    expect(withMeter).toContain("73% context");
     const without = stripAnsi(statusLine({ model: "m", workspace: "/w", mode: "confirm" }, 140));
-    expect(without).not.toContain("ctx ");
+    expect(without).not.toContain("context");
   });
 });
 
@@ -128,7 +126,7 @@ describe("queued-input strip", () => {
 
   test("states the contract and numbers each message in order", () => {
     const lines = renderQueueStrip(["first message", "second message"], 100).map(stripAnsi);
-    expect(lines[0]).toContain("QUEUED · SENDS WHEN THIS TURN COMPLETES");
+    expect(lines[0]).toContain("queued · sends when this turn completes");
     expect(lines[1]).toMatch(/^\s+1\s+first message/);
     expect(lines[2]).toMatch(/^\s+2\s+second message/);
     expect(lines[2]).toContain("removes the last"); // the undo hint rides the last row
@@ -165,31 +163,29 @@ describe("permission card v2", () => {
     ],
   };
 
-  test("renders the risk row facts and the audit-trail note", () => {
+  test("states every computed consequence, and what has not happened yet", () => {
     const out = renderPermissionCard("bash", "bash: bun test", 120, { preview })
-      .lines.map((l) =>
-        stripAnsi(l)
-          .replace(/^\s*▌\s*/, "")
-          .trim(),
-      )
+      .lines.map((l) => stripAnsi(l).trim())
       .join(" ");
-    expect(out).toContain("writes outside workspace: blocked (sandbox)");
-    expect(out).toContain("network egress: blocked");
-    expect(out).toContain("est. runtime: ≤120s cap");
-    expect(out).toContain("rate limit: 4/10 per min");
-    expect(out).toContain("tamper-evident audit trail");
+    expect(out).toContain("writes outside workspace blocked (sandbox)");
+    expect(out).toContain("network egress blocked");
+    expect(out).toContain("est. runtime ≤120s cap");
+    expect(out).toContain("rate limit 4/10 per min");
+    expect(out).toContain("recorded in the audit trail");
     expect(out).toContain("Command has not run");
   });
 
-  test("default hints advertise y / a / n beside the three decisions", () => {
+  test("numbers the caller's own answers and names escape as the default", () => {
     const out = renderPermissionCard("bash", "bash: ls", 120, { preview })
       .lines.map(stripAnsi)
       .join("\n");
-    expect(out).toContain("Allow once  y");
-    expect(out).toContain("Allow for session  a");
-    expect(out).toContain("Deny  n");
-    expect(out).toContain("$ bun test tests/unit/"); // no doubled prompt glyph
-    expect(out).not.toContain("$ $");
+    expect(out).toContain("1   Yes, run this command");
+    expect(out).toContain("2   Yes, allow shell commands for this session");
+    expect(out).toContain("3   No");
+    expect(out).toContain("esc cancel");
+    // The command is shown verbatim on its own rail, with no added prompt glyph.
+    expect(out).toContain("│ bun test tests/unit/");
+    expect(out).not.toContain("$ ");
   });
 
   test("`a` resolves to allow-for-session in the key reducer (y/n unchanged)", () => {
@@ -233,7 +229,7 @@ describe("model picker v2", () => {
     expect(out).toContain("free");
     expect(out).toContain("local");
     expect(out).toContain("current");
-    expect(out).toContain("SELECT MODEL AND EFFORT");
+    expect(out).toContain("select model and effort");
     expect(out).toContain("Gateway retries with backoff");
   });
 });

@@ -407,8 +407,7 @@ function normalizeLocations(result: unknown): LspLocation[] {
     // Location { uri, range } or LocationLink { targetUri, targetRange }.
     const uri = (item.uri ?? item.targetUri) as string | undefined;
     const range = (item.range ?? item.targetSelectionRange ?? item.targetRange) as
-      | { start?: { line?: number; character?: number }; end?: { line?: number } }
-      | undefined;
+      { start?: { line?: number; character?: number }; end?: { line?: number } } | undefined;
     if (!uri || !range?.start) continue;
     const file = uri.startsWith("file:") ? fileURLToPath(uri) : uri;
     const line = (range.start.line ?? 0) + 1;

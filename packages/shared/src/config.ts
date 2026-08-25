@@ -1,10 +1,11 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
 import type { AuthMethod } from "./providers.js";
+import { adoptLegacyEnv, getGearHome, workspaceConfigPath } from "./paths.js";
 
 // ─── Config Types ───
 
-export interface AlanConfig {
+export interface GearConfig {
   engine: {
     socketPath: string;
     logDir: string;
@@ -102,13 +103,7 @@ export interface AlanConfig {
      * workspace work) → 3rd gear — never the classifier.
      */
     mode?:
-      | "confirm"
-      | "autonomy-i"
-      | "autonomy-ii"
-      | "autonomy-iii"
-      | "auto"
-      | "hands-free"
-      | "turing";
+      "confirm" | "autonomy-i" | "autonomy-ii" | "autonomy-iii" | "auto" | "hands-free" | "turing";
     /**
      * LEGACY storage flag for the old "workspace trust" (today's 3rd gear).
      * Read when neither `gear` nor `mode` is set.
@@ -181,12 +176,30 @@ export interface AlanConfig {
     maxVerifyAttempts?: number;
     readThrashCount?: number;
     editChurnCount?: number;
+    maxPlanNudges?: number;
+    maxReplanNudges?: number;
+    maxStruggleNudges?: number;
+  };
+  /**
+   * Post-edit verification (`[verify]`). Auto-detection covers the common
+   * stacks; `commands` overrides it with the project's own checks, e.g.
+   * `[verify] commands = ["bun run lint", "bun test tests/unit/"]`.
+   * These fields were previously ENGINE-ONLY — no config key, no flag — so a
+   * user could not point verification at their real checks at all.
+   */
+  verify?: {
+    /** Default true. Set false to skip post-edit verification entirely. */
+    enabled?: boolean;
+    /** Explicit check commands; when non-empty, auto-detection is skipped. */
+    commands?: string[];
+    /** Per-command timeout in seconds. Default 120. */
+    timeoutSecs?: number;
   };
   /**
    * Opt-in, transparent telemetry — the ONLY path by which anything leaves the
    * machine. Off by default; even `enabled = true` transmits nothing until BOTH
    * an `endpoint` is configured AND the local user has granted consent
-   * (~/.alan/telemetry.json, set by the first-run prompt or `gear telemetry on`).
+   * (~/.gear/telemetry.json, set by the first-run prompt or `gear telemetry on`).
    * What ships is the already-redacted Black Box incident stream plus an
    * anonymous daily usage heartbeat — never file contents, never raw IPs, never
    * device fingerprints. `gear telemetry preview` prints the exact bytes.
@@ -234,13 +247,13 @@ export interface AlanConfig {
     autoApprove?: boolean;
     /** Save the finished report as a markdown file. Default true. */
     save?: boolean;
-    /** Directory for saved reports. Default `<workspace>/.alan/research`. */
+    /** Directory for saved reports. Default `<workspace>/.gear/research`. */
     outputDir?: string;
   };
   ui?: {
     /**
      * Default color theme name (see orchestrator ui/themes.ts). Used at startup unless
-     * overridden by the ALAN_THEME env var or a runtime `/theme` choice (~/.alan/theme.json).
+     * overridden by the GEAR_THEME env var or a runtime `/theme` choice (~/.gear/theme.json).
      */
     theme?: string;
   };
@@ -259,7 +272,7 @@ export interface AlanConfig {
   /**
    * System Memory ("dreaming") — Gear's evergreen, narrative profile of the user and the
    * codebases they work in, injected into the system prompt so even small models get cheap,
-   * personalised context. Stored at ~/.alan/system-memory.md (see shared/system-memory.ts).
+   * personalised context. Stored at ~/.gear/system-memory.md (see shared/system-memory.ts).
    */
   memory?: {
     /** Inject the memory into the system prompt. Default true. */
@@ -279,7 +292,7 @@ export interface AlanConfig {
     maxTokens?: number;
   };
   /**
-   * Black box (flight recorder) — local incident capture to ~/.alan/blackbox.db:
+   * Black box (flight recorder) — local incident capture to ~/.gear/blackbox.db:
    * every failure, degradation, and struggle, with trail forensics. Local-only;
    * nothing is ever transmitted. Default on.
    */
@@ -289,7 +302,7 @@ export interface AlanConfig {
   /**
    * Tactics notebook (evolution loop) — learned facts/tactics from past
    * sessions, injected under a hard token budget. Capture is rule-based
-   * (zero extra model spend). Default on; `alan --pristine` disables per run.
+   * (zero extra model spend). Default on; `gear --pristine` disables per run.
    */
   notebook?: {
     enabled?: boolean;
@@ -317,7 +330,7 @@ export interface AlanConfig {
    * MCP server (bunx @playwright/mcp) as a built-in `browser` MCP server:
    * headless, isolated (fresh profile), accessibility-snapshot based.
    * `/browser on|off` toggles it at runtime and persists to
-   * ~/.alan/browser.json; --browser/--no-browser force it for one run.
+   * ~/.gear/browser.json; --browser/--no-browser force it for one run.
    * Default off.
    */
   browser?: {
@@ -351,19 +364,20 @@ export interface PermissionRule {
 
 // ─── Defaults ───
 
-const home = process.env.HOME ?? process.env.USERPROFILE ?? "~";
-const alanHome = join(home, ".alan");
+// Legacy ALAN_* env names are adopted before anything reads the environment.
+adoptLegacyEnv();
+const gearHome = getGearHome();
 
-const DEFAULT_CONFIG: AlanConfig = {
+const DEFAULT_CONFIG: GearConfig = {
   engine: {
-    socketPath: join(alanHome, "alan.sock"),
-    logDir: join(alanHome, "logs"),
-    dbPath: join(alanHome, "alan.db"),
+    socketPath: join(gearHome, "gear.sock"),
+    logDir: join(gearHome, "logs"),
+    dbPath: join(gearHome, "gear.db"),
     maxSessions: 50,
   },
   llm: {
-    // Dev/test default = free tier (Gemini). Override via ~/.alan/config.toml,
-    // <workspace>/.alan/config.toml, or ALAN_PROVIDER for production validation.
+    // Dev/test default = free tier (Gemini). Override via ~/.gear/config.toml,
+    // <workspace>/.gear/config.toml, or GEAR_PROVIDER for production validation.
     defaultProvider: "google",
   },
   permissions: {
@@ -480,81 +494,6 @@ function deepMerge(
 
 function applyEnvOverrides(config: Record<string, unknown>): void {
   const envMap: Record<string, (c: Record<string, unknown>) => void> = {
-    ALAN_PROVIDER: (c) => setNested(c, "llm.defaultProvider", process.env.ALAN_PROVIDER!),
-    ALAN_MODEL: (c) => {
-      const provider = getDefaultProvider(c);
-      setNested(c, `llm.${provider}.model`, process.env.ALAN_MODEL!);
-    },
-    ALAN_MAX_TOKENS: (c) =>
-      setNested(c, `llm.${getDefaultProvider(c)}.maxTokens`, Number(process.env.ALAN_MAX_TOKENS!)),
-    ALAN_DB_PATH: (c) => setNested(c, "engine.dbPath", process.env.ALAN_DB_PATH!),
-    ALAN_SOCKET_PATH: (c) => setNested(c, "engine.socketPath", process.env.ALAN_SOCKET_PATH!),
-    ALAN_LOG_DIR: (c) => setNested(c, "engine.logDir", process.env.ALAN_LOG_DIR!),
-    ALAN_SANDBOX_ENABLED: (c) =>
-      setNested(c, "sandbox.enabled", process.env.ALAN_SANDBOX_ENABLED === "true"),
-    ALAN_SANDBOX_NETWORK: (c) =>
-      setNested(c, "sandbox.networkDeny", process.env.ALAN_SANDBOX_NETWORK !== "allow"),
-    ALAN_TRUST_WORKSPACE: (c) =>
-      setNested(c, "permissions.trustWorkspace", process.env.ALAN_TRUST_WORKSPACE === "true"),
-    ALAN_PERMISSION_MODE: (c) =>
-      setNested(c, "permissions.mode", process.env.ALAN_PERMISSION_MODE!),
-    ALAN_AUTO_CLASSIFIER_PROVIDER: (c) =>
-      setNested(
-        c,
-        "permissions.autoMode.classifierProvider",
-        process.env.ALAN_AUTO_CLASSIFIER_PROVIDER!,
-      ),
-    ALAN_AUTO_CLASSIFIER_MODEL: (c) =>
-      setNested(c, "permissions.autoMode.classifierModel", process.env.ALAN_AUTO_CLASSIFIER_MODEL!),
-    ALAN_AUTO_FAIL_CLOSED: (c) =>
-      setNested(
-        c,
-        "permissions.autoMode.failClosed",
-        process.env.ALAN_AUTO_FAIL_CLOSED !== "false",
-      ),
-    // Elio variables remain as migration aliases.
-    ELIO_PERMISSION_MODE: (c) =>
-      setNested(c, "permissions.mode", process.env.ELIO_PERMISSION_MODE!),
-    ELIO_AUTO_CLASSIFIER_PROVIDER: (c) =>
-      setNested(
-        c,
-        "permissions.autoMode.classifierProvider",
-        process.env.ELIO_AUTO_CLASSIFIER_PROVIDER!,
-      ),
-    ELIO_AUTO_CLASSIFIER_MODEL: (c) =>
-      setNested(c, "permissions.autoMode.classifierModel", process.env.ELIO_AUTO_CLASSIFIER_MODEL!),
-    ELIO_AUTO_FAIL_CLOSED: (c) =>
-      setNested(
-        c,
-        "permissions.autoMode.failClosed",
-        process.env.ELIO_AUTO_FAIL_CLOSED !== "false",
-      ),
-    ALAN_TELEMETRY: (c) => setNested(c, "telemetry.enabled", process.env.ALAN_TELEMETRY === "true"),
-    ALAN_TELEMETRY_ENDPOINT: (c) =>
-      setNested(c, "telemetry.endpoint", process.env.ALAN_TELEMETRY_ENDPOINT!),
-    ALAN_TELEMETRY_TOKEN: (c) => setNested(c, "telemetry.token", process.env.ALAN_TELEMETRY_TOKEN!),
-    ALAN_SEARCH_BACKEND: (c) => setNested(c, "search.provider", process.env.ALAN_SEARCH_BACKEND!),
-    ALAN_NATIVE_GROUNDING: (c) =>
-      setNested(c, "search.nativeGrounding", process.env.ALAN_NATIVE_GROUNDING !== "false"),
-    ALAN_RESEARCH_DEPTH: (c) => setNested(c, "research.depth", process.env.ALAN_RESEARCH_DEPTH!),
-    ALAN_RESEARCH_MAX_ROUNDS: (c) =>
-      setNested(c, "research.maxRounds", Number(process.env.ALAN_RESEARCH_MAX_ROUNDS!)),
-    ALAN_RESEARCH_MAX_PARALLEL: (c) =>
-      setNested(c, "research.maxParallel", Number(process.env.ALAN_RESEARCH_MAX_PARALLEL!)),
-    ALAN_RESEARCH_MAX_SUBQUESTIONS: (c) =>
-      setNested(c, "research.maxSubQuestions", Number(process.env.ALAN_RESEARCH_MAX_SUBQUESTIONS!)),
-    ALAN_RESEARCH_AUTO_APPROVE: (c) =>
-      setNested(c, "research.autoApprove", process.env.ALAN_RESEARCH_AUTO_APPROVE === "true"),
-    ALAN_RESEARCH_SAVE: (c) =>
-      setNested(c, "research.save", process.env.ALAN_RESEARCH_SAVE !== "false"),
-    ALAN_MEMORY_ENABLED: (c) =>
-      setNested(c, "memory.enabled", process.env.ALAN_MEMORY_ENABLED !== "false"),
-    ALAN_MEMORY_SCHEDULE: (c) => setNested(c, "memory.schedule", process.env.ALAN_MEMORY_SCHEDULE!),
-    ALAN_MEMORY_MODEL: (c) => setNested(c, "memory.model", process.env.ALAN_MEMORY_MODEL!),
-    ALAN_MEMORY_MAX_TOKENS: (c) =>
-      setNested(c, "memory.maxTokens", Number(process.env.ALAN_MEMORY_MAX_TOKENS!)),
-    // Gear is the forward identity. These are intentionally last so they win
-    // whenever both current and legacy variables are present.
     GEAR_PROVIDER: (c) => setNested(c, "llm.defaultProvider", process.env.GEAR_PROVIDER!),
     GEAR_MODEL: (c) => {
       const provider = getDefaultProvider(c);
@@ -649,14 +588,14 @@ function setNested(obj: Record<string, unknown>, path: string, value: unknown): 
 /**
  * Load Gear configuration with this precedence (later wins):
  * 1. Built-in defaults
- * 2. ~/.alan/config.toml (global)
- * 3. <workspace>/.alan/config.toml (project)
- * 4. ALAN_* environment variables
+ * 2. ~/.gear/config.toml (global)
+ * 3. <workspace>/.gear/config.toml (project)
+ * 4. GEAR_* environment variables
  */
-export function loadConfig(workspaceRoot?: string): AlanConfig {
+export function loadConfig(workspaceRoot?: string): GearConfig {
   let merged: Record<string, unknown> = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
 
-  // Global config (ALAN_CONFIG_PATH overrides ~/.alan/config.toml — see the writer).
+  // Global config (GEAR_CONFIG_PATH overrides ~/.gear/config.toml — see the writer).
   const globalConfig = globalConfigPath();
   if (existsSync(globalConfig)) {
     try {
@@ -669,7 +608,7 @@ export function loadConfig(workspaceRoot?: string): AlanConfig {
 
   // Project config
   if (workspaceRoot) {
-    const projectConfig = join(workspaceRoot, ".alan", "config.toml");
+    const projectConfig = workspaceConfigPath(workspaceRoot, "config.toml");
     if (existsSync(projectConfig)) {
       try {
         const text = readFileSync(projectConfig, "utf-8");
@@ -683,14 +622,7 @@ export function loadConfig(workspaceRoot?: string): AlanConfig {
   // Env overrides
   applyEnvOverrides(merged);
 
-  return merged as unknown as AlanConfig;
-}
-
-/**
- * Resolve Gear's legacy-compatible data home (~/.alan).
- */
-export function getAlanHome(): string {
-  return alanHome;
+  return merged as unknown as GearConfig;
 }
 
 // ─── Config Writer ───
@@ -703,25 +635,20 @@ export function getAlanHome(): string {
 
 export type ConfigScope = "global" | "project";
 
-/** The config.toml path for a scope: global = ~/.alan, project = <root>/.alan. */
+/** The config.toml path for a scope: global = ~/.gear, project = <root>/.gear. */
 export function getConfigFilePath(scope: ConfigScope, workspaceRoot?: string): string {
   if (scope === "project") {
     if (!workspaceRoot) throw new Error("project config scope requires a workspaceRoot");
-    return join(workspaceRoot, ".alan", "config.toml");
+    return workspaceConfigPath(workspaceRoot, "config.toml");
   }
-  // ALAN_CONFIG_PATH overrides the global file (tests + advanced setups); the
+  // GEAR_CONFIG_PATH overrides the global file (tests + advanced setups); the
   // loader honors the same override so reader and writer never disagree.
   return globalConfigPath();
 }
 
-/** The effective global config.toml path (honors ALAN_CONFIG_PATH). */
+/** The effective global config.toml path (honors GEAR_CONFIG_PATH). */
 function globalConfigPath(): string {
-  return (
-    process.env.GEAR_CONFIG_PATH ||
-    process.env.ELIO_CONFIG_PATH ||
-    process.env.ALAN_CONFIG_PATH ||
-    join(alanHome, "config.toml")
-  );
+  return process.env.GEAR_CONFIG_PATH || join(getGearHome(), "config.toml");
 }
 
 /** Render a JS value as a TOML scalar/array literal. */

@@ -1,13 +1,13 @@
 // ─── `gear telemetry`: the opt-in outbound channel's control surface ───
 // status | on | off | preview | reset. No Engine boot, no provider validation —
-// it only reads config + ~/.alan/telemetry.json and (for preview) shapes sample
+// it only reads config + ~/.gear/telemetry.json and (for preview) shapes sample
 // payloads. `preview` is the whole trust story: it prints the EXACT bytes that
 // would ever leave the machine, so a user or a compliance reviewer can verify
 // the claim instead of taking it on faith.
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { getAlanHome, loadConfig, type AlanConfig, type IncidentRecord } from "@alan/shared";
+import { getGearHome, loadConfig, type GearConfig, type IncidentRecord } from "@gear/shared";
 import {
   BlackboxStore,
   TelemetryReporter,
@@ -16,13 +16,13 @@ import {
   resetTelemetryState,
   setConsent,
   toIncidentWire,
-} from "@alan/telemetry";
+} from "@gear/telemetry";
 import { PRODUCT_VERSION } from "./ui/brand";
 import { accent, bold, dim, faint, info, ok, text, warn } from "./ui/theme";
 
-const HOME = () => getAlanHome();
+const HOME = () => getGearHome();
 
-type TelemetryCfg = AlanConfig["telemetry"];
+type TelemetryCfg = GearConfig["telemetry"];
 
 function loadTelemetryCfg(): TelemetryCfg {
   try {

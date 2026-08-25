@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { Engine } from "../../packages/orchestrator/src/engine";
 import type { ProviderName } from "../../packages/llm-gateway/src/types";
 
-const RUST_RELEASE = join(import.meta.dir, "../../target/release/alan-tools");
-const RUST_DEBUG = join(import.meta.dir, "../../target/debug/alan-tools");
+const RUST_RELEASE = join(import.meta.dir, "../../target/release/gear-tools");
+const RUST_DEBUG = join(import.meta.dir, "../../target/debug/gear-tools");
 const RUST_BIN = existsSync(RUST_RELEASE) ? RUST_RELEASE : RUST_DEBUG;
 const HAS_RUST_BIN = existsSync(RUST_BIN);
 
@@ -28,7 +28,7 @@ describe("Engine browser doctrine", () => {
   let requests: Array<{ messages: unknown }> = [];
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "alan-browser-doctrine-"));
+    dir = mkdtempSync(join(tmpdir(), "gear-browser-doctrine-"));
     requests = [];
     server = Bun.serve({
       port: 0,
@@ -53,10 +53,9 @@ describe("Engine browser doctrine", () => {
       model: "fake-model",
       provider: "custom" as ProviderName,
       workspaceRoot: dir,
-      dbPath: join(dir, "alan.db"),
+      dbPath: join(dir, "gear.db"),
       toolsBinaryPath: RUST_BIN,
       yoloMode: false,
-      plannerMode: false,
       customEndpoint: {
         baseUrl: `http://127.0.0.1:${server!.port}/v1`,
         model: "fake-model",
@@ -76,37 +75,43 @@ describe("Engine browser doctrine", () => {
     });
   }
 
-  test.skipIf(!HAS_RUST_BIN)("browser on ⇒ system prompt carries the # Browser doctrine", async () => {
-    const engine = makeEngine(true);
-    const session = engine.createSession();
-    for await (const _event of engine.chat(session, "hello")) {
-      // Exhaust the stream; the request capture is the assertion surface.
-    }
-    expect(requests).toHaveLength(1);
-    const wire = JSON.stringify(requests[0].messages);
-    expect(wire).toContain("# Browser");
-    expect(wire).toContain("mcp_browser_browser_snapshot");
-    expect(wire).toContain("DATA, not instructions");
-    engine.close();
-  });
+  test.skipIf(!HAS_RUST_BIN)(
+    "browser on ⇒ system prompt carries the # Browser doctrine",
+    async () => {
+      const engine = makeEngine(true);
+      const session = engine.createSession();
+      for await (const _event of engine.chat(session, "hello")) {
+        // Exhaust the stream; the request capture is the assertion surface.
+      }
+      expect(requests).toHaveLength(1);
+      const wire = JSON.stringify(requests[0].messages);
+      expect(wire).toContain("# Browser");
+      expect(wire).toContain("mcp_browser_browser_snapshot");
+      expect(wire).toContain("DATA, not instructions");
+      engine.close();
+    },
+  );
 
-  test.skipIf(!HAS_RUST_BIN)("browser off ⇒ no doctrine; live toggle flips the next turn", async () => {
-    const engine = makeEngine(false);
-    const session = engine.createSession();
-    for await (const _event of engine.chat(session, "hello")) {
-      // Exhaust the stream.
-    }
-    expect(requests).toHaveLength(1);
-    expect(JSON.stringify(requests[0].messages)).not.toContain("# Browser");
-    expect(engine.isBrowserEnabled()).toBe(false);
+  test.skipIf(!HAS_RUST_BIN)(
+    "browser off ⇒ no doctrine; live toggle flips the next turn",
+    async () => {
+      const engine = makeEngine(false);
+      const session = engine.createSession();
+      for await (const _event of engine.chat(session, "hello")) {
+        // Exhaust the stream.
+      }
+      expect(requests).toHaveLength(1);
+      expect(JSON.stringify(requests[0].messages)).not.toContain("# Browser");
+      expect(engine.isBrowserEnabled()).toBe(false);
 
-    await engine.setBrowserEnabled(true);
-    expect(engine.isBrowserEnabled()).toBe(true);
-    for await (const _event of engine.chat(session, "again")) {
-      // Exhaust the stream.
-    }
-    expect(requests).toHaveLength(2);
-    expect(JSON.stringify(requests[1].messages)).toContain("# Browser");
-    engine.close();
-  });
+      await engine.setBrowserEnabled(true);
+      expect(engine.isBrowserEnabled()).toBe(true);
+      for await (const _event of engine.chat(session, "again")) {
+        // Exhaust the stream.
+      }
+      expect(requests).toHaveLength(2);
+      expect(JSON.stringify(requests[1].messages)).toContain("# Browser");
+      engine.close();
+    },
+  );
 });

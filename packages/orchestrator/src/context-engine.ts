@@ -1,6 +1,7 @@
-import type { Message, ContentBlock, ToolDefinition } from "@alan/llm-gateway";
-import { LlmGateway } from "@alan/llm-gateway";
-import type { ProviderName } from "@alan/llm-gateway";
+import type { Message, ContentBlock, ToolDefinition } from "@gear/llm-gateway";
+import { LlmGateway } from "@gear/llm-gateway";
+import type { ProviderName } from "@gear/llm-gateway";
+import { PROVIDER_TIER_DEFAULTS } from "@gear/shared";
 import { TokenCounter, tokenCounter, countTokens, getContextLimit } from "./tokenizer";
 
 // ─── Context Budget Configuration ───
@@ -23,20 +24,14 @@ const DEFAULT_BUDGET: ContextBudget = {
   retrievalRatio: 0.2,
 };
 
-// Safe, cheap default model per provider for the summary fallback path (used
-// only when the active provider can't be reached). Keep to broadly-available,
-// inexpensive models so a fallback summary never trips a subscription gate.
-const SUMMARY_FALLBACK_MODELS: Partial<Record<ProviderName, string>> = {
-  anthropic: "claude-haiku-4-5-20251001",
-  openai: "gpt-4o-mini",
-  google: "gemini-2.5-flash",
-  openrouter: "qwen/qwen3-coder:free",
-  groq: "llama-3.3-70b-versatile",
-  xai: "grok-2-latest",
-  deepseek: "deepseek-chat",
-  "ollama-turbo": "qwen3-coder:480b",
-  ollama: "llama3",
-};
+// Cheap summarizer fallback per provider = that provider's LIGHT tier default
+// (shared/tiers.ts). One source of truth: when a free model is retired
+// upstream, fixing the tier table fixes compaction too. The previous private
+// copy here rotted independently and still pointed at models retired in July —
+// so the "fallback" summarizer was guaranteed dead exactly when it was needed.
+function summaryFallbackModel(provider: ProviderName): string | undefined {
+  return PROVIDER_TIER_DEFAULTS[provider]?.light;
+}
 
 // ─── Context Items ───
 
@@ -108,7 +103,6 @@ export interface BuiltPrompt {
 export class ContextEngine {
   private budget: ContextBudget;
   private memory: SessionMemory;
-  private pinnedFiles: Map<string, { content: string; tokens: number }> = new Map();
   private summarizeTurnsThreshold: number;
   private gateway: LlmGateway;
   private summarizerModel: string;
@@ -133,6 +127,8 @@ export class ContextEngine {
   // ask): forces the next shouldCompact()/compactWorkingSet() pair to run
   // regardless of the usage high-water mark. Consumed by compactWorkingSet.
   private compactRequested = false;
+  // Why the most recent generateSummary() failed (null when it succeeded).
+  private lastSummaryFailure: string | null = null;
 
   constructor(
     config: {
@@ -178,37 +174,6 @@ export class ContextEngine {
     this.gateway = gateway;
   }
 
-  // ─── Pinned Files ───
-
-  pinFile(path: string, content: string): void {
-    this.pinnedFiles.set(path, {
-      content,
-      tokens: this.tokenCounter.countTokens(content),
-    });
-  }
-
-  unpinFile(path: string): void {
-    this.pinnedFiles.delete(path);
-  }
-
-  // ─── Discoveries ───
-
-  addDiscovery(fact: string, source: string): void {
-    // Deduplicate by fact content
-    const existing = this.memory.discoveries.find((d) => d.fact === fact);
-    if (!existing) {
-      this.memory.discoveries.push({
-        fact,
-        source,
-        createdAt: Date.now(),
-      });
-    }
-  }
-
-  getDiscoveries(): string[] {
-    return this.memory.discoveries.map((d) => d.fact);
-  }
-
   // ─── Build Prompt ───
 
   /**
@@ -227,7 +192,6 @@ export class ContextEngine {
     systemPrompt: string,
     tools: ToolDefinition[],
     messages: Message[],
-    plan?: { description: string; tokens: number },
     retrievedChunks?: RetrievedChunk[],
     model?: string,
   ): BuiltPrompt {
@@ -252,42 +216,17 @@ export class ContextEngine {
     const systemTokens = this.tokenCounter.countTokens(systemPrompt);
     const toolTokens = this.tokenCounter.countTokens(JSON.stringify(tools));
     const messageTokens = messages.reduce(
-      (sum, m) => sum + this.tokenCounter.countTokens(messageToString(m)),
+      (sum, m) => sum + this.tokenCounter.countTokens(messageTokenText(m)),
       0,
     );
 
     // ── Auxiliary items compete for whatever budget remains ──
     const aux: ContextItem[] = [];
-    if (plan) {
-      aux.push({
-        kind: "plan",
-        content: `[Active plan]\n${plan.description}`,
-        tokens: plan.tokens,
-        relevance: 0.95,
-        age: 0,
-        pinned: false,
-      });
-    }
-    for (const [path, file] of this.pinnedFiles) {
-      aux.push({
-        kind: "pinned_file",
-        content: `[Pinned: ${path}]\n${file.content}`,
-        tokens: file.tokens,
-        relevance: 0.9,
-        age: 0,
-        pinned: false,
-      });
-    }
-    for (const disc of this.memory.discoveries) {
-      aux.push({
-        kind: "discovery",
-        content: `[Discovery] ${disc.fact} (from: ${disc.source})`,
-        tokens: this.tokenCounter.countTokens(disc.fact) + 10,
-        relevance: 0.5,
-        age: Math.floor((Date.now() - disc.createdAt) / 60000), // minutes
-        pinned: false,
-      });
-    }
+    // (Retrieved repo-map chunks only. The old plan/pinned-file/discovery
+    // slots were dead APIs no caller ever fed — and the discovery `age` math
+    // mutated the prompt prefix every turn, defeating the very prompt cache
+    // the invariant above protects. The task spine now carries plan state as
+    // a live-injected TAIL block in the agent loop instead.)
     if (retrievedChunks) {
       for (const chunk of retrievedChunks) {
         aux.push({
@@ -464,6 +403,14 @@ export class ContextEngine {
     afterTokens?: number;
     /** How many older messages were folded into the summary. */
     summarizedCount?: number;
+    /**
+     * True when compaction was ATTEMPTED and the summarizer failed — distinct
+     * from the quiet no-op cases (below threshold, nothing to fold). Callers
+     * must surface this: a silent compaction failure is a run that later dies
+     * of context overflow with no visible cause.
+     */
+    failed?: boolean;
+    failureReason?: string;
   }> {
     // An explicit request (compact_context tool) forces this attempt, and is
     // consumed either way so a fruitless compaction can't retrigger forever.
@@ -513,7 +460,12 @@ export class ContextEngine {
       priorState: priorState ?? undefined,
     });
     if (!summaryText) {
-      return { messages, compacted: false };
+      return {
+        messages,
+        compacted: false,
+        failed: true,
+        failureReason: this.lastSummaryFailure ?? "summary generation failed",
+      };
     }
 
     // ── 4. Build the summary message (role "user" — safe across providers) ──
@@ -544,7 +496,7 @@ export class ContextEngine {
     // heuristic counter buildPrompt uses; the next provider report re-calibrates
     // it, so these are labeled approximate at the render layer ("~").
     const countSet = (set: Message[]) =>
-      set.reduce((sum, m) => sum + this.tokenCounter.countTokens(messageToString(m)), 0);
+      set.reduce((sum, m) => sum + this.tokenCounter.countTokens(messageTokenText(m)), 0);
 
     return {
       messages: [summaryMessage, ...toKeep],
@@ -579,7 +531,7 @@ export class ContextEngine {
     if (!summary) return null;
 
     const sourceTokens = this.tokenCounter.countTokens(
-      messages.map((m) => messageToString(m)).join("\n"),
+      messages.map((m) => messageTokenText(m)).join("\n"),
     );
     const summaryTokens = this.tokenCounter.countTokens(summary);
     return { summary, sourceTokens, summaryTokens };
@@ -589,7 +541,12 @@ export class ContextEngine {
     messages: Message[],
     opts?: { instructions?: string; comprehensive?: boolean; priorState?: string },
   ): Promise<string | null> {
-    const transcript = messages.map((m) => `${m.role}: ${messageToString(m)}`).join("\n\n");
+    // Per-message rendering at SUMMARY fidelity: real tool names, real paths,
+    // real command output (head+tail clipped, not cut at 200/500 chars). The
+    // summarizer is asked for "files touched, commands run, errors" — feeding
+    // it a transcript where all three were amputated mid-string is why
+    // compacted sessions used to forget what they were doing.
+    const rendered = messages.map((m) => `${m.role}: ${summaryMessageText(m)}`);
 
     const focus = opts?.instructions?.trim()
       ? `\n\nPay special attention to (per the user's request): ${opts.instructions.trim()}`
@@ -598,7 +555,7 @@ export class ContextEngine {
     const comprehensive = opts?.comprehensive ?? false;
     const priorState = opts?.priorState?.trim();
     const system = comprehensive
-      ? "You are compacting a conversation so it can continue with far less context. Preserve every detail needed to resume the work: the user's goals, decisions made, files and code touched, commands run, errors encountered, and the exact current state and next step. Use exactly the labelled sections you are asked for. Never drop the most recent task."
+      ? "You are compacting a conversation so it can continue with far less context. Preserve every detail needed to resume the work: the user's goals, decisions made, files and code touched, commands run, errors encountered, and the exact current state and next step. Prioritize CODEBASE KNOWLEDGE and EVIDENCE (real paths, real error text, what commands showed) — the harness separately maintains the live goal/todo state and re-shows it to the agent, so hard-won facts are what only this summary can carry. Use exactly the labelled sections you are asked for. Never drop the most recent task."
       : "You are a conversation summarizer. Be concise — 3-5 bullet points.";
 
     // Fixed section labels: successive compactions MERGE into this structure
@@ -622,15 +579,44 @@ ${sections}${focus}`
 - Actions taken (files read, edited, commands run)
 - Outcomes and current state${focus}`;
 
-    const userText = priorState
-      ? `${instructionText}\n\nPRIOR STATE:\n${priorState}\n\nNew conversation segment:\n${transcript}`
-      : `${instructionText}\n\nConversation:\n${transcript}`;
-
     // Try the active provider/model first, then any other registered provider.
     // `infer` (non-streaming) does no cross-provider fallback of its own, so if
     // the summarizer's provider is momentarily unavailable we walk the rest
     // ourselves rather than failing the whole compaction.
+    this.lastSummaryFailure = null;
+    let lastError = "no summarizer candidates registered";
     for (const { provider, model } of this.summarizerCandidates()) {
+      // The compaction request must itself fit the candidate's window. Budget
+      // the transcript to ~55% of the model's context (instructions + prior
+      // state + the 2k reply need the rest) and keep the NEWEST messages when
+      // over — the prior state already carries older history in merged form.
+      // Without this, a long session's compaction request overflowed the
+      // summarizer too, failed silently, and the run died of the very problem
+      // compaction exists to prevent.
+      const budgetTokens = Math.max(4_000, Math.floor(getContextLimit(model) * 0.55));
+      const overheadTokens = this.tokenCounter.countTokens(instructionText + (priorState ?? ""));
+      let remaining = Math.max(2_000, budgetTokens - overheadTokens);
+      const kept: string[] = [];
+      let omitted = 0;
+      for (let i = rendered.length - 1; i >= 0; i--) {
+        const cost = this.tokenCounter.countTokens(rendered[i]);
+        if (cost <= remaining || kept.length === 0) {
+          kept.unshift(rendered[i]);
+          remaining -= cost;
+        } else {
+          omitted = i + 1;
+          break;
+        }
+      }
+      const transcript = clipText(
+        (omitted > 0
+          ? `[${omitted} older messages omitted to fit the summarizer's window]\n\n`
+          : "") + kept.join("\n\n"),
+        budgetTokens * 4, // char-level backstop: one enormous single message
+      );
+      const userText = priorState
+        ? `${instructionText}\n\nPRIOR STATE:\n${priorState}\n\nNew conversation segment:\n${transcript}`
+        : `${instructionText}\n\nConversation:\n${transcript}`;
       try {
         const response = await this.gateway.infer({
           messages: [{ role: "user", content: [{ type: "text", text: userText }] }],
@@ -643,11 +629,24 @@ ${sections}${focus}`
         const textBlock = response.content.find((b) => b.type === "text");
         const out = textBlock && textBlock.type === "text" ? textBlock.text.trim() : "";
         if (out) return out;
-      } catch {
-        // Provider not registered / transient failure — try the next candidate.
+        lastError = `${provider}/${model} returned an empty summary`;
+      } catch (err) {
+        // Remember WHY, then try the next candidate. A silent catch here was
+        // how compaction failures vanished: the run would later die of context
+        // overflow with no trace of the summarizer ever having failed.
+        lastError = `${provider}/${model}: ${err instanceof Error ? err.message : String(err)}`;
       }
     }
+    this.lastSummaryFailure = lastError;
     return null;
+  }
+
+  /**
+   * Why the most recent generateSummary() returned null — null when it
+   * succeeded (or hasn't run). Callers surface this instead of guessing.
+   */
+  getLastSummaryFailure(): string | null {
+    return this.lastSummaryFailure;
   }
 
   /**
@@ -665,7 +664,7 @@ ${sections}${focus}`
       if (name === this.summarizerProvider) continue;
       candidates.push({
         provider: name,
-        model: SUMMARY_FALLBACK_MODELS[name] ?? this.summarizerModel,
+        model: summaryFallbackModel(name) ?? this.summarizerModel,
       });
     }
     return candidates;
@@ -786,13 +785,24 @@ function isSafeCut(messages: Message[], cut: number): boolean {
   return true;
 }
 
-function messageToString(msg: Message): string {
+/**
+ * Full-fidelity text for token ESTIMATION. Every block is counted at its real
+ * size — tool inputs, tool results, and thinking included — because these are
+ * exactly what the provider bills for. The previous shared renderer truncated
+ * tool inputs to 200 chars and results to 500 and counted thinking as "",
+ * which undercounted tool-heavy sessions by up to ~60×; the calibration factor
+ * is clamped to 4× and structurally could not correct it, so compaction never
+ * fired until the provider hard-rejected the request.
+ */
+function messageTokenText(msg: Message): string {
   return msg.content
     .map((block) => {
       if (block.type === "text") return block.text;
+      if (block.type === "thinking") return block.thinking;
+      if (block.type === "redacted_thinking") return block.data;
       if (block.type === "tool_use")
-        return `[tool: ${block.toolName}(${JSON.stringify(block.toolInput).slice(0, 200)})]`;
-      if (block.type === "tool_result") return `[result: ${block.toolResultContent.slice(0, 500)}]`;
+        return `[tool: ${block.toolName}(${JSON.stringify(block.toolInput)})]`;
+      if (block.type === "tool_result") return `[result: ${block.toolResultContent}]`;
       // NEVER serialize image base64 into the estimate — megabytes of data
       // would explode a chars/4 heuristic and trigger false forced
       // compactions. A fixed placeholder under-counts (~1.6k real tokens per
@@ -800,6 +810,41 @@ function messageToString(msg: Message): string {
       if (block.type === "image") return "[image attachment]";
       return "";
     })
+    .join("\n");
+}
+
+// What the SUMMARIZER may keep per block. Head+tail clipping (not a hard cut)
+// so a compiler error's final lines and a diff's file header both survive.
+const SUMMARY_TOOL_ARGS_CHARS = 700;
+const SUMMARY_TOOL_RESULT_CHARS = 2_400;
+
+/** Head+tail clip: keeps ~70% of the budget from the start, ~30% from the end. */
+function clipText(s: string, maxChars: number): string {
+  if (s.length <= maxChars) return s;
+  const head = Math.floor(maxChars * 0.7);
+  const tail = Math.max(0, maxChars - head);
+  return `${s.slice(0, head)}\n…[${s.length - maxChars} chars clipped]…\n${s.slice(s.length - tail)}`;
+}
+
+/**
+ * Per-message rendering at SUMMARY fidelity. Tool calls keep their name and
+ * enough of their arguments to preserve paths and commands; results keep a
+ * generous head+tail so errors and evidence survive into the summary.
+ * Thinking is excluded by POLICY (the model's private reasoning is not part
+ * of the durable record), not by accident.
+ */
+function summaryMessageText(msg: Message): string {
+  return msg.content
+    .map((block) => {
+      if (block.type === "text") return block.text;
+      if (block.type === "tool_use")
+        return `[tool: ${block.toolName}(${clipText(JSON.stringify(block.toolInput), SUMMARY_TOOL_ARGS_CHARS)})]`;
+      if (block.type === "tool_result")
+        return `[result: ${clipText(block.toolResultContent, SUMMARY_TOOL_RESULT_CHARS)}]`;
+      if (block.type === "image") return "[image attachment]";
+      return "";
+    })
+    .filter((s) => s.length > 0)
     .join("\n");
 }
 

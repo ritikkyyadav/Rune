@@ -35,7 +35,7 @@ describe("checkSyntax", () => {
   test("TSX is parsed as TSX", async () => {
     const issues = await checkSyntax(
       "/x/comp.tsx",
-      "export const C = () => <div className=\"a\">hi</div>;\n",
+      'export const C = () => <div className="a">hi</div>;\n',
     );
     expect(issues).toEqual([]);
   });

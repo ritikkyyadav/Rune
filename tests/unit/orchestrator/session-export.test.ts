@@ -12,17 +12,14 @@ import { join } from "node:path";
 import { SessionManager, hashArgs, hashResult } from "../../../packages/shared/src/session";
 import { exportSession, verifyExport } from "../../../packages/orchestrator/src/session-export";
 import { generateEd25519KeyPair } from "../../../packages/orchestrator/src/signing";
-import {
-  signBytes,
-  verifySignature,
-} from "../../../packages/orchestrator/src/signing";
+import { signBytes, verifySignature } from "../../../packages/orchestrator/src/signing";
 
 // ─── Temp directory helpers ──────────────────────────────────────────────
 
 const tmpDirs: string[] = [];
 
 function makeTempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), "alan-session-export-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "gear-session-export-test-"));
   tmpDirs.push(dir);
   return dir;
 }
@@ -71,8 +68,7 @@ function seedSession(dbPath: string): { sessionId: string; sm: SessionManager } 
     payload: {
       callId: "call-001",
       toolName: "write_file",
-      content:
-        "--- a/hello.ts\n+++ b/hello.ts\n@@ -0,0 +1 @@\n+console.log(\"hello\")\n",
+      content: '--- a/hello.ts\n+++ b/hello.ts\n@@ -0,0 +1 @@\n+console.log("hello")\n',
       isError: false,
     },
   });
@@ -109,7 +105,7 @@ function seedSession(dbPath: string): { sessionId: string; sm: SessionManager } 
 describe("exportSession — Markdown format", () => {
   test("renders all sections correctly", async () => {
     const dir = makeTempDir();
-    const dbPath = join(dir, "alan.db");
+    const dbPath = join(dir, "gear.db");
     const { sessionId, sm } = seedSession(dbPath);
     sm.close();
 
@@ -131,7 +127,7 @@ describe("exportSession — Markdown format", () => {
 describe("exportSession — JSON format", () => {
   test("returns valid JSON with all top-level keys", async () => {
     const dir = makeTempDir();
-    const dbPath = join(dir, "alan.db");
+    const dbPath = join(dir, "gear.db");
     const { sessionId, sm } = seedSession(dbPath);
     sm.close();
 
@@ -158,7 +154,7 @@ describe("exportSession — JSON format", () => {
 describe("exportSession — signing", () => {
   test("returns signature, publicKey, chainHead when sign:true", async () => {
     const dir = makeTempDir();
-    const dbPath = join(dir, "alan.db");
+    const dbPath = join(dir, "gear.db");
     const { sessionId, sm } = seedSession(dbPath);
     sm.close();
 
@@ -178,7 +174,7 @@ describe("exportSession — signing", () => {
 
   test("verifyExport returns true for valid signature", async () => {
     const dir = makeTempDir();
-    const dbPath = join(dir, "alan.db");
+    const dbPath = join(dir, "gear.db");
     const { sessionId, sm } = seedSession(dbPath);
     sm.close();
 
@@ -195,7 +191,7 @@ describe("exportSession — signing", () => {
 
   test("verifyExport returns false when content is tampered", async () => {
     const dir = makeTempDir();
-    const dbPath = join(dir, "alan.db");
+    const dbPath = join(dir, "gear.db");
     const { sessionId, sm } = seedSession(dbPath);
     sm.close();
 
@@ -213,7 +209,7 @@ describe("exportSession — signing", () => {
 
   test("generated key persists and can be reused across exports", async () => {
     const dir = makeTempDir();
-    const dbPath = join(dir, "alan.db");
+    const dbPath = join(dir, "gear.db");
     const { sessionId, sm } = seedSession(dbPath);
     sm.close();
 
@@ -244,8 +240,8 @@ describe("exportSession — audit chain integrity", () => {
   test("chainHead changes if audit log differs", async () => {
     const dir1 = makeTempDir();
     const dir2 = makeTempDir();
-    const dbPath1 = join(dir1, "alan.db");
-    const dbPath2 = join(dir2, "alan.db");
+    const dbPath1 = join(dir1, "gear.db");
+    const dbPath2 = join(dir2, "gear.db");
 
     const { sessionId: sid1, sm: sm1 } = seedSession(dbPath1);
     // Add an extra audit entry to the second DB to make chain heads differ
@@ -293,13 +289,13 @@ describe("signing primitives (standalone)", () => {
 describe("exportSession — error handling", () => {
   test("throws for unknown sessionId", async () => {
     const dir = makeTempDir();
-    const dbPath = join(dir, "alan.db");
+    const dbPath = join(dir, "gear.db");
     // Create the DB but don't seed any session
     const sm = new SessionManager(dbPath);
     sm.close();
 
-    await expect(
-      exportSession(dbPath, "nonexistent-session-id", { format: "md" }),
-    ).rejects.toThrow("Session not found");
+    await expect(exportSession(dbPath, "nonexistent-session-id", { format: "md" })).rejects.toThrow(
+      "Session not found",
+    );
   });
 });

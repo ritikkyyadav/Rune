@@ -166,9 +166,9 @@ describe("gateway stream_reset on mid-stream failure", () => {
     });
     const gw = gatewayWith(provider, backup);
 
-    await expect(
-      collect(gw.inferStream(REQ, { signal: controller.signal })),
-    ).rejects.toThrow("aborted");
+    await expect(collect(gw.inferStream(REQ, { signal: controller.signal }))).rejects.toThrow(
+      "aborted",
+    );
     expect(calls).toBe(1); // no retry of the aborted request
     expect((backup as unknown as { calls: number }).calls).toBe(0); // no fallback either
   });

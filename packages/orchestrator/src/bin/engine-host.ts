@@ -31,8 +31,11 @@ import {
   type PermissionPrompt,
   type UserPermissionDecision,
 } from "../engine";
-import type { ProviderName } from "@alan/llm-gateway";
+import type { ProviderName } from "@gear/llm-gateway";
 import {
+  adoptLegacyEnv,
+  ensureGearHome,
+  migrateLegacyHome,
   loadConfig,
   loadSecrets,
   providerKeyEntries,
@@ -46,7 +49,7 @@ import {
   loadSavedSandboxState,
   resolveInitialSandbox,
   setConfigValue,
-} from "@alan/shared";
+} from "@gear/shared";
 import {
   configModeToPermissionMode,
   resolveStartupPermissionFlags,
@@ -106,7 +109,7 @@ function emitStream(stream: string, payload: unknown): void {
   send({ stream, payload });
 }
 
-// ─── Engine construction (mirrors alan-cli.ts main()) ───
+// ─── Engine construction (mirrors gear-cli.ts main()) ───
 // Same provider/model resolution, same key sources, so the desktop behaves
 // identically to the terminal.
 
@@ -131,19 +134,15 @@ function isCliProvider(p: string): p is CliProvider {
 }
 
 function ensureDataDir(): string {
-  const dir = `${process.env.HOME}/.alan`;
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  return dir;
+  return ensureGearHome();
 }
 
 function buildEngine(): Engine {
+  adoptLegacyEnv();
+  migrateLegacyHome();
   ensureDataDir();
   const workspaceRoot =
-    process.env.GEAR_WORKSPACE ||
-    process.env.ELIO_WORKSPACE ||
-    process.env.ALAN_WORKSPACE ||
-    process.env.HOME ||
-    process.cwd();
+    process.env.GEAR_WORKSPACE || process.env.GEAR_WORKSPACE || process.env.HOME || process.cwd();
   const config = loadConfig(workspaceRoot);
   const secrets = loadSecrets();
 
@@ -187,7 +186,7 @@ function buildEngine(): Engine {
     config.search?.provider &&
     config.search.provider !== "auto" &&
     !process.env.GEAR_SEARCH_BACKEND &&
-    !process.env.ALAN_SEARCH_BACKEND
+    !process.env.GEAR_SEARCH_BACKEND
   ) {
     process.env.GEAR_SEARCH_BACKEND = config.search.provider;
   }
@@ -204,32 +203,23 @@ function buildEngine(): Engine {
     provider: provider as ProviderName,
     workspaceRoot,
     dbPath: config.engine.dbPath,
-    toolsBinaryPath:
-      process.env.GEAR_TOOLS_BIN ||
-      process.env.ELIO_TOOLS_BIN ||
-      process.env.ALAN_TOOLS_BIN ||
-      "alan-tools",
+    toolsBinaryPath: process.env.GEAR_TOOLS_BIN || process.env.GEAR_TOOLS_BIN || "gear-tools",
     yoloMode: permissionFlags.yoloMode,
     trustWorkspace: permissionFlags.trustWorkspace,
     permissionMode: permissionFlags.permissionMode,
     autoMode: config.permissions?.autoMode,
     // Same posture resolution as the CLI, minus CLI flags (desktop has none).
     sandboxEnabled: resolveInitialSandbox({
-      env:
-        process.env.GEAR_SANDBOX_ENABLED ??
-        process.env.ELIO_SANDBOX_ENABLED ??
-        process.env.ALAN_SANDBOX_ENABLED ??
-        null,
+      env: process.env.GEAR_SANDBOX_ENABLED ?? null,
       saved: loadSavedSandboxState(),
       configured: config.sandbox?.enabled ?? null,
     }),
-    plannerMode: false,
     // Config-file keys count as "saved" unless they merely echo an env var.
     anthropicApiKey: process.env.ANTHROPIC_API_KEY ? undefined : config.llm.anthropic?.apiKey,
     openaiApiKey: process.env.OPENAI_API_KEY ? undefined : config.llm.openai?.apiKey,
     openrouterApiKey: process.env.OPENROUTER_API_KEY ? undefined : config.llm.openrouter?.apiKey,
     googleApiKey: process.env.GOOGLE_API_KEY ? undefined : config.llm.google?.apiKey,
-    // BYOK keys + custom endpoint + toggles from ~/.alan/secrets.json (win over config.toml).
+    // BYOK keys + custom endpoint + toggles from ~/.gear/secrets.json (win over config.toml).
     providerKeys: secrets.keys,
     providerKeyEntries: Object.fromEntries(
       PROVIDER_PRESETS.map((p) => [p.id, providerKeyEntries(secrets, p.id)]).filter(
@@ -450,7 +440,7 @@ async function dispatch(cmd: string, args: Record<string, unknown>): Promise<unk
         if (typeof value !== "string") continue;
         const key = value.trim();
         if (key) {
-          persistProviderKey(pid, key); // → ~/.alan/secrets.json (0600)
+          persistProviderKey(pid, key); // → ~/.gear/secrets.json (0600)
           engine.setProviderKey(pid, key); // live, rebuilds the gateway
         } else {
           // Empty string = clear that key.

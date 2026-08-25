@@ -63,6 +63,21 @@ const TONE_PAINT: Record<MarkdownTone, Painter> = {
 /** Inline `code` as the v2 code tag: primary weight on the bar surface. */
 const codeTag = (s: string): string => panel(bold(text(s)));
 
+const WORD = /[\p{L}\p{N}]/u;
+
+/**
+ * Whether an underscore run at `start` is emphasis rather than part of an
+ * identifier. CommonMark's rule, and the one that matters most here: `_` inside
+ * a word never opens or closes emphasis — otherwise `content_block_stop` and
+ * `read_file`, which this product prints constantly, come out as
+ * `contentblockstop` with the underscores silently eaten.
+ */
+function flanks(src: string, start: number, length: number): boolean {
+  const before = start > 0 ? src[start - 1]! : "";
+  const after = src[start + length] ?? "";
+  return !WORD.test(before) && !WORD.test(after);
+}
+
 /** `**bold**`, `*em*`, `_em_`, `` `code` ``, `~~strike~~`, `[label](url)`. */
 export function parseInline(src: string, tone: MarkdownTone = "primary"): Seg[] {
   const plain = TONE_PAINT[tone];
@@ -83,14 +98,18 @@ export function parseInline(src: string, tone: MarkdownTone = "primary"): Seg[] 
       i += code[0].length;
       continue;
     }
-    const boldm = rest.match(/^\*\*([^*]+)\*\*/) ?? rest.match(/^__([^_]+)__/);
+    const star2 = rest.match(/^\*\*([^*]+)\*\*/);
+    const under2 = star2 ? null : rest.match(/^__([^_]+)__/);
+    const boldm = star2 ?? (under2 && flanks(src, i, under2[0].length) ? under2 : null);
     if (boldm) {
       flush();
       segs.push({ t: boldm[1]!, paint: (s) => bold(text(s)) });
       i += boldm[0].length;
       continue;
     }
-    const em = rest.match(/^\*([^*\s][^*]*)\*/) ?? rest.match(/^_([^_\s][^_]*)_/);
+    const star1 = rest.match(/^\*([^*\s][^*]*)\*/);
+    const under1 = star1 ? null : rest.match(/^_([^_\s][^_]*)_/);
+    const em = star1 ?? (under1 && flanks(src, i, under1[0].length) ? under1 : null);
     if (em) {
       flush();
       segs.push({ t: em[1]!, paint: (s) => italic(text(s)) });
@@ -245,25 +264,25 @@ export function renderMarkdown(md: string, opts: MarkdownOpts = {}): string[] {
       inFence = true;
       fenceMark = fence[1]!.startsWith("~") ? "~~~" : "```";
       blank();
+      // The language is a label, not a frame. A box around code buys nothing a
+      // blank line and a change of weight does not already buy.
       const langRaw = fence[2] ?? "";
-      const plainHead = `╭─ ${langRaw}`;
-      emit(codeRow(plainHead, `${lineColor("╭─")} ${langRaw ? faint(langRaw) : ""}`));
+      if (langRaw) emit(faint(langRaw));
       continue;
     }
     if (inFence) {
       if (raw.trim().startsWith(fenceMark)) {
         inFence = false;
-        emit(codeRow("╰─", lineColor("╰─")));
         blank();
         continue;
       }
-      // Code is the record: verbatim, guttered, hard-cut to the column.
-      const codeWidth = width - 2;
+      // Code is the record: verbatim, hard-cut to the column, and set brighter
+      // than the prose around it because the command is the part you copy.
       let ln = raw.replace(/\t/g, "  ");
       do {
-        const chunk = ln.slice(0, codeWidth);
-        emit(codeRow(`│ ${chunk}`, `${lineColor("│")} ${info(chunk)}`));
-        ln = ln.slice(codeWidth);
+        const chunk = ln.slice(0, width);
+        emit(chunk.trimStart().startsWith("#") ? muted(chunk) : text(chunk));
+        ln = ln.slice(width);
       } while (ln.length > 0);
       continue;
     }
@@ -354,9 +373,6 @@ export function renderMarkdown(md: string, opts: MarkdownOpts = {}): string[] {
     }
     for (const ln of wrapInline(para, width, "", tone)) emit(ln);
   }
-
-  // Close an unterminated fence so the frame never dangles.
-  if (inFence) emit(lineColor("╰─"));
 
   // Trim leading/trailing blanks.
   while (out.length && out[0]!.trim() === "") out.shift();

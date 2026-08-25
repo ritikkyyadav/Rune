@@ -63,7 +63,7 @@ export function ModelPicker(props: {
         title="Select provider"
         sub={`${providers.length} configured`}
         onClose={props.onClose}
-        footer="Keys via /keys in the CLI (~/.alan/secrets.json) · local runtimes list live · the gateway retries & falls back automatically"
+        footer="Keys via /keys in the CLI (~/.gear/secrets.json) · local runtimes list live · the gateway retries & falls back automatically"
       >
         {providers.length === 0 ? (
           <div className="palette-empty">
@@ -154,7 +154,7 @@ export function ThemePicker(props: {
       title="Accent palette"
       sub={themeId(props.choice)}
       onClose={props.onClose}
-      footer="Same ten themes as the CLI (gear[-accent][-dark]) · the CLI persists its own choice in ~/.alan/theme.json"
+      footer="Same ten themes as the CLI (gear[-accent][-dark]) · the CLI persists its own choice in ~/.gear/theme.json"
     >
       {bases.map((b) => (
         <button
@@ -195,7 +195,7 @@ export function GearPicker(props: {
       title="Shift gears"
       sub="Shift+Tab shifts up"
       onClose={props.onClose}
-      footer="Applies to this engine now · the CLI's default lives in ~/.alan/config.toml [permissions] gear"
+      footer="Applies to this engine now · the CLI's default lives in ~/.gear/config.toml [permissions] gear"
     >
       {GEARS.map((g) => (
         <button

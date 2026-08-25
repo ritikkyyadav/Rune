@@ -40,7 +40,7 @@ describe("ui/composer renderComposer", () => {
 
   it("fits its frame inside a narrow terminal instead of assuming 28 columns", () => {
     const r = renderComposer({ input: "hello", caret: 5, width: 20, status: "  status" });
-    for (const line of r.lines.slice(0, 3)) expect(stripAnsi(line).length).toBeLessThan(20);
+    for (const line of r.lines.slice(0, 3)) expect(stripAnsi(line).length).toBeLessThanOrEqual(20);
   });
 
   it("shows a working indicator instead of the box when set", () => {
@@ -78,7 +78,7 @@ describe("ui/composer renderSlashPalette", () => {
     expect(plain.some((l) => l.includes("›") && l.includes("/theme"))).toBe(true); // selected = index 1
     expect(plain.find((l) => l.includes("/model"))!.startsWith("    ")).toBe(true); // unselected = no marker
     expect(plain.join("\n")).toContain("Switch model / provider");
-    expect(plain[0]).toContain("COMMANDS"); // v2 uppercase header carries the hints
+    expect(plain[0]).toContain("commands"); // the header carries the hints
     expect(plain[0]).toContain("tab complete");
   });
 
@@ -290,9 +290,9 @@ describe("ui/composer statusLine + permission mode", () => {
     const confirm = stripAnsi(statusLine({ ...base, mode: "confirm" }, 120));
     expect(confirm).toContain("▸ 1st gear");
     expect(confirm).toContain("every action asks first");
-    expect(confirm).toContain("shift+tab mode");
-    expect(confirm).toContain("← sessions");
-    expect(confirm).toContain("? shortcuts");
+    expect(confirm).toContain("shift+tab gear");
+    expect(confirm).toContain("esc stop");
+    expect(confirm).toContain("? keys");
     expect(confirm).not.toMatch(/autonomy/i);
 
     expect(stripAnsi(statusLine({ ...base, mode: "autonomy-i" }, 120))).toContain("▸▸ 2nd gear");
@@ -335,25 +335,32 @@ describe("ui/composer statusLine + permission mode", () => {
       statusLine({ model: "m", workspace: "/w", mode: "confirm", theme: "dark" }, 100),
     );
     expect(line).not.toContain("◐ dark");
-    expect(line).toContain("esc interrupt");
+    expect(line).toContain("esc stop");
   });
 
-  it("permissionModeBanner names each gear and mentions shift+tab", () => {
-    const fourth = stripAnsi(permissionModeBanner("autonomy-iii"));
+  it("permissionModeBanner names each gear, what it allows, and how to shift", () => {
+    // The sentence wraps to the measure, so read it flat.
+    const flat = (mode: string) => stripAnsi(permissionModeBanner(mode)).replace(/\s+/g, " ");
+    const fourth = flat("autonomy-iii");
     expect(fourth).toMatch(/4th gear/);
     expect(fourth).toMatch(/without permission prompts/i);
-    expect(stripAnsi(permissionModeBanner("gear-4"))).toBe(fourth);
+    expect(flat("gear-4")).toBe(fourth);
     expect(fourth).toMatch(/shift\+tab/i);
 
-    expect(stripAnsi(permissionModeBanner("autonomy-i"))).toMatch(/2nd gear.*workspace edits/i);
-    expect(stripAnsi(permissionModeBanner("autonomy-ii"))).toMatch(
-      /3rd gear.*sandboxed local commands/i,
-    );
+    expect(flat("autonomy-i")).toMatch(/2nd gear.*workspace edits/i);
+    expect(flat("autonomy-ii")).toMatch(/3rd gear.*sandboxed local commands/i);
 
-    const auto = stripAnsi(permissionModeBanner("auto"));
+    const auto = flat("auto");
     expect(auto).toMatch(/◆ auto/);
     expect(auto).toMatch(/isolated classifier/i);
-    expect(stripAnsi(permissionModeBanner("confirm"))).toMatch(/1st gear/);
+    expect(flat("confirm")).toMatch(/1st gear/);
+
+    // Every banner holds the measure rather than running off the right edge.
+    for (const mode of ["confirm", "gear-4", "auto"]) {
+      for (const line of stripAnsi(permissionModeBanner(mode)).split("\n")) {
+        expect(line.length).toBeLessThanOrEqual(120);
+      }
+    }
   });
 });
 
@@ -379,45 +386,43 @@ describe("ui/composer permissionView", () => {
 });
 
 describe("ui/composer renderPermissionCard", () => {
-  it("renders an open approval rail with explicit scope, choices, shortcuts, and guard state", () => {
+  it("asks a question, shows the literal command, and numbers the answers", () => {
     const r = renderPermissionCard("bash", "bash: ls -R", 80);
     const plain = r.lines.map(stripAnsi);
-    expect(plain[0]).toBe(""); // leading blank separates it from the activity stream
+    expect(plain[0]).toBe(""); // a blank line separates it from the work above
     const joined = plain.join("\n");
-    expect(joined).toContain("Permission required");
-    expect(joined).toMatch(/bash · (sandboxed|host)/); // the tag chip states the posture
-    expect(joined).toContain("$ ls -R");
+    expect(joined).toContain("▸ Run shell command?");
+    expect(joined).toMatch(/bash · (sandboxed|host)/); // the posture is stated, never assumed
+    expect(joined).toContain("│ ls -R");
     expect(joined).not.toMatch(/bash: bash/); // no redundant "bash — bash:"
-    expect(joined).toContain("Allow once");
-    expect(joined).toContain("Allow for session");
-    expect(joined).toContain("Deny");
+    expect(joined).toContain("1   yes, once");
+    expect(joined).toContain("2   yes, and stop asking this session");
+    expect(joined).toContain("3   no, skip it");
+    expect(joined).toContain("esc cancel");
+    expect(joined).toContain("(default)"); // the safe answer is the one your hands know
     expect(joined).toContain("No action taken yet");
-    // The footnote wraps across rail rows; read it as one sentence.
-    const flat = plain.map((l) => l.replace(/^\s*▌\s*/, "").trim()).join(" ");
-    expect(flat).toContain("tamper-evident audit trail");
-    expect(plain[r.caretRow]).toContain("Allow once");
+    expect(plain.join(" ")).toContain("recorded in the audit trail");
+    expect(plain[r.caretRow]).toContain("yes, once");
   });
 
-  it("never overflows the terminal width, even with a long command or tool name", () => {
+  it("holds the reading measure, whatever the command or tool name throws at it", () => {
     const r = renderPermissionCard("bash", "bash: " + "echo hi && ".repeat(40), 70);
-    for (const l of r.lines) expect(stripAnsi(l).length).toBeLessThan(70);
-    // A pathologically long (unknown) tool name must not blow out the approval rail.
+    for (const l of r.lines) expect(stripAnsi(l).length).toBeLessThanOrEqual(70);
+    // A pathologically long (unknown) tool name must not blow out the prompt.
     const long = renderPermissionCard("some_" + "x".repeat(80) + "_tool", "{}", 70);
-    for (const l of long.lines) expect(stripAnsi(l).length).toBeLessThan(70);
+    for (const l of long.lines) expect(stripAnsi(l).length).toBeLessThanOrEqual(70);
   });
 
-  it("keeps all three decisions visible on a narrow terminal", () => {
+  it("keeps all three answers visible on a narrow terminal", () => {
     const r = renderPermissionCard("bash", "bash: ls", 40);
     const joined = stripAnsi(r.lines.join("\n"));
-    expect(joined).toContain("Permission required");
-    expect(joined).toContain("$ ls");
-    expect(joined).toContain("Allow once");
-    expect(joined).toContain("Allow for session");
-    expect(joined).toContain("Deny");
-    for (const l of r.lines) expect(stripAnsi(l).length).toBeLessThan(40);
+    expect(joined).toContain("│ ls");
+    expect(joined).toContain("1   yes, once");
+    expect(joined).toContain("3   no, skip it");
+    for (const l of r.lines) expect(stripAnsi(l).length).toBeLessThanOrEqual(40);
   });
 
-  it("shows a line-numbered change preview and parks the caret on the selected decision", () => {
+  it("shows a line-numbered change preview and parks the caret on the selected answer", () => {
     const r = renderPermissionCard("edit_file", "edit_file src/palette.ts", 92, {
       selected: 1,
       preview: {
@@ -442,12 +447,16 @@ describe("ui/composer renderPermissionCard", () => {
     });
     const plain = r.lines.map(stripAnsi);
     const joined = plain.join("\n");
-    expect(joined).toContain("src/palette.ts  +1 −1");
-    expect(joined).toContain("11   const delay = 42;");
-    expect(joined).toContain("12 - filterSoon(query);");
-    expect(joined).toContain("12 + filterNow(query);");
+    expect(joined).toContain("▸ Apply this edit to src/palette.ts?");
+    expect(joined).toContain("src/palette.ts");
+    expect(joined).toContain("+1 -1");
+    expect(joined).toContain("  11   const delay = 42;");
+    expect(joined).toContain("  12 - filterSoon(query);");
+    expect(joined).toContain("  12 + filterNow(query);");
     expect(joined).toContain("Working tree unchanged");
-    expect(plain[r.caretRow]).toContain("Allow for session");
+    // The prompt uses the caller's own words for the answers when it has them.
+    expect(joined).toContain("2   Yes, allow file edits for this session");
+    expect(plain[r.caretRow]).toContain("Yes, allow file edits for this session");
   });
 });
 
@@ -459,7 +468,7 @@ describe("ui/composer renderPicker", () => {
       1,
       80,
     );
-    expect(stripAnsi(r.lines[0])).toContain("MODEL"); // v2 uppercase overlay header
+    expect(stripAnsi(r.lines[0])).toContain("model"); // the overlay header
     expect(stripAnsi(r.lines[0])).toContain("esc close");
     expect(stripAnsi(r.lines[2])).toContain("›"); // selected = index 1 → line 2
     expect(stripAnsi(r.lines[1])).not.toContain("›");

@@ -102,15 +102,6 @@ describe("undoLastGearCommit", () => {
     expect(r.reason).toContain("not a Gear-managed commit");
   });
 
-  test("still recognizes migration-era managed commits", () => {
-    writeFileSync(join(root, "legacy.txt"), "legacy\n");
-    git(root, ["add", "legacy.txt"]);
-    git(root, ["commit", "-qm", "berne: migration-era change"]);
-
-    const r = undoLastGearCommit(root);
-    expect(r.ok).toBe(true);
-  });
-
   test("refuses when the worktree is dirty (reset --hard would eat user edits)", () => {
     writeFileSync(join(root, "a.ts"), "v1\n");
     expect(autoCommitPaths(root, ["a.ts"], "task").committed).toBe(true);

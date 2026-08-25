@@ -17,11 +17,11 @@ let dir: string;
 let env: NodeJS.ProcessEnv;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "alan-byop-e2e-"));
+  dir = mkdtempSync(join(tmpdir(), "gear-byop-e2e-"));
   env = {
     HOME: dir,
-    BERNE_CREDENTIALS_PATH: join(dir, "credentials.json"),
-    BERNE_CREDENTIAL_INDEX_PATH: join(dir, "credentials.index.json"),
+    GEAR_CREDENTIALS_PATH: join(dir, "credentials.json"),
+    GEAR_CREDENTIAL_INDEX_PATH: join(dir, "credentials.index.json"),
   } as NodeJS.ProcessEnv;
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));

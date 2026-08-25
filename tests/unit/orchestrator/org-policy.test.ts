@@ -15,7 +15,7 @@ import { PermissionBroker } from "../../../packages/orchestrator/src/permissions
 import { setSandboxCapability } from "../../../packages/tool-registry/src/sandbox-capability";
 
 // P9: admin-enforced constraints the end user cannot lift. The load path is
-// driven through the BERNE_POLICY_FILE env override (honored only when no
+// driven through the GEAR_POLICY_FILE env override (honored only when no
 // system policy exists — true on dev machines and CI).
 
 setSandboxCapability({ mechanism: "seatbelt", osIsolation: true });
@@ -39,17 +39,17 @@ function installPolicy(policy: OrgPolicy, opts: { tamper?: boolean; badKey?: boo
   writeFileSync(join(dir, "policy.json"), JSON.stringify({ policy: filePolicy, signature }));
   const pub = opts.badKey ? generateEd25519KeyPair().publicKeyPem : pair.publicKeyPem;
   writeFileSync(join(dir, "org.pub"), pub);
-  process.env.BERNE_POLICY_FILE = join(dir, "policy.json");
-  process.env.BERNE_POLICY_PUBKEY = join(dir, "org.pub");
+  process.env.GEAR_POLICY_FILE = join(dir, "policy.json");
+  process.env.GEAR_POLICY_PUBKEY = join(dir, "org.pub");
 }
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "alan-policy-"));
+  dir = mkdtempSync(join(tmpdir(), "gear-policy-"));
 });
 
 afterEach(() => {
-  delete process.env.BERNE_POLICY_FILE;
-  delete process.env.BERNE_POLICY_PUBKEY;
+  delete process.env.GEAR_POLICY_FILE;
+  delete process.env.GEAR_POLICY_PUBKEY;
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -81,7 +81,7 @@ describe("loadOrgPolicy", () => {
   test("policy without any public key installed fails closed", () => {
     installPolicy(POLICY);
     rmSync(join(dir, "org.pub"));
-    delete process.env.BERNE_POLICY_PUBKEY;
+    delete process.env.GEAR_POLICY_PUBKEY;
     const result = loadOrgPolicy();
     expect(result?.ok).toBe(false);
     if (result?.ok !== false) throw new Error("unreachable");

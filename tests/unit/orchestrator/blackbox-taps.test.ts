@@ -160,7 +160,7 @@ describe("engine blackbox integration", () => {
   let dir: string;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "alan-bb-engine-"));
+    dir = mkdtempSync(join(tmpdir(), "gear-bb-engine-"));
   });
 
   afterEach(() => {
@@ -173,10 +173,9 @@ describe("engine blackbox integration", () => {
       model: "gemini-2.5-flash",
       provider: "google",
       workspaceRoot: dir,
-      dbPath: join(dir, "alan.db"),
-      toolsBinaryPath: "alan-tools",
+      dbPath: join(dir, "gear.db"),
+      toolsBinaryPath: "gear-tools",
       yoloMode: false,
-      plannerMode: false,
       enableCheckpoints: false,
       enableSecurity: false,
       enableRateLimiting: false,
@@ -207,10 +206,9 @@ describe("engine blackbox integration", () => {
       model: "gemini-2.5-flash",
       provider: "google",
       workspaceRoot: dir,
-      dbPath: join(dir, "alan.db"),
-      toolsBinaryPath: "alan-tools",
+      dbPath: join(dir, "gear.db"),
+      toolsBinaryPath: "gear-tools",
       yoloMode: false,
-      plannerMode: false,
       enableCheckpoints: false,
       enableSecurity: false,
       enableRateLimiting: false,

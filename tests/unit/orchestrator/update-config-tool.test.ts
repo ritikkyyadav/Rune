@@ -16,13 +16,13 @@ let dir: string;
 let configPath: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "alan-updcfg-"));
+  dir = mkdtempSync(join(tmpdir(), "gear-updcfg-"));
   configPath = join(dir, "config.toml");
-  process.env.ALAN_CONFIG_PATH = configPath;
+  process.env.GEAR_CONFIG_PATH = configPath;
 });
 
 afterEach(() => {
-  delete process.env.ALAN_CONFIG_PATH;
+  delete process.env.GEAR_CONFIG_PATH;
   rmSync(dir, { recursive: true, force: true });
 });
 

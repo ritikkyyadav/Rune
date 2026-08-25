@@ -5,7 +5,10 @@
  */
 
 import { describe, test, expect } from "bun:test";
-import { needsNetwork, withNetworkPreflight } from "../../../packages/tool-registry/src/tools/net-preflight";
+import {
+  needsNetwork,
+  withNetworkPreflight,
+} from "../../../packages/tool-registry/src/tools/net-preflight";
 import { setSandboxCapability } from "../../../packages/tool-registry/src/sandbox-capability";
 import type { ToolCallInput, ToolHandler } from "../../../packages/tool-registry/src/types";
 
@@ -68,10 +71,21 @@ function fakeBash(): { handler: ToolHandler; calls: number } {
     validate: () => ({ valid: true }),
     execute: async (input: ToolCallInput) => {
       state.calls++;
-      return { callId: input.callId, toolName: "bash", success: true, result: "ran", durationMs: 1 };
+      return {
+        callId: input.callId,
+        toolName: "bash",
+        success: true,
+        result: "ran",
+        durationMs: 1,
+      };
     },
   };
-  return { handler, get calls() { return state.calls; } } as any;
+  return {
+    handler,
+    get calls() {
+      return state.calls;
+    },
+  } as any;
 }
 
 function input(args: Record<string, unknown>): ToolCallInput {
@@ -113,8 +127,8 @@ describe("withNetworkPreflight — wrapper behavior", () => {
     expect(fake.calls).toBe(1);
   });
 
-  test("BERNE_NET_PREFLIGHT=0 disables the check", async () => {
-    process.env.BERNE_NET_PREFLIGHT = "0";
+  test("GEAR_NET_PREFLIGHT=0 disables the check", async () => {
+    process.env.GEAR_NET_PREFLIGHT = "0";
     try {
       const fake = fakeBash();
       const wrapped = withNetworkPreflight(fake.handler);
@@ -122,7 +136,7 @@ describe("withNetworkPreflight — wrapper behavior", () => {
       expect(out.success).toBe(true);
       expect(fake.calls).toBe(1);
     } finally {
-      delete process.env.BERNE_NET_PREFLIGHT;
+      delete process.env.GEAR_NET_PREFLIGHT;
     }
   });
 });

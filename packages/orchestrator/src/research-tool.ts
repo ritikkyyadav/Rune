@@ -1,12 +1,13 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { LlmGateway, ProviderName } from "@alan/llm-gateway";
-import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "@alan/tool-registry";
+import type { LlmGateway, ProviderName } from "@gear/llm-gateway";
+import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "@gear/tool-registry";
 import type { ToolResultProcessor } from "./agent-loop";
 import { planResearch, runResearch } from "./research";
 import type { PlanResearchOpts, ResearchDeps } from "./research";
 import { isClarification } from "./research-types";
 import type { ResearchDepth, ResearchOptions, ResearchReport } from "./research-types";
+import { workspaceConfigPath } from "@gear/shared";
 
 /**
  * `research` — the /research | /deepresearch pipeline as a model-invocable
@@ -20,12 +21,12 @@ import type { ResearchDepth, ResearchOptions, ResearchReport } from "./research-
  * - No clarifying-questions round (allowClarification: false): an ambiguous
  *   query still yields a usable plan; the model refines by re-calling.
  * The finished report is saved to the same place /research saves
- * (`<workspace>/.alan/research/`), and the same session audit events are
+ * (`<workspace>/.gear/research/`), and the same session audit events are
  * recorded, so follow-ups like /interactive work identically.
  */
 
 export interface ResearchToolDeps {
-  /** Path to the compiled alan-tools binary (read tools for local scopes). */
+  /** Path to the compiled gear-tools binary (read tools for local scopes). */
   binaryPath: string;
   workspaceRoot: string;
   /**
@@ -51,7 +52,7 @@ export const RESEARCH_TOOL_SCHEMA: ToolSchema = {
   description:
     "Run a full deep-research investigation — the same engine behind /research and " +
     "/deepresearch: plans sub-questions, fans out parallel web investigators, and " +
-    "synthesizes a long-form cited markdown report (auto-saved under .alan/research/). " +
+    "synthesizes a long-form cited markdown report (auto-saved under .gear/research/). " +
     "Use when the user asks for research, a deep dive, a survey/comparison of external " +
     "options, or a cited report — NOT for questions answerable from this codebase or " +
     "one quick web_search. depth: 'quick' fast lookup, 'standard' sectioned report " +
@@ -85,7 +86,7 @@ function saveReport(
 ): string | null {
   if (cfg.save === false) return null;
   try {
-    const dir = cfg.outputDir || join(workspaceRoot, ".alan", "research");
+    const dir = cfg.outputDir || workspaceConfigPath(workspaceRoot, "research");
     mkdirSync(dir, { recursive: true });
     const slug =
       report.question

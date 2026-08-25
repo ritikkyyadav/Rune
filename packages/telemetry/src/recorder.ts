@@ -14,7 +14,7 @@ import {
   type IncidentOutcome,
   type IncidentRecord,
   type TrailEntry,
-} from "@alan/shared";
+} from "@gear/shared";
 import { redactText } from "./redact";
 import { BlackboxStore } from "./store";
 

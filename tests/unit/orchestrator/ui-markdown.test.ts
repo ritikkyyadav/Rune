@@ -23,21 +23,42 @@ describe("renderMarkdown — block structure", () => {
     expect(out[1]).toMatch(/─+/);
   });
 
-  it("frames fenced code with a gutter and drops the backticks", () => {
+  it("sets fenced code as code, without drawing a box around it", () => {
     const md = "Run this:\n\n```bash\ncd atlas-studio\npython3 -m http.server 8000\n```\nDone.";
-    const out = plain(renderMarkdown(md, { width: 60 }));
+    const out = plain(renderMarkdown(md, { width: 60, indent: "" }));
     const joined = out.join("\n");
     expect(joined).not.toContain("```");
-    expect(joined).toContain("bash"); // language label survives on the cap
-    expect(joined).toContain("│ cd atlas-studio");
-    expect(joined).toContain("│ python3 -m http.server 8000");
-    expect(joined).toContain("╭─");
-    expect(joined).toContain("╰─");
+    expect(joined).toContain("bash"); // the language stays as a label
+    expect(joined).toContain("cd atlas-studio");
+    expect(joined).toContain("python3 -m http.server 8000");
+    // No frame: a blank line and a change of weight already separate code.
+    expect(joined).not.toContain("╭─");
+    expect(joined).not.toContain("╰─");
+    expect(joined).not.toContain("│");
   });
 
-  it("closes an unterminated fence so the frame never dangles", () => {
-    const out = plain(renderMarkdown("```\ncode", { width: 60 }));
-    expect(out.join("\n")).toContain("╰─");
+  it("never eats an underscore inside an identifier", () => {
+    // A coding agent prints snake_case constantly; treating those underscores
+    // as emphasis silently rewrites the very names the reader needs.
+    const out = plain(
+      renderMarkdown("The loop breaks on content_block_stop, so call read_file.", {
+        width: 100,
+        indent: "",
+      }),
+    ).join("\n");
+    expect(out).toBe("The loop breaks on content_block_stop, so call read_file.");
+  });
+
+  it("still reads a standalone underscore run as emphasis", () => {
+    const out = plain(
+      renderMarkdown("This is _really_ important, and __very__ so.", { width: 100, indent: "" }),
+    ).join("\n");
+    expect(out).toBe("This is really important, and very so.");
+  });
+
+  it("ends an unterminated fence without leaving anything dangling", () => {
+    const out = plain(renderMarkdown("```\ncode", { width: 60, indent: "" }));
+    expect(out.join("\n")).toBe("code");
   });
 
   it("renders list items with real bullets and hanging indents", () => {

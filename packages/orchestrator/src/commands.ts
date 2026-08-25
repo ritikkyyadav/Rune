@@ -7,11 +7,11 @@
  * Engine is intentionally left to the orchestrator — nothing here imports the
  * Engine.
  *
- * Commands live in `<workspaceRoot>/.alan/commands/*.md`. Each file becomes one
+ * Commands live in `<workspaceRoot>/.gear/commands/*.md`. Each file becomes one
  * command whose name is the filename without its `.md` extension, lowercased:
  *
- *   .alan/commands/review.md      ->  /review
- *   .alan/commands/Fix-Tests.md   ->  /fix-tests
+ *   .gear/commands/review.md      ->  /review
+ *   .gear/commands/Fix-Tests.md   ->  /fix-tests
  *
  * A file may begin with simple YAML-ish frontmatter delimited by `---` lines:
  *
@@ -26,12 +26,13 @@
  * `$ARGUMENTS` token (and the `{{args}}` alias) with the supplied string.
  *
  * Loading is lenient by design (mirrors hooks.ts):
- *   - Missing `.alan/commands` dir -> returns [] (never throws).
+ *   - Missing `.gear/commands` dir -> returns [] (never throws).
  *   - A file that can't be read    -> skipped with a console.warn (never throws).
  */
 
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { workspaceConfigPath } from "@gear/shared";
 
 // ─── Types ───
 
@@ -42,7 +43,7 @@ export interface SlashCommand {
   description: string;
   /** Optional usage hint, from frontmatter `argument-hint` / `argumentHint`. */
   argumentHint?: string;
-  /** Where the command came from: "user" (.alan/commands) or a plugin name. */
+  /** Where the command came from: "user" (.gear/commands) or a plugin name. */
   source?: string;
   /**
    * Expand the prompt template with the given argument string. Every
@@ -55,10 +56,10 @@ export interface SlashCommand {
 // ─── Loading ───
 
 /**
- * Load custom slash commands from `<workspaceRoot>/.alan/commands/*.md`, plus
+ * Load custom slash commands from `<workspaceRoot>/.gear/commands/*.md`, plus
  * any plugin command directories (each tagged with its plugin's name).
  *
- * - Missing `.alan/commands` directory -> returns [] (never throws).
+ * - Missing `.gear/commands` directory -> returns [] (never throws).
  * - A `.md` file that cannot be read    -> skipped (logged via console.warn).
  * - Name conflicts: user commands win over plugins; a plugin command whose
  *   name is already taken is REFUSED with a warning (never silently shadowed).
@@ -69,7 +70,11 @@ export async function loadCommands(
   workspaceRoot: string,
   extraDirs: Array<{ dir: string; source: string }> = [],
 ): Promise<SlashCommand[]> {
-  const commands = await loadCommandDir(join(workspaceRoot, ".alan", "commands"), "user", true);
+  const commands = await loadCommandDir(
+    workspaceConfigPath(workspaceRoot, "commands"),
+    "user",
+    true,
+  );
 
   const taken = new Map(commands.map((c) => [c.name, c.source ?? "user"]));
   for (const { dir, source } of extraDirs) {

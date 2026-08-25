@@ -15,7 +15,7 @@ import {
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "alan-blackbox-"));
+  dir = mkdtempSync(join(tmpdir(), "gear-blackbox-"));
 });
 
 afterEach(() => {
@@ -69,8 +69,16 @@ describe("BlackboxStore", () => {
       outcome: "pending" as const,
       fingerprint: "f",
     };
-    store.insert({ ...sample({ severity: "debug", class: "provider.malformed_tool_json_salvaged" }), ...base, id: "a" });
-    store.insert({ ...sample({ severity: "warn", class: "provider.fallback_triggered" }), ...base, id: "b" });
+    store.insert({
+      ...sample({ severity: "debug", class: "provider.malformed_tool_json_salvaged" }),
+      ...base,
+      id: "a",
+    });
+    store.insert({
+      ...sample({ severity: "warn", class: "provider.fallback_triggered" }),
+      ...base,
+      id: "b",
+    });
     store.insert({ ...sample({ severity: "error" }), ...base, id: "c", sessionId: "s2" });
 
     expect(store.list({ minSeverity: "warn" }).length).toBe(2);

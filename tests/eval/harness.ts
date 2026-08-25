@@ -2,11 +2,11 @@ import { mkdir, mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 
-import { Engine } from "@alan/orchestrator";
+import { Engine } from "@gear/orchestrator";
 import type {
   PermissionDecision as BrokerDecision,
   UserPermissionDecision,
-} from "@alan/orchestrator";
+} from "@gear/orchestrator";
 
 import { MockProvider, type Script } from "./mock-provider";
 
@@ -28,6 +28,12 @@ export interface EvalTask {
   /** Customize permission handler responses for this task. Defaults to allow-once. */
   permissionResponses?: UserPermissionDecision[];
   /**
+   * Scripted answers for ask_user, consumed in order (one per question). When
+   * absent, ask_user runs unwired and degrades to its proceed-on-judgment
+   * error — set this for tasks that exercise the clarify-first behavior.
+   */
+  questionResponses?: string[];
+  /**
    * Hard ceiling on completed turns (one per prompt) for this task. A run that
    * exceeds a cap is stopped and FAILED — burning unbounded work is itself the
    * failure, even if the artifact eventually appears.
@@ -37,7 +43,7 @@ export interface EvalTask {
    * Hard ceiling on tool calls across the whole task — the intra-turn runaway
    * guard (turn_complete only fires once per prompt, so a looping model never
    * trips maxTurns). Defaults: none in mock mode (scripts are finite),
-   * ALAN_EVAL_TASK_MAX_TOOL_CALLS (40) in real mode.
+   * GEAR_EVAL_TASK_MAX_TOOL_CALLS (40) in real mode.
    */
   maxToolCalls?: number;
   /** Hard ceiling on provider spend (USD) for this task; same semantics. */
@@ -92,15 +98,15 @@ function isThrottleError(msg: string): boolean {
 /** Real-mode retry/pacing knobs (env-overridable). */
 const MAX_ATTEMPTS = Math.max(
   1,
-  Number(process.env.GEAR_EVAL_MAX_RETRIES ?? process.env.ALAN_EVAL_MAX_RETRIES ?? 3),
+  Number(process.env.GEAR_EVAL_MAX_RETRIES ?? process.env.GEAR_EVAL_MAX_RETRIES ?? 3),
 );
 const RETRY_BASE_MS = Math.max(
   0,
-  Number(process.env.GEAR_EVAL_RETRY_BASE_MS ?? process.env.ALAN_EVAL_RETRY_BASE_MS ?? 4000),
+  Number(process.env.GEAR_EVAL_RETRY_BASE_MS ?? process.env.GEAR_EVAL_RETRY_BASE_MS ?? 4000),
 );
 const TASK_DELAY_MS = Math.max(
   0,
-  Number(process.env.GEAR_EVAL_TASK_DELAY_MS ?? process.env.ALAN_EVAL_TASK_DELAY_MS ?? 1500),
+  Number(process.env.GEAR_EVAL_TASK_DELAY_MS ?? process.env.GEAR_EVAL_TASK_DELAY_MS ?? 1500),
 );
 
 /**
@@ -111,26 +117,26 @@ const TASK_DELAY_MS = Math.max(
 const REAL_DEFAULT_MAX_TOOL_CALLS = Math.max(
   1,
   Number(
-    process.env.GEAR_EVAL_TASK_MAX_TOOL_CALLS ?? process.env.ALAN_EVAL_TASK_MAX_TOOL_CALLS ?? 40,
+    process.env.GEAR_EVAL_TASK_MAX_TOOL_CALLS ?? process.env.GEAR_EVAL_TASK_MAX_TOOL_CALLS ?? 40,
   ),
 );
 /** Default per-task spend cap (USD) in real mode; 0/unset disables. */
 const REAL_DEFAULT_MAX_COST = Math.max(
   0,
-  Number(process.env.GEAR_EVAL_TASK_MAX_COST ?? process.env.ALAN_EVAL_TASK_MAX_COST ?? 0),
+  Number(process.env.GEAR_EVAL_TASK_MAX_COST ?? process.env.GEAR_EVAL_TASK_MAX_COST ?? 0),
 );
 
 const TOOLS_BINARY =
   process.env.GEAR_TOOLS_BINARY ??
-  process.env.ALAN_TOOLS_BINARY ??
-  join(__dirname, "..", "..", "target", "release", "alan-tools");
+  process.env.GEAR_TOOLS_BINARY ??
+  join(__dirname, "..", "..", "target", "release", "gear-tools");
 
 /**
  * Legacy/default real-mode signal via env var. The runner now drives mode
  * explicitly through RunOptions.real, but we keep this export so callers that
  * only set the env var (e.g. the model-sweep path) still behave as before.
  */
-const IS_REAL_MODE = (process.env.GEAR_EVAL_REAL ?? process.env.ALAN_EVAL_REAL) === "1";
+const IS_REAL_MODE = (process.env.GEAR_EVAL_REAL ?? process.env.GEAR_EVAL_REAL) === "1";
 
 export interface RunOptions {
   /** Drive a live model through the real engine/gateway instead of the mock. */
@@ -180,24 +186,24 @@ export async function runTask(task: EvalTask, opts: RunOptions = {}): Promise<Ta
 /** One full attempt at a task: fresh workspace, engine, chat, verify. */
 async function attemptTask(task: EvalTask, opts: RunOptions, real: boolean): Promise<TaskResult> {
   const start = performance.now();
-  const tmpRoot = await mkdtemp(join(tmpdir(), "alan-eval-"));
+  const tmpRoot = await mkdtemp(join(tmpdir(), "gear-eval-"));
   const workspace = join(tmpRoot, "workspace");
   await mkdir(workspace, { recursive: true });
-  const dbPath = join(tmpRoot, "alan.db");
+  const dbPath = join(tmpRoot, "gear.db");
 
   const provider =
     opts.provider ??
     process.env.GEAR_EVAL_PROVIDER ??
-    process.env.ALAN_EVAL_PROVIDER ??
+    process.env.GEAR_EVAL_PROVIDER ??
     process.env.GEAR_PROVIDER ??
-    process.env.ALAN_PROVIDER ??
+    process.env.GEAR_PROVIDER ??
     "anthropic";
   const model =
     opts.model ??
     process.env.GEAR_EVAL_MODEL ??
-    process.env.ALAN_EVAL_MODEL ??
+    process.env.GEAR_EVAL_MODEL ??
     process.env.GEAR_MODEL ??
-    process.env.ALAN_MODEL ??
+    process.env.GEAR_MODEL ??
     "mock-model";
   const errors: string[] = [];
 
@@ -236,6 +242,14 @@ async function attemptTask(task: EvalTask, opts: RunOptions, real: boolean): Pro
       const next = responses[permIndex++];
       return next ?? { kind: "allow_once" };
     });
+
+    // Scripted user answers for ask_user (clarify-first tasks).
+    if (task.questionResponses) {
+      let qIndex = 0;
+      engine.setQuestionHandler(async (q: { question: string; options: string[] }) => {
+        return task.questionResponses![qIndex++] ?? q.options[0] ?? "yes";
+      });
+    }
 
     const sessionId = engine.createSession();
     let turns = 0;

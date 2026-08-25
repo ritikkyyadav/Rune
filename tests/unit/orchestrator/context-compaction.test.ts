@@ -175,8 +175,8 @@ describe("compactWorkingSet — contract C1", () => {
       assistantMsg("msg1"),
       userMsg("msg2"),
       assistantMsg("msg3"),
-      toolUseMsg("call-1"),      // index 4 — naive cut with recentK=6 would land near here
-      toolResultMsg("call-1"),   // index 5
+      toolUseMsg("call-1"), // index 4 — naive cut with recentK=6 would land near here
+      toolResultMsg("call-1"), // index 5
       userMsg("msg6"),
       assistantMsg("msg7"),
       userMsg("msg8"),
@@ -214,8 +214,8 @@ describe("compactWorkingSet — contract C1", () => {
       assistantMsg("b"),
       userMsg("c"),
       assistantMsg("d"),
-      toolUseMsg("call-X"),     // index 4
-      toolResultMsg("call-X"),  // index 5
+      toolUseMsg("call-X"), // index 4
+      toolResultMsg("call-X"), // index 5
       userMsg("e"),
       assistantMsg("f"),
       userMsg("g"),
@@ -252,7 +252,7 @@ describe("compactWorkingSet — contract C1", () => {
       userMsg("0"),
       assistantMsg("1"),
       userMsg("2"),
-      toolUseMsg("pair-A"),    // index 3
+      toolUseMsg("pair-A"), // index 3
       toolResultMsg("pair-A"), // index 4 — naive cut falls here
       userMsg("5"),
       assistantMsg("6"),
@@ -324,7 +324,9 @@ describe("compactWorkingSet — contract C1", () => {
 
   test("returns compacted: false if gateway throws during summary generation", async () => {
     const gateway = {
-      infer: mock(async () => { throw new Error("network error"); }),
+      infer: mock(async () => {
+        throw new Error("network error");
+      }),
       registerProvider: mock(() => {}),
       getProvider: mock(() => null),
       getTotalCost: mock(() => 0),

@@ -1,5 +1,5 @@
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "./types";
-import type { ToolDefinition } from "@alan/llm-gateway";
+import type { ToolDefinition } from "@gear/llm-gateway";
 
 interface CircuitState {
   failures: number;

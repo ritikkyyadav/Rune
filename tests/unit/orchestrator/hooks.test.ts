@@ -14,16 +14,16 @@ import {
 let workspace: string;
 
 beforeEach(async () => {
-  workspace = await mkdtemp(join(tmpdir(), "alan-hooks-"));
+  workspace = await mkdtemp(join(tmpdir(), "gear-hooks-"));
 });
 
 afterEach(async () => {
   await rm(workspace, { recursive: true, force: true });
 });
 
-/** Write `.alan/hooks.json` into the temp workspace. */
+/** Write `.gear/hooks.json` into the temp workspace. */
 async function writeConfig(config: HookConfig | string): Promise<void> {
-  const dir = join(workspace, ".alan");
+  const dir = join(workspace, ".gear");
   await mkdir(dir, { recursive: true });
   const body = typeof config === "string" ? config : JSON.stringify(config, null, 2);
   await writeFile(join(dir, "hooks.json"), body);
@@ -65,12 +65,12 @@ describe("matchesPattern", () => {
 // ─── loadHookConfig ───
 
 describe("loadHookConfig", () => {
-  test("missing .alan/hooks.json returns {}", async () => {
+  test("missing .gear/hooks.json returns {}", async () => {
     const config = await loadHookConfig(workspace);
     expect(config).toEqual({});
   });
 
-  test("missing .alan dir entirely returns {} (no throw)", async () => {
+  test("missing .gear dir entirely returns {} (no throw)", async () => {
     const config = await loadHookConfig(join(workspace, "does", "not", "exist"));
     expect(config).toEqual({});
   });
@@ -190,10 +190,7 @@ describe("runPreToolUse blocking", () => {
   });
 
   test("hook with omitted blocking defaults to non-blocking (does not block)", async () => {
-    const runner = createHookRunner(
-      { preToolUse: [{ command: "exit 1" }] },
-      workspace,
-    );
+    const runner = createHookRunner({ preToolUse: [{ command: "exit 1" }] }, workspace);
     expect((await runner.runPreToolUse("edit_file", {})).allow).toBe(true);
   });
 
@@ -212,13 +209,11 @@ describe("runPreToolUse blocking", () => {
     expect(decision.reason).toContain("code 3");
   });
 
-  test("passes ALAN_TOOL_NAME via env to the command", async () => {
+  test("passes GEAR_TOOL_NAME via env to the command", async () => {
     // Hook fails only when the env var is wrong, so allow:true proves it was set.
     const runner = createHookRunner(
       {
-        preToolUse: [
-          { command: '[ "$ALAN_TOOL_NAME" = "edit_file" ] || exit 1', blocking: true },
-        ],
+        preToolUse: [{ command: '[ "$GEAR_TOOL_NAME" = "edit_file" ] || exit 1', blocking: true }],
       },
       workspace,
     );
@@ -298,11 +293,9 @@ describe("runPreToolUse timeout", () => {
 describe("runPostToolUse and lifecycle hooks", () => {
   test("postToolUse never throws even when the command fails", async () => {
     const logs: string[] = [];
-    const runner = createHookRunner(
-      { postToolUse: [{ command: "exit 1" }] },
-      workspace,
-      { logger: (m) => logs.push(m) },
-    );
+    const runner = createHookRunner({ postToolUse: [{ command: "exit 1" }] }, workspace, {
+      logger: (m) => logs.push(m),
+    });
     // Must resolve, not reject.
     await runner.runPostToolUse("edit_file", { success: false, error: "boom" });
     expect(logs.some((l) => l.includes("postToolUse"))).toBe(true);
@@ -320,13 +313,11 @@ describe("runPostToolUse and lifecycle hooks", () => {
     expect(logs).toHaveLength(0);
   });
 
-  test("postToolUse passes ALAN_TOOL_OUTPUT and succeeds quietly on exit 0", async () => {
+  test("postToolUse passes GEAR_TOOL_OUTPUT and succeeds quietly on exit 0", async () => {
     const logs: string[] = [];
     const runner = createHookRunner(
       {
-        postToolUse: [
-          { command: '[ -n "$ALAN_TOOL_OUTPUT" ] && exit 0 || exit 1' },
-        ],
+        postToolUse: [{ command: '[ -n "$GEAR_TOOL_OUTPUT" ] && exit 0 || exit 1' }],
       },
       workspace,
       { logger: (m) => logs.push(m) },

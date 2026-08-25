@@ -69,6 +69,26 @@ fn output_result<T: serde::Serialize>(result: Result<T, gear_tools::error::ToolE
 
 #[tokio::main]
 async fn main() {
+    // Interrupt handling: the CLI cancels a tool call (Esc) by SIGTERM-ing
+    // this process. The running command lives in its OWN process group (so
+    // timeouts can kill whole trees), which also means our death alone would
+    // ORPHAN it — the "interrupted" bash run kept running for up to its full
+    // timeout, holding ports and files. Kill the registered child first, then
+    // exit with the conventional interrupted status.
+    #[cfg(unix)]
+    tokio::spawn(async {
+        use tokio::signal::unix::{SignalKind, signal};
+        let term = signal(SignalKind::terminate());
+        let int = signal(SignalKind::interrupt());
+        if let (Ok(mut term), Ok(mut int)) = (term, int) {
+            tokio::select! {
+                _ = term.recv() => {},
+                _ = int.recv() => {},
+            }
+            gear_sandbox::active_child::kill_active();
+            std::process::exit(130);
+        }
+    });
     let cli = Cli::parse();
     let workspace = std::fs::canonicalize(&cli.workspace).unwrap_or(cli.workspace.clone());
     let input_json = read_stdin();

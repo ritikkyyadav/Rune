@@ -8,15 +8,14 @@
  *
  * CLI agent usage:
  *   import { exportSession, verifyExport } from "./session-export";
- *   const result = await exportSession(dbPath, sessionId, { format: "md", sign: true, keyPath: "~/.alan/keys" });
+ *   const result = await exportSession(dbPath, sessionId, { format: "md", sign: true, keyPath: "~/.gear/keys" });
  *   const ok = verifyExport(result.content, result.signature!, result.publicKey!);
  */
 
 import { createHash } from "node:crypto";
-import { homedir } from "node:os";
 import { join } from "node:path";
-import { SessionManager } from "@alan/shared";
-import type { SessionInfoInternal } from "@alan/shared";
+import { SessionManager, getGearHome } from "@gear/shared";
+import type { SessionInfoInternal } from "@gear/shared";
 import { eventsToMessages } from "./session-replay";
 import { loadOrGenerateKeyPair, signBytes, verifySignature } from "./signing";
 
@@ -28,7 +27,7 @@ export interface ExportOptions {
   /**
    * Path to a directory holding ed25519.key / ed25519.pub.
    * If the files do not exist they are generated automatically.
-   * Defaults to ~/.alan/keys.
+   * Defaults to ~/.gear/keys.
    */
   keyPath?: string;
 }
@@ -167,7 +166,7 @@ export async function exportSession(
       return { content };
     }
 
-    const keyDir = opts.keyPath ?? join(homedir(), ".alan", "keys");
+    const keyDir = opts.keyPath ?? join(getGearHome(), "keys");
     const { privateKeyPem, publicKeyPem } = loadOrGenerateKeyPair(keyDir);
     const contentBytes = Buffer.from(content, "utf8");
     const signature = signBytes(contentBytes, privateKeyPem);

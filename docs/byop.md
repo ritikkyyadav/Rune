@@ -1,18 +1,18 @@
 # Bring Your Own Provider (BYOP) — authentication
 
 Gear can authenticate a provider by any of four methods. The rest of Gear never
-learns *how* a provider signed in — it asks for an authenticated provider and
+learns _how_ a provider signed in — it asks for an authenticated provider and
 streams. This is an **authentication-layer** feature: no new LLM providers are
 added, and existing API-key users see zero behavior change.
 
 ## Auth methods
 
-| Method | What it is | Providers |
-|---|---|---|
-| **api_key** | A bearer secret you paste or supply via env var (today's path). | all cloud providers |
-| **oauth** | Browser authorization-code + PKCE (loopback redirect). | OpenRouter (reference); Anthropic behind a flag |
-| **device** | OAuth device-code (headless / SSH-friendly). | framework ready; no provider wired by default |
-| **local** | A localhost runtime reached by URL — connectivity, no credential. | Ollama, LM Studio |
+| Method      | What it is                                                        | Providers                                       |
+| ----------- | ----------------------------------------------------------------- | ----------------------------------------------- |
+| **api_key** | A bearer secret you paste or supply via env var (today's path).   | all cloud providers                             |
+| **oauth**   | Browser authorization-code + PKCE (loopback redirect).            | OpenRouter (reference); Anthropic behind a flag |
+| **device**  | OAuth device-code (headless / SSH-friendly).                      | framework ready; no provider wired by default   |
+| **local**   | A localhost runtime reached by URL — connectivity, no credential. | Ollama, LM Studio                               |
 
 A provider declares its supported methods; when you don't choose one, Gear
 auto-selects: the first method that has stored credentials, else the provider's
@@ -46,13 +46,13 @@ Gear stores secrets in the best available OS-native store, chosen automatically:
 1. **macOS** → Keychain (`security`)
 2. **Linux** → Secret Service / libsecret (`secret-tool`)
 3. **Windows** → DPAPI (per-user, via PowerShell)
-4. **fallback** → `~/.alan/credentials.json`, mode `0600`, **plaintext**
+4. **fallback** → `~/.gear/credentials.json`, mode `0600`, **plaintext**
 
 When the plaintext fallback is in use (no OS keychain available), Gear prints a
 one-line notice on every write and shows it in `gear providers`:
 
 ```
-⚠ credentials stored unencrypted at ~/.alan/credentials.json (no OS keychain available)
+⚠ credentials stored unencrypted at ~/.gear/credentials.json (no OS keychain available)
 ```
 
 The secure backends shell out to first-party OS tools rather than a native
@@ -87,7 +87,7 @@ path changes.
 
 ## Config
 
-All additive and optional. In `~/.alan/config.toml` or `<workspace>/.alan/config.toml`:
+All additive and optional. In `~/.gear/config.toml` or `<workspace>/.gear/config.toml`:
 
 ```toml
 [llm]
@@ -101,6 +101,6 @@ When omitted, the method is auto-selected as described above.
 
 ## Migrating existing keys
 
-`gear login --migrate` copies API keys from the legacy `~/.alan/secrets.json`
+`gear login --migrate` copies API keys from the legacy `~/.gear/secrets.json`
 into the secure store. It never overwrites an existing entry and **never deletes
 secrets.json**, so rollback is trivial. See [byop-migration.md](./byop-migration.md).

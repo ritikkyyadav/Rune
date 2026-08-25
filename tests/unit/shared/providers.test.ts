@@ -71,11 +71,11 @@ describe("auth methods + descriptor", () => {
   });
 
   it("offers Anthropic subscription OAuth (Claude Pro/Max) with api_key as fallback", () => {
-    // Ships enabled now (no BERNE_ANTHROPIC_OAUTH flag): oauth preferred, api_key
+    // Ships enabled now (no GEAR_ANTHROPIC_OAUTH flag): oauth preferred, api_key
     // fallback. Env-independent — existing key/env users still resolve to api_key
     // because no OAuth session is stored (see resolveProviderCredentials).
     expect(effectiveAuthMethods(getPreset("anthropic")!, noEnv)).toEqual(["oauth", "api_key"]);
-    const anyEnv = { BERNE_ANTHROPIC_OAUTH: "1" } as NodeJS.ProcessEnv;
+    const anyEnv = { GEAR_ANTHROPIC_OAUTH: "1" } as NodeJS.ProcessEnv;
     expect(effectiveAuthMethods(getPreset("anthropic")!, anyEnv)).toEqual(["oauth", "api_key"]);
   });
 
@@ -113,7 +113,9 @@ describe("subscription login labels (pi-style picker)", () => {
 
   it("labels methods the way pi does: account vs API key", () => {
     expect(authMethodLabel("api_key")).toBe("Sign in with an API key");
-    expect(authMethodLabel("oauth", "anthropic")).toBe("Sign in with your Claude Pro/Max subscription");
+    expect(authMethodLabel("oauth", "anthropic")).toBe(
+      "Sign in with your Claude Pro/Max subscription",
+    );
     expect(authMethodLabel("device", "copilot")).toBe(
       "Sign in with your GitHub Copilot subscription",
     );

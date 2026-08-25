@@ -1,4 +1,4 @@
-import type { Message } from "@alan/llm-gateway";
+import type { Message } from "@gear/llm-gateway";
 import { tokenCounter } from "../tokenizer";
 
 /**

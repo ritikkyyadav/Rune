@@ -144,7 +144,9 @@ describe("GoogleProvider", () => {
     mockFetch(() =>
       sse([
         {
-          candidates: [{ content: { role: "model", parts: [{ text: "ok" }] }, finishReason: "STOP" }],
+          candidates: [
+            { content: { role: "model", parts: [{ text: "ok" }] }, finishReason: "STOP" },
+          ],
         },
       ]),
     );
@@ -196,7 +198,10 @@ describe("GoogleProvider", () => {
           JSON.stringify({
             candidates: [
               {
-                content: { role: "model", parts: [{ functionCall: { name: "list_dir", args: {} } }] },
+                content: {
+                  role: "model",
+                  parts: [{ functionCall: { name: "list_dir", args: {} } }],
+                },
                 finishReason: "STOP",
               },
             ],

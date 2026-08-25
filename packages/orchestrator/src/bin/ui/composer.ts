@@ -9,7 +9,7 @@ import {
   isOsIsolationAvailable,
   isSandboxEnabled,
   getSandboxCapability,
-} from "@alan/tool-registry";
+} from "@gear/tool-registry";
 import {
   accent,
   faint,
@@ -29,7 +29,8 @@ import {
   codeSurface,
   chip,
 } from "./theme";
-import { clampVisible, truncate, rule, visLen, wrap, meterGlyphs, railCard } from "./render";
+import { clampVisible, truncate, rule, visLen, wrap, railCard } from "./render";
+import * as F from "./flow";
 import { GEAR_MARK } from "./banner";
 import type { PermissionPreview, PermissionPreviewLine } from "./permission-preview";
 
@@ -154,15 +155,16 @@ export function permissionModeBadge(mode?: string): string {
 }
 
 /**
- * The v2 footer context meter: `ctx ▮▮▯▯▯ 41%`. Quiet below the 70% warn
- * threshold, ochre when compaction is near, red when hot (≥90%). Renders
- * nothing until a real percentage exists — the meter never guesses.
+ * Context occupancy as a plain number. A five-cell meter told you less than
+ * `41% context` does and cost four more columns to say it — and it stays quiet
+ * until it matters: ochre when compaction is near, red when it is imminent.
  */
 export function contextMeter(percent: number | undefined): string | null {
   if (percent == null || !Number.isFinite(percent) || percent <= 0) return null;
   const pct = Math.max(0, Math.min(100, Math.round(percent)));
+  if (pct < 50) return null;
   const paint = pct >= 90 ? accent : pct >= 70 ? warn : faint;
-  return `${paint(`ctx ${meterGlyphs(pct)} ${pct}%`)}`;
+  return paint(`${pct}% context`);
 }
 
 /** A footer key hint: the key in the secondary tone, the word faint. */
@@ -171,46 +173,35 @@ function keyHint(key: string, word: string): string {
 }
 
 /**
- * The v2 footer strip: mode indicator + what it means · context meter ·
- * key hints, with `? shortcuts` at the right edge. Narrow terminals drop the
- * description and shorten the hints rather than wrapping.
+ * The footer: what gear you are in and what that means, then the two keys that
+ * change it. Everything else the terminal already knows. Narrow terminals drop
+ * the description, then the hint words — the gear itself never drops, because a
+ * hidden permission state is the one thing this strip exists to prevent.
  */
 export function statusLine(s: ComposerStatus, width = process.stdout.columns || 80): string {
-  const max = Math.max(8, width - 1);
-  const extras: string[] = [];
-  if (s.loop) extras.push(faint(`↻ ${s.loop}`));
-  if (s.sandboxOff) extras.push(bold(warn("▲ sandbox off")));
+  const max = Math.max(8, Math.min(F.surfaceWidth(), width - 1));
   const mode = modeInfo(s.mode);
   const meter = contextMeter(s.contextPercent);
   const sep = ` ${faint("·")} `;
-  const right = keyHint("?", "shortcuts");
+  const extras: string[] = [];
+  if (s.loop) extras.push(faint(`↻ ${s.loop}`));
+  if (s.sandboxOff) extras.push(warn("sandbox off"));
 
   const badge = `  ${permissionModeBadge(s.mode)}`;
-  const described = `${badge}  ${faint(mode.desc)}`;
-  const fullHints = [
-    keyHint("shift+tab", "mode"),
-    keyHint("esc", "interrupt"),
-    keyHint("←", "sessions"),
-  ].join("   ");
-  const shortHints = [keyHint("shift+tab", "mode"), faint("esc · ←")].join("   ");
-  // Widest reading first; each tier gives up one thing (hint words, then the
-  // description) before the strip ever wraps or truncates.
+  const described = `${badge}${sep}${faint(mode.desc)}`;
+  const right = keyHint("?", "keys");
+  const fullHints = [keyHint("shift+tab", "gear"), keyHint("esc", "stop")].join("  ");
+
   const tiers: Array<[string, string]> = [
-    [[described, ...(meter ? [meter] : []), fullHints, ...extras].join(sep), right],
-    [[described, ...(meter ? [meter] : []), shortHints, ...extras].join(sep), right],
-    [[badge, ...(meter ? [meter] : []), shortHints, ...extras].join(sep), right],
+    [[described, ...(meter ? [meter] : []), ...extras, fullHints].join(sep), right],
+    [[described, ...(meter ? [meter] : []), ...extras].join(sep), right],
+    [[badge, ...(meter ? [meter] : []), ...extras].join(sep), right],
   ];
   for (const [left, edge] of tiers) {
     const gap = max - visLen(left) - visLen(edge);
     if (gap >= 2) return `${left}${" ".repeat(gap)}${edge}`;
   }
-  const compact = [
-    badge,
-    ...(meter ? [meter] : []),
-    faint("shift+tab · esc · ← · ?"),
-    ...extras,
-  ].join(sep);
-  return clampVisible(compact, max);
+  return clampVisible(badge, max);
 }
 
 /**
@@ -221,9 +212,9 @@ export function statusLine(s: ComposerStatus, width = process.stdout.columns || 
  */
 export function renderQueueStrip(queued: readonly string[], width: number): string[] {
   if (queued.length === 0) return [];
-  const max = Math.max(12, width - 1);
+  const max = Math.max(12, F.measure(width - 1));
   const inner = Math.max(10, Math.min(100, max - 2));
-  const lines = [`  ${bold(faint("QUEUED · SENDS WHEN THIS TURN COMPLETES"))}`];
+  const lines = [`  ${faint("queued · sends when this turn completes")}`];
   const hint = "⌫ removes the last";
   queued.forEach((message, index) => {
     const last = index === queued.length - 1;
@@ -240,18 +231,33 @@ export function renderQueueStrip(queued: readonly string[], width: number): stri
 }
 
 /**
- * A transient one-liner announcing the active gear — printed into the
- * transcript each time Shift+Tab shifts. 4th gear is loud because it silences
- * every prompt; the others are calm.
+ * A transient one-liner announcing a state change: a mark, the state, and the
+ * sentence that says what it costs you — wrapped to the measure so a long
+ * explanation is readable rather than clipped, and always ending with the exact
+ * command that reverses it.
+ */
+function stateBanner(
+  mark: string,
+  label: string,
+  detail: string,
+  undo: string,
+  paint: (v: string) => string,
+  loud = false,
+): string {
+  const head = `${F.MARK}${paint(mark)} ${loud ? bold(paint(label)) : paint(label)}`;
+  const body = wrap(`${detail} ${undo}`, F.proseWidth()).map((part) => `${F.BODY}${muted(part)}`);
+  return ["", head, ...body].join("\n");
+}
+
+/**
+ * The active gear, printed each time Shift+Tab shifts. 4th gear is loud because
+ * it silences every prompt; the others are calm, because they still ask.
  */
 export function permissionModeBanner(mode?: string): string {
   const m = modeInfo(mode);
-  const head = m.loud ? bold(m.paint(`${m.arrows} ${m.label}`)) : m.paint(`${m.arrows} ${m.label}`);
-  const body = m.loud ? text(m.detail) : muted(m.detail);
-  return `  ${head} ${faint("·")} ${body} ${faint("(shift+tab to shift up)")}`;
+  return stateBanner(m.arrows, m.label, m.detail, "(shift+tab to shift up)", m.paint, m.loud);
 }
 
-/** How an Auto-mode allow was reached, in the chip's own words. */
 const AUTO_TIER_LABEL: Record<string, string> = {
   safe: "safe-listed",
   workspace: "workspace-confined",
@@ -268,15 +274,16 @@ export function autoApprovedChip(notice: {
   tier?: string;
 }): string {
   const how = (notice.tier && AUTO_TIER_LABEL[notice.tier]) || "classifier reviewed";
-  return (
-    `    ${chip("brand", " ⛨ auto-approved ")}  ${muted(notice.toolName)} ` +
-    `${faint(`· ${how} · risk: ${notice.risk} · logged to audit trail`)}`
+  return F.row(
+    `${F.BODY}${info("✓")} ${muted("auto-approved")}  ${text(notice.toolName)}`,
+    faint(`${how} · risk ${notice.risk}`),
   );
 }
 
 /**
- * The ochre rung of the v2 status ladder while a human decision is pending:
- * `⚙︎ Waiting on approval… (6s · shell needs a decision in 1st gear)`.
+ * The rung shown while a human decision is pending. It uses the same caution
+ * mark the approval prompt does, so the thing you are waiting on and the thing
+ * asking look like the same thing.
  */
 export function waitingRung(seconds: number, toolName: string, mode?: string): string {
   const kind =
@@ -288,55 +295,69 @@ export function waitingRung(seconds: number, toolName: string, mode?: string): s
           ? "network access"
           : toolName;
   return (
-    `  ${warn(GEAR_MARK)} ${bold(warn("Waiting on approval"))}${faint("…")} ` +
-    `${faint(`(${Math.max(0, seconds)}s · ${kind} needs a decision in ${modeInfo(mode).label})`)}`
+    `${F.MARK}${warn("▸")} ${warn("waiting on you")}  ` +
+    `${faint(`${Math.max(0, seconds)}s · ${kind} needs a decision in ${modeInfo(mode).label}`)}`
   );
 }
 
 /**
- * A transient one-liner announcing the sandbox posture — printed when `/sandbox`
- * toggles (and by `/sandbox` with no argument as a status readout). Off is loud
- * for the same reason Autonomy III is: it removes a containment layer.
+ * The sandbox posture, printed when `/sandbox` toggles (and as a readout when
+ * it is called with no argument). Off is loud for the same reason 4th gear is:
+ * it removes a containment layer. "On" is only an isolation claim when this
+ * machine can actually isolate — on the degraded path the banner is just as
+ * loud, because the user would otherwise be trusting a layer that is not there.
  */
 export function sandboxModeBanner(enabled: boolean): string {
   if (!enabled) {
-    return (
-      `  ${bold(warn("▲ Sandbox off"))} ${faint("·")} ` +
-      `${text("commands run directly on this machine with full network & filesystem access.")} ` +
-      `${faint("(/sandbox on to re-enable)")}`
+    return stateBanner(
+      "▲",
+      "sandbox off",
+      "Commands run directly on this machine, with full network and filesystem access.",
+      "(/sandbox on to re-enable)",
+      warn,
+      true,
     );
   }
-  // "On" is only an isolation claim when this machine can actually isolate.
-  // On the degraded path (no seatbelt/bwrap) the banner must be as loud as
-  // "off" — the user is trusting a containment layer that does not exist.
   if (!isOsIsolationAvailable()) {
-    return (
-      `  ${bold(warn("▲ Sandbox on — NOT ISOLATED"))} ${faint("·")} ` +
-      `${text("no OS sandbox backend on this machine (" + getSandboxCapability().mechanism + "): commands run with path-guard checks only, full network & host access; bash prompts for approval.")} ` +
-      `${faint("(install sandbox-exec/bwrap for real isolation)")}`
+    return stateBanner(
+      "▲",
+      "sandbox on — not isolated",
+      `No OS sandbox backend on this machine (${getSandboxCapability().mechanism}): commands run with path-guard checks only, full network and host access, and bash still asks for approval.`,
+      "(install sandbox-exec or bwrap for real isolation)",
+      warn,
+      true,
     );
   }
-  return (
-    `  ${ok("◆ Sandbox on")} ${faint("·")} ` +
-    `${muted("commands run in an OS sandbox — no network, workspace-confined writes; network: true escalates one call.")} ` +
-    `${faint("(/sandbox off for full access)")}`
+  return stateBanner(
+    "◆",
+    "sandbox on",
+    "Commands run in an OS sandbox — no network, workspace-confined writes. A call that sets network: true escalates just that one command.",
+    "(/sandbox off for full access)",
+    ok,
   );
 }
 
 /**
- * A transient one-liner announcing the agent-browser posture — printed when
- * `/browser` toggles (and by `/browser` with no argument as a status readout).
- * First enable is chatty on purpose: bunx fetches @playwright/mcp, so the
- * tools can take a few seconds to appear.
+ * The agent-browser posture, printed when `/browser` toggles. First enable is
+ * chatty on purpose: bunx fetches @playwright/mcp, so the tools take a few
+ * seconds to appear and silence would read as a hang.
  */
 export function browserModeBanner(enabled: boolean): string {
   return enabled
-    ? `  ${ok("◆ Browser on")} ${faint("·")} ` +
-        `${muted("Gear can drive a headless, isolated browser (Playwright MCP) — navigate, read, fill, click; first use fetches @playwright/mcp (and a managed Chromium if none is installed).")} ` +
-        `${faint("(/browser off to disable)")}`
-    : `  ${text("◇ Browser off")} ${faint("·")} ` +
-        `${muted("no agent browser — web_fetch/web_search only.")} ` +
-        `${faint("(/browser on to enable)")}`;
+    ? stateBanner(
+        "◆",
+        "browser on",
+        "Gear can drive a headless, isolated browser (Playwright MCP) — navigate, read, fill, click. First use fetches @playwright/mcp, and a managed Chromium if none is installed.",
+        "(/browser off to disable)",
+        ok,
+      )
+    : stateBanner(
+        "◇",
+        "browser off",
+        "No agent browser — web_fetch and web_search only.",
+        "(/browser on to enable)",
+        muted,
+      );
 }
 
 /**
@@ -345,7 +366,7 @@ export function browserModeBanner(enabled: boolean): string {
  * same light visual boundary as the raw-mode composer.
  */
 export function composerRule(): string {
-  return rule(undefined, { color: hairline });
+  return rule(F.surfaceWidth(), { color: hairline });
 }
 
 // ─── Pinned composer (TUI) ───
@@ -386,7 +407,7 @@ export function renderWorkReview(
   const view = source.slice(start, start + pageSize);
   const range =
     source.length > pageSize ? ` · ${start + 1}–${start + view.length} of ${source.length}` : "";
-  const maxWidth = Math.max(8, width - 1);
+  const maxWidth = Math.max(8, F.measure(width - 1));
   const lines = [
     clampVisible(`${title}${faint(range)}`, maxWidth),
     ...view.map((line) => clampVisible(line, maxWidth)),
@@ -395,12 +416,19 @@ export function renderWorkReview(
   return { lines, caretRow: 0, caretCol: 0 };
 }
 
-/** Placeholder shown in the empty composer (the terminal cursor sits on its first char). */
-export const COMPOSER_PLACEHOLDER = "Give Gear a coding task (or / for commands)…";
+/** Placeholder shown in the empty composer. It says the two things a first-run
+ *  reader cannot guess, and nothing else. */
+export const COMPOSER_PLACEHOLDER = "describe a change, or / for commands";
 
-/** The pinned composer: an open hairline writing surface and quiet status footer. */
+/**
+ * The writing surface: one hairline, one chevron, your text. It spans the same
+ * measure as the transcript above it, so the whole session reads as a single
+ * column rather than a wide footer under a narrow log.
+ */
 export function renderComposer(state: ComposerState): RenderedBlock {
-  const width = Math.max(12, state.width);
+  // Chrome spans the window: the hairline divides the screen, not the sentence,
+  // and a composer that stops short of the edge reads as a half-drawn box.
+  const width = Math.max(12, Math.min(F.surfaceWidth(), state.width - 1));
   const statusLines = state.status ? state.status.split("\n") : [];
 
   if (state.working) {
@@ -411,15 +439,14 @@ export function renderComposer(state: ComposerState): RenderedBlock {
     };
   }
 
-  const frameW = width - 4; // PAD + frame stays strictly inside the terminal edge
-  const textW = Math.max(1, frameW - 2); // minus the `› ` prompt
+  const textW = Math.max(1, width - 4); // PAD(2) + `›`(1) + space(1)
 
   // Horizontal scroll so the caret stays visible within the window.
   let scroll = 0;
   if (state.caret > textW - 1) scroll = state.caret - textW + 1;
   // Newlines/control chars would spill the "single-line" box across rows and break the pinned
-  // region's row math — flatten them to spaces (pastes are collapsed to chips upstream, but a stray
-  // control byte must never desync the frame).
+  // region's row math (pastes are collapsed to chips upstream, but a stray control byte must
+  // never desync the frame).
   const slice = state.input
     .slice(scroll, scroll + textW)
     .replace(/[\r\n\t\x00-\x08\x0b-\x1f]/g, " ");
@@ -428,9 +455,7 @@ export function renderComposer(state: ComposerState): RenderedBlock {
       ? faint(COMPOSER_PLACEHOLDER.padEnd(textW, " ").slice(0, textW))
       : text(slice.padEnd(textW, " "));
 
-  // The reference has one hairline above the prompt, then the footer directly
-  // beneath it. A second rule made the composer feel like a heavy input box.
-  const top = `${PAD}${hairline("─".repeat(frameW))}`;
+  const top = hairline("─".repeat(width));
   const mid = `${PAD}${muted("›")} ${body}`;
 
   // PAD(2) + `›`(1) + space(1) = 4 cols before the input text.
@@ -478,6 +503,13 @@ export interface PermissionCardOptions {
   hints?: [string, string, string];
 }
 
+/** The three decisions, as answers to the question rather than button labels. */
+const PERMISSION_LABELS = [
+  "yes, once",
+  "yes, and stop asking this session",
+  "no, skip it",
+] as const;
+
 function fallbackPermissionPreview(toolName: string, argsSummary: string): PermissionPreview {
   const { title, body } = permissionView(toolName, argsSummary);
   return {
@@ -489,21 +521,19 @@ function fallbackPermissionPreview(toolName: string, argsSummary: string): Permi
     removed: 0,
     truncated: false,
     guard: "No action taken yet",
-    choices: ["Yes, allow once", "Yes, allow this tool for this session", "No, cancel"],
+    choices: [...PERMISSION_LABELS],
   };
 }
 
 function permissionDiffLine(row: PermissionPreviewLine, width: number): string {
-  if (row.kind === "hunk") return faint(truncate(`@@ ${row.text}`, width));
-
-  const number = row.kind === "add" ? row.newLine : row.oldLine;
-  const gutter = `${String(number ?? "").padStart(4)} `;
-  const marker = row.kind === "add" ? "+" : row.kind === "remove" ? "-" : " ";
-  const contentWidth = Math.max(1, width - visLen(gutter) - 2);
-  const code = truncate(row.text, contentWidth);
-  if (row.kind === "add") return `${faint(gutter)}${bold(ok(marker))} ${ok(code)}`;
-  if (row.kind === "remove") return `${faint(gutter)}${bold(accent(marker))} ${accent(code)}`;
-  return `${faint(gutter + marker + " ")}${muted(code)}`;
+  if (row.kind === "hunk") return `${F.BODY}   ${faint(truncate(`⋯ ${row.text}`, width))}`;
+  return F.diffRows([
+    {
+      kind: row.kind === "add" ? "add" : row.kind === "remove" ? "remove" : "context",
+      line: row.kind === "add" ? row.newLine : row.oldLine,
+      text: row.text,
+    },
+  ])[0]!;
 }
 
 /** The head chip: `bash · sandboxed`, `edit_file · workspace`, `web_fetch · network`.
@@ -519,15 +549,11 @@ function permissionTag(toolName: string, preview: PermissionPreview): string {
   return scope && scope !== "explicit approval" ? `${toolName} · ${scope}` : toolName;
 }
 
-/** The three decisions, in the contract's words (the action itself is the card). */
-const PERMISSION_LABELS = ["Allow once", "Allow for session", "Deny"] as const;
-
 /**
- * The v2 permission card (`.perm-card`): an ochre left rail on the bar
- * surface — head + tag, the proposed action (command box or located diff), the
- * risk row computed from real arguments, three button-style decisions, and the
- * audit-trail note. Still an open rail, never a floating dialog: one accent,
- * real evidence, three predictable choices, and no fake chrome.
+ * The approval prompt. It reads as a question with answers, not a dialog with
+ * buttons: the caution mark and the question, the literal thing that would
+ * happen, what it costs, then numbered choices with escape as the stated
+ * default. Nothing has run yet, and the footnote says so.
  */
 export function renderPermissionCard(
   toolName: string,
@@ -537,95 +563,64 @@ export function renderPermissionCard(
 ): RenderedBlock {
   const preview = options.preview ?? fallbackPermissionPreview(toolName, argsSummary);
   const selected = Math.max(0, Math.min(2, options.selected ?? 0));
-  const max = Math.max(11, width - 1);
-  const cardWidth = Math.max(16, Math.min(100, max - 2));
-  const inner = cardWidth - 3; // railCard's row width
-  const body = Math.max(6, inner - 2); // rows indented two cells under the head
+  const measure = F.measure(width);
+  const body = Math.max(12, measure - F.RAIL_IN.length);
   const previewLimit = Math.max(
     0,
-    Math.min(options.maxPreviewLines ?? (width < 52 ? 3 : 7), preview.lines.length),
+    Math.min(options.maxPreviewLines ?? (width < 52 ? 3 : 9), preview.lines.length),
   );
   const shownPreview = preview.lines.slice(0, previewLimit);
   const clipped = preview.truncated || shownPreview.length < preview.lines.length;
-  const rows: string[] = [];
 
-  rows.push(
-    `${warn("⚠")} ${bold(text("Permission required"))}  ${chip("warn", ` ${permissionTag(toolName, preview)} `)}`,
-  );
-  if (preview.reason) {
-    rows.push(
-      `  ${faint("Why Gear paused:")} ${muted(truncate(preview.reason, Math.max(4, body - 17)))}`,
+  // The proposal itself: a command verbatim, or the located diff it would write.
+  const command = toolName === "bash" ? (preview.detail ?? "").replace(/^\$\s+/, "") : "";
+  const evidence: string[] = [];
+  if (!command && preview.target) {
+    evidence.push(
+      F.row(
+        `${F.BODY}${info(truncate(preview.target, Math.max(4, body - 20)))}`,
+        shownPreview.length > 0 ? muted(F.editMetric(preview.added, preview.removed)) : "",
+      ),
     );
-  }
-  rows.push("");
-
-  // The proposed action: a command box, a located diff, or the plain detail.
-  if (toolName === "bash") {
-    const command = truncate((preview.detail ?? "").replace(/^\$\s+/, ""), Math.max(4, body - 6));
-    rows.push(`  ${codeSurface(` ${bold(muted("$"))} ${text(command)} `)}`);
-  } else if (preview.target) {
-    const counts =
-      shownPreview.length > 0
-        ? `  ${ok("+" + preview.added)} ${accent("−" + preview.removed)}`
-        : "";
-    const summary = preview.summary ? `  ${faint(preview.summary)}` : "";
-    const clip = clipped ? `  ${faint("· preview clipped")}` : "";
-    rows.push(
-      `  ${bold(text(truncate(preview.target, Math.max(4, body - 24))))}${counts}${summary}${clip}`,
-    );
-    for (const diffLine of shownPreview) rows.push(`  ${permissionDiffLine(diffLine, body)}`);
-  } else if (preview.detail) {
-    rows.push(`  ${text(truncate(preview.detail, body))}`);
+    for (const diffLine of shownPreview) evidence.push(permissionDiffLine(diffLine, body));
+    if (clipped) evidence.push(`${F.BODY}   ${faint("⋯ preview clipped")}`);
+  } else if (!command && preview.detail) {
+    evidence.push(`${F.BODY}${text(truncate(preview.detail, body))}`);
   }
 
-  // v2 risk row: each fact computed from the actual arguments (and the live
-  // rate limiter), colored by tone. Facts that cannot be known are absent —
-  // the row never pads itself with reassuring guesses. Facts wrap onto extra
-  // rows rather than truncate: a clipped risk statement is worse than none.
-  if (preview.risk && preview.risk.length > 0) {
-    const tonePaint = { ok, warn, accent, muted } as const;
-    const facts = preview.risk.map((fact) => {
-      const paint = tonePaint[fact.tone ?? "muted"] ?? muted;
-      return `${faint(fact.label + ":")} ${paint(fact.value)}`;
-    });
-    let row = "";
-    for (const factText of facts) {
-      const candidate = row ? `${row}${faint(" · ")}${factText}` : factText;
-      if (row && visLen(candidate) > body) {
-        rows.push(`  ${row}`);
-        row = factText;
-      } else {
-        row = candidate;
-      }
-    }
-    if (row) rows.push(`  ${row}`);
-  }
-  rows.push("");
+  // Every fact computed from the real arguments — absent when it cannot be known.
+  const irreversible = (preview.risk ?? []).find((fact) => fact.tone === "accent");
+  const impact = [
+    permissionTag(toolName, preview),
+    ...(preview.risk ?? [])
+      .filter((fact) => fact !== irreversible)
+      .map((fact) => `${fact.label} ${fact.value}`),
+  ].join(" · ");
 
-  // Decisions as buttons: the selection is the filled primary, Deny turns red.
-  const hints = options.hints ?? ["y", "a", "n"];
-  const buttons = PERMISSION_LABELS.map((label, index) => {
-    const active = index === selected;
-    const keyText = hints[index] ?? "";
-    if (active) {
-      const paint = index === 2 ? accent : text;
-      return selection(` ${bold(paint(label))}  ${muted(keyText)} `);
-    }
-    return `${muted(` ${label}`)}  ${faint(keyText)} `;
+  const lines = F.ask({
+    question: preview.question || `${permissionView(toolName, argsSummary).title}?`,
+    command: command || undefined,
+    evidence,
+    impact,
+    irreversible: irreversible
+      ? `This ${irreversible.label} ${irreversible.value}.`.replace(/\.\.$/, ".")
+      : undefined,
+    options: preview.choices?.length === 3 ? [...preview.choices] : [...PERMISSION_LABELS],
+    selected,
+    escape: "cancel",
+    width,
   });
-  const oneRow = `  ${buttons.join("  ")}`;
-  const choiceStart = rows.length;
-  const inline = visLen(oneRow) <= inner;
-  if (inline) rows.push(oneRow);
-  else for (const button of buttons) rows.push(`  ${button}`);
-  const caretRow = inline ? choiceStart : choiceStart + selected;
+  const guard = `${preview.guard} · the decision is recorded in the audit trail`;
+  lines.push("");
+  for (const part of wrap(guard, body)) lines.push(`${F.BODY}${faint(part)}`);
 
-  // The honest footnote: nothing has happened yet, and the decision is recorded.
-  const note = `${preview.guard} · decision is appended to the tamper-evident audit trail · policy: ~/.alan/config.toml`;
-  for (const part of wrap(note, body)) rows.push(`  ${faint(part)}`);
-
-  const lines = ["", ...railCard(rows, { rail: warn, surface: panel, width: cardWidth })];
-  return { lines, caretRow: caretRow + 1, caretCol: 4 };
+  // The caret rests on the highlighted answer, four rows above the escape line.
+  const firstOption = lines.findIndex((row) => stripAnsi(row).trimStart().startsWith("1 "));
+  return {
+    lines,
+    caretRow: firstOption >= 0 ? firstOption + selected : 0,
+    caretCol: 4,
+  };
 }
 
 // ─── List picker overlay (TUI: /model) ───
@@ -668,10 +663,10 @@ export function renderPicker(
   height = Number.POSITIVE_INFINITY,
   options: PickerOptions = {},
 ): RenderedBlock {
-  const maxWidth = Math.max(8, width - 1);
+  const maxWidth = Math.max(8, F.measure(width - 1));
   const popoverRow = (row: string): string =>
     popoverSurface(row + " ".repeat(Math.max(0, maxWidth - visLen(row))));
-  const heading = `${PAD}${bold(faint(title.toUpperCase()))}`;
+  const heading = `${PAD}${muted(title.toLowerCase())}`;
   const close = keyHint("esc", "close");
   const headGap = " ".repeat(Math.max(1, maxWidth - visLen(heading) - visLen(close) - 1));
   const lines: string[] = [clampVisible(popoverRow(`${heading}${headGap}${close}`), maxWidth)];
@@ -738,7 +733,7 @@ export function renderSlashPalette(
     start = Math.min(Math.max(0, sel - Math.floor(MAX / 2)), items.length - MAX);
   const view = items.slice(start, start + MAX);
   const nameW = Math.min(18, Math.max(...view.map((it) => it.name.length)));
-  const maxWidth = Math.max(8, width - 1);
+  const maxWidth = Math.max(8, F.measure(width - 1));
   const popoverRow = (row: string): string =>
     popoverSurface(row + " ".repeat(Math.max(0, maxWidth - visLen(row))));
 
@@ -757,7 +752,7 @@ export function renderSlashPalette(
   });
   const count =
     total != null && total !== items.length ? `${items.length} of ${total}` : String(items.length);
-  const heading = `${PAD}${bold(faint("COMMANDS"))} ${faint(`· ${count}`)}`;
+  const heading = `${PAD}${muted("commands")} ${faint(`· ${count}`)}`;
   const hints =
     width >= 64
       ? faint("↑↓ navigate · tab complete · ⏎ run · esc close")
@@ -830,7 +825,7 @@ export function renderKeysPanel(rows: KeyRow[], selected: number, width: number)
   const keyW = Math.max(10, Math.min(22, width - labelW - 24));
 
   const lines: string[] = [
-    `${PAD}${bold(text("API keys"))}   ${faint("bring your own — applied live, saved to ~/.alan/secrets.json")}`,
+    `${PAD}${bold(text("API keys"))}   ${faint("bring your own — applied live, saved to ~/.gear/secrets.json")}`,
   ];
 
   rows.forEach((r, i) => {
@@ -1065,7 +1060,7 @@ export function renderSessionsPanel(
   width: number,
   height = Number.POSITIVE_INFINITY,
 ): RenderedBlock {
-  const maxWidth = Math.max(8, width - 1);
+  const maxWidth = Math.max(8, F.measure(width - 1));
   const query = opts.query ?? "";
 
   // v2 top bar: mark + heading + Active/Archived tabs, the search field, and
@@ -1131,7 +1126,7 @@ export function renderSessionsPanel(
     const on = idx === sel;
     const group = r.group ?? "";
     if (group && group !== previousGroup) {
-      const label = bold(faint(group.toUpperCase()));
+      const label = muted(group.toLowerCase());
       lines.push(
         clampVisible(
           `${PAD}${label} ${hairline("─".repeat(Math.max(3, maxWidth - visLen(label) - 4)))}`,

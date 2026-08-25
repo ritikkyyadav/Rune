@@ -1,6 +1,6 @@
 import { EpisodicMemory, type EpisodicFact } from "./episodic";
 import { WorkingMemory } from "./working";
-import type { Message } from "@alan/llm-gateway";
+import type { Message } from "@gear/llm-gateway";
 
 /**
  * MemoryManager coordinates episodic and working memory subsystems.

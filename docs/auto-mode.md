@@ -32,7 +32,7 @@ For every proposed tool call, Gear applies these layers in order:
 8. After execution, every real tool result is scanned before either the UI or any agent context sees
    it. Suspicious instructions receive a high-salience untrusted-data warning.
 
-The lead agent, planner executors, read-only investigators, deep-research investigators, and
+The lead agent, read-only investigators, deep-research investigators, and
 owned-file implementation workers all use the same result-screening boundary. Workers also retain
 their existing hard capabilities: no shell, no network, no recursive delegation, and writes only to
 explicitly owned files.
@@ -58,7 +58,7 @@ arguments will be sent to it.
 
 ## User configuration
 
-Put this in `~/.alan/config.toml` for one developer, or `<workspace>/.alan/config.toml` for one
+Put this in `~/.gear/config.toml` for one developer, or `<workspace>/.gear/config.toml` for one
 project:
 
 ```toml
@@ -101,7 +101,7 @@ GEAR_AUTO_CLASSIFIER_MODEL=reviewer-model-id
 GEAR_AUTO_FAIL_CLOSED=true
 ```
 
-Legacy `ELIO_*` and `ALAN_*` spellings remain accepted during migration; `GEAR_*` wins.
+Legacy `ALAN_*` spellings are adopted as `GEAR_*` at startup when the `GEAR_*` name is unset.
 
 ### CLI permission cycle
 
@@ -162,7 +162,7 @@ bun run scripts/sign-policy.ts ./policy-input.json ./signed-policy
 Install `policy.json` and `org.pub` as root-owned files under `/etc/gear/`, or under
 `/Library/Application Support/Gear/` on macOS. Gear refuses to start when an installed policy is
 unreadable, malformed, or has an invalid signature. Legacy system paths and
-`ELIO_POLICY_FILE` / `ALAN_POLICY_FILE` development overrides remain supported; a development
+`GEAR_POLICY_FILE` development overrides remain supported; a development
 override cannot shadow an installed system policy.
 
 ## Audit and operations

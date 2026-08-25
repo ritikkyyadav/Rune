@@ -205,7 +205,9 @@ describe("AgentLoop — mid-turn steering", () => {
     expect(complete?.stopReason).toBe("aborted");
     // Never folded into the transcript…
     expect(
-      loop.getMessages().some((m) => m.role === "user" && textOf(m).startsWith(INTERJECTION_MARKER)),
+      loop
+        .getMessages()
+        .some((m) => m.role === "user" && textOf(m).startsWith(INTERJECTION_MARKER)),
     ).toBe(false);
     // …but recoverable exactly once.
     expect(loop.takeUndrainedInterjections()).toEqual(["actually, stop and use sqlite"]);

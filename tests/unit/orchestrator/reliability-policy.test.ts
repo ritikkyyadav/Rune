@@ -20,6 +20,10 @@ describe("reliability policy", () => {
       maxVerifyAttempts: 2,
       readThrashCount: 3,
       editChurnCount: 4,
+      maxPlanNudges: 1,
+      maxReplanNudges: 1,
+      maxStruggleNudges: 1,
+      maxGreenfieldNudges: 1,
     });
   });
 

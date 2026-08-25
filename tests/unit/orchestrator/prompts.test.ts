@@ -13,16 +13,32 @@ describe("AGENT_DOCTRINE", () => {
   test("covers the core doctrine sections", () => {
     for (const section of [
       "# Tone and style",
-      "# Task management",
+      "# Plan and track",
+      "# Ambiguity",
       "# Doing tasks",
       "# Tool usage policy",
       "# Coding conventions",
+      "# Greenfield builds",
       "# Building interfaces",
       "# Git",
       "# Proactiveness",
     ]) {
       expect(AGENT_DOCTRINE).toContain(section);
     }
+  });
+
+  test("greenfield builds: applications are not pages, mocks are failed tasks", () => {
+    expect(AGENT_DOCTRINE).toContain("applications are not pages");
+    expect(AGENT_DOCTRINE).toContain("walking skeleton FIRST");
+    expect(AGENT_DOCTRINE).toContain("a degraded-but-working capability beats a faked one");
+    expect(AGENT_DOCTRINE).toContain("presenting a mock as the app is a failed task");
+    expect(AGENT_DOCTRINE).toContain('"nothing runnable detected"');
+    // The clone class is named in the Ambiguity section, and deviations from
+    // the literal ask must be surfaced up front, never as a footnote.
+    expect(AGENT_DOCTRINE).toContain('"Build me a clone of X"');
+    expect(AGENT_DOCTRINE).toContain("never a silent decision");
+    // The words of the ask decide the stack — never workspace neighbors.
+    expect(AGENT_DOCTRINE).toContain("never what happens to already sit in the workspace");
   });
 
   test("teaches interface craft: one art direction, structure over decoration, banned slop", () => {
@@ -48,7 +64,7 @@ describe("AGENT_DOCTRINE", () => {
 
 describe("snapshotEnvironment / renderEnvironmentBlock", () => {
   test("non-git directory renders without git sections", () => {
-    const dir = mkdtempSync(join(tmpdir(), "alan-prompts-"));
+    const dir = mkdtempSync(join(tmpdir(), "gear-prompts-"));
     try {
       const env = snapshotEnvironment(dir, "test-model", "anthropic");
       expect(env.isGitRepo).toBe(false);
@@ -63,7 +79,7 @@ describe("snapshotEnvironment / renderEnvironmentBlock", () => {
   });
 
   test("includes model and provider", () => {
-    const dir = mkdtempSync(join(tmpdir(), "alan-prompts-"));
+    const dir = mkdtempSync(join(tmpdir(), "gear-prompts-"));
     try {
       const block = renderEnvironmentBlock(snapshotEnvironment(dir, "m1", "openai"));
       expect(block).toContain("Model: m1 (via openai)");
@@ -75,7 +91,7 @@ describe("snapshotEnvironment / renderEnvironmentBlock", () => {
 
 describe("loadProjectMemory", () => {
   test("returns empty block when no memory files exist", () => {
-    const dir = mkdtempSync(join(tmpdir(), "alan-mem-"));
+    const dir = mkdtempSync(join(tmpdir(), "gear-mem-"));
     try {
       const mem = loadProjectMemory(dir);
       expect(mem.block).toBe("");
@@ -86,7 +102,7 @@ describe("loadProjectMemory", () => {
   });
 
   test("loads GEAR.md and reports the file", () => {
-    const dir = mkdtempSync(join(tmpdir(), "alan-mem-"));
+    const dir = mkdtempSync(join(tmpdir(), "gear-mem-"));
     try {
       writeFileSync(join(dir, "GEAR.md"), "Always use tabs.");
       const mem = loadProjectMemory(dir);
@@ -98,29 +114,24 @@ describe("loadProjectMemory", () => {
     }
   });
 
-  test("GEAR.md wins while legacy ALAN.md and CLAUDE.md remain supported", () => {
-    const dir = mkdtempSync(join(tmpdir(), "alan-mem-"));
+  test("GEAR.md wins while CLAUDE.md remains supported", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gear-mem-"));
     try {
       writeFileSync(join(dir, "CLAUDE.md"), "claude instructions");
       let mem = loadProjectMemory(dir);
       expect(mem.block).toContain("claude instructions");
 
-      writeFileSync(join(dir, "ALAN.md"), "alan instructions");
-      mem = loadProjectMemory(dir);
-      expect(mem.block).toContain("alan instructions");
-      expect(mem.block).not.toContain("claude instructions");
-
       writeFileSync(join(dir, "GEAR.md"), "gear instructions");
       mem = loadProjectMemory(dir);
       expect(mem.block).toContain("gear instructions");
-      expect(mem.block).not.toContain("alan instructions");
+      expect(mem.block).not.toContain("claude instructions");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
   test("truncates oversized memory files", () => {
-    const dir = mkdtempSync(join(tmpdir(), "alan-mem-"));
+    const dir = mkdtempSync(join(tmpdir(), "gear-mem-"));
     try {
       writeFileSync(join(dir, "GEAR.md"), "x".repeat(60_000));
       const mem = loadProjectMemory(dir);
@@ -132,7 +143,7 @@ describe("loadProjectMemory", () => {
   });
 
   test("skips empty memory files", () => {
-    const dir = mkdtempSync(join(tmpdir(), "alan-mem-"));
+    const dir = mkdtempSync(join(tmpdir(), "gear-mem-"));
     try {
       writeFileSync(join(dir, "GEAR.md"), "   \n  ");
       const mem = loadProjectMemory(dir);

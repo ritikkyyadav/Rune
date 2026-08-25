@@ -53,7 +53,7 @@ function callInput(args: Record<string, unknown>): ToolCallInput {
 }
 
 function fakeProbeBinary(json: string): string {
-  const dir = mkdtempSync(join(tmpdir(), "alan-cap-"));
+  const dir = mkdtempSync(join(tmpdir(), "gear-cap-"));
   const bin = join(dir, "fake-tools.sh");
   writeFileSync(bin, `#!/bin/sh\ncat > /dev/null\necho '${json}'\n`);
   chmodSync(bin, 0o755);
@@ -71,7 +71,7 @@ describe("probeSandboxCapability", () => {
   });
 
   test("missing binary or garbage output degrades to unknown/false, never throws", () => {
-    expect(probeSandboxCapability("/nonexistent/alan-tools")).toEqual({
+    expect(probeSandboxCapability("/nonexistent/gear-tools")).toEqual({
       mechanism: "unknown",
       osIsolation: false,
     });
@@ -111,7 +111,7 @@ describe("auto-approval requires capability, not just intent", () => {
 describe("model-facing surfaces state the degraded truth", () => {
   test("bash description flips between isolated / degraded / off", () => {
     const registry = new ToolRegistry();
-    registerBuiltinTools(registry, "/nonexistent-alan-tools");
+    registerBuiltinTools(registry, "/nonexistent-gear-tools");
     const schema = registry.get("bash")!.schema;
 
     setSandboxMode("on");
@@ -169,7 +169,7 @@ describe("network preflight only claims deny-net when it exists", () => {
 
 describe("requireOs turns degradation into a refusal", () => {
   test("degraded + requireOs → sandbox-tier bash errors with guidance", async () => {
-    const handler = createRustToolHandler(BASH_SCHEMA, "bash", "/nonexistent-alan-tools");
+    const handler = createRustToolHandler(BASH_SCHEMA, "bash", "/nonexistent-gear-tools");
     setSandboxMode("on");
     setSandboxCapability({ mechanism: "none", osIsolation: false });
     setRequireOsIsolation(true);

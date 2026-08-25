@@ -14,24 +14,47 @@ import {
   checkBadge,
   type StreamState,
 } from "../../../apps/desktop/src/lib/stream";
-import { INITIAL_TRACE, traceReducer, spanDepth, type TraceState } from "../../../apps/desktop/src/lib/trace";
+import {
+  INITIAL_TRACE,
+  traceReducer,
+  spanDepth,
+  type TraceState,
+} from "../../../apps/desktop/src/lib/trace";
 import { demoSteps, DEMO_TASK } from "../../../apps/desktop/src/lib/demo";
 import { gearInfo, nextGear, normalizeGear } from "../../../apps/desktop/src/lib/gears";
 
 function runDemo(): { stream: StreamState; trace: TraceState } {
   let stream = streamReducer(INITIAL_STREAM, { type: "turn_start", task: DEMO_TASK, now: 1000 });
-  let trace = traceReducer(traceReducer(INITIAL_TRACE, { type: "status", provider: "google", model: "gemini-2.5-flash", posture: "sandboxed" }), {
-    type: "turn_start",
-    task: DEMO_TASK,
-    now: 1000,
-  });
+  let trace = traceReducer(
+    traceReducer(INITIAL_TRACE, {
+      type: "status",
+      provider: "google",
+      model: "gemini-2.5-flash",
+      posture: "sandboxed",
+    }),
+    {
+      type: "turn_start",
+      task: DEMO_TASK,
+      now: 1000,
+    },
+  );
   for (const step of demoSteps()) {
     const now = 1000 + step.at;
     if ("permission" in step) {
       stream = streamReducer(stream, { type: "permission_request", ...step.permission, now });
       trace = traceReducer(trace, { type: "permission_request", ...step.permission, now });
-      stream = streamReducer(stream, { type: "permission_decided", requestId: step.permission.requestId, decision: "allow_once", now: now + 6000 });
-      trace = traceReducer(trace, { type: "permission_decided", requestId: step.permission.requestId, decision: "allow_once", now: now + 6000 });
+      stream = streamReducer(stream, {
+        type: "permission_decided",
+        requestId: step.permission.requestId,
+        decision: "allow_once",
+        now: now + 6000,
+      });
+      trace = traceReducer(trace, {
+        type: "permission_decided",
+        requestId: step.permission.requestId,
+        decision: "allow_once",
+        now: now + 6000,
+      });
       continue;
     }
     stream = streamReducer(stream, { type: "event", event: step.event, now });
@@ -77,7 +100,9 @@ describe("desktop transcript reducer", () => {
     expect(turn.status).toBe("complete");
     expect(turn.endedAt).toBeDefined();
     expect(turn.checkpoint?.version).toBe(3);
-    expect(turn.files).toEqual([{ path: "packages/orchestrator/src/bin/ui/status.ts", added: 3, removed: 2 }]);
+    expect(turn.files).toEqual([
+      { path: "packages/orchestrator/src/bin/ui/status.ts", added: 3, removed: 2 },
+    ]);
     expect(turn.checks.map((c) => checkBadge(c))).toEqual(["214 tests pass"]);
     expect(turn.tokensOut).toBe(400 + 1400 + 200 + 4300);
     expect(turn.thinkingMs).toBeGreaterThan(2000);
@@ -85,15 +110,26 @@ describe("desktop transcript reducer", () => {
 
   test("the answer splits into a headline and detail", () => {
     const { headline, detail } = splitResponse(turn.prose);
-    expect(headline).toBe("The TUI footer now shows a live context meter fed by the engine's token budget.");
+    expect(headline).toBe(
+      "The TUI footer now shows a live context meter fed by the engine's token budget.",
+    );
     expect(detail).toContain("`renderStatus`");
   });
 
   test("status ladder: waiting while a permission is pending, running while a tool is in flight", () => {
     let s = streamReducer(INITIAL_STREAM, { type: "turn_start", task: "t", now: 1 });
-    s = streamReducer(s, { type: "event", event: { type: "tool_call_start", callId: "c1", toolName: "bash" }, now: 2 });
+    s = streamReducer(s, {
+      type: "event",
+      event: { type: "tool_call_start", callId: "c1", toolName: "bash" },
+      now: 2,
+    });
     expect(s.turns[0]!.status).toBe("running");
-    s = streamReducer(s, { type: "permission_request", requestId: "p1", prompt: { toolName: "bash", argsSummary: "bash: ls", rawArgs: {} }, now: 3 });
+    s = streamReducer(s, {
+      type: "permission_request",
+      requestId: "p1",
+      prompt: { toolName: "bash", argsSummary: "bash: ls", rawArgs: {} },
+      now: 3,
+    });
     expect(s.turns[0]!.status).toBe("waiting");
     s = streamReducer(s, { type: "permission_decided", requestId: "p1", decision: "deny", now: 4 });
     expect(s.turns[0]!.status).toBe("running");
@@ -150,8 +186,21 @@ describe("desktop trace reducer", () => {
 
   test("a fallback marks the next model call as served by the fallback provider", () => {
     let t = traceReducer(INITIAL_TRACE, { type: "turn_start", task: "x", now: 1 });
-    t = traceReducer(t, { type: "event", event: { type: "usage", inputTokens: 1, outputTokens: 1 }, now: 2 });
-    t = traceReducer(t, { type: "event", event: { type: "fallback", from: { provider: "anthropic", model: "a" }, to: { provider: "openrouter", model: "b" }, status: 429 }, now: 3 });
+    t = traceReducer(t, {
+      type: "event",
+      event: { type: "usage", inputTokens: 1, outputTokens: 1 },
+      now: 2,
+    });
+    t = traceReducer(t, {
+      type: "event",
+      event: {
+        type: "fallback",
+        from: { provider: "anthropic", model: "a" },
+        to: { provider: "openrouter", model: "b" },
+        status: 429,
+      },
+      now: 3,
+    });
     t = traceReducer(t, { type: "event", event: { type: "text_delta", text: "hi" }, now: 4 });
     const models = t.turns[0]!.spans.filter((s) => s.kind === "model");
     expect(models.at(-1)!.model?.servedBy).toBe("openrouter/b");

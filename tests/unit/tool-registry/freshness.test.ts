@@ -8,10 +8,7 @@
  */
 
 import { describe, test, expect, mock } from "bun:test";
-import {
-  FileFreshness,
-  withFreshness,
-} from "../../../packages/tool-registry/src/tools/freshness";
+import { FileFreshness, withFreshness } from "../../../packages/tool-registry/src/tools/freshness";
 import type { ToolCallInput, ToolHandler } from "../../../packages/tool-registry/src/types";
 
 function makeInput(toolName: string, args: Record<string, unknown>): ToolCallInput {
@@ -59,7 +56,9 @@ describe("withFreshness", () => {
   test("edit without prior read is rejected", async () => {
     const f = new FileFreshness();
     const edit = withFreshness(fakeHandler("edit_file", {}), f, { requiresFreshRead: true });
-    const out = await edit.execute(makeInput("edit_file", { path: "a.ts", old_text: "x", new_text: "y" }));
+    const out = await edit.execute(
+      makeInput("edit_file", { path: "a.ts", old_text: "x", new_text: "y" }),
+    );
     expect(out.success).toBe(false);
     expect(out.error).toContain("read");
   });

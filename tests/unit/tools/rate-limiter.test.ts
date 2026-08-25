@@ -3,13 +3,23 @@ import { ToolRateLimiter } from "../../../packages/tool-registry/src/rate-limite
 
 describe("ToolRateLimiter", () => {
   test("allows calls within limits", () => {
-    const limiter = new ToolRateLimiter({ globalMaxPerMinute: 60, perToolMaxPerMinute: 20, bashMaxPerMinute: 10, writeMaxPerMinute: 15 });
+    const limiter = new ToolRateLimiter({
+      globalMaxPerMinute: 60,
+      perToolMaxPerMinute: 20,
+      bashMaxPerMinute: 10,
+      writeMaxPerMinute: 15,
+    });
     const result = limiter.checkLimit("read_file");
     expect(result.allowed).toBe(true);
   });
 
   test("blocks when global limit exceeded", () => {
-    const limiter = new ToolRateLimiter({ globalMaxPerMinute: 3, perToolMaxPerMinute: 100, bashMaxPerMinute: 100, writeMaxPerMinute: 100 });
+    const limiter = new ToolRateLimiter({
+      globalMaxPerMinute: 3,
+      perToolMaxPerMinute: 100,
+      bashMaxPerMinute: 100,
+      writeMaxPerMinute: 100,
+    });
     limiter.recordCall("tool_a");
     limiter.recordCall("tool_b");
     limiter.recordCall("tool_c");
@@ -19,7 +29,12 @@ describe("ToolRateLimiter", () => {
   });
 
   test("blocks when per-tool limit exceeded", () => {
-    const limiter = new ToolRateLimiter({ globalMaxPerMinute: 100, perToolMaxPerMinute: 2, bashMaxPerMinute: 10, writeMaxPerMinute: 15 });
+    const limiter = new ToolRateLimiter({
+      globalMaxPerMinute: 100,
+      perToolMaxPerMinute: 2,
+      bashMaxPerMinute: 10,
+      writeMaxPerMinute: 15,
+    });
     limiter.recordCall("read_file");
     limiter.recordCall("read_file");
     const result = limiter.checkLimit("read_file");
@@ -27,7 +42,12 @@ describe("ToolRateLimiter", () => {
   });
 
   test("uses stricter limit for bash", () => {
-    const limiter = new ToolRateLimiter({ globalMaxPerMinute: 100, perToolMaxPerMinute: 100, bashMaxPerMinute: 2, writeMaxPerMinute: 100 });
+    const limiter = new ToolRateLimiter({
+      globalMaxPerMinute: 100,
+      perToolMaxPerMinute: 100,
+      bashMaxPerMinute: 2,
+      writeMaxPerMinute: 100,
+    });
     limiter.recordCall("bash");
     limiter.recordCall("bash");
     const result = limiter.checkLimit("bash");
@@ -35,7 +55,12 @@ describe("ToolRateLimiter", () => {
   });
 
   test("uses stricter limit for write_file", () => {
-    const limiter = new ToolRateLimiter({ globalMaxPerMinute: 100, perToolMaxPerMinute: 100, bashMaxPerMinute: 100, writeMaxPerMinute: 2 });
+    const limiter = new ToolRateLimiter({
+      globalMaxPerMinute: 100,
+      perToolMaxPerMinute: 100,
+      bashMaxPerMinute: 100,
+      writeMaxPerMinute: 2,
+    });
     limiter.recordCall("write_file");
     limiter.recordCall("write_file");
     const result = limiter.checkLimit("write_file");
@@ -43,7 +68,12 @@ describe("ToolRateLimiter", () => {
   });
 
   test("different tools have independent per-tool limits", () => {
-    const limiter = new ToolRateLimiter({ globalMaxPerMinute: 100, perToolMaxPerMinute: 2, bashMaxPerMinute: 10, writeMaxPerMinute: 15 });
+    const limiter = new ToolRateLimiter({
+      globalMaxPerMinute: 100,
+      perToolMaxPerMinute: 2,
+      bashMaxPerMinute: 10,
+      writeMaxPerMinute: 15,
+    });
     limiter.recordCall("read_file");
     limiter.recordCall("read_file");
     // read_file is at limit, but list_dir should still be allowed

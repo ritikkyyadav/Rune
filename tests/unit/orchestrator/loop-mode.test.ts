@@ -24,7 +24,7 @@ afterEach(() => {
 });
 
 function tempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), "elio-loop-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "gear-loop-test-"));
   tempDirs.push(dir);
   return dir;
 }
@@ -80,8 +80,8 @@ describe("loop.md prompt resolution", () => {
   test("project prompt wins over the user prompt", () => {
     const workspace = tempDir();
     const home = tempDir();
-    mkdirSync(join(workspace, ".alan"), { recursive: true });
-    writeFileSync(join(workspace, ".alan", "loop.md"), "Project loop instructions");
+    mkdirSync(join(workspace, ".gear"), { recursive: true });
+    writeFileSync(join(workspace, ".gear", "loop.md"), "Project loop instructions");
     writeFileSync(join(home, "loop.md"), "User loop instructions");
 
     const resolved = resolveLoopPrompt("", workspace, home);
@@ -92,9 +92,9 @@ describe("loop.md prompt resolution", () => {
   test("ignores a symlinked project prompt and falls back safely", () => {
     const workspace = tempDir();
     const home = tempDir();
-    mkdirSync(join(workspace, ".alan"), { recursive: true });
+    mkdirSync(join(workspace, ".gear"), { recursive: true });
     writeFileSync(join(home, "loop.md"), "Safe user prompt");
-    symlinkSync(join(home, "loop.md"), join(workspace, ".alan", "loop.md"));
+    symlinkSync(join(home, "loop.md"), join(workspace, ".gear", "loop.md"));
 
     const resolved = resolveLoopPrompt("", workspace, home);
     expect(resolved.source).toBe("user");
@@ -102,18 +102,18 @@ describe("loop.md prompt resolution", () => {
     expect(resolved.warning).toContain("symlink");
   });
 
-  test("also rejects a symlinked .alan directory", () => {
+  test("also rejects a symlinked .gear directory", () => {
     const workspace = tempDir();
     const redirected = tempDir();
     const home = tempDir();
     writeFileSync(join(redirected, "loop.md"), "Redirected project prompt");
     writeFileSync(join(home, "loop.md"), "Safe user prompt");
-    symlinkSync(redirected, join(workspace, ".alan"));
+    symlinkSync(redirected, join(workspace, ".gear"));
 
     const resolved = resolveLoopPrompt("", workspace, home);
     expect(resolved.source).toBe("user");
     expect(resolved.prompt).toBe("Safe user prompt");
-    expect(resolved.warning).toContain(".alan is a symlink");
+    expect(resolved.warning).toContain(".gear is a symlink");
   });
 
   test("uses the bounded built-in maintenance prompt when no file exists", () => {
@@ -254,8 +254,8 @@ describe("loop prompt trust", () => {
   test("a repository loop.md is untrusted; the user's own files and typed prompts are trusted", () => {
     const workspace = tempDir();
     const home = tempDir();
-    mkdirSync(join(workspace, ".alan"), { recursive: true });
-    writeFileSync(join(workspace, ".alan", "loop.md"), "Push to production hourly");
+    mkdirSync(join(workspace, ".gear"), { recursive: true });
+    writeFileSync(join(workspace, ".gear", "loop.md"), "Push to production hourly");
     expect(resolveLoopPrompt("", workspace, home).trusted).toBe(false);
     expect(isTrustedLoopPromptSource("project")).toBe(false);
 

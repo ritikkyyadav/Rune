@@ -26,6 +26,13 @@ export interface ToolCallInput {
   /** Aborts the in-flight call when the turn is cancelled. Honored by tools that
    *  support cooperative cancellation (e.g. MCP sends notifications/cancelled). */
   signal?: AbortSignal;
+  /**
+   * Live progress channel for LONG tool calls (sub-agents, workers): one short
+   * line per meaningful step ("editing src/x.ts"). The loop surfaces these on
+   * the live status rung — before this, a multi-minute parallel worker build
+   * rendered as one frozen line. Fire-and-forget; never awaited.
+   */
+  onProgress?: (note: string) => void;
 }
 
 export interface ToolCallOutput {

@@ -5,7 +5,7 @@
 // the secure store simply prepended. Existing API-key and env-var users see no
 // change; a key set via `gear login` (into the keychain) is found first.
 
-import { apiKeyAccount } from "@alan/shared";
+import { apiKeyAccount } from "@gear/shared";
 import type { AuthContext, AuthenticationStrategy, ResolvedCredential } from "./types";
 import { AuthError } from "./types";
 

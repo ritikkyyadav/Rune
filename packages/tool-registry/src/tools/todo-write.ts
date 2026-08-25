@@ -12,7 +12,13 @@ export const TODO_WRITE_SCHEMA: ToolSchema = {
   name: "todo_write",
   version: "0.1.0",
   description:
-    "Records or replaces the current to-do list for multi-step tasks. Use this to track work items and their completion status across agentic tasks. The full list is replaced on each call — include all items you want to keep.",
+    "Record or replace your plan as a to-do list. This IS the plan: for any task with 3+ steps, " +
+    "write the list BEFORE your first file edit, keep exactly one item in_progress, mark items " +
+    "completed the moment they are genuinely done (evidence from THIS session — never to keep " +
+    "moving), and REWRITE the list whenever the approach changes. The harness stores the list " +
+    "outside the conversation and re-shows it to you every turn (it survives compaction and " +
+    "resume), and it powers the live checklist the user watches. The full list is replaced on " +
+    "each call — include every item you want to keep. Skip it for single trivial actions.",
   inputSchema: {
     type: "object",
     properties: {

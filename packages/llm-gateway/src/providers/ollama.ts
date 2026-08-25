@@ -12,6 +12,7 @@ import type {
   ToolDefinition,
 } from "../types";
 import { parseApiErrorBody } from "../types";
+import { IdleWatchdog } from "./stream-guard";
 
 // ─── Ollama wire types (subset of /api/chat) ───
 
@@ -83,11 +84,15 @@ export class OllamaProvider implements LlmProvider {
   }
 
   async *inferStream(request: InferenceRequest, opts?: StreamOpts): AsyncGenerator<StreamEvent> {
+    // Wedged-stream protection, with GENEROUS allowances: local inference on a
+    // big model can legitimately pause a long time before/between tokens
+    // (model load, CPU offload), so only a truly dead stream trips this.
+    const guard = new IdleWatchdog(this.name, opts?.signal, 300_000, 120_000);
     const response = await fetch(`${this.baseUrl}/api/chat`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(this.buildBody(request, true)),
-      signal: opts?.signal,
+      signal: guard.signal,
     });
 
     if (!response.ok || !response.body) {
@@ -111,6 +116,7 @@ export class OllamaProvider implements LlmProvider {
       for (;;) {
         const { value, done } = await reader.read();
         if (done) break;
+        guard.beat();
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
         buffer = lines.pop() ?? ""; // keep the trailing partial line
@@ -122,8 +128,12 @@ export class OllamaProvider implements LlmProvider {
       // Flush any final line that lacked a trailing newline.
       const tail = parseLine(buffer);
       if (tail) yield* this.handleChunk(tail, state);
+    } catch (err) {
+      // Watchdog stall (not the caller's Esc) → retryable 504 for the gateway.
+      throw guard.timeoutError() ?? err;
     } finally {
       reader.releaseLock();
+      guard.stop();
     }
 
     yield { type: "content_stop", contentIndex: 0 };

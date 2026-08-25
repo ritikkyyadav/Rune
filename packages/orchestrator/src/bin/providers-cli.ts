@@ -1,7 +1,7 @@
 // ─── `gear providers` / `gear use` / `gear models` ───
 // Non-interactive provider surfaces, dispatched standalone like telemetry/doctor.
 //   providers — list every provider, its auth method, and credential status
-//   use        — set the active provider (+ optional model) in ~/.alan/model.json
+//   use        — set the active provider (+ optional model) in ~/.gear/model.json
 //   models     — live model discovery for a provider, with static fallback
 
 import {
@@ -15,10 +15,10 @@ import {
   loadLastModel,
   saveLastModel,
   describeCredentialBackend,
-  type AlanConfig,
+  type GearConfig,
   type SecretsFile,
-} from "@alan/shared";
-import type { ProviderName, ModelInfo, ResolvedCredential } from "@alan/llm-gateway";
+} from "@gear/shared";
+import type { ProviderName, ModelInfo, ResolvedCredential } from "@gear/llm-gateway";
 import { buildGateway, resolveProviderCredentials } from "../provider-registry";
 import { accent, bold, dim, faint, info, ok, text, warn } from "./ui/theme";
 import { buildSavedKeys, readAuthOverrides, insecureNoticeLine } from "./byop-cli-shared";
@@ -27,11 +27,11 @@ const pad = "  ";
 const out = (line = "") => process.stdout.write(`${pad}${line}\n`);
 
 /** Active provider = last-used sidecar, else the configured default. */
-function activeProvider(config: AlanConfig): string {
+function activeProvider(config: GearConfig): string {
   return loadLastModel()?.provider ?? config.llm.defaultProvider;
 }
 
-function mergeLocalBaseUrls(config: AlanConfig, secrets: SecretsFile): Record<string, string> {
+function mergeLocalBaseUrls(config: GearConfig, secrets: SecretsFile): Record<string, string> {
   const o: Record<string, string> = {};
   if (config.llm.ollama?.baseUrl) o.ollama = config.llm.ollama.baseUrl;
   if (config.llm.lmstudio?.baseUrl) o.lmstudio = config.llm.lmstudio.baseUrl;
@@ -39,7 +39,7 @@ function mergeLocalBaseUrls(config: AlanConfig, secrets: SecretsFile): Record<st
   return o;
 }
 
-async function resolveAll(config: AlanConfig, secrets: SecretsFile, active: string) {
+async function resolveAll(config: GearConfig, secrets: SecretsFile, active: string) {
   const store = await openCredentialStore();
   const savedKeys = buildSavedKeys(config, secrets);
   const credentials = await resolveProviderCredentials({

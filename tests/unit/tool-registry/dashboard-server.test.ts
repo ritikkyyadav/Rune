@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DashboardManager } from "../../../packages/tool-registry/src/tools/dashboard";
 
-process.env.BERNE_NO_OPEN = "1";
+process.env.GEAR_NO_OPEN = "1";
 
 const managers: DashboardManager[] = [];
 

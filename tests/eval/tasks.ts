@@ -2,7 +2,7 @@ import { readFile, writeFile } from "fs/promises";
 import { join } from "path";
 import { createHash } from "crypto";
 import { Database } from "bun:sqlite";
-import { SessionManager } from "@alan/shared";
+import { SessionManager } from "@gear/shared";
 
 import type { EvalTask } from "./harness";
 import { COMPREHENSION_TASKS } from "./tasks-comprehension";
@@ -11,6 +11,9 @@ import { MULTI_FILE_REFACTOR_TASKS } from "./tasks-multi-file-refactor";
 import { NEW_FEATURE_TASKS } from "./tasks-new-feature";
 import { TOOL_DISCIPLINE_TASKS } from "./tasks-tool-discipline";
 import { FROM_INCIDENTS_TASKS } from "./tasks-from-incidents";
+import { TASK_SPINE_TASKS } from "./tasks-task-spine";
+import { LONG_HORIZON_TASKS } from "./tasks-long-horizon";
+import { GREENFIELD_TASKS } from "./tasks-greenfield";
 
 // Each task scripts the LLM behavior deterministically and verifies a
 // concrete invariant after execution. No real model calls.
@@ -345,6 +348,9 @@ const CORE_TASKS: EvalTask[] = [
 
 export const ALL_TASKS: EvalTask[] = [
   ...CORE_TASKS,
+  ...TASK_SPINE_TASKS,
+  ...LONG_HORIZON_TASKS,
+  ...GREENFIELD_TASKS,
   ...COMPREHENSION_TASKS,
   ...FIX_FAILING_TEST_TASKS,
   ...MULTI_FILE_REFACTOR_TASKS,

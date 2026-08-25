@@ -6,7 +6,7 @@
 // provider that officially supports device authorization (none is wired by
 // default — see auth/oauth-registry.ts).
 
-import { oauthAccount } from "@alan/shared";
+import { oauthAccount } from "@gear/shared";
 import type { AuthContext, AuthenticationStrategy, ResolvedCredential, AuthMethod } from "./types";
 import { AuthError } from "./types";
 import type { ExchangeResult } from "./oauth-strategy";
