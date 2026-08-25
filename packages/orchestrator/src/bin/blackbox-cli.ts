@@ -4,7 +4,7 @@
 // annoyed user reads right after something broke.
 
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { getGearHome } from "@gear/shared";
 import type { IncidentRecord } from "@gear/shared";
 import { BlackboxStore } from "@gear/telemetry";
@@ -109,6 +109,8 @@ export function runDoctor(): void {
     }
   }
 
+  doctorToolchain();
+
   // The recorder's own failures land here — this file should not exist.
   if (existsSync(LAST_RESORT())) {
     const tail = readFileSync(LAST_RESORT(), "utf-8").trim().split("\n").slice(-2);
@@ -130,6 +132,97 @@ function processAlive(pid: number): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+// ─── toolchain: gear-tools presence + compiled-binary freshness ───
+// The doctor half of the stale-`gear-compiled` trap (the launcher warns at
+// startup; this page explains it on demand): a fix lands in the TypeScript,
+// the installed binary predates it, and "nothing changed" until a rebuild.
+
+/** First .ts source under <root>/packages newer than builtAtMs — early exit,
+ *  same contract as the launcher's `find -newer -print -quit`. */
+function newerSourceThan(root: string, builtAtMs: number): string | null {
+  const skip = new Set(["node_modules", "dist", "target", ".git"]);
+  const stack = [join(root, "packages")];
+  while (stack.length > 0) {
+    const dir = stack.pop()!;
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      if (skip.has(name)) continue;
+      const path = join(dir, name);
+      let stats;
+      try {
+        stats = statSync(path);
+      } catch {
+        continue;
+      }
+      if (stats.isDirectory()) stack.push(path);
+      else if (name.endsWith(".ts") && stats.mtimeMs > builtAtMs) return path;
+    }
+  }
+  return null;
+}
+
+function doctorToolchain(): void {
+  // gear-tools: same candidate order as the CLI's startup lookup.
+  const candidates: string[] = [];
+  if (process.env.GEAR_TOOLS_BIN) candidates.push(process.env.GEAR_TOOLS_BIN);
+  candidates.push(
+    new URL("../../../../target/release/gear-tools", import.meta.url).pathname,
+    new URL("../../../../target/debug/gear-tools", import.meta.url).pathname,
+    join(HOME(), "bin", "gear-tools"),
+  );
+  const tools = candidates.find((c) => existsSync(c)) ?? Bun.which("gear-tools");
+  if (tools) {
+    console.log(`  ${ok("✓")} gear-tools: ${info(tools)}`);
+  } else {
+    console.log(
+      `  ${accent("✕")} gear-tools: not found — set GEAR_TOOLS_BIN, re-run scripts/install.sh, or \`cargo build --release -p gear-tools\``,
+    );
+    for (const c of candidates) console.log(`    ${dim("searched:")} ${faint(c)}`);
+  }
+
+  // Build freshness, from the meta file the installer writes next to the binary.
+  const metaPath = join(dirname(process.execPath), "gear-compiled.meta");
+  if (!existsSync(metaPath)) {
+    console.log(
+      `  ${dim("·")} build freshness: no gear-compiled.meta next to this binary ${dim("(running from source, or an unmanaged install)")}`,
+    );
+    return;
+  }
+  try {
+    const meta = Object.fromEntries(
+      readFileSync(metaPath, "utf-8")
+        .split("\n")
+        .filter((line) => line.includes("="))
+        .map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
+    ) as Record<string, string>;
+    const sourceRoot = meta.GEAR_SOURCE_ROOT ?? "";
+    const builtAtMs = Number(meta.GEAR_BUILT_AT ?? 0) * 1000;
+    if (!sourceRoot || !existsSync(join(sourceRoot, "packages")) || !(builtAtMs > 0)) {
+      console.log(
+        `  ${dim("·")} build freshness: meta unreadable or the source tree moved ${faint(`(${metaPath})`)}`,
+      );
+      return;
+    }
+    const builtLabel = shortTs(new Date(builtAtMs).toISOString());
+    const newer = newerSourceThan(sourceRoot, builtAtMs);
+    if (newer) {
+      console.log(
+        `  ${warn("!")} build: STALE — built ${builtLabel}, source changed since: ${faint(newer)}`,
+      );
+      console.log(`    ${dim("rebuild:")} ${info(`cd ${sourceRoot} && ./scripts/install.sh`)}`);
+    } else {
+      console.log(`  ${ok("✓")} build: current — built ${builtLabel} from ${faint(sourceRoot)}`);
+    }
+  } catch {
+    console.log(`  ${dim("·")} build freshness: could not evaluate ${faint(metaPath)}`);
   }
 }
 

@@ -61,6 +61,25 @@ export function parseKeys(data: string): Key[] {
 
     // ── ESC / CSI sequences ──
     if (ch === "\x1b") {
+      // ── OSC replies (ESC ] … BEL | ESC ] … ESC \) ──
+      // The startup color probe (OSC 10/11) waits 120ms; a slower terminal's
+      // reply lands here in the key stream instead. Parsing it as Esc + typed
+      // junk both cancels whatever the user was doing and types "11;rgb:…"
+      // into the composer — so the whole sequence is consumed silently. An
+      // unterminated OSC at the end of the chunk is swallowed too: the tail
+      // of a split reply is worse as fake keystrokes than as a dropped reply.
+      if (data[i + 1] === "]") {
+        const bel = data.indexOf("\x07", i + 2);
+        const st = data.indexOf("\x1b\\", i + 2);
+        if (bel !== -1 && (st === -1 || bel < st)) {
+          i = bel + 1;
+        } else if (st !== -1) {
+          i = st + 2;
+        } else {
+          i = data.length;
+        }
+        continue;
+      }
       if (data.startsWith(CSI, i)) {
         // Read the CSI body: optional digits/; then a final byte.
         let j = i + 2;

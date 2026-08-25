@@ -560,7 +560,7 @@ async function main() {
   const toolsBinary = toolsLookup.path;
   if (!toolsLookup.found) {
     console.error(
-      `  ${vermillion("⚠")} ${dim("gear-tools binary not found — set GEAR_TOOLS_BIN, run `gear setup`, or build crates/gear-tools; file and shell tools will fail until then.")}`,
+      `  ${vermillion("⚠")} ${dim("gear-tools binary not found — set GEAR_TOOLS_BIN, re-run scripts/install.sh, or `cargo build --release -p gear-tools`; file and shell tools will fail until then (`gear doctor` shows what was searched).")}`,
     );
   }
   const workspaceRoot = (values.workspace as string | undefined) ?? process.cwd();
@@ -568,10 +568,14 @@ async function main() {
   const config = loadConfig(workspaceRoot);
   const secrets = loadSecrets();
 
-  // Learn the host terminal surface before anything repaints it. Auto mode uses
-  // the reported foreground/background (including custom red/blue profiles) to
-  // derive accessible semantic colors while preserving the terminal itself.
-  configureAutoTheme(await detectTerminalColors());
+  // Learn the host terminal surface before anything repaints it. The adaptive
+  // "auto" theme uses the reported foreground/background (including custom
+  // red/blue profiles) to derive accessible semantic colors while preserving
+  // the terminal itself. One-shot printers skip the probe: they exit before a
+  // slow terminal answers, and the late OSC reply would land in the SHELL
+  // prompt as typed junk. (detectTerminalColors itself no-ops off-TTY.)
+  const oneShotCommand = command === "list" || command === "export" || Boolean(values.list);
+  if (!oneShotCommand) configureAutoTheme(await detectTerminalColors());
 
   // Apply the persisted / configured color mode before anything renders.
   // GEAR_THEME (legacy ALAN_THEME is adopted at startup).

@@ -84,3 +84,18 @@ describe("ui/keys parseKeys", () => {
     expect(types("\x1b[M\x20\x21\x21")).toEqual([]);
   });
 });
+
+describe("OSC replies in the key stream", () => {
+  it("consumes a late color-probe reply silently instead of Esc + typed junk", () => {
+    // BEL-terminated (xterm default) and ST-terminated forms, wrapped in real keys.
+    expect(types("a\x1b]11;rgb:1e1e/2020/2626\x07b")).toEqual(["char", "char"]);
+    expect(types("\x1b]10;#c8ccd4\x1b\\x")).toEqual(["char"]);
+  });
+
+  it("swallows an unterminated OSC tail rather than typing its bytes", () => {
+    // A reply split across reads: the fragment must not become keystrokes.
+    expect(types("\x1b]11;rgb:1e1e/20")).toEqual([]);
+    // …while a lone ESC at the end of a chunk still means Escape.
+    expect(types("\x1b")).toEqual(["esc"]);
+  });
+});

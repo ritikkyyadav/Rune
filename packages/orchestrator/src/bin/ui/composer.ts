@@ -184,6 +184,9 @@ export function statusLine(s: ComposerStatus, width = process.stdout.columns || 
   const meter = contextMeter(s.contextPercent);
   const sep = ` ${faint("·")} `;
   const extras: string[] = [];
+  if (s.filesEdited) {
+    extras.push(faint(`${s.filesEdited} file${s.filesEdited === 1 ? "" : "s"} edited`));
+  }
   if (s.loop) extras.push(faint(`↻ ${s.loop}`));
   if (s.sandboxOff) extras.push(warn("sandbox off"));
 

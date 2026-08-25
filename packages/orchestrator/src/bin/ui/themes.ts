@@ -653,7 +653,10 @@ export function findTheme(name: string): Theme | undefined {
   const accentAlias = /^(cobalt|orange|violet|emerald|mono)(?:-(light|dark))?$/.exec(normalized);
   const canonical = accentAlias
     ? gearThemeName(
-        (accentAlias[2] as "light" | "dark" | undefined) ?? "light",
+        (accentAlias[2] as "light" | "dark" | undefined) ??
+          // Pre-rename `mono` was Monochrome Black: a saved bare "mono" keeps
+          // its dark surface. The other bare accents default to light.
+          (accentAlias[1] === "mono" ? "dark" : "light"),
         accentAlias[1] as GearAccent,
       )
     : normalized === "light"

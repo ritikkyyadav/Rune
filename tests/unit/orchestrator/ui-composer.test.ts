@@ -484,3 +484,18 @@ describe("ui/composer renderPicker", () => {
     expect(stripAnsi(r.lines[r.caretRow]!)).toContain("›");
   });
 });
+
+describe("ui/composer footer filesEdited readout", () => {
+  it("shows the session's edited-file count once files change", () => {
+    const line = stripAnsi(
+      statusLine(
+        { model: "m", workspace: "/w", mode: "gear-2", filesEdited: 3, contextPercent: 55 },
+        140,
+      ),
+    );
+    expect(line).toContain("3 files edited");
+    expect(stripAnsi(statusLine({ model: "m", workspace: "/w", mode: "gear-2" }, 140))).not.toContain(
+      "files edited",
+    );
+  });
+});
