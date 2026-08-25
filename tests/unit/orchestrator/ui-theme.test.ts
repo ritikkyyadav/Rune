@@ -400,3 +400,13 @@ describe("ui/theme Follow terminal mode", () => {
     expect(ansi256ToRgb(196)).toEqual([255, 0, 0]);
   });
 });
+
+describe("legacy theme migration polarity", () => {
+  it("a saved bare `mono` keeps its dark surface (legacy mono was Monochrome Black)", () => {
+    expect(findTheme("mono")!.name).toBe("gear-mono-dark");
+    expect(findTheme("mono")!.appearance).toBe("dark");
+    // Explicit variants and the other bare accents are untouched.
+    expect(findTheme("mono-light")!.name).toBe("gear-mono");
+    expect(findTheme("cobalt")!.appearance).toBe("light");
+  });
+});

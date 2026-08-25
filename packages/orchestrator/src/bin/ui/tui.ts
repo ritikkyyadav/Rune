@@ -494,6 +494,26 @@ class Tui {
         resolve();
         process.exit(code);
       };
+      // SIGTERM (kill, service managers) and SIGHUP (terminal window closed)
+      // must run the same teardown as /exit: leave the alternate screen, drop
+      // raw mode + mouse reporting, close the engine. A default signal death
+      // skips the process "exit" hooks — which is exactly how a killed TUI
+      // used to strand the shell in the alt screen with the mouse captured.
+      // 143/129 = 128 + signal number.
+      const onSignal = (code: number) => () => {
+        try {
+          this.exit(code);
+        } catch {
+          try {
+            this.ctx.engine.close();
+          } catch {
+            // Closing is best-effort mid-signal; the exit hook still restores modes.
+          }
+          process.exit(code);
+        }
+      };
+      process.once("SIGTERM", onSignal(143));
+      process.once("SIGHUP", onSignal(129));
     });
   }
 
@@ -548,7 +568,7 @@ class Tui {
   private slashCatalog(): SlashItem[] {
     const builtins: SlashItem[] = [
       { name: "/theme", desc: "Switch accent colors and light / dark mode", tag: "cosmetic" },
-      { name: "/model", desc: "Choose model, provider, and effort", tag: "settings" },
+      { name: "/model", desc: "Choose model and provider", tag: "settings" },
       { name: "/sessions", desc: "Browse, resume, rename, archive & delete", tag: "history" },
       { name: "/mode", desc: "Shift gears — 1st · 2nd · 3rd · 4th · auto", tag: "shift+tab" },
       { name: "/diff", desc: "Inspect staged and uncommitted workspace changes", tag: "git" },
