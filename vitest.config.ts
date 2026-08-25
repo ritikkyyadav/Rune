@@ -11,12 +11,7 @@ export default defineConfig({
         "packages/tool-registry/src/**/*.ts",
         "packages/shared/src/**/*.ts",
       ],
-      exclude: [
-        "**/*.d.ts",
-        "**/dist/**",
-        "**/bin/**",
-        "**/index.ts",
-      ],
+      exclude: ["**/*.d.ts", "**/dist/**", "**/bin/**", "**/index.ts"],
       thresholds: {
         lines: 40,
         functions: 40,

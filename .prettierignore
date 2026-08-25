@@ -1,0 +1,15 @@
+# Vendored / generated / archival content — not format-gated.
+skills/
+docs/design/
+docs/history/
+dist/
+target/
+tests/eval/results/
+bun.lock
+Cargo.lock
+apps/desktop/src-tauri/target/
+apps/desktop/dist/
+.gear/
+.claude/
+.codex/
+.alan/

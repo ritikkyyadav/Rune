@@ -13,13 +13,21 @@
     "test:unit": "bun test tests/unit/",
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "eval": "bun run tests/eval/runner.ts",
     "eval:auto-safety": "bun run tests/eval/auto-mode-safety.ts"
   },
   "devDependencies": {
-    "turbo": "^2",
-    "typescript": "^5.8",
-    "prettier": "^3",
+    "turbo": "^2.10.11",
+    "typescript": "^5.9.3",
+    "prettier": "^3.9.6",
     "@types/bun": "latest"
+  },
+  "overrides": {
+    "@babel/core": "^7.29.7",
+    "form-data": "^4.0.6",
+    "nanoid": "^3.3.18",
+    "postcss": "^8.5.26"
   }
 }

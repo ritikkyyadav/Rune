@@ -1,0 +1,145 @@
+name: Release
+
+# Tag-driven distribution: `git tag v0.3.0 && git push origin v0.3.0` builds a
+# CLI + gear-tools pair for every supported platform, generates SHA256SUMS in
+# the same job that assembled the binaries (checksum drift is impossible by
+# construction), smoke-runs the Linux pair, publishes the GitHub release, and
+# then re-installs from that release exactly the way the README tells users to.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  cli:
+    name: CLI (bun cross-compile, all platforms)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - name: Compile standalone CLIs
+        run: |
+          mkdir -p out
+          for pair in bun-darwin-arm64:darwin-arm64 bun-darwin-x64:darwin-x64 \
+                      bun-linux-x64:linux-x64 bun-linux-arm64:linux-arm64 \
+                      bun-windows-x64:windows-x64.exe; do
+            target="${pair%%:*}"; suffix="${pair##*:}"
+            bun build --compile --minify --target="$target" \
+              packages/orchestrator/src/bin/gear-cli.ts --outfile "out/gear-$suffix"
+          done
+          ls -la out/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli
+          path: out/gear-*
+          retention-days: 1
+
+  tools-native:
+    name: ${{ matrix.asset }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            asset: gear-tools-darwin-arm64
+            bin: gear-tools
+          - os: macos-13
+            asset: gear-tools-darwin-x64
+            bin: gear-tools
+          - os: ubuntu-latest
+            asset: gear-tools-linux-x64
+            bin: gear-tools
+          - os: windows-latest
+            asset: gear-tools-windows-x64.exe
+            bin: gear-tools.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p gear-tools
+      - name: Stage asset
+        shell: bash
+        run: |
+          mkdir -p out
+          cp "target/release/${{ matrix.bin }}" "out/${{ matrix.asset }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: out/*
+          retention-days: 1
+
+  tools-linux-arm64:
+    name: gear-tools-linux-arm64 (cross)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cross
+      - uses: Swatinem/rust-cache@v2
+      - run: cross build --release -p gear-tools --target aarch64-unknown-linux-gnu
+      - name: Stage asset
+        run: |
+          mkdir -p out
+          cp target/aarch64-unknown-linux-gnu/release/gear-tools out/gear-tools-linux-arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gear-tools-linux-arm64
+          path: out/*
+          retention-days: 1
+
+  publish:
+    name: Checksum, smoke, publish
+    needs: [cli, tools-native, tools-linux-arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums (generated beside the binaries they describe)
+        run: |
+          cd dist
+          sha256sum gear-* > SHA256SUMS
+          cat SHA256SUMS
+      - name: Smoke the Linux pair end-to-end
+        run: |
+          chmod +x dist/gear-linux-x64 dist/gear-tools-linux-x64
+          GEAR_TOOLS_BIN=dist/gear-tools-linux-x64 dist/gear-linux-x64 --version | grep -E "Gear v"
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Gear $GITHUB_REF_NAME" \
+            --generate-notes
+
+  install-smoke:
+    name: Fresh-machine install (README gh path, checksum-verified)
+    needs: [publish]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install exactly as the README instructs, then run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+          arch="$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/')"
+          tmp="$(mktemp -d)"; cd "$tmp"
+          gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" \
+            -p "gear-$os-$arch" -p "gear-tools-$os-$arch" -p SHA256SUMS
+          grep -E "gear(-tools)?-$os-$arch\$" SHA256SUMS | sha256sum -c -
+          mkdir -p ~/.gear/bin
+          install -m755 "gear-$os-$arch" ~/.gear/bin/gear
+          install -m755 "gear-tools-$os-$arch" ~/.gear/bin/gear-tools
+          export PATH="$HOME/.gear/bin:$PATH"
+          gear --version | grep -E "Gear v"
