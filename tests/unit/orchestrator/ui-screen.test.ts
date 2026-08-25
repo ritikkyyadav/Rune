@@ -127,7 +127,7 @@ describe("ui/AltScreen differential renderer", () => {
   });
 });
 
-// ─── Inline renderer (default surface: native scrollback + pinned composer) ───
+// ─── Inline renderer (--inline / GEAR_INLINE: native scrollback + pinned composer; the default surface is the fullscreen AltScreen above) ───
 
 const ALT_ENTER = "\x1b[?1049h";
 const HIDE = "\x1b[?25l";

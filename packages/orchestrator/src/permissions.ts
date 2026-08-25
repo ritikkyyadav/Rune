@@ -327,7 +327,7 @@ export class PermissionBroker {
 
   check(schema: ToolSchema, args: Record<string, unknown>): PermissionDecision {
     // ── Org policy: FIRST, before every shortcut. A signed policy denial is
-    // terminal — Autonomy III, workspace autonomy, and session grants cannot
+    // terminal — 4th gear, workspace autonomy, and session grants cannot
     // override it, or the policy would be advisory. ──
     if (this.orgPolicy) {
       const denial = policyDenial(this.orgPolicy, schema.name, args);

@@ -83,10 +83,10 @@ export const GEAR_ACCENTS: readonly GearAccent[] = [
   "mono",
 ];
 
-// Gear opens on its own calm, warm-ivory surface. Follow-terminal remains
-// available for people who want to keep a custom terminal profile untouched.
-// The approved product comp opens in Light + Cyber Orange (image 2). Keep the
-// other four accents and Dark as first-class runtime choices.
+// Gear opens on Flow — the dark graphite surface of the approved terminal
+// recording. The five gear accents (light and dark) and Follow-terminal stay
+// first-class runtime choices for people who want a light surface or an
+// untouched custom terminal profile.
 export const DEFAULT_THEME = "flow";
 
 // ─── ANSI-256 nearest-match (xterm cube + grayscale ramp) ───

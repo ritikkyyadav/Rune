@@ -33,9 +33,11 @@ compliance-sensitive teams.
   heightened review), and decisions enter the tamper-evident audit trail. See
   [`docs/auto-mode.md`](docs/auto-mode.md).
 - **Permissions & sandbox** — signed organization policy, mechanical deny/ask/allow rules, egress +
-  output redaction, per-tool rate limiting, OS sandboxing, and explicit Autonomy I/II/III tiers.
-  In the CLI, Shift+Tab cycles Confirm → Autonomy I → II → III → Auto; the fourth press from
-  Confirm enters classifier-backed Auto after the three autonomy levels.
+  output redaction, per-tool rate limiting, OS sandboxing, and the five-gear permission ladder.
+  In the CLI, Shift+Tab shifts up: 1st gear (every action asks) → 2nd (workspace edits proceed) →
+  3rd (adds sandboxed commands and confined delegation) → 4th (full autonomy) → Auto
+  (classifier-reviewed), then wraps. The OS sandbox is a separate `/sandbox` switch — no gear
+  changes it.
 - **Hooks** — run shell commands automatically around tool use and session lifecycle via
   `.gear/hooks.json` (e.g. format/lint after edits, block protected paths).
 - **MCP** — project-scoped tool discovery via `.gear/mcp.json`.

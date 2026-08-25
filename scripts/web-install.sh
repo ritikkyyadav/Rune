@@ -13,8 +13,10 @@
 #    GEAR_TELEMETRY_ENDPOINT=url     if set, enables the opt-in channel by
 #                                    writing [telemetry] into ~/.gear/config.toml
 #    GEAR_TELEMETRY_TOKEN=secret     collector bearer token (with the above)
-#  The CLI also accepts a best-effort native accelerator: if the release ships
-#  gear-tools-<os>-<arch> it is installed next to the CLI (optional).
+#  Releases ship a gear + gear-tools pair per platform, and the pair is
+#  REQUIRED — file and shell tools run through the native gear-tools executor.
+#  GEAR_SKIP_TOOLS=1 is the explicit opt-out for source builds that compile
+#  crates/gear-tools themselves.
 # ──────────────────────────────────────────────────────────
 set -euo pipefail
 

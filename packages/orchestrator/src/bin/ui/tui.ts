@@ -402,8 +402,8 @@ class Tui {
 
     // The banner is a live header (re-themed every frame), so nothing to seed here.
     // The handler is registered in every mode: the broker short-circuits to "allowed"
-    // under Autonomy III, so it is never invoked there — and stays ready the instant
-    // Shift+Tab cycles back to confirm/auto, without re-wiring.
+    // in 4th gear, so it is never invoked there — and stays ready the instant
+    // Shift+Tab shifts back to an asking gear, without re-wiring.
     engine.setPermissionHandler(this.permissionHandler);
     // Auto mode's classifier approvals are silent at the broker; the chip
     // keeps them visible in the transcript without pausing the run (v2 spec).

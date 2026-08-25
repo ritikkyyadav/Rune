@@ -3,6 +3,7 @@
 import type { PermissionMode } from "../../permissions";
 import * as os from "os";
 import { bold, text, muted, faint, info, warn } from "./theme";
+import { modeInfo } from "./composer";
 import { kv, visLen } from "./render";
 import * as F from "./flow";
 import { PRODUCT_NAME, PRODUCT_VERSION } from "./brand";
@@ -49,11 +50,11 @@ export interface StatusView {
 function permissionsLabel(s: StatusView): string {
   const mode: PermissionMode =
     s.permissionMode ?? (s.yoloMode ? "gear-4" : s.trustWorkspace ? "gear-3" : "gear-1");
-  if (mode === "gear-4") return bold(warn("▸▸▸▸ 4th gear · full autonomy, no prompts"));
-  if (mode === "gear-3") return warn("▸▸▸ 3rd gear · edits + sandboxed shell");
-  if (mode === "gear-2") return warn("▸▸ 2nd gear · workspace edits");
-  if (mode === "auto") return warn("◆ auto · classifier-reviewed");
-  return text("▸ 1st gear · guided");
+  // Read the one gear table (composer.modeInfo) — /status once carried its own
+  // hand-rolled copy of these labels, and copies drift.
+  const m = modeInfo(mode);
+  const label = m.paint(`${m.arrows} ${m.label} · ${m.desc}`);
+  return m.loud ? bold(label) : label;
 }
 
 export function renderStatus(s: StatusView): string {

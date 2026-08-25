@@ -11,7 +11,7 @@ import {
 
 /**
  * `update_config` — change one of Gear's own settings from a plain-language
- * request ("switch to Autonomy III", "turn the sandbox off", "enable auto
+ * request ("shift to 4th gear", "turn the sandbox off", "enable auto
  * commit"). The change is applied live AND written back to ~/.gear/config.toml so
  * it survives the next launch. The model maps the user's words to a setting +
  * value; this tool validates them against a fixed catalog (so it can only touch
@@ -34,7 +34,7 @@ export const UPDATE_CONFIG_TOOL_SCHEMA: ToolSchema = {
   name: "update_config",
   version: "0.1.0",
   description:
-    'Change one of Gear\'s own settings when the user asks (e.g. "switch to Autonomy III", ' +
+    'Change one of Gear\'s own settings when the user asks (e.g. "shift to 4th gear", ' +
     '"turn the sandbox off", "enable auto commit"). The change applies immediately ' +
     "and is saved to ~/.gear/config.toml so it persists across restarts. Call with `setting` " +
     "and `value`. Omit `value` to read the current value; omit both to list every setting. " +
@@ -140,7 +140,7 @@ export function createUpdateConfigTool(deps: UpdateConfigDeps): ToolHandler {
         const already = deps.readSetting(setting.key);
 
         // Apply live FIRST. If the machine won't honor it (e.g. org policy forbids
-        // Autonomy III), report the refusal and DON'T persist a dead setting.
+        // the 4th gear), report the refusal and DON'T persist a dead setting.
         const applied = deps.applyLive(setting.key, canonical);
         if (!applied.ok) {
           return fail(
