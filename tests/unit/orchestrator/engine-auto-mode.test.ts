@@ -178,7 +178,7 @@ describe("Engine Auto-mode wiring", () => {
     expect(internals.autoModeSafety.getStats().probeScans).toBe(0);
   });
 
-  test("safe-tier allows are counted but only risky decisions are worth an audit row", async () => {
+  test("safe-tier allows are counted but never persisted; risky decisions are", async () => {
     const sessionId = engine.createSession();
     const check = internals.buildPermissionCheck({
       sessionId,
@@ -190,7 +190,29 @@ describe("Engine Auto-mode wiring", () => {
       args: { path: join(root, "src", "parser.ts") },
     });
     expect(decision.allowed).toBe(true);
+    expect(internals.autoModeSafety.getStats().allowed).toBe(1);
 
+    // The wired gate: a safe read leaves NO safety_decision event behind —
+    // recording every read_file would multiply the audit log by the read rate.
+    const safetyEvents = (id: string) =>
+      internals.sessions
+        .getEvents(id, 1)
+        .map(({ event }) => event)
+        .filter((event) => event.type === "safety_decision");
+    expect(safetyEvents(sessionId)).toHaveLength(0);
+
+    // A classifier-tier decision (queued fast BLOCK → reasoned deny) IS
+    // persisted, with the chain intact.
+    const denied = await check({
+      callId: "push-1",
+      toolName: "bash",
+      args: { command: "git push --force origin main", network: true },
+    });
+    expect(denied.allowed).toBe(false);
+    expect(safetyEvents(sessionId)).toHaveLength(1);
+    expect(internals.sessions.verifyAuditChain()).toEqual({ ok: true });
+
+    // The pure gate documents the same contract.
     const safeAllow: AutoModeReview = {
       verdict: "allow",
       tier: "safe",
@@ -203,7 +225,6 @@ describe("Engine Auto-mode wiring", () => {
     expect(shouldRecordAutoModeDecision(safeAllow)).toBe(false);
     expect(shouldRecordAutoModeDecision({ ...safeAllow, verdict: "ask" })).toBe(true);
     expect(shouldRecordAutoModeDecision({ ...safeAllow, tier: "classifier" })).toBe(true);
-    expect(internals.autoModeSafety.getStats().allowed).toBe(1);
   });
 
   test("a reviewer ask returns to the agent with guidance — no modal handler required", async () => {
@@ -355,5 +376,73 @@ describe("Engine Auto-mode wiring", () => {
     expect(decision.allowed).toBe(true);
     expect(classifier.calls.map((call) => call.stage)).toEqual(["fast", "reasoned"]);
     expect(classifier.calls[0]!.prompt).toContain("SECURITY ALERT");
+  });
+  test("allow-for-session on an askRule ask silences identical retries only", async () => {
+    const sessionId = engine.createSession();
+    internals.autoModeSafety = new AutoModeSafetyController(
+      resolveAutoModeConfig({ askRules: ["bash(git push*)"] }),
+      new QueueClassifier([]), // throws if consulted — proves the grant path is model-free
+      () => ({ gateway: {} as LlmGateway, provider: "anthropic", model: "isolated-reviewer" }),
+    );
+    let prompts = 0;
+    engine.setPermissionHandler(async (prompt) => {
+      prompts++;
+      // In Auto the card scopes the session choice to this exact payload
+      // and an askRule ask is not a circuit breaker, so it stays offered.
+      expect(prompt.exactSessionGrant).toBe(true);
+      expect(prompt.sessionGrantUnavailable).toBeFalsy();
+      return { kind: "allow_session" };
+    });
+    const check = internals.buildPermissionCheck({
+      sessionId,
+      userMessages: ["Push the feature branch when ready."],
+    });
+    const args = { command: "git push origin feature", network: true };
+
+    const first = await check({ callId: "p1", toolName: "bash", args });
+    expect(first.allowed).toBe(true);
+    expect(prompts).toBe(1);
+
+    // The identical payload rides the exact grant — no re-ask, no reviewer.
+    const second = await check({ callId: "p2", toolName: "bash", args });
+    expect(second.allowed).toBe(true);
+    expect(prompts).toBe(1);
+
+    // Any variation of the payload re-asks.
+    const third = await check({
+      callId: "p3",
+      toolName: "bash",
+      args: { command: "git push origin other", network: true },
+    });
+    expect(third.allowed).toBe(true);
+    expect(prompts).toBe(2);
+  });
+
+  test("a critical circuit breaker hides the session choice and never records a grant", async () => {
+    const sessionId = engine.createSession();
+    internals.autoModeSafety = new AutoModeSafetyController(
+      resolveAutoModeConfig(),
+      new QueueClassifier([]),
+      () => ({ gateway: {} as LlmGateway, provider: "anthropic", model: "isolated-reviewer" }),
+    );
+    let prompts = 0;
+    engine.setPermissionHandler(async (prompt) => {
+      prompts++;
+      expect(prompt.sessionGrantUnavailable).toBe(true);
+      // A headless handler answering allow_session anyway is honored once…
+      return { kind: "allow_session" };
+    });
+    const check = internals.buildPermissionCheck({
+      sessionId,
+      userMessages: ["Clean generated build files."],
+    });
+    const args = { command: "rm -rf /" };
+
+    const first = await check({ callId: "c1", toolName: "bash", args });
+    expect(first.allowed).toBe(true);
+    // …but nothing was recorded: the identical retry pauses for a human again.
+    const second = await check({ callId: "c2", toolName: "bash", args });
+    expect(second.allowed).toBe(true);
+    expect(prompts).toBe(2);
   });
 });

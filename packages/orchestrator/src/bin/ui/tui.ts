@@ -150,25 +150,32 @@ export interface PermissionKeyAction {
   handled: boolean;
 }
 
-/** Pure reducer so the highlighted approval row and the resolved action cannot drift apart. */
-export function permissionKeyAction(key: Key, selected: number): PermissionKeyAction {
-  const current = Math.max(0, Math.min(2, selected));
+/**
+ * Pure reducer so the highlighted approval row and the resolved action cannot
+ * drift apart. `choiceCount` is 2 on circuit-breaker cards, which offer no
+ * session grant: [allow once, deny] instead of [allow once, session, deny].
+ */
+export function permissionKeyAction(
+  key: Key,
+  selected: number,
+  choiceCount: 2 | 3 = 3,
+): PermissionKeyAction {
+  const kinds: Array<UserPermissionDecision["kind"]> =
+    choiceCount === 3 ? ["allow_once", "allow_session", "deny"] : ["allow_once", "deny"];
+  const current = Math.max(0, Math.min(choiceCount - 1, selected));
   if (key.type === "up" || key.type === "left") {
-    return { selected: (current + 2) % 3, handled: true };
+    return { selected: (current + choiceCount - 1) % choiceCount, handled: true };
   }
   if (key.type === "down" || key.type === "right" || key.type === "tab") {
-    return { selected: (current + 1) % 3, handled: true };
+    return { selected: (current + 1) % choiceCount, handled: true };
   }
 
   let decision: UserPermissionDecision | undefined;
   if (key.type === "char" && /^[123]$/.test(key.value)) {
     const choice = Number(key.value) - 1;
-    decision =
-      choice === 0
-        ? { kind: "allow_once" }
-        : choice === 1
-          ? { kind: "allow_session" }
-          : { kind: "deny" };
+    if (choice < choiceCount) decision = { kind: kinds[choice]! };
+    // A digit past the card's last row is swallowed, not bubbled to the composer.
+    else return { selected: current, handled: true };
   } else if (key.type === "char" && (key.value === "n" || key.value === "N")) {
     decision = { kind: "deny" };
   } else if (
@@ -177,20 +184,45 @@ export function permissionKeyAction(key: Key, selected: number): PermissionKeyAc
     // (session) remains for muscle memory from earlier releases.
     (key.type === "char" && /^[sSaA]$/.test(key.value))
   ) {
+    // No session choice on a 2-row card — swallow the shortcut so shift-tab
+    // cannot fall through to the gear cycle while a decision is pending.
+    if (choiceCount === 2) return { selected: current, handled: true };
     decision = { kind: "allow_session" };
   } else if (key.type === "char" && (key.value === "y" || key.value === "Y")) {
     decision = { kind: "allow_once" };
   } else if (key.type === "enter") {
-    decision =
-      current === 0
-        ? { kind: "allow_once" }
-        : current === 1
-          ? { kind: "allow_session" }
-          : { kind: "deny" };
+    decision = { kind: kinds[current]! };
   } else if (key.type === "esc") {
     decision = { kind: "deny" };
   }
   return { selected: current, decision, handled: decision != null };
+}
+
+/**
+ * Pure region-scroll hint for the alt-screen compositor: when only the
+ * transcript window shifted between frames (streamed line, wheel notch) and
+ * the band geometry is unchanged, return the `frame()` scroll hint that lets
+ * the terminal's own hardware scroll move the band. Undefined = no clean
+ * shift; the compositor falls back to its per-row diff. `delta` is negated
+ * because a window that advanced (end grew) moves content UP on screen.
+ */
+export function transcriptScrollHint(
+  prev: { end: number; bandTop: number; transH: number },
+  next: { end: number; bandTop: number; transH: number; visibleLen: number },
+): { top: number; bottom: number; delta: number } | undefined {
+  const shifted = next.end - prev.end;
+  if (
+    prev.bandTop !== next.bandTop ||
+    prev.transH !== next.transH ||
+    next.transH <= 0 ||
+    shifted === 0 ||
+    Math.abs(shifted) >= next.transH ||
+    // A part-empty band top-pads instead of shifting; only a full window scrolls.
+    next.visibleLen !== next.transH
+  ) {
+    return undefined;
+  }
+  return { top: next.bandTop, bottom: next.bandTop + next.transH - 1, delta: -shifted };
 }
 
 type SessionListItem = ReturnType<Engine["listSessions"]>[number];
@@ -966,13 +998,23 @@ class Tui {
     if (rows.length > R) rows.splice(topRows + banner.length, rows.length - R);
 
     const bandTop = topRows + banner.length;
+    // Hardware-scroll hint: when only the transcript window shifted since the
+    // last frame (a streamed line, a wheel notch) and the band geometry is
+    // unchanged, the compositor can shift the band with the terminal's own
+    // region scroll and repaint just the exposed rows instead of rewriting
+    // every band row. applyScroll verifies the overlap before using the hint,
+    // so a stale or wrong hint safely degrades to the per-row diff.
+    const scrollHint = transcriptScrollHint(
+      { end: this.prevEnd, bandTop: this.prevBandTop, transH: this.prevTransH },
+      { end, bandTop, transH, visibleLen: visible.length },
+    );
     this.prevEnd = end;
     this.prevBandTop = bandTop;
     this.prevTransH = transH;
 
     const caretRow = Math.min(R - 1, bandTop + transH + hintRows + comp.caretRow);
     const caretCol = Math.min(cols() - 1, left + comp.caretCol);
-    this.screen.frame(rows, caretRow, caretCol);
+    this.screen.frame(rows, caretRow, caretCol, scrollHint);
   }
 
   /** Request a repaint, coalesced to at most one paint per ~16ms (60fps). Almost every input and
@@ -3495,6 +3537,7 @@ class Tui {
       workspaceRoot: this.ctx.workspaceRoot,
       safety: prompt.safety,
       exactSessionGrant: prompt.exactSessionGrant,
+      sessionGrantUnavailable: prompt.sessionGrantUnavailable,
       rateLimit: prompt.rateLimit,
     });
     return new Promise<UserPermissionDecision>((resolve) => {
@@ -3574,7 +3617,8 @@ class Tui {
 
   private permKey(key: Key): void {
     if (!this.perm) return;
-    const action = permissionKeyAction(key, this.perm.sel);
+    const choiceCount = this.perm.preview.choices.length === 2 ? 2 : 3;
+    const action = permissionKeyAction(key, this.perm.sel, choiceCount);
     if (!action.handled) return;
     if (!action.decision) {
       this.perm.sel = action.selected;

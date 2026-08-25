@@ -15,7 +15,7 @@ import type { ChatMessage, EngineStatus, PermissionDecision } from "./lib/types"
 
 type Overlay = null | "model" | "theme" | "gear";
 
-const VERSION = "0.2.0";
+const VERSION = __APP_VERSION__;
 
 function escapeHtml(s: string): string {
   return s.replace(

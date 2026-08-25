@@ -212,3 +212,62 @@ describe("ui/BottomRegion inline renderer", () => {
     expect(h.all()).toContain("\x1b[48;5;235m" + CLEAR_BELOW);
   });
 });
+
+// ─── The Tui→frame() region-scroll wiring ───
+// The hint below is the piece that connects the transcript band's window math
+// to AltScreen's Tier-2 hardware scroll. It was once computed and never passed
+// (frame() ran the per-row diff on every streamed line); these tests pin both
+// the pure hint and the end-to-end escape sequence.
+
+import { transcriptScrollHint } from "../../../packages/orchestrator/src/bin/ui/tui";
+
+describe("transcriptScrollHint → AltScreen region scroll", () => {
+  const geom = { bandTop: 4, transH: 10 };
+
+  it("streams (window advanced) as an upward band scroll", () => {
+    const hint = transcriptScrollHint(
+      { end: 40, ...geom },
+      { end: 42, ...geom, visibleLen: 10 },
+    );
+    expect(hint).toEqual({ top: 4, bottom: 13, delta: -2 });
+  });
+
+  it("a wheel notch up (window rewound) scrolls the band down", () => {
+    const hint = transcriptScrollHint(
+      { end: 40, ...geom },
+      { end: 37, ...geom, visibleLen: 10 },
+    );
+    expect(hint).toEqual({ top: 4, bottom: 13, delta: 3 });
+  });
+
+  it("refuses when geometry changed, the band is part-empty, or the shift is too big", () => {
+    const next = { end: 42, ...geom, visibleLen: 10 };
+    expect(transcriptScrollHint({ end: 42, ...geom }, next)).toBeUndefined(); // no shift
+    expect(transcriptScrollHint({ end: 40, bandTop: 3, transH: 10 }, next)).toBeUndefined();
+    expect(transcriptScrollHint({ end: 40, bandTop: 4, transH: 9 }, next)).toBeUndefined();
+    expect(
+      transcriptScrollHint({ end: 40, ...geom }, { ...next, visibleLen: 9 }),
+    ).toBeUndefined(); // top-padded band
+    expect(
+      transcriptScrollHint({ end: 20, ...geom }, { ...next, end: 40 }),
+    ).toBeUndefined(); // shift ≥ band height
+  });
+
+  it("drives a real DECSTBM region scroll instead of rewriting every band row", () => {
+    const h = harness();
+    const rows = (lines: string[]) => ["hdr", ...lines, "composer"];
+    h.screen.frame(rows(["l1", "l2", "l3", "l4"]), 0, 0); // baseline
+    // One streamed line: band rows 1..4 shift up by one, exposing "l5" at the bottom.
+    const hint = transcriptScrollHint(
+      { end: 4, bandTop: 1, transH: 4 },
+      { end: 5, bandTop: 1, transH: 4, visibleLen: 4 },
+    );
+    expect(hint).toEqual({ top: 1, bottom: 4, delta: -1 });
+    h.screen.frame(rows(["l2", "l3", "l4", "l5"]), 0, 0, hint);
+    const out = h.last();
+    expect(out).toContain("\x1b[2;5r"); // DECSTBM band = rows 2..5 (1-based)
+    expect(out).toContain("\x1b[1S"); // scroll up one line inside the band
+    expect(out).toContain("l5"); // only the exposed row is painted…
+    expect(out).not.toContain("l3"); // …the surviving rows are not rewritten
+  });
+});

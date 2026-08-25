@@ -605,7 +605,7 @@ export function renderPermissionCard(
     irreversible: irreversible
       ? `This ${irreversible.label} ${irreversible.value}.`.replace(/\.\.$/, ".")
       : undefined,
-    options: preview.choices?.length === 3 ? [...preview.choices] : [...PERMISSION_LABELS],
+    options: preview.choices?.length ? [...preview.choices] : [...PERMISSION_LABELS],
     selected,
     escape: "cancel",
     width,
