@@ -26,7 +26,9 @@ const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
   openai: "gpt-4o",
   openrouter: "deepseek/deepseek-v4-flash:free",
   ollama: "llama3",
-  "ollama-turbo": "qwen3-coder-next",
+  // qwen3-coder-next (the previous refresh) was itself retired 2026-07-15.
+  // gpt-oss:120b verified live + tool-capable on the keyed free tier 2026-08-26.
+  "ollama-turbo": "gpt-oss:120b",
   codex: "gpt-5.6-terra",
 };
 
@@ -39,6 +41,18 @@ const RATE_LIMIT_MAX_WAIT_MS = 8_000;
 // can only fail identically, so the provider is pruned for the session.
 const MODEL_GONE_RE =
   /retired|decommission|deprecat|model.{0,32}(not.?(found|exist|available)|unknown|invalid)|does not exist|no such model/i;
+
+/**
+ * True when a failure means the MODEL is gone (retired / renamed / never
+ * valid), not a transient fault. Exported so other layers that walk model
+ * candidates themselves (the compaction summarizer) classify with the SAME
+ * definition instead of growing a divergent copy.
+ */
+export function isModelGoneError(err: unknown): boolean {
+  const status = (err as { status?: number } | undefined)?.status;
+  if (status === 404 || status === 410) return true;
+  return MODEL_GONE_RE.test(err instanceof Error ? err.message : "");
+}
 
 // A 429 that is a PLAN/QUOTA cap ("usage limit reached", weekly caps), not a
 // per-minute throttle. Waiting seconds won't clear it — cool the provider down
@@ -83,7 +97,7 @@ export class LlmGateway {
   /** True when the failure means the MODEL is gone (not a transient fault). */
   private isModelGone(status: number | undefined, err: Error | undefined): boolean {
     if (status === 404 || status === 410) return true;
-    return MODEL_GONE_RE.test(err?.message ?? "");
+    return isModelGoneError(err);
   }
 
   /** Introspection for /status-style UIs and tests. */

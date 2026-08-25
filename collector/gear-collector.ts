@@ -26,15 +26,29 @@
 //   token    = "your-secret"
 
 import { Database } from "bun:sqlite";
-import { mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 
 const PORT = Number(process.env.GEAR_COLLECTOR_PORT ?? 8787);
 const TOKEN = process.env.GEAR_COLLECTOR_TOKEN ?? "";
-const DB_PATH = process.env.GEAR_COLLECTOR_DB ?? join(homedir(), ".gear-collector", "reports.db");
+const DB_PATH =
+  process.env.GEAR_COLLECTOR_DB ??
+  process.env.BERNE_COLLECTOR_DB ??
+  join(homedir(), ".gear-collector", "reports.db");
 
 mkdirSync(dirname(DB_PATH), { recursive: true });
+// Continuity for upgraded deployments: a collector that previously ran under
+// the Berne name kept its reports at ~/.berne-collector. When the new default
+// DB does not exist yet and the legacy one does, adopt it by copy (copy, not
+// move — a rollback to the old entry point keeps working).
+if (!process.env.GEAR_COLLECTOR_DB && !process.env.BERNE_COLLECTOR_DB && !existsSync(DB_PATH)) {
+  const legacy = join(homedir(), ".berne-collector", "reports.db");
+  if (existsSync(legacy)) {
+    copyFileSync(legacy, DB_PATH);
+    console.log(`adopted legacy collector data: ${legacy} → ${DB_PATH}`);
+  }
+}
 const db = new Database(DB_PATH);
 db.exec("PRAGMA journal_mode = WAL;");
 db.exec(`

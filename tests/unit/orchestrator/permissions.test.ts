@@ -356,3 +356,22 @@ describe("PermissionBroker — permission modes (the Shift+Tab cycle)", () => {
     expect(broker.check(webSchema, { url: "https://example.com" }).type).toBe("needs_confirmation");
   });
 });
+
+describe("resolveStartupPermissionFlags config fallbacks", () => {
+  test("the legacy [permissions] trustWorkspace boolean maps to 3rd gear", () => {
+    expect(resolveStartupPermissionFlags({ configTrustWorkspace: true })).toEqual({
+      yoloMode: false,
+      trustWorkspace: true,
+      permissionMode: "gear-3",
+    });
+    // …and stays subordinate to every explicit source.
+    expect(
+      resolveStartupPermissionFlags({ configTrustWorkspace: true, gearFlag: "1" }).permissionMode,
+    ).toBe("gear-1");
+    expect(
+      resolveStartupPermissionFlags({ configTrustWorkspace: true, yoloFlag: true }).permissionMode,
+    ).toBe("gear-4");
+    // Absent everything: 1st gear.
+    expect(resolveStartupPermissionFlags({}).permissionMode).toBe("gear-1");
+  });
+});

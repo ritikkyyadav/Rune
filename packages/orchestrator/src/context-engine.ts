@@ -1,5 +1,5 @@
 import type { Message, ContentBlock, ToolDefinition } from "@gear/llm-gateway";
-import { LlmGateway } from "@gear/llm-gateway";
+import { LlmGateway, isModelGoneError } from "@gear/llm-gateway";
 import type { ProviderName } from "@gear/llm-gateway";
 import { PROVIDER_TIER_DEFAULTS } from "@gear/shared";
 import { TokenCounter, tokenCounter, countTokens, getContextLimit } from "./tokenizer";
@@ -107,6 +107,16 @@ export class ContextEngine {
   private gateway: LlmGateway;
   private summarizerModel: string;
   private summarizerProvider: ProviderName;
+  // The active session pair, used as a summarizer fallback candidate: it is
+  // serving the main loop RIGHT NOW, so it is alive even when the light-tier
+  // table has rotted to a retired id (which is exactly when it's needed).
+  private sessionModel: string | null = null;
+  private sessionProvider: ProviderName | null = null;
+  // provider/model pairs that already failed as summarizers this session
+  // (retired ids, gated models). A corpse does not resurrect mid-session, so
+  // later candidate walks skip these instead of re-spending a doomed round
+  // trip on every high-water crossing.
+  private deadSummarizers = new Set<string>();
   private tokenCounter: TokenCounter;
   private config: {
     budget?: Partial<ContextBudget>;
@@ -154,15 +164,27 @@ export class ContextEngine {
   }
 
   /**
-   * Point summarization at a specific provider/model — normally the active
-   * session model, which is guaranteed registered and working. Without this the
-   * summarizer falls back to its anthropic/claude-haiku default and fails for
-   * everyone without an Anthropic key (the root cause of "/compress does
-   * nothing"). The Engine calls this whenever the model or provider changes.
+   * Point summarization at a specific provider/model — normally the LIGHT
+   * model tier. Without this the summarizer falls back to its anthropic/
+   * claude-haiku default and fails for everyone without an Anthropic key (the
+   * root cause of "/compress does nothing"). The Engine calls this whenever
+   * the model or provider changes, and passes the ACTIVE SESSION pair as
+   * `session`: the one model guaranteed alive (it is serving the main loop),
+   * kept as a fallback candidate for when the light-tier pick has rotted to a
+   * retired id — the failure that once left a session unable to ever compact
+   * while its main model worked fine.
    */
-  setSummarizer(model: string, provider: ProviderName): void {
+  setSummarizer(
+    model: string,
+    provider: ProviderName,
+    session?: { model: string; provider: ProviderName },
+  ): void {
     if (model) this.summarizerModel = model;
     if (provider) this.summarizerProvider = provider;
+    if (session?.model && session.provider) {
+      this.sessionModel = session.model;
+      this.sessionProvider = session.provider;
+    }
   }
 
   /**
@@ -579,13 +601,14 @@ ${sections}${focus}`
 - Actions taken (files read, edited, commands run)
 - Outcomes and current state${focus}`;
 
-    // Try the active provider/model first, then any other registered provider.
+    // Try the configured summarizer first, then the fallback candidates.
     // `infer` (non-streaming) does no cross-provider fallback of its own, so if
     // the summarizer's provider is momentarily unavailable we walk the rest
     // ourselves rather than failing the whole compaction.
     this.lastSummaryFailure = null;
     let lastError = "no summarizer candidates registered";
-    for (const { provider, model } of this.summarizerCandidates()) {
+
+    const attempt = async (provider: ProviderName, model: string): Promise<string | null> => {
       // The compaction request must itself fit the candidate's window. Budget
       // the transcript to ~55% of the model's context (instructions + prior
       // state + the 2k reply need the rest) and keep the NEWEST messages when
@@ -635,9 +658,75 @@ ${sections}${focus}`
         // how compaction failures vanished: the run would later die of context
         // overflow with no trace of the summarizer ever having failed.
         lastError = `${provider}/${model}: ${err instanceof Error ? err.message : String(err)}`;
+        // A retired/renamed model cannot come back mid-session: memoize the
+        // corpse so the next compaction skips straight past it.
+        if (isModelGoneError(err)) this.deadSummarizers.add(`${provider}/${model}`);
+      }
+      return null;
+    };
+
+    for (const { provider, model } of this.summarizerCandidates()) {
+      const out = await attempt(provider, model);
+      if (out) return out;
+    }
+
+    // Every static candidate failed. Last resort: ask each registered provider
+    // what it ACTUALLY serves today and retry on verifiably-live models. The
+    // static default tables rot — Ollama Cloud has retired its stock lineup
+    // wholesale twice — and this turns the next rot from "this session can
+    // never compact again" into one extra round trip.
+    const recovered = await this.recoverWithLiveModels(attempt);
+    if (recovered) return recovered;
+
+    this.lastSummaryFailure = lastError;
+    return null;
+  }
+
+  /**
+   * Live-list recovery for a summarizer whose every static candidate failed:
+   * walk each registered provider's listModels() and try models that are
+   * verifiably alive right now, skipping known-dead pairs. On success the
+   * summarizer is re-pointed at the discovered model, so later compactions go
+   * straight there. Attempts are capped to bound latency (gated models fail
+   * fast with a 403), and every failed id is memoized — even a transiently
+   * failing one, a deliberate trade: successive compactions walk FORWARD
+   * through the list instead of re-dying on the same head entries.
+   */
+  private async recoverWithLiveModels(
+    attempt: (provider: ProviderName, model: string) => Promise<string | null>,
+  ): Promise<string | null> {
+    const MAX_LIVE_ATTEMPTS = 8;
+    let tried = 0;
+    const providers: ProviderName[] = [
+      this.summarizerProvider,
+      ...(this.gateway.getRegisteredProviderNames?.() ?? []).filter(
+        (p) => p !== this.summarizerProvider,
+      ),
+    ];
+    for (const name of providers) {
+      const provider = this.gateway.getProvider?.(name);
+      if (!provider?.listModels) continue;
+      let live: Array<{ id: string }>;
+      try {
+        live = await provider.listModels();
+      } catch {
+        continue; // discovery itself failed — try the next provider
+      }
+      for (const m of live) {
+        if (tried >= MAX_LIVE_ATTEMPTS) return null;
+        const key = `${name}/${m.id}`;
+        if (this.deadSummarizers.has(key)) continue;
+        tried++;
+        const out = await attempt(name, m.id);
+        if (out) {
+          // Self-heal: point the summarizer at the model that just worked.
+          this.summarizerModel = m.id;
+          this.summarizerProvider = name;
+          return out;
+        }
+        this.deadSummarizers.add(key);
       }
     }
-    this.lastSummaryFailure = lastError;
     return null;
   }
 
@@ -651,23 +740,32 @@ ${sections}${focus}`
 
   /**
    * Ordered provider/model pairs to attempt for summarization: the configured
-   * (active) one first, then every other registered provider with a safe default
-   * model. Defensive — in normal use the first candidate is the active session
-   * model and succeeds immediately.
+   * (light-tier) one, its provider's stock light default, the ACTIVE SESSION
+   * model — guaranteed alive, it is serving the main loop — then every other
+   * registered provider with a safe default. Pairs that already failed as
+   * summarizers this session are skipped. In normal use the first candidate
+   * succeeds immediately; the depth exists because a rotted tier table once
+   * pinned compaction to a retired model while the session model worked fine,
+   * and that session could never compact again.
    */
   private summarizerCandidates(): Array<{ provider: ProviderName; model: string }> {
-    const candidates: Array<{ provider: ProviderName; model: string }> = [
-      { provider: this.summarizerProvider, model: this.summarizerModel },
-    ];
-    const registered = this.gateway.getRegisteredProviderNames?.() ?? [];
-    for (const name of registered) {
+    const out: Array<{ provider: ProviderName; model: string }> = [];
+    const seen = new Set<string>();
+    const push = (provider: ProviderName | null, model: string | null | undefined) => {
+      if (!provider || !model) return;
+      const key = `${provider}/${model}`;
+      if (seen.has(key) || this.deadSummarizers.has(key)) return;
+      seen.add(key);
+      out.push({ provider, model });
+    };
+    push(this.summarizerProvider, this.summarizerModel);
+    push(this.summarizerProvider, summaryFallbackModel(this.summarizerProvider));
+    push(this.sessionProvider, this.sessionModel);
+    for (const name of this.gateway.getRegisteredProviderNames?.() ?? []) {
       if (name === this.summarizerProvider) continue;
-      candidates.push({
-        provider: name,
-        model: summaryFallbackModel(name) ?? this.summarizerModel,
-      });
+      push(name, summaryFallbackModel(name) ?? this.summarizerModel);
     }
-    return candidates;
+    return out;
   }
 
   getMemory(): SessionMemory {

@@ -77,10 +77,17 @@ export const PROVIDER_TIER_DEFAULTS: Record<
     standard: "deepseek/deepseek-v4-flash:free",
     light: "deepseek/deepseek-v4-flash:free",
   },
+  // Ollama Cloud rotates its free lineup wholesale: qwen3-coder:480b AND its
+  // announced successor qwen3-coder-next both 410'd on 2026-07-15, which left
+  // this table pointing at a corpse for the second time and killed compaction
+  // for ollama-turbo sessions. Current ids verified live (200 + tool calls)
+  // against https://ollama.com/v1/models on 2026-08-26. When these rot again,
+  // the summarizer's live-list recovery (context-engine.ts) keeps compaction
+  // alive; refresh this table to stop the main loop from booting on a corpse.
   "ollama-turbo": {
-    heavy: "qwen3-coder-next",
-    standard: "qwen3-coder-next",
-    light: "qwen3-coder-next",
+    heavy: "gpt-oss:120b",
+    standard: "gpt-oss:120b",
+    light: "gpt-oss:20b",
   },
 };
 

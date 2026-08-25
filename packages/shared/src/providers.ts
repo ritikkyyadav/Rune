@@ -260,19 +260,23 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     kind: "openai-compat",
     envVar: "OLLAMA_API_KEY",
     baseUrl: "https://ollama.com/v1",
-    defaultModel: "qwen3-coder:480b",
+    defaultModel: "gpt-oss:120b",
     docsUrl: "https://ollama.com/settings/keys",
-    // Verified reachable on the default (no-subscription) Ollama Cloud plan and
-    // tool-capable where it matters for agentic use. Subscription-gated models
-    // (deepseek-v3.1, kimi-k2, glm-5.x, mistral-large-3, gemini-3) are
-    // intentionally omitted — they 403 and would trip silent provider fallback.
+    // Verified 2026-08-26 on the default (no-subscription) Ollama Cloud plan:
+    // every id below returned 200 AND completed a tool call. The whole qwen3
+    // lineup this list used to carry (qwen3-coder:480b, qwen3-coder-next,
+    // qwen3-next:80b) was retired 2026-07-15 wholesale. Subscription-gated
+    // models (qwen3.5, kimi-k2.x/k3, deepseek-v4-*, glm-5.x, minimax-m2.7,
+    // mistral-large-3) are intentionally omitted — they 403 and would trip
+    // silent provider fallback.
     models: [
-      { id: "qwen3-coder:480b", label: "Qwen3 Coder 480B" },
-      { id: "qwen3-coder-next", label: "Qwen3 Coder Next" },
-      { id: "qwen3-next:80b", label: "Qwen3 Next 80B" },
-      { id: "devstral-2:123b", label: "Devstral 2 123B" },
-      { id: "glm-4.7", label: "GLM 4.7" },
       { id: "gpt-oss:120b", label: "GPT-OSS 120B" },
+      { id: "gpt-oss:20b", label: "GPT-OSS 20B" },
+      { id: "minimax-m3", label: "MiniMax M3" },
+      { id: "nemotron-3-ultra", label: "Nemotron 3 Ultra" },
+      { id: "nemotron-3-super", label: "Nemotron 3 Super" },
+      { id: "nemotron-3-nano:30b", label: "Nemotron 3 Nano 30B" },
+      { id: "gemma4:31b", label: "Gemma 4 31B" },
     ],
   },
   {

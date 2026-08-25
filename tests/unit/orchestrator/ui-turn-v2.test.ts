@@ -117,3 +117,18 @@ describe("turn v2 metadata", () => {
     expect(h.output()).not.toContain("↓ ");
   });
 });
+
+describe("verification must never swallow the answer", () => {
+  test("the final answer commits after a 'Verifying changes' notice", () => {
+    const h = harness();
+    h.turn.onEvent({ type: "text_delta", text: "The fix is to pad before styling. " });
+    // The verifier kicks in — the renderer flips to the verify phase and
+    // deliberately prints nothing for the notice itself…
+    h.turn.onEvent({ type: "notice", message: "Verifying changes with the project checks…" });
+    h.turn.onEvent({ type: "text_delta", text: "All checks passed." });
+    h.turn.finish();
+    // …but the user's ANSWER must still land in the committed output.
+    expect(h.output()).toContain("pad before styling");
+    expect(h.output()).toContain("All checks passed.");
+  });
+});

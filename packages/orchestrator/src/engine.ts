@@ -44,6 +44,7 @@ import {
   clampToBudget,
   createLogger,
   resolveTier,
+  PROVIDER_TIER_DEFAULTS,
   getGearHome,
   workspaceConfigPath,
   setToolArgsSalvageListener,
@@ -508,21 +509,11 @@ const DEFAULT_ENGINE_CONFIG: EngineConfig = {
 const SYSTEM_PROMPT = AGENT_DOCTRINE;
 
 // ─── System Memory ("dreaming") helpers ───
-
-// Cheap/fast model per provider for the memory distillation. The dream is just
-// summarization, so default to the inexpensive tier regardless of the active
-// chat model. Mirrors the summarizer fallbacks in context-engine.ts.
-const MEMORY_CHEAP_MODELS: Partial<Record<ProviderName, string>> = {
-  anthropic: "claude-haiku-4-5-20251001",
-  openai: "gpt-4o-mini",
-  google: "gemini-2.5-flash",
-  openrouter: "qwen/qwen3-coder:free",
-  groq: "llama-3.3-70b-versatile",
-  xai: "grok-2-latest",
-  deepseek: "deepseek-chat",
-  "ollama-turbo": "qwen3-coder:480b",
-  ollama: "llama3",
-};
+//
+// The dream is just summarization, so it runs on each provider's LIGHT tier
+// default (shared/tiers.ts) — one source of truth. The private model table
+// that used to live here rotted independently and still pinned dreams to
+// qwen models retired in July while the tier table had been refreshed.
 
 /** Max characters of any single message kept in the activity digest. */
 const MEMORY_MSG_CHARS = 600;
@@ -1056,6 +1047,9 @@ export class Engine {
       },
       this.gateway,
     );
+    // Re-sync immediately: this also hands the engine the active session pair,
+    // the summarizer's guaranteed-alive fallback candidate.
+    this.syncSummarizerTier();
 
     // Verifier — runs project checks after edits so the agent self-corrects.
     // On by default; detection is best-effort and a no-op when nothing matches.
@@ -2001,7 +1995,7 @@ export class Engine {
     const order = [active, ...registered.filter((p) => p !== active)].filter((p) =>
       registered.includes(p),
     );
-    const cheap = (p: ProviderName) => MEMORY_CHEAP_MODELS[p] ?? this.config.model;
+    const cheap = (p: ProviderName) => PROVIDER_TIER_DEFAULTS[p]?.light ?? this.config.model;
 
     // Explicit "provider/model" (note: model ids may contain '/', so split once).
     if (
@@ -3083,10 +3077,17 @@ export class Engine {
     );
   }
 
-  /** Point the compaction summarizer at the current light tier. */
+  /**
+   * Point the compaction summarizer at the current light tier — and hand it
+   * the active session pair as the guaranteed-alive fallback candidate for
+   * when the light-tier table has rotted to a retired model.
+   */
   private syncSummarizerTier(): void {
     const light = this.resolveModelTier("light");
-    this.contextEngine?.setSummarizer(light.model, light.provider as ProviderName);
+    this.contextEngine?.setSummarizer(light.model, light.provider as ProviderName, {
+      model: this.config.model,
+      provider: this.config.provider as ProviderName,
+    });
   }
 
   /** Switch model and/or provider at runtime. */
