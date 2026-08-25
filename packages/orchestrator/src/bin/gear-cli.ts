@@ -1271,7 +1271,7 @@ async function main() {
     });
   };
 
-  // Register in every mode. The broker short-circuits under Autonomy III, so the
+  // Register in every mode. The broker short-circuits in 4th gear, so the
   // handler is simply never called there — but stays wired so cycling back to confirm/auto
   // (Shift+Tab, /mode, /autonomy) restores prompts without re-registration.
   engine.setPermissionHandler(permissionHandler);
@@ -3053,10 +3053,9 @@ async function main() {
     process.stdout.write(userBlock(scheduledLoop ? scheduledDisplayPrompt : input) + "\n\n");
     spinner.start("thinking");
 
-    // Collapsed rendering (see ./ui/turn.ts): narration and the final answer stay
-    // in the open; work lines stream as they happen (streamWork — readline has no
-    // pinned window to host a live tail, and print can't be retracted). finish()
-    // sets down the edit chips, the plan's final state, the record, the answer.
+    // Collapsed rendering (see ./ui/turn.ts): narration and the final answer
+    // stay in the open; work is quiet on every surface. finish() sets down the
+    // edit chips, the plan's final state, the record, the answer.
     const turn = new TurnRenderer(
       {
         commit: (block) => {
@@ -3066,7 +3065,7 @@ async function main() {
           if (wasSpinning) spinner.start("thinking");
         },
       },
-      { model: engine.getModel(), getCost: () => engine.getCost(), streamWork: true },
+      { model: engine.getModel(), getCost: () => engine.getCost() },
     );
 
     // Offer-a-dashboard bookkeeping: the answer text (for the data-density

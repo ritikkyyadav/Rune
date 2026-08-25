@@ -66,10 +66,10 @@ The input is an open writing surface with one hairline, not a heavy card. The
 footer makes the control posture explicit and keeps the reference shortcuts:
 
 ```text
-  ▸▸ guided mode    shift+tab to cycle · esc to interrupt · ← sessions · ? shortcuts
+  ▸▸ 1st gear    shift+tab to shift up · esc to interrupt · ← sessions · ? shortcuts
 ```
 
-- `Shift+Tab` cycles guided, Autonomy I/II/III, and auto-review modes.
+- `Shift+Tab` shifts up through the five gears (1st → 4th, then Auto review).
 - Left arrow from an empty composer opens sessions.
 - `?` or `/` opens the live command palette.
 - Keys `1`–`9` quick-select the first nine visible model or theme choices.
@@ -116,7 +116,7 @@ then verification. Only the first planning statement receives the `Plan:` label.
 A permission request replaces the composer so there is one decision on screen.
 It names the human action first, preserves the exact command or target, previews
 file changes when available, and states that no action has happened yet.
-Autonomy and sandbox changes are announced in the transcript because they alter
+Gear and sandbox changes are announced in the transcript because they alter
 the contract, not merely a preference.
 
 ## Frame 6 — inspect and check

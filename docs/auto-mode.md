@@ -143,15 +143,17 @@ Legacy `ALAN_*` spellings are adopted as `GEAR_*` at startup when the `GEAR_*` n
 
 Shift+Tab advances through exactly five states:
 
-1. **Confirm** — prompt before writes and commands.
-2. **Autonomy I** — confined workspace edits proceed; commands still prompt.
-3. **Autonomy II** — add OS-sandboxed local commands and confined delegation.
-4. **Autonomy III** — full system access: disable the command sandbox and bypass prompts.
-5. **Auto** — restore the prior sandbox posture and independently classify risky actions.
+1. **1st gear** — prompt before writes and commands.
+2. **2nd gear** — confined workspace edits proceed; commands still prompt.
+3. **3rd gear** — add OS-sandboxed local commands and confined delegation.
+4. **4th gear** — full autonomy: every interactive prompt is bypassed. No gear touches the OS
+   command sandbox — `/sandbox` controls that separately.
+5. **Auto** — independently classify risky actions with the isolated reviewer.
 
-The next Shift+Tab returns to Confirm. Use `/autonomy I|II|III` to jump to a level or `/mode auto`
-to jump directly to classifier-backed Auto. The legacy `/hands-free`, `/turing`, `--yolo`, and
-`permissions.mode = "hands-free"` spellings still map to Autonomy III for migration only.
+The next Shift+Tab returns to 1st gear. Use `/gear 1|2|3|4|auto` (bare `/gear` shifts up) to jump
+directly; `/autonomy I|II|III` remains a legacy alias for the 2nd/3rd/4th gears, and the legacy
+`/hands-free`, `/turing`, `--yolo`, and `permissions.mode = "hands-free"` spellings still map to
+the 4th gear for migration only.
 
 ### Rule semantics
 
@@ -235,8 +237,8 @@ source, reason, and reviewer identity.
 
 ## Production rollout checklist
 
-1. Keep `failClosed = true`, OS sandboxing on, network default-deny where practical, and Autonomy III
-   forbidden on managed machines.
+1. Keep `failClosed = true`, OS sandboxing on, network default-deny where practical, and the 4th
+   gear forbidden on managed machines.
 2. Begin with narrow environment entries and broad `askRules`. Review false positives and denied
    actions before adding exceptions.
 3. Build an organization-specific eval set with authorized and unauthorized shell, remote, CI,

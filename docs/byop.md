@@ -10,7 +10,7 @@ added, and existing API-key users see zero behavior change.
 | Method      | What it is                                                        | Providers                                       |
 | ----------- | ----------------------------------------------------------------- | ----------------------------------------------- |
 | **api_key** | A bearer secret you paste or supply via env var (today's path).   | all cloud providers                             |
-| **oauth**   | Browser authorization-code + PKCE (loopback redirect).            | OpenRouter (reference); Anthropic behind a flag |
+| **oauth**   | Browser authorization-code + PKCE (loopback redirect).            | OpenRouter, Anthropic, ChatGPT (Codex)          |
 | **device**  | OAuth device-code (headless / SSH-friendly).                      | framework ready; no provider wired by default   |
 | **local**   | A localhost runtime reached by URL — connectivity, no credential. | Ollama, LM Studio                               |
 
@@ -73,17 +73,19 @@ Because the result is an ordinary key, it streams exactly like a pasted key and
 never expires. Security: PKCE (S256) is mandatory; the loopback binds only to
 127.0.0.1; the code is useless to an interceptor without the verifier Gear holds.
 
-### Anthropic subscription OAuth (experimental, off by default)
+### Anthropic subscription OAuth
 
-Anthropic's subscription OAuth is **scaffolded but disabled** — its exact
-parameters are not shipped enabled until verified. Enable the framework with:
+`gear login anthropic` (method `oauth`) runs the same authorization-code + PKCE
+shape against Anthropic's endpoints: the browser opens the claude.com authorize
+page, and the loopback callback exchanges the code at the platform token
+endpoint. The resulting subscription credential is stored in the credential
+store and refreshed automatically. `--method api_key` remains available for
+console API keys.
 
-```bash
-export GEAR_ANTHROPIC_OAUTH=1
-```
-
-With the flag unset, `anthropic` is `api_key`-only and nothing about the Anthropic
-path changes.
+This reuses Anthropic's own first-party public client id (the OpenCode-style
+approach) — set `GEAR_ANTHROPIC_OAUTH_CLIENT_ID` to override it if Anthropic
+rotates the id. `gear login codex` follows the same pattern for ChatGPT
+subscription sign-in.
 
 ## Config
 

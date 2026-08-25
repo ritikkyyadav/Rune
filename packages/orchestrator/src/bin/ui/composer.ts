@@ -47,7 +47,7 @@ export function promptString(): string {
 export interface ComposerStatus {
   model: string;
   workspace: string;
-  /** Permission mode in the five-state Confirm/Autonomy/Auto cycle. */
+  /** Permission mode — one of the five gears (gear-1..gear-4, auto). */
   mode?: string;
   /** Context window usage, 0–100 (shown as "N% context used"). */
   contextPercent?: number;

@@ -38,8 +38,6 @@ export interface TurnSink {
 export interface TurnRendererOpts {
   model?: string;
   getCost?: () => number;
-  /** Retained for API compatibility. Work is now quiet on every surface. */
-  streamWork?: boolean;
 }
 
 export type WorkPhase = "understand" | "plan" | "act" | "verify";

@@ -13,7 +13,7 @@
     },
     "apps/desktop": {
       "name": "@gear/desktop",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "dependencies": {
         "@tauri-apps/api": "^2.0.0",
         "@tauri-apps/plugin-shell": "^2.0.0",
@@ -32,7 +32,7 @@
     },
     "packages/llm-gateway": {
       "name": "@gear/llm-gateway",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "dependencies": {
         "@anthropic-ai/sdk": "^0.39",
         "@gear/shared": "workspace:*",
@@ -45,7 +45,7 @@
     },
     "packages/orchestrator": {
       "name": "@gear/orchestrator",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "bin": {
         "gear": "src/bin/gear-cli.ts",
       },
@@ -61,14 +61,14 @@
     },
     "packages/shared": {
       "name": "@gear/shared",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "devDependencies": {
         "typescript": "^5.8",
       },
     },
     "packages/telemetry": {
       "name": "@gear/telemetry",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "dependencies": {
         "@gear/shared": "workspace:*",
       },
@@ -78,7 +78,7 @@
     },
     "packages/tool-registry": {
       "name": "@gear/tool-registry",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "dependencies": {
         "@gear/llm-gateway": "workspace:*",
         "@gear/shared": "workspace:*",
@@ -93,7 +93,7 @@
     },
     "tests/eval": {
       "name": "@gear/eval",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "dependencies": {
         "@gear/llm-gateway": "workspace:*",
         "@gear/orchestrator": "workspace:*",

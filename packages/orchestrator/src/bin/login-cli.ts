@@ -92,9 +92,6 @@ export async function runLogin(
   const strategy = getStrategy(method, providerId);
   if (!strategy) {
     log(accent(`The "${method}" method isn't wired for ${descriptor.label} yet.`));
-    if (method === "oauth" && providerId === "anthropic") {
-      log(dim("Anthropic OAuth is experimental — set GEAR_ANTHROPIC_OAUTH=1 to enable it."));
-    }
     process.exitCode = 1;
     return;
   }
