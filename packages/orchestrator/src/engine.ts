@@ -112,6 +112,8 @@ import {
   resolveAutoModeConfig,
   type AutoModePolicyConfig,
   type AutoModeReview,
+  type AutoModeRun,
+  type ReviewerIdentity,
 } from "./auto-mode";
 import { MemoryManager } from "./memory/manager";
 import { EpisodicMemory } from "./memory/episodic";
@@ -138,6 +140,7 @@ import {
 import {
   AGENT_DOCTRINE,
   loadProjectMemory,
+  renderAutoModeDoctrine,
   renderBrowserDoctrine,
   renderEnvironmentBlock,
   renderInteractiveDoctrine,
@@ -617,6 +620,15 @@ export class Engine {
   private securityGuard: ReturnType<typeof createToolExecutionGuard> | null = null;
   /** Classifier action gate + tool-result prompt-injection probe. */
   private autoModeSafety!: AutoModeSafetyController;
+  /**
+   * The Auto review context of the run currently in flight (engine runs are
+   * serial). Live so mid-run trusted input — interjections and interactive
+   * ask_user answers — reaches the reviewer, which is what lets a blocked
+   * action resolve in conversation instead of a modal prompt.
+   */
+  private activeAutoRun: AutoModeRun | null = null;
+  /** High-confidence prompt-injection findings per session (sticky across runs). */
+  private readonly sessionInjectionFindings = new Map<string, number>();
   private checkpointStore: CheckpointStore | null = null;
   private checkpointPolicy: CheckpointPolicy;
   private memoryManager: MemoryManager | null = null;
@@ -825,7 +837,26 @@ export class Engine {
     // available" while the user sat in the TUI.) Fire-and-forget stays safe:
     // the TUI's picker auto-continues on a timeout in 4th gear, and headless
     // frontends simply never wire a handler.
-    this.registry.register(createAskUserTool(() => this.questionHandler));
+    //
+    // Every answer is ALSO folded into the in-flight Auto review context: the
+    // user typed it interactively, so it is trusted authorization evidence.
+    // This is the conversational-escalation return path — a reviewer block,
+    // an ask_user question, a typed yes, and the retry clears without a modal.
+    this.registry.register(
+      createAskUserTool(() => {
+        const handler = this.questionHandler;
+        if (!handler) return undefined;
+        return async (q) => {
+          const answer = await handler(q);
+          try {
+            this.activeAutoRun?.addUserAnswer(q.question, answer);
+          } catch {
+            // Review-context bookkeeping must never break the question flow.
+          }
+          return answer;
+        };
+      }),
+    );
 
     // `worker`: write-capable parallel sub-agents with disjoint file
     // ownership — the lead splits implementation, workers run concurrently
@@ -957,25 +988,51 @@ export class Engine {
       this.config.permissionMode = "gear-1";
       this.config.trustWorkspace = false;
     }
+    const resolvePrimaryReviewer = (): ReviewerIdentity => {
+      const heavy = this.resolveModelTier("heavy");
+      const provider = (autoConfig.classifierProvider ?? heavy.provider) as ProviderName;
+      const model =
+        autoConfig.classifierModel ??
+        (provider === heavy.provider
+          ? heavy.model
+          : (getPreset(provider)?.defaultModel ?? this.config.model));
+      if (!this.gateway.getProvider(provider)) {
+        throw new Error(`classifier provider "${provider}" is not configured`);
+      }
+      if (this.orgPolicy) {
+        const denial = policyAllowsModel(this.orgPolicy.policy, provider, model);
+        if (denial) throw new Error(`classifier rejected by ${denial}`);
+      }
+      return { gateway: this.gateway, provider, model };
+    };
     this.autoModeSafety = new AutoModeSafetyController(
       autoConfig,
       new GatewayActionClassifier(),
+      resolvePrimaryReviewer,
+      undefined,
+      // Fallback reviewer for the retry after a failed reviewer call: the
+      // engine's own model tiers, which already serve this session — so the
+      // retry never widens the data boundary. Only a tier DISTINCT from the
+      // primary qualifies; otherwise the retry simply re-uses the primary.
       () => {
-        const heavy = this.resolveModelTier("heavy");
-        const provider = (autoConfig.classifierProvider ?? heavy.provider) as ProviderName;
-        const model =
-          autoConfig.classifierModel ??
-          (provider === heavy.provider
-            ? heavy.model
-            : (getPreset(provider)?.defaultModel ?? this.config.model));
-        if (!this.gateway.getProvider(provider)) {
-          throw new Error(`classifier provider "${provider}" is not configured`);
+        let primary: { provider: string; model: string } | null = null;
+        try {
+          const p = resolvePrimaryReviewer();
+          primary = { provider: p.provider, model: p.model };
+        } catch {
+          primary = null;
         }
-        if (this.orgPolicy) {
-          const denial = policyAllowsModel(this.orgPolicy.policy, provider, model);
-          if (denial) throw new Error(`classifier rejected by ${denial}`);
+        for (const tier of ["heavy", "standard"] as const) {
+          const ref = this.resolveModelTier(tier);
+          const provider = ref.provider as ProviderName;
+          if (primary && primary.provider === provider && primary.model === ref.model) continue;
+          if (!this.gateway.getProvider(provider)) continue;
+          if (this.orgPolicy && policyAllowsModel(this.orgPolicy.policy, provider, ref.model)) {
+            continue;
+          }
+          return { gateway: this.gateway, provider, model: ref.model };
         }
-        return { gateway: this.gateway, provider, model };
+        return null;
       },
     );
 
@@ -1294,7 +1351,11 @@ export class Engine {
     // or tool output. File-sourced loop prompts ride along as evidence only.
     const autoRun = this.autoModeSafety.startRun(context.userMessages, {
       untrustedPrompts: context.untrustedPrompts ?? [],
+      priorInjectionFindings: this.sessionInjectionFindings.get(context.sessionId) ?? 0,
     });
+    // Live handle: interjections and ask_user answers reach THIS run's
+    // reviewer context while the run is in flight (engine runs are serial).
+    this.activeAutoRun = autoRun;
 
     return async ({ callId, toolName, args }) => {
       // Rate limiter check
@@ -1505,6 +1566,22 @@ export class Engine {
       workspaceRoot: ctx.workspaceRoot,
       permissionMode: this.getPermissionMode(),
     });
+
+    // A flagged result raises the review posture for everything that follows:
+    // the in-flight run reviews all later risky actions on the careful pass,
+    // and the session counter re-arms that posture for subsequent runs (the
+    // poisoned content stays in the transcript after this run ends).
+    if (screened.warningAdded) {
+      this.sessionInjectionFindings.set(
+        ctx.sessionId,
+        (this.sessionInjectionFindings.get(ctx.sessionId) ?? 0) + 1,
+      );
+      try {
+        this.activeAutoRun?.noteInjectionFinding();
+      } catch {
+        // Posture bookkeeping must never break result processing.
+      }
+    }
 
     // postToolUse hooks run HERE — before the result enters the transcript —
     // so a format/lint hook's findings actually reach the model instead of a
@@ -2447,6 +2524,7 @@ export class Engine {
     const systemPrompt = [
       SYSTEM_PROMPT,
       renderInteractiveDoctrine(this.interactiveAuto),
+      renderAutoModeDoctrine(this.permissions.getMode() === "auto"),
       renderBrowserDoctrine(this.browserEnabled),
       activeLoop ? renderLoopRunDoctrine(activeLoop) : "",
       envBlock,
@@ -2902,6 +2980,9 @@ export class Engine {
       if (this.currentAbort === abortController) {
         this.currentAbort = null;
       }
+      // The Auto review context dies with its run — late answers must not
+      // leak trusted input into a different run's reviewer.
+      this.activeAutoRun = null;
     }
   }
 
@@ -2934,6 +3015,13 @@ export class Engine {
     const state = loop.getState();
     if (state === "done" || state === "error") return false;
     loop.interject(t);
+    // The reviewer must see mid-run user words too — "yes, go ahead and
+    // force-push" typed while the agent works is real authorization.
+    try {
+      this.activeAutoRun?.addTrustedUserMessage(t);
+    } catch {
+      // Review-context bookkeeping must never break steering.
+    }
     this.recorder?.note("interjection", t.slice(0, 180));
     return true;
   }

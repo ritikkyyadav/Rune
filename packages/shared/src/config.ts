@@ -138,6 +138,21 @@ export interface GearConfig {
        * shell stdout, webhooks) for prompt injection; workspace reads are never probed.
        */
       probeToolResults?: boolean;
+      /**
+       * Default true. Reviewer "ask" verdicts return to the ACTING AGENT as an
+       * actionable block ("needs explicit user authorization — ask the user
+       * directly via ask_user") instead of an immediate modal prompt; the
+       * user's typed answer authorizes the retry. Modal prompts remain the
+       * backstop (repeated blocks, catastrophic circuit breakers, guardrail
+       * changes, reviewer outage, askRules).
+       */
+      conversationalEscalation?: boolean;
+      /**
+       * Default true. Retry a failed reviewer call once — against the engine's
+       * own heavy/standard tier when distinct from the pinned reviewer — before
+       * failing closed. Stays within the session's existing data boundary.
+       */
+      reviewerFallback?: boolean;
     };
   };
   sandbox: {

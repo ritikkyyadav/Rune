@@ -280,6 +280,7 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   // OpenRouter free models (actual cost is $0 but track usage)
   "deepseek/deepseek-v4-flash:free": { inputPerMillion: 0, outputPerMillion: 0 },
   "deepseek/deepseek-r1:free": { inputPerMillion: 0, outputPerMillion: 0 },
+  "stealth/ox-alpha": { inputPerMillion: 0, outputPerMillion: 0 },
 };
 
 export interface CostEntry {

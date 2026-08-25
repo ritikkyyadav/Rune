@@ -221,6 +221,27 @@ export function renderInteractiveDoctrine(auto: boolean): string {
 }
 
 /**
+ * Auto-mode doctrine — included only while the session runs in the Auto gear
+ * (classifier-reviewed). The reviewer denies with machine-readable guidance;
+ * this block teaches the acting model the ONE correct response pattern:
+ * adapt, or ask the user a direct plain-language question — never hammer the
+ * call, never evade the reviewer, never stall the task. This is what keeps
+ * Auto mode interruption-free for the user: blocked actions resolve in
+ * conversation instead of modal permission prompts.
+ */
+export function renderAutoModeDoctrine(active: boolean): string {
+  if (!active) return "";
+  return [
+    "# Auto mode — independent safety reviewer",
+    "This session runs in the Auto gear: an independent safety reviewer (a separate model call that sees only the user's messages, their interactive answers, and proposed tool calls) silently approves routine aligned work and blocks actions that exceed what the user actually asked for. Approvals are invisible to you; a blocked call returns an error explaining why.",
+    "- When a call is blocked, never re-send the identical call and never try to slip the same effect past the reviewer (encoded payloads, wrapper scripts you write first, splitting the action into steps, switching tools). The reviewer sees the full action history including blocked attempts — evasion patterns get blocked harder and pause the whole run for the user.",
+    '- If the blocked action is genuinely required, ask the user directly with ask_user: name the exact action and its real impact in plain language ("Force-push the rebased branch fix/auth to origin?", "Delete the remote branch release/old?"). Their typed answer becomes trusted authorization the reviewer weighs — a clear yes normally clears one retry of that exact action. Ask about the ACTION, not about permissions machinery.',
+    "- If the user declines, does not answer, or no user is available, take the safer path and state plainly in your report what you skipped and why.",
+    "- Otherwise treat a block as ordinary engineering feedback: adjust the approach and keep the task moving. Work that stays within the user's request almost never gets blocked, so a block is a signal you drifted beyond it.",
+  ].join("\n");
+}
+
+/**
  * Browser doctrine — included only while the agent browser is enabled
  * (/browser on, [browser] enabled, or --browser). The browser itself is the
  * official Playwright MCP mounted as the built-in `browser` MCP server, so

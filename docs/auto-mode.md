@@ -22,28 +22,58 @@ For every proposed tool call, Gear applies these layers in order:
    reviewer input also require a human.
 4. A tier check permits built-in safe reads and ordinary, workspace-confined edits without a model
    call.
-5. Shell commands, network/MCP actions, external or protected writes, and agent delegation reach the
-   independent classifier.
+5. Shell commands, network/MCP actions, external or protected writes (including `.github/` CI
+   surfaces), and agent delegation reach the independent classifier.
 6. The fast reviewer returns only `ALLOW` or `BLOCK`. A block, or any deterministically high-risk
    action, receives a second careful review that returns a structured `allow`, `ask`, or `deny`
-   decision.
-7. A denial is returned to the acting agent so it can choose a safer path. Repeated denials pause Auto
-   mode and ask the user instead of looping indefinitely.
+   decision. A failed reviewer call retries once — against the engine's own heavy/standard tier when
+   a distinct one is configured — before failing closed.
+7. A denial — and, under the default conversational escalation, an `ask` — is returned to the acting
+   agent so it can choose a safer path or ask the user a direct plain-language question via
+   `ask_user`. The user's typed answer joins the reviewer's trusted context and can authorize the
+   retry. Repeated automatic blocks still pause Auto mode with a real prompt instead of looping.
 8. After execution, every real tool result is scanned before either the UI or any agent context sees
-   it. Suspicious instructions receive a high-salience untrusted-data warning.
+   it. Suspicious instructions receive a high-salience untrusted-data warning, and every later
+   classifier-tier action in that session gets the careful reasoned pass with an explicit alert.
 
 The lead agent, read-only investigators, deep-research investigators, and
 owned-file implementation workers all use the same result-screening boundary. Workers also retain
 their existing hard capabilities: no shell, no network, no recursive delegation, and writes only to
 explicitly owned files.
 
+## Conversational escalation
+
+The reason other tools feel interruption-free in their auto modes is that a blocked action almost
+never becomes a modal permission prompt: it becomes a short conversation. Gear implements the same
+loop, on by default (`conversationalEscalation = true`):
+
+1. The reviewer returns `ask` (only a human can resolve the ambiguity) or `deny`.
+2. The acting agent receives the block as an actionable error: adapt the approach, or — when the
+   action is genuinely required and only lacks authorization — ask the user directly with
+   `ask_user`, naming the exact action and its real impact ("Delete the remote branch
+   release/old?").
+3. The user's typed answer is folded into the reviewer's trusted context (as are mid-run
+   interjections). On the retry, the reviewer weighs the answer as authorization scoped to what the
+   question honestly disclosed — a clear yes clears the action, a vague yes does not clear a bigger
+   blast radius, and a no keeps it blocked.
+4. The modal permission prompt remains the hard backstop: repeated automatic blocks
+   (`maxAutomaticDenials`), catastrophic circuit breakers, guardrail changes, reviewer outages, and
+   explicit `askRules` always pause for a real human decision.
+
+The agent-authored question is shown to the reviewer only as framing and is never itself trusted;
+a deceptive question cannot launder authorization because the reviewer re-derives the action's true
+target and blast radius. Set `conversationalEscalation = false` (user config or signed policy) to
+restore prompt-first behavior for every reviewer `ask`.
+
 ## Reviewer isolation
 
 The Auto reviewer receives only:
 
-- trusted user messages from the session;
+- trusted user messages from the session (including mid-run interjections);
+- the user's interactive answers to agent `ask_user` questions, marked as answers to agent-authored
+  framing;
 - the configured environment and semantic policy text; and
-- redacted proposed tool calls from the current run.
+- redacted proposed tool calls from the current run, with blocked attempts marked as never executed.
 
 It does **not** receive the acting agent's prose, hidden reasoning, or tool output. Known credential
 formats, bearer/basic credentials, named secrets, and sensitive argument fields are redacted before
@@ -73,6 +103,12 @@ timeoutMs = 12000
 maxAutomaticDenials = 2
 failClosed = true
 probeToolResults = true
+# Reviewer "ask" verdicts go to the agent for a conversational check (ask_user)
+# instead of an immediate modal prompt; the modal remains the backstop.
+conversationalEscalation = true
+# Retry a failed reviewer call once against the engine's own heavy/standard
+# tier (same data boundary) before failing closed to a human prompt.
+reviewerFallback = true
 
 # Supplying environment replaces Gear's built-in entry. Keep the first line if
 # the default workspace/remotes boundary still applies.
@@ -186,6 +222,10 @@ source, reason, and reviewer identity.
 - The reviewer timeout bounds Gear's decision wait and fails closed, but the current non-streaming
   gateway API cannot cancel an already in-flight provider request. That late response is ignored,
   although the provider may still record latency or token usage.
+- `reviewerFallback` retries only against models already serving this session (the engine's
+  heavy/standard tiers), so it never widens the data boundary — but it does weaken strict
+  reviewer/actor separation for orgs that pinned a dedicated reviewer. Disable it in signed policy
+  when separation matters more than availability.
 - Status counters are process-local and reset on restart. The session events and hash-chained audit
   records are persistent.
 - No claim of parity with another vendor's private classifier is implied. Treat Auto as private-beta
