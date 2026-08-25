@@ -144,6 +144,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
       { id: "qwen/qwen3-coder:free", label: "Qwen3 Coder (free)" },
       { id: "deepseek/deepseek-v4-flash:free", label: "DeepSeek V4 (free)" },
       { id: "meta-llama/llama-3.3-70b-instruct:free", label: "Llama 3.3 70B (free)" },
+      { id: "stealth/ox-alpha", label: "Ox Alpha (free)" },
     ],
   },
   {

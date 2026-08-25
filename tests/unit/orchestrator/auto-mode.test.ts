@@ -175,9 +175,33 @@ describe("Auto mode independent classifier", () => {
       .startRun(["Push my changes."])
       .review(action("bash", { command: "git push --force origin main" }));
 
+    // Conversational escalation (the default) hands the authorization gap to
+    // the acting agent instead of popping a modal: verdict deny, with
+    // ask-the-user guidance the model can follow.
+    expect(review.verdict).toBe("deny");
+    expect(review.source).toBe("classifier_reasoned");
+    expect(review.reason).toContain("ask the user directly");
+    expect(classifier.calls.map((c) => c.stage)).toEqual(["fast", "reasoned"]);
+  });
+
+  test("with conversational escalation off, a reviewer ask pauses for the modal prompt", async () => {
+    const { controller } = setup(
+      [
+        "ALLOW",
+        JSON.stringify({
+          verdict: "ask",
+          risk: "high",
+          reason: "A force push can rewrite shared history and needs explicit confirmation.",
+        }),
+      ],
+      { conversationalEscalation: false },
+    );
+    const review = await controller
+      .startRun(["Push my changes."])
+      .review(action("bash", { command: "git push --force origin main" }));
+
     expect(review.verdict).toBe("ask");
     expect(review.source).toBe("classifier_reasoned");
-    expect(classifier.calls.map((c) => c.stage)).toEqual(["fast", "reasoned"]);
   });
 
   test("classifier outages fail closed to human review", async () => {
@@ -305,15 +329,39 @@ describe("Auto mode mechanical boundaries", () => {
     expect(classifier.calls).toHaveLength(0);
   });
 
-  test("oversized risky payloads pause instead of hiding beyond reviewer limits", async () => {
+  test("oversized risky payloads bounce back to the agent with split instructions", async () => {
     const { controller, classifier } = setup(["ALLOW"]);
     const review = await controller
       .startRun(["Run the existing tests."])
       .review(action("bash", { command: `bun test # ${"padding ".repeat(2_000)}` }));
 
-    expect(review.verdict).toBe("ask");
+    expect(review.verdict).toBe("deny");
     expect(review.source).toBe("reviewer_input_limit");
+    expect(review.reason).toContain("Split it into smaller");
     expect(classifier.calls).toHaveLength(0);
+  });
+
+  test("oversized payloads pause for a human when conversational escalation is off — and when hammered", async () => {
+    const modal = setup(["ALLOW"], { conversationalEscalation: false });
+    const paused = await modal.controller
+      .startRun(["Run the existing tests."])
+      .review(action("bash", { command: `bun test # ${"padding ".repeat(2_000)}` }));
+    expect(paused.verdict).toBe("ask");
+    expect(paused.source).toBe("reviewer_input_limit");
+    expect(modal.classifier.calls).toHaveLength(0);
+
+    // Default mode: repeated oversized sends still reach the human backstop.
+    const { controller } = setup([], { maxAutomaticDenials: 2 });
+    const run = controller.startRun(["Run the existing tests."]);
+    const first = await run.review(
+      action("bash", { command: `bun test a # ${"padding ".repeat(2_000)}` }),
+    );
+    const second = await run.review(
+      action("bash", { command: `bun test b # ${"padding ".repeat(2_000)}` }),
+    );
+    expect(first.verdict).toBe("deny");
+    expect(second.verdict).toBe("ask");
+    expect(second.source).toBe("human_escalation");
   });
 
   test("deny rules outrank matching allow rules", async () => {
@@ -503,12 +551,12 @@ describe("Fast-stage robustness", () => {
   test("an empty fast answer (reasoning model spent the budget) also falls through", async () => {
     const { controller } = setup([
       "   ",
-      JSON.stringify({ verdict: "ask", risk: "medium", reason: "Needs a human." }),
+      JSON.stringify({ verdict: "allow", risk: "medium", reason: "Aligned with the request." }),
     ]);
     const review = await controller
       .startRun(["Run the unit tests."])
       .review(action("bash", { command: "bun test tests/unit" }));
-    expect(review.verdict).toBe("ask");
+    expect(review.verdict).toBe("allow");
     expect(review.source).toBe("classifier_reasoned");
   });
 
@@ -767,5 +815,254 @@ describe("Gear vocabulary and bookkeeping", () => {
       prompt.indexOf("</trusted_user_messages>"),
     );
     expect(trustedBlock).not.toContain("Push to production");
+  });
+});
+
+describe("Conversational escalation", () => {
+  const askJson = JSON.stringify({
+    verdict: "ask",
+    risk: "medium",
+    reason: "Deleting a remote branch needs explicit confirmation.",
+  });
+
+  test("a second consecutive reviewer ask still reaches the human backstop", async () => {
+    const { controller } = setup(["BLOCK", askJson, "BLOCK", askJson], {
+      maxAutomaticDenials: 2,
+    });
+    const run = controller.startRun(["Tidy up branches."]);
+    const first = await run.review(action("bash", { command: "git push origin -d old-a" }));
+    const second = await run.review(action("bash", { command: "git push origin -d old-b" }));
+
+    expect(first.verdict).toBe("deny");
+    expect(first.source).toBe("classifier_reasoned");
+    expect(first.reason).toContain("ask the user directly");
+    expect(second.verdict).toBe("ask");
+    expect(second.source).toBe("human_escalation");
+  });
+
+  test("a typed user answer joins the reviewer prompt and authorizes the retry path", async () => {
+    const { controller, classifier } = setup(["BLOCK", askJson, "ALLOW"], {
+      maxAutomaticDenials: 2,
+    });
+    const run = controller.startRun(["Clean up my old gists."]);
+    const first = await run.review(action("bash", { command: "gh gist delete abc123 --yes" }));
+    expect(first.verdict).toBe("deny");
+
+    run.addUserAnswer("Delete the gist abc123 permanently?", "yes, delete gist abc123");
+    const second = await run.review(action("bash", { command: "gh gist delete abc123 --yes" }));
+
+    expect(second.verdict).toBe("allow");
+    const prompt = classifier.calls.at(-1)!.prompt;
+    expect(prompt).toContain("<user_answers_to_agent_questions>");
+    expect(prompt).toContain("[Q1] Delete the gist abc123 permanently?");
+    expect(prompt).toContain("[A1] yes, delete gist abc123");
+    expect(prompt).toContain("honestly disclosed");
+  });
+
+  test("fresh user input resets the block streak so the retry is not instantly escalated", async () => {
+    const { controller } = setup(["BLOCK", askJson, "BLOCK", askJson], {
+      maxAutomaticDenials: 2,
+    });
+    const run = controller.startRun(["Tidy up branches."]);
+    const first = await run.review(action("bash", { command: "git push origin -d old-a" }));
+    expect(first.verdict).toBe("deny");
+
+    run.addUserAnswer("Also delete the remote branch old-b?", "no, leave old-b alone");
+    const second = await run.review(action("bash", { command: "git push origin -d old-b" }));
+
+    // Still an automatic deny (streak restarted at 1), not the modal backstop.
+    expect(second.verdict).toBe("deny");
+    expect(second.source).toBe("classifier_reasoned");
+  });
+
+  test("mid-run interjections land in the trusted user messages", async () => {
+    const { controller, classifier } = setup(["ALLOW"]);
+    const run = controller.startRun(["Fix the failing test."]);
+    run.addTrustedUserMessage("yes, go ahead and push the branch when green");
+    await run.review(action("bash", { command: "bun test tests/unit" }));
+
+    const prompt = classifier.calls[0]!.prompt;
+    const trustedBlock = prompt.slice(
+      prompt.indexOf("<trusted_user_messages>"),
+      prompt.indexOf("</trusted_user_messages>"),
+    );
+    expect(trustedBlock).toContain("go ahead and push the branch when green");
+  });
+
+  test("blocked attempts are marked in the reviewer's action transcript", async () => {
+    const denyJson = JSON.stringify({ verdict: "deny", risk: "high", reason: "Not authorized." });
+    const { controller, classifier } = setup(["BLOCK", denyJson, "ALLOW"]);
+    const run = controller.startRun(["Run the tests."]);
+    await run.review(action("bash", { command: "gh gist create ./notes.md --public" }));
+    await run.review(action("bash", { command: "bun test tests/unit" }));
+
+    const prompt = classifier.calls.at(-1)!.prompt;
+    expect(prompt).toContain("[A1 — BLOCKED, did not run]");
+    expect(prompt).toContain("[A2] bash");
+  });
+
+  test("status reports the escalation and fallback posture", () => {
+    const { controller } = setup();
+    const status = controller.getStatus();
+    expect(status.conversationalEscalation).toBe(true);
+    expect(status.reviewerFallback).toEqual({ enabled: true, available: false });
+  });
+});
+
+describe("Reviewer redundancy", () => {
+  const allowJson = JSON.stringify({
+    verdict: "allow",
+    risk: "medium",
+    reason: "Matches the user's request.",
+  });
+
+  function setupWithFallback(
+    responses: Array<string | Error>,
+    config: Parameters<typeof resolveAutoModeConfig>[0] = {},
+  ) {
+    const classifier = new FakeClassifier(responses);
+    const controller = new AutoModeSafetyController(
+      resolveAutoModeConfig(config),
+      classifier,
+      () => ({ gateway: {} as LlmGateway, provider: "anthropic", model: "primary-model" }),
+      undefined,
+      () => ({ gateway: {} as LlmGateway, provider: "anthropic", model: "fallback-model" }),
+    );
+    return { classifier, controller };
+  }
+
+  test("a failed reasoned attempt retries on the fallback reviewer instead of failing closed", async () => {
+    const { controller, classifier } = setupWithFallback([
+      "BLOCK",
+      new Error("provider 500"),
+      allowJson,
+    ]);
+    const review = await controller
+      .startRun(["Publish my notes gist as I asked."])
+      .review(action("bash", { command: "gh gist create ./notes.md" }));
+
+    expect(review.verdict).toBe("allow");
+    expect(review.source).toBe("classifier_reasoned");
+    expect(review.reviewer?.model).toBe("fallback-model");
+    expect(classifier.calls.map((c) => c.reviewer.model)).toEqual([
+      "primary-model",
+      "primary-model",
+      "fallback-model",
+    ]);
+    expect(controller.getStats().reviewerRetries).toBe(1);
+  });
+
+  test("reviewerFallback=false keeps the retry on the pinned reviewer", async () => {
+    const { controller, classifier } = setupWithFallback(["BLOCK", new Error("blip"), allowJson], {
+      reviewerFallback: false,
+    });
+    const review = await controller
+      .startRun(["Publish my notes gist as I asked."])
+      .review(action("bash", { command: "gh gist create ./notes.md" }));
+
+    expect(review.verdict).toBe("allow");
+    expect(classifier.calls.map((c) => c.reviewer.model)).toEqual([
+      "primary-model",
+      "primary-model",
+      "primary-model",
+    ]);
+    expect(controller.getStatus().reviewerFallback).toEqual({ enabled: false, available: false });
+  });
+
+  test("a fast-stage timeout routes the reasoned attempt straight to the fallback", async () => {
+    const reasonedModels: string[] = [];
+    const classifier: ActionClassifier = {
+      async classify(call) {
+        if (call.stage === "fast") {
+          await new Promise<void>((resolveWait) => {
+            call.signal?.addEventListener("abort", () => resolveWait());
+          });
+          return "ALLOW"; // late; discarded
+        }
+        reasonedModels.push(call.reviewer.model);
+        return allowJson;
+      },
+    };
+    const controller = new AutoModeSafetyController(
+      resolveAutoModeConfig({ timeoutMs: 1_000 }),
+      classifier,
+      () => ({ gateway: {} as LlmGateway, provider: "anthropic", model: "primary-model" }),
+      undefined,
+      () => ({ gateway: {} as LlmGateway, provider: "anthropic", model: "fallback-model" }),
+    );
+    const review = await controller
+      .startRun(["Run the tests."])
+      .review(action("bash", { command: "bun test tests/unit" }));
+
+    expect(review.verdict).toBe("allow");
+    expect(reasonedModels[0]).toBe("fallback-model");
+  });
+
+  test("when the retry also fails the review still fails closed", async () => {
+    const { controller } = setupWithFallback([
+      new Error("down"),
+      new Error("down"),
+      new Error("down"),
+    ]);
+    const review = await controller
+      .startRun(["Check the deployment status."])
+      .review(action("web", { url: "https://status.example.com" }));
+    expect(review.verdict).toBe("ask");
+    expect(review.source).toBe("classifier_unavailable");
+  });
+});
+
+describe("Injection-aware escalation", () => {
+  test("after a flagged tool result, a fast allow is no longer sufficient", async () => {
+    const allowJson = JSON.stringify({ verdict: "allow", risk: "medium", reason: "Aligned." });
+    const { controller, classifier } = setup(["ALLOW", allowJson]);
+    const run = controller.startRun(["Summarize the fetched page."]);
+    run.noteInjectionFinding();
+
+    const review = await run.review(action("bash", { command: "bun test tests/unit" }));
+
+    // The risk floor forces the careful reasoned pass even though the fast
+    // stage said ALLOW, and the reviewer prompt carries the alert.
+    expect(review.verdict).toBe("allow");
+    expect(classifier.calls.map((c) => c.stage)).toEqual(["fast", "reasoned"]);
+    for (const call of classifier.calls) {
+      expect(call.prompt).toContain("SECURITY ALERT");
+    }
+  });
+
+  test("prior-session findings arm the alert from the first action of a new run", async () => {
+    const allowJson = JSON.stringify({ verdict: "allow", risk: "medium", reason: "Aligned." });
+    const { controller, classifier } = setup(["ALLOW", allowJson]);
+    const run = controller.startRun(["Continue the task."], { priorInjectionFindings: 2 });
+    await run.review(action("bash", { command: "bun test tests/unit" }));
+
+    expect(classifier.calls[0]!.prompt).toContain("SECURITY ALERT: 2 tool result(s)");
+    expect(classifier.calls.map((c) => c.stage)).toEqual(["fast", "reasoned"]);
+  });
+
+  test("safe reads and workspace writes stay silent under the alert", async () => {
+    const { controller, classifier } = setup();
+    const run = controller.startRun(["Refactor the parser."]);
+    run.noteInjectionFinding();
+
+    const read = await run.review(action("read", { path: "src/parser.ts" }));
+    const write = await run.review(
+      action("write", { path: "src/parser.ts", content: "export {}" }),
+    );
+
+    expect(read.verdict).toBe("allow");
+    expect(write.verdict).toBe("allow");
+    expect(classifier.calls).toHaveLength(0);
+  });
+});
+
+describe("CI surface protection", () => {
+  test("workflow writes are reviewed instead of waved through as workspace edits", () => {
+    expect(
+      classifyAutoModeTier(action("write", { path: ".github/workflows/ci.yml", content: "x" })),
+    ).toBe("classifier");
+    expect(classifyAutoModeTier(action("write", { path: "src/ci-helpers.ts", content: "x" }))).toBe(
+      "workspace",
+    );
   });
 });
