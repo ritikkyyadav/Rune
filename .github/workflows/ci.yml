@@ -14,12 +14,22 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+# A force-push supersedes the previous run — don't pay for both.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Billing note (private repo): macOS runners bill at 10x, Windows at 2x,
+# Linux at 1x. PRs therefore run the ubuntu+windows matrix; pushes to main
+# and the nightly schedule run the full three-OS matrix. Coverage is the
+# same before anything ships — it just lands at merge time, not per push.
+
 jobs:
   # ── Stage 1: Lint and Format (Section 15.2) ──
   rust-lint:
     strategy:
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest","windows-latest"]' || '["macos-latest","ubuntu-latest","windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -35,7 +45,7 @@ jobs:
   ts-lint:
     strategy:
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["macos-latest","ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -60,7 +70,7 @@ jobs:
     needs: [rust-lint]
     strategy:
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest","windows-latest"]' || '["macos-latest","ubuntu-latest","windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -74,7 +84,7 @@ jobs:
     needs: [rust-test, ts-lint]
     strategy:
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest","windows-latest"]' || '["macos-latest","ubuntu-latest","windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -98,7 +108,7 @@ jobs:
     needs: [build]
     strategy:
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["macos-latest","ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -142,7 +152,7 @@ jobs:
   packaged-e2e:
     strategy:
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["macos-latest","ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -161,13 +171,22 @@ jobs:
           ./gear-packaged --help > /dev/null
 
   # ── Stage 4d: Desktop app (developer preview — must keep compiling) ──
+  # Runs on Linux (1x billing vs macOS 10x); the macOS bundle itself is
+  # exercised by developers locally and by release-time builds.
   desktop:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
       - uses: oven-sh/setup-bun@v2
+      - name: Tauri system deps (webkit2gtk)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev libxdo-dev
       - run: bun install --frozen-lockfile
       - name: Frontend typecheck + build
         run: bun run --filter @gear/desktop build
@@ -197,7 +216,7 @@ jobs:
     needs: [build]
     strategy:
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["macos-latest","ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
