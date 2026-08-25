@@ -401,6 +401,10 @@ mod tests {
         assert!(output.stderr.len() > 64 * 1024);
     }
 
+    // Process-group SIGKILL is a unix mechanism; on Windows kill_process_group
+    // is a documented no-op (see docs/threat-model.md), so the grandchild
+    // genuinely survives there and this asserts unix behavior only.
+    #[cfg(unix)]
     #[tokio::test]
     async fn timeout_kills_process_group() {
         let tmp = TempDir::new().unwrap();

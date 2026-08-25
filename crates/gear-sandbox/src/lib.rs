@@ -13,7 +13,9 @@ pub mod active_child;
 pub mod audit;
 pub mod error;
 pub mod factory;
+#[cfg(target_os = "linux")]
 pub mod linux;
+#[cfg(target_os = "macos")]
 pub mod macos;
 pub mod noop;
 pub mod path_guard;
