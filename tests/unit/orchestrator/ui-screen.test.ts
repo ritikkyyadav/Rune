@@ -225,18 +225,12 @@ describe("transcriptScrollHint → AltScreen region scroll", () => {
   const geom = { bandTop: 4, transH: 10 };
 
   it("streams (window advanced) as an upward band scroll", () => {
-    const hint = transcriptScrollHint(
-      { end: 40, ...geom },
-      { end: 42, ...geom, visibleLen: 10 },
-    );
+    const hint = transcriptScrollHint({ end: 40, ...geom }, { end: 42, ...geom, visibleLen: 10 });
     expect(hint).toEqual({ top: 4, bottom: 13, delta: -2 });
   });
 
   it("a wheel notch up (window rewound) scrolls the band down", () => {
-    const hint = transcriptScrollHint(
-      { end: 40, ...geom },
-      { end: 37, ...geom, visibleLen: 10 },
-    );
+    const hint = transcriptScrollHint({ end: 40, ...geom }, { end: 37, ...geom, visibleLen: 10 });
     expect(hint).toEqual({ top: 4, bottom: 13, delta: 3 });
   });
 
@@ -245,12 +239,8 @@ describe("transcriptScrollHint → AltScreen region scroll", () => {
     expect(transcriptScrollHint({ end: 42, ...geom }, next)).toBeUndefined(); // no shift
     expect(transcriptScrollHint({ end: 40, bandTop: 3, transH: 10 }, next)).toBeUndefined();
     expect(transcriptScrollHint({ end: 40, bandTop: 4, transH: 9 }, next)).toBeUndefined();
-    expect(
-      transcriptScrollHint({ end: 40, ...geom }, { ...next, visibleLen: 9 }),
-    ).toBeUndefined(); // top-padded band
-    expect(
-      transcriptScrollHint({ end: 20, ...geom }, { ...next, end: 40 }),
-    ).toBeUndefined(); // shift ≥ band height
+    expect(transcriptScrollHint({ end: 40, ...geom }, { ...next, visibleLen: 9 })).toBeUndefined(); // top-padded band
+    expect(transcriptScrollHint({ end: 20, ...geom }, { ...next, end: 40 })).toBeUndefined(); // shift ≥ band height
   });
 
   it("drives a real DECSTBM region scroll instead of rewriting every band row", () => {

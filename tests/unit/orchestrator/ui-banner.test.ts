@@ -121,11 +121,10 @@ describe("ui/banner git caches", () => {
 
       // Age the cache out and render once: the frame returns the OLD value
       // (never blocks) while kicking one background refresh…
-      const { __bannerCachesForTest } = (await import(
-        "../../../packages/orchestrator/src/bin/ui/banner"
-      )) as unknown as {
-        __bannerCachesForTest?: { age(): void };
-      };
+      const { __bannerCachesForTest } =
+        (await import("../../../packages/orchestrator/src/bin/ui/banner")) as unknown as {
+          __bannerCachesForTest?: { age(): void };
+        };
       // (test hook ages entries; fall back to waiting out the TTL if absent)
       if (__bannerCachesForTest) __bannerCachesForTest.age();
       const stale = banner(100, { workspace: repo, branch: undefined, dirtyFiles: undefined });
