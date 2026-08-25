@@ -22,19 +22,19 @@ let dir: string;
 let prev: string | undefined;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "alan-sysmem-"));
-  prev = process.env.ALAN_SYSTEM_MEMORY_PATH;
-  process.env.ALAN_SYSTEM_MEMORY_PATH = join(dir, "system-memory.md");
+  dir = mkdtempSync(join(tmpdir(), "gear-sysmem-"));
+  prev = process.env.GEAR_SYSTEM_MEMORY_PATH;
+  process.env.GEAR_SYSTEM_MEMORY_PATH = join(dir, "system-memory.md");
 });
 
 afterEach(() => {
-  if (prev === undefined) delete process.env.ALAN_SYSTEM_MEMORY_PATH;
-  else process.env.ALAN_SYSTEM_MEMORY_PATH = prev;
+  if (prev === undefined) delete process.env.GEAR_SYSTEM_MEMORY_PATH;
+  else process.env.GEAR_SYSTEM_MEMORY_PATH = prev;
   rmSync(dir, { recursive: true, force: true });
 });
 
 describe("shared/system-memory — paths", () => {
-  it("honors ALAN_SYSTEM_MEMORY_PATH and co-locates the meta json", () => {
+  it("honors GEAR_SYSTEM_MEMORY_PATH and co-locates the meta json", () => {
     expect(getSystemMemoryPath()).toBe(join(dir, "system-memory.md"));
     expect(getSystemMemoryMetaPath()).toBe(join(dir, "system-memory.json"));
   });

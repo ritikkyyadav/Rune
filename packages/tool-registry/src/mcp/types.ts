@@ -52,9 +52,7 @@ export interface McpJsonRpcResponse {
 
 /** Any inbound message from a server (response to a request, or a server-initiated message). */
 export type McpIncomingMessage =
-  | McpJsonRpcResponse
-  | (McpJsonRpcRequest & { id?: number | string })
-  | McpJsonRpcNotification;
+  McpJsonRpcResponse | (McpJsonRpcRequest & { id?: number | string }) | McpJsonRpcNotification;
 
 // ─── Handshake shapes ───
 

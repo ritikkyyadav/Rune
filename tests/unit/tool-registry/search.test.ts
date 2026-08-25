@@ -3,7 +3,7 @@ import { selectBackends } from "../../../packages/tool-registry/src/tools/search
 import type { SearchBackend } from "../../../packages/tool-registry/src/tools/search/index";
 import { createWebSearchHandler } from "../../../packages/tool-registry/src/tools/web-search";
 
-const ENV_KEYS = ["TAVILY_API_KEY", "BRAVE_API_KEY", "BRAVE_SEARCH_API_KEY", "ALAN_SEARCH_BACKEND"];
+const ENV_KEYS = ["TAVILY_API_KEY", "BRAVE_API_KEY", "BRAVE_SEARCH_API_KEY", "GEAR_SEARCH_BACKEND"];
 const saved: Record<string, string | undefined> = {};
 for (const k of ENV_KEYS) saved[k] = process.env[k];
 
@@ -56,11 +56,11 @@ describe("selectBackends", () => {
     expect(selectBackends("brave").map((b) => b.name)).toEqual(["brave", "tavily", "duckduckgo"]);
   });
 
-  test("ALAN_SEARCH_BACKEND env is respected", () => {
+  test("GEAR_SEARCH_BACKEND env is respected", () => {
     clearEnv();
     process.env.TAVILY_API_KEY = "tvly-x";
     process.env.BRAVE_API_KEY = "brave-x";
-    process.env.ALAN_SEARCH_BACKEND = "brave";
+    process.env.GEAR_SEARCH_BACKEND = "brave";
     expect(selectBackends().map((b) => b.name)[0]).toBe("brave");
   });
 });

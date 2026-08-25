@@ -142,21 +142,26 @@ impl Sandbox for LinuxSandbox {
                 .stderr(std::process::Stdio::piped())
                 .spawn()
                 .map_err(|e| SandboxError::SpawnFailed(e.to_string()))?;
+            // bwrap owns the sandboxed tree; killing the bwrap pid tears it
+            // down. No process_group, so pid-only (own_group=false).
+            crate::active_child::set(child.id(), false);
 
-            let output = tokio::time::timeout(
+            let waited = tokio::time::timeout(
                 std::time::Duration::from_millis(timeout),
                 child.wait_with_output(),
             )
-            .await
-            .map_err(|_| {
-                warn!(
-                    command = command,
-                    timeout_ms = timeout,
-                    "sandboxed command timed out"
-                );
-                SandboxError::Timeout(timeout)
-            })?
-            .map_err(|e| SandboxError::SpawnFailed(e.to_string()))?;
+            .await;
+            crate::active_child::clear();
+            let output = waited
+                .map_err(|_| {
+                    warn!(
+                        command = command,
+                        timeout_ms = timeout,
+                        "sandboxed command timed out"
+                    );
+                    SandboxError::Timeout(timeout)
+                })?
+                .map_err(|e| SandboxError::SpawnFailed(e.to_string()))?;
 
             let duration_ms = start.elapsed().as_millis() as u64;
             let exit_code = output.status.code().unwrap_or(-1);

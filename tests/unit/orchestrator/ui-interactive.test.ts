@@ -81,7 +81,7 @@ describe("shouldOfferInteractive", () => {
       "",
       "| system | score | tests |",
       "|---|---|---|",
-      "| berne | 94.7 | 829 |",
+      "| gear | 94.7 | 829 |",
       "| codex | 91.2 | 700 |",
       "| opencode | 88.9 | 512 |",
       "| aider | 85.1 | 450 |",

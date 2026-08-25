@@ -15,10 +15,7 @@ import type { OAuthFlow, ExchangeResult } from "../auth/oauth-strategy";
 
 const AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize";
 const TOKEN_URL = "https://auth.openai.com/oauth/token";
-const CLIENT_ID =
-  process.env.GEAR_CODEX_CLIENT_ID ??
-  process.env.BERNE_CODEX_CLIENT_ID ??
-  "app_EMoamEEZ73f0CkXaXp7hrann";
+const CLIENT_ID = process.env.GEAR_CODEX_CLIENT_ID ?? "app_EMoamEEZ73f0CkXaXp7hrann";
 const LOOPBACK_PORT = 1455;
 const LOOPBACK_PATH = "/auth/callback";
 const SCOPES = "openid profile email offline_access";

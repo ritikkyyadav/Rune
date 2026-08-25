@@ -153,14 +153,21 @@ describe("Wave 2 wiring — todo_updated", () => {
     const ctx = makeContextEngine();
 
     const loop = new AgentLoop(
-      { model: "m", provider: "anthropic", maxTokens: 100, maxTurns: 5, systemPrompt: "s", contextEngine: ctx },
+      {
+        model: "m",
+        provider: "anthropic",
+        maxTokens: 100,
+        maxTurns: 5,
+        systemPrompt: "s",
+        contextEngine: ctx,
+      },
       gateway,
       registry,
     );
 
     const events = await collect(loop.run("do stuff", "sess-1", "/ws"));
-    const todoEvents = events.filter((e): e is Extract<AgentTurnEvent, { type: "todo_updated" }> =>
-      e.type === "todo_updated"
+    const todoEvents = events.filter(
+      (e): e is Extract<AgentTurnEvent, { type: "todo_updated" }> => e.type === "todo_updated",
     );
 
     expect(todoEvents).toHaveLength(1);
@@ -177,7 +184,14 @@ describe("Wave 2 wiring — todo_updated", () => {
     const ctx = makeContextEngine();
 
     const loop = new AgentLoop(
-      { model: "m", provider: "anthropic", maxTokens: 100, maxTurns: 5, systemPrompt: "s", contextEngine: ctx },
+      {
+        model: "m",
+        provider: "anthropic",
+        maxTokens: 100,
+        maxTurns: 5,
+        systemPrompt: "s",
+        contextEngine: ctx,
+      },
       gateway,
       registry,
     );
@@ -197,7 +211,14 @@ describe("Wave 2 wiring — todo_updated", () => {
     const ctx = makeContextEngine();
 
     const loop = new AgentLoop(
-      { model: "m", provider: "anthropic", maxTokens: 100, maxTurns: 5, systemPrompt: "s", contextEngine: ctx },
+      {
+        model: "m",
+        provider: "anthropic",
+        maxTokens: 100,
+        maxTurns: 5,
+        systemPrompt: "s",
+        contextEngine: ctx,
+      },
       gateway,
       registry,
     );
@@ -215,7 +236,14 @@ describe("Wave 2 wiring — abort (C2)", () => {
     const ctx = makeContextEngine();
 
     const loop = new AgentLoop(
-      { model: "m", provider: "anthropic", maxTokens: 100, maxTurns: 10, systemPrompt: "s", contextEngine: ctx },
+      {
+        model: "m",
+        provider: "anthropic",
+        maxTokens: 100,
+        maxTurns: 10,
+        systemPrompt: "s",
+        contextEngine: ctx,
+      },
       gateway,
       registry,
     );
@@ -226,10 +254,8 @@ describe("Wave 2 wiring — abort (C2)", () => {
     const events = await collect(loop.run("hello", "sess-1", "/ws", controller.signal));
 
     // Should see a turn_complete with stopReason "aborted"
-    const complete = events.find((e) => e.type === "turn_complete") as Extract<
-      AgentTurnEvent,
-      { type: "turn_complete" }
-    > | undefined;
+    const complete = events.find((e) => e.type === "turn_complete") as
+      Extract<AgentTurnEvent, { type: "turn_complete" }> | undefined;
     expect(complete).toBeDefined();
     expect(complete?.stopReason).toBe("aborted");
 
@@ -260,17 +286,22 @@ describe("Wave 2 wiring — abort (C2)", () => {
     const ctx = makeContextEngine();
 
     const loop = new AgentLoop(
-      { model: "m", provider: "anthropic", maxTokens: 100, maxTurns: 5, systemPrompt: "s", contextEngine: ctx },
+      {
+        model: "m",
+        provider: "anthropic",
+        maxTokens: 100,
+        maxTurns: 5,
+        systemPrompt: "s",
+        contextEngine: ctx,
+      },
       gateway,
       registry,
     );
 
     const events = await collect(loop.run("run bash", "sess-1", "/ws", controller.signal));
 
-    const complete = events.find((e) => e.type === "turn_complete") as Extract<
-      AgentTurnEvent,
-      { type: "turn_complete" }
-    > | undefined;
+    const complete = events.find((e) => e.type === "turn_complete") as
+      Extract<AgentTurnEvent, { type: "turn_complete" }> | undefined;
     expect(complete).toBeDefined();
     expect(complete?.stopReason).toBe("aborted");
   });
@@ -283,7 +314,14 @@ describe("Wave 2 wiring — compactWorkingSet (C1)", () => {
     const ctx = makeContextEngine();
 
     const loop = new AgentLoop(
-      { model: "m", provider: "anthropic", maxTokens: 100, maxTurns: 5, systemPrompt: "s", contextEngine: ctx },
+      {
+        model: "m",
+        provider: "anthropic",
+        maxTokens: 100,
+        maxTurns: 5,
+        systemPrompt: "s",
+        contextEngine: ctx,
+      },
       gateway,
       registry,
     );
@@ -300,7 +338,14 @@ describe("Wave 2 wiring — compactWorkingSet (C1)", () => {
     const ctx = makeContextEngine(false, false); // shouldCompact() → false
 
     const loop = new AgentLoop(
-      { model: "m", provider: "anthropic", maxTokens: 100, maxTurns: 5, systemPrompt: "s", contextEngine: ctx },
+      {
+        model: "m",
+        provider: "anthropic",
+        maxTokens: 100,
+        maxTurns: 5,
+        systemPrompt: "s",
+        contextEngine: ctx,
+      },
       gateway,
       registry,
     );

@@ -23,7 +23,7 @@ import {
   gearThemeName,
 } from "../../../packages/orchestrator/src/bin/ui/themes";
 
-const HTML_PATH = join(import.meta.dir, "../../../gear-customizer-v2.html");
+const HTML_PATH = join(import.meta.dir, "../../../docs/design/gear-customizer-v2.html");
 const html = readFileSync(HTML_PATH, "utf8");
 
 /** Pull `--name: value;` pairs out of the first CSS block matching `selector`. */
@@ -94,7 +94,11 @@ describe("design tokens ↔ v2 contract HTML", () => {
 
 describe("terminal themes derive from the tokens", () => {
   const toHex = (rgb: [number, number, number]) =>
-    "#" + rgb.map((v) => v.toString(16).padStart(2, "0")).join("").toUpperCase();
+    "#" +
+    rgb
+      .map((v) => v.toString(16).padStart(2, "0"))
+      .join("")
+      .toUpperCase();
 
   it("shared and CLI accent lists agree", () => {
     expect([...GEAR_ACCENTS]).toEqual([...GEAR_ACCENT_NAMES]);

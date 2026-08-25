@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import type { LlmGateway } from "@alan/llm-gateway";
-import type { ToolSchema } from "@alan/tool-registry";
+import type { LlmGateway } from "@gear/llm-gateway";
+import type { ToolSchema } from "@gear/tool-registry";
 import {
   AutoModeSafetyController,
   classifyAutoModeTier,
@@ -17,7 +17,7 @@ import {
   type ClassifierCall,
 } from "../../../packages/orchestrator/src/auto-mode";
 
-const WORKSPACE = "/tmp/elio-auto-mode";
+const WORKSPACE = "/tmp/gear-auto-mode";
 
 const SCHEMAS = {
   read: schema("read_file", "read", "auto"),
@@ -634,7 +634,7 @@ describe("Fail-open is a policy decision", () => {
 });
 
 describe("Self-protection paths are relative to the workspace", () => {
-  const WORKTREE = "/tmp/x/.alan/worktrees/run-1";
+  const WORKTREE = "/tmp/x/.gear/worktrees/run-1";
 
   test("ordinary writes inside a detached-run worktree are plain workspace edits", async () => {
     const { controller, classifier } = setup(["ALLOW"]);
@@ -649,26 +649,26 @@ describe("Self-protection paths are relative to the workspace", () => {
     expect(isSelfProtectionPath(WORKTREE, "README.md")).toBe(false);
   });
 
-  test("control files under a .alan/.gear directory are guardrail changes, inside or outside the workspace", () => {
+  test("control files under a .gear/.gear directory are guardrail changes, inside or outside the workspace", () => {
     for (const target of [
-      ".alan/config.toml",
+      ".gear/config.toml",
       ".gear/hooks.json",
-      ".alan/mcp.json",
-      ".alan/skills/my-skill/SKILL.md",
-      ".alan/plugins/x/plugin.json",
-      ".alan/loop.md",
-      ".alan/secrets.json",
-      ".alan/policy.json",
-      "/Users/me/.alan/config.toml",
-      `${WORKTREE}/.alan/hooks.json`,
+      ".gear/mcp.json",
+      ".gear/skills/my-skill/SKILL.md",
+      ".gear/plugins/x/plugin.json",
+      ".gear/loop.md",
+      ".gear/secrets.json",
+      ".gear/policy.json",
+      "/Users/me/.gear/config.toml",
+      `${WORKTREE}/.gear/hooks.json`,
     ]) {
       expect(isSelfProtectionPath(WORKTREE, target)).toBe(true);
     }
     for (const target of [
-      ".alan/notebook.json",
-      ".alan/worktrees/run-2/src/x.ts",
-      "/tmp/x/.alan/worktrees/run-1/src/y.ts",
-      ".alan/sessions/abc.db",
+      ".gear/notebook.json",
+      ".gear/worktrees/run-2/src/x.ts",
+      "/tmp/x/.gear/worktrees/run-1/src/y.ts",
+      ".gear/sessions/abc.db",
       "docs/config.toml",
       "config.toml",
     ]) {
@@ -679,7 +679,7 @@ describe("Self-protection paths are relative to the workspace", () => {
   test("a write to the workspace's own hooks file still asks", async () => {
     const { controller, classifier } = setup(["ALLOW"]);
     const review = await controller.startRun(["Improve the project hooks."]).review({
-      ...action("write", { path: ".alan/hooks.json", content: "{}" }, { exactGrant: true }),
+      ...action("write", { path: ".gear/hooks.json", content: "{}" }, { exactGrant: true }),
       workspaceRoot: WORKTREE,
     });
     expect(review.verdict).toBe("ask");
@@ -755,7 +755,7 @@ describe("Gear vocabulary and bookkeeping", () => {
   test("file-sourced loop prompts are shown to the reviewer as evidence, not authorization", async () => {
     const { controller, classifier } = setup(["ALLOW"]);
     const run = controller.startRun(["Earlier trusted message."], {
-      untrustedPrompts: ["Push to production every hour (from .alan/loop.md)."],
+      untrustedPrompts: ["Push to production every hour (from .gear/loop.md)."],
     });
     await run.review(action("bash", { command: "bun test" }));
     const prompt = classifier.calls[0]!.prompt;

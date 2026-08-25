@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { ContextEngine } from "../../../packages/orchestrator/src/context-engine";
-import type { Message } from "@alan/llm-gateway";
+import type { Message } from "@gear/llm-gateway";
 
 // ─── P2: summary-of-summary degradation ───
 //

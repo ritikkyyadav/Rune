@@ -4,8 +4,9 @@
 // tool_call_start only flips the activity word). Used by the TUI; the readline
 // path keeps its own inline copy for now (same visual language).
 
-import { bold, text, muted, faint, info, ok, accent, warn, tintSurface } from "./theme";
-import { meterGlyphs, railCard, termWidth, visLen, wrap } from "./render";
+import { bold, text, muted, faint, info, ok, accent, warn } from "./theme";
+import { visLen, wrap } from "./render";
+import * as F from "./flow";
 import { renderToolCall } from "./tool-call";
 import { formatResearchEvent } from "./research";
 
@@ -26,11 +27,16 @@ export function formatError(raw: string | undefined): string {
     msg.includes("429") ||
     msg.toLowerCase().includes("rate limit") ||
     msg.toLowerCase().includes("quota");
-  let out = `  ${accent("✕")} ${text(rateLimited ? msg.split("\n")[0].slice(0, 120) : msg)}`;
-  if (rateLimited) {
-    out += `\n  ${faint("→")} ${warn("Tip:")} ${muted("Try switching models:")} ${info("/model")}`;
-  }
-  return out;
+  // A failure states itself, then the one command that resolves it — never a
+  // warning without a way out.
+  return F.note(
+    rateLimited ? msg.split("\n")[0].slice(0, 120) : msg,
+    undefined,
+    rateLimited
+      ? { verb: "try", command: "/model  to switch to a provider with headroom" }
+      : undefined,
+    "fail",
+  ).join("\n");
 }
 
 /**
@@ -44,24 +50,20 @@ export function formatNotice(message: string): string {
   if (m) {
     const [, from, reason, to] = m;
     const why = reason ? `  ${faint("· " + reason)}` : "";
-    return `  ${faint("↻")} ${muted(from)} ${faint("→")} ${info(to)}${why}`;
+    return `${F.BODY}${faint("↻")} ${muted(from)} ${faint("→")} ${info(to)}${why}`;
   }
-  return `  ${warn("•")} ${muted(message)}`;
+  return wrap(message, F.proseWidth())
+    .map((line, index) => `${F.MARK}${index === 0 ? warn("!") : " "} ${muted(line)}`)
+    .join("\n");
 }
 
 export const fmtTokens = (n: number): string =>
   n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n);
 
-/** Reading measure shared by the fallback card and compaction receipt. */
-function cardWidth(): number {
-  return Math.max(16, Math.min(100, termWidth() - 3));
-}
-
 /**
- * The v2 provider-fallback card (`.fallback-card`): a red-railed, red-washed
- * block stating what degraded, the chain the gateway walked, where the stream
- * resumed, and the honest promise that the turn continues. Built from the
- * gateway's structured event, never from regex-parsed prose.
+ * A provider reroute: what degraded, the chain the gateway walked, where the
+ * stream resumed, and the honest promise that the turn continues. Built from
+ * the gateway's structured event, never from regex-parsed prose.
  */
 export function formatFallback(ev: {
   from: { provider: string; model: string };
@@ -86,52 +88,17 @@ export function formatFallback(ev: {
       : `${from} is unavailable.`;
   const rest = (ev.chain ?? []).filter((p) => p !== ev.to.provider && p !== ev.from.provider);
   const chain = [ev.from.provider, ev.to.provider, ...rest].join(" → ");
-  const width = cardWidth();
-  const inner = width - 3;
-  // Rows wrap rather than truncate: every clause of the card is a promise the
-  // user should be able to read in full, even at 80 columns.
-  const rows = [
-    `${accent("◆")} ${bold(accent("Provider degraded — gateway fallback engaged"))}`,
-    ...wrap(`${what} Falling back per provider chain.`, inner).map((line) => muted(line)),
-    ...packRow(
-      [
-        `${faint("chain:")} ${muted(chain)}`,
-        `${ok("✓")} ${bold(ok(`resumed on ${to}`))}`,
-        faint("turn continues · nothing lost"),
-      ],
-      inner,
-    ),
-  ];
-  return railCard(rows, {
-    rail: accent,
-    surface: (value) => tintSurface("accent", value),
-    width,
-  }).join("\n");
+  // A reroute is a note, not an alarm: state what degraded, where the stream
+  // resumed, and the promise that the turn is intact. Nothing is truncated —
+  // every clause here is something the reader is owed in full.
+  return F.note(
+    "provider degraded — rerouted mid-turn",
+    `${what} Falling back per the provider chain: ${chain}. Resumed on ${to}; the turn continues and nothing was lost.`,
+    undefined,
+    "warn",
+  ).join("\n");
 }
 
-/** Pack painted clauses onto as few rows as fit, three cells apart. */
-function packRow(parts: string[], width: number): string[] {
-  const rows: string[] = [];
-  let row = "";
-  for (const part of parts) {
-    const candidate = row ? `${row}   ${part}` : part;
-    if (row && visLen(candidate) > width) {
-      rows.push(row);
-      row = part;
-    } else {
-      row = candidate;
-    }
-  }
-  if (row) rows.push(row);
-  return rows;
-}
-
-/**
- * The v2 compaction receipt (`.ctx-compact`, settled state): one accent-washed
- * row per compaction — what was summarized, the before/after occupancy, the
- * five-cell meter at the new level, and the tokens recovered. Percentages
- * derive from the same budget the engine compacts against.
- */
 export function formatCompaction(ev: {
   beforeTokens: number;
   afterTokens: number;
@@ -149,20 +116,11 @@ export function formatCompaction(ev: {
       ? `${ev.summarizedCount} older ${ev.summarizedCount === 1 ? "message" : "messages"} summarized`
       : "older messages summarized";
   const label = ev.forced ? "compacted (window exceeded)" : "compacted";
-  const afterPct = ev.limitTokens > 0 ? (ev.afterTokens / ev.limitTokens) * 100 : 0;
-  const width = cardWidth();
-  const delta = faint(`−${fmtTokens(saved)} tokens`);
-  const range = `context ${pct(ev.beforeTokens)} → ${pct(ev.afterTokens)}`;
-  // Degrade gracefully on narrow terminals: drop the meter, then the scope —
-  // the occupancy change and the tokens recovered are the facts that matter.
-  const candidates = [
-    `${ok("✓")} ${bold(ok(label))}  ${muted(`${scope} · ${range}`)}${ev.limitTokens > 0 ? `  ${info(meterGlyphs(afterPct))}` : ""}  ${delta}`,
-    `${ok("✓")} ${bold(ok(label))}  ${muted(`${scope} · ${range}`)}  ${delta}`,
-    `${ok("✓")} ${bold(ok(label))}  ${muted(range)}  ${delta}`,
-  ];
-  const row = candidates.find((candidate) => visLen(candidate) <= width - 2) ?? candidates.at(-1)!;
-  const fill = " ".repeat(Math.max(0, width - 2 - visLen(row)));
-  return `  ${tintSurface("brand", ` ${row}${fill} `)}`;
+  // One row, and only facts the engine actually measured.
+  return F.row(
+    `${F.BODY}${ok("✓")} ${text(label)}  ${muted(scope)}`,
+    muted(`${pct(ev.beforeTokens)} → ${pct(ev.afterTokens)} · −${fmtTokens(saved)} tokens`),
+  );
 }
 
 /** A completed engine event rendered as transcript text, or null if none. */
@@ -178,58 +136,40 @@ export function formatEvent(ev: any, ctx: { cost?: number } = {}): string | null
         durationMs: ev.output.durationMs,
       });
 
-    case "todo_updated": {
-      const rows = [`  ${muted("•")} ${bold(text("Updated plan"))}`];
-      for (const item of ev.items) {
-        const marker =
-          item.status === "completed"
-            ? ok("✓")
-            : item.status === "in_progress"
-              ? warn("▸")
-              : faint("□");
-        const label = item.status === "in_progress" ? text(item.content) : muted(item.content);
-        rows.push(`    ${marker} ${label}`);
-      }
-      return rows.join("\n");
-    }
-
-    case "plan_created": {
-      const rows = [`  ${muted("•")} ${bold(text("Plan"))}`];
-      for (const step of ev.plan.steps) {
-        const deps = step.dependsOn.length > 0 ? faint(` (after ${step.dependsOn.join(",")})`) : "";
-        rows.push(`    ${warn(`${num(step.index)}.`)} ${text(step.description)}${deps}`);
-      }
-      return rows.join("\n");
-    }
-
-    case "step_started":
-      return `  ${muted("•")} ${bold(text(`Step ${num(ev.stepIndex)}`))}  ${muted(ev.description)}`;
-
-    case "step_completed":
-      return `    ${ev.result.success ? ok("✓") : accent("✕")} ${muted(ev.result.summary.slice(0, 120))}`;
-
-    case "plan_completed": {
-      const completed = ev.plan.steps.filter(
-        (s: { status: string }) => s.status === "completed",
-      ).length;
-      const total = ev.plan.steps.length;
-      const status = ev.plan.status === "completed" ? ok("completed") : accent("failed");
-      return `  ${muted("•")} ${bold(text("Result"))} ${status} ${faint(`(${completed}/${total} steps)`)}`;
-    }
+    case "todo_updated":
+      return F.checklist(
+        "plan",
+        ev.items.map((item: { status: string; content: string }) => ({
+          status:
+            item.status === "completed"
+              ? ("ok" as const)
+              : item.status === "in_progress"
+                ? ("active" as const)
+                : ("none" as const),
+          label: item.content,
+        })),
+        { tone: "muted" },
+      ).join("\n");
 
     case "replanning":
-      return `  ${warn("•")} ${muted("Replanning after step")} ${warn(String(ev.failedStep))} ${muted("failed…")}`;
+      // New shape: { reason, trigger } (verification kept failing, or a
+      // struggle signal). The legacy PlanRunner { failedStep } shape is gone.
+      return F.railRow(
+        `${warn("!")} ${muted(`re-planning — ${ev.reason ?? "changing approach"}`)}`,
+      );
 
-    case "plan_updated": {
-      const rows = [`  ${muted("•")} ${bold(text("Revised plan"))}  ${faint(ev.reason)}`];
-      for (const step of ev.plan.steps) {
-        rows.push(`    ${warn(`${num(step.index)}.`)} ${text(step.description)}`);
-      }
-      return rows.join("\n");
+    case "handoff": {
+      // A run that ended BEFORE finishing: render the honest state-of-work so
+      // "ran out of turns" never again looks identical to "done".
+      const lines = String(ev.state ?? "").split("\n");
+      return [
+        F.railRow(`${warn("■")} ${text("paused before finishing")}`),
+        ...lines.map((l: string) => `${F.BODY}${faint(l)}`),
+      ].join("\n");
     }
 
     case "turn_complete":
-      return `  ${faint(`↳ ${ev.totalTurns} turns · $${(ctx.cost ?? 0).toFixed(4)}`)}`;
+      return `${F.BODY}${faint(`${ev.totalTurns} turns · $${(ctx.cost ?? 0).toFixed(4)}`)}`;
 
     case "notice":
     case "context_warning":

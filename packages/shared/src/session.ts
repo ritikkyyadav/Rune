@@ -4,8 +4,6 @@ import { createHash } from "crypto";
 
 // ─── Types ───
 
-// SessionInfo is exported from protocol.ts — we use it but don't re-export
-
 export interface SessionEvent {
   type: string;
   payload: Record<string, unknown>;
@@ -41,7 +39,7 @@ export interface SessionInfoInternal {
   lastTokens: number | null;
 }
 
-// ─── Schema (mirrors crates/alan-core/src/session.rs exactly) ───
+// ─── Schema (mirrors the Rust session schema exactly) ───
 
 const SCHEMA = `
   PRAGMA journal_mode = WAL;

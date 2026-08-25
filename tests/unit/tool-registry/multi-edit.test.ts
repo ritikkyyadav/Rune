@@ -14,7 +14,7 @@ function inputFor(ws: string, args: Record<string, unknown>) {
 
 let ws: string;
 beforeEach(async () => {
-  ws = await mkdtemp(join(tmpdir(), "alan-medit-"));
+  ws = await mkdtemp(join(tmpdir(), "gear-medit-"));
 });
 afterEach(async () => {
   await rm(ws, { recursive: true, force: true });
@@ -40,9 +40,9 @@ describe("createMultiEditHandler", () => {
     expect(r.error).toMatch(/old_text/);
   });
   test("accepts a well-formed edit", () => {
-    expect(
-      handler.validate({ path: "x", edits: [{ old_text: "a", new_text: "b" }] }).valid,
-    ).toBe(true);
+    expect(handler.validate({ path: "x", edits: [{ old_text: "a", new_text: "b" }] }).valid).toBe(
+      true,
+    );
   });
 
   // ── execute: exact ──

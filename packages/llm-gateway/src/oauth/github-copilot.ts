@@ -10,10 +10,7 @@
 
 import type { DeviceAuthorization, DeviceFlow, DevicePoll } from "../auth/device-code-strategy";
 
-const CLIENT_ID =
-  process.env.GEAR_COPILOT_CLIENT_ID ??
-  process.env.BERNE_COPILOT_CLIENT_ID ??
-  "Iv1.b507a08c87ecfe98";
+const CLIENT_ID = process.env.GEAR_COPILOT_CLIENT_ID ?? "Iv1.b507a08c87ecfe98";
 const DEVICE_CODE_URL = "https://github.com/login/device/code";
 const ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token";
 const GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";

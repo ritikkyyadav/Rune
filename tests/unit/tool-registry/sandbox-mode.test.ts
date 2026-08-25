@@ -86,7 +86,7 @@ describe("sandbox-mode state", () => {
 describe("bash tool description follows the mode", () => {
   test("registered schema text swaps between sandboxed and full-access", () => {
     const registry = new ToolRegistry();
-    registerBuiltinTools(registry, "/nonexistent-alan-tools");
+    registerBuiltinTools(registry, "/nonexistent-gear-tools");
     const schema = registry.get("bash")!.schema;
 
     setSandboxMode("on");
@@ -103,10 +103,10 @@ describe("bash tool description follows the mode", () => {
 });
 
 describe("rust bridge --sandbox flag follows the mode", () => {
-  // A stand-in "alan-tools" that just echoes its argv back as the result, so
+  // A stand-in "gear-tools" that just echoes its argv back as the result, so
   // the test asserts the exact flag surface the real binary would see.
   function fakeToolsBinary(): string {
-    const dir = mkdtempSync(join(tmpdir(), "alan-sbx-"));
+    const dir = mkdtempSync(join(tmpdir(), "gear-sbx-"));
     const bin = join(dir, "fake-tools.sh");
     writeFileSync(
       bin,

@@ -110,7 +110,7 @@ describe("PermissionBroker", () => {
 });
 
 describe("PermissionBroker — workspace trust", () => {
-  const WS = "/tmp/alan-ws";
+  const WS = "/tmp/gear-ws";
   const writeSchema = {
     name: "write_file",
     permissionLevel: "confirm" as const,
@@ -210,7 +210,7 @@ describe("PermissionBroker — workspace trust", () => {
 });
 
 describe("PermissionBroker — permission modes (the Shift+Tab cycle)", () => {
-  const WS = "/tmp/alan-ws";
+  const WS = "/tmp/gear-ws";
   const bashSchema = {
     name: "bash",
     permissionLevel: "confirm" as const,

@@ -12,7 +12,8 @@ import type {
   TokenUsage,
 } from "../types";
 import { parseApiErrorBody } from "../types";
-import { tryParseJson } from "@alan/shared";
+import { tryParseJson } from "@gear/shared";
+import { IdleWatchdog } from "./stream-guard";
 
 interface GeminiPart {
   text?: string;
@@ -97,13 +98,18 @@ export class GoogleProvider implements LlmProvider {
   }
 
   async *inferStream(request: InferenceRequest, opts?: StreamOpts): AsyncGenerator<StreamEvent> {
+    // Wedged-stream protection: previously no timeout — a stalled SSE session
+    // hung the turn until the user hit Esc. Generous allowances: Gemini Pro
+    // thinking is hidden (no streamed deltas), so a legitimate reasoning pause
+    // can run minutes of silence.
+    const guard = new IdleWatchdog(this.name, opts?.signal, 240_000, 120_000);
     const response = await fetch(
       `${this.baseUrl}/models/${encodeURIComponent(request.model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(this.apiKey)}`,
       {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(this.toGeminiRequest(request)),
-        signal: opts?.signal,
+        signal: guard.signal,
       },
     );
 
@@ -129,6 +135,7 @@ export class GoogleProvider implements LlmProvider {
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
+        guard.beat();
 
         buffer += decoder.decode(value, { stream: true });
         const events = buffer.split(/\r?\n\r?\n/);
@@ -181,8 +188,12 @@ export class GoogleProvider implements LlmProvider {
           }
         }
       }
+    } catch (err) {
+      // Watchdog stall (not the caller's Esc) → retryable 504 for the gateway.
+      throw guard.timeoutError() ?? err;
     } finally {
       reader.releaseLock();
+      guard.stop();
     }
 
     // A stream that ends MALFORMED_FUNCTION_CALL (Gemini botched the tool-call

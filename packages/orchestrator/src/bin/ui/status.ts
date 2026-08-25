@@ -3,7 +3,8 @@
 import type { PermissionMode } from "../../permissions";
 import * as os from "os";
 import { bold, text, muted, faint, info, warn } from "./theme";
-import { box, kv } from "./render";
+import { kv, visLen } from "./render";
+import * as F from "./flow";
 import { PRODUCT_NAME, PRODUCT_VERSION } from "./brand";
 
 function shortPath(p: string): string {
@@ -17,7 +18,6 @@ export interface StatusView {
   workspace: string;
   sessionId: string;
   cost: number;
-  plannerMode?: boolean;
   yoloMode?: boolean;
   trustWorkspace?: boolean;
   /** Active permission mode; falls back to the yolo/trust booleans when absent. */
@@ -53,19 +53,19 @@ function permissionsLabel(s: StatusView): string {
 }
 
 export function renderStatus(s: StatusView): string {
-  const header = `${info("◉")} ${bold(text(PRODUCT_NAME))}  ${muted("v" + (s.version ?? PRODUCT_VERSION))}`;
+  // The same rule the session opens with — /status is the header, expanded.
+  const header = `${info(PRODUCT_NAME.toLowerCase())} ${muted(s.version ?? PRODUCT_VERSION)}`;
 
   const rows: [string, string][] = [
-    ["Model", info(s.model)],
-    ["Provider", text(s.provider)],
-    ["Directory", text(shortPath(s.workspace))],
-    ["Mode", text(s.plannerMode ? "planner" : "react")],
-    ["Permissions", permissionsLabel(s)],
+    ["model", info(s.model)],
+    ["provider", text(s.provider)],
+    ["directory", text(shortPath(s.workspace))],
+    ["permissions", permissionsLabel(s)],
     ...(s.sandboxEnabled === undefined
       ? []
       : ([
           [
-            "Sandbox",
+            "sandbox",
             !s.sandboxEnabled
               ? bold(warn("▲ off · full host access"))
               : s.sandboxDegraded
@@ -76,7 +76,7 @@ export function renderStatus(s: StatusView): string {
     ...(s.orgPolicy
       ? ([
           [
-            "Org policy",
+            "org policy",
             bold(warn(`⛨ ${s.orgPolicy.org ?? "enforced"} · ${s.orgPolicy.fingerprint}`)),
           ],
         ] as [string, string][])
@@ -84,7 +84,7 @@ export function renderStatus(s: StatusView): string {
     ...(s.permissionMode === "auto" && s.autoMode
       ? ([
           [
-            "Auto reviewer",
+            "auto reviewer",
             s.autoMode.reviewer
               ? text(
                   `${s.autoMode.reviewer.provider}/${s.autoMode.reviewer.model} · isolated context · ${s.autoMode.failClosed ? "fail closed" : "FAIL OPEN"}`,
@@ -92,7 +92,7 @@ export function renderStatus(s: StatusView): string {
               : bold(warn("unavailable · risky actions ask")),
           ],
           [
-            "Auto decisions",
+            "auto decisions",
             muted(
               `${s.autoMode.stats.allowed} allow · ${s.autoMode.stats.denied} block · ${s.autoMode.stats.asked} ask · ${s.autoMode.stats.injectionsFlagged} injection warnings`,
             ),
@@ -102,7 +102,7 @@ export function renderStatus(s: StatusView): string {
     ...(s.contextUsage && s.contextUsage.percent > 0
       ? ([
           [
-            "Context",
+            "context",
             (s.contextUsage.percent >= 90
               ? bold(warn(`${s.contextUsage.percent}% · hot — /compress recommended`))
               : s.contextUsage.percent >= 70
@@ -114,11 +114,11 @@ export function renderStatus(s: StatusView): string {
           ],
         ] as [string, string][])
       : []),
-    ["Session", text(s.sessionId.slice(0, 8))],
-    ["Cost", text(`$${s.cost.toFixed(4)}`)],
+    ["session", text(s.sessionId.slice(0, 8))],
+    ["cost", text(`$${s.cost.toFixed(4)}`)],
   ];
   if (s.registeredProviders?.length) {
-    rows.push(["Providers", muted(s.registeredProviders.join(", "))]);
+    rows.push(["providers", muted(s.registeredProviders.join(", "))]);
   }
   if (s.providerHealth && (s.providerHealth.pruned.length || s.providerHealth.cooling.length)) {
     const bits: string[] = [];
@@ -127,10 +127,19 @@ export function renderStatus(s: StatusView): string {
       const secs = Math.max(0, Math.ceil((c.untilMs - Date.now()) / 1000));
       bits.push(`${c.provider} cooling ${secs}s`);
     }
-    rows.push(["Gateway", warn(bits.join(" · "))]);
+    rows.push(["gateway", warn(bits.join(" · "))]);
   }
 
   // Values are already colored — keep kv's value pass as identity.
   const kvRows = kv(rows, { labelWidth: 12, labelColor: muted, valueColor: (x) => x });
-  return box([header, "", ...kvRows]);
+  const width = F.measure();
+  const lead = faint("──── ");
+  const tail = Math.max(3, width - visLen(lead) - visLen(header) - 1);
+  return [
+    "",
+    `${lead}${header} ${faint("─".repeat(tail))}`,
+    ...kvRows.map((row) => `${F.MARK}${row.trimStart()}`),
+    faint("─".repeat(width)),
+    "",
+  ].join("\n");
 }

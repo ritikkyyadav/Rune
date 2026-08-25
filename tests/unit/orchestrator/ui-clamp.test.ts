@@ -80,8 +80,8 @@ describe("clampVisible", () => {
         success: true,
       }),
     );
-    expect(todo).toContain("Plan updated");
-    expect(todo).toContain("2 items");
+    expect(todo).toContain("plan  updated");
+    expect(todo).toContain("2 steps");
     expect(todo).not.toContain('{"items"');
 
     const shell = stripAnsi(
@@ -92,8 +92,7 @@ describe("clampVisible", () => {
         success: true,
       }),
     );
-    expect(shell).toContain("Checking shell");
-    expect(shell).toContain("shell_1");
+    expect(shell).toContain("poll  shell_1");
     expect(shell).not.toContain('{"shell_id"');
   });
 });

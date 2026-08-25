@@ -11,16 +11,16 @@ import {
 let workspace: string;
 
 beforeEach(async () => {
-  workspace = await mkdtemp(join(tmpdir(), "alan-commands-"));
+  workspace = await mkdtemp(join(tmpdir(), "gear-commands-"));
 });
 
 afterEach(async () => {
   await rm(workspace, { recursive: true, force: true });
 });
 
-/** Write a `.md` file into `<workspace>/.alan/commands/`. */
+/** Write a `.md` file into `<workspace>/.gear/commands/`. */
 async function writeCommand(fileName: string, body: string): Promise<void> {
-  const dir = join(workspace, ".alan", "commands");
+  const dir = join(workspace, ".gear", "commands");
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, fileName), body);
 }
@@ -83,7 +83,7 @@ describe("loadCommands · frontmatter", () => {
   test("strips surrounding quotes from frontmatter values", async () => {
     await writeCommand(
       "quoted.md",
-      ['---', 'description: "Quoted summary"', "---", "body"].join("\n"),
+      ["---", 'description: "Quoted summary"', "---", "body"].join("\n"),
     );
 
     const [cmd] = await loadCommands(workspace);
@@ -161,7 +161,7 @@ describe("SlashCommand.render", () => {
 // ─── missing directory ───
 
 describe("loadCommands · missing dir", () => {
-  test("missing .alan/commands directory returns []", async () => {
+  test("missing .gear/commands directory returns []", async () => {
     const commands = await loadCommands(workspace);
     expect(commands).toEqual([]);
   });

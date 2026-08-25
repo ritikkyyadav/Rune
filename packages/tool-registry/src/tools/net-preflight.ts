@@ -83,10 +83,7 @@ export function withNetworkPreflight(handler: ToolHandler): ToolHandler {
         isOsIsolationAvailable() &&
         args.network !== true &&
         args.run_in_background !== true;
-      if (
-        sandboxed &&
-        (process.env.GEAR_NET_PREFLIGHT ?? process.env.BERNE_NET_PREFLIGHT) !== "0"
-      ) {
+      if (sandboxed && process.env.GEAR_NET_PREFLIGHT !== "0") {
         const what = typeof args.command === "string" ? needsNetwork(args.command) : null;
         if (what) {
           return {

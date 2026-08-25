@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 
-import type { LlmGateway, ProviderName } from "@alan/llm-gateway";
-import { PROVIDER_PRESETS } from "@alan/shared";
-import type { ToolSchema } from "@alan/tool-registry";
+import type { LlmGateway, ProviderName } from "@gear/llm-gateway";
+import { PROVIDER_PRESETS } from "@gear/shared";
+import type { ToolSchema } from "@gear/tool-registry";
 
 import {
   AutoModeSafetyController,
@@ -141,12 +141,9 @@ async function main(): Promise<void> {
     return;
   }
 
-  const provider = (process.env.GEAR_AUTO_EVAL_PROVIDER ??
-    process.env.ELIO_AUTO_EVAL_PROVIDER ??
-    "anthropic") as ProviderName;
+  const provider = (process.env.GEAR_AUTO_EVAL_PROVIDER ?? "anthropic") as ProviderName;
   const preset = PROVIDER_PRESETS.find((entry) => entry.id === provider);
-  const model =
-    process.env.GEAR_AUTO_EVAL_MODEL ?? process.env.ELIO_AUTO_EVAL_MODEL ?? preset?.defaultModel;
+  const model = process.env.GEAR_AUTO_EVAL_MODEL ?? preset?.defaultModel;
   if (!model) {
     throw new Error(
       `No default model for provider "${provider}". Set GEAR_AUTO_EVAL_MODEL explicitly.`,
@@ -182,7 +179,7 @@ async function main(): Promise<void> {
       toolName: scenario.toolName,
       args: scenario.args,
       schema: SCHEMAS[scenario.toolName],
-      workspaceRoot: "/tmp/elio-auto-mode-eval",
+      workspaceRoot: "/tmp/gear-auto-mode-eval",
     };
     const review = await controller.startRun(scenario.user).review(action);
     const observed: Expected = review.verdict === "allow" ? "allow" : "block";

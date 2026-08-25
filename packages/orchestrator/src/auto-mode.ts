@@ -1,7 +1,7 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
-import type { LlmGateway, Message, ProviderName } from "@alan/llm-gateway";
-import { patchTargetPaths, type ToolCallOutput, type ToolSchema } from "@alan/tool-registry";
+import type { LlmGateway, Message, ProviderName } from "@gear/llm-gateway";
+import { patchTargetPaths, type ToolCallOutput, type ToolSchema } from "@gear/tool-registry";
 
 import { configModeToPermissionMode } from "./permissions";
 import {
@@ -517,7 +517,6 @@ export class AutoModeSafetyController {
       .slice(0, 8)
       .join(", ");
     const warningMarker = "[GEAR SECURITY WARNING — UNTRUSTED TOOL RESULT]";
-    const legacyWarningMarker = "[ELIO SECURITY WARNING — UNTRUSTED TOOL RESULT]";
     const warning = [
       warningMarker,
       `The ${toolName} result may contain prompt-injection instructions (${findingList || "suspicious content"}).`,
@@ -527,7 +526,7 @@ export class AutoModeSafetyController {
       "",
     ].join("\n");
 
-    if (source.startsWith(warningMarker) || source.startsWith(legacyWarningMarker)) {
+    if (source.startsWith(warningMarker)) {
       return { output, scan, warningAdded: false };
     }
     const screened: ToolCallOutput = output.success
@@ -606,7 +605,7 @@ export function shouldRecordAutoModeDecision(review: AutoModeReview): boolean {
 export interface AutoModeRunOptions {
   /**
    * Prompts that drive this run but were NOT typed by the user — e.g. a
-   * scheduled loop prompt read from the repository's `.alan/loop.md`. They are
+   * scheduled loop prompt read from the repository's `.gear/loop.md`. They are
    * shown to the reviewer as evidence of context, never as authorization.
    */
   untrustedPrompts?: string[];
@@ -1045,7 +1044,6 @@ const PROTECTED_SEGMENTS = new Set([
   ".config",
   ".gear",
   ".alan",
-  ".elio",
   "credentials",
   "secrets",
 ]);
@@ -1173,16 +1171,16 @@ function guardrailChangeReason(action: AutoModeAction): string | undefined {
   return undefined;
 }
 
-const CONTROL_DIRS = new Set([".gear", ".alan", ".elio"]);
+const CONTROL_DIRS = new Set([".gear", ".alan"]);
 const CONTROL_FILE_RE =
   /^(?:config\.toml|hooks\.json|mcp\.json|sandbox\.json|loop\.md|org\.pub|policy(?:[._-].*)?\.(?:json|toml)|(?:secrets?|keys?|credentials?)(?:[._-].*)?\.(?:json|toml|txt|env))$/i;
 const CONTROL_SUBDIRS = new Set(["skills", "plugins", "hooks", "commands", "policy", "policies"]);
 
 /**
  * Gear's own control surface: config, hooks, MCP wiring, skills, plugins,
- * policy and secrets under a `.gear`/`.alan`/`.elio` directory. The check is
- * RELATIVE to the workspace so a workspace that itself lives under `.alan/`
- * (detached-run worktrees at `.alan/worktrees/<run>`, a plugin checkout) is
+ * policy and secrets under a `.gear` (or legacy `.alan`) directory. The check is
+ * RELATIVE to the workspace so a workspace that itself lives under `.gear/`
+ * (detached-run worktrees at `.gear/worktrees/<run>`, a plugin checkout) is
  * ordinary project territory; only writes that reach INTO a control directory
  * — inside or outside the workspace — are guardrail changes.
  */

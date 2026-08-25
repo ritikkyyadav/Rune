@@ -120,7 +120,7 @@ function spliceWindows(
 ): string[] {
   const startSet = new Set(starts);
   const out: string[] = [];
-  for (let i = 0; i < lines.length; ) {
+  for (let i = 0; i < lines.length;) {
     if (startSet.has(i)) {
       out.push(...newLines);
       i += oldLen;
@@ -273,7 +273,7 @@ export function createMultiEditHandler(): ToolHandler {
       }
 
       // Atomic write: write to a temp file in the same dir, then rename over.
-      const tmp = `${abs}.alan-tmp-${randomBytes(6).toString("hex")}`;
+      const tmp = `${abs}.gear-tmp-${randomBytes(6).toString("hex")}`;
       try {
         await writeFile(tmp, content, "utf8");
         await rename(tmp, abs);

@@ -89,9 +89,10 @@ describe("resolveTier", () => {
     expect(
       resolveTier("heavy", undefined, "anthropic", "claude-sonnet-4-6", registered, KNOWN),
     ).toEqual({ provider: "anthropic", model: "claude-opus-4-8" });
-    expect(
-      resolveTier("light", {}, "deepseek", "deepseek-chat", registered, KNOWN),
-    ).toEqual({ provider: "deepseek", model: "deepseek-chat" });
+    expect(resolveTier("light", {}, "deepseek", "deepseek-chat", registered, KNOWN)).toEqual({
+      provider: "deepseek",
+      model: "deepseek-chat",
+    });
   });
 
   test("unknown provider (local runtime) falls back to the session model", () => {

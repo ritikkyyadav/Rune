@@ -20,7 +20,7 @@
 //    tokens that are volatile by construction (UUIDs, timestamps, long hashes)
 //    and whitespace are folded.
 
-import { parseToolArguments } from "@alan/shared";
+import { parseToolArguments } from "@gear/shared";
 
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const ISO_TS_RE = /\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?/g;

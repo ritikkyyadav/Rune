@@ -1,6 +1,6 @@
 import { isAbsolute, relative, resolve } from "path";
-import { isOsIsolationAvailable, isSandboxEnabled, patchTargetPaths } from "@alan/tool-registry";
-import type { PermissionLevel, ToolSchema } from "@alan/tool-registry";
+import { isOsIsolationAvailable, isSandboxEnabled, patchTargetPaths } from "@gear/tool-registry";
+import type { PermissionLevel, ToolSchema } from "@gear/tool-registry";
 import { policyDenial, type OrgPolicy } from "./org-policy";
 
 export type PermissionScope = "once" | "session" | "project" | "global";
@@ -42,13 +42,7 @@ export type PermissionDecision =
 export type PermissionMode = "gear-1" | "gear-2" | "gear-3" | "gear-4" | "auto";
 /** Historical spellings still accepted on input (config, CLI, policy, chat). */
 export type LegacyPermissionMode =
-  | "confirm"
-  | "autonomy-i"
-  | "autonomy-ii"
-  | "autonomy-iii"
-  | "turing"
-  | "hands-free"
-  | "yolo";
+  "confirm" | "autonomy-i" | "autonomy-ii" | "autonomy-iii" | "turing" | "hands-free" | "yolo";
 export type PermissionModeInput = PermissionMode | LegacyPermissionMode | (string & {});
 
 /** The five gears in Shift+Tab order. */

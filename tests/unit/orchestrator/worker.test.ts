@@ -15,17 +15,18 @@ import {
   buildWorkerRegistry,
   createWorkerPermissionCheck,
   createWorkerTool,
+  workerSystemPrompt,
 } from "../../../packages/orchestrator/src/worker";
 import type { ToolCallInput } from "../../../packages/tool-registry/src/types";
 
-// Resolve the compiled alan-tools binary the same way the CLI does
-// (bin/alan-cli.ts's findToolsBinary): release build, then debug build,
+// Resolve the compiled gear-tools binary the same way the CLI does
+// (bin/gear-cli.ts's findToolsBinary): release build, then debug build,
 // relative to this file — not a hardcoded developer-machine path, which
 // would only ever resolve on the one laptop it was written on. Tests that
 // actually shell out to it skip cleanly (test.skipIf) when it hasn't been
 // built — e.g. CI's ts-lint job runs `bun test` without a `cargo build` step.
-const RUST_RELEASE = join(import.meta.dir, "../../../target/release/alan-tools");
-const RUST_DEBUG = join(import.meta.dir, "../../../target/debug/alan-tools");
+const RUST_RELEASE = join(import.meta.dir, "../../../target/release/gear-tools");
+const RUST_DEBUG = join(import.meta.dir, "../../../target/debug/gear-tools");
 const RUST_BIN = existsSync(RUST_RELEASE) ? RUST_RELEASE : RUST_DEBUG;
 const HAS_RUST_BIN = existsSync(RUST_BIN);
 
@@ -136,6 +137,17 @@ describe("worker tool — schema + end-to-end run", () => {
     expect(WORKER_TOOL_SCHEMA.category).toBe("execute");
     expect(WORKER_TOOL_SCHEMA.parallelSafe).toBe(true);
     expect(WORKER_TOOL_SCHEMA.description).toContain("DISJOINT");
+  });
+
+  test("workers carry the interface-craft doctrine — big-build frontends are not exempt", () => {
+    // The doctrine steers large builds to workers; without this block, every
+    // large build's UI was written by the one agent that never saw
+    // "Building interfaces" — the observed generated-looking-frontend cause.
+    const prompt = workerSystemPrompt("app/ui.html");
+    expect(prompt).toContain("a senior product designer built this");
+    expect(prompt).toContain("ONE art direction");
+    expect(prompt).toContain("Banned slop");
+    expect(prompt).toContain("never emoji");
   });
 
   test("validation: prompt + files required, bounded", () => {

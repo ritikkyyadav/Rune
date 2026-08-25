@@ -1,43 +1,34 @@
-// ─── Activity rendering: the thought-chain visual language ───
+// ─── Activity rendering ───
 // The single source of truth for how a turn reads on screen, shared by the live
-// stream and the session-resume replay so a resumed session looks just like
-// watching it happen. It transcribes the `docs/design/gear-customizer-v2.html` stream:
+// stream and the session-resume replay so a resumed session looks exactly like
+// watching it happen. Both paths speak the flow grammar in ./flow — this module
+// only decides *which* facts of a tool call are worth a row, and reads those
+// facts out of the tool's own structured result rather than its raw blob.
 //
-//   ● Plan: <one paragraph of intent>          ← plan bullet
-//   ● Searching src/bin/ui/ · grep             ← tool bullet: verb + target + meta
-//     └ $ grep -rn "renderStatus" src/bin/ui/  ← cmd tree on the code surface
-//   ● Editing src/bin/ui/status.ts · hash-guarded
-//     packages/…/status.ts        +2 −1 · lines 41–46   ← diff card header
-//       41 - old                                          ← red wash
-//       41 + new                                          ← green wash
-//   ● Verifying tests/unit/ · bash · sandboxed
-//     └ $ bun test tests/unit/  # 214 pass · 0 fail
+//   ● Found it. The loop breaks on the wrong event.
+//     │ · grep  content_block_stop                            4 files
+//     │ └ src/streaming.ts:42 · 3 more
+//     │   edit  src/streaming.ts                      +6 -1 · 1 hunk
+//     │    42 - if (event.type === 'content_block_stop') break
+//     │    42 + if (event.type === 'content_block_stop') {
+//     │ ✗ run   npx vitest run                                    2.6s
+//     │ └ 1 failed, 24 passed
 //
-// renderToolActivity renders ONE tool call and is used by both paths. Only the
-// batch replay renderer (renderTranscript) — which can see the whole list —
-// aggregates consecutive reads into "Read N files"; the live stream can't look
-// ahead, so it shows each read as it lands.
+// Note which rows carry a mark. `grep` and `edit` do not announce that they
+// worked, because they almost always do; their receipts carry the news. The
+// green tick belongs to a check that passed and the red cross to work that
+// failed, so both still mean something by the time you reach them.
+//
+// renderToolActivity renders ONE call and is used by both paths. Only the batch
+// replay renderer (renderTranscript) — which can see the whole list — collapses
+// a run of reads into one row; the live stream cannot look ahead.
 
-import { isOsIsolationAvailable, isSandboxEnabled } from "@alan/tool-registry";
-import {
-  bold,
-  text,
-  muted,
-  faint,
-  info,
-  ok,
-  accent,
-  warn,
-  brand,
-  codeSurface,
-  diffSurface,
-  diffHeaderSurface,
-  positiveSurface,
-  negativeSurface,
-} from "./theme";
-import { truncate, termWidth, visLen } from "./render";
+import { faint } from "./theme";
+import { truncate } from "./render";
+import { renderMarkdown } from "./markdown";
+import * as F from "./flow";
 
-/** The assistant-narration marker (Claude-Code-style filled dot). */
+/** The assistant-narration marker. */
 export const STEP = "●";
 
 export interface ToolActivityView {
@@ -60,56 +51,8 @@ export interface TranscriptLineView {
   isError?: boolean;
 }
 
-const VERB: Record<string, string> = {
-  bash: "Ran",
-  read_file: "Read",
-  list_dir: "Explored",
-  grep: "Searched",
-  write_file: "Wrote",
-  edit_file: "Edited",
-  interactive_dashboard: "Dashboard",
-  task: "Scouted",
-  worker: "Worker",
-};
-
-/** Present-tense verb for the live "what's running now" status line. */
-const RUNNING: Record<string, string> = {
-  bash: "Running",
-  read_file: "Reading",
-  list_dir: "Exploring",
-  grep: "Searching",
-  write_file: "Writing",
-  edit_file: "Editing",
-  interactive_dashboard: "Building dashboard",
-  task: "Scouting",
-  worker: "Worker building",
-};
-
-/** A short label for an in-flight tool call (args aren't known yet at start). */
-export function runningLabel(toolName: string): string {
-  return RUNNING[toolName] ?? toolName;
-}
-
-/** Commands whose result is evidence, rather than merely another action. */
-export function isVerificationCommand(command: string): boolean {
-  const cmd = command.toLowerCase();
-  return (
-    /(^|[\s;&|])(test|tests|pytest|vitest|jest|mocha)([\s;&|]|$)/.test(cmd) ||
-    /(^|[\s;&|])(lint|eslint|ruff|mypy|typecheck|tsc|check|build)([\s;&|]|$)/.test(cmd) ||
-    /\b(cargo\s+(test|check|clippy)|go\s+test|swift\s+test|xcodebuild|gradle\w*\s+test|mvn\w*\s+test)\b/.test(
-      cmd,
-    )
-  );
-}
-
 const s = (v: unknown): string => (v == null ? "" : String(v));
 const firstLine = (v: string): string => v.split("\n")[0] ?? "";
-
-function shortenPath(p: string): string {
-  const parts = p.split("/").filter(Boolean);
-  if (parts.length <= 3) return p;
-  return ".../" + parts.slice(-3).join("/");
-}
 
 /** Looser shortening for the bare-path file listing: workspace-relative paths
  *  show whole (`src/apps/ipod/ClickWheel.tsx`); only deep/absolute ones cut. */
@@ -118,11 +61,6 @@ function listingPath(p: string): string {
   if (!p.startsWith("/") && parts.length <= 6) return p;
   if (parts.length <= 4) return p;
   return ".../" + parts.slice(-4).join("/");
-}
-
-/** Usable width for an inline target/command, leaving room for the verb + indent. */
-function inlineWidth(): number {
-  return Math.max(20, Math.min(termWidth() - 12, 100));
 }
 
 function tryJson(raw: string): Record<string, unknown> | null {
@@ -155,359 +93,379 @@ function compactArgs(args: Record<string, unknown>): string {
 
 /** The `● <text>` head that opens an assistant narration step (first line only). */
 export function stepHead(line: string): string {
-  return `  ${text(STEP)} ${text(line)}`;
+  return F.said(line).split("\n")[0] ?? "";
 }
 
 /**
- * An assistant narration block: a `● ` head on the first line, the rest of the
- * prose indented to align beneath it. Returns one string per output line.
+ * An assistant narration block: one dot, then prose aligned beneath it. The
+ * model writes Markdown mid-turn as readily as it does in its final answer — a
+ * numbered plan, a path in backticks — so this renders it rather than printing
+ * the markup, which is what a reader would otherwise have to decode by eye.
  */
 export function stepBlock(prose: string): string[] {
-  const segs = prose.split("\n");
-  const out: string[] = [stepHead(segs[0] ?? "")];
-  for (const seg of segs.slice(1)) out.push(`    ${text(seg)}`);
-  return out;
+  const body = renderMarkdown(prose, { width: F.proseWidth(), indent: F.BODY });
+  return body.length ? F.dot(body) : [];
 }
 
-/** A progress paragraph rendered in the reference's explicit Plan row:
- *  `● Plan:` in primary weight, the intent itself in the secondary tone. */
+/** A progress paragraph. The agent's intent reads in its own voice — there is
+ *  no "Plan:" label, because a sentence that needs a label is not a sentence. */
 export function planBlock(prose: string): string[] {
-  const clean = prose.trim();
-  if (!clean) return [];
-  const segs = clean.split("\n");
-  const first = (segs[0] ?? "").replace(/^plan\s*:\s*/i, "");
-  const out = [`  ${text(STEP)} ${bold(text("Plan:"))} ${muted(first)}`];
-  for (const seg of segs.slice(1)) out.push(`    ${muted(seg)}`);
-  return out;
+  const clean = prose.trim().replace(/^plan\s*:\s*/i, "");
+  return clean ? stepBlock(clean) : [];
 }
 
-// ─── Tool bullet grammar ───
+// ─── Tool grammar ───
+// Every call renders the same shape: a rail, a status, a four-column verb, the
+// thing it acted on, and the receipt hard against the right edge. Whatever the
+// call produced that the reader actually needs — a diff, a command's output —
+// hangs beneath it on the same rail, never in a box of its own. Nothing here
+// paraphrases: the command shown is the command run, the count shown is the
+// count the tool reported.
 
-/** The faint `· grep` / `· bash · sandboxed` meta after a tool header. */
-function toolMeta(...parts: Array<string | false | undefined | null>): string {
-  const shown = parts.filter((part): part is string => Boolean(part));
-  return shown.length ? ` ${faint("· " + shown.join(" · "))}` : "";
+/** The verb column. Four characters wherever the language allows it, so a run
+ *  of calls lines up without anyone drawing a table. */
+const VERB: Record<string, string> = {
+  bash: "run",
+  read_file: "read",
+  list_dir: "list",
+  grep: "grep",
+  glob: "glob",
+  symbol_search: "find",
+  lsp: "lsp",
+  write_file: "new",
+  edit_file: "edit",
+  multi_edit: "edit",
+  web_search: "web",
+  web_fetch: "get",
+  task: "scout",
+  worker: "work",
+  todo_write: "plan",
+  bash_output: "poll",
+  kill_shell: "stop",
+  interactive_dashboard: "view",
+};
+
+/** Present-tense verb for the live "what's running now" status line. */
+const RUNNING: Record<string, string> = {
+  bash: "running",
+  read_file: "reading",
+  list_dir: "listing",
+  grep: "searching",
+  glob: "matching",
+  write_file: "writing",
+  edit_file: "editing",
+  multi_edit: "editing",
+  web_search: "searching the web",
+  web_fetch: "fetching",
+  interactive_dashboard: "building a view",
+  task: "scouting",
+  worker: "delegating",
+};
+
+/** A short label for an in-flight tool call (args aren't known yet at start). */
+export function runningLabel(toolName: string): string {
+  return RUNNING[toolName] ?? toolName;
 }
 
-/** `● Verb target · meta` — verb and target carry the weight, meta stays faint. */
-function toolHead(verb: string, target = "", meta = ""): string {
-  return `  ${text(STEP)} ${bold(text(verb))}${target ? " " + bold(text(target)) : ""}${meta}`;
+/** Commands whose result is evidence, rather than merely another action. */
+export function isVerificationCommand(command: string): boolean {
+  const cmd = command.toLowerCase();
+  return (
+    /(^|[\s;&|])(test|tests|pytest|vitest|jest|mocha)([\s;&|]|$)/.test(cmd) ||
+    /(^|[\s;&|])(lint|eslint|ruff|mypy|typecheck|tsc|check|build)([\s;&|]|$)/.test(cmd) ||
+    /\b(cargo\s+(test|check|clippy)|go\s+test|swift\s+test|xcodebuild|gradle\w*\s+test|mvn\w*\s+test)\b/.test(
+      cmd,
+    )
+  );
 }
 
-/** Honest execution posture for a shell command: the live sandbox state plus
- *  the call's own `network` escape hatch. Never claims isolation that the
- *  machine cannot provide. */
-function bashPosture(args: Record<string, unknown>): string[] {
-  if (args.network === true) return ["bash", "host", "network"];
-  if (isSandboxEnabled() && isOsIsolationAvailable()) return ["bash", "sandboxed"];
-  return ["bash", "host"];
+/** `2.6s` / `840ms` — a duration only when the harness actually timed the call. */
+function elapsed(ms?: number): string {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return "";
+  return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
 
-/** The target a verification command checks: its path-like argument
- *  (`bun test tests/unit/` → `tests/unit/`), else the runner itself. */
-function verificationTarget(command: string): string {
-  const tokens = command.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
-  const args = tokens.slice(1);
-  const pathLike = [...args]
-    .reverse()
-    .find((token) => !token.startsWith("-") && (token.includes("/") || /\.\w{1,5}$/.test(token)));
-  if (pathLike) return pathLike.replace(/^['"]|['"]$/g, "");
-  return tokens.slice(0, 2).join(" ") || command;
-}
-
-/** The one-line outcome of a command: a test runner's `214 pass · 0 fail`
- *  tally when it printed one, else the last non-empty output line. */
+/**
+ * The one-line outcome of a command: the runner's own tally when it printed
+ * one, else the last line it wrote. Scanned from the end, because a runner
+ * states its verdict last and its per-file counts first — reading forward finds
+ * `Test Files 1 failed | 1 passed` and reports it as the result.
+ */
 export function commandOutcome(output: string): string {
-  const passed = /^\s*(\d+)\s+pass(?:ed|ing)?\b/m.exec(output)?.[1];
-  const failed = /^\s*(\d+)\s+fail(?:ed|ing|ures?)?\b/m.exec(output)?.[1];
-  if (passed != null && failed != null) return `${passed} pass · ${failed} fail`;
   const lines = output
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]!;
+    const passed = /\b(\d+)\s+(?:tests?\s+)?pass(?:ed|ing)?\b/.exec(line)?.[1];
+    const failed = /\b(\d+)\s+(?:tests?\s+)?fail(?:ed|ing|ures?)?\b/.exec(line)?.[1];
+    if (passed != null && failed != null) return `${failed} failed, ${passed} passed`;
+    if (passed != null) return `${passed} passed`;
+    if (failed != null) return `${failed} failed`;
+  }
   return lines.at(-1) ?? "";
 }
 
-type SurfacePainter = (value: string) => string;
-
-/** Solid, padded evidence row. Padding matters: it makes the code/diff surface
- * visible as a card instead of only colouring the glyphs themselves. */
-function surfaceRow(
-  content: string,
-  surface: SurfacePainter,
-  options: { indent?: string; width?: number } = {},
-): string {
-  const indent = options.indent ?? "    ";
-  const available = Math.max(12, termWidth() - visLen(indent) - 2);
-  const width = Math.max(10, Math.min(options.width ?? available, available));
-  const shown = truncate(content, Math.max(1, width - 2));
-  const fill = " ".repeat(Math.max(0, width - 2 - visLen(shown)));
-  return `${indent}${surface(` ${shown}${fill} `)}`;
+/** stdout + stderr as the process wrote them, in order. */
+function outputOf(parsed: Record<string, unknown> | null): string {
+  const stdout = typeof parsed?.stdout === "string" ? parsed.stdout : "";
+  const stderr = typeof parsed?.stderr === "string" ? parsed.stderr : "";
+  return (stdout + (stdout && stderr ? "\n" : "") + stderr).trimEnd();
 }
 
-/** Shell syntax in the customizer's cmd-tree grammar: keyword ochre, flags in
- *  the accent, quoted strings green, the result comment green (or ochre when
- *  the command went wrong). */
-function commandCard(command: string, hint = "", tone: "ok" | "warn" = "ok"): string {
-  const max = Math.max(18, Math.min(100, termWidth() - 6));
-  const paintHint = tone === "warn" ? warn : ok;
-  const suffix = hint ? `  ${paintHint("# " + hint)}` : "";
-  const tokens = command.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
-  const syntax = tokens
-    .map((token, index) => {
-      if (/^(['"]).*\1$/.test(token)) return ok(token);
-      if (/^-{1,2}[\w-]+/.test(token)) return brand(token);
-      if (index === 0) return bold(warn(token));
-      return text(token);
-    })
-    .join(" ");
-  return surfaceRow(`${faint("└")} ${bold(muted("$"))} ${syntax}${suffix}`, codeSurface, {
-    width: max,
-  });
-}
-
-function diffCard(path: string, raw: string): { text: string; added: number; removed: number } {
-  const source = raw
-    .split("\n")
-    .filter((line) => !line.startsWith("--- ") && !line.startsWith("+++ "));
-  let oldLine = 0;
-  let newLine = 0;
-  let added = 0;
-  let removed = 0;
-  const body: string[] = [];
-  const limit = 26;
-  for (const row of source) {
-    const hunk = /^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/.exec(row);
-    if (hunk) {
-      oldLine = Number(hunk[1]);
-      newLine = Number(hunk[2]);
-      continue;
-    }
-    if (row.startsWith("+")) added++;
-    if (row.startsWith("-")) removed++;
-    if (body.length >= limit) continue;
-    const kind = row.startsWith("+") ? "add" : row.startsWith("-") ? "remove" : "context";
-    const number = kind === "add" ? newLine++ : kind === "remove" ? oldLine++ : newLine++;
-    if (kind === "context") oldLine++;
-    const gutter = `${String(number || "").padStart(4)} `;
-    const marker = kind === "add" ? "+" : kind === "remove" ? "-" : " ";
-    const code = kind === "context" ? row.replace(/^ /, "") : row.slice(1);
-    const payload = truncate(code || " ", Math.max(8, termWidth() - 19));
-    const content =
-      kind === "add"
-        ? `${faint(gutter)}${bold(ok(marker))} ${ok(payload)}`
-        : kind === "remove"
-          ? `${faint(gutter)}${bold(accent(marker))} ${accent(payload)}`
-          : `${faint(gutter)}  ${muted(payload)}`;
-    body.push(
-      surfaceRow(
-        content,
-        kind === "add" ? positiveSurface : kind === "remove" ? negativeSurface : diffSurface,
-      ),
-    );
-  }
-  const range = source.find((row) => row.startsWith("@@"))?.match(/\+(\d+)(?:,(\d+))?/);
-  const first = Number(range?.[1] ?? 1);
-  const count = Number(range?.[2] ?? Math.max(1, added));
-  const cardWidth = Math.max(18, Math.min(100, termWidth() - 6));
-  const rangeText = `lines ${first}–${first + Math.max(0, count - 1)}`;
-  const counts = `${ok(`+${added}`)} ${accent(`−${removed}`)} ${faint(`· ${rangeText}`)}`;
-  const shownPath = truncate(path, Math.max(6, cardWidth - visLen(counts) - 5));
-  const gap = " ".repeat(Math.max(1, cardWidth - 2 - visLen(shownPath) - visLen(counts)));
-  const header = surfaceRow(`${muted(shownPath)}${gap}${counts}`, diffHeaderSurface, {
-    width: cardWidth,
-  });
-  if (source.length > limit)
-    body.push(surfaceRow(faint(`… ${source.length - limit} more diff lines`), diffSurface));
-  return { text: [header, ...body].join("\n"), added, removed };
+/** A failed call, in one row and one reason. Nothing is hidden and nothing is
+ *  padded: the row says which call, the note says what the tool actually said. */
+function failedCall(v: ToolActivityView, name: string): string {
+  const reason = firstLine(v.error ?? "failed").trim() || "failed";
+  return [
+    F.toolRow({
+      name,
+      arg: compactTarget(v),
+      status: "fail",
+      metric: elapsed(v.durationMs),
+    }),
+    F.toolNote(reason, "fail"),
+  ].join("\n");
 }
 
 /**
- * Render a single completed tool call as ONE compact activity line (indented two
- * spaces, no bullet/preview — that 6-line preview was the clutter). Edits are the
- * exception: they always show their diff, because the diff is the thing you want.
- * Failures are red (L'Atlas: one emphasis = the thing that's wrong).
+ * Render one completed tool call. The default is a single row — the whole point
+ * of the receipt column is that most work needs no more than that. Two calls
+ * earn more: an edit always shows its diff, and a command that failed or was a
+ * check always shows its real output, because those are the two moments where a
+ * summary is not good enough.
  */
 export function renderToolActivity(v: ToolActivityView): string {
-  const verb = VERB[v.toolName] ?? v.toolName;
+  const name = VERB[v.toolName] ?? v.toolName;
+  if (!v.success) return failedCall(v, name);
+  const out = tryJson(v.result);
 
-  // ── Failure: one red line + a short reason — hard-bounded, because an
-  // over-wide line breaks the pinned region's row math (the leak failure mode). ──
-  if (!v.success) {
-    const tgt = truncate(compactTarget(v), 48);
-    const headPlain = 4 + verb.length + (tgt ? 2 + tgt.length : 0);
-    const budget = Math.max(12, termWidth() - headPlain - 6);
-    const head = `  ${accent(STEP)} ${bold(accent(verb))}${tgt ? " " + accent(tgt) : ""}`;
-    const reason = truncate(firstLine(v.error ?? "failed"), budget);
-    return `${head}  ${faint("· " + reason)}`;
-  }
-
-  // ── Edit: always show the diff. Every edit is hash-guarded by the harness
-  // (read-before-edit freshness + the tool's own content-hash check). ──
-  if (v.toolName === "edit_file") {
-    const parsed = tryJson(v.result);
-    if (parsed?.diff) {
-      const fullPath = s(parsed.path ?? v.args.path);
-      const file = truncate(listingPath(fullPath), 64);
-      const card = diffCard(fullPath, String(parsed.diff));
-      return `${toolHead("Editing", file, toolMeta("hash-guarded"))}\n${card.text}`;
-    }
-  }
-
-  // ── Write: name + size ──
-  if (v.toolName === "write_file") {
-    const parsed = tryJson(v.result);
-    const file = truncate(listingPath(s(parsed?.path ?? v.args.path)), 64);
-    const bytes = parsed?.bytes_written;
-    return toolHead("Writing", file, toolMeta(bytes != null && `${bytes} bytes`));
-  }
-
-  // ── Compact one-liners (each component bounded so the line never overflows) ──
   switch (v.toolName) {
-    // Reads render as bare paths (the Codex idiom): a browse through the tree
-    // should look like a quiet file listing, not a wall of repeated verbs.
-    case "read_file":
-      return toolHead("Reading", truncate(listingPath(s(v.args.path)), 72));
+    case "read_file": {
+      const total = typeof out?.total_lines === "number" ? out.total_lines : null;
+      const shown = typeof out?.lines_shown === "number" ? out.lines_shown : null;
+      const offset = typeof out?.offset === "number" ? out.offset : 0;
+      const partial = total != null && shown != null && shown < total;
+      return F.toolRow({
+        name,
+        arg: listingPath(s(out?.path ?? v.args.path)),
+        metric: partial
+          ? `lines ${offset + 1}-${offset + shown}`
+          : total != null
+            ? `${total} lines`
+            : "",
+      });
+    }
 
-    case "list_dir":
-      return toolHead(
-        "Exploring",
-        truncate((listingPath(s(v.args.path) || ".") + "/").replace(/\/+$/, "/"), 72),
-      );
+    case "list_dir": {
+      const count = typeof out?.total_count === "number" ? out.total_count : null;
+      return F.toolRow({
+        name,
+        arg: (listingPath(s(out?.path ?? v.args.path) || ".") + "/").replace(/\/+$/, "/"),
+        metric: count != null ? `${count} ${count === 1 ? "entry" : "entries"}` : "",
+      });
+    }
 
     case "grep": {
-      // Result is JSON ({ matches, total_matches, truncated }) — use the real count,
-      // then show the search as the reference's nested command evidence card.
-      const pat = truncate(s(v.args.pattern), 32);
-      const target = truncate(listingPath(s(v.args.path) || "."), 48);
-      const out = tryJson(v.result);
-      const n =
-        typeof out?.total_matches === "number" ? out.total_matches : nonEmptyLines(v.result).length;
-      const hits = n === 0 ? "no matches" : `${n} match${n === 1 ? "" : "es"}`;
-      const command = `grep -rn ${JSON.stringify(pat)} ${target}`;
-      return `${toolHead("Searching", target, toolMeta("grep"))}\n${commandCard(command, hits)}`;
+      const matches = Array.isArray(out?.matches)
+        ? (out.matches as Array<Record<string, unknown>>)
+        : [];
+      const total = typeof out?.total_matches === "number" ? out.total_matches : matches.length;
+      const files = new Set(matches.map((m) => String(m.file ?? ""))).size;
+      const rows = [
+        F.toolRow({
+          name,
+          arg: s(v.args.pattern),
+          metric:
+            total === 0
+              ? "no matches"
+              : files > 1
+                ? `${files} files`
+                : `${total} match${total === 1 ? "" : "es"}`,
+        }),
+      ];
+      // Where the first hit is beats how many there were — that is the line the
+      // reader is about to open.
+      const first = matches[0];
+      if (first) {
+        const rest = total - 1;
+        rows.push(
+          F.toolNote(
+            `${listingPath(String(first.file ?? ""))}:${first.line_number ?? "?"}` +
+              (rest > 0 ? ` · ${rest} more` : ""),
+          ),
+        );
+      }
+      return rows.join("\n");
+    }
+
+    case "glob":
+    case "symbol_search":
+    case "lsp": {
+      const found = nonEmptyLines(v.result).length;
+      return F.toolRow({
+        name,
+        arg: s(v.args.pattern ?? v.args.query ?? v.args.symbol ?? v.args.path),
+        metric: found > 0 ? `${found} result${found === 1 ? "" : "s"}` : "",
+      });
+    }
+
+    case "write_file": {
+      const path = s(out?.path ?? v.args.path);
+      const body = s(v.args.content);
+      const added = body ? body.split("\n").length : 0;
+      return F.toolRow({
+        name,
+        arg: listingPath(path),
+        argTone: "path",
+        status: "none",
+        metric: F.editMetric(added, 0, "new file"),
+      });
+    }
+
+    case "edit_file":
+    case "multi_edit": {
+      const path = s(out?.path ?? v.args.path);
+      const raw = s(out?.diff);
+      if (!raw) {
+        return F.toolRow({ name, arg: listingPath(path), argTone: "path", status: "none" });
+      }
+      const diff = F.parseDiff(raw);
+      const hunkNote = diff.hunks > 0 ? `${diff.hunks} hunk${diff.hunks === 1 ? "" : "s"}` : "";
+      return [
+        F.toolRow({
+          name,
+          arg: listingPath(path),
+          argTone: "path",
+          status: "none",
+          metric: F.editMetric(diff.added, diff.removed, hunkNote),
+        }),
+        ...F.diffRows(diff.rows),
+      ].join("\n");
     }
 
     case "bash": {
-      // Result is JSON ({ stdout, stderr, exit_code, timed_out, truncated }) — parse it,
-      // don't dump it. Surface a failure/timeout, else the last line of output.
-      const out = tryJson(v.result);
-      const stdout = typeof out?.stdout === "string" ? out.stdout : "";
-      const stderr = typeof out?.stderr === "string" ? out.stderr : "";
+      const command = firstLine(s(v.args.command));
       const exit = typeof out?.exit_code === "number" ? out.exit_code : null;
-      let hintPlain = "";
-      let bad = false;
-      if (out?.timed_out === true) {
-        hintPlain = "timed out";
-        bad = true;
-      } else if (exit != null && exit !== 0) {
-        hintPlain = `exit ${exit}`;
-        bad = true;
-      } else {
-        hintPlain = truncate(commandOutcome(stdout.trim() ? stdout : stderr), 40);
+      const timedOut = out?.timed_out === true;
+      const failed = timedOut || (exit != null && exit !== 0);
+      const body = outputOf(out);
+      // What the runner said about itself beats what the shell said about the
+      // runner: `1 failed, 24 passed` is the news; `exit 1` only repeats it.
+      const summary = timedOut
+        ? "timed out"
+        : commandOutcome(body) || (failed ? `exit ${exit}` : "");
+      // Where the green tick gets spent. A command that *checked* something and
+      // came back clean is the one routine outcome worth announcing — it is the
+      // only row on the rail that answers "is it actually right?". A command
+      // that merely ran takes the neutral mark like every other call.
+      const checked = isVerificationCommand(command);
+      const rows = [
+        F.toolRow({
+          name,
+          arg: command,
+          status: failed ? "fail" : checked ? "pass" : "ok",
+          metric: elapsed(v.durationMs),
+        }),
+      ];
+      if (summary) rows.push(F.toolNote(summary, failed ? "fail" : checked ? "ok" : "muted"));
+      // The output itself is kept only when it is the evidence: a failure to
+      // diagnose, or a check whose result is the whole point of running it. Its
+      // own last line closes the rail, rather than being printed twice.
+      if (body && (failed || checked)) {
+        const all = body.split("\n");
+        while (all.length > 0 && !all.at(-1)!.trim()) all.pop();
+        const closing = all.length > 1 ? all.pop()!.trim() : "";
+        rows.push(...F.outputRail(command, F.clip(all), closing || undefined, failed));
       }
-      // Budget: 2 indent + "Ran  " (5) + 2 safety, then reserve room for the hint.
-      const hintVis = hintPlain ? hintPlain.length + 4 : 0; // "  # " + hint
-      const raw = firstLine(s(v.args.command));
-      const cmd = truncate(raw, Math.max(12, termWidth() - 16 - hintVis));
-      const posture = toolMeta(...bashPosture(v.args));
-      const head = bad
-        ? toolHead("Command failed", "", posture)
-        : isVerificationCommand(raw)
-          ? toolHead("Verifying", truncate(verificationTarget(raw), 48), posture)
-          : toolHead("Running command", "", posture);
-      return `${head}\n${commandCard(cmd, hintPlain, bad ? "warn" : "ok")}`;
+      return rows.join("\n");
     }
 
     case "web_search": {
-      const q = truncate(s(v.args.query ?? v.args.q ?? ""), 48);
-      return toolHead("Searching web", q ? `"${q}"` : "");
+      const found = nonEmptyLines(v.result).length;
+      return F.toolRow({
+        name,
+        arg: s(v.args.query ?? v.args.q ?? ""),
+        metric: found > 0 ? `${found} result${found === 1 ? "" : "s"}` : "",
+      });
     }
 
-    case "web_fetch": {
-      const u = truncate(s(v.args.url ?? v.args.uri ?? ""), 56);
-      return toolHead("Reading source", u);
-    }
+    case "web_fetch":
+      return F.toolRow({
+        name,
+        arg: s(v.args.url ?? v.args.uri ?? ""),
+        metric: `${nonEmptyLines(v.result).length} lines`,
+      });
 
-    // The plan tool renders as its checklist elsewhere (todo_updated) — here
-    // just a quiet acknowledgement, never the raw items JSON.
     case "todo_write": {
+      // The checklist renders from the todo event; this row is only the receipt.
       const items = Array.isArray(v.args.items) ? v.args.items.length : 0;
-      return toolHead(
-        "Plan updated",
-        "",
-        toolMeta(items > 0 && `${items} item${items === 1 ? "" : "s"}`),
-      );
+      return F.toolRow({
+        name,
+        arg: "updated",
+        metric: items > 0 ? `${items} step${items === 1 ? "" : "s"}` : "",
+      });
     }
 
-    case "bash_output": {
-      const id = s(v.args.shell_id ?? v.args.id ?? "");
-      return toolHead("Checking shell", id);
+    case "bash_output":
+    case "kill_shell":
+      return F.toolRow({ name, arg: s(v.args.shell_id ?? v.args.id ?? "") });
+
+    case "worker":
+    case "task": {
+      const brief = firstLine(s(v.args.prompt ?? v.args.description ?? ""));
+      const changed = /worker changed (\d+) files?/.exec(v.result ?? "")?.[1];
+      return F.toolRow({
+        name,
+        arg: brief,
+        metric: changed ? `${changed} files` : elapsed(v.durationMs),
+      });
     }
 
-    case "kill_shell": {
-      const id = s(v.args.shell_id ?? v.args.id ?? "");
-      return toolHead("Stopping shell", id);
-    }
-
-    // Parallel implementation workers: show the contract gist + what changed.
-    case "worker": {
-      const contract = truncate(firstLine(s(v.args.prompt)), 44);
-      const m = /worker changed (\d+) files?[^)]*/.exec(v.result ?? "");
-      return toolHead("Worker", `"${contract}"`, toolMeta(m?.[0]));
-    }
-
-    // Live dashboards: surface the action + title, and above all the URL —
-    // it's the thing the user clicks.
     case "interactive_dashboard": {
-      const out = tryJson(v.result);
-      const action = s(v.args.action) || "create";
-      const verb2 =
-        action === "update"
-          ? "Updated dashboard"
-          : action === "open"
-            ? "Opened dashboard"
-            : action === "close"
-              ? "Closed dashboard"
-              : "Built dashboard";
-      const title = truncate(s(out?.title ?? v.args.title ?? ""), 32);
       const url = s(out?.url ?? "");
-      const head = toolHead(verb2, title ? `"${title}"` : "");
-      return url ? `${head}  ${info(truncate(url, 60))}` : head;
+      const rows = [
+        F.toolRow({ name, arg: s(out?.title ?? v.args.title) || s(v.args.action) || "dashboard" }),
+      ];
+      if (url) rows.push(F.toolNote(url));
+      return rows.join("\n");
     }
 
-    default: {
-      // MCP / unknown tool — name + a compact args summary.
-      return toolHead(v.toolName, "", toolMeta(compactArgs(v.args)));
-    }
+    default:
+      // MCP / unknown tool — its own name, and whatever its arguments say.
+      return F.toolRow({ name, arg: compactArgs(v.args), metric: elapsed(v.durationMs) });
   }
 }
 
-/** Best-effort `verb target` for a failed call (args only — the result is an error). */
+/** Best-effort subject for a failed call (arguments only — the result is an error). */
 function compactTarget(v: ToolActivityView): string {
   switch (v.toolName) {
     case "read_file":
     case "write_file":
     case "edit_file":
+    case "multi_edit":
     case "list_dir":
-      return shortenPath(s(v.args.path));
+      return listingPath(s(v.args.path));
     case "grep":
-      return `"${truncate(s(v.args.pattern), 44)}"`;
+    case "glob":
+      return s(v.args.pattern);
     case "bash":
-      return truncate(firstLine(s(v.args.command)), inlineWidth());
+      return firstLine(s(v.args.command));
     case "web_fetch":
-      return truncate(s(v.args.url ?? v.args.uri ?? ""), 48);
+      return s(v.args.url ?? v.args.uri ?? "");
     case "web_search":
-      return `"${truncate(s(v.args.query ?? v.args.q ?? ""), 40)}"`;
+      return s(v.args.query ?? v.args.q ?? "");
     case "todo_write":
-      return "plan";
+      return "updated";
     case "bash_output":
     case "kill_shell":
       return s(v.args.shell_id ?? v.args.id ?? "");
     case "interactive_dashboard":
       return s(v.args.title ?? v.args.id ?? v.args.action ?? "");
     case "worker":
-      return `"${truncate(firstLine(s(v.args.prompt)), 40)}"`;
+    case "task":
+      return firstLine(s(v.args.prompt ?? v.args.description ?? ""));
     default:
       return compactArgs(v.args);
   }
@@ -534,7 +492,7 @@ export function renderTranscript(lines: TranscriptLineView[]): string {
   while (i < lines.length) {
     const ln = lines[i]!;
     if (ln.role === "user") {
-      out.push(`  ${info("›")} ${text(ln.text)}`);
+      out.push(F.asked(ln.text));
       i++;
     } else if (ln.role === "assistant") {
       out.push(...stepBlock(ln.text));
@@ -555,7 +513,7 @@ export function renderTranscript(lines: TranscriptLineView[]): string {
       }
       const run = j - i;
       if (run >= 2) {
-        out.push(`  ${bold(text("Read"))}  ${bold(text(`${run} files`))}`);
+        out.push(F.toolRow({ name: "read", arg: `${run} files` }));
         i = j;
       } else {
         out.push(renderToolActivity(toView(ln)));

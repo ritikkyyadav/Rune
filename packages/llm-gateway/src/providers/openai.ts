@@ -14,7 +14,8 @@ import type {
   TokenUsage,
 } from "../types";
 import { ApiError } from "../types";
-import { parseToolArguments } from "@alan/shared";
+import { IdleWatchdog } from "./stream-guard";
+import { parseToolArguments } from "@gear/shared";
 
 export class OpenAIProvider implements LlmProvider {
   readonly name: ProviderName;
@@ -123,10 +124,18 @@ export class OpenAIProvider implements LlmProvider {
   }
 
   async *inferStream(request: InferenceRequest, opts?: StreamOpts): AsyncGenerator<StreamEvent> {
-    const controller = new AbortController();
-    // If caller provides a signal, abort our controller when it fires
-    opts?.signal?.addEventListener("abort", () => controller.abort());
-    const streamTimeout = setTimeout(() => controller.abort(), 90_000);
+    // Idle watchdog: aborts a stream that stops producing bytes. (The previous
+    // design armed a per-chunk timer and cleared it in the same iteration's
+    // `finally` — no timer was ever running during the only window that can
+    // stall: the await between chunks. A wedged stream hung the CLI.)
+    // Hidden-reasoning families (o-series / gpt-5) legitimately go silent for
+    // minutes while they think — chat-completions does not stream their
+    // reasoning — so they get a far more generous allowance than models that
+    // stream continuously.
+    const hiddenReasoning = /(^|\/)(o[134]|gpt-5)/.test(request.model.toLowerCase());
+    const guard = hiddenReasoning
+      ? new IdleWatchdog(this.name, opts?.signal, 300_000, 240_000)
+      : new IdleWatchdog(this.name, opts?.signal, 120_000, 45_000);
 
     try {
       const stream = await this.client.chat.completions.create(
@@ -136,23 +145,32 @@ export class OpenAIProvider implements LlmProvider {
           tools: request.tools ? this.toOpenAITools(request.tools) : undefined,
           stop: request.stopSequences,
           stream: true,
+          // Ask for the trailing usage chunk. Without it this whole family
+          // (openai/openrouter/groq/deepseek/…) reports zero usage on streams,
+          // the context engine never learns the REAL prompt size, and
+          // compaction can't fire until the provider hard-rejects. Copilot's
+          // proxy is the one host known to reject unrecognized params, so it
+          // keeps the legacy behavior.
+          ...(this.name !== "copilot" && { stream_options: { include_usage: true } }),
           ...(this.buildTuningParams(request) as object),
         },
-        { signal: controller.signal },
+        { signal: guard.signal },
       );
 
       let messageId = "";
       let contentIndex = 0;
       let contentStarted = false;
-      let gotFinish = false;
+      // With include_usage the final usage arrives on a chunk AFTER the
+      // finish_reason one (with an empty choices array) — so message_stop is
+      // deferred to stream end, carrying whatever usage was captured.
+      let pendingStop: StopReason | null = null;
+      let finalUsage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
       const toolCalls: Map<number, { id: string; name: string; argsJson: string }> = new Map();
 
       for await (const chunk of stream) {
-        // Reset per-chunk timeout
-        clearTimeout(streamTimeout);
-        const chunkTimeout = setTimeout(() => controller.abort(), 30_000);
+        guard.beat();
 
-        try {
+        {
           // Check for error in chunk (OpenRouter sends errors as stream events).
           // Preserve the HTTP status (e.g. 429) as an ApiError so the gateway's
           // status-based fallback/retry logic can act on it — a plain Error
@@ -235,10 +253,19 @@ export class OpenAIProvider implements LlmProvider {
             }
           }
 
+          // Usage can ride the finish chunk (legacy hosts) or a trailing
+          // choices-empty chunk (include_usage) — capture it wherever it shows.
+          if (chunk.usage) {
+            finalUsage = {
+              inputTokens: chunk.usage.prompt_tokens ?? 0,
+              outputTokens: chunk.usage.completion_tokens ?? 0,
+            };
+          }
+
           if (finishReason) {
-            gotFinish = true;
             if (contentStarted) {
               yield { type: "content_stop", contentIndex: 0 };
+              contentStarted = false;
             }
             for (const [, entry] of toolCalls) {
               // Model-streamed args aren't trustworthy JSON — parse defensively so a malformed
@@ -246,35 +273,28 @@ export class OpenAIProvider implements LlmProvider {
               const toolInput = parseToolArguments(entry.argsJson);
               yield { type: "tool_use_stop", toolCallId: entry.id, toolInput };
             }
-
-            const usage: TokenUsage = {
-              inputTokens: chunk.usage?.prompt_tokens ?? 0,
-              outputTokens: chunk.usage?.completion_tokens ?? 0,
-            };
-            yield {
-              type: "message_stop",
-              stopReason: this.mapFinishReason(finishReason),
-              usage,
-            };
+            pendingStop = this.mapFinishReason(finishReason);
           }
-        } finally {
-          clearTimeout(chunkTimeout);
         }
       }
 
-      // If stream ended without a finish reason, emit a synthetic stop
-      if (!gotFinish) {
-        if (contentStarted) {
-          yield { type: "content_stop", contentIndex: 0 };
-        }
-        yield {
-          type: "message_stop",
-          stopReason: "end_turn",
-          usage: { inputTokens: 0, outputTokens: 0 },
-        };
+      // message_stop is emitted once the stream is fully drained so the
+      // trailing usage chunk (when present) is included; a stream that died
+      // without a finish reason still gets a synthetic end_turn.
+      if (contentStarted) {
+        yield { type: "content_stop", contentIndex: 0 };
       }
+      yield {
+        type: "message_stop",
+        stopReason: pendingStop ?? "end_turn",
+        usage: finalUsage,
+      };
+    } catch (err) {
+      // Watchdog stall (not the caller's Esc) → retryable 504 the gateway can
+      // retry/fall back on, instead of the SDK's opaque abort error.
+      throw guard.timeoutError() ?? err;
     } finally {
-      clearTimeout(streamTimeout);
+      guard.stop();
     }
   }
 

@@ -268,8 +268,8 @@ describe("MCP hardening — config validation & collisions", () => {
 
   beforeEach(async () => {
     mock = startMock();
-    dir = await mkdtemp(join(tmpdir(), "alan-mcp-h-"));
-    await mkdir(join(dir, ".alan"), { recursive: true });
+    dir = await mkdtemp(join(tmpdir(), "gear-mcp-h-"));
+    await mkdir(join(dir, ".gear"), { recursive: true });
   });
   afterEach(async () => {
     mock.server.stop(true);
@@ -283,7 +283,7 @@ describe("MCP hardening — config validation & collisions", () => {
         bad: { args: ["nothing"] }, // neither command nor url
       },
     };
-    await writeFile(join(dir, ".alan", "mcp.json"), JSON.stringify(cfg));
+    await writeFile(join(dir, ".gear", "mcp.json"), JSON.stringify(cfg));
 
     const discovery = new McpDiscovery(dir);
     const handlers = await discovery.discover();
@@ -305,7 +305,7 @@ describe("MCP hardening — config validation & collisions", () => {
         a_b: { type: "http", url: mock.url },
       },
     };
-    await writeFile(join(dir, ".alan", "mcp.json"), JSON.stringify(cfg));
+    await writeFile(join(dir, ".gear", "mcp.json"), JSON.stringify(cfg));
 
     const discovery = new McpDiscovery(dir);
     const handlers = await discovery.discover();
@@ -317,7 +317,7 @@ describe("MCP hardening — config validation & collisions", () => {
   });
 
   test("malformed mcp.json yields no servers (and does not throw)", async () => {
-    await writeFile(join(dir, ".alan", "mcp.json"), "{ not valid json ");
+    await writeFile(join(dir, ".gear", "mcp.json"), "{ not valid json ");
     const discovery = new McpDiscovery(dir);
     expect(await discovery.discover()).toEqual([]);
     await discovery.stopAll();

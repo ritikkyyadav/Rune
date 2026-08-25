@@ -1,4 +1,4 @@
-import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "@alan/tool-registry";
+import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "@gear/tool-registry";
 
 /**
  * `compact_context` — the /compress behaviour as a model-invocable tool, so

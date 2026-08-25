@@ -17,7 +17,7 @@ import type {
 //
 // Layouts understood (a root is globbed recursively for SKILL.md):
 //   <root>/<plugin>/skills/<skill>/SKILL.md   → plugin = "<plugin>"   (bundled marketplace)
-//   <root>/<skill>/SKILL.md                   → plugin = "user"       (flat .alan/skills)
+//   <root>/<skill>/SKILL.md                   → plugin = "user"       (flat .gear/skills)
 //
 // The plugin is the path segment immediately before a "skills" segment; if
 // there is none, the skill is attributed to the synthetic "user" plugin.
@@ -101,9 +101,10 @@ export class SkillLoader {
   }
 
   /**
-   * Render the compact catalog injected into the system prompt: one line per
-   * plugin (its summary + comma-separated skill names). Bounded by design — it
-   * lists names, not full descriptions, so cost stays flat as skills grow.
+   * Render the catalog injected into the system prompt: each skill with a
+   * clipped one-line description (routing needs to know what a skill is FOR),
+   * under a hard character budget — over it, the largest plugins degrade to a
+   * names-only row so cost stays bounded as skills grow.
    */
   catalogPrompt(): string {
     const groups = this.catalog();
@@ -121,11 +122,37 @@ export class SkillLoader {
         "Skill ids are `<plugin>:<name>`.",
     );
     lines.push("");
-    for (const g of groups) {
+    // Routing needs more than bare names: "build me a website" can only reach
+    // frontend-design if the catalog says what each skill is FOR. Every skill
+    // gets one clipped description line, under a hard character budget (the
+    // catalog rides in every system prompt — cached after turn one, but
+    // unbounded growth is still unbounded). Over budget, the LARGEST plugins
+    // degrade back to the old names-only row first; the result is stable for
+    // a given skill set, so prompt caching is unaffected.
+    const DESC_BUDGET_CHARS = 9_000;
+    const namesRow = (g: (typeof groups)[number]): string => {
       const names = g.skills.map((s) => s.name).join(", ");
       const summary = g.description ? ` — ${firstSentence(g.description, 100)}` : "";
-      lines.push(`- **${g.plugin}**${summary}: ${names}`);
+      return `- **${g.plugin}**${summary}: ${names}`;
+    };
+    const detailRows = (g: (typeof groups)[number]): string[] => [
+      `- **${g.plugin}**${g.description ? ` — ${firstSentence(g.description, 80)}` : ""}:`,
+      ...g.skills.map(
+        (s) => `  - ${s.name}${s.description ? ` — ${firstSentence(s.description, 90)}` : ""}`,
+      ),
+    ];
+    const rendered = new Map(groups.map((g) => [g.plugin, detailRows(g)] as const));
+    const size = () =>
+      [...rendered.values()].reduce((n, rows) => n + rows.join("\n").length + 1, 0);
+    const bySize = [...groups].sort(
+      (a, b) =>
+        rendered.get(b.plugin)!.join("\n").length - rendered.get(a.plugin)!.join("\n").length,
+    );
+    for (const g of bySize) {
+      if (size() <= DESC_BUDGET_CHARS) break;
+      rendered.set(g.plugin, [namesRow(g)]);
     }
+    for (const g of groups) lines.push(...rendered.get(g.plugin)!);
     return lines.join("\n");
   }
 
@@ -220,7 +247,7 @@ export class SkillLoader {
     for (const entry of entries) {
       if (entry.isDirectory()) {
         if (IGNORE_DIRS.has(entry.name) || entry.name.startsWith(".")) {
-          // Allow a literal ".alan" root to be passed directly, but don't
+          // Allow a literal ".gear" root to be passed directly, but don't
           // descend into dot-dirs discovered mid-walk (.git, .claude-plugin, …).
           continue;
         }

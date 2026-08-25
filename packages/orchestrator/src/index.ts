@@ -57,9 +57,9 @@ export {
   type PermissionRule,
   type PermissionScope,
 } from "./permissions";
-export { Planner, type PlannerConfig, type PlannerEvent } from "./planner";
-export { PlanRunner, type PlanRunnerConfig, type PlanRunnerEvent } from "./plan-runner";
-export type { Plan, Step, PlanStatus, StepStatus, StepResult, ModelRouting } from "./types";
+// PlanRunner was retired with the task-spine work — planning is a property of
+// the default loop now. The event-union alias survives for embedders.
+export type { AgentTurnEvent as PlanRunnerEvent } from "./agent-loop";
 
 // ─── Research Mode (/research) ───
 export {
@@ -92,27 +92,9 @@ export {
   type BuiltPrompt,
 } from "./context-engine";
 
-// ─── Production Infrastructure ───
-export { ProductionEngine, type ProductionEngineConfig } from "./production-engine";
-
-// ─── Error Handling (Section 10) ───
-export {
-  classifyError,
-  withRetry,
-  retryDelay,
-  CircuitBreaker,
-  createFailoverCircuits,
-  DEFAULT_RETRY_POLICY,
-  DEFAULT_CIRCUIT_CONFIG,
-} from "./errors";
-export type {
-  ErrorClass,
-  ClassifiedError,
-  RetryPolicy,
-  CircuitBreakerConfig,
-  CircuitState,
-  FailoverConfig,
-} from "./errors";
+// (ProductionEngine and the errors.ts retry/circuit architecture were removed
+// in the phase-0 stabilization: neither was instantiated or consumed anywhere —
+// real retry/fallback policy lives in the gateway and reliability-policy.ts.)
 
 // ─── Security (Section 9) ───
 export {
@@ -168,7 +150,7 @@ export { DEFAULT_RELIABILITY, policyForModel, type ReliabilityPolicy } from "./r
 // ─── Loop-guard call signatures ───
 export { breakerSignature, batchSignature } from "./call-signature";
 
-// ─── Plugin bundles (.alan/plugins) ───
+// ─── Plugin bundles (.gear/plugins) ───
 export { discoverPlugins, type PluginManifest, type LoadedPlugin } from "./plugins";
 
 // ─── Detach/attach: host client + per-run worktrees ───

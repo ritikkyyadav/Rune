@@ -22,7 +22,10 @@ import {
   synthesizeReport,
   resolveSettings,
 } from "../../../packages/orchestrator/src/research";
-import type { ResearchEvent, ResearchPlan } from "../../../packages/orchestrator/src/research-types";
+import type {
+  ResearchEvent,
+  ResearchPlan,
+} from "../../../packages/orchestrator/src/research-types";
 import { isClarification } from "../../../packages/orchestrator/src/research-types";
 import type {
   ResearchSource,
@@ -60,8 +63,16 @@ class JsonProvider implements LlmProvider {
     throw new Error("not used");
   }
   async *inferStream(): AsyncGenerator<StreamEvent> {
-    yield { type: "content_delta", contentIndex: 0, delta: { type: "text_delta", text: this.body } };
-    yield { type: "message_stop", stopReason: "end_turn", usage: { inputTokens: 1, outputTokens: 1 } };
+    yield {
+      type: "content_delta",
+      contentIndex: 0,
+      delta: { type: "text_delta", text: this.body },
+    };
+    yield {
+      type: "message_stop",
+      stopReason: "end_turn",
+      usage: { inputTokens: 1, outputTokens: 1 },
+    };
   }
   async countTokens(): Promise<number> {
     return 1;
@@ -89,7 +100,7 @@ describe("extractJson", () => {
     expect(extractJson('{"a":1}')).toEqual({ a: 1 });
   });
   test("parses fenced JSON", () => {
-    expect(extractJson("```json\n{\"a\":2}\n```")).toEqual({ a: 2 });
+    expect(extractJson('```json\n{"a":2}\n```')).toEqual({ a: 2 });
   });
   test("parses JSON embedded in prose", () => {
     expect(extractJson('Sure, here it is: {"a":3} — done')).toEqual({ a: 3 });
@@ -162,7 +173,10 @@ describe("planResearch", () => {
       subQuestions: [{ index: 0, question: "q", rationale: "", sourceScope: "web" as const }],
       createdAt: "",
     };
-    const r = await planResearch(planDeps(body), "q", { feedback: "focus on the EU", priorPlan: prior });
+    const r = await planResearch(planDeps(body), "q", {
+      feedback: "focus on the EU",
+      priorPlan: prior,
+    });
     expect(isClarification(r)).toBe(false);
   });
 });
@@ -202,7 +216,7 @@ describe("createResearchPermissionCheck", () => {
 
 describe("createResearchRegistry", () => {
   test("web scope exposes only the web tools", () => {
-    const r = createResearchRegistry("alan-tools", "web");
+    const r = createResearchRegistry("gear-tools", "web");
     expect(r.get("web_search")).toBeDefined();
     expect(r.get("web_fetch")).toBeDefined();
     expect(r.get("read_file")).toBeUndefined();
@@ -210,14 +224,14 @@ describe("createResearchRegistry", () => {
     expect(r.get("bash")).toBeUndefined();
   });
   test("local scope exposes read tools but no web tools", () => {
-    const r = createResearchRegistry("alan-tools", "local");
+    const r = createResearchRegistry("gear-tools", "local");
     expect(r.get("read_file")).toBeDefined();
     expect(r.get("grep")).toBeDefined();
     expect(r.get("web_search")).toBeUndefined();
     expect(r.get("write_file")).toBeUndefined();
   });
   test("both scope exposes read + web, never mutating tools", () => {
-    const r = createResearchRegistry("alan-tools", "both");
+    const r = createResearchRegistry("gear-tools", "both");
     expect(r.get("read_file")).toBeDefined();
     expect(r.get("web_search")).toBeDefined();
     expect(r.get("edit_file")).toBeUndefined();
@@ -251,7 +265,13 @@ describe("captureSources", () => {
 
   test("dedupes by normalized URL across calls", () => {
     const map = new Map<string, ResearchSource>();
-    captureSources("web_search", JSON.stringify({ results: [{ title: "A", url: "https://a.com/" }] }), 0, map, 10);
+    captureSources(
+      "web_search",
+      JSON.stringify({ results: [{ title: "A", url: "https://a.com/" }] }),
+      0,
+      map,
+      10,
+    );
     const again = captureSources(
       "web_search",
       JSON.stringify({ results: [{ title: "A2", url: "https://A.com/?utm_source=x#frag" }] }),
@@ -265,7 +285,13 @@ describe("captureSources", () => {
 
   test("web_fetch upgrades an existing search result in place", () => {
     const map = new Map<string, ResearchSource>();
-    captureSources("web_search", JSON.stringify({ results: [{ title: "A", url: "https://a.com", snippet: "s" }] }), 0, map, 10);
+    captureSources(
+      "web_search",
+      JSON.stringify({ results: [{ title: "A", url: "https://a.com", snippet: "s" }] }),
+      0,
+      map,
+      10,
+    );
     const up = captureSources(
       "web_fetch",
       JSON.stringify({ url: "https://a.com", title: "A full", markdown: "BODY" }),
@@ -283,7 +309,9 @@ describe("captureSources", () => {
     const map = new Map<string, ResearchSource>();
     const added = captureSources(
       "web_search",
-      JSON.stringify({ results: [{ url: "https://a.com" }, { url: "https://b.com" }, { url: "https://c.com" }] }),
+      JSON.stringify({
+        results: [{ url: "https://a.com" }, { url: "https://b.com" }, { url: "https://c.com" }],
+      }),
       0,
       map,
       1,
@@ -326,7 +354,7 @@ describe("runResearch", () => {
     gw.registerProvider(new JsonProvider(body));
     return {
       gateway: gw,
-      binaryPath: "alan-tools",
+      binaryPath: "gear-tools",
       model: "m",
       provider: "anthropic" as const,
       workspaceRoot: "/tmp",
@@ -426,13 +454,18 @@ describe("collectWarnings", () => {
 describe("parseFollowUps", () => {
   test("returns [] when the supervisor says coverage is sufficient", () => {
     const asked = new Set<string>();
-    expect(parseFollowUps({ sufficient: true, followUps: [{ question: "x" }] }, 5, 3, asked)).toEqual([]);
+    expect(
+      parseFollowUps({ sufficient: true, followUps: [{ question: "x" }] }, 5, 3, asked),
+    ).toEqual([]);
   });
 
   test("assigns continuing indices starting from startIndex", () => {
     const asked = new Set<string>(["a"]);
     const out = parseFollowUps(
-      { sufficient: false, followUps: [{ question: "B", sourceScope: "local" }, { question: "C" }] },
+      {
+        sufficient: false,
+        followUps: [{ question: "B", sourceScope: "local" }, { question: "C" }],
+      },
       5,
       3,
       asked,
@@ -456,7 +489,9 @@ describe("parseFollowUps", () => {
 
   test("caps to maxFollowUps and returns [] when budget is 0", () => {
     const asked = new Set<string>();
-    const many = { followUps: [{ question: "a" }, { question: "b" }, { question: "c" }, { question: "d" }] };
+    const many = {
+      followUps: [{ question: "a" }, { question: "b" }, { question: "c" }, { question: "d" }],
+    };
     expect(parseFollowUps(many, 0, 2, asked).length).toBe(2);
     expect(parseFollowUps(many, 0, 0, new Set()).length).toBe(0);
   });
@@ -464,7 +499,9 @@ describe("parseFollowUps", () => {
   test("is defensive: junk input yields no follow-ups", () => {
     expect(parseFollowUps(null, 0, 3, new Set())).toEqual([]);
     expect(parseFollowUps({ followUps: "nope" }, 0, 3, new Set())).toEqual([]);
-    expect(parseFollowUps({ followUps: [{ rationale: "no question" }] }, 0, 3, new Set())).toEqual([]);
+    expect(parseFollowUps({ followUps: [{ rationale: "no question" }] }, 0, 3, new Set())).toEqual(
+      [],
+    );
   });
 });
 
@@ -489,7 +526,11 @@ describe("selectSynthesisSources", () => {
   });
 
   test("truncates each body to charsPerSource", () => {
-    const blocks = selectSynthesisSources([src(1, { fetched: true, text: "x".repeat(50) })], 10, 100000);
+    const blocks = selectSynthesisSources(
+      [src(1, { fetched: true, text: "x".repeat(50) })],
+      10,
+      100000,
+    );
     expect(blocks[0]).toContain("x".repeat(10));
     expect(blocks[0]).not.toContain("x".repeat(11));
   });
@@ -553,7 +594,11 @@ describe("synthesizeReport", () => {
     async *inferStream(): AsyncGenerator<StreamEvent> {
       const body = this.bodies[this.i++] ?? "";
       yield { type: "content_delta", contentIndex: 0, delta: { type: "text_delta", text: body } };
-      yield { type: "message_stop", stopReason: "end_turn", usage: { inputTokens: 1, outputTokens: 1 } };
+      yield {
+        type: "message_stop",
+        stopReason: "end_turn",
+        usage: { inputTokens: 1, outputTokens: 1 },
+      };
     }
     async countTokens(): Promise<number> {
       return 1;
@@ -564,7 +609,12 @@ describe("synthesizeReport", () => {
   }
 
   function gw(bodies: string[]) {
-    const g = new LlmGateway({ providers: {}, defaultProvider: "anthropic", maxRetries: 0, retryBaseMs: 1 });
+    const g = new LlmGateway({
+      providers: {},
+      defaultProvider: "anthropic",
+      maxRetries: 0,
+      retryBaseMs: 1,
+    });
     g.registerProvider(new ScriptedProvider(bodies));
     return g;
   }
@@ -579,15 +629,32 @@ describe("synthesizeReport", () => {
     { index: 0, question: "a", status: "ok", findings: "finding a", sourceCount: 1 },
   ];
   const sources: ResearchSource[] = [
-    { index: 1, title: "S1", url: "https://s1", fetched: true, text: "body one", fromSubQuestion: 0 },
-    { index: 2, title: "S2", url: "https://s2", fetched: false, snippet: "snip two", fromSubQuestion: 0 },
+    {
+      index: 1,
+      title: "S1",
+      url: "https://s1",
+      fetched: true,
+      text: "body one",
+      fromSubQuestion: 0,
+    },
+    {
+      index: 2,
+      title: "S2",
+      url: "https://s2",
+      fetched: false,
+      snippet: "snip two",
+      fromSubQuestion: 0,
+    },
   ];
 
   async function collect(gen: AsyncGenerator<ResearchEvent>) {
     const events: ResearchEvent[] = [];
     for await (const ev of gen) events.push(ev);
     const report = events
-      .filter((e): e is Extract<ResearchEvent, { type: "research_report_delta" }> => e.type === "research_report_delta")
+      .filter(
+        (e): e is Extract<ResearchEvent, { type: "research_report_delta" }> =>
+          e.type === "research_report_delta",
+      )
       .map((e) => e.text)
       .join("");
     return { events, report };
@@ -601,7 +668,12 @@ describe("synthesizeReport", () => {
         { title: "Conclusion", focus: "wrap" },
       ],
     });
-    const bodies = [outline, "Summary body [1].", "Background body [2].", "Conclusion body [1][2]."];
+    const bodies = [
+      outline,
+      "Summary body [1].",
+      "Background body [2].",
+      "Conclusion body [1][2].",
+    ];
     const s = resolveSettings({ depth: "standard" }); // maxSections 7 → outline's 3 used
     const { events, report } = await collect(
       synthesizeReport({ gateway: gw(bodies) }, plan, subResults, sources, s, "m", "anthropic"),
@@ -615,7 +687,9 @@ describe("synthesizeReport", () => {
     expect(report).toContain("Conclusion body [1][2].");
 
     // One progress notice per section, naming each.
-    const notices = events.filter((e) => e.type === "notice").map((e) => (e as { message: string }).message);
+    const notices = events
+      .filter((e) => e.type === "notice")
+      .map((e) => (e as { message: string }).message);
     expect(notices.filter((m) => /Writing section \d+\/3/.test(m)).length).toBe(3);
     // No fatal error.
     expect(events.some((e) => e.type === "error")).toBe(false);
@@ -624,15 +698,30 @@ describe("synthesizeReport", () => {
   test("quick (maxSections=1): a single call, no per-section headings/notices", async () => {
     const s = resolveSettings({ depth: "quick" });
     const { events, report } = await collect(
-      synthesizeReport({ gateway: gw(["The whole report in one go [1]."]) }, plan, subResults, sources, s, "m", "anthropic"),
+      synthesizeReport(
+        { gateway: gw(["The whole report in one go [1]."]) },
+        plan,
+        subResults,
+        sources,
+        s,
+        "m",
+        "anthropic",
+      ),
     );
     expect(report).toBe("The whole report in one go [1].");
-    expect(events.some((e) => e.type === "notice" && /Writing section/.test((e as { message: string }).message))).toBe(false);
+    expect(
+      events.some(
+        (e) => e.type === "notice" && /Writing section/.test((e as { message: string }).message),
+      ),
+    ).toBe(false);
   });
 
   test("a failed section is downgraded to a notice; the rest of the report still builds", async () => {
     const outline = JSON.stringify({
-      sections: [{ title: "Alpha", focus: "a" }, { title: "Beta", focus: "b" }],
+      sections: [
+        { title: "Alpha", focus: "a" },
+        { title: "Beta", focus: "b" },
+      ],
     });
     // Outline ok, Alpha ok, Beta errors (empty body still streams fine here, so
     // force an error by exhausting into a provider error via a throwing body).
@@ -645,11 +734,27 @@ describe("synthesizeReport", () => {
       async *inferStream(): AsyncGenerator<StreamEvent> {
         const call = this.i++;
         if (call === 0) {
-          yield { type: "content_delta", contentIndex: 0, delta: { type: "text_delta", text: outline } };
-          yield { type: "message_stop", stopReason: "end_turn", usage: { inputTokens: 1, outputTokens: 1 } };
+          yield {
+            type: "content_delta",
+            contentIndex: 0,
+            delta: { type: "text_delta", text: outline },
+          };
+          yield {
+            type: "message_stop",
+            stopReason: "end_turn",
+            usage: { inputTokens: 1, outputTokens: 1 },
+          };
         } else if (call === 1) {
-          yield { type: "content_delta", contentIndex: 0, delta: { type: "text_delta", text: "Alpha body [1]." } };
-          yield { type: "message_stop", stopReason: "end_turn", usage: { inputTokens: 1, outputTokens: 1 } };
+          yield {
+            type: "content_delta",
+            contentIndex: 0,
+            delta: { type: "text_delta", text: "Alpha body [1]." },
+          };
+          yield {
+            type: "message_stop",
+            stopReason: "end_turn",
+            usage: { inputTokens: 1, outputTokens: 1 },
+          };
         } else {
           yield { type: "error", error: "model exploded" };
         }
@@ -661,7 +766,12 @@ describe("synthesizeReport", () => {
         return true;
       }
     })();
-    const g = new LlmGateway({ providers: {}, defaultProvider: "anthropic", maxRetries: 0, retryBaseMs: 1 });
+    const g = new LlmGateway({
+      providers: {},
+      defaultProvider: "anthropic",
+      maxRetries: 0,
+      retryBaseMs: 1,
+    });
     g.registerProvider(throwingProvider);
     const s = resolveSettings({ depth: "standard" });
     const { events, report } = await collect(
@@ -674,7 +784,10 @@ describe("synthesizeReport", () => {
     // The Beta failure is a notice, not a fatal error event.
     expect(events.some((e) => e.type === "error")).toBe(false);
     expect(
-      events.some((e) => e.type === "notice" && /could not be completed/.test((e as { message: string }).message)),
+      events.some(
+        (e) =>
+          e.type === "notice" && /could not be completed/.test((e as { message: string }).message),
+      ),
     ).toBe(true);
   });
 });

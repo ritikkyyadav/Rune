@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { LlmGateway } from "@alan/llm-gateway";
-import type { SessionManager } from "@alan/shared";
+import type { LlmGateway } from "@gear/llm-gateway";
+import type { SessionManager } from "@gear/shared";
 import {
   AutoModeSafetyController,
   resolveAutoModeConfig,
@@ -50,13 +50,13 @@ describe("Engine Auto-mode wiring", () => {
   let classifier: QueueClassifier;
 
   beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), "elio-engine-auto-"));
+    root = mkdtempSync(join(tmpdir(), "gear-engine-auto-"));
     engine = new Engine({
       model: "llama3",
       provider: "ollama",
       workspaceRoot: root,
-      dbPath: join(root, "elio.db"),
-      toolsBinaryPath: "alan-tools",
+      dbPath: join(root, "gear.db"),
+      toolsBinaryPath: "gear-tools",
       // "auto" is the classifier gear; trustWorkspace alone is 3rd gear.
       permissionMode: "auto",
       enableCheckpoints: false,

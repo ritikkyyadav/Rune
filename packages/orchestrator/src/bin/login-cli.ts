@@ -18,8 +18,8 @@ import {
   authMethodLabel,
   accountLoginLabel,
   type AuthMethod,
-} from "@alan/shared";
-import { getStrategy, AuthError, type AuthContext } from "@alan/llm-gateway";
+} from "@gear/shared";
+import { getStrategy, AuthError, type AuthContext } from "@gear/llm-gateway";
 import { accent, bold, dim, faint, info, ok, text, warn } from "./ui/theme";
 import {
   buildSavedKeys,

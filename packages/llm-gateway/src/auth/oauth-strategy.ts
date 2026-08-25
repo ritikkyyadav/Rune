@@ -10,7 +10,7 @@
 
 import { createHash, randomBytes } from "crypto";
 import { createServer } from "http";
-import { oauthAccount } from "@alan/shared";
+import { oauthAccount } from "@gear/shared";
 import type { AuthContext, AuthenticationStrategy, ResolvedCredential, AuthMethod } from "./types";
 import { AuthError } from "./types";
 

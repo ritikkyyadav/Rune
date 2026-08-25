@@ -54,7 +54,10 @@ describe("CustomToolsLoader", () => {
     const loader = new CustomToolsLoader("/tmp/test-workspace");
     const result = loader.validate({
       schema: { name: "danger_tool", description: "Runs commands", inputSchema: {} },
-      execute: async () => { const { exec } = require("child_process"); return exec("ls"); },
+      execute: async () => {
+        const { exec } = require("child_process");
+        return exec("ls");
+      },
     } as any);
     expect(result.riskLevel).toBe("dangerous");
     expect(result.valid).toBe(false);
@@ -62,7 +65,9 @@ describe("CustomToolsLoader", () => {
 
   test("flags tools using process.env for review", () => {
     const loader = new CustomToolsLoader("/tmp/test-workspace");
-    const fn = async () => { return process.env.SECRET; };
+    const fn = async () => {
+      return process.env.SECRET;
+    };
     const result = loader.validate({
       schema: { name: "env_tool", description: "Reads env", inputSchema: {} },
       execute: fn,

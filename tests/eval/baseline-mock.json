@@ -1,21 +1,21 @@
 {
-  "timestamp": "2026-07-14T10:21:15.515Z",
+  "timestamp": "2026-08-25T09:07:08.879Z",
   "mode": "mock",
   "passRate": 1,
   "cleanPassRate": 1,
-  "passed": 34,
-  "measured": 34,
+  "passed": 43,
+  "measured": 43,
   "throttled": 0,
-  "total": 34,
+  "total": 43,
   "totalCost": 0,
   "avgCostPerTask": 0,
-  "avgDurationMs": 63.44117647058823,
-  "avgTurns": 0.7352941176470589,
+  "avgDurationMs": 76.20930232558139,
+  "avgTurns": 0.7441860465116279,
   "categories": [
     {
       "category": "core",
-      "passed": 7,
-      "total": 7,
+      "passed": 16,
+      "total": 16,
       "throttled": 0,
       "passRate": 1,
       "cleanPassRate": 1,
@@ -106,6 +106,60 @@
     },
     {
       "name": "tamper_detection",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "design_floor_written_page",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "spine_plan_before_write",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "spine_ask_on_ambiguous",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "spine_todos_survive_compaction",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "spine_handoff_on_error",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "long_horizon_feature",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "long_horizon_refactor",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "greenfield_nudge_fires",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "greenfield_clarify_first",
       "category": "core",
       "pass": true,
       "throttled": false

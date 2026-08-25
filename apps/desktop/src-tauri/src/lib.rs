@@ -80,33 +80,20 @@ impl Bridge {
 
 /// Resolve how to launch the engine host: the bun binary, the repo root, the
 /// Rust tools binary, and the extra environment used by the local engine.
-/// Gear-prefixed configuration is preferred while legacy Elio/Alan locations
-/// remain readable so an upgrade never strands sessions, settings, or credentials.
+/// GEAR_* configuration wins; the pre-rename `~/.alan` pointer/key file is still
+/// read so an upgrade never strands sessions, settings, or credentials.
 fn resolve_host() -> Result<(String, String, String, Vec<(String, String)>), String> {
     let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
 
-    let (engine_root, bun_hint, tools_hint) = if let Ok(root) = std::env::var("GEAR_ROOT")
-        .or_else(|_| std::env::var("ELIO_ROOT"))
-        .or_else(|_| std::env::var("ALAN_ROOT"))
-    {
+    let (engine_root, bun_hint, tools_hint) = if let Ok(root) = std::env::var("GEAR_ROOT") {
         (
             root,
-            std::env::var("GEAR_BUN")
-                .or_else(|_| std::env::var("ELIO_BUN"))
-                .or_else(|_| std::env::var("ALAN_BUN"))
-                .ok(),
-            std::env::var("GEAR_TOOLS_BIN")
-                .or_else(|_| std::env::var("ELIO_TOOLS_BIN"))
-                .or_else(|_| std::env::var("ALAN_TOOLS_BIN"))
-                .ok(),
+            std::env::var("GEAR_BUN").ok(),
+            std::env::var("GEAR_TOOLS_BIN").ok(),
         )
     } else {
         let gear_pointer = format!("{home}/.gear/desktop.json");
-        let pointer = [
-            gear_pointer.clone(),
-            format!("{home}/.elio/desktop.json"),
-            format!("{home}/.alan/desktop.json"),
-        ]
+        let pointer = [gear_pointer.clone(), format!("{home}/.alan/desktop.json")]
         .into_iter()
         .find(|candidate| Path::new(candidate).exists())
         .unwrap_or(gear_pointer);
@@ -119,7 +106,6 @@ fn resolve_host() -> Result<(String, String, String, Vec<(String, String)>), Str
         let v: Value = serde_json::from_str(&txt).map_err(|e| format!("bad {pointer}: {e}"))?;
         let root = v
             .get("gearRoot")
-            .or_else(|| v.get("elioRoot"))
             .or_else(|| v.get("alanRoot"))
             .and_then(|x| x.as_str())
             .ok_or_else(|| format!("{pointer} is missing \"gearRoot\""))?
@@ -148,23 +134,19 @@ fn resolve_host() -> Result<(String, String, String, Vec<(String, String)>), Str
     let tools = tools_hint
         .filter(|p| exists(p))
         .or_else(|| {
-            let p = format!("{engine_root}/target/release/alan-tools");
+            let p = format!("{engine_root}/target/release/gear-tools");
             exists(&p).then_some(p)
         })
         .or_else(|| {
-            let p = format!("{engine_root}/target/debug/alan-tools");
+            let p = format!("{engine_root}/target/debug/gear-tools");
             exists(&p).then_some(p)
         })
-        .unwrap_or_else(|| "alan-tools".to_string());
+        .unwrap_or_else(|| "gear-tools".to_string());
 
-    // Prefer Gear's key file and fall back to legacy locations during migration.
+    // Prefer Gear's key file; the pre-rename ~/.alan/.env is read as a fallback.
     let mut env = Vec::new();
     let gear_env = format!("{home}/.gear/.env");
-    let env_path = [
-        gear_env.clone(),
-        format!("{home}/.elio/.env"),
-        format!("{home}/.alan/.env"),
-    ]
+    let env_path = [gear_env.clone(), format!("{home}/.alan/.env")]
     .into_iter()
     .find(|candidate| Path::new(candidate).exists())
     .unwrap_or(gear_env);
@@ -201,23 +183,14 @@ fn spawn_host() -> Result<Child, String> {
         return Err(format!("engine host not found at {script}"));
     }
     let home = std::env::var("HOME").unwrap_or_default();
-    let workspace = std::env::var("GEAR_WORKSPACE")
-        .or_else(|_| std::env::var("ELIO_WORKSPACE"))
-        .or_else(|_| std::env::var("ALAN_WORKSPACE"))
-        .unwrap_or(home);
+    let workspace = std::env::var("GEAR_WORKSPACE").unwrap_or(home);
 
     let mut cmd = Command::new(&bun);
     cmd.arg("run")
         .arg(&script)
         .env("GEAR_ROOT", &engine_root)
-        .env("ELIO_ROOT", &engine_root)
-        .env("ALAN_ROOT", &engine_root)
         .env("GEAR_TOOLS_BIN", &tools)
-        .env("ELIO_TOOLS_BIN", &tools)
-        .env("ALAN_TOOLS_BIN", &tools)
         .env("GEAR_WORKSPACE", &workspace)
-        .env("ELIO_WORKSPACE", &workspace)
-        .env("ALAN_WORKSPACE", &workspace)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

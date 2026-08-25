@@ -43,6 +43,11 @@ export const INCIDENT_CLASSES = [
   "loop.consecutive_errors",
   "loop.max_turns",
   "loop.user_abort",
+  "loop.plan_nudge",
+  "loop.replan_nudge",
+  "loop.struggle_nudge",
+  "loop.greenfield_nudge",
+  "loop.handoff",
   "context.forced_compaction",
   "context.budget_overflow",
   "context.freshness_mismatch",
@@ -93,12 +98,7 @@ export const SEVERITY_RANK: Record<IncidentSeverity, number> = {
  * crash             — the process died before resolution
  */
 export type IncidentOutcome =
-  | "pending"
-  | "recovered"
-  | "turn_failed"
-  | "user_interrupted"
-  | "abandoned"
-  | "crash";
+  "pending" | "recovered" | "turn_failed" | "user_interrupted" | "abandoned" | "crash";
 
 /** One compact entry in the flight trail: what Gear did leading up to an incident. */
 export interface TrailEntry {

@@ -3,10 +3,10 @@
 The measurement layer every reliability claim rests on. Three tiers, cheapest first:
 
 1. **Scripted mock suite** (this directory) — deterministic tasks driving the real engine
-   with a scripted `MockProvider`. Verifies the *harness*: tool routing, permissions,
+   with a scripted `MockProvider`. Verifies the _harness_: tool routing, permissions,
    audit chain, loop guards, context replay. Runs on every PR; must stay at 100%.
 2. **Real-model runs** (`--real`) — the same tasks judged purely by artifacts, driven by a
-   live provider. This measures *capability* (ours + the model's). Nightly in CI when a
+   live provider. This measures _capability_ (ours + the model's). Nightly in CI when a
    key is configured; the clean rate over measured tasks is the number that matters.
 3. **External anchors** — SWE-bench Lite / Terminal-Bench via a headless adapter
    (not yet built; tracked in the prescription plan, P1). Monthly, for calibration
@@ -35,7 +35,7 @@ Real-mode env: `GEAR_EVAL_PROVIDER` / `GEAR_EVAL_MODEL` (default google/gemini-2
   completed turns is excluded from the clean rate (marked ⚠). This is what keeps a
   free-tier quota from masquerading as a 16% agent.
 - **Caps are verdicts.** Real runs get per-task tool-call (default 40,
-  `ALAN_EVAL_TASK_MAX_TOOL_CALLS`) and optional cost caps (`ALAN_EVAL_TASK_MAX_COST`);
+  `GEAR_EVAL_TASK_MAX_TOOL_CALLS`) and optional cost caps (`GEAR_EVAL_TASK_MAX_COST`);
   blowing the cap fails the task even if the artifact eventually appeared.
 - **Baselines are per-mode and protected.** Mock runs anchor `baseline-mock.json`
   (deterministic — any task flip is a regression); real runs anchor `baseline.json`
@@ -46,7 +46,7 @@ Real-mode env: `GEAR_EVAL_PROVIDER` / `GEAR_EVAL_MODEL` (default google/gemini-2
 
 ## Incident → eval pipeline (the flywheel)
 
-The black box (`~/.alan/blackbox.db`) fingerprints every failure. The contract:
+The black box (`~/.gear/blackbox.db`) fingerprints every failure. The contract:
 **any class that fires ≥3 times gets a deterministic eval reproducing it.**
 
 ```bash

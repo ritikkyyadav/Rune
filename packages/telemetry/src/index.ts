@@ -1,4 +1,4 @@
-// ─── @alan/telemetry: the Black Box ───
+// ─── @gear/telemetry: the Black Box ───
 // Flight recorder for incidents (failures, degradations, struggles) with
 // crash-safe storage, redaction, trail forensics, and outcome resolution.
 // The legacy TelemetrySink surface is kept below for compatibility; the

@@ -3,8 +3,8 @@ import { isSandboxEnabled } from "../sandbox-mode";
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
 
 /**
- * Creates a ToolHandler that delegates to the alan-tools Rust binary.
- * Each tool invocation spawns: alan-tools --workspace <root> <subcommand>
+ * Creates a ToolHandler that delegates to the gear-tools Rust binary.
+ * Each tool invocation spawns: gear-tools --workspace <root> <subcommand>
  * with JSON piped to stdin, JSON read from stdout.
  */
 export function createRustToolHandler(
@@ -17,6 +17,16 @@ export function createRustToolHandler(
     validate: (_args) => ({ valid: true }),
     execute: async (input: ToolCallInput): Promise<ToolCallOutput> => {
       const start = performance.now();
+      if (input.signal?.aborted) {
+        return {
+          callId: input.callId,
+          toolName: input.toolName,
+          success: false,
+          result: "",
+          error: "Interrupted before start.",
+          durationMs: 0,
+        };
+      }
       try {
         const args = ["--workspace", input.workspaceRoot];
         // Sandbox-level tools run inside the OS sandbox (deny-net, confined
@@ -55,13 +65,53 @@ export function createRustToolHandler(
           stderr: "pipe",
         });
 
-        const [stdout, stderr] = await Promise.all([
-          new Response(proc.stdout).text(),
-          new Response(proc.stderr).text(),
-        ]);
+        // Esc must actually stop the work. Forward the abort as SIGTERM —
+        // gear-tools' signal handler kills its child's whole process group
+        // and exits — escalating to SIGKILL if it doesn't die promptly.
+        // Without this, an interrupted bash call kept running for up to its
+        // full 120s timeout while the turn appeared hung.
+        let killTimer: ReturnType<typeof setTimeout> | null = null;
+        const onAbort = () => {
+          try {
+            proc.kill();
+          } catch {
+            /* already gone */
+          }
+          killTimer = setTimeout(() => {
+            try {
+              proc.kill(9);
+            } catch {
+              /* already gone */
+            }
+          }, 1_500);
+        };
+        input.signal?.addEventListener("abort", onAbort, { once: true });
 
-        const exitCode = await proc.exited;
+        let stdout: string;
+        let stderr: string;
+        let exitCode: number;
+        try {
+          [stdout, stderr] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+          ]);
+          exitCode = await proc.exited;
+        } finally {
+          input.signal?.removeEventListener("abort", onAbort);
+          if (killTimer) clearTimeout(killTimer);
+        }
         const durationMs = Math.round(performance.now() - start);
+
+        if (input.signal?.aborted) {
+          return {
+            callId: input.callId,
+            toolName: input.toolName,
+            success: false,
+            result: "",
+            error: "Interrupted by user.",
+            durationMs,
+          };
+        }
 
         if (exitCode !== 0) {
           // Try to parse error from JSON output

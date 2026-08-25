@@ -8,23 +8,26 @@ import type {
   TokenUsage,
   ToolDefinition,
   StreamOpts,
-} from "@alan/llm-gateway";
+} from "@gear/llm-gateway";
 import {
   LlmGateway,
   providerSupportsNativeSearch,
   providerAllowsGroundingWithTools,
-} from "@alan/llm-gateway";
-import { parseToolArguments } from "@alan/shared";
+} from "@gear/llm-gateway";
+import { existsSync } from "node:fs";
+import { isAbsolute, relative, resolve } from "node:path";
+import { parseToolArguments } from "@gear/shared";
 import { batchSignature, breakerSignature } from "./call-signature";
-import type { IncidentContext, IncidentReporter, IncidentSeverity } from "@alan/shared";
-import type { IncidentClass } from "@alan/shared";
-import type { ToolCallInput, ToolCallOutput } from "@alan/tool-registry";
-import { ToolRegistry } from "@alan/tool-registry";
+import type { IncidentContext, IncidentReporter, IncidentSeverity } from "@gear/shared";
+import type { IncidentClass } from "@gear/shared";
+import type { ToolCallInput, ToolCallOutput } from "@gear/tool-registry";
+import { ToolRegistry } from "@gear/tool-registry";
 import type { ContextEngine } from "./context-engine";
 import { buildUserContent } from "./image-attach";
 import type { RetrievedChunk } from "./context-engine";
 import { getMaxOutputTokens } from "./tokenizer";
 import type { Verifier } from "./verifier";
+import type { HandoffReason, TaskStateStore } from "./task-state";
 
 // ─── Agent Turn Events (yielded to caller) ───
 
@@ -90,8 +93,19 @@ export type AgentTurnEvent =
       /** True when a provider over-limit rejection forced this compaction. */
       forced?: boolean;
     }
-  // A durable run-state checkpoint was written (see @alan/shared state.ts).
-  | { type: "checkpoint_saved"; runId: string; version: number; turnCount: number };
+  // A durable run-state checkpoint was written (see @gear/shared state.ts).
+  | { type: "checkpoint_saved"; runId: string; version: number; turnCount: number }
+  // ─── Task-spine events ───
+  // The run ended BEFORE finishing (turn ceiling, exhausted context, abort,
+  // error) with open todos: `state` is the zero-token "state of work" handoff
+  // (done / remaining / files / next step). Resume picks it up automatically.
+  | { type: "handoff"; reason: HandoffReason; state: string }
+  // The loop told the model to stop patching and genuinely change approach —
+  // after verification kept failing, or a struggle signal (edit churn) fired.
+  | { type: "replanning"; reason: string; trigger: "verification" | "struggle" }
+  // Live progress from a LONG tool call (sub-agent / worker): one short note
+  // per meaningful step, rendered on the status rung — never in the transcript.
+  | { type: "tool_progress"; callId: string; note: string };
 
 // ─── Permission Gate ───
 // The agent loop invokes this before executing every tool call.
@@ -146,6 +160,18 @@ export interface AgentLoopConfig {
   verifier?: Verifier;
   /** Max times to run verification + re-prompt on failure. Default 2. */
   maxVerifyAttempts?: number;
+  /**
+   * The run's task spine (goal, todos, ledger, verification, handoff) —
+   * engine-owned, re-injected each request, persisted outside the transcript.
+   * Optional: worker/subagent/utility loops run without one.
+   */
+  taskState?: TaskStateStore;
+  /** Plan-discipline nudges per run (write-with-no-plan tripwire). Default 1. */
+  maxPlanNudges?: number;
+  /** Change-approach nudges after verification keeps failing. Default 1. */
+  maxReplanNudges?: number;
+  /** Clarify-first nudges when a NEW project starts with zero questions asked. Default 1. */
+  maxGreenfieldNudges?: number;
   /** Max independent read-only tool calls to run concurrently. Default 8. */
   maxParallelTools?: number;
   /** Max times to nudge a stuck agent before bailing. Default 1. */
@@ -209,6 +235,12 @@ export type AgentState = "idle" | "thinking" | "tool_calling" | "observing" | "d
 const TOOL_RESULT_MAX_CHARS = 30_000;
 const TOOL_RESULT_HEAD_CHARS = 22_000;
 const TOOL_RESULT_TAIL_CHARS = 6_000;
+
+// A SINGLE trivial command (no pipes/chains) proves nothing about written
+// code — listing or printing files is not executing them. Chained commands
+// (`ls && bun test`) still count, deliberately erring toward counting.
+const TRIVIAL_EVIDENCE_RE =
+  /^\s*(?:ls|pwd|echo|cat|cd|which|type|env|printenv|date|whoami|true|head|tail|wc|stat|file|dirname|basename)\b[^|;&]*$/;
 
 export function truncateForTranscript(text: string): string {
   if (text.length <= TOOL_RESULT_MAX_CHARS) return text;
@@ -320,6 +352,25 @@ export class AgentLoop {
     return [...this.messages];
   }
 
+  // Messages appended DURING the run, queued for incremental persistence. The
+  // engine drains this as events stream, so session history survives both
+  // compaction (which rewrites `messages` — the old final sweep indexed into
+  // the post-compaction array and silently persisted NOTHING after any
+  // auto-compaction) and crashes (which never reach a final sweep at all).
+  private pendingPersist: Message[] = [];
+
+  /** Append to the transcript AND queue for persistence. Every message the
+   *  run creates goes through here; the prior-history seed does not. */
+  private appendMessage(m: Message): void {
+    this.messages.push(m);
+    this.pendingPersist.push(m);
+  }
+
+  /** Drain messages appended since the last call (incremental persistence). */
+  takePendingPersist(): Message[] {
+    return this.pendingPersist.splice(0);
+  }
+
   /**
    * Queue a user message typed while this run is in flight (mid-turn
    * steering). It is folded into the conversation at the next turn boundary —
@@ -342,6 +393,42 @@ export class AgentLoop {
     return this.interjections.splice(0);
   }
 
+  // ─── Harness notes (engine → live loop) ───
+  // Deterministic corrective messages injected by the ENGINE while the run is
+  // in flight — today, struggle-detector nudges ("you've edited this file 5
+  // times; stop and reconsider"). They ride the same turn-boundary drain as
+  // interjections but are NOT user words: no interjection marker, so the
+  // persistence filter skips them, exactly like the loop's own nudges.
+  private harnessNotes: Array<{ text: string; replanReason?: string }> = [];
+
+  injectHarnessNote(text: string, opts?: { replanReason?: string }): void {
+    const t = text.trim();
+    if (t) this.harnessNotes.push({ text: t, replanReason: opts?.replanReason });
+  }
+
+  /** Fold queued harness notes into one user message. Returns the first
+   *  replan reason among them (so the caller can emit a `replanning` event),
+   *  or null when nothing was drained. */
+  private drainHarnessNotes(): { replanReason: string | null } | null {
+    if (this.harnessNotes.length === 0) return null;
+    const notes = this.harnessNotes.splice(0);
+    this.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: notes.map((n) => `[Harness note] ${n.text}`).join("\n\n") }],
+    });
+    return { replanReason: notes.find((n) => n.replanReason)?.replanReason ?? null };
+  }
+
+  /** Emit a handoff for a run ending with open todos — the honest "state of
+   *  work" that replaces today's silent deaths. No-op without a spine or when
+   *  the task has no unfinished work. */
+  private *handoffEvents(reason: HandoffReason): Generator<AgentTurnEvent> {
+    const ts = this.config.taskState;
+    if (!ts || !ts.hasOpenTodos()) return;
+    ts.setHandoff(reason);
+    yield { type: "handoff", reason, state: ts.renderHandoff() };
+  }
+
   /** Fold every queued interjection into the transcript as ONE user message.
    *  Returns true when something was folded. Only called at turn boundaries
    *  (the messages array ends with a user/tool message there, so pushing a
@@ -351,7 +438,7 @@ export class AgentLoop {
     const texts = this.interjections.splice(0);
     // Mid-task steering can reference images too ("match THIS screenshot") —
     // attach them exactly like an initial message would.
-    this.messages.push({
+    this.appendMessage({
       role: "user",
       content: buildUserContent(formatInterjection(texts), this.workspaceRoot),
     });
@@ -367,9 +454,13 @@ export class AgentLoop {
     this.state = "thinking";
     this.workspaceRoot = workspaceRoot;
 
+    // Task boundary: a fresh request starts a new task in the spine; a message
+    // over open todos (or a pending handoff) is mid-task steering.
+    this.config.taskState?.beginTurn(userMessage);
+
     // Add user message. Image files the user references become real image
     // blocks here (vision), so the model sees pixels — not a path to guess at.
-    this.messages.push({
+    this.appendMessage({
       role: "user",
       content: buildUserContent(userMessage, workspaceRoot),
     });
@@ -380,6 +471,14 @@ export class AgentLoop {
     let editsSinceVerify = false;
     let stuckNudges = 0;
     let truncationRetries = 0;
+    // Task-spine discipline: one plan nudge when multi-step work proceeds with
+    // no recorded plan; one replan round when verification keeps failing; one
+    // clarify nudge when a brand-new project starts with zero questions asked.
+    let planNudges = 0;
+    let replanNudges = 0;
+    let greenfieldNudges = 0;
+    let toolCallsThisRun = 0;
+    let verifyStillFailing = false;
     // Execution-evidence gate: when files were written but NOTHING was ever
     // executed to prove they work (no bash run, no project checks), refuse
     // the first attempt to finish and demand verification + an honest report.
@@ -410,6 +509,7 @@ export class AgentLoop {
       // Check for abort before starting each turn
       if (signal?.aborted) {
         this.state = "done";
+        yield* this.handoffEvents("aborted");
         yield { type: "turn_complete", stopReason: "aborted", totalTurns: turn };
         return;
       }
@@ -422,6 +522,13 @@ export class AgentLoop {
           type: "notice",
           message: "New message from you folded into the running task.",
         };
+      }
+
+      // Harness notes (struggle nudges) ride the same boundary. When one asks
+      // for a genuine change of approach, say so in the UI too.
+      const drainedNotes = this.drainHarnessNotes();
+      if (drainedNotes?.replanReason) {
+        yield { type: "replanning", reason: drainedNotes.replanReason, trigger: "struggle" };
       }
 
       turn++;
@@ -456,7 +563,6 @@ export class AgentLoop {
           this.config.systemPrompt || "",
           tools.length > 0 ? tools : [],
           this.messages,
-          undefined,
           this.config.retrievedChunks,
           this.config.model,
         );
@@ -470,6 +576,21 @@ export class AgentLoop {
             message: `Context budget exceeded: ${built.evictedCount} items evicted, ${built.totalTokens} tokens used`,
           };
         }
+      }
+
+      // ── Task-state tail injection ──
+      // The spine rides as an EPHEMERAL final user message: rebuilt fresh for
+      // every request, never stored in `this.messages` — so it survives
+      // compaction by construction, costs nothing on trivial tasks (renders
+      // null), and mutates only the prompt SUFFIX (cache-safe, unlike the
+      // old aux-prepend). Providers accept a user message after tool results;
+      // Anthropic merges the resulting consecutive user-role turns.
+      const taskBlock = this.config.taskState?.renderBlock();
+      if (taskBlock) {
+        requestMessages = [
+          ...requestMessages,
+          { role: "user", content: [{ type: "text", text: taskBlock }] },
+        ];
       }
 
       const request: InferenceRequest = {
@@ -494,6 +615,12 @@ export class AgentLoop {
       const contentBlocks: ContentBlock[] = [];
       let stopReason = "end_turn";
       let streamErrored = false;
+      // The model that actually served this request. A mid-request gateway
+      // fallback swaps providers/models under us; usage must be recorded
+      // against the model that produced it, or the context engine tracks the
+      // ORIGINAL model's window (e.g. thinks it still has 200k after falling
+      // back to an 8k local model).
+      let activeRequestModel = this.config.model;
       const pendingToolCalls: Array<{
         callId: string;
         toolName: string;
@@ -503,6 +630,7 @@ export class AgentLoop {
       try {
         const streamOpts: StreamOpts = signal ? { signal } : {};
         for await (const event of this.gateway.inferStream(request, streamOpts)) {
+          if (event.type === "fallback") activeRequestModel = event.to.model;
           const result = this.processStreamEvent(event, contentBlocks, pendingToolCalls);
           if (result.event) yield result.event;
           if (result.reset) {
@@ -519,7 +647,7 @@ export class AgentLoop {
           // driven by the provider's authoritative count against the model's
           // actual context window — not a word-count heuristic.
           if (result.usage && this.config.contextEngine) {
-            this.config.contextEngine.noteRealUsage(result.usage, this.config.model);
+            this.config.contextEngine.noteRealUsage(result.usage, activeRequestModel);
           }
           // Surface the authoritative usage (plus the refreshed context
           // snapshot) so status lines can show real "↓ tokens" and the footer
@@ -562,6 +690,7 @@ export class AgentLoop {
                 await abortableSleep(waitSecs * 1000, signal);
                 if (signal?.aborted) {
                   this.state = "done";
+                  yield* this.handoffEvents("aborted");
                   yield { type: "turn_complete", stopReason: "aborted", totalTurns: turn };
                   return;
                 }
@@ -569,6 +698,7 @@ export class AgentLoop {
                 break;
               }
               this.state = "error";
+              yield* this.handoffEvents("error");
               yield { type: "error", error: result.error, recoverable: false };
               return;
             }
@@ -602,6 +732,21 @@ export class AgentLoop {
                 streamErrored = true;
                 break;
               }
+              if (r.failed) {
+                // The one recovery path for an over-limit prompt just failed —
+                // say so LOUDLY. Silence here was how long runs died of
+                // "too many consecutive errors" with no visible cause.
+                this.report(
+                  "context.budget_overflow",
+                  "error",
+                  "overflow.compact",
+                  `forced compaction failed: ${r.failureReason}`,
+                );
+                yield {
+                  type: "notice",
+                  message: `Compaction failed (${r.failureReason}) — the prompt still exceeds the model's window.`,
+                };
+              }
               // Compaction found nothing to cut — fall through to normal error handling.
             }
             consecutiveErrors++;
@@ -630,6 +775,7 @@ export class AgentLoop {
         // Handle clean abort
         if (signal?.aborted) {
           this.state = "done";
+          yield* this.handoffEvents("aborted");
           yield { type: "turn_complete", stopReason: "aborted", totalTurns: turn };
           return;
         }
@@ -645,6 +791,7 @@ export class AgentLoop {
             "inferStream.catch",
             `run failed after ${consecutiveErrors} consecutive errors: ${msg}`,
           );
+          yield* this.handoffEvents("error");
           yield {
             type: "error",
             error: `Too many consecutive errors (${consecutiveErrors})`,
@@ -654,6 +801,11 @@ export class AgentLoop {
         }
         continue;
       }
+
+      // A stream that completed cleanly means the provider is healthy again —
+      // reset the breaker. Without this, two transient errors an hour apart
+      // plus one more later killed an otherwise-fine long run.
+      if (!streamErrored) consecutiveErrors = 0;
 
       // If the stream errored mid-turn (e.g. provider throttle / 5xx after
       // retries), don't treat it as a finished turn — retry instead of
@@ -715,7 +867,7 @@ export class AgentLoop {
       // providers reject transcripts containing empty content on the next call,
       // which would poison every later step of this session.
       if (contentBlocks.length > 0) {
-        this.messages.push({ role: "assistant", content: contentBlocks });
+        this.appendMessage({ role: "assistant", content: contentBlocks });
       }
 
       // ── max_tokens: the response was cut off by the output-token limit ──
@@ -736,21 +888,19 @@ export class AgentLoop {
         if (truncationRetries < maxTrunc) {
           truncationRetries++;
           if (pendingToolCalls.length > 0) {
-            this.messages.push({
+            this.appendMessage({
               role: "tool",
-              content: pendingToolCalls.map(
-                (tc): ContentBlock => ({
-                  type: "tool_result",
-                  toolCallId: tc.callId,
-                  toolResultContent:
-                    "Not executed: your response hit the output-token limit mid-call, so the " +
-                    "arguments may be incomplete. Re-issue this tool call.",
-                  isError: true,
-                }),
-              ),
+              content: pendingToolCalls.map((tc): ContentBlock => ({
+                type: "tool_result",
+                toolCallId: tc.callId,
+                toolResultContent:
+                  "Not executed: your response hit the output-token limit mid-call, so the " +
+                  "arguments may be incomplete. Re-issue this tool call.",
+                isError: true,
+              })),
             });
           } else {
-            this.messages.push({
+            this.appendMessage({
               role: "user",
               content: [
                 {
@@ -771,6 +921,7 @@ export class AgentLoop {
         }
         // Retries exhausted: surface truthfully instead of pretending we finished.
         this.state = "done";
+        yield* this.handoffEvents("error");
         yield { type: "turn_complete", stopReason: "max_tokens", totalTurns: turn };
         return;
       }
@@ -786,46 +937,86 @@ export class AgentLoop {
           this.state = "observing";
           continue;
         }
-        if (
-          this.config.verifier &&
-          editsSinceVerify &&
-          verifyAttempts < (this.config.maxVerifyAttempts ?? 2) &&
-          !signal?.aborted
-        ) {
-          verifyAttempts++;
-          yield { type: "verification_started", attempt: verifyAttempts };
-          const result = await this.config.verifier.verify(signal);
-          yield {
-            type: "verification_completed",
-            attempt: verifyAttempts,
-            ran: result.ran,
-            passed: result.passed,
-            report: result.report,
-          };
-          editsSinceVerify = false;
-          if (result.ran && result.passed) projectChecksPassed = true;
-          if (result.ran && !result.passed) {
+        if (this.config.verifier && !signal?.aborted) {
+          if (editsSinceVerify && verifyAttempts < (this.config.maxVerifyAttempts ?? 2)) {
+            verifyAttempts++;
+            yield { type: "verification_started", attempt: verifyAttempts };
+            const result = await this.config.verifier.verify(signal);
+            yield {
+              type: "verification_completed",
+              attempt: verifyAttempts,
+              ran: result.ran,
+              passed: result.passed,
+              report: result.report,
+            };
+            editsSinceVerify = false;
+            this.config.taskState?.noteVerification(result.ran, result.passed, result.report);
+            if (result.ran && result.passed) {
+              projectChecksPassed = true;
+              verifyStillFailing = false;
+            }
+            if (result.ran && !result.passed) {
+              verifyStillFailing = true;
+              this.report(
+                "loop.verification_failed",
+                "warn",
+                "verify",
+                `project checks failed after edits (attempt ${verifyAttempts}): ${result.report.slice(0, 300)}`,
+              );
+              this.appendMessage({
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text:
+                      "Automated verification failed after your changes. Fix the " +
+                      `problems below, then finish.\n\n${result.report}`,
+                  },
+                ],
+              });
+              yield {
+                type: "notice",
+                message: "Verification failed — asking the agent to fix it.",
+              };
+              continue;
+            }
+          } else if (verifyStillFailing && replanNudges < (this.config.maxReplanNudges ?? 1)) {
+            // Fix attempts are exhausted (or the model gave up editing) and
+            // the checks STILL fail. Patching harder is the failure mode —
+            // demand a genuinely different approach, reset the verify budget,
+            // and give that approach its own verification rounds. Bounded:
+            // worst case maxVerifyAttempts × (maxReplanNudges + 1) runs.
+            replanNudges++;
+            verifyAttempts = 0;
             this.report(
-              "loop.verification_failed",
+              "loop.replan_nudge",
               "warn",
-              "verify",
-              `project checks failed after edits (attempt ${verifyAttempts}): ${result.report.slice(0, 300)}`,
+              "verify.replan",
+              "checks still failing after repeated fixes — demanded a different approach",
             );
-            this.messages.push({
+            yield {
+              type: "replanning",
+              reason: "checks still failing after repeated fixes",
+              trigger: "verification",
+            };
+            this.appendMessage({
               role: "user",
               content: [
                 {
                   type: "text",
                   text:
-                    "Automated verification failed after your changes. Fix the " +
-                    `problems below, then finish.\n\n${result.report}`,
+                    "Automated checks are still failing after repeated fix attempts on the same " +
+                    "approach. Stop patching. Re-read the failing output, rewrite your todo list " +
+                    "with a genuinely different approach via todo_write (one line on why the old " +
+                    "approach failed), then implement it.",
                 },
               ],
             });
             yield {
               type: "notice",
-              message: "Verification failed — asking the agent to fix it.",
+              message: "Repeated fixes failed — asking the agent to re-plan.",
             };
+            this.state = "observing";
             continue;
           }
         }
@@ -852,7 +1043,7 @@ export class AgentLoop {
             "evidenceGate",
             "files were written but nothing was executed — refused the finish once",
           );
-          this.messages.push({
+          this.appendMessage({
             role: "user",
             content: [
               {
@@ -885,6 +1076,17 @@ export class AgentLoop {
           if (r.compacted) {
             this.messages = r.messages;
             yield this.compactionEvent(r);
+          } else if (r.failed) {
+            this.report(
+              "context.budget_overflow",
+              "warn",
+              "finish.compact",
+              `compaction failed: ${r.failureReason}`,
+            );
+            yield {
+              type: "notice",
+              message: `Context compaction failed (${r.failureReason}) — continuing uncompacted.`,
+            };
           }
         }
         // A steering message may have arrived while verification / the
@@ -920,18 +1122,16 @@ export class AgentLoop {
           recentToolSignatures.length = 0; // reset the detection window
           // Answer the repeated tool_use blocks (keeps the transcript valid),
           // then nudge the model to reconsider instead of silently bailing.
-          this.messages.push({
+          this.appendMessage({
             role: "tool",
-            content: pendingToolCalls.map(
-              (tc): ContentBlock => ({
-                type: "tool_result",
-                toolCallId: tc.callId,
-                toolResultContent:
-                  "Skipped: this identical call was repeated without progress. " +
-                  "Re-read the goal and try a different approach, or finish if the task is already done.",
-                isError: true,
-              }),
-            ),
+            content: pendingToolCalls.map((tc): ContentBlock => ({
+              type: "tool_result",
+              toolCallId: tc.callId,
+              toolResultContent:
+                "Skipped: this identical call was repeated without progress. " +
+                "Re-read the goal and try a different approach, or finish if the task is already done.",
+              isError: true,
+            })),
           });
           yield {
             type: "notice",
@@ -964,6 +1164,7 @@ export class AgentLoop {
 
       if (signal?.aborted) {
         this.state = "done";
+        yield* this.handoffEvents("aborted");
         yield { type: "turn_complete", stopReason: "aborted", totalTurns: turn };
         return;
       }
@@ -975,11 +1176,45 @@ export class AgentLoop {
         allowed: boolean;
         parallelSafe: boolean;
         isWrite: boolean;
+        /**
+         * This write creates a file whose TOP-LEVEL workspace directory does
+         * not exist yet — the objective marker of a greenfield project being
+         * started (write_file mkdir-ps parents, so this must be captured
+         * BEFORE execution). Editing inside an existing tree never sets it.
+         */
+        createsTopLevelDir: boolean;
         callSig: string;
         output?: ToolCallOutput;
       };
 
+      // A write's target lands in a new top-level directory iff the first
+      // path segment under the workspace root doesn't exist yet. Paths that
+      // escape the workspace or sit at its root never qualify.
+      const createsNewTopLevelDir = (isWrite: boolean, args: Record<string, unknown>): boolean => {
+        if (!isWrite) return false;
+        const raw = typeof args.path === "string" ? args.path : "";
+        if (!raw) return false;
+        const rel = isAbsolute(raw) ? relative(workspaceRoot, raw) : raw;
+        if (!rel || rel.startsWith("..") || isAbsolute(rel)) return false;
+        const top = rel.split(/[\\/]/)[0];
+        if (!top || top === rel) return false; // file directly at the root
+        return !existsSync(resolve(workspaceRoot, top));
+      };
+
       // ── Phase A: permission gates, in order (interactive prompts are serial) ──
+      // Progress pump: long tools (sub-agents, workers) report short notes via
+      // input.onProgress; they queue here and are yielded as `tool_progress`
+      // events WHILE Phase B awaits — the mechanism that lets a five-minute
+      // parallel build show live movement instead of one frozen line.
+      const progressQueue: Array<{ callId: string; note: string }> = [];
+      let progressSignal: (() => void) | null = null;
+      const progressFor = (callId: string) => (note: string) => {
+        const t = String(note ?? "").trim();
+        if (!t) return;
+        progressQueue.push({ callId, note: t.slice(0, 160) });
+        progressSignal?.();
+      };
+
       const planned: PlannedCall[] = [];
       for (const tc of pendingToolCalls) {
         // Defense in depth: argsJson is normally a re-stringified object from the provider, but
@@ -992,6 +1227,7 @@ export class AgentLoop {
           sessionId,
           workspaceRoot,
           signal,
+          onProgress: progressFor(tc.callId),
         };
 
         let allowed = true;
@@ -1064,20 +1300,46 @@ export class AgentLoop {
           allowed,
           parallelSafe,
           isWrite,
+          createsTopLevelDir: createsNewTopLevelDir(isWrite, parsedArgs),
           callSig,
           output: denied,
         });
       }
 
       // ── Phase B: execute — parallel-safe reads concurrently (bounded), rest serial ──
-      const parallel = planned.filter((p) => p.allowed && p.parallelSafe && !p.output);
-      await mapWithConcurrency(parallel, this.config.maxParallelTools ?? 8, async (p) => {
-        p.output = await this.registry.execute(p.input);
+      // Execution runs as one background task while this generator pumps the
+      // progress queue: yields happen the moment a note arrives, not after
+      // everything completes.
+      const executionDone = { flag: false };
+      const execution = (async () => {
+        const parallel = planned.filter((p) => p.allowed && p.parallelSafe && !p.output);
+        await mapWithConcurrency(parallel, this.config.maxParallelTools ?? 8, async (p) => {
+          p.output = await this.registry.execute(p.input);
+        });
+        for (const p of planned) {
+          if (!p.allowed || p.output) continue; // denied, or already run in parallel
+          p.output = await this.registry.execute(p.input);
+        }
+      })().finally(() => {
+        executionDone.flag = true;
+        progressSignal?.();
       });
-      for (const p of planned) {
-        if (!p.allowed || p.output) continue; // denied, or already run in parallel
-        p.output = await this.registry.execute(p.input);
+
+      while (!executionDone.flag || progressQueue.length > 0) {
+        if (progressQueue.length === 0) {
+          await new Promise<void>((resolve) => {
+            progressSignal = resolve;
+            // Close the check-then-await race: completion (or a note) that
+            // landed between the loop condition and here resolves immediately.
+            if (executionDone.flag || progressQueue.length > 0) resolve();
+          });
+          progressSignal = null;
+          continue;
+        }
+        const item = progressQueue.shift()!;
+        yield { type: "tool_progress", callId: item.callId, note: item.note };
       }
+      await execution; // surface any execution error truthfully
 
       // Tool outputs are an untrusted input boundary. Probe every real result
       // before either the event stream or the model sees it. A probe failure is
@@ -1109,6 +1371,7 @@ export class AgentLoop {
       const toolResults: ContentBlock[] = [];
       for (const p of planned) {
         const output = p.output!;
+        toolCallsThisRun++;
         yield {
           type: "tool_call_end",
           callId: p.tc.callId,
@@ -1116,13 +1379,15 @@ export class AgentLoop {
           output,
         };
 
-        // Emit todo_updated when todo_write succeeds
+        // Emit todo_updated when todo_write succeeds — and record the list in
+        // the task spine, which is what makes it survive compaction/resume.
         if (output.success && p.tc.toolName === "todo_write" && output.result) {
           try {
             const parsed = JSON.parse(output.result) as {
               items?: { content: string; status: "pending" | "in_progress" | "completed" }[];
             };
             if (Array.isArray(parsed.items)) {
+              this.config.taskState?.setTodos(parsed.items);
               yield { type: "todo_updated", items: parsed.items };
             }
           } catch {
@@ -1130,24 +1395,134 @@ export class AgentLoop {
           }
         }
 
+        // Spine ledger: clarifications and the file trail, recorded at the one
+        // chokepoint every tool result already passes through.
+        if (output.success && this.config.taskState) {
+          const ts = this.config.taskState;
+          const pathArg = typeof p.parsedArgs.path === "string" ? p.parsedArgs.path : "";
+          if (p.tc.toolName === "ask_user") {
+            const q =
+              typeof p.parsedArgs.question === "string"
+                ? p.parsedArgs.question
+                : Array.isArray(p.parsedArgs.questions)
+                  ? (p.parsedArgs.questions as Array<{ question?: string }>)
+                      .map((x) => x?.question ?? "")
+                      .filter(Boolean)
+                      .join(" / ")
+                  : "";
+            if (q) ts.addClarification(q, output.result.slice(0, 300));
+          } else if (p.tc.toolName === "read_file" && pathArg) {
+            ts.noteFileRead(pathArg);
+          } else if (p.isWrite && pathArg) {
+            ts.noteFileWritten(pathArg);
+          } else if (p.tc.toolName === "worker" && Array.isArray(p.parsedArgs.files)) {
+            for (const f of p.parsedArgs.files) {
+              if (typeof f === "string") ts.noteFileWritten(f);
+            }
+          }
+        }
+
+        // Worker output IS written code: it must count as writes for the
+        // verifier and the evidence gate. (worker's schema category is
+        // "execute", so the isWrite path below never saw it — the doctrine
+        // steers big builds to workers, which made the largest work exactly
+        // the work that skipped verification.)
+        if (output.success && p.tc.toolName === "worker") {
+          editsSinceVerify = true;
+          anyWritesThisRun = true;
+          executedSinceWrite = false;
+        }
+
         if (!p.allowed) {
+          // A user's "no" is a decision, not a failure — it must never charge
+          // the provider-error breaker. (It used to: three denied prompts plus
+          // one transient 500 read as "4 consecutive errors" and killed the run.)
           toolResults.push({
             type: "tool_result",
             toolCallId: p.tc.callId,
             toolResultContent: `Permission denied: ${output.error}`,
             isError: true,
           });
-          consecutiveErrors++;
         } else {
+          let resultContent = truncateForTranscript(
+            output.success ? output.result : `Error: ${output.error}`,
+          );
+
+          // ── Plan-discipline tripwire (deterministic, once per run) ──
+          // Multi-file work proceeding with NO recorded plan gets exactly one
+          // corrective note, prefixed to this write's own result. Single-file
+          // fixes never trip it; a model that legitimately has a one-step task
+          // is told it may ignore the note. No classifier, no model call.
+          const ts = this.config.taskState;
+          if (
+            output.success &&
+            (p.isWrite || p.tc.toolName === "worker") &&
+            ts &&
+            !ts.hasOpenTodos() &&
+            planNudges < (this.config.maxPlanNudges ?? 1) &&
+            (ts.filesWrittenCount() >= 2 || toolCallsThisRun >= 6)
+          ) {
+            planNudges++;
+            this.report(
+              "loop.plan_nudge",
+              "warn",
+              "planNudge",
+              "multi-step writes with no recorded plan — nudged once for todo_write",
+            );
+            resultContent =
+              "[Harness note] You are editing files with no recorded plan. If this task has " +
+              "3+ steps, pause now: record the remaining steps with todo_write (exactly one " +
+              "in_progress), then continue. If this is genuinely a single-step task, ignore " +
+              "this note and continue.\n\n" +
+              resultContent;
+          }
+
+          // ── Greenfield-clarify tripwire (deterministic, once per run) ──
+          // The task's FIRST written file just created a brand-new top-level
+          // project directory, and the user was never asked a single question.
+          // This is the signature of the worst observed failure: an
+          // application-class request ("build me a clone of X") answered with
+          // silently-chosen platform, stack, and depth — a static mock where a
+          // working product was wanted. One corrective note, only when
+          // ask_user is actually available (it is withheld in 4th gear).
+          if (
+            output.success &&
+            p.isWrite &&
+            p.createsTopLevelDir &&
+            ts &&
+            ts.clarificationCount() === 0 &&
+            ts.filesWrittenCount() === 1 &&
+            greenfieldNudges < (this.config.maxGreenfieldNudges ?? 1) &&
+            this.registry.get("ask_user")
+          ) {
+            greenfieldNudges++;
+            this.report(
+              "loop.greenfield_nudge",
+              "warn",
+              "greenfieldNudge",
+              "new top-level project started with zero clarifying questions — nudged once for ask_user",
+            );
+            resultContent =
+              "[Harness note] You are starting a NEW project from scratch and asked the user " +
+              "nothing. If platform (web app / native / CLI), stack, or depth of functionality " +
+              "(working core features vs a visual mock) are YOUR assumptions rather than the " +
+              "user's stated spec, stop and ask now — one ask_user round, 2-4 questions with " +
+              "short options — before building further. A wrong guess here wastes the entire " +
+              "build. If the user already pinned these choices, or this is genuinely a small " +
+              "single-file artifact, ignore this note and continue.\n\n" +
+              resultContent;
+          }
+
           toolResults.push({
             type: "tool_result",
             toolCallId: p.tc.callId,
-            toolResultContent: truncateForTranscript(
-              output.success ? output.result : `Error: ${output.error}`,
-            ),
+            toolResultContent: resultContent,
             isError: !output.success,
           });
-          consecutiveErrors = output.success ? 0 : consecutiveErrors + 1;
+          // Tool failures are the MODEL's problem to react to (the result says
+          // what went wrong) and are policed per-call by `failedCalls` and
+          // per-tool by the registry's circuit breaker. They no longer feed
+          // `consecutiveErrors`, which guards PROVIDER health only.
           if (!output.success) {
             failedCalls.set(p.callSig, (failedCalls.get(p.callSig) ?? 0) + 1);
           }
@@ -1158,18 +1533,25 @@ export class AgentLoop {
           }
           // Only a real bash run counts as execution evidence — other
           // "execute"-category tools (kill_shell, ask_user) prove nothing.
-          if (output.success && p.tc.toolName === "bash") {
+          // Nor does a trivial listing: `ls` after a write used to satisfy the
+          // gate, which defeated its whole point.
+          if (
+            output.success &&
+            p.tc.toolName === "bash" &&
+            !TRIVIAL_EVIDENCE_RE.test(String(p.parsedArgs.command ?? ""))
+          ) {
             executedSinceWrite = true;
           }
         }
       }
 
       // Add tool results as user message
-      this.messages.push({ role: "tool", content: toolResults });
+      this.appendMessage({ role: "tool", content: toolResults });
 
       // Abort may have fired during tool execution (e.g. a long bash call).
       if (signal?.aborted) {
         this.state = "done";
+        yield* this.handoffEvents("aborted");
         yield { type: "turn_complete", stopReason: "aborted", totalTurns: turn };
         return;
       }
@@ -1181,6 +1563,17 @@ export class AgentLoop {
         if (r.compacted) {
           this.messages = r.messages;
           yield this.compactionEvent(r);
+        } else if (r.failed) {
+          this.report(
+            "context.budget_overflow",
+            "warn",
+            "turn.compact",
+            `compaction failed: ${r.failureReason}`,
+          );
+          yield {
+            type: "notice",
+            message: `Context compaction failed (${r.failureReason}) — continuing uncompacted.`,
+          };
         }
       }
 
@@ -1195,6 +1588,7 @@ export class AgentLoop {
       "run",
       `run ended at the ${this.config.maxTurns}-turn ceiling without finishing`,
     );
+    yield* this.handoffEvents("max_turns");
     yield {
       type: "turn_complete",
       stopReason: "max_turns",

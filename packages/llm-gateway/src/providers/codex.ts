@@ -24,7 +24,8 @@ import type {
   TokenUsage,
 } from "../types";
 import { ApiError } from "../types";
-import { parseToolArguments } from "@alan/shared";
+import { IdleWatchdog } from "./stream-guard";
+import { parseToolArguments } from "@gear/shared";
 
 const RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
 /** Models on Codex that reason (send a `reasoning` param + collect thinking). */
@@ -203,8 +204,7 @@ export async function* parseResponsesStream(body: ByteStream): AsyncGenerator<St
         }
         case "response.output_item.added": {
           const item = ev.item as
-            | { id?: string; type?: string; call_id?: string; name?: string }
-            | undefined;
+            { id?: string; type?: string; call_id?: string; name?: string } | undefined;
           if (item?.type === "function_call" && item.id) {
             sawToolCall = true;
             const callId = item.call_id ?? item.id;
@@ -359,20 +359,36 @@ export class CodexProvider implements LlmProvider {
   }
 
   async *inferStream(request: InferenceRequest, opts?: StreamOpts): AsyncGenerator<StreamEvent> {
+    // Wedged-stream protection: previously no timeout — a stalled SSE session
+    // hung the turn until the user hit Esc. Very generous allowances: the
+    // Codex backend serves hidden-reasoning gpt-5.x models that legitimately
+    // go silent for minutes while they think.
+    const guard = new IdleWatchdog(this.name, opts?.signal, 300_000, 240_000);
     const res = await fetch(RESPONSES_URL, {
       method: "POST",
       headers: this.headers(),
       body: JSON.stringify(toResponsesBody(request, true, this.sessionId)),
-      signal: opts?.signal,
+      signal: guard.signal,
     });
     if (!res.ok || !res.body) {
+      guard.stop();
       throw new ApiError({
         status: res.status || 502,
         provider: "codex",
         message: await codexErrorMessage(res),
       });
     }
-    yield* parseResponsesStream(res.body);
+    try {
+      for await (const ev of parseResponsesStream(res.body)) {
+        guard.beat();
+        yield ev;
+      }
+    } catch (err) {
+      // Watchdog stall (not the caller's Esc) → retryable 504 for the gateway.
+      throw guard.timeoutError() ?? err;
+    } finally {
+      guard.stop();
+    }
   }
 
   async infer(request: InferenceRequest): Promise<InferenceResponse> {

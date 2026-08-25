@@ -18,7 +18,7 @@ export type ProviderKind =
 
 // ─── Authentication methods ───
 // How a provider proves who you are. This is the ONE canonical definition of the
-// set; `@alan/llm-gateway`'s auth layer re-exports it so the strategy code and the
+// set; `@gear/llm-gateway`'s auth layer re-exports it so the strategy code and the
 // preset metadata never drift. Adding a method here is the first step to teaching
 // Gear a new way to sign in — the rest of the system asks for an *authenticated*
 // provider and never learns which of these produced it.

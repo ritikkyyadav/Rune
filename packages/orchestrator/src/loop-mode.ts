@@ -9,6 +9,7 @@
 import { randomBytes } from "node:crypto";
 import { lstatSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { workspaceConfigPath } from "@gear/shared";
 
 export const LOOP_MIN_INTERVAL_MS = 60_000;
 export const LOOP_MAX_ADAPTIVE_INTERVAL_MS = 60 * LOOP_MIN_INTERVAL_MS;
@@ -41,8 +42,8 @@ export type LoopPromptSource = "argument" | "project" | "user" | "builtin";
 /**
  * Whether a loop prompt may stand in for the user's own words when the Auto
  * reviewer judges authorization. Text the user typed (`argument`), Gear's
- * built-in maintenance prompt, and the user's own `~/.alan/loop.md` are theirs;
- * a repository's `.alan/loop.md` is written by whoever commits to the repo
+ * built-in maintenance prompt, and the user's own `~/.gear/loop.md` are theirs;
+ * a repository's `.gear/loop.md` is written by whoever commits to the repo
  * and must be treated as untrusted context, never as authorization.
  */
 export function isTrustedLoopPromptSource(source: LoopPromptSource): boolean {
@@ -232,11 +233,11 @@ function parseInterval(value: string, unit: string, warnings: string[]): number 
   return requested;
 }
 
-/** Resolve a missing prompt from `.alan/loop.md`, then `~/.alan/loop.md`, then the built-in. */
+/** Resolve a missing prompt from `.gear/loop.md`, then `~/.gear/loop.md`, then the built-in. */
 export function resolveLoopPrompt(
   explicitPrompt: string,
   workspaceRoot: string,
-  alanHome: string,
+  gearHome: string,
 ): ResolvedLoopPrompt {
   if (explicitPrompt.trim()) {
     const limited = limitPrompt(explicitPrompt.trim());
@@ -254,8 +255,8 @@ export function resolveLoopPrompt(
   }
 
   const candidates: Array<{ path: string; source: LoopPromptSource }> = [
-    { path: join(workspaceRoot, ".alan", "loop.md"), source: "project" },
-    { path: join(alanHome, "loop.md"), source: "user" },
+    { path: workspaceConfigPath(workspaceRoot, "loop.md"), source: "project" },
+    { path: join(gearHome, "loop.md"), source: "user" },
   ];
   let warning: string | undefined;
 

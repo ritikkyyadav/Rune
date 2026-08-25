@@ -31,7 +31,11 @@ describe("eventsToTranscript", () => {
         content: "",
         toolUses: [{ callId: "c1", toolName: "edit_file", toolInput: { path: "a.ts" } }],
       }),
-      ev(3, "tool_result", { callId: "c1", content: '{"path":"a.ts","diff":"+x"}', isError: false }),
+      ev(3, "tool_result", {
+        callId: "c1",
+        content: '{"path":"a.ts","diff":"+x"}',
+        isError: false,
+      }),
       ev(4, "assistant_msg", {
         content: "",
         toolUses: [{ callId: "c2", toolName: "bash", toolInput: { command: "ls" } }],

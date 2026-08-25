@@ -488,7 +488,7 @@ async function fileExists(abs: string): Promise<boolean> {
 }
 
 async function atomicWrite(abs: string, content: string): Promise<void> {
-  const tmp = `${abs}.alan-tmp-${randomBytes(6).toString("hex")}`;
+  const tmp = `${abs}.gear-tmp-${randomBytes(6).toString("hex")}`;
   await writeFile(tmp, content, "utf8");
   await rename(tmp, abs);
 }

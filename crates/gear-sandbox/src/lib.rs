@@ -9,6 +9,7 @@
 //! and hash-chained audit logging regardless of whether OS-level sandboxing
 //! is active.
 
+pub mod active_child;
 pub mod audit;
 pub mod error;
 pub mod factory;

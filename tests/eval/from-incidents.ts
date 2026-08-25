@@ -24,7 +24,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { BlackboxStore } from "@alan/telemetry";
+import { BlackboxStore } from "@gear/telemetry";
 
 const SCAFFOLD_DIR = join(__dirname, "from-incidents");
 const COVERED_PATH = join(SCAFFOLD_DIR, "covered.json");
@@ -38,7 +38,7 @@ interface CliArgs {
 
 function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = {
-    db: join(homedir(), ".alan", "blackbox.db"),
+    db: join(homedir(), ".gear", "blackbox.db"),
     minCount: 3,
     sinceDays: 30,
     scaffold: false,

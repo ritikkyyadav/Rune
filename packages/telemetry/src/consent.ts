@@ -1,6 +1,6 @@
 // ─── Telemetry consent + install identity ───
 // Everything that decides WHETHER anything may leave the machine lives here, in
-// one small JSON file (~/.alan/telemetry.json). The reporter refuses to be
+// one small JSON file (~/.gear/telemetry.json). The reporter refuses to be
 // constructed unless decision === "granted", so this file is the single,
 // auditable gate — a user can `cat` it and know exactly where they stand.
 //

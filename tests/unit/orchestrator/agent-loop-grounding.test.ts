@@ -103,7 +103,10 @@ describe("AgentLoop — native grounding vs. function tools", () => {
         systemPrompt: "s",
         contextEngine,
         retrievedChunks: [
-          { content: "# Repository map\n- src/auth.ts:4 — function validateToken", relevance: 0.96 },
+          {
+            content: "# Repository map\n- src/auth.ts:4 — function validateToken",
+            relevance: 0.96,
+          },
         ],
       },
       gateway,

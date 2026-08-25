@@ -1,6 +1,8 @@
 /**
- * Unit tests for the customizer activity renderer shared by the live stream and
- * session-resume replay.
+ * The flow grammar for one tool call, shared by the live stream and the
+ * session-resume replay. Every assertion here is a design decision: the rail,
+ * the four-column verb, the receipt at the right edge, and the two cases that
+ * earn more than a single row.
  */
 
 import { describe, it, expect } from "bun:test";
@@ -10,11 +12,13 @@ import {
   stepHead,
   planBlock,
   runningLabel,
+  commandOutcome,
   STEP,
   type ToolActivityView,
   type TranscriptLineView,
 } from "../../../packages/orchestrator/src/bin/ui/activity";
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
+import { setTermWidthOverride } from "../../../packages/orchestrator/src/bin/ui/render";
 
 const plain = (s: string) => stripAnsi(s);
 
@@ -22,112 +26,158 @@ function tool(over: Partial<ToolActivityView>): ToolActivityView {
   return { toolName: "bash", args: {}, result: "", success: true, ...over };
 }
 
-describe("renderToolActivity — reference cards and bullets", () => {
-  it("renders a read as an explicit Reading activity", () => {
+describe("renderToolActivity — one call, one row", () => {
+  it("renders a read as a single rail row with the line count it reported", () => {
     const out = plain(
-      renderToolActivity(tool({ toolName: "read_file", args: { path: "src/engine.ts" } })),
+      renderToolActivity(
+        tool({
+          toolName: "read_file",
+          args: { path: "src/engine.ts" },
+          result: JSON.stringify({
+            path: "src/engine.ts",
+            total_lines: 120,
+            lines_shown: 120,
+            offset: 0,
+          }),
+        }),
+      ),
     );
-    expect(out).toBe("  ● Reading src/engine.ts");
     expect(out.split("\n")).toHaveLength(1);
+    // A read that returned takes the neutral mark. What the row is *for* is the
+    // receipt on the right — the line count — and a green tick here would only
+    // compete with it.
+    expect(out).toMatch(/^ {4}│ · read {2}src\/engine\.ts {2,}120 lines$/);
   });
 
-  // Tool results are STRUCTURED JSON (matching the Rust tools' Output structs), not raw text —
-  // these tests feed the real shapes so a "dump the JSON blob" regression can't slip through.
-  it("renders a grep with the real total_matches count (JSON result)", () => {
+  it("names the range when a read was partial, rather than implying the whole file", () => {
+    const out = plain(
+      renderToolActivity(
+        tool({
+          toolName: "read_file",
+          args: { path: "src/engine.ts" },
+          result: JSON.stringify({
+            path: "src/engine.ts",
+            total_lines: 120,
+            lines_shown: 31,
+            offset: 29,
+          }),
+        }),
+      ),
+    );
+    expect(out).toContain("lines 30-60");
+  });
+
+  it("reports a grep by the files it hit and points at the first one", () => {
     const out = plain(
       renderToolActivity(
         tool({
           toolName: "grep",
           args: { pattern: "ProviderName" },
-          result: JSON.stringify({ total_matches: 3, matches: [{}, {}, {}], truncated: false }),
+          result: JSON.stringify({
+            matches: [
+              { file: "src/a.ts", line_number: 42 },
+              { file: "src/b.ts", line_number: 9 },
+            ],
+            total_matches: 3,
+          }),
         }),
       ),
-    );
-    expect(out).toContain("Searching");
-    expect(out).toContain('"ProviderName"');
-    expect(out).toContain("3 matches");
-    expect(out).not.toContain("total_matches"); // the JSON is parsed, not dumped
+    ).split("\n");
+    expect(out[0]).toContain("grep  ProviderName");
+    expect(out[0]).toContain("2 files");
+    expect(out[1]).toBe("    │ └ src/a.ts:42 · 2 more");
+    expect(plain(out.join())).not.toContain("total_matches"); // parsed, not dumped
   });
 
-  it("says `no matches` for a zero-match grep", () => {
+  it("says `no matches` for a zero-match grep instead of leaving the receipt blank", () => {
     const out = plain(
       renderToolActivity(
         tool({
           toolName: "grep",
           args: { pattern: "zzz" },
-          result: JSON.stringify({ total_matches: 0, matches: [] }),
+          result: JSON.stringify({ matches: [], total_matches: 0 }),
         }),
       ),
     );
     expect(out).toContain("no matches");
+    expect(out.split("\n")).toHaveLength(1);
   });
 
-  it("renders a bash run with the last stdout line (JSON result), not the raw blob", () => {
+  it("keeps a check's real output, closed by the runner's own last line", () => {
     const out = plain(
       renderToolActivity(
         tool({
           toolName: "bash",
-          args: { command: "bun test" },
+          args: { command: "bun test tests/unit/" },
+          durationMs: 2610,
           result: JSON.stringify({
-            stdout: "...\n531 pass",
+            stdout: " Test Files  3 passed (3)\n      Tests  37 passed (37)\n 37 passed in 1.9s",
             stderr: "",
             exit_code: 0,
             timed_out: false,
           }),
         }),
       ),
-    );
-    expect(out).toContain("Verifying bun test"); // a test runner is evidence, not just a command
-    expect(out).toContain("└ $ bun test");
-    expect(out).toContain("· bash"); // posture meta after the header
-    expect(out).toContain("bun test");
-    expect(out).toContain("531 pass");
-    expect(out).not.toContain("exit_code"); // parsed, not dumped
-    expect(out).not.toContain("stdout");
+    ).split("\n");
+    expect(out[0]).toContain("run   bun test tests/unit/");
+    expect(out[0]).toContain("2.6s");
+    expect(out[1]).toBe("    │ └ 37 passed");
+    expect(out[2]).toBe("    ┌ bun test tests/unit/");
+    expect(out.at(-1)).toBe("    └ 37 passed in 1.9s");
+    // The rail's closing line is moved, not duplicated.
+    expect(out.filter((l) => l.includes("37 passed in 1.9s"))).toHaveLength(1);
+    expect(out.join()).not.toContain("exit_code");
   });
 
-  it("surfaces a nonzero bash exit code instead of output", () => {
+  it("prefers a runner's tally over the shell's exit code when both are known", () => {
     const out = plain(
       renderToolActivity(
         tool({
           toolName: "bash",
-          args: { command: "ls -la" },
-          result: JSON.stringify({ stdout: "", stderr: "nope", exit_code: 1, timed_out: false }),
+          args: { command: "npx vitest run" },
+          result: JSON.stringify({
+            stdout: " Test Files  1 failed | 1 passed (2)\n 1 failed, 24 passed in 2.6s",
+            stderr: "",
+            exit_code: 1,
+            timed_out: false,
+          }),
         }),
       ),
     );
-    expect(out).toContain("Command failed");
-    expect(out).toContain("ls -la");
-    expect(out).toContain("exit 1");
+    expect(out).toContain("│ ✗ run ");
+    expect(out).toContain("└ 1 failed, 24 passed");
+    expect(out).not.toContain("exit 1");
   });
 
-  it("renders web_search with its query (not raw args JSON)", () => {
-    const out = plain(
-      renderToolActivity(
-        tool({ toolName: "web_search", args: { query: "what is today's date" }, result: "[]" }),
-      ),
-    );
-    expect(out).toContain("Searching web");
-    expect(out).toContain("what is today's date");
-    expect(out).not.toContain("{"); // no raw JSON args
-  });
-
-  it("renders a write with its byte count", () => {
+  it("falls back to the exit code when a failed command printed nothing", () => {
     const out = plain(
       renderToolActivity(
         tool({
-          toolName: "write_file",
-          args: { path: "a.ts" },
-          result: '{"path":"a.ts","bytes_written":42}',
+          toolName: "bash",
+          args: { command: "ls -la /nope" },
+          result: JSON.stringify({ stdout: "", stderr: "", exit_code: 1, timed_out: false }),
         }),
       ),
     );
-    expect(out).toContain("Writing");
-    expect(out).toContain("a.ts");
-    expect(out).toContain("42 bytes");
+    expect(out).toContain("ls -la /nope");
+    expect(out).toContain("exit 1");
   });
 
-  it("ALWAYS shows the diff for an edit, with +/- counts", () => {
+  it("keeps an ordinary command to one row and one outcome — no output rail", () => {
+    const out = plain(
+      renderToolActivity(
+        tool({
+          toolName: "bash",
+          args: { command: "git rev-parse HEAD" },
+          result: JSON.stringify({ stdout: "9be117a\n", stderr: "", exit_code: 0 }),
+        }),
+      ),
+    ).split("\n");
+    expect(out).toHaveLength(2);
+    expect(out[1]).toBe("    │ └ 9be117a");
+  });
+
+  it("ALWAYS shows an edit's diff, with real line numbers and signed counts", () => {
     const out = plain(
       renderToolActivity(
         tool({
@@ -135,59 +185,105 @@ describe("renderToolActivity — reference cards and bullets", () => {
           args: { path: "src/engine.ts" },
           result: JSON.stringify({
             path: "src/engine.ts",
-            diff: "@@ -1 +1 @@\n-const a = 1;\n+const a = 2;",
+            diff: "@@ -1,1 +1,1 @@\n-const a = 1;\n+const a = 2;",
           }),
         }),
       ),
-    );
-    expect(out).toContain("Editing");
-    expect(out).toContain("src/engine.ts");
-    expect(out).toContain("+1");
-    expect(out).toContain("−1");
-    expect(out).toContain("lines 1–1");
-    expect(out).toContain("const a = 1;"); // the diff body is present, not collapsed
-    expect(out).toContain("const a = 2;");
+    ).split("\n");
+    // The verb column is held whether or not a row carries a mark, so an edit
+    // lines up with the reads above it instead of hanging two cells left.
+    expect(out[0]).toMatch(/^ {4}│ {3}edit {2}src\/engine\.ts/);
+    expect(out[0]).toContain("edit  src/engine.ts");
+    expect(out[0]).toContain("+1 -1 · 1 hunk");
+    expect(out[1]).toBe("    │    1 - const a = 1;");
+    expect(out[2]).toBe("    │    1 + const a = 2;");
+    // An edit carries no mark at all: the diff below it is the evidence, and it
+    // does not need a tick to vouch for it.
+    expect(out[0]).not.toContain("✓");
   });
 
-  it("renders a failure on one line with the reason (no 6-line preview)", () => {
+  it("renders a new file as a write with its own line count", () => {
+    const out = plain(
+      renderToolActivity(
+        tool({
+          toolName: "write_file",
+          args: { path: "a.ts", content: "one\ntwo\nthree" },
+          result: JSON.stringify({ path: "a.ts", bytes_written: 13 }),
+        }),
+      ),
+    );
+    expect(out).toContain("new   a.ts");
+    expect(out).toContain("+3 · new file");
+  });
+
+  it("renders web_search with its query, never the raw args JSON", () => {
+    const out = plain(
+      renderToolActivity(
+        tool({ toolName: "web_search", args: { query: "what is today's date" }, result: "a\nb" }),
+      ),
+    );
+    expect(out).toContain("web   what is today's date");
+    expect(out).not.toContain("{");
+  });
+
+  it("renders a failure as its own row plus the tool's own reason", () => {
     const out = plain(
       renderToolActivity(
         tool({
           toolName: "read_file",
           args: { path: "missing.ts" },
           success: false,
-          error: "ENOENT: no such file",
+          error: "ENOENT: no such file or directory",
         }),
       ),
-    );
-    expect(out).toContain("Read");
-    expect(out).toContain("missing.ts");
-    expect(out).toContain("ENOENT");
-    expect(out.split("\n")).toHaveLength(1);
+    ).split("\n");
+    expect(out).toHaveLength(2);
+    expect(out[0]).toContain("│ ✗ read  missing.ts");
+    expect(out[1]).toBe("    │ └ ENOENT: no such file or directory");
   });
 
-  it("never overflows the terminal width, even with a long command + tail or long path", () => {
-    const longCmd = renderToolActivity(
-      tool({
-        toolName: "bash",
-        args: { command: "echo " + "x".repeat(300) },
-        result: JSON.stringify({
-          stdout: "ok " + "y".repeat(200),
-          stderr: "",
-          exit_code: 0,
-          timed_out: false,
-        }),
-      }),
-    );
-    const longPath = renderToolActivity(
-      tool({
-        toolName: "read_file",
-        args: { path: "/" + Array(20).fill("segment").join("/") + "/file.ts" },
-      }),
-    );
-    for (const block of [longCmd, longPath]) {
-      for (const line of block.split("\n")) expect(plain(line).length).toBeLessThanOrEqual(80);
+  it("uses the width it has, and never spills past a narrow terminal", () => {
+    for (const columns of [60, 80, 200]) {
+      setTermWidthOverride(columns);
+      const blocks = [
+        renderToolActivity(
+          tool({
+            toolName: "bash",
+            args: { command: "echo " + "x".repeat(300) },
+            result: JSON.stringify({
+              stdout: "ok " + "y".repeat(200),
+              stderr: "",
+              exit_code: 0,
+            }),
+          }),
+        ),
+        renderToolActivity(
+          tool({
+            toolName: "read_file",
+            args: { path: "/" + Array(20).fill("segment").join("/") + "/file.ts" },
+            result: JSON.stringify({ total_lines: 5, lines_shown: 5, offset: 0 }),
+          }),
+        ),
+      ];
+      for (const block of blocks) {
+        for (const line of block.split("\n")) {
+          expect(plain(line).length).toBeLessThanOrEqual(Math.min(120, columns));
+        }
+      }
     }
+    setTermWidthOverride(null);
+  });
+});
+
+describe("commandOutcome", () => {
+  it("reads the runner's verdict from the end, not its per-file counts", () => {
+    expect(
+      commandOutcome(" Test Files  1 failed | 1 passed (2)\n 1 failed, 24 passed in 2.6s"),
+    ).toBe("1 failed, 24 passed");
+  });
+
+  it("falls back to the last line when nothing stated a tally", () => {
+    expect(commandOutcome("cloning…\ndone.")).toBe("done.");
   });
 });
 
@@ -199,48 +295,69 @@ describe("renderTranscript — batch replay", () => {
     ...over,
   });
 
-  it("opens a ● step for assistant prose and `›` for the user", () => {
+  it("opens `›` for the user and `●` for the agent", () => {
     const out = plain(
       renderTranscript([
         L({ role: "user", text: "fix the bug" }),
         L({ role: "assistant", text: "On it." }),
       ]),
     ).split("\n");
-    expect(out[0]).toBe("  › fix the bug");
-    expect(out[1]).toBe(`  ${STEP} On it.`);
+    expect(out[1]).toBe("  › fix the bug");
+    expect(out[2]).toBe(`  ${STEP} On it.`);
   });
 
-  it("collapses a run of consecutive reads into `Read N files`", () => {
-    const reads = (p: string): TranscriptLineView =>
-      L({ role: "tool", toolName: "read_file", args: { path: p }, result: "x" });
-    const out = plain(renderTranscript([reads("a.ts"), reads("b.ts"), reads("c.ts")]));
-    expect(out).toBe("  Read  3 files");
-  });
-
-  it("keeps a single read as an explicit Reading row", () => {
-    const out = plain(
-      renderTranscript([
-        L({ role: "tool", toolName: "read_file", args: { path: "only.ts" }, result: "x" }),
-      ]),
+  it("collapses a run of consecutive reads into one rail row", () => {
+    const reads = [1, 2, 3].map((n) =>
+      L({ role: "tool", toolName: "read_file", args: { path: `${n}.ts` } }),
     );
-    expect(out).toBe("  ● Reading only.ts");
+    expect(plain(renderTranscript(reads))).toBe("    │ · read  3 files");
   });
 
-  it("interleaves prose → tool card → prose as three distinct ● rows", () => {
+  it("keeps a single read as its own row", () => {
+    const out = plain(
+      renderTranscript([L({ role: "tool", toolName: "read_file", args: { path: "only.ts" } })]),
+    );
+    expect(out).toContain("│ · read  only.ts");
+  });
+
+  it("interleaves prose → work → prose as three distinct blocks", () => {
     const out = plain(
       renderTranscript([
-        L({ role: "assistant", text: "First I look." }),
-        L({ role: "tool", toolName: "bash", args: { command: "ls" }, result: "a\nb" }),
-        L({ role: "assistant", text: "Now I fix." }),
+        L({ role: "assistant", text: "Looking." }),
+        L({ role: "tool", toolName: "bash", args: { command: "ls" } }),
+        L({ role: "assistant", text: "Done." }),
       ]),
     ).split("\n");
-    expect(out.filter((l) => l.startsWith(`  ${STEP} `))).toHaveLength(3);
-    expect(out[1]).toContain("Running command");
+    expect(out.filter((l) => l.startsWith(`  ${STEP} `))).toHaveLength(2);
+    expect(out.some((l) => l.includes("│ · run   ls"))).toBe(true);
+  });
+
+  it("spends the green tick only on a command that checked something", () => {
+    const run = (command: string, exit = 0) =>
+      plain(
+        renderToolActivity(
+          tool({
+            toolName: "bash",
+            args: { command },
+            result: JSON.stringify({ stdout: "42 passed\n", stderr: "", exit_code: exit }),
+          }),
+        ),
+      ).split("\n")[0]!;
+    // A check that came back clean is the one routine outcome worth announcing.
+    expect(run("npx vitest run")).toContain("│ ✓ run ");
+    expect(run("bun run typecheck")).toContain("│ ✓ run ");
+    // Anything that merely ran reports itself in the receipt column instead.
+    expect(run("git status --short")).toContain("│ · run ");
+    expect(run("mkdir -p dist")).toContain("│ · run ");
+    // A failure still interrupts, checked or not.
+    expect(run("npx vitest run", 1)).toContain("│ ✗ run ");
+    expect(run("git push", 1)).toContain("│ ✗ run ");
   });
 
   it("renders a compaction note", () => {
-    const out = plain(renderTranscript([L({ role: "note", text: "context compacted earlier" })]));
-    expect(out).toBe("  — context compacted earlier —");
+    expect(plain(renderTranscript([L({ role: "note", text: "context compacted earlier" })]))).toBe(
+      "  — context compacted earlier —",
+    );
   });
 });
 
@@ -249,15 +366,14 @@ describe("helpers", () => {
     expect(plain(stepHead("hello"))).toBe(`  ${STEP} hello`);
   });
 
-  it("never duplicates an authored Plan label", () => {
-    expect(stripAnsi(planBlock("Plan: Trace the request path.").join("\n"))).toBe(
-      "  ● Plan: Trace the request path.",
+  it("drops an authored Plan label rather than repeating it", () => {
+    expect(plain(planBlock("Plan: Trace the request path.").join("\n"))).toBe(
+      `  ${STEP} Trace the request path.`,
     );
   });
 
   it("runningLabel gives a present-tense verb for the live status", () => {
-    expect(runningLabel("read_file")).toBe("Reading");
-    expect(runningLabel("bash")).toBe("Running");
-    expect(runningLabel("some_mcp_tool")).toBe("some_mcp_tool");
+    expect(runningLabel("read_file")).toBe("reading");
+    expect(runningLabel("bash")).toBe("running");
   });
 });

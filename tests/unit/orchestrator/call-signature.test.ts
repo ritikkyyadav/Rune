@@ -31,11 +31,15 @@ describe("breakerSignature (aggressive)", () => {
   test("timestamp and uuid mutation collapses", () => {
     const a = breakerSignature(
       "bash",
-      JSON.stringify({ command: "curl api/x?ts=2026-07-14T10:00:00Z&id=6a1f2b3c-1111-2222-3333-444455556666" }),
+      JSON.stringify({
+        command: "curl api/x?ts=2026-07-14T10:00:00Z&id=6a1f2b3c-1111-2222-3333-444455556666",
+      }),
     );
     const b = breakerSignature(
       "bash",
-      JSON.stringify({ command: "curl api/x?ts=2026-07-14T10:05:33Z&id=9b8c7d6e-aaaa-bbbb-cccc-ddddeeeeffff" }),
+      JSON.stringify({
+        command: "curl api/x?ts=2026-07-14T10:05:33Z&id=9b8c7d6e-aaaa-bbbb-cccc-ddddeeeeffff",
+      }),
     );
     expect(a).toBe(b);
   });

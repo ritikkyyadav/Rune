@@ -6,7 +6,7 @@
 // at most once per run per key, so a long thrash becomes one incident, not
 // fifty.
 
-import type { IncidentReporter } from "@alan/shared";
+import type { IncidentReporter } from "@gear/shared";
 
 export interface StruggleDetectorConfig {
   /** Same file read this many times in one run (without an intervening edit) → thrash. Default 3. */
@@ -45,9 +45,24 @@ const CORRECTION_RES: RegExp[] = [
   /^(that )?(didn'?t|doesn'?t|does not|did not) (work|help|fix)/i,
 ];
 
+/**
+ * An actionable struggle the LIVE RUN should hear about — not just the black
+ * box. `advice` is the in-context corrective note, written imperatively.
+ * Only the signals where intervention beats observation carry one: edit churn
+ * and search thrash (the run is burning turns on a failing approach RIGHT
+ * NOW). Read-thrash and user corrections stay observe-only — re-reading can
+ * be legitimate exploration, and corrections arrive between runs.
+ */
+export interface StruggleSignal {
+  cls: "struggle.thrash_edits" | "struggle.thrash_search";
+  message: string;
+  advice: string;
+}
+
 export class StruggleDetector {
   private cfg: Required<StruggleDetectorConfig>;
   private report: IncidentReporter;
+  private onSignal?: (signal: StruggleSignal) => void;
 
   // per-run state
   private reads = new Map<string, number>();
@@ -57,9 +72,14 @@ export class StruggleDetector {
   private aborts = 0;
   private prevUserMessage: string | null = null;
 
-  constructor(report: IncidentReporter, config: StruggleDetectorConfig = {}) {
+  constructor(
+    report: IncidentReporter,
+    config: StruggleDetectorConfig = {},
+    onSignal?: (signal: StruggleSignal) => void,
+  ) {
     this.report = report;
     this.cfg = { ...DEFAULTS, ...config };
+    this.onSignal = onSignal;
   }
 
   /** Reset per-run counters. The previous user message survives — rephrase compares across runs. */
@@ -95,6 +115,14 @@ export class StruggleDetector {
         this.edits.set(path, n);
         if (n === this.cfg.editChurnCount) {
           this.fire("struggle.thrash_edits", "warn", `edited ${path} ${n}× in one run`);
+          this.signal({
+            cls: "struggle.thrash_edits",
+            message: `edited ${path} ${n}× in one run`,
+            advice:
+              `You have now edited ${path} ${n} times this run. Stop patching this file. ` +
+              "Re-read the ACTUAL failing output, reconsider the approach, and update your " +
+              "todo list (todo_write) before the next edit.",
+          });
         }
       } else if (toolName === "grep" || toolName === "glob") {
         const pattern = str(args.pattern) ?? str(args.glob);
@@ -108,6 +136,15 @@ export class StruggleDetector {
             "warn",
             `${toolName} for ${JSON.stringify(pattern)} repeated ${n}×`,
           );
+          this.signal({
+            cls: "struggle.thrash_search",
+            message: `${toolName} for ${JSON.stringify(pattern)} repeated ${n}×`,
+            advice:
+              `The same ${toolName} (${JSON.stringify(pattern)}) has now run ${n} times — ` +
+              "it will keep returning the same results. Change the query, search a different " +
+              "way (symbol_search, search_code, list_dir), or step back and rethink where the " +
+              "answer actually lives.",
+          });
         }
       }
     } catch {
@@ -180,6 +217,15 @@ export class StruggleDetector {
   }
 
   // ─── internals ───
+
+  /** Guarded delivery of an actionable signal to the live run. */
+  private signal(s: StruggleSignal): void {
+    try {
+      this.onSignal?.(s);
+    } catch {
+      // a consumer bug must never affect the run
+    }
+  }
 
   private fire(
     cls: Parameters<IncidentReporter>[0]["class"],

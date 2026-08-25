@@ -17,11 +17,11 @@ let dir: string;
 let env: NodeJS.ProcessEnv;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "alan-cred-"));
+  dir = mkdtempSync(join(tmpdir(), "gear-cred-"));
   env = {
     HOME: dir,
-    BERNE_CREDENTIALS_PATH: join(dir, "credentials.json"),
-    BERNE_CREDENTIAL_INDEX_PATH: join(dir, "credentials.index.json"),
+    GEAR_CREDENTIALS_PATH: join(dir, "credentials.json"),
+    GEAR_CREDENTIAL_INDEX_PATH: join(dir, "credentials.index.json"),
   } as NodeJS.ProcessEnv;
 });
 
@@ -151,12 +151,12 @@ describe("keychain backend (macOS security, faked)", () => {
 
   it("reads credentials saved under the migration-era service namespace", async () => {
     const account = apiKeyAccount("openrouter");
-    writeFileSync(env.BERNE_CREDENTIAL_INDEX_PATH!, JSON.stringify({ accounts: [account] }));
+    writeFileSync(env.GEAR_CREDENTIAL_INDEX_PATH!, JSON.stringify({ accounts: [account] }));
     const services: string[] = [];
     const runner: CredentialCommandRunner = async (_cmd, args) => {
       const service = args[args.indexOf("-s") + 1]!;
       services.push(service);
-      return service === "berne"
+      return service === "alan"
         ? { code: 0, stdout: "legacy-secret\n", stderr: "" }
         : { code: 44, stdout: "", stderr: "not found" };
     };
@@ -164,7 +164,7 @@ describe("keychain backend (macOS security, faked)", () => {
 
     expect(await store.get(account)).toBe("legacy-secret");
     expect(services[0]).toBe("gear");
-    expect(services).toContain("berne");
+    expect(services).toContain("alan");
   });
 
   it("set() throws when the backend hard-fails", async () => {
@@ -197,9 +197,9 @@ describe("openCredentialStore backend selection", () => {
     expect(store.secure).toBe(false);
   });
 
-  it("honors BERNE_CREDENTIAL_BACKEND=file", async () => {
+  it("honors GEAR_CREDENTIAL_BACKEND=file", async () => {
     const store = await openCredentialStore({
-      env: { ...env, BERNE_CREDENTIAL_BACKEND: "file" } as NodeJS.ProcessEnv,
+      env: { ...env, GEAR_CREDENTIAL_BACKEND: "file" } as NodeJS.ProcessEnv,
     });
     expect(store.backend).toBe("file");
   });
@@ -212,7 +212,7 @@ describe("openCredentialStore backend selection", () => {
 
 describe("migrateLegacySecrets", () => {
   it("copies provider keys, skips search keys, and never deletes secrets.json", async () => {
-    process.env.ALAN_SECRETS_PATH = join(dir, "secrets.json");
+    process.env.GEAR_SECRETS_PATH = join(dir, "secrets.json");
     try {
       setProviderKey("openrouter", "sk-or-legacy-123456");
       setProviderKey("groq", "gsk_legacy_123456");
@@ -228,12 +228,12 @@ describe("migrateLegacySecrets", () => {
       // non-destructive: the legacy file survives
       expect(existsSync(join(dir, "secrets.json"))).toBe(true);
     } finally {
-      delete process.env.ALAN_SECRETS_PATH;
+      delete process.env.GEAR_SECRETS_PATH;
     }
   });
 
   it("does not overwrite an account already in the store", async () => {
-    process.env.ALAN_SECRETS_PATH = join(dir, "secrets.json");
+    process.env.GEAR_SECRETS_PATH = join(dir, "secrets.json");
     try {
       setProviderKey("openrouter", "sk-or-legacy");
       const store = await openCredentialStore({ forceBackend: "file", env });
@@ -242,7 +242,7 @@ describe("migrateLegacySecrets", () => {
       expect(result.migrated).toBe(0);
       expect(await store.get(apiKeyAccount("openrouter"))).toBe("sk-or-newer");
     } finally {
-      delete process.env.ALAN_SECRETS_PATH;
+      delete process.env.GEAR_SECRETS_PATH;
     }
   });
 });

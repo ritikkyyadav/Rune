@@ -1,4 +1,5 @@
-export * from "./protocol.js";
+// (protocol.ts — a JSON-RPC wire spec nothing ever imported — was removed in
+// the phase-0 stabilization; the real host wire format lives in host-client.ts.)
 export {
   parseToolArguments,
   tryParseJson,
@@ -21,12 +22,11 @@ export {
   type TrailEntry,
 } from "./incident.js";
 export {
-  type AlanConfig,
+  type GearConfig,
   type PermissionRule,
   type ConfigScope,
   type SetConfigResult,
   loadConfig,
-  getAlanHome,
   getConfigFilePath,
   setConfigValue,
 } from "./config.js";
@@ -140,3 +140,19 @@ export {
   gearAccentHex,
   solidOver,
 } from "./design-tokens.js";
+export {
+  adoptLegacyEnv,
+  ensureGearHome,
+  gearHomePath,
+  getGearHome,
+  migrateLegacyHome,
+  resetGearHomeCache,
+  takeHomeMigrationNote,
+  usesLegacyWorkspaceDir,
+  workspaceConfigDir,
+  workspaceConfigPath,
+  GEAR_HOME_DIRNAME,
+  GEAR_WS_DIRNAME,
+  LEGACY_HOME_DIRNAME,
+  LEGACY_WS_DIRNAME,
+} from "./paths.js";

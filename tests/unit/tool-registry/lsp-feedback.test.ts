@@ -81,7 +81,7 @@ afterEach(() => setLspAutoFeedback(false));
 
 describe("post-edit LSP feedback (P4)", () => {
   test("autoFeedback ON: server errors land in the same tool result", async () => {
-    const workspace = mkdtempSync(join(tmpdir(), "alan-lspfb-"));
+    const workspace = mkdtempSync(join(tmpdir(), "gear-lspfb-"));
     setLspAutoFeedback(true);
     const wrapped = withLspFeedback(fakeWriteTool, fakeManager());
 
@@ -95,7 +95,7 @@ describe("post-edit LSP feedback (P4)", () => {
   });
 
   test("autoFeedback OFF (default): result is untouched, no server spawned", async () => {
-    const workspace = mkdtempSync(join(tmpdir(), "alan-lspfb-"));
+    const workspace = mkdtempSync(join(tmpdir(), "gear-lspfb-"));
     const manager = fakeManager();
     const wrapped = withLspFeedback(fakeWriteTool, manager);
 
@@ -105,7 +105,7 @@ describe("post-edit LSP feedback (P4)", () => {
   });
 
   test("budget: a server that never publishes cannot stall the edit past ~1.5s", async () => {
-    const workspace = mkdtempSync(join(tmpdir(), "alan-lspfb-"));
+    const workspace = mkdtempSync(join(tmpdir(), "gear-lspfb-"));
     setLspAutoFeedback(true);
     const wrapped = withLspFeedback(fakeWriteTool, fakeManager({ mute: true }));
 
@@ -119,7 +119,7 @@ describe("post-edit LSP feedback (P4)", () => {
   });
 
   test("unsupported extensions and failed writes pass through untouched", async () => {
-    const workspace = mkdtempSync(join(tmpdir(), "alan-lspfb-"));
+    const workspace = mkdtempSync(join(tmpdir(), "gear-lspfb-"));
     setLspAutoFeedback(true);
     const wrapped = withLspFeedback(fakeWriteTool, fakeManager());
 

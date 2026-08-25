@@ -7,7 +7,7 @@
 //   1. macOS  → `security`   (Keychain)                    secure
 //   2. Linux  → `secret-tool` (libsecret / Secret Service)  secure
 //   3. Windows→ PowerShell    (DPAPI, per-user)             secure
-//   4. anywhere→ FileCredentialStore (~/.alan/credentials.json, 0600)  INSECURE
+//   4. anywhere→ FileCredentialStore (~/.gear/credentials.json, 0600)  INSECURE
 //
 // The secure backends shell out to first-party OS tools rather than a native
 // N-API module: that keeps `bun build --compile` single-file releases working on
@@ -24,6 +24,7 @@ import { dirname, join } from "path";
 import { spawn } from "child_process";
 import { loadSecrets } from "./secrets.js";
 import { PROVIDER_PRESETS } from "./providers.js";
+import { getGearHome } from "./paths.js";
 
 export type CredentialBackend = "keychain" | "secret-service" | "wincred" | "file";
 
@@ -44,7 +45,8 @@ export interface CredentialStore {
 
 /** Current keychain service namespace; every account is scoped under it. */
 export const CREDENTIAL_SERVICE = "gear";
-const LEGACY_CREDENTIAL_SERVICES = ["elio", "berne", "alan"] as const;
+/** Keychain service name used before the rename; read-through only, never written. */
+const LEGACY_CREDENTIAL_SERVICES = ["alan"] as const;
 
 // ─── Injectable command runner (so shell-out backends are unit-testable) ───
 
@@ -87,18 +89,12 @@ const defaultRunner: CredentialCommandRunner = (cmd, args, opts) =>
 
 // ─── File paths (env-overridable for tests) ───
 
-function alanDir(env: NodeJS.ProcessEnv): string {
-  const home = env.HOME ?? env.USERPROFILE ?? ".";
-  return join(home, ".alan");
+function gearDir(env: NodeJS.ProcessEnv): string {
+  return getGearHome(env);
 }
 
 function credentialsFilePath(env: NodeJS.ProcessEnv): string {
-  return (
-    env.GEAR_CREDENTIALS_PATH ??
-    env.ELIO_CREDENTIALS_PATH ??
-    env.BERNE_CREDENTIALS_PATH ??
-    join(alanDir(env), "credentials.json")
-  );
+  return env.GEAR_CREDENTIALS_PATH ?? join(gearDir(env), "credentials.json");
 }
 
 /**
@@ -107,12 +103,7 @@ function credentialsFilePath(env: NodeJS.ProcessEnv): string {
  * account names only (e.g. "provider:openrouter:oauth"), never secrets.
  */
 function indexFilePath(env: NodeJS.ProcessEnv): string {
-  return (
-    env.GEAR_CREDENTIAL_INDEX_PATH ??
-    env.ELIO_CREDENTIAL_INDEX_PATH ??
-    env.BERNE_CREDENTIAL_INDEX_PATH ??
-    join(alanDir(env), "credentials.index.json")
-  );
+  return env.GEAR_CREDENTIAL_INDEX_PATH ?? join(gearDir(env), "credentials.index.json");
 }
 
 function readJsonMap(path: string): Record<string, string> {
@@ -344,11 +335,8 @@ class WinCredStore implements CredentialStore {
     // DPAPI encrypts to a per-user blob; we store the ciphertext (never plaintext)
     // in a file. Distinct from the plaintext FileCredentialStore path.
     this.path =
-      (
-        env.GEAR_CREDENTIALS_PATH ??
-        env.ELIO_CREDENTIALS_PATH ??
-        env.BERNE_CREDENTIALS_PATH
-      )?.replace(/\.json$/, ".win.json") ?? join(alanDir(env), "credentials.win.json");
+      env.GEAR_CREDENTIALS_PATH?.replace(/\.json$/, ".win.json") ??
+      join(gearDir(env), "credentials.win.json");
   }
 
   private async ps(script: string, stdin?: string): Promise<CredentialCommandResult> {
@@ -440,10 +428,7 @@ export async function openCredentialStore(
   const service = opts.service ?? CREDENTIAL_SERVICE;
   const legacyServices = opts.service ? [] : LEGACY_CREDENTIAL_SERVICES;
   const forced =
-    opts.forceBackend ??
-    ((env.GEAR_CREDENTIAL_BACKEND ??
-      env.ELIO_CREDENTIAL_BACKEND ??
-      env.BERNE_CREDENTIAL_BACKEND) as CredentialBackend | undefined);
+    opts.forceBackend ?? (env.GEAR_CREDENTIAL_BACKEND as CredentialBackend | undefined);
 
   if (forced === "file") return new FileCredentialStore(env);
   if (forced === "keychain") return new KeychainStore(service, run, env, legacyServices);
@@ -483,7 +468,7 @@ export function describeCredentialBackend(store: CredentialStore): string {
     case "wincred":
       return "Windows DPAPI";
     case "file":
-      return "plaintext file (~/.alan/credentials.json)";
+      return "plaintext file (~/.gear/credentials.json)";
   }
 }
 

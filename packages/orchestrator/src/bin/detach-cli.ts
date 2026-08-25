@@ -7,18 +7,20 @@
 // Ctrl+C detaches again without stopping anything.
 //
 // Each detached run gets its own host + socket (registry at
-// ~/.alan/run/registry.json). With --worktree the run executes in an isolated
+// ~/.gear/run/registry.json). With --worktree the run executes in an isolated
 // `git worktree` checkout on its own branch, so concurrent runs — and the
 // user's own tree — never collide; merge-back is ordinary git.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, openSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { HostClient } from "../host-client";
 import { createRunWorktree } from "../worktree";
+import { adoptLegacyEnv, getGearHome, migrateLegacyHome } from "@gear/shared";
 
-const RUN_DIR = join(homedir(), ".alan", "run");
+adoptLegacyEnv();
+migrateLegacyHome();
+const RUN_DIR = join(getGearHome(), "run");
 const REGISTRY = join(RUN_DIR, "registry.json");
 
 interface RunEntry {
@@ -86,7 +88,7 @@ export async function runDetach(
   // workspace; stdio goes to a log file so the child never holds a tty.
   const hostScript = join(import.meta.dir, "engine-host.ts");
   const child = Bun.spawn(["bun", hostScript, "--socket", socket], {
-    env: { ...process.env, ALAN_WORKSPACE: workspace },
+    env: { ...process.env, GEAR_WORKSPACE: workspace },
     stdin: "ignore",
     stdout: logFd,
     stderr: logFd,

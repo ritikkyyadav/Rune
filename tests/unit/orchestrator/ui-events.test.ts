@@ -24,9 +24,9 @@ describe("ui/events formatNotice", () => {
     expect(out).toContain("google/gemini-2.5-flash");
   });
 
-  it("falls back to a plain bullet for non-fallback notices", () => {
+  it("falls back to a plain caution row for non-fallback notices", () => {
     const out = stripAnsi(formatNotice("Context is getting long — consider /compress."));
-    expect(out.trim().startsWith("•")).toBe(true);
+    expect(out.trim().startsWith("!")).toBe(true);
     expect(out).toContain("/compress");
   });
 

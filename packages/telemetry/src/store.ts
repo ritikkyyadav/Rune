@@ -1,5 +1,5 @@
 // ─── BlackboxStore: durable incident storage ───
-// Separate DB from sessions (~/.alan/blackbox.db) so incidents outlive session
+// Separate DB from sessions (~/.gear/blackbox.db) so incidents outlive session
 // deletion and aggregate across every session. WAL mode; single-row synchronous
 // writes (bun:sqlite is sync — a row insert is microseconds, so there is no
 // async queue to lose in a crash). Raw incidents are prunable; fingerprint
@@ -13,7 +13,7 @@ import type {
   IncidentOutcome,
   IncidentRecord,
   IncidentSeverity,
-} from "@alan/shared";
+} from "@gear/shared";
 
 export interface FingerprintRow {
   fingerprint: string;

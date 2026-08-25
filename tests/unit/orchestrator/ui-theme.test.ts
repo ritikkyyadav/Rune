@@ -39,6 +39,7 @@ import {
 } from "../../../packages/orchestrator/src/bin/ui/terminal-colors";
 
 const EXPECTED = [
+  "flow",
   "gear",
   "gear-orange",
   "gear-violet",
@@ -105,7 +106,7 @@ describe("ui/themes registry", () => {
   });
 
   it("default theme exists, unknown lookups return undefined", () => {
-    expect(DEFAULT_THEME).toBe("gear-orange");
+    expect(DEFAULT_THEME).toBe("flow");
     expect(findTheme(DEFAULT_THEME)).toBeTruthy();
     expect(findTheme("does-not-exist")).toBeUndefined();
   });
@@ -200,6 +201,9 @@ describe("ui/theme active-theme control", () => {
   });
 
   it("preserves the cosmetic accent across light/dark and the surface across accent aliases", () => {
+    // An accent alias keeps the appearance you are already in; start from a
+    // known light base so the assertion is about the accent, not the default.
+    expect(setTheme("gear")).toBe(true);
     expect(setTheme("orange")).toBe(true);
     expect(getTheme().name).toBe("gear-orange");
     expect(setTheme("dark")).toBe(true);
@@ -212,8 +216,9 @@ describe("ui/theme active-theme control", () => {
     expect(getTheme().name).toBe("auto");
   });
 
-  it("listThemes exposes all ten customizer combinations plus Follow terminal", () => {
+  it("listThemes exposes Flow, all ten customizer combinations, and Follow terminal", () => {
     expect(listThemes().map((t) => t.name)).toEqual([
+      "flow",
       "gear",
       "gear-orange",
       "gear-violet",
@@ -226,8 +231,9 @@ describe("ui/theme active-theme control", () => {
       "gear-mono-dark",
       "auto",
     ]);
-    expect(listThemes()[0]!.label).toBe("Electric Cobalt · Light");
-    expect(listThemes()[10]!.label).toMatch(/^Auto · follows terminal/);
+    expect(listThemes()[0]!.label).toBe("Flow (default)");
+    expect(listThemes()[1]!.label).toBe("Electric Cobalt · Light");
+    expect(listThemes()[11]!.label).toMatch(/^Auto · follows terminal/);
   });
 
   it("matches the customizer's exact light/dark bases and five cosmetic accents", () => {
@@ -281,7 +287,7 @@ describe("ui/theme active-theme control", () => {
 
 describe("ui/theme-store persistence", () => {
   it("round-trips the saved theme via the JSON sidecar", () => {
-    const dir = mkdtempSync(join(tmpdir(), "alan-theme-"));
+    const dir = mkdtempSync(join(tmpdir(), "gear-theme-"));
     try {
       expect(loadSavedTheme(dir)).toBeNull();
       saveTheme("nord", dir);
@@ -292,7 +298,7 @@ describe("ui/theme-store persistence", () => {
   });
 
   it("returns null for a corrupt sidecar", () => {
-    const dir = mkdtempSync(join(tmpdir(), "alan-theme-"));
+    const dir = mkdtempSync(join(tmpdir(), "gear-theme-"));
     try {
       writeFileSync(join(dir, "theme.json"), "{ not valid json");
       expect(loadSavedTheme(dir)).toBeNull();
@@ -316,9 +322,8 @@ describe("ui/theme-store persistence", () => {
     expect(resolveInitialTheme({ configured: "bogus" })).toBe(DEFAULT_THEME);
   });
 
-  it("migrates saved Elio theme ids to the matching Gear themes", () => {
-    expect(resolveInitialTheme({ saved: "elio" })).toBe("gear");
-    expect(resolveInitialTheme({ saved: "elio-dark" })).toBe("gear-dark");
+  it("keeps a saved Gear theme id", () => {
+    expect(resolveInitialTheme({ saved: "gear-dark" })).toBe("gear-dark");
   });
 });
 

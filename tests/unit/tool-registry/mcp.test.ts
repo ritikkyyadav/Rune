@@ -150,8 +150,8 @@ describe("McpDiscovery", () => {
 
   beforeEach(async () => {
     mock = startMockServer();
-    dir = await mkdtemp(join(tmpdir(), "alan-mcp-"));
-    await mkdir(join(dir, ".alan"), { recursive: true });
+    dir = await mkdtemp(join(tmpdir(), "gear-mcp-"));
+    await mkdir(join(dir, ".gear"), { recursive: true });
   });
   afterEach(async () => {
     mock.server.stop(true);
@@ -171,7 +171,7 @@ describe("McpDiscovery", () => {
         },
       },
     };
-    await writeFile(join(dir, ".alan", "mcp.json"), JSON.stringify(cfg));
+    await writeFile(join(dir, ".gear", "mcp.json"), JSON.stringify(cfg));
 
     const discovery = new McpDiscovery(dir);
     const handlers = await discovery.discover();
@@ -195,7 +195,7 @@ describe("McpDiscovery", () => {
     await discovery.stopAll();
   });
 
-  test("missing .alan/mcp.json → no handlers", async () => {
+  test("missing .gear/mcp.json → no handlers", async () => {
     const discovery = new McpDiscovery(dir);
     expect(await discovery.discover()).toEqual([]);
   });

@@ -30,12 +30,12 @@ const PROVIDER_ENV = [
 const savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "alan-pcli-"));
-  process.env.ALAN_SECRETS_PATH = join(dir, "secrets.json");
-  process.env.ALAN_MODEL_PATH = join(dir, "model.json");
-  process.env.BERNE_CREDENTIAL_BACKEND = "file";
-  process.env.BERNE_CREDENTIALS_PATH = join(dir, "credentials.json");
-  process.env.BERNE_CREDENTIAL_INDEX_PATH = join(dir, "credentials.index.json");
+  dir = mkdtempSync(join(tmpdir(), "gear-pcli-"));
+  process.env.GEAR_SECRETS_PATH = join(dir, "secrets.json");
+  process.env.GEAR_MODEL_PATH = join(dir, "model.json");
+  process.env.GEAR_CREDENTIAL_BACKEND = "file";
+  process.env.GEAR_CREDENTIALS_PATH = join(dir, "credentials.json");
+  process.env.GEAR_CREDENTIAL_INDEX_PATH = join(dir, "credentials.index.json");
   // Clear provider env keys so provider listing/discovery is deterministic + offline.
   for (const k of PROVIDER_ENV) {
     savedEnv[k] = process.env[k];
@@ -49,11 +49,11 @@ afterEach(() => {
     else process.env[k] = savedEnv[k];
   }
   for (const k of [
-    "ALAN_SECRETS_PATH",
-    "ALAN_MODEL_PATH",
-    "BERNE_CREDENTIAL_BACKEND",
-    "BERNE_CREDENTIALS_PATH",
-    "BERNE_CREDENTIAL_INDEX_PATH",
+    "GEAR_SECRETS_PATH",
+    "GEAR_MODEL_PATH",
+    "GEAR_CREDENTIAL_BACKEND",
+    "GEAR_CREDENTIALS_PATH",
+    "GEAR_CREDENTIAL_INDEX_PATH",
   ]) {
     delete process.env[k];
   }

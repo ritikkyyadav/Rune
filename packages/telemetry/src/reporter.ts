@@ -28,7 +28,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import type { IncidentContext, IncidentRecord } from "@alan/shared";
+import type { IncidentContext, IncidentRecord } from "@gear/shared";
 import { redactText } from "./redact";
 import { markHeartbeat, todayUtc, type TelemetryState } from "./consent";
 import { peekUsage, takeUsage } from "./counters";

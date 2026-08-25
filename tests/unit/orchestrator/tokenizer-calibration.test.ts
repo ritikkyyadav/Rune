@@ -90,11 +90,11 @@ describe("ContextEngine token feedback", () => {
     const messages = [
       { role: "user" as const, content: [{ type: "text" as const, text: "word ".repeat(2000) }] },
     ];
-    const built = engine.buildPrompt("system", [], messages, undefined, undefined, "cal-model");
+    const built = engine.buildPrompt("system", [], messages, undefined, "cal-model");
     engine.noteRealUsage({ inputTokens: built.totalTokens * 2 }, "cal-model");
     expect(tokenCounter.getCalibration("cal-model")).toBeGreaterThan(1.5);
     // The next build estimates ~2× higher for the same content.
-    const rebuilt = engine.buildPrompt("system", [], messages, undefined, undefined, "cal-model");
+    const rebuilt = engine.buildPrompt("system", [], messages, undefined, "cal-model");
     expect(rebuilt.totalTokens).toBeGreaterThan(built.totalTokens * 1.5);
   });
 
@@ -102,20 +102,22 @@ describe("ContextEngine token feedback", () => {
     const engine = new ContextEngine({}, gateway); // default 100k budget
     // llama3 → 8192-token window. Aux items beyond ~85% of it must be evicted
     // rather than shipped in a prompt the provider is guaranteed to reject.
-    for (let i = 0; i < 30; i++) {
-      engine.pinFile(`/big/file${i}.ts`, "const x = 1;\n".repeat(400));
-    }
-    const built = engine.buildPrompt("system", [], [], undefined, undefined, "llama3");
+    const bigChunks = Array.from({ length: 30 }, (_, i) => ({
+      content: `// file${i}\n` + "const x = 1;\n".repeat(400),
+      relevance: 0.9,
+    }));
+    const built = engine.buildPrompt("system", [], [], bigChunks, "llama3");
     expect(built.totalTokens).toBeLessThanOrEqual(Math.floor(8192 * 0.85));
     expect(built.evictedCount).toBeGreaterThan(0);
   });
 
   test("explicitly configured budget is respected verbatim", () => {
     const engine = new ContextEngine({ budget: { maxTokens: 50_000 } }, gateway);
-    for (let i = 0; i < 30; i++) {
-      engine.pinFile(`/big/file${i}.ts`, "const x = 1;\n".repeat(400));
-    }
-    const built = engine.buildPrompt("system", [], [], undefined, undefined, "llama3");
+    const bigChunks = Array.from({ length: 30 }, (_, i) => ({
+      content: `// file${i}\n` + "const x = 1;\n".repeat(400),
+      relevance: 0.9,
+    }));
+    const built = engine.buildPrompt("system", [], [], bigChunks, "llama3");
     // User said 50k — the engine must not silently re-cap it to the model map
     // (they may be running a context-extended variant the map doesn't know).
     expect(built.totalTokens).toBeGreaterThan(Math.floor(8192 * 0.85));
@@ -128,7 +130,7 @@ describe("ContextEngine token feedback", () => {
       role: (i % 2 === 0 ? "user" : "assistant") as "user" | "assistant",
       content: [{ type: "text" as const, text: `turn ${i}: ` + "content ".repeat(500) }],
     }));
-    const built = engine.buildPrompt("system", [], messages, undefined, undefined, "llama3");
+    const built = engine.buildPrompt("system", [], messages, undefined, "llama3");
     expect(
       built.messages.filter((m) => !String(m.content[0]).includes("Session context")).length,
     ).toBeGreaterThanOrEqual(messages.length);

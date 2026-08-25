@@ -1,16 +1,16 @@
 // ─── `gear doctor` + `gear incidents`: the black box's terminal surfaces ───
-// Both open ~/.alan/blackbox.db directly (read-only usage) — no Engine boot, no
+// Both open ~/.gear/blackbox.db directly (read-only usage) — no Engine boot, no
 // provider validation, instant. Deliberately plain output: this is the page an
 // annoyed user reads right after something broke.
 
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { getAlanHome } from "@alan/shared";
-import type { IncidentRecord } from "@alan/shared";
-import { BlackboxStore } from "@alan/telemetry";
+import { getGearHome } from "@gear/shared";
+import type { IncidentRecord } from "@gear/shared";
+import { BlackboxStore } from "@gear/telemetry";
 import { accent, dim, faint, info, ok, text, warn } from "./ui/theme";
 
-const HOME = () => getAlanHome();
+const HOME = () => getGearHome();
 const DB = () => join(HOME(), "blackbox.db");
 const SENTINEL = () => join(HOME(), "blackbox.sentinel.json");
 const LAST_RESORT = () => join(HOME(), "blackbox.last-resort.log");

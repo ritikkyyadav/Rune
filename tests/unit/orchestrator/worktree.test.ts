@@ -22,7 +22,7 @@ function sh(args: string[]): void {
 }
 
 beforeEach(() => {
-  repo = mkdtempSync(join(tmpdir(), "alan-worktree-"));
+  repo = mkdtempSync(join(tmpdir(), "gear-worktree-"));
   sh(["init", "-q"]);
   sh(["config", "user.email", "t@example.com"]);
   sh(["config", "user.name", "t"]);
@@ -83,7 +83,7 @@ describe("per-run worktree isolation", () => {
     createRunWorktree(repo, "dup");
     expect(() => createRunWorktree(repo, "dup")).toThrow(/already exists/);
 
-    const notRepo = mkdtempSync(join(tmpdir(), "alan-notrepo-"));
+    const notRepo = mkdtempSync(join(tmpdir(), "gear-notrepo-"));
     try {
       expect(isGitRepo(notRepo)).toBe(false);
       expect(() => createRunWorktree(notRepo, "x")).toThrow(/git repository/);

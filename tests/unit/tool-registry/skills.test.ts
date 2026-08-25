@@ -14,7 +14,7 @@ import type { ToolCallInput } from "../../../packages/tool-registry/src/types";
 let workspace: string;
 
 beforeEach(async () => {
-  workspace = await mkdtemp(join(tmpdir(), "alan-skills-"));
+  workspace = await mkdtemp(join(tmpdir(), "gear-skills-"));
 });
 
 afterEach(async () => {
@@ -51,7 +51,15 @@ function callInput(args: Record<string, unknown>): ToolCallInput {
 describe("splitFrontmatter", () => {
   test("parses name/description/argument-hint and strips block from body", () => {
     const { frontmatter, body } = splitFrontmatter(
-      ['---', 'name: code-review', 'description: Review a diff: find bugs', 'argument-hint: "<PR URL>"', '---', '', '# Body here'].join("\n"),
+      [
+        "---",
+        "name: code-review",
+        "description: Review a diff: find bugs",
+        'argument-hint: "<PR URL>"',
+        "---",
+        "",
+        "# Body here",
+      ].join("\n"),
     );
     expect(frontmatter.name).toBe("code-review");
     expect(frontmatter.description).toBe("Review a diff: find bugs"); // colon in value preserved
@@ -93,8 +101,20 @@ describe("substituteArgs", () => {
 describe("SkillLoader · discovery", () => {
   test("discovers skills, namespaces by plugin, reads plugin description", async () => {
     await writePluginJson(workspace, "engineering", "Engineering workflows");
-    await writeSkill(workspace, "engineering", "code-review", { name: "code-review", description: "Review code" }, "body");
-    await writeSkill(workspace, "engineering", "debug", { name: "debug", description: "Debug things" }, "body");
+    await writeSkill(
+      workspace,
+      "engineering",
+      "code-review",
+      { name: "code-review", description: "Review code" },
+      "body",
+    );
+    await writeSkill(
+      workspace,
+      "engineering",
+      "debug",
+      { name: "debug", description: "Debug things" },
+      "body",
+    );
 
     const loader = new SkillLoader({ roots: [workspace] });
     await loader.loadAll();
@@ -108,7 +128,7 @@ describe("SkillLoader · discovery", () => {
     expect(catalog[0].description).toBe("Engineering workflows");
   });
 
-  test("flat .alan/skills layout is attributed to the 'user' plugin", async () => {
+  test("flat .gear/skills layout is attributed to the 'user' plugin", async () => {
     const dir = join(workspace, "mine");
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, "SKILL.md"), "---\nname: mine\ndescription: my skill\n---\nbody");
@@ -129,7 +149,13 @@ describe("SkillLoader · discovery", () => {
 
 describe("SkillLoader · collisions", () => {
   test("same bare name across plugins stays distinct; bare lookup is ambiguous", async () => {
-    await writeSkill(workspace, "sales", "start", { name: "start", description: "sales start" }, "b");
+    await writeSkill(
+      workspace,
+      "sales",
+      "start",
+      { name: "start", description: "sales start" },
+      "b",
+    );
     await writeSkill(workspace, "zoom", "start", { name: "start", description: "zoom start" }, "b");
 
     const loader = new SkillLoader({ roots: [workspace] });
@@ -203,8 +229,20 @@ describe("SkillLoader · load", () => {
 
 describe("SkillLoader · search / catalogPrompt", () => {
   test("search ranks name matches above description matches", async () => {
-    await writeSkill(workspace, "engineering", "code-review", { name: "code-review", description: "inspect a diff" }, "b");
-    await writeSkill(workspace, "data", "analyze", { name: "analyze", description: "review datasets" }, "b");
+    await writeSkill(
+      workspace,
+      "engineering",
+      "code-review",
+      { name: "code-review", description: "inspect a diff" },
+      "b",
+    );
+    await writeSkill(
+      workspace,
+      "data",
+      "analyze",
+      { name: "analyze", description: "review datasets" },
+      "b",
+    );
 
     const loader = new SkillLoader({ roots: [workspace] });
     await loader.loadAll();
@@ -215,10 +253,26 @@ describe("SkillLoader · search / catalogPrompt", () => {
     expect(hits[0].id).toBe("engineering:code-review");
   });
 
-  test("catalogPrompt lists plugins and names and stays compact", async () => {
-    await writePluginJson(workspace, "engineering", "Engineering workflows. Extra ignored sentence.");
-    await writeSkill(workspace, "engineering", "code-review", { name: "code-review", description: "x" }, "b");
-    await writeSkill(workspace, "engineering", "debug", { name: "debug", description: "x" }, "b");
+  test("catalogPrompt lists each skill WITH its description (routing needs it)", async () => {
+    await writePluginJson(
+      workspace,
+      "engineering",
+      "Engineering workflows. Extra ignored sentence.",
+    );
+    await writeSkill(
+      workspace,
+      "engineering",
+      "code-review",
+      { name: "code-review", description: "Review a diff for correctness bugs" },
+      "b",
+    );
+    await writeSkill(
+      workspace,
+      "engineering",
+      "debug",
+      { name: "debug", description: "Root-cause a failing behavior" },
+      "b",
+    );
 
     const loader = new SkillLoader({ roots: [workspace] });
     await loader.loadAll();
@@ -226,9 +280,41 @@ describe("SkillLoader · search / catalogPrompt", () => {
     const prompt = loader.catalogPrompt();
     expect(prompt).toContain("## Available Skills");
     expect(prompt).toContain("**engineering**");
-    expect(prompt).toContain("code-review, debug");
+    // Names-only was the old format — "build me a website" could never route
+    // to a skill whose purpose the catalog never stated.
+    expect(prompt).toContain("code-review — Review a diff for correctness bugs");
+    expect(prompt).toContain("debug — Root-cause a failing behavior");
     expect(prompt).toContain("Engineering workflows"); // first sentence only
     expect(prompt).not.toContain("Extra ignored sentence");
+  });
+
+  test("catalogPrompt degrades the largest plugins to names-only over budget", async () => {
+    // One small plugin and one enormous one: the big one must fall back to a
+    // names row while the small one keeps its descriptions.
+    await writePluginJson(workspace, "tiny", "Small plugin.");
+    await writeSkill(
+      workspace,
+      "tiny",
+      "one-skill",
+      { name: "one-skill", description: "Does one thing" },
+      "b",
+    );
+    await writePluginJson(workspace, "huge", "Big plugin.");
+    for (let i = 0; i < 120; i++) {
+      await writeSkill(
+        workspace,
+        "huge",
+        `skill-${i}`,
+        { name: `skill-${i}`, description: "A long description ".repeat(6) + i },
+        "b",
+      );
+    }
+    const loader = new SkillLoader({ roots: [workspace] });
+    await loader.loadAll();
+    const prompt = loader.catalogPrompt();
+    expect(prompt).toContain("one-skill — Does one thing");
+    expect(prompt).toContain("skill-0,"); // names row
+    expect(prompt.length).toBeLessThan(16_000);
   });
 
   test("catalogPrompt is empty when no skills", async () => {
@@ -242,7 +328,13 @@ describe("SkillLoader · search / catalogPrompt", () => {
 
 describe("createSkillTool", () => {
   async function toolWith(): Promise<ReturnType<typeof createSkillTool>> {
-    await writeSkill(workspace, "engineering", "code-review", { name: "code-review", description: "Review code" }, "Do the review.");
+    await writeSkill(
+      workspace,
+      "engineering",
+      "code-review",
+      { name: "code-review", description: "Review code" },
+      "Do the review.",
+    );
     const loader = new SkillLoader({ roots: [workspace] });
     await loader.loadAll();
     return createSkillTool(loader);

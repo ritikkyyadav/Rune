@@ -1,7 +1,7 @@
 // ─── Usage counters (durable accumulator) ───
 // Coarse, anonymous COUNTS only — sessions started, incidents observed, and any
 // feature tallies a surface chooses to bump. Never any content, path, argument,
-// or identifier. They accumulate in ~/.alan/telemetry-usage.json between
+// or identifier. They accumulate in ~/.gear/telemetry-usage.json between
 // heartbeats; the daily heartbeat reads-and-resets them. Every operation fails
 // safe — a counter must never be the thing that crashed the app.
 //

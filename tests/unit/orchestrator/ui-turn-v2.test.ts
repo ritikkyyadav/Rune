@@ -79,7 +79,7 @@ describe("turn v2 metadata", () => {
     h.turn.onEvent(editEnd("src/a.ts"));
     h.turn.finish();
     const out = h.output();
-    expect(out).toContain("Provider degraded — gateway fallback engaged");
+    expect(out).toContain("provider degraded — rerouted mid-turn");
     expect(out).toContain("1 model switch");
   });
 
@@ -105,9 +105,8 @@ describe("turn v2 metadata", () => {
     h.turn.onEvent({ type: "turn_complete", stopReason: "end_turn", totalTurns: 3 });
     h.turn.finish();
     const out = h.output();
-    expect(out).toContain("1 file changed");
-    expect(out).toContain("checkpoint v2 saved");
-    expect(out).toContain("/rewind to undo");
+    expect(out).toContain("│ changed  1 file");
+    expect(out).toContain("/rewind to roll back");
   });
 
   test("no checkpoint → no checkpoint line, and no invented tokens", () => {

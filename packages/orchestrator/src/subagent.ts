@@ -1,11 +1,11 @@
-import type { LlmGateway, ProviderName } from "@alan/llm-gateway";
+import type { LlmGateway, ProviderName } from "@gear/llm-gateway";
 import type {
   ToolCallInput,
   ToolCallOutput,
   ToolHandler,
   ToolRegistry,
   ToolSchema,
-} from "@alan/tool-registry";
+} from "@gear/tool-registry";
 import { AgentLoop } from "./agent-loop";
 import type { PermissionCheck, ToolResultProcessor } from "./agent-loop";
 
@@ -162,14 +162,26 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
         let toolCallCount = 0;
         let loopError: string | undefined;
 
-        for await (const event of loop.run(fullPrompt, input.sessionId, input.workspaceRoot)) {
+        // Propagate the abort signal: without it Ctrl-C/Esc could not
+        // interrupt a running sub-agent — the turn blocked until it finished.
+        for await (const event of loop.run(
+          fullPrompt,
+          input.sessionId,
+          input.workspaceRoot,
+          input.signal,
+        )) {
           switch (event.type) {
             case "text_delta":
               finalText += event.text;
               break;
-            case "tool_call_end":
+            case "tool_call_end": {
               toolCallCount++;
+              // Live movement for the parent's status rung — sub-agents used
+              // to run completely dark for their whole multi-minute life.
+              const p = typeof event.args?.path === "string" ? ` ${event.args.path}` : "";
+              input.onProgress?.(`${event.output.toolName}${p}`);
               break;
+            }
             case "error":
               // Keep the last error; only fatal (non-recoverable) errors end the run.
               loopError = event.error;

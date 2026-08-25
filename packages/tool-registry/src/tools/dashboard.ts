@@ -96,7 +96,7 @@ function jsonForScript(value: unknown): string {
 
 /** Open a URL in the platform browser; best-effort, never throws. */
 export function openInBrowser(url: string): boolean {
-  if ((process.env.GEAR_NO_OPEN ?? process.env.BERNE_NO_OPEN) === "1") return false;
+  if (process.env.GEAR_NO_OPEN === "1") return false;
   try {
     const [cmd, args] =
       process.platform === "darwin"
@@ -234,7 +234,7 @@ export function buildCsv(spec: unknown, data: unknown): string | null {
  * --headless --print-to-pdf). GEAR_BROWSER_BIN overrides discovery.
  */
 export function findHeadlessBrowser(): string | null {
-  const override = process.env.GEAR_BROWSER_BIN ?? process.env.BERNE_BROWSER_BIN;
+  const override = process.env.GEAR_BROWSER_BIN;
   if (override) return existsSync(override) ? override : null;
   const candidates =
     process.platform === "darwin"
@@ -335,8 +335,7 @@ export class DashboardManager {
   constructor(opts: DashboardManagerOptions = {}) {
     this.host = opts.host ?? "127.0.0.1";
     this.watchIntervalMs = opts.watchIntervalMs ?? 500;
-    this.shouldOpen =
-      opts.openInBrowser ?? (process.env.GEAR_NO_OPEN ?? process.env.BERNE_NO_OPEN) !== "1";
+    this.shouldOpen = opts.openInBrowser ?? process.env.GEAR_NO_OPEN !== "1";
   }
 
   /** The dashboard page URL for an id (server must be started). */

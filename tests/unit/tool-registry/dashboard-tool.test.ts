@@ -14,7 +14,7 @@ import {
 } from "../../../packages/tool-registry/src/tools/dashboard";
 import type { ToolCallInput } from "../../../packages/tool-registry/src/types";
 
-process.env.BERNE_NO_OPEN = "1";
+process.env.GEAR_NO_OPEN = "1";
 
 const manager = new DashboardManager({ openInBrowser: false });
 const tool = createDashboardTool(manager);
@@ -288,8 +288,8 @@ describe("interactive_dashboard — spec mode", () => {
   });
 
   test("pdf export without a browser fails with guidance (not a hang)", async () => {
-    const prev = process.env.BERNE_BROWSER_BIN;
-    process.env.BERNE_BROWSER_BIN = "/nonexistent/browser";
+    const prev = process.env.GEAR_BROWSER_BIN;
+    process.env.GEAR_BROWSER_BIN = "/nonexistent/browser";
     try {
       const created = await tool.execute(
         input({ action: "create", title: "p", spec, open: false }),
@@ -299,8 +299,8 @@ describe("interactive_dashboard — spec mode", () => {
       expect(out.success).toBe(false);
       expect(out.error).toContain("Export menu");
     } finally {
-      if (prev === undefined) delete process.env.BERNE_BROWSER_BIN;
-      else process.env.BERNE_BROWSER_BIN = prev;
+      if (prev === undefined) delete process.env.GEAR_BROWSER_BIN;
+      else process.env.GEAR_BROWSER_BIN = prev;
     }
   });
 });

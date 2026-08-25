@@ -5,7 +5,7 @@ import type {
   Message,
   StreamEvent,
   ToolDefinition,
-} from "@alan/llm-gateway";
+} from "@gear/llm-gateway";
 
 /**
  * A scripted response to one model invocation.
@@ -50,7 +50,24 @@ export class MockProvider implements LlmProvider {
   }
 
   async infer(_request: InferenceRequest): Promise<InferenceResponse> {
-    throw new Error("MockProvider only supports streaming");
+    // Non-streaming inference backs the context engine's SUMMARIZER. A canned
+    // summary keeps compaction functional in mock mode (it used to throw,
+    // which made every compaction path untestable in evals).
+    return {
+      id: "mock_infer",
+      content: [
+        {
+          type: "text",
+          text:
+            "## Goals & requirements\n(mock summary)\n## Key facts & codebase knowledge\n-\n" +
+            "## Actions taken & outcomes (files touched, commands run)\n-\n" +
+            "## Decisions & open questions\n-\n## Current state & next step\ncontinue",
+        },
+      ],
+      stopReason: "end_turn",
+      usage: { inputTokens: 10, outputTokens: 20 },
+      model: "mock-model",
+    };
   }
 
   async *inferStream(request: InferenceRequest): AsyncGenerator<StreamEvent> {

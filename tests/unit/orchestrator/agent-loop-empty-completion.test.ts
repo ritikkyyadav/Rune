@@ -66,7 +66,9 @@ describe("AgentLoop — empty completions never end a run silently", () => {
     const events = await collect(loop.run("build me a dashboard", "s1", "/tmp"));
 
     expect(calls).toBe(3); // initial + 2 retries
-    const notices = events.filter((e) => e.type === "notice" && /empty response/i.test((e as any).message));
+    const notices = events.filter(
+      (e) => e.type === "notice" && /empty response/i.test((e as any).message),
+    );
     expect(notices.length).toBe(2);
     const errors = events.filter((e) => e.type === "error");
     expect(errors.length).toBe(1);
@@ -95,7 +97,9 @@ describe("AgentLoop — empty completions never end a run silently", () => {
     const events = await collect(loop.run("hello", "s1", "/tmp"));
 
     expect(calls).toBe(2);
-    expect(events.some((e) => e.type === "text_delta" && (e as any).text.includes("answer"))).toBe(true);
+    expect(events.some((e) => e.type === "text_delta" && (e as any).text.includes("answer"))).toBe(
+      true,
+    );
     const complete = events.filter((e) => e.type === "turn_complete");
     expect(complete.length).toBe(1);
     expect((complete[0] as any).stopReason).toBe("end_turn");

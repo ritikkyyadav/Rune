@@ -4,7 +4,7 @@
 // instance each is enough. OAuth is provider-specific (OpenRouter's PKCE flow is
 // the working reference); device-code is a headless fallback for OAuth providers.
 
-import type { AuthMethod } from "@alan/shared";
+import type { AuthMethod } from "@gear/shared";
 import type { AuthenticationStrategy } from "./types";
 import { ApiKeyStrategy } from "./api-key-strategy";
 import { LocalEndpointStrategy } from "./local-endpoint-strategy";

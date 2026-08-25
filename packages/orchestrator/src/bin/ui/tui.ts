@@ -10,7 +10,7 @@
 //   • alt-screen (ctx.fullscreen) — takes the alternate screen and repaints the whole
 //     viewport each frame (AltScreen), painting the theme bg edge-to-edge at the cost of a
 //     self-managed (non-native) scroll.
-// Selected over the readline path with `--tui` / ALAN_TUI=1; `--inline` keeps native scrollback.
+// Selected over the readline path with `--tui` / GEAR_TUI=1; `--inline` keeps native scrollback.
 
 import type {
   Engine,
@@ -38,8 +38,8 @@ import {
   saveSandboxState,
   saveBrowserState,
   getSystemMemoryPath,
-} from "@alan/shared";
-import type { CustomEndpoint } from "@alan/shared";
+} from "@gear/shared";
+import type { CustomEndpoint } from "@gear/shared";
 import { providerChoices, accountChoices, modelChoices, fetchLiveModels } from "./model-picker";
 import { configModeToPermissionMode } from "../../permissions";
 import { AltScreen, BottomRegion } from "./screen";
@@ -62,6 +62,7 @@ import {
   renderQueueStrip,
   sessionGroupLabel,
   statusLine,
+  modeInfo,
   permissionModeBanner,
   autoApprovedChip,
   waitingRung,
@@ -110,6 +111,7 @@ import {
 import { saveTheme } from "./theme-store";
 import { buildPermissionPreview, type PermissionPreview } from "./permission-preview";
 import { renderWorkspaceDiff } from "./workspace-diff";
+import { workspaceConfigPath } from "@gear/shared";
 import {
   buildInteractiveDirective,
   saveInteractiveAuto,
@@ -332,12 +334,17 @@ class Tui {
   } | null = null;
   // transient single-line text prompt (used by /research clarify & revise)
   private askState: { resolve: (s: string | null) => void; title: string } | null = null;
+  /** Grace window before a 4th-gear ask_user picker auto-continues. */
+  private static readonly QUESTION_AUTO_CONTINUE_MS = 60_000;
   // ask_user tool: blocking question with numbered options (turn-time).
   private questionState: {
     resolve: (s: string) => void;
     question: string;
     options: string[];
     prevMode: Mode;
+    /** 4th-gear auto-continue: the run must survive an absent user. */
+    timer?: ReturnType<typeof setTimeout>;
+    autoContinue?: boolean;
   } | null = null;
 
   constructor(private ctx: TuiContext) {
@@ -346,15 +353,14 @@ class Tui {
   }
 
   /**
-   * The supplied 860px card has 44px side padding and a ~14px mono face,
-   * yielding roughly a 100-cell reading measure. The terminal surface itself
-   * is full-window; only the readable content column is capped and centered.
+   * The column the surface is allowed to draw into. The flow grammar bounds
+   * itself to a 78-cell measure, so this only has to stop a line from touching
+   * the right edge of a narrow window.
    */
   private contentCols(): number {
     const width = cols();
     if (this.inline) return width;
-    if (width < 24) return Math.max(8, width - 2);
-    return Math.min(104, width - 8);
+    return Math.max(8, width - 1);
   }
 
   // ── lifecycle ──
@@ -413,9 +419,7 @@ class Tui {
     if (!this.ctx.launchPick) {
       const mem = engine.getSystemMemory();
       if (mem.enabled && !mem.content.trim() && mem.scheduleLabel === "manual") {
-        this.print(
-          `  ${faint("✦ tip: Gear can learn your style & codebases over time —")}${info("/memory")}${faint(" (auto-update: /memory weekly)")}`,
-        );
+        this.print(`  ${faint("tip: Gear can learn your style over time —")} ${info("/memory")}`);
       }
       void engine
         .maybeReflectSystemMemory()
@@ -528,7 +532,6 @@ class Tui {
       { name: "/research", desc: "Research — propose a plan, then a cited report" },
       { name: "/deepresearch", desc: "Deep research — multi-round, long-form" },
       { name: "/cost", desc: "Session cost" },
-      { name: "/plan", desc: "Toggle plan mode" },
       { name: "/gear", desc: "Shift gears — /gear 1 | 2 | 3 | 4 | auto (empty shifts up)" },
       { name: "/autonomy", desc: "Legacy alias — /autonomy I | II | III = 2nd | 3rd | 4th gear" },
       { name: "/sandbox", desc: "OS sandbox for commands — on | off (off = full access)" },
@@ -620,7 +623,12 @@ class Tui {
       const head = [
         `  ${info("?")} ${bold(text(q.question))}`,
         ...q.options.map((opt, i) => `    ${info(String(i + 1))} ${text(opt)}`),
-        `  ${faint("1-" + q.options.length + " choose · or type an answer · Enter = 1 · Esc = skip")}`,
+        `  ${faint(
+          "1-" +
+            q.options.length +
+            " choose · or type an answer · Enter = 1 · Esc = skip" +
+            (q.autoContinue ? " · auto-continues in 60s (4th gear)" : ""),
+        )}`,
       ];
       return {
         lines: [...head, ...base.lines],
@@ -840,6 +848,16 @@ class Tui {
     }
   }
 
+  /** The active gear, as the header states it: what proceeds without asking,
+   *  and — in 1st gear, where nothing does — what still asks. */
+  private gearScope(): { scope: string; caution?: string } {
+    const mode = modeInfo(this.ctx.engine.getPermissionMode());
+    return {
+      scope: mode.label,
+      caution: mode.desc,
+    };
+  }
+
   /** Print the banner into the transcript (inline surface). The alt-screen surface renders it
    *  live as a pinned header via bannerLines() instead. */
   private printBanner(): void {
@@ -854,6 +872,7 @@ class Tui {
         version: this.ctx.version,
         sandbox: engine.isSandboxEnabled(),
         mcpServers: this.mcpServerCount(),
+        ...this.gearScope(),
       }),
     );
   }
@@ -885,22 +904,24 @@ class Tui {
       version: this.ctx.version,
       sandbox: engine.isSandboxEnabled(),
       mcpServers: this.mcpServerCount(),
+      ...this.gearScope(),
     })
       .split("\n")
       .map((l) => this.bound(l));
   }
 
   /**
-   * Repaint the supplied terminal composition itself: exact card base,
-   * centered reading measure, identity, transcript, and anchored composer.
-   * The customizer page surrounding the card is deliberately absent.
+   * Repaint the whole surface: identity, transcript, anchored composer. The
+   * content is left-aligned at its own small indent and bounded by the reading
+   * measure — never centered. Centering a terminal's text column makes every
+   * line start in a different place than the shell prompt above it, and the
+   * measure already stops a wide window from producing 200-column sentences.
    */
   private drawComposer(): void {
     if (!this.screen.isActive) return;
     const R = rowsCount();
-    const C = cols();
     const contentWidth = this.contentCols();
-    const left = Math.max(0, Math.floor((C - contentWidth) / 2));
+    const left = 0;
     const banner = this.bannerLines();
     const comp = this.composerBlock();
     const compLines = comp.lines.map((l) => clampVisible(l, contentWidth));
@@ -950,7 +971,7 @@ class Tui {
     this.prevTransH = transH;
 
     const caretRow = Math.min(R - 1, bandTop + transH + hintRows + comp.caretRow);
-    const caretCol = Math.min(C - 1, left + comp.caretCol);
+    const caretCol = Math.min(cols() - 1, left + comp.caretCol);
     this.screen.frame(rows, caretRow, caretCol);
   }
 
@@ -1485,7 +1506,6 @@ class Tui {
             workspace: s.workspace,
             sessionId: this.ctx.sessionId,
             cost: s.cost,
-            plannerMode: s.plannerMode,
             yoloMode: s.yoloMode,
             trustWorkspace: s.trustWorkspace,
             permissionMode: s.permissionMode,
@@ -1581,7 +1601,7 @@ class Tui {
         const lines = [`  ${bold(text("MCP servers"))}`];
         if (servers.length === 0) {
           lines.push(
-            `    ${muted("None configured. Add servers in ")}${info(".alan/mcp.json")}${muted(".")}`,
+            `    ${muted("None configured. Add servers in ")}${info(".gear/mcp.json")}${muted(".")}`,
           );
         } else {
           for (const server of servers) {
@@ -1627,7 +1647,7 @@ class Tui {
                   `      ${faint(plugin.skills.map((skill) => skill.name).join(", "))}`,
                 ])
               : [
-                  `    ${muted("None found. Add skills under ")}${info("skills/")}${muted(" or ")}${info(".alan/skills/")}${muted(".")}`,
+                  `    ${muted("None found. Add skills under ")}${info("skills/")}${muted(" or ")}${info(".gear/skills/")}${muted(".")}`,
                 ]),
             `  ${faint("Skills load automatically when a request matches · search with /skills <keywords>")}`,
           ].join("\n"),
@@ -1643,12 +1663,6 @@ class Tui {
           return true;
         }
         await this.runResearchFlow(arg, deep ? "deep" : undefined);
-        return true;
-      }
-      case "plan": {
-        const on = !engine.isPlannerMode();
-        engine.setPlannerMode(on);
-        this.print(`  ${ok("✓")} ${muted(`plan mode ${on ? "on" : "off"}`)}`);
         return true;
       }
       case "gear": {
@@ -1770,7 +1784,7 @@ class Tui {
             setTheme(themes[idx]!.name);
             this.refreshThemeSurface();
           },
-          "Light or dark: /theme light · /theme dark · persisted to ~/.alan/theme.json",
+          "Light or dark: /theme light · /theme dark · persisted to ~/.gear/theme.json",
         );
         if (i != null) {
           setTheme(themes[i]!.name);
@@ -1883,7 +1897,7 @@ class Tui {
           this.print(`  ${muted(`Cannot undo — ${r.reason}`)}`);
           if (!engine.isAutoCommitEnabled()) {
             this.print(
-              `  ${faint("Tip: set [git] autoCommit = true in ~/.alan/config.toml so every run lands as a revertible commit.")}`,
+              `  ${faint("Tip: set [git] autoCommit = true in ~/.gear/config.toml so every run lands as a revertible commit.")}`,
             );
           }
         }
@@ -2081,7 +2095,7 @@ class Tui {
           `  ${bold(text("Loop mode"))}`,
           `    ${info("/loop 5m check the deploy")} ${faint("fixed interval")}`,
           `    ${info("/loop check CI and review comments")} ${faint("adaptive 1–60m cadence")}`,
-          `    ${info("/loop")} ${faint("built-in maintenance prompt, or .alan/loop.md")}`,
+          `    ${info("/loop")} ${faint("built-in maintenance prompt, or .gear/loop.md")}`,
           `    ${info("/loops")} ${faint("list active tasks")}`,
           `    ${info("/loop cancel <id>")} ${faint("stop one · /loop clear stops all")}`,
         ].join("\n"),
@@ -3506,32 +3520,50 @@ class Tui {
       this.input = "";
       this.caret = 0;
       this.mode = "question";
+      // 4th gear asks like every other gear — the user is usually right here —
+      // but must never park an autonomous run on a question nobody answers:
+      // after a grace window the picker dismisses itself and the model
+      // proceeds on its own judgment, keeping fire-and-forget intact.
+      if (this.ctx.engine.getPermissionMode() === "gear-4") {
+        this.questionState.autoContinue = true;
+        this.questionState.timer = setTimeout(() => {
+          this.finishQuestion(
+            "(no answer within 60s — proceed with your best judgment and state the assumption)",
+          );
+        }, Tui.QUESTION_AUTO_CONTINUE_MS);
+      }
       this.scheduleDraw();
     });
+
+  /** Resolve the pending ask_user question and restore the turn UI. */
+  private finishQuestion(answer: string): void {
+    const q = this.questionState;
+    if (!q) return;
+    if (q.timer) clearTimeout(q.timer);
+    this.questionState = null;
+    this.input = "";
+    this.caret = 0;
+    // Return to the in-flight turn (questions only fire mid-turn).
+    this.mode = q.prevMode === "question" ? "turn" : q.prevMode;
+    this.print(`  ${ok("✓")} ${muted(truncate(answer, 80))}`);
+    this.scheduleDraw();
+    q.resolve(answer);
+  }
 
   private questionKey(key: Key): void {
     const q = this.questionState;
     if (!q) return;
-    const finish = (answer: string) => {
-      this.questionState = null;
-      this.input = "";
-      this.caret = 0;
-      // Return to the in-flight turn (questions only fire mid-turn).
-      this.mode = q.prevMode === "question" ? "turn" : q.prevMode;
-      this.print(`  ${ok("✓")} ${muted(truncate(answer, 80))}`);
-      q.resolve(answer);
-    };
     // Bare digit with an empty composer = instant pick.
     if (key.type === "char" && this.input.length === 0 && /^[1-9]$/.test(key.value)) {
       const n = Number(key.value);
-      if (n >= 1 && n <= q.options.length) return finish(q.options[n - 1]);
+      if (n >= 1 && n <= q.options.length) return this.finishQuestion(q.options[n - 1]);
     }
     if (key.type === "enter") {
       const typed = this.input.trim();
-      return finish(typed || q.options[0]);
+      return this.finishQuestion(typed || q.options[0]);
     }
     if (key.type === "esc") {
-      return finish("(user skipped the question — proceed with your best judgment)");
+      return this.finishQuestion("(user skipped the question — proceed with your best judgment)");
     }
     // Everything else edits the composer (free-text answer).
     if (this.editComposer(key)) this.scheduleDraw();
@@ -3654,8 +3686,11 @@ class Tui {
     );
     this.liveTurn = turn;
     // The web comp rotates the gear continuously. Terminals cannot rotate a
-    // glyph, so the same mark pulses at eight frames/second while the elapsed
-    // receipt advances. This preserves motion without swapping the logo.
+    // glyph, so the same mark breathes along a colour ramp instead (breathAt,
+    // in ./turn) while the elapsed receipt advances. This tick drives that ramp
+    // and the clock, and it is deliberately the only thing repainting the rung
+    // on a timer: the stream may arrive as fast as it likes, and the footer
+    // still moves no faster than a person can read it.
     this.tick = setInterval(() => {
       if (this.mode === "turn") {
         this.turnPreview = turn.liveLines();
@@ -3903,58 +3938,62 @@ class Tui {
     question: string,
     opts?: ResearchOptions,
   ): Promise<void> {
+    // Research renders through the SAME TurnRenderer as every other turn —
+    // same live rung, same rail rows, same streaming prose, same receipts.
+    // (It used to be a second product wearing the same binary: its own event
+    // printing, raw unwrapped report streaming, its own error format — the
+    // exact "many pieces, not one system" seam.)
     const { engine } = this.ctx;
     this.mode = "turn";
     this.aborting = false;
     this.turnStart = Date.now();
     this.streamBuf = "";
+    this.turnPreview = null;
     this.scheduleDraw();
-    this.tick = setInterval(() => {
-      if (this.mode === "turn") this.scheduleDraw();
-    }, 250);
 
-    const flush = (final = false) => {
-      let idx: number;
-      while ((idx = this.streamBuf.indexOf("\n")) >= 0) {
-        const ln = this.streamBuf.slice(0, idx);
-        this.streamBuf = this.streamBuf.slice(idx + 1);
-        this.print(`  ${text(ln)}`);
+    const turn = new TurnRenderer(
+      {
+        commit: (block) => this.print(block),
+        preview: (lines) => {
+          this.turnPreview = lines;
+          this.scheduleDraw();
+        },
+      },
+      { model: engine.getModel(), getCost: () => engine.getCost() },
+    );
+    this.liveTurn = turn;
+    this.tick = setInterval(() => {
+      if (this.mode === "turn") {
+        this.turnPreview = turn.liveLines();
+        this.scheduleDraw();
       }
-      if (final && this.streamBuf.length) {
-        this.print(`  ${text(this.streamBuf)}`);
-        this.streamBuf = "";
-      }
-    };
+    }, 125);
 
     let report: ResearchReport | null = null;
     try {
       for await (const ev of engine.runResearch(this.ctx.sessionId, plan, opts)) {
         if (ev.type === "research_report_delta") {
-          this.streamBuf += ev.text;
-          flush();
+          // The report IS the answer — stream it as the turn's prose so it
+          // previews live and lands as rendered markdown at finish.
+          turn.onEvent({ type: "text_delta", text: ev.text });
           continue;
         }
-        flush(true);
         if (ev.type === "research_complete") report = ev.report;
-        if (ev.type === "error") {
-          this.print(`  ${accent("✕")} ${text(ev.error)}`);
-          continue;
-        }
-        const block = formatResearchEvent(ev);
-        if (block) this.print(block);
+        turn.onEvent(ev);
       }
-      flush(true);
     } catch (err) {
-      flush(true);
-      if (!this.aborting) {
-        this.print(`  ${accent("✕")} ${text(err instanceof Error ? err.message : String(err))}`);
-      }
+      if (!this.aborting) turn.onError(err);
     } finally {
+      turn.finish({ aborted: this.aborting });
+      this.lastWorkLog = turn.fullLog();
+      this.liveTurn = null;
       if (this.tick) {
         clearInterval(this.tick);
         this.tick = null;
       }
+      this.turnPreview = null;
       this.mode = "input";
+      this.scheduleDraw();
     }
 
     if (report) this.saveResearchReport(plan, question, report);
@@ -3969,7 +4008,7 @@ class Tui {
     try {
       const { writeFileSync, mkdirSync } = require("fs");
       const { join } = require("path");
-      const dir = cfg.outputDir || join(this.ctx.workspaceRoot, ".alan", "research");
+      const dir = cfg.outputDir || workspaceConfigPath(this.ctx.workspaceRoot, "research");
       mkdirSync(dir, { recursive: true });
       const slug =
         question

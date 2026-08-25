@@ -42,9 +42,7 @@ const req = (): InferenceRequest => ({
 
 describe("GoogleProvider — unusable finish reasons throw instead of ending silently", () => {
   test("MALFORMED_FUNCTION_CALL with zero parts throws a retryable error", async () => {
-    mockFetch(() =>
-      sse([{ candidates: [{ finishReason: "MALFORMED_FUNCTION_CALL" }] }]),
-    );
+    mockFetch(() => sse([{ candidates: [{ finishReason: "MALFORMED_FUNCTION_CALL" }] }]));
     const p = new GoogleProvider("key");
     await expect(collect(p.inferStream(req()))).rejects.toThrow(/MALFORMED_FUNCTION_CALL/);
   });
@@ -67,7 +65,10 @@ describe("GoogleProvider — unusable finish reasons throw instead of ending sil
         {
           candidates: [
             {
-              content: { role: "model", parts: [{ functionCall: { name: "read_file", args: { path: "a" } } }] },
+              content: {
+                role: "model",
+                parts: [{ functionCall: { name: "read_file", args: { path: "a" } } }],
+              },
             },
           ],
         },
@@ -95,7 +96,11 @@ describe("GoogleProvider — unusable finish reasons throw instead of ending sil
   test("normal STOP with text still streams fine", async () => {
     mockFetch(() =>
       sse([
-        { candidates: [{ content: { role: "model", parts: [{ text: "Hello" }] }, finishReason: "STOP" }] },
+        {
+          candidates: [
+            { content: { role: "model", parts: [{ text: "Hello" }] }, finishReason: "STOP" },
+          ],
+        },
       ]),
     );
     const p = new GoogleProvider("key");
@@ -107,10 +112,13 @@ describe("GoogleProvider — unusable finish reasons throw instead of ending sil
   test("non-streaming infer() throws on MALFORMED too", async () => {
     mockFetch(
       () =>
-        new Response(JSON.stringify({ candidates: [{ finishReason: "MALFORMED_FUNCTION_CALL" }] }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
+        new Response(
+          JSON.stringify({ candidates: [{ finishReason: "MALFORMED_FUNCTION_CALL" }] }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        ),
     );
     const p = new GoogleProvider("key");
     await expect(p.infer({ ...req(), stream: false })).rejects.toThrow(/MALFORMED_FUNCTION_CALL/);

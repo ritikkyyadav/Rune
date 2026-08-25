@@ -1,7 +1,7 @@
 // ─── loop_control tool ───
 // Allows an adaptive /loop iteration to choose its next wait or stop itself.
 
-import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "@alan/tool-registry";
+import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "@gear/tool-registry";
 import type { LoopControlRequest, LoopControlResult } from "./loop-mode";
 
 export interface LoopControlToolDeps {

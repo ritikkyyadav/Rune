@@ -6,7 +6,7 @@
 // These types are the contract shared by the orchestration core
 // (research.ts), the Engine methods, and the CLI/TUI renderers.
 
-import type { ProviderName } from "@alan/llm-gateway";
+import type { ProviderName } from "@gear/llm-gateway";
 
 /** Depth presets — control sub-question count, fan-out, sources, and turns. */
 export type ResearchDepth = "quick" | "standard" | "deep";
@@ -109,7 +109,7 @@ export interface ResearchOptions {
   autoApprove?: boolean;
   /** Save the finished report to a markdown file. Default true. */
   save?: boolean;
-  /** Directory for saved reports. Default `<workspace>/.alan/research`. */
+  /** Directory for saved reports. Default `<workspace>/.gear/research`. */
   outputDir?: string;
 }
 

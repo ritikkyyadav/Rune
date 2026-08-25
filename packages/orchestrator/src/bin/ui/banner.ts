@@ -1,37 +1,41 @@
 // ─── Gear identity header ───
-// Terminal-native transcription of the header in docs/design/gear-customizer-v2.html. The
-// browser comp uses a 48px SVG beside three metadata rows and two environment
-// badges. A four-row Braille raster preserves the reference mark's detail in a
-// real monospace terminal; the compact fallback keeps U+2699 for narrow
-// viewports.
+// Four lines and no logo. A rule with the name set into it, where you are, what
+// this agent is allowed to do to your machine, and a closing rule. That is the
+// whole header — a mark would only tell you something the window title already
+// says, and a terminal that opens with artwork has spent its first screen on
+// itself instead of on your work.
 //
-//   ⣴⣦⣽⣯⣴⣦    Gear  v0.2.0
-//  ⣶⣾⡿⠋⠙⢿⣷⣶   Gemini 2.5 Flash · high effort · /model to change
-//  ⢠⣿⣷⣄⣠⣾⣿⡄   ~/Projects/Alan · main                sandbox on  MCP · 2 servers
-//  ⠈⠉⢿⡟⢻⡿⠉⠁
+//   ──── gear 0.3.0 ─────────────────────────────────────────────
+//     alan · gear/phase-0-stabilize · 3 files changed
+//     claude-opus-5 · 1st gear — every action asks first
+//   ─────────────────────────────────────────────────────────────
 
 import * as os from "os";
 import { execFileSync } from "child_process";
-import { bold, text, muted, faint, brand, chip } from "./theme";
-import { truncate, termWidth, visLen } from "./render";
+import { bold, text, brand } from "./theme";
+import { header as flowHeader } from "./flow";
 import { PRODUCT_NAME } from "./brand";
 
-/** Explicit text presentation. Never use the coloured emoji gear here. */
+/** Explicit text presentation. Never use the coloured emoji gear. */
 export const GEAR_MARK = "⚙︎";
 
 /** The supplied Gear mark has exactly nine teeth. */
 export const GEAR_TOOTH_COUNT = 9;
 
-/**
- * Faithful 16×16 terminal raster of the supplied nine-tooth mark. Each Braille
- * cell carries a 2×4 dot matrix, so this 8×4-cell lockup stays square at a
- * conventional 2:1 terminal-cell ratio while retaining the open circular hub.
- */
-export const GEAR_AVATAR_LINES = [" ⣴⣦⣽⣯⣴⣦ ", "⣶⣾⡿⠋⠙⢿⣷⣶", "⢠⣿⣷⣄⣠⣾⣿⡄", "⠈⠉⢿⡟⢻⡿⠉⠁"] as const;
+/** Retained so callers that referenced the old raster still type-check; the
+ *  header no longer draws it. */
+export const GEAR_AVATAR_LINES = ["", "", "", ""] as const;
 
 function shortPath(p: string): string {
   const home = os.homedir();
   return p.startsWith(home) ? "~" + p.slice(home.length) : p;
+}
+
+/** The folder you are actually in — the last segment, which is the part you
+ *  recognise. The full path is one `pwd` away and does not belong in a header. */
+function folderName(p: string): string {
+  const parts = shortPath(p).split("/").filter(Boolean);
+  return parts.at(-1) ?? shortPath(p);
 }
 
 export interface BannerOptions {
@@ -46,17 +50,23 @@ export interface BannerOptions {
   workspace: string;
   branch?: string;
   sessionId?: string;
-  /** OS command sandbox state → the `sandbox on` / `sandbox off` badge. */
+  /** What proceeds without asking, in the gear's own words. */
+  scope?: string;
+  /** The guardrail clause after the em dash — what still asks. */
+  caution?: string;
+  /** Uncommitted files in the tree, when the workspace is a git repo. */
+  dirtyFiles?: number;
+  /** OS command sandbox state. A removed guardrail is stated, never implied. */
   sandbox?: boolean;
-  /** Connected MCP servers → the `MCP · N servers` badge (hidden at 0). */
+  /** Connected MCP servers. */
   mcpServers?: number;
-  /** Kept for call-site back-compat; unused by the banner. */
+  /** Kept for call-site back-compat; unused by the header. */
   recentSessions?: unknown[];
 }
 
 const branchCache = new Map<string, string>();
 
-/** Resolve once per workspace. Banner rendering happens every frame. */
+/** Resolve once per workspace. Header rendering happens every frame. */
 function workspaceBranch(workspace: string): string {
   const cached = branchCache.get(workspace);
   if (cached != null) return cached;
@@ -74,72 +84,69 @@ function workspaceBranch(workspace: string): string {
   return branch;
 }
 
-/** Compact lockup used when the full four-row mark would crowd the terminal. */
+const dirtyCache = new Map<string, { count: number; at: number }>();
+
+/** Uncommitted files, refreshed at most twice a second. The header states the
+ *  shape of the tree you are about to change; a stale count would be worse
+ *  than none, and a `git status` per frame would be worse than both. */
+function workspaceDirty(workspace: string): number {
+  const cached = dirtyCache.get(workspace);
+  if (cached && Date.now() - cached.at < 2000) return cached.count;
+  let count = 0;
+  try {
+    const out = execFileSync("git", ["-C", workspace, "status", "--porcelain"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 400,
+    });
+    count = out.split("\n").filter((row) => row.trim()).length;
+  } catch {
+    count = 0;
+  }
+  dirtyCache.set(workspace, { count, at: Date.now() });
+  return count;
+}
+
+/** Compact lockup, still used by a few one-line notices. */
 export function wordmark(): string {
   return `${brand(GEAR_MARK)} ${bold(text(PRODUCT_NAME))}`;
 }
 
-/** The v2 environment badges: sandbox posture (a removed guardrail stays loud)
- *  and the MCP server count. Returned pre-painted, widest first. */
+/**
+ * Environment facts that belong on the state line rather than in a badge: how
+ * dirty the tree is, whether the sandbox is off, and how many MCP servers are
+ * attached. Only the sandbox is ever loud, because only the sandbox is a
+ * guardrail you can remove.
+ */
 export function bannerBadges(opts: Pick<BannerOptions, "sandbox" | "mcpServers">): string[] {
   const badges: string[] = [];
-  if (opts.sandbox === true) badges.push(chip("ok", " sandbox on "));
-  else if (opts.sandbox === false) badges.push(bold(chip("accent", " sandbox off ")));
+  if (opts.sandbox === false) badges.push("sandbox off");
   if (opts.mcpServers && opts.mcpServers > 0) {
-    badges.push(
-      chip("muted", ` MCP · ${opts.mcpServers} ${opts.mcpServers === 1 ? "server" : "servers"} `),
-    );
+    badges.push(`mcp ${opts.mcpServers}`);
   }
   return badges;
 }
 
 export function renderBanner(opts: BannerOptions): string {
-  const width = termWidth();
-  const available = Math.max(12, width - 4);
-  const dir = shortPath(opts.workspace);
   const branch = opts.branch ?? workspaceBranch(opts.workspace);
-  const location = [dir, branch].filter(Boolean).join(" · ");
-  const modelName = opts.modelLabel || opts.model;
-  const effort = opts.effort ? `${opts.effort} effort` : "";
-  const badges = bannerBadges(opts);
+  const dirty = opts.dirtyFiles ?? (branch ? workspaceDirty(opts.workspace) : 0);
+  const state = [
+    dirty > 0 ? `${dirty} file${dirty === 1 ? "" : "s"} changed` : "",
+    ...bannerBadges(opts),
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
-  if (width < 48) {
-    return [
-      "",
-      `  ${wordmark()}  ${faint("v" + opts.version)}`,
-      `  ${muted(truncate([modelName, effort].filter(Boolean).join(" · "), available))}`,
-      `  ${faint(truncate(location, available))}`,
-      ...(badges.length ? [`  ${badges.join(" ")}`] : []),
-      "",
-    ].join("\n");
-  }
-
-  // 2-col inset + 8-col avatar + 3-col gap = 13 columns before metadata.
-  const metaWidth = Math.max(18, width - 13);
-  const modelLink = "/model to change";
-  const runtimeWidth = Math.max(
-    10,
-    metaWidth - modelLink.length - 3 - (effort ? effort.length + 3 : 0),
-  );
-  const runtime =
-    `${text(truncate(modelName, runtimeWidth))}` +
-    (effort ? ` ${faint("·")} ${muted(effort)}` : "") +
-    ` ${faint("·")} ${brand(modelLink)}`;
-  const badgeRow = badges.join(" ");
-  const badgeCells = visLen(badgeRow);
-  // Badges sit at the right edge of the location row when they fit beside it.
-  const locationWidth = badgeCells > 0 ? metaWidth - badgeCells - 2 : metaWidth;
-  const locationShown = muted(truncate(location, Math.max(10, locationWidth)));
-  const fits = badgeCells > 0 && locationWidth >= 18;
-  const gap = fits
-    ? " ".repeat(Math.max(2, metaWidth - visLen(locationShown) - badgeCells - 1))
-    : "";
-  return [
-    "",
-    `  ${brand(GEAR_AVATAR_LINES[0])}   ${bold(text(PRODUCT_NAME))}  ${faint("v" + opts.version)}`,
-    `  ${brand(GEAR_AVATAR_LINES[1])}   ${runtime}`,
-    `  ${brand(GEAR_AVATAR_LINES[2])}   ${locationShown}${fits ? gap + badgeRow : ""}`,
-    `  ${brand(GEAR_AVATAR_LINES[3])}${!fits && badgeCells > 0 ? "   " + badgeRow : ""}`,
-    "",
-  ].join("\n");
+  return flowHeader({
+    name: PRODUCT_NAME.toLowerCase(),
+    version: opts.version,
+    workspace: folderName(opts.workspace),
+    branch: branch || undefined,
+    state: state || undefined,
+    model: [opts.modelLabel || opts.model, opts.effort ? `${opts.effort} effort` : ""]
+      .filter(Boolean)
+      .join(" · "),
+    scope: opts.scope,
+    caution: opts.caution,
+  });
 }

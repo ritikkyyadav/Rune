@@ -101,7 +101,7 @@ describe("ui/composer renderSessionsPanel", () => {
     );
     const plain = r.lines.map(stripAnsi).join("\n");
     expect(plain).toContain("composer");
-    expect(plain).toContain("TODAY");
+    expect(plain).toContain("today");
     expect(plain).toContain("abcdef12");
     expect(plain).toContain("/tmp/gear");
   });

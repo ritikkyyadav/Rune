@@ -14,9 +14,9 @@ import { SessionManager, deriveSessionTitle } from "../../../packages/shared/src
 const tmpDirs: string[] = [];
 
 function dbPath(): string {
-  const dir = mkdtempSync(join(tmpdir(), "alan-session-mgr-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "gear-session-mgr-test-"));
   tmpDirs.push(dir);
-  return join(dir, "alan.db");
+  return join(dir, "gear.db");
 }
 
 afterAll(() => {

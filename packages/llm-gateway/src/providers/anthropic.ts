@@ -12,7 +12,8 @@ import type {
   ToolDefinition,
   TokenUsage,
 } from "../types";
-import { parseToolArguments } from "@alan/shared";
+import { parseToolArguments } from "@gear/shared";
+import { IdleWatchdog } from "./stream-guard";
 
 // ─── Subscription OAuth (Claude Pro/Max) ───
 // A Claude Pro/Max login yields a bearer *access token*, not an API key. The
@@ -85,6 +86,11 @@ export class AnthropicProvider implements LlmProvider {
   async *inferStream(request: InferenceRequest, opts?: StreamOpts): AsyncGenerator<StreamEvent> {
     const { thinking, needsInterleavedBeta } = this.buildThinkingParam(request);
     const headers = this.betaHeader(needsInterleavedBeta);
+    // Wedged-stream protection: this adapter previously had NO timeout at all —
+    // a stalled SSE session hung the turn until the user hit Esc. Thinking
+    // models stream their reasoning as deltas, so a healthy stream beats
+    // continuously; the allowance only needs to cover inter-block pauses.
+    const guard = new IdleWatchdog(this.name, opts?.signal, 120_000, 60_000);
     const stream = this.client.messages.stream(
       {
         model: request.model,
@@ -99,7 +105,7 @@ export class AnthropicProvider implements LlmProvider {
         ...(thinking ? { thinking: thinking as never } : {}),
       },
       {
-        signal: opts?.signal,
+        signal: guard.signal,
         ...(headers ? { headers } : {}),
       },
     );
@@ -120,109 +126,117 @@ export class AnthropicProvider implements LlmProvider {
       cacheCreation: 0,
     };
 
-    for await (const event of stream) {
-      switch (event.type) {
-        case "message_start": {
-          const u = event.message.usage as unknown as Record<string, number> | undefined;
-          startUsage = {
-            input: u?.input_tokens ?? 0,
-            cacheRead: u?.cache_read_input_tokens ?? 0,
-            cacheCreation: u?.cache_creation_input_tokens ?? 0,
-          };
-          yield { type: "message_start", messageId: event.message.id };
-          break;
-        }
-
-        case "content_block_start": {
-          const block = event.content_block;
-          contentIndex = event.index;
-          if (block.type === "text") {
-            yield { type: "content_start", contentIndex };
-          } else if (block.type === "tool_use") {
-            currentToolCallId = block.id;
-            toolJsonAccumulator = "";
-            yield {
-              type: "tool_use_start",
-              toolCallId: block.id,
-              toolName: block.name,
+    try {
+      for await (const event of stream) {
+        guard.beat();
+        switch (event.type) {
+          case "message_start": {
+            const u = event.message.usage as unknown as Record<string, number> | undefined;
+            startUsage = {
+              input: u?.input_tokens ?? 0,
+              cacheRead: u?.cache_read_input_tokens ?? 0,
+              cacheCreation: u?.cache_creation_input_tokens ?? 0,
             };
-          } else if (block.type === "thinking") {
-            currentThinking = { text: "", signature: "" };
-          } else if (block.type === "redacted_thinking") {
-            // Opaque, complete on arrival — forward for verbatim round-trip.
-            const data = (block as unknown as { data?: string }).data ?? "";
-            yield { type: "redacted_thinking", data };
+            yield { type: "message_start", messageId: event.message.id };
+            break;
           }
-          break;
-        }
 
-        case "content_block_delta": {
-          const delta = event.delta;
-          if (delta.type === "text_delta") {
-            yield {
-              type: "content_delta",
-              contentIndex,
-              delta: { type: "text_delta", text: delta.text },
-            };
-          } else if (delta.type === "input_json_delta" && currentToolCallId) {
-            toolJsonAccumulator += delta.partial_json;
-            yield {
-              type: "tool_use_delta",
-              toolCallId: currentToolCallId,
-              partialJson: delta.partial_json,
-            };
-          } else if (delta.type === "thinking_delta" && currentThinking) {
-            const text = (delta as unknown as { thinking?: string }).thinking ?? "";
-            currentThinking.text += text;
-            if (text) yield { type: "thinking_delta", text };
-          } else if (delta.type === "signature_delta" && currentThinking) {
-            currentThinking.signature +=
-              (delta as unknown as { signature?: string }).signature ?? "";
+          case "content_block_start": {
+            const block = event.content_block;
+            contentIndex = event.index;
+            if (block.type === "text") {
+              yield { type: "content_start", contentIndex };
+            } else if (block.type === "tool_use") {
+              currentToolCallId = block.id;
+              toolJsonAccumulator = "";
+              yield {
+                type: "tool_use_start",
+                toolCallId: block.id,
+                toolName: block.name,
+              };
+            } else if (block.type === "thinking") {
+              currentThinking = { text: "", signature: "" };
+            } else if (block.type === "redacted_thinking") {
+              // Opaque, complete on arrival — forward for verbatim round-trip.
+              const data = (block as unknown as { data?: string }).data ?? "";
+              yield { type: "redacted_thinking", data };
+            }
+            break;
           }
-          break;
-        }
 
-        case "content_block_stop":
-          if (currentToolCallId) {
-            const toolInput = parseToolArguments(toolJsonAccumulator);
-            yield {
-              type: "tool_use_stop",
-              toolCallId: currentToolCallId,
-              toolInput,
-            };
-            currentToolCallId = null;
-            toolJsonAccumulator = "";
-          } else if (currentThinking) {
-            yield {
-              type: "thinking_stop",
-              thinking: currentThinking.text,
-              signature: currentThinking.signature || undefined,
-            };
-            currentThinking = null;
-          } else {
-            yield { type: "content_stop", contentIndex };
+          case "content_block_delta": {
+            const delta = event.delta;
+            if (delta.type === "text_delta") {
+              yield {
+                type: "content_delta",
+                contentIndex,
+                delta: { type: "text_delta", text: delta.text },
+              };
+            } else if (delta.type === "input_json_delta" && currentToolCallId) {
+              toolJsonAccumulator += delta.partial_json;
+              yield {
+                type: "tool_use_delta",
+                toolCallId: currentToolCallId,
+                partialJson: delta.partial_json,
+              };
+            } else if (delta.type === "thinking_delta" && currentThinking) {
+              const text = (delta as unknown as { thinking?: string }).thinking ?? "";
+              currentThinking.text += text;
+              if (text) yield { type: "thinking_delta", text };
+            } else if (delta.type === "signature_delta" && currentThinking) {
+              currentThinking.signature +=
+                (delta as unknown as { signature?: string }).signature ?? "";
+            }
+            break;
           }
-          break;
 
-        case "message_delta": {
-          const eventUsage = event.usage as unknown as Record<string, number> | undefined;
-          const usage: TokenUsage = {
-            // message_delta usually omits input tokens — fall back to the
-            // counts captured from message_start.
-            inputTokens: eventUsage?.input_tokens || startUsage.input,
-            outputTokens: event.usage?.output_tokens ?? 0,
-            cacheReadTokens: eventUsage?.cache_read_input_tokens ?? startUsage.cacheRead,
-            cacheCreationTokens:
-              eventUsage?.cache_creation_input_tokens ?? startUsage.cacheCreation,
-          };
-          yield {
-            type: "message_stop",
-            stopReason: this.mapStopReason(event.delta.stop_reason),
-            usage,
-          };
-          break;
+          case "content_block_stop":
+            if (currentToolCallId) {
+              const toolInput = parseToolArguments(toolJsonAccumulator);
+              yield {
+                type: "tool_use_stop",
+                toolCallId: currentToolCallId,
+                toolInput,
+              };
+              currentToolCallId = null;
+              toolJsonAccumulator = "";
+            } else if (currentThinking) {
+              yield {
+                type: "thinking_stop",
+                thinking: currentThinking.text,
+                signature: currentThinking.signature || undefined,
+              };
+              currentThinking = null;
+            } else {
+              yield { type: "content_stop", contentIndex };
+            }
+            break;
+
+          case "message_delta": {
+            const eventUsage = event.usage as unknown as Record<string, number> | undefined;
+            const usage: TokenUsage = {
+              // message_delta usually omits input tokens — fall back to the
+              // counts captured from message_start.
+              inputTokens: eventUsage?.input_tokens || startUsage.input,
+              outputTokens: event.usage?.output_tokens ?? 0,
+              cacheReadTokens: eventUsage?.cache_read_input_tokens ?? startUsage.cacheRead,
+              cacheCreationTokens:
+                eventUsage?.cache_creation_input_tokens ?? startUsage.cacheCreation,
+            };
+            yield {
+              type: "message_stop",
+              stopReason: this.mapStopReason(event.delta.stop_reason),
+              usage,
+            };
+            break;
+          }
         }
       }
+    } catch (err) {
+      // Watchdog stall (not the caller's Esc) → retryable 504 for the gateway.
+      throw guard.timeoutError() ?? err;
+    } finally {
+      guard.stop();
     }
   }
 

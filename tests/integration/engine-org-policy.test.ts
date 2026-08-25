@@ -7,8 +7,8 @@ import { Engine } from "../../packages/orchestrator/src/engine";
 import { canonicalPolicyBytes, type OrgPolicy } from "../../packages/orchestrator/src/org-policy";
 import { generateEd25519KeyPair, signBytes } from "../../packages/orchestrator/src/signing";
 
-const RUST_RELEASE = join(import.meta.dir, "../../target/release/alan-tools");
-const RUST_DEBUG = join(import.meta.dir, "../../target/debug/alan-tools");
+const RUST_RELEASE = join(import.meta.dir, "../../target/release/gear-tools");
+const RUST_DEBUG = join(import.meta.dir, "../../target/debug/gear-tools");
 const RUST_BIN = existsSync(RUST_RELEASE) ? RUST_RELEASE : RUST_DEBUG;
 const HAS_RUST_BIN = existsSync(RUST_BIN);
 
@@ -20,12 +20,12 @@ describe("Engine under org policy", () => {
   let dir: string;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "alan-engine-policy-"));
+    dir = mkdtempSync(join(tmpdir(), "gear-engine-policy-"));
   });
 
   afterEach(() => {
-    delete process.env.BERNE_POLICY_FILE;
-    delete process.env.BERNE_POLICY_PUBKEY;
+    delete process.env.GEAR_POLICY_FILE;
+    delete process.env.GEAR_POLICY_PUBKEY;
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -35,8 +35,8 @@ describe("Engine under org policy", () => {
     const written = tamper ? { ...policy, org: "Mallory" } : policy;
     writeFileSync(join(dir, "policy.json"), JSON.stringify({ policy: written, signature }));
     writeFileSync(join(dir, "org.pub"), pair.publicKeyPem);
-    process.env.BERNE_POLICY_FILE = join(dir, "policy.json");
-    process.env.BERNE_POLICY_PUBKEY = join(dir, "org.pub");
+    process.env.GEAR_POLICY_FILE = join(dir, "policy.json");
+    process.env.GEAR_POLICY_PUBKEY = join(dir, "org.pub");
   }
 
   function makeEngine(): Engine {
@@ -44,7 +44,7 @@ describe("Engine under org policy", () => {
       model: "mock-model",
       provider: "anthropic",
       workspaceRoot: dir,
-      dbPath: join(dir, "alan.db"),
+      dbPath: join(dir, "gear.db"),
       toolsBinaryPath: RUST_BIN,
       yoloMode: true, // the policy must beat even this
     });

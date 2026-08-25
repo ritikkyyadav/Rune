@@ -14,9 +14,9 @@ import { SessionManager } from "../../../packages/shared/src/session";
 const tmpDirs: string[] = [];
 
 function dbPath(): string {
-  const dir = mkdtempSync(join(tmpdir(), "alan-session-tokens-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "gear-session-tokens-test-"));
   tmpDirs.push(dir);
-  return join(dir, "alan.db");
+  return join(dir, "gear.db");
 }
 
 afterAll(() => {

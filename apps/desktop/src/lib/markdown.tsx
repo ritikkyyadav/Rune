@@ -108,9 +108,7 @@ export function Markdown({ source, streaming = false }: { source: string; stream
         switch (block.kind) {
           case "h": {
             const Tag = (block.level <= 1 ? "h1" : block.level === 2 ? "h2" : "h3") as
-              | "h1"
-              | "h2"
-              | "h3";
+              "h1" | "h2" | "h3";
             return <Tag key={index}>{renderInline(block.text, `h${index}`)}</Tag>;
           }
           case "ul":

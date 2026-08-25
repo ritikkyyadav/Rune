@@ -1,10 +1,11 @@
-import { type Logger, createLogger } from "@alan/shared";
+import { type Logger, createLogger } from "@gear/shared";
 import { McpClient } from "./client";
 import type { ToolHandler } from "../types";
 import type { McpEvent, McpServerInfo } from "./types";
+import { workspaceConfigPath } from "@gear/shared";
 
 // ─── MCP Config Format ───
-// Loaded from .alan/mcp.json in the workspace root. Supports local subprocess
+// Loaded from .gear/mcp.json in the workspace root. Supports local subprocess
 // (stdio) servers and remote (Streamable HTTP) servers.
 //
 //   {
@@ -116,7 +117,7 @@ export class McpDiscovery {
   private serverErrors: Map<string, { error: string; kind: "stdio" | "http" }> = new Map();
 
   constructor(workspaceRoot: string, options: McpDiscoveryOptions = {}) {
-    this.configPath = `${workspaceRoot}/.alan/mcp.json`;
+    this.configPath = workspaceConfigPath(workspaceRoot, "mcp.json");
     this.options = options;
     this.logger = options.logger ?? createLogger("mcp");
   }

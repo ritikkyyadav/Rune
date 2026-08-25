@@ -14,16 +14,16 @@ import {
   CopilotProvider,
   CodexProvider,
   getStrategy,
-} from "@alan/llm-gateway";
+} from "@gear/llm-gateway";
 import type {
   GatewayIncidentEvent,
   ProviderName,
   ResolvedCredential,
   AuthContext,
   AuthMethod,
-} from "@alan/llm-gateway";
-import { PROVIDER_PRESETS, CUSTOM_PROVIDER_ID, maskKey, effectiveAuthMethods } from "@alan/shared";
-import type { CustomEndpoint, CredentialStore, StoredKey } from "@alan/shared";
+} from "@gear/llm-gateway";
+import { PROVIDER_PRESETS, CUSTOM_PROVIDER_ID, maskKey, effectiveAuthMethods } from "@gear/shared";
+import type { CustomEndpoint, CredentialStore, StoredKey } from "@gear/shared";
 
 export interface BuildGatewayOpts {
   /** Active/default provider for the gateway. */

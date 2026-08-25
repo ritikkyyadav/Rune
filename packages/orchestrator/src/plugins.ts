@@ -3,7 +3,7 @@
 // The four extension loaders (skills, hooks.json, mcp.json, commands/*.md)
 // each work alone, but nothing ships as a unit. A plugin is a directory:
 //
-//   .alan/plugins/<name>/
+//   .gear/plugins/<name>/
 //     plugin.json          ← manifest (name must equal the directory name)
 //     skills/<s>/SKILL.md  ← auto-discovered; attributed to <name>
 //     hooks.json           ← merged into the hook runner (manifest: "hooks")
@@ -18,6 +18,7 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
+import { workspaceConfigPath } from "@gear/shared";
 
 export interface PluginManifest {
   name: string;
@@ -61,7 +62,7 @@ function resolveInsidePlugin(root: string, rel: string): string | null {
 }
 
 export function discoverPlugins(workspaceRoot: string): PluginDiscovery {
-  const pluginsRoot = join(workspaceRoot, ".alan", "plugins");
+  const pluginsRoot = workspaceConfigPath(workspaceRoot, "plugins");
   const out: PluginDiscovery = { plugins: [], errors: [] };
   if (!existsSync(pluginsRoot)) return out;
 

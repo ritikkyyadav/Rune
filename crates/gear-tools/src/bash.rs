@@ -118,6 +118,9 @@ pub async fn execute(input: BashInput, workspace_root: &Path) -> Result<BashOutp
         .map_err(|e| ToolError::CommandFailed(format!("Failed to spawn bash: {e}")))?;
 
     let child_pid = child.id();
+    // Register for the SIGTERM handler in main(): an interrupt (Esc in the
+    // CLI) must kill this child's whole process group, not just gear-tools.
+    gear_sandbox::active_child::set(child_pid, true);
 
     let mut stdout = child.stdout.take();
     let mut stderr = child.stderr.take();
@@ -146,6 +149,7 @@ pub async fn execute(input: BashInput, workspace_root: &Path) -> Result<BashOutp
         (stdout_buf, stderr_buf, status)
     })
     .await;
+    gear_sandbox::active_child::clear();
 
     match result {
         Ok((stdout_buf, stderr_buf, status)) => {

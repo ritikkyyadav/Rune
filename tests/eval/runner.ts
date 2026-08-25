@@ -18,10 +18,10 @@ import type { ModelSweepResult } from "./report";
 // ─── Real-mode defaults & key wiring ───
 //
 // In --real mode the suite drives a LIVE model through the real engine/gateway.
-// Provider/model come from env (ALAN_EVAL_PROVIDER / ALAN_EVAL_MODEL), with the
-// older ALAN_PROVIDER / ALAN_MODEL names accepted as fallbacks. The dev default
+// Provider/model come from env (GEAR_EVAL_PROVIDER / GEAR_EVAL_MODEL), with the
+// older GEAR_PROVIDER / GEAR_MODEL names accepted as fallbacks. The dev default
 // is a FREE model (Gemini 2.5 Flash). For a later production-validation pass, set
-// ALAN_EVAL_PROVIDER / ALAN_EVAL_MODEL to a paid top-tier model
+// GEAR_EVAL_PROVIDER / GEAR_EVAL_MODEL to a paid top-tier model
 // (e.g. anthropic / claude-sonnet-4-20250514).
 
 const DEFAULT_PROVIDER = "google";
@@ -108,7 +108,7 @@ function selectTasks(tasks: EvalTask[], args: CliArgs): EvalTask[] {
  * Sweeps only run in real mode — in mock mode every task uses the mock provider.
  */
 function parseModelSweep(): Array<{ provider: string; model: string }> | null {
-  const raw = process.env.GEAR_MODEL_SWEEP ?? process.env.ALAN_MODEL_SWEEP;
+  const raw = process.env.GEAR_MODEL_SWEEP ?? process.env.GEAR_MODEL_SWEEP;
   if (!raw) return null;
   return raw
     .split(",")
@@ -120,9 +120,9 @@ function parseModelSweep(): Array<{ provider: string; model: string }> | null {
         return {
           provider:
             process.env.GEAR_EVAL_PROVIDER ??
-            process.env.ALAN_EVAL_PROVIDER ??
+            process.env.GEAR_EVAL_PROVIDER ??
             process.env.GEAR_PROVIDER ??
-            process.env.ALAN_PROVIDER ??
+            process.env.GEAR_PROVIDER ??
             DEFAULT_PROVIDER,
           model: entry,
         };
@@ -133,20 +133,20 @@ function parseModelSweep(): Array<{ provider: string; model: string }> | null {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  // --real flag OR the legacy ALAN_EVAL_REAL=1 env var enables real mode.
+  // --real flag OR the legacy GEAR_EVAL_REAL=1 env var enables real mode.
   const real = args.real || IS_REAL_MODE;
 
   const provider =
     process.env.GEAR_EVAL_PROVIDER ??
-    process.env.ALAN_EVAL_PROVIDER ??
+    process.env.GEAR_EVAL_PROVIDER ??
     process.env.GEAR_PROVIDER ??
-    process.env.ALAN_PROVIDER ??
+    process.env.GEAR_PROVIDER ??
     DEFAULT_PROVIDER;
   const model =
     process.env.GEAR_EVAL_MODEL ??
-    process.env.ALAN_EVAL_MODEL ??
+    process.env.GEAR_EVAL_MODEL ??
     process.env.GEAR_MODEL ??
-    process.env.ALAN_MODEL ??
+    process.env.GEAR_MODEL ??
     DEFAULT_MODEL;
 
   // ── Fail fast if --real is requested without the relevant API key. ──

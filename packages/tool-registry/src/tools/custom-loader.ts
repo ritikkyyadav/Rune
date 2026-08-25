@@ -1,9 +1,10 @@
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
 import { readdirSync, existsSync, watchFile, unwatchFile } from "fs";
 import { join, extname } from "path";
+import { workspaceConfigPath } from "@gear/shared";
 
 // ─── Custom Tool Interface ───
-// Users drop files in .alan/tools/ that export this shape.
+// Users drop files in .gear/tools/ that export this shape.
 
 interface CustomToolExport {
   schema: {
@@ -25,7 +26,7 @@ export class CustomToolsLoader {
   private watchers: string[] = [];
 
   constructor(workspaceRoot: string) {
-    this.toolsDir = join(workspaceRoot, ".alan", "tools");
+    this.toolsDir = workspaceConfigPath(workspaceRoot, "tools");
   }
 
   /**

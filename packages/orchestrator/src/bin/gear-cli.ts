@@ -55,7 +55,6 @@ import { rmSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import { parseArgs } from "util";
 import * as readline from "readline";
-import { Spinner } from "./spinner";
 import { renderWelcome } from "./welcome";
 import { TurnRenderer, userBlock, renderReplay } from "./ui/turn";
 import { renderStatus } from "./ui/status";
@@ -63,6 +62,7 @@ import {
   promptString,
   statusLine,
   composerRule,
+  modeInfo,
   permissionModeBanner,
   sandboxModeBanner,
   browserModeBanner,
@@ -107,9 +107,6 @@ const { values, positionals } = parseArgs({
     yolo: { type: "boolean", default: false },
     trust: { type: "boolean", default: false },
     autonomy: { type: "string" },
-    planner: { type: "boolean", default: false },
-    "planner-model": { type: "string" },
-    "executor-model": { type: "string" },
     resume: { type: "string", short: "r" },
     new: { type: "boolean", short: "n", default: false },
     list: { type: "boolean", short: "l", default: false },
@@ -190,7 +187,6 @@ if (values.help) {
       `    --autonomy <I|II|III>        Legacy alias for --gear 2|3|4\n` +
       `    --yolo                       Legacy alias for --gear 4\n` +
       `    --trust                      Legacy alias for --gear 3 (workspace trust)\n` +
-      `    --planner                    Enable planner+executor mode\n` +
       `    --classic                    Plain readline prompt (default is the pinned composer)\n` +
       `    --tui                        Force the Codex-style pinned composer\n` +
       `    --fullscreen                 Use the focused Gear terminal surface (default)\n` +
@@ -265,13 +261,7 @@ if (command === "models") {
 }
 
 type CliProvider =
-  | "anthropic"
-  | "openai"
-  | "openrouter"
-  | "google"
-  | "ollama-turbo"
-  | "ollama"
-  | "lmstudio";
+  "anthropic" | "openai" | "openrouter" | "google" | "ollama-turbo" | "ollama" | "lmstudio";
 
 const DEFAULT_MODELS: Record<CliProvider, string> = {
   anthropic: "claude-sonnet-4-6",
@@ -665,7 +655,6 @@ async function main() {
       DEFAULT_MODELS[provider];
   }
 
-  const plannerMode = values.planner as boolean;
   // Explicit CLI gear flags win over the persisted gear.
   const gearFlag = values.gear !== undefined ? String(values.gear) : undefined;
   if (gearFlag !== undefined && !configModeToPermissionMode(gearFlag)) {
@@ -705,18 +694,14 @@ async function main() {
   // Sandbox posture: flag > GEAR_SANDBOX_ENABLED env > /sandbox sidecar > config > on.
   const sandboxEnabled = resolveInitialSandbox({
     flag: values["no-sandbox"] === true ? false : values.sandbox === true ? true : undefined,
-    env:
-      process.env.GEAR_SANDBOX_ENABLED ??
-      null,
+    env: process.env.GEAR_SANDBOX_ENABLED ?? null,
     saved: loadSavedSandboxState(),
     configured: config.sandbox?.enabled ?? null,
   });
   // Browser posture: flag > GEAR_BROWSER_ENABLED env > /browser sidecar > config > off.
   const browserEnabled = resolveInitialBrowser({
     flag: values["no-browser"] === true ? false : values.browser === true ? true : undefined,
-    env:
-      process.env.GEAR_BROWSER_ENABLED ??
-      null,
+    env: process.env.GEAR_BROWSER_ENABLED ?? null,
     saved: loadSavedBrowserState(),
     configured: config.browser?.enabled ?? null,
   });
@@ -754,16 +739,14 @@ async function main() {
     sandboxRequireOs: config.sandbox?.requireOs === true,
     lspAutoFeedback: config.lsp?.autoFeedback === true,
     reliability: config.reliability,
+    // [verify] — previously EngineConfig-only, unreachable from any config.
+    enableVerification: config.verify?.enabled,
+    verifyCommand: config.verify?.commands,
+    verifyTimeoutMs:
+      typeof config.verify?.timeoutSecs === "number" && config.verify.timeoutSecs > 0
+        ? Math.floor(config.verify.timeoutSecs * 1000)
+        : undefined,
     browser: { ...config.browser, enabled: browserEnabled },
-    plannerMode,
-    routing: plannerMode
-      ? {
-          planner: (values["planner-model"] as string) ?? config.llm.planner?.model ?? model,
-          executor: (values["executor-model"] as string) ?? config.llm.executor?.model ?? model,
-          plannerProvider: config.llm.planner?.provider ?? provider,
-          executorProvider: config.llm.executor?.provider ?? provider,
-        }
-      : undefined,
     // Pass config-file keys as "saved" — but NOT when they merely echo an env
     // var (loadConfig folds env into config.llm.*), so an env-only key is
     // reported as "env" by the gateway's env fallback instead of "saved".
@@ -928,20 +911,12 @@ async function main() {
   // excluded. `--inline` remains a compatibility escape hatch for users who value native terminal
   // scrollback over the product surface. Piped/non-TTY stdin and `--classic` / GEAR_CLASSIC fall
   // back to the plain readline prompt; `--tui` / GEAR_TUI force the TUI even past `--classic`.
-  const classicForced =
-    (values.classic as boolean) ||
-    !!process.env.GEAR_CLASSIC;
-  const tuiForced =
-    (values.tui as boolean) ||
-    !!process.env.GEAR_TUI;
+  const classicForced = (values.classic as boolean) || !!process.env.GEAR_CLASSIC;
+  const tuiForced = (values.tui as boolean) || !!process.env.GEAR_TUI;
   const useTui = !!process.stdin.isTTY && (tuiForced || !classicForced);
-  const inlineTui =
-    (values.inline as boolean) ||
-    !!process.env.GEAR_INLINE;
+  const inlineTui = (values.inline as boolean) || !!process.env.GEAR_INLINE;
   const fullscreenTui =
-    !inlineTui ||
-    (values.fullscreen as boolean) ||
-    !!process.env.GEAR_FULLSCREEN;
+    !inlineTui || (values.fullscreen as boolean) || !!process.env.GEAR_FULLSCREEN;
 
   // ─── Create or resume session (one native flow) ───
   // `gear resume [id]` / `--resume <id>` target a specific session. Otherwise, on an
@@ -1131,6 +1106,7 @@ async function main() {
     .listSessions()
     .filter((s) => s.id !== sessionId && isMeaningfulSession(s));
 
+  const startingGear = modeInfo(engine.getPermissionMode());
   process.stdout.write(
     renderWelcome({
       model: engine.getModel(),
@@ -1139,6 +1115,10 @@ async function main() {
       workspace: workspaceRoot,
       version: GEAR_VERSION,
       sandbox: sandboxEnabled,
+      // The header states what the agent may do to this machine before the
+      // first prompt, not after the first surprise.
+      scope: startingGear.label,
+      caution: startingGear.desc,
       recentSessions,
     }) + "\n",
   );
@@ -1155,7 +1135,19 @@ async function main() {
     process.stdout.write(`  ${faint("continue where you left off ↓")}\n\n`);
   }
 
-  const spinner = new Spinner();
+  // Classic mode is a frozen NON-INTERACTIVE plain printer (pipes / CI /
+  // one-shot). The stderr spinner is retired: two independently-buffered
+  // streams sharing a terminal row was the documented "garbled composer"
+  // failure, and in a pipe it was pure noise. The interactive product is
+  // the Flow TUI; this null-object keeps the 30+ call sites inert.
+  const spinner = {
+    start: (_phase?: string) => {},
+    stop: () => {},
+    isRunning: () => false,
+    addTokens: (_n?: number) => {},
+    setActivity: (_a?: string) => {},
+    setTool: (_t?: string) => {},
+  };
 
   // ─── Paste Interception ───
   // Intercept stdin BEFORE readline to prevent echo flood on large pastes.
@@ -1282,38 +1274,42 @@ async function main() {
 
   // ─── Question Handler (ask_user tool) ───
   // Numbered options; a bare number picks one, anything else is a free-text
-  // answer, Enter alone takes the first option.
+  // answer, Enter alone takes the first option. Wired only on a real TTY:
+  // piped/CI runs leave it absent so ask_user degrades to its instructive
+  // error instead of parking the run on a readline nobody will answer.
 
-  engine.setQuestionHandler(
-    (q) =>
-      new Promise<string>((resolve) => {
-        const wasSpinning = spinner.isRunning?.() ?? false;
-        spinner.stop();
+  if (process.stdin.isTTY) {
+    engine.setQuestionHandler(
+      (q) =>
+        new Promise<string>((resolve) => {
+          const wasSpinning = spinner.isRunning?.() ?? false;
+          spinner.stop();
 
-        process.stdout.write("\n");
-        process.stdout.write(`  ${info("?")} ${bold(text(q.question))}\n`);
-        q.options.forEach((opt, i) => {
-          process.stdout.write(`    ${info(String(i + 1))} ${text(opt)}\n`);
-        });
-        process.stdout.write(`  ${muted("number to choose · or type an answer · Enter = 1")}\n`);
+          process.stdout.write("\n");
+          process.stdout.write(`  ${info("?")} ${bold(text(q.question))}\n`);
+          q.options.forEach((opt, i) => {
+            process.stdout.write(`    ${info(String(i + 1))} ${text(opt)}\n`);
+          });
+          process.stdout.write(`  ${muted("number to choose · or type an answer · Enter = 1")}\n`);
 
-        rl.question(`  ${info("›")} `, (answer) => {
-          const a = answer.trim();
-          let result: string;
-          const n = Number.parseInt(a, 10);
-          if (!a) {
-            result = q.options[0];
-          } else if (!Number.isNaN(n) && n >= 1 && n <= q.options.length && String(n) === a) {
-            result = q.options[n - 1];
-          } else {
-            result = a; // free-text answer
-          }
-          process.stdout.write(`  ${ok("✓")} ${muted(truncate(result, 80))}\n`);
-          if (wasSpinning) spinner.start("tool_call");
-          resolve(result);
-        });
-      }),
-  );
+          rl.question(`  ${info("›")} `, (answer) => {
+            const a = answer.trim();
+            let result: string;
+            const n = Number.parseInt(a, 10);
+            if (!a) {
+              result = q.options[0];
+            } else if (!Number.isNaN(n) && n >= 1 && n <= q.options.length && String(n) === a) {
+              result = q.options[n - 1];
+            } else {
+              result = a; // free-text answer
+            }
+            process.stdout.write(`  ${ok("✓")} ${muted(truncate(result, 80))}\n`);
+            if (wasSpinning) spinner.start("tool_call");
+            resolve(result);
+          });
+        }),
+    );
+  }
 
   // ─── Slash Command Definitions ───
 
@@ -1321,7 +1317,7 @@ async function main() {
     ["/theme", "Switch accent colors and light/dark mode"],
     ["/model", "Choose model/provider"],
     ["/sessions", "Browse, resume, rename, archive, or delete sessions"],
-    ["/mode", "Cycle guided → Autonomy I → II → III → Auto"],
+    ["/mode", "Shift gears — 1st · 2nd · 3rd · 4th · auto"],
     ["/diff", "Inspect staged and uncommitted workspace changes"],
     ["/loop", "Repeat a prompt while this session stays open"],
     ["/loops", "List and manage this session's loops"],
@@ -1341,7 +1337,6 @@ async function main() {
     ["/memory", "System memory — your evergreen profile (update/add/edit/cadence)"],
     ["/notebook", "Learned tactics active for this workspace"],
     ["/bug", "Flag a problem — records the flight trail to the black box"],
-    ["/plan", "Toggle plan mode"],
     ["/gear", "Shift gears — /gear 1 | 2 | 3 | 4 | auto (empty shifts up)"],
     ["/sandbox", "OS sandbox for commands — on | off (off = full access)"],
     ["/browser", "Agent web browser — on | off (Playwright, headless)"],
@@ -1577,7 +1572,7 @@ async function main() {
     const mem = engine.getSystemMemory();
     if (mem.enabled && !mem.content.trim() && mem.scheduleLabel === "manual") {
       process.stdout.write(
-        `  ${faint("✦ tip: Gear can learn your style & codebases over time — ")}${info("/memory")}${faint(" (auto-update: /memory weekly)")}\n`,
+        `  ${faint("tip: Gear can learn your style over time —")} ${info("/memory")}\n`,
       );
     }
     // Auto-refresh in the background when the chosen cadence is due. Non-blocking;
@@ -1723,7 +1718,6 @@ async function main() {
               workspace: status.workspace,
               sessionId,
               cost: status.cost,
-              plannerMode: status.plannerMode,
               yoloMode: status.yoloMode,
               trustWorkspace: status.trustWorkspace,
               permissionMode: status.permissionMode,
@@ -2610,18 +2604,6 @@ async function main() {
         return;
       }
 
-      if (input === "/plan") {
-        const on = !engine.isPlannerMode();
-        engine.setPlannerMode(on);
-        process.stdout.write(
-          `  ${green("✓")} plan mode ${on ? "on" : "off"} ${dim(
-            on ? "— Gear drafts a step plan before executing" : "— flat agent loop",
-          )}\n\n`,
-        );
-        showPrompt();
-        return;
-      }
-
       if (input === "/gear" || input.startsWith("/gear ")) {
         const raw = input.slice("/gear".length).trim();
         const target = configModeToPermissionMode(raw || undefined);
@@ -2997,7 +2979,8 @@ async function main() {
               try {
                 const { writeFileSync, mkdirSync } = require("fs");
                 const { join } = require("path");
-                const dir = config.research?.outputDir || workspaceConfigPath(workspaceRoot, "research");
+                const dir =
+                  config.research?.outputDir || workspaceConfigPath(workspaceRoot, "research");
                 mkdirSync(dir, { recursive: true });
                 const slug =
                   question

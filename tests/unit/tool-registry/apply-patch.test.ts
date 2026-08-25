@@ -30,7 +30,7 @@ async function run(patch: string) {
 }
 
 beforeEach(async () => {
-  workspace = await mkdtemp(join(tmpdir(), "alan-apply-patch-"));
+  workspace = await mkdtemp(join(tmpdir(), "gear-apply-patch-"));
 });
 
 afterEach(async () => {
@@ -109,7 +109,10 @@ random junk
 
 describe("apply_patch execution", () => {
   test("multi-hunk update across two files applies atomically", async () => {
-    await writeFile(join(workspace, "math.ts"), "export function add(a, b) {\n  return a - b;\n}\nexport function mul(a, b) {\n  return a + b;\n}\n");
+    await writeFile(
+      join(workspace, "math.ts"),
+      "export function add(a, b) {\n  return a - b;\n}\nexport function mul(a, b) {\n  return a + b;\n}\n",
+    );
     await writeFile(join(workspace, "index.ts"), "import { add } from './math';\n");
 
     const out = await run(`*** Begin Patch
@@ -252,10 +255,23 @@ describe("per-model-family tool advertisement", () => {
   });
 
   test("modelUsesApplyPatch matches the Codex lineage only", () => {
-    for (const m of ["gpt-5", "gpt-4o-mini", "o3", "o4-mini", "codex-mini-latest", "gpt-oss-120b"]) {
+    for (const m of [
+      "gpt-5",
+      "gpt-4o-mini",
+      "o3",
+      "o4-mini",
+      "codex-mini-latest",
+      "gpt-oss-120b",
+    ]) {
       expect(modelUsesApplyPatch(m)).toBe(true);
     }
-    for (const m of ["claude-sonnet-5", "gemini-2.5-flash", "qwen3-coder-next", "olmo-2", "llama3"]) {
+    for (const m of [
+      "claude-sonnet-5",
+      "gemini-2.5-flash",
+      "qwen3-coder-next",
+      "olmo-2",
+      "llama3",
+    ]) {
       expect(modelUsesApplyPatch(m)).toBe(false);
     }
   });

@@ -16,12 +16,18 @@ describe("AGENT_DOCTRINE — agency layer", () => {
       AGENT_DOCTRINE.indexOf("# Tone and style"),
     );
     expect(AGENT_DOCTRINE).toContain("that is YOUR bug to fix");
-    expect(AGENT_DOCTRINE).toContain("Never end your reply with a plan or a promise");
+    expect(AGENT_DOCTRINE).toContain("Never END your reply on an unexecuted plan or a promise");
+    // Stating a brief plan BEFORE acting is explicitly good practice now —
+    // the ban is on stopping there, not on showing the plan.
+    expect(AGENT_DOCTRINE).toContain(
+      "Stating your plan briefly BEFORE executing it is good engineering",
+    );
     expect(AGENT_DOCTRINE).toContain("Act on reasonable assumptions");
   });
 
   test("4th gear means no human mid-task", () => {
-    expect(AGENT_DOCTRINE).toContain("In 4th gear (full autonomy) there is no human mid-task");
+    expect(AGENT_DOCTRINE).toContain("In 4th gear (full autonomy), execution is yours alone");
+    expect(AGENT_DOCTRINE).toContain("4th gear changes WHEN you ask, not whether");
   });
 
   test("delegation teaches parallel fan-out", () => {

@@ -392,8 +392,7 @@ describe("parseResponsesStream", () => {
     ];
     const evs = await collect(parseResponsesStream(sseStream(events)));
     const rt = evs.find((e) => e.type === "redacted_thinking") as
-      | { data: string; provider?: string }
-      | undefined;
+      { data: string; provider?: string } | undefined;
     expect(rt?.provider).toBe("codex"); // tagged so only Codex replays it
     expect(JSON.parse(rt!.data)).toMatchObject({
       type: "reasoning",

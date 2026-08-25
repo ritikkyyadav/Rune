@@ -10,6 +10,13 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
+/** New run worktrees live here; pre-rename `.alan/worktrees` checkouts are still recognized. */
+const WORKTREE_DIR = join(".gear", "worktrees");
+const WORKTREE_DIRS = [WORKTREE_DIR, join(".alan", "worktrees")];
+function isRunWorktreePath(path: string | undefined): boolean {
+  return !!path && WORKTREE_DIRS.some((dir) => path.includes(dir));
+}
+
 export interface RunWorktree {
   /** Absolute path of the isolated checkout. */
   path: string;
@@ -32,7 +39,7 @@ export function isGitRepo(dir: string): boolean {
 }
 
 /**
- * Create an isolated worktree for a run at `.alan/worktrees/<runId>`, on a
+ * Create an isolated worktree for a run at `.gear/worktrees/<runId>`, on a
  * fresh `gear/run-<runId>` branch off the current HEAD. Throws with the git
  * error on failure — a run that THINKS it is isolated but isn't would be
  * worse than one that refuses to start.
@@ -44,7 +51,7 @@ export function createRunWorktree(repoRoot: string, runId: string): RunWorktree 
     );
   }
   const safeId = runId.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 48);
-  const base = join(repoRoot, ".alan", "worktrees");
+  const base = join(repoRoot, WORKTREE_DIR);
   mkdirSync(base, { recursive: true });
   const path = join(base, safeId);
   if (existsSync(path)) {
@@ -58,7 +65,7 @@ export function createRunWorktree(repoRoot: string, runId: string): RunWorktree 
   return { path, branch };
 }
 
-/** Worktrees under `.alan/worktrees` (path + branch per entry). */
+/** Worktrees under `.gear/worktrees` (path + branch per entry). */
 export function listRunWorktrees(repoRoot: string): RunWorktree[] {
   const res = git(repoRoot, ["worktree", "list", "--porcelain"]);
   if (!res.ok) return [];
@@ -69,13 +76,13 @@ export function listRunWorktrees(repoRoot: string): RunWorktree[] {
     else if (line.startsWith("branch ")) {
       current.branch = line.slice("branch ".length).replace("refs/heads/", "");
     } else if (line === "") {
-      if (current.path?.includes(`${join(".alan", "worktrees")}`) && current.branch) {
+      if (isRunWorktreePath(current.path) && current.branch) {
         out.push(current as RunWorktree);
       }
       current = {};
     }
   }
-  if (current.path?.includes(join(".alan", "worktrees")) && current.branch) {
+  if (isRunWorktreePath(current.path) && current.branch) {
     out.push(current as RunWorktree);
   }
   return out;
@@ -87,7 +94,7 @@ export function listRunWorktrees(repoRoot: string): RunWorktree[] {
  */
 export function removeRunWorktree(repoRoot: string, runId: string): void {
   const safeId = runId.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 48);
-  const path = join(repoRoot, ".alan", "worktrees", safeId);
+  const path = join(repoRoot, WORKTREE_DIR, safeId);
   const res = git(repoRoot, ["worktree", "remove", "--force", path]);
   if (!res.ok) {
     throw new Error(`git worktree remove failed: ${res.stderr || res.stdout}`);

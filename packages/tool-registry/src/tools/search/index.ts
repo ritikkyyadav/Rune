@@ -32,12 +32,7 @@ function makeBackend(name: SearchBackendName): SearchBackend {
  * the list is never empty.
  */
 export function selectBackends(preferred?: string): SearchBackend[] {
-  const pref = (
-    preferred ??
-    process.env.GEAR_SEARCH_BACKEND ??
-    process.env.ALAN_SEARCH_BACKEND ??
-    "auto"
-  ).toLowerCase();
+  const pref = (preferred ?? process.env.GEAR_SEARCH_BACKEND ?? "auto").toLowerCase();
 
   let order = [...DEFAULT_ORDER];
   if (pref !== "auto" && (DEFAULT_ORDER as string[]).includes(pref)) {

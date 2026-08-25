@@ -5,7 +5,7 @@
  * This is a self-contained reliability module. Wiring into the Engine is
  * intentionally left to the orchestrator — nothing here imports the Engine.
  *
- * Configuration lives in `<workspaceRoot>/.alan/hooks.json` and looks like:
+ * Configuration lives in `<workspaceRoot>/.gear/hooks.json` and looks like:
  *
  *   {
  *     "preToolUse":  [{ "match": "edit_*", "command": "./scripts/guard.sh", "blocking": true }],
@@ -15,7 +15,7 @@
  *   }
  *
  * Each command receives:
- *   - env vars: ALAN_TOOL_NAME, ALAN_TOOL_ARGS / ALAN_TOOL_OUTPUT, ALAN_HOOK_EVENT
+ *   - env vars: GEAR_TOOL_NAME, GEAR_TOOL_ARGS / GEAR_TOOL_OUTPUT, GEAR_HOOK_EVENT
  *   - stdin: a JSON payload ({ event, toolName, args } or { event, toolName, output })
  *
  * Blocking pre-tool hooks that exit non-zero veto the tool call. All other
@@ -24,6 +24,7 @@
  */
 
 import { join } from "node:path";
+import { workspaceConfigPath } from "@gear/shared";
 
 // ─── Types ───
 
@@ -82,7 +83,7 @@ const SNIPPET_LIMIT = 500;
 // ─── Config loading ───
 
 /**
- * Load hook configuration from `<workspaceRoot>/.alan/hooks.json`, plus any
+ * Load hook configuration from `<workspaceRoot>/.gear/hooks.json`, plus any
  * extra hook files (plugin bundles). Event arrays concatenate — workspace
  * hooks first, then each extra file in order, so user hooks always run before
  * plugin hooks for the same event.
@@ -95,7 +96,7 @@ export async function loadHookConfig(
   workspaceRoot: string,
   extraFiles: string[] = [],
 ): Promise<HookConfig> {
-  const base = await loadHookFile(join(workspaceRoot, ".alan", "hooks.json"));
+  const base = await loadHookFile(workspaceConfigPath(workspaceRoot, "hooks.json"));
   let merged = base;
   for (const extra of extraFiles) {
     merged = mergeHookConfigs(merged, await loadHookFile(extra));
@@ -238,7 +239,7 @@ export class HookRunner {
     this.logger = options?.logger ?? ((m) => console.warn(m));
   }
 
-  /** Convenience: load `<workspaceRoot>/.alan/hooks.json` then build a runner. */
+  /** Convenience: load `<workspaceRoot>/.gear/hooks.json` then build a runner. */
   static async load(
     workspaceRoot: string,
     options?: { logger?: (message: string) => void; extraHookFiles?: string[] },
@@ -271,9 +272,9 @@ export class HookRunner {
 
     const payload = safeStringify({ event: "preToolUse", toolName, args });
     const env: Record<string, string> = {
-      ALAN_HOOK_EVENT: "preToolUse",
-      ALAN_TOOL_NAME: toolName,
-      ALAN_TOOL_ARGS: payload,
+      GEAR_HOOK_EVENT: "preToolUse",
+      GEAR_TOOL_NAME: toolName,
+      GEAR_TOOL_ARGS: payload,
     };
 
     for (const hook of hooks) {
@@ -295,28 +296,43 @@ export class HookRunner {
   }
 
   /**
-   * Run all matching postToolUse hooks after a tool executes.
-   * Fire-and-report: failures are logged, never thrown. The tool output is
-   * passed both as JSON on stdin and via ALAN_TOOL_OUTPUT.
+   * Run all matching postToolUse hooks after a tool executes. Failures are
+   * logged, never thrown — but the hooks' OUTPUT is returned so the caller can
+   * feed it back to the model. (It used to be discarded entirely, which made a
+   * format/lint hook a silent bystander: its findings never reached the agent,
+   * so nothing was ever fixed because of one.)
+   *
+   * @returns concatenated hook stdout (plus failure one-liners), capped, or
+   *          null when there is nothing worth feeding back.
    */
-  async runPostToolUse(toolName: string, output: unknown): Promise<void> {
+  async runPostToolUse(toolName: string, output: unknown): Promise<string | null> {
     const hooks = this.matching(this.config.postToolUse, toolName);
-    if (hooks.length === 0) return;
+    if (hooks.length === 0) return null;
 
     const outputStr = safeStringify(output);
     const payload = safeStringify({ event: "postToolUse", toolName, output });
     const env: Record<string, string> = {
-      ALAN_HOOK_EVENT: "postToolUse",
-      ALAN_TOOL_NAME: toolName,
-      ALAN_TOOL_OUTPUT: outputStr,
+      GEAR_HOOK_EVENT: "postToolUse",
+      GEAR_TOOL_NAME: toolName,
+      GEAR_TOOL_OUTPUT: outputStr,
     };
 
+    const feedback: string[] = [];
     for (const hook of hooks) {
       const result = await this.execute(hook, payload, env);
       if (result.timedOut || result.spawnError !== undefined || result.exitCode !== 0) {
         this.logger(`[hooks] postToolUse hook failed: ${this.describeFailure(hook, result)}`);
+        const detail = (result.stderr || result.stdout || "").trim().slice(0, 400);
+        feedback.push(
+          `hook \`${hook.command}\` exited ${result.exitCode ?? "?"}${detail ? `:\n${detail}` : ""}`,
+        );
+      } else if (result.stdout.trim()) {
+        feedback.push(result.stdout.trim());
       }
     }
+    if (feedback.length === 0) return null;
+    const joined = feedback.join("\n");
+    return joined.length > 2_000 ? joined.slice(0, 2_000) + "\n…[hook output truncated]" : joined;
   }
 
   /** Run sessionStart hooks. Report-only; never throws. */
@@ -334,7 +350,7 @@ export class HookRunner {
   private async runLifecycle(event: HookEvent, hooks: HookDef[] | undefined): Promise<void> {
     if (!hooks || hooks.length === 0) return;
     const payload = safeStringify({ event });
-    const env: Record<string, string> = { ALAN_HOOK_EVENT: event };
+    const env: Record<string, string> = { GEAR_HOOK_EVENT: event };
     for (const hook of hooks) {
       const result = await this.execute(hook, payload, env);
       if (result.timedOut || result.spawnError !== undefined || result.exitCode !== 0) {

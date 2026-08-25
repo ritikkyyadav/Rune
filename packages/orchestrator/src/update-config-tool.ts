@@ -1,5 +1,5 @@
-import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "@alan/tool-registry";
-import { setConfigValue } from "@alan/shared";
+import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "@gear/tool-registry";
+import { setConfigValue } from "@gear/shared";
 import {
   CONFIG_SETTINGS,
   resolveSetting,
@@ -12,7 +12,7 @@ import {
 /**
  * `update_config` — change one of Gear's own settings from a plain-language
  * request ("switch to Autonomy III", "turn the sandbox off", "enable auto
- * commit"). The change is applied live AND written back to ~/.alan/config.toml so
+ * commit"). The change is applied live AND written back to ~/.gear/config.toml so
  * it survives the next launch. The model maps the user's words to a setting +
  * value; this tool validates them against a fixed catalog (so it can only touch
  * known settings), applies the change, then persists it.
@@ -36,7 +36,7 @@ export const UPDATE_CONFIG_TOOL_SCHEMA: ToolSchema = {
   description:
     'Change one of Gear\'s own settings when the user asks (e.g. "switch to Autonomy III", ' +
     '"turn the sandbox off", "enable auto commit"). The change applies immediately ' +
-    "and is saved to ~/.alan/config.toml so it persists across restarts. Call with `setting` " +
+    "and is saved to ~/.gear/config.toml so it persists across restarts. Call with `setting` " +
     "and `value`. Omit `value` to read the current value; omit both to list every setting. " +
     "Only these settings can be changed:\n" +
     settingsCatalogSummary(),
@@ -152,7 +152,7 @@ export function createUpdateConfigTool(deps: UpdateConfigDeps): ToolHandler {
 
         // Persist so it sticks. A persist failure is non-fatal (the live change
         // already took) but must be reported honestly.
-        let persistNote = "saved to ~/.alan/config.toml";
+        let persistNote = "saved to ~/.gear/config.toml";
         try {
           setConfigValue(setting.tomlPath, settingTomlValue(setting, canonical), {
             scope: "global",

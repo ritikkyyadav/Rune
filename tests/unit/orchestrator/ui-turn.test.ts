@@ -23,8 +23,18 @@ function harness() {
     turn,
     output: () => stripAnsi(commits.join("\n")),
     preview: () => stripAnsi((previews.at(-1) ?? []).join("\n")),
+    /** What the 125ms TUI tick would paint right now. The sink only receives a
+     *  rung when an event changes it, so a frame released by the passage of
+     *  time — which is most of them — is visible here and nowhere else. */
+    rung: () => stripAnsi(turn.liveLines().join("\n")),
   };
 }
+
+/** The live rung's dwell floor, mirrored from ./ui/turn so the pacing tests
+ *  wait on the real number rather than a guess. */
+const DWELL = 700;
+const SETTLE = 120;
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function toolEnd(name: string, args: Record<string, unknown>, result = "{}", success = true) {
   return {
@@ -45,24 +55,24 @@ describe("TurnRenderer — customizer activity stream", () => {
     expect(h.output()).not.toContain("◉ Gear");
   });
 
-  it("paces a long routine burst into one visible summary while preserving full details", () => {
+  it("commits every call as it lands — no burst is hidden behind a summary", () => {
     const h = harness();
     for (let index = 0; index < 30; index++) {
       h.turn.onEvent(toolEnd("read_file", { path: `src/file-${index}.ts` }));
     }
-    expect(h.commits).toHaveLength(0);
-    expect(h.preview()).toContain("Thinking"); // the v2 rung: label + receipt, no ledger
+    expect(h.commits).toHaveLength(30);
+    expect(h.preview()).toContain("thinking"); // the rung: label + receipt, no ledger
     expect((h.previews.at(-1) ?? []).length).toBeLessThanOrEqual(2);
 
     h.turn.onEvent({ type: "text_delta", text: "The implementation is mapped." });
     h.turn.finish();
-    expect(h.output()).toContain("Read 30 files");
+    // Each row is one line, so 30 of them cost 30 lines and hide nothing.
+    expect(h.output()).toContain("src/file-0.ts");
+    expect(h.output()).toContain("src/file-29.ts");
     expect(h.output()).toContain("30 files reviewed");
-    expect(h.output()).not.toContain("src/file-0.ts");
-    expect(stripAnsi(h.turn.fullLog() ?? "")).toContain("src/file-0.ts");
   });
 
-  it("renders model progress prose as a Plan row before the matching action", () => {
+  it("renders model progress prose in the agent's own voice, before the matching action", async () => {
     const h = harness();
     h.turn.onEvent({ type: "text_delta", text: "Tracing the authentication path." });
     h.turn.onEvent({ type: "tool_call_start", callId: "r1", toolName: "read_file" });
@@ -71,17 +81,19 @@ describe("TurnRenderer — customizer activity stream", () => {
       callId: "r1",
       partialJson: '{"path":"src/auth/session.ts"}',
     });
-    expect(h.preview()).toContain("Reading");
-    expect(h.preview()).toContain("src/auth/session.ts");
+    await sleep(DWELL + 60);
+    expect(h.rung()).toContain("Reading");
+    expect(h.rung()).toContain("src/auth/session.ts");
     h.turn.onEvent(toolEnd("read_file", { path: "src/auth/session.ts" }));
     h.turn.onEvent({ type: "text_delta", text: "The stale branch is the cause." });
     h.turn.finish();
-    expect(h.output()).toContain("Plan:");
-    expect(h.output()).toContain("Tracing the authentication path");
+    // No "Plan:" label — a sentence that needs a label is not a sentence.
+    expect(h.output()).not.toContain("Plan:");
+    expect(h.output()).toContain("● Tracing the authentication path.");
     expect(h.output()).toContain("The stale branch is the cause.");
   });
 
-  it("uses Plan once, then renders later progress as ordinary activity", () => {
+  it("renders every progress paragraph the same way — one dot, one voice", () => {
     const h = harness();
     h.turn.onEvent({ type: "text_delta", text: "Trace the request path." });
     h.turn.onEvent({ type: "tool_call_start", callId: "r1", toolName: "read_file" });
@@ -90,11 +102,12 @@ describe("TurnRenderer — customizer activity stream", () => {
     h.turn.onEvent({ type: "tool_call_start", callId: "r2", toolName: "grep" });
     h.turn.onEvent(toolEnd("grep", { pattern: "stale", path: "src" }));
     h.turn.finish();
-    expect(h.output().match(/Plan:/g) ?? []).toHaveLength(1);
+    expect(h.output()).not.toContain("Plan:");
+    expect(h.output()).toContain("● Trace the request path.");
     expect(h.output()).toContain("● The stale branch is isolated.");
   });
 
-  it("matches the reference ledger for a mixed exploration burst", () => {
+  it("renders a mixed exploration burst as one row per call", () => {
     const h = harness();
     h.turn.onEvent(toolEnd("read_file", { path: "src/app.ts" }));
     h.turn.onEvent(toolEnd("list_dir", { path: "src" }));
@@ -103,12 +116,13 @@ describe("TurnRenderer — customizer activity stream", () => {
     );
     h.turn.onEvent({ type: "text_delta", text: "The implementation is mapped." });
     h.turn.finish();
-    expect(h.output()).toContain("Read 1 file, listed 1 directory, and ran 1 shell command");
-    expect(h.output()).toContain("● Running command");
-    expect(h.output()).toContain("$ git status --short");
+    expect(h.output()).toContain("│ · read  src/app.ts");
+    expect(h.output()).toContain("│ · list  src/");
+    expect(h.output()).toContain("│ · run   git status --short");
+    expect(h.output()).toContain("└ M src/app.ts");
   });
 
-  it("advances through Plan, Act, and Verify while retaining the completed rows", () => {
+  it("advances through Plan, Act, and Verify while retaining the completed rows", async () => {
     const h = harness();
     h.turn.onEvent({
       type: "todo_updated",
@@ -118,9 +132,13 @@ describe("TurnRenderer — customizer activity stream", () => {
         { content: "Run checks", status: "pending" },
       ],
     });
-    expect(h.output()).toContain("Plan:");
-    expect(h.preview()).toContain("Fix the branch");
-    expect(h.preview()).toContain("1/3 steps");
+    expect(h.output()).toContain("│ plan");
+    expect(h.output()).toContain("│ ✓ Trace the flow");
+    expect(h.output()).toContain("│ › Fix the branch");
+    expect(h.output()).toContain("│ ○ Run checks");
+    await sleep(SETTLE + 60);
+    expect(h.rung()).toContain("Fix the branch");
+    expect(h.rung()).toContain("1/3 steps");
 
     h.turn.onEvent({ type: "tool_call_start", callId: "e1", toolName: "edit_file" });
     h.turn.onEvent({
@@ -128,13 +146,88 @@ describe("TurnRenderer — customizer activity stream", () => {
       callId: "e1",
       partialJson: '{"path":"src/auth/session.ts"}',
     });
-    expect(h.preview()).toContain("Updating src/auth/session.ts");
+    // The rung is paced: a frame that has only just gone up outlasts whatever
+    // wants to replace it, so a tool that starts moments after the plan did does
+    // not shove the plan step off screen before it could be read.
+    expect(h.rung()).toContain("Fix the branch");
+    await sleep(DWELL + 60);
+    expect(h.rung()).toContain("Updating src/auth/session.ts");
 
     h.turn.onEvent({ type: "verification_started", attempt: 1 });
-    expect(h.preview()).toContain("Verifying");
+    await sleep(DWELL + 60);
+    expect(h.rung()).toContain("checking");
   });
 
-  it("renders the reference's file header and line-level diff card", () => {
+  it("holds a live frame long enough to be read, however fast the work is", async () => {
+    const h = harness();
+    h.turn.onEvent({ type: "tool_call_start", callId: "r1", toolName: "read_file" });
+    h.turn.onEvent({ type: "tool_call_args_delta", callId: "r1", partialJson: '{"path":"a.ts"}' });
+    await sleep(DWELL + 60);
+    expect(h.rung()).toContain("Reading a.ts");
+
+    // Four more calls, all inside one dwell window. The rail below records every
+    // one of them; the rung lets at most a single frame through and absorbs the
+    // rest, because four filenames in 300ms is not something anyone can read.
+    for (const path of ["b.ts", "c.ts", "d.ts", "e.ts"]) {
+      h.turn.onEvent(toolEnd("read_file", { path }, JSON.stringify({ path })));
+      h.turn.onEvent({ type: "tool_call_start", callId: path, toolName: "read_file" });
+      h.turn.onEvent({
+        type: "tool_call_args_delta",
+        callId: path,
+        partialJson: JSON.stringify({ path }),
+      });
+    }
+    // Nothing is promoted while the burst is still going: none of those states
+    // has lasted long enough to be worth a reader's attention.
+    expect(h.rung()).toContain("Reading a.ts");
+
+    // `a.ts` is entitled to its whole dwell first. Once that is spent, the rung
+    // names the call that is *actually* in flight — one frame for the burst,
+    // and it is the true one, not the stalest one.
+    await sleep(DWELL + 60);
+    const shown = h.rung();
+    expect(shown).toContain("Reading e.ts");
+    expect(["b.ts", "c.ts", "d.ts"].filter((p) => shown.includes(p))).toHaveLength(0);
+  });
+
+  it("does not fall back to thinking in the gaps between calls in a burst", async () => {
+    const h = harness();
+    // Eight quick calls with a real hole between each — the shape of an agent
+    // reading its way through a directory. Taken literally each hole is a moment
+    // with nothing in flight, but nobody watching this is watching an agent
+    // think; they are watching it work.
+    for (const path of ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts", "f.ts", "g.ts", "h.ts"]) {
+      h.turn.onEvent({ type: "tool_call_start", callId: path, toolName: "read_file" });
+      h.turn.onEvent({
+        type: "tool_call_args_delta",
+        callId: path,
+        partialJson: JSON.stringify({ path }),
+      });
+      await sleep(25);
+      h.turn.onEvent(toolEnd("read_file", { path }, JSON.stringify({ path })));
+      await sleep(25);
+      expect(h.rung()).not.toContain("thinking");
+    }
+    expect(h.rung()).toContain("working");
+  });
+
+  it("names a target only once the arguments have finished saying it", async () => {
+    const h = harness();
+    h.turn.onEvent({ type: "tool_call_start", callId: "b1", toolName: "bash" });
+    // Mid-value: the rung must not type the command out letter by letter.
+    for (const fragment of ['{"comm', 'and":"npx v', "itest r"]) {
+      h.turn.onEvent({ type: "tool_call_args_delta", callId: "b1", partialJson: fragment });
+    }
+    await sleep(DWELL + 60);
+    expect(h.rung()).toContain("Running the necessary command");
+    expect(h.rung()).not.toContain("npx v");
+
+    h.turn.onEvent({ type: "tool_call_args_delta", callId: "b1", partialJson: 'un"}' });
+    await sleep(DWELL + 60);
+    expect(h.rung()).toContain("Checking with npx vitest run");
+  });
+
+  it("renders an edit as a rail row and a line-numbered diff", () => {
     const h = harness();
     h.turn.onEvent(
       toolEnd(
@@ -148,17 +241,15 @@ describe("TurnRenderer — customizer activity stream", () => {
     );
     h.turn.onEvent({ type: "text_delta", text: "Updated the handler." });
     h.turn.finish();
-    expect(h.output()).toContain("1 file changed");
-    expect(h.output()).toContain("src/app.ts");
-    expect(h.output()).toMatch(/\+\d+ −\d+/);
-    expect(h.output()).toContain("lines 1–2");
-    expect(h.output()).toContain("- old");
-    expect(h.output()).toContain("+ new");
-    expect(h.output().indexOf("Complete.")).toBeLessThan(
-      h.output().indexOf("Updated the handler."),
-    );
+    expect(h.output()).toContain("│   edit  src/app.ts");
+    expect(h.output()).toContain("+2 -1 · 1 hunk");
+    expect(h.output()).toContain("1 - old");
+    expect(h.output()).toContain("1 + new");
+    expect(h.output()).toContain("│ changed  1 file");
+    // A turn that worked says so by showing what changed, not by announcing it.
+    expect(h.output()).not.toContain("Complete.");
     expect(h.output().indexOf("Updated the handler.")).toBeLessThan(
-      h.output().indexOf("1 file changed"),
+      h.output().indexOf("│ changed"),
     );
   });
 
@@ -177,7 +268,7 @@ describe("TurnRenderer — customizer activity stream", () => {
     h.turn.finish();
     expect(h.output()).toContain("✓ typecheck clean"); // v2 summary-strip badge
     expect(h.output()).toContain("bun run typecheck");
-    expect(h.output()).not.toContain("verification not observed");
+    expect(h.output()).not.toContain("no check was run on this change");
   });
 
   it("states when changed code has no observed verification", () => {
@@ -185,10 +276,10 @@ describe("TurnRenderer — customizer activity stream", () => {
     h.turn.onEvent(toolEnd("write_file", { path: "src/new.ts" }, '{"path":"src/new.ts"}'));
     h.turn.onEvent({ type: "text_delta", text: "Created the file." });
     h.turn.finish();
-    expect(h.output()).toContain("verification not observed");
+    expect(h.output()).toContain("no check was run on this change");
   });
 
-  it("recognizes a failed-then-passing verification cycle as repaired", () => {
+  it("recognizes a failed-then-passing verification cycle as repaired", async () => {
     const h = harness();
     h.turn.onEvent(toolEnd("edit_file", { path: "a.ts" }, '{"path":"a.ts"}'));
     h.turn.onEvent({
@@ -198,7 +289,8 @@ describe("TurnRenderer — customizer activity stream", () => {
       passed: false,
       report: "$ bun test  (exit 1)\n1 failed",
     });
-    expect(h.preview()).toContain("Fixing what the checks found");
+    await sleep(SETTLE + 60);
+    expect(h.rung()).toContain("Fixing what the checks found");
     h.turn.onEvent({
       type: "verification_completed",
       attempt: 2,
@@ -208,9 +300,10 @@ describe("TurnRenderer — customizer activity stream", () => {
     });
     h.turn.onEvent({ type: "text_delta", text: "Fixed." });
     h.turn.finish();
-    expect(h.output()).toContain("Complete.");
-    expect(h.output()).toContain("1 failure repaired");
-    expect(h.output()).not.toContain("Done with notes");
+    // The verdict is the latest run, not the worst one along the way.
+    expect(h.output()).toContain("✓ tests pass");
+    expect(h.output()).not.toContain("✗ bun test");
+    expect(h.output()).not.toContain("stopped on an error");
   });
 
   it("never exposes raw thinking, including in the detail log", () => {
@@ -223,7 +316,7 @@ describe("TurnRenderer — customizer activity stream", () => {
     expect(stripAnsi(h.turn.fullLog() ?? "")).not.toContain("private hidden reasoning");
   });
 
-  it("keeps raw command evidence in details while the default stays compact", () => {
+  it("keeps a check's real output, because the output is the evidence", () => {
     const h = harness();
     const result = JSON.stringify({
       stdout: "suite A passed\nsuite B passed\n42 tests passed",
@@ -234,9 +327,9 @@ describe("TurnRenderer — customizer activity stream", () => {
     h.turn.onEvent(toolEnd("bash", { command: "bun test" }, result));
     h.turn.onEvent({ type: "text_delta", text: "All checks pass." });
     h.turn.finish();
-    expect(h.output()).toContain("42 tests passed");
-    expect(h.output()).not.toContain("suite A passed");
-    expect(stripAnsi(h.turn.fullLog() ?? "")).toContain("suite A passed");
+    expect(h.output()).toContain("└ 42 passed");
+    expect(h.output()).toContain("suite A passed");
+    expect(h.output()).toContain("┌ bun test");
   });
 
   it("surfaces the same error only once and never labels it done", () => {
@@ -246,7 +339,7 @@ describe("TurnRenderer — customizer activity stream", () => {
     h.turn.finish();
     const occurrences = h.output().split("All providers unavailable").length - 1;
     expect(occurrences).toBe(1);
-    expect(h.output()).toContain("Needs attention");
+    expect(h.output()).toContain("stopped on an error");
     expect(h.output()).not.toContain("✓ Done");
   });
 
@@ -254,7 +347,7 @@ describe("TurnRenderer — customizer activity stream", () => {
     const h = harness();
     h.turn.onEvent(toolEnd("read_file", { path: "a.ts" }));
     h.turn.finish({ aborted: true });
-    expect(h.output()).toContain("Interrupted.");
+    expect(h.output()).toContain("interrupted");
     expect(h.output()).not.toContain("✓ Done");
   });
 });
@@ -281,10 +374,10 @@ describe("renderReplay", () => {
         line({ role: "assistant", text: "Fixed and verified." }),
       ]),
     );
-    expect(output).toContain("⌄ fix the bug");
-    expect(output).toContain("I am reading the files.");
-    expect(output).toContain("1 file changed");
-    expect(output).toContain("1 check passed");
+    expect(output).toContain("› fix the bug");
+    expect(output).toContain("● I am reading the files.");
+    expect(output).toContain("│ · read  2 files");
+    expect(output).toContain("1 file changed · 1 check passed");
     expect(output).toContain("Fixed and verified.");
   });
 
@@ -302,7 +395,7 @@ describe("renderReplay", () => {
 
 describe("helpers", () => {
   it("keeps the user's message visually findable", () => {
-    expect(stripAnsi(userBlock("build the app"))).toContain("⌄ build the app");
+    expect(stripAnsi(userBlock("build the app"))).toContain("› build the app");
   });
 
   it("classifies common verification commands without treating every shell call as a check", () => {

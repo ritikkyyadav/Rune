@@ -32,9 +32,9 @@ describe("PermissionBroker × worker", () => {
     expect(
       broker.check(WORKER_TOOL_SCHEMA, { prompt: "p", files: ["src/a.ts", "../outside.ts"] }).type,
     ).toBe("needs_confirmation");
-    expect(
-      broker.check(WORKER_TOOL_SCHEMA, { prompt: "p", files: ["/etc/hosts"] }).type,
-    ).toBe("needs_confirmation");
+    expect(broker.check(WORKER_TOOL_SCHEMA, { prompt: "p", files: ["/etc/hosts"] }).type).toBe(
+      "needs_confirmation",
+    );
     expect(broker.check(WORKER_TOOL_SCHEMA, { prompt: "p", files: [] }).type).toBe(
       "needs_confirmation",
     );

@@ -8,7 +8,7 @@
 import { describe, test, expect } from "bun:test";
 import { PermissionBroker } from "../../../packages/orchestrator/src/permissions";
 import { setSandboxCapability } from "../../../packages/tool-registry/src/sandbox-capability";
-import type { ToolSchema } from "@alan/tool-registry";
+import type { ToolSchema } from "@gear/tool-registry";
 
 // Auto-approval of sandbox-confined bash presumes the machine CAN isolate.
 setSandboxCapability({ mechanism: "seatbelt", osIsolation: true });

@@ -15,7 +15,7 @@
 //    carried its own key would verify any forgery.
 //  - GEAR_POLICY_FILE / GEAR_POLICY_PUBKEY env overrides are consulted ONLY
 //    when no system-path policy exists (dev/test). They can never shadow an
-//    installed org policy. Elio/Alan/Berne spellings remain migration fallbacks.
+//    installed org policy.
 //  - A policy that exists but fails verification is an ERROR, not an absence:
 //    the engine refuses to start rather than running unpoliced.
 //
@@ -60,9 +60,7 @@ export interface LoadedOrgPolicy {
 }
 
 export type OrgPolicyLoadResult =
-  | { ok: true; loaded: LoadedOrgPolicy }
-  | { ok: false; error: string }
-  | null; // no policy anywhere — unmanaged machine, behavior unchanged
+  { ok: true; loaded: LoadedOrgPolicy } | { ok: false; error: string } | null; // no policy anywhere — unmanaged machine, behavior unchanged
 
 interface SignedPolicyFile {
   policy: OrgPolicy;
@@ -92,17 +90,6 @@ const SYSTEM_LOCATIONS: Array<{ policy: string; pubkey: string }> = [
     policy: "/Library/Application Support/Gear/policy.json",
     pubkey: "/Library/Application Support/Gear/org.pub",
   },
-  // Legacy locations remain valid during the Elio/Alan/Berne -> Gear migration.
-  { policy: "/etc/elio/policy.json", pubkey: "/etc/elio/org.pub" },
-  {
-    policy: "/Library/Application Support/Elio/policy.json",
-    pubkey: "/Library/Application Support/Elio/org.pub",
-  },
-  { policy: "/etc/berne/policy.json", pubkey: "/etc/berne/org.pub" },
-  {
-    policy: "/Library/Application Support/Berne/policy.json",
-    pubkey: "/Library/Application Support/Berne/org.pub",
-  },
 ];
 
 /**
@@ -113,16 +100,8 @@ const SYSTEM_LOCATIONS: Array<{ policy: string; pubkey: string }> = [
 export function loadOrgPolicy(): OrgPolicyLoadResult {
   const candidates = [...SYSTEM_LOCATIONS];
   const systemPresent = SYSTEM_LOCATIONS.some((l) => existsSync(l.policy));
-  const envPolicy =
-    process.env.GEAR_POLICY_FILE ??
-    process.env.ELIO_POLICY_FILE ??
-    process.env.ALAN_POLICY_FILE ??
-    process.env.BERNE_POLICY_FILE;
-  const envPubkey =
-    process.env.GEAR_POLICY_PUBKEY ??
-    process.env.ELIO_POLICY_PUBKEY ??
-    process.env.ALAN_POLICY_PUBKEY ??
-    process.env.BERNE_POLICY_PUBKEY;
+  const envPolicy = process.env.GEAR_POLICY_FILE;
+  const envPubkey = process.env.GEAR_POLICY_PUBKEY;
   if (!systemPresent && envPolicy) {
     candidates.push({
       policy: envPolicy,

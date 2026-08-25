@@ -18,7 +18,7 @@
 //   - No recursion: a worker's registry contains neither `task` nor `worker`.
 
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import type { LlmGateway, ProviderName } from "@alan/llm-gateway";
+import type { LlmGateway, ProviderName } from "@gear/llm-gateway";
 import {
   ToolRegistry,
   registerBuiltinTools,
@@ -26,7 +26,7 @@ import {
   type ToolCallOutput,
   type ToolHandler,
   type ToolSchema,
-} from "@alan/tool-registry";
+} from "@gear/tool-registry";
 import { AgentLoop } from "./agent-loop";
 import type { PermissionCheck, ToolResultProcessor } from "./agent-loop";
 
@@ -46,7 +46,7 @@ const WORKER_READ_TOOLS = new Set([
 const WORKER_WRITE_TOOLS = new Set(["write_file", "edit_file", "multi_edit"]);
 
 export interface WorkerDeps {
-  /** Path to the alan-tools binary (worker registries are built per run). */
+  /** Path to the gear-tools binary (worker registries are built per run). */
   binaryPath: string;
   /**
    * Live resolver for gateway/model/provider at execute time. Workers do real
@@ -242,7 +242,8 @@ export function createWorkerPermissionCheck(registry: ToolRegistry): PermissionC
   };
 }
 
-function workerSystemPrompt(ownedList: string): string {
+/** Exported for tests: the doctrine every worker carries. */
+export function workerSystemPrompt(ownedList: string): string {
   return [
     "You are a Gear implementation worker: a focused engineer executing one contract inside a larger build.",
     `You EXCLUSIVELY own these files (relative to the workspace): ${ownedList}`,
@@ -251,6 +252,16 @@ function workerSystemPrompt(ownedList: string): string {
     "- You have no shell and no network. Verify by re-reading what you wrote; if a write reports syntax errors, fix them before finishing.",
     "- Fulfill the contract COMPLETELY. Follow the surrounding codebase's conventions.",
     "- Finish with a short integrator report: what you changed per file, decisions you made, and anything the lead must wire up, verify, or change in files you don't own.",
+    "",
+    // The doctrine steers big builds to workers, which made the frontend of
+    // every large build the one thing written WITHOUT the interface doctrine.
+    // This block is the distilled "Building interfaces" law — without it,
+    // worker-built UI is exactly the generated-looking output users report.
+    'If any owned file renders UI (HTML/CSS/components), visual quality is part of correctness — the bar is "a senior product designer built this":',
+    "- Match the project's existing design system exactly if one exists; otherwise commit to ONE art direction and execute it consistently — never average two styles.",
+    "- Structure does the design: a real type scale (one dominant display size, quiet body, 10-11px uppercase letter-spaced labels), a 4/8px spacing grid, ONE accent color on a neutral ground, one corner-radius family, tabular numerals where numbers align.",
+    "- Real copy (never lorem ipsum), units on numbers, designed hover/empty/loading states, inline SVG icons (never emoji), no CDNs or web fonts unless the project already uses them.",
+    "- Banned slop: purple-blue gradient washes, drop-shadow soup, mixed corner radii, emoji as icons or in headings, 8-color palettes, rainbow charts, centered walls of text, decoration that carries no information.",
   ].join("\n");
 }
 
@@ -336,10 +347,23 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
         const changed = new Set<string>();
         let loopError: string | undefined;
 
-        for await (const event of loop.run(fullPrompt, input.sessionId, input.workspaceRoot)) {
+        // Propagate the abort signal: without it Ctrl-C/Esc could not
+        // interrupt a running worker — the turn blocked until it finished.
+        for await (const event of loop.run(
+          fullPrompt,
+          input.sessionId,
+          input.workspaceRoot,
+          input.signal,
+        )) {
           if (event.type === "text_delta") report += event.text;
           else if (event.type === "tool_call_end") {
             toolCalls++;
+            // Live movement for the parent's status rung — workers used to
+            // run completely dark for their whole multi-minute build.
+            {
+              const p = typeof event.args?.path === "string" ? ` ${event.args.path}` : "";
+              input.onProgress?.(`${event.output.toolName}${p}`);
+            }
             if (
               event.output?.success &&
               WORKER_WRITE_TOOLS.has(event.output.toolName) &&
