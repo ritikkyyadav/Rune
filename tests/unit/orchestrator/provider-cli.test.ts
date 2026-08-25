@@ -7,6 +7,7 @@ import {
   runProviders,
   runModels,
 } from "../../../packages/orchestrator/src/bin/providers-cli";
+import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
 import { runLogin, runLogout } from "../../../packages/orchestrator/src/bin/login-cli";
 import {
   loadLastModel,
@@ -111,6 +112,27 @@ describe("gear providers", () => {
     expect(out).toMatch(/local/); // ollama/lmstudio
     // file backend forced → the insecure notice must be present
     expect(out).toMatch(/unencrypted/);
+  });
+
+  it("keeps every column aligned for active and inactive rows (NO_COLOR regression)", async () => {
+    // Make one row active so both padEnd paths render.
+    setProviderKey("groq", "gsk_saved_key_123456");
+    await capture(() => runUse(["groq"]));
+    const out = await capture(() => runProviders());
+    const rows = out
+      .split("\n")
+      .map((row) => stripAnsi(row).trimStart())
+      .filter((row) => /^[●○] /.test(row));
+    expect(rows.length).toBeGreaterThan(3);
+    expect(rows.some((row) => row.startsWith("●"))).toBe(true);
+    // marker(1) + space + name padded to 22 + space → the method column starts
+    // at index 25 on EVERY row. Padding the styled string instead of the label
+    // broke this whenever the active row's escapes (or their absence under
+    // NO_COLOR) changed the string length.
+    for (const row of rows) {
+      expect(row[24]).toBe(" ");
+      expect(row[25]).not.toBe(" ");
+    }
   });
 
   it("shows a provider as signed-in once a key is stored", async () => {

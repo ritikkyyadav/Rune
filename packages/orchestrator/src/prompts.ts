@@ -410,8 +410,13 @@ export function renderRepoMap(workspaceRoot: string): string {
 
 // ─── Project Memory (GEAR.md / compatibility alternatives) ───
 
-/** Project-instruction filenames, in priority order. First match wins per directory. */
-const PROJECT_MEMORY_FILES = ["GEAR.md", "CLAUDE.md", "AGENTS.md"];
+/**
+ * Project-instruction filenames, in priority order. First match wins per
+ * directory. ALAN.md is the product's own pre-rename name — dropping it made
+ * existing users' memory silently vanish on upgrade, so it stays until a
+ * migration writes GEAR.md.
+ */
+const PROJECT_MEMORY_FILES = ["GEAR.md", "ALAN.md", "CLAUDE.md", "AGENTS.md"];
 
 /** Hard cap so a runaway instructions file can't dominate the context window. */
 const PROJECT_MEMORY_MAX_CHARS = 40_000;
@@ -451,7 +456,9 @@ export function loadProjectMemory(workspaceRoot: string): ProjectMemory {
   const sections: string[] = [];
   const files: string[] = [];
 
-  const globalPaths = [join(getGearHome(), "GEAR.md")];
+  // GEAR.md first; ALAN.md is the pre-rename fallback so an upgraded install
+  // keeps its user instructions until the user renames the file.
+  const globalPaths = [join(getGearHome(), "GEAR.md"), join(getGearHome(), "ALAN.md")];
   for (const globalPath of globalPaths) {
     const globalContent = readMemoryFile(globalPath);
     if (!globalContent) continue;

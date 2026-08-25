@@ -130,6 +130,26 @@ describe("loadProjectMemory", () => {
     }
   });
 
+  test("pre-rename ALAN.md still loads, below GEAR.md but above CLAUDE.md", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gear-mem-"));
+    try {
+      writeFileSync(join(dir, "CLAUDE.md"), "claude instructions");
+      writeFileSync(join(dir, "ALAN.md"), "alan-era instructions");
+      let mem = loadProjectMemory(dir);
+      // An upgraded install keeps its memory: ALAN.md beats the ecosystem files…
+      expect(mem.block).toContain("alan-era instructions");
+      expect(mem.block).not.toContain("claude instructions");
+
+      writeFileSync(join(dir, "GEAR.md"), "gear instructions");
+      mem = loadProjectMemory(dir);
+      // …and the new name wins once the user migrates.
+      expect(mem.block).toContain("gear instructions");
+      expect(mem.block).not.toContain("alan-era instructions");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("truncates oversized memory files", () => {
     const dir = mkdtempSync(join(tmpdir(), "gear-mem-"));
     try {

@@ -82,9 +82,10 @@ export async function runProviders(): Promise<void> {
     } else {
       status = dim("—");
     }
-    const name = (isActive ? bold(text(preset.label)) : text(preset.label)).padEnd(
-      isActive ? 30 : 22,
-    );
+    // Pad BEFORE styling: ANSI escapes count toward padEnd, so padding the
+    // styled string misaligns the columns — and under NO_COLOR (no escapes)
+    // any styled-width compensation misaligns them the other way.
+    const name = (isActive ? (s: string) => bold(text(s)) : text)(preset.label.padEnd(22));
     out(`${marker} ${name} ${faint(method.padEnd(8))} ${status}`);
   }
   out();
