@@ -163,12 +163,15 @@ jobs:
       - run: cargo build --release -p gear-tools
       - name: Compile standalone CLI (same command as release builds)
         run: bun build --compile packages/orchestrator/src/bin/gear-cli.ts --outfile ./gear-packaged
-      - name: Packaged smoke — version, help, tools discovery
+      - name: Packaged smoke — version, help, REAL tool execution
         env:
           GEAR_TOOLS_BIN: ${{ github.workspace }}/target/release/gear-tools
         run: |
           ./gear-packaged --version | grep -E "Gear v[0-9]"
           ./gear-packaged --help > /dev/null
+          # The artifact pair must actually work, not merely start: a
+          # write → read → edit → bash round-trip through gear-tools.
+          ./gear-packaged tools-smoke
 
   # ── Stage 4d: Desktop app (developer preview — must keep compiling) ──
   # Runs on Linux (1x billing vs macOS 10x); the macOS bundle itself is

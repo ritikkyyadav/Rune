@@ -114,6 +114,8 @@ jobs:
         run: |
           chmod +x dist/gear-linux-x64 dist/gear-tools-linux-x64
           GEAR_TOOLS_BIN=dist/gear-tools-linux-x64 dist/gear-linux-x64 --version | grep -E "Gear v"
+          # Not just "it starts": the pair must execute real tools together.
+          GEAR_TOOLS_BIN="$PWD/dist/gear-tools-linux-x64" dist/gear-linux-x64 tools-smoke
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -143,3 +145,4 @@ jobs:
           install -m755 "gear-tools-$os-$arch" ~/.gear/bin/gear-tools
           export PATH="$HOME/.gear/bin:$PATH"
           gear --version | grep -E "Gear v"
+          GEAR_TOOLS_BIN="$HOME/.gear/bin/gear-tools" gear tools-smoke

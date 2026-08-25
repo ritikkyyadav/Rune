@@ -26,7 +26,7 @@ export {
   providerSupportsNativeSearch,
   providerAllowsGroundingWithTools,
 } from "./types";
-export { LlmGateway } from "./gateway";
+export { LlmGateway, isModelGoneError } from "./gateway";
 export { AnthropicProvider } from "./providers/anthropic";
 export { OpenAIProvider } from "./providers/openai";
 export { OpenRouterProvider } from "./providers/openrouter";

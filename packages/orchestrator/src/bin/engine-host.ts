@@ -117,9 +117,11 @@ type CliProvider = "anthropic" | "openai" | "openrouter" | "google" | "ollama-tu
 const DEFAULT_MODELS: Record<CliProvider, string> = {
   anthropic: "claude-sonnet-4-6",
   openai: "gpt-4o",
-  openrouter: "qwen/qwen3-coder:free",
+  // qwen/qwen3-coder:free and qwen3-coder:480b were retired 2026-07-15;
+  // these mirror the gateway's refreshed, live-verified defaults.
+  openrouter: "deepseek/deepseek-v4-flash:free",
   google: "gemini-2.5-flash",
-  "ollama-turbo": "qwen3-coder:480b",
+  "ollama-turbo": "gpt-oss:120b",
 };
 const PROVIDER_ENV: Record<CliProvider, string> = {
   google: "GOOGLE_API_KEY",

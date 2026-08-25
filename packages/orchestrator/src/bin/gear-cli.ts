@@ -82,6 +82,7 @@ import {
 import { renderWorkspaceDiff } from "./ui/workspace-diff";
 import { truncate } from "./ui/render";
 import { runTui } from "./ui/tui";
+import { resolveSurface } from "./ui/surface";
 import { exportSession } from "../session-export";
 import { loadCommands, findCommand } from "../commands";
 import { isClarification } from "../research-types";
@@ -168,7 +169,8 @@ if (values.help) {
       `    gear providers                List providers, their auth method, and credential status\n` +
       `    gear use <provider> [model]   Set the active provider (+ model) for new sessions\n` +
       `    gear models [provider]        List a provider's models (live discovery, static fallback)\n` +
-      `    gear doctor                   Black-box health: recent incidents, crash sentinel, recorder state\n` +
+      `    gear doctor                   Health: incidents, crash sentinel, gear-tools, build freshness\n` +
+      `    gear tools-smoke              Verify the native tool executor end to end (write/read/edit/bash)\n` +
       `    gear incidents [sub]          Browse recorded failures — list | show <id> | top [--by-version] | export\n` +
       `    gear notebook [sub]           Learned tactics notebook — list | show <id> | rm <id> | export\n` +
       `    gear telemetry [sub]          Opt-in diagnostics — status | on | off | preview | reset (off by default)\n\n` +
@@ -205,6 +207,18 @@ if (command === "doctor") {
   const { runDoctor } = await import("./blackbox-cli");
   runDoctor();
   process.exit(0);
+}
+if (command === "tools-smoke") {
+  // End-to-end native-tools check (CI runs this against the packaged binary).
+  const lookup = await findToolsBinary();
+  if (!lookup.found) {
+    console.error(
+      "  ✕ gear-tools not found — set GEAR_TOOLS_BIN, re-run scripts/install.sh, or `cargo build --release -p gear-tools`",
+    );
+    process.exit(1);
+  }
+  const { runToolsSmoke } = await import("./tools-smoke-cli");
+  process.exit(await runToolsSmoke(lookup.path));
 }
 if (command === "incidents") {
   const { runIncidents } = await import("./blackbox-cli");
@@ -266,9 +280,11 @@ type CliProvider =
 const DEFAULT_MODELS: Record<CliProvider, string> = {
   anthropic: "claude-sonnet-4-6",
   openai: "gpt-4o",
-  openrouter: "qwen/qwen3-coder:free",
+  // qwen/qwen3-coder:free and qwen3-coder:480b were retired 2026-07-15;
+  // these mirror the gateway's refreshed, live-verified defaults.
+  openrouter: "deepseek/deepseek-v4-flash:free",
   google: "gemini-2.5-flash",
-  "ollama-turbo": "qwen3-coder:480b",
+  "ollama-turbo": "gpt-oss:120b",
   ollama: "llama3.1",
   lmstudio: "local-model",
 };
@@ -607,6 +623,10 @@ async function main() {
       const cfgSection = config.llm[configKey] as { apiKey?: string } | undefined;
       if (process.env[envVar] || cfgSection?.apiKey) return provider;
     }
+    // Keyed hosts without an [llm.*] config section: a saved /keys secret (or
+    // env var) is a working credential too. Without this, a user whose ONLY
+    // key was ollama-turbo auto-detected into a keyless openrouter boot.
+    if (process.env.OLLAMA_API_KEY || secrets.keys["ollama-turbo"]) return "ollama-turbo";
     return "openrouter"; // last resort
   }
 
@@ -637,7 +657,7 @@ async function main() {
   // The model the user last picked sticks across sessions: it wins over the config default (but not
   // over an explicit --model/--provider) as long as its provider still has credentials — otherwise
   // we fall through rather than boot a keyless provider. This is why a fresh session resumes e.g.
-  // ollama-turbo/qwen3-coder:480b instead of resetting to the built-in google/gemini-2.5-flash.
+  // ollama-turbo/gpt-oss:120b instead of resetting to the built-in google/gemini-2.5-flash.
   const lastUsed = !cliProvider && !values.model ? loadLastModel() : null;
   const sticky =
     lastUsed && isCliProvider(lastUsed.provider) && hasCreds(lastUsed.provider) ? lastUsed : null;
@@ -915,12 +935,15 @@ async function main() {
   // excluded. `--inline` remains a compatibility escape hatch for users who value native terminal
   // scrollback over the product surface. Piped/non-TTY stdin and `--classic` / GEAR_CLASSIC fall
   // back to the plain readline prompt; `--tui` / GEAR_TUI force the TUI even past `--classic`.
-  const classicForced = (values.classic as boolean) || !!process.env.GEAR_CLASSIC;
-  const tuiForced = (values.tui as boolean) || !!process.env.GEAR_TUI;
-  const useTui = !!process.stdin.isTTY && (tuiForced || !classicForced);
-  const inlineTui = (values.inline as boolean) || !!process.env.GEAR_INLINE;
-  const fullscreenTui =
-    !inlineTui || (values.fullscreen as boolean) || !!process.env.GEAR_FULLSCREEN;
+  const surface = resolveSurface({
+    isTTY: !!process.stdin.isTTY,
+    classicForced: (values.classic as boolean) || !!process.env.GEAR_CLASSIC,
+    tuiForced: (values.tui as boolean) || !!process.env.GEAR_TUI,
+    inline: (values.inline as boolean) || !!process.env.GEAR_INLINE,
+    fullscreenForced: (values.fullscreen as boolean) || !!process.env.GEAR_FULLSCREEN,
+  });
+  const useTui = surface.useTui;
+  const fullscreenTui = surface.fullscreen;
 
   // ─── Create or resume session (one native flow) ───
   // `gear resume [id]` / `--resume <id>` target a specific session. Otherwise, on an
