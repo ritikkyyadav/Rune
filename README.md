@@ -25,9 +25,12 @@ compliance-sensitive teams.
   whitespace-insensitive → indentation-insensitive) in both the TypeScript and Rust editors, so edits
   survive minor whitespace drift instead of corrupting files.
 - **Classifier-backed Auto mode** — safe reads and reversible workspace edits stay fast; shell,
-  network, protected/external writes, and delegation are reviewed by an isolated two-stage action
-  classifier. Tool results cross a prompt-injection probe before model context, failures close to a
-  human prompt, and decisions enter the tamper-evident audit trail. See
+  network, protected/external writes (including CI workflows), and delegation are reviewed by an
+  isolated two-stage action classifier. Blocked actions resolve conversationally: the agent asks you
+  a plain-language question and your typed answer authorizes the retry — modal prompts remain only
+  as the backstop. Failed reviewer calls retry against a same-boundary fallback before failing
+  closed, tool results cross a prompt-injection probe before model context (flagged sessions get
+  heightened review), and decisions enter the tamper-evident audit trail. See
   [`docs/auto-mode.md`](docs/auto-mode.md).
 - **Permissions & sandbox** — signed organization policy, mechanical deny/ask/allow rules, egress +
   output redaction, per-tool rate limiting, OS sandboxing, and explicit Autonomy I/II/III tiers.

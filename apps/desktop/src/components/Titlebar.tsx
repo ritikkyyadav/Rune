@@ -39,7 +39,7 @@ export function Titlebar(props: {
       ) : null}
       <div className="tb-brand">
         <GearMark size={18} />
-        Gear <span className="version">v{props.version}</span>
+        Gear <span className="version">v{props.version} · preview</span>
       </div>
       <div className="tb-task" data-tauri-drag-region>
         <b>{props.task || "New task"}</b>

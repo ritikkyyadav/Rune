@@ -1066,3 +1066,43 @@ describe("CI surface protection", () => {
     );
   });
 });
+
+describe("askRules vs session grants", () => {
+  test("an askRule pauses for a human when no exact grant exists", async () => {
+    const { controller, classifier } = setup(["ALLOW"], { askRules: ["bash(git push*)"] });
+    const review = await controller
+      .startRun(["Ship the feature branch."])
+      .review(action("bash", { command: "git push origin feature", network: true }));
+
+    expect(review.verdict).toBe("ask");
+    expect(review.source).toBe("permission_rule");
+    expect(review.matchedRule).toBe("bash(git push*)");
+    expect(classifier.calls).toHaveLength(0);
+  });
+
+  test("an exact session grant silences the askRule for the identical payload", async () => {
+    const { controller, classifier } = setup([], { askRules: ["bash(git push*)"] });
+    const review = await controller
+      .startRun(["Ship the feature branch."])
+      .review(
+        action("bash", { command: "git push origin feature", network: true }, { exactGrant: true }),
+      );
+
+    // The rule demanded a human decision; the human made one for this exact
+    // payload. Identical retries ride the grant — no model call, no re-ask.
+    expect(review.verdict).toBe("allow");
+    expect(review.source).toBe("exact_user_grant");
+    expect(classifier.calls).toHaveLength(0);
+  });
+
+  test("an exact grant does not leak past the askRule onto the circuit breakers", async () => {
+    const { controller } = setup([], { askRules: ["bash(*)"] });
+    const review = await controller
+      .startRun(["Clean things up."])
+      .review(action("bash", { command: "rm -rf /" }, { exactGrant: true }));
+
+    // Even grant-in-hand, a catastrophic action re-asks every time.
+    expect(review.verdict).toBe("ask");
+    expect(review.source).toBe("critical_circuit_breaker");
+  });
+});

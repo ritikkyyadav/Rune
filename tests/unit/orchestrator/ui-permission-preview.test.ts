@@ -103,4 +103,42 @@ describe("ui/permission-preview", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("drops the session choice entirely on a circuit-breaker ask", async () => {
+    const preview = await buildPermissionPreview({
+      toolName: "bash",
+      argsSummary: "bash: rm -rf /",
+      rawArgs: { command: "rm -rf /" },
+      workspaceRoot: "/workspace",
+      exactSessionGrant: true,
+      sessionGrantUnavailable: true,
+      safety: { reason: "Catastrophic blast radius", tier: "classifier" },
+    });
+
+    expect(preview.choices).toHaveLength(2);
+    expect(preview.choices[0]).toContain("Yes");
+    expect(preview.choices[1]).toContain("No");
+    for (const choice of preview.choices) expect(choice).not.toContain("session");
+  });
+
+  it("never fabricates a line-1 anchor for an empty old_text edit", async () => {
+    const root = await workspace();
+    try {
+      await writeFile(join(root, "config.ts"), "first line\nsecond line\n");
+      const preview = await buildPermissionPreview({
+        toolName: "edit_file",
+        argsSummary: "edit_file config.ts",
+        rawArgs: { path: "config.ts", old_text: "", new_text: "injected\n" },
+        workspaceRoot: root,
+      });
+
+      // No stolen context row from the top of the file, no line numbers…
+      expect(preview.lines.some((line) => line.text === "first line")).toBe(false);
+      expect(preview.lines.every((line) => line.oldLine === undefined)).toBe(true);
+      // …and the card says outright that the editor rejects this call.
+      expect(preview.lines.some((line) => line.text.includes("editor rejects"))).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

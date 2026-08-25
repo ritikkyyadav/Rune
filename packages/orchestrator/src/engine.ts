@@ -110,6 +110,7 @@ import {
   AutoModeSafetyController,
   GatewayActionClassifier,
   resolveAutoModeConfig,
+  shouldRecordAutoModeDecision,
   type AutoModePolicyConfig,
   type AutoModeReview,
   type AutoModeRun,
@@ -178,6 +179,12 @@ export interface PermissionPrompt {
   };
   /** "Allow session" is deliberately narrowed to this exact payload in Auto. */
   exactSessionGrant?: boolean;
+  /**
+   * True when a session grant would be a lie: critical/guardrail circuit
+   * breakers require a fresh human decision on every occurrence, so the card
+   * must not offer "allow for session" at all.
+   */
+  sessionGrantUnavailable?: boolean;
   /** Live per-minute rate-limit occupancy for this tool, for the risk row. */
   rateLimit?: { used: number; limit: number };
 }
@@ -1414,7 +1421,11 @@ export class Engine {
           workspaceRoot: this.config.workspaceRoot,
           exactGrant: decision.type === "allowed" && decision.basis === "exact_grant",
         });
-        this.recordAutoModeDecision(context.sessionId, toolName, args, autoReview);
+        // Safe/workspace-tier allows only move in-memory counters — persisting
+        // every read_file would multiply the audit log by the read rate.
+        if (shouldRecordAutoModeDecision(autoReview)) {
+          this.recordAutoModeDecision(context.sessionId, toolName, args, autoReview);
+        }
 
         if (autoReview.verdict === "allow") {
           this.rateLimiter?.recordCall(toolName);
@@ -1479,7 +1490,10 @@ export class Engine {
               reviewer: autoReview.reviewer,
             }
           : undefined,
-        exactSessionGrant: autoReview?.tier === "classifier",
+        exactSessionGrant: autoReview != null,
+        sessionGrantUnavailable:
+          autoReview?.source === "critical_circuit_breaker" ||
+          autoReview?.source === "guardrail_circuit_breaker",
       });
 
       if (userDecision.kind === "deny") {
@@ -1487,7 +1501,18 @@ export class Engine {
         return { allowed: false, reason: "User denied" };
       }
       if (userDecision.kind === "allow_session") {
-        if (autoReview?.tier === "classifier") {
+        if (
+          autoReview?.source === "critical_circuit_breaker" ||
+          autoReview?.source === "guardrail_circuit_breaker"
+        ) {
+          // Breaker asks are non-reusable by design and their cards offer no
+          // session choice; a stray allow_session from a headless handler is
+          // honored once, never recorded.
+        } else if (autoReview) {
+          // In Auto every session approval is scoped to this exact payload —
+          // a blanket tool grant would let later, unrelated calls skip the
+          // reviewer. The reviewer honors exact grants (askRules yield to
+          // them).
           this.permissions.grantExact(toolName, args, "session");
         } else {
           this.permissions.grantTool(toolName, "session");

@@ -40,8 +40,13 @@ export interface PermissionPreview {
   summary?: string;
   /** Honest statement of what has not happened yet. */
   guard: string;
-  /** Labels are action-specific so choices never become vague yes/no prompts. */
-  choices: [string, string, string];
+  /**
+   * Labels are action-specific so choices never become vague yes/no prompts.
+   * Two entries (allow once / deny) when a session grant is unavailable —
+   * critical/guardrail circuit breakers re-ask on every occurrence, so a
+   * session choice would be a lie.
+   */
+  choices: [string, string, string] | [string, string];
   /** Optional explanation from Auto review. */
   reason?: string;
   /** v2 risk row (writes / egress / runtime / rate limit). Absent facts stay absent. */
@@ -55,6 +60,8 @@ export interface PermissionPreviewInput {
   workspaceRoot: string;
   safety?: { reason: string; tier?: string };
   exactSessionGrant?: boolean;
+  /** Circuit-breaker asks re-prompt every time; the card drops the session choice. */
+  sessionGrantUnavailable?: boolean;
   /** Live per-minute occupancy for this tool, from the engine's rate limiter. */
   rateLimit?: { used: number; limit: number };
 }
@@ -147,9 +154,18 @@ function editRows(
 ): { rows: PermissionPreviewLine[]; added: number; removed: number } {
   const oldRows = changeLines(oldText);
   const newRows = changeLines(newText);
-  const found = source == null ? -1 : source.indexOf(oldText);
+  // `indexOf("")` is 0 — an empty old_text must not fabricate a line-1 anchor
+  // and a top-of-file context row for an edit the native editor rejects
+  // outright. Show the insertion unanchored, with the rejection stated.
+  const found = source == null || oldText === "" ? -1 : source.indexOf(oldText);
   const start = found >= 0 && source != null ? lineNumberAt(source, found) : undefined;
   const rows: PermissionPreviewLine[] = [];
+  if (oldText === "") {
+    rows.push({
+      kind: "hunk",
+      text: "old_text is empty — the editor rejects this call; nothing would be written",
+    });
+  }
 
   if (source != null && start != null && start > 1) {
     rows.push({
@@ -278,6 +294,16 @@ const BASH_DEFAULT_TIMEOUT_MS = 120_000;
 export async function buildPermissionPreview(
   input: PermissionPreviewInput,
 ): Promise<PermissionPreview> {
+  const preview = await assemblePreview(input);
+  // A circuit-breaker ask never honors a session grant — offering the choice
+  // would be a lie, so the card carries only "allow once" and "deny".
+  if (input.sessionGrantUnavailable && preview.choices.length === 3) {
+    return { ...preview, choices: [preview.choices[0], preview.choices[2]] };
+  }
+  return preview;
+}
+
+async function assemblePreview(input: PermissionPreviewInput): Promise<PermissionPreview> {
   const args = input.rawArgs ?? {};
   const rawPath = clean(args.path);
   const target = shortenTarget(rawPath, input.workspaceRoot);
@@ -338,7 +364,9 @@ export async function buildPermissionPreview(
       rows.push(...one.rows);
       added += one.added;
       removed += one.removed;
-      if (source != null && source.includes(oldText)) {
+      // "" is included in every string — simulating it would silently prepend
+      // new_text to the working copy and skew every later hunk's line numbers.
+      if (source != null && oldText !== "" && source.includes(oldText)) {
         source = edit.replace_all
           ? source.split(oldText).join(newText)
           : source.replace(oldText, newText);

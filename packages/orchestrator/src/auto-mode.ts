@@ -819,8 +819,13 @@ export class AutoModeRun {
         durationMs: elapsed(started),
       });
     }
+    // An askRule yields to an EXACT session grant: the rule demanded a human
+    // decision, the human made one for this exact payload ("allow this exact
+    // action for this session"), so identical retries stop nagging. Any
+    // variation of the payload re-asks, and the critical/guardrail circuit
+    // breakers below still run — those are deliberately non-reusable.
     const ask = firstMatchingRule(rules.askRules, action);
-    if (ask) {
+    if (ask && !action.exactGrant) {
       return this.finish({
         verdict: "ask",
         tier,
