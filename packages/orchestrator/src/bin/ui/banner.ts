@@ -11,7 +11,7 @@
 //   ─────────────────────────────────────────────────────────────
 
 import * as os from "os";
-import { execFileSync } from "child_process";
+import { execFile, execFileSync } from "child_process";
 import { bold, text, brand } from "./theme";
 import { header as flowHeader } from "./flow";
 import { PRODUCT_NAME } from "./brand";
@@ -64,47 +64,105 @@ export interface BannerOptions {
   recentSessions?: unknown[];
 }
 
-const branchCache = new Map<string, string>();
-
-/** Resolve once per workspace. Header rendering happens every frame. */
-function workspaceBranch(workspace: string): string {
-  const cached = branchCache.get(workspace);
-  if (cached != null) return cached;
-  let branch = "";
-  try {
-    branch = execFileSync("git", ["-C", workspace, "branch", "--show-current"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 400,
-    }).trim();
-  } catch {
-    branch = "";
-  }
-  branchCache.set(workspace, branch);
-  return branch;
+interface CachedFact<T> {
+  value: T;
+  at: number;
+  refreshing?: boolean;
 }
 
-const dirtyCache = new Map<string, { count: number; at: number }>();
+const branchCache = new Map<string, CachedFact<string>>();
+const dirtyCache = new Map<string, CachedFact<number>>();
 
-/** Uncommitted files, refreshed at most twice a second. The header states the
- *  shape of the tree you are about to change; a stale count would be worse
- *  than none, and a `git status` per frame would be worse than both. */
-function workspaceDirty(workspace: string): number {
-  const cached = dirtyCache.get(workspace);
-  if (cached && Date.now() - cached.at < 2000) return cached.count;
-  let count = 0;
-  try {
-    const out = execFileSync("git", ["-C", workspace, "status", "--porcelain"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 400,
-    });
-    count = out.split("\n").filter((row) => row.trim()).length;
-  } catch {
-    count = 0;
+/** Test hook: the header caches are process-global; tests reset them. */
+export function __resetBannerCachesForTest(): void {
+  branchCache.clear();
+  dirtyCache.clear();
+}
+
+/** Test hook: force every cached entry stale so the next render refreshes. */
+export const __bannerCachesForTest = {
+  age(): void {
+    for (const entry of branchCache.values()) entry.at = 0;
+    for (const entry of dirtyCache.values()) entry.at = 0;
+  },
+};
+
+/**
+ * Git fact with a never-blocking steady state. The FIRST resolve per
+ * workspace is synchronous so the first frame is right; every render after
+ * that returns the cached value instantly, and a value older than `ttlMs`
+ * kicks one background refresh. The header renders every frame — a
+ * synchronous `git status` on that path froze the UI for up to 400ms every
+ * two seconds on large repos.
+ */
+function cachedGitFact<T>(
+  cache: Map<string, CachedFact<T>>,
+  workspace: string,
+  ttlMs: number,
+  args: string[],
+  parse: (out: string) => T,
+  empty: T,
+): T {
+  const now = Date.now();
+  const hit = cache.get(workspace);
+  if (hit) {
+    if (now - hit.at >= ttlMs && !hit.refreshing) {
+      hit.refreshing = true;
+      execFile(
+        "git",
+        ["-C", workspace, ...args],
+        { encoding: "utf8", timeout: 2000 },
+        (error, stdout) => {
+          cache.set(workspace, {
+            value: error ? empty : parse(stdout ?? ""),
+            at: Date.now(),
+          });
+        },
+      );
+    }
+    return hit.value;
   }
-  dirtyCache.set(workspace, { count, at: Date.now() });
-  return count;
+  let value = empty;
+  try {
+    value = parse(
+      execFileSync("git", ["-C", workspace, ...args], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 400,
+      }),
+    );
+  } catch {
+    value = empty;
+  }
+  cache.set(workspace, { value, at: now });
+  return value;
+}
+
+/** Current branch, refreshed in the background every few seconds — switching
+ *  branches mid-session must reach the header without a restart. */
+function workspaceBranch(workspace: string): string {
+  return cachedGitFact(
+    branchCache,
+    workspace,
+    5_000,
+    ["branch", "--show-current"],
+    (out) => out.trim(),
+    "",
+  );
+}
+
+/** Uncommitted files. The header states the shape of the tree you are about
+ *  to change; a stale count would be worse than none, and a blocking
+ *  `git status` per frame would be worse than both. */
+function workspaceDirty(workspace: string): number {
+  return cachedGitFact(
+    dirtyCache,
+    workspace,
+    2_000,
+    ["status", "--porcelain"],
+    (out) => out.split("\n").filter((row) => row.trim()).length,
+    0,
+  );
 }
 
 /** Compact lockup, still used by a few one-line notices. */

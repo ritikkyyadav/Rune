@@ -81,3 +81,68 @@ describe("ui/banner", () => {
     expect(stripAnsi(wordmark())).toBe("⚙︎ Gear");
   });
 });
+
+// ─── The render-path git caches ───
+// The header renders every frame. These pin the contract that replaced the
+// immortal branch cache and the synchronous every-2s `git status`: first
+// resolve is synchronous, steady-state renders return instantly from cache,
+// and a stale entry refreshes in the background.
+
+import { execFileSync } from "child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import { __resetBannerCachesForTest } from "../../../packages/orchestrator/src/bin/ui/banner";
+
+function git(repo: string, ...args: string[]): void {
+  execFileSync("git", ["-C", repo, ...args], { stdio: "ignore" });
+}
+
+describe("ui/banner git caches", () => {
+  it("resolves branch + dirty count synchronously on first render, then refreshes in the background", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "gear-banner-git-"));
+    try {
+      git(repo, "init", "-b", "first-branch");
+      git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "x");
+      __resetBannerCachesForTest();
+
+      // First frame: right immediately (synchronous resolve).
+      const first = banner(100, { workspace: repo, branch: undefined, dirtyFiles: undefined });
+      expect(first).toContain("first-branch");
+
+      // The world changes: new branch, a dirty file.
+      git(repo, "checkout", "-q", "-b", "second-branch");
+      writeFileSync(join(repo, "dirty.txt"), "x");
+
+      // Within the TTL the header serves the cache — instantly, and still the
+      // old branch (staleness bounded by the TTL is the accepted trade).
+      const cached = banner(100, { workspace: repo, branch: undefined, dirtyFiles: undefined });
+      expect(cached).toContain("first-branch");
+
+      // Age the cache out and render once: the frame returns the OLD value
+      // (never blocks) while kicking one background refresh…
+      const { __bannerCachesForTest } = (await import(
+        "../../../packages/orchestrator/src/bin/ui/banner"
+      )) as unknown as {
+        __bannerCachesForTest?: { age(): void };
+      };
+      // (test hook ages entries; fall back to waiting out the TTL if absent)
+      if (__bannerCachesForTest) __bannerCachesForTest.age();
+      const stale = banner(100, { workspace: repo, branch: undefined, dirtyFiles: undefined });
+      expect(stale).toContain("first-branch");
+
+      // …which lands within a few tens of ms.
+      const deadline = Date.now() + 3000;
+      let fresh = "";
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        fresh = banner(100, { workspace: repo, branch: undefined, dirtyFiles: undefined });
+        if (fresh.includes("second-branch")) break;
+      }
+      expect(fresh).toContain("second-branch");
+      expect(fresh).toContain("1 file changed");
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});
