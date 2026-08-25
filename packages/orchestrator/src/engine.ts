@@ -1034,10 +1034,10 @@ export class Engine {
       },
     );
 
-    // Initialize Context Engine — always on, manages token budgets. Seed the
-    // summarizer with the LIGHT model tier (summarization is utility work —
-    // no need to burn frontier-model tokens on it). Resolution guarantees a
-    // registered provider, so /compress and rolling compaction always work.
+    // Initialize Context Engine — always on, manages token budgets. The seed
+    // below is immediately overridden by syncSummarizerTier(), which points
+    // summarization at the ACTIVE SESSION model (with the light tier kept as
+    // a fallback candidate) — see syncSummarizerTier for why.
     const lightSeed = this.resolveModelTier("light");
     this.contextEngine = new ContextEngine(
       {
@@ -3078,16 +3078,26 @@ export class Engine {
   }
 
   /**
-   * Point the compaction summarizer at the current light tier — and hand it
-   * the active session pair as the guaranteed-alive fallback candidate for
-   * when the light-tier table has rotted to a retired model.
+   * Point the compaction summarizer at the ACTIVE SESSION model — the one
+   * model proven working every single turn, because it is streaming the main
+   * loop. Static tier tables rot (retired, withdrawn-to-paid, and gated ids,
+   * three rounds and counting) and every time they did, compaction died while
+   * the session model sat there working. An explicit `[tiers].light` override
+   * still wins — a user who pinned a cheap summarizer asked for exactly that —
+   * and the light tier remains a fallback candidate inside the context
+   * engine's walk either way.
    */
   private syncSummarizerTier(): void {
-    const light = this.resolveModelTier("light");
-    this.contextEngine?.setSummarizer(light.model, light.provider as ProviderName, {
+    const session = {
       model: this.config.model,
       provider: this.config.provider as ProviderName,
-    });
+    };
+    let pick = session;
+    if (this.config.tiers?.light?.trim()) {
+      const ref = this.resolveModelTier("light");
+      pick = { model: ref.model, provider: ref.provider as ProviderName };
+    }
+    this.contextEngine?.setSummarizer(pick.model, pick.provider, session);
   }
 
   /** Switch model and/or provider at runtime. */

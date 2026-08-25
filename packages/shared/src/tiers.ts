@@ -69,13 +69,17 @@ export const PROVIDER_TIER_DEFAULTS: Record<
     standard: "grok-4",
     light: "grok-4-fast",
   },
-  // qwen/qwen3-coder:free and qwen3-coder:480b were retired upstream on
-  // 2026-07-15 (see gateway.ts's model-gone handling) — these entries mirror
-  // the gateway's refreshed defaults so a tier can never resolve to a corpse.
+  // OpenRouter's :free tier churns constantly: qwen/qwen3-coder:free retired
+  // 2026-07-15, then deepseek-v4-flash:free and deepseek-r1:free were
+  // withdrawn from the free tier ("paid version available now" 404s,
+  // observed 2026-08-26). Current ids verified live with a completion on
+  // 2026-08-26. NOTE: the compaction summarizer no longer trusts this table
+  // first — it runs on the active session model (engine.syncSummarizerTier)
+  // and only falls back through here.
   openrouter: {
-    heavy: "deepseek/deepseek-r1:free",
-    standard: "deepseek/deepseek-v4-flash:free",
-    light: "deepseek/deepseek-v4-flash:free",
+    heavy: "nvidia/nemotron-3-ultra-550b-a55b:free",
+    standard: "minimax/minimax-m3:free",
+    light: "minimax/minimax-m3:free",
   },
   // Ollama Cloud rotates its free lineup wholesale: qwen3-coder:480b AND its
   // announced successor qwen3-coder-next both 410'd on 2026-07-15, which left

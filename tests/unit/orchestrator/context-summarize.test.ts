@@ -148,7 +148,9 @@ describe("ContextEngine.summarizeConversation — manual /compress", () => {
 
     expect(r).not.toBeNull();
     expect(r!.summary).toBe("session-model summary");
-    expect(models).toContain("gpt-oss:120b");
+    // The session pair is candidate #2, BEFORE the static light default: the
+    // walk must be [dead pin, session] with no table entry in between.
+    expect(models).toEqual(["dead-light-model", "gpt-oss:120b"]);
   });
 
   test("memoizes retired summarizer models so later compactions skip them", async () => {
@@ -221,6 +223,53 @@ describe("ContextEngine.summarizeConversation — manual /compress", () => {
     await ce.summarizeConversation([userMsg("more"), assistantMsg("work")]);
     expect(models.length).toBe(before + 1);
     expect(models[models.length - 1]).toBe("freshly-launched");
+  });
+
+  test("live recovery tries :free models before the paid catalog head", async () => {
+    const models: string[] = [];
+    const gateway = {
+      infer: mock(async (req: any) => {
+        models.push(req.model);
+        if (req.model === "cheap/small:free") {
+          return {
+            content: [{ type: "text" as const, text: "free-tier summary" }],
+            model: req.model,
+            stopReason: "end_turn" as const,
+            usage: { inputTokens: 10, outputTokens: 5 },
+          };
+        }
+        // Static candidates die as retired; paid catalog entries die as 402.
+        throw Object.assign(new Error("410 model was retired"), { status: 410 });
+      }),
+      getRegisteredProviderNames: mock(() => ["openrouter"]),
+      registerProvider: mock(() => {}),
+      getProvider: mock(() => ({
+        // Catalog head is paid (the live-observed failure mode: eight 402s
+        // burned the whole budget); the one :free entry sits at the tail.
+        listModels: async () => [
+          { id: "big/paid-1" },
+          { id: "big/paid-2" },
+          { id: "big/paid-3" },
+          { id: "big/paid-4" },
+          { id: "big/paid-5" },
+          { id: "cheap/small:free" },
+        ],
+      })),
+      getTotalCost: mock(() => 0),
+    } as any;
+    const ce = new ContextEngine({}, gateway);
+    ce.setSummarizer("dead-light-model", "openrouter" as any);
+
+    const r = await ce.summarizeConversation([userMsg("hi"), assistantMsg("yo")]);
+
+    expect(r).not.toBeNull();
+    expect(r!.summary).toBe("free-tier summary");
+    // Of the catalog entries, the :free one must be attempted FIRST — the
+    // paid head must not be touched at all once it succeeds.
+    const catalogAttempts = models.filter(
+      (m) => m.startsWith("big/") || m === "cheap/small:free",
+    );
+    expect(catalogAttempts).toEqual(["cheap/small:free"]);
   });
 
   test("uses a comprehensive system prompt and forwards user focus instructions", async () => {
