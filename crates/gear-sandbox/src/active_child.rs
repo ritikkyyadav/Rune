@@ -36,11 +36,8 @@ pub fn clear() {
 /// Best-effort and idempotent (the slot is consumed).
 pub fn kill_active() {
     let v = ACTIVE.swap(0, Ordering::SeqCst);
-    if v == 0 {
-        return;
-    }
     #[cfg(unix)]
-    {
+    if v != 0 {
         let pid = (v >> 1) as i32;
         let grouped = (v & 1) == 1;
         unsafe {
@@ -50,4 +47,6 @@ pub fn kill_active() {
             libc::kill(pid, libc::SIGKILL);
         }
     }
+    #[cfg(not(unix))]
+    let _ = v;
 }
