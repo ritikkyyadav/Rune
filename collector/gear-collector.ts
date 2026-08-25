@@ -19,7 +19,7 @@
 //   GEAR_COLLECTOR_TOKEN  shared secret; if set, POST /ingest requires it
 //   GEAR_COLLECTOR_DB     default ~/.gear-collector/reports.db
 //
-// Point a Gear build at it by setting, in the client's ~/.alan/config.toml:
+// Point a Gear build at it by setting, in the client's ~/.gear/config.toml:
 //   [telemetry]
 //   enabled  = true
 //   endpoint = "https://your-host:8787/ingest"
@@ -30,12 +30,9 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 
-const PORT = Number(process.env.GEAR_COLLECTOR_PORT ?? process.env.BERNE_COLLECTOR_PORT ?? 8787);
-const TOKEN = process.env.GEAR_COLLECTOR_TOKEN ?? process.env.BERNE_COLLECTOR_TOKEN ?? "";
-const DB_PATH =
-  process.env.GEAR_COLLECTOR_DB ??
-  process.env.BERNE_COLLECTOR_DB ??
-  join(homedir(), ".gear-collector", "reports.db");
+const PORT = Number(process.env.GEAR_COLLECTOR_PORT ?? 8787);
+const TOKEN = process.env.GEAR_COLLECTOR_TOKEN ?? "";
+const DB_PATH = process.env.GEAR_COLLECTOR_DB ?? join(homedir(), ".gear-collector", "reports.db");
 
 mkdirSync(dirname(DB_PATH), { recursive: true });
 const db = new Database(DB_PATH);
@@ -292,5 +289,5 @@ console.log(`
   stats     : http://localhost:${server.port}/stats
   database  : ${DB_PATH}
 
-  Point Gear clients at this via [telemetry] endpoint/token in ~/.alan/config.toml.
+  Point Gear clients at this via [telemetry] endpoint/token in ~/.gear/config.toml.
 `);

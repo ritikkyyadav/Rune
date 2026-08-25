@@ -1,4 +1,4 @@
-//! Code indexing and symbol retrieval for the Alan agentic coding assistant.
+//! Code indexing and symbol retrieval for the Gear agentic coding assistant.
 //!
 //! Provides symbol extraction and structural repository maps across multiple
 //! languages, backed by a SQLite store for fast symbol lookup and staleness

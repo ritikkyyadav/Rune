@@ -68,7 +68,7 @@ impl Default for SandboxConfig {
             extra_read_paths: Vec::new(),
             extra_write_paths: Vec::new(),
             env_overrides: HashMap::new(),
-            audit_log_path: home.join(".alan").join("audit.jsonl"),
+            audit_log_path: home.join(".gear").join("audit.jsonl"),
         }
     }
 }

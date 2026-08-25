@@ -1,5 +1,5 @@
-# Alan project config — free-tier dev/test defaults.
-# Precedence: built-in defaults < ~/.alan/config.toml < this file < ALAN_* env vars.
+# Gear project config — free-tier dev/test defaults.
+# Precedence: built-in defaults < ~/.gear/config.toml < this file < GEAR_* env vars.
 # Keys are NOT stored here — set GOOGLE_API_KEY / OPENROUTER_API_KEY in your env or .env.
 
 [llm]

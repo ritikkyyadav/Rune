@@ -23,6 +23,7 @@ const PAGE_RANK_ITERATIONS: usize = 20;
 
 const SKIP_DIRS: &[&str] = &[
     ".git",
+    ".gear",
     ".alan",
     "node_modules",
     "target",

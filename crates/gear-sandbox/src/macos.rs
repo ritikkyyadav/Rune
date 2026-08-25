@@ -52,7 +52,7 @@ impl MacOsSandbox {
     fn seatbelt_profile(&self) -> String {
         let home = dirs::home_dir().unwrap_or_default();
         let workspace = escape_sb(&self.config.workspace_root.display().to_string());
-        let cache_path = escape_sb(&home.join(".alan").join("cache").display().to_string());
+        let cache_path = escape_sb(&home.join(".gear").join("cache").display().to_string());
 
         // Writable roots. macOS's per-user temp lives under /private/var/folders
         // (this is what $TMPDIR and confstr(_CS_DARWIN_USER_TEMP_DIR) resolve to);
@@ -77,7 +77,7 @@ impl MacOsSandbox {
 
         // Credential / secret stores that stay unreadable even under broad reads.
         // Mirrors PathGuard's blocked set, plus tool-specific token locations and
-        // Alan's own BYOK secrets file.
+        // Gear's own BYOK secrets file (current and legacy homes).
         let deny_reads: String = [
             home.join(".ssh"),
             home.join(".aws"),
@@ -90,6 +90,7 @@ impl MacOsSandbox {
             home.join(".netrc"),
             home.join(".bash_history"),
             home.join(".zsh_history"),
+            home.join(".gear").join("secrets.json"),
             home.join(".alan").join("secrets.json"),
         ]
         .iter()
@@ -348,7 +349,7 @@ mod tests {
             None => return,
         };
         // $HOME root is readable but not writable under the profile.
-        let probe = home.join(format!(".alan-sbx-write-probe-{}", std::process::id()));
+        let probe = home.join(format!(".gear-sbx-write-probe-{}", std::process::id()));
         let _ = std::fs::remove_file(&probe);
 
         let ws = tempfile::TempDir::new().unwrap();

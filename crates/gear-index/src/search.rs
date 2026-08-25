@@ -8,7 +8,7 @@
 //! configs and scripts stay findable.
 //!
 //! Local-first by construction: the index is a plain SQLite file under
-//! `.alan/`, built and refreshed incrementally by (mtime, size) — no daemon,
+//! `.gear/`, built and refreshed incrementally by (mtime, size) — no daemon,
 //! no embeddings, no network.
 
 use std::fs;

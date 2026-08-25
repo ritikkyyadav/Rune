@@ -3,7 +3,7 @@ use std::io::{self, Read};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "alan-tools", version, about = "Alan built-in tool executor")]
+#[command(name = "gear-tools", version, about = "Gear built-in tool executor")]
 struct Cli {
     /// Workspace root directory
     #[arg(long, default_value = ".")]
@@ -47,7 +47,7 @@ fn read_stdin() -> String {
     input
 }
 
-fn output_result<T: serde::Serialize>(result: Result<T, alan_tools::error::ToolError>) {
+fn output_result<T: serde::Serialize>(result: Result<T, gear_tools::error::ToolError>) {
     match result {
         Ok(output) => {
             let json = serde_json::json!({
@@ -75,83 +75,83 @@ async fn main() {
 
     match cli.command {
         Commands::ReadFile => {
-            let input: alan_tools::read_file::ReadFileInput = serde_json::from_str(&input_json)
+            let input: gear_tools::read_file::ReadFileInput = serde_json::from_str(&input_json)
                 .unwrap_or_else(|e| {
                     eprintln!("Invalid input JSON: {e}");
                     std::process::exit(2);
                 });
-            output_result(alan_tools::read_file::execute(input, &workspace));
+            output_result(gear_tools::read_file::execute(input, &workspace));
         }
         Commands::ListDir => {
-            let input: alan_tools::list_dir::ListDirInput = serde_json::from_str(&input_json)
+            let input: gear_tools::list_dir::ListDirInput = serde_json::from_str(&input_json)
                 .unwrap_or_else(|e| {
                     eprintln!("Invalid input JSON: {e}");
                     std::process::exit(2);
                 });
-            output_result(alan_tools::list_dir::execute(input, &workspace));
+            output_result(gear_tools::list_dir::execute(input, &workspace));
         }
         Commands::Grep => {
-            let input: alan_tools::grep::GrepInput = serde_json::from_str(&input_json)
+            let input: gear_tools::grep::GrepInput = serde_json::from_str(&input_json)
                 .unwrap_or_else(|e| {
                     eprintln!("Invalid input JSON: {e}");
                     std::process::exit(2);
                 });
-            output_result(alan_tools::grep::execute(input, &workspace));
+            output_result(gear_tools::grep::execute(input, &workspace));
         }
         Commands::WriteFile => {
-            let input: alan_tools::write_file::WriteFileInput = serde_json::from_str(&input_json)
+            let input: gear_tools::write_file::WriteFileInput = serde_json::from_str(&input_json)
                 .unwrap_or_else(|e| {
                     eprintln!("Invalid input JSON: {e}");
                     std::process::exit(2);
                 });
-            output_result(alan_tools::write_file::execute(input, &workspace));
+            output_result(gear_tools::write_file::execute(input, &workspace));
         }
         Commands::EditFile => {
-            let input: alan_tools::edit_file::EditFileInput = serde_json::from_str(&input_json)
+            let input: gear_tools::edit_file::EditFileInput = serde_json::from_str(&input_json)
                 .unwrap_or_else(|e| {
                     eprintln!("Invalid input JSON: {e}");
                     std::process::exit(2);
                 });
-            output_result(alan_tools::edit_file::execute(input, &workspace));
+            output_result(gear_tools::edit_file::execute(input, &workspace));
         }
         Commands::Bash => {
-            let input: alan_tools::bash::BashInput = serde_json::from_str(&input_json)
+            let input: gear_tools::bash::BashInput = serde_json::from_str(&input_json)
                 .unwrap_or_else(|e| {
                     eprintln!("Invalid input JSON: {e}");
                     std::process::exit(2);
                 });
             if cli.sandbox {
-                output_result(alan_tools::bash::execute_sandboxed(input, &workspace).await);
+                output_result(gear_tools::bash::execute_sandboxed(input, &workspace).await);
             } else {
-                output_result(alan_tools::bash::execute(input, &workspace).await);
+                output_result(gear_tools::bash::execute(input, &workspace).await);
             }
         }
         Commands::SymbolSearch => {
-            let input: alan_tools::symbol_search::SymbolSearchInput =
+            let input: gear_tools::symbol_search::SymbolSearchInput =
                 serde_json::from_str(&input_json).unwrap_or_else(|e| {
                     eprintln!("Invalid input JSON: {e}");
                     std::process::exit(2);
                 });
-            output_result(alan_tools::symbol_search::execute(input, &workspace));
+            output_result(gear_tools::symbol_search::execute(input, &workspace));
         }
         Commands::SearchCode => {
-            let input: alan_tools::search_code::SearchCodeInput = serde_json::from_str(&input_json)
+            let input: gear_tools::search_code::SearchCodeInput = serde_json::from_str(&input_json)
                 .unwrap_or_else(|e| {
                     eprintln!("Invalid input JSON: {e}");
                     std::process::exit(2);
                 });
-            output_result(alan_tools::search_code::execute(input, &workspace));
+            output_result(gear_tools::search_code::execute(input, &workspace));
         }
         Commands::RepoMap => {
-            let input: alan_tools::repo_map::RepoMapInput = serde_json::from_str(&input_json)
+            let input: gear_tools::repo_map::RepoMapInput = serde_json::from_str(&input_json)
                 .unwrap_or_else(|e| {
                     eprintln!("Invalid input JSON: {e}");
                     std::process::exit(2);
                 });
-            output_result(alan_tools::repo_map::execute(input, &workspace));
+            output_result(gear_tools::repo_map::execute(input, &workspace));
         }
         Commands::SandboxCheck => {
-            output_result::<alan_sandbox::SandboxProbe>(Ok(alan_sandbox::probe_capability()));
+            output_result::<gear_sandbox::SandboxProbe>(Ok(gear_sandbox::probe_capability()));
         }
     }
 }

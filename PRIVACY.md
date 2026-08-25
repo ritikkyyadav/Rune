@@ -7,12 +7,12 @@ does, because "you can verify it" is the whole point.
 ## The short version
 
 - **Off by default.** Nothing leaves your machine until (a) the build is
-  configured with a collector endpoint **and** (b) you answer *yes* to the
+  configured with a collector endpoint **and** (b) you answer _yes_ to the
   first-run prompt (or run `gear telemetry on`).
 - **You can see the exact bytes.** `gear telemetry preview` prints the complete
   set of payloads that could ever be sent — no hidden fields.
 - **Change your mind any time.** `gear telemetry off` stops it; `gear telemetry
-  reset` also throws away your anonymous install id.
+reset` also throws away your anonymous install id.
 
 ## What is collected when you opt in
 
@@ -37,7 +37,7 @@ replaces it.
 - File paths (your home directory is collapsed to `~`) or the flight trail's
   content summaries.
 - API keys or secrets — these are stripped at a single redaction chokepoint
-  *before* anything is even written to the local Black Box, and again before
+  _before_ anything is even written to the local Black Box, and again before
   transmission.
 
 ### A note on IP addresses
@@ -52,23 +52,23 @@ want, keep telemetry off (the default).
 
 ## Where your data lives locally
 
-- `~/.alan/blackbox.db` — the local flight recorder (always local; browse with
+- `~/.gear/blackbox.db` — the local flight recorder (always local; browse with
   `gear doctor` / `gear incidents`).
-- `~/.alan/telemetry.json` — your consent decision + anonymous install id.
-- `~/.alan/telemetry-queue.jsonl` — reports waiting to send (only exists after
+- `~/.gear/telemetry.json` — your consent decision + anonymous install id.
+- `~/.gear/telemetry-queue.jsonl` — reports waiting to send (only exists after
   opt-in); delivered best-effort at the next launch.
-- `~/.alan/telemetry-usage.json` — the pending usage counters.
+- `~/.gear/telemetry-usage.json` — the pending usage counters.
 
 ## Controls
 
-| Command | Effect |
-| --- | --- |
-| `gear telemetry status` | Show config, consent, install id, and what's queued |
-| `gear telemetry preview` | Print the exact payloads that could be sent |
-| `gear telemetry on` / `off` | Opt in / out |
-| `gear telemetry reset` | Forget the decision + install id |
+| Command                     | Effect                                              |
+| --------------------------- | --------------------------------------------------- |
+| `gear telemetry status`     | Show config, consent, install id, and what's queued |
+| `gear telemetry preview`    | Print the exact payloads that could be sent         |
+| `gear telemetry on` / `off` | Opt in / out                                        |
+| `gear telemetry reset`      | Forget the decision + install id                    |
 
-Config lives under `[telemetry]` in `~/.alan/config.toml` (or a project
-`.alan/config.toml`); env overrides `GEAR_TELEMETRY`,
+Config lives under `[telemetry]` in `~/.gear/config.toml` (or a project
+`.gear/config.toml`); env overrides `GEAR_TELEMETRY`,
 `GEAR_TELEMETRY_ENDPOINT`, `GEAR_TELEMETRY_TOKEN`. Setting `enabled = false` or
 blanking `endpoint` is a hard kill-switch — no prompt, no network.

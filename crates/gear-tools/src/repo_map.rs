@@ -1,11 +1,11 @@
 use std::path::Path;
 
-use alan_index::{RepoMapConfig, RepoMapOutput, build_repo_map};
+use gear_index::{RepoMapConfig, RepoMapOutput, build_repo_map};
 use serde::Deserialize;
 
 use crate::error::ToolError;
 
-/// Input accepted by `alan-tools repo-map`. The command is deliberately not a
+/// Input accepted by `gear-tools repo-map`. The command is deliberately not a
 /// model-facing tool: the orchestrator invokes it once per user request and
 /// puts the bounded result through the normal context budgeter.
 #[derive(Debug, Deserialize)]

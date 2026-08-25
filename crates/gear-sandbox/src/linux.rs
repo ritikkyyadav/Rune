@@ -31,11 +31,11 @@ impl LinuxSandbox {
     /// Build the argument list for `bwrap`.
     fn bwrap_args(&self, command: &str, cwd: &Path) -> Vec<String> {
         let workspace = self.config.workspace_root.display().to_string();
-        let alan_cache = dirs::home_dir()
+        let gear_cache = dirs::home_dir()
             .unwrap_or_default()
-            .join(".alan")
+            .join(".gear")
             .join("cache");
-        let cache_path = alan_cache.display().to_string();
+        let cache_path = gear_cache.display().to_string();
 
         let mut args: Vec<String> = Vec::new();
 
@@ -53,7 +53,7 @@ impl LinuxSandbox {
         // Writable mounts.
         args.extend_from_slice(&["--bind".to_string(), workspace.clone(), workspace.clone()]);
 
-        if alan_cache.exists() {
+        if gear_cache.exists() {
             args.extend_from_slice(&["--bind".to_string(), cache_path.clone(), cache_path.clone()]);
         }
 

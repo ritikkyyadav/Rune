@@ -201,7 +201,7 @@ pub async fn execute_sandboxed(
     input: BashInput,
     workspace_root: &Path,
 ) -> Result<BashOutput, ToolError> {
-    use alan_sandbox::{SandboxConfig, create_sandbox};
+    use gear_sandbox::{SandboxConfig, create_sandbox};
 
     if let Some(reason) = blocked_reason(&input.command) {
         return Err(ToolError::CommandFailed(format!(
@@ -238,7 +238,7 @@ pub async fn execute_sandboxed(
                 sandboxed: result.sandboxed,
             })
         }
-        Err(alan_sandbox::SandboxError::Timeout(ms)) => Ok(BashOutput {
+        Err(gear_sandbox::SandboxError::Timeout(ms)) => Ok(BashOutput {
             stdout: String::new(),
             stderr: format!(
                 "Command timed out after {ms}ms (sandboxed). If it needs network access \
@@ -426,17 +426,17 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         // SAFETY: test-only env mutation; tests in this module are async but
         // this var is unique to this test.
-        unsafe { std::env::set_var("ALAN_BASH_ENV_PROBE", "inherited-42") };
+        unsafe { std::env::set_var("GEAR_BASH_ENV_PROBE", "inherited-42") };
         let output = execute(
             BashInput {
-                command: "echo $ALAN_BASH_ENV_PROBE".to_string(),
+                command: "echo $GEAR_BASH_ENV_PROBE".to_string(),
                 timeout_ms: None,
             },
             tmp.path(),
         )
         .await
         .unwrap();
-        unsafe { std::env::remove_var("ALAN_BASH_ENV_PROBE") };
+        unsafe { std::env::remove_var("GEAR_BASH_ENV_PROBE") };
         assert_eq!(output.stdout.trim(), "inherited-42");
     }
 
