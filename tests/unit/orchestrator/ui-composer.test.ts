@@ -494,8 +494,8 @@ describe("ui/composer footer filesEdited readout", () => {
       ),
     );
     expect(line).toContain("3 files edited");
-    expect(stripAnsi(statusLine({ model: "m", workspace: "/w", mode: "gear-2" }, 140))).not.toContain(
-      "files edited",
-    );
+    expect(
+      stripAnsi(statusLine({ model: "m", workspace: "/w", mode: "gear-2" }, 140)),
+    ).not.toContain("files edited");
   });
 });

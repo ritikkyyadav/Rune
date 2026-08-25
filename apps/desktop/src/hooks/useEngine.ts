@@ -179,7 +179,7 @@ export function useEngine(options: UseEngineOptions) {
 
   type CommandResult<T> = { ok: true; value: T | null } | { ok: false };
   const command = useCallback(
-    async <T,>(
+    async <T>(
       cmd: string,
       args: Record<string, unknown> | undefined,
       what: string,
@@ -200,7 +200,11 @@ export function useEngine(options: UseEngineOptions) {
 
   const createSession = useCallback(
     async (model?: string) => {
-      const r = await command<string>("create_session", { model: model ?? status.model }, "new session");
+      const r = await command<string>(
+        "create_session",
+        { model: model ?? status.model },
+        "new session",
+      );
       // No engine (preview) or a reported failure: a local-only id keeps the
       // UI navigable; nothing pretends the engine has this session.
       return r.ok && r.value ? r.value : `local-${Date.now()}`;
