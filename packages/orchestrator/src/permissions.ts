@@ -99,7 +99,7 @@ export const GEAR_DESCRIPTIONS: Readonly<Record<PermissionMode, string>> = {
   "gear-1": "guided — asks before every write and command",
   "gear-2": "workspace file edits proceed; commands and delegation still ask",
   "gear-3": "adds sandboxed commands and workspace-confined delegation",
-  "gear-4": "full autonomy — no prompts (the sandbox is a separate switch)",
+  "gear-4": "full autonomy — never asks first (the sandbox is a separate switch)",
   auto: "automatic — a separate classifier reviews risky actions",
 };
 

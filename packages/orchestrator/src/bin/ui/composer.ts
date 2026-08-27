@@ -128,7 +128,15 @@ export function modeInfo(mode?: string): ModeInfo {
         id: "gear-4",
         label: "4th gear",
         arrows: ">>>>",
-        desc: "full autonomy | no prompts",
+        // "no prompts" was ambiguous in exactly the place it could least
+        // afford to be. In a coding agent "prompt" means the system prompt at
+        // least as often as it means a confirmation, so a status line reading
+        // "full autonomy | no prompts" can be read as "running without
+        // instructions" — which is not true and is alarming in the opposite
+        // direction from the real risk. Every other gear here names a
+        // behaviour, and 1st gear is literally "every action asks first"; this
+        // is its opposite, said the same way.
+        desc: "never asks first",
         detail: "Gear acts without permission prompts; the OS sandbox is unchanged (see /sandbox).",
         paint: warn,
         loud: true,

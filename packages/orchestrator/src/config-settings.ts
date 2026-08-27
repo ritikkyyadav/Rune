@@ -37,7 +37,7 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
     description:
       "Which gear Gear runs in: 1 = guided (asks before writes and commands); 2 = workspace " +
       "file edits proceed; 3 = also sandboxed commands and confined delegation; 4 = full " +
-      "autonomy, no prompts; auto = a separate classifier reviews risky actions.",
+      "autonomy, never asks first; auto = a separate classifier reviews risky actions.",
     kind: "enum",
     values: ["1", "2", "3", "4", "auto"],
     valueAliases: {

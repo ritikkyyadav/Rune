@@ -1237,11 +1237,14 @@ export function classifyAutoModeTier(action: AutoModeAction): AutoModeTier {
   // Delegation is a trust-boundary crossing even if the child is read-only.
   if (name === "task" || name === "worker") return "classifier";
   // Asking the user and internal planning/context/loop bookkeeping have no external blast radius.
+  // `team` is same-user local coordination (messages/claims on the local bus);
+  // receivers frame peer mail as non-authoritative, so it stays mechanical.
   if (
     name === "ask_user" ||
     name === "todo_write" ||
     name === "compact_context" ||
-    name === "loop_control"
+    name === "loop_control" ||
+    name === "team"
   ) {
     return "safe";
   }
@@ -1410,7 +1413,7 @@ function guardrailChangeReason(action: AutoModeAction): string | undefined {
       setting === "gear") &&
     configModeToPermissionMode(value) === "gear-4"
   ) {
-    return "the action disables interactive permission review and shifts into 4th gear (full autonomy, no prompts)";
+    return "the action disables interactive permission review and shifts into 4th gear (full autonomy — it never asks first)";
   }
   if (setting === "sandbox" && ["false", "off", "disabled", "disable", "no"].includes(value)) {
     return "the action disables the operating-system sandbox";
