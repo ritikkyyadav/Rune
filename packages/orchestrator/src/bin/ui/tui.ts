@@ -222,6 +222,25 @@ function isMeaningfulSession(session: SessionListItem): boolean {
 // zero-size terminal falls back sanely instead of clamping every line to nothing.
 const cols = () => process.stdout.columns || 80;
 const rowsCount = () => process.stdout.rows || 24;
+
+/**
+ * How many blank rows the pinned block holds open beneath the transcript so the
+ * field sits on the bottom of the window instead of floating under the header.
+ *
+ * Pure, and exported, because the interesting case is not the arithmetic — it
+ * is what `printedRows` means after the screen has been wiped. It counts rows
+ * committed to scrollback and only ever counts UP, which is right while a
+ * session accumulates: once a window's worth of output exists there is nothing
+ * left to hold open. But /clear erases that output, and if the count survives
+ * the erase the padding stays at zero against a screen that is now empty, and
+ * the whole bar collapses upward. Every path that clears the screen has to
+ * reset the count with it — see resetTranscript.
+ */
+export function holdOpenRows(viewport: number, printedRows: number, blockRows: number): number {
+  // One row spare: a pinned block that reaches the last cell wraps, and a wrap
+  // desyncs the relative cursor math for every frame after it.
+  return Math.max(0, viewport - printedRows - blockRows - 1);
+}
 const MAX_TRANSCRIPT = 5000; // cap the in-memory scrollback
 const SCROLL_STEP = 3; // lines per mouse-wheel notch
 
@@ -859,8 +878,7 @@ class Tui {
     let caretRow = comp.caretRow;
 
     // Hold the field on the bottom rows until real output has earned the space.
-    const viewport = rowsCount();
-    const pad = Math.max(0, viewport - this.printedRows - lines.length - 1);
+    const pad = holdOpenRows(rowsCount(), this.printedRows, lines.length);
     if (pad > 0) {
       const blank = withThemeBg(this.bound(""));
       lines = [...Array.from({ length: pad }, () => blank), ...lines];
@@ -958,6 +976,12 @@ class Tui {
     this.scroll = 0;
     this.region.clear();
     process.stdout.write("\x1b[2J\x1b[3J\x1b[H");
+    // The screen is empty again, so the row count that decides how much space
+    // the field holds open has to be empty too. Without this, /clear wipes the
+    // window while the padding still believes a full screen of output is above
+    // it — it computes zero, and the bar jumps up under the banner leaving the
+    // bottom of the window blank. printBanner() re-counts its own rows below.
+    this.printedRows = 0;
     this.printBanner();
   }
 
