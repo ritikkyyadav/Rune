@@ -182,11 +182,35 @@ export function swatch(themeName: string): string {
 }
 
 /** Flow never mutates terminal foreground, background, or cursor colors. */
+/**
+ * The cursor, in the theme's accent — and nothing else.
+ *
+ * The standing rule here is that Flow paints no terminal state: no background,
+ * no foreground, body text inherits. That rule is right, and it is why gear
+ * never leaves a terminal looking wrong after it exits. The cursor is the one
+ * exception, and the distinction is about where the thing sits.
+ *
+ * A background is behind everything, including the user's other programs; a
+ * foreground is their reading colour. Both belong to them. The cursor is a
+ * GLYPH, drawn on our row, inside our input field, between our two rules — and
+ * left alone it renders in whatever colour the terminal picked, which is a
+ * foreign accent sitting in the middle of a themed frame. Inheriting the ground
+ * is deference; inheriting a mark inside your own field is just a mismatch.
+ *
+ * OSC 12 sets it, OSC 112 resets it, and the reset is wired into both the
+ * ordinary exit and the crash handler — this is a session-scoped mode like
+ * bracketed paste, not a persistent mutation. A terminal that ignores OSC 12
+ * ignores it harmlessly.
+ */
 export function terminalThemeSeq(): string {
-  return "";
+  if (!COLOR_CAPABLE || active.useNativeColors) return "";
+  const [r, g, b] = pigmentFor(ROLE_SLOT.accent).rgb;
+  const hex = [r, g, b].map((n) => n.toString(16).padStart(2, "0")).join("");
+  return `\x1b]12;#${hex}\x07`;
 }
 
-export const TERMINAL_THEME_RESET = "";
+/** Hand the cursor back. OSC 112 restores the terminal's own cursor colour. */
+export const TERMINAL_THEME_RESET = "\x1b]112\x07";
 
 /** Compatibility APIs kept while Phase 03 removes the old full-screen surface. */
 export function themeBgSeq(): string {
