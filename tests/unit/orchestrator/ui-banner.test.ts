@@ -43,10 +43,14 @@ describe("ui/banner", () => {
     // It used to be four: a rule with the name inlaid, a location row, a model
     // row, and a closing rule. Two heavy rules to say "a program started" is a
     // lot of screen spent before the first word of the session.
-    expect(lines).toHaveLength(2);
+    // ONE row. The header does not close itself with a rule: on a fresh
+    // session there is no transcript between it and the composer, so its rule
+    // would land on the row above the composer's own top rule and draw as a
+    // doubled border. The composer's rule is the divider.
+    expect(lines).toHaveLength(1);
     expect(lines[0]).toContain("gear · sample-app · main · claude-sonnet-4-6");
     expect(lines[0]).toContain("1st gear"); // the mode, hard right
-    expect(lines[1]).toMatch(/^─+$/); // the single hairline
+    expect(lines.some((l) => /^─+$/.test(l))).toBe(false);
     // Nothing decorative survives: no mark, no avatar, no wordmark, no tagline.
     expect(output).not.toContain("⚙");
     expect(output).not.toContain("⣴");
@@ -78,9 +82,10 @@ describe("ui/banner", () => {
         .split("\n")
         .filter((line) => line.trim());
       const content = lines[0]!;
-      const hair = lines[1]!;
-      expect(content.length).toBe(hair.length);
-      expect(content.trimEnd()).toMatch(/1st gear$/); // the badge IS the right edge
+      // The badge is the right edge, and the row fills the window it is chrome
+      // for — measured against the surface, not the 120-column reading column.
+      expect(content.length).toBe(Math.max(20, columns - 1));
+      expect(content.trimEnd()).toMatch(/1st gear$/);
     }
   });
 
@@ -89,10 +94,8 @@ describe("ui/banner", () => {
       const lines = banner(columns)
         .split("\n")
         .filter((line) => line.trim());
-      // The one hairline divides the whole surface…
-      const hair = lines.at(-1)!;
-      expect(hair).toMatch(/─$/);
-      expect(hair.length).toBeGreaterThanOrEqual(Math.min(120, columns) - 1);
+      // No rule of its own — the composer supplies the divider.
+      expect(lines.some((l) => /^─+$/.test(l))).toBe(false);
       // …while every line still stays inside the window, never touching its
       // last cell (a full-width line wraps, and a wrap desyncs the composer).
       for (const line of lines) expect(line.length).toBeLessThan(columns);
