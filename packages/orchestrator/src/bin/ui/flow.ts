@@ -1,44 +1,45 @@
-// ─── Flow: the terminal design system ───
+// --- Flow: the terminal design system ---
 // A coding agent's terminal UI, as it reads under a real pty. One rule underneath
 // everything here: never own the screen, own the last four lines. So there are no
-// cards, no boxes, no painted surfaces, no logo — just a fixed reading measure, a
+// cards, no boxes, no painted surfaces, no logo -- just a fixed reading measure, a
 // left rail where work happens, and a right column where the receipt lands.
 //
 // The whole grammar is five marks:
 //
-//   › you asked                            the human, at the left margin
-//   ● the agent answers                    one signal dot, prose beside it
-//     │ · grep  content_block_stop         work, on a rail under the prose
-//     │ └ src/streaming.ts:42              what that work found
-//   ▸ Run this? It touches ~/.cache        a decision, and only a decision
+//   > you asked                            the human, at the left margin
+//   o the agent answers                    one signal dot, prose beside it
+//     | | grep  content_block_stop         work, on a rail under the prose
+//     | + src/streaming.ts:42              what that work found
+//   > Run this? It touches ~/.cache        a decision, and only a decision
 //
 // Colour carries meaning, never decoration: teal is identity and location,
 // green is added and passed, red is removed and failed, amber asks. Everything
-// else is one of three greys. If a value is unknown it is absent — no row here
+// else is one of three greys. If a value is unknown it is absent -- no row here
 // ever pads itself with a reassuring guess.
 
-import { accent, bold, faint, info, muted, ok, text, warn } from "./theme";
+import { bold, danger, faint, info, muted, ok, text, warn } from "./theme";
+import { glyph } from "./glyphs";
 import { termWidth, truncate, visLen, wrap } from "./render";
 
-// ─── The grid ───
+// --- The grid ---
 // Prose sits at column 4 and work rails from the same column, so a tool call
 // reads as a continuation of the sentence that introduced it rather than a
 // separate panel. The measure is fixed: wide terminals get whitespace, not
 // longer lines, because a 200-column sentence is unreadable.
 
-/** Marker column — `›` and `●` live here. */
+/** Marker column -- `>` and `o` live here. */
 export const MARK = "  ";
 /** Prose/rail column. Everything a marker introduces aligns here. */
 export const BODY = "    ";
-/** Content inside a rail: past `│ `. */
+/** Content inside a rail: past `| `. */
 export const RAIL_IN = "      ";
 
 /**
- * The content measure, in columns. Rows that carry *data* — a path, a diff, a
- * command's output, a receipt — get this, and it follows the terminal up to a
+ * The content measure, in columns. Rows that carry *data* -- a path, a diff, a
+ * command's output, a receipt -- get this, and it follows the terminal up to a
  * generous ceiling. The ceiling exists only so a right-aligned receipt stays
  * near the row it belongs to; it is not a reading limit, because truncating a
- * path with `…` while half the window sits empty destroys the one thing the row
+ * path with `...` while half the window sits empty destroys the one thing the row
  * was printed to say.
  *
  * A caller that owns a narrower region (an overlay, a pinned panel) passes its
@@ -51,7 +52,7 @@ export function measure(cap?: number): number {
 }
 
 /**
- * The whole surface, for the structural rules that divide it — the header's two
+ * The whole surface, for the structural rules that divide it -- the header's two
  * rules and the hairline above the composer. Chrome is not content: a divider
  * that stops at the reading column leaves the screen looking half-drawn, and
  * the thing it is dividing is the window, not the paragraph.
@@ -63,7 +64,7 @@ export function surfaceWidth(): number {
 /**
  * Columns available to *prose*. Sentences are capped well below the data
  * measure and stay there on a wide window, because a 120-column sentence is
- * genuinely harder to read than an 84-column one — the eye loses the line on
+ * genuinely harder to read than an 84-column one -- the eye loses the line on
  * the way back. Code and paths have no such problem, which is why they are
  * measured separately.
  */
@@ -71,17 +72,17 @@ export function proseWidth(): number {
   return Math.max(16, Math.min(88, measure()) - BODY.length);
 }
 
-/** Columns available inside a rail (`    │ ` is 6 cells) for a row that also
+/** Columns available inside a rail (`    | ` is 6 cells) for a row that also
  *  carries a right-aligned receipt. */
 export function railWidth(): number {
   return Math.max(12, measure() - RAIL_IN.length);
 }
 
 /**
- * Columns available inside a rail for *verbatim* content — a line of a diff,
+ * Columns available inside a rail for *verbatim* content -- a line of a diff,
  * a line a command actually printed. These rows carry no receipt, so there is
  * nothing to keep near anything, and they take the whole window: a source line
- * cut at `…` is a line the reader cannot check, which defeats the point of
+ * cut at `...` is a line the reader cannot check, which defeats the point of
  * showing the evidence at all.
  */
 export function verbatimWidth(): number {
@@ -91,10 +92,10 @@ export function verbatimWidth(): number {
 /**
  * One row of the grid: content on the left, a receipt hard against the right
  * edge of the measure. When the two cannot both fit, the receipt wins and the
- * content truncates — a metric you cannot read is worse than a clipped path.
+ * content truncates -- a metric you cannot read is worse than a clipped path.
  */
-export function row(left: string, right = ""): string {
-  const width = measure();
+export function row(left: string, right = "", budgetWidth = measure()): string {
+  const width = budgetWidth;
   const rightCells = visLen(right);
   const budget = Math.max(4, width - rightCells - (rightCells ? 2 : 0));
   const shown = visLen(left) > budget ? truncate(left, budget) : left;
@@ -103,12 +104,12 @@ export function row(left: string, right = ""): string {
   return `${shown}${" ".repeat(gap)}${right}`;
 }
 
-// ─── Header ───
+// --- Header ---
 
 export interface FlowHeader {
   /** Product name, set in the identity colour. */
   name: string;
-  /** Version, no `v` prefix — `gear 0.3.0`. */
+  /** Version, no `v` prefix -- `gear 0.3.0`. */
   version: string;
   /** Workspace folder name. */
   workspace?: string;
@@ -118,7 +119,7 @@ export interface FlowHeader {
   state?: string;
   /** Model id or label. */
   model?: string;
-  /** What the agent may do without asking — the gear, in words. */
+  /** What the agent may do without asking -- the gear, in words. */
   scope?: string;
   /** The part of `scope` that is a guardrail rather than a permission. */
   caution?: string;
@@ -127,36 +128,59 @@ export interface FlowHeader {
 /**
  * The identity block: a rule with the name set into it, two lines that say
  * where you are and what the agent is allowed to do, and a closing rule. No
- * mark, no avatar, no wordmark — the terminal already knows it is a terminal.
+ * mark, no avatar, no wordmark -- the terminal already knows it is a terminal.
+ */
+/**
+ * The header, as one line and a hairline.
+ *
+ * It used to be six rows: a blank, a full-width rule with the product name
+ * inlaid, a location row, a model row, another full-width rule, another blank —
+ * before a single word of the session. Two heavy rules and two blanks is a lot
+ * of screen spent saying "a program started", and the dashes read as texture
+ * rather than as structure.
+ *
+ * One row carries all of it: who you are talking to, where, on what, in which
+ * gear. The mode sits hard against the right edge because it is the one field
+ * that changes under you. The hairline beneath is the only chrome, and it marks
+ * the boundary the session scrolls away from.
  */
 export function header(opts: FlowHeader): string {
-  const width = measure();
   const surface = surfaceWidth();
-  const title = `${info(opts.name)} ${muted(opts.version)}`;
-  const lead = faint("──── ");
-  const tail = Math.max(3, surface - visLen(lead) - visLen(title) - 1);
-  const lines = [
-    "",
-    `${lead}${title} ${faint("─".repeat(tail))}`,
-    ...place(
-      [
-        opts.workspace && text(opts.workspace),
-        opts.branch && info(opts.branch),
-        opts.state && muted(opts.state),
-      ],
-      width,
-    ),
-    ...place([opts.model && muted(opts.model), scopeClause(opts)], width),
-    faint("─".repeat(surface)),
-    "",
-  ];
-  return lines.join("\n");
+  // Ordered by how much you need it when the line has to be cut: who and where
+  // first, then what it is running on, then the tree's shape. The mode goes
+  // hard right on its own, because it is the field that changes under you and
+  // the one whose absence would be dangerous rather than merely inconvenient.
+  const left = [
+    info(opts.name),
+    opts.workspace && text(opts.workspace),
+    opts.branch && muted(opts.branch),
+    opts.model && muted(opts.model),
+    opts.state && muted(opts.state),
+  ]
+    .filter(Boolean)
+    .join(faint(` ${glyph("observed")} `));
+  // Just the gear, not its explanation. The caution ("every action asks first")
+  // is already spelled out on the status line above the composer, and repeating
+  // it here cost more of this row than the dirty-file count it displaced.
+  const right = opts.scope ? warn(opts.scope) : "";
+  // The indent is paid for out of the row's own budget. Prepending MARK to a
+  // row already sized to the full measure pushes the line onto the terminal's
+  // last cell, and a line that touches the last cell wraps — which desyncs the
+  // relative cursor math for the pinned region below it.
+  return ["", `${MARK}${row(left, right, measure() - MARK.length)}`, hairline(surface), ""].join(
+    "\n",
+  );
 }
 
-/** What the agent may do, and where that stops — one amber clause, because
+/** The one piece of chrome in the product: a hairline the width of the window. */
+export function hairline(width = surfaceWidth()): string {
+  return faint(glyph("rule").repeat(Math.max(1, width)));
+}
+
+/** What the agent may do, and where that stops -- one amber clause, because
  *  this is the only line in the header that governs your machine. */
 function scopeClause(opts: FlowHeader): string | undefined {
-  const clause = [opts.scope, opts.caution && `— ${opts.caution}`].filter(Boolean).join(" ");
+  const clause = [opts.scope, opts.caution && `-- ${opts.caution}`].filter(Boolean).join(" ");
   return clause ? warn(clause) : undefined;
 }
 
@@ -164,13 +188,13 @@ function scopeClause(opts: FlowHeader): string | undefined {
 function place(parts: Array<string | undefined | false>, width: number): string[] {
   const shown = parts.filter((part): part is string => Boolean(part));
   if (shown.length === 0) return [];
-  return [`${MARK}${truncate(shown.join(faint(" · ")), width - MARK.length)}`];
+  return [`${MARK}${truncate(shown.join(faint(` ${glyph("observed")} `)), width - MARK.length)}`];
 }
 
-// ─── Turn markers ───
+// --- Turn markers ---
 
 /**
- * What you asked, at the left margin — the strongest landmark in scrollback
+ * What you asked, at the left margin -- the strongest landmark in scrollback
  * precisely because nothing decorates it.
  */
 export function asked(body: string): string {
@@ -178,7 +202,9 @@ export function asked(body: string): string {
   let first = true;
   for (const source of body.replace(/\r\n/g, "\n").split("\n")) {
     for (const part of wrap(source, proseWidth())) {
-      lines.push(first ? `${MARK}${muted("›")} ${text(part)}` : `${BODY}${text(part)}`);
+      lines.push(
+        first ? `${MARK}${muted(glyph("selection"))} ${text(part)}` : `${BODY}${text(part)}`,
+      );
       first = false;
     }
   }
@@ -186,7 +212,7 @@ export function asked(body: string): string {
 }
 
 /**
- * Put the agent's dot on an already-rendered block — Markdown that has been
+ * Put the agent's dot on an already-rendered block -- Markdown that has been
  * laid out at the body indent, so lists and inline code survive. The dot
  * replaces the first line's indent rather than being prepended to it, which is
  * what keeps every continuation aligned under the prose.
@@ -196,7 +222,7 @@ export function dot(lines: string[]): string[] {
   if (first < 0) return lines;
   return lines.map((line, index) =>
     index === first && line.startsWith(BODY)
-      ? `${MARK}${info("●")} ${line.slice(BODY.length)}`
+      ? `${MARK}${info(glyph("live"))} ${line.slice(BODY.length)}`
       : line,
   );
 }
@@ -211,51 +237,57 @@ export function said(body: string, paint: (v: string) => string = text): string 
       continue;
     }
     for (const part of wrap(source, proseWidth())) {
-      lines.push(first ? `${MARK}${info("●")} ${paint(part)}` : `${BODY}${paint(part)}`);
+      lines.push(first ? `${MARK}${info(glyph("live"))} ${paint(part)}` : `${BODY}${paint(part)}`);
       first = false;
     }
   }
   return lines.join("\n");
 }
 
-// ─── Work rails ───
+// --- Work rails ---
 
 export type Status = "ok" | "pass" | "fail" | "active" | "none";
 
 /**
  * The status column, ordered by how much attention each mark is allowed to ask
  * for. `ok` is the default and says only *this happened*: a faint middot, no
- * verdict. A file that was read is not news — reads almost always succeed — and
+ * verdict. A file that was read is not news -- reads almost always succeed -- and
  * a rail that awards a green tick to fifteen routine calls has spent the tick
  * before it reaches the one that mattered. What the reader actually wants from
  * a finished call is on the other side of the row: `120 lines`, `4 files`,
  * `2.6s`. Neutralising the mark is what lets the eye travel there.
  *
  * `pass` is the green tick, and it is spent only where something was genuinely
- * checked — a test run, a typecheck, a build. `fail` is the single mark allowed
+ * checked -- a test run, a typecheck, a build. `fail` is the single mark allowed
  * to interrupt. Every glyph occupies one cell, `none` included, so the verb
  * column holds whether or not a row carries a mark.
  */
-const GLYPH: Record<Status, string> = { ok: "·", pass: "✓", fail: "✗", active: "›", none: " " };
+const STATUS_GLYPH: Record<Status, string> = {
+  ok: glyph("observed"),
+  pass: glyph("verified"),
+  fail: glyph("failure"),
+  active: glyph("selection"),
+  none: " ",
+};
 
-/** The rail cell — a hairline under the prose, marking work rather than boxing it. */
+/** The rail cell -- a hairline under the prose, marking work rather than boxing it. */
 function rail(): string {
-  return `${BODY}${faint("│")} `;
+  return `${BODY}${faint(glyph("gutter"))} `;
 }
 
 export interface ToolRow {
-  /** `grep`, `read`, `edit`, `run` — a verb short enough to scan, not a tool id. */
+  /** `grep`, `read`, `edit`, `run` -- a verb short enough to scan, not a tool id. */
   name: string;
   /** What it acted on: a pattern, a path, a command. */
   arg?: string;
-  /** The receipt, right-aligned: `4 files`, `+6 -1 · 1 hunk`, `2.6s`. */
+  /** The receipt, right-aligned: `4 files`, `+6 -1 | 1 hunk`, `2.6s`. */
   metric?: string;
   /** How the call ended. `ok` (the default) is a neutral "this happened";
    *  `pass` is reserved for work that verified something. Edits use `none`:
    *  the diff below is the evidence, and it does not need a mark to vouch for
    *  it. */
   status?: Status;
-  /** Paints the argument — teal when it names a file the agent is changing. */
+  /** Paints the argument -- teal when it names a file the agent is changing. */
   argTone?: "muted" | "path";
 }
 
@@ -266,7 +298,7 @@ function paintMetric(metric?: string): string {
 }
 
 /**
- * One unit of work: `│ · grep  content_block_stop            4 files`.
+ * One unit of work: `| | grep  content_block_stop            4 files`.
  * The name is padded to a stable column so a run of calls reads as a table
  * without ever drawing one.
  */
@@ -274,27 +306,27 @@ export function toolRow(v: ToolRow): string {
   const status = v.status ?? "ok";
   const mark =
     status === "ok"
-      ? `${faint(GLYPH.ok)} `
+      ? `${faint(STATUS_GLYPH.ok)} `
       : status === "pass"
-        ? `${ok(GLYPH.pass)} `
+        ? `${ok(STATUS_GLYPH.pass)} `
         : status === "fail"
-          ? `${accent(GLYPH.fail)} `
+          ? `${danger(STATUS_GLYPH.fail)} `
           : status === "active"
-            ? `${info(GLYPH.active)} `
-            : `${GLYPH.none} `;
+            ? `${info(STATUS_GLYPH.active)} `
+            : `${STATUS_GLYPH.none} `;
   const name = text(v.name.padEnd(4));
   const arg = v.arg ? `  ${(v.argTone === "path" ? info : muted)(v.arg)}` : "";
   return row(`${rail()}${mark}${name}${arg}`, paintMetric(v.metric));
 }
 
 /**
- * What the work found, one line, under its call: `│ └ src/streaming.ts:42`.
+ * What the work found, one line, under its call: `| + src/streaming.ts:42`.
  * Tinted only when the outcome itself is the news (a failure).
  */
 export function toolNote(detail: string, tone: "muted" | "fail" | "ok" = "muted"): string {
-  const paint = tone === "fail" ? accent : tone === "ok" ? text : muted;
-  const glyph = tone === "fail" ? accent("└") : faint("└");
-  return `${rail()}${glyph} ${truncate(paint(detail), railWidth() - 2)}`;
+  const paint = tone === "fail" ? danger : tone === "ok" ? text : muted;
+  const branch = tone === "fail" ? danger(glyph("gutter")) : faint(glyph("gutter"));
+  return `${rail()}${branch} ${truncate(paint(detail), railWidth() - 2)}`;
 }
 
 /** A plain continuation row on the rail, already painted by the caller. */
@@ -302,7 +334,7 @@ export function railRow(content: string): string {
   return `${rail()}${content}`;
 }
 
-// ─── Diffs ───
+// --- Diffs ---
 
 export interface DiffRow {
   kind: "add" | "remove" | "context" | "elide";
@@ -313,17 +345,17 @@ export interface DiffRow {
 /**
  * A hunk as it actually reads: a line-number gutter, one sign column, and the
  * source's own indentation preserved. Added lines are green, removed red,
- * context grey — no background wash, because a wash makes code harder to read,
+ * context grey -- no background wash, because a wash makes code harder to read,
  * not easier.
  */
 export function diffRows(rows: DiffRow[]): string[] {
   const codeWidth = Math.max(8, verbatimWidth() - 8);
   return rows.map((r) => {
-    if (r.kind === "elide") return `${rail()}   ${faint(`⋯ ${r.text}`)}`;
+    if (r.kind === "elide") return `${rail()}   ${faint(`${glyph("elision")} ${r.text}`)}`;
     const number = faint(String(r.line ?? "").padStart(4));
     const body = truncate(r.text, codeWidth);
     if (r.kind === "add") return `${rail()}${number} ${ok("+")} ${ok(body)}`;
-    if (r.kind === "remove") return `${rail()}${number} ${accent("-")} ${accent(body)}`;
+    if (r.kind === "remove") return `${rail()}${number} ${danger("-")} ${danger(body)}`;
     return `${rail()}${number}   ${muted(body)}`;
   });
 }
@@ -369,20 +401,20 @@ export function parseDiff(
   return { rows, added, removed, hunks };
 }
 
-/** The receipt for an edit: `+6 -1 · 1 hunk`, or `+14 · new file`. The counts
+/** The receipt for an edit: `+6 -1 | 1 hunk`, or `+14 | new file`. The counts
  *  carry their own meaning, so they carry their own colour. */
 export function editMetric(added: number, removed: number, note = ""): string {
-  const counts = [added > 0 ? ok(`+${added}`) : "", removed > 0 ? accent(`-${removed}`) : ""]
+  const counts = [added > 0 ? ok(`+${added}`) : "", removed > 0 ? danger(`-${removed}`) : ""]
     .filter(Boolean)
     .join(" ");
-  return [counts || muted("no change"), note ? muted(note) : ""].filter(Boolean).join(muted(" · "));
+  return [counts || muted("no change"), note ? muted(note) : ""].filter(Boolean).join(muted(" | "));
 }
 
-// ─── Command output ───
+// --- Command output ---
 
 /**
- * A command's real output, kept whole in its own rail: `┌ the command`, the
- * bytes it printed, `└ what happened`. The rail sits in the same column as the
+ * A command's real output, kept whole in its own rail: `+ the command`, the
+ * bytes it printed, `+ what happened`. The rail sits in the same column as the
  * work above it, so output reads as the continuation of the call rather than a
  * new region of the screen.
  */
@@ -393,13 +425,17 @@ export function outputRail(
   failed = false,
 ): string[] {
   const width = verbatimWidth();
-  const lines = [`${BODY}${faint("┌")} ${muted(truncate(command, width))}`];
+  const lines = [`${BODY}${faint(glyph("gutter"))} ${muted(truncate(command, width))}`];
   for (const source of body) {
-    lines.push(`${BODY}${faint("│")} ${muted(truncate(source.replace(/\t/g, "  "), width))}`);
+    lines.push(
+      `${BODY}${faint(glyph("gutter"))} ${muted(truncate(source.replace(/\t/g, "  "), width))}`,
+    );
   }
   if (summary) {
-    const edge = failed ? accent : faint;
-    lines.push(`${BODY}${edge("└")} ${(failed ? accent : text)(truncate(summary, width))}`);
+    const edge = failed ? danger : faint;
+    lines.push(
+      `${BODY}${edge(glyph("gutter"))} ${(failed ? danger : text)(truncate(summary, width))}`,
+    );
   }
   return lines;
 }
@@ -408,15 +444,15 @@ export function outputRail(
 export function clip(lines: string[], head = 22, tail = 8): string[] {
   if (lines.length <= head + tail + 1) return lines;
   const hidden = lines.length - head - tail;
-  return [...lines.slice(0, head), `⋯ ${hidden} lines`, ...lines.slice(-tail)];
+  return [...lines.slice(0, head), `${glyph("elision")} ${hidden} lines`, ...lines.slice(-tail)];
 }
 
-// ─── Checklists ───
+// --- Checklists ---
 
 export interface CheckItem {
   status: Status;
   label: string;
-  /** Right-aligned per row: `+9 -1`, or why a row is `✗`. */
+  /** Right-aligned per row: `+9 -1`, or why a row is `x`. */
   metric?: string;
   metricTone?: "muted" | "ok" | "fail";
 }
@@ -433,7 +469,7 @@ export interface ChecklistOpts {
 
 /**
  * A plan, or the set of files a turn touched: a labelled rail with a receipt,
- * then one row per item. A `✗` row states its reason instead of disappearing —
+ * then one row per item. A `x` row states its reason instead of disappearing --
  * work that did not happen is still information.
  */
 export function checklist(label: string, items: CheckItem[], opts: ChecklistOpts = {}): string[] {
@@ -450,13 +486,13 @@ export function checklist(label: string, items: CheckItem[], opts: ChecklistOpts
       // milestone someone chose to close, so here the tick keeps its green.
       const mark =
         item.status === "ok" || item.status === "pass"
-          ? ok(GLYPH.pass)
+          ? ok(STATUS_GLYPH.pass)
           : item.status === "fail"
-            ? accent(GLYPH.fail)
+            ? danger(STATUS_GLYPH.fail)
             : item.status === "active"
-              ? info(GLYPH.active)
-              : faint("○");
-      const tone = item.metricTone === "ok" ? ok : item.metricTone === "fail" ? accent : muted;
+              ? info(STATUS_GLYPH.active)
+              : faint("o");
+      const tone = item.metricTone === "ok" ? ok : item.metricTone === "fail" ? danger : muted;
       const metric =
         item.metric && item.metric.includes("\x1b")
           ? item.metric
@@ -469,17 +505,17 @@ export function checklist(label: string, items: CheckItem[], opts: ChecklistOpts
   ];
 }
 
-// ─── Decisions ───
+// --- Decisions ---
 
 export interface AskBlock {
   /** The question, in one sentence, stating what is at stake. */
   question: string;
-  /** The exact thing that would run — never a paraphrase. */
+  /** The exact thing that would run -- never a paraphrase. */
   command?: string;
   /** Pre-painted evidence rows (a located diff) when the proposal is not a
    *  command. Rendered exactly as given, under the question. */
   evidence?: string[];
-  /** Real consequences, computed: `deletes 1.2 GB outside the repo · ~90s`. */
+  /** Real consequences, computed: `deletes 1.2 GB outside the repo | ~90s`. */
   impact?: string;
   /** The one line that cannot be walked back, if there is one. */
   irreversible?: string;
@@ -487,7 +523,7 @@ export interface AskBlock {
   options: string[];
   /** Highlighted choice (0-based), when the surface has a cursor. */
   selected?: number;
-  /** What Escape does — always shown, always the safe default. */
+  /** What Escape does -- always shown, always the safe default. */
   escape?: string;
   /** Columns the host region owns, when it is narrower than the measure. */
   width?: number;
@@ -504,12 +540,12 @@ export function ask(block: AskBlock): string[] {
   const rail = Math.max(12, width - RAIL_IN.length);
   const lines: string[] = [
     "",
-    `${MARK}${warn("▸")} ${bold(text(truncate(block.question, width - 4)))}`,
+    `${MARK}${warn(glyph("selection"))} ${bold(text(truncate(block.question, width - 4)))}`,
   ];
   if (block.command) {
     lines.push("");
     for (const part of wrap(block.command, rail)) {
-      lines.push(`${BODY}${warn("│")} ${text(part)}`);
+      lines.push(`${BODY}${warn(glyph("gutter"))} ${text(part)}`);
     }
   } else if (block.evidence?.length) {
     lines.push("", ...block.evidence);
@@ -538,14 +574,14 @@ export function ask(block: AskBlock): string[] {
 
 /** The answer, echoed back so scrollback records what was decided. */
 export function answered(index: number, label: string): string {
-  return `\n${MARK}${info("›")} ${info(String(index + 1))}   ${text(label)}`;
+  return `\n${MARK}${info(glyph("selection"))} ${info(String(index + 1))}   ${text(label)}`;
 }
 
-// ─── Notes ───
+// --- Notes ---
 
 /**
- * Something the turn could not do, or chose not to: a mark, a sentence, and —
- * when there is one — the exact command that would resolve it. Never a warning
+ * Something the turn could not do, or chose not to: a mark, a sentence, and --
+ * when there is one -- the exact command that would resolve it. Never a warning
  * without a way out.
  */
 export function note(
@@ -554,9 +590,9 @@ export function note(
   next?: { verb: string; command: string },
   tone: "fail" | "warn" | "ok" = "warn",
 ): string[] {
-  const paint = tone === "fail" ? accent : tone === "ok" ? ok : warn;
-  const glyph = tone === "fail" ? "✗" : tone === "ok" ? "✓" : "!";
-  const lines = ["", `${MARK}${paint(glyph)} ${bold(text(truncate(headline, measure() - 4)))}`];
+  const paint = tone === "fail" ? danger : tone === "ok" ? ok : warn;
+  const mark = tone === "fail" ? glyph("failure") : tone === "ok" ? glyph("verified") : "!";
+  const lines = ["", `${MARK}${paint(mark)} ${bold(text(truncate(headline, measure() - 4)))}`];
   if (body) {
     lines.push("");
     for (const part of wrap(body, proseWidth())) lines.push(`${BODY}${text(part)}`);
@@ -564,7 +600,7 @@ export function note(
   if (next) {
     lines.push("");
     lines.push(
-      `${BODY}${info("→")} ${muted(next.verb)}  ${text(truncate(next.command, proseWidth() - 8))}`,
+      `${BODY}${info("->")} ${muted(next.verb)}  ${text(truncate(next.command, proseWidth() - 8))}`,
     );
   }
   return lines;

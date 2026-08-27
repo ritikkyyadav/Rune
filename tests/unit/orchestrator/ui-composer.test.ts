@@ -16,13 +16,22 @@ import {
   permissionModeBanner,
 } from "../../../packages/orchestrator/src/bin/ui/composer";
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
+import { glyph } from "../../../packages/orchestrator/src/bin/ui/glyphs";
 
 describe("ui/composer renderComposer", () => {
-  it("renders the reference's 3-line open surface with one hairline and caret on the input row", () => {
+  it("is a CLOSED field: a rule above and below, so the input has edges", () => {
     const r = renderComposer({ input: "hello", caret: 5, width: 80, status: "  status" });
-    expect(r.lines).toHaveLength(3); // hairline, input, status
-    expect(stripAnsi(r.lines[0]).length).toBe(stripAnsi(r.lines[1]).length);
-    expect(r.caretRow).toBe(1);
+    // One rule is a divider — it separates the composer from the transcript but
+    // leaves the input floating, so on a quiet screen nothing says where the
+    // typing goes. Two make it a place, with the status hint outside the edges
+    // rather than looking like more input.
+    expect(r.lines).toHaveLength(4); // rule, input, rule, status
+    const top = stripAnsi(r.lines[0]);
+    const bottom = stripAnsi(r.lines[2]);
+    expect(top).toBe(bottom);
+    expect(top.trim()).toMatch(/^─+$/);
+    expect(top.length).toBe(stripAnsi(r.lines[1]).length);
+    expect(r.caretRow).toBe(1); // still on the input row, between the rules
     expect(r.caretCol).toBe(9); // 4 chrome cols + caret index 5
   });
 
@@ -58,10 +67,12 @@ describe("ui/composer renderComposer", () => {
 });
 
 describe("ui/composer composerRule", () => {
-  it("is a chevron-aligned hairline of only ─ glyphs (frames the readline input)", () => {
+  it("is a hairline from the closed glyph set, not a dashed rule", () => {
     const r = stripAnsi(composerRule());
     expect(r.startsWith("  ")).toBe(true); // same 2-col indent as the `›` prompt
-    expect(r.trim()).toMatch(/^─+$/); // nothing but box-drawing dashes
+    // A dash rule reads as texture; a hairline reads as structure. Both fold to
+    // "-" on the ASCII rung, so nothing is lost on a serial console.
+    expect(r.trim()).toMatch(/^─+$/);
     expect(r.trim().length).toBeGreaterThan(10);
   });
 });
@@ -132,7 +143,7 @@ describe("ui/composer renderKeysPanel", () => {
   it("marks the selection, shows status + masked keys, and never the raw secret", () => {
     const plain = renderKeysPanel(rows, 1, 100).lines.map(stripAnsi);
     expect(plain[0]).toContain("API keys");
-    expect(plain.some((l) => l.includes("❯") && l.includes("Groq"))).toBe(true); // selected = index 1
+    expect(plain.some((l) => l.includes(glyph("selection")) && l.includes("Groq"))).toBe(true);
     expect(plain.find((l) => l.includes("Anthropic"))!).toContain("sk-a…1f2a");
     expect(plain.find((l) => l.includes("Groq"))!).toContain("not set");
     expect(plain.find((l) => l.includes("OpenAI"))!).toContain("off"); // toggled off
@@ -175,7 +186,7 @@ describe("ui/composer renderKeyManagerPanel", () => {
     expect(plain[0]).toContain("2 keys configured");
     expect(plain.find((l) => l.includes("personal"))!).toContain("2026-07-01");
     expect(plain.find((l) => l.includes("work"))!).toContain("active");
-    expect(plain.some((l) => l.includes("❯") && l.includes("work"))).toBe(true); // selected index 1
+    expect(plain.some((l) => l.includes(glyph("selection")) && l.includes("work"))).toBe(true);
     expect(plain.at(-1)).toContain("a add key");
     // Never leaks a raw secret.
     expect(plain.join("\n")).not.toContain("SECRET");
@@ -192,9 +203,9 @@ describe("ui/composer formatKeyDate", () => {
   it("formats an ISO date as YYYY-MM-DD", () => {
     expect(formatKeyDate("2026-07-10T10:00:00Z")).toBe("2026-07-10");
   });
-  it("shows an em-dash for unknown or bad dates", () => {
-    expect(formatKeyDate(undefined)).toBe("—");
-    expect(formatKeyDate("not-a-date")).toBe("—");
+  it("shows an ASCII dash pair for unknown or bad dates", () => {
+    expect(formatKeyDate(undefined)).toBe("--");
+    expect(formatKeyDate("not-a-date")).toBe("--");
   });
 });
 
@@ -221,7 +232,7 @@ describe("ui/composer renderMemoryPanel", () => {
     for (const action of ["Refresh now", "Auto-update", "Add a note", "Edit", "Clear"]) {
       expect(plain.some((l) => l.includes(action))).toBe(true);
     }
-    expect(stripAnsi(r.lines[r.caretRow])).toContain("❯"); // caret on selected action row
+    expect(stripAnsi(r.lines[r.caretRow])).toContain(glyph("selection"));
     expect(stripAnsi(r.lines[r.caretRow])).toContain("Refresh now");
   });
 
@@ -264,7 +275,7 @@ describe("ui/composer renderKeyEditor", () => {
     const joined = stripAnsi(r.lines.join("\n"));
     expect(joined).toContain("Paste API key");
     expect(joined).not.toContain("supersecret");
-    expect(joined).toContain("•");
+    expect(joined).toContain(".");
     expect(joined).toContain("cret"); // last 4 shown
     expect(r.caretRow).toBeGreaterThan(0);
   });
@@ -288,19 +299,21 @@ describe("ui/composer statusLine + permission mode", () => {
   it("keeps the safe default and every gear visible", () => {
     const base = { model: "gemini-2.5-flash", workspace: "/tmp/ws" };
     const confirm = stripAnsi(statusLine({ ...base, mode: "confirm" }, 120));
-    expect(confirm).toContain("▸ 1st gear");
+    expect(confirm).toContain("> 1st gear");
     expect(confirm).toContain("every action asks first");
     expect(confirm).toContain("shift+tab gear");
     expect(confirm).toContain("esc stop");
     expect(confirm).toContain("? keys");
     expect(confirm).not.toMatch(/autonomy/i);
 
-    expect(stripAnsi(statusLine({ ...base, mode: "autonomy-i" }, 120))).toContain("▸▸ 2nd gear");
-    expect(stripAnsi(statusLine({ ...base, mode: "autonomy-ii" }, 120))).toContain("▸▸▸ 3rd gear");
+    expect(stripAnsi(statusLine({ ...base, mode: "autonomy-i" }, 120))).toContain(">> 2nd gear");
+    // The gear marker is the phase glyph now: ">>>" was arrow soup sitting a
+    // row under a "›" prompt that already means "your turn".
+    expect(stripAnsi(statusLine({ ...base, mode: "autonomy-ii" }, 120))).toContain("◆ 3rd gear");
     expect(stripAnsi(statusLine({ ...base, mode: "autonomy-iii" }, 120))).toContain(
-      "▸▸▸▸ 4th gear",
+      ">>>> 4th gear",
     );
-    expect(stripAnsi(statusLine({ ...base, mode: "auto" }, 120))).toContain("◆ auto");
+    expect(stripAnsi(statusLine({ ...base, mode: "auto" }, 120))).toContain("* auto");
   });
 
   it("stays on one line in a narrow terminal by dropping the description first", () => {
@@ -351,7 +364,7 @@ describe("ui/composer statusLine + permission mode", () => {
     expect(flat("autonomy-ii")).toMatch(/3rd gear.*sandboxed local commands/i);
 
     const auto = flat("auto");
-    expect(auto).toMatch(/◆ auto/);
+    expect(auto).toMatch(/\* auto/);
     expect(auto).toMatch(/isolated classifier/i);
     expect(flat("confirm")).toMatch(/1st gear/);
 
@@ -391,8 +404,8 @@ describe("ui/composer renderPermissionCard", () => {
     const plain = r.lines.map(stripAnsi);
     expect(plain[0]).toBe(""); // a blank line separates it from the work above
     const joined = plain.join("\n");
-    expect(joined).toContain("▸ Run shell command?");
-    expect(joined).toMatch(/bash · (sandboxed|host)/); // the posture is stated, never assumed
+    expect(joined).toContain(`${glyph("selection")} Run shell command?`);
+    expect(joined).toMatch(/bash \| (sandboxed|host)/); // the posture is stated, never assumed
     expect(joined).toContain("│ ls -R");
     expect(joined).not.toMatch(/bash: bash/); // no redundant "bash — bash:"
     expect(joined).toContain("1   yes, once");
@@ -447,7 +460,7 @@ describe("ui/composer renderPermissionCard", () => {
     });
     const plain = r.lines.map(stripAnsi);
     const joined = plain.join("\n");
-    expect(joined).toContain("▸ Apply this edit to src/palette.ts?");
+    expect(joined).toContain(`${glyph("selection")} Apply this edit to src/palette.ts?`);
     expect(joined).toContain("src/palette.ts");
     expect(joined).toContain("+1 -1");
     expect(joined).toContain("  11   const delay = 42;");
@@ -472,7 +485,7 @@ describe("ui/composer renderPicker", () => {
     expect(stripAnsi(r.lines[0])).toContain("esc close");
     expect(stripAnsi(r.lines[2])).toContain("›"); // selected = index 1 → line 2
     expect(stripAnsi(r.lines[1])).not.toContain("›");
-    expect(stripAnsi(r.lines.at(-1)!)).toContain("⏎ select");
+    expect(stripAnsi(r.lines.at(-1)!)).toContain("enter select");
     expect(r.caretRow).toBe(2);
   });
 
