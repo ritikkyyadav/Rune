@@ -1,4 +1,4 @@
-// ─── Composer — input prompt + status line ───
+// --- Composer -- input prompt + status line ---
 // The composer is an open writing surface: one quiet hairline, no heavy card chrome,
 // and a footer that keeps control state visible. Readline and raw-mode TUI use the
 // same language so switching surfaces never feels like switching products.
@@ -11,7 +11,7 @@ import {
   getSandboxCapability,
 } from "@gear/tool-registry";
 import {
-  accent,
+  danger,
   faint,
   warn,
   text,
@@ -29,6 +29,7 @@ import {
   codeSurface,
   chip,
 } from "./theme";
+import { glyph } from "./glyphs";
 import { clampVisible, truncate, rule, visLen, wrap, railCard } from "./render";
 import * as F from "./flow";
 import { GEAR_MARK } from "./banner";
@@ -41,21 +42,21 @@ function shortPath(p: string): string {
 
 /** The readline prompt: the follow-up arrow. */
 export function promptString(): string {
-  return `  ${muted("›")} `;
+  return `  ${muted(glyph("selection"))} `;
 }
 
 export interface ComposerStatus {
   model: string;
   workspace: string;
-  /** Permission mode — one of the five gears (gear-1..gear-4, auto). */
+  /** Permission mode -- one of the five gears (gear-1..gear-4, auto). */
   mode?: string;
-  /** Context window usage, 0–100 (shown as "N% context used"). */
+  /** Context window usage, 0-100 (shown as "N% context used"). */
   contextPercent?: number;
   /** Files edited so far this session (shown as "K files edited"). */
   filesEdited?: number;
-  /** True when the OS sandbox is disabled (/sandbox off) — shown as a loud badge. */
+  /** True when the OS sandbox is disabled (/sandbox off) -- shown as a loud badge. */
   sandboxOff?: boolean;
-  /** Active session-loop readout, e.g. "loop · in 5m". */
+  /** Active session-loop readout, e.g. "loop | in 5m". */
   loop?: string;
   /** Current surface mode, kept visible so light/dark is never hidden state. */
   theme?: "light" | "dark" | "auto" | string;
@@ -69,7 +70,7 @@ export function normalizeMode(mode?: string): PermissionModeId {
 }
 
 /**
- * The autonomy ladder in Gear's own vocabulary — gears. Shift+Tab shifts up:
+ * The autonomy ladder in Gear's own vocabulary -- gears. Shift+Tab shifts up:
  * 1st gear asks for everything, 2nd lets workspace edits through, 3rd adds the
  * sandboxed shell, 4th is full access, and Auto hands the rest to the
  * classifier. The footer, the Shift+Tab banner, and the waiting rung all read
@@ -77,16 +78,16 @@ export function normalizeMode(mode?: string): PermissionModeId {
  */
 export interface ModeInfo {
   id: PermissionModeId;
-  /** Footer/banner label: "1st gear" … "4th gear", "auto". */
+  /** Footer/banner label: "1st gear" ... "4th gear", "auto". */
   label: string;
-  /** Ladder arrows: one ▸ per gear, ◆ for Auto. */
+  /** Ladder arrows: one > per gear, * for Auto. */
   arrows: string;
   /** One clause: what proceeds without asking. */
   desc: string;
   /** The banner sentence. */
   detail: string;
   paint: (value: string) => string;
-  /** 4th gear silences every prompt — it announces itself loudly. */
+  /** 4th gear silences every prompt -- it announces itself loudly. */
   loud: boolean;
 }
 
@@ -96,7 +97,7 @@ export function modeInfo(mode?: string): ModeInfo {
       return {
         id: "gear-2",
         label: "2nd gear",
-        arrows: "▸▸",
+        arrows: ">>",
         desc: "workspace edits proceed",
         detail:
           "confined workspace edits proceed; commands, delegation, network, and external access ask.",
@@ -107,7 +108,7 @@ export function modeInfo(mode?: string): ModeInfo {
       return {
         id: "gear-3",
         label: "3rd gear",
-        arrows: "▸▸▸",
+        arrows: glyph("phase"),
         desc: "edits + sandboxed shell",
         detail:
           "workspace edits, sandboxed local commands, and confined delegation proceed; external access asks.",
@@ -118,8 +119,8 @@ export function modeInfo(mode?: string): ModeInfo {
       return {
         id: "gear-4",
         label: "4th gear",
-        arrows: "▸▸▸▸",
-        desc: "full autonomy · no prompts",
+        arrows: ">>>>",
+        desc: "full autonomy | no prompts",
         detail: "Gear acts without permission prompts; the OS sandbox is unchanged (see /sandbox).",
         paint: warn,
         loud: true,
@@ -128,7 +129,7 @@ export function modeInfo(mode?: string): ModeInfo {
       return {
         id: "auto",
         label: "auto",
-        arrows: "◆",
+        arrows: "*",
         desc: "classifier reviews the rest",
         detail: "safe workspace work proceeds; risky actions get an isolated classifier check.",
         paint: brand,
@@ -138,7 +139,7 @@ export function modeInfo(mode?: string): ModeInfo {
       return {
         id: "gear-1",
         label: "1st gear",
-        arrows: "▸",
+        arrows: ">",
         desc: "every action asks first",
         detail: "Gear asks before writing or running.",
         paint: muted,
@@ -147,7 +148,7 @@ export function modeInfo(mode?: string): ModeInfo {
   }
 }
 
-/** A compact, always-visible permission readout: `▸▸ 2nd gear`. */
+/** A compact, always-visible permission readout: `>> 2nd gear`. */
 export function permissionModeBadge(mode?: string): string {
   const m = modeInfo(mode);
   const label = m.paint(`${m.arrows} ${m.label}`);
@@ -156,14 +157,14 @@ export function permissionModeBadge(mode?: string): string {
 
 /**
  * Context occupancy as a plain number. A five-cell meter told you less than
- * `41% context` does and cost four more columns to say it — and it stays quiet
+ * `41% context` does and cost four more columns to say it -- and it stays quiet
  * until it matters: ochre when compaction is near, red when it is imminent.
  */
 export function contextMeter(percent: number | undefined): string | null {
   if (percent == null || !Number.isFinite(percent) || percent <= 0) return null;
   const pct = Math.max(0, Math.min(100, Math.round(percent)));
   if (pct < 50) return null;
-  const paint = pct >= 90 ? accent : pct >= 70 ? warn : faint;
+  const paint = pct >= 90 ? danger : pct >= 70 ? warn : faint;
   return paint(`${pct}% context`);
 }
 
@@ -175,19 +176,19 @@ function keyHint(key: string, word: string): string {
 /**
  * The footer: what gear you are in and what that means, then the two keys that
  * change it. Everything else the terminal already knows. Narrow terminals drop
- * the description, then the hint words — the gear itself never drops, because a
+ * the description, then the hint words -- the gear itself never drops, because a
  * hidden permission state is the one thing this strip exists to prevent.
  */
 export function statusLine(s: ComposerStatus, width = process.stdout.columns || 80): string {
   const max = Math.max(8, Math.min(F.surfaceWidth(), width - 1));
   const mode = modeInfo(s.mode);
   const meter = contextMeter(s.contextPercent);
-  const sep = ` ${faint("·")} `;
+  const sep = ` ${faint(glyph("observed"))} `;
   const extras: string[] = [];
   if (s.filesEdited) {
     extras.push(faint(`${s.filesEdited} file${s.filesEdited === 1 ? "" : "s"} edited`));
   }
-  if (s.loop) extras.push(faint(`↻ ${s.loop}`));
+  if (s.loop) extras.push(faint(`${glyph("retry")} ${s.loop}`));
   if (s.sandboxOff) extras.push(warn("sandbox off"));
 
   const badge = `  ${permissionModeBadge(s.mode)}`;
@@ -210,15 +211,15 @@ export function statusLine(s: ComposerStatus, width = process.stdout.columns || 
 /**
  * The v2 queued-input strip (`.queue-strip`), floated above the composer while
  * a turn runs: a quiet uppercase header stating the contract, then one bounded
- * row per queued message; the last row carries the undo hint. Pure — the TUI
+ * row per queued message; the last row carries the undo hint. Pure -- the TUI
  * supplies state.
  */
 export function renderQueueStrip(queued: readonly string[], width: number): string[] {
   if (queued.length === 0) return [];
   const max = Math.max(12, F.measure(width - 1));
   const inner = Math.max(10, Math.min(100, max - 2));
-  const lines = [`  ${faint("queued · sends when this turn completes")}`];
-  const hint = "⌫ removes the last";
+  const lines = [`  ${faint("queued | sends when this turn completes")}`];
+  const hint = "backspace removes the last";
   queued.forEach((message, index) => {
     const last = index === queued.length - 1;
     const tail = last ? faint(hint) : "";
@@ -235,7 +236,7 @@ export function renderQueueStrip(queued: readonly string[], width: number): stri
 
 /**
  * A transient one-liner announcing a state change: a mark, the state, and the
- * sentence that says what it costs you — wrapped to the measure so a long
+ * sentence that says what it costs you -- wrapped to the measure so a long
  * explanation is readable rather than clipped, and always ending with the exact
  * command that reverses it.
  */
@@ -278,8 +279,8 @@ export function autoApprovedChip(notice: {
 }): string {
   const how = (notice.tier && AUTO_TIER_LABEL[notice.tier]) || "classifier reviewed";
   return F.row(
-    `${F.BODY}${info("✓")} ${muted("auto-approved")}  ${text(notice.toolName)}`,
-    faint(`${how} · risk ${notice.risk}`),
+    `${F.BODY}${info(glyph("verified"))} ${muted("auto-approved")}  ${text(notice.toolName)}`,
+    faint(`${how} | risk ${notice.risk}`),
   );
 }
 
@@ -298,8 +299,8 @@ export function waitingRung(seconds: number, toolName: string, mode?: string): s
           ? "network access"
           : toolName;
   return (
-    `${F.MARK}${warn("▸")} ${warn("waiting on you")}  ` +
-    `${faint(`${Math.max(0, seconds)}s · ${kind} needs a decision in ${modeInfo(mode).label}`)}`
+    `${F.MARK}${warn(glyph("selection"))} ${warn("waiting on you")}  ` +
+    `${faint(`${Math.max(0, seconds)}s | ${kind} needs a decision in ${modeInfo(mode).label}`)}`
   );
 }
 
@@ -307,13 +308,13 @@ export function waitingRung(seconds: number, toolName: string, mode?: string): s
  * The sandbox posture, printed when `/sandbox` toggles (and as a readout when
  * it is called with no argument). Off is loud for the same reason 4th gear is:
  * it removes a containment layer. "On" is only an isolation claim when this
- * machine can actually isolate — on the degraded path the banner is just as
+ * machine can actually isolate -- on the degraded path the banner is just as
  * loud, because the user would otherwise be trusting a layer that is not there.
  */
 export function sandboxModeBanner(enabled: boolean): string {
   if (!enabled) {
     return stateBanner(
-      "▲",
+      "!",
       "sandbox off",
       "Commands run directly on this machine, with full network and filesystem access.",
       "(/sandbox on to re-enable)",
@@ -323,8 +324,8 @@ export function sandboxModeBanner(enabled: boolean): string {
   }
   if (!isOsIsolationAvailable()) {
     return stateBanner(
-      "▲",
-      "sandbox on — not isolated",
+      "!",
+      "sandbox on -- not isolated",
       `No OS sandbox backend on this machine (${getSandboxCapability().mechanism}): commands run with path-guard checks only, full network and host access, and bash still asks for approval.`,
       "(install sandbox-exec or bwrap for real isolation)",
       warn,
@@ -332,9 +333,9 @@ export function sandboxModeBanner(enabled: boolean): string {
     );
   }
   return stateBanner(
-    "◆",
+    glyph("verified"),
     "sandbox on",
-    "Commands run in an OS sandbox — no network, workspace-confined writes. A call that sets network: true escalates just that one command.",
+    "Commands run in an OS sandbox -- no network, workspace-confined writes. A call that sets network: true escalates just that one command.",
     "(/sandbox off for full access)",
     ok,
   );
@@ -348,31 +349,31 @@ export function sandboxModeBanner(enabled: boolean): string {
 export function browserModeBanner(enabled: boolean): string {
   return enabled
     ? stateBanner(
-        "◆",
+        glyph("verified"),
         "browser on",
-        "Gear can drive a headless, isolated browser (Playwright MCP) — navigate, read, fill, click. First use fetches @playwright/mcp, and a managed Chromium if none is installed.",
+        "Gear can drive a headless, isolated browser (Playwright MCP) -- navigate, read, fill, click. First use fetches @playwright/mcp, and a managed Chromium if none is installed.",
         "(/browser off to disable)",
         ok,
       )
     : stateBanner(
-        "◇",
+        "o",
         "browser off",
-        "No agent browser — web_fetch and web_search only.",
+        "No agent browser -- web_fetch and web_search only.",
         "(/browser on to enable)",
         muted,
       );
 }
 
 /**
- * A hairline rule spanning the composer width, indented to the `›` chevron.
+ * A hairline rule spanning the composer width, indented to the `>` chevron.
  * Printed directly above the input so the classic readline surface echoes the
  * same light visual boundary as the raw-mode composer.
  */
 export function composerRule(): string {
-  return rule(F.surfaceWidth(), { color: hairline });
+  return rule(F.surfaceWidth(), { color: hairline, glyph: glyph("rule") });
 }
 
-// ─── Pinned composer (TUI) ───
+// --- Pinned composer (TUI) ---
 
 const PAD = "  ";
 
@@ -409,12 +410,12 @@ export function renderWorkReview(
   const start = Math.max(0, Math.min(top, maxTop));
   const view = source.slice(start, start + pageSize);
   const range =
-    source.length > pageSize ? ` · ${start + 1}–${start + view.length} of ${source.length}` : "";
+    source.length > pageSize ? ` | ${start + 1}-${start + view.length} of ${source.length}` : "";
   const maxWidth = Math.max(8, F.measure(width - 1));
   const lines = [
     clampVisible(`${title}${faint(range)}`, maxWidth),
     ...view.map((line) => clampVisible(line, maxWidth)),
-    `  ${faint("↑↓ scroll · page up/down · ctrl+r or esc close")}`,
+    `  ${faint("up/down scroll | page up/down | ctrl+r or esc close")}`,
   ];
   return { lines, caretRow: 0, caretCol: 0 };
 }
@@ -442,7 +443,7 @@ export function renderComposer(state: ComposerState): RenderedBlock {
     };
   }
 
-  const textW = Math.max(1, width - 4); // PAD(2) + `›`(1) + space(1)
+  const textW = Math.max(1, width - 4); // PAD(2) + `>`(1) + space(1)
 
   // Horizontal scroll so the caret stays visible within the window.
   let scroll = 0;
@@ -458,20 +459,25 @@ export function renderComposer(state: ComposerState): RenderedBlock {
       ? faint(COMPOSER_PLACEHOLDER.padEnd(textW, " ").slice(0, textW))
       : text(slice.padEnd(textW, " "));
 
-  const top = hairline("─".repeat(width));
-  const mid = `${PAD}${muted("›")} ${body}`;
+  // A rule above AND below. One rule is a divider — it separates the composer
+  // from the transcript but leaves the input itself floating, so on a quiet
+  // screen there is nothing telling you where the typing goes. Two rules make
+  // it a place: the field has edges, and the status hint sits outside them
+  // rather than looking like more input.
+  const edge = hairline(glyph("rule").repeat(width));
+  const mid = `${PAD}${muted(glyph("selection"))} ${body}`;
 
-  // PAD(2) + `›`(1) + space(1) = 4 cols before the input text.
+  // PAD(2) + chevron(1) + space(1) = 4 cols before the input text.
   const caretCol = 4 + (state.caret - scroll);
-  return { lines: [top, mid, ...statusLines], caretRow: 1, caretCol };
+  return { lines: [edge, mid, edge, ...statusLines], caretRow: 1, caretCol };
 }
 
-// ─── Permission request card (TUI) ───
+// --- Permission request card (TUI) ---
 
 /**
  * A human title + one clean line of detail for a permission request. The broker's
  * `argsSummary` repeats the tool name ("bash: ls -R", "write_file /x"); strip that so
- * the card reads "Run shell command / ls -R" instead of "Allow bash — bash: ls -R".
+ * the card reads "Run shell command / ls -R" instead of "Allow bash -- bash: ls -R".
  */
 export function permissionView(
   toolName: string,
@@ -529,7 +535,7 @@ function fallbackPermissionPreview(toolName: string, argsSummary: string): Permi
 }
 
 function permissionDiffLine(row: PermissionPreviewLine, width: number): string {
-  if (row.kind === "hunk") return `${F.BODY}   ${faint(truncate(`⋯ ${row.text}`, width))}`;
+  if (row.kind === "hunk") return `${F.BODY}   ${faint(truncate(`... ${row.text}`, width))}`;
   return F.diffRows([
     {
       kind: row.kind === "add" ? "add" : row.kind === "remove" ? "remove" : "context",
@@ -539,17 +545,17 @@ function permissionDiffLine(row: PermissionPreviewLine, width: number): string {
   ])[0]!;
 }
 
-/** The head chip: `bash · sandboxed`, `edit_file · workspace`, `web_fetch · network`.
+/** The head chip: `bash | sandboxed`, `edit_file | workspace`, `web_fetch | network`.
  *  A shell's posture comes from the preview when it states one, else from the
- *  live sandbox state — never a reassuring default. */
+ *  live sandbox state -- never a reassuring default. */
 function permissionTag(toolName: string, preview: PermissionPreview): string {
   if (toolName === "bash") {
-    if (/host/.test(preview.scope)) return "bash · host";
-    if (/sandboxed/.test(preview.scope)) return "bash · sandboxed";
-    return isSandboxEnabled() && isOsIsolationAvailable() ? "bash · sandboxed" : "bash · host";
+    if (/host/.test(preview.scope)) return "bash | host";
+    if (/sandboxed/.test(preview.scope)) return "bash | sandboxed";
+    return isSandboxEnabled() && isOsIsolationAvailable() ? "bash | sandboxed" : "bash | host";
   }
-  const scope = preview.scope.split("·")[0]?.trim() ?? "";
-  return scope && scope !== "explicit approval" ? `${toolName} · ${scope}` : toolName;
+  const scope = preview.scope.split("|")[0]?.trim() ?? "";
+  return scope && scope !== "explicit approval" ? `${toolName} | ${scope}` : toolName;
 }
 
 /**
@@ -586,19 +592,19 @@ export function renderPermissionCard(
       ),
     );
     for (const diffLine of shownPreview) evidence.push(permissionDiffLine(diffLine, body));
-    if (clipped) evidence.push(`${F.BODY}   ${faint("⋯ preview clipped")}`);
+    if (clipped) evidence.push(`${F.BODY}   ${faint(`${glyph("elision")} preview clipped`)}`);
   } else if (!command && preview.detail) {
     evidence.push(`${F.BODY}${text(truncate(preview.detail, body))}`);
   }
 
-  // Every fact computed from the real arguments — absent when it cannot be known.
+  // Every fact computed from the real arguments -- absent when it cannot be known.
   const irreversible = (preview.risk ?? []).find((fact) => fact.tone === "accent");
   const impact = [
     permissionTag(toolName, preview),
     ...(preview.risk ?? [])
       .filter((fact) => fact !== irreversible)
       .map((fact) => `${fact.label} ${fact.value}`),
-  ].join(" · ");
+  ].join(" | ");
 
   const lines = F.ask({
     question: preview.question || `${permissionView(toolName, argsSummary).title}?`,
@@ -613,7 +619,7 @@ export function renderPermissionCard(
     escape: "cancel",
     width,
   });
-  const guard = `${preview.guard} · the decision is recorded in the audit trail`;
+  const guard = `${preview.guard} | the decision is recorded in the audit trail`;
   lines.push("");
   for (const part of wrap(guard, body)) lines.push(`${F.BODY}${faint(part)}`);
 
@@ -626,7 +632,7 @@ export function renderPermissionCard(
   };
 }
 
-// ─── List picker overlay (TUI: /model) ───
+// --- List picker overlay (TUI: /model) ---
 
 export interface PickerItem {
   label: string;
@@ -648,14 +654,14 @@ export interface PickerOptions {
 function pickerTag(tag: string): string {
   if (tag === "free") return chip("ok", " free ");
   if (tag === "local") return chip("warn", " local ");
-  if (tag === "default") return chip("brand", " ◆ default ");
+  if (tag === "default") return chip("brand", " * default ");
   return chip("muted", ` ${tag} `);
 }
 
 /**
  * The v2 overlay list (`/model`, `/theme`): an uppercase header with `esc
  * close` at the right edge, numbered rows with the name, a secondary-tone
- * description, and chips (`free` · `local` · provider · `current`), the
+ * description, and chips (`free` | `local` | provider | `current`), the
  * selection on the bar surface, then an optional footnote and the key hints.
  */
 export function renderPicker(
@@ -682,7 +688,7 @@ export function renderPicker(
   const view = items.slice(start, start + maxItems);
   view.forEach((it, i) => {
     const on = start + i === sel;
-    const marker = on ? brand("›") : " ";
+    const marker = on ? brand(glyph("selection")) : " ";
     const number = faint(`${start + i + 1}.`.padStart(3));
     const label = on ? bold(text(it.label)) : text(it.label);
     const prefix = it.prefix ? `${it.prefix} ` : "";
@@ -699,11 +705,13 @@ export function renderPicker(
   if (options.footnote) {
     lines.push(popoverRow(`${PAD}${faint(truncate(options.footnote, maxWidth - 4))}`));
   }
-  lines.push(popoverRow(`${PAD}${faint("↑↓ navigate · 1–9 quick select · ⏎ select · esc close")}`));
+  lines.push(
+    popoverRow(`${PAD}${faint("up/down navigate | 1-9 quick select | enter select | esc close")}`),
+  );
   return { lines, caretRow: sel - start + 1, caretCol: 0 };
 }
 
-// ─── Slash-command palette (TUI: live `/` menu) ───
+// --- Slash-command palette (TUI: live `/` menu) ---
 
 export interface SlashItem {
   /** Command including its leading "/" (e.g. "/model"). */
@@ -717,8 +725,8 @@ export interface SlashItem {
 /**
  * The v2 slash-command palette (`#cmd-popover`) that floats above the composer
  * as you type `/`: an uppercase header with the live match count and the key
- * hints, then filtered rows — command, secondary-tone description, a quiet
- * category chip — with the selection on the bar surface. Windows around the
+ * hints, then filtered rows -- command, secondary-tone description, a quiet
+ * category chip -- with the selection on the bar surface. Windows around the
  * selection so a long list never overruns.
  */
 export function renderSlashPalette(
@@ -742,7 +750,7 @@ export function renderSlashPalette(
 
   const rows = view.map((it, i) => {
     const on = start + i === sel;
-    const marker = on ? brand("›") : " ";
+    const marker = on ? brand(glyph("selection")) : " ";
     const name = on ? bold(text(it.name.padEnd(nameW))) : text(it.name.padEnd(nameW));
     const tag = it.tag && width >= 64 ? chip("muted", ` ${it.tag} `) : "";
     const descMax = Math.max(8, maxWidth - nameW - visLen(tag) - 9);
@@ -755,16 +763,16 @@ export function renderSlashPalette(
   });
   const count =
     total != null && total !== items.length ? `${items.length} of ${total}` : String(items.length);
-  const heading = `${PAD}${muted("commands")} ${faint(`· ${count}`)}`;
+  const heading = `${PAD}${muted("commands")} ${faint(`| ${count}`)}`;
   const hints =
     width >= 64
-      ? faint("↑↓ navigate · tab complete · ⏎ run · esc close")
-      : faint("⏎ run · esc close");
+      ? faint("up/down navigate | tab complete | enter run | esc close")
+      : faint("enter run | esc close");
   const headGap = " ".repeat(Math.max(1, maxWidth - visLen(heading) - visLen(hints) - 1));
   return [clampVisible(popoverRow(`${heading}${headGap}${hints}`), maxWidth), ...rows];
 }
 
-// ─── API keys panel (TUI: `/keys` BYOK) ───
+// --- API keys panel (TUI: `/keys` BYOK) ---
 
 /** One stored key as the per-provider manager lists it (masked + dated). */
 export interface KeyManagerRow {
@@ -773,7 +781,7 @@ export interface KeyManagerRow {
   label?: string;
   /** ISO add-date, or undefined for keys that predate multi-key storage. */
   addedAt?: string;
-  /** The active key of the pool — the one the gateway uses. */
+  /** The active key of the pool -- the one the gateway uses. */
   active: boolean;
 }
 
@@ -803,14 +811,14 @@ export interface KeyRow {
 }
 
 /**
- * Format an ISO add-date for the keys panel: a compact `YYYY-MM-DD`, or "—" when
+ * Format an ISO add-date for the keys panel: a compact `YYYY-MM-DD`, or "--" when
  * the key predates multi-key storage (we never fabricate a date). Bad input also
- * degrades to "—" rather than throwing in the render path.
+ * degrades to "--" rather than throwing in the render path.
  */
 export function formatKeyDate(iso?: string): string {
-  if (!iso) return "—";
+  if (!iso) return "--";
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
+  if (Number.isNaN(d.getTime())) return "--";
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
@@ -819,7 +827,7 @@ export function formatKeyDate(iso?: string): string {
 
 /**
  * The `/keys` panel: every provider with its status dot, masked key, source, and
- * on/off toggle. A leading `❯` marks the selected row. Returns a RenderedBlock so
+ * on/off toggle. A leading `>` marks the selected row. Returns a RenderedBlock so
  * the TUI can pin it like the picker; the caret is parked on the selected row.
  */
 export function renderKeysPanel(rows: KeyRow[], selected: number, width: number): RenderedBlock {
@@ -828,15 +836,21 @@ export function renderKeysPanel(rows: KeyRow[], selected: number, width: number)
   const keyW = Math.max(10, Math.min(22, width - labelW - 24));
 
   const lines: string[] = [
-    `${PAD}${bold(text("API keys"))}   ${faint("bring your own — applied live, saved to ~/.gear/secrets.json")}`,
+    `${PAD}${bold(text("API keys"))}   ${faint("bring your own -- applied live, saved to ~/.gear/secrets.json")}`,
   ];
 
   rows.forEach((r, i) => {
     const on = i === sel;
     // Local runtimes are usable without a key; treat a configured/active one as "ready".
     const ready = r.local ? !!r.hasKey : r.source !== "none";
-    const marker = on ? info("❯") : " ";
-    const dot = r.disabled ? faint("○") : r.active ? ok("●") : ready ? info("●") : faint("○");
+    const marker = on ? info(glyph("selection")) : " ";
+    const dot = r.disabled
+      ? faint("o")
+      : r.active
+        ? ok(glyph("live"))
+        : ready
+          ? info(glyph("live"))
+          : faint("o");
     const name = (on ? text : muted)(r.label.padEnd(labelW));
     // For a multi-account pool, show the active key plus a "+N" badge so the
     // count is visible at a glance; the per-provider manager lists them all.
@@ -844,7 +858,7 @@ export function renderKeysPanel(rows: KeyRow[], selected: number, width: number)
     const keyShown = truncate(r.masked || "set", Math.max(4, keyW - poolBadge.length));
     const keyPad = " ".repeat(Math.max(0, keyW - keyShown.length - poolBadge.length));
     const keyCell = r.local
-      ? faint(truncate(r.endpoint || "—", keyW).padEnd(keyW))
+      ? faint(truncate(r.endpoint || "--", keyW).padEnd(keyW))
       : r.source === "none"
         ? faint("not set".padEnd(keyW))
         : text(keyShown) + (poolBadge ? info(poolBadge) : "") + keyPad;
@@ -860,11 +874,13 @@ export function renderKeysPanel(rows: KeyRow[], selected: number, width: number)
       : r.source === "none"
         ? faint(" ".repeat(6))
         : faint((srcLabel[r.source] ?? r.source).padEnd(6));
-    const toggle = r.disabled ? warn("off") : ready ? ok("on") : faint("·");
+    const toggle = r.disabled ? warn("off") : ready ? ok("on") : faint("-");
     lines.push(`${PAD}${marker} ${dot} ${name} ${keyCell} ${srcCell} ${toggle}`);
   });
 
-  lines.push(`${PAD}${faint("↑↓ move · enter manage keys · space on/off · d clear · esc close")}`);
+  lines.push(
+    `${PAD}${faint("up/down move | enter manage keys | space on/off | d clear | esc close")}`,
+  );
   return { lines, caretRow: sel + 1, caretCol: 0 };
 }
 
@@ -872,7 +888,7 @@ export function renderKeysPanel(rows: KeyRow[], selected: number, width: number)
  * The per-provider key manager: every key stored for one provider, masked, with
  * the date it was added and an optional account label. A filled dot + "active"
  * tag marks the key the gateway uses. This is the view that answers "how many
- * keys do I have configured, and which is which" — reached by pressing enter on a
+ * keys do I have configured, and which is which" -- reached by pressing enter on a
  * provider row. Reveals no raw secrets.
  */
 export function renderKeyManagerPanel(
@@ -884,7 +900,7 @@ export function renderKeyManagerPanel(
   const sel = rows.length ? Math.max(0, Math.min(selected, rows.length - 1)) : 0;
   const count = rows.length;
   const lines: string[] = [
-    `${PAD}${bold(text(`${providerLabel} · keys`))}   ${faint(
+    `${PAD}${bold(text(`${providerLabel} | keys`))}   ${faint(
       count === 0 ? "none configured" : `${count} key${count === 1 ? "" : "s"} configured`,
     )}`,
   ];
@@ -892,14 +908,14 @@ export function renderKeyManagerPanel(
   if (count === 0) {
     lines.push("");
     lines.push(`${PAD}${muted("No keys saved for this provider yet.")}`);
-    lines.push(`${PAD}${faint("Press a to add one — paste a key from any account.")}`);
+    lines.push(`${PAD}${faint("Press a to add one -- paste a key from any account.")}`);
   } else {
     const maskW = Math.min(22, Math.max(8, ...rows.map((r) => r.masked.length)));
     const labelW = Math.min(16, Math.max(0, ...rows.map((r) => (r.label ?? "").length)));
     rows.forEach((r, i) => {
       const on = i === sel;
-      const marker = on ? info("❯") : " ";
-      const dot = r.active ? ok("●") : faint("○");
+      const marker = on ? info(glyph("selection")) : " ";
+      const dot = r.active ? ok(glyph("live")) : faint("o");
       const mask = (on ? text : muted)(truncate(r.masked, maskW).padEnd(maskW));
       const label = labelW > 0 ? "  " + faint(truncate(r.label ?? "", labelW).padEnd(labelW)) : "";
       const date = "  " + faint(`added ${formatKeyDate(r.addedAt)}`);
@@ -909,12 +925,12 @@ export function renderKeyManagerPanel(
   }
 
   lines.push("");
-  lines.push(`${PAD}${faint("a add key · enter/space set active · d remove · esc back")}`);
+  lines.push(`${PAD}${faint("a add key | enter/space set active | d remove | esc back")}`);
   const caretRow = count === 0 ? 2 : sel + 1;
   return { lines, caretRow, caretCol: 0 };
 }
 
-// ─── System Memory panel (TUI: `/memory`) ───
+// --- System Memory panel (TUI: `/memory`) ---
 
 export interface MemoryPanelView {
   /** The profile markdown (may be empty). */
@@ -927,7 +943,7 @@ export interface MemoryPanelView {
   lastDreamed: string;
   /** A refresh ("dream") is running right now. */
   busy: boolean;
-  /** A transient status note (e.g. "refreshed · ~120 tokens"). */
+  /** A transient status note (e.g. "refreshed | ~120 tokens"). */
   note?: string;
   /** Clear is armed for a confirming second press. */
   pendingClear: boolean;
@@ -939,7 +955,7 @@ export const MEMORY_ACTION_COUNT = 5;
 /**
  * The `/memory` panel: the evergreen profile with a row of single-key actions
  * (refresh / cadence / add note / edit / clear). Mirrors the keys + picker panels;
- * a leading `❯` marks the selected action and the caret parks on it.
+ * a leading `>` marks the selected action and the caret parks on it.
  */
 export function renderMemoryPanel(
   v: MemoryPanelView,
@@ -951,14 +967,14 @@ export function renderMemoryPanel(
   const lines: string[] = [];
 
   lines.push(
-    `${PAD}${bold(text("System memory"))}   ${faint("a guide Gear tailors to — it never overrides what you ask")}`,
+    `${PAD}${bold(text("System memory"))}   ${faint("a guide Gear tailors to -- it never overrides what you ask")}`,
   );
   const empty = !v.content.trim();
   lines.push(
     `${PAD}${faint(
       empty
-        ? `empty · auto-update ${v.scheduleLabel}`
-        : `~${v.tokens}/${v.maxTokens} tokens · auto-update ${v.scheduleLabel} · dreamed ${v.lastDreamed}`,
+        ? `empty | auto-update ${v.scheduleLabel}`
+        : `~${v.tokens}/${v.maxTokens} tokens | auto-update ${v.scheduleLabel} | dreamed ${v.lastDreamed}`,
     )}`,
   );
   lines.push("");
@@ -973,7 +989,7 @@ export function renderMemoryPanel(
     const MAX = 10;
     for (const ln of body.slice(0, MAX)) lines.push(`${PAD}${faint(truncate(ln, innerW))}`);
     if (body.length > MAX) {
-      lines.push(`${PAD}${faint(`…(+${body.length - MAX} more lines · edit to see all)`)}`);
+      lines.push(`${PAD}${faint(`...(+${body.length - MAX} more lines | edit to see all)`)}`);
     }
   }
   lines.push("");
@@ -981,30 +997,33 @@ export function renderMemoryPanel(
   const actionStart = lines.length;
   const row = (i: number, label: string, hint: string) => {
     const on = i === sel;
-    const marker = on ? info("❯") : " ";
+    const marker = on ? info(glyph("selection")) : " ";
     const lab = on ? text(label) : muted(label);
     lines.push(`${PAD}${marker} ${lab}${hint ? "   " + faint(hint) : ""}`);
   };
-  row(0, "Refresh now", v.busy ? "dreaming…" : "learn from your recent sessions");
-  row(1, `Auto-update: ${v.scheduleLabel}`, "↵ cycles manual · daily · 3d · weekly");
+  row(0, "Refresh now", v.busy ? "dreaming..." : "learn from your recent sessions");
+  row(1, `Auto-update: ${v.scheduleLabel}`, "enter cycles manual | daily | 3d | weekly");
   row(2, "Add a note", "jot a quick fact about you");
   row(3, "Edit in your editor", "open the full profile in $EDITOR");
   row(
     4,
-    v.pendingClear ? "Clear — press again to confirm" : "Clear",
+    v.pendingClear ? "Clear -- press again to confirm" : "Clear",
     v.pendingClear ? "" : "wipe the profile (keeps your cadence)",
   );
 
-  if (v.busy) lines.push(`${PAD}${ok("✦")} ${muted("dreaming — distilling your profile…")}`);
-  else if (v.note) lines.push(`${PAD}${ok("✓")} ${muted(v.note)}`);
+  if (v.busy) {
+    lines.push(`${PAD}${ok(glyph("phase"))} ${muted("dreaming -- distilling your profile...")}`);
+  } else if (v.note) {
+    lines.push(`${PAD}${ok(glyph("verified"))} ${muted(v.note)}`);
+  }
   lines.push(
-    `${PAD}${faint("↑↓ move · enter choose · r refresh · c cadence · a add · e edit · x clear · esc close")}`,
+    `${PAD}${faint("up/down move | enter choose | r refresh | c cadence | a add | e edit | x clear | esc close")}`,
   );
 
   return { lines, caretRow: actionStart + sel, caretCol: 0 };
 }
 
-// ─── Sessions manager panel (TUI: `/sessions`) ───
+// --- Sessions manager panel (TUI: `/sessions`) ---
 
 /**
  * Chronological divider label for a session timestamp: Today / Yesterday /
@@ -1021,11 +1040,11 @@ export function sessionGroupLabel(
   const day = new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const days = Math.max(0, Math.round((today - day) / 86_400_000));
-  // The v2 timeline header names the day: "Today · Thu Aug 20".
+  // The v2 timeline header names the day: "Today | Thu Aug 20".
   const date = () =>
     `${value.toLocaleDateString("en-US", { weekday: "short" })} ${value.toLocaleDateString("en-US", { month: "short" })} ${value.getDate()}`;
-  if (days === 0) return opts.withDate ? `Today · ${date()}` : "Today";
-  if (days === 1) return opts.withDate ? `Yesterday · ${date()}` : "Yesterday";
+  if (days === 0) return opts.withDate ? `Today | ${date()}` : "Today";
+  if (days === 1) return opts.withDate ? `Yesterday | ${date()}` : "Yesterday";
   if (days < 7) return "Past 7 days";
   return value.toLocaleDateString([], { month: "short", year: "numeric" });
 }
@@ -1034,11 +1053,11 @@ export interface SessionRowView {
   id?: string;
   /** Resolved display title (already falls back to "untitled"). */
   title: string;
-  /** Pre-rendered meta line, e.g. "14 events · qwen3-coder:480b". */
+  /** Pre-rendered meta line, e.g. "14 events | qwen3-coder:480b". */
   meta: string;
   workspace?: string;
   updatedAt?: string;
-  /** Chronological divider supplied by the controller (Today, Yesterday, …). */
+  /** Chronological divider supplied by the controller (Today, Yesterday, ...). */
   group?: string;
   /** The session currently loaded in this window. */
   current: boolean;
@@ -1046,7 +1065,7 @@ export interface SessionRowView {
 
 /**
  * The `/sessions` manager: every stored conversation with a status dot, its
- * title and a meta line (age · message count · model). A leading `❯` marks the
+ * title and a meta line (age | message count | model). A leading `>` marks the
  * selection; the active session gets a filled dot. Windows around the selection
  * so a long history never overruns the viewport. Returns a RenderedBlock so the
  * TUI can pin it like the picker.
@@ -1074,9 +1093,9 @@ export function renderSessionsPanel(
   const tabs = `${tab("Active", opts.view === "active")} ${tab("Archived", opts.view === "archived")}`;
   const count = query ? faint(`${rows.length} ${rows.length === 1 ? "match" : "matches"}`) : "";
   const headLeft = `${PAD}${brand(GEAR_MARK)} ${bold(text("Sessions"))}  ${tabs}${count ? "  " + count : ""}`;
-  const searchText = `${opts.searching ? brand("›") : faint("/")} ${
-    query ? text(query) : faint("Search title, path, model…")
-  }${opts.searching ? brand("▌") : ""}`;
+  const searchText = `${opts.searching ? brand(glyph("selection")) : faint("/")} ${
+    query ? text(query) : faint("Search title, path, model...")
+  }${opts.searching ? brand("|") : ""}`;
   const close = keyHint("esc", "close");
   const lines: string[] = [];
   let searchRow: number;
@@ -1094,17 +1113,17 @@ export function renderSessionsPanel(
     searchRow = 1;
     searchCol = 4 + query.length;
   }
-  lines.push(`${PAD}${hairline("─".repeat(Math.max(3, maxWidth - 3)))}`);
+  lines.push(`${PAD}${hairline("-".repeat(Math.max(3, maxWidth - 3)))}`);
 
   if (rows.length === 0) {
     const empty = query
       ? "No sessions match this search."
       : opts.view === "archived"
         ? "No archived sessions."
-        : "No sessions yet — start chatting.";
+        : "No sessions yet -- start chatting.";
     const emptyRow = lines.length;
     lines.push(`${PAD}${faint(empty)}`);
-    lines.push(`${PAD}${faint("/ search · tab active/archived · ctrl+n new · esc close")}`);
+    lines.push(`${PAD}${faint("/ search | tab active/archived | ctrl+n new | esc close")}`);
     return {
       lines,
       caretRow: opts.searching ? searchRow : emptyRow,
@@ -1132,15 +1151,15 @@ export function renderSessionsPanel(
       const label = muted(group.toLowerCase());
       lines.push(
         clampVisible(
-          `${PAD}${label} ${hairline("─".repeat(Math.max(3, maxWidth - visLen(label) - 4)))}`,
+          `${PAD}${label} ${hairline("-".repeat(Math.max(3, maxWidth - visLen(label) - 4)))}`,
           maxWidth,
         ),
       );
       previousGroup = group;
     }
 
-    const marker = on ? brand("›") : " ";
-    const dot = r.current ? brand("●") : faint("○");
+    const marker = on ? brand(glyph("selection")) : " ";
+    const dot = r.current ? brand(glyph("live")) : faint("o");
     const id = faint(r.id ? r.id.slice(0, 8) : "session");
     const pill = r.current
       ? chip("brand", " active now ")
@@ -1156,7 +1175,7 @@ export function renderSessionsPanel(
     const titleRow = clampVisible(`${prefix}${titleGap}${pill}`, maxWidth);
 
     const workspace = r.workspace ? shortPath(r.workspace) : "";
-    const detail = [workspace, r.meta].filter(Boolean).join(" · ");
+    const detail = [workspace, r.meta].filter(Boolean).join(" | ");
     const stamp = r.updatedAt
       ? new Date(r.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
       : "";
@@ -1170,17 +1189,17 @@ export function renderSessionsPanel(
   });
 
   if (rows.length > view.length) {
-    lines.push(`${PAD}${faint(`${start + 1}–${start + view.length} of ${rows.length} sessions`)}`);
+    lines.push(`${PAD}${faint(`${start + 1}-${start + view.length} of ${rows.length} sessions`)}`);
   }
 
   const hint = opts.pendingDelete
-    ? `${warn("press d again to delete")} ${faint("·")} ${faint("esc cancels")}`
+    ? `${warn("press d again to delete")} ${faint("|")} ${faint("esc cancels")}`
     : opts.view === "archived"
       ? faint(
-          "↑↓ navigate · ⏎ resume · u restore · ctrl+d twice to delete · / search · tab active · esc close",
+          "up/down navigate | enter resume | u restore | ctrl+d twice to delete | / search | tab active | esc close",
         )
       : faint(
-          "↑↓ navigate · ⏎ resume · r rename · a archive · ctrl+d twice to delete · / search · tab archived · esc close",
+          "up/down navigate | enter resume | r rename | a archive | ctrl+d twice to delete | / search | tab archived | esc close",
         );
   lines.push(`${PAD}${hint}`);
 
@@ -1215,10 +1234,10 @@ export function renderKeyEditor(s: KeyEditorState): RenderedBlock {
 
   const head = `${PAD}${bold(text(s.title))}`;
   const sub = s.subtitle ? `${PAD}${faint(truncate(s.subtitle, boxW))}` : "";
-  const top = `${PAD}${line("╭" + "─".repeat(boxW - 2) + "╮")}`;
-  const mid = `${PAD}${line("│")} ${info("›")} ${text(slice.padEnd(textW, " "))} ${line("│")}`;
-  const bot = `${PAD}${line("╰" + "─".repeat(boxW - 2) + "╯")}`;
-  const hint = `${PAD}${faint("enter save · esc cancel · paste supported")}`;
+  const top = `${PAD}${line("+" + "-".repeat(boxW - 2) + "+")}`;
+  const mid = `${PAD}${line("|")} ${info(glyph("selection"))} ${text(slice.padEnd(textW, " "))} ${line("|")}`;
+  const bot = `${PAD}${line("+" + "-".repeat(boxW - 2) + "+")}`;
+  const hint = `${PAD}${faint("enter save | esc cancel | paste supported")}`;
 
   const lines = sub ? [head, sub, top, mid, bot, hint] : [head, top, mid, bot, hint];
   const caretRow = sub ? 3 : 2;
@@ -1228,6 +1247,6 @@ export function renderKeyEditor(s: KeyEditorState): RenderedBlock {
 
 /** Mask a value for the editor: dots for all but the last 4 characters. */
 function maskField(v: string): string {
-  if (v.length <= 4) return "•".repeat(v.length);
-  return "•".repeat(v.length - 4) + v.slice(-4);
+  if (v.length <= 4) return ".".repeat(v.length);
+  return ".".repeat(v.length - 4) + v.slice(-4);
 }

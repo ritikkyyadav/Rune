@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { renderBanner, wordmark } from "../../../packages/orchestrator/src/bin/ui/banner";
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
+import { glyph } from "../../../packages/orchestrator/src/bin/ui/glyphs";
 import * as os from "os";
 
 // Hermetic: the header names the folder you are in, not the whole path — but
@@ -36,28 +37,34 @@ function banner(columns: number, extra: Record<string, unknown> = {}): string {
 }
 
 describe("ui/banner", () => {
-  it("opens with a rule, where you are, and what the agent may do — and no logo", () => {
+  it("is ONE line of identity and ONE hairline — nothing else", () => {
     const output = banner(100);
     const lines = output.split("\n").filter((line) => line.trim());
-    expect(lines).toHaveLength(4);
-    expect(lines[0]).toMatch(/^──── gear 0\.2\.0 ─+$/);
-    expect(lines[1]).toBe("  sample-app · main");
-    expect(lines[2]).toBe("  claude-sonnet-4-6 · 1st gear — every action asks first");
-    expect(lines[3]).toMatch(/^─+$/);
+    // It used to be four: a rule with the name inlaid, a location row, a model
+    // row, and a closing rule. Two heavy rules to say "a program started" is a
+    // lot of screen spent before the first word of the session.
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain("gear · sample-app · main · claude-sonnet-4-6");
+    expect(lines[0]).toContain("1st gear"); // the mode, hard right
+    expect(lines[1]).toMatch(/^─+$/); // the single hairline
     // Nothing decorative survives: no mark, no avatar, no wordmark, no tagline.
     expect(output).not.toContain("⚙");
     expect(output).not.toContain("⣴");
     expect(output).not.toContain("Ready to build.");
+    // And no dashed rules — a dash rule reads as texture, a hairline as structure.
+    expect(output).not.toMatch(/-{10}/);
   });
 
   it("states the tree's real shape and any guardrail that has been removed", () => {
     const output = banner(100, { dirtyFiles: 3, sandbox: false, mcpServers: 2 });
-    expect(output).toContain("sample-app · main · 3 files changed · sandbox off · mcp 2");
+    expect(output).toContain("sample-app · main");
+    expect(output).toContain("3 files changed | sandbox off | mcp 2");
   });
 
   it("prefers the preset's model label and carries the effort dial", () => {
     const output = banner(100, { modelLabel: "Gemini 2.5 Flash", effort: "high" });
-    expect(output).toContain("Gemini 2.5 Flash · high effort · 1st gear");
+    expect(output).toContain("Gemini 2.5 Flash | high effort");
+    expect(output).toContain("1st gear");
     expect(output).not.toContain("gemini-2.5-flash");
   });
 
@@ -66,11 +73,10 @@ describe("ui/banner", () => {
       const lines = banner(columns)
         .split("\n")
         .filter((line) => line.trim());
-      // The two rules divide the whole surface…
-      for (const rule of [lines[0]!, lines.at(-1)!]) {
-        expect(rule).toMatch(/─$/);
-        expect(rule.length).toBeGreaterThanOrEqual(Math.min(120, columns) - 1);
-      }
+      // The one hairline divides the whole surface…
+      const hair = lines.at(-1)!;
+      expect(hair).toMatch(/─$/);
+      expect(hair.length).toBeGreaterThanOrEqual(Math.min(120, columns) - 1);
       // …while every line still stays inside the window, never touching its
       // last cell (a full-width line wraps, and a wrap desyncs the composer).
       for (const line of lines) expect(line.length).toBeLessThan(columns);
@@ -78,7 +84,7 @@ describe("ui/banner", () => {
   });
 
   it("uses a text glyph rather than an emoji-font gear in the compact wordmark", () => {
-    expect(stripAnsi(wordmark())).toBe("⚙︎ Gear");
+    expect(stripAnsi(wordmark())).toBe(`${glyph("phase")} Gear`);
   });
 });
 

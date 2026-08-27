@@ -1,9 +1,10 @@
-// ─── Gear Render Primitives ───
+// --- Gear Render Primitives ---
 // Pure, width-aware string builders. All length math uses terminal cells rather
 // than JavaScript string length, so ANSI styling, CJK, emoji, combining marks,
 // and joined graphemes do not break cursor math or box alignment.
 
 import { line as lineColor, muted, faint, text as textColor, warn } from "./theme";
+import { glyph } from "./glyphs";
 
 let widthOverride: number | null = null;
 
@@ -15,7 +16,7 @@ export function setTermWidthOverride(width: number | null): void {
 }
 
 export function termWidth(): number {
-  // `columns` is 0 (not undefined) on a PTY with no winsize — fall back sanely.
+  // `columns` is 0 (not undefined) on a PTY with no winsize -- fall back sanely.
   return widthOverride ?? (process.stdout.columns || 80);
 }
 
@@ -145,9 +146,10 @@ function prefixByWidth(value: string, max: number): string {
 export function truncate(value: string, max: number): string {
   if (max <= 0) return "";
   if (visLen(value) <= max) return value;
-  if (max === 1) return "…";
+  const elision = glyph("elision");
+  if (max === 1) return elision;
   const prefix = prefixByWidth(value, max - 1);
-  return prefix + "…" + (value.includes("\x1b") ? RESET : "");
+  return prefix + elision + (value.includes("\x1b") ? RESET : "");
 }
 
 /**
@@ -161,7 +163,7 @@ export function clampVisible(line: string, max: number): string {
   if (max <= 0) return "";
   if (visLen(line) <= max) return line;
   const prefix = max === 1 ? "" : prefixByWidth(line, max - 1);
-  return prefix + "…" + (line.includes("\x1b") ? RESET : "");
+  return prefix + glyph("elision") + (line.includes("\x1b") ? RESET : "");
 }
 
 /** Split one unbroken word into grapheme-safe chunks no wider than `width`. */
@@ -219,19 +221,19 @@ export function wrap(value: string, width: number): string[] {
 }
 
 /** The five-cell occupancy meter used by the footer and the compaction
- * receipt: `▮▮▯▯▯`. Any non-zero percentage shows at least one filled cell. */
+ * receipt: `##...`. Any non-zero percentage shows at least one filled cell. */
 export function meterGlyphs(percent: number, cells = 5): string {
   const pct = Math.max(0, Math.min(100, percent));
   const filled = Math.min(cells, Math.max(pct > 0 ? 1 : 0, Math.round((pct / 100) * cells)));
-  return "▮".repeat(filled) + "▯".repeat(cells - filled);
+  return "#".repeat(filled) + ".".repeat(cells - filled);
 }
 
 export interface RailCardOpts {
-  /** Paints the left rail glyph — the card's coloured border. */
+  /** Paints the left rail glyph -- the card's coloured border. */
   rail: (value: string) => string;
-  /** Paints each row's background — the card's tinted surface. */
+  /** Paints each row's background -- the card's tinted surface. */
   surface?: (value: string) => string;
-  /** Card width in cells (default: the reading measure, ≤100). */
+  /** Card width in cells (default: the reading measure, <=100). */
   width?: number;
   indent?: string;
 }
@@ -247,11 +249,11 @@ export function railCard(rows: string[], opts: RailCardOpts): string[] {
   // width); only the default derives from the terminal.
   const available = Math.max(16, termWidth() - visLen(indent) - 1);
   const width = Math.max(16, opts.width ?? Math.min(100, available));
-  const inner = width - 3; // rail + gap … trailing pad
+  const inner = width - 3; // rail + gap ... trailing pad
   return rows.map((row) => {
     const shown = truncate(row, inner);
     const fill = " ".repeat(Math.max(0, inner - visLen(shown)));
-    const body = `${opts.rail("▌")} ${shown}${fill} `;
+    const body = `${opts.rail(glyph("gutter"))} ${shown}${fill} `;
     return `${indent}${opts.surface ? opts.surface(body) : body}`;
   });
 }
@@ -259,19 +261,22 @@ export function railCard(rows: string[], opts: RailCardOpts): string[] {
 /** Horizontal rule, indented. */
 export function rule(
   width?: number,
-  opts: { pad?: string; color?: (s: string) => string } = {},
+  opts: { pad?: string; color?: (s: string) => string; glyph?: string } = {},
 ): string {
   const pad = opts.pad ?? "  ";
   const w = width ?? Math.min(termWidth() - 4, 76);
-  return `${pad}${(opts.color ?? lineColor)("─".repeat(Math.max(1, w)))}`;
+  // The cell defaults to ASCII so this stays usable from non-UI callers; the
+  // UI passes the closed set's hairline, which folds to the same "-" anyway.
+  const cell = opts.glyph ?? "-";
+  return `${pad}${(opts.color ?? lineColor)(cell.repeat(Math.max(1, w)))}`;
 }
 
-// ─── Box ───
+// --- Box ---
 
 export interface BoxOpts {
   /** Left indentation. Default "  ". */
   pad?: string;
-  /** Rounded corners (╭╮╰╯) vs square (┌┐└┘). Default rounded. */
+  /** Rounded corners (++++) vs square (++++). Default rounded. */
   rounded?: boolean;
   /** Hard inner width override. Default: fit content, capped to terminal. */
   width?: number;
@@ -294,21 +299,20 @@ function boxInnerWidth(lines: string[], pad: string, override?: number): number 
 export function box(lines: string[], opts: BoxOpts = {}): string {
   const pad = opts.pad ?? "  ";
   const color = opts.color ?? lineColor;
-  const rounded = opts.rounded ?? true;
-  const [tl, tr, bl, br] = rounded ? ["╭", "╮", "╰", "╯"] : ["┌", "┐", "└", "┘"];
+  const [tl, tr, bl, br] = ["+", "+", "+", "+"];
   const inner = boxInnerWidth(lines, pad, opts.width);
 
-  const top = `${pad}${color(tl + "─".repeat(inner + 2) + tr)}`;
-  const bottom = `${pad}${color(bl + "─".repeat(inner + 2) + br)}`;
+  const top = `${pad}${color(tl + "-".repeat(inner + 2) + tr)}`;
+  const bottom = `${pad}${color(bl + "-".repeat(inner + 2) + br)}`;
   const body = lines.map((ln) => {
     const shown = visLen(ln) > inner ? truncate(ln, inner) : ln;
     const fill = Math.max(0, inner - visLen(shown));
-    return `${pad}${color("│")} ${shown}${" ".repeat(fill)} ${color("│")}`;
+    return `${pad}${color(glyph("gutter"))} ${shown}${" ".repeat(fill)} ${color(glyph("gutter"))}`;
   });
   return [top, ...body, bottom].join("\n");
 }
 
-// ─── Key/value rows ───
+// --- Key/value rows ---
 
 export interface KvOpts {
   labelWidth?: number;
@@ -316,7 +320,7 @@ export interface KvOpts {
   valueColor?: (s: string) => string;
 }
 
-/** Aligned `label   value` rows (unframed — drop into a box or print directly). */
+/** Aligned `label   value` rows (unframed -- drop into a box or print directly). */
 export function kv(rows: [string, string][], opts: KvOpts = {}): string[] {
   const lw = opts.labelWidth ?? Math.max(0, ...rows.map(([k]) => visLen(k)));
   const lc = opts.labelColor ?? muted;
@@ -324,42 +328,42 @@ export function kv(rows: [string, string][], opts: KvOpts = {}): string[] {
   return rows.map(([k, v]) => `${lc(k + " ".repeat(Math.max(0, lw - visLen(k))))}  ${vc(v)}`);
 }
 
-// ─── Progress bar ───
+// --- Progress bar ---
 
 export interface BarOpts {
   fill?: (s: string) => string;
   empty?: (s: string) => string;
 }
 
-/** `[████░░░░]` progress bar for a fraction in [0,1]. */
+/** `[████....]` progress bar for a fraction in [0,1]. */
 export function bar(frac: number, width = 20, opts: BarOpts = {}): string {
   const f = Math.max(0, Math.min(1, Number.isFinite(frac) ? frac : 0));
   const filled = Math.round(f * width);
   const fill = opts.fill ?? warn;
   const empty = opts.empty ?? faint;
-  return `${faint("[")}${fill("█".repeat(filled))}${empty("░".repeat(width - filled))}${faint("]")}`;
+  return `${faint("[")}${fill("#".repeat(filled))}${empty(".".repeat(width - filled))}${faint("]")}`;
 }
 
-// ─── Bullets & connectors (Codex-style activity rows) ───
+// --- Bullets & connectors (Codex-style activity rows) ---
 
-/** `• content` — a top-level activity row. */
+/** `. content` -- a top-level activity row. */
 export function bullet(
   content: string,
   opts: { color?: (s: string) => string; pad?: string } = {},
 ): string {
   const pad = opts.pad ?? "  ";
   const c = opts.color ?? muted;
-  return `${pad}${c("•")} ${content}`;
+  return `${pad}${c(glyph("observed"))} ${content}`;
 }
 
-/** `  └ content` with optional indented sub-lines beneath it. */
+/** `  + content` with optional indented sub-lines beneath it. */
 export function connector(
   content: string,
   opts: { pad?: string; sub?: string[]; color?: (s: string) => string } = {},
 ): string {
   const pad = opts.pad ?? "  ";
   const c = opts.color ?? faint;
-  const lines = [`${pad}${c("└")} ${content}`];
+  const lines = [`${pad}${c(glyph("gutter"))} ${content}`];
   for (const s of opts.sub ?? []) lines.push(`${pad}  ${muted(s)}`);
   return lines.join("\n");
 }
