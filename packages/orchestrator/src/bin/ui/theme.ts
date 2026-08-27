@@ -18,6 +18,7 @@ import {
   DEFAULT_THEME,
   ROLE_SLOT,
   adaptiveTheme,
+  contrastRatio,
   findTheme,
   productionThemes,
 } from "./themes";
@@ -183,34 +184,80 @@ export function swatch(themeName: string): string {
 
 /** Flow never mutates terminal foreground, background, or cursor colors. */
 /**
- * The cursor, in the theme's accent — and nothing else.
+ * Flow mutates no terminal state. Background, foreground and cursor colour all
+ * belong to the host.
  *
- * The standing rule here is that Flow paints no terminal state: no background,
- * no foreground, body text inherits. That rule is right, and it is why gear
- * never leaves a terminal looking wrong after it exits. The cursor is the one
- * exception, and the distinction is about where the thing sits.
+ * The cursor was briefly claimed here with OSC 12, on the reasoning that it is
+ * a glyph inside our own field rather than the ground beneath it. The reasoning
+ * was fine and the mechanism was not: the sequence went out correctly — an
+ * emitted `OSC 12 -> #a78bfa` matching the theme exactly — and the terminal
+ * ignored it and drew its own cursor anyway. A request a terminal is free to
+ * refuse is not a way to own something.
  *
- * A background is behind everything, including the user's other programs; a
- * foreground is their reading colour. Both belong to them. The cursor is a
- * GLYPH, drawn on our row, inside our input field, between our two rules — and
- * left alone it renders in whatever colour the terminal picked, which is a
- * foreign accent sitting in the middle of a themed frame. Inheriting the ground
- * is deference; inheriting a mark inside your own field is just a mismatch.
- *
- * OSC 12 sets it, OSC 112 resets it, and the reset is wired into both the
- * ordinary exit and the crash handler — this is a session-scoped mode like
- * bracketed paste, not a persistent mutation. A terminal that ignores OSC 12
- * ignores it harmlessly.
+ * So the cursor is drawn instead of asked for. See cursorCell() below and
+ * renderComposer: the hardware cursor is hidden and the caret cell is painted,
+ * which works identically everywhere and needs nothing from the host.
  */
 export function terminalThemeSeq(): string {
-  if (!COLOR_CAPABLE || active.useNativeColors) return "";
-  const [r, g, b] = pigmentFor(ROLE_SLOT.accent).rgb;
-  const hex = [r, g, b].map((n) => n.toString(16).padStart(2, "0")).join("");
-  return `\x1b]12;#${hex}\x07`;
+  return "";
 }
 
-/** Hand the cursor back. OSC 112 restores the terminal's own cursor colour. */
-export const TERMINAL_THEME_RESET = "\x1b]112\x07";
+/**
+ * One cell, painted as the caret.
+ *
+ * This is the single place in the product that sets a background, and the rule
+ * it bends is worth restating so the exception stays one: never painting a
+ * background is about the GROUND — the surface behind everything, which is the
+ * user's and which is why a TUI that claims it looks broken on someone else's
+ * theme. A caret is not ground. It is a mark exactly one cell wide, and a block
+ * caret has no other way to exist.
+ *
+ * The foreground is chosen against the accent's own luminance rather than fixed,
+ * so the character under the caret stays legible on a pale accent as well as a
+ * dark one — a caret you cannot read through is worse than one in the wrong
+ * colour.
+ */
+/**
+ * Which foreground keeps the character legible inside a painted caret.
+ *
+ * Pure, and exported, because the rule is the interesting part and a test
+ * process has no tty — cursorCell falls back to reverse video there, so
+ * inspecting its output tells you nothing about the choice being made.
+ *
+ * Measured, not guessed. A luminance threshold picked by eye put white on Cyber
+ * Orange at ~2.9:1 where black reaches 7.5:1 — legible enough to pass a glance,
+ * not enough to read the character you are typing over. Asking which of the two
+ * actually contrasts more is exact, and cannot drift when a palette changes.
+ */
+export function caretForeground(accent: [number, number, number]): "black" | "white" {
+  return contrastRatio(accent, [0, 0, 0]) >= contrastRatio(accent, [255, 255, 255])
+    ? "black"
+    : "white";
+}
+
+export function cursorCell(ch: string): string {
+  const safe = terminalText(ch || " ");
+  if (!COLOR_CAPABLE || active.useNativeColors) {
+    // Nothing to paint with: fall back to reverse video, which every terminal
+    // understands and which the host's own colours make legible by definition.
+    return `\x1b[7m${safe}${RESET}`;
+  }
+  const [r, g, b] = pigmentFor(ROLE_SLOT.accent).rgb;
+  // Measured, not guessed. A luminance threshold picked by eye put white on
+  // Cyber Orange at about 2.9:1 where black reaches 7:1 — legible enough to
+  // pass a glance and not enough to read the character you are typing over.
+  // Asking which of the two actually contrasts more is exact and cannot drift
+  // when a palette changes.
+  const onDark = caretForeground([r, g, b]) === "black" ? "30" : "97";
+  if (DEPTH === "truecolor") return `\x1b[48;2;${r};${g};${b}m\x1b[${onDark}m${safe}${RESET}`;
+  if (DEPTH === "ansi256") {
+    return `\x1b[48;5;${pigmentFor(ROLE_SLOT.accent).ansi}m\x1b[${onDark}m${safe}${RESET}`;
+  }
+  return `\x1b[7m${safe}${RESET}`;
+}
+
+/** Nothing to hand back — Flow never took anything. */
+export const TERMINAL_THEME_RESET = "";
 
 /** Compatibility APIs kept while Phase 03 removes the old full-screen surface. */
 export function themeBgSeq(): string {
