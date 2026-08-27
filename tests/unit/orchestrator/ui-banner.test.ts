@@ -85,7 +85,8 @@ describe("ui/banner", () => {
       const content = lines[0]!;
       // The badge is the right edge, and the row fills the window it is chrome
       // for — measured against the surface, not the 120-column reading column.
-      expect(content.length).toBe(Math.max(20, columns - 1));
+      // Symmetric margin: MARK on the left, the same on the right.
+      expect(content.length).toBe(Math.max(20, columns - 2));
       expect(content.trimEnd()).toMatch(/1st gear$/);
     }
   });
@@ -97,7 +98,7 @@ describe("ui/banner", () => {
         .filter((line) => line.trim());
       const hair = lines.at(-1)!;
       expect(hair).toMatch(/^ {2}─+$/);
-      expect(hair.length).toBe(Math.max(20, columns - 1));
+      expect(hair.length).toBe(Math.max(20, columns - 2));
       // …and it is exactly as wide as the identity row it closes.
       expect(hair.length).toBe(lines[0]!.length);
       // …while every line still stays inside the window, never touching its

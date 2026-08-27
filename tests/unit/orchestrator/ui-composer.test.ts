@@ -308,9 +308,7 @@ describe("ui/composer statusLine + permission mode", () => {
     expect(confirm).not.toMatch(/autonomy/i);
 
     expect(stripAnsi(statusLine({ ...base, mode: "autonomy-i" }, 120))).toContain(">> 2nd gear");
-    // The gear marker is the phase glyph now: ">>>" was arrow soup sitting a
-    // row under a "›" prompt that already means "your turn".
-    expect(stripAnsi(statusLine({ ...base, mode: "autonomy-ii" }, 120))).toContain("◆ 3rd gear");
+    expect(stripAnsi(statusLine({ ...base, mode: "autonomy-ii" }, 120))).toContain(">>> 3rd gear");
     expect(stripAnsi(statusLine({ ...base, mode: "autonomy-iii" }, 120))).toContain(
       ">>>> 4th gear",
     );
@@ -511,5 +509,26 @@ describe("ui/composer footer filesEdited readout", () => {
     expect(
       stripAnsi(statusLine({ model: "m", workspace: "/w", mode: "gear-2" }, 140)),
     ).not.toContain("files edited");
+  });
+});
+
+describe("the gear ladder", () => {
+  // The count is the information: one mark per gear, readable at a glance
+  // without parsing the label. A gap anywhere in the sequence makes that gear
+  // look like a different product.
+  it("is a counting sequence with no gaps", () => {
+    const { modeInfo } = require("../../../packages/orchestrator/src/bin/ui/composer");
+    expect(modeInfo("gear-1").arrows).toBe(">");
+    expect(modeInfo("gear-2").arrows).toBe(">>");
+    expect(modeInfo("gear-3").arrows).toBe(">>>");
+    expect(modeInfo("gear-4").arrows).toBe(">>>>");
+    for (const [id, n] of [
+      ["gear-1", 1],
+      ["gear-2", 2],
+      ["gear-3", 3],
+      ["gear-4", 4],
+    ] as const) {
+      expect(modeInfo(id).arrows.length, id).toBe(n);
+    }
   });
 });
