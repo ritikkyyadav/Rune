@@ -3522,7 +3522,7 @@ class Tui {
     this.print(renderReadBack(brief));
     const answer = await this.questionHandler({
       question: "Work to this?",
-      options: ["go", "edit — I'll say what's wrong", "ask me something first"],
+      options: ["go", "edit - I'll say what's wrong", "ask me something first"],
     });
     const picked = answer.trim().toLowerCase();
     if (picked === "go" || picked.startsWith("go")) return { accepted: true };

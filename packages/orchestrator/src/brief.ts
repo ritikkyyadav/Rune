@@ -39,7 +39,7 @@ export const RUNG_GLYPH: Record<ClaimRung, { utf8: string; ascii: string }> = {
   suspected: { utf8: "~", ascii: "~" },
   observed: { utf8: "·", ascii: "." },
   reproduced: { utf8: "=", ascii: "=" },
-  verified: { utf8: "✓", ascii: "x" },
+  verified: { utf8: "✓", ascii: "+" },
 };
 
 /** What it costs to write each rung — shown in help, and enforced below. */
