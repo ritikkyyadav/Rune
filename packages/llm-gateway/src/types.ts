@@ -125,6 +125,18 @@ export interface InferenceRequest {
   topP?: number;
   stopSequences?: string[];
   cacheControl?: CacheControlHint[];
+  /**
+   * Index of the last message that will recur BYTE-IDENTICALLY on the next
+   * request — i.e. the end of the cacheable prefix. Everything after it is
+   * ephemeral: rebuilt per request and never stored (today, the task-state
+   * spine block the agent loop appends).
+   *
+   * Providers place their conversation cache breakpoint here. Placing it on
+   * the final message instead — the obvious-looking choice — writes a cache
+   * entry keyed on content that never repeats, so every turn pays to write a
+   * prefix no later turn can read. Omit when the whole array is stable.
+   */
+  cacheBreakpointIndex?: number;
   responseFormat?: ResponseFormat;
   /**
    * Enable the provider's native web-search grounding (Gemini googleSearch /
@@ -210,6 +222,26 @@ export type StreamEvent =
   // discard everything accumulated for the current assistant message, or the
   // retry duplicates text and tool calls in the transcript.
   | { type: "stream_reset" }
+  // The same provider is about to be re-tried after a transient failure.
+  // Emitted BEFORE the backoff sleep, so the surface can say why it is about
+  // to go quiet for `waitMs` instead of looking wedged. A retry that never
+  // reaches a UI is a lie of omission about how long the turn took and how
+  // reliable the run was, which is why this is a first-class event and not a
+  // log line. A `stream_reset` precedes it when partial output must be dropped.
+  | {
+      type: "retry";
+      provider: string;
+      model: string;
+      /** 1-based: this is retry `attempt` of `of`. */
+      attempt: number;
+      of: number;
+      /** HTTP status that triggered it, when there is one. */
+      status?: number;
+      /** How long the gateway is about to wait, before jitter. */
+      waitMs: number;
+      /** Short human reason, e.g. "rate limited". */
+      reason?: string;
+    }
   // `retryable: false` marks a terminal failure (bad key, no credits, every
   // provider rate-limited) that re-running won't fix — the agent loop surfaces
   // it immediately instead of retrying through maxConsecutiveErrors.
@@ -228,6 +260,13 @@ export interface ModelInfo {
   label?: string;
   /** True when this came from the provider's live endpoint vs. a static fallback. */
   live?: boolean;
+  /**
+   * The model's real context window, when the provider's catalog reports one.
+   * Authoritative — the orchestrator's static family table is only a guess for
+   * models it happens to recognize, and guesses low (100k) for everything else.
+   * A too-low guess makes compaction fire on a model that had room to spare.
+   */
+  contextLimit?: number;
 }
 
 export interface LlmProvider {
@@ -321,13 +360,19 @@ export interface GatewayConfig {
 
 /** What the gateway reports to the black box (kept provider-agnostic). */
 export interface GatewayIncidentEvent {
-  kind: "fallback" | "terminal";
+  kind: "fallback" | "terminal" | "retry";
   provider: string;
   model?: string;
   status?: number;
   message: string;
   /** For kind="fallback": the provider we switched to. */
   fallbackTo?: string;
+  /** For kind="retry": which attempt this is, and how long the wait will be.
+   *  Carried here as well as on the stream so the non-streaming `infer()`
+   *  path — which has no event channel — still reports its retries. */
+  attempt?: number;
+  of?: number;
+  waitMs?: number;
 }
 
 export interface ProviderConfig {

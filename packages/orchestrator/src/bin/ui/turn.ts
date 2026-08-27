@@ -1,9 +1,10 @@
-// ─── TurnRenderer: the Gear customizer's visible activity stream ───
-// The reference deliberately shows Plan → Read/Search → Command → Edit/Diff →
-// Complete → Answer. Keep private reasoning private, but never hide the actual
+// --- TurnRenderer: the Gear customizer's visible activity stream ---
+// The reference deliberately shows Plan -> Read/Search -> Command -> Edit/Diff ->
+// Complete -> Answer. Keep private reasoning private, but never hide the actual
 // actions or evidence that explain what the agent did.
 
-import { accent, between, bold, faint, muted, ok, stripAnsi, text, warn } from "./theme";
+import { accent, bold, danger, faint, muted, ok, stripAnsi, text, warn } from "./theme";
+import { glyph } from "./glyphs";
 import { truncate, wrap } from "./render";
 import * as F from "./flow";
 import {
@@ -17,12 +18,13 @@ import {
   type TranscriptLineView,
 } from "./activity";
 import { formatError, formatEvent, fmtTokens } from "./events";
+import { Pulse, PULSE_WEIGHT, pulseGlyph, quietLabel } from "./pulse";
 import { renderMarkdown } from "./markdown";
 import { renderUnifiedDiff } from "../diff-render";
 
 export { isVerificationCommand };
 
-/** Column budget for a turn. The flow measure is the single source of truth —
+/** Column budget for a turn. The flow measure is the single source of truth --
  *  a wide terminal gets whitespace, not a 110-column sentence. */
 export function turnWidth(): number {
   return F.measure();
@@ -77,12 +79,12 @@ const PHASE_DEFAULT: Record<WorkPhase, string> = {
 };
 
 /** The stable signal glyph used for the current phase. */
-export const HEX = "◆";
+export const HEX = glyph("phase");
 
-// ─── The pace of the live rung ───
+// --- The pace of the live rung ---
 // Everything below is about *time*, not ink, and all of it exists to answer one
 // complaint: watched from outside, the agent looked like it was rushing. It was
-// not — the work took exactly as long as it took. What rushed was the reporting.
+// not -- the work took exactly as long as it took. What rushed was the reporting.
 // A turn can open and close four tool calls in the time it takes to focus on a
 // line, and a status line that honours every one of those transitions is not
 // informative, it is a strobe. Reading a strobe feels like watching someone who
@@ -93,8 +95,8 @@ export const HEX = "◆";
 const DWELL_MS = 700;
 
 /** How long a state that says *less* than what is already up must persist
- *  before it may replace it. Quiet frames — `thinking` with nothing under it,
- *  `answering` on the strength of one stray token — are the ones that turn out
+ *  before it may replace it. Quiet frames -- `thinking` with nothing under it,
+ *  `answering` on the strength of one stray token -- are the ones that turn out
  *  not to have been true a moment later, so they are asked to prove themselves.
  *  A frame that names real work is not: making it wait would mean the rung goes
  *  quiet precisely when the agent is busiest. Roughly one tick. */
@@ -102,7 +104,7 @@ const SETTLE_MS = 120;
 
 /** How long after a tool ends the agent is still considered mid-burst. Between
  *  one call finishing and the next beginning there is a beat where nothing is in
- *  flight, and taken literally that beat is "thinking" — but a 5ms hole in the
+ *  flight, and taken literally that beat is "thinking" -- but a 5ms hole in the
  *  middle of obvious work is an artefact of event granularity, not a state
  *  anyone is in. Left alone it also defeats the settle above, because the
  *  candidate flips away and back and never accumulates the time it needs to
@@ -110,23 +112,9 @@ const SETTLE_MS = 120;
  *  visible work. Inside this window the rung simply holds. */
 const GAP_MS = 300;
 
-/** One breath of the live mark, and the number of steps it is quantised into.
- *  Quantising earns its keep twice: consecutive repaints inside a step are
- *  byte-identical, so the rung is not redrawn on every streamed token, and a
- *  256-colour terminal gets a ramp it can actually represent. */
-const BREATH_MS = 2600;
-const BREATH_STEPS = 16;
-
-/**
- * Position along the breath, 0.3…1. Eased by a cosine so the mark lingers at
- * each end instead of sweeping evenly past it, and floored well above zero so
- * it never goes dark — a mark that disappears, however briefly, is a mark that
- * blinks, and a blink is the terminal's way of saying something is wrong.
- */
-function breathAt(elapsedMs: number): number {
-  const step = Math.floor(((elapsedMs % BREATH_MS) / BREATH_MS) * BREATH_STEPS);
-  return 0.3 + ((1 - Math.cos((step / BREATH_STEPS) * 2 * Math.PI)) / 2) * 0.7;
-}
+/** How long a turn runs before its elapsed clock is worth a column. `0s`
+ *  beside every step is noise pretending to be data. */
+const ELAPSED_AFTER_MS = 2000;
 
 function oneLine(raw: string, max = 100): string {
   const clean = raw
@@ -151,7 +139,7 @@ function shortPath(path: string): string {
   const parts = path.split("/").filter(Boolean);
   if (!path.startsWith("/") && parts.length <= 5) return path;
   if (parts.length <= 3) return path;
-  return "…/" + parts.slice(-3).join("/");
+  return ".../" + parts.slice(-3).join("/");
 }
 
 function tryJson(raw: string): Record<string, unknown> | null {
@@ -191,7 +179,7 @@ function liveToolLabel(name: string, args: Record<string, unknown>): string {
       return path ? `Exploring ${shortPath(path)}` : "Mapping the workspace";
     case "grep": {
       const pattern = String(args.pattern ?? "");
-      return pattern ? `Searching for “${truncate(pattern, 48)}”` : "Searching the codebase";
+      return pattern ? `Searching for "${truncate(pattern, 48)}"` : "Searching the codebase";
     }
     case "glob":
       return "Finding relevant files";
@@ -210,7 +198,7 @@ function liveToolLabel(name: string, args: Record<string, unknown>): string {
     }
     case "web_search": {
       const query = oneLine(String(args.query ?? args.q ?? ""), 58);
-      return query ? `Researching “${query}”` : "Researching current information";
+      return query ? `Researching "${query}"` : "Researching current information";
     }
     case "web_fetch":
       return "Reading the primary source";
@@ -226,16 +214,16 @@ function liveToolLabel(name: string, args: Record<string, unknown>): string {
 }
 
 /**
- * What the streaming tool-call arguments say *so far* — but only where they
+ * What the streaming tool-call arguments say *so far* -- but only where they
  * have finished saying it. The closing quote in each pattern is the whole
  * point: matching an unterminated value meant the live rung typed the path out
- * letter by letter (`Reading s` → `Reading src/b` → `Reading …/ui/turn.ts`),
+ * letter by letter (`Reading s` -> `Reading src/b` -> `Reading .../ui/turn.ts`),
  * reshaping itself on every token as the string grew past what shortPath elides.
  * That stutter is a large part of what made the agent look frantic while it was
  * doing something perfectly ordinary. Waiting for the closing quote costs a few
  * hundred milliseconds of vagueness and buys one clean transition: the generic
  * phrase, then the real target, and nothing in between. When a value is escaped
- * or spans lines no partial match is offered at all — the full parse above will
+ * or spans lines no partial match is offered at all -- the full parse above will
  * supply it a moment later, and a calm "Running the necessary command" is a
  * better placeholder than a half-typed one.
  */
@@ -258,7 +246,7 @@ export interface UserBlockMeta {
 }
 
 /**
- * What you asked, at the left margin. No bar, no fill, no receipt — the message
+ * What you asked, at the left margin. No bar, no fill, no receipt -- the message
  * is the strongest landmark in scrollback precisely because nothing decorates
  * it, and the turn number is already in the header.
  */
@@ -305,7 +293,7 @@ export function splitHeadline(paragraph: string): { headline: string; rest: stri
 /**
  * The final answer, in the agent's voice: one dot, then the sentence that
  * actually answers the question, then the detail. Authored Markdown structure
- * (headings, lists, code) is preserved — only a plain opening paragraph is
+ * (headings, lists, code) is preserved -- only a plain opening paragraph is
  * promoted to the dot, because that is the line the reader came for.
  */
 export function responseBlock(markdown: string): string {
@@ -384,7 +372,7 @@ function parseCheck(command: string, result: string, toolSuccess: boolean): Chec
 }
 
 /** The v2 summary-strip badge for a passed check: `214 tests pass`,
- * `typecheck clean`, `lint clean`, `build ok` — or the command itself. */
+ * `typecheck clean`, `lint clean`, `build ok` -- or the command itself. */
 function checkBadge(check: CheckEvidence): string {
   const cmd = check.label.toLowerCase();
   const detail = check.detail ?? "";
@@ -418,6 +406,13 @@ export class TurnRenderer {
   private editedFiles = new Map<string, EditStat>();
   private checks: CheckEvidence[] = [];
   private currentTool: CurrentTool | null = null;
+  /**
+   * Every started-but-unfinished call this turn, by callId. `currentTool` is
+   * the newest streamed call and goes null on the FIRST end -- with several
+   * parallel sub-agents in flight that read as "thinking" while four workers
+   * were still building. This map keeps the rung honest for the whole fleet.
+   */
+  private pendingCalls = new Map<string, string>();
   private phase: WorkPhase = "understand";
   private intent = PHASE_DEFAULT.understand;
   private toolCalls = 0;
@@ -433,22 +428,30 @@ export class TurnRenderer {
   private narratedPlan = false;
   private verificationRunning = false;
   private readonly startedAt = Date.now();
-  /** The live rung's current frame and when it went up — see steadyFrame. */
+  /** Liveness driven by real output rather than by the clock -- see pulse.ts.
+   *  Fed by every scrap of genuine progress: streamed prose, reasoning deltas,
+   *  tool arguments, sub-agent heartbeats, calls opening and closing. */
+  private readonly pulse = new Pulse();
+  /** The provider retry in flight, when there is one. A silent retry is a lie
+   *  of omission about how long something took and how reliable it was, so it
+   *  rides the rung for as long as it lasts. */
+  private retrying: { attempt: number; of: number } | null = null;
+  /** The live rung's current frame and when it went up -- see steadyFrame. */
   private frame: { label: string; detail: string } = { label: "thinking", detail: "" };
   private frameAt = 0;
   /** The state the rung is *trying* to move to, and when it first appeared. */
   private want: { label: string; detail: string } = { label: "thinking", detail: "" };
   private wantSince = 0;
-  /** When the last tool call ended — the near side of a possible burst gap. */
+  /** When the last tool call ended -- the near side of a possible burst gap. */
   private lastToolEndAt = 0;
   /** The last rung actually pushed to the sink, so an event that changes
    *  nothing visible does not schedule a repaint. */
   private lastLive = "";
-  /** Rows in the last committed block — drives the blank-line rhythm. */
+  /** Rows in the last committed block -- drives the blank-line rhythm. */
   private lastBlockRows = 0;
   // v2 turn metadata: provider-reported download tokens, accumulated thinking
   // wall-clock, live context %, the agent-loop turn number, and the latest
-  // durable checkpoint — all fed by structured events, never invented.
+  // durable checkpoint -- all fed by structured events, never invented.
   private downTokens = 0;
   private thinkingMs = 0;
   private lastThinkingAt = 0;
@@ -470,7 +473,7 @@ export class TurnRenderer {
   fullLog(): string | null {
     if (this.workLog.length === 0) return null;
     return [
-      `  ${bold(text("Work details"))} ${faint(`· ${plural(this.toolCalls, "action")}`)}`,
+      `  ${bold(text("Work details"))} ${faint(`| ${plural(this.toolCalls, "action")}`)}`,
       ...this.workLog.map((entry) => entry.line),
     ].join("\n");
   }
@@ -482,35 +485,33 @@ export class TurnRenderer {
   /**
    * The live rung above the composer: the same dot the agent speaks with, and an
    * honest receipt beside it. One row, plus a faint second row naming what is
-   * actually in flight — never a fake progress bar, because the agent does not
+   * actually in flight -- never a fake progress bar, because the agent does not
    * know how far along it is either.
    *
-   * The mark breathes between the secondary grey and the agent's own identity
-   * colour. It used to alternate hard between `accent` and `faint` every 400ms,
-   * which was wrong twice over: a hard alternation is a blink, and `accent` is
-   * the colour this palette reserves for errors — so the calmest moment of a
-   * turn, waiting, was rendered in the vocabulary of a fault. Breathing in the
-   * identity colour says the opposite, and says it about the right subject:
-   * this is the agent, still here.
+   * The one-cell ramp is sampled from the real-output accumulator. It rises
+   * only when bytes or callbacks arrive and falls when they stop; ambiguous
+   * width terminals receive its ASCII twin. The quiet word still carries the
+   * stall, so shape and colour are never the only evidence.
    *
-   * Nothing here slows the work down. Only the reporting is paced — the elapsed
+   * Nothing here slows the work down. Only the reporting is paced -- the elapsed
    * receipt beside the mark is the honest clock, and it never waits.
    */
   liveLines(): string[] {
     const { label, detail } = this.steadyFrame();
-    const mark = between("muted", "info", breathAt(Date.now() - this.startedAt))("●");
-    const lines = [`  ${mark} ${muted(label)}  ${faint(this.receipt().join(" · "))}`];
+    const beat = this.pulse.sample();
+    const mark = accent(pulseGlyph(beat));
+    const lines = [`  ${mark} ${muted(label)}  ${faint(this.receipt().join(" | "))}`];
     if (detail) lines.push(`${F.BODY}${faint(truncate(detail, F.proseWidth()))}`);
     lines.push(...this.streamingProseTail());
     return lines;
   }
 
   /**
-   * The last few lines of the answer AS IT STREAMS — the agent's voice, live.
+   * The last few lines of the answer AS IT STREAMS -- the agent's voice, live.
    * The rung says "answering"; these lines say WHAT. This is the single change
    * that separates "a spinner ran for 40 seconds and a wall of text appeared"
    * from watching an engineer talk while they work: mid-turn narration
-   * ("Found it: …") is visible the moment it is written, not retroactively.
+   * ("Found it: ...") is visible the moment it is written, not retroactively.
    * Committed scrollback still gets the fully-rendered markdown at finish;
    * this is only the live view of the tail.
    */
@@ -526,11 +527,11 @@ export class TurnRenderer {
       .flatMap((l) => wrap(l, width))
       .slice(-4);
     if (lines.length === 0) return [];
-    if (clipped) lines[0] = "…" + lines[0].slice(1);
+    if (clipped) lines[0] = glyph("elision") + lines[0].slice(1);
     return lines.map((l) => `${F.BODY}${text(l)}`);
   }
 
-  /** True in the beat between one tool call ending and the next beginning —
+  /** True in the beat between one tool call ending and the next beginning --
    *  nothing in flight, nothing said yet, and a call only just finished. The
    *  caller also requires the candidate to be empty; this only answers "was a
    *  tool running a moment ago?". */
@@ -546,7 +547,7 @@ export class TurnRenderer {
 
   /** What the rung would say if it could change this instant. */
   private liveLabel(): string {
-    if (this.currentTool) return "working";
+    if (this.currentTool || this.pendingCalls.size > 0) return "working";
     if (this.verificationRunning) return "checking";
     return this.prose.trim() ? "answering" : "thinking";
   }
@@ -559,13 +560,13 @@ export class TurnRenderer {
    * against whatever wants to replace it. The **gap** (inToolGap) hides the beat
    * between two calls in a burst, so a 5ms hole in obvious work is not mistaken
    * for a change of state. The **settle** asks a candidate that says *less* than
-   * what is up — `thinking` with nothing under it — to still be true a moment
+   * what is up -- `thinking` with nothing under it -- to still be true a moment
    * later before it takes the screen; a candidate that names real work goes up
    * as soon as the dwell allows, because making it wait would leave the rung
    * silent exactly while the agent is busiest.
    *
    * Label and detail move as one pair rather than independently, because
-   * releasing them separately would put `answering` above a stale tool target —
+   * releasing them separately would put `answering` above a stale tool target --
    * a frame that was never true of anything.
    *
    * Nothing is lost to any of this. The rail below records every call in full as
@@ -576,7 +577,7 @@ export class TurnRenderer {
     const now = Date.now();
     const want = { label: this.liveLabel(), detail: this.liveDetail() };
     // Mid-burst, between two calls, with nothing to say for itself: no new
-    // information, so do not evaluate a transition at all — hold what is up.
+    // information, so do not evaluate a transition at all -- hold what is up.
     // The emptiness is the test. A gap that *has* something to report (a check
     // came back, a plan step advanced) is not this, and is not held.
     if (!want.detail && this.inToolGap(now)) return this.frame;
@@ -595,30 +596,58 @@ export class TurnRenderer {
   /** What the rung is waiting on: the in-flight tool, else the active plan step,
    * else the phase intent the renderer inferred from the stream. */
   private liveDetail(): string {
+    // A FLEET of parallel sub-agents reads as one calm sentence -- count plus
+    // the freshest heartbeat -- instead of whichever call streamed last (or,
+    // worse, "thinking" after the first of five workers finished).
+    const fleet = [...this.pendingCalls.values()].filter((n) => n === "task" || n === "worker");
+    if (fleet.length >= 2 || (fleet.length === 1 && !this.currentTool)) {
+      const uniform = new Set(fleet);
+      const noun = uniform.size === 1 && uniform.has("worker") ? "worker" : "sub-agent";
+      const note =
+        this.toolProgressNote && this.pendingCalls.has(this.toolProgressNote.callId)
+          ? ` | ${this.toolProgressNote.note}`
+          : "";
+      if (fleet.length === 1) return `${noun} running${note}`;
+      return `${fleet.length} ${noun}s running${note}`;
+    }
     if (this.currentTool) {
       const base = liveToolLabel(this.currentTool.name, this.currentTool.args);
       // A long call's own heartbeat (worker: "edit_file src/x.ts") rides
       // beside its label. The callId guard self-cleans on the next call.
       if (this.toolProgressNote?.callId === this.currentTool.callId) {
-        return `${base} · ${this.toolProgressNote.note}`;
+        return `${base} | ${this.toolProgressNote.note}`;
       }
       return base;
     }
     const active = this.todos.find((item) => item.status === "in_progress");
     if (active) {
       const done = this.todos.filter((item) => item.status === "completed").length;
-      return `${active.content} · ${done}/${this.todos.length} steps`;
+      return `${active.content} | ${done}/${this.todos.length} steps`;
     }
-    // While the answer streams the intent is stale context — stay quiet.
+    // While the answer streams the intent is stale context -- stay quiet.
     if (this.prose.trim()) return "";
     if (this.intent && this.intent !== PHASE_DEFAULT.understand) return this.intent;
     return "";
   }
 
-  /** Elapsed · provider-reported ↓ tokens · reasoning wall-clock — never invented. */
+  /**
+   * Elapsed | the stall, in words | retries | provider-reported down tokens |
+   * reasoning wall-clock. Every column is a measured fact. There is no
+   * percentage here and no estimate of what remains: elapsed time is a fact,
+   * remaining time is a guess, and a wrong guess about an agent's runtime is
+   * the fastest way to lose trust in everything else on the screen.
+   */
   private receipt(): string[] {
-    const parts = [duration(this.startedAt)];
-    if (this.downTokens > 0) parts.push(`↓ ${fmtTokens(this.downTokens)} tokens`);
+    const parts: string[] = [];
+    if (Date.now() - this.startedAt >= ELAPSED_AFTER_MS) parts.push(duration(this.startedAt));
+    // The pulse can go flat; only this says so. Carried by the word, never by
+    // the glyph or the colour, so it survives NO_COLOR and a mono rung.
+    const quiet = quietLabel(this.pulse.sample());
+    if (quiet) parts.push(quiet);
+    if (this.retrying) {
+      parts.push(`${glyph("retry")} ${this.retrying.attempt} of ${this.retrying.of}`);
+    }
+    if (this.downTokens > 0) parts.push(`down ${fmtTokens(this.downTokens)} tokens`);
     if (this.thinkingMs >= 100) parts.push(`thought for ${(this.thinkingMs / 1000).toFixed(1)}s`);
     return parts;
   }
@@ -651,8 +680,8 @@ export class TurnRenderer {
 
   /**
    * Vertical rhythm between blocks. A blank line separates *groups*, not rows:
-   * a run of one-line calls stays tight, and anything with a body — a diff, an
-   * output rail, a call with a note — gets air on both sides. Blank-lining every
+   * a run of one-line calls stays tight, and anything with a body -- a diff, an
+   * output rail, a call with a note -- gets air on both sides. Blank-lining every
    * row would double the cost of a thirty-file read for no added meaning.
    */
   private commitTimeline(block: string): void {
@@ -758,7 +787,7 @@ export class TurnRenderer {
         const shown =
           all.length <= 60
             ? all
-            : [...all.slice(0, 42), `… ${all.length - 54} lines omitted …`, ...all.slice(-12)];
+            : [...all.slice(0, 42), `... ${all.length - 54} lines omitted ...`, ...all.slice(-12)];
         this.addLog(
           [
             `    ${faint("command output")}`,
@@ -781,9 +810,10 @@ export class TurnRenderer {
     switch (event.type) {
       case "thinking_delta": {
         // Reasoning remains private. The UI communicates intent and evidence
-        // instead — but the time SPENT reasoning is honest turn metadata
+        // instead -- but the time SPENT reasoning is honest turn metadata
         // ("thought for 2.3s"), so accumulate wall-clock across delta bursts.
         const now = Date.now();
+        this.pulse.feed(String(event.text ?? "").length || PULSE_WEIGHT.token, now);
         if (this.lastThinkingAt > 0 && now - this.lastThinkingAt < 3000) {
           this.thinkingMs += now - this.lastThinkingAt;
         }
@@ -794,7 +824,8 @@ export class TurnRenderer {
       case "text_delta": {
         this.activity = null;
         this.prose += event.text;
-        // The voice streams LIVE (see streamingProseTail) — but a repaint per
+        this.pulse.feed(String(event.text ?? "").length);
+        // The voice streams LIVE (see streamingProseTail) -- but a repaint per
         // token is a strobe, so paint at most every ~80ms; the animation tick
         // catches whatever a gate skipped.
         const now = Date.now();
@@ -806,19 +837,24 @@ export class TurnRenderer {
       }
 
       case "stream_reset":
+        // Re-streaming from scratch is work, not silence.
+        this.pulse.feed(PULSE_WEIGHT.callback);
         this.prose = "";
         this.currentTool = null;
+        this.pendingCalls.clear();
         this.activity = null;
         this.updateLive();
         return;
 
       case "tool_progress":
         // Sub-agent/worker heartbeat: shown on the rung, never committed.
+        this.pulse.feed(PULSE_WEIGHT.heartbeat);
         this.toolProgressNote = { callId: event.callId, note: String(event.note ?? "") };
         this.updateLive();
         return;
 
       case "tool_call_start": {
+        this.pulse.feed(PULSE_WEIGHT.callback);
         this.captureProseAsIntent();
         this.currentTool = {
           callId: String(event.callId ?? ""),
@@ -826,6 +862,12 @@ export class TurnRenderer {
           argsJson: "",
           args: {},
         };
+        // Fleet tracking is DELEGATION-only: ordinary tools keep the single
+        // `currentTool` slot (and its unpaired-event tolerance); task/worker
+        // calls are the ones that genuinely run as a concurrent fleet.
+        if (this.currentTool.name === "task" || this.currentTool.name === "worker") {
+          this.pendingCalls.set(this.currentTool.callId, this.currentTool.name);
+        }
         this.activity = runningLabel(this.currentTool.name);
         this.setPhase(phaseForTool(this.currentTool.name, {}));
         return;
@@ -833,6 +875,7 @@ export class TurnRenderer {
 
       case "tool_call_args_delta":
         if (this.currentTool && (!event.callId || event.callId === this.currentTool.callId)) {
+          this.pulse.feed(String(event.partialJson ?? "").length);
           this.currentTool.argsJson += String(event.partialJson ?? "");
           this.currentTool.args = partialArgs(this.currentTool.argsJson);
           this.activity = liveToolLabel(this.currentTool.name, this.currentTool.args);
@@ -841,11 +884,13 @@ export class TurnRenderer {
         return;
 
       case "tool_call_end": {
+        this.pulse.feed(PULSE_WEIGHT.callback);
         this.captureProseAsIntent();
         const phase = phaseForTool(String(event.output?.toolName ?? ""), event.args ?? {});
         this.setPhase(phase);
         this.recordTool(event);
         const failedCheck = this.checks.at(-1)?.status === "failed" && phase === "verify";
+        this.pendingCalls.delete(String(event.callId ?? ""));
         this.currentTool = null;
         this.lastToolEndAt = Date.now();
         this.activity = null;
@@ -907,6 +952,9 @@ export class TurnRenderer {
         this.captureProseAsIntent();
         this.flushRoutine();
         this.currentTool = null;
+        // Loop invariant: verification only starts once the turn's tool batch
+        // is fully done -- anything still marked pending is a stale leftover.
+        this.pendingCalls.clear();
         this.activity = null;
         this.verificationRunning = true;
         this.setPhase("verify", "Running the project checks");
@@ -935,7 +983,7 @@ export class TurnRenderer {
           status: !event.ran ? "not-run" : event.passed ? "passed" : "failed",
           count: event.ran ? commandCount : 0,
         });
-        const verification = `  ${event.passed && event.ran ? ok("✓") : event.ran ? accent("✕") : faint("○")} ${muted(
+        const verification = `  ${event.passed && event.ran ? ok(glyph("verified")) : event.ran ? danger(glyph("failure")) : faint("o")} ${muted(
           event.ran
             ? oneLine(report, 100)
             : oneLine(report, 100) || "No project checks were detected",
@@ -955,8 +1003,9 @@ export class TurnRenderer {
       }
 
       case "usage": {
-        // Authoritative provider counts: drive the "↓ tokens" meta and the
+        // Authoritative provider counts: drive the "down tokens" meta and the
         // live context percentage without a transcript line.
+        this.pulse.feed(Number(event.outputTokens ?? 0) * 4);
         this.downTokens += Number(event.outputTokens ?? 0);
         if (event.context && Number(event.context.percent) > 0) {
           this.contextPercent = Number(event.context.percent);
@@ -977,7 +1026,24 @@ export class TurnRenderer {
         return;
       }
 
+      // A provider retry, visible for as long as it runs. The gateway used to
+      // back off and re-stream in silence, which understated both how long the
+      // turn took and how reliable the run was -- and left the rung looking
+      // wedged for the length of the backoff with nothing to explain it.
+      case "retry": {
+        this.pulse.feed(PULSE_WEIGHT.callback);
+        this.retrying = {
+          attempt: Math.max(1, Number(event.attempt ?? 1)),
+          of: Math.max(1, Number(event.of ?? 1)),
+        };
+        this.updateLive();
+        return;
+      }
+
       case "fallback": {
+        this.pulse.feed(PULSE_WEIGHT.callback);
+        // Switching provider ends this provider's retry ladder.
+        this.retrying = null;
         this.reroutes++;
         const block = formatEvent(event, { cost: this.opts.getCost?.() });
         if (block) {
@@ -1043,7 +1109,9 @@ export class TurnRenderer {
 
       case "turn_complete":
         this.turnCount = Math.max(this.turnCount, Number(event.totalTurns ?? 0));
-        // A run that hit a ceiling is NOT a finished run — remember why so
+        this.pendingCalls.clear();
+        this.retrying = null;
+        // A run that hit a ceiling is NOT a finished run -- remember why so
         // the closing row can say so. Before this, `stopReason` was read by
         // nothing: an 80-turn cap death rendered identically to success.
         if (event.stopReason === "max_turns" || event.stopReason === "max_tokens") {
@@ -1085,7 +1153,7 @@ export class TurnRenderer {
 
   /**
    * A turn that worked says so by showing what it changed, not by announcing
-   * that it finished — so this row exists only when the ending itself is the
+   * that it finished -- so this row exists only when the ending itself is the
    * news: interrupted, ended on a failure nothing repaired, or stopped at a
    * ceiling with the task unfinished.
    */
@@ -1098,22 +1166,22 @@ export class TurnRenderer {
       // it was done. Silence here read as success and cost real trust.
       const label =
         this.stoppedEarly === "max_turns"
-          ? "ran out of turns — the task is not finished"
-          : "hit the output limit — the response is incomplete";
+          ? "ran out of turns -- the task is not finished"
+          : "hit the output limit -- the response is incomplete";
       const meta = [...this.receipt(), "send a follow-up to continue"];
-      return `  ${warn("■")} ${text(label)}  ${faint(meta.join(" · "))}`;
+      return `  ${warn("!")} ${text(label)}  ${faint(meta.join(" | "))}`;
     }
     if (!aborted && !failed) return null;
-    const mark = aborted ? warn("■") : accent("✗");
+    const mark = aborted ? warn("!") : danger(glyph("failure"));
     const label = aborted ? "interrupted" : "stopped on an error";
     const meta = aborted ? [...this.receipt(), "partial work kept"] : this.receipt();
-    return `  ${mark} ${text(label)}  ${faint(meta.join(" · "))}`;
+    return `  ${mark} ${text(label)}  ${faint(meta.join(" | "))}`;
   }
 
   /**
    * What the turn actually did to the tree, as a checklist, plus one faint
    * receipt row. A file the turn deliberately left alone still gets a row and a
-   * reason — work that did not happen is information too.
+   * reason -- work that did not happen is information too.
    */
   private summaryBlock(): string | null {
     const lines: string[] = [];
@@ -1144,14 +1212,14 @@ export class TurnRenderer {
     if (latest?.status === "failed") {
       lines.push(
         F.railRow(
-          `${accent("✗")} ${text(truncate(latest.label, 44))}${latest.detail ? ` ${faint("· " + latest.detail)}` : ""}`,
+          `${danger(glyph("failure"))} ${text(truncate(latest.label, 44))}${latest.detail ? ` ${faint("| " + latest.detail)}` : ""}`,
         ),
       );
     } else if (latest?.status === "passed") {
       const badges = ran
         .filter((check) => check.status === "passed")
         .slice(-3)
-        .map((check) => `${ok("✓")} ${muted(checkBadge(check))}`);
+        .map((check) => `${ok(glyph("verified"))} ${muted(checkBadge(check))}`);
       lines.push(F.railRow(badges.join("   ")));
     } else if (edits.length > 0) {
       lines.push(F.railRow(`${warn("!")} ${muted("no check was run on this change")}`));
@@ -1176,12 +1244,12 @@ export class TurnRenderer {
       this.checkpoint ? `/rewind to roll back` : "",
     ].filter(Boolean);
     if (receipt.length > 0 && (edits.length > 0 || this.toolCalls > 0)) {
-      lines.push(`${F.BODY}${faint(receipt.join(" · "))}`);
+      lines.push(`${F.BODY}${faint(receipt.join(" | "))}`);
     }
     return lines.length > 0 ? lines.join("\n") : null;
   }
 
-  /** Live context occupancy (0–100) from the last provider report, if any. */
+  /** Live context occupancy (0-100) from the last provider report, if any. */
   get liveContextPercent(): number | null {
     return this.contextPercent;
   }
@@ -1200,7 +1268,7 @@ export class TurnRenderer {
     }
     if (answer) this.sink.commit(responseBlock(answer));
     else if (aborted)
-      this.sink.commit(`\n ${accent("■")} ${muted("stopped before a result was ready")}\n`);
+      this.sink.commit(`\n ${warn("!")} ${muted("stopped before a result was ready")}\n`);
     const summary = this.summaryBlock();
     if (summary) this.sink.commit(`\n${summary}\n`);
     this.prose = "";
@@ -1244,7 +1312,7 @@ function replaySummary(lines: TranscriptLineView[]): string | null {
   if (failures > 0) metrics.push(plural(failures, "failure"));
   // A replay's receipt is a receipt, not a verdict: it counts what the session
   // did and says nothing about whether that was the right thing.
-  return `${F.BODY}${faint(metrics.join(" · "))}`;
+  return `${F.BODY}${faint(metrics.join(" | "))}`;
 }
 
 /** Replayed sessions preserve the same inspectable chronology as a live turn. */
@@ -1263,7 +1331,7 @@ export function renderReplay(lines: TranscriptLineView[]): string {
       if (summary) output.push("", summary);
       continue;
     }
-    if (line.role === "note") output.push(`  ${faint(`— ${line.text} —`)}`);
+    if (line.role === "note") output.push(`  ${faint(`-- ${line.text} --`)}`);
     index++;
   }
   return output.join("\n");
