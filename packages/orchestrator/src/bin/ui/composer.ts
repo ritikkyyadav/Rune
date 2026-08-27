@@ -108,7 +108,13 @@ export function modeInfo(mode?: string): ModeInfo {
       return {
         id: "gear-3",
         label: "3rd gear",
-        arrows: glyph("phase"),
+        // Rung three of five. It was briefly a diamond, on the grounds that
+        // ">>>" was arrow soup under a chevron prompt — which missed that the
+        // count IS the information: one mark per gear, so the ladder can be
+        // read at a glance without parsing the label beside it. Breaking the
+        // sequence in exactly one position made 3rd gear look like a different
+        // product from 4th.
+        arrows: ">>>",
         desc: "edits + sandboxed shell",
         detail:
           "workspace edits, sandboxed local commands, and confined delegation proceed; external access asks.",
@@ -375,7 +381,8 @@ export function composerRule(): string {
 
 // --- Pinned composer (TUI) ---
 
-const PAD = "  ";
+/** The composer sits in the same column as everything else. */
+const PAD = F.MARK;
 
 export interface ComposerState {
   input: string;

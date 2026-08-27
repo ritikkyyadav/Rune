@@ -28,6 +28,18 @@ import { termWidth, truncate, visLen, wrap } from "./render";
 // longer lines, because a 200-column sentence is unreadable.
 
 /** Marker column -- `>` and `o` live here. */
+/**
+ * The frame's margin, and the column every line begins in.
+ *
+ * It was two columns, and the frame ran to one column short of the window on
+ * the right — so the product hugged the edges asymmetrically. That went
+ * unnoticed for as long as it was only ever looked at inside Warp, which insets
+ * its own pane and was quietly supplying the breathing room. Opened in
+ * Terminal.app, which does not, the same build reads as jammed against the
+ * glass. A UI should not depend on its host to be legible.
+ *
+ * Four columns, and the same four on the right — see surfaceWidth().
+ */
 export const MARK = "  ";
 /** Prose/rail column. Everything a marker introduces aligns here. */
 export const BODY = "    ";
@@ -74,7 +86,12 @@ export function measure(cap?: number): number {
  * the thing it is dividing is the window, not the paragraph.
  */
 export function surfaceWidth(): number {
-  return Math.max(20, termWidth() - 1);
+  // Symmetric with MARK: a line starts at MARK and ends MARK short of the
+  // window, so the frame is inset by the same amount on both sides. The old
+  // single-column right margin also sat one cell from the edge for a reason —
+  // a line that touches the last cell wraps, and a wrap desyncs the pinned
+  // region's cursor math — and four keeps that safety with room to spare.
+  return Math.max(20, termWidth() - MARK.length);
 }
 
 /**
