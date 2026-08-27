@@ -522,6 +522,26 @@ class Tui {
       };
       process.once("SIGTERM", onSignal(143));
       process.once("SIGHUP", onSignal(129));
+      // Suspension is not death, so it does not run the teardown — but the
+      // writing surface hides the hardware cursor to draw its own caret, and a
+      // job stopped in that state hands the shell back with no cursor at all.
+      // Raw mode means ^Z arrives as a keystroke rather than a signal, so this
+      // only fires for an external `kill -TSTP`; it costs nothing and closes
+      // the one way this change could leave a terminal worse than it found it.
+      process.on("SIGTSTP", () => {
+        try {
+          process.stdout.write("\x1b[?25h");
+        } catch {
+          // Nothing to do if the terminal is already gone.
+        }
+        process.kill(process.pid, "SIGSTOP");
+      });
+      process.on("SIGCONT", () => {
+        // Whatever the shell drew while we were stopped is gone from our idea
+        // of the screen, so remount rather than redraw in place.
+        this.region.clear();
+        this.scheduleDraw();
+      });
     });
   }
 

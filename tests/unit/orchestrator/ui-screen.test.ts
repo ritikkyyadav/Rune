@@ -353,3 +353,27 @@ describe("a long run: the composer holds the bottom, history keeps flowing", () 
     expect(term.view.some((l) => l.includes("output line 25"))).toBe(true);
   });
 });
+
+describe("the hardware cursor is always given back", () => {
+  // The writing surface hides it to draw its own caret. That is the one way
+  // this whole design could leave a terminal worse than it found it, so every
+  // path that stops drawing has to hand it back.
+  it("clear() restores the cursor", () => {
+    const writes: string[] = [];
+    const region = new BottomRegion((s) => writes.push(s));
+    region.render(["  > x"], 0, 4, true); // ownCursor: no SHOW on the draw
+    expect(writes.join("")).not.toContain("\x1b[?25h");
+    writes.length = 0;
+    region.clear();
+    expect(writes.join("")).toContain("\x1b[?25h");
+  });
+
+  it("a block that does not own its caret shows the cursor as before", () => {
+    // Pickers, permission cards and the sessions panel keep the real cursor:
+    // there it is the only signal that the pane has focus.
+    const writes: string[] = [];
+    const region = new BottomRegion((s) => writes.push(s));
+    region.render(["  > x"], 0, 4);
+    expect(writes.join("")).toContain("\x1b[?25h");
+  });
+});
