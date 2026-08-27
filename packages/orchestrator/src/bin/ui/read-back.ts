@@ -18,6 +18,11 @@ import { RUNG_GLYPH, type ClaimRung } from "../../brief";
 
 const LABEL_W = 10;
 
+/** The one separator this file is allowed, taken from the closed budget rather
+ *  than typed as a literal — which is what the glyph-budget test enforces, and
+ *  what keeps this readable on a serial console. */
+const SEP = () => ` ${glyph("observed")} `;
+
 function label(name: string): string {
   return faint(name.padEnd(LABEL_W));
 }
@@ -35,19 +40,19 @@ export function renderReadBack(brief: Brief, width = F.measure()): string {
   rows.push("");
 
   if (brief.touch.length > 0) {
-    rows.push(`  ${label("touch")}${text(truncate(brief.touch.join(" · "), width - LABEL_W - 4))}`);
+    rows.push(`  ${label("touch")}${text(truncate(brief.touch.join(SEP()), width - LABEL_W - 4))}`);
   }
   // Always rendered. An empty exclusion list is information, not a blank.
   rows.push(
     brief.leave.length > 0
-      ? `  ${label("leave")}${text(truncate(brief.leave.join(" · "), width - LABEL_W - 4))}`
+      ? `  ${label("leave")}${text(truncate(brief.leave.join(SEP()), width - LABEL_W - 4))}`
       : `  ${label("leave")}${warn("nothing stated")}`,
   );
   rows.push(
-    `  ${label("done when")}${text(truncate(brief.criteria.map((c) => c.text).join(" · "), width - LABEL_W - 4))}`,
+    `  ${label("done when")}${text(truncate(brief.criteria.map((c) => c.text).join(SEP()), width - LABEL_W - 4))}`,
   );
   rows.push("");
-  rows.push(`  ${faint("⏎ go    e edit this    ? ask me something")}`);
+  rows.push(`  ${faint("enter  go     e  edit this     ?  ask me something")}`);
   return rows.join("\n");
 }
 

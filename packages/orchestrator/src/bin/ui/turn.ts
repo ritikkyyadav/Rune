@@ -259,36 +259,13 @@ export function responseHead(): string {
 }
 
 const BLOCK_OPENER = /^(#{1,6}\s|[-*+]\s|\d+[.)]\s|>|```|~~~|\||(?:-{3,}|\*{3,}|_{3,})$)/;
-const HEADLINE_MAX = 200;
 
-/**
- * Split an opening paragraph into the v2 response headline (its first
- * sentence) and the detail that follows. Sentence ends are found outside
- * inline code and after common abbreviations are skipped; a paragraph with no
- * boundary is a headline only when it is short enough to read as one.
- */
-export function splitHeadline(paragraph: string): { headline: string; rest: string } | null {
-  let inCode = false;
-  for (let i = 0; i < paragraph.length; i++) {
-    const ch = paragraph[i]!;
-    if (ch === "`") {
-      inCode = !inCode;
-      continue;
-    }
-    if (inCode || (ch !== "." && ch !== "!" && ch !== "?")) continue;
-    // A decimal point or dotted version (v0.2.0) is not a sentence end.
-    if (ch === "." && /\d/.test(paragraph[i + 1] ?? "")) continue;
-    if (/\b(e\.g|i\.e|etc|vs|cf|approx|fig|no)$/i.test(paragraph.slice(0, i))) continue;
-    let j = i + 1;
-    while (j < paragraph.length && /[)"'*_\]]/.test(paragraph[j]!)) j++;
-    const next = paragraph.slice(j);
-    if (next.length > 0 && !/^\s+["'(`\[*_A-Z0-9]/.test(next)) continue;
-    const headline = paragraph.slice(0, j).trim();
-    if (headline.length > HEADLINE_MAX) return null;
-    return { headline, rest: next.trim() };
-  }
-  return paragraph.length <= HEADLINE_MAX ? { headline: paragraph, rest: "" } : null;
-}
+/* splitHeadline() lived here: it walked model prose looking for a sentence
+ * boundary so the first sentence could be laid out as a headline. It was the
+ * last place in this file where what the model WROTE decided what the screen
+ * DID, which is the seam an unreliable model gets through — see
+ * ui/events/log.ts. Prose is printed; it does not choose layout. Deleted in
+ * Phase 05 with no caller and no replacement. */
 
 /**
  * The final answer, in the agent's voice: one dot, then the sentence that
