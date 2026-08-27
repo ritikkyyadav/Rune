@@ -234,6 +234,16 @@ class Tui {
   /** False for the default full Gear card; true only through --inline / GEAR_INLINE. */
   private readonly inline: boolean;
   private transcript: string[] = []; // alt-screen only: themed lines, self-managed scrollback window
+  /**
+   * Rows committed into the terminal's own scrollback so far.
+   *
+   * Only ever used to decide how much empty space the pinned block should hold
+   * open beneath the transcript — see pinnedBlock(). It counts up and never
+   * down, which is exactly right: once the session has produced a viewport's
+   * worth of output there is nothing left to hold open, and the padding is
+   * gone for good.
+   */
+  private printedRows = 0;
   private scroll = 0; // alt-screen only: lines scrolled up from the bottom (0 = following latest)
   private onResize = () => {
     // Native scrollback reflows itself; just redraw the pinned composer at the
@@ -795,6 +805,7 @@ class Tui {
       // Inline: completed blocks flow into the terminal's native scrollback above the pinned
       // composer (the terminal owns scrolling from here). printAbove redraws the composer after.
       const lines = block.split("\n").map((l) => withThemeBg(this.bound(l)));
+      this.printedRows += lines.length;
       const comp = this.pinnedBlock();
       this.region.printAbove(lines.join("\r\n"), comp.lines, comp.caretRow, comp.caretCol);
       return;
@@ -819,10 +830,42 @@ class Tui {
    *  scroll the terminal mid-draw and desync that math (garbled/duplicated footer under heavy
    *  streaming). Keep the tail -- the composer + status the user is actually using -- and elide the
    *  top (the older work/prose preview) behind a marker. */
+  /**
+   * The pinned block — and, at launch, the empty space that puts it where it
+   * belongs.
+   *
+   * A program that prints eight lines into a forty-row window leaves the header
+   * floating in the middle of the screen with the field somewhere under it and
+   * dead space below. Both are technically "in the terminal"; neither is in its
+   * place. The old surface solved this by taking the alternate screen and
+   * owning every cell, which put the header on row one and the field on the
+   * last row — and cost native scrollback, wheel scroll, ⌘F and pipeability to
+   * do it, and painted an empty session as a viewport of nothing.
+   *
+   * This holds the space open from below instead. The pinned block carries the
+   * blank rows itself, so the field sits on the bottom rows of the window from
+   * the first frame while the header stays at the top. As output arrives the
+   * padding shrinks by exactly as much as was printed, so the field never
+   * moves — and once the session has filled the window the padding reaches zero
+   * and the whole thing scrolls like any other program, with its history in the
+   * terminal's own buffer where it belongs.
+   *
+   * Nothing is painted into the held space: they are ordinary blank rows, so a
+   * pipe, NO_COLOR and a narrow window all see exactly what they should.
+   */
   private pinnedBlock(): { lines: string[]; caretRow: number; caretCol: number } {
     const comp = this.composerBlock();
     let lines = comp.lines.map((l) => withThemeBg(this.bound(l)));
     let caretRow = comp.caretRow;
+
+    // Hold the field on the bottom rows until real output has earned the space.
+    const viewport = rowsCount();
+    const pad = Math.max(0, viewport - this.printedRows - lines.length - 1);
+    if (pad > 0) {
+      const blank = withThemeBg(this.bound(""));
+      lines = [...Array.from({ length: pad }, () => blank), ...lines];
+      caretRow += pad;
+    }
     const max = Math.max(3, rowsCount() - 1);
     if (lines.length > max) {
       const drop = lines.length - max;

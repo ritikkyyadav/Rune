@@ -47,7 +47,23 @@ export const RAIL_IN = "      ";
  * than its host.
  */
 export function measure(cap?: number): number {
-  const base = Math.min(120, Math.max(40, termWidth() - 2));
+  // No fixed ceiling. There used to be one at 120 columns, and on an ordinary
+  // 80-column terminal it never bound — measure, prose and surface all landed
+  // within five columns of each other and the product looked like one column.
+  //
+  // Open the same session at 241 columns and it became three nested rectangles
+  // on one screen: prose wrapping at 84, data rows and their right-aligned
+  // receipts stopping at 120, and the chrome spanning the full 240. The frame
+  // read as empty on its right half because the rows inside it stopped less
+  // than halfway across.
+  //
+  // The ceiling also contradicted the reason given for it. It existed so a
+  // receipt would stay near the row it belongs to — but the same paragraph
+  // says truncating a path while half the window sits empty destroys the one
+  // thing the row was printed to say, and at 241 columns the ceiling did
+  // precisely that. Rows follow the terminal now; prose keeps its own reading
+  // limit below, which is the only width here that SHOULD stop early.
+  const base = Math.max(40, termWidth() - 2);
   return cap != null ? Math.max(12, Math.min(base, cap)) : base;
 }
 
