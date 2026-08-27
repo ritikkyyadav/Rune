@@ -24,7 +24,7 @@ export interface ThemeSlots {
   text: Pigment; // primary text
   muted: Pigment; // secondary text / labels
   faint: Pigment; // hints / connectors
-  accent: Pigment; // emphasis, errors, prompt `›`
+  accent: Pigment; // emphasis, errors, the prompt chevron
   info: Pigment; // commands, paths, tool targets
   warn: Pigment; // warnings, prompts, bar fill
   ok: Pigment; // success
@@ -255,7 +255,7 @@ export function adaptiveTheme(colors: { background?: Rgb; foreground?: Rgb } = {
     // complete Theme object avoids special cases in pickers and persistence.
     return {
       name: "auto",
-      label: "Auto · follows terminal",
+      label: "Auto - follows terminal",
       appearance: "dark",
       preserveTerminal: true,
       useNativeColors: true,
@@ -285,7 +285,7 @@ export function adaptiveTheme(colors: { background?: Rgb; foreground?: Rgb } = {
 
   return {
     name: "auto",
-    label: `Auto · follows terminal (${appearance})`,
+    label: `Auto - follows terminal (${appearance})`,
     appearance,
     preserveTerminal: true,
     useNativeColors: false,
@@ -358,7 +358,7 @@ function gearTheme(appearance: "light" | "dark", accentName: GearAccent): Theme 
   // composited to solid terminal colors.
   const palette = gearTerminalPalette(appearance);
   const brand = gearAccentHex(appearance, accentName);
-  const label = `${GEAR_ACCENT_LABEL[accentName]} · ${appearance === "light" ? "Light" : "Dark"}`;
+  const label = `${GEAR_ACCENT_LABEL[accentName]} ${appearance === "light" ? "Light" : "Dark"}`;
   return theme(
     gearThemeName(appearance, accentName),
     label,
@@ -690,3 +690,43 @@ export function isProductionTheme(name: string): boolean {
 export function productionThemes(): Theme[] {
   return PRODUCTION_THEME_NAMES.map((n) => findTheme(n)!).filter(Boolean);
 }
+
+// ─── The six roles, restored on top of the palette rather than instead of it ───
+//
+// Phase 02 closed the colour budget to six semantic roles, which was right: a
+// seventh hue is always a missing word. What went wrong is that it also
+// collapsed the palette to five hardcoded ANSI-16 codes and deleted thirty
+// themes, on an instruction of mine that said "a closed palette does not need a
+// theme engine". That conflated two different things. The budget closes the set
+// of MEANINGS a colour may carry. It says nothing about which pigment a theme
+// chooses to carry them with.
+//
+// Six roles times thirty themes is not a contradiction — it is the point. The
+// roles are the grammar; a theme is a voice speaking it.
+//
+// The other cost of collapsing to ANSI-16 was that ANSI-16 does not name a
+// colour, it names a SLOT IN THE TERMINAL'S OWN SCHEME. Emitting `36` asks for
+// "whatever this terminal calls cyan", which is why the identical build looked
+// rich in one terminal and washed out in another. A Pigment carries exact
+// 24-bit RGB and a derived ANSI-256 index, so the product looks like itself
+// wherever it runs and degrades on purpose rather than by accident.
+
+export type ColorRole = "body" | "dim" | "accent" | "ok" | "warn" | "danger";
+
+export const COLOR_ROLES: readonly ColorRole[] = ["body", "dim", "accent", "ok", "warn", "danger"];
+
+/**
+ * Which slot a role reads its pigment from.
+ *
+ * `danger` maps to the `accent` slot and `accent` to `info` because the old
+ * eight-slot vocabulary named them from the other direction: `accent` was
+ * "emphasis, errors, prompt" and `info` was "commands, paths, tool targets".
+ * The roles are named for what they MEAN; the slots for where they came from.
+ */
+export const ROLE_SLOT: Record<Exclude<ColorRole, "body">, SlotName> = {
+  dim: "faint",
+  accent: "info",
+  ok: "ok",
+  warn: "warn",
+  danger: "accent",
+};

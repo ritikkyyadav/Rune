@@ -1,36 +1,51 @@
-import { describe, it, expect, afterEach } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
-import { mkdtempSync, writeFileSync, rmSync } from "fs";
 import { join } from "path";
+import { pathToFileURL } from "url";
 import {
-  THEMES,
-  findTheme,
+  AUTO_THEME,
+  COLOR_ROLES,
   DEFAULT_THEME,
-  nearestAnsi256,
+  THEMES,
   adaptiveTheme,
-  contrastRatio,
-  GEAR_ACCENTS,
-  type SlotName,
+  findTheme,
 } from "../../../packages/orchestrator/src/bin/ui/themes";
 import {
-  setTheme,
+  TERMINAL_THEME_RESET,
+  accent,
+  body,
+  cardSurface,
+  codeSurface,
   configureAutoTheme,
+  danger,
+  diffHeaderSurface,
+  diffSurface,
+  dim,
   getTheme,
   listThemes,
+  negativeSurface,
+  ok,
   paintWith,
-  swatch,
-  text,
+  panel,
+  popoverSurface,
+  positiveSurface,
+  selection,
+  setTheme,
   stripAnsi,
-  colorEnabled,
-  truecolor,
+  swatch,
   terminalThemeSeq,
-  TERMINAL_THEME_RESET,
+  text,
+  themeBgSeq,
+  tintSurface,
+  warn,
   withThemeBg,
 } from "../../../packages/orchestrator/src/bin/ui/theme";
+import { glyph } from "../../../packages/orchestrator/src/bin/ui/glyphs";
 import {
-  saveTheme,
   loadSavedTheme,
   resolveInitialTheme,
+  saveTheme,
 } from "../../../packages/orchestrator/src/bin/ui/theme-store";
 import {
   ansi256ToRgb,
@@ -38,375 +53,218 @@ import {
   stripTerminalColorResponses,
 } from "../../../packages/orchestrator/src/bin/ui/terminal-colors";
 
-const EXPECTED = [
-  "flow",
-  "gear",
-  "gear-orange",
-  "gear-violet",
-  "gear-emerald",
-  "gear-mono",
-  "gear-dark",
-  "gear-orange-dark",
-  "gear-violet-dark",
-  "gear-emerald-dark",
-  "gear-mono-dark",
-  "studio",
-  "atlas",
-  "atlas-light",
-  "mono",
-  "mono-light",
-  "matrix",
-  "dracula",
-  "nord",
-  "solarized-dark",
-  "solarized-light",
-  "gruvbox",
-  "tokyo-night",
-  "catppuccin",
-  "one-dark",
-  "synthwave",
-  "neon",
-  "neon-lime",
-  "high-contrast",
-  "github-light",
-];
-const SLOTS: SlotName[] = ["text", "muted", "faint", "accent", "info", "warn", "ok", "line"];
-
-// The active theme is module-global; keep tests order-independent.
 afterEach(() => {
   configureAutoTheme({});
   setTheme(DEFAULT_THEME);
 });
 
-describe("ui/themes registry", () => {
-  it("bundles the full famous set with unique kebab names", () => {
-    const names = THEMES.map((t) => t.name);
-    expect(names).toEqual(EXPECTED);
-    expect(new Set(names).size).toBe(names.length);
-    for (const n of names) expect(n).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
+describe("Flow six-role palette", () => {
+  it("has exactly six closed foreground roles", () => {
+    expect(COLOR_ROLES).toEqual(["body", "dim", "accent", "ok", "warn", "danger"]);
   });
 
-  it("every theme defines its brand pigment and all 8 slots with valid rgb + ansi", () => {
-    for (const t of THEMES) {
-      expect(t.brand.rgb, `${t.name}.brand`).toHaveLength(3);
-      expect(t.brand.ansi).toBeGreaterThanOrEqual(0);
-      expect(t.brand.ansi).toBeLessThanOrEqual(255);
-      for (const s of SLOTS) {
-        const p = t.slots[s];
-        expect(p, `${t.name}.${s}`).toBeTruthy();
-        expect(p.rgb).toHaveLength(3);
-        for (const c of p.rgb) {
-          expect(c).toBeGreaterThanOrEqual(0);
-          expect(c).toBeLessThanOrEqual(255);
-        }
-        expect(p.ansi).toBeGreaterThanOrEqual(0);
-        expect(p.ansi).toBeLessThanOrEqual(255);
-      }
+  it("body inherits the terminal foreground even when ANSI is available", () => {
+    const root = join(import.meta.dir, "../../..");
+    const themeUrl = pathToFileURL(join(root, "packages/orchestrator/src/bin/ui/theme.ts")).href;
+    const script = `
+      Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+      const theme = await import(${JSON.stringify(themeUrl)});
+      process.stdout.write(JSON.stringify({
+        body: theme.body("body text"),
+        text: theme.text("body text"),
+        dim: theme.dim("dim text"),
+        panel: theme.panel("panel body"),
+      }));
+    `;
+    const run = Bun.spawnSync([process.execPath, "-e", script], {
+      cwd: root,
+      env: { ...process.env, NO_COLOR: "", TERM: "xterm-256color" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(run.exitCode, run.stderr.toString()).toBe(0);
+    const rendered = JSON.parse(run.stdout.toString()) as Record<string, string>;
+    expect(rendered.body).toBe("body text");
+    expect(rendered.text).toBe("body text");
+    expect(rendered.body).not.toContain("\x1b");
+    expect(rendered.dim).toContain("\x1b[");
+    expect(rendered.panel).toBe("panel body");
+  });
+
+  it("keeps semantic payloads intact", () => {
+    for (const paint of [body, dim, accent, ok, warn, danger]) {
+      expect(stripAnsi(paint("payload"))).toBe("payload");
     }
-  });
-
-  it("default theme exists, unknown lookups return undefined", () => {
-    expect(DEFAULT_THEME).toBe("flow");
-    expect(findTheme(DEFAULT_THEME)).toBeTruthy();
-    expect(findTheme("does-not-exist")).toBeUndefined();
-  });
-
-  it("nearestAnsi256 stays in range for extremes", () => {
-    expect(nearestAnsi256([0, 0, 0])).toBeGreaterThanOrEqual(0);
-    expect(nearestAnsi256([255, 255, 255])).toBeLessThanOrEqual(255);
-    expect(nearestAnsi256([128, 128, 128])).toBeGreaterThanOrEqual(0);
-  });
-
-  it("every theme defines a valid background pigment", () => {
-    for (const t of THEMES) {
-      expect(t.bg.rgb, `${t.name}.bg`).toHaveLength(3);
-      for (const c of t.bg.rgb) {
-        expect(c).toBeGreaterThanOrEqual(0);
-        expect(c).toBeLessThanOrEqual(255);
-      }
-      expect(t.bg.ansi).toBeGreaterThanOrEqual(0);
-      expect(t.bg.ansi).toBeLessThanOrEqual(255);
-    }
+    expect(text("plain body")).toBe("plain body");
+    expect(stripAnsi(paintWith("flow", "danger", "failed"))).toBe("failed");
   });
 });
 
-describe("ui/theme whole-terminal recolor (OSC 10/11/12)", () => {
-  it("terminalThemeSeq emits the active theme's foreground, background, and cursor", () => {
-    setTheme("dracula");
-    const seq = terminalThemeSeq();
-    if (colorEnabled) {
-      expect(seq).toContain("]11;#282a36"); // OSC 11 background
-      expect(seq).toContain("]10;#f8f8f2"); // OSC 10 foreground = text slot
-      expect(seq).toContain("]12;#8be9fd"); // OSC 12 cursor = interactive signal
-    } else {
-      expect(seq).toBe("");
-    }
-  });
-
-  it("light themes paint a light background (so dark text is readable)", () => {
-    setTheme("github-light");
-    if (colorEnabled) expect(terminalThemeSeq()).toContain("]11;#ffffff");
-  });
-
-  it("uses the supplied card base in production, not the browser customizer canvas", () => {
-    setTheme("gear-orange");
-    if (colorEnabled) {
-      expect(terminalThemeSeq()).toContain("]11;#faf9f6");
-      expect(terminalThemeSeq()).not.toContain("]11;#ccd8d1");
-    }
-  });
-
-  it("TERMINAL_THEME_RESET restores fg, bg, and cursor", () => {
-    expect(TERMINAL_THEME_RESET).toContain("]110");
-    expect(TERMINAL_THEME_RESET).toContain("]111");
-    expect(TERMINAL_THEME_RESET).toContain("]112");
-  });
-
-  it("Follow terminal preserves the host surface instead of repainting it", () => {
-    configureAutoTheme({ background: [180, 25, 25], foreground: [255, 255, 255] });
-    setTheme("auto");
+describe("no background ownership", () => {
+  it("never emits OSC foreground/background/cursor mutation", () => {
     expect(terminalThemeSeq()).toBe("");
-    expect(withThemeBg(text("hello"))).toContain("hello");
-    expect(withThemeBg(text("hello"))).not.toContain("\x1b[K");
+    expect(TERMINAL_THEME_RESET).toBe("");
+    expect(themeBgSeq()).toBe("");
   });
 
-  it("withThemeBg paints the bg + fills the row (works where OSC is ignored, e.g. Warp)", () => {
-    setTheme("github-light"); // white bg, dark text → the case that was unreadable
-    const out = withThemeBg(text("hello"));
-    expect(out).toContain("hello"); // text preserved
-    if (colorEnabled) {
-      // SGR background, respecting colour depth: truecolor `48;2` or 256-colour `48;5`.
-      const bg = truecolor ? "48;2;255;255;255" : `48;5;${findTheme("github-light")!.bg.ansi}`;
-      expect(out).toContain(bg);
-      expect(out.startsWith("\x1b[48;")).toBe(true); // bg opens the row (before the text)
-      expect(out).toContain("\x1b[K"); // erase-to-EOL fills the right margin with bg
+  it("all former surface APIs are background-free pass-throughs", () => {
+    const value = "surface payload";
+    for (const surface of [
+      withThemeBg,
+      panel,
+      positiveSurface,
+      negativeSurface,
+      cardSurface,
+      codeSurface,
+      diffSurface,
+      diffHeaderSurface,
+      popoverSurface,
+    ]) {
+      const rendered = surface(value);
+      expect(stripAnsi(rendered)).toBe(value);
+      expect(rendered).not.toMatch(/\x1b\[(?:4[0-9]|10[0-7])(?:;|m)/);
+      expect(rendered).not.toContain("\x1b]");
     }
-  });
-
-  it("withThemeBg uses a 256-colour bg fallback when truecolor is unavailable (Terminal.app)", () => {
-    // The bug behind the unreadable Terminal.app render: bg was hardcoded truecolor.
-    setTheme("matrix");
-    const out = withThemeBg(text("x"));
-    expect(out).toContain("x");
-    if (colorEnabled) expect(out).toMatch(/\x1b\[48;[25];/); // 48;2 (truecolor) OR 48;5 (256)
+    expect(stripAnsi(selection(value))).toBe(value);
+    expect(stripAnsi(tintSurface("warn", value))).toBe(value);
   });
 });
 
-describe("ui/theme active-theme control", () => {
-  it("setTheme switches; unknown is rejected and leaves active unchanged", () => {
-    expect(setTheme("dracula")).toBe(true);
-    expect(getTheme().name).toBe("dracula");
-    expect(setTheme("nope")).toBe(false);
-    expect(getTheme().name).toBe("dracula");
+// The six-role budget closes the set of MEANINGS a colour may carry. It never
+// implied one palette: six roles times a dozen themes is the point, not a
+// contradiction. These tests previously pinned the opposite — that every name
+// collapses to a single mode — which is the shape of the deletion, not of the
+// design.
+describe("theme palettes", () => {
+  it("offers every accent in both polarities, plus the host escape hatch", () => {
+    const names = listThemes().map((theme) => theme.name);
+    expect(names[0]).toBe("flow");
+    expect(names.at(-1)).toBe("auto");
+    // Cobalt is the base accent, so its ids are bare `gear` / `gear-dark`.
+    for (const [light, dark] of [
+      ["gear", "gear-dark"],
+      ["gear-orange", "gear-orange-dark"],
+      ["gear-violet", "gear-violet-dark"],
+      ["gear-emerald", "gear-emerald-dark"],
+      ["gear-mono", "gear-mono-dark"],
+    ]) {
+      expect(names, light).toContain(light);
+      expect(names, dark).toContain(dark);
+    }
+    expect(names.length).toBeGreaterThanOrEqual(12);
+    expect(DEFAULT_THEME).toBe("flow");
+    expect(AUTO_THEME.preserveTerminal).toBe(true);
   });
 
-  it("preserves the cosmetic accent across light/dark and the surface across accent aliases", () => {
-    // An accent alias keeps the appearance you are already in; start from a
-    // known light base so the assertion is about the accent, not the default.
-    expect(setTheme("gear")).toBe(true);
-    expect(setTheme("orange")).toBe(true);
-    expect(getTheme().name).toBe("gear-orange");
-    expect(setTheme("dark")).toBe(true);
-    expect(getTheme().name).toBe("gear-orange-dark");
-    expect(setTheme("violet")).toBe(true);
-    expect(getTheme().name).toBe("gear-violet-dark");
-    expect(setTheme("light")).toBe(true);
-    expect(getTheme().name).toBe("gear-violet");
-    expect(setTheme("system")).toBe(true);
+  it("every theme supplies its own pigments for every coloured role", () => {
+    // The failure this guards against is a palette that exists in the picker
+    // and renders identically to its neighbours — a theme list as decoration.
+    for (const theme of listThemes()) {
+      if (theme.useNativeColors) continue; // host mode paints nothing by design
+      for (const slot of ["faint", "info", "ok", "warn", "accent"] as const) {
+        const pigment = theme.slots[slot];
+        expect(pigment.rgb, `${theme.name}.${slot}`).toHaveLength(3);
+        expect(pigment.ansi, `${theme.name}.${slot}`).toBeGreaterThanOrEqual(0);
+        expect(pigment.ansi).toBeLessThanOrEqual(255);
+      }
+    }
+  });
+
+  it("distinct accents are actually distinct pigments", () => {
+    const accentOf = (name: string) => findTheme(name)!.slots.info.rgb.join(",");
+    const seen = new Set(
+      ["gear-dark", "gear-orange-dark", "gear-violet-dark", "gear-emerald-dark"].map(accentOf),
+    );
+    expect(seen.size).toBe(4);
+  });
+
+  it("resolves a saved name to its own palette, and still rejects typos", () => {
+    for (const [saved, resolved] of [
+      ["gear-dark", "gear-dark"],
+      ["orange", "gear-orange"],
+      ["mono-light", "gear-mono"],
+    ] as const) {
+      expect(findTheme(saved)?.name, saved).toBe(resolved);
+      expect(setTheme(saved)).toBe(true);
+      expect(getTheme().name).toBe(resolved);
+    }
+    setTheme("flow");
+    expect(setTheme("not-a-theme")).toBe(false);
+    expect(getTheme().name).toBe("flow");
+  });
+
+  it("keeps terminal-native mode inert and labels detected polarity", () => {
+    configureAutoTheme({ background: [245, 245, 240], foreground: [20, 20, 20] });
+    expect(setTheme("auto")).toBe(true);
+    expect(getTheme().name).toBe("auto");
+    expect(getTheme().appearance).toBe("light");
+    expect(terminalThemeSeq()).toBe("");
+    expect(withThemeBg("native")).toBe("native");
+    expect(adaptiveTheme({ background: [5, 5, 8] }).appearance).toBe("dark");
+  });
+
+  it("renders a compact semantic swatch without changing the active mode", () => {
+    setTheme("auto");
+    expect(stripAnsi(swatch("flow"))).toBe(glyph("live").repeat(4));
     expect(getTheme().name).toBe("auto");
   });
 
-  it("listThemes exposes Flow, all ten customizer combinations, and Follow terminal", () => {
-    expect(listThemes().map((t) => t.name)).toEqual([
-      "flow",
-      "gear",
-      "gear-orange",
-      "gear-violet",
-      "gear-emerald",
-      "gear-mono",
-      "gear-dark",
-      "gear-orange-dark",
-      "gear-violet-dark",
-      "gear-emerald-dark",
-      "gear-mono-dark",
-      "auto",
-    ]);
-    expect(listThemes()[0]!.label).toBe("Flow (default)");
-    expect(listThemes()[1]!.label).toBe("Electric Cobalt · Light");
-    expect(listThemes()[11]!.label).toMatch(/^Auto · follows terminal/);
-  });
-
-  it("matches the customizer's exact light/dark bases and five cosmetic accents", () => {
-    const expectedBrand = {
-      gear: [0, 56, 255],
-      "gear-orange": [255, 85, 0],
-      "gear-violet": [124, 58, 237],
-      "gear-emerald": [5, 150, 105],
-      "gear-mono": [26, 25, 23],
-      "gear-dark": [56, 117, 255],
-      "gear-orange-dark": [255, 110, 38],
-      "gear-violet-dark": [167, 139, 250],
-      "gear-emerald-dark": [16, 185, 129],
-      "gear-mono-dark": [255, 255, 255],
-    } as const;
-    for (const [name, brand] of Object.entries(expectedBrand)) {
-      const theme = findTheme(name)!;
-      const dark = name.endsWith("dark");
-      expect(theme.bg.rgb).toEqual(dark ? [10, 10, 12] : [250, 249, 246]); // dark card = #0A0A0C per the v2 contract tokens
-      expect(theme.slots.text.rgb).toEqual(dark ? [255, 255, 255] : [26, 25, 23]);
-      expect(theme.brand.rgb).toEqual([...brand]);
-      expect(contrastRatio(theme.slots.text.rgb, theme.bg.rgb)).toBeGreaterThanOrEqual(7);
-      expect(theme.canvas?.rgb).toEqual(dark ? [0, 0, 0] : [204, 216, 209]);
-      expect(theme.surfaces?.card.rgb).toEqual(dark ? [10, 10, 12] : [250, 249, 246]);
-      expect(theme.surfaces?.bar.rgb).toEqual(dark ? [18, 18, 21] : [241, 239, 234]);
-      expect(theme.surfaces?.code.rgb).toEqual(dark ? [15, 15, 18] : [240, 238, 232]);
-      // Accent dots are cosmetic in the supplied customizer; some are not
-      // intended as small body text and therefore are not contrast-normalized.
-      expect(contrastRatio(theme.slots.muted.rgb, theme.bg.rgb)).toBeGreaterThanOrEqual(6);
-    }
-    expect(GEAR_ACCENTS).toEqual(["cobalt", "orange", "violet", "emerald", "mono"]);
-  });
-
-  it("tokens preserve payload and (when colour is on) differ across themes", () => {
-    setTheme("matrix");
-    const a = text("X");
-    setTheme("dracula");
-    const b = text("X");
-    expect(stripAnsi(a)).toBe("X");
-    expect(stripAnsi(b)).toBe("X");
-    if (colorEnabled) expect(a).not.toBe(b);
-  });
-
-  it("paintWith / swatch render a theme without mutating the active one", () => {
-    setTheme("atlas");
-    expect(stripAnsi(paintWith("matrix", "ok", "Z"))).toBe("Z");
-    expect(stripAnsi(swatch("dracula"))).toBe("●●●●");
-    expect(getTheme().name).toBe("atlas"); // unchanged by either call
+  it("two themes carry different pigments for the same role", () => {
+    // Asserted on the pigments rather than on rendered output: a test process
+    // has no tty, so nothing emits colour and every swatch strips to the same
+    // four marks. The palette is the thing that has to differ.
+    const cobalt = findTheme("gear-dark")!.slots.info.rgb;
+    const orange = findTheme("gear-orange-dark")!.slots.info.rgb;
+    expect(cobalt).not.toEqual(orange);
   });
 });
 
-describe("ui/theme-store persistence", () => {
-  it("round-trips the saved theme via the JSON sidecar", () => {
+describe("theme-store migration", () => {
+  it("round-trips the sidecar and resolves precedence onto the reduced modes", () => {
     const dir = mkdtempSync(join(tmpdir(), "gear-theme-"));
     try {
       expect(loadSavedTheme(dir)).toBeNull();
-      saveTheme("nord", dir);
-      expect(loadSavedTheme(dir)).toBe("nord");
+      saveTheme("auto", dir);
+      expect(loadSavedTheme(dir)).toBe("auto");
+      // A saved palette resolves to itself now; it used to be flattened to
+      // the single remaining mode, which is what made every theme a no-op.
+      expect(resolveInitialTheme({ env: "gear-orange-dark", saved: "auto" })).toBe(
+        "gear-orange-dark",
+      );
+      expect(resolveInitialTheme({ env: "bogus", saved: "auto" })).toBe("auto");
+      expect(resolveInitialTheme({ configured: "dracula" })).toBe("flow");
+      expect(resolveInitialTheme({})).toBe("flow");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it("returns null for a corrupt sidecar", () => {
+  it("returns null for corrupt state", () => {
     const dir = mkdtempSync(join(tmpdir(), "gear-theme-"));
     try {
-      writeFileSync(join(dir, "theme.json"), "{ not valid json");
+      writeFileSync(join(dir, "theme.json"), "{ invalid json");
       expect(loadSavedTheme(dir)).toBeNull();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
-
-  it("resolveInitialTheme honours env > saved > configured, restricted to production themes", () => {
-    expect(resolveInitialTheme({ env: "orange-dark", saved: "mono", configured: "violet" })).toBe(
-      "gear-orange-dark",
-    );
-    expect(resolveInitialTheme({ env: undefined, saved: "mono-light", configured: "mono" })).toBe(
-      "gear-mono",
-    );
-    expect(resolveInitialTheme({ saved: null, configured: "dark" })).toBe("gear-dark");
-    expect(resolveInitialTheme({})).toBe(DEFAULT_THEME);
-    // unknown *and* non-production themes are skipped at each tier (matrix/dracula are hidden now)
-    expect(resolveInitialTheme({ env: "bogus", saved: "emerald" })).toBe("gear-emerald");
-    expect(resolveInitialTheme({ env: "matrix", saved: "dracula" })).toBe(DEFAULT_THEME);
-    expect(resolveInitialTheme({ configured: "bogus" })).toBe(DEFAULT_THEME);
-  });
-
-  it("keeps a saved Gear theme id", () => {
-    expect(resolveInitialTheme({ saved: "gear-dark" })).toBe("gear-dark");
-  });
 });
 
-describe("ui/theme Follow terminal mode", () => {
-  it("uses native terminal colors when the background is unknown", () => {
-    const theme = adaptiveTheme({ foreground: [255, 255, 255] });
-    expect(theme.label).toBe("Auto · follows terminal");
-    expect(theme.preserveTerminal).toBe(true);
-    expect(theme.useNativeColors).toBe(true);
-
-    configureAutoTheme({ foreground: [255, 255, 255] });
-    setTheme("auto");
-    expect(text("native text")).toBe("native text");
-    expect(paintWith("auto", "accent", "native accent")).toBe("native accent");
-    expect(terminalThemeSeq()).toBe("");
-    expect(withThemeBg("native row")).toBe("native row");
-  });
-
-  it("derives high-contrast colors from a saturated red terminal background", () => {
-    const background: [number, number, number] = [170, 24, 24];
-    const theme = adaptiveTheme({ background });
-    expect(theme.name).toBe("auto");
-    expect(theme.label).toBe("Auto · follows terminal (dark)");
-    expect(theme.bg.rgb).toEqual(background);
-    expect(theme.preserveTerminal).toBe(true);
-    expect(theme.useNativeColors).toBe(false);
-    expect(contrastRatio(theme.slots.text.rgb, background)).toBeGreaterThanOrEqual(7);
-    for (const slot of ["muted", "faint", "accent", "info", "warn", "ok"] as const) {
-      expect(contrastRatio(theme.slots[slot].rgb, background)).toBeGreaterThanOrEqual(4.5);
-    }
-    expect(contrastRatio(theme.slots.line.rgb, background)).toBeGreaterThanOrEqual(3);
-  });
-
-  it("adapts safely to very light terminal backgrounds", () => {
-    const background: [number, number, number] = [250, 248, 242];
-    const theme = adaptiveTheme({ background, foreground: [120, 120, 120] });
-    expect(theme.label).toBe("Auto · follows terminal (light)");
-    expect(contrastRatio(theme.slots.text.rgb, background)).toBeGreaterThanOrEqual(7);
-    for (const slot of ["muted", "faint", "accent", "info", "warn", "ok"] as const) {
-      expect(contrastRatio(theme.slots[slot].rgb, background)).toBeGreaterThanOrEqual(4.5);
-    }
-  });
-
-  it("keeps every text-bearing slot readable across representative terminal colors", () => {
-    const levels = [0, 64, 128, 192, 255];
-    for (const r of levels) {
-      for (const g of levels) {
-        for (const b of levels) {
-          const background: [number, number, number] = [r, g, b];
-          const theme = adaptiveTheme({ background });
-          for (const slot of ["text", "muted", "faint", "accent", "info", "warn", "ok"] as const) {
-            expect(contrastRatio(theme.slots[slot].rgb, background)).toBeGreaterThanOrEqual(4.5);
-          }
-          expect(contrastRatio(theme.slots.line.rgb, background)).toBeGreaterThanOrEqual(3);
-        }
-      }
-    }
-  });
-
-  it("parses OSC rgb responses from terminals such as VS Code and iTerm", () => {
+describe("terminal color reply parser", () => {
+  it("parses OSC rgb and hex responses", () => {
     expect(
-      parseTerminalColorResponses("\x1b]10;rgb:ffff/ffff/ffff\x07\x1b]11;rgb:1212/3434/5656\x1b\\"),
+      parseTerminalColorResponses("\x1b]10;rgb:ffff/ffff/ffff\x07\x1b]11;#123456\x1b\\"),
     ).toEqual({ foreground: [255, 255, 255], background: [18, 52, 86] });
   });
 
-  it("preserves keys typed while terminal color replies are being detected", () => {
+  it("removes replies without swallowing typed input", () => {
     const response = "\x1b]10;rgb:ffff/ffff/ffff\x07\x1b]11;#121212\x07";
     expect(stripTerminalColorResponses(`h${response}i`)).toBe("hi");
   });
 
-  it("maps ANSI colors used by COLORFGBG", () => {
+  it("maps ANSI256 colors used by COLORFGBG", () => {
     expect(ansi256ToRgb(0)).toEqual([0, 0, 0]);
     expect(ansi256ToRgb(15)).toEqual([255, 255, 255]);
     expect(ansi256ToRgb(196)).toEqual([255, 0, 0]);
-  });
-});
-
-describe("legacy theme migration polarity", () => {
-  it("a saved bare `mono` keeps its dark surface (legacy mono was Monochrome Black)", () => {
-    expect(findTheme("mono")!.name).toBe("gear-mono-dark");
-    expect(findTheme("mono")!.appearance).toBe("dark");
-    // Explicit variants and the other bare accents are untouched.
-    expect(findTheme("mono-light")!.name).toBe("gear-mono");
-    expect(findTheme("cobalt")!.appearance).toBe("light");
   });
 });

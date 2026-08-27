@@ -1,94 +1,135 @@
-// ─── Gear Terminal Theme ───
-// Every styled string in the CLI funnels through this module. Each semantic token
-// (text, muted, …) is a *stable* function that looks up the **active theme** at call
-// time, so switching themes at runtime (setTheme) instantly recolours everything
-// rendered afterward — no call site changes. Palettes live in ./themes.
+// Flow's six foreground roles, painted from the active theme's palette.
 //
-// Capability detection (NO_COLOR / truecolor-vs-256) is an environment fact, independent
-// of the chosen theme: it's resolved once here and applied on top of whatever theme is
-// active. Under NO_COLOR, themes are inert (tokens pass text through unchanged).
+// Body text inherits the terminal's own foreground and backgrounds are never
+// painted — both of those are law and both survive. What does NOT survive is
+// the idea that six roles means six fixed codes: see themes.ts for why that
+// collapsed thirty palettes into one, and why ANSI-16 is the reason the same
+// build looked rich in Warp and washed out in Terminal.app.
 
+import { glyph } from "./glyphs";
+import { terminalText } from "./glyphs";
 import {
+  type ColorRole,
   type Pigment,
   type SlotName,
   type Theme,
   AUTO_THEME,
+  COLOR_ROLES,
   DEFAULT_THEME,
+  ROLE_SLOT,
   adaptiveTheme,
   findTheme,
-  gearThemeName,
-  GEAR_ACCENTS,
-  nearestAnsi256,
   productionThemes,
-  type GearAccent,
 } from "./themes";
 
-// ─── Capability detection ───
+const RESET = "\x1b[0m";
+const ANSI_PATTERN = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 
-function detectNoColor(): boolean {
-  // Honor the NO_COLOR standard (https://no-color.org). FORCE_COLOR overrides it.
-  if (process.env.FORCE_COLOR && process.env.FORCE_COLOR !== "0") return false;
-  return process.env.NO_COLOR != null && process.env.NO_COLOR !== "";
+function noColor(): boolean {
+  return (
+    (process.env.NO_COLOR != null && process.env.NO_COLOR !== "") ||
+    (process.env.TERM ?? "").toLowerCase() === "dumb"
+  );
 }
 
-function detectTruecolor(): boolean {
-  const tp = (process.env.TERM_PROGRAM ?? "").toLowerCase();
-  // macOS Terminal.app renders only 256 colours, but many shells still export
-  // COLORTERM=truecolor globally. Trusting that makes us emit 24-bit codes Terminal.app
-  // silently drops — backgrounds never paint. Force the 256 path for it, no matter what
-  // COLORTERM says, so fg+bg both render (and stay in contrast).
-  if (tp === "apple_terminal") return false;
-  const ct = (process.env.COLORTERM ?? "").toLowerCase();
-  if (ct.includes("truecolor") || ct.includes("24bit")) return true;
-  // Several modern terminals signal truecolor via TERM_PROGRAM instead of COLORTERM.
-  if (["iterm.app", "wezterm", "warpterminal", "vscode", "ghostty", "hyper", "tabby"].includes(tp))
-    return true;
-  // …or only via TERM (kitty / alacritty / xterm-direct / *-truecolor).
-  const term = (process.env.TERM ?? "").toLowerCase();
-  if (
-    term.includes("kitty") ||
-    term.includes("alacritty") ||
-    term.includes("direct") ||
-    term.includes("truecolor")
-  )
-    return true;
-  return false;
+const COLOR_CAPABLE = Boolean(process.stdout.isTTY) && !noColor();
+
+/**
+ * How much colour this terminal can actually be told.
+ *
+ * This is the whole reason the product looked like two different applications
+ * in two different terminals. ANSI-16 does not name a colour — it names an
+ * INDEX INTO THE TERMINAL'S OWN SCHEME. Asking for `36` asks for "whatever you
+ * call cyan", and Warp's answer and Terminal.app's answer are different
+ * colours. A theme that only ever emits sixteen codes therefore has no say in
+ * how it looks; the host decides, and the author's palette is decoration in the
+ * source file.
+ *
+ * Detected once. Truecolor is announced by COLORTERM, which every terminal that
+ * supports it sets; 256 by TERM. macOS Terminal.app is the notable one that
+ * reports 256 and not truecolor, which is exactly the case that made this
+ * visible.
+ */
+type ColorDepth = "truecolor" | "ansi256" | "ansi16";
+
+function detectDepth(env: NodeJS.ProcessEnv = process.env): ColorDepth {
+  if (!COLOR_CAPABLE) return "ansi16";
+  const colorterm = (env.COLORTERM ?? "").toLowerCase();
+  if (colorterm.includes("truecolor") || colorterm.includes("24bit")) return "truecolor";
+  const term = (env.TERM ?? "").toLowerCase();
+  if (term.includes("truecolor") || term.includes("direct")) return "truecolor";
+  if (term.includes("256")) return "ansi256";
+  // A terminal that says nothing gets the floor. Guessing high here is the one
+  // failure that produces unreadable text rather than merely duller text.
+  return "ansi16";
 }
 
-const NO_COLOR = detectNoColor();
-const TRUECOLOR = detectTruecolor();
+const DEPTH: ColorDepth = detectDepth();
 
-// ─── Core ───
+/** The floor, used only when a terminal admits to nothing better. */
+const ANSI16: Readonly<Record<Exclude<ColorRole, "body">, number>> = {
+  dim: 90,
+  accent: 36,
+  ok: 32,
+  warn: 33,
+  danger: 31,
+};
 
-const esc = (code: string) => `\x1b[${code}m`;
-const RESET = esc("0");
+let autoTheme = AUTO_THEME;
+let active: Theme = findTheme(DEFAULT_THEME)!;
 
-/** Apply a pigment to a string, honoring the terminal's colour capability. */
-function fmt(p: Pigment, value: string, useNativeColors = false): string {
-  if (NO_COLOR || useNativeColors) return value;
-  const code = TRUECOLOR ? `38;2;${p.rgb[0]};${p.rgb[1]};${p.rgb[2]}` : `38;5;${p.ansi}`;
-  return `${esc(code)}${value}${RESET}`;
+/** One pigment, in the richest form this terminal will understand. */
+function sgr(pigment: Pigment, role: Exclude<ColorRole, "body">): string {
+  if (DEPTH === "truecolor") {
+    const [r, g, b] = pigment.rgb;
+    return `\x1b[38;2;${r};${g};${b}m`;
+  }
+  if (DEPTH === "ansi256") return `\x1b[38;5;${pigment.ansi}m`;
+  return `\x1b[${ANSI16[role]}m`;
 }
 
-export const bold = (value: string): string => (NO_COLOR ? value : `${esc("1")}${value}${RESET}`);
+function pigmentFor(slot: SlotName, theme: Theme = active): Pigment {
+  return theme.slots[slot];
+}
 
-const ANSI_PATTERN = /\x1b\[[0-9;]*m/g;
+function fmt(role: ColorRole, value: string, theme: Theme = active): string {
+  const safe = terminalText(value);
+  // Body inherits the user's foreground. Asserting over it fights every scheme
+  // they might be running, and it is the one rule here with no exceptions.
+  if (role === "body" || !COLOR_CAPABLE || theme.useNativeColors) return safe;
+  return `${sgr(pigmentFor(ROLE_SLOT[role], theme), role)}${safe}${RESET}`;
+}
+
+/** Paint by the older eight-slot vocabulary, for callers that still speak it. */
+function fmtSlot(slot: SlotName, value: string, theme: Theme = active): string {
+  const safe = terminalText(value);
+  if (slot === "text" || !COLOR_CAPABLE || theme.useNativeColors) return safe;
+  return `${sgr(pigmentFor(slot, theme), roleFor(slot) as Exclude<ColorRole, "body">)}${safe}${RESET}`;
+}
+
+function roleFor(slot: SlotName): ColorRole {
+  switch (slot) {
+    case "text":
+      return "body";
+    case "muted":
+    case "faint":
+    case "line":
+      return "dim";
+    case "info":
+      return "accent";
+    default:
+      return slot;
+  }
+}
 
 export function stripAnsi(value: string): string {
   return value.replace(ANSI_PATTERN, "");
 }
 
-/** True when colors are being emitted (false under NO_COLOR). */
-export const colorEnabled = !NO_COLOR;
-/** True when 24-bit codes are being emitted (false → ANSI-256 fallback). */
-export const truecolor = TRUECOLOR;
+export const colorEnabled = COLOR_CAPABLE;
+export const truecolor = DEPTH === "truecolor";
+export const colorDepth = DEPTH;
 
-// ─── Active theme + control API ───
-
-let autoTheme = AUTO_THEME;
-let active: Theme = findTheme(DEFAULT_THEME)!;
-
-/** Refresh Follow-terminal mode from the host terminal's reported colors. */
 export function configureAutoTheme(colors: {
   background?: [number, number, number];
   foreground?: [number, number, number];
@@ -97,268 +138,148 @@ export function configureAutoTheme(colors: {
   if (active.name === "auto") active = autoTheme;
 }
 
-/** Switch the active theme. Returns false (and leaves the theme unchanged) if unknown. */
 export function setTheme(name: string): boolean {
-  const normalized = name.trim().toLowerCase();
-  const currentAccent = active.gearAccent ?? "cobalt";
-  let canonical = normalized;
-  if (normalized === "light" || normalized === "dark") {
-    canonical = gearThemeName(normalized, currentAccent);
-  } else if ((GEAR_ACCENTS as readonly string[]).includes(normalized)) {
-    canonical = gearThemeName(active.appearance, normalized as GearAccent);
-  } else if (normalized === "system") {
-    canonical = "auto";
-  }
-  const t = canonical === "auto" ? autoTheme : findTheme(canonical);
-  if (!t) return false;
-  active = t;
+  const next =
+    name.trim().toLowerCase() === "auto" || name.trim().toLowerCase() === "system"
+      ? autoTheme
+      : findTheme(name);
+  if (!next) return false;
+  active = next.name === "auto" ? autoTheme : next;
   return true;
 }
 
-/** The currently active theme. */
 export function getTheme(): Theme {
   return active;
 }
 
-/** The intentionally small set of product themes offered to the user. */
 export function listThemes(): Theme[] {
   return productionThemes().map((theme) => (theme.name === "auto" ? autoTheme : theme));
 }
 
-/** Format a string in a named theme's slot *without* changing the active theme. */
-export function paintWith(themeName: string, slot: SlotName, value: string): string {
-  const t = themeName === "auto" ? autoTheme : (findTheme(themeName) ?? active);
-  return fmt(t.slots[slot], value, t.useNativeColors);
+/** Paint with a named theme rather than the active one — the picker's preview
+ *  paints every theme at once, which is only meaningful now that a theme has a
+ *  palette of its own to be previewed. Accepts either vocabulary. */
+export function paintWith(themeName: string, slot: SlotName | ColorRole, value: string): string {
+  const theme = themeName === "auto" ? autoTheme : (findTheme(themeName) ?? active);
+  const role: ColorRole = (COLOR_ROLES as readonly string[]).includes(slot)
+    ? (slot as ColorRole)
+    : roleFor(slot as SlotName);
+  return fmt(role, value, theme);
 }
 
-/** Paint with a palette's exact cosmetic Gear signal without changing themes. */
 export function paintBrandWith(themeName: string, value: string): string {
-  const t = themeName === "auto" ? autoTheme : (findTheme(themeName) ?? active);
-  return fmt(t.brand, value, t.useNativeColors);
+  return paintWith(themeName, "accent", value);
 }
 
-/** A tiny inline colour sample (accent · info · warn · ok) in a theme's own colours. */
+/** The picker's per-theme preview: one mark per coloured role, in that theme's
+ *  own pigments. With a single hardcoded palette this was the same four cells
+ *  on every row, which is what made the theme list look decorative. */
 export function swatch(themeName: string): string {
-  return (
-    paintBrandWith(themeName, "●") +
-    paintWith(themeName, "accent", "●") +
-    paintWith(themeName, "warn", "●") +
-    paintWith(themeName, "ok", "●")
-  );
+  const mark = glyph("live");
+  return (["accent", "ok", "warn", "danger"] as const)
+    .map((role) => paintWith(themeName, role, mark))
+    .join("");
 }
 
-// ─── Whole-terminal recolor (OSC 10/11/12) ───
-// Themes set the terminal's default foreground, background, and cursor so the *entire* surface
-// recolours on a switch (not just newly-printed text). This is what makes a theme
-// change feel complete and makes light themes readable on a dark terminal.
-
-function hexOf(p: Pigment): string {
-  return "#" + p.rgb.map((c) => c.toString(16).padStart(2, "0")).join("");
-}
-
-/** OSC 10/11/12 escape setting the terminal's foreground, background, and cursor. */
+/** Flow never mutates terminal foreground, background, or cursor colors. */
 export function terminalThemeSeq(): string {
-  if (NO_COLOR || active.preserveTerminal) return "";
-  return (
-    `\x1b]10;${hexOf(active.slots.text)}\x07` +
-    `\x1b]11;${hexOf(active.bg)}\x07` +
-    `\x1b]12;${hexOf(active.brand)}\x07`
-  );
+  return "";
 }
 
-/** Restore the host terminal's foreground, background, and cursor colors. */
-export const TERMINAL_THEME_RESET = "\x1b]110\x07\x1b]111\x07\x1b]112\x07";
+export const TERMINAL_THEME_RESET = "";
 
-// ─── Per-line background fill (SGR — works where OSC 11 doesn't, e.g. Warp) ───
-// Some terminals (Warp, VS Code) ignore OSC 10/11, so the only way to actually paint a
-// theme's background is to draw it ourselves with an SGR background + EL (erase-to-EOL,
-// which fills the right margin with the current bg). EL and the bg SGR don't move the
-// cursor and are stripped by visible-length math, so this is transparent to the inline
-// renderer's caret positioning. We re-assert the bg after every RESET so it survives the
-// per-token `\x1b[0m` resets that would otherwise drop it mid-line.
-
-/** SGR sequence that opens the active theme's background (used for fills/clears).
- *  Respects the terminal's colour depth — truecolor `48;2` or 256-colour `48;5` — exactly
- *  like fmt() does for the foreground. (Terminal.app is 256-only and drops `48;2`, which
- *  is why the background never painted there.) */
+/** Compatibility APIs kept while Phase 03 removes the old full-screen surface. */
 export function themeBgSeq(): string {
-  if (NO_COLOR || active.preserveTerminal) return "";
-  // The sage/black canvas belongs to the browser customizer around the card.
-  // The production CLI *is* the terminal card, so it paints the card base
-  // edge-to-edge instead of recreating the customizer's outer page chrome.
-  const p = active.bg;
-  const code = TRUECOLOR ? `48;2;${p.rgb[0]};${p.rgb[1]};${p.rgb[2]}` : `48;5;${p.ansi}`;
-  return `\x1b[${code}m`;
+  return "";
 }
 
-/** Paint the active theme's background across a rendered line (right margin included). */
-export function withThemeBg(line: string): string {
-  if (NO_COLOR || active.preserveTerminal) return line;
-  const bg = themeBgSeq();
-  return bg + line.replace(/\x1b\[0m/g, RESET + bg) + "\x1b[K" + RESET;
+export function withThemeBg(value: string): string {
+  return body(value);
 }
 
-// ─── In-surface fills (task bar, popovers, selected rows) ───
-
-function blendPigment(base: Pigment, overlay: Pigment, amount: number): Pigment {
-  const rgb = base.rgb.map((value, index) =>
-    Math.round(value + (overlay.rgb[index]! - value) * amount),
-  ) as [number, number, number];
-  return { rgb, ansi: nearestAnsi256(rgb) };
-}
-
-function pigmentBgSeq(p: Pigment): string {
-  const code = TRUECOLOR ? `48;2;${p.rgb[0]};${p.rgb[1]};${p.rgb[2]}` : `48;5;${p.ansi}`;
-  return esc(code);
-}
-
-/** Apply a bounded background fill while preserving nested foreground styles. */
-function onBackground(p: Pigment, value: string): string {
-  if (NO_COLOR || active.preserveTerminal) return value;
-  const bg = pigmentBgSeq(p);
-  return bg + value.replace(/\x1b\[0m/g, RESET + bg) + RESET;
-}
-
-/** Neutral card/bar fill derived from the active base. */
 export function panel(value: string): string {
-  if (active.surfaces) return onBackground(active.surfaces.bar, value);
-  return onBackground(
-    blendPigment(active.bg, active.slots.text, active.appearance === "dark" ? 0.06 : 0.035),
-    value,
-  );
+  return body(value);
 }
 
-/** Active-row fill derived from the exact cosmetic accent. */
 export function selection(value: string): string {
-  if (active.surfaces) return onBackground(active.surfaces.barActive, value);
-  return onBackground(
-    blendPigment(active.bg, active.brand, active.appearance === "dark" ? 0.18 : 0.09),
-    value,
-  );
+  return accent(value);
 }
 
-/** Semantic diff fills, deliberately quieter than their foreground signals. */
 export function positiveSurface(value: string): string {
-  return onBackground(
-    blendPigment(
-      active.surfaces?.diff ?? active.bg,
-      active.slots.ok,
-      active.appearance === "dark" ? 0.13 : 0.08,
-    ),
-    value,
-  );
+  return body(value);
 }
 
 export function negativeSurface(value: string): string {
-  return onBackground(
-    blendPigment(
-      active.surfaces?.diff ?? active.bg,
-      active.slots.accent,
-      active.appearance === "dark" ? 0.13 : 0.08,
-    ),
-    value,
-  );
+  return body(value);
 }
 
-/** The warm-ivory / near-black product card. */
 export function cardSurface(value: string): string {
-  return onBackground(active.surfaces?.card ?? active.bg, value);
+  return body(value);
 }
 
-/** Shell commands and compact code evidence. */
 export function codeSurface(value: string): string {
-  return onBackground(active.surfaces?.code ?? active.bg, value);
+  return body(value);
 }
 
-/** Neutral body of a unified-diff card. */
 export function diffSurface(value: string): string {
-  return onBackground(active.surfaces?.diff ?? active.bg, value);
+  return body(value);
 }
 
-/** File/range header at the top of a diff card. */
 export function diffHeaderSurface(value: string): string {
-  return onBackground(active.surfaces?.diffHeader ?? active.bg, value);
+  return body(value);
 }
 
-/** Commands, model, theme, and approval overlays. */
 export function popoverSurface(value: string): string {
-  return onBackground(active.surfaces?.popover ?? active.bg, value);
+  return body(value);
 }
 
-/** Exact customizer hairline pigment (rather than the higher-contrast text rule). */
 export function hairline(value: string): string {
-  return fmt(active.surfaces?.hairline ?? active.slots.line, value, active.useNativeColors);
+  return dim(value);
 }
-
-// ─── Tinted chips and card washes ───
-// The customizer's pills (`.oi-tag.free`, `.session-pill-status`, `.auto-chip
-// .chip`, `.env-badge`) and tinted cards (`.fallback-card`, `.ctx-compact`) are
-// a semantic colour laid over a faint wash of itself. Terminals cannot blend
-// alpha, so the wash is composited here over the card base at build time.
 
 export type TintKind = "ok" | "warn" | "accent" | "brand" | "muted" | "text";
 
-function tintPigments(kind: TintKind): { fg: Pigment; wash: Pigment } {
-  const fg = kind === "brand" ? active.brand : active.slots[kind];
-  const base = active.surfaces?.card ?? active.bg;
-  // Dark bases need a stronger wash to read at all; light bases stay airy.
-  const amount = active.appearance === "dark" ? 0.16 : 0.1;
-  return { fg, wash: blendPigment(base, fg, amount) };
-}
-
-/** A pill: the slot colour on its own faint wash. Pad the value yourself (" free "). */
 export function chip(kind: TintKind, value: string): string {
-  if (NO_COLOR || active.preserveTerminal || active.useNativeColors) return value;
-  const { fg, wash } = tintPigments(kind);
-  return onBackground(wash, fmt(fg, value));
+  if (kind === "ok") return ok(value);
+  if (kind === "warn") return warn(value);
+  if (kind === "accent" || kind === "brand") return accent(value);
+  if (kind === "muted") return dim(value);
+  return body(value);
 }
 
-/** A row-spanning wash for tinted cards (fallback banner, compaction receipt). */
-export function tintSurface(kind: TintKind, value: string): string {
-  if (NO_COLOR || active.preserveTerminal || active.useNativeColors) return value;
-  return onBackground(tintPigments(kind).wash, value);
+export function tintSurface(_kind: TintKind, value: string): string {
+  return body(value);
 }
 
-// ─── Semantic tokens (read the active theme at call time) ───
+export const body = (value: string): string => fmt("body", value);
+export const dim = (value: string): string => fmt("dim", value);
+export const accent = (value: string): string => fmt("accent", value);
+export const ok = (value: string): string => fmt("ok", value);
+export const warn = (value: string): string => fmt("warn", value);
+export const danger = (value: string): string => fmt("danger", value);
 
-const slot = (name: SlotName) => (value: string) =>
-  fmt(active.slots[name], value, active.useNativeColors);
+export const bold = (value: string): string => {
+  const safe = terminalText(value);
+  return COLOR_CAPABLE && !active.useNativeColors ? `\x1b[1m${safe}${RESET}` : safe;
+};
 
-export const text = slot("text"); // primary text, banner name
-export const brand = (value: string): string => fmt(active.brand, value, active.useNativeColors);
-export const muted = slot("muted"); // secondary text
-export const faint = slot("faint"); // hints, connectors
-export const accent = slot("accent"); // single emphasis, errors, `›`
-export const info = slot("info"); // commands, paths, tool targets
-export const warn = slot("warn"); // warnings, prompts, bar fill
-export const ok = slot("ok"); // success ✓
-export const line = slot("line"); // borders / rules
+// Compatibility names retain source stability while every renderer moves onto
+// the six canonical roles above.
+export const text = body;
+export const brand = accent;
+export const muted = dim;
+export const faint = dim;
+export const info = accent;
+export const line = dim;
 
-/**
- * A colour part-way between two slots. The live rung is the only caller, and it
- * exists for one reason: a mark that snaps between two pigments reads as a
- * blink, and a blink is how a terminal says *something is wrong* — it is the
- * grammar of a smoke alarm, not of a colleague working. Easing along a ramp
- * instead reads as breathing, which is what a process that is fine but busy
- * should look like. On a 256-colour terminal the ramp quantises to a handful of
- * steps and simply breathes more coarsely; under NO_COLOR it is inert, like
- * every other token here.
- */
 export function between(from: SlotName, to: SlotName, amount: number): (value: string) => string {
-  const ratio = Math.max(0, Math.min(1, amount));
-  return (value: string) =>
-    fmt(blendPigment(active.slots[from], active.slots[to], ratio), value, active.useNativeColors);
+  const role = amount < 0.5 ? roleFor(from) : roleFor(to);
+  return (value: string) => fmt(role, value);
 }
 
-// ─── Back-compat raw pigment names (now mapped onto theme slots) ───
-// welcome.ts, diff-render.ts and gear-cli.ts import these; routing them
-// through slots means diffs and the provider list recolour with the
-// active theme too, with no changes at their call sites.
-
-export const paper = slot("text");
-export const dim = slot("muted");
-export const vermillion = slot("accent");
-export const brass = slot("warn");
-export const cyanotype = slot("info");
-export const green = slot("ok");
-export const draftLine = slot("line");
+export const paper = body;
+export const vermillion = danger;
+export const brass = warn;
+export const cyanotype = accent;
+export const green = ok;
+export const draftLine = dim;
