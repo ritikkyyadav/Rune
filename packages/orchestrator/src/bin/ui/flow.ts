@@ -180,9 +180,20 @@ export function header(opts: FlowHeader): string {
   // to a row already sized to the full surface pushes the line onto the
   // terminal's last cell, and a line that touches the last cell wraps — which
   // desyncs the relative cursor math for the pinned region below it.
-  return ["", `${MARK}${row(left, right, surface - MARK.length)}`, hairline(surface), ""].join(
-    "\n",
-  );
+  // No trailing hairline.
+  //
+  // The header used to close itself with one. On a session that has said
+  // anything that reads fine — but on a FRESH session there is no transcript
+  // between the header and the composer, so the header's rule and the
+  // composer's top rule land on adjacent rows and draw as a doubled border.
+  // The two elements then read as one heavy block instead of an identity line
+  // and a field.
+  //
+  // The composer's own top rule is the divider, and unlike this one it is
+  // always in the right place: it sits directly above the input wherever the
+  // input happens to be. A second rule up here was only ever correct when
+  // something was already on screen to separate.
+  return ["", `${MARK}${row(left, right, surface - MARK.length)}`, ""].join("\n");
 }
 
 /** The one piece of chrome in the product: a hairline the width of the window. */
