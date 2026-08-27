@@ -138,3 +138,50 @@ describe("full-screen behaviour", () => {
     }
   });
 });
+
+describe("holding the field at the bottom", () => {
+  const { holdOpenRows } = require("../../../packages/orchestrator/src/bin/ui/tui");
+
+  it("holds the window open on a fresh session", () => {
+    // 30-row window, banner has printed 3 rows, the field block is 5 rows.
+    expect(holdOpenRows(30, 3, 5)).toBe(21);
+    expect(3 + 21 + 5).toBe(29); // …and one row spare, never the last cell
+  });
+
+  it("gives the space back exactly as fast as output takes it", () => {
+    // The field must not move as the transcript grows: every row printed is
+    // one row of padding surrendered.
+    let last = holdOpenRows(30, 3, 5);
+    for (let printed = 4; printed <= 24; printed++) {
+      const now = holdOpenRows(30, printed, 5);
+      expect(now).toBe(last - 1);
+      last = now;
+    }
+  });
+
+  it("stops holding once the session has filled the window", () => {
+    expect(holdOpenRows(30, 24, 5)).toBe(0);
+    expect(holdOpenRows(30, 500, 5)).toBe(0); // and never goes negative
+  });
+
+  it("REGRESSION: /clear must reset the count, or the bar collapses upward", () => {
+    // The bug: printedRows only ever counts up, so after a long session it sat
+    // well past the viewport. /clear wiped the screen but left the count, so
+    // the padding computed zero against an empty window and the field jumped
+    // up under the banner with the bottom of the screen left blank.
+    const afterLongSession = holdOpenRows(30, 200, 5);
+    expect(afterLongSession).toBe(0); // correct while the output is still there
+
+    // resetTranscript sets printedRows = 0, then printBanner re-counts its
+    // own rows. The field must return to the bottom.
+    const afterClear = holdOpenRows(30, 3, 5);
+    expect(afterClear).toBe(21);
+    expect(afterClear).toBeGreaterThan(afterLongSession);
+  });
+
+  it("follows a resize in both directions", () => {
+    expect(holdOpenRows(50, 3, 5)).toBe(41); // taller window, more held open
+    expect(holdOpenRows(12, 3, 5)).toBe(3); // shorter window, less
+    expect(holdOpenRows(6, 3, 5)).toBe(0); // no room at all: hold nothing
+  });
+});
