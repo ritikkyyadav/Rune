@@ -15,6 +15,7 @@ import {
   statusLine,
   permissionModeBanner,
 } from "../../../packages/orchestrator/src/bin/ui/composer";
+import { setTermWidthOverride } from "../../../packages/orchestrator/src/bin/ui/render";
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
 import { glyph } from "../../../packages/orchestrator/src/bin/ui/glyphs";
 
@@ -302,12 +303,23 @@ describe("ui/composer statusLine + permission mode", () => {
     const confirm = stripAnsi(statusLine({ ...base, mode: "confirm" }, 120));
     expect(confirm).toContain("> 1st gear");
     expect(confirm).toContain("every action asks first");
-    expect(confirm).toContain("shift+tab gear");
-    expect(confirm).toContain("esc stop");
+    expect(confirm).toContain("gemini-2.5-flash"); // live state, not the header's
     expect(confirm).toContain("? keys");
     expect(confirm).not.toMatch(/autonomy/i);
 
+    // The key hints are what yields first at a narrow width — a hint is
+    // discovery, useful once, while the gear's description is what someone
+    // still learning the gears is reading. They come back when there is room.
+    setTermWidthOverride(160);
+    const wide = stripAnsi(statusLine({ ...base, mode: "confirm" }, 160));
+    expect(wide).toContain("shift+tab gear");
+    expect(wide).toContain("esc stop");
+    expect(wide).toContain("every action asks first");
+    setTermWidthOverride(null);
+
     expect(stripAnsi(statusLine({ ...base, mode: "autonomy-i" }, 120))).toContain(">> 2nd gear");
+    // The model rides here now, so the gear label is still present but the
+    // description may yield to it at narrower widths.
     expect(stripAnsi(statusLine({ ...base, mode: "autonomy-ii" }, 120))).toContain(">>> 3rd gear");
     expect(stripAnsi(statusLine({ ...base, mode: "autonomy-iii" }, 120))).toContain(
       ">>>> 4th gear",

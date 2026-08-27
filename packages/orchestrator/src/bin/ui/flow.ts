@@ -127,6 +127,13 @@ export function verbatimWidth(): number {
  * edge of the measure. When the two cannot both fit, the receipt wins and the
  * content truncates -- a metric you cannot read is worse than a clipped path.
  */
+/** Fill a chrome row to its budget. A frame whose rows are different lengths is
+ *  not a frame — the hairlines above and below would overhang it. Transcript
+ *  rows are NOT padded: trailing whitespace on content is noise in a pipe. */
+function pad(line: string, width: number): string {
+  return line + " ".repeat(Math.max(0, width - visLen(line)));
+}
+
 export function row(left: string, right = "", budgetWidth = measure()): string {
   const width = budgetWidth;
   const rightCells = visLen(right);
@@ -183,11 +190,24 @@ export function header(opts: FlowHeader): string {
   // first, then what it is running on, then the tree's shape. The mode goes
   // hard right on its own, because it is the field that changes under you and
   // the one whose absence would be dangerous rather than merely inconvenient.
+  // Only what stays true.
+  //
+  // This row is committed scrollback: written once and never rewritten, which
+  // is what makes history in this UI incapable of developing rendering bugs. It
+  // also means everything on it is a record of how the session STARTED. The
+  // model and the gear both change mid-session, so naming them here produced a
+  // header that confidently stated the wrong model for the rest of the run —
+  // and, worse, contradicted the status line one row above the composer, which
+  // was right. Under the old alt screen the banner repainted every frame and
+  // this never showed; deleting that surface exposed it.
+  //
+  // Live state lives in the pinned region, which redraws. What is left here is
+  // what does not move: who you are talking to, where, and the shape the tree
+  // was in when you opened it.
   const left = [
     info(opts.name),
     opts.workspace && text(opts.workspace),
     opts.branch && muted(opts.branch),
-    opts.model && muted(opts.model),
     opts.state && muted(opts.state),
   ]
     .filter(Boolean)
@@ -195,7 +215,9 @@ export function header(opts: FlowHeader): string {
   // Just the gear, not its explanation. The caution ("every action asks first")
   // is already spelled out on the status line above the composer, and repeating
   // it here cost more of this row than the dirty-file count it displaced.
-  const right = opts.scope ? warn(opts.scope) : "";
+  // The gear moves too — shift+tab changes it — so it is not written down
+  // here either. The status line above the composer carries it, live.
+  const right = "";
   // The indent is paid for out of the row's own budget. Prepending MARK to a
   // row already sized to the full measure pushes the line onto the terminal's
   // last cell, and a line that touches the last cell wraps — which desyncs the
@@ -221,7 +243,11 @@ export function header(opts: FlowHeader): string {
   // there is no transcript between them — that is solved at the other end, by
   // the composer carrying a blank line above itself, so the two rules can
   // never end up on adjacent rows however empty the session is.
-  return ["", `${MARK}${row(left, right, surface - MARK.length)}`, hairline(surface)].join("\n");
+  return [
+    "",
+    `${MARK}${pad(row(left, right, surface - MARK.length), surface - MARK.length)}`,
+    hairline(surface),
+  ].join("\n");
 }
 
 /**
