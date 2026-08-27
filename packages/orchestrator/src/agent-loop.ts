@@ -72,6 +72,19 @@ export type AgentTurnEvent =
       reason?: string;
       chain?: string[];
     }
+  // The same provider is about to be re-tried after a transient failure. The
+  // turn continues; the surface shows `↻ 1 of 3` for the length of the backoff
+  // instead of looking wedged with nothing to explain it.
+  | {
+      type: "retry";
+      provider: string;
+      model: string;
+      attempt: number;
+      of: number;
+      status?: number;
+      waitMs: number;
+      reason?: string;
+    }
   // Authoritative provider token usage for the request just completed, plus a
   // context-budget snapshot so UIs can keep a live meter without polling.
   | {
@@ -158,7 +171,7 @@ export interface AgentLoopConfig {
   retrievedChunks?: RetrievedChunk[];
   /** Runs project checks after edits; on failure the agent is asked to fix. */
   verifier?: Verifier;
-  /** Max times to run verification + re-prompt on failure. Default 2. */
+  /** Max times to run verification + re-prompt per approach. Default 3. */
   maxVerifyAttempts?: number;
   /**
    * The run's task spine (goal, todos, ledger, verification, handoff) —
@@ -166,6 +179,13 @@ export interface AgentLoopConfig {
    * Optional: worker/subagent/utility loops run without one.
    */
   taskState?: TaskStateStore;
+  /**
+   * Live team snapshot (other Gear instances in this repository) — rendered
+   * fresh per request and injected as an ephemeral tail block exactly like
+   * the task spine. Returns null when there is nothing to say (no peers).
+   * Lead loop only; nested worker/subagent loops run without one.
+   */
+  teamContext?: () => string | null;
   /** Plan-discipline nudges per run (write-with-no-plan tripwire). Default 1. */
   maxPlanNudges?: number;
   /** Change-approach nudges after verification keeps failing. Default 1. */
@@ -364,6 +384,28 @@ export class AgentLoop {
   private appendMessage(m: Message): void {
     this.messages.push(m);
     this.pendingPersist.push(m);
+  }
+
+  /**
+   * Close function-call pairs when Gear stops after the provider has already
+   * emitted tool calls but before those tools execute. Persisting a bare
+   * assistant tool_use poisons resume: strict providers (notably Codex's
+   * Responses API) reject the next request with "No tool output found".
+   */
+  private closeUnexecutedToolCalls(
+    calls: Array<{ callId: string; toolName: string }>,
+    reason: string,
+  ): void {
+    if (calls.length === 0) return;
+    this.appendMessage({
+      role: "tool",
+      content: calls.map((tc): ContentBlock => ({
+        type: "tool_result",
+        toolCallId: tc.callId,
+        toolResultContent: `Not executed: ${reason}`,
+        isError: true,
+      })),
+    });
   }
 
   /** Drain messages appended since the last call (incremental persistence). */
@@ -585,6 +627,12 @@ export class AgentLoop {
       // null), and mutates only the prompt SUFFIX (cache-safe, unlike the
       // old aux-prepend). Providers accept a user message after tool results;
       // Anthropic merges the resulting consecutive user-role turns.
+      // Everything up to here recurs verbatim next turn, so this is the end of
+      // the cacheable prefix. Capture it BEFORE the ephemeral task/team blocks:
+      // a breakpoint on either live tail would key a cache entry to content
+      // rebuilt every request and prevent the next turn from reading it back.
+      const stableMessageCount = requestMessages.length;
+
       const taskBlock = this.config.taskState?.renderBlock();
       if (taskBlock) {
         requestMessages = [
@@ -593,8 +641,26 @@ export class AgentLoop {
         ];
       }
 
+      // ── Team tail injection ──
+      // Same ephemeral contract as the spine: rebuilt per request, never
+      // stored, so peer presence is always CURRENT (a peer that exited two
+      // turns ago vanishes from context instead of haunting the transcript).
+      let teamBlock: string | null = null;
+      try {
+        teamBlock = this.config.teamContext?.() ?? null;
+      } catch {
+        // team snapshot must never break a request
+      }
+      if (teamBlock) {
+        requestMessages = [
+          ...requestMessages,
+          { role: "user", content: [{ type: "text", text: teamBlock }] },
+        ];
+      }
+
       const request: InferenceRequest = {
         messages: requestMessages,
+        ...(stableMessageCount > 0 && { cacheBreakpointIndex: stableMessageCount - 1 }),
         system: requestSystemPrompt,
         tools: tools.length > 0 ? tools : undefined,
         model: this.config.model,
@@ -938,7 +1004,7 @@ export class AgentLoop {
           continue;
         }
         if (this.config.verifier && !signal?.aborted) {
-          if (editsSinceVerify && verifyAttempts < (this.config.maxVerifyAttempts ?? 2)) {
+          if (editsSinceVerify && verifyAttempts < (this.config.maxVerifyAttempts ?? 3)) {
             verifyAttempts++;
             yield { type: "verification_started", attempt: verifyAttempts };
             const result = await this.config.verifier.verify(signal);
@@ -1147,6 +1213,10 @@ export class AgentLoop {
           "loopDetect",
           `bailed: same tool batch repeated after a nudge: ${signature.slice(0, 150)}`,
         );
+        this.closeUnexecutedToolCalls(
+          pendingToolCalls,
+          "Gear stopped this repeated call after the loop detector's corrective nudge did not help.",
+        );
         yield {
           type: "error",
           error:
@@ -1163,6 +1233,10 @@ export class AgentLoop {
       this.state = "tool_calling";
 
       if (signal?.aborted) {
+        this.closeUnexecutedToolCalls(
+          pendingToolCalls,
+          "the run was aborted before this tool call started.",
+        );
         this.state = "done";
         yield* this.handoffEvents("aborted");
         yield { type: "turn_complete", stopReason: "aborted", totalTurns: turn };
@@ -1745,6 +1819,22 @@ export class AgentLoop {
 
       // Structured provider fallback — passed through untouched so every
       // surface renders the same banner from the same facts.
+      // Passed through untouched, like `fallback`: every surface renders the
+      // same retry from the same facts.
+      case "retry":
+        return {
+          event: {
+            type: "retry",
+            provider: event.provider,
+            model: event.model,
+            attempt: event.attempt,
+            of: event.of,
+            status: event.status,
+            waitMs: event.waitMs,
+            reason: event.reason,
+          },
+        };
+
       case "fallback":
         return {
           event: {

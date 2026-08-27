@@ -152,6 +152,9 @@ export class LlmGateway {
         // cancel) — retrying it would resurrect work the caller abandoned.
         if (request.signal?.aborted) break;
         if (!this.shouldRetry(err as Error, attempt)) break;
+        // No stream to yield on here, but the retry is still not allowed to be
+        // silent — `retryEvent` reports it to the black box on the way past.
+        this.retryEvent(request.provider, request.model, attempt, lastError);
         await this.backoff(lastError, attempt);
       }
     }
@@ -280,6 +283,7 @@ export class LlmGateway {
               yieldedSinceReset = false;
               yield { type: "stream_reset" };
             }
+            yield this.retryEvent(providerName, adjustedRequest.model, attempt, lastError);
             await this.backoff(lastError, attempt);
             continue;
           }
@@ -290,6 +294,7 @@ export class LlmGateway {
             yieldedSinceReset = false;
             yield { type: "stream_reset" };
           }
+          yield this.retryEvent(providerName, adjustedRequest.model, attempt, lastError);
           await this.backoff(lastError, attempt);
         }
       }
@@ -497,16 +502,60 @@ export class LlmGateway {
     return 0;
   }
 
-  private async backoff(err: Error | undefined, attempt: number): Promise<void> {
-    let waitMs = Math.max(
+  /**
+   * How long the next retry will wait. Split out of `backoff` so the `retry`
+   * event can state the real number rather than an approximation of it — the
+   * surface uses it to explain a gap the user is about to sit through.
+   */
+  private retryWaitMs(err: Error | undefined, attempt: number): number {
+    const waitMs = Math.max(
       this.getRetryAfterMs(err),
       this.config.retryBaseMs * Math.pow(2, attempt),
     );
     // Never hang on a long server-advised delay for rate limits — better to fall
     // back or fail fast with guidance than freeze the session.
     const status = (err as unknown as { status?: number } | undefined)?.status;
-    if (status === 429) waitMs = Math.min(waitMs, RATE_LIMIT_MAX_WAIT_MS);
+    return status === 429 ? Math.min(waitMs, RATE_LIMIT_MAX_WAIT_MS) : waitMs;
+  }
 
+  /**
+   * The retry, as a fact: reported to the black box and returned as a stream
+   * event so no retry is ever silent. `attempt` in is 0-based (the attempt that
+   * just failed); `attempt` out is 1-based (the retry about to happen).
+   */
+  private retryEvent(
+    provider: string,
+    model: string,
+    attempt: number,
+    err: Error | undefined,
+  ): Extract<StreamEvent, { type: "retry" }> {
+    const status = (err as unknown as { status?: number } | undefined)?.status;
+    const waitMs = this.retryWaitMs(err, attempt);
+    const reason = this.failureReason(status, err) || undefined;
+    this.reportIncident({
+      kind: "retry",
+      provider,
+      model,
+      status,
+      message: reason || err?.message?.slice(0, 120) || "transient failure",
+      attempt: attempt + 1,
+      of: this.config.maxRetries,
+      waitMs,
+    });
+    return {
+      type: "retry",
+      provider,
+      model,
+      attempt: attempt + 1,
+      of: this.config.maxRetries,
+      status,
+      waitMs,
+      reason,
+    };
+  }
+
+  private async backoff(err: Error | undefined, attempt: number): Promise<void> {
+    const waitMs = this.retryWaitMs(err, attempt);
     const jitter = Math.random() * waitMs * 0.1;
     await new Promise((resolve) => setTimeout(resolve, waitMs + jitter));
   }
