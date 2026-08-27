@@ -370,7 +370,7 @@ export function browserModeBanner(enabled: boolean): string {
  * same light visual boundary as the raw-mode composer.
  */
 export function composerRule(): string {
-  return rule(F.surfaceWidth(), { color: hairline, glyph: glyph("rule") });
+  return F.hairline();
 }
 
 // --- Pinned composer (TUI) ---
@@ -464,7 +464,9 @@ export function renderComposer(state: ComposerState): RenderedBlock {
   // screen there is nothing telling you where the typing goes. Two rules make
   // it a place: the field has edges, and the status hint sits outside them
   // rather than looking like more input.
-  const edge = hairline(glyph("rule").repeat(width));
+  // The SAME rule the header draws — indented to the content column, so the
+  // field's edges line up with the text inside it and with everything above.
+  const edge = F.hairline(width);
   const mid = `${PAD}${muted(glyph("selection"))} ${body}`;
 
   // The blank line above the field belongs to the FIELD, not to whatever is

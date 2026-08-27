@@ -50,7 +50,8 @@ describe("ui/banner", () => {
     expect(lines).toHaveLength(2);
     expect(lines[0]).toContain("gear · sample-app · main · claude-sonnet-4-6");
     expect(lines[0]).toContain("1st gear"); // the mode, hard right
-    expect(lines[1]).toMatch(/^─+$/); // the rule that closes the frame's top
+    // Indented to the content column: a rule begins where the row above it does.
+    expect(lines[1]).toMatch(/^ {2}─+$/);
     // Nothing decorative survives: no mark, no avatar, no wordmark, no tagline.
     expect(output).not.toContain("⚙");
     expect(output).not.toContain("⣴");
@@ -95,8 +96,10 @@ describe("ui/banner", () => {
         .split("\n")
         .filter((line) => line.trim());
       const hair = lines.at(-1)!;
-      expect(hair).toMatch(/^─+$/);
+      expect(hair).toMatch(/^ {2}─+$/);
       expect(hair.length).toBe(Math.max(20, columns - 1));
+      // …and it is exactly as wide as the identity row it closes.
+      expect(hair.length).toBe(lines[0]!.length);
       // …while every line still stays inside the window, never touching its
       // last cell (a full-width line wraps, and a wrap desyncs the composer).
       for (const line of lines) expect(line.length).toBeLessThan(columns);
