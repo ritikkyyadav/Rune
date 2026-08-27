@@ -221,3 +221,135 @@ describe("Phase 03 — the interactive stream replays to the piped transcript", 
     expect(all).not.toContain("\x1b[2J"); // no full-screen clear in a render path
   });
 });
+
+// ─── Streaming into a viewport that actually scrolls ───
+// The emulator above never runs out of rows, so it cannot see what happens when
+// a tall pinned block plus new output overflows the window and the terminal
+// scrolls under us. Every cursor move here is RELATIVE, so a scroll the surface
+// does not account for makes the next erase land in the wrong place — which
+// shows up as stale copies of the composer stranded in scrollback, or as real
+// output being wiped. Both are silent; neither is visible in a short session.
+class ScrollingTerm {
+  scrollback: string[] = [];
+  view: string[] = [""];
+  row = 0;
+  col = 0;
+  constructor(readonly rows: number) {}
+  feed(s: string): void {
+    for (let i = 0; i < s.length;) {
+      const ch = s[i]!;
+      if (ch === "\x1b") {
+        const m = /^\x1b\[(\??)(\d*)([A-Za-z])/.exec(s.slice(i));
+        if (!m) throw new Error("unparsable escape");
+        const [full, priv, n, verb] = m;
+        const k = n === "" ? 1 : parseInt(n!, 10);
+        if (priv === "?") {
+          if (n === "1049") throw new Error("ALTERNATE SCREEN — forbidden");
+        } else if (verb === "A") {
+          this.row = Math.max(0, this.row - k);
+          this.col = 0;
+        } else if (verb === "C") {
+          this.col += k;
+        } else if (verb === "K") {
+          this.view[this.row] = (this.view[this.row] ?? "").slice(0, this.col);
+        } else if (verb === "J") {
+          this.view[this.row] = (this.view[this.row] ?? "").slice(0, this.col);
+          this.view.length = this.row + 1;
+        } else if (verb === "H" || verb === "d") {
+          throw new Error("ABSOLUTE ADDRESSING — forbidden");
+        }
+        i += full.length;
+        continue;
+      }
+      if (ch === "\n") {
+        this.row += 1;
+        this.col = 0;
+        while (this.view.length <= this.row) this.view.push("");
+        while (this.row >= this.rows) {
+          this.scrollback.push(this.view.shift() ?? "");
+          this.row -= 1;
+        }
+      } else if (ch === "\r") {
+        this.col = 0;
+      } else {
+        while (this.view.length <= this.row) this.view.push("");
+        const line = this.view[this.row] ?? "";
+        this.view[this.row] =
+          line.padEnd(this.col, " ").slice(0, this.col) + ch + line.slice(this.col + 1);
+        this.col += 1;
+      }
+      i += 1;
+    }
+  }
+  get everything(): string[] {
+    return [...this.scrollback, ...this.view];
+  }
+}
+
+describe("a long run: the composer holds the bottom, history keeps flowing", () => {
+  const ROWS = 12;
+  const CORE = ["------------", "  > type here", "------------", "  >>> 3rd gear"];
+
+  function stream(lines: number) {
+    const orig = Object.getOwnPropertyDescriptor(process.stdout, "rows");
+    Object.defineProperty(process.stdout, "rows", { value: ROWS, configurable: true });
+    try {
+      const term = new ScrollingTerm(ROWS);
+      const writes: string[] = [];
+      const region = new BottomRegion((s) => writes.push(s));
+      const drain = () => {
+        term.feed(writes.join(""));
+        writes.length = 0;
+      };
+      let printed = 0;
+      // The pinned block holds the field on the bottom rows until output has
+      // earned the space — the same arithmetic the TUI uses.
+      const block = () => [
+        ...Array.from({ length: Math.max(0, ROWS - printed - CORE.length - 1) }, () => ""),
+        ...CORE,
+      ];
+      let b = block();
+      region.render(b, b.length - 3, 4);
+      drain();
+      for (let n = 1; n <= lines; n++) {
+        printed += 1;
+        b = block();
+        region.printAbove(`  output line ${n}`, b, b.length - 3, 4);
+        drain();
+      }
+      return term;
+    } finally {
+      if (orig) Object.defineProperty(process.stdout, "rows", orig);
+    }
+  }
+
+  it("leaves exactly one composer, never a trail of stale ones", () => {
+    const term = stream(25);
+    const copies = term.everything.filter((l) => l.includes("> type here")).length;
+    expect(copies).toBe(1);
+  });
+
+  it("loses no output to the redraw", () => {
+    const term = stream(25);
+    const missing = Array.from({ length: 25 }, (_, i) => i + 1).filter(
+      (n) => !term.everything.some((l) => l.includes(`output line ${n}`)),
+    );
+    expect(missing).toEqual([]);
+  });
+
+  it("keeps the field on the bottom rows while output flows above it", () => {
+    const term = stream(25);
+    const inputRow = term.view.findIndex((l) => l.includes("> type here"));
+    expect(inputRow).toBeGreaterThanOrEqual(0);
+    // Two rows below it: the closing rule and the status line.
+    expect(term.view.length - 1 - inputRow).toBe(2);
+    // …and the row above it is the field's own opening rule, not stray output.
+    expect(term.view[inputRow - 1]).toContain("---");
+  });
+
+  it("history reaches scrollback rather than being overwritten in place", () => {
+    const term = stream(25);
+    expect(term.scrollback.some((l) => l.includes("output line 1"))).toBe(true);
+    expect(term.view.some((l) => l.includes("output line 25"))).toBe(true);
+  });
+});
