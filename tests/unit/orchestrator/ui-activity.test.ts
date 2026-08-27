@@ -85,7 +85,7 @@ describe("renderToolActivity — one call, one row", () => {
     ).split("\n");
     expect(out[0]).toContain("grep  ProviderName");
     expect(out[0]).toContain("2 files");
-    expect(out[1]).toBe("    │ └ src/a.ts:42 · 2 more");
+    expect(out[1]).toBe("    │ │ src/a.ts:42 | 2 more");
     expect(plain(out.join())).not.toContain("total_matches"); // parsed, not dumped
   });
 
@@ -121,9 +121,9 @@ describe("renderToolActivity — one call, one row", () => {
     ).split("\n");
     expect(out[0]).toContain("run   bun test tests/unit/");
     expect(out[0]).toContain("2.6s");
-    expect(out[1]).toBe("    │ └ 37 passed");
-    expect(out[2]).toBe("    ┌ bun test tests/unit/");
-    expect(out.at(-1)).toBe("    └ 37 passed in 1.9s");
+    expect(out[1]).toBe("    │ │ 37 passed");
+    expect(out[2]).toBe("    │ bun test tests/unit/");
+    expect(out.at(-1)).toBe("    │ 37 passed in 1.9s");
     // The rail's closing line is moved, not duplicated.
     expect(out.filter((l) => l.includes("37 passed in 1.9s"))).toHaveLength(1);
     expect(out.join()).not.toContain("exit_code");
@@ -145,7 +145,7 @@ describe("renderToolActivity — one call, one row", () => {
       ),
     );
     expect(out).toContain("│ ✗ run ");
-    expect(out).toContain("└ 1 failed, 24 passed");
+    expect(out).toContain("│ 1 failed, 24 passed");
     expect(out).not.toContain("exit 1");
   });
 
@@ -174,7 +174,7 @@ describe("renderToolActivity — one call, one row", () => {
       ),
     ).split("\n");
     expect(out).toHaveLength(2);
-    expect(out[1]).toBe("    │ └ 9be117a");
+    expect(out[1]).toBe("    │ │ 9be117a");
   });
 
   it("ALWAYS shows an edit's diff, with real line numbers and signed counts", () => {
@@ -194,7 +194,7 @@ describe("renderToolActivity — one call, one row", () => {
     // lines up with the reads above it instead of hanging two cells left.
     expect(out[0]).toMatch(/^ {4}│ {3}edit {2}src\/engine\.ts/);
     expect(out[0]).toContain("edit  src/engine.ts");
-    expect(out[0]).toContain("+1 -1 · 1 hunk");
+    expect(out[0]).toContain("+1 -1 | 1 hunk");
     expect(out[1]).toBe("    │    1 - const a = 1;");
     expect(out[2]).toBe("    │    1 + const a = 2;");
     // An edit carries no mark at all: the diff below it is the evidence, and it
@@ -213,7 +213,7 @@ describe("renderToolActivity — one call, one row", () => {
       ),
     );
     expect(out).toContain("new   a.ts");
-    expect(out).toContain("+3 · new file");
+    expect(out).toContain("+3 | new file");
   });
 
   it("renders web_search with its query, never the raw args JSON", () => {
@@ -239,7 +239,7 @@ describe("renderToolActivity — one call, one row", () => {
     ).split("\n");
     expect(out).toHaveLength(2);
     expect(out[0]).toContain("│ ✗ read  missing.ts");
-    expect(out[1]).toBe("    │ └ ENOENT: no such file or directory");
+    expect(out[1]).toBe("    │ │ ENOENT: no such file or directory");
   });
 
   it("uses the width it has, and never spills past a narrow terminal", () => {
@@ -267,7 +267,10 @@ describe("renderToolActivity — one call, one row", () => {
       ];
       for (const block of blocks) {
         for (const line of block.split("\n")) {
-          expect(plain(line).length).toBeLessThanOrEqual(Math.min(120, columns));
+          // The invariant this test's name states is the TERMINAL width, not a
+          // fixed ceiling. Rows follow the window now: capping them at 120 on a
+          // 241-column screen truncated paths while half the window sat empty.
+          expect(plain(line).length).toBeLessThanOrEqual(columns);
         }
       }
     }
@@ -356,7 +359,7 @@ describe("renderTranscript — batch replay", () => {
 
   it("renders a compaction note", () => {
     expect(plain(renderTranscript([L({ role: "note", text: "context compacted earlier" })]))).toBe(
-      "  — context compacted earlier —",
+      "  -- context compacted earlier --",
     );
   });
 });

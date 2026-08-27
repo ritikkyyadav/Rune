@@ -11,7 +11,7 @@
  * These tests measure where lines BEGIN. Nothing else here does.
  */
 
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { renderBanner } from "../../../packages/orchestrator/src/bin/ui/banner";
 import { renderComposer, statusLine } from "../../../packages/orchestrator/src/bin/ui/composer";
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
@@ -19,6 +19,19 @@ import { setTermWidthOverride } from "../../../packages/orchestrator/src/bin/ui/
 import * as os from "os";
 
 const WORKSPACE = `${os.homedir()}/Projects/sample-app`;
+
+// setTermWidthOverride and process.stdout.columns are global module state.
+// Leaving either set leaks a 400-column terminal into every file that runs
+// after this one — which is exactly how this file broke ui-clamp while passing
+// on its own.
+const REAL_COLUMNS = process.stdout.columns;
+afterEach(() => {
+  setTermWidthOverride(null);
+  Object.defineProperty(process.stdout, "columns", {
+    value: REAL_COLUMNS,
+    configurable: true,
+  });
+});
 
 /** Every line the product paints on a fresh launch, in order. */
 function launchFrame(columns: number): string[] {
@@ -88,5 +101,40 @@ describe("the launch frame", () => {
     const status = statusLine({ mode: "gear-3" } as any, 100);
     const composer = renderComposer({ input: "", caret: 0, width: 100, status } as any);
     expect(stripAnsi(composer.lines[0]!).trim()).toBe("");
+  });
+});
+
+describe("full-screen behaviour", () => {
+  // At 80 columns the three widths land within five of each other, so a
+  // mismatch between them is invisible. At 241 it is the whole screen: this is
+  // the only place it can be caught.
+  const F = require("../../../packages/orchestrator/src/bin/ui/flow");
+
+  it("structural width follows the terminal — no fixed ceiling", () => {
+    for (const columns of [80, 145, 241, 400]) {
+      setTermWidthOverride(columns);
+      // A row must be able to reach the window. A ceiling here truncates paths
+      // and diffs while half the screen sits empty, which is worse than a
+      // receipt sitting further right.
+      expect(F.measure(), `at ${columns}`).toBeGreaterThanOrEqual(Math.min(columns - 2, 200));
+      expect(F.measure()).toBeLessThanOrEqual(F.surfaceWidth());
+    }
+  });
+
+  it("prose keeps a reading limit however wide the window gets", () => {
+    for (const columns of [145, 241, 400]) {
+      setTermWidthOverride(columns);
+      // The one width that SHOULD stop early. A 240-character sentence is not
+      // a use of the space, it is a failure to have a measure.
+      expect(F.proseWidth(), `at ${columns}`).toBeLessThanOrEqual(88);
+    }
+  });
+
+  it("the frame still closes on both edges at full screen", () => {
+    for (const columns of [241, 400]) {
+      const lines = launchFrame(columns);
+      expect(new Set(lines.map(startsAt))).toEqual(new Set([2]));
+      expect(new Set(lines.map((l) => l.length)).size).toBe(1);
+    }
   });
 });
