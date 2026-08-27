@@ -279,34 +279,56 @@ describe("terminal color reply parser", () => {
   });
 });
 
-describe("the cursor is the one piece of terminal chrome Flow claims", () => {
-  // The standing rule is that Flow paints no terminal state — no background, no
-  // foreground, body text inherits — and that rule is why gear never leaves a
-  // terminal looking wrong after it exits. The cursor is the exception, and the
-  // distinction is about where the thing sits: a background is behind
-  // everything including the user's other programs, but the cursor is a glyph
-  // drawn on our row, inside our input field, between our two rules. Left
-  // alone it renders in whatever colour the terminal picked, which is a foreign
-  // accent in the middle of a themed frame.
+describe("the caret is painted, not requested", () => {
+  const { cursorCell } = require("../../../packages/orchestrator/src/bin/ui/theme");
+  const { findTheme, contrastRatio } = require("../../../packages/orchestrator/src/bin/ui/themes");
 
-  it("hands the cursor back on exit, always", () => {
-    // Session-scoped, like bracketed paste. This string is wired into both the
-    // ordinary exit and the crash handler.
-    expect(TERMINAL_THEME_RESET).toBe("\x1b]112\x07");
-  });
-
-  it("claims nothing at all in host mode", () => {
-    // "Terminal native" exists precisely so the host keeps every decision.
-    setTheme("auto");
-    expect(terminalThemeSeq()).toBe("");
-  });
-
-  it("never paints a background — that one is not ours", () => {
-    for (const name of ["flow", "gear-dark", "gear-orange-dark", "auto"]) {
+  it("asks the terminal for nothing at all", () => {
+    // OSC 12 asks a terminal to colour its own cursor, and a terminal may
+    // simply refuse — Warp does, which is how a foreign accent ended up sitting
+    // on the first character of the input on every frame while the sequence
+    // went out correctly. A request that can be ignored is not ownership.
+    for (const name of ["flow", "gear-orange-dark", "auto"]) {
       setTheme(name);
-      expect(withThemeBg("plain"), name).toBe("plain");
-      // OSC 11 sets the terminal background; it must never be emitted.
-      expect(terminalThemeSeq(), name).not.toContain("]11;");
+      expect(terminalThemeSeq(), name).toBe("");
     }
+    expect(TERMINAL_THEME_RESET).toBe(""); // nothing taken, nothing to give back
+  });
+
+  it("the character under the caret stays readable on every palette", () => {
+    // Asserted on the RULE, not on cursorCell's output. A test process has no
+    // tty, so cursorCell falls back to reverse video there — inspecting it
+    // would say nothing about the choice being made, which is how the first
+    // version of this test measured every theme against white and "found" a
+    // contrast failure that did not exist.
+    //
+    // The real failure it replaces: a luminance threshold picked by eye put
+    // white on Cyber Orange at ~2.9:1 — enough to pass a glance, not enough to
+    // read the character you are typing over.
+    const { caretForeground } = require("../../../packages/orchestrator/src/bin/ui/theme");
+    for (const theme of listThemes()) {
+      if (theme.useNativeColors) continue; // host mode uses the host's own pair
+      const accent = theme.slots.info.rgb;
+      const pick = caretForeground(accent);
+      const chosen = contrastRatio(accent, pick === "black" ? [0, 0, 0] : [255, 255, 255]);
+      const other = contrastRatio(accent, pick === "black" ? [255, 255, 255] : [0, 0, 0]);
+      // It must pick the better of the two, always — that is the whole rule.
+      expect(chosen, `${theme.name}: picked the worse foreground`).toBeGreaterThanOrEqual(other);
+      // And the better of the two must actually be readable.
+      expect(chosen, `${theme.name} caret contrast (${pick})`).toBeGreaterThanOrEqual(4);
+    }
+  });
+
+  it("still carries the character, never blanks it", () => {
+    setTheme("gear-violet-dark");
+    expect(stripAnsi(cursorCell("d"))).toBe("d");
+    expect(stripAnsi(cursorCell(""))).toBe(" "); // end of line still gets a block
+  });
+
+  it("host mode paints with reverse video, claiming no colour of its own", () => {
+    // Terminal-native exists so the host keeps every decision; reverse video is
+    // legible by definition because it is the host's own pair.
+    setTheme("auto");
+    expect(cursorCell("d")).toContain("\x1b[7m");
   });
 });

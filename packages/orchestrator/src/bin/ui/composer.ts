@@ -28,6 +28,7 @@ import {
   popoverSurface,
   codeSurface,
   chip,
+  cursorCell,
 } from "./theme";
 import { fmtTokens } from "./events";
 import { glyph } from "./glyphs";
@@ -485,10 +486,25 @@ export function renderComposer(state: ComposerState): RenderedBlock {
   const slice = state.input
     .slice(scroll, scroll + textW)
     .replace(/[\r\n\t\x00-\x08\x0b-\x1f]/g, " ");
+  // The caret is painted, not requested.
+  //
+  // OSC 12 asks the terminal to colour its own cursor, and a terminal is free
+  // to ignore that — Warp does, drawing its cursor in its own theme regardless,
+  // which left a foreign accent sitting on the first character of the input on
+  // every frame. Painting the cell needs nothing from the host and looks the
+  // same everywhere.
+  const at = Math.max(0, Math.min(state.caret - scroll, textW - 1));
+  const paint = (raw: string, dim: boolean): string => {
+    const head = raw.slice(0, at);
+    const cell = raw.slice(at, at + 1) || " ";
+    const tail = raw.slice(at + 1);
+    const wrapText = dim ? faint : text;
+    return `${head ? wrapText(head) : ""}${cursorCell(cell)}${tail ? wrapText(tail) : ""}`;
+  };
   const body =
     state.input.length === 0
-      ? faint(COMPOSER_PLACEHOLDER.padEnd(textW, " ").slice(0, textW))
-      : text(slice.padEnd(textW, " "));
+      ? paint(COMPOSER_PLACEHOLDER.padEnd(textW, " ").slice(0, textW), true)
+      : paint(slice.padEnd(textW, " "), false);
 
   // A rule above AND below. One rule is a divider — it separates the composer
   // from the transcript but leaves the input itself floating, so on a quiet

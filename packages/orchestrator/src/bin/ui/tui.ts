@@ -883,7 +883,15 @@ class Tui {
       const lines = block.split("\n").map((l) => withThemeBg(this.bound(l)));
       this.printedRows += lines.length;
       const comp = this.pinnedBlock();
-      this.region.printAbove(lines.join("\r\n"), comp.lines, comp.caretRow, comp.caretCol);
+      // The composer paints its own caret, so the hardware cursor stays
+      // hidden — two carets on one row is worse than either alone.
+      this.region.printAbove(
+        lines.join("\r\n"),
+        comp.lines,
+        comp.caretRow,
+        comp.caretCol,
+        this.ownsCaret(),
+      );
       return;
     }
     const added = this.pushLines(block);
@@ -898,7 +906,7 @@ class Tui {
    *  terminal's own scrollback). The alt-screen surface uses drawComposer() instead. */
   private renderRegion(): void {
     const comp = this.pinnedBlock();
-    this.region.render(comp.lines, comp.caretRow, comp.caretCol);
+    this.region.render(comp.lines, comp.caretRow, comp.caretCol, this.ownsCaret());
   }
 
   /** The pinned composer block, themed, width-bounded, and height-clamped to the viewport. The
@@ -929,6 +937,22 @@ class Tui {
    * Nothing is painted into the held space: they are ordinary blank rows, so a
    * pipe, NO_COLOR and a narrow window all see exactly what they should.
    */
+  /**
+   * Whether the block about to be drawn paints its own caret.
+   *
+   * Only the writing surface does. A picker, a permission card and the sessions
+   * panel all use the caret purely to park the terminal's cursor somewhere
+   * sensible, and hiding it there would take away the one signal that says the
+   * pane is focused at all.
+   */
+  private ownsCaret(): boolean {
+    // Only the writing surface paints a caret. Every other mode — pickers, the
+    // permission card, the sessions panel, the key sheet — parks the terminal's
+    // cursor somewhere sensible and needs it visible, because there it is the
+    // only signal that the pane has focus at all.
+    return this.mode === "input" || this.mode === "turn";
+  }
+
   private pinnedBlock(): { lines: string[]; caretRow: number; caretCol: number } {
     const comp = this.composerBlock();
     let lines = comp.lines.map((l) => withThemeBg(this.bound(l)));

@@ -65,11 +65,19 @@ export class BottomRegion {
   }
 
   /** Draw or redraw the pinned block in place. */
-  render(lines: string[], caretRow = lines.length - 1, caretCol = 0): void {
+  /**
+   * `ownCursor` leaves the hardware cursor hidden because the caller has
+   * painted its own caret into the block. Asking the terminal to colour its
+   * cursor (OSC 12) turned out to be a request terminals may simply refuse, so
+   * the caret is drawn as a cell instead — and two carets on one row is worse
+   * than either alone. The cursor is still PLACED, so the terminal's own idea
+   * of where input goes stays correct for anything reading it.
+   */
+  render(lines: string[], caretRow = lines.length - 1, caretCol = 0, ownCursor = false): void {
     ({ lines, caretRow } = this.fit(lines, caretRow));
     let s = HIDE;
     if (this.mounted) s += this.toTop() + this.bgFill + CLEAR_BELOW;
-    s += this.place(lines, caretRow, caretCol) + SHOW;
+    s += this.place(lines, caretRow, caretCol) + (ownCursor ? "" : SHOW);
     this.write(s);
     this.rows = lines.length;
     this.caretRow = caretRow;
@@ -77,13 +85,19 @@ export class BottomRegion {
   }
 
   /** Emit transcript text above the block (scrolls into history), then redraw. */
-  printAbove(text: string, lines: string[], caretRow = lines.length - 1, caretCol = 0): void {
+  printAbove(
+    text: string,
+    lines: string[],
+    caretRow = lines.length - 1,
+    caretCol = 0,
+    ownCursor = false,
+  ): void {
     let s = HIDE;
     if (this.mounted) s += this.toTop() + this.bgFill + CLEAR_BELOW;
     s += text.endsWith("\n") ? text : text + "\n";
     this.write(s);
     this.mounted = false; // old block is gone; draw a fresh one at the new bottom
-    this.render(lines, caretRow, caretCol);
+    this.render(lines, caretRow, caretCol, ownCursor);
   }
 
   /** Remove the block (on exit), leaving the transcript intact. */
