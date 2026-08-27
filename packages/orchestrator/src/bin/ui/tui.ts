@@ -591,12 +591,26 @@ class Tui {
           question: "Open new sessions in 4th gear from now on?",
           options: ["no - this session only", "yes - remember 4th gear"],
         });
-        const sticky = answer.trim().toLowerCase().startsWith("yes");
+        // Only an explicit answer is an answer. 4th gear's picker auto-continues
+        // after a minute so an autonomous run never parks on an unanswered
+        // question — and reading that timeout as "not yes" wrote a permanent
+        // decline for a choice nobody made, which, because a decline is never
+        // re-asked, locked the user out of it. A timeout leaves the question
+        // open; it will be asked again next time.
+        const said = answer.trim().toLowerCase();
+        const sticky = said.startsWith("yes");
+        const declined = said.startsWith("no");
+        if (!sticky && !declined) {
+          this.print(
+            `  ${ok(glyph("verified"))} ${muted("4th gear for this session")} ${faint("| not remembered -- /mode default to make it stick")}`,
+          );
+          return;
+        }
         savePrefs({ stickyFourthGear: sticky, ...(sticky ? { gear } : {}) });
         this.print(
           sticky
             ? `  ${accent(glyph("phase"))} ${muted("remembered --")} ${info("4th gear")} ${faint("at startup (change it any time with shift+tab)")}`
-            : `  ${ok(glyph("verified"))} ${muted("4th gear for this session only")}`,
+            : `  ${ok(glyph("verified"))} ${muted("4th gear for this session only")} ${faint("| /mode default if you change your mind")}`,
         );
         return;
       }
@@ -613,7 +627,11 @@ class Tui {
       { name: "/theme", desc: "Switch accent colors and light / dark mode", tag: "cosmetic" },
       { name: "/model", desc: "Choose model and provider", tag: "settings" },
       { name: "/sessions", desc: "Browse, resume, rename, archive & delete", tag: "history" },
-      { name: "/mode", desc: "Shift gears -- 1st | 2nd | 3rd | 4th | auto", tag: "shift+tab" },
+      {
+        name: "/mode",
+        desc: "Shift gears -- 1st | 2nd | 3rd | 4th | auto | default",
+        tag: "shift+tab",
+      },
       { name: "/diff", desc: "Inspect staged and uncommitted workspace changes", tag: "git" },
       { name: "/loop", desc: "Repeat a prompt while this session stays open" },
       { name: "/loops", desc: "List and manage this session's loops" },
@@ -1766,16 +1784,46 @@ class Tui {
         return true;
       }
       case "mode": {
-        const raw = (arg ?? "").toLowerCase();
+        const raw = (arg ?? "").toLowerCase().trim();
+        // `/mode default` pins the CURRENT gear as the startup gear, including
+        // 4th. There has to be a way in that is not the one-time prompt: a
+        // prompt you can miss, or that times out, is not a control — and the
+        // whole point of remembering 4th gear is that it must be chosen out
+        // loud, which typing this is.
+        if (raw === "default" || raw === "save" || raw === "keep") {
+          const current = engine.getPermissionMode();
+          savePrefs({ gear: current, ...(current === "gear-4" ? { stickyFourthGear: true } : {}) });
+          const label = modeInfo(current).label;
+          this.print(
+            `  ${accent(glyph("phase"))} ${muted("startup gear --")} ${info(label)}` +
+              (current === "gear-4"
+                ? ` ${warn("| full autonomy, every prompt bypassed")}`
+                : ` ${faint("(used for new sessions)")}`),
+          );
+          return true;
+        }
+        if (raw === "forget" || raw === "reset") {
+          savePrefs({ gear: undefined, stickyFourthGear: undefined });
+          this.print(
+            `  ${ok(glyph("verified"))} ${muted("startup gear cleared")} ${faint("| new sessions use the built-in default again")}`,
+          );
+          return true;
+        }
         const mode = configModeToPermissionMode(raw);
         if (mode) {
           this.cyclePermissionMode(mode);
         } else if (raw) {
           this.print(
-            `  ${warn("Usage:")} ${info("/mode")} ${faint("[1|2|3|4|auto] -- empty shifts up (same as /gear)")}`,
+            `  ${warn("Usage:")} ${info("/mode")} ${faint("[1|2|3|4|auto] -- empty shifts up; `default` pins the current gear for new sessions; `forget` clears it")}`,
           );
         } else {
           this.cyclePermissionMode(); // no arg -> advance the cycle, like Shift+Tab
+          const remembered = loadPrefs().gear;
+          if (remembered) {
+            this.print(
+              `  ${faint(`startup gear: ${modeInfo(remembered as never).label} -- /mode default to change it`)}`,
+            );
+          }
         }
         return true;
       }

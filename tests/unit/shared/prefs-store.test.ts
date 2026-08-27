@@ -90,3 +90,45 @@ describe("4th gear is the exception", () => {
     expect(mayPersistGear("gear-4", { gear: "gear-4" })).toBe(false);
   });
 });
+
+describe("a timeout is not an answer", () => {
+  // The bug this guards: 4th gear's picker auto-continues after a minute so an
+  // autonomous run never parks on an unanswered question. Reading that timeout
+  // as "not yes" wrote a permanent decline for a choice nobody made — and
+  // because a decline is never re-asked, it locked the user out of it.
+  const explicit = (answer: string): "yes" | "no" | "unanswered" => {
+    const said = answer.trim().toLowerCase();
+    if (said.startsWith("yes")) return "yes";
+    if (said.startsWith("no")) return "no";
+    return "unanswered";
+  };
+
+  test("only the two offered answers count", () => {
+    expect(explicit("yes - remember 4th gear")).toBe("yes");
+    expect(explicit("no - this session only")).toBe("no");
+  });
+
+  test("the auto-continue string leaves the question open", () => {
+    expect(
+      explicit(
+        "(no answer within 60s -- proceed with your best judgment and state the assumption)",
+      ),
+    ).toBe("unanswered");
+    expect(explicit("")).toBe("unanswered");
+    expect(explicit("   ")).toBe("unanswered");
+  });
+
+  test("an unanswered question must leave the pref unset, so it is asked again", () => {
+    savePrefs({ gear: "gear-3" });
+    // nothing written for stickyFourthGear
+    expect(loadPrefs().stickyFourthGear).toBeUndefined();
+    expect(shouldAskAboutFourthGear("gear-4")).toBe(true);
+  });
+
+  test("clearing lets a locked-out user back in", () => {
+    savePrefs({ stickyFourthGear: false });
+    expect(shouldAskAboutFourthGear("gear-4")).toBe(false); // stuck
+    savePrefs({ stickyFourthGear: undefined });
+    expect(shouldAskAboutFourthGear("gear-4")).toBe(true); // asked again
+  });
+});
