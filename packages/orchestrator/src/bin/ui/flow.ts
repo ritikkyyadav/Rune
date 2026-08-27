@@ -191,9 +191,22 @@ export function header(opts: FlowHeader): string {
   return ["", `${MARK}${row(left, right, surface - MARK.length)}`, hairline(surface)].join("\n");
 }
 
-/** The one piece of chrome in the product: a hairline the width of the window. */
+/**
+ * The one piece of chrome in the product — and it begins where the content
+ * begins.
+ *
+ * Every rule in this codebase used to start at column 0 while every line of
+ * content started at column 2, so each hairline overhung its own block by two
+ * characters on the left. The right edges agreed; the left edges never did.
+ * That is what made the frame look ragged no matter how carefully the right
+ * side was measured, and it was invisible for as long as rules were drawn with
+ * repeated dashes — a dashed line's ragged start reads as texture. Drawn as a
+ * continuous hairline it reads as exactly what it is: a misalignment.
+ *
+ * A rule spans MARK..width, the same span as the row above it.
+ */
 export function hairline(width = surfaceWidth()): string {
-  return faint(glyph("rule").repeat(Math.max(1, width)));
+  return `${MARK}${faint(glyph("rule").repeat(Math.max(1, width - MARK.length)))}`;
 }
 
 /** What the agent may do, and where that stops -- one amber clause, because
