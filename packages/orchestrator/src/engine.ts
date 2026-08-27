@@ -19,7 +19,12 @@ import {
   setRequireOsIsolation,
   setLspAutoFeedback,
 } from "@gear/tool-registry";
-import type { DashboardInfo, PluginCatalogEntry, SkillSearchHit } from "@gear/tool-registry";
+import type {
+  DashboardInfo,
+  PluginCatalogEntry,
+  SkillSearchHit,
+  ToolCallOutput,
+} from "@gear/tool-registry";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -106,6 +111,7 @@ import {
 } from "./session-replay";
 import { ContextEngine } from "./context-engine";
 import type { ContextBudget } from "./context-engine";
+import { getContextLimit, registerContextLimit, UNKNOWN_MODEL_CONTEXT_LIMIT } from "./tokenizer";
 import { createToolExecutionGuard } from "./security";
 import {
   AutoModeSafetyController,
@@ -122,8 +128,12 @@ import { EpisodicMemory } from "./memory/episodic";
 import { WorkingMemory } from "./memory/working";
 import { HookRunner } from "./hooks";
 import { createSubagentTool } from "./subagent";
+import { TeamBus } from "./team/bus";
+import { createTeamTool, renderTeamStatus } from "./team/tool";
+import { deriveRepoIdentity } from "./team/repo-key";
 import { createWorkerTool } from "./worker";
 import { createAskUserTool } from "./ask-user";
+import { BriefLedger, createReadBackTool, type Brief, type BriefHandler } from "./brief";
 import type { QuestionHandler } from "./ask-user";
 export type { QuestionHandler, UserQuestion } from "./ask-user";
 import { createLoopControlTool } from "./loop-control-tool";
@@ -434,6 +444,23 @@ export interface EngineConfig {
   interactive?: {
     auto?: boolean;
   };
+  /**
+   * Multi-instance teamwork ([team] in config.toml). OFF unless enabled —
+   * unit tests and embedders stay hermetic; the CLI passes the user's config
+   * through (default on there). When on, this session registers on a local
+   * shared bus (~/.gear/team.db) so concurrent Gear processes in the same
+   * repository see each other, exchange messages, and lease path claims.
+   * claimEnforcement: what a write into a PEER's leased scope does — "warn"
+   * (default) proceeds with a loud note in the tool result, "block" refuses
+   * pre-execution, "off" disables the check. dbPath overrides the bus
+   * location (tests).
+   */
+  team?: {
+    enabled?: boolean;
+    claimEnforcement?: "warn" | "block" | "off";
+    heartbeatSecs?: number;
+    dbPath?: string;
+  };
   /** Deep-research ("/research") defaults: depth, fan-out, sources. */
   research?: ResearchOptions;
   /** System Memory ("dreaming") — evergreen profile config (enabled/schedule/model/maxTokens). */
@@ -612,7 +639,15 @@ export class Engine {
   private permissionHandler?: PermissionHandler;
   private autoApprovalNotifier?: (notice: AutoApprovalNotice) => void;
   private questionHandler?: QuestionHandler;
+  /** Wired by the frontend so a read-back can be accepted, edited or queried.
+   *  Unwired means headless: the brief still stands, nothing blocks on it. */
+  private briefHandler?: BriefHandler;
+  /** The contract for the task in flight, and the only thing that can close it. */
+  private brief?: Brief;
+  private ledger?: BriefLedger;
   private contextEngine: ContextEngine;
+  /** Providers whose model catalog has already supplied real context windows. */
+  private contextCatalogWarmed = new Set<ProviderName>();
   private costTracker: CostTracker;
   private rateLimiter: ToolRateLimiter | null = null;
   private securityGuard: ReturnType<typeof createToolExecutionGuard> | null = null;
@@ -680,6 +715,12 @@ export class Engine {
   // The flat AgentLoop currently running a chat() turn — the target for
   // mid-turn steering (interject). Null when idle.
   private liveLoop: AgentLoop | null = null;
+  // ── Multi-instance teamwork ──
+  private teamBus: TeamBus | null = null;
+  private teamHeartbeat: ReturnType<typeof setInterval> | null = null;
+  /** worker label → team-bus claim id, released when the worker finishes. */
+  private teamWorkerClaims = new Map<string, string>();
+  private static readonly TEAM_WRITE_TOOLS = new Set(["write_file", "edit_file", "multi_edit"]);
   // Task spines per session: the run's goal/todos/ledger/handoff, kept outside
   // the transcript and persisted as `task_state` session events (latest wins).
   private taskStates = new Map<string, TaskStateStore>();
@@ -811,12 +852,12 @@ export class Engine {
         registry: subRegistry,
         model: this.config.model,
         provider: this.config.provider,
-        resolve: () => {
-          const light = this.resolveModelTier("light");
+        resolve: (tier) => {
+          const ref = this.resolveModelTier(tier ?? "light");
           return {
             gateway: this.gateway,
-            model: light.model,
-            provider: light.provider as ProviderName,
+            model: ref.model,
+            provider: ref.provider as ProviderName,
           };
         },
         toolResultProcessor: (ctx) => this.processToolResult(ctx),
@@ -856,6 +897,22 @@ export class Engine {
       }),
     );
 
+    // `read_back`: the contract, stated before any file is opened. It commits
+    // the agent's reading, what it will leave alone, and how it will know it is
+    // done — correctable in one keystroke, which is what makes a misread cost
+    // four seconds instead of a session. The criteria it names are the same
+    // objects the close checks off, and only evidence can move them.
+    this.registry.register(
+      createReadBackTool(
+        () => this.briefHandler,
+        () => this.currentGoal(),
+        (brief) => {
+          this.brief = brief;
+          this.ledger = new BriefLedger(brief);
+        },
+      ),
+    );
+
     // `worker`: write-capable parallel sub-agents with disjoint file
     // ownership — the lead splits implementation, workers run concurrently
     // (parallelSafe + ownership claims), the lead integrates and verifies.
@@ -864,17 +921,56 @@ export class Engine {
     this.registry.register(
       createWorkerTool({
         binaryPath: this.config.toolsBinaryPath,
-        resolve: () => {
-          const std = this.resolveModelTier("standard");
+        resolve: (tier) => {
+          const ref = this.resolveModelTier(tier ?? "standard");
           return {
             gateway: this.gateway,
-            model: std.model,
-            provider: std.provider as ProviderName,
+            model: ref.model,
+            provider: ref.provider as ProviderName,
           };
         },
         toolResultProcessor: (ctx) => this.processToolResult(ctx),
+        // Repo-wide worker leases: peers' workers stay off these files while
+        // the build runs (and this engine's workers respect THEIR leases).
+        team: {
+          claim: (paths, label) => this.teamWorkerClaim(paths, label),
+          release: (label) => this.teamWorkerRelease(label),
+        },
       }),
     );
+
+    // ── Multi-instance teamwork ──
+    // Register this session on the local shared bus so concurrent Gear
+    // processes in the same repository see each other, message each other,
+    // and lease path scopes. Engine-level default is OFF (hermetic tests and
+    // embedders); the CLI passes [team] through, which defaults to on.
+    if (this.config.team?.enabled === true) {
+      const identity = deriveRepoIdentity(this.config.workspaceRoot);
+      this.teamBus = TeamBus.open({
+        dbPath: this.config.team.dbPath ?? join(getGearHome(), "team.db"),
+        repoKey: identity.repoKey,
+        workspace: identity.workspace,
+        ...(identity.branch ? { branch: identity.branch } : {}),
+        model: this.config.model,
+        provider: this.config.provider,
+      });
+      if (this.teamBus) {
+        const beatMs = Math.max(5, this.config.team.heartbeatSecs ?? 15) * 1000;
+        this.teamHeartbeat = setInterval(() => {
+          this.teamBus?.heartbeat({
+            model: this.config.model,
+            provider: this.config.provider,
+          });
+          // Teammate mail reaches a RUNNING turn as a harness note at the
+          // next turn boundary; while idle it stays queued for the next chat.
+          this.deliverTeamMessages();
+        }, beatMs);
+        this.teamHeartbeat.unref?.();
+        // The steering wheel for the bus — only registered when a bus exists,
+        // so solo sessions never carry a dead tool in their prompt.
+        this.registry.register(createTeamTool({ getBus: () => this.teamBus }));
+      }
+    }
 
     // interactive_dashboard: live HTML dashboards in the browser. Main
     // registry only — sub-agents are read-only investigators and must not
@@ -1159,6 +1255,32 @@ export class Engine {
     this.questionHandler = handler;
   }
 
+  /** Wire the frontend's read-back confirmation UI. Without it the agent still
+   *  states its brief; it just cannot be corrected before the work starts. */
+  setBriefHandler(handler: BriefHandler): void {
+    this.briefHandler = handler;
+  }
+
+  /** The verbatim request the current task started from, for the read-back to
+   *  be checked against. Empty when no task has begun. */
+  private currentGoal(): string {
+    for (const store of this.taskStates.values()) {
+      const goal = store.snapshot?.()?.goal;
+      if (goal) return goal;
+    }
+    return "";
+  }
+
+  /** The brief for the task in flight, if one has been read back. */
+  currentBrief(): Brief | undefined {
+    return this.brief;
+  }
+
+  /** The ledger that closes it. Only evidence moves a criterion — see brief.ts. */
+  currentLedger(): BriefLedger | undefined {
+    return this.ledger;
+  }
+
   /**
    * Discover plugin bundles (.gear/plugins/<name>/plugin.json) once per
    * engine. Each bundle feeds the four extension loaders: skills (auto,
@@ -1405,6 +1527,14 @@ export class Engine {
         return { allowed: false, reason: decision.reason };
       }
 
+      // Cross-instance claims: in "block" mode a write into a live PEER's
+      // leased scope is refused before it executes ("warn" mode is advisory,
+      // applied to the result in processToolResult instead).
+      const teamDenial = this.checkTeamClaimBlock(toolName, args);
+      if (teamDenial) {
+        return { allowed: false, reason: teamDenial };
+      }
+
       let autoReview: AutoModeReview | undefined;
       if (this.permissions.getMode() === "auto") {
         autoReview = await autoRun.review({
@@ -1620,6 +1750,13 @@ export class Engine {
       }
     }
 
+    // Cross-instance awareness: record this write on the team bus, and warn
+    // when a live PEER claims (or just edited) the same path. This is the
+    // advisory lane — "block" mode refuses pre-execution in the permission
+    // chain instead. Runs for every loop sharing this processor, so worker
+    // sub-agents' writes are covered too.
+    withHooks = this.applyTeamWriteAdvisory(ctx, withHooks);
+
     if (!screened.warningAdded) return withHooks;
 
     try {
@@ -1657,6 +1794,182 @@ export class Engine {
     const r = undoLastGearCommit(this.config.workspaceRoot);
     if (r.ok) this.lastAutoCommitSha = null;
     return r;
+  }
+
+  // ─── Multi-instance teamwork ───
+
+  /** Deliver queued teammate messages into the live run as harness notes. */
+  private deliverTeamMessages(): void {
+    if (!this.teamBus || !this.liveLoop) return;
+    try {
+      for (const m of this.teamBus.drainInbox()) {
+        const who = m.fromIntent ? `${m.fromId} (working on: ${m.fromIntent})` : m.fromId;
+        this.liveLoop.injectHarnessNote(
+          `Message from Gear instance ${who} in this repository: ${m.body}\n` +
+            "(Peer coordination info — fold it into your work where relevant; this session's " +
+            "user instructions still take precedence. Reply with the team tool if useful.)",
+        );
+      }
+    } catch {
+      // teammate mail must never break the engine
+    }
+  }
+
+  /** Compact [Team] tail block for the lead loop. Null when solo. */
+  private renderTeamBlock(): string | null {
+    const bus = this.teamBus;
+    if (!bus) return null;
+    try {
+      const peers = bus.peers();
+      if (peers.length === 0) return null;
+      const lines = [
+        "[Team — other Gear instances working in this repository; maintained by the harness]",
+        `You are instance ${bus.instanceId}. Coordinate with the team tool (status/send/claim).`,
+      ];
+      for (const p of peers.slice(0, 5)) {
+        const bits = [
+          p.intent ? `working on: ${p.intent}` : "no stated intent",
+          p.sameTree
+            ? "SAME working tree — your edits can collide"
+            : `separate worktree${p.branch ? ` (${p.branch})` : ""}`,
+        ];
+        lines.push(`- ${p.id}: ${bits.join(" · ")}`);
+      }
+      if (peers.length > 5) lines.push(`  …+${peers.length - 5} more`);
+      const claims = bus.liveClaims().filter((c) => c.instanceId !== bus.instanceId);
+      for (const c of claims.slice(0, 6)) {
+        lines.push(
+          `  claimed by ${c.instanceId}: ${c.paths.join(", ")}${c.reason ? ` — ${c.reason}` : ""}`,
+        );
+      }
+      return lines.join("\n");
+    } catch {
+      return null;
+    }
+  }
+
+  /** Worker-lease claim on the team bus, honoring [team] claimEnforcement. */
+  private teamWorkerClaim(
+    paths: string[],
+    label: string,
+  ): { ok: boolean; error?: string; note?: string } {
+    const bus = this.teamBus;
+    const mode = this.config.team?.claimEnforcement ?? "warn";
+    if (!bus || mode === "off") return { ok: true };
+    const res = bus.claim(paths, { reason: "worker build" });
+    if (res.ok) {
+      if (res.id) this.teamWorkerClaims.set(label, res.id);
+      return { ok: true };
+    }
+    const c = res.conflict;
+    const peerBit = c.peer
+      ? `Gear instance ${c.peer.id}${c.peer.intent ? ` (working on: ${c.peer.intent})` : ""}`
+      : `Gear instance ${c.claim.instanceId}`;
+    const detail = `${c.claim.paths.join(", ")} is leased by ${peerBit}`;
+    if (mode === "block") {
+      return {
+        ok: false,
+        error:
+          `Team ownership conflict: ${detail}. Give this worker different files, ` +
+          "or coordinate via the team tool and retry when the lease ends.",
+      };
+    }
+    return {
+      ok: true,
+      note:
+        `[TEAM] Heads-up: ${detail}. This worker proceeded anyway ` +
+        '([team] claimEnforcement = "warn") — coordinate via the team tool to avoid conflicting edits.',
+    };
+  }
+
+  private teamWorkerRelease(label: string): void {
+    const id = this.teamWorkerClaims.get(label);
+    if (id) {
+      this.teamWorkerClaims.delete(label);
+      this.teamBus?.releaseClaim(id);
+    }
+  }
+
+  /** "block"-mode pre-execution refusal for writes into a peer's lease. */
+  private checkTeamClaimBlock(toolName: string, args: Record<string, unknown>): string | null {
+    const bus = this.teamBus;
+    if (!bus || (this.config.team?.claimEnforcement ?? "warn") !== "block") return null;
+    if (!Engine.TEAM_WRITE_TOOLS.has(toolName)) return null;
+    const path = typeof args.path === "string" ? args.path : "";
+    if (!path) return null;
+    const claim = bus.findConflictingClaim(path);
+    if (!claim) return null;
+    const who = claim.peer
+      ? `Gear instance ${claim.peer.id}${claim.peer.intent ? ` (working on: ${claim.peer.intent})` : ""}`
+      : `Gear instance ${claim.instanceId}`;
+    return (
+      `"${path}" is inside a scope leased by ${who} until ` +
+      `${new Date(claim.expiresAt).toLocaleTimeString()} — [team] claimEnforcement = "block" ` +
+      "refuses cross-instance writes there. Coordinate via the team tool, or work elsewhere."
+    );
+  }
+
+  /** Advisory lane: warn on peer-claimed/just-edited paths, record writes. */
+  private applyTeamWriteAdvisory(
+    ctx: ToolResultProcessArgs,
+    output: ToolCallOutput,
+  ): ToolCallOutput {
+    const bus = this.teamBus;
+    if (!bus || !output.success || !Engine.TEAM_WRITE_TOOLS.has(ctx.toolName)) return output;
+    const path = typeof ctx.args.path === "string" ? ctx.args.path : "";
+    if (!path) return output;
+    try {
+      const mode = this.config.team?.claimEnforcement ?? "warn";
+      let warning = "";
+      if (mode === "warn") {
+        const claim = bus.findConflictingClaim(path);
+        if (claim) {
+          const who = claim.peer
+            ? `${claim.peer.id}${claim.peer.intent ? ` (working on: ${claim.peer.intent})` : ""}`
+            : claim.instanceId;
+          warning =
+            `[TEAM] "${path}" is inside a scope claimed by Gear instance ${who}. ` +
+            "Your edit went through, but coordinate via the team tool before more changes there.";
+        }
+      }
+      if (!warning && mode !== "off") {
+        const recent = bus.recentPeerWrite(path);
+        if (recent) {
+          const secs = Math.max(1, Math.round((Date.now() - recent.at) / 1000));
+          warning =
+            `[TEAM] Gear instance ${recent.peer.id} also wrote "${recent.path}" ${secs}s ago — ` +
+            "you may be editing the same area concurrently. Check team status before continuing there.";
+        }
+      }
+      bus.noteWrite(path);
+      if (warning) return { ...output, result: `${warning}\n\n${output.result}` };
+    } catch {
+      // advisory only — never break a result
+    }
+    return output;
+  }
+
+  /** Team snapshot for /team and /status. */
+  getTeamStatus(): { enabled: boolean; instanceId?: string; peerCount: number; text: string } {
+    const bus = this.teamBus;
+    if (!bus || !bus.healthy) {
+      return {
+        enabled: false,
+        peerCount: 0,
+        text: "Team layer is off — no shared bus in this session ([team] enabled = false, or the bus failed to open).",
+      };
+    }
+    return {
+      enabled: true,
+      instanceId: bus.instanceId,
+      peerCount: bus.peers().length,
+      text: renderTeamStatus(bus),
+    };
+  }
+
+  /** The live team bus, or null (surfaces: /team send|claim|release). */
+  getTeamBus(): TeamBus | null {
+    return this.teamBus;
   }
 
   /** Whether [git] autoCommit is active (drives /undo messaging). */
@@ -2448,7 +2761,13 @@ export class Engine {
 
     // Load prior conversation history
     const priorEvents = this.sessions.getEvents(sessionId, 1);
-    const priorMessages: Message[] = eventsToMessages(priorEvents);
+    const priorMessages: Message[] = eventsToMessages(priorEvents, {
+      // Historical Codex rows predate exact block persistence and therefore
+      // lack the encrypted reasoning item required before each function call.
+      // Omitting only that legacy protocol is safer than poisoning every
+      // resume with a deterministic Responses API 400.
+      dropLegacyToolProtocol: session.provider === "codex",
+    });
 
     // Task spine: reuse the live store, else restore the latest snapshot from
     // the session log (resume across engine restarts), else start fresh. This
@@ -2503,6 +2822,16 @@ export class Engine {
     // renames and later turns never clobber it).
     if (!session.title && userMessage.trim()) {
       this.sessions.setTitleIfEmpty(sessionId, deriveSessionTitle(userMessage));
+    }
+
+    // Team intent: when this message starts a NEW task (same boundary rule as
+    // the spine — no open todos), peers see what this session is now doing.
+    // Mid-task steering leaves the advertised intent alone.
+    if (this.teamBus && !taskState.hasOpenTodos() && userMessage.trim()) {
+      this.teamBus.heartbeat({
+        sessionId,
+        intent: deriveSessionTitle(userMessage),
+      });
     }
 
     // Mark session as running for crash recovery
@@ -2617,6 +2946,7 @@ export class Engine {
         maxReplanNudges: reliability.maxReplanNudges,
         maxGreenfieldNudges: reliability.maxGreenfieldNudges,
         toolResultProcessor: this.processToolResult,
+        teamContext: this.teamBus ? () => this.renderTeamBlock() : undefined,
       },
       this.gateway,
       this.registry,
@@ -2630,6 +2960,9 @@ export class Engine {
     };
     // Expose the live loop so interject() can steer this run mid-flight.
     this.liveLoop = loop;
+    // Teammate mail queued while this session sat idle lands at the run's
+    // first turn boundary — before the model's first completion.
+    this.deliverTeamMessages();
 
     // ── Incremental persistence ──
     // Session events are written as the run PRODUCES them, not in one sweep at
@@ -3098,6 +3431,32 @@ export class Engine {
       pick = { model: ref.model, provider: ref.provider as ProviderName };
     }
     this.contextEngine?.setSummarizer(pick.model, pick.provider, session);
+    this.warmContextLimits(session.model, session.provider);
+  }
+
+  /**
+   * Best-effort: teach the tokenizer the active model's real context window
+   * from the provider catalog when the static family table only has its 100k
+   * fallback. This is fire-and-forget and deduplicated per provider so catalog
+   * latency can never delay a turn; an unreachable catalog leaves the safe
+   * static guess in place.
+   */
+  private warmContextLimits(model: string, providerName: ProviderName): void {
+    if (!model || this.contextCatalogWarmed.has(providerName)) return;
+    if (getContextLimit(model) !== UNKNOWN_MODEL_CONTEXT_LIMIT) return;
+    this.contextCatalogWarmed.add(providerName);
+    const provider = this.gateway.getProvider?.(providerName);
+    if (!provider?.listModels) return;
+    void provider
+      .listModels()
+      .then((models) => {
+        for (const entry of models) {
+          if (entry.contextLimit) registerContextLimit(entry.id, entry.contextLimit);
+        }
+      })
+      .catch(() => {
+        // Catalog unavailable: retain the static conservative limit.
+      });
   }
 
   /** Switch model and/or provider at runtime. */
@@ -3364,6 +3723,7 @@ export class Engine {
     skills: number;
     orgPolicy: { org?: string; fingerprint: string; source: string } | null;
     autoMode: ReturnType<AutoModeSafetyController["getStatus"]>;
+    team: { enabled: boolean; instanceId?: string; peerCount: number };
   } {
     return {
       model: this.config.model,
@@ -3392,6 +3752,14 @@ export class Engine {
           }
         : null,
       autoMode: this.autoModeSafety.getStatus(),
+      team: (() => {
+        const t = this.getTeamStatus();
+        return {
+          enabled: t.enabled,
+          ...(t.instanceId ? { instanceId: t.instanceId } : {}),
+          peerCount: t.peerCount,
+        };
+      })(),
     };
   }
 
