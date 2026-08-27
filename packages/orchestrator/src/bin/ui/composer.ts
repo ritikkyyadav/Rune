@@ -29,6 +29,7 @@ import {
   codeSurface,
   chip,
 } from "./theme";
+import { fmtTokens } from "./events";
 import { glyph } from "./glyphs";
 import { clampVisible, truncate, rule, visLen, wrap, railCard } from "./render";
 import * as F from "./flow";
@@ -1092,8 +1093,12 @@ export interface SessionRowView {
   id?: string;
   /** Resolved display title (already falls back to "untitled"). */
   title: string;
-  /** Pre-rendered meta line, e.g. "14 events | qwen3-coder:480b". */
+  /** Pre-rendered meta line — kept for callers that still supply only this. */
   meta: string;
+  /** Structured, so the panel can lay out columns instead of splitting a string. */
+  model?: string;
+  events?: number;
+  tokens?: number;
   workspace?: string;
   updatedAt?: string;
   /** Chronological divider supplied by the controller (Today, Yesterday, ...). */
@@ -1152,7 +1157,7 @@ export function renderSessionsPanel(
     searchRow = 1;
     searchCol = 4 + query.length;
   }
-  lines.push(`${PAD}${hairline("-".repeat(Math.max(3, maxWidth - 3)))}`);
+  lines.push(F.hairline(maxWidth));
 
   if (rows.length === 0) {
     const empty = query
@@ -1173,7 +1178,10 @@ export function renderSessionsPanel(
   // Each timeline card uses two rows and may introduce a day divider. Budget
   // for the worst case so short terminals never hide the selected card/footer.
   const fixedRows = lines.length + 2; // + range note + footer
-  const MAX = Math.max(1, Math.min(12, Math.floor((height - fixedRows) / 3)));
+  // One row each now, so a tall window shows a session list rather than a
+  // sample of one. The +3 budget covers the selected row's id line, a day
+  // divider and its blank.
+  const MAX = Math.max(1, Math.min(24, height - fixedRows - 3));
   const sel = Math.max(0, Math.min(selected, rows.length - 1));
   let start = 0;
   if (rows.length > MAX)
@@ -1182,65 +1190,129 @@ export function renderSessionsPanel(
 
   let caretRow = lines.length;
   let previousGroup = "";
+
+  // ─── One row per session ───
+  //
+  // It used to take two: a title row with a status pill hard right, and a
+  // detail row underneath carrying `~/Project/x | provider/model | N events |
+  // Nk tokens` with the clock time hard right. Three things went wrong with
+  // that, and none of them are about density.
+  //
+  // The two right-hand columns interleaved. Reading down the right edge gave
+  // `active now / 11:46 PM / saved / 9:22 PM / saved / 8:40 PM` — two different
+  // kinds of fact alternating in one column, which is the layout equivalent of
+  // two people talking at once.
+  //
+  // `saved` was on every row. A state that every row shares is not information;
+  // it is twelve repetitions of the default. Only the exceptions earn ink: the
+  // live session gets a mark, an archived one says so, and "saved" says nothing
+  // because saved is what a session is.
+  //
+  // And the id sat in the most valuable position on the screen — eight hex
+  // characters before the title, on every row, in the column the eye lands on
+  // first. It moves to the selected row, where it is occasionally wanted for
+  // `gear resume <id>`, and is off the other rows entirely.
+  //
+  // What is left is a real grid: title left, context dim in the middle, time
+  // right. Down the right edge is only ever time.
+  const TIME_W = 8;
+  const stampOf = (iso?: string): string => {
+    if (!iso) return "";
+    const then = new Date(iso).getTime();
+    if (!Number.isFinite(then)) return "";
+    const mins = Math.floor((Date.now() - then) / 60000);
+    // Inside the hour, elapsed reads faster than a clock face — "4m" answers
+    // "is this the one I just had open" without the subtraction. Past that the
+    // day divider already carries the date, so a clock time is unambiguous.
+    if (mins < 1) return "now";
+    if (mins < 60) return `${mins}m`;
+    return new Date(then).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  };
+  /** `minimax/minimax-m3:free` -> `minimax-m3:free`. The provider is already
+   *  implied by the model name in every case where it is not noise. */
+  const shortModel = (m?: string): string => (m ? (m.split("/").pop() ?? m) : "");
+  /** `~/Project/evolab2` -> `evolab2`. The parent is the same for every row. */
+  const projectOf = (w?: string): string =>
+    w ? (shortPath(w).split("/").filter(Boolean).pop() ?? "") : "";
+
   view.forEach((r, i) => {
     const idx = start + i;
     const on = idx === sel;
     const group = r.group ?? "";
     if (group && group !== previousGroup) {
-      const label = muted(group.toLowerCase());
-      lines.push(
-        clampVisible(
-          `${PAD}${label} ${hairline("-".repeat(Math.max(3, maxWidth - visLen(label) - 4)))}`,
-          maxWidth,
-        ),
-      );
+      // A quiet label, not a rule with a word in it. The blank column to its
+      // right is what separates the days; drawing a line there as well says the
+      // same thing twice and turns a divider into texture.
+      if (lines.length > (maxWidth >= 84 ? 2 : 3)) lines.push("");
+      lines.push(clampVisible(`${PAD}${faint(group.toLowerCase())}`, maxWidth));
       previousGroup = group;
     }
 
-    const marker = on ? brand(glyph("selection")) : " ";
-    const dot = r.current ? brand(glyph("live")) : faint("o");
-    const id = faint(r.id ? r.id.slice(0, 8) : "session");
-    const pill = r.current
-      ? chip("brand", " active now ")
-      : opts.view === "archived"
-        ? chip("muted", " archived ")
-        : chip("ok", " saved ");
-    const titleBudget = Math.max(10, maxWidth - visLen(pill) - 20);
-    const title = on
-      ? bold(text(truncate(r.title, titleBudget)))
-      : text(truncate(r.title, titleBudget));
-    const prefix = `${PAD}${marker} ${dot} ${id}  ${title}`;
-    const titleGap = " ".repeat(Math.max(1, maxWidth - visLen(prefix) - visLen(pill)));
-    const titleRow = clampVisible(`${prefix}${titleGap}${pill}`, maxWidth);
+    const marker = on ? info(glyph("selection")) : " ";
+    // The live session is the only row that earns a mark. Archived rows say so
+    // in the context column; everything else is simply a session.
+    const dot = r.current ? info(glyph("live")) : " ";
 
-    const workspace = r.workspace ? shortPath(r.workspace) : "";
-    const detail = [workspace, r.meta].filter(Boolean).join(" | ");
-    const stamp = r.updatedAt
-      ? new Date(r.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-      : "";
-    const detailPrefix = `${PAD}    ${faint(truncate(detail, Math.max(8, maxWidth - stamp.length - 8)))}`;
-    const detailGap = stamp
-      ? " ".repeat(Math.max(1, maxWidth - visLen(detailPrefix) - stamp.length))
-      : "";
-    const detailRow = clampVisible(`${detailPrefix}${detailGap}${faint(stamp)}`, maxWidth);
+    const context = [
+      projectOf(r.workspace),
+      shortModel(r.model),
+      r.tokens ? fmtTokens(r.tokens) : "",
+      opts.view === "archived" ? "archived" : "",
+    ]
+      .filter(Boolean)
+      .join(` ${glyph("observed")} `);
+
+    const stamp = stampOf(r.updatedAt);
+    const lead = `${PAD}${marker} ${dot} `;
+    const tail = stamp ? stamp.padStart(TIME_W) : " ".repeat(TIME_W);
+    // The context column gets a third of the row, the title takes the rest —
+    // and on a narrow terminal the context yields entirely rather than
+    // squeezing the title down to nothing.
+    const room = Math.max(10, maxWidth - visLen(lead) - TIME_W - 2);
+    const ctxBudget = room >= 46 ? Math.min(34, Math.floor(room / 2.4)) : 0;
+    const titleBudget = Math.max(8, room - (ctxBudget ? ctxBudget + 2 : 0));
+    const titleText = truncate(r.title, titleBudget);
+    const title = on ? bold(text(titleText)) : text(titleText);
+    const ctxText = ctxBudget ? truncate(context, ctxBudget) : "";
+    const ctx = ctxText ? faint(ctxText) : "";
+
+    const titleCell = titleText.padEnd(titleBudget).slice(titleText.length);
+    let row = `${lead}${title}${titleCell}`;
+    if (ctx) row += `  ${ctx}${" ".repeat(Math.max(0, ctxBudget - visLen(ctxText)))}`;
+    const gap = Math.max(1, maxWidth - visLen(row) - visLen(tail));
+    row += `${" ".repeat(gap)}${faint(tail)}`;
+
     if (on) caretRow = lines.length;
-    lines.push(on ? selection(titleRow) : titleRow, on ? selection(detailRow) : detailRow);
+    lines.push(on ? selection(clampVisible(row, maxWidth)) : clampVisible(row, maxWidth));
   });
 
   if (rows.length > view.length) {
     lines.push(`${PAD}${faint(`${start + 1}-${start + view.length} of ${rows.length} sessions`)}`);
   }
 
-  const hint = opts.pendingDelete
-    ? `${warn("press d again to delete")} ${faint("|")} ${faint("esc cancels")}`
-    : opts.view === "archived"
-      ? faint(
-          "up/down navigate | enter resume | u restore | ctrl+d twice to delete | / search | tab active | esc close",
-        )
-      : faint(
-          "up/down navigate | enter resume | r rename | a archive | ctrl+d twice to delete | / search | tab archived | esc close",
-        );
-  lines.push(`${PAD}${hint}`);
+  // Four hints, not eight. A footer listing every key is a wall that gets read
+  // once and skipped forever; these are the ones you reach for on this screen,
+  // and `?` already opens the full key sheet. `esc close` is in the top bar.
+  // The selected session's id rides the footer rather than a line of its own
+  // under the row. Inline, it broke the grid's rhythm and — worse — moved every
+  // row below it each time the selection moved, so the list shifted under the
+  // cursor while you were reading it. Down here it is available for
+  // `gear resume <id>` and costs the list nothing.
+  const sep2 = faint(` ${glyph("observed")} `);
+  const selectedId = rows[sel]?.id ? faint(rows[sel]!.id!) : "";
+  const keys = opts.pendingDelete
+    ? warn("press d again to delete") + sep2 + faint("esc cancels")
+    : [
+        keyHint("enter", "resume"),
+        keyHint("/", "search"),
+        opts.view === "archived" ? keyHint("u", "restore") : keyHint("a", "archive"),
+        keyHint("tab", opts.view === "archived" ? "active" : "archived"),
+      ].join(sep2);
+  const footLeft = `${PAD}${keys}`;
+  const footGap = selectedId
+    ? " ".repeat(Math.max(2, maxWidth - visLen(footLeft) - visLen(selectedId)))
+    : "";
+  lines.push(clampVisible(`${footLeft}${footGap}${selectedId}`, maxWidth));
 
   return {
     lines,

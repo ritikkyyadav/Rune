@@ -103,6 +103,10 @@ describe("ui/composer renderSessionsPanel", () => {
     expect(plain).toContain("composer");
     expect(plain).toContain("today");
     expect(plain).toContain("abcdef12");
-    expect(plain).toContain("/tmp/gear");
+    // The row shows the project, not the whole path: every row in a session
+    // list tends to share a parent, so the parent is the part that carries no
+    // information. Search still matches the full path.
+    expect(plain).toContain("gear");
+    expect(plain).not.toContain("/tmp/gear");
   });
 });
