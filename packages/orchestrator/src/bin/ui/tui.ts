@@ -86,6 +86,8 @@ import {
 } from "./composer";
 import { GEAR_MARK, renderBanner } from "./banner";
 import { renderStatus } from "./status";
+import { renderReadBack } from "./read-back";
+import type { Brief } from "../../brief";
 import { TurnRenderer, userBlock, renderReplay, HEX } from "./turn";
 import { truncate, clampVisible, setTermWidthOverride } from "./render";
 import { renderResearchPlan, renderClarifyingQuestions, formatResearchEvent } from "./research";
@@ -389,6 +391,7 @@ class Tui {
     // keeps them visible in the transcript without pausing the run (v2 spec).
     engine.setAutoApprovalNotifier?.((notice) => this.print(autoApprovedChip(notice)));
     engine.setQuestionHandler(this.questionHandler);
+    engine.setBriefHandler(this.briefHandler);
 
     // Poll cheaply; claimDueLoopTask() returns null while nothing is due and
     // runDueLoopTask() itself refuses to start unless the composer is idle.
@@ -3501,6 +3504,32 @@ class Tui {
       }
       this.scheduleDraw();
     });
+
+  /**
+   * The read-back, made correctable. The block is committed to scrollback first
+   * — it is the contract, and it stands whether or not they answer — and then
+   * the same picker that serves ask_user takes the one keystroke that accepts,
+   * corrects, or questions it.
+   *
+   * "edit" and "ask" both come back as NOT accepted with the person's own words
+   * attached, which sends the model around to read back again rather than
+   * letting it start on a brief nobody agreed to. That loop is the entire
+   * mechanism: a misread costs four seconds here instead of a session.
+   */
+  private briefHandler = async (
+    brief: Brief,
+  ): Promise<{ accepted: boolean; edited?: Brief; note?: string }> => {
+    this.print(renderReadBack(brief));
+    const answer = await this.questionHandler({
+      question: "Work to this?",
+      options: ["go", "edit — I'll say what's wrong", "ask me something first"],
+    });
+    const picked = answer.trim().toLowerCase();
+    if (picked === "go" || picked.startsWith("go")) return { accepted: true };
+    // Anything else is a correction, including free text they typed instead of
+    // choosing — that text IS the correction and must reach the model verbatim.
+    return { accepted: false, note: answer.trim() };
+  };
 
   /** Resolve the pending ask_user question and restore the turn UI. */
   private finishQuestion(answer: string): void {
