@@ -101,10 +101,20 @@ describe("Flow six-role palette", () => {
 });
 
 describe("no background ownership", () => {
-  it("never emits OSC foreground/background/cursor mutation", () => {
-    expect(terminalThemeSeq()).toBe("");
-    expect(TERMINAL_THEME_RESET).toBe("");
-    expect(themeBgSeq()).toBe("");
+  it("never emits an OSC foreground or background mutation", () => {
+    // Narrowed deliberately, and only by one glyph. The background (OSC 11) and
+    // the foreground (OSC 10) belong to the user: they sit behind and beneath
+    // everything, including their other programs, and claiming either is why a
+    // TUI leaves a terminal looking wrong. The cursor is different — it is a
+    // mark drawn on our row, inside our own input field, and inheriting it puts
+    // a foreign accent in the middle of a themed frame. It is claimed, and
+    // handed straight back on exit; see the cursor describe below.
+    for (const name of ["flow", "gear-dark", "gear-orange-dark", "auto"]) {
+      setTheme(name);
+      expect(terminalThemeSeq(), name).not.toContain("]10;");
+      expect(terminalThemeSeq(), name).not.toContain("]11;");
+      expect(themeBgSeq(), name).toBe("");
+    }
   });
 
   it("all former surface APIs are background-free pass-throughs", () => {
@@ -266,5 +276,37 @@ describe("terminal color reply parser", () => {
     expect(ansi256ToRgb(0)).toEqual([0, 0, 0]);
     expect(ansi256ToRgb(15)).toEqual([255, 255, 255]);
     expect(ansi256ToRgb(196)).toEqual([255, 0, 0]);
+  });
+});
+
+describe("the cursor is the one piece of terminal chrome Flow claims", () => {
+  // The standing rule is that Flow paints no terminal state — no background, no
+  // foreground, body text inherits — and that rule is why gear never leaves a
+  // terminal looking wrong after it exits. The cursor is the exception, and the
+  // distinction is about where the thing sits: a background is behind
+  // everything including the user's other programs, but the cursor is a glyph
+  // drawn on our row, inside our input field, between our two rules. Left
+  // alone it renders in whatever colour the terminal picked, which is a foreign
+  // accent in the middle of a themed frame.
+
+  it("hands the cursor back on exit, always", () => {
+    // Session-scoped, like bracketed paste. This string is wired into both the
+    // ordinary exit and the crash handler.
+    expect(TERMINAL_THEME_RESET).toBe("\x1b]112\x07");
+  });
+
+  it("claims nothing at all in host mode", () => {
+    // "Terminal native" exists precisely so the host keeps every decision.
+    setTheme("auto");
+    expect(terminalThemeSeq()).toBe("");
+  });
+
+  it("never paints a background — that one is not ours", () => {
+    for (const name of ["flow", "gear-dark", "gear-orange-dark", "auto"]) {
+      setTheme(name);
+      expect(withThemeBg("plain"), name).toBe("plain");
+      // OSC 11 sets the terminal background; it must never be emitted.
+      expect(terminalThemeSeq(), name).not.toContain("]11;");
+    }
   });
 });

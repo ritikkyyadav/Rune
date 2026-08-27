@@ -963,6 +963,11 @@ class Tui {
    *  opened Gear — and asserting a background is the single largest reason a
    *  TUI looks broken on someone else's theme. Inherit; do not assert. */
   private enterInline(): void {
+    // The cursor is the one piece of terminal chrome that sits inside our own
+    // field, so it takes the theme's accent — see terminalThemeSeq. Handed back
+    // on exit and by the crash handler; a terminal that ignores OSC 12 ignores
+    // it harmlessly.
+    process.stdout.write(terminalThemeSeq());
     this.printBanner();
   }
 
