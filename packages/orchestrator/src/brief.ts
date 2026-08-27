@@ -323,3 +323,203 @@ export function createReadBackTool(
     },
   };
 }
+
+// ─── The check log, and where a rung actually comes from ───
+//
+// The first draft of this file let the model name a rung and made the ledger
+// argue with it. That was the wrong shape: an argument the model can restate
+// more confidently is an argument it eventually wins. So the model does not
+// name rungs at all any more. It points at a criterion and cites a command it
+// ran, and the RUNTIME decides what that citation is worth — from its own
+// record of what actually happened when that command ran.
+//
+// The mapping falls out of the log with no judgement involved:
+//
+//   ran once, passed              -> observed    (it appeared in output)
+//   ran twice or more, all passed -> reproduced  (made to happen on purpose)
+//   failed before, passes now     -> verified    (the parent-commit rule, met)
+//   last run failed               -> refused     (nothing to record)
+//   never ran                     -> refused     (a citation to nothing)
+//
+// The `verified` line is the one that matters. It is exactly the parent-commit
+// rule expressed as something the runtime can check by itself: the same command
+// is on record as having failed and then passed. A model cannot fabricate
+// either half, because it never touched the verdict — the exit code did.
+
+export interface CheckRun {
+  command: string;
+  passed: boolean;
+  at: number;
+  summary?: string;
+}
+
+/** Every check the runtime ran this session, with the verdict IT read. */
+export class CheckLog {
+  private readonly runs: CheckRun[] = [];
+
+  record(run: CheckRun): void {
+    this.runs.push(run);
+  }
+
+  /** Runs of one command, oldest first. Normalised on whitespace only — a
+   *  command is identified by what was executed, not by how it was spaced. */
+  history(command: string): CheckRun[] {
+    const key = normalizeCommand(command);
+    return this.runs.filter((r) => normalizeCommand(r.command) === key);
+  }
+
+  get all(): readonly CheckRun[] {
+    return this.runs;
+  }
+}
+
+export function normalizeCommand(command: string): string {
+  return command.trim().replace(/\s+/g, " ");
+}
+
+export type RungVerdict =
+  { ok: true; rung: ClaimRung; evidence: Evidence } | { ok: false; reason: string };
+
+/**
+ * What a cited command is worth. Pure, and derived only from the runtime's own
+ * record — nothing the model wrote reaches this function.
+ */
+export function rungForCommand(log: CheckLog, command: string): RungVerdict {
+  const runs = log.history(command);
+  if (runs.length === 0) {
+    return {
+      ok: false,
+      reason:
+        `nothing on record for \`${normalizeCommand(command)}\`. Run it first — a citation to a ` +
+        `command that never ran is not evidence.`,
+    };
+  }
+  const last = runs[runs.length - 1]!;
+  if (!last.passed) {
+    return {
+      ok: false,
+      reason:
+        `\`${normalizeCommand(command)}\` last FAILED${last.summary ? ` (${last.summary})` : ""}. ` +
+        `A criterion cannot be settled by a check that is failing.`,
+    };
+  }
+  const failedBefore = runs.slice(0, -1).find((r) => !r.passed);
+  const base: Evidence = {
+    source: normalizeCommand(command),
+    detail: last.summary,
+  };
+  if (failedBefore) {
+    return {
+      ok: true,
+      rung: "verified",
+      evidence: {
+        ...base,
+        parentCommitFailed: true,
+        detail: joinDetail(last.summary, "failed earlier in this session, passes now"),
+      },
+    };
+  }
+  if (runs.length >= 2) {
+    return {
+      ok: true,
+      rung: "reproduced",
+      evidence: { ...base, detail: joinDetail(last.summary, `passed ${runs.length} times`) },
+    };
+  }
+  return { ok: true, rung: "observed", evidence: base };
+}
+
+function joinDetail(a: string | undefined, b: string): string {
+  return a ? `${a} — ${b}` : b;
+}
+
+export const RECORD_EVIDENCE_SCHEMA: ToolSchema = {
+  name: "record_evidence",
+  version: "1.0.0",
+  description:
+    "Cite a command you already ran as evidence for one of your read_back criteria. You choose " +
+    "WHICH criterion the command speaks to; you do not get to say what it proves — the runtime " +
+    "reads its own record of that command and decides. A command that never ran, or that is " +
+    "currently failing, is refused. A command that failed earlier and passes now is what earns " +
+    "'verified'; anything else is weaker, and that is the honest answer. Call this as you go, " +
+    "not at the end.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      criterion: {
+        type: "number",
+        description: "0-based index of the done_when criterion this speaks to.",
+      },
+      command: {
+        type: "string",
+        description: "The command you ran, verbatim, exactly as you ran it.",
+      },
+    },
+    required: ["criterion", "command"],
+  },
+  permissionLevel: "auto",
+  category: "read",
+};
+
+export function createRecordEvidenceTool(
+  getLedger: () => BriefLedger | undefined,
+  getLog: () => CheckLog,
+): ToolHandler {
+  return {
+    schema: RECORD_EVIDENCE_SCHEMA,
+
+    validate: (args) => {
+      if (typeof args.criterion !== "number" || !Number.isInteger(args.criterion)) {
+        return { valid: false, error: "criterion must be the 0-based index of a done_when item" };
+      }
+      if (!String(args.command ?? "").trim()) {
+        return { valid: false, error: "command must be the command you ran, verbatim" };
+      }
+      return { valid: true };
+    },
+
+    execute: async (input: ToolCallInput): Promise<ToolCallOutput> => {
+      const start = performance.now();
+      const reply = (result: string, success = true): ToolCallOutput => ({
+        callId: input.callId,
+        toolName: input.toolName,
+        success,
+        result,
+        durationMs: Math.round(performance.now() - start),
+      });
+
+      const ledger = getLedger();
+      if (!ledger) {
+        return reply(
+          "No brief in play. Call read_back first — criteria have to exist before evidence can " +
+            "settle one.",
+        );
+      }
+      const index = Number((input.args ?? {}).criterion);
+      const command = String((input.args ?? {}).command ?? "");
+      const verdict = rungForCommand(getLog(), command);
+      if (!verdict.ok) return reply(verdict.reason);
+
+      const moved = ledger.record(index, verdict.rung, verdict.evidence);
+      if (!moved.ok) return reply(moved.reason);
+      return reply(
+        `Recorded as ${verdict.rung}: ${RUNG_MEANING[verdict.rung]} ` +
+          `(${ledger.met} of ${ledger.total} criteria verified)`,
+      );
+    },
+  };
+}
+
+/** The one quotable line from a check's output — the tail, where failures live. */
+export function summarizeCheck(raw: string): string | undefined {
+  const lines = raw
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return undefined;
+  // Prefer a line that carries counts; otherwise the last line, because that is
+  // where test runners put their verdict.
+  const counted = [...lines].reverse().find((l) => /\d+\s*(\/|of|pass|fail|error)/i.test(l));
+  const chosen = counted ?? lines[lines.length - 1]!;
+  return chosen.length > 90 ? chosen.slice(0, 87) + "..." : chosen;
+}

@@ -91,8 +91,12 @@ describe("the ledger — what it takes to move a criterion", () => {
 
   test("weaker rungs need evidence but not a parent commit", () => {
     const l = new BriefLedger(brief());
-    expect(l.record(0, "observed", { source: "curl -i localhost/x", detail: "HTTP 429" }).ok).toBe(true);
-    expect(l.record(1, "reproduced", { source: "bun test --rerun 2", detail: "failed twice" }).ok).toBe(true);
+    expect(l.record(0, "observed", { source: "curl -i localhost/x", detail: "HTTP 429" }).ok).toBe(
+      true,
+    );
+    expect(
+      l.record(1, "reproduced", { source: "bun test --rerun 2", detail: "failed twice" }).ok,
+    ).toBe(true);
     // …but neither counts as done.
     expect(l.met).toBe(0);
     expect(l.complete).toBe(false);
@@ -108,7 +112,9 @@ describe("the ledger — what it takes to move a criterion", () => {
   });
 
   test("an unknown criterion cannot be invented mid-run", () => {
-    expect(new BriefLedger(brief()).record(9, "verified", { source: "x", parentCommitFailed: true }).ok).toBe(false);
+    expect(
+      new BriefLedger(brief()).record(9, "verified", { source: "x", parentCommitFailed: true }).ok,
+    ).toBe(false);
   });
 
   test("complete means every criterion verified — nothing else", () => {
@@ -156,15 +162,25 @@ describe("the claim ladder", () => {
 
 describe("the read_back tool", () => {
   test("refuses a brief with no criteria — a contract with no terms is not one", () => {
-    const tool = createReadBackTool(() => undefined, () => "req", () => {});
+    const tool = createReadBackTool(
+      () => undefined,
+      () => "req",
+      () => {},
+    );
     expect(tool.validate({ reading: "I think you want X" }).valid).toBe(false);
     expect(tool.validate({ reading: "", done_when: ["x"] }).valid).toBe(false);
-    expect(tool.validate({ reading: "I think you want X", done_when: ["tests pass"] }).valid).toBe(true);
+    expect(tool.validate({ reading: "I think you want X", done_when: ["tests pass"] }).valid).toBe(
+      true,
+    );
   });
 
   test("headless still records the brief rather than skipping it", async () => {
     let captured: Brief | null = null;
-    const tool = createReadBackTool(() => undefined, () => "the ask", (b) => (captured = b));
+    const tool = createReadBackTool(
+      () => undefined,
+      () => "the ask",
+      (b) => (captured = b),
+    );
     const out = await tool.execute({
       callId: "c1",
       toolName: "read_back",
@@ -194,14 +210,188 @@ describe("the read_back tool", () => {
   test("an edited read-back is what gets recorded, not what the model proposed", async () => {
     let captured: Brief | null = null;
     const tool = createReadBackTool(
-      () => async (b) => ({ accepted: true, edited: { ...b, reading: "You want the p99 on /search" } }),
+      () => async (b) => ({
+        accepted: true,
+        edited: { ...b, reading: "You want the p99 on /search" },
+      }),
       () => "make it faster",
       (b) => (captured = b),
     );
     await tool.execute({
-      callId: "c1", toolName: "read_back",
+      callId: "c1",
+      toolName: "read_back",
       args: { reading: "You want the cold start fixed", done_when: ["under 1s"] },
     } as any);
     expect(captured!.reading).toBe("You want the p99 on /search");
+  });
+});
+
+// ─── The rung comes from the runtime, never from the model ───
+// The first version of this let the model name a rung and made the ledger
+// argue. An argument the model can restate more confidently is one it
+// eventually wins, so the model no longer names rungs at all: it points at a
+// criterion and cites a command, and the log decides what that is worth.
+
+import {
+  CheckLog,
+  rungForCommand,
+  createRecordEvidenceTool,
+  summarizeCheck,
+} from "../../../packages/orchestrator/src/brief";
+
+function logWith(runs: Array<[string, boolean, string?]>): CheckLog {
+  const log = new CheckLog();
+  runs.forEach(([command, passed, summary], i) => log.record({ command, passed, at: i, summary }));
+  return log;
+}
+
+describe("what a cited command is worth", () => {
+  test("a command that never ran is not evidence", () => {
+    const v = rungForCommand(logWith([]), "bun test");
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.reason).toContain("never ran");
+  });
+
+  test("a currently-failing command cannot settle anything", () => {
+    const v = rungForCommand(logWith([["bun test", false, "1 failed"]]), "bun test");
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.reason).toContain("FAILED");
+  });
+
+  test("one passing run is `observed` — no more", () => {
+    const v = rungForCommand(logWith([["bun test", true, "44/44"]]), "bun test");
+    expect(v.ok).toBe(true);
+    if (v.ok) {
+      expect(v.rung).toBe("observed");
+      expect(v.evidence.parentCommitFailed).toBeUndefined();
+    }
+  });
+
+  test("two passing runs is `reproduced` — still not done", () => {
+    const v = rungForCommand(
+      logWith([
+        ["bun test", true],
+        ["bun test", true],
+      ]),
+      "bun test",
+    );
+    expect(v.ok).toBe(true);
+    if (v.ok) expect(v.rung).toBe("reproduced");
+  });
+
+  test("failed-then-passing is `verified` — the parent-commit rule, met by the log itself", () => {
+    const v = rungForCommand(
+      logWith([
+        ["bun test tests/http", false, "1 failed"],
+        ["bun test tests/http", true, "44/44"],
+      ]),
+      "bun test tests/http",
+    );
+    expect(v.ok).toBe(true);
+    if (v.ok) {
+      expect(v.rung).toBe("verified");
+      expect(v.evidence.parentCommitFailed).toBe(true);
+    }
+  });
+
+  test("a command is identified by what ran, not by how it was spaced", () => {
+    const v = rungForCommand(logWith([["bun  test   tests/http", true]]), "bun test tests/http");
+    expect(v.ok).toBe(true);
+  });
+});
+
+describe("record_evidence — the model picks the criterion, never the rung", () => {
+  test("it cannot upgrade a citation by asking nicely", async () => {
+    const b = brief();
+    const ledger = new BriefLedger(b);
+    const log = logWith([["bun test", true, "44/44"]]);
+    const tool = createRecordEvidenceTool(
+      () => ledger,
+      () => log,
+    );
+
+    // The schema offers no rung field at all — there is nothing to inflate.
+    const props = (tool.schema.inputSchema as any).properties;
+    expect(Object.keys(props).sort()).toEqual(["command", "criterion"]);
+
+    const out = await tool.execute({
+      callId: "c1",
+      toolName: "record_evidence",
+      args: { criterion: 0, command: "bun test" },
+    } as any);
+    expect(out.result).toContain("observed"); // one pass, so: observed
+    expect(ledger.met).toBe(0); // and NOT met
+    expect(ledger.complete).toBe(false);
+  });
+
+  test("the same citation becomes `verified` once the log shows it failing first", async () => {
+    const ledger = new BriefLedger(brief());
+    const log = logWith([
+      ["bun test", false, "1 failed"],
+      ["bun test", true, "44/44"],
+    ]);
+    const tool = createRecordEvidenceTool(
+      () => ledger,
+      () => log,
+    );
+    const out = await tool.execute({
+      callId: "c1",
+      toolName: "record_evidence",
+      args: { criterion: 0, command: "bun test" },
+    } as any);
+    expect(out.result).toContain("verified");
+    expect(ledger.met).toBe(1);
+  });
+
+  test("citing a command that was never run is refused, however confident the call", async () => {
+    const ledger = new BriefLedger(brief());
+    const tool = createRecordEvidenceTool(
+      () => ledger,
+      () => new CheckLog(),
+    );
+    const out = await tool.execute({
+      callId: "c1",
+      toolName: "record_evidence",
+      args: { criterion: 0, command: "bun test --everything-passes" },
+    } as any);
+    expect(out.result).toContain("never ran");
+    expect(ledger.met).toBe(0);
+  });
+
+  test("without a brief there is nothing to record against", async () => {
+    const tool = createRecordEvidenceTool(
+      () => undefined,
+      () => logWith([["bun test", true]]),
+    );
+    const out = await tool.execute({
+      callId: "c1",
+      toolName: "record_evidence",
+      args: { criterion: 0, command: "bun test" },
+    } as any);
+    expect(out.result).toContain("read_back first");
+  });
+});
+
+describe("summarizeCheck", () => {
+  // The rule is LAST counted line, not first — because a failing runner puts
+  // its failure count last, and that is the line a person needs to see.
+  test("takes the last line carrying counts", () => {
+    expect(summarizeCheck("compiling...\n44 pass\n0 fail")).toBe("0 fail");
+    expect(summarizeCheck("running\n43 pass\n1 fail")).toBe("1 fail");
+  });
+
+  test("falls back to the tail, where runners put their verdict", () => {
+    expect(summarizeCheck("noise\nnoise\nDone.")).toBe("Done.");
+  });
+
+  test("empty output summarises to nothing rather than to a lie", () => {
+    expect(summarizeCheck("   \n  ")).toBeUndefined();
+    expect(summarizeCheck("")).toBeUndefined();
+  });
+
+  test("a very long line is clipped, and says so", () => {
+    const out = summarizeCheck("x".repeat(200))!;
+    expect(out.length).toBeLessThanOrEqual(90);
+    expect(out.endsWith("...")).toBe(true);
   });
 });

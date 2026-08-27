@@ -133,7 +133,16 @@ import { createTeamTool, renderTeamStatus } from "./team/tool";
 import { deriveRepoIdentity } from "./team/repo-key";
 import { createWorkerTool } from "./worker";
 import { createAskUserTool } from "./ask-user";
-import { BriefLedger, createReadBackTool, type Brief, type BriefHandler } from "./brief";
+import {
+  BriefLedger,
+  CheckLog,
+  createReadBackTool,
+  createRecordEvidenceTool,
+  summarizeCheck,
+  type Brief,
+  type BriefHandler,
+} from "./brief";
+import { isVerificationCommand } from "./bin/ui/activity";
 import type { QuestionHandler } from "./ask-user";
 export type { QuestionHandler, UserQuestion } from "./ask-user";
 import { createLoopControlTool } from "./loop-control-tool";
@@ -645,6 +654,9 @@ export class Engine {
   /** The contract for the task in flight, and the only thing that can close it. */
   private brief?: Brief;
   private ledger?: BriefLedger;
+  /** Every check this session ran, with the verdict the RUNTIME read.
+   *  The only thing a criterion's rung is ever derived from. */
+  private readonly checkLog = new CheckLog();
   private contextEngine: ContextEngine;
   /** Providers whose model catalog has already supplied real context windows. */
   private contextCatalogWarmed = new Set<ProviderName>();
@@ -910,6 +922,17 @@ export class Engine {
           this.brief = brief;
           this.ledger = new BriefLedger(brief);
         },
+      ),
+    );
+
+    // `record_evidence`: the model points at a criterion and cites a command it
+    // ran; the runtime looks that command up in its OWN log and decides what
+    // the citation is worth. The model never touches the rung, which is what
+    // keeps "verified" out of reach of a confident sentence.
+    this.registry.register(
+      createRecordEvidenceTool(
+        () => this.ledger,
+        () => this.checkLog,
       ),
     );
 
@@ -3113,6 +3136,26 @@ export class Engine {
         }
         if (event.type === "error" && this.recorder) {
           this.recorder.note("error", event.error);
+        }
+
+        // A check the runtime ran, with the exit code IT read. This is the
+        // sole source a criterion's rung is derived from — see brief.ts. It is
+        // recorded here, at the point the result comes back, precisely so that
+        // nothing downstream has to take the model's word for what happened.
+        if (event.type === "tool_call_end" && event.output.toolName === "run_command") {
+          const command = String(
+            (event.args as Record<string, unknown> | undefined)?.command ?? "",
+          );
+          if (command && isVerificationCommand(command)) {
+            this.checkLog.record({
+              command,
+              passed: event.output.success,
+              at: Date.now(),
+              summary: summarizeCheck(
+                event.output.success ? event.output.result : (event.output.error ?? ""),
+              ),
+            });
+          }
         }
 
         // Audit tool calls with security post-processing
