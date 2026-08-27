@@ -48,8 +48,14 @@ describe("ui/banner", () => {
     // would land on the row above the composer's own top rule and draw as a
     // doubled border. The composer's rule is the divider.
     expect(lines).toHaveLength(2);
-    expect(lines[0]).toContain("gear · sample-app · main · claude-sonnet-4-6");
-    expect(lines[0]).toContain("1st gear"); // the mode, hard right
+    // Identity and location only. The model and the gear both change during a
+    // session, and this row is committed scrollback that is never rewritten —
+    // naming them here produced a header that stated the wrong model for the
+    // rest of the run and contradicted the live status line. They live in the
+    // pinned region now, which redraws.
+    expect(lines[0]).toContain("gear · sample-app · main");
+    expect(lines[0]).not.toContain("claude-sonnet-4-6");
+    expect(lines[0]).not.toContain("1st gear");
     // Indented to the content column: a rule begins where the row above it does.
     expect(lines[1]).toMatch(/^ {2}─+$/);
     // Nothing decorative survives: no mark, no avatar, no wordmark, no tagline.
@@ -67,9 +73,11 @@ describe("ui/banner", () => {
   });
 
   it("prefers the preset's model label and carries the effort dial", () => {
+    // The label still resolves — it is simply not printed in the header any
+    // more, because a model named in committed scrollback goes stale on the
+    // next /model. statusLine carries it.
     const output = banner(100, { modelLabel: "Gemini 2.5 Flash", effort: "high" });
-    expect(output).toContain("Gemini 2.5 Flash | high effort");
-    expect(output).toContain("1st gear");
+    expect(output).not.toContain("Gemini 2.5 Flash");
     expect(output).not.toContain("gemini-2.5-flash");
   });
 
@@ -87,7 +95,7 @@ describe("ui/banner", () => {
       // for — measured against the surface, not the 120-column reading column.
       // Symmetric margin: MARK on the left, the same on the right.
       expect(content.length).toBe(Math.max(20, columns - 2));
-      expect(content.trimEnd()).toMatch(/1st gear$/);
+      expect(content.trimEnd()).toMatch(/sample-app/);
     }
   });
 

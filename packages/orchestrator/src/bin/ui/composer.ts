@@ -198,14 +198,37 @@ export function statusLine(s: ComposerStatus, width = process.stdout.columns || 
   if (s.sandboxOff) extras.push(warn("sandbox off"));
 
   const badge = `  ${permissionModeBadge(s.mode)}`;
-  const described = `${badge}${sep}${faint(mode.desc)}`;
+  // The model belongs HERE, not in the header.
+  //
+  // The header is committed scrollback: written once at launch and never
+  // rewritten, which is the whole reason history in this UI cannot develop
+  // rendering bugs. It also means anything printed there is a record of how the
+  // session STARTED, not of what is true now — so a model named up there went
+  // stale the moment /model switched, and sat there naming the wrong model for
+  // the rest of the session. Under the old alt screen the banner repainted
+  // every frame and hid this; deleting that surface exposed it.
+  //
+  // The pinned region redraws on every frame, so live state put here is live by
+  // construction. It outranks the gear's description, which is static and
+  // learned once, and the model is the field a person actually re-checks.
+  const modelName = s.model ? info(s.model) : "";
   const right = keyHint("?", "keys");
   const fullHints = [keyHint("shift+tab", "gear"), keyHint("esc", "stop")].join("  ");
 
+  // What is given up first, at each width. The key hints go before the gear's
+  // description does: a hint is discovery, useful once, and 80 columns is the
+  // width most people are actually at — losing "edits + sandboxed shell" there
+  // to buy back a hint would be the wrong trade for someone still learning what
+  // the gear means. The model survives to the last tier because it is the only
+  // field here that changes under the user.
+  const named = [badge, ...(modelName ? [modelName] : [])].join(sep);
   const tiers: Array<[string, string]> = [
-    [[described, ...(meter ? [meter] : []), ...extras, fullHints].join(sep), right],
-    [[described, ...(meter ? [meter] : []), ...extras].join(sep), right],
-    [[badge, ...(meter ? [meter] : []), ...extras].join(sep), right],
+    [[named, faint(mode.desc), ...(meter ? [meter] : []), ...extras, fullHints].join(sep), right],
+    [[named, faint(mode.desc), ...(meter ? [meter] : []), ...extras].join(sep), right],
+    [[named, faint(mode.desc), ...extras].join(sep), right],
+    [[named, faint(mode.desc)].join(sep), right],
+    [named, right],
+    [badge, right],
   ];
   for (const [left, edge] of tiers) {
     const gap = max - visLen(left) - visLen(edge);
