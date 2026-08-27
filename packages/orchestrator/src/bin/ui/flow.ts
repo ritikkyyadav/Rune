@@ -167,7 +167,20 @@ export function header(opts: FlowHeader): string {
   // row already sized to the full measure pushes the line onto the terminal's
   // last cell, and a line that touches the last cell wraps — which desyncs the
   // relative cursor math for the pinned region below it.
-  return ["", `${MARK}${row(left, right, measure() - MARK.length)}`, hairline(surface), ""].join(
+  // Budgeted to the SURFACE, not to the reading column.
+  //
+  // measure() caps at 120 so prose never becomes a 200-column sentence, and
+  // that is right for prose. The header is chrome: it is divided by a hairline
+  // that spans the window, so laying its contents out to the reading column
+  // parks the mode badge at column 120 while the rule beneath it runs to 164 —
+  // a 44-column gap on a wide terminal, which reads as a broken right edge
+  // rather than as a deliberate column. Chrome aligns to the window it divides.
+  //
+  // The indent is still paid for out of the row's own budget: prepending MARK
+  // to a row already sized to the full surface pushes the line onto the
+  // terminal's last cell, and a line that touches the last cell wraps — which
+  // desyncs the relative cursor math for the pinned region below it.
+  return ["", `${MARK}${row(left, right, surface - MARK.length)}`, hairline(surface), ""].join(
     "\n",
   );
 }

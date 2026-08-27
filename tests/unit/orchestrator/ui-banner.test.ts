@@ -68,6 +68,22 @@ describe("ui/banner", () => {
     expect(output).not.toContain("gemini-2.5-flash");
   });
 
+  it("chrome aligns to the WINDOW, so the mode badge lands on the hairline's right edge", () => {
+    // Regression: the header row was budgeted to measure(), which caps at 120
+    // so prose never becomes a 200-column sentence. Right for prose, wrong for
+    // chrome — on a 165-column terminal it parked the gear at column 120 while
+    // the rule beneath ran to 164, a 44-column gap that reads as a broken edge.
+    for (const columns of [80, 120, 165, 220]) {
+      const lines = banner(columns)
+        .split("\n")
+        .filter((line) => line.trim());
+      const content = lines[0]!;
+      const hair = lines[1]!;
+      expect(content.length).toBe(hair.length);
+      expect(content.trimEnd()).toMatch(/1st gear$/); // the badge IS the right edge
+    }
+  });
+
   it("rules span the window; content stays in the reading column", () => {
     for (const columns of [44, 60, 100, 220]) {
       const lines = banner(columns)
