@@ -16,6 +16,7 @@ import {
   setLocalEndpoint as persistLocalEndpoint,
   getPreset,
   PROVIDER_PRESETS,
+  AUTO_PROVIDER_PRIORITY,
   CUSTOM_PROVIDER_ID,
   applySearchKeysToEnv,
   searchKeyStatus,
@@ -38,6 +39,7 @@ import {
 } from "@gear/shared";
 import type { ProviderName, ResolvedCredential } from "@gear/llm-gateway";
 import { configModeToPermissionMode, resolveStartupPermissionFlags } from "../permissions";
+import { runTeamCommand } from "../team/command";
 import { resolveProviderCredentials } from "../provider-registry";
 import { buildSavedKeys, readAuthOverrides } from "./byop-cli-shared";
 import {
@@ -155,48 +157,51 @@ if (values.version) {
 
 if (values.help) {
   process.stdout.write(
-    `\n  ${PRODUCT_LABEL} — AI coding agent\n\n` +
-      `  Usage:\n` +
-      `    gear [chat]                   Start chatting — offers to resume recent work (Enter = new)\n` +
-      `    gear --new                    Skip the picker and start a fresh session\n` +
-      `    gear resume [sessionId]       Resume a session (no id → interactive picker)\n` +
-      `    gear list [--all]             List stored sessions (--all includes archived)\n` +
-      `    gear export <sessionId>       Export a session transcript\n` +
-      `    gear detach "<prompt>"        Start a background run that survives this terminal (--worktree isolates it)\n` +
-      `    gear attach [session|latest]  Reattach to a detached run — replay, live-stream, Ctrl+C detaches again\n` +
-      `    gear login [provider]         Authenticate a provider — API key, or OAuth where supported (--method, --no-browser, --migrate)\n` +
-      `    gear logout <provider>        Remove a provider's stored key/OAuth from the secure store\n` +
-      `    gear providers                List providers, their auth method, and credential status\n` +
-      `    gear use <provider> [model]   Set the active provider (+ model) for new sessions\n` +
-      `    gear models [provider]        List a provider's models (live discovery, static fallback)\n` +
-      `    gear doctor                   Health: incidents, crash sentinel, gear-tools, build freshness\n` +
-      `    gear tools-smoke              Verify the native tool executor end to end (write/read/edit/bash)\n` +
-      `    gear incidents [sub]          Browse recorded failures — list | show <id> | top [--by-version] | export\n` +
-      `    gear notebook [sub]           Learned tactics notebook — list | show <id> | rm <id> | export\n` +
-      `    gear telemetry [sub]          Opt-in diagnostics — status | on | off | preview | reset (off by default)\n\n` +
-      `  Export options:\n` +
-      `    --format md|json             Output format (default: md)\n` +
-      `    --sign                       Sign the export with Ed25519\n` +
-      `    --out <path>                 Write output to file instead of stdout\n\n` +
-      `  Global options:\n` +
-      `    -m, --model <model>          LLM model to use\n` +
-      `    -p, --provider <provider>    LLM provider (anthropic|openai|openrouter|google|ollama-turbo|ollama|lmstudio)\n` +
-      `    -w, --workspace <path>       Workspace root directory\n` +
-      `    -r, --resume <sessionId>     Resume an existing session\n` +
-      `    -n, --new                    Start a fresh session (skip the resume picker)\n` +
-      `    --gear <1|2|3|4|auto>        Start in a gear: 1 guided · 2 workspace edits · 3 + sandboxed shell · 4 full autonomy · auto classifier\n` +
-      `                                 (Shift+Tab shifts up: 1st → 2nd → 3rd → 4th → auto)\n` +
-      `    --autonomy <I|II|III>        Legacy alias for --gear 2|3|4\n` +
-      `    --yolo                       Legacy alias for --gear 4\n` +
-      `    --trust                      Legacy alias for --gear 3 (workspace trust)\n` +
-      `    --classic                    Plain readline prompt (default is the pinned composer)\n` +
-      `    --tui                        Force the Codex-style pinned composer\n` +
-      `    --fullscreen                 Use the focused Gear terminal surface (default)\n` +
-      `    --inline                     Use legacy native-scrollback layout\n` +
-      `    --pristine                   Run without the learned tactics notebook (evolution control group)\n` +
-      `    --sandbox / --no-sandbox     Force the OS command sandbox on/off for this run (overrides /sandbox + config)\n` +
-      `    --browser / --no-browser     Force the agent browser (Playwright MCP) on/off for this run (overrides /browser + config)\n` +
-      `    -h, --help                   Show this help\n\n`,
+    terminalText(
+      `\n  ${PRODUCT_LABEL} — AI coding agent\n\n` +
+        `  Usage:\n` +
+        `    gear [chat]                   Start chatting — offers to resume recent work (Enter = new)\n` +
+        `    gear --new                    Skip the picker and start a fresh session\n` +
+        `    gear resume [sessionId]       Resume a session (no id → interactive picker)\n` +
+        `    gear list [--all]             List stored sessions (--all includes archived)\n` +
+        `    gear export <sessionId>       Export a session transcript\n` +
+        `    gear detach "<prompt>"        Start a background run that survives this terminal (--worktree isolates it)\n` +
+        `    gear attach [session|latest]  Reattach to a detached run — replay, live-stream, Ctrl+C detaches again\n` +
+        `    gear login [provider]         Authenticate a provider — API key, or OAuth where supported (--method, --no-browser, --migrate)\n` +
+        `    gear logout <provider>        Remove a provider's stored key/OAuth from the secure store\n` +
+        `    gear providers                List providers, their auth method, and credential status\n` +
+        `    gear use <provider> [model]   Set the active provider (+ model) for new sessions\n` +
+        `    gear models [provider]        List a provider's models (live discovery, static fallback)\n` +
+        `    gear doctor                   Health: incidents, crash sentinel, gear-tools, build freshness\n` +
+        `    gear tools-smoke              Verify the native tool executor end to end (write/read/edit/bash)\n` +
+        `    gear incidents [sub]          Browse recorded failures — list | show <id> | top [--by-version] | export\n` +
+        `    gear notebook [sub]           Learned tactics notebook — list | show <id> | rm <id> | export\n` +
+        `    gear telemetry [sub]          Opt-in diagnostics — status | on | off | preview | reset (off by default)\n\n` +
+        `  Export options:\n` +
+        `    --format md|json             Output format (default: md)\n` +
+        `    --sign                       Sign the export with Ed25519\n` +
+        `    --out <path>                 Write output to file instead of stdout\n\n` +
+        `  Global options:\n` +
+        `    -m, --model <model>          LLM model to use\n` +
+        `    -p, --provider <provider>    LLM provider (anthropic|openai|openrouter|google|ollama-turbo|ollama|lmstudio)\n` +
+        `    -w, --workspace <path>       Workspace root directory\n` +
+        `    -r, --resume <sessionId>     Resume an existing session\n` +
+        `    -n, --new                    Start a fresh session (skip the resume picker)\n` +
+        `    --gear <1|2|3|4|auto>        Start in a gear: 1 guided · 2 workspace edits · 3 + sandboxed shell · 4 full autonomy · auto classifier\n` +
+        `                                 (Shift+Tab shifts up: 1st → 2nd → 3rd → 4th → auto)\n` +
+        `    --autonomy <I|II|III>        Legacy alias for --gear 2|3|4\n` +
+        `    --yolo                       Legacy alias for --gear 4\n` +
+        `    --trust                      Legacy alias for --gear 3 (workspace trust)\n` +
+        `    --classic                    Plain readline prompt (default is the pinned composer)\n` +
+        `    --tui                        Force the Codex-style pinned composer\n` +
+        `    --inline                     Accepted, no-op — the only TUI layout since the\n` +
+        `                                 alternate screen was retired\n` +
+        `    --inline                     Use legacy native-scrollback layout\n` +
+        `    --pristine                   Run without the learned tactics notebook (evolution control group)\n` +
+        `    --sandbox / --no-sandbox     Force the OS command sandbox on/off for this run (overrides /sandbox + config)\n` +
+        `    --browser / --no-browser     Force the agent browser (Playwright MCP) on/off for this run (overrides /browser + config)\n` +
+        `    -h, --help                   Show this help\n\n`,
+    ),
   );
   process.exit(0);
 }
@@ -213,7 +218,7 @@ if (command === "tools-smoke") {
   const lookup = await findToolsBinary();
   if (!lookup.found) {
     console.error(
-      "  ✕ gear-tools not found — set GEAR_TOOLS_BIN, re-run scripts/install.sh, or `cargo build --release -p gear-tools`",
+      `  ${glyph("failure")} gear-tools not found -- set GEAR_TOOLS_BIN, re-run scripts/install.sh, or \`cargo build --release -p gear-tools\``,
     );
     process.exit(1);
   }
@@ -426,6 +431,7 @@ import {
   shouldOfferInteractive,
 } from "./ui/interactive";
 import { PRODUCT_VERSION, PRODUCT_LABEL } from "./ui/brand";
+import { glyph, terminalText } from "./ui/glyphs";
 
 /** A compact "2h ago" style age for the session list and pickers. */
 function relTime(iso: string): string {
@@ -609,19 +615,17 @@ async function main() {
   // ─── Smart Provider Detection ───
   // Priority: CLI arg > config > auto-detect from available API keys
   function detectBestProvider(): CliProvider {
-    // Prefer providers with API keys, in order of free-tier friendliness
-    const providerKeys: {
-      provider: CliProvider;
-      envVar: string;
-      configKey: keyof typeof config.llm;
-    }[] = [
-      { provider: "google", envVar: "GOOGLE_API_KEY", configKey: "google" },
-      { provider: "anthropic", envVar: "ANTHROPIC_API_KEY", configKey: "anthropic" },
-      { provider: "openai", envVar: "OPENAI_API_KEY", configKey: "openai" },
-      { provider: "openrouter", envVar: "OPENROUTER_API_KEY", configKey: "openrouter" },
-    ];
-    for (const { provider, envVar, configKey } of providerKeys) {
-      const cfgSection = config.llm[configKey] as { apiKey?: string } | undefined;
+    // Prefer reliable/funded capacity when several keys exist. Explicit CLI,
+    // config, and the user's sticky /model choice have already won above.
+    const envVars: Record<(typeof AUTO_PROVIDER_PRIORITY)[number], string> = {
+      anthropic: "ANTHROPIC_API_KEY",
+      openai: "OPENAI_API_KEY",
+      google: "GOOGLE_API_KEY",
+      openrouter: "OPENROUTER_API_KEY",
+    };
+    for (const provider of AUTO_PROVIDER_PRIORITY) {
+      const cfgSection = config.llm[provider] as { apiKey?: string } | undefined;
+      const envVar = envVars[provider];
       if (process.env[envVar] || cfgSection?.apiKey) return provider;
     }
     // Keyed hosts without an [llm.*] config section: a saved /keys secret (or
@@ -798,6 +802,9 @@ async function main() {
     context: config.context,
     // Autonomy toggle precedence: /interactive sidecar > [interactive] auto.
     interactive: { auto: loadInteractiveAuto() ?? config.interactive?.auto },
+    // Multi-instance teamwork: on by default for the real CLI ([team] can turn
+    // it off). Unit tests construct the Engine directly and stay hermetic.
+    team: config.team,
     // Black box: on by default for the real CLI (config [diagnostics] can turn
     // it off). Unit tests construct the Engine directly and stay hermetic.
     // The trail spool is pid-scoped so two concurrent Gear instances don't
@@ -944,7 +951,6 @@ async function main() {
     fullscreenForced: (values.fullscreen as boolean) || !!process.env.GEAR_FULLSCREEN,
   });
   const useTui = surface.useTui;
-  const fullscreenTui = surface.fullscreen;
 
   // ─── Create or resume session (one native flow) ───
   // `gear resume [id]` / `--resume <id>` target a specific session. Otherwise, on an
@@ -1103,7 +1109,6 @@ async function main() {
       yoloMode,
       trustWorkspace,
       customCommands,
-      fullscreen: fullscreenTui,
     });
     return;
   }
@@ -1355,6 +1360,7 @@ async function main() {
     ["/providers", "List providers"],
     ["/keys", "Manage API keys"],
     ["/mcp", "List MCP servers"],
+    ["/team", "Other Gear instances in this repo — status · send · claim"],
     ["/skills", "Browse & search skills"],
     ["/research", "Research — propose a plan, then a cited report"],
     ["/deepresearch", "Deep research — multi-round, long-form"],
@@ -1768,6 +1774,20 @@ async function main() {
             `  ${muted("Skills")}  ${text(`${status.skills} loaded`)} ${faint("(/skills to browse)")}\n\n`,
           );
         }
+        if (status.team.enabled && status.team.peerCount > 0) {
+          process.stdout.write(
+            `  ${muted("Team")}  ${text(`${status.team.peerCount} other instance(s) in this repo`)} ${faint("(/team)")}\n\n`,
+          );
+        }
+        showPrompt();
+        return;
+      }
+
+      if (input === "/team" || input.startsWith("/team ")) {
+        const lines = runTeamCommand(engine.getTeamBus(), input.slice("/team".length).trim());
+        process.stdout.write(
+          "\n" + lines.map((l, i) => `  ${i === 0 ? text(l) : muted(l)}`).join("\n") + "\n\n",
+        );
         showPrompt();
         return;
       }
@@ -1912,32 +1932,34 @@ async function main() {
         const themes = listThemes();
         const arg = input.slice("/theme".length).trim().toLowerCase();
         if (arg) {
-          // `setTheme` owns semantic aliases: light/dark preserve the current
-          // cosmetic accent, while a bare accent preserves the current surface.
-          // Human labels remain accepted for parity with the numbered picker.
+          // Legacy palette names still migrate onto Flow; the active choices
+          // are the six foreground roles or terminal-native mode.
           const labelMatch = themes.find((t) => t.label.toLowerCase() === arg);
           const applied = setTheme(arg) || (labelMatch ? setTheme(labelMatch.name) : false);
           if (applied) {
             saveTheme(getTheme().name);
             applyTerminalTheme();
-            process.stdout.write(`  ${green("✓")} theme set to ${brass(getTheme().label)}\n\n`);
+            process.stdout.write(
+              `  ${green(glyph("verified"))} theme set to ${brass(getTheme().label)}\n\n`,
+            );
           } else {
-            process.stdout.write(`  ${vermillion("✕")} unknown theme: ${arg}\n\n`);
+            process.stdout.write(`  ${vermillion(glyph("failure"))} unknown theme: ${arg}\n\n`);
           }
           showPrompt();
           return;
         }
         const current = getTheme().name;
-        process.stdout.write(`  ${bold(text("Themes"))}\n\n`);
+        process.stdout.write(`  ${bold(text("Color modes"))}\n\n`);
         themes.forEach((t, i) => {
           const isCurrent = t.name === current;
-          const marker = isCurrent ? ` ${ok("◂ current")}` : "";
+          const marker = isCurrent ? ` ${info(`${glyph("selection")} current`)}` : "";
+          const description = t.name === "auto" ? "host terminal" : "six ANSI16 foreground roles";
           process.stdout.write(
-            `    ${warn(`[${String(i + 1).padStart(2)}]`)} ${(isCurrent ? text : muted)(t.label.padEnd(18))} ${swatch(t.name)}  ${faint(t.appearance)}${marker}\n`,
+            `    ${warn(`[${String(i + 1).padStart(2)}]`)} ${(isCurrent ? text : muted)(t.label.padEnd(18))} ${swatch(t.name)}  ${faint(description)}${marker}\n`,
           );
         });
         process.stdout.write("\n");
-        rl.question(`  ${info("›")} `, (answer) => {
+        rl.question(`  ${info(glyph("selection"))} `, (answer) => {
           const a = answer.trim().toLowerCase();
           const pick =
             themes.find((_, i) => String(i + 1) === a) ??
@@ -1946,7 +1968,9 @@ async function main() {
             setTheme(pick.name);
             saveTheme(pick.name);
             applyTerminalTheme();
-            process.stdout.write(`  ${green("✓")} theme set to ${brass(getTheme().label)}\n\n`);
+            process.stdout.write(
+              `  ${green(glyph("verified"))} theme set to ${brass(getTheme().label)}\n\n`,
+            );
           } else {
             process.stdout.write(`  ${dim("no change")}\n\n`);
           }
@@ -2985,7 +3009,7 @@ async function main() {
                   process.stdout.write("\n");
                   streaming = false;
                 }
-                process.stdout.write(`\n  ${accent("✕")} ${text(ev.error)}\n`);
+                process.stdout.write(`\n  ${vermillion(glyph("failure"))} ${text(ev.error)}\n`);
                 continue;
               }
               const block = formatResearchEvent(ev);

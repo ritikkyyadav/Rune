@@ -1,16 +1,25 @@
 // ─── TUI controller (raw mode) ───
-// Gear's customizer-backed terminal UI: the supplied terminal card becomes the
-// terminal itself — a warm-ivory/near-black full-window surface with a centered
-// reading column. The browser-only canvas, nav pills, and swatches are not copied
-// into production. Two render surfaces share every renderer + the engine:
-//   • inline (explicit compatibility mode) — prints the transcript into the terminal's NORMAL buffer and pins
-//     only the composer (BottomRegion). The terminal owns scrolling, so you get native
-//     momentum smooth-scroll, real scrollback, and copy/paste for free; the theme bg is set
-//     via OSC 11 (+ per-line SGR fallback for terminals that ignore it, e.g. Warp).
-//   • alt-screen (ctx.fullscreen) — takes the alternate screen and repaints the whole
-//     viewport each frame (AltScreen), painting the theme bg edge-to-edge at the cost of a
-//     self-managed (non-native) scroll.
-// Selected over the readline path with `--tui` / GEAR_TUI=1; `--inline` keeps native scrollback.
+// Gear's terminal UI. ONE render surface, since Phase 03:
+//
+//   COMMITTED  the transcript, printed into the terminal's NORMAL buffer and
+//              never touched again. The terminal owns it, so native momentum
+//              scrolling, real scrollback, ⌘F, mouse selection and `| tee` all
+//              work for free — and history cannot develop rendering bugs,
+//              because nothing rewrites it.
+//   LIVE       the composer and the live rung, pinned to the bottom rows
+//              (BottomRegion) and erased with relative cursor moves only.
+//
+// What was deleted: an alternate-screen surface that repainted the whole
+// viewport each frame to paint a theme background edge-to-edge. It bought a
+// cohesive window on terminals that ignore OSC 11 (Warp) and cost scrollback,
+// native scroll, pipeability, and — most visibly — an empty session rendered as
+// a full viewport of painted nothing, because a program that owns every cell
+// must fill every cell. Taking the alternate screen means signing up to be
+// correct about every cell forever, through resize, tmux reattach, and a
+// dropped ssh frame. Almost nothing is.
+//
+// Selected over the readline path with `--tui` / GEAR_TUI=1; `--classic` opts
+// out to the plain printer. `--inline` and `--fullscreen` are accepted no-ops.
 
 import type {
   Engine,
@@ -42,7 +51,8 @@ import {
 import type { CustomEndpoint } from "@gear/shared";
 import { providerChoices, accountChoices, modelChoices, fetchLiveModels } from "./model-picker";
 import { configModeToPermissionMode } from "../../permissions";
-import { AltScreen, BottomRegion } from "./screen";
+import { runTeamCommand } from "../../team/command";
+import { BottomRegion } from "./screen";
 import { parseKeys, type Key } from "./keys";
 import { fmtTokens } from "./events";
 import { PasteScanner, shouldCollapse, pasteChip, expandPastes, livePasteIds } from "./paste";
@@ -97,6 +107,7 @@ import {
   brand,
   ok,
   accent,
+  danger,
   warn,
   setTheme,
   getTheme,
@@ -108,6 +119,7 @@ import {
   stripAnsi,
   TERMINAL_THEME_RESET,
 } from "./theme";
+import { glyph } from "./glyphs";
 import { saveTheme } from "./theme-store";
 import { buildPermissionPreview, type PermissionPreview } from "./permission-preview";
 import { renderWorkspaceDiff } from "./workspace-diff";
@@ -129,7 +141,6 @@ export interface TuiContext {
   /** Show the "resume a session" picker on launch (default flow with prior history). */
   launchPick?: boolean;
   /** Use the customizer-backed alternate-screen product surface. This is the default from CLI. */
-  fullscreen?: boolean;
 }
 
 type Mode =
@@ -184,7 +195,7 @@ export function permissionKeyAction(
     // (session) remains for muscle memory from earlier releases.
     (key.type === "char" && /^[sSaA]$/.test(key.value))
   ) {
-    // No session choice on a 2-row card — swallow the shortcut so shift-tab
+    // No session choice on a 2-row card -- swallow the shortcut so shift-tab
     // cannot fall through to the gear cycle while a decision is pending.
     if (choiceCount === 2) return { selected: current, handled: true };
     decision = { kind: "allow_session" };
@@ -198,33 +209,6 @@ export function permissionKeyAction(
   return { selected: current, decision, handled: decision != null };
 }
 
-/**
- * Pure region-scroll hint for the alt-screen compositor: when only the
- * transcript window shifted between frames (streamed line, wheel notch) and
- * the band geometry is unchanged, return the `frame()` scroll hint that lets
- * the terminal's own hardware scroll move the band. Undefined = no clean
- * shift; the compositor falls back to its per-row diff. `delta` is negated
- * because a window that advanced (end grew) moves content UP on screen.
- */
-export function transcriptScrollHint(
-  prev: { end: number; bandTop: number; transH: number },
-  next: { end: number; bandTop: number; transH: number; visibleLen: number },
-): { top: number; bottom: number; delta: number } | undefined {
-  const shifted = next.end - prev.end;
-  if (
-    prev.bandTop !== next.bandTop ||
-    prev.transH !== next.transH ||
-    next.transH <= 0 ||
-    shifted === 0 ||
-    Math.abs(shifted) >= next.transH ||
-    // A part-empty band top-pads instead of shifting; only a full window scrolls.
-    next.visibleLen !== next.transH
-  ) {
-    return undefined;
-  }
-  return { top: next.bandTop, bottom: next.bandTop + next.transH - 1, delta: -shifted };
-}
-
 type SessionListItem = ReturnType<Engine["listSessions"]>[number];
 
 /** Empty launch placeholders are implementation detail, not conversation history. */
@@ -232,7 +216,7 @@ function isMeaningfulSession(session: SessionListItem): boolean {
   return session.eventCount > 0 || Boolean(session.title?.trim());
 }
 
-// `columns`/`rows` are 0 (not undefined) on a PTY with no winsize — `||` so a
+// `columns`/`rows` are 0 (not undefined) on a PTY with no winsize -- `||` so a
 // zero-size terminal falls back sanely instead of clamping every line to nothing.
 const cols = () => process.stdout.columns || 80;
 const rowsCount = () => process.stdout.rows || 24;
@@ -244,22 +228,16 @@ export async function runTui(ctx: TuiContext): Promise<void> {
 }
 
 class Tui {
-  private screen = new AltScreen(); // focused full-window product surface
   private region = new BottomRegion(); // explicit inline compatibility surface
   /** False for the default full Gear card; true only through --inline / GEAR_INLINE. */
   private readonly inline: boolean;
   private transcript: string[] = []; // alt-screen only: themed lines, self-managed scrollback window
   private scroll = 0; // alt-screen only: lines scrolled up from the bottom (0 = following latest)
   private onResize = () => {
-    if (this.inline) {
-      // Native scrollback reflows itself; just redraw the pinned composer at the new width.
-      this.renderRegion();
-      return;
-    }
-    // Alt-screen: a resize reflows/clears the terminal, so the diff baseline is stale — repaint.
-    setTermWidthOverride(this.contentCols());
-    this.screen.invalidate();
-    this.scheduleDraw();
+    // Native scrollback reflows itself; just redraw the pinned composer at the
+    // new width. There is no frame to invalidate — history above the composer
+    // was written once and is the terminal's to reflow, not ours to repaint.
+    this.renderRegion();
   };
   private input = "";
   private caret = 0;
@@ -318,7 +296,7 @@ class Tui {
   private tick: ReturnType<typeof setInterval> | null = null;
   private streamBuf = "";
   private queued: string[] = []; // type-ahead: messages composed mid-turn, run in order on completion
-  private aborting = false; // an esc/ctrl-c interrupt is in flight (guards the "interrupting…" flood)
+  private aborting = false; // an esc/ctrl-c interrupt is in flight (guards the "interrupting..." flood)
   private turnPreview: string[] | null = null; // one live intent row + one evidence row
   private filesEdited = new Set<string>(); // session-wide, shown on the footer readout
   private interactiveTipShown = false; // the /interactive offer fires at most once per session
@@ -333,14 +311,13 @@ class Tui {
   private reviewTop = 0;
   private reviewReturnMode: "input" | "turn" = "input";
 
-  // render coalescing — collapse bursts of draw requests into one paint per frame (~60fps), so a
+  // render coalescing -- collapse bursts of draw requests into one paint per frame (~60fps), so a
   // streamed token, a held arrow key, or a flick of the mouse wheel never trigger N full repaints.
   private drawScheduled = false;
   private drawTimer: ReturnType<typeof setTimeout> | null = null;
   private lastPaint = 0;
 
   // hardware-scroll tracking: the visible window's bottom index (`end`) + band geometry at the last
-  // paint, so drawComposer can tell AltScreen when the transcript band merely shifted (stream/scroll)
   // and only the newly exposed lines need painting. -1 = no previous frame yet.
   private prevEnd = -1;
   private prevBandTop = -1;
@@ -354,7 +331,7 @@ class Tui {
     resolve: (i: number | null, alt?: boolean) => void;
     onPreview?: (i: number) => void;
     footnote?: string;
-    /** Optional second action key (e.g. `d` = "select as default") — resolves with alt=true. */
+    /** Optional second action key (e.g. `d` = "select as default") -- resolves with alt=true. */
     altKey?: string;
   } | null = null;
   private perm: {
@@ -380,7 +357,10 @@ class Tui {
   } | null = null;
 
   constructor(private ctx: TuiContext) {
-    this.inline = !ctx.fullscreen;
+    // Phase 03: one surface. The transcript is committed into the terminal's
+    // OWN scrollback and only the composer is pinned; nothing takes the
+    // alternate screen, so nothing has to fill a viewport it does not own.
+    this.inline = true;
     setTermWidthOverride(this.inline ? null : this.contentCols());
   }
 
@@ -395,14 +375,14 @@ class Tui {
     return Math.max(8, width - 1);
   }
 
-  // ── lifecycle ──
+  // -- lifecycle --
 
   async run(): Promise<void> {
     const { engine } = this.ctx;
 
     // The banner is a live header (re-themed every frame), so nothing to seed here.
     // The handler is registered in every mode: the broker short-circuits to "allowed"
-    // in 4th gear, so it is never invoked there — and stays ready the instant
+    // in 4th gear, so it is never invoked there -- and stays ready the instant
     // Shift+Tab shifts back to an asking gear, without re-wiring.
     engine.setPermissionHandler(this.permissionHandler);
     // Auto mode's classifier approvals are silent at the broker; the chip
@@ -420,9 +400,8 @@ class Tui {
     process.stdout.write("\x1b[?2004h"); // bracketed paste on
     // Alt-screen captures the wheel to drive its self-managed scroll; inline leaves the wheel to
     // the terminal so native momentum scrollback works. So only report the mouse in alt-screen.
-    if (!this.inline) process.stdout.write("\x1b[?1000h\x1b[?1006h"); // mouse button + SGR coords
     // Safety net: if we ever exit without running this.exit() (a crash), still leave the terminal
-    // usable — drop mouse/paste reporting, restore the user's colours, and show the cursor.
+    // usable -- drop mouse/paste reporting, restore the user's colours, and show the cursor.
     process.once("exit", () => {
       try {
         process.stdout.write(
@@ -434,16 +413,14 @@ class Tui {
     });
     stdin.resume();
 
-    if (this.inline) this.enterInline();
-    else this.screen.enter(themeBgSeq());
+    this.enterInline();
     process.stdout.on("resize", this.onResize);
     // Replay prior conversation when launched straight into a session (--resume /
     // `gear resume <id>`). When launchPick is set, the picker runs once input is
-    // live (below) instead — a fresh session has nothing to seed.
+    // live (below) instead -- a fresh session has nothing to seed.
     if (!this.ctx.launchPick) this.seedFromHistory();
-    // First frame synchronous so the composer (and, inline, the banner) appears instantly.
-    if (this.inline) this.renderRegion();
-    else this.drawComposer();
+    // First frame synchronous so the banner and composer appear instantly.
+    this.renderRegion();
 
     // System Memory: a one-time discoverability hint + a background "dream" when the
     // chosen cadence is due. Skipped while the launch picker owns the screen. The
@@ -451,14 +428,14 @@ class Tui {
     if (!this.ctx.launchPick) {
       const mem = engine.getSystemMemory();
       if (mem.enabled && !mem.content.trim() && mem.scheduleLabel === "manual") {
-        this.print(`  ${faint("tip: Gear can learn your style over time —")} ${info("/memory")}`);
+        this.print(`  ${faint("tip: Gear can learn your style over time --")} ${info("/memory")}`);
       }
       void engine
         .maybeReflectSystemMemory()
         .then((r) => {
           if (r.updated) {
             this.print(
-              `  ${ok("✦")} ${muted(`system memory refreshed (~${r.tokensAfter ?? 0} tokens) · /memory to view`)}`,
+              `  ${ok(glyph("verified"))} ${muted(`system memory refreshed (~${r.tokensAfter ?? 0} tokens) | /memory to view`)}`,
             );
           }
         })
@@ -478,14 +455,9 @@ class Tui {
           this.loopPoll = null;
         }
         process.stdout.write("\x1b[?2004l"); // bracketed paste off
-        if (!this.inline) process.stdout.write("\x1b[?1000l\x1b[?1006l"); // mouse tracking off
         if (this.drawTimer) clearTimeout(this.drawTimer); // cancel any pending coalesced paint
-        if (this.inline) {
-          this.region.clear(); // unmount the composer, leaving the transcript in scrollback
-          process.stdout.write(TERMINAL_THEME_RESET); // restore the user's terminal colours
-        } else {
-          this.screen.exit(); // restore the main screen + the user's own colours
-        }
+        this.region.clear(); // unmount the composer, leaving the transcript in scrollback
+        process.stdout.write(TERMINAL_THEME_RESET); // restore the user's terminal colours
         if (stdin.isTTY) stdin.setRawMode(false);
         setTermWidthOverride(null);
         process.stdout.write(`  ${muted("Goodbye.")}\n`);
@@ -497,7 +469,7 @@ class Tui {
       // SIGTERM (kill, service managers) and SIGHUP (terminal window closed)
       // must run the same teardown as /exit: leave the alternate screen, drop
       // raw mode + mouse reporting, close the engine. A default signal death
-      // skips the process "exit" hooks — which is exactly how a killed TUI
+      // skips the process "exit" hooks -- which is exactly how a killed TUI
       // used to strand the shell in the alt screen with the mouse captured.
       // 143/129 = 128 + signal number.
       const onSignal = (code: number) => () => {
@@ -519,7 +491,7 @@ class Tui {
 
   private exit: (code?: number) => void = () => {};
 
-  // ── input rendering ──
+  // -- input rendering --
 
   private statusStr(): string {
     let contextPercent: number | undefined;
@@ -540,14 +512,14 @@ class Tui {
         theme: getTheme().name === "auto" ? "auto" : getTheme().appearance,
         loop:
           loop.count > 0 && loop.nextRunAt !== null
-            ? `${loop.count === 1 ? "loop" : `${loop.count} loops`} · ${formatLoopDue(loop.nextRunAt)}`
+            ? `${loop.count === 1 ? "loop" : `${loop.count} loops`} | ${formatLoopDue(loop.nextRunAt)}`
             : undefined,
       },
       this.contentCols(),
     );
   }
 
-  /** Shift up one gear (Shift+Tab / `/gear` / `/mode`) — or straight to `target` — and announce it. */
+  /** Shift up one gear (Shift+Tab / `/gear` / `/mode`) -- or straight to `target` -- and announce it. */
   private cyclePermissionMode(mode?: ReturnType<Engine["getPermissionMode"]>): void {
     let next: ReturnType<Engine["getPermissionMode"]>;
     if (mode) {
@@ -563,14 +535,14 @@ class Tui {
     this.print(permissionModeBanner(next));
   }
 
-  // ── slash palette (live `/` menu) ──
+  // -- slash palette (live `/` menu) --
 
   private slashCatalog(): SlashItem[] {
     const builtins: SlashItem[] = [
       { name: "/theme", desc: "Switch accent colors and light / dark mode", tag: "cosmetic" },
       { name: "/model", desc: "Choose model and provider", tag: "settings" },
       { name: "/sessions", desc: "Browse, resume, rename, archive & delete", tag: "history" },
-      { name: "/mode", desc: "Shift gears — 1st · 2nd · 3rd · 4th · auto", tag: "shift+tab" },
+      { name: "/mode", desc: "Shift gears -- 1st | 2nd | 3rd | 4th | auto", tag: "shift+tab" },
       { name: "/diff", desc: "Inspect staged and uncommitted workspace changes", tag: "git" },
       { name: "/loop", desc: "Repeat a prompt while this session stays open" },
       { name: "/loops", desc: "List and manage this session's loops" },
@@ -580,21 +552,22 @@ class Tui {
       { name: "/providers", desc: "List providers" },
       { name: "/keys", desc: "Manage API keys" },
       { name: "/mcp", desc: "Connected MCP servers and tools" },
+      { name: "/team", desc: "Other Gear instances here -- status | send | claim | intent" },
       { name: "/skills", desc: "Browse or search available skills" },
-      { name: "/research", desc: "Research — propose a plan, then a cited report" },
-      { name: "/deepresearch", desc: "Deep research — multi-round, long-form" },
+      { name: "/research", desc: "Research -- propose a plan, then a cited report" },
+      { name: "/deepresearch", desc: "Deep research -- multi-round, long-form" },
       { name: "/cost", desc: "Session cost" },
-      { name: "/gear", desc: "Shift gears — /gear 1 | 2 | 3 | 4 | auto (empty shifts up)" },
-      { name: "/autonomy", desc: "Legacy alias — /autonomy I | II | III = 2nd | 3rd | 4th gear" },
-      { name: "/sandbox", desc: "OS sandbox for commands — on | off (off = full access)" },
-      { name: "/browser", desc: "Agent web browser — on | off" },
+      { name: "/gear", desc: "Shift gears -- /gear 1 | 2 | 3 | 4 | auto (empty shifts up)" },
+      { name: "/autonomy", desc: "Legacy alias -- /autonomy I | II | III = 2nd | 3rd | 4th gear" },
+      { name: "/sandbox", desc: "OS sandbox for commands -- on | off (off = full access)" },
+      { name: "/browser", desc: "Agent web browser -- on | off" },
       { name: "/rewind", desc: "Roll back the conversation" },
       { name: "/compress", desc: "Summarize & shrink context" },
       { name: "/undo", desc: "Revert the last Gear auto-commit" },
-      { name: "/interactive", desc: "Live dashboard — [focus] · auto on|off · open" },
-      { name: "/memory", desc: "System memory — your evergreen profile" },
+      { name: "/interactive", desc: "Live dashboard -- [focus] | auto on|off | open" },
+      { name: "/memory", desc: "System memory -- your evergreen profile" },
       { name: "/notebook", desc: "Learned tactics for this workspace" },
-      { name: "/bug", desc: "Flag a problem — records the flight trail" },
+      { name: "/bug", desc: "Flag a problem -- records the flight trail" },
       { name: "/clear", desc: "Clear the screen" },
       { name: "/help", desc: "Show commands" },
       { name: "/quit", desc: "Exit Gear" },
@@ -639,8 +612,8 @@ class Tui {
           maxPreviewLines: Math.max(2, Math.min(7, rowsCount() - 15)),
         },
       );
-      // v2 status ladder: the run is paused on a human decision — say so in
-      // the ochre "Waiting on approval…" rung above the card, with the live
+      // v2 status ladder: the run is paused on a human decision -- say so in
+      // the ochre "Waiting on approval..." rung above the card, with the live
       // elapsed receipt and the gear the decision is needed in.
       const waitSecs = Math.max(0, Math.floor((Date.now() - this.turnStart) / 1000));
       const head = waitingRung(waitSecs, this.perm.toolName, this.ctx.engine.getPermissionMode());
@@ -657,7 +630,7 @@ class Tui {
         width: this.contentCols(),
         status: this.statusStr(),
       });
-      const title = `  ${info("?")} ${text(this.askState.title)} ${faint("(Enter = ok · Esc = skip)")}`;
+      const title = `  ${info("?")} ${text(this.askState.title)} ${faint("(Enter = ok | Esc = skip)")}`;
       return {
         lines: [title, ...base.lines],
         caretRow: base.caretRow + 1,
@@ -678,8 +651,8 @@ class Tui {
         `  ${faint(
           "1-" +
             q.options.length +
-            " choose · or type an answer · Enter = 1 · Esc = skip" +
-            (q.autoContinue ? " · auto-continues in 60s (4th gear)" : ""),
+            " choose | or type an answer | Enter = 1 | Esc = skip" +
+            (q.autoContinue ? " | auto-continues in 60s (4th gear)" : ""),
         )}`,
       ];
       return {
@@ -761,7 +734,7 @@ class Tui {
         status: this.statusStr(),
       });
       // The buffered prose run streams live here (it commits to the transcript only
-      // once the turn decides which partition — work rail or response — it belongs to).
+      // once the turn decides which partition -- work rail or response -- it belongs to).
       const head = this.turnStateLines();
       head.push(...renderQueueStrip(this.queued, this.contentCols()));
       return {
@@ -797,7 +770,7 @@ class Tui {
    *  the buffer. (Lines keep their theme; switching themes recolours the live composer + new
    *  output, and history stays readable in the theme it was written in.) */
   /** Hard-bound a line to the terminal width. An over-wide line auto-wraps,
-   *  which breaks the pinned region's row math — and then every repaint leaks
+   *  which breaks the pinned region's row math -- and then every repaint leaks
    *  stale rows into the scrollback (the "duplicated spam" failure mode). */
   private bound(ln: string): string {
     return clampVisible(ln, Math.max(8, this.contentCols() - 1));
@@ -841,7 +814,7 @@ class Tui {
   /** The pinned composer block, themed, width-bounded, and height-clamped to the viewport. The
    *  inline region draws with *relative* cursor moves, so a block taller than the screen would
    *  scroll the terminal mid-draw and desync that math (garbled/duplicated footer under heavy
-   *  streaming). Keep the tail — the composer + status the user is actually using — and elide the
+   *  streaming). Keep the tail -- the composer + status the user is actually using -- and elide the
    *  top (the older work/prose preview) behind a marker. */
   private pinnedBlock(): { lines: string[]; caretRow: number; caretCol: number } {
     const comp = this.composerBlock();
@@ -852,7 +825,7 @@ class Tui {
       const drop = lines.length - max;
       const marker = withThemeBg(
         this.bound(
-          `  ${faint(`… ${drop} more line${drop === 1 ? "" : "s"} above (ctrl+r to expand)`)}`,
+          `  ${faint(`... ${drop} more line${drop === 1 ? "" : "s"} above (ctrl+r to expand)`)}`,
         ),
       );
       lines = [marker, ...lines.slice(drop + 1)];
@@ -861,13 +834,14 @@ class Tui {
     return { lines, caretRow, caretCol: comp.caretCol };
   }
 
-  /** Inline surface: recolour the terminal in the theme, clear to a themed screen, and print the
-   *  banner once at the top — it scrolls away with the conversation, like Codex/Claude Code. */
+  /** Print the banner once at the top; it scrolls away with the conversation.
+   *
+   *  This used to also clear the screen and paint it in the theme background.
+   *  Both are gone. Starting a program is not a licence to erase what the user
+   *  had on screen — their last command's output is often the reason they
+   *  opened Gear — and asserting a background is the single largest reason a
+   *  TUI looks broken on someone else's theme. Inherit; do not assert. */
   private enterInline(): void {
-    this.region.setBgFill(themeBgSeq());
-    // OSC 10/11 sets the terminal's default fg/bg (themed margins where honoured); the SGR bg +
-    // clear paints the visible screen now so the first frame isn't drawn over the old colours.
-    process.stdout.write(terminalThemeSeq() + themeBgSeq() + "\x1b[2J\x1b[H\x1b[0m");
     this.printBanner();
   }
 
@@ -878,8 +852,6 @@ class Tui {
       // foreground/background control back to the host terminal.
       process.stdout.write(TERMINAL_THEME_RESET + terminalThemeSeq());
       this.region.setBgFill(themeBgSeq());
-    } else {
-      this.screen.invalidate();
     }
     this.scheduleDraw();
   }
@@ -901,7 +873,7 @@ class Tui {
   }
 
   /** The active gear, as the header states it: what proceeds without asking,
-   *  and — in 1st gear, where nothing does — what still asks. */
+   *  and -- in 1st gear, where nothing does -- what still asks. */
   private gearScope(): { scope: string; caution?: string } {
     const mode = modeInfo(this.ctx.engine.getPermissionMode());
     return {
@@ -929,22 +901,22 @@ class Tui {
     );
   }
 
-  /** Clear the visible transcript. Inline clears the real screen (scrollback is preserved) and
-   *  reprints the banner; alt-screen just empties its in-memory window and repaints. */
+  /** Clear the visible transcript, on explicit user request only.
+   *
+   *  The absolute clear here is deliberate and is the one place it is allowed:
+   *  the user asked for a clear screen, and this is exactly what clear(1) does.
+   *  It is not a render path — nothing repaints through here — so it cannot rot
+   *  the way a per-frame absolute address does. No background is painted. */
   private resetTranscript(): void {
     this.transcript = [];
     this.scroll = 0;
-    if (this.inline) {
-      this.region.clear();
-      process.stdout.write(themeBgSeq() + "\x1b[2J\x1b[3J\x1b[H\x1b[0m");
-      this.printBanner();
-    } else {
-      this.scheduleDraw();
-    }
+    this.region.clear();
+    process.stdout.write("\x1b[2J\x1b[3J\x1b[H");
+    this.printBanner();
   }
 
   /** The banner, rendered live (re-themed every frame) so the header always matches the
-   *  current theme — pinned at the top of the viewport. */
+   *  current theme -- pinned at the top of the viewport. */
   private bannerLines(): string[] {
     const { engine } = this.ctx;
     return renderBanner({
@@ -962,81 +934,6 @@ class Tui {
       .map((l) => this.bound(l));
   }
 
-  /**
-   * Repaint the whole surface: identity, transcript, anchored composer. The
-   * content is left-aligned at its own small indent and bounded by the reading
-   * measure — never centered. Centering a terminal's text column makes every
-   * line start in a different place than the shell prompt above it, and the
-   * measure already stops a wide window from producing 200-column sentences.
-   */
-  private drawComposer(): void {
-    if (!this.screen.isActive) return;
-    const R = rowsCount();
-    const contentWidth = this.contentCols();
-    const left = 0;
-    const banner = this.bannerLines();
-    const comp = this.composerBlock();
-    const compLines = comp.lines.map((l) => clampVisible(l, contentWidth));
-    const topRows = R >= 20 ? 1 : 0;
-    const bottomRows = R >= 20 ? 1 : 0;
-    // When scrolled up, reserve one row above the composer for a "more below" hint so the
-    // user knows output isn't frozen and how to catch back up.
-    const hintRows = this.scroll > 0 ? 1 : 0;
-    const transH = Math.max(
-      0,
-      R - topRows - bottomRows - banner.length - compLines.length - hintRows,
-    );
-
-    const total = this.transcript.length;
-    const maxScroll = Math.max(0, total - transH);
-    if (this.scroll > maxScroll) this.scroll = maxScroll;
-    const end = total - this.scroll;
-    const visible = this.transcript.slice(Math.max(0, end - transH), end);
-
-    const content: string[] = [...banner];
-    for (let i = 0; i < transH - visible.length; i++) content.push("");
-    content.push(...visible);
-    if (hintRows) {
-      content.push(
-        this.scroll > 0
-          ? `  ${faint(`↓ ${this.scroll} more line${this.scroll === 1 ? "" : "s"} below · scroll down to resume`)}`
-          : "",
-      );
-    }
-    content.push(...compLines);
-
-    const contentRow = (line: string): string =>
-      withThemeBg(" ".repeat(left) + clampVisible(line, contentWidth));
-
-    const rows: string[] = [];
-    for (let i = 0; i < topRows; i++) rows.push(withThemeBg(""));
-    rows.push(...content.map(contentRow));
-    for (let i = 0; i < bottomRows; i++) rows.push(withThemeBg(""));
-
-    // Keep exactly R rows (guards tiny terminals / an oversized overlay).
-    while (rows.length < R) rows.push(withThemeBg(""));
-    if (rows.length > R) rows.splice(topRows + banner.length, rows.length - R);
-
-    const bandTop = topRows + banner.length;
-    // Hardware-scroll hint: when only the transcript window shifted since the
-    // last frame (a streamed line, a wheel notch) and the band geometry is
-    // unchanged, the compositor can shift the band with the terminal's own
-    // region scroll and repaint just the exposed rows instead of rewriting
-    // every band row. applyScroll verifies the overlap before using the hint,
-    // so a stale or wrong hint safely degrades to the per-row diff.
-    const scrollHint = transcriptScrollHint(
-      { end: this.prevEnd, bandTop: this.prevBandTop, transH: this.prevTransH },
-      { end, bandTop, transH, visibleLen: visible.length },
-    );
-    this.prevEnd = end;
-    this.prevBandTop = bandTop;
-    this.prevTransH = transH;
-
-    const caretRow = Math.min(R - 1, bandTop + transH + hintRows + comp.caretRow);
-    const caretCol = Math.min(cols() - 1, left + comp.caretCol);
-    this.screen.frame(rows, caretRow, caretCol, scrollHint);
-  }
-
   /** Request a repaint, coalesced to at most one paint per ~16ms (60fps). Almost every input and
    *  stream event funnels through here; together with the diff renderer this turns a burst of
    *  changes into a single frame, which is what removes the scroll/stream jitter. */
@@ -1051,37 +948,27 @@ class Tui {
     this.drawScheduled = false;
     this.drawTimer = null;
     this.lastPaint = Date.now();
-    if (this.inline) this.renderRegion();
-    else this.drawComposer();
+    this.renderRegion();
   }
 
-  private scrollBy(pages: number): void {
-    if (this.inline) return; // native scrollback owns scrolling; nothing to emulate
-    const page = Math.max(1, rowsCount() - 6);
-    this.scroll = Math.max(0, this.scroll + pages * page);
-    this.scheduleDraw(); // clamps to maxScroll
-  }
+  /** No-op: the terminal owns its scrollback, so there is nothing to emulate. */
+  private scrollBy(_pages: number): void {}
 
-  /** Scroll the transcript by a line delta (positive = toward older output). Alt-screen only —
-   *  inline mode lets the terminal scroll its own buffer natively. */
-  private scrollLines(lines: number): void {
-    if (this.inline) return;
-    this.scroll = Math.max(0, this.scroll + lines);
-    this.scheduleDraw(); // clamps to maxScroll
-  }
+  /** No-op: the terminal scrolls its own buffer natively. */
+  private scrollLines(_lines: number): void {}
 
   private workingText(): string {
-    if (this.aborting) return `${accent(HEX)} ${bold(text("Interrupting…"))}`;
+    if (this.aborting) return `${accent(HEX)} ${bold(text("Interrupting..."))}`;
     const elapsed = Date.now() - this.turnStart;
     const secs = Math.floor(elapsed / 1000);
     const t = secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m${secs % 60}s`;
-    // The hint adapts: idle composer → how to stop; a typed-ahead draft → how to queue/clear it.
-    const hint = this.input.length > 0 ? "enter queues · esc clears" : "esc to interrupt";
-    return faint(`${t} · ${hint}`);
+    // The hint adapts: idle composer -> how to stop; a typed-ahead draft -> how to queue/clear it.
+    const hint = this.input.length > 0 ? "enter queues | esc clears" : "esc to interrupt";
+    return faint(`${t} | ${hint}`);
   }
 
   /** The v2 status ladder rung directly above the composer: the TurnRenderer's
-   *  live lines (label + receipt, then a faint detail row) — or the
+   *  live lines (label + receipt, then a faint detail row) -- or the
    *  interrupting state while an abort drains. */
   private turnStateLines(): string[] {
     if (this.aborting) return [`  ${this.workingText()}`];
@@ -1089,18 +976,18 @@ class Tui {
     if (lines.length === 0) {
       const secs = Math.max(0, Math.floor((Date.now() - this.turnStart) / 1000));
       return [
-        `  ${brand(GEAR_MARK)} ${bold(brand("Thinking"))}${faint("…")} ${faint(`(${secs}s)`)}`,
+        `  ${brand(GEAR_MARK)} ${bold(brand("Thinking"))}${faint("...")} ${faint(`(${secs}s)`)}`,
       ];
     }
     return lines.slice(0, 2).map((line) => clampVisible(line, Math.max(8, cols() - 1)));
   }
 
-  // ── stdin routing ──
+  // -- stdin routing --
 
   private onData(chunk: string): void {
-    // Bracketed paste is carved out of the stream as substrings (PasteScanner) — never fed through
+    // Bracketed paste is carved out of the stream as substrings (PasteScanner) -- never fed through
     // parseKeys. A multi-megabyte paste (e.g. dumping a large doc) would otherwise allocate one Key
-    // object per character and rebuild an accumulator char-by-char (O(n²)), freezing the UI for
+    // object per character and rebuild an accumulator char-by-char (O(n2)), freezing the UI for
     // seconds. Here the whole body is one substring, so a huge paste is effectively free.
     for (const seg of this.paste.push(chunk)) {
       if (seg.type === "paste") this.endPaste(seg.content);
@@ -1114,7 +1001,7 @@ class Tui {
       this.moveWorkReview(key.type === "wheel-up" ? -SCROLL_STEP : SCROLL_STEP);
       return;
     }
-    // The mouse wheel scrolls the transcript in every mode — even while a turn streams.
+    // The mouse wheel scrolls the transcript in every mode -- even while a turn streams.
     if (key.type === "wheel-up") {
       this.scrollLines(SCROLL_STEP);
       return;
@@ -1123,7 +1010,7 @@ class Tui {
       this.scrollLines(-SCROLL_STEP);
       return;
     }
-    // Shift+Tab cycles confirm → Autonomy I → II → III → Auto → confirm while composing.
+    // Shift+Tab cycles confirm -> Autonomy I -> II -> III -> Auto -> confirm while composing.
     // Inside an approval ask it is the explicit "allow for session" shortcut printed
     // beside choice 2, so the visible contract and the keyboard behavior stay identical.
     if (key.type === "shift-tab") {
@@ -1168,7 +1055,7 @@ class Tui {
   /** Land a finished paste: small single-line pastes drop in inline; anything multi-line or long
    *  collapses to a chip so the composer stays a clean single line (see `pastes`). */
   private endPaste(content: string): void {
-    // Key/URL editor is a single-line field — always inline, newlines stripped by insertActive.
+    // Key/URL editor is a single-line field -- always inline, newlines stripped by insertActive.
     if (this.mode === "keys") {
       this.insertActive(content);
       this.scheduleDraw();
@@ -1184,7 +1071,7 @@ class Tui {
     this.scheduleDraw();
   }
 
-  /** Swap `[Pasted text #N …]` chips back to their stored bodies just before a message is sent. */
+  /** Swap `[Pasted text #N ...]` chips back to their stored bodies just before a message is sent. */
   private expandPastes(s: string): string {
     return expandPastes(s, this.pastes);
   }
@@ -1196,7 +1083,7 @@ class Tui {
     for (const id of [...this.pastes.keys()]) if (!live.has(id)) this.pastes.delete(id);
   }
 
-  // ── input mode ──
+  // -- input mode --
 
   private insert(s: string): void {
     const clean = s.replace(/\r/g, "");
@@ -1268,7 +1155,7 @@ class Tui {
       this.scheduleDraw();
       return;
     }
-    // When the `/` palette is open, ↑/↓ navigate it and tab/enter pick from it.
+    // When the `/` palette is open, up/down navigate it and tab/enter pick from it.
     const sm = this.slashMatches();
     if (sm.length > 0) {
       const sel = Math.max(0, Math.min(this.slashSel, sm.length - 1));
@@ -1323,7 +1210,7 @@ class Tui {
           const cancelled = this.ctx.engine.cancelLoopTask(this.ctx.sessionId);
           if (cancelled.ok && cancelled.task) {
             this.print(
-              `  ${accent("✕")} ${muted("stopped loop")} ${info(cancelled.task.id)} ${faint(loopPromptPreview(cancelled.task.prompt, 56))}`,
+              `  ${danger(glyph("failure"))} ${muted("stopped loop")} ${info(cancelled.task.id)} ${faint(loopPromptPreview(cancelled.task.prompt, 56))}`,
             );
           }
         } else {
@@ -1413,7 +1300,7 @@ class Tui {
     this.scheduleDraw();
   }
 
-  // ── submit ──
+  // -- submit --
 
   private async submit(): Promise<void> {
     const raw = this.expandPastes(this.input).trim();
@@ -1422,7 +1309,7 @@ class Tui {
     this.histIdx = -1;
     this.slashSel = 0;
     this.scroll = 0; // submitting jumps back to the live tail
-    this.gcPastes(); // composer is empty now → release the paste bodies just consumed
+    this.gcPastes(); // composer is empty now -> release the paste bodies just consumed
     if (!raw) {
       this.scheduleDraw();
       return;
@@ -1447,19 +1334,19 @@ class Tui {
     return { turn, checkpoint };
   }
 
-  /** Echo, record, and execute one line of input — a slash command or a model turn. Shared by
+  /** Echo, record, and execute one line of input -- a slash command or a model turn. Shared by
    *  submit() and the type-ahead queue drained when a turn completes, so both run identically. */
   private async runInput(raw: string, scheduledLoop?: LoopTask): Promise<void> {
     if (!scheduledLoop) this.history.push(raw);
 
     // Echo the prompt into the transcript. A slash command is an instruction to the
-    // shell (quiet echo); anything else is the user's message — the loud block.
+    // shell (quiet echo); anything else is the user's message -- the loud block.
     if (scheduledLoop) {
       this.print(
-        `  ${warn("↻")} ${bold(text("Loop"))} ${info(scheduledLoop.id)} ${faint(`· iteration ${scheduledLoop.runCount + 1} · ${scheduledLoop.cadence}`)}`,
+        `  ${warn(glyph("retry"))} ${bold(text("Loop"))} ${info(scheduledLoop.id)} ${faint(`| iteration ${scheduledLoop.runCount + 1} | ${scheduledLoop.cadence}`)}`,
       );
       this.print(userBlock(raw, this.taskBarMeta()));
-    } else if (raw.startsWith("/")) this.print(`  ${info("›")} ${text(raw)}`);
+    } else if (raw.startsWith("/")) this.print(`  ${info(glyph("selection"))} ${text(raw)}`);
     else this.print(userBlock(raw, this.taskBarMeta()));
 
     if (!scheduledLoop && raw.startsWith("/")) {
@@ -1479,7 +1366,7 @@ class Tui {
     this.scheduleDraw();
   }
 
-  // ── slash commands ──
+  // -- slash commands --
 
   private async handleSlash(raw: string): Promise<boolean> {
     const { engine } = this.ctx;
@@ -1498,12 +1385,12 @@ class Tui {
         const entries = engine.getNotebookEntries(10);
         if (entries.length === 0) {
           this.print(
-            `  ${muted("Notebook is empty for this workspace — Gear fills it as it verifies how your repos work.")}`,
+            `  ${muted("Notebook is empty for this workspace -- Gear fills it as it verifies how your repos work.")}`,
           );
         } else {
           this.print(
             [
-              `  ${bold(text("Notebook — active for this workspace"))}`,
+              `  ${bold(text("Notebook -- active for this workspace"))}`,
               ...entries.map(
                 (e) =>
                   `    ${info(e.id.slice(-8))} ${muted(`[${e.scope}]`)} ${text(e.body.slice(0, 90))}`,
@@ -1529,8 +1416,8 @@ class Tui {
         });
         this.print(
           id
-            ? `  ${text("✦ Logged with the current flight trail.")} ${muted(`gear incidents show ${id.slice(-8)}`)}`
-            : `  ${muted("Could not record — see gear doctor.")}`,
+            ? `  ${text("* Logged with the current flight trail.")} ${muted(`gear incidents show ${id.slice(-8)}`)}`
+            : `  ${muted("Could not record -- see gear doctor.")}`,
         );
         return true;
       }
@@ -1551,12 +1438,12 @@ class Tui {
       case "rename": {
         if (!arg) {
           this.print(
-            `  ${warn("Usage:")} ${info("/rename <title>")} ${faint("— renames the current session (or use /sessions)")}`,
+            `  ${warn("Usage:")} ${info("/rename <title>")} ${faint("-- renames the current session (or use /sessions)")}`,
           );
           return true;
         }
         engine.renameSession(this.ctx.sessionId, arg);
-        this.print(`  ${ok("✓")} ${muted("renamed session to")} ${text(arg)}`);
+        this.print(`  ${ok(glyph("verified"))} ${muted("renamed session to")} ${text(arg)}`);
         return true;
       }
       case "status": {
@@ -1581,11 +1468,22 @@ class Tui {
             providerHealth: engine.getProviderHealth(),
           }),
         );
+        const team = engine.getTeamStatus();
+        if (team.enabled && team.peerCount > 0) {
+          this.print(
+            `  ${muted("Team")}  ${text(`${team.peerCount} other instance${team.peerCount === 1 ? "" : "s"} in this repo`)} ${faint("(/team)")}`,
+          );
+        }
         return true;
       }
       case "cost":
         this.print(`  ${muted(`$${engine.getCost().toFixed(4)}`)}`);
         return true;
+      case "team": {
+        const lines = runTeamCommand(engine.getTeamBus(), arg);
+        this.print(lines.map((l, i) => `  ${i === 0 ? text(l) : muted(l)}`).join("\n"));
+        return true;
+      }
       case "loop":
       case "loops":
         this.handleLoopSlash(cmd, arg);
@@ -1598,7 +1496,7 @@ class Tui {
           const id = a[1].toLowerCase();
           if (!getPreset(id) && id !== CUSTOM_PROVIDER_ID) {
             this.print(
-              `  ${warn("Unknown provider")} ${info(id)} ${faint("(one word, no spaces — e.g. openai)")}`,
+              `  ${warn("Unknown provider")} ${info(id)} ${faint("(one word, no spaces -- e.g. openai)")}`,
             );
             this.print(
               `  ${faint("Providers: ")}${faint(PROVIDER_PRESETS.map((p) => p.id).join(", "))}`,
@@ -1608,20 +1506,22 @@ class Tui {
           const disabled = op === "off";
           persistDisabled(id, disabled);
           const res = engine.setProviderDisabled(id, disabled, this.ctx.sessionId);
-          this.print(`  ${ok("✓")} ${info(id)} ${muted(disabled ? "disabled" : "enabled")}`);
-          // Enabling only re-includes an already-credentialed provider — it does
+          this.print(
+            `  ${ok(glyph("verified"))} ${info(id)} ${muted(disabled ? "disabled" : "enabled")}`,
+          );
+          // Enabling only re-includes an already-credentialed provider -- it does
           // NOT add a key. If it has none, point the user at how to add one.
           if (!disabled) {
             const row = engine.getProviderStatus().find((r) => r.id === id);
             if (row && !row.hasKey && !row.local) {
               this.print(
-                `  ${warn("→")} ${muted(`${id} has no key yet — add one:`)} ${info(`/keys set ${id} <key>`)} ${muted("or")} ${info(`gear login ${id}`)}`,
+                `  ${warn("->")} ${muted(`${id} has no key yet -- add one:`)} ${info(`/keys set ${id} <key>`)} ${muted("or")} ${info(`gear login ${id}`)}`,
               );
             }
           }
           if (res.switchedTo) {
             this.print(
-              `  ${warn("→")} ${muted("active provider was off — now on")} ${info(`${res.switchedTo.provider}/${res.switchedTo.model}`)}`,
+              `  ${warn("->")} ${muted("active provider was off -- now on")} ${info(`${res.switchedTo.provider}/${res.switchedTo.model}`)}`,
             );
           }
           return true;
@@ -1629,12 +1529,12 @@ class Tui {
         // Data-driven listing: all providers, key state, on/off, active.
         const rows = engine.getProviderStatus().map((r) => {
           const dot = r.disabled
-            ? faint("○")
+            ? faint("o")
             : r.active
-              ? ok("●")
+              ? ok(glyph("live"))
               : r.hasKey
-                ? info("●")
-                : faint("○");
+                ? info(glyph("live"))
+                : faint("o");
           const c = r.active ? ok : r.hasKey && !r.disabled ? text : faint;
           const st = r.disabled
             ? warn("off")
@@ -1653,7 +1553,7 @@ class Tui {
           [
             `  ${bold(text("Providers"))}`,
             ...rows,
-            `  ${faint("toggle /providers on|off <id> · keys /keys · switch /model")}`,
+            `  ${faint("toggle /providers on|off <id> | keys /keys | switch /model")}`,
           ].join("\n"),
         );
         return true;
@@ -1672,15 +1572,15 @@ class Tui {
           for (const server of servers) {
             const dot =
               server.health === "healthy"
-                ? ok("●")
+                ? ok(glyph("live"))
                 : server.health === "degraded"
-                  ? warn("●")
-                  : faint("○");
+                  ? warn(glyph("live"))
+                  : faint("o");
             lines.push(
               `    ${dot} ${text(server.name)} ${muted(`(${server.kind}, ${server.toolCount} tools)`)}`,
             );
             if (server.tools.length) lines.push(`      ${faint(server.tools.join(", "))}`);
-            if (server.lastError) lines.push(`      ${warn("⚠")} ${faint(server.lastError)}`);
+            if (server.lastError) lines.push(`      ${warn("!")} ${faint(server.lastError)}`);
           }
         }
         this.print(lines.join("\n"));
@@ -1691,7 +1591,7 @@ class Tui {
           const hits = await engine.searchSkills(arg);
           this.print(
             [
-              `  ${bold(text("Skills"))} ${muted(`matching “${arg}”`)}`,
+              `  ${bold(text("Skills"))} ${muted(`matching "${arg}"`)}`,
               ...(hits.length
                 ? hits.flatMap((hit) => [
                     `    ${info(hit.id)}`,
@@ -1708,13 +1608,13 @@ class Tui {
             `  ${bold(text("Skills"))} ${muted(`(${catalog.total} across ${catalog.plugins.length} domains)`)}`,
             ...(catalog.total
               ? catalog.plugins.flatMap((plugin) => [
-                  `    ${ok("●")} ${text(plugin.plugin)} ${muted(`(${plugin.skills.length})`)}`,
+                  `    ${ok(glyph("live"))} ${text(plugin.plugin)} ${muted(`(${plugin.skills.length})`)}`,
                   `      ${faint(plugin.skills.map((skill) => skill.name).join(", "))}`,
                 ])
               : [
                   `    ${muted("None found. Add skills under ")}${info("skills/")}${muted(" or ")}${info(".gear/skills/")}${muted(".")}`,
                 ]),
-            `  ${faint("Skills load automatically when a request matches · search with /skills <keywords>")}`,
+            `  ${faint("Skills load automatically when a request matches | search with /skills <keywords>")}`,
           ].join("\n"),
         );
         return true;
@@ -1724,30 +1624,30 @@ class Tui {
         const deep = cmd === "deepresearch";
         if (!arg) {
           const verb = deep ? "deep, multi-round research" : "research with a cited report";
-          this.print(`  ${warn("Usage:")} ${info(`/${cmd} <question>`)} ${faint(`— ${verb}`)}`);
+          this.print(`  ${warn("Usage:")} ${info(`/${cmd} <question>`)} ${faint(`-- ${verb}`)}`);
           return true;
         }
         await this.runResearchFlow(arg, deep ? "deep" : undefined);
         return true;
       }
       case "gear": {
-        // /gear          → shift up one gear
-        // /gear 3 | 3rd | auto → shift straight to that gear
+        // /gear          -> shift up one gear
+        // /gear 3 | 3rd | auto -> shift straight to that gear
         const target = configModeToPermissionMode(arg || undefined);
         if (arg && !target) {
           this.print(
-            `  ${warn("Usage:")} ${info("/gear")} ${faint("[1|2|3|4|auto] — empty shifts up")}`,
+            `  ${warn("Usage:")} ${info("/gear")} ${faint("[1|2|3|4|auto] -- empty shifts up")}`,
           );
         } else this.cyclePermissionMode(target);
         return true;
       }
       case "autonomy": {
-        // Legacy alias: /autonomy I|II|III → 2nd|3rd|4th gear.
+        // Legacy alias: /autonomy I|II|III -> 2nd|3rd|4th gear.
         const target = configModeToPermissionMode(arg ? `autonomy-${arg}` : undefined);
         if (target) this.cyclePermissionMode(target);
         else
           this.print(
-            `  ${warn("Usage:")} ${info("/autonomy")} ${faint("[I|II|III] — or /gear 1|2|3|4|auto")}`,
+            `  ${warn("Usage:")} ${info("/autonomy")} ${faint("[I|II|III] -- or /gear 1|2|3|4|auto")}`,
           );
         return true;
       }
@@ -1763,10 +1663,10 @@ class Tui {
           this.cyclePermissionMode(mode);
         } else if (raw) {
           this.print(
-            `  ${warn("Usage:")} ${info("/mode")} ${faint("[1|2|3|4|auto] — empty shifts up (same as /gear)")}`,
+            `  ${warn("Usage:")} ${info("/mode")} ${faint("[1|2|3|4|auto] -- empty shifts up (same as /gear)")}`,
           );
         } else {
-          this.cyclePermissionMode(); // no arg → advance the cycle, like Shift+Tab
+          this.cyclePermissionMode(); // no arg -> advance the cycle, like Shift+Tab
         }
         return true;
       }
@@ -1779,7 +1679,7 @@ class Tui {
           this.print(sandboxModeBanner(enabled));
         } else if (raw) {
           this.print(
-            `  ${warn("Usage:")} ${info("/sandbox")} ${faint("[on|off] — empty shows the current state")}`,
+            `  ${warn("Usage:")} ${info("/sandbox")} ${faint("[on|off] -- empty shows the current state")}`,
           );
         } else {
           this.print(sandboxModeBanner(engine.isSandboxEnabled()));
@@ -1795,7 +1695,7 @@ class Tui {
           this.print(browserModeBanner(enabled));
         } else if (raw) {
           this.print(
-            `  ${warn("Usage:")} ${info("/browser")} ${faint("[on|off] — empty shows the current state")}`,
+            `  ${warn("Usage:")} ${info("/browser")} ${faint("[on|off] -- empty shows the current state")}`,
           );
         } else {
           this.print(browserModeBanner(engine.isBrowserEnabled()));
@@ -1812,28 +1712,20 @@ class Tui {
           if (setTheme(arg)) {
             this.refreshThemeSurface();
             saveTheme(getTheme().name);
-            this.print(`  ${ok("✓")} ${muted("theme set to")} ${warn(getTheme().label)}`);
-          } else this.print(`  ${accent("✕")} ${muted("unknown theme:")} ${faint(arg)}`);
+            this.print(
+              `  ${ok(glyph("verified"))} ${muted("theme set to")} ${warn(getTheme().label)}`,
+            );
+          } else
+            this.print(`  ${danger(glyph("failure"))} ${muted("unknown theme:")} ${faint(arg)}`);
           return true;
         }
-        // Live-preview: navigating the picker repaints the whole screen in the theme; Esc reverts.
+        // Live-preview keeps compatibility with the existing picker flow; the
+        // choices only select Flow foreground roles or the terminal-native rung.
         const original = getTheme().name;
-        // The v2 theme selector: accent name, its one-line character, and the
-        // persisted theme id as the quiet tag.
-        const ACCENT_DESC: Record<string, string> = {
-          cobalt: "Signature blueprint blue",
-          orange: "High-contrast amber",
-          violet: "Modern editorial purple",
-          emerald: "Terminal phosphor green",
-          mono: "Minimalist grayscale",
-        };
         const items: PickerItem[] = themes.map((t) => ({
           label: t.label,
-          hint:
-            t.name === "auto"
-              ? "follows your terminal's own colors"
-              : (t.gearAccent && ACCENT_DESC[t.gearAccent]) || `${t.appearance} surface`,
-          prefix: paintBrandWith(t.name, "●"),
+          hint: t.name === "auto" ? "follows the host terminal" : "six ANSI16 foreground roles",
+          prefix: paintBrandWith(t.name, glyph("live")),
           current: t.name === original,
           tags: [t.name],
         }));
@@ -1842,20 +1734,22 @@ class Tui {
           themes.findIndex((t) => t.name === original),
         );
         const i = await this.pick(
-          `Accent palette · ${getTheme().appearance}`,
+          "Color mode",
           items,
           start,
           (idx) => {
             setTheme(themes[idx]!.name);
             this.refreshThemeSurface();
           },
-          "Light or dark: /theme light · /theme dark · persisted to ~/.gear/theme.json",
+          "Flow or terminal native | persisted to ~/.gear/theme.json",
         );
         if (i != null) {
           setTheme(themes[i]!.name);
           this.refreshThemeSurface();
           saveTheme(themes[i]!.name);
-          this.print(`  ${ok("✓")} ${muted("theme set to")} ${warn(getTheme().label)}`);
+          this.print(
+            `  ${ok(glyph("verified"))} ${muted("theme set to")} ${warn(getTheme().label)}`,
+          );
         } else {
           setTheme(original); // revert the live preview on cancel
           this.refreshThemeSurface();
@@ -1871,8 +1765,8 @@ class Tui {
             const def = loadLastModel();
             this.print(
               def
-                ? `  ${accent("◆")} ${muted("default:")} ${info(`${def.provider}/${def.model}`)} ${faint("· change: /model default <provider>/<model>, or d in /model")}`
-                : `  ${muted("no default set —")} ${info("/model default <provider>/<model>")}${muted(", or press d on a model in /model")}`,
+                ? `  ${accent(glyph("phase"))} ${muted("default:")} ${info(`${def.provider}/${def.model}`)} ${faint("| change: /model default <provider>/<model>, or d in /model")}`
+                : `  ${muted("no default set --")} ${info("/model default <provider>/<model>")}${muted(", or press d on a model in /model")}`,
             );
             return true;
           }
@@ -1912,7 +1806,9 @@ class Tui {
           return true;
         }
         const removed = engine.rewindTo(this.ctx.sessionId, turns[n - 1]!.seq - 1);
-        this.print(`  ${ok("✓")} ${muted(`rewound to turn ${n} (removed ${removed})`)}`);
+        this.print(
+          `  ${ok(glyph("verified"))} ${muted(`rewound to turn ${n} (removed ${removed})`)}`,
+        );
         return true;
       }
       case "interactive": {
@@ -1924,16 +1820,16 @@ class Tui {
             engine.setInteractiveAuto(on);
             saveInteractiveAuto(on);
             this.print(
-              `  ${ok("✓")} ${muted(`autonomous dashboards ${on ? "on" : "off"}`)} ${faint(
+              `  ${ok(glyph("verified"))} ${muted(`autonomous dashboards ${on ? "on" : "off"}`)} ${faint(
                 on
-                  ? "— Gear builds one when an answer is data-heavy"
-                  : "— dashboards only when you ask (/interactive)",
+                  ? "-- Gear builds one when an answer is data-heavy"
+                  : "-- dashboards only when you ask (/interactive)",
               )}`,
             );
           } else {
             this.print(
               `  ${muted(`Autonomous dashboards: ${engine.isInteractiveAuto() ? "on" : "off"}`)} ${faint(
-                "· toggle: /interactive auto on|off",
+                "| toggle: /interactive auto on|off",
               )}`,
             );
           }
@@ -1943,8 +1839,8 @@ class Tui {
           const info = engine.openDashboard(rest[0]);
           this.print(
             info
-              ? `  ${ok("✓")} ${muted(`opened "${info.title}"`)} ${faint(info.url)}`
-              : `  ${muted("No dashboard yet — run /interactive after a report, or ask for one.")}`,
+              ? `  ${ok(glyph("verified"))} ${muted(`opened "${info.title}"`)} ${faint(info.url)}`
+              : `  ${muted("No dashboard yet -- run /interactive after a report, or ask for one.")}`,
           );
           return true;
         }
@@ -1957,9 +1853,11 @@ class Tui {
       case "undo": {
         const r = engine.undoLastAutoCommit();
         if (r.ok) {
-          this.print(`  ${ok("✓")} ${muted(`reverted ${r.undoneSha}`)} ${faint(`(${r.subject})`)}`);
+          this.print(
+            `  ${ok(glyph("verified"))} ${muted(`reverted ${r.undoneSha}`)} ${faint(`(${r.subject})`)}`,
+          );
         } else {
-          this.print(`  ${muted(`Cannot undo — ${r.reason}`)}`);
+          this.print(`  ${muted(`Cannot undo -- ${r.reason}`)}`);
           if (!engine.isAutoCommitEnabled()) {
             this.print(
               `  ${faint("Tip: set [git] autoCommit = true in ~/.gear/config.toml so every run lands as a revertible commit.")}`,
@@ -1969,10 +1867,10 @@ class Tui {
         return true;
       }
       case "compress": {
-        this.print(`  ${faint("Compressing…")}`);
+        this.print(`  ${faint("Compressing...")}`);
         const r = await engine.compactSession(this.ctx.sessionId, arg || undefined);
         if (!r.compacted) {
-          this.print(`  ${muted(`Nothing to compact — ${r.reason}.`)}`);
+          this.print(`  ${muted(`Nothing to compact -- ${r.reason}.`)}`);
           return true;
         }
         const fmtTok = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
@@ -1981,7 +1879,7 @@ class Tui {
             ? Math.max(0, Math.round((1 - r.summaryTokens / r.sourceTokens) * 100))
             : 0;
         this.print(
-          `  ${ok("✓")} ${muted(`compacted ${r.originalMessages} messages · ~${fmtTok(r.sourceTokens)} → ~${fmtTok(r.summaryTokens)} tokens (${saved}% smaller)`)}`,
+          `  ${ok(glyph("verified"))} ${muted(`compacted ${r.originalMessages} messages | ~${fmtTok(r.sourceTokens)} -> ~${fmtTok(r.summaryTokens)} tokens (${saved}% smaller)`)}`,
         );
         return true;
       }
@@ -1997,15 +1895,15 @@ class Tui {
           return true;
         }
 
-        // ── update / refresh (the "dream") ──
+        // -- update / refresh (the "dream") --
         if (sub === "update" || sub === "refresh" || sub === "dream") {
-          this.print(`  ${faint("Dreaming — distilling your profile…")}`);
+          this.print(`  ${faint("Dreaming -- distilling your profile...")}`);
           const r = await engine.reflectSystemMemory({
             focus: subArg || undefined,
             trigger: "manual",
           });
           if (!r.updated) {
-            this.print(`  ${muted(`Memory unchanged — ${r.reason}.`)}`);
+            this.print(`  ${muted(`Memory unchanged -- ${r.reason}.`)}`);
             return true;
           }
           const preview = (r.content ?? "")
@@ -2015,38 +1913,40 @@ class Tui {
             .slice(0, 8);
           this.print(
             [
-              `  ${ok("✦")} ${muted(`system memory refreshed · ~${fmtTok(r.tokensBefore)} → ~${fmtTok(r.tokensAfter)} tokens`)}`,
+              `  ${ok(glyph("verified"))} ${muted(`system memory refreshed | ~${fmtTok(r.tokensBefore)} -> ~${fmtTok(r.tokensAfter)} tokens`)}`,
               ...preview.map((l) => `  ${faint(l.slice(0, 100))}`),
             ].join("\n"),
           );
           return true;
         }
 
-        // ── add a manual note ──
+        // -- add a manual note --
         if (sub === "add" || sub === "note") {
           if (!subArg) {
             this.print(`  ${warn("Usage:")} ${info("/memory add <note>")}`);
             return true;
           }
           const r = engine.appendSystemMemoryNote(subArg);
-          this.print(`  ${ok("✓")} ${muted(`noted · ~${fmtTok(r.tokens)} tokens total`)}`);
+          this.print(
+            `  ${ok(glyph("verified"))} ${muted(`noted | ~${fmtTok(r.tokens)} tokens total`)}`,
+          );
           return true;
         }
 
-        // ── edit: suspend the TUI and open the profile in $EDITOR for real ──
+        // -- edit: suspend the TUI and open the profile in $EDITOR for real --
         if (sub === "edit") {
           await this.editMemoryInEditor();
           return true;
         }
 
-        // ── clear ──
+        // -- clear --
         if (sub === "clear" || sub === "reset" || sub === "forget") {
           engine.clearSystemMemory();
-          this.print(`  ${ok("✓")} ${muted("system memory cleared")}`);
+          this.print(`  ${ok(glyph("verified"))} ${muted("system memory cleared")}`);
           return true;
         }
 
-        // ── set cadence (off | manual | daily | weekly | Nd | every N days) ──
+        // -- set cadence (off | manual | daily | weekly | Nd | every N days) --
         if (
           sub === "off" ||
           sub === "manual" ||
@@ -2056,25 +1956,25 @@ class Tui {
           /^every\s+\d+/.test(arg)
         ) {
           const r = engine.setSystemMemorySchedule(arg);
-          const verb = r.label === "manual" ? "manual (no auto-refresh)" : `auto · ${r.label}`;
-          this.print(`  ${ok("✓")} ${muted("memory cadence:")} ${info(verb)}`);
+          const verb = r.label === "manual" ? "manual (no auto-refresh)" : `auto | ${r.label}`;
+          this.print(`  ${ok(glyph("verified"))} ${muted("memory cadence:")} ${info(verb)}`);
           return true;
         }
 
-        // ── default: status + show the profile ──
+        // -- default: status + show the profile --
         const mem = engine.getSystemMemory();
         const last = mem.meta.updatedAt ? this.relTime(mem.meta.updatedAt) : "never";
         const dreamt = mem.meta.lastReflectedAt ? this.relTime(mem.meta.lastReflectedAt) : "never";
         const head = [
           `  ${bold(text("System memory"))}${mem.enabled ? "" : ` ${faint("(disabled)")}`}`,
-          `  ${faint(`cadence: ${mem.scheduleLabel} · ~${fmtTok(mem.tokens)}/${fmtTok(mem.maxTokens)} tokens · updated ${last} · dreamed ${dreamt}`)}`,
+          `  ${faint(`cadence: ${mem.scheduleLabel} | ~${fmtTok(mem.tokens)}/${fmtTok(mem.maxTokens)} tokens | updated ${last} | dreamed ${dreamt}`)}`,
         ];
         if (!mem.content.trim()) {
           this.print(
             [
               ...head,
-              `  ${muted("Empty — Gear hasn't built your profile yet.")}`,
-              `  ${faint("Seed it: /memory update · note: /memory add <…> · auto: /memory weekly")}`,
+              `  ${muted("Empty -- Gear hasn't built your profile yet.")}`,
+              `  ${faint("Seed it: /memory update | note: /memory add <...> | auto: /memory weekly")}`,
             ].join("\n"),
           );
           return true;
@@ -2085,7 +1985,7 @@ class Tui {
             "",
             ...mem.content.split("\n").map((l) => `  ${text(l)}`),
             "",
-            `  ${faint("update: /memory update · note: /memory add <…> · cadence: /memory daily|3d|weekly|manual")}`,
+            `  ${faint("update: /memory update | note: /memory add <...> | cadence: /memory daily|3d|weekly|manual")}`,
           ].join("\n"),
         );
         return true;
@@ -2096,7 +1996,9 @@ class Tui {
           await this.runTurn(custom.render(arg));
           return true;
         }
-        this.print(`  ${accent("✕")} ${muted(`unknown command: /${cmd}`)} ${faint("· /help")}`);
+        this.print(
+          `  ${danger(glyph("failure"))} ${muted(`unknown command: /${cmd}`)} ${faint("| /help")}`,
+        );
         return true;
       }
     }
@@ -2121,12 +2023,12 @@ class Tui {
       }
       this.print(
         [
-          `  ${bold(text(`Loops — ${tasks.length} active`))}`,
+          `  ${bold(text(`Loops -- ${tasks.length} active`))}`,
           ...tasks.map(
             (task) =>
-              `    ${warn("↻")} ${info(task.id)} ${text(task.cadence === "fixed" ? `every ${formatLoopInterval(task.intervalMs)}` : `adaptive ${formatLoopInterval(task.intervalMs)}`)} ${faint(`· ${formatLoopDue(task.nextRunAt)} · ${loopPromptPreview(task.prompt, 54)}`)}`,
+              `    ${warn(glyph("retry"))} ${info(task.id)} ${text(task.cadence === "fixed" ? `every ${formatLoopInterval(task.intervalMs)}` : `adaptive ${formatLoopInterval(task.intervalMs)}`)} ${faint(`| ${formatLoopDue(task.nextRunAt)} | ${loopPromptPreview(task.prompt, 54)}`)}`,
           ),
-          `  ${faint("/loop cancel <id> · /loop clear · Esc stops the newest loop")}`,
+          `  ${faint("/loop cancel <id> | /loop clear | Esc stops the newest loop")}`,
         ].join("\n"),
       );
       return;
@@ -2135,10 +2037,12 @@ class Tui {
     if (["cancel", "stop", "off", "delete", "rm"].includes(operation)) {
       const result = this.ctx.engine.cancelLoopTask(this.ctx.sessionId, tokens[1]);
       if (!result.ok || !result.task) {
-        this.print(`  ${accent("✕")} ${muted(result.error ?? "Could not stop that loop.")}`);
+        this.print(
+          `  ${danger(glyph("failure"))} ${muted(result.error ?? "Could not stop that loop.")}`,
+        );
       } else {
         this.print(
-          `  ${accent("✕")} ${muted("stopped loop")} ${info(result.task.id)} ${faint(loopPromptPreview(result.task.prompt, 58))}`,
+          `  ${danger(glyph("failure"))} ${muted("stopped loop")} ${info(result.task.id)} ${faint(loopPromptPreview(result.task.prompt, 58))}`,
         );
       }
       return;
@@ -2148,7 +2052,7 @@ class Tui {
       const count = this.ctx.engine.clearLoopTasks(this.ctx.sessionId);
       this.print(
         count > 0
-          ? `  ${accent("✕")} ${muted(`stopped ${count} ${count === 1 ? "loop" : "loops"}`)}`
+          ? `  ${danger(glyph("failure"))} ${muted(`stopped ${count} ${count === 1 ? "loop" : "loops"}`)}`
           : `  ${muted("No loops are active in this session.")}`,
       );
       return;
@@ -2159,10 +2063,10 @@ class Tui {
         [
           `  ${bold(text("Loop mode"))}`,
           `    ${info("/loop 5m check the deploy")} ${faint("fixed interval")}`,
-          `    ${info("/loop check CI and review comments")} ${faint("adaptive 1–60m cadence")}`,
+          `    ${info("/loop check CI and review comments")} ${faint("adaptive 1-60m cadence")}`,
           `    ${info("/loop")} ${faint("built-in maintenance prompt, or .gear/loop.md")}`,
           `    ${info("/loops")} ${faint("list active tasks")}`,
-          `    ${info("/loop cancel <id>")} ${faint("stop one · /loop clear stops all")}`,
+          `    ${info("/loop cancel <id>")} ${faint("stop one | /loop clear stops all")}`,
         ].join("\n"),
       );
       return;
@@ -2174,18 +2078,18 @@ class Tui {
       const cadence =
         task.cadence === "fixed"
           ? `every ${formatLoopInterval(task.intervalMs)}`
-          : `adaptive · first check ${formatLoopDue(task.nextRunAt)}`;
+          : `adaptive | first check ${formatLoopDue(task.nextRunAt)}`;
       this.print(
         [
-          `  ${ok("✓")} ${text("loop scheduled")} ${info(task.id)} ${faint(`· ${cadence} · expires in 7d`)}`,
-          `    ${faint("└")} ${muted(loopPromptPreview(task.prompt, Math.max(36, cols() - 10)))}`,
+          `  ${ok(glyph("verified"))} ${text("loop scheduled")} ${info(task.id)} ${faint(`| ${cadence} | expires in 7d`)}`,
+          `    ${faint(glyph("gutter"))} ${muted(loopPromptPreview(task.prompt, Math.max(36, cols() - 10)))}`,
           ...(result.promptPath ? [`    ${faint(`prompt: ${result.promptPath}`)}`] : []),
-          ...result.warnings.map((warning) => `    ${warn("•")} ${muted(warning)}`),
+          ...result.warnings.map((warning) => `    ${warn(glyph("observed"))} ${muted(warning)}`),
         ].join("\n"),
       );
     } catch (error) {
       this.print(
-        `  ${accent("✕")} ${muted(error instanceof Error ? error.message : String(error))}`,
+        `  ${danger(glyph("failure"))} ${muted(error instanceof Error ? error.message : String(error))}`,
       );
     }
   }
@@ -2193,8 +2097,8 @@ class Tui {
   private modelPresets(reg: string[]): { provider: string; model: string; label: string }[] {
     // Data-driven from the provider presets: every registered provider with a
     // curated `models` list contributes its models, so adding a provider is a
-    // one-line preset edit — no picker code to touch. Local runtimes (ollama /
-    // lmstudio) are listed even when not yet active so they're discoverable —
+    // one-line preset edit -- no picker code to touch. Local runtimes (ollama /
+    // lmstudio) are listed even when not yet active so they're discoverable --
     // picking one switches to it. Free-form `/model <provider>/<id>` still works.
     const localIds = PROVIDER_PRESETS.filter((p) => p.local).map((p) => p.id);
     const ids = [...reg, ...localIds.filter((id) => !reg.includes(id))];
@@ -2227,21 +2131,21 @@ class Tui {
     if (asDefault) {
       saveLastModel({ provider: engine.getProvider(), model: engine.getModel() });
       this.print(
-        `  ${accent("◆")} ${muted("default set —")} ${info(now)} ${faint("(used at startup)")}`,
+        `  ${accent(glyph("phase"))} ${muted("default set --")} ${info(now)} ${faint("(used at startup)")}`,
       );
     } else {
       this.print(
-        `  ${ok("✓")} ${muted("switched to")} ${info(now)} ${faint("· this session only — d in /model, or /model default, sets the startup default")}`,
+        `  ${ok(glyph("verified"))} ${muted("switched to")} ${info(now)} ${faint("| this session only -- d in /model, or /model default, sets the startup default")}`,
       );
     }
   }
 
   /**
-   * The /model tree: providers → accounts/endpoints → models.
+   * The /model tree: providers -> accounts/endpoints -> models.
    * Level 1 lists only configured providers (plus local runtimes); level 2 the
    * real access paths for the chosen one (skipped when there is just one);
-   * level 3 the models under that account — live-listed for local runtimes.
-   * ⏎ switches this session; `d` also makes the pick the startup default.
+   * level 3 the models under that account -- live-listed for local runtimes.
+   * enter switches this session; `d` also makes the pick the startup default.
    */
   private async modelTree(): Promise<void> {
     const engine = this.ctx.engine;
@@ -2249,11 +2153,11 @@ class Tui {
     const customEp = engine.getCustomEndpoint();
     const current = { provider: String(engine.getProvider()), model: engine.getModel() };
     const def = loadLastModel();
-    const defNote = def ? ` · default ${def.provider}/${def.model}` : "";
+    const defNote = def ? ` | default ${def.provider}/${def.model}` : "";
 
-    // ── Level 1: providers ──
+    // -- Level 1: providers --
     const provs = providerChoices(rows, customEp, process.env, getPreset);
-    const typeItem: PickerItem = { label: "Type provider/model…", hint: "anything not listed" };
+    const typeItem: PickerItem = { label: "Type provider/model...", hint: "anything not listed" };
     const l1: PickerItem[] = [
       ...provs.map((p) => ({
         label: p.label,
@@ -2268,13 +2172,13 @@ class Tui {
       provs.findIndex((p) => p.id === current.provider),
     );
     const a1 = await this.pick(
-      `Model · current ${current.provider}/${current.model}${defNote}`,
+      `Model | current ${current.provider}/${current.model}${defNote}`,
       l1,
       l1start,
       undefined,
       provs.length
-        ? "subscriptions (Claude Pro/Max · ChatGPT · Copilot): gear login · keys: /keys"
-        : "no providers configured yet — add a key with /keys or sign in with gear login",
+        ? "subscriptions (Claude Pro/Max | ChatGPT | Copilot): gear login | keys: /keys"
+        : "no providers configured yet -- add a key with /keys or sign in with gear login",
     );
     if (a1 == null) return;
     if (a1 >= provs.length) {
@@ -2293,7 +2197,7 @@ class Tui {
     const preset = getPreset(chosen.id);
     const accounts = accountChoices(preset, row, customEp, process.env);
 
-    // ── Level 2: accounts / endpoints (skipped when only one path) ──
+    // -- Level 2: accounts / endpoints (skipped when only one path) --
     let account = accounts[0];
     if (accounts.length > 1) {
       const l2: PickerItem[] = [
@@ -2305,7 +2209,7 @@ class Tui {
         { label: "Back", hint: "choose another provider" },
       ];
       const a2 = await this.pick(
-        `Model · ${chosen.label} · account`,
+        `Model | ${chosen.label} | account`,
         l2,
         Math.max(
           0,
@@ -2318,7 +2222,7 @@ class Tui {
       if (a2 >= accounts.length) return this.modelTree();
       account = accounts[a2];
       if (account?.kind === "key" && account.entryId && !account.active) {
-        // Picking a pooled key makes it the ACTIVE key — persisted and applied
+        // Picking a pooled key makes it the ACTIVE key -- persisted and applied
         // to the live gateway, same as the /keys manager.
         const file = persistSetActiveKey(chosen.id, account.entryId);
         engine.setProviderKeys(
@@ -2328,23 +2232,23 @@ class Tui {
           this.ctx.sessionId,
         );
         this.print(
-          `  ${ok("✓")} ${muted("active key now")} ${text(account.label)} ${faint(account.detail)}`,
+          `  ${ok(glyph("verified"))} ${muted("active key now")} ${text(account.label)} ${faint(account.detail)}`,
         );
       }
       if (row.source === "oauth" || row.source === "keychain") {
         if (account?.kind === "key" || account?.kind === "env") {
           this.print(
-            `  ${faint(`note: the signed-in ${row.source} credential wins on the wire —`)} ${info(`gear logout ${chosen.id}`)} ${faint("to use API keys")}`,
+            `  ${faint(`note: the signed-in ${row.source} credential wins on the wire --`)} ${info(`gear logout ${chosen.id}`)} ${faint("to use API keys")}`,
           );
         }
       } else if (account?.kind === "env" && accounts.some((x) => x.kind === "key")) {
         this.print(
-          `  ${faint("note: the saved key wins on the wire —")} ${info(`/keys clear ${chosen.id}`)} ${faint("to use the env key")}`,
+          `  ${faint("note: the saved key wins on the wire --")} ${info(`/keys clear ${chosen.id}`)} ${faint("to use the env key")}`,
         );
       }
     }
 
-    // ── Level 3: models under that account ──
+    // -- Level 3: models under that account --
     let live: string[] | null = null;
     if (preset && (chosen.local || account?.kind === "endpoint")) {
       live = await fetchLiveModels(preset.kind, row.endpoint ?? preset.baseUrl ?? "");
@@ -2361,7 +2265,7 @@ class Tui {
           ...(chosen.local ? ["local"] : []),
         ],
       })),
-      { label: "Type a model id…", hint: "anything not listed" },
+      { label: "Type a model id...", hint: "anything not listed" },
       {
         label: "Back",
         hint: accounts.length > 1 ? "choose another account" : "choose another provider",
@@ -2369,11 +2273,11 @@ class Tui {
     ];
     const crumb =
       accounts.length > 1 && account
-        ? `Model · ${chosen.label} · ${account.label.replace("API key · ", "key ")}`
-        : `Model · ${chosen.label}`;
+        ? `Model | ${chosen.label} | ${account.label.replace("API key | ", "key ")}`
+        : `Model | ${chosen.label}`;
     if (chosen.local && !live) {
       this.print(
-        `  ${faint(`endpoint ${row.endpoint ?? ""} not reachable — showing suggestions`)}`,
+        `  ${faint(`endpoint ${row.endpoint ?? ""} not reachable -- showing suggestions`)}`,
       );
     }
     const a3 = await this.pickAlt(
@@ -2383,7 +2287,7 @@ class Tui {
         0,
         models.findIndex((m) => m.current),
       ),
-      "⏎ use now (this session) · d = use now and make it the startup default · esc back",
+      "enter use now (this session) | d = use now and make it the startup default | esc back",
       "d",
     );
     if (a3 == null) return;
@@ -2397,7 +2301,7 @@ class Tui {
     this.applyModelSwitch(chosen.id, pickM.id, a3.alt);
   }
 
-  // ── picker mode ──
+  // -- picker mode --
 
   private pick(
     title: string,
@@ -2421,9 +2325,9 @@ class Tui {
   }
 
   /**
-   * A picker with a second action key: ⏎ resolves `{ index, alt: false }`,
+   * A picker with a second action key: enter resolves `{ index, alt: false }`,
    * `altKey` resolves `{ index, alt: true }` (the /model tree uses `d` for
-   * "use now AND make it the startup default"). esc → null.
+   * "use now AND make it the startup default"). esc -> null.
    */
   private pickAlt(
     title: string,
@@ -2477,7 +2381,7 @@ class Tui {
     p?.resolve(result, alt); // the resolver (or a following print/redraw) repaints
   }
 
-  // ── ask mode (transient single-line text prompt; used by /research) ──
+  // -- ask mode (transient single-line text prompt; used by /research) --
 
   private promptLine(title: string): Promise<string | null> {
     return new Promise((resolve) => {
@@ -2535,7 +2439,7 @@ class Tui {
     }
   }
 
-  // ── sessions manager (`/sessions`) ──
+  // -- sessions manager (`/sessions`) --
 
   /** A compact "2h ago" style age for the session list. */
   private relTime(iso: string): string {
@@ -2583,7 +2487,7 @@ class Tui {
     return {
       id: s.id,
       title,
-      meta: parts.filter(Boolean).join(" · "),
+      meta: parts.filter(Boolean).join(" | "),
       workspace: s.workspaceRoot,
       updatedAt: s.updatedAt,
       group: this.sessionGroup(s.updatedAt),
@@ -2732,7 +2636,7 @@ class Tui {
     this.sessionsQuery = "";
     this.mode = "input";
     this.resetTranscript();
-    this.print(`  ${ok("✓")} ${muted("started a new session")}`);
+    this.print(`  ${ok(glyph("verified"))} ${muted("started a new session")}`);
   }
 
   /** Load the selected session's history into the transcript and continue it. */
@@ -2742,7 +2646,7 @@ class Tui {
       this.closeSessions();
       return;
     }
-    // Already the live session — nothing to reload.
+    // Already the live session -- nothing to reload.
     if (s.id === this.ctx.sessionId && this.sessionsView === "active") {
       this.closeSessions();
       return;
@@ -2751,7 +2655,7 @@ class Tui {
     this.mode = "input";
     this.sessionsPendingDelete = null;
     if (!res) {
-      this.print(`  ${accent("✕")} ${muted("could not open that session")}`);
+      this.print(`  ${danger(glyph("failure"))} ${muted("could not open that session")}`);
       return;
     }
     this.replayTranscript(s.id, s, res);
@@ -2770,21 +2674,21 @@ class Tui {
 
     const title = s.title && s.title.trim() ? s.title.trim() : "untitled";
     this.print(
-      `  ${faint("╶─")} ${muted("resumed")} ${text(title)} ${faint(this.shortId(id))} ${faint("╶─")}`,
+      `  ${faint("--")} ${muted("resumed")} ${text(title)} ${faint(this.shortId(id))} ${faint("--")}`,
     );
     this.printTranscriptLines(lines);
     if (lines.length === 0) this.print(`  ${faint("(no earlier messages)")}`);
 
     if (res.switched) {
       this.print(
-        `  ${ok("✓")} ${muted("model")} ${info(`${this.ctx.engine.getProvider()}/${this.ctx.engine.getModel()}`)}`,
+        `  ${ok(glyph("verified"))} ${muted("model")} ${info(`${this.ctx.engine.getProvider()}/${this.ctx.engine.getModel()}`)}`,
       );
     } else if (!res.providerKnown) {
       this.print(
-        `  ${warn("•")} ${muted("couldn't detect this session's provider —")} ${info("/model")} ${muted("if replies look off")}`,
+        `  ${warn(glyph("observed"))} ${muted("couldn't detect this session's provider --")} ${info("/model")} ${muted("if replies look off")}`,
       );
     }
-    this.print(`  ${faint("continue where you left off ↓")}`);
+    this.print(`  ${faint("continue where you left off down")}`);
   }
 
   /** Render replayed history lines into the transcript (shared by resume + startup seeding).
@@ -2806,14 +2710,14 @@ class Tui {
     const info = this.ctx.engine.getSessionInfo(this.ctx.sessionId);
     const title = info?.title?.trim() || "untitled";
     this.print(
-      `  ${faint("╶─")} ${muted("resumed")} ${text(title)} ${faint(this.shortId(this.ctx.sessionId))} ${faint("╶─")}`,
+      `  ${faint("--")} ${muted("resumed")} ${text(title)} ${faint(this.shortId(this.ctx.sessionId))} ${faint("--")}`,
     );
     this.printTranscriptLines(lines);
-    this.print(`  ${faint("continue where you left off ↓")}`);
+    this.print(`  ${faint("continue where you left off down")}`);
   }
 
   /**
-   * Launch flow: started without a target session but prior work exists → offer a
+   * Launch flow: started without a target session but prior work exists -> offer a
    * compact "resume a session" picker (Enter / Esc / "new" = keep the fresh
    * session). Picking an older session loads it and discards the throwaway session
    * we created to land in, so launches never litter the history.
@@ -2824,23 +2728,23 @@ class Tui {
       .listSessions({ status: "active" })
       .filter((s) => s.id !== fresh && isMeaningfulSession(s))
       .slice(0, 12);
-    if (recent.length === 0) return; // nothing to resume — stay in the fresh session
+    if (recent.length === 0) return; // nothing to resume -- stay in the fresh session
 
     const items: PickerItem[] = [
-      { label: "✦  Start a new session", hint: "fresh start" },
+      { label: "*  Start a new session", hint: "fresh start" },
       ...recent.map((s) => {
         const v = this.sessionRowView(s);
         return { label: v.title, hint: v.meta };
       }),
     ];
     const i = await this.pick("Resume a session", items, 0);
-    if (i == null || i === 0) return; // Esc or "new" → keep the fresh session
+    if (i == null || i === 0) return; // Esc or "new" -> keep the fresh session
 
     const s = recent[i - 1];
     if (!s) return;
     const res = this.ctx.engine.resumeSession(s.id);
     if (!res) {
-      this.print(`  ${accent("✕")} ${muted("could not open that session")}`);
+      this.print(`  ${danger(glyph("failure"))} ${muted("could not open that session")}`);
       return;
     }
     this.replayTranscript(s.id, s, res);
@@ -2850,9 +2754,9 @@ class Tui {
     const s = this.sessionsList[this.sessionsSel];
     if (!s) return;
     const current = s.title && s.title.trim() ? s.title.trim() : "untitled";
-    const name = await this.promptLine(`Rename "${current}" →`);
+    const name = await this.promptLine(`Rename "${current}" ->`);
     if (name != null && name.trim()) this.ctx.engine.renameSession(s.id, name.trim());
-    // promptLine returns us to "input" mode — re-open the manager on the same row.
+    // promptLine returns us to "input" mode -- re-open the manager on the same row.
     this.openSessions(this.sessionsView);
     const idx = this.sessionsList.findIndex((x) => x.id === s.id);
     if (idx >= 0) this.sessionsSel = idx;
@@ -2863,8 +2767,10 @@ class Tui {
     const s = this.sessionsList[this.sessionsSel];
     if (!s) return;
     this.ctx.engine.archiveSession(s.id);
-    this.print(`  ${ok("✓")} ${muted("archived")} ${faint(s.title?.trim() || "untitled")}`);
-    // Archiving the live session would orphan chat() (getSession rejects non-active) — land in a fresh one.
+    this.print(
+      `  ${ok(glyph("verified"))} ${muted("archived")} ${faint(s.title?.trim() || "untitled")}`,
+    );
+    // Archiving the live session would orphan chat() (getSession rejects non-active) -- land in a fresh one.
     if (s.id === this.ctx.sessionId) {
       this.ctx.sessionId = this.ctx.engine.createSession();
       this.resetTranscript();
@@ -2877,7 +2783,9 @@ class Tui {
     const s = this.sessionsList[this.sessionsSel];
     if (!s) return;
     this.ctx.engine.restoreSession(s.id);
-    this.print(`  ${ok("✓")} ${muted("restored")} ${faint(s.title?.trim() || "untitled")}`);
+    this.print(
+      `  ${ok(glyph("verified"))} ${muted("restored")} ${faint(s.title?.trim() || "untitled")}`,
+    );
     this.refreshSessions();
   }
 
@@ -2893,9 +2801,9 @@ class Tui {
     this.sessionsPendingDelete = null;
     this.ctx.engine.deleteSession(s.id);
     this.print(
-      `  ${ok("✓")} ${muted("deleted")} ${faint(s.title?.trim() || "untitled")} ${faint("· recoverable until purged")}`,
+      `  ${ok(glyph("verified"))} ${muted("deleted")} ${faint(s.title?.trim() || "untitled")} ${faint("| recoverable until purged")}`,
     );
-    // Deleting the live session would orphan chat() — open a fresh one to land in.
+    // Deleting the live session would orphan chat() -- open a fresh one to land in.
     if (s.id === this.ctx.sessionId) {
       this.ctx.sessionId = this.ctx.engine.createSession();
       this.resetTranscript();
@@ -2904,9 +2812,9 @@ class Tui {
     this.refreshSessions();
   }
 
-  // ── keys mode (BYOK API keys) ──
+  // -- keys mode (BYOK API keys) --
 
-  // ── memory panel (`/memory`) ──
+  // -- memory panel (`/memory`) --
 
   private openMemory(): void {
     this.memorySel = 0;
@@ -2998,8 +2906,8 @@ class Tui {
       this.memoryBusy = false;
     }
     this.memoryNote = res.updated
-      ? `refreshed · ~${res.tokensAfter} tokens`
-      : `unchanged — ${res.reason}`;
+      ? `refreshed | ~${res.tokensAfter} tokens`
+      : `unchanged -- ${res.reason}`;
     this.scheduleDraw();
   }
 
@@ -3050,7 +2958,7 @@ class Tui {
   /**
    * Suspend the TUI (leave raw mode + alt-screen/inline, hand the terminal to the
    * child), open the profile in $EDITOR, then restore the TUI and fold the edits
-   * back in. The genuine in-app edit path — no "go use classic mode" punt.
+   * back in. The genuine in-app edit path -- no "go use classic mode" punt.
    */
   private async editMemoryInEditor(): Promise<void> {
     const { engine } = this.ctx;
@@ -3063,19 +2971,14 @@ class Tui {
     const editor = process.env.VISUAL || process.env.EDITOR || "nano";
     const stdin = process.stdin;
 
-    // ── suspend ──
+    // -- suspend --
     if (this.drawTimer) {
       clearTimeout(this.drawTimer);
       this.drawTimer = null;
     }
     process.stdout.write("\x1b[?2004l"); // bracketed paste off
-    if (!this.inline) process.stdout.write("\x1b[?1000l\x1b[?1006l"); // mouse off
-    if (this.inline) {
-      this.region.clear();
-      process.stdout.write(TERMINAL_THEME_RESET);
-    } else {
-      this.screen.exit();
-    }
+    this.region.clear();
+    process.stdout.write(TERMINAL_THEME_RESET);
     if (stdin.isTTY) stdin.setRawMode(false);
     stdin.pause();
     process.stdout.write("\x1b[?25h"); // show cursor for the editor
@@ -3089,19 +2992,17 @@ class Tui {
       okEdit = false;
     }
 
-    // ── resume ──
+    // -- resume --
     if (stdin.isTTY) stdin.setRawMode(true);
     stdin.resume();
     process.stdout.write("\x1b[?2004h");
-    if (!this.inline) process.stdout.write("\x1b[?1000h\x1b[?1006h");
-    if (this.inline) this.enterInline();
-    else this.screen.enter(themeBgSeq());
+    this.enterInline();
 
     if (okEdit) {
       try {
         const { readFileSync } = require("fs");
         const res = engine.setSystemMemoryContent(readFileSync(path, "utf-8"));
-        this.memoryNote = `saved · ~${res.tokens} tokens`;
+        this.memoryNote = `saved | ~${res.tokens} tokens`;
       } catch {
         this.memoryNote = "no changes";
       }
@@ -3243,8 +3144,8 @@ class Tui {
       masked: true,
       mode: "add",
       pending: {},
-      title: `Add API key — ${mgr.label}`,
-      subtitle: preset?.docsUrl ? `paste a key from any account · ${preset.docsUrl}` : undefined,
+      title: `Add API key -- ${mgr.label}`,
+      subtitle: preset?.docsUrl ? `paste a key from any account | ${preset.docsUrl}` : undefined,
     };
     this.scheduleDraw();
   }
@@ -3288,7 +3189,7 @@ class Tui {
     if (!row) return;
     const localPreset = getPreset(row.id);
     if (row.id === CUSTOM_PROVIDER_ID) {
-      // Walk base URL → model → key for the user-defined endpoint.
+      // Walk base URL -> model -> key for the user-defined endpoint.
       const c = this.ctx.engine.getCustomEndpoint();
       const base = c?.baseUrl ?? "https://";
       this.keysEdit = {
@@ -3299,7 +3200,7 @@ class Tui {
         caret: base.length,
         masked: false,
         pending: {},
-        title: "Custom endpoint — base URL",
+        title: "Custom endpoint -- base URL",
         subtitle: "OpenAI-compatible /v1 base URL",
       };
     } else if (localPreset?.local) {
@@ -3313,8 +3214,8 @@ class Tui {
         caret: cur.length,
         masked: false,
         pending: {},
-        title: `${row.label} — base URL`,
-        subtitle: "local server URL · no API key needed · empty resets to default",
+        title: `${row.label} -- base URL`,
+        subtitle: "local server URL | no API key needed | empty resets to default",
       };
     } else {
       const preset = getPreset(row.id);
@@ -3326,7 +3227,7 @@ class Tui {
         caret: 0,
         masked: true,
         pending: {},
-        title: `Paste API key — ${row.label}`,
+        title: `Paste API key -- ${row.label}`,
         subtitle: preset?.docsUrl ? `get one at ${preset.docsUrl}` : undefined,
       };
     }
@@ -3397,11 +3298,11 @@ class Tui {
     const val = e.value.trim();
     const { engine } = this.ctx;
 
-    // ── Add a key to a provider's multi-account pool (append, not replace) ──
+    // -- Add a key to a provider's multi-account pool (append, not replace) --
     if (e.mode === "add") {
       if (e.field === "key") {
         if (!val) {
-          this.keysEdit = null; // nothing pasted → back to the manager
+          this.keysEdit = null; // nothing pasted -> back to the manager
           this.scheduleDraw();
           return;
         }
@@ -3410,12 +3311,12 @@ class Tui {
         e.value = "";
         e.caret = 0;
         e.masked = false;
-        e.title = `Label this key — ${e.label}`;
-        e.subtitle = "optional · name the account (e.g. work, personal) · enter to skip";
+        e.title = `Label this key -- ${e.label}`;
+        e.subtitle = "optional | name the account (e.g. work, personal) | enter to skip";
         this.scheduleDraw();
         return;
       }
-      // field === "label" → commit the add
+      // field === "label" -> commit the add
       const file = persistAddKey(e.id, e.pending.newKey ?? "", val || undefined).file;
       const res = engine.setProviderKeys(
         e.id,
@@ -3429,7 +3330,7 @@ class Tui {
       const count = this.keysRows.find((r) => r.id === e.id)?.savedKeys?.length ?? 0;
       if (this.keysManage?.id === e.id) this.keysManage.sel = Math.max(0, count - 1);
       this.print(
-        `  ${ok("✓")} ${muted("added key for")} ${info(e.label)}${val ? faint(` · ${val}`) : ""} ${faint(`· ${count} configured`)}`,
+        `  ${ok(glyph("verified"))} ${muted("added key for")} ${info(e.label)}${val ? faint(` | ${val}`) : ""} ${faint(`| ${count} configured`)}`,
       );
       this.scheduleDraw();
       return;
@@ -3448,7 +3349,7 @@ class Tui {
         e.value = def;
         e.caret = def.length;
         e.masked = false;
-        e.title = "Custom endpoint — model";
+        e.title = "Custom endpoint -- model";
         e.subtitle = "Model id to send (e.g. llama-3.3-70b-versatile)";
         this.scheduleDraw();
         return;
@@ -3459,12 +3360,12 @@ class Tui {
         e.value = "";
         e.caret = 0;
         e.masked = true;
-        e.title = "Custom endpoint — API key";
+        e.title = "Custom endpoint -- API key";
         e.subtitle = undefined;
         this.scheduleDraw();
         return;
       }
-      // field === "key" → commit
+      // field === "key" -> commit
       const ep: CustomEndpoint = {
         baseUrl: e.pending.baseUrl ?? "",
         model: e.pending.model ?? "",
@@ -3475,7 +3376,7 @@ class Tui {
       this.keysEdit = null;
       this.keysRows = this.buildKeyRows();
       this.print(
-        `  ${ok("✓")} ${muted("saved custom endpoint")} ${faint(ep.baseUrl)} ${faint("· use /model to switch")}`,
+        `  ${ok(glyph("verified"))} ${muted("saved custom endpoint")} ${faint(ep.baseUrl)} ${faint("| use /model to switch")}`,
       );
       this.scheduleDraw();
       return;
@@ -3489,7 +3390,7 @@ class Tui {
       this.keysRows = this.buildKeyRows();
       const shown = engine.getLocalEndpoint(e.id) ?? "";
       this.print(
-        `  ${ok("✓")} ${muted(`${e.label} endpoint`)} ${faint(shown)} ${faint("· /model to switch")}`,
+        `  ${ok(glyph("verified"))} ${muted(`${e.label} endpoint`)} ${faint(shown)} ${faint("| /model to switch")}`,
       );
       this.scheduleDraw();
       return;
@@ -3506,7 +3407,7 @@ class Tui {
     this.keysEdit = null;
     this.keysRows = this.buildKeyRows();
     this.print(
-      `  ${ok("✓")} ${muted("saved key for")} ${info(e.label)} ${faint("· use /model to switch")}`,
+      `  ${ok(glyph("verified"))} ${muted("saved key for")} ${info(e.label)} ${faint("| use /model to switch")}`,
     );
     this.scheduleDraw();
   }
@@ -3542,12 +3443,12 @@ class Tui {
   private noteForcedSwitch(res: { switchedTo?: { provider: string; model: string } }): void {
     if (res.switchedTo) {
       this.print(
-        `  ${warn("→")} ${muted("active provider unavailable — now on")} ${info(`${res.switchedTo.provider}/${res.switchedTo.model}`)}`,
+        `  ${warn("->")} ${muted("active provider unavailable -- now on")} ${info(`${res.switchedTo.provider}/${res.switchedTo.model}`)}`,
       );
     }
   }
 
-  // ── permission mode ──
+  // -- permission mode --
 
   private permissionHandler: PermissionHandler = async (prompt) => {
     const preview = await buildPermissionPreview({
@@ -3573,7 +3474,7 @@ class Tui {
     });
   };
 
-  // ── ask_user question mode ──
+  // -- ask_user question mode --
 
   private questionHandler = (q: { question: string; options: string[] }): Promise<string> =>
     new Promise<string>((resolve) => {
@@ -3586,7 +3487,7 @@ class Tui {
       this.input = "";
       this.caret = 0;
       this.mode = "question";
-      // 4th gear asks like every other gear — the user is usually right here —
+      // 4th gear asks like every other gear -- the user is usually right here --
       // but must never park an autonomous run on a question nobody answers:
       // after a grace window the picker dismisses itself and the model
       // proceeds on its own judgment, keeping fire-and-forget intact.
@@ -3594,7 +3495,7 @@ class Tui {
         this.questionState.autoContinue = true;
         this.questionState.timer = setTimeout(() => {
           this.finishQuestion(
-            "(no answer within 60s — proceed with your best judgment and state the assumption)",
+            "(no answer within 60s -- proceed with your best judgment and state the assumption)",
           );
         }, Tui.QUESTION_AUTO_CONTINUE_MS);
       }
@@ -3611,7 +3512,7 @@ class Tui {
     this.caret = 0;
     // Return to the in-flight turn (questions only fire mid-turn).
     this.mode = q.prevMode === "question" ? "turn" : q.prevMode;
-    this.print(`  ${ok("✓")} ${muted(truncate(answer, 80))}`);
+    this.print(`  ${ok(glyph("verified"))} ${muted(truncate(answer, 80))}`);
     this.scheduleDraw();
     q.resolve(answer);
   }
@@ -3629,7 +3530,7 @@ class Tui {
       return this.finishQuestion(typed || q.options[0]);
     }
     if (key.type === "esc") {
-      return this.finishQuestion("(user skipped the question — proceed with your best judgment)");
+      return this.finishQuestion("(user skipped the question -- proceed with your best judgment)");
     }
     // Everything else edits the composer (free-text answer).
     if (this.editComposer(key)) this.scheduleDraw();
@@ -3651,13 +3552,17 @@ class Tui {
     this.mode = "turn"; // return to the in-flight turn
     const label =
       decision.kind === "deny"
-        ? muted("◇ declined · no action taken")
-        : ok(decision.kind === "allow_session" ? "✓ approved for session" : "✓ approved once");
+        ? muted(`${glyph("observed")} declined | no action taken`)
+        : ok(
+            `${glyph("verified")} ${
+              decision.kind === "allow_session" ? "approved for session" : "approved once"
+            }`,
+          );
     this.print(`  ${label}`);
     r(decision);
   }
 
-  // ── turn mode (streaming) ──
+  // -- turn mode (streaming) --
 
   private turnKey(key: Key): void {
     // Ctrl+R mid-turn: print the in-flight work log so far.
@@ -3677,27 +3582,29 @@ class Tui {
         if (this.activeLoopId) {
           const cancelled = this.ctx.engine.cancelLoopTask(this.ctx.sessionId, this.activeLoopId);
           if (cancelled.ok)
-            this.print(`  ${accent("✕")} ${muted(`loop ${this.activeLoopId} stopped`)}`);
+            this.print(
+              `  ${danger(glyph("failure"))} ${muted(`loop ${this.activeLoopId} stopped`)}`,
+            );
         }
         // Guard the flood: one interrupt request per turn, however many times esc is pressed.
         this.aborting = true;
         this.ctx.engine.abort();
-        this.print(`  ${accent("✕")} ${muted("interrupting…")}`);
+        this.print(`  ${danger(glyph("failure"))} ${muted("interrupting...")}`);
         this.scheduleDraw();
       }
       return;
     }
     // Backspace with an empty composer removes the most recently queued
-    // message — the strip advertises this, so queueing stays reversible.
+    // message -- the strip advertises this, so queueing stays reversible.
     if (key.type === "backspace" && this.input.length === 0 && this.queued.length > 0) {
       this.queued.pop();
       this.scheduleDraw();
       return;
     }
-    // Enter mid-turn: STEER the live run — the message is folded into the
+    // Enter mid-turn: STEER the live run -- the message is folded into the
     // agent's context at the next tool boundary, so it adapts its plan without
     // restarting (Claude Code-style). Slash commands can't run mid-turn, and
-    // planner-mode/research runs aren't steerable — those queue and run when
+    // planner-mode/research runs aren't steerable -- those queue and run when
     // the turn finishes (the previous behaviour).
     if (key.type === "enter") {
       const raw = this.expandPastes(this.input).trim();
@@ -3706,7 +3613,7 @@ class Tui {
         if (steered) {
           this.history.push(raw);
           this.print(userBlock(raw));
-          this.print(`  ${info("↪")} ${faint("folded into the running task")}`);
+          this.print(`  ${info("->")} ${faint("folded into the running task")}`);
         } else {
           this.queued.push(raw);
         }
@@ -3737,8 +3644,8 @@ class Tui {
     this.scheduleDraw();
 
     // Collapsed rendering (see ./turn.ts): narration and the final answer stay in
-    // the open; the heavy work accumulates in a hidden log whose live tail — plus
-    // the to-do checklist and a preview of the streaming prose — shows in the
+    // the open; the heavy work accumulates in a hidden log whose live tail -- plus
+    // the to-do checklist and a preview of the streaming prose -- shows in the
     // pinned window above the composer. finish() sets down the collapsed summary,
     // edit chips, the plan's final state, the record line, and the answer.
     const turn = new TurnRenderer(
@@ -3802,7 +3709,7 @@ class Tui {
         }
       }
     } catch (err) {
-      // A user interrupt surfaces as an abort error — that's expected, not a failure to report.
+      // A user interrupt surfaces as an abort error -- that's expected, not a failure to report.
       if (!this.aborting) {
         turnFailed = true;
         turn.onError(err);
@@ -3817,7 +3724,7 @@ class Tui {
         shouldOfferInteractive(answerText)
       ) {
         this.interactiveTipShown = true;
-        this.print(`  ${faint("✦ /interactive — view this as a live dashboard")}`);
+        this.print(`  ${faint(`${glyph("phase")} /interactive -- view this as a live dashboard`)}`);
       }
       this.lastWorkLog = turn.fullLog();
       this.liveTurn = null;
@@ -3846,13 +3753,13 @@ class Tui {
 
   private renderLoopCompletion(task: LoopTask, completion: LoopCompletion): string {
     if (completion.state === "rescheduled" && completion.task) {
-      return `  ${warn("↻")} ${muted(`loop ${task.id} next ${formatLoopDue(completion.task.nextRunAt)}`)} ${faint(`· ${completion.reason}`)}`;
+      return `  ${warn(glyph("retry"))} ${muted(`loop ${task.id} next ${formatLoopDue(completion.task.nextRunAt)}`)} ${faint(`| ${completion.reason}`)}`;
     }
     if (completion.state === "stopped") {
-      return `  ${ok("✓")} ${muted(`loop ${task.id} complete`)} ${faint(`· ${completion.reason}`)}`;
+      return `  ${ok(glyph("verified"))} ${muted(`loop ${task.id} complete`)} ${faint(`| ${completion.reason}`)}`;
     }
     if (completion.state === "expired") {
-      return `  ${muted(`loop ${task.id} expired`)} ${faint(`· ${completion.reason}`)}`;
+      return `  ${muted(`loop ${task.id} expired`)} ${faint(`| ${completion.reason}`)}`;
     }
     return `  ${muted(`loop ${task.id} stopped`)}`;
   }
@@ -3876,7 +3783,7 @@ class Tui {
       this.activeLoopId = null;
       this.mode = "input";
       this.print(
-        `  ${accent("✕")} ${muted(`loop failed: ${error instanceof Error ? error.message : String(error)}`)}`,
+        `  ${danger(glyph("failure"))} ${muted(`loop failed: ${error instanceof Error ? error.message : String(error)}`)}`,
       );
       this.scheduleDraw();
     }
@@ -3929,7 +3836,7 @@ class Tui {
 
   /** Close out a finished turn's type-ahead queue. On a clean finish, run the next queued
    *  message (which itself drains the rest on completion). On an interrupt, the queue is
-   *  cancelled — the most recent draft is restored to the composer (when empty) so nothing
+   *  cancelled -- the most recent draft is restored to the composer (when empty) so nothing
    *  the user typed is silently lost. */
   private drainQueue(wasAborted: boolean): void {
     if (wasAborted) {
@@ -3945,7 +3852,7 @@ class Tui {
     else this.scheduleDraw();
   }
 
-  // ── research mode (/research) ──
+  // -- research mode (/research) --
 
   private async runResearchFlow(query: string, depth?: ResearchOptions["depth"]): Promise<void> {
     const { engine } = this.ctx;
@@ -3974,7 +3881,7 @@ class Tui {
             "Research plan",
             [
               { label: "Run research", hint: "fan out & synthesize a cited report" },
-              { label: "Revise…", hint: "give feedback and re-plan" },
+              { label: "Revise...", hint: "give feedback and re-plan" },
               { label: "Cancel", hint: "" },
             ],
             0,
@@ -3996,7 +3903,9 @@ class Tui {
       // Phase 3: execute.
       await this.runResearchTurn(plan, question, researchOpts);
     } catch (err) {
-      this.print(`  ${accent("✕")} ${text(err instanceof Error ? err.message : String(err))}`);
+      this.print(
+        `  ${danger(glyph("failure"))} ${text(err instanceof Error ? err.message : String(err))}`,
+      );
     }
   }
 
@@ -4005,10 +3914,10 @@ class Tui {
     question: string,
     opts?: ResearchOptions,
   ): Promise<void> {
-    // Research renders through the SAME TurnRenderer as every other turn —
+    // Research renders through the SAME TurnRenderer as every other turn --
     // same live rung, same rail rows, same streaming prose, same receipts.
     // (It used to be a second product wearing the same binary: its own event
-    // printing, raw unwrapped report streaming, its own error format — the
+    // printing, raw unwrapped report streaming, its own error format -- the
     // exact "many pieces, not one system" seam.)
     const { engine } = this.ctx;
     this.mode = "turn";
@@ -4040,7 +3949,7 @@ class Tui {
     try {
       for await (const ev of engine.runResearch(this.ctx.sessionId, plan, opts)) {
         if (ev.type === "research_report_delta") {
-          // The report IS the answer — stream it as the turn's prose so it
+          // The report IS the answer -- stream it as the turn's prose so it
           // previews live and lands as rendered markdown at finish.
           turn.onEvent({ type: "text_delta", text: ev.text });
           continue;
@@ -4084,7 +3993,7 @@ class Tui {
           .replace(/^-+|-+$/g, "")
           .slice(0, 50) || "research";
       const file = join(dir, `${new Date().toISOString().slice(0, 10)}-${slug}.md`);
-      const body = `# Research: ${plan.question}\n\n_Generated by Gear · ${new Date().toISOString()}_\n\n${report.markdown}\n`;
+      const body = `# Research: ${plan.question}\n\n_Generated by Gear | ${new Date().toISOString()}_\n\n${report.markdown}\n`;
       writeFileSync(file, body);
       const shown = file.startsWith(this.ctx.workspaceRoot)
         ? file.slice(this.ctx.workspaceRoot.length).replace(/^[/\\]/, "")
