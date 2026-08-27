@@ -43,6 +43,10 @@ import {
   PROVIDER_PRESETS,
   CUSTOM_PROVIDER_ID,
   loadLastModel,
+  loadPrefs,
+  savePrefs,
+  mayPersistGear,
+  shouldAskAboutFourthGear,
   saveLastModel,
   saveSandboxState,
   saveBrowserState,
@@ -565,6 +569,41 @@ class Tui {
     this.ctx.yoloMode = next === "gear-4";
     this.ctx.trustWorkspace = next === "gear-3";
     this.print(permissionModeBanner(next));
+    void this.rememberGear(next);
+  }
+
+  /**
+   * Write the chosen gear down, so the next session opens in it.
+   *
+   * Every gear except the fourth persists without ceremony, because every other
+   * gear still asks before it acts — remembering them changes how much typing a
+   * session costs, not what it is permitted to do. The fourth bypasses every
+   * interactive prompt, so making it sticky silently would mean a machine that
+   * quietly stopped asking, forever, on the strength of one afternoon. It is
+   * asked about once and the answer is what is kept: yes, and it persists like
+   * any other; no, and it stays session-only and is never raised again.
+   */
+  private async rememberGear(gear: ReturnType<Engine["getPermissionMode"]>): Promise<void> {
+    try {
+      const prefs = loadPrefs();
+      if (shouldAskAboutFourthGear(gear, prefs)) {
+        const answer = await this.questionHandler({
+          question: "Open new sessions in 4th gear from now on?",
+          options: ["no - this session only", "yes - remember 4th gear"],
+        });
+        const sticky = answer.trim().toLowerCase().startsWith("yes");
+        savePrefs({ stickyFourthGear: sticky, ...(sticky ? { gear } : {}) });
+        this.print(
+          sticky
+            ? `  ${accent(glyph("phase"))} ${muted("remembered --")} ${info("4th gear")} ${faint("at startup (change it any time with shift+tab)")}`
+            : `  ${ok(glyph("verified"))} ${muted("4th gear for this session only")}`,
+        );
+        return;
+      }
+      if (mayPersistGear(gear, prefs)) savePrefs({ gear });
+    } catch {
+      // A preference that cannot be written must never interrupt the session.
+    }
   }
 
   // -- slash palette (live `/` menu) --
@@ -2198,16 +2237,16 @@ class Tui {
     const engine = this.ctx.engine;
     engine.switchModel(model, prov as any, this.ctx.sessionId);
     const now = `${engine.getProvider()}/${engine.getModel()}`;
-    if (asDefault) {
-      saveLastModel({ provider: engine.getProvider(), model: engine.getModel() });
-      this.print(
-        `  ${accent(glyph("phase"))} ${muted("default set --")} ${info(now)} ${faint("(used at startup)")}`,
-      );
-    } else {
-      this.print(
-        `  ${ok(glyph("verified"))} ${muted("switched to")} ${info(now)} ${faint("| this session only -- d in /model, or /model default, sets the startup default")}`,
-      );
-    }
+    // Switching model IS the decision. Asking the user to confirm it a second
+    // time, with a different key in a different place, meant the next session
+    // opened on the model they had already rejected — so a plain pick persists
+    // now, and `asDefault` only changes how loudly it says so.
+    saveLastModel({ provider: engine.getProvider(), model: engine.getModel() });
+    this.print(
+      asDefault
+        ? `  ${accent(glyph("phase"))} ${muted("default set --")} ${info(now)} ${faint("(used at startup)")}`
+        : `  ${ok(glyph("verified"))} ${muted("switched to")} ${info(now)} ${faint("| kept for new sessions too")}`,
+    );
   }
 
   /**
