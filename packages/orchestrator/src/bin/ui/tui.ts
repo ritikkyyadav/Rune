@@ -86,7 +86,7 @@ import {
 } from "./composer";
 import { GEAR_MARK, renderBanner } from "./banner";
 import { renderStatus } from "./status";
-import { renderReadBack } from "./read-back";
+import { renderReadBack, renderClose } from "./read-back";
 import type { Brief } from "../../brief";
 import { TurnRenderer, userBlock, renderReplay, HEX } from "./turn";
 import { truncate, clampVisible, setTermWidthOverride } from "./render";
@@ -3506,6 +3506,21 @@ class Tui {
     });
 
   /**
+   * The close, printed at the end of any turn that opened a brief.
+   *
+   * This is the half of the read-back that makes the other half mean something:
+   * the same criteria, in the same order, each showing the evidence that moved
+   * it — or showing plainly that nothing did. It renders whether or not the
+   * turn went well, because a brief that quietly stops being mentioned when the
+   * work went badly is worse than no brief at all.
+   */
+  private printClose(): void {
+    const ledger = this.ctx.engine.currentLedger();
+    if (!ledger || ledger.total === 0) return;
+    this.print(renderClose(ledger));
+  }
+
+  /**
    * The read-back, made correctable. The block is committed to scrollback first
    * — it is the contract, and it stands whether or not they answer — and then
    * the same picker that serves ask_user takes the one keystroke that accepts,
@@ -3745,6 +3760,7 @@ class Tui {
       }
     } finally {
       turn.finish({ aborted: this.aborting });
+      this.printClose();
       if (
         !this.aborting &&
         !dashboardTouched &&
@@ -3990,6 +4006,7 @@ class Tui {
       if (!this.aborting) turn.onError(err);
     } finally {
       turn.finish({ aborted: this.aborting });
+      this.printClose();
       this.lastWorkLog = turn.fullLog();
       this.liveTurn = null;
       if (this.tick) {
