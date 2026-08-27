@@ -25,13 +25,14 @@ describe("ui/composer renderComposer", () => {
     // leaves the input floating, so on a quiet screen nothing says where the
     // typing goes. Two make it a place, with the status hint outside the edges
     // rather than looking like more input.
-    expect(r.lines).toHaveLength(4); // rule, input, rule, status
-    const top = stripAnsi(r.lines[0]);
-    const bottom = stripAnsi(r.lines[2]);
+    expect(r.lines).toHaveLength(5); // gap, rule, input, rule, status
+    expect(stripAnsi(r.lines[0]).trim()).toBe(""); // the field owns its own gap
+    const top = stripAnsi(r.lines[1]);
+    const bottom = stripAnsi(r.lines[3]);
     expect(top).toBe(bottom);
     expect(top.trim()).toMatch(/^─+$/);
-    expect(top.length).toBe(stripAnsi(r.lines[1]).length);
-    expect(r.caretRow).toBe(1); // still on the input row, between the rules
+    expect(top.length).toBe(stripAnsi(r.lines[2]).length);
+    expect(r.caretRow).toBe(2); // still on the input row, between the rules
     expect(r.caretCol).toBe(9); // 4 chrome cols + caret index 5
   });
 

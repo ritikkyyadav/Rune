@@ -467,9 +467,16 @@ export function renderComposer(state: ComposerState): RenderedBlock {
   const edge = hairline(glyph("rule").repeat(width));
   const mid = `${PAD}${muted(glyph("selection"))} ${body}`;
 
+  // The blank line above the field belongs to the FIELD, not to whatever is
+  // above it. Owning it here is what makes the frame hold in both directions:
+  // on a long session it keeps the input from touching the last line of
+  // output, and on a fresh one it keeps this rule off the row directly below
+  // the header's rule, where the two would draw as a doubled border. The
+  // caller above cannot know which case it is in; this block always can.
+  //
   // PAD(2) + chevron(1) + space(1) = 4 cols before the input text.
   const caretCol = 4 + (state.caret - scroll);
-  return { lines: [edge, mid, edge, ...statusLines], caretRow: 1, caretCol };
+  return { lines: ["", edge, mid, edge, ...statusLines], caretRow: 2, caretCol };
 }
 
 // --- Permission request card (TUI) ---
