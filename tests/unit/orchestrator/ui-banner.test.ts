@@ -47,10 +47,10 @@ describe("ui/banner", () => {
     // session there is no transcript between it and the composer, so its rule
     // would land on the row above the composer's own top rule and draw as a
     // doubled border. The composer's rule is the divider.
-    expect(lines).toHaveLength(1);
+    expect(lines).toHaveLength(2);
     expect(lines[0]).toContain("gear · sample-app · main · claude-sonnet-4-6");
     expect(lines[0]).toContain("1st gear"); // the mode, hard right
-    expect(lines.some((l) => /^─+$/.test(l))).toBe(false);
+    expect(lines[1]).toMatch(/^─+$/); // the rule that closes the frame's top
     // Nothing decorative survives: no mark, no avatar, no wordmark, no tagline.
     expect(output).not.toContain("⚙");
     expect(output).not.toContain("⣴");
@@ -94,8 +94,9 @@ describe("ui/banner", () => {
       const lines = banner(columns)
         .split("\n")
         .filter((line) => line.trim());
-      // No rule of its own — the composer supplies the divider.
-      expect(lines.some((l) => /^─+$/.test(l))).toBe(false);
+      const hair = lines.at(-1)!;
+      expect(hair).toMatch(/^─+$/);
+      expect(hair.length).toBe(Math.max(20, columns - 1));
       // …while every line still stays inside the window, never touching its
       // last cell (a full-width line wraps, and a wrap desyncs the composer).
       for (const line of lines) expect(line.length).toBeLessThan(columns);
