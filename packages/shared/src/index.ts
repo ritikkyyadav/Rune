@@ -37,6 +37,7 @@ export {
   type ProviderCapabilities,
   type ProviderDescriptor,
   PROVIDER_PRESETS,
+  AUTO_PROVIDER_PRIORITY,
   CUSTOM_PROVIDER_ID,
   getPreset,
   getProviderDescriptor,
@@ -86,6 +87,14 @@ export {
   applySearchKeysToEnv,
 } from "./secrets.js";
 export { type LastModel, getModelStatePath, loadLastModel, saveLastModel } from "./model-store.js";
+export {
+  type SessionPrefs,
+  getPrefsPath,
+  loadPrefs,
+  savePrefs,
+  mayPersistGear,
+  shouldAskAboutFourthGear,
+} from "./prefs-store.js";
 export { loadSavedSandboxState, resolveInitialSandbox, saveSandboxState } from "./sandbox-store.js";
 export { loadSavedBrowserState, resolveInitialBrowser, saveBrowserState } from "./browser-store.js";
 export {

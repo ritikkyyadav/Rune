@@ -22,6 +22,7 @@ import {
   searchKeyStatus,
   SEARCH_KEY_PRESETS,
   loadLastModel,
+  loadPrefs,
   saveLastModel,
   loadSavedSandboxState,
   resolveInitialSandbox,
@@ -698,12 +699,19 @@ async function main() {
   if (autonomyFlag && !configModeToPermissionMode(autonomyFlag)) {
     throw new Error(`Invalid --autonomy level "${values.autonomy}"; use I, II, or III (or --gear)`);
   }
+  // The gear the last session ended in, remembered — see prefs-store. It sits
+  // BELOW an explicit flag and below the project's own config, and above the
+  // built-in default: a flag is this run's instruction and a config file is the
+  // project's policy, but between two runs with neither, what the user last
+  // chose is the best available answer. Opening on the built-in default instead
+  // means re-stating a preference every morning, which is not a preference.
+  const rememberedGear = loadPrefs().gear;
   const { yoloMode, trustWorkspace, permissionMode } = resolveStartupPermissionFlags({
     gearFlag,
     yoloFlag: values.yolo as boolean,
     trustFlag: values.trust as boolean,
     modeFlag: autonomyFlag,
-    configGear: config.permissions?.gear,
+    configGear: config.permissions?.gear ?? rememberedGear,
     configMode: config.permissions?.mode,
     configTrustWorkspace: config.permissions?.trustWorkspace,
   });
