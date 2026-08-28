@@ -50,7 +50,7 @@ describe("the wire format", () => {
     const seq = warpNotice({ ...base, query: "x".repeat(400) }, "0.3.0", inWarp);
     const body = JSON.parse(seq.slice(seq.indexOf("{"), -1));
     expect(body.query.length).toBeLessThanOrEqual(120);
-    expect(body.query.endsWith("…")).toBe(true);
+    expect(body.query.endsWith("...")).toBe(true);
   });
 
   test("whitespace-only text is omitted rather than sent empty", () => {
