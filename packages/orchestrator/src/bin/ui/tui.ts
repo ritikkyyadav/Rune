@@ -90,6 +90,7 @@ import {
 } from "./composer";
 import { GEAR_MARK, renderBanner } from "./banner";
 import { renderStatus } from "./status";
+import { notifyWarp } from "./warp";
 import { renderReadBack, renderClose } from "./read-back";
 import type { Brief } from "../../brief";
 import { TurnRenderer, userBlock, renderReplay, HEX } from "./turn";
@@ -1006,12 +1007,29 @@ class Tui {
    *  had on screen — their last command's output is often the reason they
    *  opened Gear — and asserting a background is the single largest reason a
    *  TUI looks broken on someone else's theme. Inherit; do not assert. */
+  /** Tell Warp this pane is an agent, and where it is. */
+  private warp(
+    event: Parameters<typeof notifyWarp>[0]["event"],
+    extra: { query?: string; response?: string; toolName?: string } = {},
+  ): void {
+    notifyWarp(
+      {
+        event,
+        sessionId: this.ctx.sessionId,
+        cwd: this.ctx.workspaceRoot,
+        ...extra,
+      },
+      this.ctx.version,
+    );
+  }
+
   private enterInline(): void {
     // The cursor is the one piece of terminal chrome that sits inside our own
     // field, so it takes the theme's accent — see terminalThemeSeq. Handed back
     // on exit and by the crash handler; a terminal that ignores OSC 12 ignores
     // it harmlessly.
     process.stdout.write(terminalThemeSeq());
+    this.warp("session_start");
     this.printBanner();
   }
 
@@ -3891,6 +3909,9 @@ class Tui {
     this.turnStart = Date.now();
     this.streamBuf = "";
     this.turnPreview = null;
+    // Warp shows the pane as working from here; without this a long run looks
+    // idle to the terminal and the tab says nothing while the agent is busy.
+    this.warp("prompt_submit", { query: input });
     this.scheduleDraw();
 
     // Collapsed rendering (see ./turn.ts): narration and the final answer stay in
@@ -3967,6 +3988,10 @@ class Tui {
     } finally {
       turn.finish({ aborted: this.aborting });
       this.printClose();
+      // The event a long run is actually for: Warp raises a notification when
+      // the pane is in the background, which is the difference between
+      // watching a spinner and being told when it is your turn again.
+      this.warp("stop");
       if (
         !this.aborting &&
         !dashboardTouched &&
@@ -4213,6 +4238,10 @@ class Tui {
     } finally {
       turn.finish({ aborted: this.aborting });
       this.printClose();
+      // The event a long run is actually for: Warp raises a notification when
+      // the pane is in the background, which is the difference between
+      // watching a spinner and being told when it is your turn again.
+      this.warp("stop");
       this.lastWorkLog = turn.fullLog();
       this.liveTurn = null;
       if (this.tick) {
