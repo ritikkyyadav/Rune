@@ -45,7 +45,9 @@ function clip(value: string | undefined, max = 120): string | undefined {
   if (!value) return undefined;
   const flat = value.replace(/\s+/g, " ").trim();
   if (!flat) return undefined;
-  return flat.length > max ? flat.slice(0, max - 1) + "…" : flat;
+  // ASCII: this string leaves the process as JSON for another program to
+  // render, so it answers to that program's font, not our glyph budget.
+  return flat.length > max ? flat.slice(0, max - 3) + "..." : flat;
 }
 
 /**
