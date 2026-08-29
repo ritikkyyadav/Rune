@@ -8,6 +8,15 @@
 //
 //   ESC ] 777 ; notify ; warp://cli-agent ; {json} BEL
 //
+// What the events buy is the pane's status badge, and the events are the only
+// thing that moves it: `prompt_submit` turns it to working, `permission_request`
+// and `idle_prompt` to blocked, `tool_complete` back to working, `stop` to done.
+// A run that reports only the first and last of those looks, to the terminal,
+// like it is still working while it sits waiting for an answer — which is the
+// one moment the badge exists to catch. The set mirrors Warp's own Claude Code
+// adapter; there is no heartbeat because that adapter has none, and a status
+// held up by a timer would go on reporting work through a wedged tool call.
+//
 // What this does NOT buy is the logo. Warp picks an agent's icon by matching
 // the launched command against its own list of known agents — claude, codex,
 // gemini and so on — so a third-party CLI cannot supply one from here however
@@ -23,7 +32,12 @@ const ESC = "\x1b";
 const BEL = "\x07";
 
 export type WarpEvent =
-  "session_start" | "prompt_submit" | "tool_complete" | "stop" | "idle_prompt";
+  | "session_start"
+  | "prompt_submit"
+  | "permission_request"
+  | "tool_complete"
+  | "idle_prompt"
+  | "stop";
 
 export interface WarpNotice {
   event: WarpEvent;
@@ -33,6 +47,10 @@ export interface WarpNotice {
   query?: string;
   response?: string;
   toolName?: string;
+  /** Why the pane is waiting — the question asked, or the action to approve. */
+  summary?: string;
+  /** A preview of the pending call's arguments, for the approval notification. */
+  toolInput?: string;
 }
 
 /** Warp identifies itself here; nothing else claims this value. */
@@ -73,6 +91,10 @@ export function warpNotice(notice: WarpNotice, version: string, env = process.en
   if (query) body.query = query;
   if (response) body.response = response;
   if (notice.toolName) body.tool_name = notice.toolName;
+  const summary = clip(notice.summary);
+  if (summary) body.summary = summary;
+  const toolInput = clip(notice.toolInput);
+  if (toolInput) body.tool_input = toolInput;
   // JSON.stringify escapes every control character, so a payload can never
   // carry a stray BEL and terminate its own sequence early.
   return `${ESC}]777;notify;warp://cli-agent;${JSON.stringify(body)}${BEL}`;

@@ -125,6 +125,11 @@ const { values, positionals } = parseArgs({
     out: { type: "string" },
     help: { type: "boolean", short: "h", default: false },
     version: { type: "boolean", short: "v", default: false },
+    // Headless: one prompt in, an answer and an exit code out. `-p` is already
+    // --provider's short flag, so this takes -P.
+    print: { type: "string", short: "P" },
+    json: { type: "boolean", default: false },
+    "auto-approve": { type: "boolean", default: false },
     tui: { type: "boolean", default: false },
     classic: { type: "boolean", default: false },
     fullscreen: { type: "boolean", default: false },
@@ -617,7 +622,11 @@ async function main() {
   // the terminal itself. One-shot printers skip the probe: they exit before a
   // slow terminal answers, and the late OSC reply would land in the SHELL
   // prompt as typed junk. (detectTerminalColors itself no-ops off-TTY.)
-  const oneShotCommand = command === "list" || command === "export" || Boolean(values.list);
+  const oneShotCommand =
+    command === "list" ||
+    command === "export" ||
+    Boolean(values.list) ||
+    typeof values.print === "string";
   if (!oneShotCommand) configureAutoTheme(await detectTerminalColors());
 
   // Apply the persisted / configured color mode before anything renders.
@@ -1166,6 +1175,34 @@ async function main() {
     if (telemetryReporter) void telemetryReporter.flush().catch(() => {});
   }
 
+  // ─── Headless: one prompt in, an answer and an exit code out ───
+  // Placed before the TUI branch because it must never touch the alternate
+  // screen: stdout is the answer, and a benchmark harness or a shell pipeline
+  // reads it verbatim. Progress goes to stderr so `gear -P "..." > out.txt`
+  // captures the answer alone.
+  if (typeof values.print === "string") {
+    const { runHeadless, headlessExitCode, headlessEnvelope } = await import("../headless");
+    const result = await runHeadless(engine, sessionId, values.print as string, {
+      autoApprove: values["auto-approve"] === true,
+      onProgress: (line) => process.stderr.write(`${line}\n`),
+    });
+    process.stdout.write(
+      values.json === true ? `${headlessEnvelope(result)}\n` : `${result.text}\n`,
+    );
+    if (!result.ok && result.error) process.stderr.write(`${result.error}\n`);
+    // Say WHY, once, when the run was blocked rather than incapable. Without
+    // this the caller sees a refusal with no cause and scores the agent for
+    // the harness's missing flag.
+    if (result.permissionsDenied > 0) {
+      process.stderr.write(
+        `${result.permissionsDenied} permission request(s) denied — no approver in a headless run. ` +
+          `Pass --auto-approve to grant them.\n`,
+      );
+    }
+    engine.close();
+    process.exit(headlessExitCode(result));
+  }
+
   if (useTui) {
     await runTui({
       engine,
@@ -1218,7 +1255,7 @@ async function main() {
       // The header states what the agent may do to this machine before the
       // first prompt, not after the first surprise.
       scope: startingGear.label,
-      caution: startingGear.desc,
+      caution: startingGear.desc || undefined,
       recentSessions,
     }) + "\n",
   );

@@ -2,15 +2,21 @@
 // A coding agent's terminal UI, as it reads under a real pty. One rule underneath
 // everything here: never own the screen, own the last four lines. So there are no
 // cards, no boxes, no painted surfaces, no logo -- just a fixed reading measure, a
-// left rail where work happens, and a right column where the receipt lands.
+// left rail where work happens, and one left edge that nothing escapes.
+//
+// Nothing in the transcript right-aligns. A receipt sits two spaces after the
+// thing it is a receipt for, because at 240 columns a path and its metric a
+// hundred and fifty columns apart stop reading as one row. `row` still pads to
+// the far margin and is for CHROME only -- the header frame. Content uses
+// `flowRow`. See tests/unit/orchestrator/ui-grammar.test.ts, which enforces it.
 //
 // The whole grammar is five marks:
 //
-//   > you asked                            the human, at the left margin
-//   o the agent answers                    one signal dot, prose beside it
-//     | | grep  content_block_stop         work, on a rail under the prose
-//     | + src/streaming.ts:42              what that work found
-//   > Run this? It touches ~/.cache        a decision, and only a decision
+//   > you asked                       the human, at the left margin
+//   o the agent answers               one signal dot, prose beside it
+//     | | grep  content_block_stop  4 files    work, on a rail under the prose
+//     | + src/streaming.ts:42                  what that work found
+//   > Run this? It touches ~/.cache           a decision, and only a decision
 //
 // Colour carries meaning, never decoration: teal is identity and location,
 // green is added and passed, red is removed and failed, amber asks. Everything
@@ -125,7 +131,7 @@ export function proseWidth(): number {
 }
 
 /** Columns available inside a rail (`    | ` is 6 cells) for a row that also
- *  carries a right-aligned receipt. */
+ *  carries an inline receipt. */
 export function railWidth(): number {
   return Math.max(12, measure() - RAIL_IN.length);
 }
@@ -161,6 +167,59 @@ export function row(left: string, right = "", budgetWidth = measure()): string {
   if (!rightCells) return shown;
   const gap = Math.max(1, width - visLen(shown) - rightCells);
   return `${shown}${" ".repeat(gap)}${right}`;
+}
+
+/**
+ * A transcript row: content, then what it produced, one flowing line.
+ *
+ * This is `row`'s counterpart and the difference between them is the difference
+ * between chrome and content. `row` pushes its right half against the far edge,
+ * which is correct for a frame -- the header's gear badge marks the boundary of
+ * a structure. It was wrong for everything else, for two reasons that turned
+ * out to be the same reason.
+ *
+ * The first is distance. On a wide terminal `read src/streaming.ts` and
+ * `319 lines` ended up a hundred and fifty columns apart, and two things that
+ * far apart do not read as one row -- they read as two columns of two different
+ * reports, which is exactly the complaint.
+ *
+ * The second is that only some of the screen obeyed it. The live rung, the
+ * read-back and the composer blocks each hand-built their own left-flowing
+ * layout, so watching a turn meant watching a left-flowing line become a
+ * right-aligned one, once per row, forever.
+ *
+ * So: one edge. Nothing in the transcript travels to the right margin, and a
+ * receipt sits two spaces after the thing it is a receipt for, where the eye
+ * already is. There is no column to disagree about.
+ */
+export function flowRow(left: string, receipt = "", budgetWidth = measure()): string {
+  // The budget binds whether or not there is a receipt. Returning `left`
+  // untouched when the receipt was empty let a long path run past the window on
+  // a narrow terminal -- `row` had always truncated it, and dropping that on
+  // the way past was a regression, not a simplification.
+  const joined = visLen(receipt) ? `${left}  ${receipt}` : left;
+  return visLen(joined) > budgetWidth ? truncate(joined, budgetWidth) : joined;
+}
+
+/**
+ * A key legend: the key, then what it does, pairs separated the same way
+ * receipt parts are. The footer had this idiom and the read-back invented its
+ * own with five-space gaps, which is how a legend starts looking like a padded
+ * table. One definition, used by both.
+ */
+export function keyHint(key: string, word: string): string {
+  return `${muted(key)} ${faint(word)}`;
+}
+
+export function keyLegend(pairs: Array<[string, string]>): string {
+  return pairs.map(([key, word]) => keyHint(key, word)).join("  ");
+}
+
+/** Receipt parts as one phrase. Facts about the same row, so they are separated
+ *  rather than punctuated -- the marker is from the closed glyph set. */
+export function receiptOf(parts: Array<string | undefined | null>): string {
+  const kept = parts.filter((p): p is string => !!p && visLen(p) > 0);
+  return kept.join(` ${glyph("observed")} `);
 }
 
 // --- Header ---
@@ -426,7 +485,7 @@ export interface ToolRow {
   name: string;
   /** What it acted on: a pattern, a path, a command. */
   arg?: string;
-  /** The receipt, right-aligned: `4 files`, `+6 -1 | 1 hunk`, `2.6s`. */
+  /** The receipt, inline after the argument: `4 files`, `+6 -1`, `2.6s`. */
   metric?: string;
   /** How the call ended. `ok` (the default) is a neutral "this happened";
    *  `pass` is reserved for work that verified something. Edits use `none`:
@@ -462,7 +521,7 @@ export function toolRow(v: ToolRow): string {
             : `${STATUS_GLYPH.none} `;
   const name = text(v.name.padEnd(4));
   const arg = v.arg ? `  ${(v.argTone === "path" ? info : muted)(v.arg)}` : "";
-  return row(`${rail()}${mark}${name}${arg}`, paintMetric(v.metric));
+  return flowRow(`${rail()}${mark}${name}${arg}`, paintMetric(v.metric));
 }
 
 /**
@@ -707,7 +766,7 @@ export interface ChecklistOpts {
 export function checklist(label: string, items: CheckItem[], opts: ChecklistOpts = {}): string[] {
   const done = items.filter((i) => i.status === "ok" || i.status === "pass").length;
   const paintLabel = opts.tone === "muted" ? muted : text;
-  const head = row(
+  const head = flowRow(
     `${rail()}${text(label)}${opts.caption ? `  ${muted(opts.caption)}` : ""}`,
     paintMetric(opts.receipt ?? `${done}/${items.length}`),
   );
@@ -729,7 +788,7 @@ export function checklist(label: string, items: CheckItem[], opts: ChecklistOpts
         item.metric && item.metric.includes("\x1b")
           ? item.metric
           : item.metric && tone(item.metric);
-      return row(
+      return flowRow(
         `${rail()}${mark} ${(item.status === "active" ? text : paintLabel)(item.label)}`,
         metric || "",
       );

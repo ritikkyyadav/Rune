@@ -27,32 +27,40 @@ function label(name: string): string {
   return faint(name.padEnd(LABEL_W));
 }
 
-function body(width: number, s: string, indent = "  "): string[] {
+function body(width: number, s: string, indent: string = F.MARK): string[] {
   return wrap(s, Math.max(20, width - indent.length)).map((line) => indent + text(line));
 }
 
 /** The read-back, as committed scrollback. */
 export function renderReadBack(brief: Brief, width = F.measure()): string {
   const rows: string[] = [];
-  rows.push(`${accent(glyph("phase"))} ${bold(text("understand"))}`);
+  rows.push(`${F.MARK}${accent(glyph("phase"))} ${bold(text("understand"))}`);
   rows.push("");
   rows.push(...body(width, brief.reading));
   rows.push("");
 
   if (brief.touch.length > 0) {
-    rows.push(`  ${label("touch")}${text(truncate(brief.touch.join(SEP()), width - LABEL_W - 4))}`);
+    rows.push(
+      `${F.MARK}${label("touch")}${text(truncate(brief.touch.join(SEP()), width - LABEL_W - 4))}`,
+    );
   }
   // Always rendered. An empty exclusion list is information, not a blank.
   rows.push(
     brief.leave.length > 0
-      ? `  ${label("leave")}${text(truncate(brief.leave.join(SEP()), width - LABEL_W - 4))}`
-      : `  ${label("leave")}${warn("nothing stated")}`,
+      ? `${F.MARK}${label("leave")}${text(truncate(brief.leave.join(SEP()), width - LABEL_W - 4))}`
+      : `${F.MARK}${label("leave")}${warn("nothing stated")}`,
   );
   rows.push(
-    `  ${label("done when")}${text(truncate(brief.criteria.map((c) => c.text).join(SEP()), width - LABEL_W - 4))}`,
+    `${F.MARK}${label("done when")}${text(truncate(brief.criteria.map((c) => c.text).join(SEP()), width - LABEL_W - 4))}`,
   );
   rows.push("");
-  rows.push(`  ${faint("enter  go     e  edit this     ?  ask me something")}`);
+  rows.push(
+    `${F.MARK}${F.keyLegend([
+      ["enter", "go"],
+      ["e", "edit this"],
+      ["?", "ask me something"],
+    ])}`,
+  );
   return rows.join("\n");
 }
 
@@ -65,8 +73,8 @@ function closeRow(
   paint: (s: string) => string,
 ): string[] {
   const mark = rung ? RUNG_GLYPH[rung].utf8 : " ";
-  const head = `  ${paint(mark)} ${text(truncate(text_, Math.max(20, width - 34)))}`;
-  return [head, `      ${faint(truncate(receipt, width - 8))}`];
+  const head = `${F.MARK}${paint(mark)} ${text(truncate(text_, Math.max(20, width - 34)))}`;
+  return [head, `${F.RAIL_IN}${faint(truncate(receipt, width - 8))}`];
 }
 
 /**
@@ -81,8 +89,10 @@ export function renderClose(ledger: BriefLedger, width = F.measure()): string {
   const rows: string[] = [];
   const done = close.met === close.total && close.total > 0;
   rows.push(
-    `${accent(glyph("phase"))} ${bold(text(done ? "done" : "not done"))}  ` +
+    F.flowRow(
+      `${F.MARK}${accent(glyph("phase"))} ${bold(text(done ? "done" : "not done"))}`,
       faint(`${close.met} of ${close.total}`),
+    ),
   );
   rows.push("");
   for (const row of close.rows) {
@@ -92,7 +102,7 @@ export function renderClose(ledger: BriefLedger, width = F.measure()): string {
   if (!done) {
     rows.push("");
     rows.push(
-      `  ${faint("criteria without evidence are not met. nothing here was closed by assertion.")}`,
+      `${F.MARK}${faint("criteria without evidence are not met. nothing here was closed by assertion.")}`,
     );
   }
   return rows.join("\n");

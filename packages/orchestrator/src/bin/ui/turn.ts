@@ -491,11 +491,19 @@ export class TurnRenderer {
    * Nothing here slows the work down. Only the reporting is paced -- the elapsed
    * receipt beside the mark is the honest clock, and it never waits.
    */
+  /** What the tab title needs from the pulse: how long since real output. The
+   *  title turns on this rather than on a timer -- see ./title.ts and ./pulse.ts. */
+  beat(): { quietMs: number } {
+    return { quietMs: this.pulse.sample().quietMs };
+  }
+
   liveLines(): string[] {
     const { label, detail } = this.steadyFrame();
     const beat = this.pulse.sample();
     const mark = accent(pulseGlyph(beat));
-    const lines = [`  ${mark} ${muted(label)}  ${faint(this.receipt().join(" | "))}`];
+    const lines = [
+      F.flowRow(`${F.MARK}${mark} ${muted(label)}`, faint(F.receiptOf(this.receipt()))),
+    ];
     if (detail) lines.push(`${F.BODY}${faint(truncate(detail, F.proseWidth()))}`);
     lines.push(...this.streamingProseTail());
     return lines;
@@ -639,6 +647,26 @@ export class TurnRenderer {
    * remaining time is a guess, and a wrong guess about an agent's runtime is
    * the fastest way to lose trust in everything else on the screen.
    */
+  /**
+   * The receipt a COMMITTED row is allowed: what the work was, never what the
+   * session cost.
+   *
+   * Elapsed time, token counts and reasoning wall-clock are true, and they are
+   * telemetry about the machine rather than facts about the work. On the live
+   * rung they earn their place -- you are watching something run and you want
+   * to know it is still running. Left on the committed rows they turned the
+   * transcript into a performance log: every row ending in a different KIND of
+   * number, so the eye never learned what the tail of a row means. They live in
+   * the footer now, which is always visible anyway, and in /details.
+   */
+  private workReceipt(): string[] {
+    const parts: string[] = [];
+    if (this.retrying) {
+      parts.push(`${glyph("retry")} ${this.retrying.attempt} of ${this.retrying.of}`);
+    }
+    return parts;
+  }
+
   private receipt(): string[] {
     const parts: string[] = [];
     if (Date.now() - this.startedAt >= ELAPSED_AFTER_MS) parts.push(duration(this.startedAt));
@@ -1208,14 +1236,16 @@ export class TurnRenderer {
         this.stoppedEarly === "max_turns"
           ? "ran out of turns -- the task is not finished"
           : "hit the output limit -- the response is incomplete";
-      const meta = [...this.receipt(), "send a follow-up to continue"];
-      return `  ${warn("!")} ${text(label)}  ${faint(meta.join(" | "))}`;
+      return F.flowRow(
+        `${F.MARK}${warn("!")} ${text(label)}`,
+        faint(F.receiptOf([...this.workReceipt(), "send a follow-up to continue"])),
+      );
     }
     if (!aborted && !failed) return null;
     const mark = aborted ? warn("!") : danger(glyph("failure"));
     const label = aborted ? "interrupted" : "stopped on an error";
-    const meta = aborted ? [...this.receipt(), "partial work kept"] : this.receipt();
-    return `  ${mark} ${text(label)}  ${faint(meta.join(" | "))}`;
+    const meta = aborted ? [...this.workReceipt(), "partial work kept"] : this.workReceipt();
+    return F.flowRow(`${F.MARK}${mark} ${text(label)}`, faint(F.receiptOf(meta)));
   }
 
   /**
@@ -1277,14 +1307,14 @@ export class TurnRenderer {
         : [];
     const receipt = [
       ...reviewed,
-      ...this.receipt(),
+      ...this.workReceipt(),
       this.reroutes > 0 ? plural(this.reroutes, "model switch", "model switches") : "",
       // Honest wording: /rewind rolls back the CONVERSATION log; it never
       // reads checkpoint snapshots (they're a separate write-only store).
       this.checkpoint ? `/rewind to roll back` : "",
     ].filter(Boolean);
     if (receipt.length > 0 && (edits.length > 0 || this.toolCalls > 0)) {
-      lines.push(`${F.BODY}${faint(receipt.join(" | "))}`);
+      lines.push(`${F.BODY}${faint(F.receiptOf(receipt))}`);
     }
     return lines.length > 0 ? lines.join("\n") : null;
   }
@@ -1359,7 +1389,7 @@ function replaySummary(lines: TranscriptLineView[]): string | null {
   if (failures > 0) metrics.push(plural(failures, "failure"));
   // A replay's receipt is a receipt, not a verdict: it counts what the session
   // did and says nothing about whether that was the right thing.
-  return `${F.BODY}${faint(metrics.join(" | "))}`;
+  return `${F.BODY}${faint(F.receiptOf(metrics))}`;
 }
 
 /** Replayed sessions preserve the same inspectable chronology as a live turn. */

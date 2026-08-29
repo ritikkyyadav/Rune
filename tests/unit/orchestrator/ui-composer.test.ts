@@ -564,7 +564,9 @@ describe("the Auto chip — only decisions that changed something", () => {
       autoApprovedChip({ toolName: "bash", risk: "high", kind: "contained", route: "sandboxed" }),
     );
     expect(contained).toContain("contained");
-    expect(contained).toContain("sandboxed");
+    expect(contained).toContain("kept inside the sandbox");
+    // The row says what happened to the work, never which tier scored it.
+    expect(contained).not.toContain("risk");
 
     const redirected = stripAnsi(
       autoApprovedChip({
@@ -594,7 +596,9 @@ describe("the Auto chip — only decisions that changed something", () => {
     expect(halted).toContain("run halted");
     expect(halted).toContain("the run stopped here");
     expect(halted).toContain("nothing further ran");
-    // The internal routing token is not the user's business.
+    // Neither the internal routing token nor the risk score is the user's
+    // business on the row -- both are in the audit log and /details.
     expect(halted).not.toContain("supervisor_halt");
+    expect(halted).not.toContain("risk");
   });
 });

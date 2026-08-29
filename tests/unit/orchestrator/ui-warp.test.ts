@@ -64,6 +64,67 @@ describe("the wire format", () => {
   });
 });
 
+describe("the states that pull a person back", () => {
+  const body = (n: Parameters<typeof warpNotice>[0]) =>
+    JSON.parse(
+      warpNotice(n, "0.3.0", inWarp).slice(warpNotice(n, "0.3.0", inWarp).indexOf("{"), -1),
+    );
+
+  test("an approval reports the pending call, not just that something stopped", () => {
+    // Warp turns this into the blocked badge. Without the tool name the
+    // notification says a pane wants something and not what, which is the
+    // difference between switching tabs and switching tabs usefully.
+    expect(
+      body({
+        ...base,
+        event: "permission_request",
+        toolName: "bash",
+        summary: "rm -rf build/",
+        toolInput: "rm -rf build/",
+      }),
+    ).toMatchObject({
+      event: "permission_request",
+      tool_name: "bash",
+      summary: "rm -rf build/",
+      tool_input: "rm -rf build/",
+    });
+  });
+
+  test("a question carries the question", () => {
+    expect(body({ ...base, event: "idle_prompt", summary: "Which database?" })).toMatchObject({
+      event: "idle_prompt",
+      summary: "Which database?",
+    });
+  });
+
+  test("the unblock names the tool that finished", () => {
+    expect(body({ ...base, event: "tool_complete", toolName: "edit_file" })).toMatchObject({
+      event: "tool_complete",
+      tool_name: "edit_file",
+    });
+  });
+
+  test("summary and tool_input are clipped like every other field carrying user text", () => {
+    const b = body({
+      ...base,
+      event: "permission_request",
+      summary: "s".repeat(400),
+      toolInput: "i".repeat(400),
+    });
+    expect(b.summary.length).toBeLessThanOrEqual(120);
+    expect(b.tool_input.length).toBeLessThanOrEqual(120);
+  });
+
+  test("a blocked payload can no more terminate its own sequence than any other", () => {
+    const seq = warpNotice(
+      { ...base, event: "permission_request", summary: "run \x07 \x1b]777;evil" },
+      "0.3.0",
+      inWarp,
+    );
+    expect(seq.split("\x07")).toHaveLength(2);
+  });
+});
+
 describe("nobody else hears it", () => {
   test("nothing is emitted outside Warp", () => {
     for (const env of [

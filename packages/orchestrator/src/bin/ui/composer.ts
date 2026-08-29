@@ -84,8 +84,9 @@ export interface ModeInfo {
   label: string;
   /** Ladder arrows: one > per gear, * for Auto. */
   arrows: string;
-  /** One clause: what proceeds without asking. */
-  desc: string;
+  /** One clause: what proceeds without asking. Omitted where the label
+   *  already says it -- Auto mode has no clause to add. */
+  desc?: string;
   /** The banner sentence. */
   detail: string;
   paint: (value: string) => string;
@@ -150,10 +151,11 @@ export function modeInfo(mode?: string): ModeInfo {
         // says you are in it.
         label: "Auto mode",
         arrows: "*",
-        // No longer "the classifier reviews the rest" — it does not gate
-        // actions any more. It watches for instructions that came from
-        // something the agent read rather than from you.
-        desc: "never asks; watched for injection",
+        // No clause. "never asks; watched for injection" spent a permanent
+        // slot on the footer restating what the mode's own name already says,
+        // and named the watcher in a place where nothing can be done about it.
+        // The sentence still exists in `detail`, where /status and the mode
+        // switch can spell it out on request.
         detail:
           "Gear acts without permission prompts inside the sandbox; a watcher above it stops work that did not come from you.",
         paint: brand,
@@ -192,10 +194,9 @@ export function contextMeter(percent: number | undefined): string | null {
   return paint(`${pct}% context`);
 }
 
-/** A footer key hint: the key in the secondary tone, the word faint. */
-function keyHint(key: string, word: string): string {
-  return `${muted(key)} ${faint(word)}`;
-}
+/** A footer key hint. One definition, in the design system -- see F.keyHint;
+ *  this alias keeps the local call sites reading as they always did. */
+const keyHint = F.keyHint;
 
 /**
  * The footer: what gear you are in and what that means, then the two keys that
@@ -240,11 +241,12 @@ export function statusLine(s: ComposerStatus, width = process.stdout.columns || 
   // the gear means. The model survives to the last tier because it is the only
   // field here that changes under the user.
   const named = [badge, ...(modelName ? [modelName] : [])].join(sep);
+  const desc = mode.desc ? [faint(mode.desc)] : [];
   const tiers: Array<[string, string]> = [
-    [[named, faint(mode.desc), ...(meter ? [meter] : []), ...extras, fullHints].join(sep), right],
-    [[named, faint(mode.desc), ...(meter ? [meter] : []), ...extras].join(sep), right],
-    [[named, faint(mode.desc), ...extras].join(sep), right],
-    [[named, faint(mode.desc)].join(sep), right],
+    [[named, ...desc, ...(meter ? [meter] : []), ...extras, fullHints].join(sep), right],
+    [[named, ...desc, ...(meter ? [meter] : []), ...extras].join(sep), right],
+    [[named, ...desc, ...extras].join(sep), right],
+    [[named, ...desc].join(sep), right],
     [named, right],
     [badge, right],
   ];
@@ -309,12 +311,6 @@ export function permissionModeBanner(mode?: string): string {
   return stateBanner(m.arrows, m.label, m.detail, "(shift+tab to shift up)", m.paint, m.loud);
 }
 
-const AUTO_TIER_LABEL: Record<string, string> = {
-  safe: "safe-listed",
-  workspace: "workspace-confined",
-  classifier: "classifier reviewed",
-};
-
 /**
  * The Auto chip (`.auto-chip`): one line per decision Auto made that the reader
  * would want to find afterwards — and nothing for the ones they would not.
@@ -343,7 +339,6 @@ export function autoApprovedChip(notice: {
   route?: string;
   substitute?: string;
 }): string {
-  const how = (notice.tier && AUTO_TIER_LABEL[notice.tier]) || "classifier reviewed";
   const kind = notice.kind ?? "approved";
   if (kind === "approved") return "";
   const headline =
@@ -354,16 +349,21 @@ export function autoApprovedChip(notice: {
         : kind === "redirected"
           ? muted("redirected")
           : muted("contained");
-  // What a halt costs the reader is the run, not the classifier's routing
-  // label. `supervisor_halt | risk critical` names the mechanism that fired;
-  // this names what just happened to their work and what to do about it.
+  // The row says what happened to the work. It does not say which tier decided
+  // it or what risk score it carried: `safe-listed | risk low` is the audit
+  // layer describing its own machinery, in the one place the reader can do
+  // nothing with it, and it made every row a negotiation between two
+  // vocabularies. The full decision — tier, risk, rule, timing — is in the
+  // audit log and in /details, where it can actually be examined.
   const detail =
     kind === "halted"
-      ? "the run stopped here | nothing further ran"
+      ? "the run stopped here, nothing further ran"
       : kind === "redirected" && notice.substitute
         ? `ran instead: ${notice.substitute.slice(0, 60)}`
-        : `${notice.route ?? how} | risk ${notice.risk}`;
-  return F.row(
+        : kind === "deferred"
+          ? "waiting for you at the end of the turn"
+          : "kept inside the sandbox";
+  return F.flowRow(
     `${F.MARK}${warn(glyph("selection"))} ${headline}  ${text(notice.toolName)}`,
     faint(detail),
   );
@@ -380,7 +380,7 @@ export function autoDeferralSummary(
   deferrals: ReadonlyArray<{ toolName: string; summary: string; reason: string }>,
 ): string {
   if (deferrals.length === 0) return "";
-  const head = F.row(
+  const head = F.flowRow(
     `${F.MARK}${warn(glyph("selection"))} ${warn(`held for you (${deferrals.length})`)}`,
     faint("outward steps Auto did not take on its own"),
   );

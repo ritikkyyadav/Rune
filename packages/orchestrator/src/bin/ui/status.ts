@@ -59,7 +59,7 @@ function permissionsLabel(s: StatusView): string {
   // Read the one gear table (composer.modeInfo) -- /status once carried its own
   // hand-rolled copy of these labels, and copies drift.
   const m = modeInfo(mode);
-  const label = m.paint(`${m.arrows} ${m.label} | ${m.desc}`);
+  const label = m.paint(`${m.arrows} ${m.label}${m.desc ? ` | ${m.desc}` : ""}`);
   return m.loud ? bold(label) : label;
 }
 

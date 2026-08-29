@@ -20,6 +20,10 @@ function harness() {
     turn,
     output: () => stripAnsi(commits.join("\n")),
     preview: () => stripAnsi((previews.at(-1) ?? []).join("\n")),
+    /** The rung as the 125ms tick would paint it right now. finish() clears the
+     *  preview to null, so a rung assertion after a finished turn has to come
+     *  from the renderer rather than from the last pushed frame. */
+    rung: () => stripAnsi(turn.liveLines().join("\n")),
   };
 }
 
@@ -36,14 +40,18 @@ const editEnd = (path: string) => ({
 });
 
 describe("turn v2 metadata", () => {
-  test("usage events surface real ↓ tokens in the live meta and completion row", () => {
+  test("usage events surface real ↓ tokens on the live rung, and nowhere else", () => {
     const h = harness();
     h.turn.onEvent({ type: "usage", inputTokens: 900, outputTokens: 1800 });
     expect(h.preview()).toContain("down 1.8k tokens");
     h.turn.onEvent({ type: "usage", inputTokens: 100, outputTokens: 200 });
-    h.turn.onEvent(editEnd("src/a.ts")); // makes the turn "worked" so completion commits
+    expect(h.preview()).toContain("down 2.0k tokens"); // 1800 + 200, accumulated
+    h.turn.onEvent(editEnd("src/a.ts"));
     h.turn.finish();
-    expect(h.output()).toContain("down 2.0k tokens"); // 1800 + 200, accumulated
+    // Session telemetry belongs to the footer, which is always visible anyway.
+    // On a committed row it made every line end in a different KIND of number,
+    // so the tail of a row never meant one thing.
+    expect(h.output()).not.toContain("tokens");
   });
 
   test("thinking time accumulates across delta bursts and prints once ≥100ms", () => {
@@ -63,8 +71,10 @@ describe("turn v2 metadata", () => {
     } finally {
       Date.now = realNow;
     }
-    expect(h.output()).toContain("thought for 0.3s");
-    expect(h.output()).not.toContain("thought for 10");
+    // Measured on the rung while it runs; absent from the committed transcript.
+    expect(h.rung()).toContain("thought for 0.3s");
+    expect(h.rung()).not.toContain("thought for 10");
+    expect(h.output()).not.toContain("thought for");
   });
 
   test("a typed fallback event renders the banner and counts as a model switch", () => {
