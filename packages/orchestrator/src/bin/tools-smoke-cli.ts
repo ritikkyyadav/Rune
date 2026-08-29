@@ -10,7 +10,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ToolRegistry, registerBuiltinTools } from "@gear/tool-registry";
-import { accent, dim, faint, ok } from "./ui/theme";
+import { danger, dim, faint, ok } from "./ui/theme";
+import { glyph } from "./ui/glyphs";
 
 export async function runToolsSmoke(toolsBinary: string): Promise<number> {
   const workspace = mkdtempSync(join(tmpdir(), "gear-tools-smoke-"));
@@ -58,7 +59,7 @@ export async function runToolsSmoke(toolsBinary: string): Promise<number> {
     return 0;
   } catch (error) {
     console.error(
-      `  ${accent("✕")} tools-smoke failed at ${step}: ${error instanceof Error ? error.message : String(error)}`,
+      `  ${danger(glyph("failure"))} tools-smoke failed at ${step}: ${error instanceof Error ? error.message : String(error)}`,
     );
     console.error(`  ${dim(`binary: ${toolsBinary} · workspace: ${workspace}`)}`);
     return 1;

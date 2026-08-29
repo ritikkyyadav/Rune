@@ -15,9 +15,9 @@ describe("ui/status renderStatus", () => {
 
   it("renders the gear row from the shared table", () => {
     const out = stripAnsi(renderStatus({ ...base, permissionMode: "gear-2" as const }));
-    expect(out).toContain("▸▸ 2nd gear · workspace edits proceed");
+    expect(out).toContain(">> 2nd gear | workspace edits proceed");
     const auto = stripAnsi(renderStatus({ ...base, permissionMode: "auto" as const }));
-    expect(auto).toContain("◆ auto · classifier reviews the rest");
+    expect(auto).toContain("* Auto mode | never asks; watched for injection");
   });
 
   it("shows the Auto reviewer identity, fallback readiness, and escalation posture", () => {

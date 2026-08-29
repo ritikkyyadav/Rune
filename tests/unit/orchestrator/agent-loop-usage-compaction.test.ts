@@ -83,7 +83,7 @@ describe("AgentLoop — v2 structured events", () => {
 
   test("usage carries the context snapshot when an engine is attached", async () => {
     const contextEngine = {
-      buildPrompt: async (messages: any, system: any) => ({
+      buildPrompt: (messages: any, system: any) => ({
         messages,
         system,
         tools: [],
@@ -104,7 +104,7 @@ describe("AgentLoop — v2 structured events", () => {
   test("near-budget working set → one compaction event with honest estimates", async () => {
     let compactions = 0;
     const contextEngine = {
-      buildPrompt: async (messages: any, system: any) => ({
+      buildPrompt: (messages: any, system: any) => ({
         messages,
         system,
         tools: [],

@@ -196,6 +196,26 @@ export interface GearConfig {
     maxStruggleNudges?: number;
   };
   /**
+   * Which provider the gateway hands the work to when the active one fails
+   * MID-TASK (`[fallback] order = ["anthropic", "codex"]`).
+   *
+   * Absent, the built-in capacity ranking decides: funded API keys, then
+   * subscription seats, then free tiers, then local runtimes — so a capped
+   * frontier session degrades as little as possible instead of landing on
+   * whichever provider happened to register next. Names here are tried first,
+   * in this order; providers left out are NOT excluded, they simply follow.
+   */
+  fallback?: {
+    order?: string[];
+    /**
+     * What a plan/QUOTA cap does mid-task: "stop" (default) ends the run with
+     * the retry window and keeps the work, rather than letting a weaker model
+     * inherit an extensive task; "degrade" restores automatic downgrade.
+     * Ordinary rate limits are unaffected — they clear in seconds.
+     */
+    onQuotaExceeded?: string;
+  };
+  /**
    * Post-edit verification (`[verify]`). Auto-detection covers the common
    * stacks; `commands` overrides it with the project's own checks, e.g.
    * `[verify] commands = ["bun run lint", "bun test tests/unit/"]`.
@@ -368,6 +388,21 @@ export interface GearConfig {
   interactive?: {
     auto?: boolean;
   };
+  /**
+   * Multi-instance teamwork (config.toml `[team]`). When several Gear
+   * processes work in the same repository they register on a local shared
+   * bus (~/.gear/team.db): each sees the others' presence and intent, can
+   * message them, and can lease path claims. claimEnforcement decides what a
+   * write into a PEER's claimed scope does: "warn" (default) lets it proceed
+   * with a loud warning in the tool result, "block" refuses it, "off"
+   * disables the check. Everything is local to this machine and user.
+   */
+  team?: {
+    enabled?: boolean;
+    claimEnforcement?: "warn" | "block" | "off";
+    /** Presence heartbeat interval in seconds (default 15). */
+    heartbeatSecs?: number;
+  };
 }
 
 export interface PermissionRule {
@@ -421,6 +456,11 @@ const DEFAULT_CONFIG: GearConfig = {
     schedule: "manual",
     model: "cheapest",
     maxTokens: 1500,
+  },
+  team: {
+    enabled: true,
+    claimEnforcement: "warn",
+    heartbeatSecs: 15,
   },
 };
 
@@ -567,6 +607,9 @@ function applyEnvOverrides(config: Record<string, unknown>): void {
     GEAR_MEMORY_MODEL: (c) => setNested(c, "memory.model", process.env.GEAR_MEMORY_MODEL!),
     GEAR_MEMORY_MAX_TOKENS: (c) =>
       setNested(c, "memory.maxTokens", Number(process.env.GEAR_MEMORY_MAX_TOKENS!)),
+    GEAR_TEAM: (c) => setNested(c, "team.enabled", process.env.GEAR_TEAM !== "false"),
+    GEAR_TEAM_ENFORCEMENT: (c) =>
+      setNested(c, "team.claimEnforcement", process.env.GEAR_TEAM_ENFORCEMENT!),
     ANTHROPIC_API_KEY: (c) => setNested(c, "llm.anthropic.apiKey", process.env.ANTHROPIC_API_KEY!),
     OPENAI_API_KEY: (c) => setNested(c, "llm.openai.apiKey", process.env.OPENAI_API_KEY!),
     OPENROUTER_API_KEY: (c) =>

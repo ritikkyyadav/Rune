@@ -5,6 +5,15 @@
 // (b) rank items for eviction; every compaction *decision* after turn one runs
 // on provider-authoritative numbers (ContextEngine.noteRealUsage).
 
+/**
+ * The window assumed for a model no static family rule recognizes. Deliberately
+ * conservative — assuming too MUCH context yields provider 400s — but it is a
+ * guess, and callers that can do better (a provider catalog) should say so via
+ * TokenCounter.registerContextLimit rather than let this stand. Exported so
+ * that check reads as "the table didn't know" instead of comparing to 100000.
+ */
+export const UNKNOWN_MODEL_CONTEXT_LIMIT = 100000;
+
 export class TokenCounter {
   private cache: Map<string, number> = new Map();
   private maxCacheSize = 1000;
@@ -79,13 +88,40 @@ export class TokenCounter {
   }
 
   /**
+   * Windows learned from a provider's live catalog, keyed by model id. These
+   * OUTRANK the static table below: the table can only guess at families it
+   * recognizes and falls back to 100k for everything else, which is how a
+   * 256k-window stealth id ("stealth/ox-alpha") ended up compacting at ~70k
+   * six times in one run. Process-scoped; repopulated on each session start.
+   */
+  private static liveContextLimits = new Map<string, number>();
+
+  /**
+   * Record a model's real context window, as reported by a provider catalog.
+   * Non-positive values are ignored so a malformed catalog entry can't shrink
+   * a window below the static guess.
+   */
+  static registerContextLimit(model: string, limit: number): void {
+    if (!model || !Number.isFinite(limit) || limit <= 0) return;
+    this.liveContextLimits.set(model, Math.floor(limit));
+  }
+
+  /** Drop every learned window. Test-only; sessions never need this. */
+  static clearContextLimits(): void {
+    this.liveContextLimits.clear();
+  }
+
+  /**
    * Get the context window limit for a given model.
-   * Exact match first, then model-family substring rules, then a safe default.
-   * Values are the model's advertised window; compaction triggers at a
-   * fraction of this (shouldCompact's high-water ratio), so being slightly
-   * generous is safe while being badly low forces needless compaction.
+   * Live catalog first, then exact match, then model-family substring rules,
+   * then a safe default. Values are the model's advertised window; compaction
+   * triggers at a fraction of this (shouldCompact's high-water ratio), so being
+   * slightly generous is safe while being badly low forces needless compaction.
    */
   static getContextLimit(model: string): number {
+    const live = this.liveContextLimits.get(model);
+    if (live) return live;
+
     const exact: Record<string, number> = {
       "qwen/qwen3-coder:free": 262144,
       "qwen3-coder:480b": 262144,
@@ -95,7 +131,22 @@ export class TokenCounter {
     // Family rules — first match wins. Substring-keyed so provider prefixes
     // ("anthropic/…", "openai/…") and date suffixes don't matter.
     const families: Array<[pattern: string, limit: number]> = [
-      // Anthropic: 200k standard across Claude 3.5+ (1M is beta/opt-in)
+      // Anthropic. 1M is now STANDARD (not beta/opt-in) on the current
+      // lineup — Fable 5, Mythos 5, Opus 5, Opus 4.8/4.7/4.6, Sonnet 5, and
+      // Sonnet 4.6. The old blanket `["claude", 200000]` rule predated that
+      // and silently compacted every one of them at ~140k, discarding 85% of
+      // the window and paying for summarizer round-trips that bought nothing.
+      // These MUST stay above the generic "claude" rule — first match wins.
+      ["claude-fable-5", 1000000],
+      ["claude-mythos-5", 1000000],
+      ["claude-opus-5", 1000000],
+      ["claude-opus-4-8", 1000000],
+      ["claude-opus-4-7", 1000000],
+      ["claude-opus-4-6", 1000000],
+      ["claude-sonnet-5", 1000000],
+      ["claude-sonnet-4-6", 1000000],
+      // Everything older on the Claude line (Sonnet 4.5, Haiku 4.5, Opus 4.5
+      // and back) is genuinely 200k.
       ["claude", 200000],
       // OpenAI
       ["gpt-5", 400000],
@@ -121,7 +172,7 @@ export class TokenCounter {
       if (lower.includes(pattern)) return limit;
     }
 
-    return 100000; // safe default
+    return UNKNOWN_MODEL_CONTEXT_LIMIT;
   }
 
   /**
@@ -184,6 +235,14 @@ export function countTokens(text: string, model?: string): number {
 /** Get context window limit for a model (convenience function). */
 export function getContextLimit(model: string): number {
   return TokenCounter.getContextLimit(model);
+}
+
+/**
+ * Teach the counter a model's real context window from a provider catalog
+ * (convenience function). Outranks the static family table.
+ */
+export function registerContextLimit(model: string, limit: number): void {
+  TokenCounter.registerContextLimit(model, limit);
 }
 
 /** Max output tokens a model accepts per response (convenience function). */

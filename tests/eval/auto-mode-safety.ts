@@ -8,6 +8,7 @@ import {
   AutoModeSafetyController,
   GatewayActionClassifier,
   resolveAutoModeConfig,
+  type ActionClassifier,
   type AutoModeAction,
 } from "../../packages/orchestrator/src/auto-mode";
 import { buildGateway } from "../../packages/orchestrator/src/provider-registry";
@@ -234,12 +235,29 @@ function printCatalog(): void {
   }
 }
 
+/**
+ * The reviewer, dead. `--offline` runs the whole corpus against this, which
+ * measures the property the design now leans on hardest: with no model
+ * reachable at all, Auto still resolves every scenario mechanically and
+ * instantly, and nothing dangerous gets through.
+ *
+ * This is the regression guard for the 22-minute outage. It needs no key, no
+ * network, and no quota, so it can run on every change rather than whenever
+ * someone has credits.
+ */
+class DeadClassifier implements ActionClassifier {
+  async classify(): Promise<string> {
+    throw new Error("reviewer unavailable (offline eval)");
+  }
+}
+
 async function main(): Promise<void> {
   if (process.argv.includes("--list")) {
     printCatalog();
     return;
   }
 
+  const offline = process.argv.includes("--offline");
   const provider = (process.env.GEAR_AUTO_EVAL_PROVIDER ?? "anthropic") as ProviderName;
   const preset = PROVIDER_PRESETS.find((entry) => entry.id === provider);
   const model = process.env.GEAR_AUTO_EVAL_MODEL ?? preset?.defaultModel;
@@ -249,8 +267,10 @@ async function main(): Promise<void> {
     );
   }
 
-  const gateway = buildGateway({ provider, keys: {}, maxRetries: 1, retryBaseMs: 250 });
-  if (!gateway.getProvider(provider)) {
+  const gateway = offline
+    ? ({} as LlmGateway)
+    : buildGateway({ provider, keys: {}, maxRetries: 1, retryBaseMs: 250 });
+  if (!offline && !(gateway as ReturnType<typeof buildGateway>).getProvider(provider)) {
     const envName = preset?.envVar ?? "the provider's credential variable";
     throw new Error(
       `Provider "${provider}" is not configured. Set ${envName}, sign in through Gear, or choose a configured local provider.`,
@@ -264,7 +284,7 @@ async function main(): Promise<void> {
       failClosed: true,
       timeoutMs: 20_000,
     }),
-    new GatewayActionClassifier(),
+    offline ? new DeadClassifier() : new GatewayActionClassifier(),
     () => ({ gateway: gateway as LlmGateway, provider, model }),
   );
 
@@ -298,6 +318,8 @@ async function main(): Promise<void> {
       risk: review.risk,
       stage: review.stage,
       source: review.source,
+      route: review.containment?.route,
+      kind: review.containment?.kind,
       reason: review.reason,
     });
   }

@@ -8,7 +8,8 @@ import { dirname, join } from "node:path";
 import { getGearHome } from "@gear/shared";
 import type { IncidentRecord } from "@gear/shared";
 import { BlackboxStore } from "@gear/telemetry";
-import { accent, dim, faint, info, ok, text, warn } from "./ui/theme";
+import { accent, danger, dim, faint, info, ok, text, warn } from "./ui/theme";
+import { glyph } from "./ui/glyphs";
 
 const HOME = () => getGearHome();
 const DB = () => join(HOME(), "blackbox.db");
@@ -28,8 +29,8 @@ function shortTs(iso: string): string {
 }
 
 function sevPaint(severity: string, s: string): string {
-  if (severity === "critical") return accent(s);
-  if (severity === "error") return accent(s);
+  if (severity === "critical") return danger(s);
+  if (severity === "error") return danger(s);
   if (severity === "warn") return warn(s);
   return dim(s);
 }
@@ -42,7 +43,7 @@ export function runDoctor(): void {
   // Recorder store health
   const store = openStore();
   if (!store) {
-    console.log(`  ${accent("✕")} black box: cannot open ${DB()}`);
+    console.log(`  ${danger(glyph("failure"))} black box: cannot open ${DB()}`);
   } else {
     const size = existsSync(DB()) ? statSync(DB()).size : 0;
     console.log(`  ${ok("✓")} black box: ${info(DB())} ${dim(`(${(size / 1024).toFixed(0)} KB)`)}`);
@@ -114,7 +115,7 @@ export function runDoctor(): void {
   // The recorder's own failures land here — this file should not exist.
   if (existsSync(LAST_RESORT())) {
     const tail = readFileSync(LAST_RESORT(), "utf-8").trim().split("\n").slice(-2);
-    console.log(`  ${accent("✕")} recorder self-errors (${LAST_RESORT()}):`);
+    console.log(`  ${danger(glyph("failure"))} recorder self-errors (${LAST_RESORT()}):`);
     for (const line of tail) console.log(`    ${faint(line.slice(0, 100))}`);
   } else {
     console.log(`  ${ok("✓")} recorder: no internal failures`);
@@ -169,6 +170,20 @@ function newerSourceThan(root: string, builtAtMs: number): string | null {
   return null;
 }
 
+function gitHead(root: string): string | null {
+  try {
+    const result = Bun.spawnSync(["git", "-C", root, "rev-parse", "HEAD"], {
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    if (result.exitCode !== 0) return null;
+    const head = new TextDecoder().decode(result.stdout).trim();
+    return head || null;
+  } catch {
+    return null;
+  }
+}
+
 function doctorToolchain(): void {
   // gear-tools: same candidate order as the CLI's startup lookup.
   const candidates: string[] = [];
@@ -183,7 +198,7 @@ function doctorToolchain(): void {
     console.log(`  ${ok("✓")} gear-tools: ${info(tools)}`);
   } else {
     console.log(
-      `  ${accent("✕")} gear-tools: not found — set GEAR_TOOLS_BIN, re-run scripts/install.sh, or \`cargo build --release -p gear-tools\``,
+      `  ${danger(glyph("failure"))} gear-tools: not found — set GEAR_TOOLS_BIN, re-run scripts/install.sh, or \`cargo build --release -p gear-tools\``,
     );
     for (const c of candidates) console.log(`    ${dim("searched:")} ${faint(c)}`);
   }
@@ -212,14 +227,29 @@ function doctorToolchain(): void {
       return;
     }
     const builtLabel = shortTs(new Date(builtAtMs).toISOString());
+    const sourceCommit = meta.GEAR_SOURCE_COMMIT ?? "";
+    const sourceBranch = meta.GEAR_SOURCE_BRANCH || "detached";
+    const dirty = meta.GEAR_SOURCE_DIRTY === "1";
+    const provenance = sourceCommit
+      ? `${sourceBranch}@${sourceCommit.slice(0, 8)}${dirty ? "+dirty" : ""}`
+      : "legacy meta (commit unknown)";
+    const currentCommit = gitHead(sourceRoot);
     const newer = newerSourceThan(sourceRoot, builtAtMs);
-    if (newer) {
+    if (sourceCommit && currentCommit && sourceCommit !== currentCommit) {
       console.log(
-        `  ${warn("!")} build: STALE — built ${builtLabel}, source changed since: ${faint(newer)}`,
+        `  ${warn("!")} build: STALE — installed ${provenance}, source is now ${currentCommit.slice(0, 8)}`,
+      );
+      console.log(`    ${dim("source:")} ${faint(sourceRoot)}`);
+      console.log(`    ${dim("rebuild:")} ${info(`cd ${sourceRoot} && ./scripts/install.sh`)}`);
+    } else if (newer) {
+      console.log(
+        `  ${warn("!")} build: STALE — built ${builtLabel} from ${provenance}; source changed since: ${faint(newer)}`,
       );
       console.log(`    ${dim("rebuild:")} ${info(`cd ${sourceRoot} && ./scripts/install.sh`)}`);
     } else {
-      console.log(`  ${ok("✓")} build: current — built ${builtLabel} from ${faint(sourceRoot)}`);
+      console.log(
+        `  ${ok("✓")} build: current — ${provenance}, built ${builtLabel} from ${faint(sourceRoot)}`,
+      );
     }
   } catch {
     console.log(`  ${dim("·")} build freshness: could not evaluate ${faint(metaPath)}`);

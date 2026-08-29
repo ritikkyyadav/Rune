@@ -20,7 +20,7 @@ describe("renderMarkdown — block structure", () => {
     expect(out.join("\n")).not.toContain("#");
     expect(out[0]).toContain("What I built");
     // h1/h2 carry a hairline underneath
-    expect(out[1]).toMatch(/─+/);
+    expect(out[1]).toMatch(/-+/);
   });
 
   it("sets fenced code as code, without drawing a box around it", () => {
@@ -65,10 +65,10 @@ describe("renderMarkdown — block structure", () => {
     const md =
       "- first item that is long enough to wrap onto a second line for sure here\n- second";
     const out = plain(renderMarkdown(md, { width: 40, indent: "" }));
-    expect(out[0]!.startsWith("• ")).toBe(true);
+    expect(out[0]!.startsWith("· ")).toBe(true);
     // continuation aligns under the text, not under the bullet
     expect(out[1]!.startsWith("  ")).toBe(true);
-    expect(out.join("\n")).toContain("• second");
+    expect(out.join("\n")).toContain("· second");
   });
 
   it("keeps ordered-list numbers", () => {

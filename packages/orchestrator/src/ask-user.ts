@@ -12,6 +12,17 @@ import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "@ge
 export interface UserQuestion {
   question: string;
   options: string[];
+  /**
+   * Where this question sits in the round, 0-based, and how many there are.
+   *
+   * A round of four is asked one question at a time, each replacing the last.
+   * Without these the person answers four unrelated-looking interruptions and
+   * cannot tell after the first whether they are nearly done or have only just
+   * started. The frontends render them as `2 of 4`; a frontend that ignores
+   * them is unaffected.
+   */
+  index?: number;
+  total?: number;
 }
 
 /** Resolves with the user's answer (an option or free text). */
@@ -153,8 +164,8 @@ export function createAskUserTool(getHandler: () => QuestionHandler | undefined)
         // single question returns the raw answer (legacy contract); several
         // return labeled Q→A lines so the model sees which answer is whose.
         const answers: string[] = [];
-        for (const q of normalized) {
-          answers.push(await handler(q));
+        for (const [index, q] of normalized.entries()) {
+          answers.push(await handler({ ...q, index, total: normalized.length }));
         }
         const result =
           normalized.length === 1

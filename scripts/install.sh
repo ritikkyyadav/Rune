@@ -54,6 +54,94 @@ migrate_home
 INSTALL_DIR="$HOME/.gear/bin"
 mkdir -p "$INSTALL_DIR"
 
+# ─── Install provenance guard ───
+# Multiple Gear worktrees share one ~/.gear/bin. A later install from an older
+# or divergent worktree used to silently replace a fixed binary (the exact
+# regression that put the pre-context-economics build back on PATH). A clean
+# fast-forward is safe; dirty cross-worktree and non-fast-forward installs need
+# an explicit override.
+meta_value() {
+  local key="$1" file="$2"
+  [ -f "$file" ] || return 0
+  sed -n "s/^${key}=//p" "$file" | tail -1
+}
+
+sha256_file() {
+  local file="$1"
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$file" | awk '{print $1}'
+  elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file" | awk '{print $1}'
+  else
+    printf 'unavailable\n'
+  fi
+}
+
+# Backward-compatible downgrade protection. A historical installer does not
+# know the provenance rule above, but macOS's user-immutable flag still stops
+# it from truncating or unlinking the live artifacts. This installer clears the
+# flag only after its provenance check and both staged builds have succeeded,
+# then restores it after promotion. Users can always reverse it with
+# `chflags nouchg ~/.gear/bin/{gear,gear-compiled,gear-tools,gear-compiled.meta}`.
+if [ "$(uname -s 2>/dev/null || true)" = "Darwin" ] && command -v chflags >/dev/null 2>&1; then
+  INSTALL_FILE_GUARD=macos-uchg
+else
+  INSTALL_FILE_GUARD=none
+fi
+
+if command -v git >/dev/null 2>&1 && git -C "$GEAR_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  CANDIDATE_COMMIT="$(git -C "$GEAR_ROOT" rev-parse HEAD)"
+  CANDIDATE_BRANCH="$(git -C "$GEAR_ROOT" branch --show-current)"
+  if [ -n "$(git -C "$GEAR_ROOT" status --porcelain=v1 --untracked-files=all)" ]; then
+    CANDIDATE_DIRTY=1
+  else
+    CANDIDATE_DIRTY=0
+  fi
+else
+  CANDIDATE_COMMIT=unknown
+  CANDIDATE_BRANCH=unknown
+  CANDIDATE_DIRTY=1
+fi
+
+INSTALLED_META="$INSTALL_DIR/gear-compiled.meta"
+if [ -f "$INSTALLED_META" ] && [ "${GEAR_ALLOW_NON_FF_INSTALL:-0}" != "1" ]; then
+  INSTALLED_ROOT="$(meta_value GEAR_SOURCE_ROOT "$INSTALLED_META")"
+  INSTALLED_COMMIT="$(meta_value GEAR_SOURCE_COMMIT "$INSTALLED_META")"
+  INSTALLED_DIRTY="$(meta_value GEAR_SOURCE_DIRTY "$INSTALLED_META")"
+
+  if [ -n "$INSTALLED_ROOT" ] && [ "$INSTALLED_ROOT" != "$GEAR_ROOT" ] && \
+     { [ "$INSTALLED_DIRTY" = "1" ] || [ "$CANDIDATE_DIRTY" = "1" ]; }; then
+    echo ""
+    echo "  $(red '✗') Refusing to replace a dirty build from another worktree."
+    echo "    installed: $(dim "$INSTALLED_ROOT")"
+    echo "    candidate: $(dim "$GEAR_ROOT")"
+    echo "    Commit or reconcile the worktrees first. If this replacement is intentional:"
+    echo "    $(bold 'GEAR_ALLOW_NON_FF_INSTALL=1 ./scripts/install.sh')"
+    exit 1
+  fi
+
+  if [ -n "$INSTALLED_COMMIT" ] && [ "$INSTALLED_COMMIT" != "unknown" ] && \
+     [ "$CANDIDATE_COMMIT" != "unknown" ] && \
+     git -C "$GEAR_ROOT" cat-file -e "$INSTALLED_COMMIT^{commit}" 2>/dev/null && \
+     ! git -C "$GEAR_ROOT" merge-base --is-ancestor "$INSTALLED_COMMIT" "$CANDIDATE_COMMIT"; then
+    echo ""
+    echo "  $(red '✗') Refusing a non-fast-forward Gear install."
+    echo "    installed commit: $(dim "$INSTALLED_COMMIT")"
+    echo "    candidate commit: $(dim "$CANDIDATE_COMMIT")"
+    echo "    The candidate does not contain the currently installed build's commit."
+    echo "    Merge/cherry-pick the missing work, or explicitly override with:"
+    echo "    $(bold 'GEAR_ALLOW_NON_FF_INSTALL=1 ./scripts/install.sh')"
+    exit 1
+  fi
+fi
+
+# Build everything off to the side and promote only after BOTH the TypeScript
+# CLI and Rust executor succeed. A failed cargo build must not leave a half-new
+# installation on PATH.
+STAGE_DIR="$(mktemp -d "$INSTALL_DIR/.gear-install.XXXXXX")"
+cleanup_stage() { rm -rf -- "$STAGE_DIR"; }
+trap cleanup_stage EXIT
+
 # ─── 1. Find / verify Bun ───
 if [ -x "$HOME/.bun/bin/bun" ]; then
   BUN="$HOME/.bun/bin/bun"
@@ -78,7 +166,7 @@ echo "  $(green '✓') Cargo: $(dim "$CARGO")"
 
 # ─── 3. Build standalone TypeScript CLI ───
 CLI_ENTRY="$GEAR_ROOT/packages/orchestrator/src/bin/gear-cli.ts"
-CLI_OUT="$INSTALL_DIR/gear-compiled"
+CLI_OUT="$STAGE_DIR/gear-compiled"
 
 echo ""
 echo "  $(dim '...') Compiling TypeScript CLI (bun build --compile)"
@@ -92,14 +180,18 @@ echo "  $(dim "    $BUN build --compile $CLI_ENTRY --outfile $CLI_OUT")"
 # (set by the wrapper script written in step 5).
 (cd "$GEAR_ROOT" && "$BUN" build --compile "$CLI_ENTRY" --outfile "$CLI_OUT")
 chmod +x "$CLI_OUT"
-echo "  $(green '✓') Compiled CLI installed: $(dim "$CLI_OUT")"
+echo "  $(green '✓') Compiled CLI staged"
 
 # Record where this binary came from, so the launcher can detect the classic
 # trap: a fix lands in the TypeScript but the installed binary predates it,
 # and "nothing changed" until someone remembers to rebuild.
-cat > "$INSTALL_DIR/gear-compiled.meta" <<META
+cat > "$STAGE_DIR/gear-compiled.meta" <<META
 GEAR_SOURCE_ROOT=$GEAR_ROOT
 GEAR_BUILT_AT=$(date +%s)
+GEAR_SOURCE_COMMIT=$CANDIDATE_COMMIT
+GEAR_SOURCE_BRANCH=$CANDIDATE_BRANCH
+GEAR_SOURCE_DIRTY=$CANDIDATE_DIRTY
+GEAR_INSTALL_FILE_GUARD=$INSTALL_FILE_GUARD
 META
 
 # ─── 4. Build Rust gear-tools binary ───
@@ -108,15 +200,26 @@ echo "  $(dim '...') Building Rust tools binary (cargo build --release)"
 (cd "$GEAR_ROOT" && "$CARGO" build --release -p gear-tools 2>&1 | tail -3)
 
 TOOLS_SRC="$GEAR_ROOT/target/release/gear-tools"
-TOOLS_DST="$INSTALL_DIR/gear-tools"
+TOOLS_DST="$STAGE_DIR/gear-tools"
 cp "$TOOLS_SRC" "$TOOLS_DST"
 chmod +x "$TOOLS_DST"
-echo "  $(green '✓') gear-tools installed: $(dim "$TOOLS_DST")"
+echo "  $(green '✓') gear-tools staged"
+
+# Bind the provenance record to the exact staged bytes. Verification can now
+# distinguish "built from this worktree" from "this is the same artifact the
+# installer promoted" without relying on mtimes or filenames.
+CLI_SHA256="$(sha256_file "$CLI_OUT")"
+TOOLS_SHA256="$(sha256_file "$TOOLS_DST")"
+cat >> "$STAGE_DIR/gear-compiled.meta" <<META
+GEAR_CLI_SHA256=$CLI_SHA256
+GEAR_TOOLS_SHA256=$TOOLS_SHA256
+META
 
 # ─── 5. Write a thin `gear` launcher that sets GEAR_TOOLS_BIN ───
 # The compiled binary needs to know where gear-tools lives; the wrapper sets the
 # env var, loads saved API keys, and execs the compiled CLI.
-cat > "$INSTALL_DIR/gear" <<'WRAPPER'
+LAUNCHER_OUT="$STAGE_DIR/gear"
+cat > "$LAUNCHER_OUT" <<'WRAPPER'
 #!/usr/bin/env bash
 # Gear launcher: points the compiled CLI at gear-tools and loads saved keys.
 
@@ -150,6 +253,12 @@ if [ -f "$META_FILE" ]; then
   # shellcheck disable=SC1090
   source "$META_FILE"
   if [ -n "${GEAR_SOURCE_ROOT:-}" ] && [ -d "$GEAR_SOURCE_ROOT/packages" ]; then
+    CURRENT_COMMIT="$(git -C "$GEAR_SOURCE_ROOT" rev-parse HEAD 2>/dev/null || true)"
+    if [ -n "${GEAR_SOURCE_COMMIT:-}" ] && [ -n "$CURRENT_COMMIT" ] && \
+       [ "$CURRENT_COMMIT" != "$GEAR_SOURCE_COMMIT" ]; then
+      echo "  ! This gear build came from commit ${GEAR_SOURCE_COMMIT:0:8}, but its source worktree is now ${CURRENT_COMMIT:0:8}." >&2
+      echo "    Rebuild:  cd $GEAR_SOURCE_ROOT && ./scripts/install.sh" >&2
+    fi
     NEWER="$(find "$GEAR_SOURCE_ROOT/packages" -name '*.ts' \
       -not -path '*/node_modules/*' -not -path '*/dist/*' \
       -newer "$GEAR_BIN_DIR/gear-compiled" -print -quit 2>/dev/null)"
@@ -171,8 +280,42 @@ fi
 
 exec "$GEAR_BIN_DIR/gear-compiled" "$@"
 WRAPPER
-chmod +x "$INSTALL_DIR/gear"
-echo "  $(green '✓') Launcher written: $(dim "$INSTALL_DIR/gear")"
+chmod +x "$LAUNCHER_OUT"
+
+# ─── Atomic promotion + recoverable backup ───
+# Existing artifacts from a guarded install are immutable. This point is
+# intentionally late: provenance passed and every replacement byte is staged.
+if [ "$INSTALL_FILE_GUARD" = "macos-uchg" ]; then
+  for name in gear gear-compiled gear-tools gear-compiled.meta; do
+    [ ! -e "$INSTALL_DIR/$name" ] || chflags nouchg "$INSTALL_DIR/$name"
+  done
+fi
+
+BACKUP_STAMP="$(date +%s)"
+for name in gear gear-compiled gear-tools gear-compiled.meta; do
+  if [ -e "$INSTALL_DIR/$name" ]; then
+    cp -p "$INSTALL_DIR/$name" "$INSTALL_DIR/$name.backup-$BACKUP_STAMP"
+  fi
+done
+mv "$CLI_OUT" "$INSTALL_DIR/gear-compiled"
+mv "$TOOLS_DST" "$INSTALL_DIR/gear-tools"
+mv "$STAGE_DIR/gear-compiled.meta" "$INSTALL_DIR/gear-compiled.meta"
+mv "$LAUNCHER_OUT" "$INSTALL_DIR/gear"
+
+if [ "$INSTALL_FILE_GUARD" = "macos-uchg" ]; then
+  chflags uchg \
+    "$INSTALL_DIR/gear" \
+    "$INSTALL_DIR/gear-compiled" \
+    "$INSTALL_DIR/gear-tools" \
+    "$INSTALL_DIR/gear-compiled.meta"
+fi
+trap - EXIT
+cleanup_stage
+echo "  $(green '✓') Installed atomically: $(dim "$INSTALL_DIR/gear-compiled")"
+echo "  $(green '✓') CLI checksum: $(dim "$CLI_SHA256")"
+if [ "$INSTALL_FILE_GUARD" = "macos-uchg" ]; then
+  echo "  $(green '✓') Legacy-installer guard: $(dim 'macOS user-immutable artifacts')"
+fi
 
 # Prune the pre-rename launchers (they pointed at the same binary).
 for old in elio berne alan; do
@@ -194,9 +337,13 @@ case ":$PATH:" in
     echo "  $(bold 'Add ~/.gear/bin to your PATH:')"
     echo ""
     echo "  $(yellow '  # bash — add to ~/.bashrc or ~/.bash_profile')"
+    # Print the literal shell snippet for the user.
+    # shellcheck disable=SC2016
     echo "  $(cyan '  export PATH="$HOME/.gear/bin:$PATH"')"
     echo ""
     echo "  $(yellow '  # zsh  — add to ~/.zshrc')"
+    # Print the literal shell snippet for the user.
+    # shellcheck disable=SC2016
     echo "  $(cyan '  export PATH="$HOME/.gear/bin:$PATH"')"
     echo ""
     echo "  $(dim '  Then reload your shell: source ~/.zshrc (or open a new terminal)')"

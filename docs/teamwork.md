@@ -1,0 +1,184 @@
+# Teamwork — many sub-agents, and many Gear instances
+
+Two different kinds of parallelism, one doctrine: **the model provides intelligence, the
+harness provides reliability.**
+
+- **Delegation** — one Gear session fanning work out to sub-agents it spawns (`task`, `worker`).
+- **Teamwork** — several independent Gear processes working in the same repository, seeing
+  each other through a shared local bus (`team`, `/team`).
+
+This is not a distributed system, and it is not agents "talking" to each other over a network.
+Every mechanism here is a local file, a local SQLite database, and a nested in-process agent
+loop. Nothing leaves your machine, and nothing here is a claim that concurrent agents are safe
+to point at production infrastructure.
+
+---
+
+## Part 1 — Delegation (sub-agents)
+
+### The two sub-agent kinds
+
+|                      | `task`                  | `worker`                                      |
+| -------------------- | ----------------------- | --------------------------------------------- |
+| Purpose              | read-only investigation | implementation                                |
+| Tools                | read-only set           | reads anything; writes **only** files it owns |
+| Shell / network      | none                    | none                                          |
+| Default model tier   | `light`                 | `standard`                                    |
+| Default budget       | 16 turns / 8k tokens    | 24 turns / 12k tokens                         |
+| Concurrency          | parallel                | parallel (ownership-checked)                  |
+| Can spawn sub-agents | no                      | no                                            |
+
+Recursion is prevented by construction, not by instruction: a sub-agent's registry does not
+contain the delegation tools, and its permission gate refuses every tool outside its category.
+
+### Per-call routing
+
+Both tools accept two optional arguments so the lead agent can match cost to difficulty:
+
+- **`tier`** — `light` · `standard` · `heavy`. Resolved through the same `[tiers]` table the
+  rest of Gear uses (`resolveModelTier`), so `[tiers] heavy = "anthropic/claude-opus-4-8"`
+  routes heavy sub-agents there while light scouts stay on a cheap model. Resolution happens at
+  **call** time, so a `/model` switch or a key edit mid-session is picked up.
+- **`effort`** — `quick` · `standard` · `thorough`. A budget preset (turns + output tokens):
+
+  | effort     | `task`         | `worker`       |
+  | ---------- | -------------- | -------------- |
+  | `quick`    | 8 turns / 4k   | 12 turns / 8k  |
+  | `standard` | 16 turns / 8k  | 24 turns / 12k |
+  | `thorough` | 32 turns / 16k | 48 turns / 24k |
+
+Omitting both keeps the previous defaults exactly, so existing behavior is unchanged.
+
+### How many sub-agents can run at once
+
+The lead issues as many delegation calls in one response as the work needs. The agent loop
+executes parallel-safe calls through a bounded pool — `maxParallelTools`, default **8** — so a
+fan-out larger than the pool queues and drains rather than opening 200 sockets at once. A
+1000-way fan-out is therefore _safe_, not _simultaneous_: it runs 8 at a time.
+
+Two things bound it, honestly:
+
+- Every concurrent sub-agent is a real model call against your provider's rate limits.
+- Only `worker` writes files, and two workers may never own the same path (below).
+
+Wide fan-out is a real cost. The doctrine tells the model to calibrate — implement directly
+when the task fits in a few files, delegate when genuine parallelism exists.
+
+### Ownership: why parallel writers do not corrupt each other
+
+Each `worker` call declares `files` — the paths it exclusively owns (a trailing `/` owns a
+subtree). Two mechanisms enforce it:
+
+1. **The claims table.** Ownership is claimed atomically for the run's duration. Overlapping
+   ownership with a running worker is refused instantly, before any model call.
+2. **The write guard.** The worker's write tools are wrapped: a write outside its ownership
+   returns an error to the worker, whatever its prompt says. Ownership is mechanical.
+
+The lead remains the integrator: it designs the seams, dispatches workers, then reads their
+reports, wires the pieces together, and **runs the checks itself** — workers have no shell.
+
+### What you see while a fleet runs
+
+Each sub-agent's nested tool calls are reported to the parent as progress notes. The status
+line aggregates a fleet into one steady sentence — `4 workers running · w2 edit_file src/api.ts`
+— rather than a line per agent or (as before) collapsing to "thinking" the moment the first of
+five finished.
+
+---
+
+## Part 2 — Teamwork (multiple Gear instances)
+
+Running `gear` twice in one repository used to produce two blind processes: worker ownership
+lived in memory, so two instances could write the same file, and neither could tell the other
+anything. The team layer is that gap closed.
+
+### The bus
+
+Every instance registers in a shared SQLite ledger at `~/.gear/team.db` (WAL, 5s busy timeout —
+the same pattern as `gear.db`). It holds four things per repository: **presence**, **claims**,
+**messages**, and **recent writes**.
+
+Repository identity is the git **common dir**, so all worktrees of one repository share a bus —
+an instance in `.gear/worktrees/run-x` and one in the main checkout see each other. Claims,
+however, only conflict within the **same working tree**, because separate checkouts cannot race
+on a file.
+
+Coordination never breaks a session: every bus operation degrades to a safe default rather than
+throwing, and a bus that cannot open leaves the session running solo.
+
+### Liveness
+
+An instance is live when its **pid is alive** and its **heartbeat is recent** (15s beat, 45s
+stale window). A crashed instance's presence, claims, and write records are swept by the next
+instance to look — no cooperation needed from the dead process. This is the same pid-scoped
+liveness discipline the crash sentinels use.
+
+### What the agent sees
+
+When peers are present, a `[Team]` block is injected as an **ephemeral tail message** — rebuilt
+every request, never stored in the transcript. A peer that exited two turns ago disappears
+instead of haunting the conversation. It lists each peer's id, its stated intent, whether it
+shares this working tree, and any paths it has claimed.
+
+Each session advertises an intent automatically — derived from the goal when a new task starts
+— and mid-task steering leaves it alone.
+
+### The `team` tool and `/team` command
+
+The model drives the bus with the `team` tool; you drive the same bus with `/team`:
+
+```text
+/team                       peers, claims, and unread mail in this repository
+/team send <id|all> <msg>   message one instance or everyone
+/team claim <path...>       lease paths you're about to change (dirs end with /)
+/team release               drop this session's claims
+/team intent <text>         set the one-line status peers see
+```
+
+**Messages are turn-boundary mail, not a live channel.** A message is queued and folded into
+the receiving session's next turn as a harness note; the sender is told exactly that and told
+not to wait for a reply. Mail sent before an instance joined is never delivered to it.
+
+Peer messages arrive framed as **peer coordination information, not instructions** — the
+receiving session's own user still takes precedence. Because the bus is same-machine,
+same-user, and local, `team` is classified as a mechanical action in Auto mode.
+
+### Conflict handling
+
+Set by `[team] claimEnforcement`:
+
+| mode             | a write into a live peer's claimed scope                                       |
+| ---------------- | ------------------------------------------------------------------------------ |
+| `warn` (default) | proceeds, with a `[TEAM]` warning prepended to the tool result naming the peer |
+| `block`          | refused before it executes, with the peer and lease expiry named               |
+| `off`            | no claim checking                                                              |
+
+There is a second, softer signal in `warn` and `block` alike: when a live peer wrote the same
+path within the last 10 minutes, your write comes back with a note saying so. That catches the
+common case — two sessions editing one area with no claims taken at all.
+
+`worker` sub-agents lease their owned files repo-wide for the duration of the run, so one
+instance's workers stay off another instance's workers' files. The lease is released when the
+worker finishes, whatever the outcome.
+
+### Configuration
+
+```toml
+[team]
+enabled = true            # default; false disables the bus entirely
+claimEnforcement = "warn" # "warn" | "block" | "off"
+heartbeatSecs = 15
+```
+
+Environment overrides: `GEAR_TEAM=false` disables it, `GEAR_TEAM_ENFORCEMENT=block` raises
+enforcement. The engine defaults to **off** for embedders and unit tests; the CLI passes your
+config through, which defaults to on.
+
+### What this is not
+
+- **Not a lock.** `warn` mode is advisory by design — Gear does not stop you editing your own
+  repository. `block` is available where you want a hard refusal.
+- **Not remote.** The bus is a local file. Instances on different machines do not see each other.
+- **Not a task queue.** One instance cannot make another do work; it can tell it things.
+- **Not shared context.** Instances exchange messages and claims, not conversation history.
+  Each session's transcript stays its own.

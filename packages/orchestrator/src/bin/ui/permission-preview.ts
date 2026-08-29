@@ -1,4 +1,4 @@
-// ─── Permission preview model ───
+// --- Permission preview model ---
 // Build a truthful, bounded preview before a risky tool executes. The renderer stays
 // pure; this module performs the one filesystem read needed to locate proposed edits
 // and attach real source line numbers. A failed read never blocks the permission ask.
@@ -25,7 +25,7 @@ export interface PermissionRiskFact {
 export interface PermissionPreview {
   /** The human question at the centre of the ask. */
   question: string;
-  /** Compact trust boundary, e.g. "workspace · reversible". */
+  /** Compact trust boundary, e.g. "workspace | reversible". */
   scope: string;
   /** Command/query detail for non-file actions. */
   detail?: string;
@@ -42,7 +42,7 @@ export interface PermissionPreview {
   guard: string;
   /**
    * Labels are action-specific so choices never become vague yes/no prompts.
-   * Two entries (allow once / deny) when a session grant is unavailable —
+   * Two entries (allow once / deny) when a session grant is unavailable --
    * critical/guardrail circuit breakers re-ask on every occurrence, so a
    * session choice would be a lie.
    */
@@ -140,7 +140,7 @@ function crop(rows: PermissionPreviewLine[]): {
   return {
     lines: [
       ...rows.slice(0, head),
-      { kind: "hunk", text: `… ${rows.length - head - tail} preview lines hidden …` },
+      { kind: "hunk", text: `... ${rows.length - head - tail} preview lines hidden ...` },
       ...rows.slice(-tail),
     ],
     truncated: true,
@@ -154,7 +154,7 @@ function editRows(
 ): { rows: PermissionPreviewLine[]; added: number; removed: number } {
   const oldRows = changeLines(oldText);
   const newRows = changeLines(newText);
-  // `indexOf("")` is 0 — an empty old_text must not fabricate a line-1 anchor
+  // `indexOf("")` is 0 -- an empty old_text must not fabricate a line-1 anchor
   // and a top-of-file context row for an edit the native editor rejects
   // outright. Show the insertion unanchored, with the rejection stated.
   const found = source == null || oldText === "" ? -1 : source.indexOf(oldText);
@@ -163,7 +163,7 @@ function editRows(
   if (oldText === "") {
     rows.push({
       kind: "hunk",
-      text: "old_text is empty — the editor rejects this call; nothing would be written",
+      text: "old_text is empty -- the editor rejects this call; nothing would be written",
     });
   }
 
@@ -295,7 +295,7 @@ export async function buildPermissionPreview(
   input: PermissionPreviewInput,
 ): Promise<PermissionPreview> {
   const preview = await assemblePreview(input);
-  // A circuit-breaker ask never honors a session grant — offering the choice
+  // A circuit-breaker ask never honors a session grant -- offering the choice
   // would be a lie, so the card carries only "allow once" and "deny".
   if (input.sessionGrantUnavailable && preview.choices.length === 3) {
     return { ...preview, choices: [preview.choices[0], preview.choices[2]] };
@@ -331,13 +331,13 @@ async function assemblePreview(input: PermissionPreviewInput): Promise<Permissio
     const cropped = crop(diff.rows);
     return {
       question: `Apply this edit to ${target || "the file"}?`,
-      scope: "workspace · reversible",
+      scope: "workspace | reversible",
       target,
       lines: cropped.lines,
       added: diff.added,
       removed: diff.removed,
       truncated: cropped.truncated,
-      guard: "Working tree unchanged · review before write",
+      guard: "Working tree unchanged | review before write",
       risk: fileWriteRisk(),
       choices: [
         "Yes, apply this edit",
@@ -364,7 +364,7 @@ async function assemblePreview(input: PermissionPreviewInput): Promise<Permissio
       rows.push(...one.rows);
       added += one.added;
       removed += one.removed;
-      // "" is included in every string — simulating it would silently prepend
+      // "" is included in every string -- simulating it would silently prepend
       // new_text to the working copy and skew every later hunk's line numbers.
       if (source != null && oldText !== "" && source.includes(oldText)) {
         source = edit.replace_all
@@ -375,13 +375,13 @@ async function assemblePreview(input: PermissionPreviewInput): Promise<Permissio
     const cropped = crop(rows);
     return {
       question: `Apply ${edits.length || "these"} atomic edits to ${target || "the file"}?`,
-      scope: "workspace · all-or-nothing",
+      scope: "workspace | all-or-nothing",
       target,
       lines: cropped.lines,
       added,
       removed,
       truncated: cropped.truncated,
-      guard: "Working tree unchanged · every edit must validate before write",
+      guard: "Working tree unchanged | every edit must validate before write",
       risk: fileWriteRisk(),
       choices: [
         "Yes, apply these edits",
@@ -402,14 +402,14 @@ async function assemblePreview(input: PermissionPreviewInput): Promise<Permissio
     const existingNotPreviewed = snapshot.exists !== false && source == null;
     return {
       question: `${creating ? "Create" : "Replace the contents of"} ${target || "the file"}?`,
-      scope: `workspace · ${creating ? "new file" : "full rewrite"}`,
+      scope: `workspace | ${creating ? "new file" : "full rewrite"}`,
       target,
       lines: cropped.lines,
       added: diff.added,
       removed: diff.removed,
       truncated: cropped.truncated,
-      summary: existingNotPreviewed ? "new contents · existing target not loaded" : undefined,
-      guard: "Working tree unchanged · review before write",
+      summary: existingNotPreviewed ? "new contents | existing target not loaded" : undefined,
+      guard: "Working tree unchanged | review before write",
       risk: fileWriteRisk(),
       choices: [
         creating ? "Yes, create this file" : "Yes, write this file",
@@ -435,20 +435,20 @@ async function assemblePreview(input: PermissionPreviewInput): Promise<Permissio
         : { label: "network egress", value: "blocked", tone: "ok" },
       {
         label: "est. runtime",
-        value: `≤${runtimeSecs}s cap`,
+        value: `<=${runtimeSecs}s cap`,
         tone: runtimeSecs > 120 ? "warn" : "muted",
       },
       ...(rateFact(input.rateLimit) ? [rateFact(input.rateLimit)!] : []),
     ];
     return {
       question: "Run this command?",
-      scope: network ? "host command · network access" : "sandboxed command · workspace",
+      scope: network ? "host command | network access" : "sandboxed command | workspace",
       detail: command,
       lines: [],
       added: 0,
       removed: 0,
       truncated: false,
-      guard: "Command has not run · review before execute",
+      guard: "Command has not run | review before execute",
       risk: bashRisk,
       choices: [
         "Yes, run this command",
@@ -469,13 +469,13 @@ async function assemblePreview(input: PermissionPreviewInput): Promise<Permissio
         input.toolName === "web_fetch"
           ? `Fetch content from ${label}?`
           : "Search the web with this query?",
-      scope: "network · read only",
+      scope: "network | read only",
       detail,
       lines: [],
       added: 0,
       removed: 0,
       truncated: false,
-      guard: "No request sent · review before network access",
+      guard: "No request sent | review before network access",
       risk: [
         { label: "writes outside workspace", value: "no", tone: "ok" },
         {

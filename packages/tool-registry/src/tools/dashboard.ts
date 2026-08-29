@@ -31,7 +31,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
 import { CHART_UMD, CHART_UMD_VERSION } from "./assets/chart-umd";
 import { CHART_DEFAULTS_JS, FAB_CSS, THEME_CSS, specShellHtml } from "./dashboard-theme";
@@ -972,7 +972,18 @@ export const INTERACTIVE_DASHBOARD_SCHEMA: ToolSchema = {
       data: {
         type: "object",
         description:
-          "JSON payload for window.render / key-bound updates. On update, sending only data live-refreshes the page without reload.",
+          "JSON payload for window.render / key-bound updates. On update, sending only data live-refreshes the page without reload. Requires data_source — every number on the page has to say where it came from.",
+      },
+      data_source: {
+        type: "object",
+        description:
+          "REQUIRED whenever you send `data`: where those numbers came from. One of " +
+          '{"kind":"file","path":"<workspace-relative file you read>"} — the path is checked to exist; ' +
+          '{"kind":"command","command":"<the command whose output you are plotting, verbatim>"}; or ' +
+          '{"kind":"conversation","note":"<which message or tool result these came from>"} — the weakest form, ' +
+          "for numbers the user gave you directly. Omit `data` entirely and bind watch_file instead when the " +
+          "values live in a file that changes. There is no option for numbers you produced yourself: if you " +
+          "cannot name a source, you do not have data to plot.",
       },
       watch_file: {
         type: "string",
@@ -1013,6 +1024,73 @@ function coerceData(raw: unknown): unknown {
   }
 }
 
+/** A declared origin for plotted numbers. See `data_source` in the schema. */
+export type DataSource =
+  | { kind: "file"; path: string }
+  | { kind: "command"; command: string }
+  | { kind: "conversation"; note: string };
+
+/**
+ * Shape-check a `data_source`. Returns an error string, or null when valid.
+ *
+ * Deliberately strict about the discriminant: an unrecognized `kind` is
+ * refused rather than waved through as "some other source", because a source
+ * field that accepts anything is decoration, not provenance.
+ */
+export function validateDataSource(raw: unknown): string | null {
+  const need =
+    "data requires data_source — where these numbers came from: " +
+    '{"kind":"file","path":…}, {"kind":"command","command":…}, or {"kind":"conversation","note":…}';
+  if (raw === undefined || raw === null) return need;
+
+  const src = (typeof raw === "string" ? coerceData(raw) : raw) as Record<string, unknown>;
+  if (typeof src !== "object" || Array.isArray(src)) return need;
+
+  const nonEmpty = (v: unknown): boolean => typeof v === "string" && v.trim().length > 0;
+  switch (src.kind) {
+    case "file":
+      return nonEmpty(src.path)
+        ? null
+        : 'data_source {"kind":"file"} requires a workspace-relative `path` you actually read';
+    case "command":
+      return nonEmpty(src.command)
+        ? null
+        : 'data_source {"kind":"command"} requires the `command` whose output you are plotting, verbatim';
+    case "conversation":
+      return nonEmpty(src.note)
+        ? null
+        : 'data_source {"kind":"conversation"} requires a `note` naming the message or tool result these came from';
+    default:
+      return need;
+  }
+}
+
+/**
+ * The one source form the runtime can check by itself: a file either exists in
+ * the workspace or it does not. Returns an error string, or null.
+ *
+ * Path containment matters as much as existence — a source pointing outside the
+ * workspace is not a source this run can stand behind.
+ */
+export function verifyDataSource(source: unknown, workspaceRoot: string): string | null {
+  const src = source as Record<string, unknown> | undefined;
+  if (!src || src.kind !== "file" || typeof src.path !== "string") return null;
+
+  const root = resolve(workspaceRoot);
+  const abs = isAbsolute(src.path) ? resolve(src.path) : resolve(root, src.path);
+  const rel = relative(root, abs);
+  if (rel.startsWith("..") || isAbsolute(rel)) {
+    return `data_source path "${src.path}" is outside the workspace`;
+  }
+  if (!existsSync(abs)) {
+    return (
+      `data_source names "${src.path}", which does not exist. Cite the file you actually read, ` +
+      "or use watch_file to bind the page to it."
+    );
+  }
+  return null;
+}
+
 export function createDashboardTool(manager: DashboardManager): ToolHandler {
   return {
     schema: INTERACTIVE_DASHBOARD_SCHEMA,
@@ -1047,6 +1125,18 @@ export function createDashboardTool(manager: DashboardManager): ToolHandler {
             error: "create requires a spec (preferred — see tool description) or body-only html",
           };
         }
+      }
+      // Provenance for plotted numbers.
+      //
+      // `data` is a free-form object the model authors, and it is the one tool
+      // output a reader takes as fact — a chart reads as measurement whether or
+      // not anything measured it. The rule "plot the REAL numbers, never invent
+      // data" lived only in the doctrine, and a prose rule is exactly what does
+      // not survive a model swap. So the schema asks the question instead, and
+      // the file form is checked against the filesystem at execute time.
+      if ((action === "create" || action === "update") && args.data !== undefined) {
+        const sourceError = validateDataSource(args.data_source);
+        if (sourceError) return { valid: false, error: sourceError };
       }
       if (action === "update" && (typeof args.id !== "string" || !args.id)) {
         return { valid: false, error: "update requires the dashboard id returned by create" };
@@ -1083,6 +1173,13 @@ export function createDashboardTool(manager: DashboardManager): ToolHandler {
 
       try {
         const args = input.args;
+        // The half of provenance the runtime can settle by itself: a cited
+        // file either exists inside the workspace or it does not. validate()
+        // has no workspace root, so the check lands here.
+        if (args.data !== undefined) {
+          const sourceError = verifyDataSource(args.data_source, input.workspaceRoot);
+          if (sourceError) return fail(sourceError);
+        }
         switch (args.action) {
           case "create": {
             const info = await manager.create({

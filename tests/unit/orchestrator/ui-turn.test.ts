@@ -119,7 +119,7 @@ describe("TurnRenderer — customizer activity stream", () => {
     expect(h.output()).toContain("│ · read  src/app.ts");
     expect(h.output()).toContain("│ · list  src/");
     expect(h.output()).toContain("│ · run   git status --short");
-    expect(h.output()).toContain("└ M src/app.ts");
+    expect(h.output()).toContain("│ M src/app.ts");
   });
 
   it("advances through Plan, Act, and Verify while retaining the completed rows", async () => {
@@ -135,7 +135,7 @@ describe("TurnRenderer — customizer activity stream", () => {
     expect(h.output()).toContain("│ plan");
     expect(h.output()).toContain("│ ✓ Trace the flow");
     expect(h.output()).toContain("│ › Fix the branch");
-    expect(h.output()).toContain("│ ○ Run checks");
+    expect(h.output()).toContain("│ o Run checks");
     await sleep(SETTLE + 60);
     expect(h.rung()).toContain("Fix the branch");
     expect(h.rung()).toContain("1/3 steps");
@@ -242,7 +242,7 @@ describe("TurnRenderer — customizer activity stream", () => {
     h.turn.onEvent({ type: "text_delta", text: "Updated the handler." });
     h.turn.finish();
     expect(h.output()).toContain("│   edit  src/app.ts");
-    expect(h.output()).toContain("+2 -1 · 1 hunk");
+    expect(h.output()).toContain("+2 -1 | 1 hunk");
     expect(h.output()).toContain("1 - old");
     expect(h.output()).toContain("1 + new");
     expect(h.output()).toContain("│ changed  1 file");
@@ -327,9 +327,9 @@ describe("TurnRenderer — customizer activity stream", () => {
     h.turn.onEvent(toolEnd("bash", { command: "bun test" }, result));
     h.turn.onEvent({ type: "text_delta", text: "All checks pass." });
     h.turn.finish();
-    expect(h.output()).toContain("└ 42 passed");
+    expect(h.output()).toContain("│ 42 passed");
     expect(h.output()).toContain("suite A passed");
-    expect(h.output()).toContain("┌ bun test");
+    expect(h.output()).toContain("│ bun test");
   });
 
   it("surfaces the same error only once and never labels it done", () => {
@@ -377,7 +377,7 @@ describe("renderReplay", () => {
     expect(output).toContain("› fix the bug");
     expect(output).toContain("● I am reading the files.");
     expect(output).toContain("│ · read  2 files");
-    expect(output).toContain("1 file changed · 1 check passed");
+    expect(output).toContain("1 file changed | 1 check passed");
     expect(output).toContain("Fixed and verified.");
   });
 

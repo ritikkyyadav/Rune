@@ -241,7 +241,12 @@ describe("toResponsesInput / toResponsesBody", () => {
     expect(body.instructions).toBe("You are Gear.");
     expect(body.store).toBe(false);
     expect(body.stream).toBe(true);
-    expect(body.parallel_tool_calls).toBe(false); // matches Codex
+    // TRUE, deliberately diverging from the Codex CLI: with it false the
+    // backend served one tool call per response, so every file read cost a
+    // full round trip re-sending the whole prompt (1030 of 1041 recorded
+    // tool-using turns carried exactly one call). The agent loop bounds real
+    // concurrency itself.
+    expect(body.parallel_tool_calls).toBe(true);
     expect(body.prompt_cache_key).toBe("sess-1");
     // reasoning carries summary ONLY — the backend 400s on a top-level effort.
     expect(body.reasoning).toEqual({ summary: "auto" });

@@ -44,6 +44,9 @@ import {
   clearProviderKey as persistClearKey,
   searchKeyStatus,
   PROVIDER_PRESETS,
+  AUTO_PROVIDER_PRIORITY,
+  normalizeFallbackOrder,
+  normalizeQuotaPolicy,
   loadLastModel,
   saveLastModel,
   loadSavedSandboxState,
@@ -154,9 +157,11 @@ function buildEngine(): Engine {
     !!(p !== "ollama-turbo" && (config.llm[p] as { apiKey?: string } | undefined)?.apiKey) ||
     !!secrets.keys[p];
 
-  // Detect the best provider from available credentials (free-tier friendly order).
+  // Detect the best provider from available credentials. Paid-capacity direct
+  // providers outrank quota-constrained free/developer endpoints; an explicit
+  // config or sticky model still wins before this fallback is consulted.
   function detectProvider(): CliProvider {
-    for (const p of ["google", "anthropic", "openai", "openrouter"] as CliProvider[]) {
+    for (const p of AUTO_PROVIDER_PRIORITY) {
       if (hasCreds(p)) return p;
     }
     return "openrouter";
@@ -235,9 +240,14 @@ function buildEngine(): Engine {
     search: config.search,
     research: config.research,
     tiers: config.tiers,
+    // Same mid-task fallback policy as the CLI. Unknown ids are dropped here
+    // silently — this host has no console to warn into; the CLI reports them.
+    fallbackOrder: normalizeFallbackOrder(config.fallback?.order).order as ProviderName[],
+    quotaPolicy: normalizeQuotaPolicy(config.fallback?.onQuotaExceeded),
     git: config.git,
     context: config.context,
     interactive: config.interactive,
+    team: config.team,
     // Black box: same local incident capture as the CLI (config can disable).
     blackbox:
       config.diagnostics?.enabled !== false

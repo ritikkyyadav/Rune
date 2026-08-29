@@ -1,4 +1,4 @@
-// ─── Tool-call rendering (compatibility shim) ───
+// --- Tool-call rendering (compatibility shim) ---
 // The Codex-style 6-line preview that used to live here was the source of the
 // "cluttered" feel. Tool rendering now lives in ./activity as a single compact
 // line per call (the thought-chain language shared by the live stream and the

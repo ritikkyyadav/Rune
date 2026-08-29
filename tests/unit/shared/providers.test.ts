@@ -7,9 +7,14 @@ import {
   effectiveAuthMethods,
   authMethodLabel,
   accountLoginLabel,
+  AUTO_PROVIDER_PRIORITY,
 } from "../../../packages/shared/src/providers";
 
 describe("provider presets", () => {
+  it("prefers direct paid-capacity providers during automatic startup", () => {
+    expect(AUTO_PROVIDER_PRIORITY).toEqual(["anthropic", "openai", "google", "openrouter"]);
+  });
+
   it("offers the named providers the keys panel promises", () => {
     const ids = PROVIDER_PRESETS.map((p) => p.id);
     for (const id of ["anthropic", "openai", "openrouter", "google", "groq", "xai", "deepseek"]) {

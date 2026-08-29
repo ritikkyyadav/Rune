@@ -19,6 +19,7 @@
 
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { LlmGateway, ProviderName } from "@gear/llm-gateway";
+import type { ModelTier } from "@gear/shared";
 import {
   ToolRegistry,
   registerBuiltinTools,
@@ -29,10 +30,19 @@ import {
 } from "@gear/tool-registry";
 import { AgentLoop } from "./agent-loop";
 import type { PermissionCheck, ToolResultProcessor } from "./agent-loop";
+import { ContextEngine } from "./context-engine";
 
 const DEFAULT_MAX_TURNS = 24;
 const DEFAULT_MAX_TOKENS = 12_000;
 const MAX_OWNED_FILES = 32;
+
+/** Per-call budget presets: how much room one worker's build gets. */
+const EFFORT_PRESETS: Record<string, { maxTurns: number; maxTokens: number }> = {
+  quick: { maxTurns: 12, maxTokens: 8_000 },
+  standard: { maxTurns: DEFAULT_MAX_TURNS, maxTokens: DEFAULT_MAX_TOKENS },
+  thorough: { maxTurns: 48, maxTokens: 24_000 },
+};
+const TIERS = new Set<ModelTier>(["light", "standard", "heavy"]);
 
 /** Read tools a worker keeps from the builtin set (bash/web/network excluded). */
 const WORKER_READ_TOOLS = new Set([
@@ -51,13 +61,25 @@ export interface WorkerDeps {
   /**
    * Live resolver for gateway/model/provider at execute time. Workers do real
    * implementation, so the engine routes them to the STANDARD tier (the main
-   * loop's model), not the light tier used by read-only scouts.
+   * loop's model) by default — a per-call `tier` argument overrides.
    */
-  resolve: () => { gateway: LlmGateway; model: string; provider: ProviderName };
+  resolve: (tier?: ModelTier) => { gateway: LlmGateway; model: string; provider: ProviderName };
   maxTurns?: number;
   maxTokens?: number;
   /** Same prompt-injection probe used by the lead agent. */
   toolResultProcessor?: ToolResultProcessor;
+  /**
+   * Cross-instance ownership (the team bus). Local claims stop THIS engine's
+   * workers racing; this hook additionally leases the files repo-wide so a
+   * concurrent Gear instance's workers stay off them. `claim` returns ok:false
+   * (with the reason) when enforcement is "block" and a live peer holds an
+   * overlapping lease; a "warn"-mode conflict returns ok:true with a note the
+   * worker's report will carry.
+   */
+  team?: {
+    claim(paths: string[], label: string): { ok: boolean; error?: string; note?: string };
+    release(label: string): void;
+  };
 }
 
 export const WORKER_TOOL_SCHEMA: ToolSchema = {
@@ -89,6 +111,20 @@ export const WORKER_TOOL_SCHEMA: ToolSchema = {
       context: {
         type: "string",
         description: "Optional extra context (key file paths to read first, style notes).",
+      },
+      tier: {
+        type: "string",
+        enum: ["light", "standard", "heavy"],
+        description:
+          "Model tier for this worker. Default 'standard' (the main loop's weight). Use " +
+          "'light' for mechanical boilerplate, 'heavy' for the genuinely hard pieces.",
+      },
+      effort: {
+        type: "string",
+        enum: ["quick", "standard", "thorough"],
+        description:
+          "Budget preset: 'quick' for small contained edits, 'standard' (default), " +
+          "'thorough' for large multi-file pieces.",
       },
     },
     required: ["prompt", "files"],
@@ -252,6 +288,8 @@ export function workerSystemPrompt(ownedList: string): string {
     "- You have no shell and no network. Verify by re-reading what you wrote; if a write reports syntax errors, fix them before finishing.",
     "- Fulfill the contract COMPLETELY. Follow the surrounding codebase's conventions.",
     "- Finish with a short integrator report: what you changed per file, decisions you made, and anything the lead must wire up, verify, or change in files you don't own.",
+    "- Only the text you write AFTER YOUR LAST TOOL CALL is returned to the lead — anything typed on the way to a tool call is working narration and is discarded. Write the report once, at the end, self-contained. A turn that ends on a tool call returns no report at all.",
+    "- A [Budget: turn N of M] line arrives with every request. When two turns remain, stop building and write the report on what you have, naming what is unfinished.",
     "",
     // The doctrine steers big builds to workers, which made the frontend of
     // every large build the one thing written WITHOUT the interface doctrine.
@@ -294,16 +332,27 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
       if (args.context !== undefined && typeof args.context !== "string") {
         return { valid: false, error: "context must be a string when provided" };
       }
+      if (args.tier !== undefined && !TIERS.has(args.tier as ModelTier)) {
+        return { valid: false, error: "tier must be one of: light, standard, heavy" };
+      }
+      if (
+        args.effort !== undefined &&
+        !(typeof args.effort === "string" && args.effort in EFFORT_PRESETS)
+      ) {
+        return { valid: false, error: "effort must be one of: quick, standard, thorough" };
+      }
       return { valid: true };
     },
 
     execute: async (input: ToolCallInput): Promise<ToolCallOutput> => {
       const start = performance.now();
       const workerId = `w${++workerSeq}`;
-      const { prompt, files, context } = input.args as {
+      const { prompt, files, context, tier, effort } = input.args as {
         prompt: string;
         files: string[];
         context?: string;
+        tier?: ModelTier;
+        effort?: string;
       };
 
       let ownership: Ownership;
@@ -323,17 +372,51 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
         );
       }
 
+      // Repo-wide lease: make this worker's ownership visible to (and safe
+      // from) OTHER Gear instances working in the same repository.
+      let teamNote = "";
+      let teamClaimed = false;
+      if (deps.team) {
+        const lease = deps.team.claim(files, workerId);
+        if (!lease.ok) {
+          claims.release(workerId);
+          return fail(lease.error ?? "Files are leased by another Gear instance.");
+        }
+        teamClaimed = true;
+        if (lease.note) teamNote = lease.note;
+      }
+
       try {
         const registry = buildWorkerRegistry(deps.binaryPath, ownership);
-        const live = deps.resolve();
+        const live = deps.resolve(tier);
+        const budget = effort ? EFFORT_PRESETS[effort] : { maxTurns, maxTokens };
+        // Nested loops used to run with NO context engine, which meant the
+        // over-limit recovery in agent-loop.ts was gated off for them
+        // (`isContextOverflowError(...) && this.config.contextEngine`): a
+        // worker whose transcript outgrew the window died at three consecutive
+        // errors instead of compacting, throwing away a multi-minute build.
+        // The summarizer points at the worker's OWN model — the one model
+        // guaranteed alive here, because it is serving this loop right now.
+        const nestedContext = new ContextEngine(
+          { summarizerModel: live.model, summarizerProvider: live.provider },
+          live.gateway,
+        );
+        nestedContext.setSummarizer(live.model, live.provider, {
+          model: live.model,
+          provider: live.provider,
+        });
         const loop = new AgentLoop(
           {
             model: live.model,
             provider: live.provider,
-            maxTokens,
-            maxTurns,
+            maxTokens: budget.maxTokens,
+            maxTurns: budget.maxTurns,
             systemPrompt: workerSystemPrompt(ownership.describe(input.workspaceRoot)),
             toolResultProcessor: deps.toolResultProcessor,
+            // Workers average four minutes and run to a fixed turn ceiling;
+            // like scouts, they were told to budget without being shown a clock.
+            turnBudgetNotice: true,
+            contextEngine: nestedContext,
           },
           live.gateway,
           registry,
@@ -342,10 +425,20 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
 
         const fullPrompt = context && context.trim() ? `${context.trim()}\n\n${prompt}` : prompt;
 
+        // As in subagent.ts: the report is the text written AFTER the last
+        // tool call, not every delta of the run concatenated. The old
+        // `report += event.text` returned the worker's whole running
+        // commentary — half-formed reasoning and its own retractions — to a
+        // parent that reads it as a finished account of what was built.
         let report = "";
         let toolCalls = 0;
         const changed = new Set<string>();
         let loopError: string | undefined;
+        // Mid-run model swap (see subagent.ts): `fallback` used to be ignored
+        // here too, so a worker demoted to a fallback model reported in the
+        // same voice as one that never left the model it was dispatched to.
+        let servedBy: { provider: string; model: string } | null = null;
+        let fallbackReason: string | undefined;
 
         // Propagate the abort signal: without it Ctrl-C/Esc could not
         // interrupt a running worker — the turn blocked until it finished.
@@ -356,13 +449,24 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
           input.signal,
         )) {
           if (event.type === "text_delta") report += event.text;
-          else if (event.type === "tool_call_end") {
+          else if (event.type === "stream_reset") report = "";
+          else if (event.type === "fallback") {
+            servedBy = event.to;
+            fallbackReason = event.reason;
+            input.onProgress?.(`${workerId} ↯ ${event.to.provider}/${event.to.model}`);
+          } else if (event.type === "tool_call_start") {
+            // Narration on the way to this call, not the report. Keyed to the
+            // START so a refused or never-executed call still ends the block
+            // (see subagent.ts).
+            report = "";
+          } else if (event.type === "tool_call_end") {
             toolCalls++;
             // Live movement for the parent's status rung — workers used to
-            // run completely dark for their whole multi-minute build.
+            // run completely dark for their whole multi-minute build. The
+            // worker id keys the note to ONE member of a parallel fleet.
             {
               const p = typeof event.args?.path === "string" ? ` ${event.args.path}` : "";
-              input.onProgress?.(`${event.output.toolName}${p}`);
+              input.onProgress?.(`${workerId} ${event.output.toolName}${p}`);
             }
             if (
               event.output?.success &&
@@ -377,27 +481,44 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
 
         const trimmed = report.trim();
         if (!trimmed && changed.size === 0) {
+          // Name the model on the failure path too: a demoted worker that then
+          // built nothing is the clearest signal the fallback could not do the
+          // job, and the lead needs that to decide whether to retry or wait.
+          const where = servedBy ? `[ran on ${servedBy.provider}/${servedBy.model}] ` : "";
           return fail(
-            loopError
-              ? `Worker produced nothing (last error: ${loopError})`
-              : "Worker produced no changes and no report",
+            where +
+              (loopError
+                ? `Worker produced nothing (last error: ${loopError})`
+                : "Worker produced no changes and no report"),
           );
         }
 
         const summary = `\n\n(worker changed ${changed.size} file${changed.size === 1 ? "" : "s"}${
           changed.size ? `: ${[...changed].join(", ")}` : ""
         } in ${toolCalls} tool call${toolCalls === 1 ? "" : "s"})`;
+        // A worker that finished on a different model than it was dispatched
+        // to WROTE CODE from somewhere the caller did not choose. Louder than
+        // the scout's banner for that reason: the parent owns verification.
+        const provenance = servedBy
+          ? `[PROVENANCE — this worker did not run on ${live.provider}/${live.model}. The ` +
+            `gateway switched it to ${servedBy.provider}/${servedBy.model} mid-run` +
+            `${fallbackReason ? ` (${fallbackReason})` : ""}. The files below were written ` +
+            `by that model: review its diff and run the project's checks yourself before ` +
+            `building on it.]\n\n`
+          : "";
+        const prefix = provenance + (teamNote ? `${teamNote}\n\n` : "");
         return {
           callId: input.callId,
           toolName: input.toolName,
           success: true,
-          result: (trimmed || "(no report)") + summary,
+          result: prefix + (trimmed || "(no report)") + summary,
           durationMs: Math.round(performance.now() - start),
         };
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
       } finally {
         claims.release(workerId);
+        if (teamClaimed) deps.team?.release(workerId);
       }
 
       function fail(error: string): ToolCallOutput {

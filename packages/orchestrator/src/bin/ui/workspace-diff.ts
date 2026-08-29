@@ -1,9 +1,10 @@
-// ─── Workspace diff surface (`/diff`) ───
+// --- Workspace diff surface (`/diff`) ---
 // Read-only inspection of staged + unstaged changes, rendered with the same
 // semantic palette and bounded unified-diff component used by edit receipts.
 
 import { renderUnifiedDiff } from "../diff-render";
-import { bold, text, muted, faint, info, ok, accent, panel } from "./theme";
+import { bold, danger, text, muted, faint, info, ok, panel } from "./theme";
+import { glyph } from "./glyphs";
 
 export interface WorkspaceDiffSnapshot {
   staged: string;
@@ -25,9 +26,9 @@ export function formatWorkspaceDiff(snapshot: WorkspaceDiffSnapshot): string {
   const untracked = snapshot.untracked ?? [];
   if (!snapshot.staged.trim() && !snapshot.unstaged.trim() && untracked.length === 0) {
     if (snapshot.error) {
-      return `  ${accent("✕")} ${muted("Could not inspect this workspace:")} ${faint(snapshot.error)}`;
+      return `  ${danger(glyph("failure"))} ${muted("Could not inspect this workspace:")} ${faint(snapshot.error)}`;
     }
-    return `  ${ok("✓")} ${muted("Working tree clean — no staged or unstaged changes.")}`;
+    return `  ${ok(glyph("verified"))} ${muted("Working tree clean -- no staged or unstaged changes.")}`;
   }
 
   const files = new Set(changedFiles(`${snapshot.staged}\n${snapshot.unstaged}`));
@@ -49,23 +50,23 @@ export function formatWorkspaceDiff(snapshot: WorkspaceDiffSnapshot): string {
   if (untracked.length > 0) {
     const shown = untracked.slice(0, 20);
     sections.push(
-      `  ${bold(text("Untracked files"))} ${faint(`· ${untracked.length}`)}`,
+      `  ${bold(text("Untracked files"))} ${faint(`| ${untracked.length}`)}`,
       ...shown.map((file) => `    ${info(file)}`),
     );
     if (untracked.length > shown.length) {
-      sections.push(`    ${faint(`… ${untracked.length - shown.length} more`)}`);
+      sections.push(`    ${faint(`${glyph("elision")} ${untracked.length - shown.length} more`)}`);
     }
   }
 
   const summary = panel(
-    `  ${bold(text("Workspace diff"))} ${faint("·")} ${muted(
+    `  ${bold(text("Workspace diff"))} ${faint(glyph("observed"))} ${muted(
       `${files.size} ${files.size === 1 ? "file" : "files"}`,
-    )} ${ok(`+${added}`)} ${accent(`-${removed}`)}`,
+    )} ${ok(`+${added}`)} ${danger(`-${removed}`)}`,
   );
   const fileList = [...files];
   const fileLine = fileList.length
-    ? `  ${info(fileList.slice(0, 4).join(" · "))}${
-        fileList.length > 4 ? faint(` · ${fileList.length - 4} more`) : ""
+    ? `  ${info(fileList.slice(0, 4).join(" | "))}${
+        fileList.length > 4 ? faint(` | ${fileList.length - 4} more`) : ""
       }`
     : "";
   return [summary, fileLine, ...sections].filter(Boolean).join("\n");

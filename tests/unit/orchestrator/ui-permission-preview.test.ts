@@ -78,7 +78,7 @@ describe("ui/permission-preview", () => {
       safety: { reason: "Remote write needs a human decision", tier: "classifier" },
     });
 
-    expect(preview.scope).toBe("host command · network access");
+    expect(preview.scope).toBe("host command | network access");
     expect(preview.detail).toBe("git push origin main");
     expect(preview.choices[1]).toContain("exact action");
     expect(preview.reason).toContain("Remote write");

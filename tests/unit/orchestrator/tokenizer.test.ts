@@ -62,6 +62,35 @@ describe("getContextLimit", () => {
   test("returns 100k default for unknown models", () => {
     expect(getContextLimit("unknown-model-v99")).toBe(100000);
   });
+
+  // The blanket `["claude", 200000]` rule outlived the lineup it described and
+  // compacted every 1M-window Claude model at ~140k. These assertions are the
+  // tripwire: they fail the moment the table drifts behind the lineup again.
+  test("current Claude lineup gets its real 1M window", () => {
+    for (const model of [
+      "claude-fable-5",
+      "claude-mythos-5",
+      "claude-opus-5",
+      "claude-opus-4-8",
+      "claude-opus-4-7",
+      "claude-opus-4-6",
+      "claude-sonnet-5",
+      "claude-sonnet-4-6",
+    ]) {
+      expect([model, getContextLimit(model)]).toEqual([model, 1000000]);
+    }
+  });
+
+  test("the 1M rules survive provider prefixes and date suffixes", () => {
+    expect(getContextLimit("anthropic/claude-opus-5")).toBe(1000000);
+    expect(getContextLimit("claude-sonnet-5-20260101")).toBe(1000000);
+  });
+
+  test("older Claude models keep 200k — the generic rule still applies", () => {
+    for (const model of ["claude-sonnet-4-5", "claude-haiku-4-5", "claude-3-5-sonnet"]) {
+      expect([model, getContextLimit(model)]).toEqual([model, 200000]);
+    }
+  });
 });
 
 describe("countTokens (convenience)", () => {

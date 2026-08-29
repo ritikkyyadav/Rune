@@ -24,6 +24,23 @@ const DEFAULT_BUDGET: ContextBudget = {
   retrievalRatio: 0.2,
 };
 
+// ─── Compaction tiers ───
+// Compaction escalates instead of jumping straight to "summarize almost
+// everything": evict bulky old tool results first, then keep a token-budgeted
+// verbatim tail, and only summarize the head if that still doesn't fit.
+
+/** Share of the real context window kept VERBATIM as the recent tail. */
+const COMPACT_TAIL_RATIO = 0.3;
+/** Share of the window compaction aims to land at. Comfortably under the
+ *  0.7 high-water trigger so the next turn doesn't immediately re-compact. */
+const COMPACT_TARGET_RATIO = 0.5;
+/** Head messages below this count aren't worth a summarizer round-trip. */
+const MIN_SUMMARIZABLE_HEAD = 4;
+/** Tool results at or under this size aren't worth replacing with a stub. */
+const EVICT_MIN_RESULT_CHARS = 200;
+/** Marker so an evicted result is recognizable and never re-evicted. */
+const EVICTED_RESULT_PREFIX = "[tool result evicted to reclaim context]";
+
 // Cheap summarizer fallback per provider = that provider's LIGHT tier default
 // (shared/tiers.ts). One source of truth: when a free model is retired
 // upstream, fixing the tier table fixes compaction too. The previous private
@@ -296,9 +313,17 @@ export class ContextEngine {
     // Heuristic estimate — overwritten by noteRealUsage() as soon as the
     // provider reports authoritative counts for the request we send. The
     // heuristic total is also parked so that report can calibrate the counter.
+    //
+    // `limit` is the MODEL'S CONTEXT WINDOW, never the assembly budget. Those
+    // are different quantities, and writing the budget here made this field
+    // mean one thing after buildPrompt and another after noteRealUsage: the
+    // status meter (reading the budget) showed 99% while shouldCompact()
+    // (reading the window, written last) computed 25% and never fired. The
+    // session pinned at "100% context" while compaction stayed asleep and
+    // buildPrompt quietly evicted items to fit. One field, one meaning.
     this.lastTokenUsage = {
       used: totalTokens,
-      limit: maxTokens,
+      limit: model ? getContextLimit(model) : maxTokens,
     };
     this.lastHeuristicTotal = totalTokens;
 
@@ -336,14 +361,21 @@ export class ContextEngine {
 
   /**
    * The prompt-assembly budget actually in effect. An explicitly configured
-   * maxTokens is respected verbatim; the default budget is additionally capped
-   * to 85% of the active model's context window (headroom for the reply and
-   * residual estimate error), so small-window models get prompts that fit
-   * instead of guaranteed provider rejections.
+   * maxTokens is respected verbatim; otherwise the budget is 85% of the active
+   * model's context window (headroom for the reply and residual estimate
+   * error), so small-window models get prompts that fit instead of guaranteed
+   * provider rejections.
+   *
+   * This used to be `min(budget.maxTokens, 0.85 × window)`, and because the
+   * default budget is 100k that min was a HARD CEILING on every model with a
+   * larger window. On a 400k model the assembler used a quarter of the context
+   * and evicted the rest — "Context budget exceeded: 1 items evicted" every
+   * turn, silently dropping content that compaction should have summarized.
+   * The default is a fallback for when no model is known, not a cap.
    */
   private effectiveMaxTokens(model?: string): number {
     if (this.budgetExplicit || !model) return this.budget.maxTokens;
-    return Math.min(this.budget.maxTokens, Math.floor(getContextLimit(model) * 0.85));
+    return Math.floor(getContextLimit(model) * 0.85);
   }
 
   // ─── Rolling Summarization ───
@@ -433,6 +465,11 @@ export class ContextEngine {
      */
     failed?: boolean;
     failureReason?: string;
+    /**
+     * Which tier actually did the work. "tool_results" means the summarizer
+     * was never called — the bulky old results alone were enough.
+     */
+    tier?: "tool_results" | "summarized";
   }> {
     // An explicit request (compact_context tool) forces this attempt, and is
     // consumed either way so a fruitless compaction can't retrigger forever.
@@ -444,14 +481,52 @@ export class ContextEngine {
       return { messages, compacted: false };
     }
 
+    const countSet = (set: Message[]) =>
+      set.reduce((sum, m) => sum + this.tokenCounter.countTokens(messageTokenText(m)), 0);
+
     // ── 2. Find a safe cut point ──
-    // We want to keep the last `recentK` messages verbatim, but we must not
-    // split a tool_use/tool_result pair.  We scan forward from the naive cut
-    // point until we land on a boundary that is safe.
-    const safeCutPoint = findSafeCutPoint(messages, recentK);
+    // The tail is sized in TOKENS against the model's real window whenever the
+    // provider has told us what that window is. Without authoritative usage
+    // there is no budget to size against, so the historical count-based cut
+    // stands — that is also what keeps synthetic callers deterministic.
+    const usage = this.lastTokenUsage;
+    let safeCutPoint: number;
+    if (usage && usage.limit > 0) {
+      const tailBudget = Math.floor(usage.limit * COMPACT_TAIL_RATIO);
+      safeCutPoint = safeCutAtOrBefore(
+        messages,
+        tailCutPoint(messages, tailBudget, recentK, (m) =>
+          this.tokenCounter.countTokens(messageTokenText(m)),
+        ),
+      );
+
+      // ── Tier 1: can evicting old tool-result bodies alone get us under? ──
+      // Preferred outcome by a distance: the head keeps its structure, the
+      // reasoning survives verbatim, and no summarizer call is made at all.
+      // Skipped under `force`, where the provider has already rejected the
+      // request and only a hard shrink is guaranteed to help.
+      if (!force && safeCutPoint > 0) {
+        const evicted = evictOldToolResults(messages, safeCutPoint);
+        if (
+          evicted.evictedCount > 0 &&
+          countSet(evicted.messages) <= Math.floor(usage.limit * COMPACT_TARGET_RATIO)
+        ) {
+          return {
+            messages: evicted.messages,
+            compacted: true,
+            beforeTokens: countSet(messages),
+            afterTokens: countSet(evicted.messages),
+            summarizedCount: 0,
+            tier: "tool_results",
+          };
+        }
+      }
+    } else {
+      safeCutPoint = findSafeCutPoint(messages, recentK);
+    }
 
     // If we can't carve off at least 4 messages (2 when forced), bail out.
-    if (safeCutPoint < (force ? 2 : 4)) {
+    if (safeCutPoint < (force ? 2 : MIN_SUMMARIZABLE_HEAD)) {
       return { messages, compacted: false };
     }
 
@@ -514,15 +589,14 @@ export class ContextEngine {
       },
     ];
 
-    // Honest before/after estimates for the UI's compaction line. Same
-    // heuristic counter buildPrompt uses; the next provider report re-calibrates
-    // it, so these are labeled approximate at the render layer ("~").
-    const countSet = (set: Message[]) =>
-      set.reduce((sum, m) => sum + this.tokenCounter.countTokens(messageTokenText(m)), 0);
-
+    // Honest before/after estimates for the UI's compaction line, from the
+    // same heuristic counter buildPrompt uses (hoisted above); the next
+    // provider report re-calibrates it, so these are labeled approximate at
+    // the render layer ("~").
     return {
       messages: [summaryMessage, ...toKeep],
       compacted: true,
+      tier: "summarized",
       beforeTokens: countSet(messages),
       afterTokens: countSet([summaryMessage, ...toKeep]),
       summarizedCount: transcriptMessages.length,
@@ -847,14 +921,92 @@ ${sections}${focus}`
  * Returns the safe cut index (0 … messages.length). Returns 0 if no safe
  * cut can be found (caller should treat this as "cannot compact").
  */
-function findSafeCutPoint(messages: Message[], recentK: number): number {
-  const naiveCut = messages.length - recentK;
+/**
+ * Where the verbatim tail begins under a TOKEN budget, rather than a message
+ * count.
+ *
+ * `recentK` is a count, and a count is the wrong unit: six messages of a
+ * tool-heavy run is a rounding error against a 200k window. Observed in the
+ * field — a compaction that folded 212 messages and left 834 tokens standing,
+ * 0.54% of the budget, six times in one build. This keeps the newest messages
+ * until `tailTokens` is spent, never fewer than `recentK` of them, and never so
+ * many that the head is too small to be worth summarizing.
+ */
+function tailCutPoint(
+  messages: Message[],
+  tailTokens: number,
+  recentK: number,
+  count: (m: Message) => number,
+): number {
+  let used = 0;
+  let cut = messages.length;
+  while (cut > 0) {
+    const next = count(messages[cut - 1]);
+    if (used + next > tailTokens && messages.length - cut >= recentK) break;
+    used += next;
+    cut--;
+  }
+  // Tail never shorter than recentK (contract C1); head never shorter than
+  // MIN_SUMMARIZABLE_HEAD, or a long history that happens to fit the tail
+  // budget would make compaction a no-op at the moment it is needed.
+  const maxCut = Math.max(0, messages.length - recentK);
+  const minCut = Math.min(MIN_SUMMARIZABLE_HEAD, maxCut);
+  return Math.max(minCut, Math.min(cut, maxCut));
+}
 
-  // We try the naive cut first, then walk backward toward 0.
-  for (let cut = naiveCut; cut >= 0; cut--) {
+/**
+ * Replace the BODY of tool results in messages[0, headEnd) with a short stub,
+ * leaving the blocks themselves in place.
+ *
+ * This is the cheapest useful thing compaction can do: tool results are the
+ * bulk of an agentic transcript and the least re-readable part of it, and
+ * because the block survives, no tool_use/tool_result pair is ever orphaned —
+ * strictly safer than dropping messages. Same idea as Anthropic's own
+ * `clear_tool_uses` context editing.
+ */
+function evictOldToolResults(
+  messages: Message[],
+  headEnd: number,
+): { messages: Message[]; evictedCount: number; reclaimedChars: number } {
+  let evictedCount = 0;
+  let reclaimedChars = 0;
+  const out = messages.map((msg, i) => {
+    if (i >= headEnd) return msg;
+    let touched = false;
+    const content = msg.content.map((block) => {
+      if (block.type !== "tool_result") return block;
+      const body = block.toolResultContent ?? "";
+      // Small results aren't worth the stub, and an already-evicted one must
+      // not be re-counted on a later compaction pass.
+      if (body.length <= EVICT_MIN_RESULT_CHARS || body.startsWith(EVICTED_RESULT_PREFIX)) {
+        return block;
+      }
+      touched = true;
+      evictedCount++;
+      reclaimedChars += body.length;
+      return {
+        ...block,
+        toolResultContent: `${EVICTED_RESULT_PREFIX} ${body.length} chars reclaimed. Re-run the tool if you still need this output.`,
+      };
+    });
+    return touched ? { ...msg, content } : msg;
+  });
+  return { messages: out, evictedCount, reclaimedChars };
+}
+
+function findSafeCutPoint(messages: Message[], recentK: number): number {
+  return safeCutAtOrBefore(messages, messages.length - recentK);
+}
+
+/**
+ * The largest pair-safe cut at or before `startCut`. Walking backward only
+ * ever keeps MORE messages verbatim, so a cut chosen by token budget can be
+ * snapped to a safe boundary without ever violating the tail guarantee.
+ */
+function safeCutAtOrBefore(messages: Message[], startCut: number): number {
+  for (let cut = Math.min(startCut, messages.length); cut >= 0; cut--) {
     if (isSafeCut(messages, cut)) return cut;
   }
-
   return 0;
 }
 

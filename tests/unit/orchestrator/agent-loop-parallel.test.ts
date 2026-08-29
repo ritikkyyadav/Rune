@@ -224,10 +224,12 @@ describe("AgentLoop — bounded fan-out concurrency (Phase 3)", () => {
 describe("AgentLoop — stuck-detection nudge (Phase 3)", () => {
   test("nudges once before bailing when the same call repeats", async () => {
     // Gateway that ALWAYS repeats the same single tool call.
+    let providerTurn = 0;
     const gateway = {
       inferStream: mock(async function* () {
-        yield ev("tool_use_start", { toolCallId: "same", toolName: "read_file" });
-        yield ev("tool_use_stop", { toolCallId: "same", toolInput: { path: "x" } });
+        const callId = `same-${++providerTurn}`;
+        yield ev("tool_use_start", { toolCallId: callId, toolName: "read_file" });
+        yield ev("tool_use_stop", { toolCallId: callId, toolInput: { path: "x" } });
         yield ev("message_stop", { stopReason: "tool_use" });
       }),
       infer: mock(async () => ({
@@ -263,5 +265,23 @@ describe("AgentLoop — stuck-detection nudge (Phase 3)", () => {
     const fatal = events.find((e) => e.type === "error" && (e as any).recoverable === false);
     expect(fatal).toBeDefined();
     expect((fatal as any).error).toMatch(/loop/i);
+
+    // Resume-safety invariant: even the FINAL repeated function call gets a
+    // synthetic output. Before this fix the persisted transcript ended on a
+    // bare tool_use, and Codex rejected every resume with
+    // "No tool output found for function call".
+    const queued = loop.takePendingPersist();
+    const calls = queued.flatMap((m) =>
+      m.role === "assistant" ? m.content.filter((b) => b.type === "tool_use") : [],
+    );
+    const outputs = queued.flatMap((m) =>
+      m.role === "tool" ? m.content.filter((b) => b.type === "tool_result") : [],
+    );
+    expect(outputs).toHaveLength(calls.length);
+    expect(outputs.at(-1)).toMatchObject({
+      type: "tool_result",
+      toolCallId: calls.at(-1)?.type === "tool_use" ? calls.at(-1)?.toolCallId : "",
+      isError: true,
+    });
   });
 });

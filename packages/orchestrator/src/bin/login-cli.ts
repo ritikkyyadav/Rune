@@ -20,7 +20,8 @@ import {
   type AuthMethod,
 } from "@gear/shared";
 import { getStrategy, AuthError, type AuthContext } from "@gear/llm-gateway";
-import { accent, bold, dim, faint, info, ok, text, warn } from "./ui/theme";
+import { bold, danger, dim, faint, info, ok, text, warn } from "./ui/theme";
+import { glyph } from "./ui/glyphs";
 import {
   buildSavedKeys,
   readAuthOverrides,
@@ -74,7 +75,7 @@ export async function runLogin(
   const preset = getPreset(providerId);
   const descriptor = getProviderDescriptor(providerId);
   if (!preset || !descriptor) {
-    log(accent(`Unknown provider "${providerId}".`));
+    log(danger(`Unknown provider "${providerId}".`));
     log(dim(`Known: ${PROVIDER_PRESETS.map((p) => p.id).join(", ")}`));
     process.exitCode = 1;
     return;
@@ -83,7 +84,7 @@ export async function runLogin(
   // Choose the auth method: --method, else the provider's preferred (or ask).
   const method = await chooseMethod(descriptor.auth, methodArg, providerId);
   if (!method) {
-    log(accent(`"${providerId}" doesn't support the "${methodArg}" method.`));
+    log(danger(`"${providerId}" doesn't support the "${methodArg}" method.`));
     log(dim(`Supported: ${descriptor.auth.join(", ")}`));
     process.exitCode = 1;
     return;
@@ -91,7 +92,7 @@ export async function runLogin(
 
   const strategy = getStrategy(method, providerId);
   if (!strategy) {
-    log(accent(`The "${method}" method isn't wired for ${descriptor.label} yet.`));
+    log(danger(`The "${method}" method isn't wired for ${descriptor.label} yet.`));
     process.exitCode = 1;
     return;
   }
@@ -126,10 +127,14 @@ export async function runLogin(
   } catch (err) {
     log();
     if (err instanceof AuthError) {
-      log(accent(`✕ ${err.message}`));
+      log(danger(`${glyph("failure")} ${err.message}`));
       if (err.recovery) log(dim(err.recovery));
     } else {
-      log(accent(`✕ Login failed: ${err instanceof Error ? err.message : String(err)}`));
+      log(
+        danger(
+          `${glyph("failure")} Login failed: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+      );
     }
     process.exitCode = 1;
   }
@@ -139,14 +144,14 @@ export async function runLogin(
 export async function runLogout(positionals: string[]): Promise<void> {
   const providerId = positionals[0];
   if (!providerId) {
-    log(accent("Usage: ") + info("gear logout <provider>"));
+    log(warn("Usage: ") + info("gear logout <provider>"));
     log(faint("Providers: ") + PROVIDER_PRESETS.map((p) => p.id).join(", "));
     process.exitCode = 1;
     return;
   }
   const preset = getPreset(providerId);
   if (!preset) {
-    log(accent(`Unknown provider "${providerId}".`));
+    log(danger(`Unknown provider "${providerId}".`));
     process.exitCode = 1;
     return;
   }

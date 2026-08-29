@@ -34,9 +34,9 @@ describe("provider reroute note", () => {
   test("names what degraded, the chain, and the continuity promise", () => {
     const out = stripAnsi(formatFallback(FALLBACK));
     const flat = out.replace(/\s+/g, " ");
-    expect(out).toContain("provider degraded — rerouted mid-turn");
+    expect(out).toContain("provider degraded -- rerouted mid-turn");
     expect(flat).toContain("anthropic/claude-x returned 429 (rate limited)");
-    expect(flat).toContain("anthropic → openrouter → ollama");
+    expect(flat).toContain("anthropic -> openrouter -> ollama");
     expect(flat).toContain("Resumed on openrouter/qwen/qwen3-coder:free");
     expect(flat).toContain("the turn continues and nothing was lost");
     // It wraps to the measure; every clause here is owed to the reader in full.
@@ -57,7 +57,7 @@ describe("provider reroute note", () => {
       }),
     );
     expect(out.replace(/\s+/g, " ")).toContain("invalid API key");
-    expect(out.replace(/\s+/g, " ")).toContain("google → ollama");
+    expect(out.replace(/\s+/g, " ")).toContain("google -> ollama");
   });
 });
 
@@ -71,9 +71,9 @@ describe("compaction line", () => {
         summarizedCount: 14,
       }),
     );
-    expect(out).toContain("✓ compacted");
-    expect(out).toContain("82% → 51%");
-    expect(out).toContain("−31k tokens");
+    expect(out).toContain("· compacted");
+    expect(out).toContain("82% -> 51%");
+    expect(out).toContain("-31k tokens");
     expect(out).toContain("14 older messages summarized");
   });
 
@@ -126,7 +126,7 @@ describe("queued-input strip", () => {
 
   test("states the contract and numbers each message in order", () => {
     const lines = renderQueueStrip(["first message", "second message"], 100).map(stripAnsi);
-    expect(lines[0]).toContain("queued · sends when this turn completes");
+    expect(lines[0]).toContain("queued | sends when this turn completes");
     expect(lines[1]).toMatch(/^\s+1\s+first message/);
     expect(lines[2]).toMatch(/^\s+2\s+second message/);
     expect(lines[2]).toContain("removes the last"); // the undo hint rides the last row

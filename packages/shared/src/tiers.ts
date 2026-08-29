@@ -40,8 +40,8 @@ export const PROVIDER_TIER_DEFAULTS: Record<
   { heavy: string; standard: string; light: string }
 > = {
   anthropic: {
-    heavy: "claude-opus-4-8",
-    standard: "claude-sonnet-4-6",
+    heavy: "claude-opus-5",
+    standard: "claude-sonnet-5",
     light: "claude-haiku-4-5",
   },
   openai: {
@@ -68,6 +68,20 @@ export const PROVIDER_TIER_DEFAULTS: Record<
     heavy: "grok-4",
     standard: "grok-4",
     light: "grok-4-fast",
+  },
+  // The ChatGPT/Codex backend. Absent from this table until 2026-08-28, which
+  // meant resolveTier fell all the way through to step 3 and returned the
+  // SESSION model for every tier: every "cheap scout" (task defaults to light)
+  // was a 32-turn gpt-5.6-sol run against the plan quota. A recorded audit
+  // session hit "429 The usage limit has been reached" nine minutes in, then
+  // silently finished its deepest sub-agent on a free fallback model. The
+  // gpt-5.6 line encodes reasoning effort in the model NAME (sol > terra >
+  // luna) rather than a reasoning.effort param, so the tier split is just the
+  // right variant per weight.
+  codex: {
+    heavy: "gpt-5.6-sol",
+    standard: "gpt-5.6-terra",
+    light: "gpt-5.6-luna",
   },
   // OpenRouter's :free tier churns constantly: qwen/qwen3-coder:free retired
   // 2026-07-15, then deepseek-v4-flash:free and deepseek-r1:free were

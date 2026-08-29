@@ -25,6 +25,42 @@ describe("ask_user", () => {
     expect(out.result).toBe("picked: sqlite");
   });
 
+  test("a batched round tells each question where it sits", async () => {
+    // The picker renders these as `2 of 4`. Without them a round of four
+    // arrives as four unrelated interruptions: after the first, the person
+    // answering cannot tell whether they are nearly done or have just started.
+    const seen: Array<{ q: string; index?: number; total?: number }> = [];
+    const tool = createAskUserTool(() => async (q) => {
+      seen.push({ q: q.question, index: q.index, total: q.total });
+      return q.options[0]!;
+    });
+    const out = await tool.execute(
+      makeInput({
+        questions: [
+          { question: "Platform?", options: ["web", "native"] },
+          { question: "Depth?", options: ["working core", "prototype"] },
+          { question: "Data?", options: ["live", "fixtures"] },
+        ],
+      }),
+    );
+    expect(out.success).toBe(true);
+    expect(seen).toEqual([
+      { q: "Platform?", index: 0, total: 3 },
+      { q: "Depth?", index: 1, total: 3 },
+      { q: "Data?", index: 2, total: 3 },
+    ]);
+  });
+
+  test("a single question carries no round position, so nothing renders `1 of 1`", async () => {
+    let seen: { index?: number; total?: number } = { index: -1, total: -1 };
+    const tool = createAskUserTool(() => async (q) => {
+      seen = { index: q.index, total: q.total };
+      return q.options[0]!;
+    });
+    await tool.execute(makeInput({ question: "Which DB?", options: ["postgres", "sqlite"] }));
+    expect(seen).toEqual({ index: 0, total: 1 });
+  });
+
   test("headless (no handler) → instructive error, not a hang", async () => {
     const tool = createAskUserTool(() => undefined);
     const out = await tool.execute(

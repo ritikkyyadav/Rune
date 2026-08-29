@@ -20,7 +20,15 @@
 //
 // There is deliberately no rung for "probably". That absence is load-bearing:
 // it means the agent structurally cannot write "this failure looks unrelated to
-// my change". It has to stash, run the test on the parent commit, and report.
+// my change" — the parent commit has to be checked, and the answer recorded.
+//
+// The runtime does that checking itself (parent-check.ts): when a passing
+// command is cited, it re-runs that same command against the pre-change tree in
+// a detached worktree and records what happened. `verified` used to be inferred
+// from in-session red→green instead, which is a weaker and different claim —
+// break a test, fix your own break, and it goes red→green while the parent
+// commit was green the whole time. Nothing outside the test files ever set
+// `parentCommit`, which is what that gap looked like from the outside.
 
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "@gear/tool-registry";
 
@@ -346,6 +354,19 @@ export function createReadBackTool(
 // is on record as having failed and then passed. A model cannot fabricate
 // either half, because it never touched the verdict — the exit code did.
 
+/**
+ * The tool whose results feed the check log — the shell, by its REGISTERED
+ * schema name. The engine's listener matches on this.
+ *
+ * It lives here, next to CheckLog, because the coupling it names is the one
+ * that already broke once: the listener was written against `run_command`, the
+ * tool was renamed to `bash`, and the log went silently empty — taking the
+ * entire evidence ledger with it while every unit test stayed green, because
+ * they all built the log by hand. `check-log-wiring.test.ts` asserts this
+ * constant against the live registry, so the next rename fails loudly.
+ */
+export const CHECK_SOURCE_TOOL = "bash";
+
 export interface CheckRun {
   command: string;
   passed: boolean;
@@ -353,12 +374,46 @@ export interface CheckRun {
   summary?: string;
 }
 
+/**
+ * What running one command against the pre-change tree established. `failed`
+ * is the only status that can lift a criterion to `verified`; `passed` is the
+ * finding that the change is NOT why the check is green, and `inconclusive`
+ * means the parent tree could not answer (usually: nothing installed there).
+ */
+export interface ParentRun {
+  command: string;
+  status: "failed" | "passed" | "inconclusive";
+  commit?: string;
+  reason?: string;
+}
+
 /** Every check the runtime ran this session, with the verdict IT read. */
 export class CheckLog {
   private readonly runs: CheckRun[] = [];
+  private readonly parents: ParentRun[] = [];
 
   record(run: CheckRun): void {
     this.runs.push(run);
+  }
+
+  /**
+   * Record what the pre-change tree did with this command. Written only by the
+   * runtime's own parent-commit probe (parent-check.ts) — there is deliberately
+   * no path from a model-authored value to here, for the same reason the model
+   * cannot name a rung.
+   */
+  recordParent(run: ParentRun): void {
+    this.parents.push(run);
+  }
+
+  /** The most recent parent-commit result for a command, if one was taken. */
+  parent(command: string): ParentRun | undefined {
+    const key = normalizeCommand(command);
+    for (let i = this.parents.length - 1; i >= 0; i--) {
+      const run = this.parents[i]!;
+      if (normalizeCommand(run.command) === key) return run;
+    }
+    return undefined;
   }
 
   /** Runs of one command, oldest first. Normalised on whitespace only — a
@@ -370,6 +425,10 @@ export class CheckLog {
 
   get all(): readonly CheckRun[] {
     return this.runs;
+  }
+
+  get allParents(): readonly ParentRun[] {
+    return this.parents;
   }
 }
 
@@ -403,33 +462,69 @@ export function rungForCommand(log: CheckLog, command: string): RungVerdict {
         `A criterion cannot be settled by a check that is failing.`,
     };
   }
-  const failedBefore = runs.slice(0, -1).find((r) => !r.passed);
   const base: Evidence = {
     source: normalizeCommand(command),
     detail: last.summary,
   };
-  if (failedBefore) {
+
+  // `verified` comes from ONE place: the runtime having run this same command
+  // against the pre-change tree and read a failure there.
+  //
+  // It used to be inferred from in-session red→green — the command failed at
+  // some earlier point this session and passes now. That is a different claim,
+  // and the difference is the most ordinary shape of agent work there is: the
+  // agent edits, breaks the test, fixes its own break, and the test goes
+  // red→green while the parent commit was green the entire time. The receipt
+  // then asserted "a test that failed on the parent commit passes now" about a
+  // commit nothing had checked out. `parentCommit` was never populated by any
+  // code path outside the test files, which is what that gap looks like from
+  // the outside.
+  const parent = log.parent(command);
+  if (parent?.status === "failed") {
     return {
       ok: true,
       rung: "verified",
       evidence: {
         ...base,
         parentCommitFailed: true,
-        detail: joinDetail(last.summary, "failed earlier in this session, passes now"),
+        ...(parent.commit ? { parentCommit: parent.commit } : {}),
+        detail: joinDetail(
+          last.summary,
+          `failed on ${parent.commit?.slice(0, 8) ?? "the parent commit"}, passes now`,
+        ),
       },
     };
   }
+
+  // A green parent is a real finding, not a shortfall: the change is not why
+  // this check passes. Say so in the receipt rather than quietly settling for
+  // a weaker rung with no explanation.
+  const note =
+    parent?.status === "passed"
+      ? `also passed on ${parent.commit?.slice(0, 8) ?? "the parent commit"} — this change is not why it passes`
+      : parent?.status === "inconclusive"
+        ? `parent-commit check inconclusive: ${parent.reason ?? "unknown"}`
+        : undefined;
+
   if (runs.length >= 2) {
     return {
       ok: true,
       rung: "reproduced",
-      evidence: { ...base, detail: joinDetail(last.summary, `passed ${runs.length} times`) },
+      evidence: {
+        ...base,
+        detail: joinDetail(joinDetail(last.summary, `passed ${runs.length} times`), note ?? ""),
+      },
     };
   }
-  return { ok: true, rung: "observed", evidence: base };
+  return {
+    ok: true,
+    rung: "observed",
+    evidence: { ...base, detail: joinDetail(last.summary, note ?? "") },
+  };
 }
 
-function joinDetail(a: string | undefined, b: string): string {
+function joinDetail(a: string | undefined, b: string | undefined): string | undefined {
+  if (!b) return a;
   return a ? `${a} — ${b}` : b;
 }
 
@@ -440,9 +535,11 @@ export const RECORD_EVIDENCE_SCHEMA: ToolSchema = {
     "Cite a command you already ran as evidence for one of your read_back criteria. You choose " +
     "WHICH criterion the command speaks to; you do not get to say what it proves — the runtime " +
     "reads its own record of that command and decides. A command that never ran, or that is " +
-    "currently failing, is refused. A command that failed earlier and passes now is what earns " +
-    "'verified'; anything else is weaker, and that is the honest answer. Call this as you go, " +
-    "not at the end.",
+    "currently failing, is refused. For a passing command the runtime re-runs it ITSELF against " +
+    "the pre-change tree in a throwaway checkout: only a command that FAILS there and passes now " +
+    "earns 'verified'. If it passes there too, your change is not why it is green, and the " +
+    "receipt will say so. Anything else is weaker, and that is the honest answer. Call this as " +
+    "you go, not at the end.",
   inputSchema: {
     type: "object",
     properties: {
@@ -464,6 +561,13 @@ export const RECORD_EVIDENCE_SCHEMA: ToolSchema = {
 export function createRecordEvidenceTool(
   getLedger: () => BriefLedger | undefined,
   getLog: () => CheckLog,
+  /**
+   * Run the cited command against the pre-change tree. Supplied by the Engine
+   * (parent-check.ts); omitted by embedders with no git repo, in which case
+   * `verified` is simply unreachable — which is the correct outcome, not a
+   * degraded one. A rung nobody can substantiate should not be awarded.
+   */
+  probeParent?: (command: string) => ParentRun | undefined,
 ): ToolHandler {
   return {
     schema: RECORD_EVIDENCE_SCHEMA,
@@ -497,7 +601,21 @@ export function createRecordEvidenceTool(
       }
       const index = Number((input.args ?? {}).criterion);
       const command = String((input.args ?? {}).command ?? "");
-      const verdict = rungForCommand(getLog(), command);
+      const log = getLog();
+
+      // Take the parent-commit measurement before judging the citation — but
+      // only once per command, and only for a command that is currently
+      // passing. Probing a failing check would spend a full test run to learn
+      // nothing (rungForCommand refuses it either way), and probing twice
+      // would spend it again for an answer already on record.
+      const runs = log.history(command);
+      const lastRun = runs[runs.length - 1];
+      if (probeParent && lastRun?.passed && !log.parent(command)) {
+        const parent = probeParent(command);
+        if (parent) log.recordParent(parent);
+      }
+
+      const verdict = rungForCommand(log, command);
       if (!verdict.ok) return reply(verdict.reason);
 
       const moved = ledger.record(index, verdict.rung, verdict.evidence);

@@ -30,6 +30,119 @@ export type ProviderKind =
 export type AuthMethod = "api_key" | "oauth" | "device" | "local";
 
 /**
+ * Automatic startup order when several cloud credentials are available.
+ * Direct Anthropic/OpenAI credentials normally represent funded capacity, so
+ * they outrank quota-constrained developer/free endpoints. Explicit CLI,
+ * config, and sticky model choices still win before this list is consulted.
+ */
+export const AUTO_PROVIDER_PRIORITY = ["anthropic", "openai", "google", "openrouter"] as const;
+
+/**
+ * How much capacity a provider represents — the axis the gateway descends when
+ * the active provider dies MID-TASK.
+ *
+ * This is deliberately NOT `AUTO_PROVIDER_PRIORITY`, which answers a different
+ * question: "which keyed provider should this session boot into?" That list is
+ * env-var-shaped (its element type keys a `Record<…, string>` of env var names
+ * in gear-cli), so the OAuth-only transports — codex, copilot — can never
+ * appear in it, and they are precisely the ones a fallback has to reason about.
+ *
+ * The classes carry the same principle its doc states, generalized:
+ *
+ *   funded       — a direct API key you top up. Falling here costs money, not
+ *                  capability, and it is the smallest possible drop.
+ *   subscription — a plan seat with a hard periodic cap (ChatGPT/Copilot).
+ *                  Strong models, but the cap is exactly why we are here.
+ *   free         — quota-constrained free tiers. Cheap and weak, and they rot:
+ *                  ids retire without notice and balances hit 402 mid-run.
+ *   local        — a localhost runtime. It never 429s, but its default is an
+ *                  8k-window model, so handing it a long agentic transcript
+ *                  produces immediate context overflow. Availability does not
+ *                  help when the work cannot fit; this is the last resort.
+ *
+ * Ranking by CAPACITY rather than by model strength is the durable choice:
+ * capacity is a structural fact about the account, while model ids rot (see the
+ * retirement graveyard in PROVIDER_TIER_DEFAULTS and PROVIDER_DEFAULT_MODELS).
+ */
+export type ProviderCapacity = "funded" | "subscription" | "free" | "local";
+
+/** Descending preference. Index = rank; lower is tried first. */
+export const FALLBACK_CAPACITY_ORDER: readonly ProviderCapacity[] = [
+  "funded",
+  "subscription",
+  "free",
+  "local",
+];
+
+export const PROVIDER_CAPACITY: Record<string, ProviderCapacity> = {
+  anthropic: "funded",
+  openai: "funded",
+  google: "funded",
+  groq: "funded",
+  xai: "funded",
+  deepseek: "funded",
+  // A user-supplied OpenAI-compatible endpoint: they chose and pay for it, so
+  // it is treated as funded capacity rather than guessed at.
+  custom: "funded",
+  codex: "subscription",
+  copilot: "subscription",
+  openrouter: "free",
+  "ollama-turbo": "free",
+  ollama: "local",
+  lmstudio: "local",
+};
+
+/**
+ * Fallback rank for a provider id — lower is preferred. An id absent from the
+ * table ranks as "free": pessimistic on purpose, so a provider added to the
+ * presets without a capacity entry can never silently outrank a funded one.
+ */
+export function providerFallbackRank(id: string): number {
+  const capacity = PROVIDER_CAPACITY[id] ?? "free";
+  return FALLBACK_CAPACITY_ORDER.indexOf(capacity);
+}
+
+/** What a plan/quota cap does to a run. See GatewayConfig.quotaPolicy. */
+export type QuotaPolicy = "stop" | "degrade";
+
+/**
+ * Read `[fallback] onQuotaExceeded`. Anything unrecognized — including a typo —
+ * resolves to "stop", the safe direction: the cost of stopping when the user
+ * meant to degrade is one message and a `/model` switch, while the cost of
+ * degrading when they meant to stop is a long task silently finished by a
+ * weaker model.
+ */
+export function normalizeQuotaPolicy(value: unknown): QuotaPolicy {
+  return value === "degrade" ? "degrade" : "stop";
+}
+
+/**
+ * Validate a user-written `[fallback] order` list: keep the known provider ids,
+ * in order, without duplicates, and report the rest.
+ *
+ * The unknown ids come back rather than being dropped on the floor: a typo'd
+ * provider name in config.toml silently doing nothing is the failure mode that
+ * makes people distrust the knob. One place does this so the CLI and the
+ * desktop host cannot drift into two different notions of a valid list.
+ */
+export function normalizeFallbackOrder(order: readonly unknown[] | undefined): {
+  order: string[];
+  unknown: string[];
+} {
+  const kept: string[] = [];
+  const unknown: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of order ?? []) {
+    const id = typeof raw === "string" ? raw.trim() : "";
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    if (id in PROVIDER_CAPACITY) kept.push(id);
+    else unknown.push(id);
+  }
+  return { order: kept, unknown };
+}
+
+/**
  * Coarse, provider-level capability facts surfaced for display and routing hints.
  * Model-level truth still lives in `models` / MODEL_PRICING — these are the
  * broad strokes (does this provider stream, call tools, see images, reason).
@@ -96,7 +209,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     label: "Anthropic",
     kind: "anthropic",
     envVar: "ANTHROPIC_API_KEY",
-    defaultModel: "claude-sonnet-4-6",
+    defaultModel: "claude-opus-5",
     docsUrl: "https://console.anthropic.com/settings/keys",
     keyHint: "sk-ant-…",
     // Two ways in: sign in with a Claude Pro/Max *subscription* (OAuth → a
@@ -104,7 +217,12 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     // OAuth is preferred in the picker; the API key stays the fallback and the
     // env/console path is byte-identical to before for existing key users.
     auth: ["oauth", "api_key"],
+    // Fable 5 is listed but is NOT the default: it is unavailable under zero
+    // data retention, and Gear's compliance-sensitive users are exactly the
+    // ones who run ZDR. Opting in is a choice they should make knowingly.
     models: [
+      { id: "claude-opus-5", label: "Claude Opus 5" },
+      { id: "claude-fable-5", label: "Claude Fable 5" },
       { id: "claude-opus-4-8", label: "Claude Opus 4.8" },
       { id: "claude-sonnet-5", label: "Claude Sonnet 5" },
       { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },

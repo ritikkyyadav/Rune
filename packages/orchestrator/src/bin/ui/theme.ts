@@ -329,6 +329,22 @@ export const ok = (value: string): string => fmt("ok", value);
 export const warn = (value: string): string => fmt("warn", value);
 export const danger = (value: string): string => fmt("danger", value);
 
+/**
+ * Secondary prose: quieter than body, still readable.
+ *
+ * `muted` and `faint` below are BOTH aliases of `dim`, and `dim` reads the
+ * FAINT slot -- so every "make this slightly quieter" call in this codebase
+ * lands on the faintest grey the theme owns. That is 2.62:1 on Flow and 2.03:1
+ * on Dracula. Correct for rails, gutters and elisions; wrong for anything a
+ * person is expected to read, and invisible in review because the call site
+ * says `muted(...)` and means it.
+ *
+ * This is the only way to reach the `muted` slot the palettes already author
+ * and nothing else could get at: 4.5-7.3:1 across the bundled set. Use it for a
+ * block that should recede without becoming work to read.
+ */
+export const quiet = (value: string): string => fmtSlot("muted", value);
+
 export const bold = (value: string): string => {
   const safe = terminalText(value);
   return COLOR_CAPABLE && !active.useNativeColors ? `\x1b[1m${safe}${RESET}` : safe;

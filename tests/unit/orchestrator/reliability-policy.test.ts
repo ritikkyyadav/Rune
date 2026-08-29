@@ -17,7 +17,7 @@ describe("reliability policy", () => {
       maxOverflowCompactions: 2,
       maxEmptyCompletionRetries: 3,
       maxTruncationRetries: 2,
-      maxVerifyAttempts: 2,
+      maxVerifyAttempts: 3,
       readThrashCount: 3,
       editChurnCount: 4,
       maxPlanNudges: 1,

@@ -2,8 +2,8 @@
 // The HTML prototype is the product contract. This test regex-extracts every
 // base + accent custom property from the HTML and asserts the shared token
 // module carries the exact same values, so the three-way pigment drift that
-// motivated Phase 0 cannot silently return. It also asserts the ten gear
-// terminal themes in the CLI derive from the tokens (hex round-trip).
+// motivated Phase 0 cannot silently return. Flow Phase 02 deliberately no
+// longer projects these browser surfaces into the terminal.
 
 import { describe, it, expect } from "bun:test";
 import { readFileSync } from "fs";
@@ -12,16 +12,9 @@ import {
   GEAR_ACCENT_NAMES,
   GEAR_ACCENT_CSS,
   GEAR_BASE_CSS,
-  gearTerminalPalette,
-  gearAccentHex,
   solidOver,
   type GearBaseName,
 } from "../../../packages/shared/src/design-tokens";
-import {
-  THEMES,
-  GEAR_ACCENTS,
-  gearThemeName,
-} from "../../../packages/orchestrator/src/bin/ui/themes";
 
 const HTML_PATH = join(import.meta.dir, "../../../docs/design/gear-customizer-v2.html");
 const html = readFileSync(HTML_PATH, "utf8");
@@ -92,41 +85,7 @@ describe("design tokens ↔ v2 contract HTML", () => {
   });
 });
 
-describe("terminal themes derive from the tokens", () => {
-  const toHex = (rgb: [number, number, number]) =>
-    "#" +
-    rgb
-      .map((v) => v.toString(16).padStart(2, "0"))
-      .join("")
-      .toUpperCase();
-
-  it("shared and CLI accent lists agree", () => {
-    expect([...GEAR_ACCENTS]).toEqual([...GEAR_ACCENT_NAMES]);
-  });
-
-  for (const base of ["light", "dark"] as GearBaseName[]) {
-    for (const accent of GEAR_ACCENT_NAMES) {
-      it(`${gearThemeName(base, accent)} carries the token pigments`, () => {
-        const theme = THEMES.find((t) => t.name === gearThemeName(base, accent));
-        expect(theme).toBeTruthy();
-        const palette = gearTerminalPalette(base);
-        expect(toHex(theme!.slots.text.rgb)).toBe(palette.text);
-        expect(toHex(theme!.slots.muted.rgb)).toBe(palette.muted);
-        expect(toHex(theme!.slots.faint.rgb)).toBe(palette.faint);
-        expect(toHex(theme!.slots.accent.rgb)).toBe(palette.red);
-        expect(toHex(theme!.slots.warn.rgb)).toBe(palette.ochre);
-        expect(toHex(theme!.slots.ok.rgb)).toBe(palette.green);
-        expect(toHex(theme!.slots.line.rgb)).toBe(palette.line);
-        expect(toHex(theme!.bg.rgb)).toBe(palette.bg);
-        expect(toHex(theme!.brand.rgb)).toBe(gearAccentHex(base, accent));
-        expect(toHex(theme!.slots.info.rgb)).toBe(gearAccentHex(base, accent));
-        expect(theme!.surfaces).toBeTruthy();
-        expect(toHex(theme!.surfaces!.hairline.rgb)).toBe(palette.surfaces.hairline);
-        expect(toHex(theme!.surfaces!.popover.rgb)).toBe(palette.surfaces.popover);
-      });
-    }
-  }
-
+describe("shared visual token utilities", () => {
   it("solidOver composites translucent contract values deterministically", () => {
     expect(solidOver("#FAF9F6", "#000000")).toBe("#FAF9F6");
     expect(solidOver("rgba(255, 255, 255, 0.08)", "#0A0A0C")).toBe(

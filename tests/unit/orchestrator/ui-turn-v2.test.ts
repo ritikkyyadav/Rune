@@ -39,11 +39,11 @@ describe("turn v2 metadata", () => {
   test("usage events surface real ↓ tokens in the live meta and completion row", () => {
     const h = harness();
     h.turn.onEvent({ type: "usage", inputTokens: 900, outputTokens: 1800 });
-    expect(h.preview()).toContain("↓ 1.8k tokens");
+    expect(h.preview()).toContain("down 1.8k tokens");
     h.turn.onEvent({ type: "usage", inputTokens: 100, outputTokens: 200 });
     h.turn.onEvent(editEnd("src/a.ts")); // makes the turn "worked" so completion commits
     h.turn.finish();
-    expect(h.output()).toContain("↓ 2.0k tokens"); // 1800 + 200, accumulated
+    expect(h.output()).toContain("down 2.0k tokens"); // 1800 + 200, accumulated
   });
 
   test("thinking time accumulates across delta bursts and prints once ≥100ms", () => {
@@ -79,7 +79,7 @@ describe("turn v2 metadata", () => {
     h.turn.onEvent(editEnd("src/a.ts"));
     h.turn.finish();
     const out = h.output();
-    expect(out).toContain("provider degraded — rerouted mid-turn");
+    expect(out).toContain("provider degraded -- rerouted mid-turn");
     expect(out).toContain("1 model switch");
   });
 
@@ -93,9 +93,9 @@ describe("turn v2 metadata", () => {
     });
     h.turn.onEvent(editEnd("src/a.ts"));
     h.turn.finish();
-    const matches = h.output().match(/✓ compacted/g) ?? [];
+    const matches = h.output().match(/· compacted/g) ?? [];
     expect(matches).toHaveLength(1);
-    expect(h.output()).toContain("82% → 51%");
+    expect(h.output()).toContain("82% -> 51%");
   });
 
   test("checkpoint receipt lands in the summary strip with the /rewind hint", () => {
@@ -114,7 +114,7 @@ describe("turn v2 metadata", () => {
     h.turn.onEvent(editEnd("src/a.ts"));
     h.turn.finish();
     expect(h.output()).not.toContain("checkpoint");
-    expect(h.output()).not.toContain("↓ ");
+    expect(h.output()).not.toContain("down ");
   });
 });
 

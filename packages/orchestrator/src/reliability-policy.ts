@@ -47,7 +47,9 @@ export const DEFAULT_RELIABILITY: ReliabilityPolicy = {
   maxOverflowCompactions: 2,
   maxEmptyCompletionRetries: 3,
   maxTruncationRetries: 2,
-  maxVerifyAttempts: 2,
+  // Three rounds per approach, plus the one bounded replan round below, gives
+  // a real fix→test→fix loop up to six checks without opening an infinite run.
+  maxVerifyAttempts: 3,
   readThrashCount: 3,
   editChurnCount: 4,
   maxPlanNudges: 1,

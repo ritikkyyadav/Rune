@@ -121,12 +121,63 @@ describe("full-screen behaviour", () => {
     }
   });
 
-  it("prose keeps a reading limit however wide the window gets", () => {
-    for (const columns of [145, 241, 400]) {
+  it("prose shares the frame's measure — it does not stop halfway", () => {
+    for (const columns of [80, 145, 241, 400]) {
       setTermWidthOverride(columns);
-      // The one width that SHOULD stop early. A 240-character sentence is not
-      // a use of the space, it is a failure to have a measure.
-      expect(F.proseWidth(), `at ${columns}`).toBeLessThanOrEqual(88);
+      // Prose is the measure less the body indent, so a sentence ends flush
+      // with the hairline above it and the rails below it.
+      //
+      // This used to assert the opposite: a hard ceiling of 88, defended as
+      // "the one width that SHOULD stop early". The defence was sound
+      // typography and the wrong rule for this surface, because prose was the
+      // ONLY thing it bound. measure() had already given up its ceiling, so on
+      // a 200-column window the header, the composer, the rails and every
+      // receipt ran to the edge while the sentences inside them stopped at 84.
+      // Half the window sat empty, all of it on one side — reported as "the
+      // screen is divided into half". A reading measure nothing else obeys is
+      // not a measure, it is a pane that failed to fill.
+      expect(F.proseWidth(), `at ${columns}`).toBe(F.measure() - F.BODY.length);
+    }
+  });
+
+  it("a turn's blocks all end inside the measure, and all reach it", () => {
+    const { userBlock, responseBlock } = require("../../../packages/orchestrator/src/bin/ui/turn");
+    const SENTENCE =
+      "I set up the auto mode as the proper fourth gear autonomy, but there is one specific issue in it: even in fourth gear the agent still stops to ask about permissions, and what I wanted was for the classifier to sit on top as a watchdog instead. ";
+    const PARAGRAPH = SENTENCE.repeat(6);
+    const ANSWER = [
+      PARAGRAPH,
+      "",
+      "- a bullet whose text is long enough to wrap at every width tested here, which is the case that used to run past the right edge",
+      "",
+      "1. an ordered item, likewise long enough to wrap, because its marker is wider than a bullet's and is charged to the same budget",
+      "",
+      "```ts",
+      "const broker = new ContainmentBroker({ sandbox: true });",
+      "```",
+    ].join("\n");
+
+    for (const columns of [60, 80, 145, 190, 241, 400]) {
+      setTermWidthOverride(columns);
+      Object.defineProperty(process.stdout, "columns", { value: columns, configurable: true });
+      for (const [name, block] of [
+        ["asked", userBlock(PARAGRAPH)],
+        ["answered", responseBlock(ANSWER)],
+      ] as Array<[string, string]>) {
+        const widths = stripAnsi(block)
+          .split("\n")
+          .map((l) => l.length)
+          .filter((n) => n > 0);
+        const widest = Math.max(...widths);
+        // Never past the measure. A line that reaches the terminal's last cell
+        // soft-wraps, and a soft wrap desyncs the pinned composer's cursor
+        // math — which is how the list marker's unbudgeted width showed up
+        // once the ceiling stopped hiding it.
+        expect(widest, `${name} at ${columns}`).toBeLessThanOrEqual(F.measure());
+        // And never far short of it. This is the half-drawn screen, as a
+        // number: the gap here was 114 columns before prose joined the measure.
+        expect(widest, `${name} at ${columns}`).toBeGreaterThan(F.measure() - 16);
+      }
     }
   });
 

@@ -1,10 +1,11 @@
-// ─── Pure event → transcript text ───
+// --- Pure event -> transcript text ---
 // Maps a streamed engine event to the block of text to print. Returns null for
 // events with no standalone transcript line (text_delta is streamed separately;
 // tool_call_start only flips the activity word). Used by the TUI; the readline
 // path keeps its own inline copy for now (same visual language).
 
-import { bold, text, muted, faint, info, ok, accent, warn } from "./theme";
+import { text, muted, faint, info, warn } from "./theme";
+import { glyph } from "./glyphs";
 import { visLen, wrap } from "./render";
 import * as F from "./flow";
 import { renderToolCall } from "./tool-call";
@@ -27,7 +28,7 @@ export function formatError(raw: string | undefined): string {
     msg.includes("429") ||
     msg.toLowerCase().includes("rate limit") ||
     msg.toLowerCase().includes("quota");
-  // A failure states itself, then the one command that resolves it — never a
+  // A failure states itself, then the one command that resolves it -- never a
   // warning without a way out.
   return F.note(
     rateLimited ? msg.split("\n")[0].slice(0, 120) : msg,
@@ -40,17 +41,19 @@ export function formatError(raw: string | undefined): string {
 }
 
 /**
- * Render an engine notice. Provider-fallback notices ("X unavailable — Y. Switching to Z…")
- * are the noisy, repeated case: collapse them to a compact `↻ from → to · reason` line so a
+ * Render an engine notice. Provider-fallback notices ("X unavailable -- Y. Switching to Z...")
+ * are the noisy, repeated case: collapse them to a compact `r from -> to | reason` line so a
  * chain of retries stays scannable instead of stacking up as full-width sentences. Anything
  * else keeps the plain bullet.
  */
 export function formatNotice(message: string): string {
-  const m = message.match(/^(.+?) unavailable(?: — (.+?))?\.\s*Switching to (.+?)…?$/);
+  const m = message.match(
+    /^(.+?) unavailable(?:\s*(?:--|\u2014)\s*(.+?))?\.\s*Switching to\s+(.+?)(?:\.\.\.|\u2026)?$/,
+  );
   if (m) {
     const [, from, reason, to] = m;
-    const why = reason ? `  ${faint("· " + reason)}` : "";
-    return `${F.BODY}${faint("↻")} ${muted(from)} ${faint("→")} ${info(to)}${why}`;
+    const why = reason ? `  ${faint("| " + reason)}` : "";
+    return `${F.BODY}${faint(glyph("retry"))} ${muted(from)} ${faint("->")} ${info(to)}${why}`;
   }
   return wrap(message, F.proseWidth())
     .map((line, index) => `${F.MARK}${index === 0 ? warn("!") : " "} ${muted(line)}`)
@@ -74,7 +77,7 @@ export function formatFallback(ev: {
 }): string {
   const status = ev.status === 429 ? "429 (rate limited)" : ev.status ? String(ev.status) : "";
   // Skip the reason when the status text already says the same thing
-  // ("429 (rate limited) — rate limited" reads like a stutter).
+  // ("429 (rate limited) -- rate limited" reads like a stutter).
   const reason =
     ev.reason && !status.toLowerCase().includes(ev.reason.toLowerCase().slice(0, 12))
       ? ev.reason
@@ -82,17 +85,17 @@ export function formatFallback(ev: {
   const from = `${ev.from.provider}/${ev.from.model}`;
   const to = `${ev.to.provider}/${ev.to.model}`;
   const what = status
-    ? `${from} returned ${status}${reason ? ` — ${reason}` : ""}.`
+    ? `${from} returned ${status}${reason ? ` -- ${reason}` : ""}.`
     : reason
-      ? `${from} failed — ${reason}.`
+      ? `${from} failed -- ${reason}.`
       : `${from} is unavailable.`;
   const rest = (ev.chain ?? []).filter((p) => p !== ev.to.provider && p !== ev.from.provider);
-  const chain = [ev.from.provider, ev.to.provider, ...rest].join(" → ");
+  const chain = [ev.from.provider, ev.to.provider, ...rest].join(" -> ");
   // A reroute is a note, not an alarm: state what degraded, where the stream
-  // resumed, and the promise that the turn is intact. Nothing is truncated —
+  // resumed, and the promise that the turn is intact. Nothing is truncated --
   // every clause here is something the reader is owed in full.
   return F.note(
-    "provider degraded — rerouted mid-turn",
+    "provider degraded -- rerouted mid-turn",
     `${what} Falling back per the provider chain: ${chain}. Resumed on ${to}; the turn continues and nothing was lost.`,
     undefined,
     "warn",
@@ -118,8 +121,8 @@ export function formatCompaction(ev: {
   const label = ev.forced ? "compacted (window exceeded)" : "compacted";
   // One row, and only facts the engine actually measured.
   return F.row(
-    `${F.BODY}${ok("✓")} ${text(label)}  ${muted(scope)}`,
-    muted(`${pct(ev.beforeTokens)} → ${pct(ev.afterTokens)} · −${fmtTokens(saved)} tokens`),
+    `${F.BODY}${faint(glyph("observed"))} ${text(label)}  ${muted(scope)}`,
+    muted(`${pct(ev.beforeTokens)} -> ${pct(ev.afterTokens)} | -${fmtTokens(saved)} tokens`),
   );
 }
 
@@ -155,7 +158,7 @@ export function formatEvent(ev: any, ctx: { cost?: number } = {}): string | null
       // New shape: { reason, trigger } (verification kept failing, or a
       // struggle signal). The legacy PlanRunner { failedStep } shape is gone.
       return F.railRow(
-        `${warn("!")} ${muted(`re-planning — ${ev.reason ?? "changing approach"}`)}`,
+        `${warn("!")} ${muted(`re-planning -- ${ev.reason ?? "changing approach"}`)}`,
       );
 
     case "handoff": {
@@ -163,13 +166,13 @@ export function formatEvent(ev: any, ctx: { cost?: number } = {}): string | null
       // "ran out of turns" never again looks identical to "done".
       const lines = String(ev.state ?? "").split("\n");
       return [
-        F.railRow(`${warn("■")} ${text("paused before finishing")}`),
+        F.railRow(`${warn("!")} ${text("paused before finishing")}`),
         ...lines.map((l: string) => `${F.BODY}${faint(l)}`),
       ].join("\n");
     }
 
     case "turn_complete":
-      return `${F.BODY}${faint(`${ev.totalTurns} turns · $${(ctx.cost ?? 0).toFixed(4)}`)}`;
+      return `${F.BODY}${faint(`${ev.totalTurns} turns | $${(ctx.cost ?? 0).toFixed(4)}`)}`;
 
     case "notice":
     case "context_warning":
