@@ -11,6 +11,7 @@ import type {
   TokenUsage,
 } from "./types";
 import { CostTracker } from "./cost-tracker";
+import { ProviderHealthStore } from "./provider-health";
 import { providerFallbackRank } from "@gear/shared";
 
 // Default model for each provider, used during fallback.
@@ -97,8 +98,26 @@ export class LlmGateway {
    */
   private cappedUntil = new Map<ProviderName, { until: number; message: string }>();
 
-  constructor(config: GatewayConfig) {
+  /**
+   * What previous sessions learned about dead models and capped plans. Seeded
+   * into the in-memory cooldowns below so a fresh session starts informed
+   * instead of re-paying for the same discoveries — the pattern behind 24
+   * recorded failures against a model retired six weeks earlier.
+   */
+  private health: ProviderHealthStore;
+
+  constructor(config: GatewayConfig, health?: ProviderHealthStore) {
     this.config = config;
+    this.health = health ?? new ProviderHealthStore();
+    // Seed cooldowns, NOT the fallback policy. getFallbackProviders
+    // deliberately re-attempts a capped primary so the gateway can notice the
+    // cap has lifted; persisting the cap must make that first attempt
+    // better-informed, never remove it.
+    for (const cap of this.health.snapshot().capped) {
+      const provider = cap.provider as ProviderName;
+      this.cooldownUntil.set(provider, cap.until);
+      this.cappedUntil.set(provider, { until: cap.until, message: cap.message });
+    }
   }
 
   /** Cool a provider down after a 429; usage-cap 429s cool much longer. */
@@ -110,6 +129,14 @@ export class LlmGateway {
     const until = Date.now() + waitMs;
     this.cooldownUntil.set(provider, until);
     if (isCap) {
+      // Persisted too: a plan cap outlives the session that hit it, and a new
+      // session walking into the same wall is the single most common failure
+      // in the incident log.
+      this.health.noteCapped(
+        provider,
+        until,
+        err?.message?.split("\n")[0]?.slice(0, 150) ?? "usage limit reached",
+      );
       this.cappedUntil.set(provider, {
         until,
         message: err?.message?.split("\n")[0]?.slice(0, 150) ?? "usage limit reached",
@@ -273,6 +300,24 @@ export class LlmGateway {
               model: PROVIDER_DEFAULT_MODELS[providerName] ?? request.model,
             };
 
+      // A model a previous session watched die. Skipping costs nothing;
+      // confirming it costs a full request with the entire conversation
+      // attached, which is what the incident log shows happening 24 times
+      // against one id. The record expires, so a model that returns is
+      // re-probed rather than blocked forever.
+      if (this.health.isRetired(providerName, adjustedRequest.model)) {
+        this.prunedProviders.add(providerName);
+        this.reportIncident({
+          kind: "terminal",
+          provider: providerName,
+          model: adjustedRequest.model,
+          message: `skipped without a request — known retired: ${
+            this.health.retirementReason(providerName, adjustedRequest.model) ?? "model gone"
+          }`,
+        });
+        continue;
+      }
+
       // The next REGISTERED provider in the chain, if any. Used both to fall
       // back fast (don't burn the retry ladder on a down/over-quota model) and
       // to decide whether a failure is terminal.
@@ -312,6 +357,14 @@ export class LlmGateway {
           // from burning the agent loop's whole error budget turn after turn.
           if (this.isModelGone(lastStatus, lastError)) {
             this.prunedProviders.add(providerName);
+            // Remember it past this session. A retired id does not un-retire
+            // between runs, and rediscovering it costs a full request with the
+            // whole conversation attached.
+            this.health.noteRetired(
+              providerName,
+              adjustedRequest.model,
+              lastError?.message?.slice(0, 200) ?? `HTTP ${lastStatus ?? "?"}`,
+            );
             this.reportIncident({
               kind: "terminal",
               provider: providerName,
@@ -598,6 +651,15 @@ export class LlmGateway {
 
   getTotalCost(): number {
     return this.costTracker.getLedger().totalCostUsd;
+  }
+
+  /**
+   * The PERSISTED health record, distinct from getProviderHealth() above,
+   * which reports what this session alone has learned. This one survives
+   * restarts and is what stops a new session rediscovering a dead model.
+   */
+  getPersistedHealth(): ProviderHealthStore {
+    return this.health;
   }
 
   /** Metered-equivalent total — what this gateway's traffic is worth at list rates. */
