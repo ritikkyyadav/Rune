@@ -6,7 +6,8 @@
       "outputs": ["dist/**"]
     },
     "test": {
-      "dependsOn": ["build"]
+      "dependsOn": ["build"],
+      "passThroughEnv": ["TMPDIR", "TMP", "TEMP", "GEAR_TOOLS_BIN"]
     },
     "lint": {},
     "typecheck": {

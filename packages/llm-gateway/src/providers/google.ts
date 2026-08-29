@@ -59,6 +59,8 @@ interface GeminiResponse {
     promptTokenCount?: number;
     candidatesTokenCount?: number;
     totalTokenCount?: number;
+    /** Portion of promptTokenCount served from implicit or explicit cache. */
+    cachedContentTokenCount?: number;
   };
 }
 
@@ -395,10 +397,20 @@ export class GoogleProvider implements LlmProvider {
     return lines.length > 0 ? `\n\nSources:\n${lines.join("\n")}` : "";
   }
 
+  /**
+   * Gemini reports `promptTokenCount` INCLUSIVE of the cached portion, so the
+   * cached count is subtracted here to satisfy the TokenUsage contract (three
+   * disjoint input counts that sum to the total). Reporting both without
+   * subtracting would double-count the cache in context-window accounting.
+   */
   private fromUsage(response: GeminiResponse): TokenUsage {
+    const prompt = response.usageMetadata?.promptTokenCount ?? 0;
+    const cached = response.usageMetadata?.cachedContentTokenCount ?? 0;
+    const cacheReadTokens = Math.min(Math.max(cached, 0), prompt);
     return {
-      inputTokens: response.usageMetadata?.promptTokenCount ?? 0,
+      inputTokens: prompt - cacheReadTokens,
       outputTokens: response.usageMetadata?.candidatesTokenCount ?? 0,
+      ...(cacheReadTokens > 0 ? { cacheReadTokens } : {}),
     };
   }
 

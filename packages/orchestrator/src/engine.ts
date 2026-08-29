@@ -1,4 +1,5 @@
 import { LlmGateway, CostTracker } from "@gear/llm-gateway";
+import { formatCostSummary } from "./cost-report";
 import type { Message, ProviderName, ResolvedCredential } from "@gear/llm-gateway";
 import {
   ToolRegistry,
@@ -120,6 +121,7 @@ import {
   shouldRecordAutoModeDecision,
   type AutoModePolicyConfig,
   type AutoModeReview,
+  type AutoModeDeferral,
   type AutoModeRun,
   type ReviewerIdentity,
 } from "./auto-mode";
@@ -135,6 +137,7 @@ import { createWorkerTool } from "./worker";
 import { createAskUserTool } from "./ask-user";
 import {
   BriefLedger,
+  CHECK_SOURCE_TOOL,
   CheckLog,
   createReadBackTool,
   createRecordEvidenceTool,
@@ -142,6 +145,8 @@ import {
   type Brief,
   type BriefHandler,
 } from "./brief";
+import { runOnParentCommit } from "./parent-check";
+import { isGitRepo } from "./worktree";
 import { isVerificationCommand } from "./bin/ui/activity";
 import type { QuestionHandler } from "./ask-user";
 export type { QuestionHandler, UserQuestion } from "./ask-user";
@@ -209,12 +214,22 @@ export interface PermissionPrompt {
   rateLimit?: { used: number; limit: number };
 }
 
-/** Payload for the inline ⛨ auto-approved chip (Auto mode, classifier allow). */
+/**
+ * Payload for the inline Auto-mode chip. Every Auto decision prints one — an
+ * approval, a containment, a deferral, a halt — because a mode that never
+ * interrupts you has to be legible in the scrollback instead.
+ */
 export interface AutoApprovalNotice {
   toolName: string;
   argsSummary: string;
   risk: string;
   tier: string;
+  /** Which decision this was. Absent means the historical "approved". */
+  kind?: "approved" | "contained" | "redirected" | "deferred" | "halted";
+  /** For a non-approval: the containment route that produced it. */
+  route?: string;
+  /** For a redirect: the command offered in place of the one that stopped. */
+  substitute?: string;
 }
 
 export type UserPermissionDecision =
@@ -360,6 +375,18 @@ export interface EngineConfig {
    * overriding the per-model-family defaults. See reliability-policy.ts.
    */
   reliability?: Partial<ReliabilityPolicy>;
+  /**
+   * Preferred provider order for MID-TASK fallback (`[fallback] order` in
+   * config.toml). Overrides the built-in capacity ranking head-first; unnamed
+   * providers still follow, ranked. See gateway.getFallbackProviders.
+   */
+  fallbackOrder?: ProviderName[];
+  /**
+   * What a plan/quota cap does mid-task (`[fallback] onQuotaExceeded`).
+   * "stop" (default) ends the run with the retry window instead of letting a
+   * weaker model inherit the task; "degrade" restores automatic downgrade.
+   */
+  quotaPolicy?: "stop" | "degrade";
   /** Enable Planner-Executor two-tier mode. */
   anthropicApiKey?: string;
   openaiApiKey?: string;
@@ -647,6 +674,7 @@ export class Engine {
   private config: EngineConfig;
   private permissionHandler?: PermissionHandler;
   private autoApprovalNotifier?: (notice: AutoApprovalNotice) => void;
+  private autoDeferralNotifier?: (deferrals: readonly AutoModeDeferral[]) => void;
   private questionHandler?: QuestionHandler;
   /** Wired by the frontend so a read-back can be accepted, edited or queried.
    *  Unwired means headless: the brief still stands, nothing blocks on it. */
@@ -672,6 +700,15 @@ export class Engine {
    * action resolve in conversation instead of a modal prompt.
    */
   private activeAutoRun: AutoModeRun | null = null;
+  /**
+   * Set when Auto mode's watcher concluded the run is no longer the user's —
+   * an exfiltration shape, a supervisor objection, a reviewer calling an action
+   * unauthorized outright. Every later tool call in the turn is refused, so the
+   * only thing the agent can still do is explain itself. That is deliberate: a
+   * captured run should end in a report, not in silence and not in a dialog box
+   * the capture could answer.
+   */
+  private autoHalt: { reason: string } | null = null;
   /** High-confidence prompt-injection findings per session (sticky across runs). */
   private readonly sessionInjectionFindings = new Map<string, number>();
   private checkpointStore: CheckpointStore | null = null;
@@ -933,6 +970,25 @@ export class Engine {
       createRecordEvidenceTool(
         () => this.ledger,
         () => this.checkLog,
+        // The parent-commit probe: a detached worktree at the pre-change
+        // commit, the same command run there, and whatever actually happened.
+        // This is what makes `verified` a measurement instead of an inference
+        // — see parent-check.ts. Non-git workspaces get no probe and simply
+        // cannot reach `verified`, which is the honest outcome.
+        (command) => {
+          if (!isGitRepo(this.config.workspaceRoot)) return undefined;
+          const result = runOnParentCommit(
+            this.config.workspaceRoot,
+            command,
+            this.config.verifyTimeoutMs ?? 120_000,
+          );
+          return {
+            command,
+            status: result.status,
+            ...(result.commit ? { commit: result.commit } : {}),
+            ...(result.reason ? { reason: result.reason } : {}),
+          };
+        },
       ),
     );
 
@@ -1177,6 +1233,15 @@ export class Engine {
         workspaceRoot: this.config.workspaceRoot,
         commands: this.config.verifyCommand,
         timeoutMs: this.config.verifyTimeoutMs,
+        // One log, two sources: checks the model ran through `bash` and checks
+        // the harness ran on its behalf both settle criteria now.
+        onCheck: (run) =>
+          this.checkLog.record({
+            command: run.command,
+            passed: run.passed,
+            at: Date.now(),
+            summary: run.summary,
+          }),
       });
     }
 
@@ -1242,9 +1307,33 @@ export class Engine {
     this.permissionHandler = handler;
   }
 
-  /** Wire the UI chip for Auto mode's silent classifier approvals. */
+  /** Wire the UI chip for Auto mode's silent decisions. */
   setAutoApprovalNotifier(notifier: ((notice: AutoApprovalNotice) => void) | null): void {
     this.autoApprovalNotifier = notifier ?? undefined;
+  }
+
+  /**
+   * Wire the end-of-turn list of outward steps Auto declined to take.
+   *
+   * This is the surface that replaces the mid-run permission card, and the
+   * swap is the point of the whole design. A card asks "may I publish this?"
+   * at the moment when the answer is least knowable — nothing is built, no
+   * tests have run, and the person is being interrupted. The list asks the
+   * same question when the work is finished and the answer is obvious.
+   */
+  setAutoDeferralNotifier(
+    notifier: ((deferrals: readonly AutoModeDeferral[]) => void) | null,
+  ): void {
+    this.autoDeferralNotifier = notifier ?? undefined;
+  }
+
+  /** Print one Auto decision inline. Presentation only — never blocks a call. */
+  private notifyAuto(notice: AutoApprovalNotice): void {
+    try {
+      this.autoApprovalNotifier?.(notice);
+    } catch {
+      // A chip that cannot be drawn must not change what was decided.
+    }
   }
 
   /** Current-minute occupancy vs. the per-tool ceiling, for the permission card. */
@@ -1560,6 +1649,17 @@ export class Engine {
 
       let autoReview: AutoModeReview | undefined;
       if (this.permissions.getMode() === "auto") {
+        // A halt stands for the rest of the turn. Nothing is re-reviewed,
+        // because re-reviewing is exactly the loop a captured agent would use
+        // to find the one phrasing that gets through.
+        if (this.autoHalt) {
+          return {
+            allowed: false,
+            reason:
+              `Auto mode halted this run: ${this.autoHalt.reason} No further tool calls will run this turn. ` +
+              "Write your report to the user now — what you were doing, what you had just read, and what you did not finish.",
+          };
+        }
         autoReview = await autoRun.review({
           callId,
           toolName,
@@ -1578,21 +1678,47 @@ export class Engine {
           this.rateLimiter?.recordCall(toolName);
           this.autoVerifier?.onToolCall();
           // Auto mode's approvals are silent by design at the broker level;
-          // the notifier lets a UI print the ⛨ auto-approved chip inline so
-          // classifier decisions stay visible without pausing the run.
-          try {
-            this.autoApprovalNotifier?.({
+          // the notifier lets a UI print the chip inline so decisions stay
+          // visible without pausing the run.
+          this.notifyAuto({
+            toolName,
+            argsSummary: `${toolName} ${JSON.stringify(args).slice(0, 120)}`,
+            risk: autoReview.risk,
+            tier: autoReview.tier,
+            kind: "approved",
+            route: autoReview.containment?.route,
+          });
+          return { allowed: true };
+        }
+        if (autoReview.verdict === "deny") {
+          const route = autoReview.containment;
+          // The watcher concluded the run is no longer the user's. Latch it.
+          if (autoReview.haltRun) {
+            this.autoHalt = { reason: autoReview.reason };
+            this.notifyAuto({
               toolName,
               argsSummary: `${toolName} ${JSON.stringify(args).slice(0, 120)}`,
               risk: autoReview.risk,
               tier: autoReview.tier,
+              kind: "halted",
+              route: route?.route ?? autoReview.source,
             });
-          } catch {
-            // Presentation only — never block the approval path.
+          } else if (route) {
+            this.notifyAuto({
+              toolName,
+              argsSummary: `${toolName} ${JSON.stringify(args).slice(0, 120)}`,
+              risk: autoReview.risk,
+              tier: autoReview.tier,
+              kind:
+                route.kind === "redirect"
+                  ? "redirected"
+                  : route.kind === "defer"
+                    ? "deferred"
+                    : "contained",
+              route: route.route,
+              substitute: route.substitute,
+            });
           }
-          return { allowed: true };
-        }
-        if (autoReview.verdict === "deny") {
           return {
             allowed: false,
             reason: `Auto mode blocked this action: ${autoReview.reason}`,
@@ -2523,6 +2649,14 @@ export class Engine {
     this.config.permissionMode = canonical;
     this.config.yoloMode = canonical === "gear-4";
     this.config.trustWorkspace = canonical === "gear-3";
+    // Auto is 4th-gear autonomy INSIDE the sandbox: the agent may do anything
+    // it likes and the sandbox, not a person, is what bounds it. So the
+    // sandbox is not an independent knob here the way it is in gears 1-4 —
+    // switching it off would leave autonomy with nothing underneath it. Auto
+    // turns it on when you shift into it.
+    if (canonical === "auto" && !isSandboxEnabled()) {
+      setSandboxMode("on");
+    }
     return result;
   }
 
@@ -3142,7 +3276,14 @@ export class Engine {
         // sole source a criterion's rung is derived from — see brief.ts. It is
         // recorded here, at the point the result comes back, precisely so that
         // nothing downstream has to take the model's word for what happened.
-        if (event.type === "tool_call_end" && event.output.toolName === "run_command") {
+        //
+        // The tool is `bash`. It was `run_command` once, and this listener was
+        // left behind by the rename while ui/turn.ts was updated — so the log
+        // stayed empty, rungForCommand answered "nothing on record" to every
+        // citation, and the whole read_back/record_evidence ledger was
+        // unreachable at runtime while its unit tests passed on a hand-built
+        // log. TOOL_NAME is shared with the test that now guards this.
+        if (event.type === "tool_call_end" && event.output.toolName === CHECK_SOURCE_TOOL) {
           const command = String(
             (event.args as Record<string, unknown> | undefined)?.command ?? "",
           );
@@ -3236,6 +3377,59 @@ export class Engine {
             this.sessions.noteContextTokens(sessionId, event.context.used);
           } catch {
             // Metadata only — never let it interrupt the stream.
+          }
+        }
+
+        // Price the run. The CostTracker existed, held the pricing table, and
+        // was NEVER fed — nothing called record(), so getBreakdown() reported
+        // zero for every session and the signed export shipped "unknown". The
+        // authoritative token counts arrive right here, so this is where they
+        // become money.
+        //
+        // Also persisted as a `cost` event: exportSession is a standalone
+        // reader over the DB with no access to this in-memory tracker, and an
+        // audit artifact that cannot state what a run cost is missing a fact
+        // an auditor will always ask for.
+        // Cached input counts as billable work: a turn served almost entirely
+        // from a warm cache can report inputTokens: 0 and still cost money, so
+        // the cache fields belong in this guard. Testing fresh input alone
+        // would drop exactly the cheapest, most cache-efficient turns from the
+        // ledger — biasing the average cost per turn upward.
+        if (
+          event.type === "usage" &&
+          (event.inputTokens > 0 ||
+            event.outputTokens > 0 ||
+            (event.cacheReadTokens ?? 0) > 0 ||
+            (event.cacheCreationTokens ?? 0) > 0)
+        ) {
+          const billedModel = event.model ?? session.model;
+          try {
+            const entry = this.costTracker.record(billedModel, this.config.provider, {
+              inputTokens: event.inputTokens,
+              outputTokens: event.outputTokens,
+              cacheReadTokens: event.cacheReadTokens,
+              cacheCreationTokens: event.cacheCreationTokens,
+            });
+            this.sessions.appendEvent(sessionId, {
+              type: "cost",
+              payload: {
+                model: entry.model,
+                provider: entry.provider,
+                inputTokens: entry.inputTokens,
+                outputTokens: entry.outputTokens,
+                cacheReadTokens: entry.cacheReadTokens,
+                cacheCreationTokens: entry.cacheCreationTokens,
+                costUsd: entry.costUsd,
+                listCostUsd: entry.listCostUsd,
+                billing: entry.billing,
+                priced: entry.priced,
+                estimated: entry.estimated,
+              },
+            });
+          } catch {
+            // record() throws BudgetExceededError once budget caps are wired.
+            // Accounting must never abort a run that the provider already
+            // billed for — the cap belongs on the pre-flight check, not here.
           }
         }
 
@@ -3375,9 +3569,23 @@ export class Engine {
       if (this.currentAbort === abortController) {
         this.currentAbort = null;
       }
+      // Report the outward steps Auto declined to take, once, with the work
+      // already done — the deliberate opposite of interrupting to ask.
+      const deferrals = this.activeAutoRun?.getDeferrals() ?? [];
+      if (deferrals.length > 0) {
+        try {
+          this.autoDeferralNotifier?.(deferrals);
+        } catch {
+          // Presentation only.
+        }
+      }
       // The Auto review context dies with its run — late answers must not
       // leak trusted input into a different run's reviewer.
       this.activeAutoRun = null;
+      // A halt is lifted only by the user speaking again, which the next run
+      // does by existing. Injection findings stay sticky across runs: the
+      // poisoned text is still in the transcript.
+      this.autoHalt = null;
     }
   }
 
@@ -3425,8 +3633,30 @@ export class Engine {
     return this.permissions;
   }
 
+  /**
+   * Dollars actually spent this session. ZERO on a subscription seat or a free
+   * tier — those are real routes with a real bill of $0, so any caller using
+   * this as a proxy for "how much work happened" wants getListCost() instead.
+   *
+   * Reads the engine's own tracker, NOT the gateway's. Both ledgers exist and
+   * count honestly, but they count different things: the gateway sees every
+   * provider attempt including failed ones and fallback retries, while this
+   * sees the usage the agent loop actually received. `/cost` reports this one,
+   * so everything the engine exposes reports this one — a status line and a
+   * cost command that disagree are worse than either alone.
+   */
   getCost() {
-    return this.gateway.getTotalCost();
+    return this.costTracker.getLedger().totalCostUsd;
+  }
+
+  /**
+   * What this session's tokens would cost metered at list rates, regardless of
+   * who actually paid. The number that compares to a competitor, and the only
+   * one that works as a budget cap: a cap on getCost() never fires on the
+   * subscription and free routes this agent spends most of its time on.
+   */
+  getListCost() {
+    return this.costTracker.getLedger().totalListCostUsd;
   }
 
   verifyAuditChain() {
@@ -3531,6 +3761,8 @@ export class Engine {
       localBaseUrls: this.localBaseUrls,
       ollamaBaseUrl: this.config.ollamaBaseUrl,
       credentials: this.resolvedCredentials,
+      fallbackOrder: this.config.fallbackOrder,
+      quotaPolicy: this.config.quotaPolicy,
       // Closure reads this.recorder lazily, so key-edit rebuilds keep the tap.
       onIncident: (gi) => {
         if (!this.recorder) return;
@@ -3759,6 +3991,8 @@ export class Engine {
     sandboxDegraded: boolean;
     registeredProviders: ProviderName[];
     cost: number;
+    /** One-line cost readout; see the field's note at the assignment site. */
+    costSummary: string;
     sessionId?: string;
     contextUsage: { used: number; limit: number; percent: number };
     securityPosture: string;
@@ -3779,6 +4013,10 @@ export class Engine {
       sandboxDegraded: isSandboxEnabled() && !isOsIsolationAvailable(),
       registeredProviders: this.getRegisteredProviders(),
       cost: this.getCost(),
+      // One-line cost readout. Carried alongside the raw number because on a
+      // subscription route `cost` is always 0.0000 — accurate, and mute about
+      // the work that actually happened.
+      costSummary: formatCostSummary(this.costTracker.getBreakdown()),
       sessionId,
       contextUsage: this.getContextUsage(),
       securityPosture: this.getSecurityPosture(),

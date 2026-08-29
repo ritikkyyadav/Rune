@@ -70,6 +70,8 @@ export interface TaskResult {
   reason?: string;
   durationMs: number;
   cost: number;
+  /** Metered-equivalent cost — what the task's tokens are worth at list rates. */
+  listCost: number;
   turns: number;
   model?: string;
   provider?: string;
@@ -159,6 +161,7 @@ export async function runTask(task: EvalTask, opts: RunOptions = {}): Promise<Ta
       reason: "task.script is required in mock mode (use --real to drive a live model)",
       durationMs: 0,
       cost: 0,
+      listCost: 0,
       turns: 0,
       attempts: 0,
     };
@@ -282,14 +285,22 @@ async function attemptTask(task: EvalTask, opts: RunOptions, real: boolean): Pro
           cappedReason = `exceeded tool-call cap (${maxToolCalls})`;
           break outer;
         }
-        if (maxCost !== undefined && engine.getCost() > maxCost) {
-          cappedReason = `exceeded cost cap ($${maxCost.toFixed(2)}; spent $${engine.getCost().toFixed(4)})`;
+        // Capped on the METERED-EQUIVALENT cost, not actual spend. Eval runs
+        // ride subscription and free routes where actual spend is $0 by
+        // definition, so a cap on getCost() can never fire — the guard would
+        // pass every task no matter how much work it burned. List cost
+        // measures the work regardless of who paid for it.
+        if (maxCost !== undefined && engine.getListCost() > maxCost) {
+          cappedReason = `exceeded cost cap ($${maxCost.toFixed(2)}; used $${engine.getListCost().toFixed(4)} metered-equivalent)`;
           break outer;
         }
       }
     }
 
+    // Recorded per task so the suite can report cost alongside pass/fail —
+    // the two numbers have never been captured together.
     const cost = engine.getCost();
+    const listCost = engine.getListCost();
 
     if (cappedReason) {
       engine.close();
@@ -300,6 +311,7 @@ async function attemptTask(task: EvalTask, opts: RunOptions, real: boolean): Pro
         reason: cappedReason,
         durationMs: Math.round(performance.now() - start),
         cost,
+        listCost,
         turns,
         model: real ? model : "mock-model",
         provider: real ? provider : "mock",
@@ -334,6 +346,7 @@ async function attemptTask(task: EvalTask, opts: RunOptions, real: boolean): Pro
       reason,
       durationMs: Math.round(performance.now() - start),
       cost,
+      listCost,
       turns,
       model: real ? model : "mock-model",
       provider: real ? provider : "mock",
@@ -350,6 +363,7 @@ async function attemptTask(task: EvalTask, opts: RunOptions, real: boolean): Pro
       reason: msg,
       durationMs: Math.round(performance.now() - start),
       cost: 0,
+      listCost: 0,
       turns: 0,
       model: real ? model : undefined,
       provider: real ? provider : undefined,

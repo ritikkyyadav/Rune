@@ -11,7 +11,7 @@
     "build": "bun build ./src/index.ts --outdir ./dist --target bun",
     "typecheck": "tsc --noEmit",
     "lint": "prettier --check src/",
-    "test": "bun test",
+    "test": "bun test ../../tests/unit/orchestrator",
     "start": "bun run src/bin/gear-cli.ts"
   },
   "dependencies": {

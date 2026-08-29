@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -90,6 +90,48 @@ describe("snapshotEnvironment / renderEnvironmentBlock", () => {
 });
 
 describe("loadProjectMemory", () => {
+  // loadProjectMemory reads the USER's global instructions (~/.gear/GEAR.md)
+  // as well as the workspace's. Without redirecting the gear home, these tests
+  // read the machine they run on: green on a clean CI runner, red for every
+  // developer who has ever used the product — the worst way round, because the
+  // failure only appears where nobody is watching for it.
+  //
+  // getGearHome() honors GEAR_HOME, so pointing it at an empty directory
+  // isolates the global half without weakening what is being tested.
+  let gearHome: string;
+  let prevGearHome: string | undefined;
+  let prevAlanHome: string | undefined;
+
+  beforeEach(() => {
+    gearHome = mkdtempSync(join(tmpdir(), "gear-home-"));
+    prevGearHome = process.env.GEAR_HOME;
+    prevAlanHome = process.env.ALAN_HOME;
+    process.env.GEAR_HOME = gearHome;
+    // The pre-rename fallback is consulted too; leaving it set would reopen
+    // the same hole from the other side.
+    delete process.env.ALAN_HOME;
+  });
+
+  afterEach(() => {
+    if (prevGearHome === undefined) delete process.env.GEAR_HOME;
+    else process.env.GEAR_HOME = prevGearHome;
+    if (prevAlanHome === undefined) delete process.env.ALAN_HOME;
+    else process.env.ALAN_HOME = prevAlanHome;
+    rmSync(gearHome, { recursive: true, force: true });
+  });
+
+  test("reads the user's global instructions from the gear home", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gear-mem-"));
+    try {
+      writeFileSync(join(gearHome, "GEAR.md"), "be terse");
+      const mem = loadProjectMemory(dir);
+      expect(mem.block).toContain("be terse");
+      expect(mem.files).toEqual([join(gearHome, "GEAR.md")]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("returns empty block when no memory files exist", () => {
     const dir = mkdtempSync(join(tmpdir(), "gear-mem-"));
     try {

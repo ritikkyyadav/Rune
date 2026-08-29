@@ -79,6 +79,7 @@ import {
   modeInfo,
   permissionModeBanner,
   autoApprovedChip,
+  autoDeferralSummary,
   waitingRung,
   sandboxModeBanner,
   browserModeBanner,
@@ -92,6 +93,14 @@ import { GEAR_MARK, renderBanner } from "./banner";
 import { renderStatus } from "./status";
 import { notifyWarp } from "./warp";
 import { renderReadBack, renderClose } from "./read-back";
+import * as F from "./flow";
+import {
+  questionAction,
+  questionLines,
+  questionPlaceholder,
+  QUESTION_SKIPPED,
+  QUESTION_UNANSWERED,
+} from "./question";
 import type { Brief } from "../../brief";
 import { TurnRenderer, userBlock, renderReplay, HEX } from "./turn";
 import { truncate, clampVisible, setTermWidthOverride } from "./render";
@@ -126,6 +135,7 @@ import {
   stripAnsi,
   TERMINAL_THEME_RESET,
 } from "./theme";
+import { formatCostReport } from "../../cost-report";
 import { glyph } from "./glyphs";
 import { saveTheme } from "./theme-store";
 import { buildPermissionPreview, type PermissionPreview } from "./permission-preview";
@@ -387,9 +397,19 @@ class Tui {
     question: string;
     options: string[];
     prevMode: Mode;
+    /** The highlighted choice. Enter commits THIS -- never a hardcoded first
+     *  option, which is what made Enter a blind commit to a product decision
+     *  the reader had not necessarily read. */
+    selected: number;
+    /** Position in a multi-question round, so the picker can say `2 of 4`. */
+    index?: number;
+    total?: number;
     /** 4th-gear auto-continue: the run must survive an absent user. */
     timer?: ReturnType<typeof setTimeout>;
     autoContinue?: boolean;
+    /** Wall clock the auto-continue fires at, so the hint can tick it down
+     *  instead of stating a 60 that was true only when the question opened. */
+    deadline?: number;
   } | null = null;
 
   constructor(private ctx: TuiContext) {
@@ -421,9 +441,14 @@ class Tui {
     // in 4th gear, so it is never invoked there -- and stays ready the instant
     // Shift+Tab shifts back to an asking gear, without re-wiring.
     engine.setPermissionHandler(this.permissionHandler);
-    // Auto mode's classifier approvals are silent at the broker; the chip
-    // keeps them visible in the transcript without pausing the run (v2 spec).
+    // Auto mode never pauses the run, so the transcript is where its
+    // decisions live: a chip per decision, and one list at the end of the turn
+    // for the outward steps it declined to take on its own.
     engine.setAutoApprovalNotifier?.((notice) => this.print(autoApprovedChip(notice)));
+    engine.setAutoDeferralNotifier?.((deferrals) => {
+      const block = autoDeferralSummary(deferrals);
+      if (block) this.print(block);
+    });
     engine.setQuestionHandler(this.questionHandler);
     engine.setBriefHandler(this.briefHandler);
 
@@ -754,19 +779,15 @@ class Tui {
         caret: this.caret,
         width: this.contentCols(),
         status: this.statusStr(),
+        placeholder: questionPlaceholder(q.options.length),
       });
-      const head = [
-        `  ${info("?")} ${bold(text(q.question))}`,
-        ...q.options.map((opt, i) => `    ${info(String(i + 1))} ${text(opt)}`),
-        `  ${faint(
-          "1-" +
-            q.options.length +
-            " choose | or type an answer | Enter = 1 | Esc = skip" +
-            (q.autoContinue ? " | auto-continues in 60s (4th gear)" : ""),
-        )}`,
-      ];
+      const head = questionLines({ ...q, input: this.input, width: this.contentCols() });
       return {
         lines: [...head, ...base.lines],
+        // The caret stays in the field, not on the highlighted row: typing an
+        // answer is a first-class path here, and the marker already says where
+        // the selection is. A caret parked on a list you may not be using is
+        // the thing that made this surface feel like it was guessing.
         caretRow: base.caretRow + head.length,
         caretCol: base.caretCol,
       };
@@ -1649,6 +1670,7 @@ class Tui {
             workspace: s.workspace,
             sessionId: this.ctx.sessionId,
             cost: s.cost,
+            costSummary: s.costSummary,
             yoloMode: s.yoloMode,
             trustWorkspace: s.trustWorkspace,
             permissionMode: s.permissionMode,
@@ -1670,9 +1692,28 @@ class Tui {
         }
         return true;
       }
-      case "cost":
-        this.print(`  ${muted(`$${engine.getCost().toFixed(4)}`)}`);
+      case "cost": {
+        // Was a lone `$0.0000` — true on a subscription route and useless.
+        // The readout now answers the three questions that number can't:
+        // what left the building, what it would cost metered, and what the
+        // prompt cache is actually saving.
+        const rows = formatCostReport(engine.getCostBreakdown());
+        const width = Math.max(...rows.map((r) => r.label.length));
+        for (const row of rows) {
+          const label = faint(row.label.padStart(width));
+          const paint =
+            row.tone === "warn"
+              ? warn
+              : row.tone === "good"
+                ? ok
+                : row.tone === "muted"
+                  ? muted
+                  : text;
+          const note = row.note ? ` ${faint(`(${row.note})`)}` : "";
+          this.print(`  ${label}  ${paint(row.value)}${note}`);
+        }
         return true;
+      }
       case "team": {
         const lines = runTeamCommand(engine.getTeamBus(), arg);
         this.print(lines.map((l, i) => `  ${i === 0 ? text(l) : muted(l)}`).join("\n"));
@@ -3703,13 +3744,21 @@ class Tui {
 
   // -- ask_user question mode --
 
-  private questionHandler = (q: { question: string; options: string[] }): Promise<string> =>
+  private questionHandler = (q: {
+    question: string;
+    options: string[];
+    index?: number;
+    total?: number;
+  }): Promise<string> =>
     new Promise<string>((resolve) => {
       this.questionState = {
         resolve,
         question: q.question,
         options: q.options,
         prevMode: this.mode,
+        selected: 0,
+        index: q.index,
+        total: q.total,
       };
       this.input = "";
       this.caret = 0;
@@ -3720,10 +3769,9 @@ class Tui {
       // proceeds on its own judgment, keeping fire-and-forget intact.
       if (this.ctx.engine.getPermissionMode() === "gear-4") {
         this.questionState.autoContinue = true;
+        this.questionState.deadline = Date.now() + Tui.QUESTION_AUTO_CONTINUE_MS;
         this.questionState.timer = setTimeout(() => {
-          this.finishQuestion(
-            "(no answer within 60s -- proceed with your best judgment and state the assumption)",
-          );
+          this.finishQuestion(QUESTION_UNANSWERED);
         }, Tui.QUESTION_AUTO_CONTINUE_MS);
       }
       this.scheduleDraw();
@@ -3770,8 +3818,15 @@ class Tui {
     return { accepted: false, note: answer.trim() };
   };
 
-  /** Resolve the pending ask_user question and restore the turn UI. */
-  private finishQuestion(answer: string): void {
+  /**
+   * Resolve the pending ask_user question and restore the turn UI.
+   *
+   * `chosen` is the option's index when one was picked. Scrollback then records
+   * the decision in the grammar decisions use here -- `> 2   Sounding rockets`
+   * -- rather than a tick beside a string clipped at 80 columns, which read as
+   * a log line and not as the answer that steered the work.
+   */
+  private finishQuestion(answer: string, chosen?: number): void {
     const q = this.questionState;
     if (!q) return;
     if (q.timer) clearTimeout(q.timer);
@@ -3780,7 +3835,11 @@ class Tui {
     this.caret = 0;
     // Return to the in-flight turn (questions only fire mid-turn).
     this.mode = q.prevMode === "question" ? "turn" : q.prevMode;
-    this.print(`  ${ok(glyph("verified"))} ${muted(truncate(answer, 80))}`);
+    this.print(
+      chosen != null
+        ? F.answered(chosen, answer)
+        : `  ${ok(glyph("verified"))} ${muted(truncate(answer, F.proseWidth()))}`,
+    );
     this.scheduleDraw();
     q.resolve(answer);
   }
@@ -3788,20 +3847,27 @@ class Tui {
   private questionKey(key: Key): void {
     const q = this.questionState;
     if (!q) return;
-    // Bare digit with an empty composer = instant pick.
-    if (key.type === "char" && this.input.length === 0 && /^[1-9]$/.test(key.value)) {
-      const n = Number(key.value);
-      if (n >= 1 && n <= q.options.length) return this.finishQuestion(q.options[n - 1]);
+    // The state machine is pure and lives in ./question, so what a key means
+    // here is the same thing the hint above the composer says it means.
+    const action = questionAction(key, { ...q, input: this.input });
+    switch (action.kind) {
+      case "move":
+        q.selected = action.selected;
+        return this.scheduleDraw();
+      case "answer":
+        return this.finishQuestion(action.text, action.chosen);
+      case "clear":
+        this.input = "";
+        this.caret = 0;
+        return this.scheduleDraw();
+      case "skip":
+        return this.finishQuestion(QUESTION_SKIPPED);
+      case "ignore":
+        return;
+      case "edit":
+        // Everything else edits the composer (free-text answer).
+        if (this.editComposer(key)) this.scheduleDraw();
     }
-    if (key.type === "enter") {
-      const typed = this.input.trim();
-      return this.finishQuestion(typed || q.options[0]);
-    }
-    if (key.type === "esc") {
-      return this.finishQuestion("(user skipped the question -- proceed with your best judgment)");
-    }
-    // Everything else edits the composer (free-text answer).
-    if (this.editComposer(key)) this.scheduleDraw();
   }
 
   private permKey(key: Key): void {
@@ -3939,6 +4005,11 @@ class Tui {
     this.tick = setInterval(() => {
       if (this.mode === "turn") {
         this.turnPreview = turn.liveLines();
+        this.scheduleDraw();
+      } else if (this.mode === "question" && this.questionState?.deadline != null) {
+        // 4th gear's grace window is real time passing, so it has to LOOK like
+        // real time passing. A static "auto-continues in 60s" tells you nothing
+        // about whether you have fifty seconds left or two.
         this.scheduleDraw();
       }
     }, 125);

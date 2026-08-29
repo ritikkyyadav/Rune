@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "test": "bun test ../../tests/unit/desktop",
     "typecheck": "tsc --noEmit",
     "lint": "prettier --check src/",
     "tauri": "tauri"
