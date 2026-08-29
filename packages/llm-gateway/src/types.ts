@@ -304,6 +304,18 @@ export interface LlmProvider {
    * `models` list when this is absent or throws.
    */
   listModels?(): Promise<ModelInfo[]>;
+
+  /**
+   * OPTIONAL single-model lookup, for hosts whose listing endpoint omits the
+   * detail a caller actually needs.
+   *
+   * Exists because Ollama's /api/tags returns names only, while /api/show
+   * returns the real context length — but only one model at a time. Asking for
+   * the one model in play is a single cheap request; listing then describing
+   * every installed model to learn one number is not. Callers fall back to
+   * listModels() when this is absent, and to the static table when both are.
+   */
+  describeModel?(id: string): Promise<ModelInfo | null>;
 }
 
 // ─── Cost Tracking ───

@@ -441,10 +441,16 @@ class Tui {
     // in 4th gear, so it is never invoked there -- and stays ready the instant
     // Shift+Tab shifts back to an asking gear, without re-wiring.
     engine.setPermissionHandler(this.permissionHandler);
-    // Auto mode never pauses the run, so the transcript is where its
-    // decisions live: a chip per decision, and one list at the end of the turn
-    // for the outward steps it declined to take on its own.
-    engine.setAutoApprovalNotifier?.((notice) => this.print(autoApprovedChip(notice)));
+    // Auto mode never pauses the run, so the transcript is where its decisions
+    // live -- but only the ones that changed something. Routine approvals
+    // return "" and are not printed: they are the harness allowing what it
+    // always allows, and a row each buried the work they were meant to make
+    // auditable. Containments, redirects and halts still get a chip, and the
+    // outward steps Auto declined get one list at the end of the turn.
+    engine.setAutoApprovalNotifier?.((notice) => {
+      const chip = autoApprovedChip(notice);
+      if (chip) this.print(chip);
+    });
     engine.setAutoDeferralNotifier?.((deferrals) => {
       const block = autoDeferralSummary(deferrals);
       if (block) this.print(block);

@@ -163,12 +163,6 @@ export class CostTracker {
     // competitor's invoice.
     const costUsd = billing === "metered" ? listCostUsd : 0;
 
-    const projected = this.ledger.totalCostUsd + costUsd;
-    const sessionBudget = this.budgets.find((b) => b.scope === "session");
-    if (sessionBudget && projected > sessionBudget.limitUsd) {
-      throw new BudgetExceededError("session", sessionBudget.limitUsd, projected);
-    }
-
     const entry: CostEntry = {
       model,
       provider,
@@ -183,10 +177,27 @@ export class CostTracker {
       estimated: price?.estimated === true,
       timestamp,
     };
+    // Record BEFORE the cap is tested. The provider has already served and
+    // billed this response; refusing to count it would make the ledger
+    // understate exactly the run that overspent. The cap governs whether the
+    // NEXT request goes out, not whether this one happened.
     this.ledger.entries.push(entry);
     this.ledger.totalCostUsd += costUsd;
     this.ledger.totalListCostUsd += listCostUsd;
     this.ledger.unpricedModels = [...this.unpriced];
+
+    // Tested against the METERED-EQUIVALENT total, not actual spend. A cap on
+    // spend can never fire on a subscription or free route — where this agent
+    // spends most of its life — so it would guard only the runs that need
+    // guarding least.
+    const sessionBudget = this.budgets.find((b) => b.scope === "session");
+    if (sessionBudget && this.ledger.totalListCostUsd > sessionBudget.limitUsd) {
+      throw new BudgetExceededError(
+        "session",
+        sessionBudget.limitUsd,
+        this.ledger.totalListCostUsd,
+      );
+    }
     return entry;
   }
 

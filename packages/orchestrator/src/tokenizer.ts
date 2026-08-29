@@ -157,9 +157,29 @@ export class TokenCounter {
       // Google
       ["gemini-1.5-pro", 2097152],
       ["gemini", 1048576],
-      // Open-weight coder families
+      // Open-weight families.
+      //
+      // These are FLOORS, not exact windows. Every one of them is served by
+      // several hosts at different configured lengths, and the doctrine here
+      // is to err low: guessing too high earns a provider 400, guessing too
+      // low only costs an early compaction. The floors get corrected upward
+      // automatically wherever a catalog reports the truth — OpenRouter's
+      // listModels carries context_length, and Ollama's /api/show is queried
+      // per model — so these only govern the offline case.
+      //
+      // Before this, none of them matched any rule and every one fell to the
+      // 100k UNKNOWN default, compacting these models at a fraction of their
+      // real window and paying for summarizer round-trips that bought nothing.
       ["qwen3-coder", 262144],
       ["qwen", 131072],
+      ["gpt-oss", 131072],
+      ["nemotron", 131072],
+      ["gemma4", 131072],
+      ["gemma-3", 131072],
+      // MiniMax M2 documents 204,800; M3 is its successor and should be at
+      // least that, but "should be" is not evidence — take the safe floor and
+      // let the catalog raise it.
+      ["minimax", 131072],
       ["glm-4", 131072],
       ["deepseek", 131072],
       ["kimi", 131072],

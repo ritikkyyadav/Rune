@@ -168,6 +168,35 @@ export class OllamaProvider implements LlmProvider {
       .map((id) => ({ id, label: id, live: true }));
   }
 
+  /**
+   * Real context window for one model, from /api/show.
+   *
+   * /api/tags — what listModels uses — returns names only, so every Ollama
+   * model fell to the tokenizer's conservative 100k default and was compacted
+   * far below its real window. /api/show reports `model_info` keyed by
+   * architecture (`llama.context_length`, `qwen3moe.context_length`, …), so
+   * the key is found by suffix rather than guessed per family.
+   */
+  async describeModel(id: string): Promise<ModelInfo | null> {
+    try {
+      const r = await fetch(`${this.baseUrl}/api/show`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: id }),
+      });
+      if (!r.ok) return null;
+      const json = (await r.json()) as { model_info?: Record<string, unknown> };
+      const info = json.model_info ?? {};
+      const key = Object.keys(info).find((k) => k.endsWith(".context_length"));
+      const raw = key ? info[key] : undefined;
+      const contextLimit = typeof raw === "number" && raw > 0 ? Math.floor(raw) : undefined;
+      return { id, label: id, live: true, ...(contextLimit ? { contextLimit } : {}) };
+    } catch {
+      // Runtime unreachable — the static floor stands.
+      return null;
+    }
+  }
+
   // ── internals ──
 
   private *handleChunk(chunk: OllamaChatChunk, state: StreamState): Generator<StreamEvent> {

@@ -316,12 +316,24 @@ const AUTO_TIER_LABEL: Record<string, string> = {
 };
 
 /**
- * The Auto chip (`.auto-chip`): one line per decision, printed inline.
+ * The Auto chip (`.auto-chip`): one line per decision Auto made that the reader
+ * would want to find afterwards — and nothing for the ones they would not.
  *
- * Auto mode never stops to ask, which means the scrollback is the only place
- * its decisions are visible at all. So every decision gets a chip, not just
- * the approvals — a contained call and a deferred publish are exactly the
- * moments a reader needs to be able to find afterwards.
+ * An approval gets no chip. This used to print one per call, on the reasoning
+ * that Auto never stops to ask so scrollback is the only record of what it did.
+ * That reasoning holds for the decisions that CHANGED something — a contained
+ * call, a redirected command, a deferred publish, a halt. It does not hold for
+ * `read_file | safe-listed | risk low`, which is the harness telling you it
+ * allowed the thing it always allows. Printed once per call it buried the work
+ * it was supposed to make auditable: a burst of twelve reads cost twelve rows
+ * of consent paperwork above the twelve rows of actual reading. Auto's whole
+ * promise is not interrupting you, and a chip per approval reinstates the
+ * interruption as text.
+ *
+ * The full decision record still exists in the audit log, and the outward steps
+ * Auto declined to take are collected once, at the end, by autoDeferralSummary.
+ *
+ * Returns "" when there is nothing worth a row; callers must not print empties.
  */
 export function autoApprovedChip(notice: {
   toolName: string;
@@ -333,12 +345,7 @@ export function autoApprovedChip(notice: {
 }): string {
   const how = (notice.tier && AUTO_TIER_LABEL[notice.tier]) || "classifier reviewed";
   const kind = notice.kind ?? "approved";
-  if (kind === "approved") {
-    return F.row(
-      `${F.BODY}${info(glyph("verified"))} ${muted("auto-approved")}  ${text(notice.toolName)}`,
-      faint(`${how} | risk ${notice.risk}`),
-    );
-  }
+  if (kind === "approved") return "";
   const headline =
     kind === "halted"
       ? warn("run halted")
@@ -347,10 +354,15 @@ export function autoApprovedChip(notice: {
         : kind === "redirected"
           ? muted("redirected")
           : muted("contained");
+  // What a halt costs the reader is the run, not the classifier's routing
+  // label. `supervisor_halt | risk critical` names the mechanism that fired;
+  // this names what just happened to their work and what to do about it.
   const detail =
-    kind === "redirected" && notice.substitute
-      ? `ran instead: ${notice.substitute.slice(0, 60)}`
-      : `${notice.route ?? how} | risk ${notice.risk}`;
+    kind === "halted"
+      ? "the run stopped here | nothing further ran"
+      : kind === "redirected" && notice.substitute
+        ? `ran instead: ${notice.substitute.slice(0, 60)}`
+        : `${notice.route ?? how} | risk ${notice.risk}`;
   return F.row(
     `${F.MARK}${warn(glyph("selection"))} ${headline}  ${text(notice.toolName)}`,
     faint(detail),

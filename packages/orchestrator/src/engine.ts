@@ -1,4 +1,4 @@
-import { LlmGateway, CostTracker } from "@gear/llm-gateway";
+import { LlmGateway, CostTracker, BudgetExceededError } from "@gear/llm-gateway";
 import { formatCostSummary } from "./cost-report";
 import type { Message, ProviderName, ResolvedCredential } from "@gear/llm-gateway";
 import {
@@ -352,6 +352,14 @@ export interface EngineConfig {
   /** Independent reviewer + trust-boundary configuration for Auto mode. */
   autoMode?: AutoModePolicyConfig;
   /**
+   * Stop the session once its METERED-EQUIVALENT cost passes this many US
+   * dollars. Unset by default — a cap that surprises a user mid-task is worse
+   * than no cap — but armed and enforced when set, including on subscription
+   * and free routes, where actual spend is $0 and a spend-based cap could
+   * never fire.
+   */
+  maxSessionCostUsd?: number;
+  /**
    * Run foreground bash inside the OS sandbox (Seatbelt/Bubblewrap: deny-net,
    * workspace-confined writes). Default true; false = full host access
    * (`/sandbox off`, `--no-sandbox`). Process-wide — see tool-registry/sandbox-mode.
@@ -689,6 +697,12 @@ export class Engine {
   /** Providers whose model catalog has already supplied real context windows. */
   private contextCatalogWarmed = new Set<ProviderName>();
   private costTracker: CostTracker;
+  /**
+   * Set when a session spend ceiling trips. Held so the turn can report WHY it
+   * stopped — an abort with no explanation reads as a crash, and a cost cap
+   * the user cannot see the reason for is worse than no cap.
+   */
+  private costCapTripped: BudgetExceededError | null = null;
   private rateLimiter: ToolRateLimiter | null = null;
   private securityGuard: ReturnType<typeof createToolExecutionGuard> | null = null;
   /** Classifier action gate + tool-result prompt-injection probe. */
@@ -1246,7 +1260,11 @@ export class Engine {
     }
 
     // Initialize Cost Tracker
-    this.costTracker = new CostTracker();
+    this.costTracker = new CostTracker(
+      config.maxSessionCostUsd && config.maxSessionCostUsd > 0
+        ? { budgets: [{ scope: "session", limitUsd: config.maxSessionCostUsd }] }
+        : {},
+    );
 
     // Checkpoint policy
     this.checkpointPolicy = {
@@ -3426,10 +3444,17 @@ export class Engine {
                 estimated: entry.estimated,
               },
             });
-          } catch {
-            // record() throws BudgetExceededError once budget caps are wired.
-            // Accounting must never abort a run that the provider already
-            // billed for — the cap belongs on the pre-flight check, not here.
+          } catch (err) {
+            // The provider already billed for THIS response, so it is always
+            // recorded and never rejected — the cap governs whether a NEXT
+            // request goes out, not whether this one counts.
+            if (err instanceof BudgetExceededError) {
+              this.costCapTripped = err;
+              // Stop before spending more. Without this the cap could only be
+              // observed after the fact, which is a report, not a limit.
+              this.currentAbort?.abort();
+            }
+            // Anything else is accounting noise and must never interrupt a run.
           }
         }
 
@@ -3568,6 +3593,21 @@ export class Engine {
       // Clear the abort controller reference when the run is done
       if (this.currentAbort === abortController) {
         this.currentAbort = null;
+      }
+      // A spend ceiling that stops the run without saying so is indistinguishable
+      // from a crash. Report it once, in the user's terms — what the limit was,
+      // what it reached, and how to lift it — then clear it so the next turn
+      // starts fresh if the user raises the cap.
+      if (this.costCapTripped) {
+        const cap = this.costCapTripped;
+        this.costCapTripped = null;
+        yield {
+          type: "notice",
+          message:
+            `Stopped at the session spend ceiling: $${cap.projectedUsd.toFixed(2)} of ` +
+            `$${cap.limitUsd.toFixed(2)} (metered-equivalent). Raise or remove ` +
+            `maxSessionCostUsd to continue.`,
+        } as AgentTurnEvent;
       }
       // Report the outward steps Auto declined to take, once, with the work
       // already done — the deliberate opposite of interrupting to ask.
@@ -3719,11 +3759,22 @@ export class Engine {
     if (getContextLimit(model) !== UNKNOWN_MODEL_CONTEXT_LIMIT) return;
     this.contextCatalogWarmed.add(providerName);
     const provider = this.gateway.getProvider?.(providerName);
-    if (!provider?.listModels) return;
-    void provider
-      .listModels()
+    if (!provider) return;
+    // Ask about THIS model first where the adapter supports it. Ollama's
+    // listing endpoint returns names only — the real window lives behind a
+    // per-model /api/show — so listModels alone left every Ollama model on the
+    // conservative default no matter how often it warmed.
+    const describe = provider.describeModel?.(model) ?? Promise.resolve(null);
+    void describe
+      .then((entry) => {
+        if (entry?.contextLimit) {
+          registerContextLimit(entry.id, entry.contextLimit);
+          return null;
+        }
+        return provider.listModels?.() ?? null;
+      })
       .then((models) => {
-        for (const entry of models) {
+        for (const entry of models ?? []) {
           if (entry.contextLimit) registerContextLimit(entry.id, entry.contextLimit);
         }
       })

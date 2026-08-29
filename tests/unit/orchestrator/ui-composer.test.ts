@@ -14,6 +14,7 @@ import {
   permissionView,
   statusLine,
   permissionModeBanner,
+  autoApprovedChip,
 } from "../../../packages/orchestrator/src/bin/ui/composer";
 import { setTermWidthOverride } from "../../../packages/orchestrator/src/bin/ui/render";
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
@@ -545,5 +546,55 @@ describe("the gear ladder", () => {
     ] as const) {
       expect(modeInfo(id).arrows.length, id).toBe(n);
     }
+  });
+});
+
+describe("the Auto chip — only decisions that changed something", () => {
+  it("says nothing about a routine approval", () => {
+    // The case that buried the work: a burst of safe-listed reads, each one
+    // printing a row to say the harness allowed what it always allows.
+    expect(autoApprovedChip({ toolName: "read_file", risk: "low", tier: "safe" })).toBe("");
+    expect(
+      autoApprovedChip({ toolName: "bash", risk: "medium", tier: "classifier", kind: "approved" }),
+    ).toBe("");
+  });
+
+  it("still records a containment, a redirect, and a deferral", () => {
+    const contained = stripAnsi(
+      autoApprovedChip({ toolName: "bash", risk: "high", kind: "contained", route: "sandboxed" }),
+    );
+    expect(contained).toContain("contained");
+    expect(contained).toContain("sandboxed");
+
+    const redirected = stripAnsi(
+      autoApprovedChip({
+        toolName: "bash",
+        risk: "medium",
+        kind: "redirected",
+        substitute: "rg --files",
+      }),
+    );
+    expect(redirected).toContain("redirected");
+    expect(redirected).toContain("ran instead: rg --files");
+
+    expect(
+      stripAnsi(autoApprovedChip({ toolName: "web_fetch", risk: "high", kind: "deferred" })),
+    ).toContain("held for you");
+  });
+
+  it("tells a halt in terms of the run, not the classifier that fired", () => {
+    const halted = stripAnsi(
+      autoApprovedChip({
+        toolName: "bash",
+        risk: "critical",
+        kind: "halted",
+        route: "supervisor_halt",
+      }),
+    );
+    expect(halted).toContain("run halted");
+    expect(halted).toContain("the run stopped here");
+    expect(halted).toContain("nothing further ran");
+    // The internal routing token is not the user's business.
+    expect(halted).not.toContain("supervisor_halt");
   });
 });
