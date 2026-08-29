@@ -201,6 +201,76 @@ Strike a balance: do what was asked thoroughly (including obviously implied foll
 // named bans beat adjectives: "polished" steers nothing, "span 8 beside
 // span 4, ≤4 series, one accent" does.
 
+// ─── Doctrine weight ───
+//
+// The full doctrine is 7,461 tokens, and it ships on every request alongside
+// ~3,200 tokens of tool schemas. Measured against the field, that puts Gear's
+// fixed overhead at 14,617 tokens where a minimal harness (Pi) does the same
+// job in under 1,000 — the single largest addressable inefficiency in the
+// system, and the one thing none of the cost work touched.
+//
+// The cut here is conservative on purpose: it drops only sections that CANNOT
+// apply to the session, never sections that merely might not come up. A
+// delegation section is unusable with no delegation tool; greenfield doctrine
+// is inapplicable inside a mature repository. Anything judgement-shaped stays,
+// because a prompt that is cheap and produces slop is not cheaper.
+//
+// AGENT_DOCTRINE itself is left whole. Callers that want everything (tests,
+// docs, anything asserting a section exists) keep working untouched.
+
+/** What this session can actually do — decides which doctrine sections earn their place. */
+export interface DoctrineContext {
+  /** A delegation/sub-agent tool is registered. */
+  canDelegate: boolean;
+  /** The workspace is empty or near-empty, so a build may start from scratch. */
+  greenfield: boolean;
+  /** The workspace contains (or will contain) something a person looks at. */
+  buildsInterfaces: boolean;
+}
+
+/** Everything on — byte-identical to AGENT_DOCTRINE. The safe default. */
+export const FULL_DOCTRINE_CONTEXT: DoctrineContext = {
+  canDelegate: true,
+  greenfield: true,
+  buildsInterfaces: true,
+};
+
+/**
+ * Doctrine sections that are dropped when their capability is absent, keyed by
+ * the exact heading text. Matched on the heading PREFIX so rewording the tail
+ * of a heading cannot silently un-gate a section — but a renamed section stops
+ * matching, which the prompt-budget test catches as a size regression.
+ */
+const GATED_SECTIONS: Array<{ heading: string; keep: (c: DoctrineContext) => boolean }> = [
+  { heading: "# Delegation", keep: (c) => c.canDelegate },
+  { heading: "# Greenfield builds", keep: (c) => c.greenfield },
+  { heading: "# Building interfaces", keep: (c) => c.buildsInterfaces },
+];
+
+/**
+ * Render the doctrine for a session, dropping sections it cannot use.
+ *
+ * Splits on top-level `# ` headings; the preamble before the first heading is
+ * always kept.
+ */
+export function renderDoctrine(ctx: DoctrineContext = FULL_DOCTRINE_CONTEXT): string {
+  const lines = AGENT_DOCTRINE.split("\n");
+  const out: string[] = [];
+  let dropping = false;
+  for (const line of lines) {
+    if (line.startsWith("# ")) {
+      const gate = GATED_SECTIONS.find((g) => line.startsWith(g.heading));
+      dropping = gate ? !gate.keep(ctx) : false;
+    }
+    if (!dropping) out.push(line);
+  }
+  // Collapse the blank-line run a removed section leaves behind.
+  return out
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trimEnd();
+}
+
 export function renderInteractiveDoctrine(auto: boolean): string {
   const lines = [
     "# Interactive views — design charter",
@@ -381,6 +451,44 @@ export function renderEnvironmentBlock(env: EnvironmentInfo): string {
     }
   }
   return lines.join("\n");
+}
+
+/**
+ * Below this many tracked files a workspace counts as greenfield.
+ *
+ * Generous on purpose. Guessing "not greenfield" wrongly costs correctness —
+ * the agent loses the guidance that stops it shipping a page as an
+ * application. Guessing "greenfield" wrongly costs 490 tokens. The asymmetry
+ * decides the threshold.
+ */
+export const GREENFIELD_FILE_THRESHOLD = 12;
+
+/** Tracked-file count, or Infinity when git cannot answer (assume mature). */
+export function countTrackedFiles(workspaceRoot: string): number {
+  const out = git(workspaceRoot, ["ls-files"]);
+  if (!out) {
+    // Empty output is ambiguous: a genuinely empty repo, or not a repo at all.
+    // Only the first is greenfield, so check before claiming it.
+    const isRepo = git(workspaceRoot, ["rev-parse", "--is-inside-work-tree"]) === "true";
+    return isRepo ? 0 : Number.POSITIVE_INFINITY;
+  }
+  return out.split("\n").filter(Boolean).length;
+}
+
+/** Extensions that mean somebody looks at the output of this project. */
+const INTERFACE_EXTENSIONS = /\.(html?|css|scss|sass|less|jsx|tsx|vue|svelte|astro|mdx)$/i;
+
+/**
+ * Whether the workspace renders anything a person looks at.
+ *
+ * Reads the tracked-file list rather than the filesystem so node_modules and
+ * build output cannot vote. A false negative costs visual quality on a real UI
+ * task, so the match is deliberately broad.
+ */
+export function workspaceHasInterface(workspaceRoot: string): boolean {
+  const out = git(workspaceRoot, ["ls-files"]);
+  if (!out) return false;
+  return out.split("\n").some((f) => INTERFACE_EXTENSIONS.test(f));
 }
 
 // ─── Repo Map ───
