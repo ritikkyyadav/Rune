@@ -420,7 +420,7 @@ describe("renderReplay", () => {
     expect(output).toContain("› fix the bug");
     expect(output).toContain("● I am reading the files.");
     expect(output).toContain("│ · read  2 files");
-    expect(output).toContain("1 file changed | 1 check passed");
+    expect(output).toContain("1 file changed · 1 check passed");
     expect(output).toContain("Fixed and verified.");
   });
 

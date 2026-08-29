@@ -30,6 +30,26 @@ const FAMILY_GATED_TOOLS: Record<string, (model: string) => boolean> = {
   apply_patch: modelUsesApplyPatch,
 };
 
+/**
+ * Tools advertised only when the environment can actually use them.
+ *
+ * Distinct from FAMILY_GATED_TOOLS above, which asks "does this MODEL speak
+ * this format". This asks "is this integration configured at all". Every tool
+ * definition costs tokens on every request whether or not the task could reach
+ * for it, and an integration nobody has set up is the clearest case of a
+ * schema earning nothing.
+ *
+ * Deliberately conservative: gate only on an unambiguous signal, and only for
+ * tools whose absence cannot silently reduce ordinary coding ability. A gate
+ * that removes a useful tool to save tokens is a worse trade than the tokens.
+ */
+const CAPABILITY_GATED_TOOLS: Record<string, (env: NodeJS.ProcessEnv) => boolean> = {
+  // n8n is an opt-in workflow integration reached through N8N_BASE_URL. With
+  // no base URL configured the tool can only be called with a full webhook
+  // URL the model has no way to know.
+  n8n_trigger: (env) => Boolean(env.N8N_BASE_URL),
+};
+
 export class ToolRegistry {
   private tools: Map<string, ToolHandler> = new Map();
   private circuits: Map<string, CircuitState> = new Map();
@@ -66,6 +86,8 @@ export class ToolRegistry {
   toLlmTools(forModel?: string): ToolDefinition[] {
     return [...this.tools.values()]
       .filter((h) => {
+        const capability = CAPABILITY_GATED_TOOLS[h.schema.name];
+        if (capability && !capability(process.env)) return false;
         const gate = FAMILY_GATED_TOOLS[h.schema.name];
         if (!gate) return true;
         return forModel !== undefined && gate(forModel);

@@ -120,7 +120,7 @@ export function formatCompaction(ev: {
       : "older messages summarized";
   const label = ev.forced ? "compacted (window exceeded)" : "compacted";
   // One row, and only facts the engine actually measured.
-  return F.row(
+  return F.flowRow(
     `${F.BODY}${faint(glyph("observed"))} ${text(label)}  ${muted(scope)}`,
     muted(`${pct(ev.beforeTokens)} -> ${pct(ev.afterTokens)} | -${fmtTokens(saved)} tokens`),
   );

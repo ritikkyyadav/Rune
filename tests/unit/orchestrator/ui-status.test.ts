@@ -17,7 +17,9 @@ describe("ui/status renderStatus", () => {
     const out = stripAnsi(renderStatus({ ...base, permissionMode: "gear-2" as const }));
     expect(out).toContain(">> 2nd gear | workspace edits proceed");
     const auto = stripAnsi(renderStatus({ ...base, permissionMode: "auto" as const }));
-    expect(auto).toContain("* Auto mode | never asks; watched for injection");
+    // Auto mode carries no clause -- the name is the whole statement.
+    expect(auto).toContain("* Auto mode");
+    expect(auto).not.toContain("never asks; watched for injection");
   });
 
   it("shows the Auto reviewer identity, fallback readiness, and escalation posture", () => {

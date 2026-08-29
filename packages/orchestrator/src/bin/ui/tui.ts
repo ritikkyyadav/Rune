@@ -92,6 +92,7 @@ import {
 import { GEAR_MARK, renderBanner } from "./banner";
 import { renderStatus } from "./status";
 import { notifyWarp } from "./warp";
+import { setTitle, clearTitle } from "./title";
 import { renderReadBack, renderClose } from "./read-back";
 import * as F from "./flow";
 import {
@@ -343,6 +344,27 @@ class Tui {
   private streamBuf = "";
   private queued: string[] = []; // type-ahead: messages composed mid-turn, run in order on completion
   private aborting = false; // an esc/ctrl-c interrupt is in flight (guards the "interrupting..." flood)
+  // Warp's badge is showing this pane as blocked on us. Set when we raise an
+  // approval or a question, cleared by the first tool call that finishes after
+  // -- which is the event that means the answer landed and work resumed. Kept
+  // as a flag so a fifty-call turn writes one sequence, not fifty.
+  private warpBlocked = false;
+  // Advanced by the turn tick, but only while output is actually arriving --
+  // see ./title.ts. Not a clock.
+  private titleFrame = 0;
+
+  /** The tab's own name for this project. */
+  private titleProject(): string {
+    return this.ctx.workspaceRoot.split("/").filter(Boolean).pop() ?? "";
+  }
+
+  /** Paint the tab for an in-flight turn. Warp will not badge a pane it has not
+   *  classified as an agent, but it renames one on OSC 0 like any terminal. */
+  private paintTitle(turn: { beat(): { quietMs: number } }): void {
+    const { quietMs } = turn.beat();
+    if (quietMs < 4000) this.titleFrame++;
+    setTitle({ kind: "working", frame: this.titleFrame, quietMs }, this.titleProject());
+  }
   private turnPreview: string[] | null = null; // one live intent row + one evidence row
   private filesEdited = new Set<string>(); // session-wide, shown on the footer readout
   private interactiveTipShown = false; // the /interactive offer fires at most once per session
@@ -475,6 +497,7 @@ class Tui {
         process.stdout.write(
           "\x1b[?1000l\x1b[?1006l\x1b[?2004l\x1b[0 q" + TERMINAL_THEME_RESET + "\x1b[?25h",
         );
+        clearTitle();
       } catch {
         /* terminal already gone */
       }
@@ -526,6 +549,7 @@ class Tui {
         if (this.drawTimer) clearTimeout(this.drawTimer); // cancel any pending coalesced paint
         this.region.clear(); // unmount the composer, leaving the transcript in scrollback
         process.stdout.write(TERMINAL_THEME_RESET); // restore the user's terminal colours
+        clearTitle(); // and its name -- see ./title.ts
         if (stdin.isTTY) stdin.setRawMode(false);
         setTermWidthOverride(null);
         process.stdout.write(`  ${muted("Goodbye.")}\n`);
@@ -1037,7 +1061,13 @@ class Tui {
   /** Tell Warp this pane is an agent, and where it is. */
   private warp(
     event: Parameters<typeof notifyWarp>[0]["event"],
-    extra: { query?: string; response?: string; toolName?: string } = {},
+    extra: {
+      query?: string;
+      response?: string;
+      toolName?: string;
+      summary?: string;
+      toolInput?: string;
+    } = {},
   ): void {
     notifyWarp(
       {
@@ -1057,6 +1087,11 @@ class Tui {
     // it harmlessly.
     process.stdout.write(terminalThemeSeq());
     this.warp("session_start");
+    // Name the tab the moment we own the pane. Without this the tab keeps
+    // whatever the terminal derived from the command until the first turn
+    // starts, so a session sitting at the prompt looks like a bare shell --
+    // which is most of the time anyone is actually glancing at the tab strip.
+    setTitle({ kind: "idle" }, this.titleProject());
     this.printBanner();
   }
 
@@ -1093,7 +1128,7 @@ class Tui {
     const mode = modeInfo(this.ctx.engine.getPermissionMode());
     return {
       scope: mode.label,
-      caution: mode.desc,
+      caution: mode.desc || undefined,
     };
   }
 
@@ -3744,6 +3779,16 @@ class Tui {
         sel: 0,
       };
       this.mode = "permission";
+      // Until this resolves the pane is waiting on a person, not working. Warp
+      // shows that as its own badge, which is what pulls someone back to a tab
+      // they left running.
+      this.warpBlocked = true;
+      setTitle({ kind: "waiting" }, this.titleProject());
+      this.warp("permission_request", {
+        toolName: prompt.toolName,
+        summary: prompt.argsSummary,
+        toolInput: prompt.argsSummary,
+      });
       this.scheduleDraw();
     });
   };
@@ -3769,6 +3814,9 @@ class Tui {
       this.input = "";
       this.caret = 0;
       this.mode = "question";
+      this.warpBlocked = true;
+      setTitle({ kind: "waiting" }, this.titleProject());
+      this.warp("idle_prompt", { summary: q.question });
       // 4th gear asks like every other gear -- the user is usually right here --
       // but must never park an autonomous run on a question nobody answers:
       // after a grace window the picker dismisses itself and the model
@@ -3978,6 +4026,7 @@ class Tui {
     const { engine } = this.ctx;
     this.mode = "turn";
     this.aborting = false;
+    this.warpBlocked = false;
     this.turnStart = Date.now();
     this.streamBuf = "";
     this.turnPreview = null;
@@ -4011,6 +4060,7 @@ class Tui {
     this.tick = setInterval(() => {
       if (this.mode === "turn") {
         this.turnPreview = turn.liveLines();
+        this.paintTitle(turn);
         this.scheduleDraw();
       } else if (this.mode === "question" && this.questionState?.deadline != null) {
         // 4th gear's grace window is real time passing, so it has to LOOK like
@@ -4038,6 +4088,11 @@ class Tui {
         if (ev.type === "tool_call_end") {
           toolCalls++;
           if (!ev.output?.success) toolErrors++;
+          // The answer landed and the work moved: take the pane off blocked.
+          if (this.warpBlocked) {
+            this.warpBlocked = false;
+            this.warp("tool_complete", { toolName: ev.output?.toolName });
+          }
         }
         if (ev.type === "tool_call_end" && ev.output?.toolName === "interactive_dashboard") {
           dashboardTouched = true;
@@ -4069,6 +4124,7 @@ class Tui {
       // the pane is in the background, which is the difference between
       // watching a spinner and being told when it is your turn again.
       this.warp("stop");
+      setTitle({ kind: "idle" }, this.titleProject());
       if (
         !this.aborting &&
         !dashboardTouched &&
@@ -4275,6 +4331,7 @@ class Tui {
     const { engine } = this.ctx;
     this.mode = "turn";
     this.aborting = false;
+    this.warpBlocked = false;
     this.turnStart = Date.now();
     this.streamBuf = "";
     this.turnPreview = null;
@@ -4294,6 +4351,7 @@ class Tui {
     this.tick = setInterval(() => {
       if (this.mode === "turn") {
         this.turnPreview = turn.liveLines();
+        this.paintTitle(turn);
         this.scheduleDraw();
       }
     }, 125);
@@ -4319,6 +4377,7 @@ class Tui {
       // the pane is in the background, which is the difference between
       // watching a spinner and being told when it is your turn again.
       this.warp("stop");
+      setTitle({ kind: "idle" }, this.titleProject());
       this.lastWorkLog = turn.fullLog();
       this.liveTurn = null;
       if (this.tick) {
