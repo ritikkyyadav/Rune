@@ -122,6 +122,22 @@ export function migrateLegacyHome(env: NodeJS.ProcessEnv = process.env): string 
       } catch {
         // The old name keeps working for this run; next start retries.
       }
+    } else if (existsSync(oldDb) && existsSync(newDb)) {
+      // BOTH exist, so the rename above can never fire and the legacy file is
+      // stranded — permanently, and silently, which is the part that bites.
+      // This is not merely pre-rename residue: a build that resolved the home
+      // differently (an older installed binary, a stale GEAR_HOME) will open
+      // the legacy name and write real sessions into it, and nothing ever
+      // tells the user those sessions have stopped appearing in `/sessions`.
+      //
+      // Merging is not attempted here: two live databases can hold colliding
+      // ids and diverged schemas, and quietly interleaving a user's history is
+      // a worse failure than leaving it in place. Say so instead, so the data
+      // is recoverable by someone who knows what it is.
+      notes.push(
+        `${LEGACY_DB_FILENAME} still exists alongside ${GEAR_DB_FILENAME} in ${home} — ` +
+          `its sessions are NOT visible to this build; nothing was deleted`,
+      );
     }
   }
   cache = null;
