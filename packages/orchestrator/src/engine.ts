@@ -165,6 +165,11 @@ import {
 } from "./loop-mode";
 import {
   AGENT_DOCTRINE,
+  renderDoctrine,
+  type DoctrineContext,
+  countTrackedFiles,
+  workspaceHasInterface,
+  GREENFIELD_FILE_THRESHOLD,
   loadProjectMemory,
   renderAutoModeDoctrine,
   renderBrowserDoctrine,
@@ -3045,7 +3050,7 @@ export class Engine {
     const projectMemory = loadProjectMemory(this.config.workspaceRoot);
     const notebookBlock = this.buildNotebookInjection(sessionId);
     const systemPrompt = [
-      SYSTEM_PROMPT,
+      renderDoctrine(this.doctrineContext()),
       renderInteractiveDoctrine(this.interactiveAuto),
       renderAutoModeDoctrine(this.permissions.getMode() === "auto"),
       renderBrowserDoctrine(this.browserEnabled),
@@ -4025,6 +4030,37 @@ export class Engine {
 
   getAutoModeStatus(): ReturnType<AutoModeSafetyController["getStatus"]> {
     return this.autoModeSafety.getStatus();
+  }
+
+  /**
+   * Which doctrine sections this session can actually use.
+   *
+   * The doctrine is 7,461 tokens on every request. Sections the session cannot
+   * possibly act on are dead weight: delegation guidance with no delegation
+   * tool registered, greenfield guidance inside a repository that already has
+   * hundreds of files. Only capabilities that are ABSENT are dropped —
+   * anything merely unlikely stays, because a prompt that is cheap and
+   * produces slop is not cheaper.
+   *
+   * Resolved per turn but from session-stable inputs, so the prompt prefix
+   * stays byte-identical between turns and keeps earning its cache discount.
+   */
+  private doctrineContext(): DoctrineContext {
+    const hasDelegation =
+      this.registry.get("task") !== undefined || this.registry.get("worker") !== undefined;
+    // A workspace with almost nothing tracked is where a build starts from
+    // scratch. The threshold is generous: guessing "not greenfield" wrongly
+    // costs correctness, guessing "greenfield" wrongly costs only tokens.
+    const tracked = countTrackedFiles(this.config.workspaceRoot);
+    const greenfield = tracked <= GREENFIELD_FILE_THRESHOLD;
+    return {
+      canDelegate: hasDelegation,
+      greenfield,
+      // Kept whenever the workspace already renders something OR a build might
+      // still create one. Erring toward keeping it: "looks generic" is a bug
+      // this section exists to prevent.
+      buildsInterfaces: greenfield || workspaceHasInterface(this.config.workspaceRoot),
+    };
   }
 
   getCostBreakdown() {

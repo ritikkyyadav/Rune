@@ -108,7 +108,13 @@ export class LlmGateway {
 
   constructor(config: GatewayConfig, health?: ProviderHealthStore) {
     this.config = config;
-    this.health = health ?? new ProviderHealthStore();
+    // Persistence is OPT-IN. Defaulting to a store rooted in the real gear
+    // home made every gateway built without one — every test, every embedded
+    // use — read and write a machine-global file, so a live run in one process
+    // silently changed fallback behaviour in another. That is the same
+    // read-the-developer's-home bug this audit fixed elsewhere; it does not get
+    // an exception for being mine. The CLI passes a store explicitly.
+    this.health = health ?? ProviderHealthStore.ephemeral();
     // Seed cooldowns, NOT the fallback policy. getFallbackProviders
     // deliberately re-attempts a capped primary so the gateway can notice the
     // cap has lifted; persisting the cap must make that first attempt
@@ -357,14 +363,24 @@ export class LlmGateway {
           // from burning the agent loop's whole error budget turn after turn.
           if (this.isModelGone(lastStatus, lastError)) {
             this.prunedProviders.add(providerName);
-            // Remember it past this session. A retired id does not un-retire
-            // between runs, and rediscovering it costs a full request with the
-            // whole conversation attached.
-            this.health.noteRetired(
-              providerName,
-              adjustedRequest.model,
-              lastError?.message?.slice(0, 200) ?? `HTTP ${lastStatus ?? "?"}`,
-            );
+            // Remember it past this session — but only on a STATUS that
+            // pertains to this request. isModelGone also matches on message
+            // text ("retired", "deprecated"), which is right for pruning
+            // in-session but wrong for a 7-day record: a message naming a
+            // DIFFERENT model can reach this catch (a summarizer's fallback
+            // ladder, a wrapped upstream error) and be filed against the model
+            // that happened to be in hand. Observed doing exactly that —
+            // google/gemini-2.5-flash recorded as retired with the reason
+            // "qwen3-coder:480b was retired", which would have skipped a
+            // healthy model for a week. A 404/410 is unambiguous evidence
+            // about the request that just failed; nothing else is.
+            if (lastStatus === 404 || lastStatus === 410) {
+              this.health.noteRetired(
+                providerName,
+                adjustedRequest.model,
+                lastError?.message?.slice(0, 200) ?? `HTTP ${lastStatus}`,
+              );
+            }
             this.reportIncident({
               kind: "terminal",
               provider: providerName,

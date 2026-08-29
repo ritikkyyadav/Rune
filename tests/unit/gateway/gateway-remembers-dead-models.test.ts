@@ -144,4 +144,64 @@ describe("gateway remembers dead models across sessions", () => {
     await drain(gw.inferStream(request("openrouter", "live-model")));
     expect(live.calls).toBe(1);
   });
+
+  test("a gateway given no store touches no file — persistence is opt-in", async () => {
+    // Regression: the default used to be a store rooted in the real gear home,
+    // so every gateway built without one read and wrote a machine-global file.
+    // A live run in one process silently changed fallback behaviour in another,
+    // and 17 tests started failing depending on what the machine had learned.
+    const gw = new LlmGateway({
+      providers: {},
+      defaultProvider: "openrouter",
+      maxRetries: 0,
+      retryBaseMs: 1,
+    });
+    const dead = new CountingProvider("openrouter", modelGone);
+    gw.registerProvider(dead);
+
+    await drain(gw.inferStream(request("openrouter", "dead-model")));
+
+    // It still learns for this session...
+    expect(gw.getPersistedHealth().isRetired("openrouter", "dead-model")).toBe(true);
+    // ...and remembers nothing for the next one.
+    expect(new ProviderHealthStore(path).isRetired("openrouter", "dead-model")).toBe(false);
+  });
+
+  test("a 'retired' message with no 404/410 is NOT written to the record", async () => {
+    // Observed in the wild: google/gemini-2.5-flash filed as retired with the
+    // reason "qwen3-coder:480b was retired at 2026-07-15". A message naming a
+    // DIFFERENT model reached this path and was filed against whatever model
+    // was in hand, which would have skipped a healthy model for a week.
+    // In-session pruning may still trust the text; a 7-day record may not.
+    async function* textOnlyRetired(): AsyncGenerator<StreamEvent> {
+      throw new ApiError({
+        status: 500,
+        provider: "openrouter",
+        message: "qwen3-coder:480b was retired at 2026-07-15",
+      });
+    }
+    const health = new ProviderHealthStore(path);
+    const gw = new LlmGateway(
+      { providers: {}, defaultProvider: "openrouter", maxRetries: 0, retryBaseMs: 1 },
+      health,
+    );
+    gw.registerProvider(new CountingProvider("openrouter", textOnlyRetired));
+
+    await drain(gw.inferStream(request("openrouter", "some-healthy-model")));
+
+    expect(health.isRetired("openrouter", "some-healthy-model")).toBe(false);
+  });
+
+  test("a 404 IS written — unambiguous evidence about this request", async () => {
+    const health = new ProviderHealthStore(path);
+    const gw = new LlmGateway(
+      { providers: {}, defaultProvider: "openrouter", maxRetries: 0, retryBaseMs: 1 },
+      health,
+    );
+    gw.registerProvider(new CountingProvider("openrouter", modelGone));
+
+    await drain(gw.inferStream(request("openrouter", "dead-model")));
+
+    expect(health.isRetired("openrouter", "dead-model")).toBe(true);
+  });
 });

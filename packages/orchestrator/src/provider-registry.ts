@@ -14,6 +14,7 @@ import {
   CopilotProvider,
   CodexProvider,
   getStrategy,
+  ProviderHealthStore,
 } from "@gear/llm-gateway";
 import type {
   GatewayIncidentEvent,
@@ -26,6 +27,12 @@ import { PROVIDER_PRESETS, CUSTOM_PROVIDER_ID, maskKey, effectiveAuthMethods } f
 import type { CustomEndpoint, CredentialStore, StoredKey } from "@gear/shared";
 
 export interface BuildGatewayOpts {
+  /**
+   * Cross-session provider health. Defaults to the real store rooted in the
+   * gear home; pass an isolated one in tests so a run never reads or writes
+   * the machine it runs on.
+   */
+  health?: ProviderHealthStore;
   /** Active/default provider for the gateway. */
   provider: ProviderName;
   /** Saved keys by provider id (config + secrets + runtime, already merged). */
@@ -79,15 +86,22 @@ function resolveKey(
 export function buildGateway(opts: BuildGatewayOpts): LlmGateway {
   const env = opts.env ?? process.env;
   const disabled = opts.disabled ?? new Set<string>();
-  const gw = new LlmGateway({
-    providers: {},
-    defaultProvider: opts.provider,
-    maxRetries: opts.maxRetries ?? 3,
-    retryBaseMs: opts.retryBaseMs ?? 1000,
-    onIncident: opts.onIncident,
-    fallbackOrder: opts.fallbackOrder,
-    quotaPolicy: opts.quotaPolicy,
-  });
+  const gw = new LlmGateway(
+    {
+      providers: {},
+      defaultProvider: opts.provider,
+      maxRetries: opts.maxRetries ?? 3,
+      retryBaseMs: opts.retryBaseMs ?? 1000,
+      onIncident: opts.onIncident,
+      fallbackOrder: opts.fallbackOrder,
+      quotaPolicy: opts.quotaPolicy,
+    },
+    // Opt into cross-session provider health. This is the ONE place that should:
+    // it builds the gateway a real CLI session runs on, where remembering a dead
+    // model across restarts is the whole point. A gateway built anywhere else
+    // (tests, embedded uses) gets an ephemeral store and stays hermetic.
+    opts.health ?? new ProviderHealthStore(),
+  );
 
   const localBaseUrls = mergeLocalBaseUrls(opts);
 

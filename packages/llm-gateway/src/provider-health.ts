@@ -70,9 +70,27 @@ export class ProviderHealthStore {
   private data: HealthFile = { ...EMPTY, retired: [], capped: [] };
   private readonly path: string;
   private loaded = false;
+  // Overridden per-instance by ephemeral(); hence a property, not a method.
+  protected save: () => void = () => this.persist();
 
   constructor(path?: string) {
     this.path = path ?? defaultPath();
+  }
+
+  /**
+   * A store that remembers nothing beyond this object.
+   *
+   * The default for any gateway built without an explicit store. Persistence
+   * is a machine-global side effect and has to be asked for: a gateway that
+   * quietly reads and writes the user's home makes one process's live run
+   * change another's behaviour, and makes tests depend on the machine they run
+   * on. The CLI opts in; everything else gets this.
+   */
+  static ephemeral(): ProviderHealthStore {
+    const s = new ProviderHealthStore("");
+    s.loaded = true; // never read from disk
+    s.save = () => {}; // never write to disk
+    return s;
   }
 
   private load(): void {
@@ -92,7 +110,7 @@ export class ProviderHealthStore {
     }
   }
 
-  private save(): void {
+  private persist(): void {
     const now = Date.now();
     // Expiry is enforced on write as well as read, so the file cannot grow
     // without bound on a machine that never restarts.
