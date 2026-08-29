@@ -218,8 +218,11 @@ export function printReport(report: SuiteReport): void {
     );
   }
 
+  // Printed even when totalCost is 0, which is the normal case: eval runs ride
+  // subscription and free routes, so actual spend says nothing about how much
+  // work a task took. This is the figure the cost gate compares.
   if (report.totalListCost > 0) {
-    lines.push(
+    console.log(
       `  \x1b[2mMetered-equivalent: $${report.totalListCost.toFixed(4)} total · ` +
         `$${report.avgListCostPerTask.toFixed(4)}/task\x1b[0m`,
     );
@@ -294,6 +297,13 @@ export interface BaselineFile {
   model?: string;
   provider?: string;
   cleanPassRate?: number;
+  /**
+   * Metered-equivalent cost per task at the time the baseline was written.
+   * Optional because every baseline recorded before the meter existed lacks
+   * it — the cost gate treats its absence as "nothing to compare", never as
+   * zero, or the first run after this shipped would fail on a division.
+   */
+  avgListCostPerTask?: number;
   tasks?: Array<{ name: string; pass: boolean; throttled?: boolean }>;
 }
 

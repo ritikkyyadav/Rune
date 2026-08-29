@@ -27,6 +27,18 @@ import type { ModelSweepResult } from "./report";
 const DEFAULT_PROVIDER = "google";
 const DEFAULT_MODEL = "gemini-2.5-flash";
 
+/**
+ * Providers that authenticate from a stored OAuth credential rather than an
+ * env var — a ChatGPT or Copilot plan, logged in once with `gear login`.
+ *
+ * They were absent from the map below, and the map was also the allowlist, so
+ * `--real` refused to run on them at all: the suite could not measure the
+ * transport carrying most of this agent's real traffic. There is no key name
+ * to demand here; a missing login surfaces as an auth error on the first call,
+ * which is the same failure the env-var check exists to pre-empt.
+ */
+const SUBSCRIPTION_PROVIDERS = new Set(["codex", "copilot"]);
+
 /** Which env var holds the API key for each provider. */
 const PROVIDER_KEY_ENV: Record<string, string> = {
   anthropic: "ANTHROPIC_API_KEY",
@@ -151,12 +163,12 @@ async function main() {
 
   // ── Fail fast if --real is requested without the relevant API key. ──
   // Never touch the network or hang waiting on input.
-  if (real) {
+  if (real && !SUBSCRIPTION_PROVIDERS.has(provider)) {
     const keyEnv = PROVIDER_KEY_ENV[provider];
     if (!keyEnv) {
       console.error(
         `\n  \x1b[31mUnknown provider "${provider}".\x1b[0m Set GEAR_EVAL_PROVIDER to one of: ` +
-          `${Object.keys(PROVIDER_KEY_ENV).join(", ")}\n`,
+          `${[...Object.keys(PROVIDER_KEY_ENV), ...SUBSCRIPTION_PROVIDERS].join(", ")}\n`,
       );
       process.exit(1);
     }
