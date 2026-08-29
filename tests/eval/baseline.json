@@ -1,30 +1,50 @@
 {
-  "timestamp": "2026-06-19T18:15:06.744Z",
+  "timestamp": "2026-08-29T12:59:28.979Z",
   "mode": "real",
-  "model": "qwen3-coder-next",
-  "provider": "ollama-turbo",
-  "passRate": 0.72,
-  "cleanPassRate": 0.9473684210526315,
-  "passed": 18,
-  "measured": 19,
-  "throttled": 6,
-  "total": 25,
+  "model": "gpt-5.6-terra",
+  "provider": "codex",
+  "passRate": 0.7674418604651163,
+  "cleanPassRate": 0.7674418604651163,
+  "passed": 33,
+  "measured": 43,
+  "throttled": 0,
+  "total": 43,
   "totalCost": 0,
   "avgCostPerTask": 0,
-  "avgDurationMs": 9929.64,
-  "avgTurns": 0.8,
+  "totalListCost": 3.604177375,
+  "avgListCostPerTask": 0.0838180784883721,
+  "avgDurationMs": 36072.67441860465,
+  "avgTurns": 0.9069767441860465,
   "categories": [
     {
       "category": "core",
-      "passed": 7,
+      "passed": 11,
+      "total": 16,
+      "throttled": 0,
+      "passRate": 0.6875,
+      "cleanPassRate": 0.6875,
+      "avgCost": 0
+    },
+    {
+      "category": "comprehension",
+      "passed": 6,
       "total": 7,
+      "throttled": 0,
+      "passRate": 0.8571428571428571,
+      "cleanPassRate": 0.8571428571428571,
+      "avgCost": 0
+    },
+    {
+      "category": "fix-failing-test",
+      "passed": 5,
+      "total": 5,
       "throttled": 0,
       "passRate": 1,
       "cleanPassRate": 1,
       "avgCost": 0
     },
     {
-      "category": "comprehension",
+      "category": "multi-file-refactor",
       "passed": 4,
       "total": 4,
       "throttled": 0,
@@ -33,40 +53,282 @@
       "avgCost": 0
     },
     {
-      "category": "fix-failing-test",
-      "passed": 3,
-      "total": 3,
-      "throttled": 0,
-      "passRate": 1,
-      "cleanPassRate": 1,
-      "avgCost": 0
-    },
-    {
-      "category": "multi-file-refactor",
-      "passed": 3,
-      "total": 3,
-      "throttled": 0,
-      "passRate": 1,
-      "cleanPassRate": 1,
-      "avgCost": 0
-    },
-    {
       "category": "new-feature",
-      "passed": 1,
-      "total": 4,
-      "throttled": 2,
-      "passRate": 0.25,
-      "cleanPassRate": 0.5,
+      "passed": 2,
+      "total": 5,
+      "throttled": 0,
+      "passRate": 0.4,
+      "cleanPassRate": 0.4,
       "avgCost": 0
     },
     {
       "category": "tool-discipline",
-      "passed": 0,
-      "total": 4,
-      "throttled": 4,
-      "passRate": 0,
-      "cleanPassRate": 0,
+      "passed": 5,
+      "total": 6,
+      "throttled": 0,
+      "passRate": 0.8333333333333334,
+      "cleanPassRate": 0.8333333333333334,
       "avgCost": 0
+    }
+  ],
+  "tasks": [
+    {
+      "name": "read_and_grep",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "edit_with_hash",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "multi_turn_memory",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "permission_denied",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "audit_chain_integrity",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "infinite_loop_halts",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "tamper_detection",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "design_floor_written_page",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "spine_plan_before_write",
+      "category": "core",
+      "pass": false,
+      "throttled": false
+    },
+    {
+      "name": "spine_ask_on_ambiguous",
+      "category": "core",
+      "pass": false,
+      "throttled": false
+    },
+    {
+      "name": "spine_todos_survive_compaction",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "spine_handoff_on_error",
+      "category": "core",
+      "pass": false,
+      "throttled": false
+    },
+    {
+      "name": "long_horizon_feature",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "long_horizon_refactor",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "greenfield_nudge_fires",
+      "category": "core",
+      "pass": false,
+      "throttled": false
+    },
+    {
+      "name": "greenfield_clarify_first",
+      "category": "core",
+      "pass": false,
+      "throttled": false
+    },
+    {
+      "name": "comprehension_find_auth",
+      "category": "comprehension",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "comprehension_find_constant",
+      "category": "comprehension",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "comprehension_find_entry",
+      "category": "comprehension",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "comprehension_find_type",
+      "category": "comprehension",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "comprehension_find_dead_code",
+      "category": "comprehension",
+      "pass": false,
+      "throttled": false
+    },
+    {
+      "name": "comprehension_trace_writer",
+      "category": "comprehension",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "comprehension_search_code",
+      "category": "comprehension",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "fix_off_by_one",
+      "category": "fix-failing-test",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "fix_wrong_operator",
+      "category": "fix-failing-test",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "fix_missing_return",
+      "category": "fix-failing-test",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "fix_empty_reduce",
+      "category": "fix-failing-test",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "fix_wrong_default",
+      "category": "fix-failing-test",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "refactor_rename_function",
+      "category": "multi-file-refactor",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "refactor_rename_class",
+      "category": "multi-file-refactor",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "refactor_rename_constant",
+      "category": "multi-file-refactor",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "refactor_extract_constant",
+      "category": "multi-file-refactor",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "new_feature_validation_util",
+      "category": "new-feature",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "new_feature_logger_module",
+      "category": "new-feature",
+      "pass": false,
+      "throttled": false
+    },
+    {
+      "name": "new_feature_config_parser",
+      "category": "new-feature",
+      "pass": false,
+      "throttled": false
+    },
+    {
+      "name": "new_feature_rate_limiter",
+      "category": "new-feature",
+      "pass": false,
+      "throttled": false
+    },
+    {
+      "name": "new_feature_env_override",
+      "category": "new-feature",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "tool_discipline_read_before_edit",
+      "category": "tool-discipline",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "tool_discipline_hash_used",
+      "category": "tool-discipline",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "tool_discipline_no_blind_write",
+      "category": "tool-discipline",
+      "pass": false,
+      "throttled": false
+    },
+    {
+      "name": "tool_discipline_grep_before_edit",
+      "category": "tool-discipline",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "tool_discipline_no_read_thrash",
+      "category": "tool-discipline",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "tool_discipline_parallel_reads",
+      "category": "tool-discipline",
+      "pass": true,
+      "throttled": false
     }
   ]
 }
