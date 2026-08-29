@@ -1,18 +1,18 @@
-// ─── Activity rendering ───
+// --- Activity rendering ---
 // The single source of truth for how a turn reads on screen, shared by the live
 // stream and the session-resume replay so a resumed session looks exactly like
-// watching it happen. Both paths speak the flow grammar in ./flow — this module
+// watching it happen. Both paths speak the flow grammar in ./flow -- this module
 // only decides *which* facts of a tool call are worth a row, and reads those
 // facts out of the tool's own structured result rather than its raw blob.
 //
-//   ● Found it. The loop breaks on the wrong event.
-//     │ · grep  content_block_stop                            4 files
-//     │ └ src/streaming.ts:42 · 3 more
-//     │   edit  src/streaming.ts                      +6 -1 · 1 hunk
-//     │    42 - if (event.type === 'content_block_stop') break
-//     │    42 + if (event.type === 'content_block_stop') {
-//     │ ✗ run   npx vitest run                                    2.6s
-//     │ └ 1 failed, 24 passed
+//   o Found it. The loop breaks on the wrong event.
+//     | | grep  content_block_stop                            4 files
+//     | + src/streaming.ts:42 | 3 more
+//     |   edit  src/streaming.ts                      +6 -1 | 1 hunk
+//     |    42 - if (event.type === 'content_block_stop') break
+//     |    42 + if (event.type === 'content_block_stop') {
+//     | x run   npx vitest run                                    2.6s
+//     | + 1 failed, 24 passed
 //
 // Note which rows carry a mark. `grep` and `edit` do not announce that they
 // worked, because they almost always do; their receipts carry the news. The
@@ -20,16 +20,17 @@
 // failed, so both still mean something by the time you reach them.
 //
 // renderToolActivity renders ONE call and is used by both paths. Only the batch
-// replay renderer (renderTranscript) — which can see the whole list — collapses
+// replay renderer (renderTranscript) -- which can see the whole list -- collapses
 // a run of reads into one row; the live stream cannot look ahead.
 
 import { faint } from "./theme";
+import { glyph } from "./glyphs";
 import { truncate } from "./render";
 import { renderMarkdown } from "./markdown";
 import * as F from "./flow";
 
 /** The assistant-narration marker. */
-export const STEP = "●";
+export const STEP = glyph("live");
 
 export interface ToolActivityView {
   toolName: string;
@@ -72,7 +73,7 @@ function tryJson(raw: string): Record<string, unknown> | null {
   }
 }
 
-/** Non-empty result lines — a cheap proxy for grep match / output counts. */
+/** Non-empty result lines -- a cheap proxy for grep match / output counts. */
 function nonEmptyLines(result: string): string[] {
   return result
     .split("\n")
@@ -91,33 +92,35 @@ function compactArgs(args: Record<string, unknown>): string {
   }
 }
 
-/** The `● <text>` head that opens an assistant narration step (first line only). */
+/** The `o <text>` head that opens an assistant narration step (first line only). */
 export function stepHead(line: string): string {
   return F.said(line).split("\n")[0] ?? "";
 }
 
 /**
  * An assistant narration block: one dot, then prose aligned beneath it. The
- * model writes Markdown mid-turn as readily as it does in its final answer — a
- * numbered plan, a path in backticks — so this renders it rather than printing
+ * model writes Markdown mid-turn as readily as it does in its final answer -- a
+ * numbered plan, a path in backticks -- so this renders it rather than printing
  * the markup, which is what a reader would otherwise have to decode by eye.
  */
 export function stepBlock(prose: string): string[] {
-  const body = renderMarkdown(prose, { width: F.proseWidth(), indent: F.BODY });
+  // The TOTAL line budget -- renderMarkdown subtracts F.BODY itself. See
+  // responseBlock(): passing proseWidth() here paid for the indent twice.
+  const body = renderMarkdown(prose, { width: F.measure(), indent: F.BODY });
   return body.length ? F.dot(body) : [];
 }
 
-/** A progress paragraph. The agent's intent reads in its own voice — there is
+/** A progress paragraph. The agent's intent reads in its own voice -- there is
  *  no "Plan:" label, because a sentence that needs a label is not a sentence. */
 export function planBlock(prose: string): string[] {
   const clean = prose.trim().replace(/^plan\s*:\s*/i, "");
   return clean ? stepBlock(clean) : [];
 }
 
-// ─── Tool grammar ───
+// --- Tool grammar ---
 // Every call renders the same shape: a rail, a status, a four-column verb, the
 // thing it acted on, and the receipt hard against the right edge. Whatever the
-// call produced that the reader actually needs — a diff, a command's output —
+// call produced that the reader actually needs -- a diff, a command's output --
 // hangs beneath it on the same rail, never in a box of its own. Nothing here
 // paraphrases: the command shown is the command run, the count shown is the
 // count the tool reported.
@@ -179,7 +182,7 @@ export function isVerificationCommand(command: string): boolean {
   );
 }
 
-/** `2.6s` / `840ms` — a duration only when the harness actually timed the call. */
+/** `2.6s` / `840ms` -- a duration only when the harness actually timed the call. */
 function elapsed(ms?: number): string {
   if (ms == null || !Number.isFinite(ms) || ms < 0) return "";
   return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
@@ -188,7 +191,7 @@ function elapsed(ms?: number): string {
 /**
  * The one-line outcome of a command: the runner's own tally when it printed
  * one, else the last line it wrote. Scanned from the end, because a runner
- * states its verdict last and its per-file counts first — reading forward finds
+ * states its verdict last and its per-file counts first -- reading forward finds
  * `Test Files 1 failed | 1 passed` and reports it as the result.
  */
 export function commandOutcome(output: string): string {
@@ -230,7 +233,7 @@ function failedCall(v: ToolActivityView, name: string): string {
 }
 
 /**
- * Render one completed tool call. The default is a single row — the whole point
+ * Render one completed tool call. The default is a single row -- the whole point
  * of the receipt column is that most work needs no more than that. Two calls
  * earn more: an edit always shows its diff, and a command that failed or was a
  * check always shows its real output, because those are the two moments where a
@@ -285,7 +288,7 @@ export function renderToolActivity(v: ToolActivityView): string {
                 : `${total} match${total === 1 ? "" : "es"}`,
         }),
       ];
-      // Where the first hit is beats how many there were — that is the line the
+      // Where the first hit is beats how many there were -- that is the line the
       // reader is about to open.
       const first = matches[0];
       if (first) {
@@ -293,7 +296,7 @@ export function renderToolActivity(v: ToolActivityView): string {
         rows.push(
           F.toolNote(
             `${listingPath(String(first.file ?? ""))}:${first.line_number ?? "?"}` +
-              (rest > 0 ? ` · ${rest} more` : ""),
+              (rest > 0 ? ` | ${rest} more` : ""),
           ),
         );
       }
@@ -357,7 +360,7 @@ export function renderToolActivity(v: ToolActivityView): string {
         ? "timed out"
         : commandOutcome(body) || (failed ? `exit ${exit}` : "");
       // Where the green tick gets spent. A command that *checked* something and
-      // came back clean is the one routine outcome worth announcing — it is the
+      // came back clean is the one routine outcome worth announcing -- it is the
       // only row on the rail that answers "is it actually right?". A command
       // that merely ran takes the neutral mark like every other call.
       const checked = isVerificationCommand(command);
@@ -433,12 +436,12 @@ export function renderToolActivity(v: ToolActivityView): string {
     }
 
     default:
-      // MCP / unknown tool — its own name, and whatever its arguments say.
+      // MCP / unknown tool -- its own name, and whatever its arguments say.
       return F.toolRow({ name, arg: compactArgs(v.args), metric: elapsed(v.durationMs) });
   }
 }
 
-/** Best-effort subject for a failed call (arguments only — the result is an error). */
+/** Best-effort subject for a failed call (arguments only -- the result is an error). */
 function compactTarget(v: ToolActivityView): string {
   switch (v.toolName) {
     case "read_file":
@@ -498,7 +501,7 @@ export function renderTranscript(lines: TranscriptLineView[]): string {
       out.push(...stepBlock(ln.text));
       i++;
     } else if (ln.role === "note") {
-      out.push(`  ${faint(`— ${ln.text} —`)}`);
+      out.push(`  ${faint(`-- ${ln.text} --`)}`);
       i++;
     } else if (ln.role === "tool") {
       // Collapse a run of successful reads into one count line.

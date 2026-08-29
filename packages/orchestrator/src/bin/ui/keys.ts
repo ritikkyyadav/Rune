@@ -1,4 +1,4 @@
-// ─── Raw-mode key parser ───
+// --- Raw-mode key parser ---
 // Pure: turns a decoded stdin chunk into a list of key events. Bracketed-paste is
 // surfaced as paste-start/paste-end markers so the controller can accumulate a
 // paste that spans multiple chunks. Everything here is unit-testable.
@@ -27,7 +27,7 @@ export type Key =
 
 const CSI = "\x1b[";
 
-// Recognised CSI escape sequences → key (the part after ESC[).
+// Recognised CSI escape sequences -> key (the part after ESC[).
 const CSI_KEYS: Record<string, Key> = {
   A: { type: "up" },
   B: { type: "down" },
@@ -35,7 +35,7 @@ const CSI_KEYS: Record<string, Key> = {
   D: { type: "left" },
   H: { type: "home" },
   F: { type: "end" },
-  Z: { type: "shift-tab" }, // back-tab — drives the permission-mode cycle
+  Z: { type: "shift-tab" }, // back-tab -- drives the permission-mode cycle
   "1~": { type: "home" },
   "7~": { type: "home" },
   "4~": { type: "end" },
@@ -48,7 +48,7 @@ const CSI_KEYS: Record<string, Key> = {
 };
 
 function ctrlName(code: number): string {
-  // 1..26 → a..z
+  // 1..26 -> a..z
   return String.fromCharCode(code + 96);
 }
 
@@ -59,13 +59,13 @@ export function parseKeys(data: string): Key[] {
     const ch = data[i]!;
     const code = data.charCodeAt(i);
 
-    // ── ESC / CSI sequences ──
+    // -- ESC / CSI sequences --
     if (ch === "\x1b") {
-      // ── OSC replies (ESC ] … BEL | ESC ] … ESC \) ──
+      // -- OSC replies (ESC ] ... BEL | ESC ] ... ESC \) --
       // The startup color probe (OSC 10/11) waits 120ms; a slower terminal's
       // reply lands here in the key stream instead. Parsing it as Esc + typed
-      // junk both cancels whatever the user was doing and types "11;rgb:…"
-      // into the composer — so the whole sequence is consumed silently. An
+      // junk both cancels whatever the user was doing and types "11;rgb:..."
+      // into the composer -- so the whole sequence is consumed silently. An
       // unterminated OSC at the end of the chunk is swallowed too: the tail
       // of a split reply is worse as fake keystrokes than as a dropped reply.
       if (data[i + 1] === "]") {
@@ -91,7 +91,7 @@ export function parseKeys(data: string): Key[] {
           if (/[A-Za-z~]/.test(c)) break;
           j++;
         }
-        // ── Mouse (wheel → scroll) ──
+        // -- Mouse (wheel -> scroll) --
         // SGR form (ESC [ < b ; x ; y M|m) when ?1006h is honoured; legacy X10
         // (ESC [ M b x y) otherwise. Only the wheel is surfaced (buttons 64/65, plus
         // modifier-shifted variants); clicks/drags are consumed silently so their
@@ -120,7 +120,7 @@ export function parseKeys(data: string): Key[] {
           i = j + 1;
           continue;
         }
-        // Unknown CSI — skip it whole.
+        // Unknown CSI -- skip it whole.
         i = j + 1;
         continue;
       }
@@ -130,13 +130,13 @@ export function parseKeys(data: string): Key[] {
         i++;
         continue;
       }
-      // ESC followed by something we don't model — treat as Escape, continue.
+      // ESC followed by something we don't model -- treat as Escape, continue.
       keys.push({ type: "esc" });
       i++;
       continue;
     }
 
-    // ── Control bytes ──
+    // -- Control bytes --
     if (ch === "\r" || ch === "\n") {
       keys.push({ type: "enter" });
       i++;
@@ -162,7 +162,7 @@ export function parseKeys(data: string): Key[] {
       continue;
     }
 
-    // ── Printable (handle astral/code-point chars) ──
+    // -- Printable (handle astral/code-point chars) --
     const cp = data.codePointAt(i)!;
     const chr = String.fromCodePoint(cp);
     keys.push({ type: "char", value: chr });

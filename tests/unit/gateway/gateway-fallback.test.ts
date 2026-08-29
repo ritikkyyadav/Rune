@@ -74,12 +74,13 @@ const req: InferenceRequest = {
   stream: true,
 };
 
-function gateway(): LlmGateway {
+function gateway(quotaPolicy?: "stop" | "degrade"): LlmGateway {
   return new LlmGateway({
     providers: {},
     defaultProvider: "google",
     maxRetries: 1,
     retryBaseMs: 1,
+    ...(quotaPolicy ? { quotaPolicy } : {}),
   });
 }
 
@@ -243,9 +244,13 @@ describe("LlmGateway model-gone pruning", () => {
   });
 });
 
-describe("LlmGateway usage-cap cooldown", () => {
+// These exercise the cooldown/self-heal machinery, which only produces a
+// fallback under `quotaPolicy: "degrade"`. Under the default ("stop") a cap
+// ends the run instead — see quota-stop.test.ts. The cooldown itself still
+// runs in both modes; only what happens next differs.
+describe("LlmGateway usage-cap cooldown (degrade mode)", () => {
   test("a plan-cap 429 cools the provider — next call skips it instantly", async () => {
-    const gw = gateway();
+    const gw = gateway("degrade");
     const google = new FakeProvider("google", fail429UsageCap);
     const openrouter = new FakeProvider("openrouter", okText("via fallback"));
     gw.registerProvider(google);
@@ -273,7 +278,7 @@ describe("LlmGateway usage-cap cooldown", () => {
   });
 
   test("when everything is unusable, the primary is retried alone and errors cleanly (self-heal path)", async () => {
-    const gw = gateway();
+    const gw = gateway("degrade");
     const google = new FakeProvider("google", fail429UsageCap);
     gw.registerProvider(google);
 

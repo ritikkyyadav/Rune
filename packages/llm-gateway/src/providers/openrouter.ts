@@ -51,7 +51,19 @@ export class OpenRouterProvider implements LlmProvider {
   async listModels(): Promise<ModelInfo[]> {
     const res = await fetch(`${OPENROUTER_BASE_URL}/models`);
     if (!res.ok) throw new Error(`OpenRouter /models failed (${res.status})`);
-    const json = (await res.json()) as { data?: { id: string; name?: string }[] };
-    return (json.data ?? []).map((m) => ({ id: m.id, label: m.name ?? m.id, live: true }));
+    const json = (await res.json()) as {
+      data?: { id: string; name?: string; context_length?: number }[];
+    };
+    return (json.data ?? []).map((m) => ({
+      id: m.id,
+      label: m.name ?? m.id,
+      live: true,
+      // The catalog knows every model's real window, including stealth ids the
+      // orchestrator's static table can't recognize. Carrying it costs nothing
+      // (this fetch already happens) and is the difference between compacting
+      // a 256k model at 70k and leaving it alone.
+      ...(typeof m.context_length === "number" &&
+        m.context_length > 0 && { contextLimit: m.context_length }),
+    }));
   }
 }

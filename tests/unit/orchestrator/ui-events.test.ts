@@ -9,7 +9,7 @@ describe("ui/events formatNotice", () => {
     const out = stripAnsi(formatNotice(msg));
     expect(out).toContain("ollama-turbo/glm-4.7");
     expect(out).toContain("openrouter/qwen/qwen3-coder:free");
-    expect(out).toContain("→"); // the switch is shown as an arrow, not a sentence
+    expect(out).toContain("->"); // the switch is shown as an arrow, not a sentence
     expect(out).toContain("rate limited");
     expect(out).not.toContain("Switching to"); // the verbose phrasing is gone
     expect(out).not.toContain("unavailable");
@@ -20,7 +20,7 @@ describe("ui/events formatNotice", () => {
       formatNotice("openai/gpt-4o unavailable. Switching to google/gemini-2.5-flash…"),
     );
     expect(out).toContain("openai/gpt-4o");
-    expect(out).toContain("→");
+    expect(out).toContain("->");
     expect(out).toContain("google/gemini-2.5-flash");
   });
 

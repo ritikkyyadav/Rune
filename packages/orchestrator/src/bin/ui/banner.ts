@@ -1,23 +1,24 @@
-// ─── Gear identity header ───
+// --- Gear identity header ---
 // Four lines and no logo. A rule with the name set into it, where you are, what
 // this agent is allowed to do to your machine, and a closing rule. That is the
-// whole header — a mark would only tell you something the window title already
+// whole header -- a mark would only tell you something the window title already
 // says, and a terminal that opens with artwork has spent its first screen on
 // itself instead of on your work.
 //
-//   ──── gear 0.3.0 ─────────────────────────────────────────────
-//     alan · gear/phase-0-stabilize · 3 files changed
-//     claude-opus-5 · 1st gear — every action asks first
-//   ─────────────────────────────────────────────────────────────
+//   ---- gear 0.3.0 ---------------------------------------------
+//     alan | gear/phase-0-stabilize | 3 files changed
+//     claude-opus-5 | 1st gear -- every action asks first
+//   -------------------------------------------------------------
 
 import * as os from "os";
 import { execFile, execFileSync } from "child_process";
 import { bold, text, brand } from "./theme";
+import { glyph } from "./glyphs";
 import { header as flowHeader } from "./flow";
 import { PRODUCT_NAME } from "./brand";
 
 /** Explicit text presentation. Never use the coloured emoji gear. */
-export const GEAR_MARK = "⚙︎";
+export const GEAR_MARK = glyph("phase");
 
 /** The supplied Gear mark has exactly nine teeth. */
 export const GEAR_TOOTH_COUNT = 9;
@@ -31,7 +32,7 @@ function shortPath(p: string): string {
   return p.startsWith(home) ? "~" + p.slice(home.length) : p;
 }
 
-/** The folder you are actually in — the last segment, which is the part you
+/** The folder you are actually in -- the last segment, which is the part you
  *  recognise. The full path is one `pwd` away and does not belong in a header. */
 function folderName(p: string): string {
   const parts = shortPath(p).split("/").filter(Boolean);
@@ -52,7 +53,7 @@ export interface BannerOptions {
   sessionId?: string;
   /** What proceeds without asking, in the gear's own words. */
   scope?: string;
-  /** The guardrail clause after the em dash — what still asks. */
+  /** The guardrail clause after the em dash -- what still asks. */
   caution?: string;
   /** Uncommitted files in the tree, when the workspace is a git repo. */
   dirtyFiles?: number;
@@ -91,7 +92,7 @@ export const __bannerCachesForTest = {
  * Git fact with a never-blocking steady state. The FIRST resolve per
  * workspace is synchronous so the first frame is right; every render after
  * that returns the cached value instantly, and a value older than `ttlMs`
- * kicks one background refresh. The header renders every frame — a
+ * kicks one background refresh. The header renders every frame -- a
  * synchronous `git status` on that path froze the UI for up to 400ms every
  * two seconds on large repos.
  */
@@ -138,7 +139,7 @@ function cachedGitFact<T>(
   return value;
 }
 
-/** Current branch, refreshed in the background every few seconds — switching
+/** Current branch, refreshed in the background every few seconds -- switching
  *  branches mid-session must reach the header without a restart. */
 function workspaceBranch(workspace: string): string {
   return cachedGitFact(
@@ -193,7 +194,7 @@ export function renderBanner(opts: BannerOptions): string {
     ...bannerBadges(opts),
   ]
     .filter(Boolean)
-    .join(" · ");
+    .join(" | ");
 
   return flowHeader({
     name: PRODUCT_NAME.toLowerCase(),
@@ -203,7 +204,7 @@ export function renderBanner(opts: BannerOptions): string {
     state: state || undefined,
     model: [opts.modelLabel || opts.model, opts.effort ? `${opts.effort} effort` : ""]
       .filter(Boolean)
-      .join(" · "),
+      .join(" | "),
     scope: opts.scope,
     caution: opts.caution,
   });

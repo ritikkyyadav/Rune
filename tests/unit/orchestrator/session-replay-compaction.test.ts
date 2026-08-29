@@ -14,7 +14,10 @@ import { describe, test, expect, afterAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { eventsToMessages } from "../../../packages/orchestrator/src/session-replay";
+import {
+  eventsToMessages,
+  messageToAssistantPayload,
+} from "../../../packages/orchestrator/src/session-replay";
 import { SessionManager } from "../../../packages/shared/src/session";
 import type { SessionEvent } from "../../../packages/shared/src/session";
 
@@ -30,6 +33,81 @@ function firstText(content: { type: string; text?: string }[]): string {
 }
 
 describe("eventsToMessages — compaction replay", () => {
+  test("repairs a historical tool call left open by an aborted run", () => {
+    const events: Ev[] = [
+      ev(1, "user_msg", { content: "inspect x" }),
+      ev(2, "assistant_msg", {
+        content: "",
+        toolUses: [{ callId: "call_open", toolName: "read_file", toolInput: { path: "x" } }],
+      }),
+      ev(3, "system_note", { content: "agent loop terminated: Infinite loop detected" }),
+      ev(4, "user_msg", { content: "resume" }),
+    ];
+
+    const messages = eventsToMessages(events);
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "tool", "user"]);
+    expect(messages[2]?.content[0]).toMatchObject({
+      type: "tool_result",
+      toolCallId: "call_open",
+      isError: true,
+    });
+  });
+
+  test("omits an orphan result from the provider-visible replay", () => {
+    const messages = eventsToMessages([
+      ev(1, "user_msg", { content: "hello" }),
+      ev(2, "tool_result", { callId: "missing", content: "orphan" }),
+    ]);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.role).toBe("user");
+  });
+
+  test("round-trips exact provider reasoning state in block order", () => {
+    const payload = messageToAssistantPayload({
+      role: "assistant",
+      content: [
+        {
+          type: "redacted_thinking",
+          provider: "codex",
+          data: JSON.stringify({ type: "reasoning", id: "rs_1", encrypted_content: "enc" }),
+        },
+        {
+          type: "tool_use",
+          toolCallId: "call_1",
+          toolName: "read_file",
+          toolInput: { path: "x" },
+        },
+      ],
+    });
+    const messages = eventsToMessages([
+      ev(1, "assistant_msg", payload),
+      ev(2, "tool_result", { callId: "call_1", content: "ok" }),
+    ]);
+    expect(messages[0]?.content.map((block) => block.type)).toEqual([
+      "redacted_thinking",
+      "tool_use",
+    ]);
+    expect(messages[1]?.content[0]).toMatchObject({
+      type: "tool_result",
+      toolCallId: "call_1",
+    });
+  });
+
+  test("drops legacy Codex tool protocol that has no persisted reasoning state", () => {
+    const messages = eventsToMessages(
+      [
+        ev(1, "assistant_msg", {
+          content: "checking",
+          toolUses: [{ callId: "old", toolName: "read_file", toolInput: { path: "x" } }],
+        }),
+        ev(2, "tool_result", { callId: "old", content: "legacy output" }),
+      ],
+      { dropLegacyToolProtocol: true },
+    );
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.content).toEqual([{ type: "text", text: "checking" }]);
+  });
+
   test("a compaction event collapses all prior messages into one summary", () => {
     const events: Ev[] = [
       ev(1, "user_msg", { content: "hello" }),

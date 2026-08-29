@@ -1,13 +1,13 @@
-// ─── /model tree picker — pure data + line rendering ───
-// The clutter fix for many providers × many models: /model navigates a tree
+// --- /model tree picker -- pure data + line rendering ---
+// The clutter fix for many providers x many models: /model navigates a tree
 // instead of dumping one flat list.
 //
-//   Level 1 · providers   — only the ones actually configured (key, endpoint,
+//   Level 1 | providers   -- only the ones actually configured (key, endpoint,
 //                           or active), plus local runtimes (discoverable).
-//   Level 2 · accounts    — the real access paths for the chosen provider:
+//   Level 2 | accounts    -- the real access paths for the chosen provider:
 //                           saved key, env key, local endpoint, custom
 //                           endpoint. Skipped when only one path exists.
-//   Level 3 · models      — what's reachable under that account: live-listed
+//   Level 3 | models      -- what's reachable under that account: live-listed
 //                           from local runtimes (/api/tags, /models), the
 //                           curated preset list otherwise. A plain number
 //                           switches this session; `d<n>` sets the startup
@@ -20,20 +20,21 @@ import type { ProviderPreset, CustomEndpoint, LastModel } from "@gear/shared";
 import { CUSTOM_PROVIDER_ID, maskKey } from "@gear/shared";
 import type { ProviderStatusRow } from "../../provider-registry";
 import { text, muted, faint, accent, info, warn, ok } from "./theme";
+import { glyph } from "./glyphs";
 
-// ── Level 1: providers ──
+// -- Level 1: providers --
 
 export interface ProviderChoice {
   id: string;
   label: string;
-  /** Themed one-glance state: `● active · key saved`, `localhost:11434`, … */
+  /** Themed one-glance state: `o active | key saved`, `localhost:11434`, ... */
   hint: string;
   local?: boolean;
 }
 
 /**
  * The providers worth showing: anything with a usable access path (key saved,
- * env key, custom endpoint), every local runtime (reachable without a key —
+ * env key, custom endpoint), every local runtime (reachable without a key --
  * kept discoverable), and whatever is currently active. Disabled providers
  * (`/providers off`) stay hidden unless active. Active first, then cloud in
  * preset order, then local, then the custom endpoint.
@@ -52,27 +53,27 @@ export function providerChoices(
 
   const hintFor = (r: ProviderStatusRow): string => {
     const bits: string[] = [];
-    if (r.active) bits.push(ok("● active"));
+    if (r.active) bits.push(ok(`${glyph("live")} active`));
     if (r.id === CUSTOM_PROVIDER_ID && custom) {
-      bits.push(muted(`${hostOf(custom.baseUrl)} · ${custom.model}`));
+      bits.push(muted(`${hostOf(custom.baseUrl)} | ${custom.model}`));
     } else if (r.local) {
       bits.push(muted(hostOf(r.endpoint ?? "")));
     } else if (r.source === "oauth") {
-      bits.push(ok("oauth · signed in") + (r.keyCount > 0 ? faint(" · +keys") : ""));
+      bits.push(ok("oauth | signed in") + (r.keyCount > 0 ? faint(" | +keys") : ""));
     } else if (r.source === "keychain") {
-      bits.push(muted(`key · keychain ${r.masked}`.trim()));
+      bits.push(muted(`key | keychain ${r.masked}`.trim()));
     } else if (r.source === "saved") {
       const preset = presetFor(r.id);
       const envAlso = preset?.envVar && env[preset.envVar];
       bits.push(
         muted(`key saved ${r.masked}`) +
-          (r.keyCount > 1 ? faint(` · ${r.keyCount} keys`) : "") +
-          (envAlso ? faint(" · +env") : ""),
+          (r.keyCount > 1 ? faint(` | ${r.keyCount} keys`) : "") +
+          (envAlso ? faint(" | +env") : ""),
       );
     } else if (r.source === "env") {
       bits.push(muted(`key env ${presetFor(r.id)?.envVar ?? ""}`.trim()));
     }
-    return bits.join(faint(" · "));
+    return bits.join(faint(" | "));
   };
 
   const order = (r: ProviderStatusRow): number =>
@@ -89,7 +90,7 @@ export function providerChoices(
     }));
 }
 
-// ── Level 2: accounts / endpoints ──
+// -- Level 2: accounts / endpoints --
 
 export interface AccountChoice {
   kind: "oauth" | "keychain" | "key" | "env" | "endpoint" | "custom";
@@ -119,7 +120,7 @@ export function accountChoices(
       {
         kind: "custom",
         label: custom.label ?? "Custom endpoint",
-        detail: `${custom.baseUrl} · ${custom.model}`,
+        detail: `${custom.baseUrl} | ${custom.model}`,
         active: true,
       },
     ];
@@ -133,15 +134,15 @@ export function accountChoices(
   const out: AccountChoice[] = [];
 
   // The BYOP secure-store credential the gateway resolved (OAuth login or a
-  // keychain-held key) — always the one on the wire when present.
+  // keychain-held key) -- always the one on the wire when present.
   if (row.source === "oauth" || row.source === "keychain") {
     out.push({
       kind: row.source,
-      label: row.source === "oauth" ? "OAuth account" : "API key · keychain",
+      label: row.source === "oauth" ? "OAuth account" : "API key | keychain",
       detail:
         row.source === "oauth"
           ? row.authMethod === "device"
-            ? "signed in · device flow"
+            ? "signed in | device flow"
             : "signed in"
           : row.masked || "secure store",
       active: true,
@@ -153,21 +154,21 @@ export function accountChoices(
     for (const k of row.savedKeys) {
       out.push({
         kind: "key",
-        label: k.label ? `API key · ${k.label}` : "API key",
-        detail: `${k.masked}${k.addedAt ? ` · added ${k.addedAt.slice(0, 10)}` : ""}`,
+        label: k.label ? `API key | ${k.label}` : "API key",
+        detail: `${k.masked}${k.addedAt ? ` | added ${k.addedAt.slice(0, 10)}` : ""}`,
         entryId: k.id,
         active: row.source === "saved" && k.active,
       });
     }
   } else if (row.source === "saved") {
-    out.push({ kind: "key", label: "API key · saved", detail: row.masked, active: true });
+    out.push({ kind: "key", label: "API key | saved", detail: row.masked, active: true });
   }
 
   const envKey = preset?.envVar ? env[preset.envVar] : undefined;
   if (envKey) {
     out.push({
       kind: "env",
-      label: "API key · env",
+      label: "API key | env",
       detail: `${preset!.envVar} ${maskKey(envKey)}`,
       active: row.source === "env",
     });
@@ -175,7 +176,7 @@ export function accountChoices(
   return out;
 }
 
-// ── Level 3: models ──
+// -- Level 3: models --
 
 export interface ModelChoice {
   id: string;
@@ -185,7 +186,7 @@ export interface ModelChoice {
 }
 
 export interface ModelChoiceOpts {
-  /** Live-listed ids (local runtimes); null/undefined → fall back to the preset list. */
+  /** Live-listed ids (local runtimes); null/undefined -> fall back to the preset list. */
   live?: string[] | null;
   custom?: CustomEndpoint;
   current: { provider: string; model: string };
@@ -215,10 +216,10 @@ export function modelChoices(
 }
 
 /**
- * Live model listing for local runtimes — what this endpoint can actually
+ * Live model listing for local runtimes -- what this endpoint can actually
  * serve, matching the tree's "only what's available under the selected
  * account" rule. Ollama speaks `/api/tags`; LM Studio (openai-compat) speaks
- * `GET {base}/models`. Best-effort: unreachable/odd hosts → null (the caller
+ * `GET {base}/models`. Best-effort: unreachable/odd hosts -> null (the caller
  * falls back to the curated list). Never throws.
  */
 export async function fetchLiveModels(
@@ -247,23 +248,23 @@ export async function fetchLiveModels(
   }
 }
 
-// ── Line rendering (shared by every level) ──
+// -- Line rendering (shared by every level) --
 
 function hostOf(url: string): string {
   return url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
 }
 
-/** `current ······ openai/gpt-5` readout rows for the tree header. */
+/** `current |||||| openai/gpt-5` readout rows for the tree header. */
 export function treeHeadline(
   current: { provider: string; model: string },
   def: LastModel | null,
 ): string[] {
   const rows = [
-    `  ${muted("CURRENT")} ${faint("····")} ${info(`${current.provider}/${current.model}`)}`,
+    `  ${muted("CURRENT")} ${faint("||||")} ${info(`${current.provider}/${current.model}`)}`,
   ];
   if (def)
     rows.push(
-      `  ${muted("DEFAULT")} ${faint("····")} ${text(`${def.provider}/${def.model}`)} ${accent("◆")}`,
+      `  ${muted("DEFAULT")} ${faint("||||")} ${text(`${def.provider}/${def.model}`)} ${accent(glyph("phase"))}`,
     );
   return rows;
 }
@@ -274,14 +275,14 @@ export function formatProviderLine(n: number, c: ProviderChoice): string {
 }
 
 export function formatAccountLine(n: number, a: AccountChoice): string {
-  const mark = a.active ? ` ${ok("●")}` : "";
+  const mark = a.active ? ` ${ok(glyph("live"))}` : "";
   return `    ${warn(`[${n}]`)} ${text(a.label)}  ${muted(a.detail)}${mark}`;
 }
 
 export function formatModelLine(n: number, m: ModelChoice): string {
   const marks = [
-    m.current ? ` ${ok("◂ current")}` : "",
-    m.isDefault ? ` ${accent("◆ default")}` : "",
+    m.current ? ` ${ok("< current")}` : "",
+    m.isDefault ? ` ${accent(`${glyph("phase")} default`)}` : "",
   ].join("");
   const id = m.label !== m.id ? `  ${faint(m.id)}` : "";
   return `    ${warn(`[${n}]`)} ${text(m.label)}${id}${marks}`;

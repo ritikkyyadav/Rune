@@ -33,6 +33,18 @@ export interface CommandVerifierConfig {
   commands?: string[];
   /** Per-command timeout in ms. Default 120_000. */
   timeoutMs?: number;
+  /**
+   * Called once per command the verifier actually ran, with the exit code IT
+   * read. Wired by the Engine to the same CheckLog the `bash` tool feeds.
+   *
+   * Without this there were two verification systems that never spoke: the
+   * end-of-turn verifier ran the project's checks through its own spawner,
+   * while the evidence ledger only ever saw checks the MODEL chose to run.
+   * A criterion therefore could not cite the very checks the harness ran on
+   * its behalf. Both now write to one log, so a rung can be derived from
+   * either source.
+   */
+  onCheck?: (run: { command: string; passed: boolean; summary?: string }) => void;
 }
 
 // ─── Package-manager / runner detection ───
@@ -314,6 +326,14 @@ export class CommandVerifier implements Verifier {
     }
 
     const reports: string[] = [];
+    /** Report every command we ran to the check log — pass or fail, always. */
+    const note = (command: string, passed: boolean, summary?: string): void => {
+      try {
+        this.config.onCheck?.({ command, passed, summary });
+      } catch {
+        // Evidence bookkeeping must never break verification itself.
+      }
+    };
     for (const cmd of commands) {
       if (signal?.aborted) break;
       const { exitCode, output, timedOut } = await runCommand(
@@ -323,13 +343,16 @@ export class CommandVerifier implements Verifier {
         signal,
       );
       if (timedOut) {
+        note(cmd, false, `timed out after ${timeoutMs}ms`);
         reports.push(`$ ${cmd}\n[timed out after ${timeoutMs}ms]`);
         return { passed: false, ran: true, report: reports.join("\n\n") };
       }
       if (exitCode !== 0) {
+        note(cmd, false, `exit ${exitCode}`);
         reports.push(`$ ${cmd}  (exit ${exitCode})\n${truncate(output, 2000)}`);
         return { passed: false, ran: true, report: reports.join("\n\n") };
       }
+      note(cmd, true, "ok");
       reports.push(`$ ${cmd}  (ok)`);
     }
 

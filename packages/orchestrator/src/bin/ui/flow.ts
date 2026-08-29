@@ -17,7 +17,7 @@
 // else is one of three greys. If a value is unknown it is absent -- no row here
 // ever pads itself with a reassuring guess.
 
-import { bold, danger, faint, info, muted, ok, text, warn } from "./theme";
+import { bold, danger, faint, info, muted, ok, quiet, text, warn } from "./theme";
 import { glyph } from "./glyphs";
 import { termWidth, truncate, visLen, wrap } from "./render";
 
@@ -95,14 +95,33 @@ export function surfaceWidth(): number {
 }
 
 /**
- * Columns available to *prose*. Sentences are capped well below the data
- * measure and stay there on a wide window, because a 120-column sentence is
- * genuinely harder to read than an 84-column one -- the eye loses the line on
- * the way back. Code and paths have no such problem, which is why they are
- * measured separately.
+ * Columns available to *prose*: the same measure as everything else, less the
+ * body indent, so a sentence ends flush with the hairline above it and the
+ * rails below it.
+ *
+ * This used to stop at 88 on the argument that a 120-column sentence is harder
+ * to read than an 84-column one -- the eye loses the line on the way back to
+ * the left margin. That is true of a book, and it was still the wrong rule
+ * here, for two reasons.
+ *
+ * The first is that prose was the only thing it bound. measure() gave up its
+ * own ceiling when the frame was found to be holding three widths at once, so
+ * on a 200-column window the header rule, the composer, the work rails and
+ * every receipt ran to 192 and past -- and the sentences inside them stopped
+ * at 84. Half the window was empty, all of it on one side. That does not read
+ * as a chosen reading column; it reads as a pane that failed to fill, which is
+ * exactly how it was reported.
+ *
+ * The second is the composer, which is full width. You type a paragraph across
+ * the whole window and it is echoed back in a narrow strip directly beneath
+ * the field you typed it into. Whatever the measure is, the same text has to
+ * occupy the same width going in and coming out.
+ *
+ * So: one measure, and the window sets it. A wide terminal is a choice the
+ * reader made, and the honest answer to it is to use the room.
  */
 export function proseWidth(): number {
-  return Math.max(16, Math.min(88, measure()) - BODY.length);
+  return Math.max(16, measure() - BODY.length);
 }
 
 /** Columns available inside a rail (`    | ` is 6 cells) for a row that also
@@ -224,12 +243,12 @@ export function header(opts: FlowHeader): string {
   // relative cursor math for the pinned region below it.
   // Budgeted to the SURFACE, not to the reading column.
   //
-  // measure() caps at 120 so prose never becomes a 200-column sentence, and
-  // that is right for prose. The header is chrome: it is divided by a hairline
-  // that spans the window, so laying its contents out to the reading column
-  // parks the mode badge at column 120 while the rule beneath it runs to 164 —
-  // a 44-column gap on a wide terminal, which reads as a broken right edge
-  // rather than as a deliberate column. Chrome aligns to the window it divides.
+  // The header is chrome: it is divided by a hairline that spans the window, so
+  // it is budgeted to the surface rather than to the content column. Back when
+  // measure() capped at 120, this row parked its mode badge at column 120 while
+  // the rule beneath it ran to 164 — a 44-column gap on a wide terminal, which
+  // reads as a broken right edge rather than as a deliberate column. Chrome
+  // aligns to the window it divides, and no width in this file stops early now.
   //
   // The indent is still paid for out of the row's own budget: prepending MARK
   // to a row already sized to the full surface pushes the line onto the
@@ -284,9 +303,45 @@ function place(parts: Array<string | undefined | false>, width: number): string[
 
 // --- Turn markers ---
 
+/** Paste chips carried inside an echoed message. They are attachments, not
+ *  words, so they are painted apart from the sentence: the eye steps over them
+ *  while reading and can still find them when the question is what was
+ *  attached. Kept in sync with pasteChip() in ./paste.ts. */
+const ECHO_CHIP = /\[Pasted text #\d+ \+\d+ (?:lines|chars)\]/g;
+
+/** One line of the echo: the sentence recedes, its attachments recede further. */
+function echoed(part: string): string {
+  let out = "";
+  let last = 0;
+  for (const match of part.matchAll(ECHO_CHIP)) {
+    const at = match.index ?? 0;
+    if (at > last) out += quiet(part.slice(last, at));
+    out += faint(match[0]);
+    last = at + match[0].length;
+  }
+  if (last === 0) return quiet(part);
+  return last < part.length ? out + quiet(part.slice(last)) : out;
+}
+
 /**
- * What you asked, at the left margin -- the strongest landmark in scrollback
- * precisely because nothing decorates it.
+ * What you asked, at the left margin.
+ *
+ * This used to be set in full body text, on the argument that the message is
+ * the strongest landmark in scrollback precisely because nothing decorates it.
+ * Half of that is right and the half that is wrong made the transcript tiring:
+ * "findable when you scan back" and "brightest when you read forward" are
+ * different properties, and only the first one is what a landmark needs. You
+ * already know what you typed. The sentence you came back for is the answer,
+ * and it was competing with your own words at identical weight.
+ *
+ * So the emphasis moves from AREA to POINT: the whole block steps back to the
+ * muted slot, and the marker -- one cell -- takes the identity pigment. That is
+ * quieter to sit in front of for an hour and easier to find when scrolling,
+ * because a dim paragraph under a coloured pip is a landmark and a bright
+ * paragraph among bright paragraphs is not.
+ *
+ * It steps back to `quiet`, never to `faint`: see the note on quiet() in
+ * ./theme.ts for why the obvious call would have shipped a 2:1 block.
  */
 export function asked(body: string): string {
   const lines: string[] = [""];
@@ -294,7 +349,7 @@ export function asked(body: string): string {
   for (const source of body.replace(/\r\n/g, "\n").split("\n")) {
     for (const part of wrap(source, proseWidth())) {
       lines.push(
-        first ? `${MARK}${muted(glyph("selection"))} ${text(part)}` : `${BODY}${text(part)}`,
+        first ? `${MARK}${info(glyph("selection"))} ${echoed(part)}` : `${BODY}${echoed(part)}`,
       );
       first = false;
     }
@@ -618,6 +673,25 @@ export interface AskBlock {
   escape?: string;
   /** Columns the host region owns, when it is narrower than the measure. */
   width?: number;
+  /**
+   * Who is asking. `caution` is the permission broker asking to touch your
+   * machine and wears the amber mark. `question` is the agent asking about the
+   * WORK -- a product fork it cannot resolve by reading the code -- and wears
+   * the identity colour, because nothing is at stake but the answer.
+   */
+  tone?: "caution" | "question";
+  /**
+   * True while the person is composing an answer in their own words instead of
+   * picking one. The choices dim and the marker leaves them: the list is no
+   * longer what Enter commits, and that has to be visible at the instant it
+   * stops being true -- otherwise the same keystroke means two things and the
+   * surface feels like it is guessing.
+   */
+  answering?: boolean;
+  /** Where this sits in a round of several. Right-aligned: `2 of 4`. */
+  progress?: string;
+  /** Replaces the escape line with what the keys do in the CURRENT state. */
+  hint?: string;
 }
 
 /**
@@ -629,9 +703,26 @@ export interface AskBlock {
 export function ask(block: AskBlock): string[] {
   const width = measure(block.width);
   const rail = Math.max(12, width - RAIL_IN.length);
+  // The caution mark stays the chevron: `> Run this?` is this product's
+  // established grammar for the broker asking to touch your machine.
+  //
+  // A question about the WORK gets the diamond instead, and not for variety.
+  // The chevron is also the cursor -- the composer's, the palette's, and now
+  // the highlighted choice's -- so an agent's question drawn with one put two
+  // identical marks in the same column two rows apart, where the top one is a
+  // heading and the bottom one is where your hands are. The diamond is a fork
+  // in the road, which is exactly what the row is.
+  const mark = block.tone === "question" ? info(glyph("phase")) : warn(glyph("selection"));
   const lines: string[] = [
     "",
-    `${MARK}${warn(glyph("selection"))} ${bold(text(truncate(block.question, width - 4)))}`,
+    // The round's position rides the right edge, where every other receipt in
+    // this UI lives. A person answering four questions in a row needs to know
+    // there are four; without it each one arrives as an unrelated interruption.
+    row(
+      `${MARK}${mark} ${bold(text(truncate(block.question, width - 4)))}`,
+      block.progress ? faint(block.progress) : "",
+      width,
+    ),
   ];
   if (block.command) {
     lines.push("");
@@ -653,15 +744,29 @@ export function ask(block: AskBlock): string[] {
     }
   }
   lines.push("");
+  const answering = block.answering === true;
   block.options.forEach((option, index) => {
-    const chosen = index === block.selected;
-    const key = chosen ? bold(info(String(index + 1))) : info(String(index + 1));
-    const label = chosen ? bold(text(option)) : text(option);
-    lines.push(`${BODY}${key}   ${truncate(label, width - 8)}`);
+    const chosen = !answering && index === block.selected;
+    // The marker is paid for out of the body indent, never prepended to it:
+    // MARK + glyph + space is exactly BODY's four cells, so the number column
+    // holds still as the selection travels. A list that shifts sideways under
+    // the eye is the single cheapest way to make a picker feel unsteady.
+    const gutter = chosen ? `${MARK}${info(glyph("selection"))} ` : BODY;
+    const key = String(index + 1);
+    const paint = chosen ? (v: string) => bold(text(v)) : answering ? faint : text;
+    const number = chosen ? bold(info(key)) : answering ? faint(key) : info(key);
+    lines.push(`${gutter}${number}   ${truncate(paint(option), width - 8)}`);
   });
-  lines.push(`${BODY}${faint("esc")} ${faint(block.escape ?? "cancel")}  ${faint("(default)")}`);
+  // Truncated like every other row: a hint that wraps costs more than the
+  // binding it failed to mention, because the wrap desyncs the pinned region.
+  lines.push(
+    `${BODY}${faint(truncate(block.hint ?? `esc ${block.escape ?? "cancel"}  (default)`, width - BODY.length))}`,
+  );
   return lines;
 }
+
+/** How many lines `ask()` puts after the last option -- the hint row. */
+export const ASK_TRAILING_ROWS = 1;
 
 /** The answer, echoed back so scrollback records what was decided. */
 export function answered(index: number, label: string): string {

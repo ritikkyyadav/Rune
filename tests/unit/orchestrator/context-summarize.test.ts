@@ -266,9 +266,7 @@ describe("ContextEngine.summarizeConversation — manual /compress", () => {
     expect(r!.summary).toBe("free-tier summary");
     // Of the catalog entries, the :free one must be attempted FIRST — the
     // paid head must not be touched at all once it succeeds.
-    const catalogAttempts = models.filter(
-      (m) => m.startsWith("big/") || m === "cheap/small:free",
-    );
+    const catalogAttempts = models.filter((m) => m.startsWith("big/") || m === "cheap/small:free");
     expect(catalogAttempts).toEqual(["cheap/small:free"]);
   });
 

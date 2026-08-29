@@ -20,7 +20,7 @@ import {
 } from "@gear/shared";
 import type { ProviderName, ModelInfo, ResolvedCredential } from "@gear/llm-gateway";
 import { buildGateway, resolveProviderCredentials } from "../provider-registry";
-import { accent, bold, dim, faint, info, ok, text, warn } from "./ui/theme";
+import { bold, danger, dim, faint, info, ok, text, warn } from "./ui/theme";
 import { buildSavedKeys, readAuthOverrides, insecureNoticeLine } from "./byop-cli-shared";
 
 const pad = "  ";
@@ -103,14 +103,14 @@ export async function runUse(args: string[]): Promise<void> {
   const providerId = args[0];
   const modelArg = args[1];
   if (!providerId) {
-    out(accent("Usage: ") + info("gear use <provider> [model]"));
+    out(warn("Usage: ") + info("gear use <provider> [model]"));
     out(faint("Providers: ") + PROVIDER_PRESETS.map((p) => p.id).join(", "));
     process.exitCode = 1;
     return;
   }
   const preset = getPreset(providerId);
   if (!preset && providerId !== CUSTOM_PROVIDER_ID) {
-    out(accent(`Unknown provider "${providerId}".`));
+    out(danger(`Unknown provider "${providerId}".`));
     out(dim(`Known: ${PROVIDER_PRESETS.map((p) => p.id).join(", ")}`));
     process.exitCode = 1;
     return;
@@ -131,7 +131,7 @@ export async function runModels(args: string[]): Promise<void> {
 
   const preset = getPreset(providerId);
   if (!preset) {
-    out(accent(`Unknown provider "${providerId}".`));
+    out(danger(`Unknown provider "${providerId}".`));
     out(dim(`Known: ${PROVIDER_PRESETS.map((p) => p.id).join(", ")}`));
     process.exitCode = 1;
     return;

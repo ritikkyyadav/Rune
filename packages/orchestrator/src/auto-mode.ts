@@ -1,8 +1,15 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
 import type { LlmGateway, Message, ProviderName } from "@gear/llm-gateway";
-import { patchTargetPaths, type ToolCallOutput, type ToolSchema } from "@gear/tool-registry";
+import {
+  isOsIsolationAvailable,
+  isSandboxEnabled,
+  patchTargetPaths,
+  type ToolCallOutput,
+  type ToolSchema,
+} from "@gear/tool-registry";
 
+import { routeContainment, type ContainmentOutcome } from "./auto-containment";
 import { configModeToPermissionMode } from "./permissions";
 import {
   hasHighConfidenceFinding,
@@ -253,6 +260,10 @@ export interface AutoModeReview {
   source:
     | "safe_tier"
     | "workspace_tier"
+    /** Allowed without waiting for a reviewer; the supervisor watches out of band. */
+    | "supervised_tier"
+    /** The supervisor flagged an EARLIER action; the run pauses before this one. */
+    | "supervisor_halt"
     | "permission_rule"
     | "critical_circuit_breaker"
     | "guardrail_circuit_breaker"
@@ -261,12 +272,25 @@ export interface AutoModeReview {
     | "classifier_fast"
     | "classifier_reasoned"
     | "classifier_unavailable"
+    /** A mechanical breaker tripped and Auto routed around it instead of asking. */
+    | "containment"
     | "human_escalation";
   reason: string;
   stage: 0 | 1 | 2;
   durationMs: number;
   reviewer?: { provider: string; model: string };
   matchedRule?: string;
+  /**
+   * How Auto routed an action it will not run as written. Present on every
+   * `source: "containment"` review, and it is the part that matters — the
+   * verdict says the action stopped, the route says what happens instead.
+   */
+  containment?: ContainmentOutcome;
+  /**
+   * The attack response. The engine ends the turn rather than handing back a
+   * blocked-tool result the agent would simply try to route around.
+   */
+  haltRun?: boolean;
 }
 
 export interface ReviewerIdentity {
@@ -695,6 +719,23 @@ export interface AutoModeRunOptions {
   priorInjectionFindings?: number;
 }
 
+/**
+ * An outward, irreversible step Auto declined to take unattended. The run
+ * carries these to the end of the turn, where they are reported together —
+ * one decision, made with the work already finished, instead of a decision
+ * demanded mid-run with nothing to judge it against.
+ */
+export interface AutoModeDeferral {
+  toolName: string;
+  /** The command or a bounded argument summary. */
+  summary: string;
+  /** Which containment route produced it, for the audit row. */
+  route: string;
+  /** One line the user reads: what would have happened, and why it did not. */
+  reason: string;
+  at: Date;
+}
+
 /** Newest user answers kept for the reviewer (each Q+A is already bounded). */
 const MAX_USER_ANSWERS = 8;
 const MAX_ANSWER_QUESTION_CHARS = 600;
@@ -714,6 +755,16 @@ export class AutoModeRun {
   private consecutiveClassifierDenials = 0;
   /** Sticky for the rest of the run once any tool result is flagged. */
   private injectionFindings = 0;
+  /**
+   * Set when the out-of-band supervisor objected to an action that had ALREADY
+   * been allowed. Consumed at the top of the next review(), which pauses for a
+   * human — so a bad call costs one executed action, not a whole run.
+   */
+  private pendingSupervisorHalt: string | null = null;
+  /** In-flight supervisor calls, so a run can be drained deterministically. */
+  private readonly supervisorInFlight = new Set<Promise<void>>();
+  /** Outward steps Auto declined to take unattended, reported when the turn ends. */
+  private readonly deferrals: AutoModeDeferral[] = [];
 
   constructor(
     private readonly controller: AutoModeSafetyController,
@@ -823,6 +874,29 @@ export class AutoModeRun {
         durationMs: elapsed(started),
       });
     }
+    // The supervisor objected to something that already ran. Stop here, before
+    // the next action, so a compromised or misdirected run costs one action
+    // rather than continuing unattended. A configured deny above still wins.
+    //
+    // This ends the turn instead of asking. A supervisor objection means the
+    // run may no longer be the user's — the likeliest cause is text the agent
+    // read, not something the user typed — and the one thing you must not do
+    // in that state is hand the compromised run a dialog it can answer.
+    if (this.pendingSupervisorHalt) {
+      const reason = this.pendingSupervisorHalt;
+      this.pendingSupervisorHalt = null;
+      return this.finish({
+        verdict: "deny",
+        tier,
+        risk: "critical",
+        source: "supervisor_halt",
+        reason: `${reason} The run is halted here. Report what you were doing and what you had read just before that action, and stop.`,
+        stage: 0,
+        haltRun: true,
+        durationMs: elapsed(started),
+      });
+    }
+
     // An askRule yields to an EXACT session grant: the rule demanded a human
     // decision, the human made one for this exact payload ("allow this exact
     // action for this session"), so identical retries stop nagging. Any
@@ -842,61 +916,61 @@ export class AutoModeRun {
       });
     }
 
-    // Fixed circuit breakers are mechanical. A probabilistic reviewer never
-    // silently approves catastrophic host/disk/root operations. They also
-    // require a fresh decision on every occurrence: a prior session grant is
-    // deliberately not reusable for this risk class.
+    // Fixed circuit breakers are mechanical, so they hold whether or not a
+    // reviewer is alive, and a prior session grant never makes one reusable.
+    //
+    // What changed is the exit. Catastrophic host operations used to become a
+    // permission card, which asked the person least able to answer to
+    // adjudicate `dd of=/dev/disk0` under time pressure. They now go to the
+    // broker: a disk wipe halts, `terraform apply` comes back as
+    // `terraform plan`, and either way nobody is interrupted.
     if (risk === "critical") {
-      return this.finish({
-        verdict: "ask",
-        tier: "classifier",
-        risk,
-        source: "critical_circuit_breaker",
-        reason: criticalRiskReason(action),
-        stage: 0,
-        durationMs: elapsed(started),
-      });
+      return this.route(action, "classifier", risk, started, criticalRiskReason(action));
     }
 
     if (tier === "classifier" && stableJson(action.args).length > MAX_ACTION_CHARS) {
       const rules0 = this.controller.getConfig();
-      if (!rules0.conversationalEscalation) {
-        return this.finish({
-          verdict: "ask",
-          tier,
-          risk: risk === "low" ? "medium" : risk,
-          source: "reviewer_input_limit",
-          reason:
-            "Human confirmation is mandatory: the risky action exceeds the reviewer's bounded input limit; split it into smaller actions or use an inspected script.",
-          stage: 0,
-          durationMs: elapsed(started),
-        });
-      }
-      // Agent-fixable: an oversized payload is a shape problem, not a policy
-      // one. Send it back with instructions; hammering still escalates.
+      // An oversized payload is a shape problem, not a policy one, and the
+      // agent is the only party who can fix a shape. Sending it back is the
+      // whole remedy; a human staring at a 14KB argument blob was never one.
       this.consecutiveClassifierDenials++;
-      const escalate = this.consecutiveClassifierDenials >= rules0.maxAutomaticDenials;
+      if (this.consecutiveClassifierDenials >= rules0.maxAutomaticDenials) {
+        return this.route(
+          action,
+          tier,
+          risk,
+          started,
+          "The action exceeds the safety reviewer's bounded input limit and the agent kept retrying oversized payloads.",
+        );
+      }
       return this.finish({
-        verdict: escalate ? "ask" : "deny",
+        verdict: "deny",
         tier,
         risk: risk === "low" ? "medium" : risk,
-        source: escalate ? "human_escalation" : "reviewer_input_limit",
-        reason: escalate
-          ? `The action exceeds the safety reviewer's bounded input limit and the agent kept retrying oversized payloads. ${pauseForHumanText(this.consecutiveClassifierDenials)}`
-          : "Blocked: this risky action is too large for the safety reviewer's bounded input. Do not resend it as-is. Split it into smaller reviewable actions, or write the payload to a workspace file first and run that file so the reviewer can see both steps.",
+        source: "reviewer_input_limit",
+        reason:
+          "Blocked: this risky action is too large for the safety reviewer's bounded input. Do not resend it as-is. Split it into smaller reviewable actions, or write the payload to a workspace file first and run that file so the reviewer can see both steps.",
         stage: 0,
         durationMs: elapsed(started),
       });
     }
 
+    // Gear's own controls: the gear itself, the sandbox switch, the policy
+    // and hook files under .gear. This is the exit where the old permission
+    // card was not merely useless but backwards — "the agent would like to
+    // turn off the sandbox, allow?" is a dialog that injected text could
+    // summon, wearing the agent's credibility. There is no version of that
+    // question worth asking, so it is not asked: the human changes gears.
     const guardrailReason = guardrailChangeReason(action) ?? selfProtectionPathReason(action);
     if (guardrailReason) {
       return this.finish({
-        verdict: "ask",
+        verdict: "deny",
         tier: "classifier",
         risk: "high",
         source: "guardrail_circuit_breaker",
-        reason: `Human confirmation is mandatory: ${guardrailReason}.`,
+        reason:
+          `Refused: ${guardrailReason}. Auto mode's own controls are not agent-writable, and this is not a permission you can obtain by asking — the user changes gears, the sandbox, and the policy files themselves. ` +
+          "Continue with the work that does not depend on it, and say plainly in your reply that you needed this and could not have it.",
         stage: 0,
         durationMs: elapsed(started),
       });
@@ -958,6 +1032,33 @@ export class AutoModeRun {
       });
     }
 
+    // ── Supervised tier: 4th-gear autonomy with a watcher above it ──
+    //
+    // Everything mechanical has now run: catastrophic patterns, the dangerous
+    // command list, guardrail and self-protection breakers, deny/ask rules. All
+    // of them are pure regex, so they hold whether or not a reviewer is alive.
+    // What remains at low/medium risk IS the day's work — builds, tests,
+    // dependency installs, API calls, ordinary shell.
+    //
+    // Putting a model in front of that stream bought little and cost a lot: a
+    // withdrawn reviewer model once left a build waiting 22 minutes for a human
+    // to type "proceed". So this runs, and the supervisor observes it out of
+    // band — able to halt the NEXT action, never to delay this one.
+    if (risk === "low" || risk === "medium") {
+      this.consecutiveClassifierDenials = 0;
+      if (rules.enabled) this.superviseInBackground(action, risk);
+      return this.finish({
+        verdict: "allow",
+        tier,
+        risk,
+        source: "supervised_tier",
+        reason:
+          "Ordinary action inside the sandbox: cleared the mechanical safety breakers and is running under supervision rather than waiting for review.",
+        stage: 0,
+        durationMs: elapsed(started),
+      });
+    }
+
     if (!rules.enabled) {
       return this.finish({
         verdict: "ask",
@@ -972,16 +1073,13 @@ export class AutoModeRun {
 
     const prompt = this.buildPrompt(risk);
     if (prompt.length > MAX_CLASSIFIER_PROMPT_CHARS) {
-      return this.finish({
-        verdict: "ask",
+      return this.route(
+        action,
         tier,
         risk,
-        source: "reviewer_input_limit",
-        reason:
-          "Human confirmation is mandatory: the configured trust policy and bounded action transcript exceed the reviewer's safe prompt limit.",
-        stage: 0,
-        durationMs: elapsed(started),
-      });
+        started,
+        "The configured trust policy and bounded action transcript exceed the reviewer's safe prompt limit, so this action could not be read.",
+      );
     }
     try {
       // Fast stage: a single ALLOW/BLOCK token. Any failure here — timeout,
@@ -1061,60 +1159,177 @@ export class AutoModeRun {
           durationMs: elapsed(started),
         });
       }
-      if (parsed.verdict === "ask" && !rules.conversationalEscalation) {
+      // Both remaining verdicts mean the same thing at different strengths:
+      // the reviewer cannot trace this action back to the user. Nobody needs
+      // to be interrupted to establish that — it is precisely what the broker
+      // exists to answer — so the action is contained, redirected, or
+      // recorded, and the agent keeps working on everything else.
+      //
+      // A "deny" additionally raises suspicion for the rest of the run, the
+      // same way a flagged tool result does: every later classifier-tier
+      // action takes the careful pass, and the broker's borderline routes
+      // stop being borderline.
+      if (parsed.verdict === "deny") this.injectionFindings++;
+
+      // What is NOT proportionate is halting on one disagreement. A reviewer
+      // that misreads a legitimate branch cleanup should cost that command,
+      // not the session — stopping the world on a single false positive is
+      // the jitter this mode exists to remove. But an agent that keeps
+      // pushing after the reviewer has said no twice is no longer
+      // disagreeing, it is probing, and probing is what a captured run looks
+      // like from the outside. That is the line the streak draws.
+      this.consecutiveClassifierDenials++;
+      if (
+        parsed.verdict === "deny" &&
+        this.consecutiveClassifierDenials >= rules.maxAutomaticDenials
+      ) {
         return this.finish({
-          verdict: "ask",
+          verdict: "deny",
           tier,
-          risk: parsed.risk ?? risk,
+          risk: "critical",
           source: "classifier_reasoned",
-          reason: parsed.reason,
+          reason:
+            `${parsed.reason} The safety reviewer has now refused ${this.consecutiveClassifierDenials} actions in a row as outside anything the user asked for. ` +
+            "The run is halted rather than continued. Report what you were doing and what you had read just before these actions, and stop.",
           stage: 2,
           reviewer: reasoned.reviewer,
+          haltRun: true,
           durationMs: elapsed(started),
         });
       }
 
-      // Conversational escalation: an "ask" is delivered to the ACTING AGENT
-      // as an authorization gap it can resolve by asking the user directly —
-      // the user's typed answer joins this run's trusted context and clears an
-      // authorized retry. A hard "deny" returns with adapt-or-ask guidance.
-      // Either way the streak counts, and the modal prompt stays the backstop.
-      this.consecutiveClassifierDenials++;
-      const escalate = this.consecutiveClassifierDenials >= rules.maxAutomaticDenials;
-      const agentGuidance =
-        parsed.verdict === "ask"
-          ? `${parsed.reason} Blocked pending explicit user authorization. Do not resend the identical call and do not try to achieve the same effect another way. If this action is genuinely required, ask the user directly (ask_user) naming the exact action and its real impact — a clear yes in their answer authorizes one retry. Otherwise choose a safer approach within what the user asked.`
-          : `${parsed.reason} Do not resend the identical call or repackage the same effect (encodings, wrapper scripts, a different tool). Adjust your approach to stay within what the user asked; if you believe only user authorization is missing, ask the user directly (ask_user) naming the exact action and impact.`;
-      return this.finish({
-        verdict: escalate ? "ask" : "deny",
-        tier,
-        risk: parsed.risk ?? risk,
-        source: escalate ? "human_escalation" : "classifier_reasoned",
-        reason: escalate
-          ? `${parsed.reason} ${pauseForHumanText(this.consecutiveClassifierDenials)}`
-          : agentGuidance,
+      const authorizationGap = `${parsed.reason} The user's request does not cover this action's real impact.`;
+      return this.route(action, tier, parsed.risk ?? risk, started, authorizationGap, {
         stage: 2,
         reviewer: reasoned.reviewer,
-        durationMs: elapsed(started),
+        countedAlready: true,
       });
     } catch (error) {
       const reason = `Independent reviewer unavailable: ${safeError(error)}`;
-      return this.finish({
-        verdict: rules.failClosed ? "ask" : "allow",
+      if (!rules.failClosed) {
+        return this.finish({
+          verdict: "allow",
+          tier,
+          risk,
+          source: "classifier_unavailable",
+          reason: `${reason}. Policy is configured to fail open (unsafe).`,
+          stage: 0,
+          durationMs: elapsed(started),
+        });
+      }
+      return this.route(
+        action,
         tier,
         risk,
-        source: "classifier_unavailable",
-        reason: rules.failClosed
-          ? `${reason}. Auto mode failed closed to human confirmation.`
-          : `${reason}. Policy is configured to fail open (unsafe).`,
-        stage: 0,
-        durationMs: elapsed(started),
-      });
+        started,
+        `${reason}. Auto mode fell back to mechanical containment rather than waiting for a human.`,
+      );
     }
   }
 
   noteHumanDecision(): void {
     this.consecutiveClassifierDenials = 0;
+  }
+
+  /** Outward steps this run left for the user, oldest first. */
+  getDeferrals(): readonly AutoModeDeferral[] {
+    return this.deferrals;
+  }
+
+  /**
+   * Route an action Auto will not run as written — the replacement for every
+   * place this file used to return `verdict: "ask"`.
+   *
+   * The old exit put a yes/no card in front of the user. It was the wrong
+   * question asked of the wrong person at the wrong time: the card shows a
+   * command, the user needs to know why the command appeared, and mid-run is
+   * exactly when that is least knowable. Worse, it was reachable by injected
+   * content — text in a web page could summon a dialog with its own framing
+   * attached, and a dialog that an attacker can trigger is not a control.
+   *
+   * So the breaker still trips and the action still stops; what changes is
+   * what happens next. The broker hands back a route the AGENT can act on
+   * without anyone being interrupted, and only the genuine attack shapes end
+   * the turn. `contain` and `redirect` come back as denials because a denial
+   * carrying an instruction is how the agent learns the shape it should have
+   * used; `extend` comes back as an allow because widening the sandbox for
+   * ordinary work is a decision this layer is entitled to make on its own.
+   */
+  private route(
+    action: AutoModeAction,
+    tier: AutoModeTier,
+    risk: AutoModeRisk,
+    started: number,
+    breaker: string,
+    provenance: {
+      /** Whether a model was consulted before the route was chosen. */
+      stage?: 0 | 1 | 2;
+      reviewer?: { provider: string; model: string };
+      /** The caller already counted this action toward the block streak. */
+      countedAlready?: boolean;
+    } = {},
+  ): AutoModeReview {
+    const outcome = routeContainment({
+      action,
+      osIsolation: isSandboxEnabled() && isOsIsolationAvailable(),
+      injectionSuspected: this.injectionFindings > 0,
+    });
+
+    if (outcome.kind === "extend") {
+      this.consecutiveClassifierDenials = 0;
+      return this.finish({
+        verdict: "allow",
+        tier,
+        risk,
+        source: "containment",
+        reason: `${outcome.instruction} (Auto widened the sandbox for this call: ${outcome.extension ?? outcome.route}.)`,
+        stage: provenance.stage ?? 0,
+        reviewer: provenance.reviewer,
+        containment: outcome,
+        durationMs: elapsed(started),
+      });
+    }
+
+    if (outcome.ledger) {
+      this.deferrals.push({
+        toolName: action.toolName,
+        summary: summarizeForLedger(action),
+        route: outcome.route,
+        reason: breaker,
+        at: new Date(),
+      });
+    }
+
+    // A halt is the attack response and does not count toward the retry
+    // streak — there is no retry. The other routes do: an agent that keeps
+    // re-issuing the same contained shape is a signal in itself. Callers that
+    // already counted this action (the reviewer path) pass countedAlready.
+    if (outcome.kind !== "halt" && !provenance.countedAlready) {
+      this.consecutiveClassifierDenials++;
+    }
+
+    // Say the next step in the agent's own vocabulary. A route the agent has
+    // to translate before it can act on it is a route it will get wrong once
+    // and then stop trusting, so a substitute arrives as a command line and a
+    // containment arrives as the exact arguments to re-send.
+    const guidance = outcome.substitute
+      ? `${outcome.instruction} Run this instead: \`${outcome.substitute}\``
+      : outcome.containedArgs
+        ? `${outcome.instruction} Re-send it with exactly these arguments: ${stableJson(outcome.containedArgs)}`
+        : outcome.instruction;
+
+    return this.finish({
+      verdict: "deny",
+      tier,
+      risk: outcome.kind === "halt" ? "critical" : risk === "low" ? "medium" : risk,
+      source: "containment",
+      reason: `${breaker} ${guidance}`,
+      stage: provenance.stage ?? 0,
+      reviewer: provenance.reviewer,
+      containment: outcome,
+      haltRun: outcome.kind === "halt" ? true : undefined,
+      durationMs: elapsed(started),
+    });
   }
 
   private finish(review: AutoModeReview): AutoModeReview {
@@ -1126,6 +1341,57 @@ export class AutoModeRun {
       if (last) last.blocked = true;
     }
     return this.controller.record(review);
+  }
+
+  /**
+   * Watch an action that has already been allowed, without delaying it.
+   *
+   * This is the supervisor: it reads the same bounded transcript the in-path
+   * reviewer would have seen, and its only power is to set a halt that the NEXT
+   * review() consumes. It can never block the action it is looking at — that is
+   * the whole point of moving it out of the approval path.
+   *
+   * Deliberately silent on failure. A supervisor that cannot answer must not
+   * degrade a run; the mechanical breakers are what actually guard destruction,
+   * and they never call a model.
+   */
+  private superviseInBackground(action: AutoModeAction, risk: AutoModeRisk): void {
+    if (this.pendingSupervisorHalt) return; // already halting; don't pile on
+    let prompt: string;
+    try {
+      prompt = this.buildPrompt(risk);
+    } catch {
+      return;
+    }
+    if (prompt.length > MAX_CLASSIFIER_PROMPT_CHARS) return;
+
+    const task = (async () => {
+      try {
+        const { text } = await this.controller.classifierCall("fast", prompt);
+        if (parseFastDecision(text) !== "block") return;
+        // Flagged after the fact. Raise the scrutiny floor for the rest of the
+        // run the same way an injection finding does, and stop before the next
+        // action so exposure is bounded to this one.
+        this.injectionFindings++;
+        this.pendingSupervisorHalt =
+          `The safety supervisor flagged the preceding ${action.toolName} action after it ran` +
+          (action.toolName === "bash" && typeof action.args.command === "string"
+            ? `: ${sanitizeText(String(action.args.command), 200)}`
+            : "") +
+          ". The agent may be acting on injected or unintended instructions.";
+      } catch {
+        // Supervisor unreachable — the mechanical breakers still stand.
+      }
+    })();
+    this.supervisorInFlight.add(task);
+    void task.finally(() => this.supervisorInFlight.delete(task));
+  }
+
+  /** Await any in-flight supervisor calls. Test-only determinism helper. */
+  async drainSupervisor(): Promise<void> {
+    while (this.supervisorInFlight.size > 0) {
+      await Promise.all([...this.supervisorInFlight]);
+    }
   }
 
   private buildPrompt(risk: AutoModeRisk): string {
@@ -1198,9 +1464,15 @@ export class AutoModeRun {
   }
 }
 
-/** Escalation copy shown when Auto pauses for a human after repeated blocks. */
-function pauseForHumanText(streak: number): string {
-  return `Auto mode paused after ${streak} consecutive reviewer denials: approve or deny this action yourself to resume, or steer the agent toward a different approach. If the reviewer keeps blocking legitimate work, add a narrow allowRules/askRules entry or raise permissions.autoMode.maxAutomaticDenials.`;
+/**
+ * One line for the end-of-turn deferral list. It has to be readable by someone
+ * who did not watch the run, so it carries the payload rather than a hash.
+ */
+function summarizeForLedger(action: AutoModeAction): string {
+  if (action.toolName === "bash" && typeof action.args.command === "string") {
+    return sanitizeText(action.args.command, 240);
+  }
+  return sanitizeText(`${action.toolName} ${stableJson(action.args)}`, 240);
 }
 
 const SHARED_CLASSIFIER_RULES = [
@@ -1336,7 +1608,65 @@ const CRITICAL_COMMAND_PATTERNS: Array<{ re: RegExp; reason: string }> = [
 ];
 
 const HIGH_RISK_COMMAND_RE =
-  /(?:git\s+push[^\n]*(?:--force|-f\b|--delete)|git\s+reset\s+--hard|terraform\s+(?:apply|destroy)|kubectl\s+(?:apply|delete|replace)|\b(?:aws|gcloud|az)\b[^\n]*\b(?:delete|destroy|terminate|purge)\b|curl[^\n|]*\|\s*(?:ba|z|k)?sh\b|wget[^\n|]*\|\s*(?:ba|z|k)?sh\b|--no-verify|skip[-_]?verification|disable[-_ ]?(?:logging|audit|security)|crontab|authorized_keys|\bprod(?:uction)?\b)/i;
+  /(?:git\s+push[^\n]*(?:--force|-f\b|--delete|-d\b)|git\s+reset\s+--hard|terraform\s+(?:apply|destroy)|kubectl\s+(?:apply|delete|replace)|\b(?:aws|gcloud|az)\b[^\n]*\b(?:delete|destroy|terminate|purge)\b|curl[^\n|]*\|\s*(?:ba|z|k)?sh\b|wget[^\n|]*\|\s*(?:ba|z|k)?sh\b|--no-verify|skip[-_]?verification|disable[-_ ]?(?:logging|audit|security)|crontab|authorized_keys|\bprod(?:uction)?\b)/i;
+
+/**
+ * Outward publication: pushes workspace content to people who were never party
+ * to this session, and cannot be recalled once it lands.
+ *
+ * Split out because it closes a hole opened by supervising ordinary commands
+ * instead of reviewing them in path. `gh gist create ./notes.md --public` was
+ * only ever caught by the reviewer READING it — nothing mechanical stopped it —
+ * so once ordinary commands stopped waiting on a reviewer, an exfiltration in
+ * the shape of a normal shell command would simply have run. Publication is the
+ * clearest "the user should know this is happening" case there is.
+ */
+const PUBLISH_COMMAND_RE =
+  /(?:(?:npm|yarn|pnpm|bun)\s+publish|cargo\s+publish|twine\s+upload|gh\s+(?:release\s+create|gist\s+create)|docker\s+push)\b/i;
+
+/**
+ * Destructive action through a service CLI — deleting a remote branch, a gist,
+ * a deployment, a bucket.
+ *
+ * Deliberately broad. While the reviewer read every command, "delete a shared
+ * resource" was caught by MEANING; the mechanical list only ever enumerated a
+ * few shapes (it knew `git push --delete` but not `-d`, `aws … delete` but not
+ * `gh … delete`). Once ordinary commands stopped being read, that gap became
+ * reachable, and chasing each vendor's subcommand grammar is a losing game.
+ *
+ * A destructive verb anywhere in a command that drives one of these tools is
+ * worth exactly one confirmation. `docker` is deliberately absent: `docker rm`
+ * on a local container is routine, and `docker push` is covered above.
+ */
+const SERVICE_CLI_RE =
+  /\b(?:gh|glab|aws|gcloud|az|heroku|fly|flyctl|vercel|netlify|supabase|railway|render|doctl|stripe|kubectl|helm|terraform|pulumi|firebase|wrangler)\b/i;
+const DESTRUCTIVE_VERB_RE =
+  /\b(?:delete|destroy|remove|drop|purge|terminate|revoke|disable|deactivate|prune|truncate|wipe)\b/i;
+
+function isRemoteMutation(command: string): boolean {
+  return SERVICE_CLI_RE.test(command) && DESTRUCTIVE_VERB_RE.test(command);
+}
+
+/**
+ * Credential and secret stores. Touching one is rarely ordinary work: reading
+ * it is how an agent routes around an auth failure instead of reporting it, and
+ * sending it anywhere is the exfiltration case outright.
+ *
+ * `.env.example` / `.sample` / `.template` are excluded — those are checked-in
+ * documentation, and gating them would tax a very common, harmless edit.
+ */
+const SECRET_PATH_RE =
+  /(?:\.env\b(?!\.(?:example|sample|template))|\.ssh\/|\bid_(?:rsa|ed25519|ecdsa)\b|\.aws\/credentials|\.config\/gcloud|\.kube\/config|\.npmrc|\.pypirc|\.netrc|\.git-credentials|\bservice[-_]?account[\w-]*\.json|\.(?:pem|p12|pfx|keystore)\b|\bsecrets?\.(?:json|ya?ml|env)\b)/i;
+
+/**
+ * Content fed into an interpreter. This is the shape that defeats every pattern
+ * above by construction: whatever is dangerous arrives decoded or downloaded at
+ * runtime, so the literal command text never contains it.
+ * `echo <base64> | base64 -d | sh` is a home-directory wipe that reads as an
+ * echo. Anything reaching a shell this way is worth one confirmation.
+ */
+const PIPE_TO_INTERPRETER_RE =
+  /\|\s*(?:sudo\s+)?(?:ba|z|k|da)?sh\b|\|\s*(?:sudo\s+)?(?:python3?|perl|ruby|node|bun|deno)\b|\beval\s|\bbase64\s+(?:-d|-D|--decode)\b/i;
 
 export function assessActionRisk(
   action: AutoModeAction,
@@ -1345,8 +1675,22 @@ export function assessActionRisk(
   if (action.toolName === "bash") {
     const command = String(action.args.command ?? "");
     if (CRITICAL_COMMAND_PATTERNS.some((p) => p.re.test(command))) return "critical";
-    if (HIGH_RISK_COMMAND_RE.test(command)) return "high";
-    if (action.args.network === true || action.args.run_in_background === true) return "high";
+    if (
+      HIGH_RISK_COMMAND_RE.test(command) ||
+      PUBLISH_COMMAND_RE.test(command) ||
+      SECRET_PATH_RE.test(command) ||
+      PIPE_TO_INTERPRETER_RE.test(command) ||
+      isRemoteMutation(command)
+    ) {
+      return "high";
+    }
+    // Reaching the network is NOT itself dangerous, and rating it "high" taxed
+    // the whole day: every `npm install`, `pip install`, `gh`, and API `curl`
+    // was routed to the reviewer, so ordinary work waited on a model. Auto mode
+    // grants network by design. The genuinely dangerous networked shapes are
+    // already caught above — `curl … | sh`, `wget … | sh`, cloud-CLI deletes —
+    // and the catastrophic patterns before that. Backgrounding is likewise a
+    // scheduling detail (dev servers, watchers), not a blast radius.
     return "medium";
   }
   if (action.toolName === "update_config") {

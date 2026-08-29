@@ -57,7 +57,7 @@ export class AnthropicProvider implements LlmProvider {
         model: request.model,
         max_tokens: request.maxTokens,
         system: this.toSystemBlocks(request.system),
-        messages: this.toAnthropicMessagesWithCache(request.messages),
+        messages: this.toAnthropicMessagesWithCache(request.messages, request.cacheBreakpointIndex),
         tools: request.tools ? this.toAnthropicToolsWithCache(request.tools) : undefined,
         // Anthropic rejects sampling params alongside thinking.
         temperature: thinking ? undefined : request.temperature,
@@ -96,7 +96,7 @@ export class AnthropicProvider implements LlmProvider {
         model: request.model,
         max_tokens: request.maxTokens,
         system: this.toSystemBlocks(request.system),
-        messages: this.toAnthropicMessagesWithCache(request.messages),
+        messages: this.toAnthropicMessagesWithCache(request.messages, request.cacheBreakpointIndex),
         tools: this.buildTools(request),
         // Anthropic rejects sampling params alongside thinking.
         temperature: thinking ? undefined : request.temperature,
@@ -375,19 +375,44 @@ export class AnthropicProvider implements LlmProvider {
 
   /**
    * Converts messages and adds cache_control to the last content block of the
-   * last message so the full conversation prefix is eligible for caching.
+   * conversation's STABLE prefix, so everything up to that point is eligible
+   * for caching on the next turn.
+   *
+   * `breakpointIndex` indexes the caller's array; default is the last message.
+   * Defaulting is only correct when the whole array recurs verbatim — when the
+   * caller appends an ephemeral tail (the agent loop's task-state spine), a
+   * breakpoint on the final message writes a cache entry keyed on content that
+   * never repeats, so every turn pays the write and no turn ever reads it.
    */
-  private toAnthropicMessagesWithCache(messages: Message[]): Anthropic.MessageParam[] {
+  private toAnthropicMessagesWithCache(
+    messages: Message[],
+    breakpointIndex?: number,
+  ): Anthropic.MessageParam[] {
     const filtered = messages.filter((m) => m.role !== "system");
+
+    // Map the caller's index onto `filtered`, which has had system-role turns
+    // removed and therefore does not share indices with `messages`.
+    let markAt = filtered.length - 1;
+    if (breakpointIndex != null && breakpointIndex >= 0 && messages.length > 0) {
+      const clamped = Math.min(breakpointIndex, messages.length - 1);
+      let seen = 0;
+      for (let i = 0; i <= clamped; i++) {
+        if (messages[i].role !== "system") seen++;
+      }
+      markAt = seen - 1;
+    }
+
     return filtered.map((msg, msgIdx) => {
-      const isLast = msgIdx === filtered.length - 1;
       const own = this.ownContent(msg.content);
+      // thinking blocks cannot carry cache_control (the API rejects it), so
+      // the marker rides the last block that can hold it rather than being
+      // silently dropped when a turn happens to end in thinking.
+      const cacheableAt = (block: (typeof own)[number]) =>
+        block.type !== "thinking" && block.type !== "redacted_thinking";
+      const lastCacheable = msgIdx === markAt ? own.map(cacheableAt).lastIndexOf(true) : -1;
       const blocks = own.map((block, blkIdx) => {
-        const isLastBlock = blkIdx === own.length - 1;
         const base = this.toAnthropicBlock(block);
-        // thinking blocks cannot carry cache_control (API rejects it).
-        const cacheable = block.type !== "thinking" && block.type !== "redacted_thinking";
-        if (isLast && isLastBlock && cacheable) {
+        if (blkIdx === lastCacheable) {
           return { ...base, cache_control: { type: "ephemeral" as const } };
         }
         return base;

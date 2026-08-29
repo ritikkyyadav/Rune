@@ -16,6 +16,7 @@ import {
   text,
   muted,
 } from "../../../packages/orchestrator/src/bin/ui/theme";
+import { glyph } from "../../../packages/orchestrator/src/bin/ui/glyphs";
 
 describe("ui/render primitives", () => {
   it("visLen ignores ANSI escapes and counts terminal cells", () => {
@@ -49,10 +50,10 @@ describe("ui/render primitives", () => {
   it("box frames content with matching corners and uniform width", () => {
     const lines = stripAnsi(box(["hello", "a longer line here"])).split("\n");
     expect(lines).toHaveLength(4); // top + 2 content + bottom
-    expect(lines[0].trimStart().startsWith("╭")).toBe(true);
-    expect(lines[0].trimEnd().endsWith("╮")).toBe(true);
-    expect(lines[3].trimStart().startsWith("╰")).toBe(true);
-    expect(lines[3].trimEnd().endsWith("╯")).toBe(true);
+    expect(lines[0].trimStart().startsWith("+")).toBe(true);
+    expect(lines[0].trimEnd().endsWith("+")).toBe(true);
+    expect(lines[3].trimStart().startsWith("+")).toBe(true);
+    expect(lines[3].trimEnd().endsWith("+")).toBe(true);
     const widths = new Set(lines.map((l) => l.length));
     expect(widths.size).toBe(1); // every row is the same visible width
   });
@@ -77,9 +78,11 @@ describe("ui/render primitives", () => {
   });
 
   it("box supports square corners", () => {
-    const top = stripAnsi(box(["x"], { rounded: false })).split("\n")[0];
-    expect(top.includes("┌")).toBe(true);
-    expect(top.includes("┐")).toBe(true);
+    const top = stripAnsi(box(["x"], { rounded: false }))
+      .split("\n")[0]!
+      .trim();
+    expect(top.startsWith("+")).toBe(true);
+    expect(top.endsWith("+")).toBe(true);
   });
 
   it("kv aligns labels to a common width", () => {
@@ -105,16 +108,16 @@ describe("ui/render primitives", () => {
 
   it("bar reflects the fraction and total width", () => {
     const half = stripAnsi(bar(0.5, 10));
-    expect(half).toBe("[█████░░░░░]");
-    expect(stripAnsi(bar(0, 4))).toBe("[░░░░]");
-    expect(stripAnsi(bar(1, 4))).toBe("[████]");
-    expect(stripAnsi(bar(2, 4))).toBe("[████]"); // clamped
+    expect(half).toBe("[#####.....]");
+    expect(stripAnsi(bar(0, 4))).toBe("[....]");
+    expect(stripAnsi(bar(1, 4))).toBe("[####]");
+    expect(stripAnsi(bar(2, 4))).toBe("[####]"); // clamped
   });
 
   it("bullet and connector use the expected glyphs", () => {
-    expect(stripAnsi(bullet("Ran"))).toBe("  • Ran");
-    expect(stripAnsi(connector("output"))).toBe("  └ output");
+    expect(stripAnsi(bullet("Ran"))).toBe(`  ${glyph("observed")} Ran`);
+    expect(stripAnsi(connector("output"))).toBe(`  ${glyph("gutter")} output`);
     const withSub = stripAnsi(connector("head", { sub: ["a", "b"] })).split("\n");
-    expect(withSub).toEqual(["  └ head", "    a", "    b"]);
+    expect(withSub).toEqual([`  ${glyph("gutter")} head`, "    a", "    b"]);
   });
 });

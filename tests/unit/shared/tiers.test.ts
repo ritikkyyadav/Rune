@@ -88,7 +88,7 @@ describe("resolveTier", () => {
   test("no override → provider tier table", () => {
     expect(
       resolveTier("heavy", undefined, "anthropic", "claude-sonnet-4-6", registered, KNOWN),
-    ).toEqual({ provider: "anthropic", model: "claude-opus-4-8" });
+    ).toEqual({ provider: "anthropic", model: "claude-opus-5" });
     expect(resolveTier("light", {}, "deepseek", "deepseek-chat", registered, KNOWN)).toEqual({
       provider: "deepseek",
       model: "deepseek-chat",

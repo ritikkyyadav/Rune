@@ -1,5 +1,5 @@
-// ─── Theme persistence ───
-// The active theme is saved to ~/.gear/theme.json — a tiny JSON sidecar, because
+// --- Theme persistence ---
+// The active theme is saved to ~/.gear/theme.json -- a tiny JSON sidecar, because
 // config.ts ships only a TOML *reader* (writing TOML back would clobber user comments).
 // This follows the existing ~/.gear/<file> persistence pattern.
 //
@@ -15,14 +15,14 @@ function themeFile(dir: string): string {
   return join(dir, "theme.json");
 }
 
-/** Persist the chosen theme name to <dir>/theme.json. Never throws — a write failure
+/** Persist the chosen theme name to <dir>/theme.json. Never throws -- a write failure
  *  must not crash the UI. */
 export function saveTheme(name: string, dir: string = getGearHome()): void {
   try {
     mkdirSync(dir, { recursive: true });
     writeFileSync(themeFile(dir), JSON.stringify({ theme: name }, null, 2) + "\n");
   } catch {
-    // Ignore — the in-memory theme still applied; only persistence was lost.
+    // Ignore -- the in-memory theme still applied; only persistence was lost.
   }
 }
 
@@ -39,7 +39,7 @@ export function loadSavedTheme(dir: string = getGearHome()): string | null {
 }
 
 /** Resolve the startup theme: env > saved > configured > default. Only the small
- *  production theme set is honored — a value naming any other (or a stale/typo'd one)
+ *  production theme set is honored -- a value naming any other (or a stale/typo'd one)
  *  is skipped and falls through to the next source, ultimately the default. */
 export function resolveInitialTheme(opts: {
   env?: string | null;

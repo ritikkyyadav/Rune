@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { getGearHome } from "@gear/shared";
 import { NotebookStore } from "../notebook/store";
 import type { NotebookEntry } from "../notebook/store";
-import { accent, dim, faint, info, ok, text, warn } from "./ui/theme";
+import { dim, faint, info, ok, text, warn } from "./ui/theme";
 
 function openStore(): NotebookStore | null {
   try {
@@ -46,7 +46,7 @@ export function runNotebook(positionals: string[], values: Record<string, unknow
             : "";
         console.log(
           `  ${info(e.id.slice(-8))} ${warn(e.kind.padEnd(7))} ${dim(scopeLabel(e).padEnd(22))}` +
-            `${e.retired ? accent(" retired") : ""}${record}\n           ${text(e.body.slice(0, 100))}`,
+            `${e.retired ? warn(" retired") : ""}${record}\n           ${text(e.body.slice(0, 100))}`,
         );
       }
       console.log(
@@ -62,7 +62,7 @@ export function runNotebook(positionals: string[], values: Record<string, unknow
       console.log(`  ${text(e.body)}\n`);
       console.log(`  ${dim("kind")}     ${e.kind} ${dim("·")} ${scopeLabel(e)}`);
       console.log(
-        `  ${dim("record")}   used ${e.uses}× · ${e.wins} wins${e.retired ? ` · ${accent("retired")}` : ""}`,
+        `  ${dim("record")}   used ${e.uses}× · ${e.wins} wins${e.retired ? ` · ${warn("retired")}` : ""}`,
       );
       console.log(
         `  ${dim("learned")}  ${e.createdAt.slice(0, 10)} · updated ${e.updatedAt.slice(0, 10)}`,

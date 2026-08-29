@@ -1,4 +1,4 @@
-// ─── Bracketed-paste collapsing ───
+// --- Bracketed-paste collapsing ---
 // Large / multi-line pastes are folded into a compact `[Pasted text #N +K lines]` chip in the
 // composer; the body is held aside and expanded back in on submit. This keeps the single-line
 // composer single-line (a pasted newline would spill the box across rows and desync the pinned
@@ -19,14 +19,14 @@ export function shouldCollapse(content: string, max = PASTE_INLINE_MAX): boolean
   return content.includes("\n") || content.length > max;
 }
 
-/** The composer chip for a collapsed paste — the exact text expandPastes() looks for. */
+/** The composer chip for a collapsed paste -- the exact text expandPastes() looks for. */
 export function pasteChip(id: number, content: string): string {
   return content.includes("\n")
     ? `[Pasted text #${id} +${content.split("\n").length} lines]`
     : `[Pasted text #${id} +${content.length} chars]`;
 }
 
-/** Swap every `[Pasted text #N …]` chip back to its stored body (unknown ids are left as-is). */
+/** Swap every `[Pasted text #N ...]` chip back to its stored body (unknown ids are left as-is). */
 export function expandPastes(s: string, bodies: Map<number, string>): string {
   if (bodies.size === 0) return s;
   return s.replace(CHIP_RE, (m, n) => {
@@ -35,7 +35,7 @@ export function expandPastes(s: string, bodies: Map<number, string>): string {
   });
 }
 
-/** The paste ids still referenced by a composer string — for GC of consumed/edited-away bodies. */
+/** The paste ids still referenced by a composer string -- for GC of consumed/edited-away bodies. */
 export function livePasteIds(s: string): Set<number> {
   const live = new Set<number>();
   for (const m of s.matchAll(CHIP_ID_RE)) live.add(Number(m[1]));
@@ -47,9 +47,9 @@ export type PasteSegment = { type: "keys"; data: string } | { type: "paste"; con
 
 /**
  * Splits a stream of stdin chunks into ordinary key runs and completed paste bodies, tracking a
- * paste that spans several chunks. Bracketed-paste content is carved out as substrings — never
- * decoded key-by-key — so a multi-megabyte paste costs one string append, not one allocation per
- * character (the O(n²) accumulation that froze the composer on a large paste).
+ * paste that spans several chunks. Bracketed-paste content is carved out as substrings -- never
+ * decoded key-by-key -- so a multi-megabyte paste costs one string append, not one allocation per
+ * character (the O(n2) accumulation that froze the composer on a large paste).
  */
 export class PasteScanner {
   private inPaste = false;

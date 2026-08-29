@@ -151,9 +151,9 @@ describe("accountChoices (level 2)", () => {
     });
     const out = accountChoices(getPreset("ollama-turbo"), r, undefined, {});
     expect(out.map((a) => a.kind)).toEqual(["key", "key"]);
-    expect(out[0]).toMatchObject({ label: "API key · personal", entryId: "k1", active: false });
+    expect(out[0]).toMatchObject({ label: "API key | personal", entryId: "k1", active: false });
     expect(out[0]!.detail).toContain("added 2026-07-01");
-    expect(out[1]).toMatchObject({ label: "API key · work", entryId: "k2", active: true });
+    expect(out[1]).toMatchObject({ label: "API key | work", entryId: "k2", active: true });
   });
 
   it("a signed-in OAuth account leads the list and outranks stored keys", () => {
@@ -183,7 +183,7 @@ describe("accountChoices (level 2)", () => {
     });
     const out = accountChoices(getPreset("copilot"), r, undefined, {});
     expect(out).toHaveLength(1);
-    expect(out[0]!.detail).toBe("signed in · device flow");
+    expect(out[0]!.detail).toBe("signed in | device flow");
   });
 
   it("local runtimes yield their endpoint; custom yields the endpoint card", () => {
@@ -276,7 +276,7 @@ describe("line rendering", () => {
       formatModelLine(3, { id: "o3", label: "o3", current: true, isDefault: true }),
     );
     expect(line).toContain("[3] o3");
-    expect(line).toContain("◂ current");
+    expect(line).toContain("< current");
     expect(line).toContain("◆ default");
     const withId = stripAnsi(
       formatModelLine(1, { id: "gpt-5", label: "GPT-5", current: false, isDefault: false }),
@@ -315,6 +315,6 @@ describe("line rendering", () => {
       }),
     ];
     const out = providerChoices(rows, undefined, {}, getPreset);
-    expect(stripAnsi(out[0]!.hint)).toContain("oauth · signed in");
+    expect(stripAnsi(out[0]!.hint)).toContain("oauth | signed in");
   });
 });

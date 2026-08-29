@@ -1,10 +1,12 @@
-// ─── Research mode rendering ───
+// --- Research mode rendering ---
 // Pure string builders for the /research flow, shared by the classic CLI and
 // the TUI. Plan/clarification are rendered at the approval gate; the streaming
 // progress events go through formatResearchEvent (mirrors events.ts).
 
-import { bold, text, muted, faint, info, ok, accent, warn } from "./theme";
-import { wrap, termWidth } from "./render";
+import { bold, danger, text, muted, faint, info, ok, warn } from "./theme";
+import { glyph } from "./glyphs";
+import { visLen, wrap } from "./render";
+import * as F from "./flow";
 import type {
   ResearchClarification,
   ResearchEvent,
@@ -12,6 +14,19 @@ import type {
   ResearchReport,
   SourceScope,
 } from "../../research-types";
+
+/**
+ * The research panel's measure. Its rows start at column 2, so the budget is
+ * the surface less that indent -- the same width the transcript around it uses.
+ *
+ * It was min(term - 8, 92). A fixed ceiling put the plan in a 92-column strip
+ * while the hairlines above and below it ran the full width of the window, so
+ * the approval gate -- the one screen in the product that has to be read
+ * carefully before you answer it -- was the most half-drawn thing on it.
+ */
+function panelWidth(): number {
+  return Math.max(40, F.measure() - 2);
+}
 
 const NUMERALS = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"];
 const num = (i: number): string => NUMERALS[i] ?? `${i + 1}`;
@@ -31,8 +46,8 @@ function host(url: string): string {
 
 /** The proposed plan, shown at the approval gate. Wraps long lines. */
 export function renderResearchPlan(plan: ResearchPlan): string {
-  const w = Math.max(40, Math.min(termWidth() - 8, 92));
-  const rows: string[] = [`  ${muted("•")} ${bold(text("Research plan"))}`];
+  const w = panelWidth();
+  const rows: string[] = [`  ${muted(glyph("observed"))} ${bold(text("Research plan"))}`];
   for (const ln of wrap(plan.question, w)) rows.push(`  ${faint(ln)}`);
   if (plan.clarification) {
     rows.push("");
@@ -40,20 +55,25 @@ export function renderResearchPlan(plan: ResearchPlan): string {
   }
   rows.push("");
   for (const sq of plan.subQuestions) {
-    const head = wrap(sq.question, w - 8);
-    rows.push(
-      `    ${warn(`${num(sq.index)}.`)} ${scopeTag(sq.sourceScope)} ${text(head[0] ?? "")}`,
-    );
+    // The first line of a sub-question is prefixed by its numeral and scope tag,
+    // which together run 13-18 cells wide -- not the 8 the hanging indent costs.
+    // Budgeting the text at `w - 8` and then printing it after an 18-cell lead
+    // ran the row six columns past the panel. Measure the lead that is actually
+    // printed, and both the head line and its continuations land inside it.
+    const lead = `    ${warn(`${num(sq.index)}.`)} ${scopeTag(sq.sourceScope)} `;
+    const body = Math.max(20, w + 2 - visLen(lead));
+    const head = wrap(sq.question, body);
+    rows.push(`${lead}${text(head[0] ?? "")}`);
     for (const ln of head.slice(1)) rows.push(`        ${text(ln)}`);
     if (sq.rationale) {
-      for (const ln of wrap(sq.rationale, w - 8)) rows.push(`        ${faint(ln)}`);
+      for (const ln of wrap(sq.rationale, body)) rows.push(`        ${faint(ln)}`);
     }
   }
   const scopes = new Set(plan.subQuestions.map((s) => s.sourceScope));
   rows.push("");
   rows.push(
     `  ${faint(
-      `${plan.subQuestions.length} sub-question${plan.subQuestions.length === 1 ? "" : "s"} · sources: ${[...scopes].join(", ")}`,
+      `${plan.subQuestions.length} sub-question${plan.subQuestions.length === 1 ? "" : "s"} | sources: ${[...scopes].join(", ")}`,
     )}`,
   );
   return rows.join("\n");
@@ -61,8 +81,10 @@ export function renderResearchPlan(plan: ResearchPlan): string {
 
 /** Clarifying questions shown before planning when the request is ambiguous. */
 export function renderClarifyingQuestions(clar: ResearchClarification): string {
-  const w = Math.max(40, Math.min(termWidth() - 8, 92));
-  const rows: string[] = [`  ${muted("•")} ${bold(text("A few quick questions first"))}`];
+  const w = panelWidth();
+  const rows: string[] = [
+    `  ${muted(glyph("observed"))} ${bold(text("A few quick questions first"))}`,
+  ];
   clar.questions.forEach((q, i) => {
     const lines = wrap(q, w - 6);
     rows.push(`    ${warn(`${i + 1}.`)} ${text(lines[0] ?? "")}`);
@@ -77,27 +99,34 @@ export function renderResearchComplete(report: ResearchReport): string {
     `${report.sources.length} source${report.sources.length === 1 ? "" : "s"}`,
     `${report.completed}/${report.subResults.length} sub-questions`,
   ];
-  if (report.failed > 0) parts.push(accent(`${report.failed} failed`));
-  const rows = [`  ${muted("•")} ${bold(text("Report ready"))}  ${faint(parts.join(" · "))}`];
+  if (report.failed > 0) parts.push(danger(`${report.failed} failed`));
+  const rows = [
+    `  ${muted(glyph("observed"))} ${bold(text("Report ready"))}  ${faint(parts.join(" | "))}`,
+  ];
   for (const w of report.warnings) rows.push(`    ${warn("!")} ${muted(w)}`);
   return rows.join("\n");
 }
 
 /**
- * A streamed research progress event → transcript line, or null for events
+ * A streamed research progress event -> transcript line, or null for events
  * rendered elsewhere (research_report_delta streams as raw text; research_plan
  * is drawn at the gate).
  */
 export function formatResearchEvent(ev: ResearchEvent): string | null {
   switch (ev.type) {
     case "research_step_start":
-      return `  ${muted("•")} ${bold(text("Investigating"))} ${warn(`${num(ev.index)}.`)} ${scopeTag(ev.sourceScope)} ${muted(ev.question)}`;
+      return `  ${muted(glyph("observed"))} ${bold(text("Investigating"))} ${warn(`${num(ev.index)}.`)} ${scopeTag(ev.sourceScope)} ${muted(ev.question)}`;
 
     case "research_source":
-      return `    ${faint("└")} ${info(`[${ev.sourceIndex}]`)} ${text(ev.title.slice(0, 70))} ${faint(ev.fetched ? `(${host(ev.url)} ✓)` : `(${host(ev.url)})`)}`;
+      return `    ${faint(glyph("gutter"))} ${info(`[${ev.sourceIndex}]`)} ${text(ev.title.slice(0, 70))} ${faint(ev.fetched ? `(${host(ev.url)} ${glyph("verified")})` : `(${host(ev.url)})`)}`;
 
     case "research_step_done": {
-      const mark = ev.status === "ok" ? ok("✓") : ev.status === "empty" ? faint("∅") : accent("✕");
+      const mark =
+        ev.status === "ok"
+          ? ok(glyph("verified"))
+          : ev.status === "empty"
+            ? faint("empty")
+            : danger(glyph("failure"));
       const label =
         ev.status === "empty"
           ? "no new sources"
@@ -106,13 +135,13 @@ export function formatResearchEvent(ev: ResearchEvent): string | null {
     }
 
     case "research_synthesizing":
-      return `  ${muted("•")} ${bold(text("Synthesizing"))} ${faint(`from ${ev.sourceCount} source${ev.sourceCount === 1 ? "" : "s"}…`)}`;
+      return `  ${muted(glyph("observed"))} ${bold(text("Synthesizing"))} ${faint(`from ${ev.sourceCount} source${ev.sourceCount === 1 ? "" : "s"}${glyph("elision")}`)}`;
 
     case "research_complete":
       return renderResearchComplete(ev.report);
 
     case "notice":
-      return `  ${warn("•")} ${muted(ev.message)}`;
+      return `  ${warn(glyph("observed"))} ${muted(ev.message)}`;
 
     default:
       // research_plan (gate), research_report_delta (streamed), error (caller)

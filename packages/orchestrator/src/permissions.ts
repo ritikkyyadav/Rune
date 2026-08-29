@@ -35,7 +35,10 @@ export type PermissionDecision =
 //   gear-3 — adds OS-sandboxed local commands and workspace-confined delegation
 //   gear-4 — full autonomy: every interactive permission prompt is bypassed.
 //            The OS sandbox is an independent knob and is NOT touched by gears.
-//   auto   — automatic: an independent classifier reviews risky actions
+//   auto   — automatic: 4th-gear autonomy INSIDE the OS sandbox, with an
+//            independent watcher above the path. It never asks: an action it
+//            will not run comes back to the agent as a contained, redirected,
+//            or recorded step. The sandbox is the boundary, so auto turns it on.
 //
 // The broker is the deterministic capability boundary; the Engine owns the
 // classifier layer for `auto`.
@@ -62,7 +65,7 @@ export function nextPermissionMode(mode: PermissionMode): PermissionMode {
   return PERMISSION_MODE_ORDER[(i + 1) % PERMISSION_MODE_ORDER.length]!;
 }
 
-/** Human label: "1st gear" … "4th gear", "auto". */
+/** Human label: "1st gear" … "4th gear", "Auto mode". */
 export function gearLabel(mode: PermissionMode): string {
   switch (mode) {
     case "gear-1":
@@ -74,7 +77,7 @@ export function gearLabel(mode: PermissionMode): string {
     case "gear-4":
       return "4th gear";
     default:
-      return "auto";
+      return "Auto mode";
   }
 }
 
@@ -100,7 +103,7 @@ export const GEAR_DESCRIPTIONS: Readonly<Record<PermissionMode, string>> = {
   "gear-2": "workspace file edits proceed; commands and delegation still ask",
   "gear-3": "adds sandboxed commands and workspace-confined delegation",
   "gear-4": "full autonomy — never asks first (the sandbox is a separate switch)",
-  auto: "automatic — a separate classifier reviews risky actions",
+  auto: "automatic — full autonomy inside the sandbox, watched for injected instructions",
 };
 
 export function gearDescription(mode: PermissionMode): string {
@@ -508,6 +511,27 @@ export class PermissionBroker {
     return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
   }
 
+  /**
+   * Whether this call LEAVES the containment the tool is normally approved
+   * inside. For `bash` that is the two sandbox escapes `isWorkspaceConfined`
+   * already refuses to auto-approve: `network: true` (runs outside the OS
+   * sandbox, with the internet) and `run_in_background: true` (detached, binds
+   * ports, outlives the turn).
+   *
+   * This exists because a BLANKET session grant used to cover them. The user
+   * approved `bash: bun test` once, chose "allow session", and every later
+   * bash call matched — including `curl … | sh` with `network: true`. The
+   * careful escape logic in isWorkspaceConfined was doing real work and a
+   * single click routed around it for the rest of the session.
+   *
+   * An EXACT grant is unaffected: there the user approved that precise
+   * payload, escape flags and all, and saw them in the prompt summary.
+   */
+  private static escapesContainment(tool: string, args: Record<string, unknown>): boolean {
+    if (tool !== "bash") return false;
+    return args.network === true || args.run_in_background === true;
+  }
+
   private findGrant(tool: string, args: Record<string, unknown>): PermissionRule | undefined {
     return this.sessionGrants.find((grant) => {
       if (grant.tool !== tool) return false;
@@ -518,6 +542,11 @@ export class PermissionBroker {
       if (grant.exactArgs !== undefined) {
         return grant.exactArgs === stableArgs(args);
       }
+
+      // Below here the grant is blanket or pattern-based — neither one was
+      // approved against THIS payload, so an escaping call must earn its own
+      // prompt rather than inherit someone else's yes.
+      if (PermissionBroker.escapesContainment(tool, args)) return false;
 
       // Check pattern match on args
       if (grant.pattern) {

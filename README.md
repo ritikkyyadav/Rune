@@ -19,8 +19,17 @@ compliance-sensitive teams.
 - **Multi-provider gateway** — Anthropic, OpenAI, OpenRouter, Google, and local **Ollama**, with
   automatic provider fallback, retry, and backoff.
 - **Tool suite** — `read_file`, `write_file`, `edit_file`, `multi_edit`, `glob`, `grep`, `list_dir`,
-  `bash`, `symbol_search`, `ast_query`, `web_fetch`, `web_search`, `todo_write`, `n8n_trigger`, and a
-  `task` sub-agent for parallel **read-only** investigations.
+  `bash`, `symbol_search`, `ast_query`, `web_fetch`, `web_search`, `todo_write`, `n8n_trigger`, a
+  `task` sub-agent for parallel **read-only** investigations, and a `worker` sub-agent for
+  parallel **implementation**.
+- **Delegation & teamwork** — the agent fans work out to sub-agents and routes each call by
+  weight: `tier` (`light`/`standard`/`heavy`, resolved through your `[tiers]` table) and `effort`
+  (`quick`/`standard`/`thorough`) per call, executed through a bounded parallel pool. `worker`
+  sub-agents own **disjoint** files, enforced mechanically by a claims table plus a write guard —
+  not by prompt. And when you run **several Gear instances in one repository**, they see each
+  other on a local shared bus: presence and intent, teammate messages delivered at turn
+  boundaries, path claims, and warnings when two instances edit the same area. See
+  [`docs/teamwork.md`](docs/teamwork.md).
 - **Reliable editing** — hash-guarded, atomic edits with 3-tier matching (exact →
   whitespace-insensitive → indentation-insensitive) in both the TypeScript and Rust editors, so edits
   survive minor whitespace drift instead of corrupting files.
@@ -147,8 +156,44 @@ cargo build --release -p gear-tools    # required — file, search, and shell to
 
 ## Quickstart
 
-Gear defaults to a **free model (Gemini 2.5 Flash)**. Grab a free
-[Google AI Studio key](https://aistudio.google.com/apikey), then:
+Gear can start on **Gemini 2.5 Flash's free developer tier**. That is suitable
+for setup, short fixes, and local evaluation—not dependable multi-hour work:
+free quotas can throttle a healthy run after dozens of turns. For long-horizon
+tasks, use a funded Anthropic/OpenAI/Google key or a sufficiently provisioned
+local model. When several credentials exist and you have not chosen a default,
+Gear prefers direct Anthropic/OpenAI capacity; an explicit `--provider`, config,
+or saved `/model` choice always wins.
+
+**When your plan quota runs out mid-task, the run stops.** A frontier model
+halfway through an extensive task is not interchangeable with whatever is
+registered next: the substitute inherits the transcript and the authority,
+works to a different standard, and nothing in the output says so. So Gear ends
+the turn with the retry window instead — your todos and file trail are written
+to a resume handoff first, so nothing is lost:
+
+```
+Quota exceeded on codex/gpt-5.6-sol — The usage limit has been reached.
+Stopped here instead of handing your task to a weaker model. Your work is
+saved: resume this session in ~14m, switch now with /model, or set
+[fallback] onQuotaExceeded = "degrade" to allow automatic downgrade.
+```
+
+This applies to plan/quota **caps** only. An ordinary rate limit clears in
+seconds, so it still retries and falls back as before.
+
+For those transient failures the gateway descends as little as it can: funded
+API keys first, then subscription seats (ChatGPT/Copilot), then free tiers, then
+local runtimes. Any sub-agent that finishes on a different model than it was
+dispatched to returns a `[PROVENANCE …]` banner, so a degraded result is never
+mistaken for a clean one. Both behaviours are configurable in `.gear/config.toml`:
+
+```toml
+[fallback]
+order = ["anthropic", "codex"]   # tried first; providers left out simply follow
+onQuotaExceeded = "stop"         # "stop" (default) | "degrade"
+```
+
+To try the free tier:
 
 ```bash
 export GOOGLE_API_KEY=...     # free tier — or put it in .env (Bun auto-loads it)
@@ -159,14 +204,15 @@ Other **free** options:
 
 ```bash
 export OPENROUTER_API_KEY=...                                   # free models on OpenRouter
-gear -p openrouter -m deepseek/deepseek-v4-flash:free
+gear -p openrouter -m minimax/minimax-m3:free
 
 export OLLAMA_HOST=http://localhost:11434                       # fully local / offline
 gear -p ollama -m llama3
 ```
 
-Paid top-tier (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`) is **optional** — only needed
-for a later production-grade validation pass. See `.env.example`.
+Paid top-tier (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`) is optional for trying
+Gear, but required for an honest production-grade or long-horizon validation
+unless your local provider has comparable sustained capacity. See `.env.example`.
 
 Common flags: `-m/--model`, `-p/--provider`, `-w/--workspace <dir>`,
 `--autonomy <I|II|III>`, `--trust` (Auto), `-r/--resume <sessionId>`, `-l/--list`.
@@ -189,6 +235,11 @@ Go — including monorepo roots and single nested apps); point them at your real
 `[verify] commands = ["bun run lint", "bun test tests/unit/"]`, tune `timeoutSecs`, or disable
 with `enabled = false`.
 
+**Teamwork:** `[team]` controls the multi-instance bus — `enabled` (default true),
+`claimEnforcement` (`warn` | `block` | `off`, default `warn`), and `heartbeatSecs`. Env
+overrides: `GEAR_TEAM`, `GEAR_TEAM_ENFORCEMENT`. Full details in
+[`docs/teamwork.md`](docs/teamwork.md).
+
 **Research defaults** live under `[research]` in `.gear/config.toml`: `depth` (`quick`/`standard`/`deep`),
 `maxSubQuestions`, `maxParallel`, `maxSourcesPerStep`, `autoApprove`, `save`, and `outputDir`. Env
 overrides: `GEAR_RESEARCH_DEPTH`, `GEAR_RESEARCH_MAX_PARALLEL`, `GEAR_RESEARCH_MAX_SUBQUESTIONS`,
@@ -206,9 +257,12 @@ overrides: `GEAR_RESEARCH_DEPTH`, `GEAR_RESEARCH_MAX_PARALLEL`, `GEAR_RESEARCH_M
 
 ## Slash commands
 
-`/model`, `/effort`, `/status`, `/providers`, `/keys`, `/mcp`, `/skills`, `/research`,
+`/model`, `/effort`, `/status`, `/providers`, `/keys`, `/mcp`, `/team`, `/skills`, `/research`,
 `/deepresearch`, `/cost`, `/loop`, `/loops`, `/compress`, `/plan`, `/rewind`, `/help`, `/quit` — plus any custom
 commands you define in `.gear/commands/`.
+`/team` shows the other Gear instances working in this repository; `/team send <id|all> <msg>`
+messages one or all of them (delivered at their next turn boundary), `/team claim <path...>`
+leases paths you're about to change, and `/team intent <text>` sets the status peers see.
 `/skills` lists the bundled skill catalog; `/skills <keywords>` searches it.
 `/research <question>` runs research: it proposes a plan, waits for your approval (Enter to run,
 `r` to revise, `n` to cancel), then iteratively fans out and writes a cited report. `/deepresearch

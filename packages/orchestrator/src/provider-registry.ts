@@ -40,6 +40,14 @@ export interface BuildGatewayOpts {
   ollamaBaseUrl?: string;
   maxRetries?: number;
   retryBaseMs?: number;
+  /**
+   * `[fallback] order` from config.toml — the head of the provider chain the
+   * gateway walks when the active provider fails mid-task. Unset means the
+   * built-in capacity ranking decides.
+   */
+  fallbackOrder?: ProviderName[];
+  /** `[fallback] onQuotaExceeded` — stop the run on a plan cap, or degrade. */
+  quotaPolicy?: "stop" | "degrade";
   /** Injectable for tests; defaults to process.env. */
   env?: NodeJS.ProcessEnv;
   /** Black-box tap forwarded into the gateway (survives gateway rebuilds). */
@@ -77,6 +85,8 @@ export function buildGateway(opts: BuildGatewayOpts): LlmGateway {
     maxRetries: opts.maxRetries ?? 3,
     retryBaseMs: opts.retryBaseMs ?? 1000,
     onIncident: opts.onIncident,
+    fallbackOrder: opts.fallbackOrder,
+    quotaPolicy: opts.quotaPolicy,
   });
 
   const localBaseUrls = mergeLocalBaseUrls(opts);

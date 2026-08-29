@@ -324,7 +324,7 @@ describe("ui/composer statusLine + permission mode", () => {
     expect(stripAnsi(statusLine({ ...base, mode: "autonomy-iii" }, 120))).toContain(
       ">>>> 4th gear",
     );
-    expect(stripAnsi(statusLine({ ...base, mode: "auto" }, 120))).toContain("* auto");
+    expect(stripAnsi(statusLine({ ...base, mode: "auto" }, 120))).toContain("* Auto mode");
   });
 
   it("stays on one line in a narrow terminal by dropping the description first", () => {
@@ -375,8 +375,11 @@ describe("ui/composer statusLine + permission mode", () => {
     expect(flat("autonomy-ii")).toMatch(/3rd gear.*sandboxed local commands/i);
 
     const auto = flat("auto");
-    expect(auto).toMatch(/\* auto/);
-    expect(auto).toMatch(/isolated classifier/i);
+    expect(auto).toMatch(/\* Auto mode/);
+    // The banner has to say both halves or it is misleading: no prompts, AND
+    // something is still watching. Either one alone reads as a different mode.
+    expect(auto).toMatch(/without permission prompts/i);
+    expect(auto).toMatch(/watcher/i);
     expect(flat("confirm")).toMatch(/1st gear/);
 
     // Every banner holds the measure rather than running off the right edge.

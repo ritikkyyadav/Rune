@@ -246,9 +246,10 @@ export interface UserBlockMeta {
 }
 
 /**
- * What you asked, at the left margin. No bar, no fill, no receipt -- the message
- * is the strongest landmark in scrollback precisely because nothing decorates
- * it, and the turn number is already in the header.
+ * What you asked, at the left margin. No bar, no fill, no receipt -- and, since
+ * the echo was repainted, no competing with the answer either: the block sits
+ * at the muted slot under a single coloured marker. F.asked() carries the
+ * reasoning; the turn number is already in the header.
  */
 export function userBlock(raw: string, _meta: UserBlockMeta = {}): string {
   return F.asked(raw);
@@ -274,7 +275,12 @@ const BLOCK_OPENER = /^(#{1,6}\s|[-*+]\s|\d+[.)]\s|>|```|~~~|\||(?:-{3,}|\*{3,}|
  * promoted to the dot, because that is the line the reader came for.
  */
 export function responseBlock(markdown: string): string {
-  const width = F.proseWidth();
+  // renderMarkdown's `width` is the TOTAL budget for a line, indent included:
+  // it takes `indent` off itself. Passing proseWidth() -- which has already had
+  // BODY subtracted -- charged for the indent twice, so every paragraph, list
+  // and code fence under the headline stopped four columns short of the
+  // headline sitting directly above it. The measure is the whole line.
+  const width = F.measure();
   const source = markdown.replace(/\r\n/g, "\n").split("\n");
   const first = source.findIndex((line) => line.trim());
   if (

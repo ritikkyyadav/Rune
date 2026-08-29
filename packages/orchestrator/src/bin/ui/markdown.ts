@@ -1,4 +1,4 @@
-// ─── Markdown → ANSI (the response voice) ───
+// --- Markdown -> ANSI (the response voice) ---
 // Renders the model's final answer as *typography*, not raw markup: headings set
 // bold with a hairline, code fences get a gutter, lists get real bullets with
 // hanging indents, and inline `code`/**bold**/*italic* become their terminal
@@ -21,6 +21,7 @@ import {
   codeSurface,
   panel,
 } from "./theme";
+import { glyph } from "./glyphs";
 import { termWidth } from "./render";
 
 const ITALIC_ON = "\x1b[3m";
@@ -35,7 +36,11 @@ const strike = (v: string): string => (colorEnabled ? `${STRIKE_ON}${v}${STYLE_O
 export type MarkdownTone = "primary" | "secondary" | "headline";
 
 export interface MarkdownOpts {
-  /** Total column budget for each rendered line (indent included). Default: min(term-2, 100). */
+  /**
+   * Total column budget for each rendered line, INDENT INCLUDED -- this
+   * renderer subtracts `indent` itself, so a caller passes the whole line's
+   * budget, not the room left after the indent. Default: the terminal.
+   */
   width?: number;
   /** Left indent prepended to every line. Default "  ". */
   indent?: string;
@@ -43,7 +48,7 @@ export interface MarkdownOpts {
   tone?: MarkdownTone;
 }
 
-// ── inline styling ──
+// -- inline styling --
 // Parse a single line of prose into styled segments, then wrap segment-aware so
 // a style never leaks across a line break (each chunk is styled independently).
 
@@ -68,7 +73,7 @@ const WORD = /[\p{L}\p{N}]/u;
 /**
  * Whether an underscore run at `start` is emphasis rather than part of an
  * identifier. CommonMark's rule, and the one that matters most here: `_` inside
- * a word never opens or closes emphasis — otherwise `content_block_stop` and
+ * a word never opens or closes emphasis -- otherwise `content_block_stop` and
  * `read_file`, which this product prints constantly, come out as
  * `contentblockstop` with the underscores silently eaten.
  */
@@ -90,7 +95,7 @@ export function parseInline(src: string, tone: MarkdownTone = "primary"): Seg[] 
   };
   while (i < src.length) {
     const rest = src.slice(i);
-    // inline code — highest precedence, protects its contents
+    // inline code -- highest precedence, protects its contents
     const code = rest.match(/^`([^`]+)`/);
     if (code) {
       flush();
@@ -150,7 +155,7 @@ interface Unit {
 }
 
 /** Explode styled segments into wrap units, gluing chunks not separated by
- *  whitespace in the source — so `` `dir`. `` renders "dir." not "dir .". */
+ *  whitespace in the source -- so `` `dir`. `` renders "dir." not "dir .". */
 function toUnits(segs: Seg[]): Unit[] {
   const units: Unit[] = [];
   let open = false; // the previous token ended flush against this boundary
@@ -175,7 +180,7 @@ function toUnits(segs: Seg[]): Unit[] {
   return units;
 }
 
-/** Slice an over-wide unit into ≤`max`-char chunks, each piece keeping its paint. */
+/** Slice an over-wide unit into <=`max`-char chunks, each piece keeping its paint. */
 function splitUnit(u: Unit, max: number): Unit[] {
   const out: Unit[] = [];
   let cur: Unit = { pieces: [], len: 0 };
@@ -214,7 +219,17 @@ export function wrapInline(
   const lines: string[] = [];
   let parts: string[] = []; // styled units on the current line
   let len = 0; // their visible length, separators included
-  const avail = () => width - (lines.length === 0 ? 0 : hang.length);
+  // Every line pays for the hang, the first one included. It does not carry
+  // `hang` in its own string -- the list caller prepends the marker instead --
+  // but the marker is sized to exactly hang.length, so the first line lands in
+  // the same content column as its continuations and costs the same. Budgeting
+  // it at the full `width` overflowed the measure by the marker's width on
+  // every bullet; with a ceiling in place that overflow stayed under the window
+  // and went unseen, and the moment the measure followed the terminal it began
+  // pushing list items onto the last cell -- where the line soft-wraps and the
+  // pinned composer's cursor math desyncs. splitUnit()'s maxChunk above has
+  // always subtracted the hang; this is the same rule, applied consistently.
+  const avail = () => width - hang.length;
   const flush = () => {
     lines.push((lines.length === 0 ? "" : hang) + parts.join(" "));
     parts = [];
@@ -229,13 +244,18 @@ export function wrapInline(
   return lines.length ? lines : [""];
 }
 
-// ── block-level rendering ──
+// -- block-level rendering --
 
 /** Render a markdown document to themed terminal lines. */
 export function renderMarkdown(md: string, opts: MarkdownOpts = {}): string[] {
   const indent = opts.indent ?? "  ";
   const tone = opts.tone ?? "primary";
-  const width = Math.max(24, (opts.width ?? Math.min(termWidth() - 2, 100)) - indent.length);
+  // No ceiling. This defaulted to min(term - 2, 100), which on a wide window
+  // set an answer's paragraphs, lists and fenced code at 100 columns while the
+  // rails and rules around them ran to the edge -- the same half-drawn frame
+  // that flow.proseWidth() was capping into existence. Callers that own a
+  // narrower region still pass their own budget; the default follows the window.
+  const width = Math.max(24, (opts.width ?? termWidth() - 2) - indent.length);
   const out: string[] = [];
   const src = md.replace(/\r\n/g, "\n").split("\n");
 
@@ -258,7 +278,7 @@ export function renderMarkdown(md: string, opts: MarkdownOpts = {}): string[] {
   for (let li = 0; li < src.length; li++) {
     const raw = src[li]!;
 
-    // ── fenced code ──
+    // -- fenced code --
     const fence = raw.match(/^\s*(```+|~~~+)\s*(\S+)?\s*$/);
     if (fence && !inFence) {
       inFence = true;
@@ -294,44 +314,44 @@ export function renderMarkdown(md: string, opts: MarkdownOpts = {}): string[] {
       continue;
     }
 
-    // ── horizontal rule ──
+    // -- horizontal rule --
     if (/^(-{3,}|\*{3,}|_{3,})$/.test(t)) {
       blank();
-      emit(lineColor("─".repeat(Math.min(width, 40))));
+      emit(lineColor("-".repeat(Math.min(width, 40))));
       blank();
       continue;
     }
 
-    // ── headings ──
+    // -- headings --
     const h = t.match(/^(#{1,6})\s+(.*)$/);
     if (h) {
       const level = h[1]!.length;
-      // Headings are set as type, not markup — drop any inline markers.
+      // Headings are set as type, not markup -- drop any inline markers.
       const title = h[2]!
         .replace(/#+\s*$/, "")
         .replace(/\*\*|__|~~|`/g, "")
         .trim();
       blank();
       emit(bold(text(title.slice(0, width))));
-      if (level <= 2) emit(lineColor("─".repeat(Math.max(4, Math.min(title.length, width)))));
+      if (level <= 2) emit(lineColor("-".repeat(Math.max(4, Math.min(title.length, width)))));
       lastBlank = false;
       continue;
     }
 
-    // ── blockquote ──
+    // -- blockquote --
     const bq = raw.match(/^\s*>\s?(.*)$/);
     if (bq) {
       for (const ln of wrapInline(bq[1]!, width - 2, "", tone))
-        emit(`${lineColor("▏")} ${muted(stripAnsi(ln))}`);
+        emit(`${lineColor(glyph("gutter"))} ${muted(stripAnsi(ln))}`);
       continue;
     }
 
-    // ── list items (unordered + ordered), nesting via leading spaces ──
+    // -- list items (unordered + ordered), nesting via leading spaces --
     const ul = raw.match(/^(\s*)[-*+]\s+(.*)$/);
     const ol = raw.match(/^(\s*)(\d{1,3})[.)]\s+(.*)$/);
     if (ul || ol) {
       const lead = " ".repeat(Math.min((ul ?? ol)![1]!.length, 8));
-      const marker = ul ? muted("•") : warn(`${ol![2]!}.`);
+      const marker = ul ? muted(glyph("observed")) : warn(`${ol![2]!}.`);
       const markerW = ul ? 1 : ol![2]!.length + 1;
       const body = ul ? ul[2]! : ol![3]!;
       const hang = lead + " ".repeat(markerW + 1);
@@ -341,7 +361,7 @@ export function renderMarkdown(md: string, opts: MarkdownOpts = {}): string[] {
       continue;
     }
 
-    // ── table rows: keep mono alignment, tint the frame ──
+    // -- table rows: keep mono alignment, tint the frame --
     if (/^\s*\|.*\|\s*$/.test(raw)) {
       if (/^\s*\|[\s\-:|]+\|\s*$/.test(raw)) {
         emit(lineColor(t.slice(0, width)));
@@ -351,7 +371,7 @@ export function renderMarkdown(md: string, opts: MarkdownOpts = {}): string[] {
       continue;
     }
 
-    // ── paragraph (merge soft-wrapped source lines into one flow) ──
+    // -- paragraph (merge soft-wrapped source lines into one flow) --
     let para = t;
     while (li + 1 < src.length) {
       const nxt = src[li + 1]!;

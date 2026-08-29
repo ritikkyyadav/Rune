@@ -279,7 +279,11 @@ describe("what a cited command is worth", () => {
     if (v.ok) expect(v.rung).toBe("reproduced");
   });
 
-  test("failed-then-passing is `verified` — the parent-commit rule, met by the log itself", () => {
+  // The old rule read in-session red→green as the parent-commit rule "met by
+  // the log itself". It is not the same claim, and the difference is the most
+  // ordinary shape of agent work there is: break a test, fix your own break,
+  // watch it go red→green while the parent commit was green throughout.
+  test("in-session red→green is NOT `verified` — the agent may have broken it itself", () => {
     const v = rungForCommand(
       logWith([
         ["bun test tests/http", false, "1 failed"],
@@ -289,8 +293,61 @@ describe("what a cited command is worth", () => {
     );
     expect(v.ok).toBe(true);
     if (v.ok) {
+      expect(v.rung).toBe("reproduced");
+      expect(v.evidence.parentCommitFailed).toBeUndefined();
+    }
+  });
+
+  test("a recorded parent-commit FAILURE is what earns `verified`", () => {
+    const log = logWith([["bun test tests/http", true, "44/44"]]);
+    log.recordParent({
+      command: "bun test tests/http",
+      status: "failed",
+      commit: "4a91c2ef00d1",
+      reason: "exit 1 on HEAD",
+    });
+
+    const v = rungForCommand(log, "bun test tests/http");
+    expect(v.ok).toBe(true);
+    if (v.ok) {
       expect(v.rung).toBe("verified");
       expect(v.evidence.parentCommitFailed).toBe(true);
+      // The receipt now carries the commit it actually ran against.
+      expect(v.evidence.parentCommit).toBe("4a91c2ef00d1");
+      expect(v.evidence.detail).toContain("4a91c2ef");
+    }
+  });
+
+  test("a parent that PASSED caps the rung and says why in the receipt", () => {
+    const log = logWith([
+      ["bun test", true, "44/44"],
+      ["bun test", true, "44/44"],
+    ]);
+    log.recordParent({ command: "bun test", status: "passed", commit: "deadbeefcafe" });
+
+    const v = rungForCommand(log, "bun test");
+    expect(v.ok).toBe(true);
+    if (v.ok) {
+      expect(v.rung).toBe("reproduced");
+      expect(v.evidence.detail).toContain("this change is not why it passes");
+    }
+  });
+
+  test("an inconclusive parent check never yields `verified`, and says so", () => {
+    const log = logWith([["bun test", true, "44/44"]]);
+    log.recordParent({
+      command: "bun test",
+      status: "inconclusive",
+      commit: "abc123",
+      reason: "the HEAD tree is not set up to run this check (exit 127)",
+    });
+
+    const v = rungForCommand(log, "bun test");
+    expect(v.ok).toBe(true);
+    if (v.ok) {
+      expect(v.rung).toBe("observed");
+      expect(v.evidence.parentCommitFailed).toBeUndefined();
+      expect(v.evidence.detail).toContain("inconclusive");
     }
   });
 
@@ -324,7 +381,30 @@ describe("record_evidence — the model picks the criterion, never the rung", ()
     expect(ledger.complete).toBe(false);
   });
 
-  test("the same citation becomes `verified` once the log shows it failing first", async () => {
+  test("the citation becomes `verified` only when the parent probe reports a failure", async () => {
+    const ledger = new BriefLedger(brief());
+    const log = logWith([["bun test", true, "44/44"]]);
+    let probed = 0;
+    const tool = createRecordEvidenceTool(
+      () => ledger,
+      () => log,
+      (command) => {
+        probed++;
+        return { command, status: "failed", commit: "0f1e2d3c4b5a", reason: "exit 1 on HEAD" };
+      },
+    );
+
+    const out = await tool.execute({
+      callId: "c1",
+      toolName: "record_evidence",
+      args: { criterion: 0, command: "bun test" },
+    } as any);
+    expect(out.result).toContain("verified");
+    expect(ledger.met).toBe(1);
+    expect(probed).toBe(1);
+  });
+
+  test("a green parent leaves the criterion unmet, however many times it passes now", async () => {
     const ledger = new BriefLedger(brief());
     const log = logWith([
       ["bun test", false, "1 failed"],
@@ -333,14 +413,88 @@ describe("record_evidence — the model picks the criterion, never the rung", ()
     const tool = createRecordEvidenceTool(
       () => ledger,
       () => log,
+      (command) => ({ command, status: "passed", commit: "0f1e2d3c4b5a" }),
     );
+
     const out = await tool.execute({
       callId: "c1",
       toolName: "record_evidence",
       args: { criterion: 0, command: "bun test" },
     } as any);
-    expect(out.result).toContain("verified");
-    expect(ledger.met).toBe(1);
+    // Red→green in-session, but the parent was green: the change is not why.
+    expect(out.result).not.toContain("verified:");
+    expect(ledger.met).toBe(0);
+  });
+
+  test("the parent tree is probed once per command, not once per citation", async () => {
+    const ledger = new BriefLedger(brief());
+    const log = logWith([["bun test", true, "44/44"]]);
+    let probed = 0;
+    const tool = createRecordEvidenceTool(
+      () => ledger,
+      () => log,
+      (command) => {
+        probed++;
+        return { command, status: "failed", commit: "aaaa1111" };
+      },
+    );
+
+    const call = (criterion: number) =>
+      tool.execute({
+        callId: `c${criterion}`,
+        toolName: "record_evidence",
+        args: { criterion, command: "bun test" },
+      } as any);
+
+    await call(0);
+    await call(1);
+    // Two criteria, one full test run against the parent tree.
+    expect(probed).toBe(1);
+    expect(ledger.met).toBe(2);
+  });
+
+  test("with no probe available (non-git workspace) `verified` is simply out of reach", async () => {
+    const ledger = new BriefLedger(brief());
+    const log = logWith([
+      ["bun test", false, "1 failed"],
+      ["bun test", true, "44/44"],
+    ]);
+    const tool = createRecordEvidenceTool(
+      () => ledger,
+      () => log,
+      // no probeParent
+    );
+
+    const out = await tool.execute({
+      callId: "c1",
+      toolName: "record_evidence",
+      args: { criterion: 0, command: "bun test" },
+    } as any);
+    expect(out.result).toContain("reproduced");
+    expect(ledger.met).toBe(0);
+  });
+
+  test("a failing command is never probed — the run would buy nothing", async () => {
+    const ledger = new BriefLedger(brief());
+    const log = logWith([["bun test", false, "1 failed"]]);
+    let probed = 0;
+    const tool = createRecordEvidenceTool(
+      () => ledger,
+      () => log,
+      (command) => {
+        probed++;
+        return { command, status: "failed" };
+      },
+    );
+
+    const out = await tool.execute({
+      callId: "c1",
+      toolName: "record_evidence",
+      args: { criterion: 0, command: "bun test" },
+    } as any);
+    expect(out.success).toBe(true);
+    expect(out.result).toContain("FAILED");
+    expect(probed).toBe(0);
   });
 
   test("citing a command that was never run is refused, however confident the call", async () => {

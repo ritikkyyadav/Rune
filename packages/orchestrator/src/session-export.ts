@@ -136,8 +136,13 @@ export async function exportSession(
     // 7. Audit chain verification
     const chainResult = sm.verifyAuditChain();
 
-    // 8. Cost — CostTracker lives in the Engine; mark unknown when not available
-    const totalCostUsd: number | "unknown" = "unknown";
+    // 8. Cost — summed from the `cost` events the engine writes per billed
+    // request. This used to be hardcoded "unknown" because the CostTracker
+    // lives in the Engine and an export is a standalone reader; persisting the
+    // priced entries is what closes that gap. A session logged before the
+    // engine started writing them still reports "unknown" rather than a
+    // confident $0.00 — an audit artifact must not round absence down to zero.
+    const totalCostUsd: number | "unknown" = sumCostEvents(rawEvents);
 
     // ── Render ──────────────────────────────────────────────────────────
     const content =
@@ -186,6 +191,30 @@ export async function exportSession(
  */
 export function verifyExport(content: string, signature: string, publicKey: string): boolean {
   return verifySignature(Buffer.from(content, "utf8"), signature, publicKey);
+}
+
+/**
+ * Total USD across the session's persisted `cost` events.
+ *
+ * Returns "unknown" — never 0 — when the session carries no cost events at
+ * all. Those are two different facts: "this run was free" and "this run's
+ * spend was never recorded". Collapsing them would let an export understate
+ * cost with total confidence, which is the failure mode an audit artifact
+ * exists to prevent. A malformed or non-finite entry is skipped rather than
+ * poisoning the sum, but its presence still counts as "recorded".
+ */
+function sumCostEvents(
+  events: Array<{ seq: number; event: { type: string; payload: Record<string, unknown> } }>,
+): number | "unknown" {
+  let seen = false;
+  let total = 0;
+  for (const { event } of events) {
+    if (event.type !== "cost") continue;
+    seen = true;
+    const usd = event.payload?.costUsd;
+    if (typeof usd === "number" && Number.isFinite(usd) && usd >= 0) total += usd;
+  }
+  return seen ? total : "unknown";
 }
 
 // ─── DB helpers ───────────────────────────────────────────────────────────

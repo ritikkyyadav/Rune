@@ -126,8 +126,23 @@ export class ToolRegistry {
     const start = performance.now();
     try {
       const output = await handler.execute(input);
-      // Reset circuit on success
-      circuit.failures = 0;
+      // Reset the circuit on SUCCESS ONLY.
+      //
+      // This used to reset on any returned output, success or not. Because a
+      // returned `{success: false}` is the normal failure convention across
+      // this codebase, one such result zeroed the counter — so a tool could
+      // throw, throw, throw, return a soft failure, and start again from zero,
+      // never reaching CIRCUIT_THRESHOLD inside the window. The breaker was
+      // effectively disarmed by the very failures it was counting.
+      //
+      // Deliberately NOT tripping the breaker on a returned failure: those are
+      // usually the CALL being wrong rather than the tool being broken — a
+      // stale edit_file hash, a grep pattern that matches nothing, a bad path.
+      // Disabling edit_file for 60s because the model made five stale edits
+      // would cost far more than the retry loop it prevents. That class is the
+      // agent loop's job (maxConsecutiveErrors in reliability-policy.ts); the
+      // breaker's job is a tool whose implementation is faulting.
+      if (output.success) circuit.failures = 0;
       return output;
     } catch (err) {
       const durationMs = Math.round(performance.now() - start);

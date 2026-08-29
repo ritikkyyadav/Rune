@@ -144,10 +144,18 @@ export function modeInfo(mode?: string): ModeInfo {
     case "auto":
       return {
         id: "auto",
-        label: "auto",
+        // The one entry that is not a gear number, so it is the one entry that
+        // has to say what it is. Lowercase "auto" beside "4th gear" read as a
+        // setting's value rather than a place you are standing; "Auto mode"
+        // says you are in it.
+        label: "Auto mode",
         arrows: "*",
-        desc: "classifier reviews the rest",
-        detail: "safe workspace work proceeds; risky actions get an isolated classifier check.",
+        // No longer "the classifier reviews the rest" — it does not gate
+        // actions any more. It watches for instructions that came from
+        // something the agent read rather than from you.
+        desc: "never asks; watched for injection",
+        detail:
+          "Gear acts without permission prompts inside the sandbox; a watcher above it stops work that did not come from you.",
         paint: brand,
         loud: false,
       };
@@ -308,19 +316,67 @@ const AUTO_TIER_LABEL: Record<string, string> = {
 };
 
 /**
- * The v2 auto-review chip (`.auto-chip`): printed inline for every action that
- * proceeded in Auto, so approvals stay visible without pausing the run.
+ * The Auto chip (`.auto-chip`): one line per decision, printed inline.
+ *
+ * Auto mode never stops to ask, which means the scrollback is the only place
+ * its decisions are visible at all. So every decision gets a chip, not just
+ * the approvals — a contained call and a deferred publish are exactly the
+ * moments a reader needs to be able to find afterwards.
  */
 export function autoApprovedChip(notice: {
   toolName: string;
   risk: string;
   tier?: string;
+  kind?: string;
+  route?: string;
+  substitute?: string;
 }): string {
   const how = (notice.tier && AUTO_TIER_LABEL[notice.tier]) || "classifier reviewed";
+  const kind = notice.kind ?? "approved";
+  if (kind === "approved") {
+    return F.row(
+      `${F.BODY}${info(glyph("verified"))} ${muted("auto-approved")}  ${text(notice.toolName)}`,
+      faint(`${how} | risk ${notice.risk}`),
+    );
+  }
+  const headline =
+    kind === "halted"
+      ? warn("run halted")
+      : kind === "deferred"
+        ? warn("held for you")
+        : kind === "redirected"
+          ? muted("redirected")
+          : muted("contained");
+  const detail =
+    kind === "redirected" && notice.substitute
+      ? `ran instead: ${notice.substitute.slice(0, 60)}`
+      : `${notice.route ?? how} | risk ${notice.risk}`;
   return F.row(
-    `${F.BODY}${info(glyph("verified"))} ${muted("auto-approved")}  ${text(notice.toolName)}`,
-    faint(`${how} | risk ${notice.risk}`),
+    `${F.MARK}${warn(glyph("selection"))} ${headline}  ${text(notice.toolName)}`,
+    faint(detail),
   );
+}
+
+/**
+ * The end-of-turn list of outward steps Auto declined to take unattended.
+ *
+ * This is the whole trade Auto mode makes, printed: instead of interrupting
+ * the run N times to ask about N irreversible steps, it finishes the work and
+ * shows you the N steps once, when you can actually judge them.
+ */
+export function autoDeferralSummary(
+  deferrals: ReadonlyArray<{ toolName: string; summary: string; reason: string }>,
+): string {
+  if (deferrals.length === 0) return "";
+  const head = F.row(
+    `${F.MARK}${warn(glyph("selection"))} ${warn(`held for you (${deferrals.length})`)}`,
+    faint("outward steps Auto did not take on its own"),
+  );
+  const rows = deferrals.map(
+    (d) =>
+      `${F.BODY}  ${text(d.summary.slice(0, 88))}\n${F.BODY}    ${faint(d.reason.slice(0, 96))}`,
+  );
+  return [head, ...rows].join("\n");
 }
 
 /**
@@ -423,6 +479,14 @@ export interface ComposerState {
   width: number; // terminal columns
   status: string; // pre-rendered status line (from statusLine())
   working?: string; // when set, show this instead of the input box
+  /**
+   * What the empty field is for, right now. It defaults to the session's
+   * placeholder, and a surface that has borrowed the composer for something
+   * else overrides it: while the agent is waiting on an answer, a field that
+   * still reads "describe a change, or / for commands" is the UI telling you
+   * to do the one thing it is not currently listening for.
+   */
+  placeholder?: string;
 }
 
 export interface RenderedBlock {
@@ -511,7 +575,7 @@ export function renderComposer(state: ComposerState): RenderedBlock {
   };
   const body =
     state.input.length === 0
-      ? paint(COMPOSER_PLACEHOLDER.padEnd(textW, " ").slice(0, textW), true)
+      ? paint((state.placeholder ?? COMPOSER_PLACEHOLDER).padEnd(textW, " ").slice(0, textW), true)
       : paint(slice.padEnd(textW, " "), false);
 
   // A rule above AND below. One rule is a divider — it separates the composer
@@ -683,12 +747,23 @@ export function renderPermissionCard(
     escape: "cancel",
     width,
   });
+
+  // The caret rests on the highlighted answer.
+  //
+  // This used to find the option rows by scanning for a line starting with
+  // "1 ", which broke the moment ask() began painting a selection marker into
+  // the body indent -- the selected row starts with the marker, not the digit,
+  // so row zero silently became the caret's home. The options are the last
+  // rows ask() emits before its single hint line, and that is knowable without
+  // reading the text back. Measured HERE, against ask()'s own output, before
+  // the guard footnote below lengthens the block.
+  const choiceCount = preview.choices?.length ? preview.choices.length : PERMISSION_LABELS.length;
+  const firstOption = lines.length - choiceCount - F.ASK_TRAILING_ROWS;
+
   const guard = `${preview.guard} | the decision is recorded in the audit trail`;
   lines.push("");
   for (const part of wrap(guard, body)) lines.push(`${F.BODY}${faint(part)}`);
 
-  // The caret rests on the highlighted answer, four rows above the escape line.
-  const firstOption = lines.findIndex((row) => stripAnsi(row).trimStart().startsWith("1 "));
   return {
     lines,
     caretRow: firstOption >= 0 ? firstOption + selected : 0,

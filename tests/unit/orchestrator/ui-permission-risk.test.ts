@@ -31,7 +31,7 @@ describe("permission risk facts", () => {
       tone: "ok",
     });
     expect(fact(p, "network egress")?.value).toBe("blocked");
-    expect(fact(p, "est. runtime")?.value).toBe("≤120s cap");
+    expect(fact(p, "est. runtime")?.value).toBe("<=120s cap");
     expect(fact(p, "rate limit")).toEqual({
       label: "rate limit",
       value: "4/10 per min",
@@ -54,7 +54,7 @@ describe("permission risk facts", () => {
     expect(fact(p, "writes outside workspace")?.value).toBe("possible (host)");
     expect(fact(p, "est. runtime")).toEqual({
       label: "est. runtime",
-      value: "≤300s cap",
+      value: "<=300s cap",
       tone: "warn",
     });
     expect(fact(p, "rate limit")).toBeUndefined(); // no limiter data → no fact
