@@ -17,9 +17,66 @@ import { ApiError } from "../types";
 import { IdleWatchdog } from "./stream-guard";
 import { parseToolArguments } from "@gear/shared";
 
+/**
+ * Attach a prompt-cache breakpoint to one chat message, promoting its string
+ * content to the array-of-parts form that can carry the field. A message with
+ * no text to hang it on (an assistant turn that is pure tool_calls) is left
+ * alone rather than given an empty part.
+ */
+function markCacheBreakpoint(msg: OpenAI.ChatCompletionMessageParam | undefined): void {
+  if (!msg) return;
+  const cacheControl = { type: "ephemeral" as const };
+  if (typeof msg.content === "string") {
+    if (!msg.content) return;
+    (msg as { content: unknown }).content = [
+      { type: "text", text: msg.content, cache_control: cacheControl },
+    ];
+    return;
+  }
+  if (Array.isArray(msg.content) && msg.content.length > 0) {
+    const last = msg.content[msg.content.length - 1] as unknown as {
+      type?: string;
+    } & Record<string, unknown>;
+    if (last.type === "text") last.cache_control = cacheControl;
+  }
+}
+
+/**
+ * Split an OpenAI-compatible host's prompt count into the disjoint fields the
+ * TokenUsage contract requires.
+ *
+ * `prompt_tokens` INCLUDES the cached portion, so the cached count has to be
+ * SUBTRACTED, not merely reported alongside. Reporting both without
+ * subtracting made ContextEngine.noteRealUsage — which sums the three input
+ * fields — count every cached token twice, so a well-cached conversation read
+ * as nearly double its real size and compacted at a fraction of the window.
+ * The symptom was paying for summarizer round-trips on a context that had
+ * plenty of room left.
+ *
+ * Keeping the cached figure is still what makes a working prompt cache
+ * distinguishable from a silently-invalidated one.
+ */
+function inputUsageFrom(usage: unknown): { inputTokens: number; cacheReadTokens?: number } {
+  const u = usage as
+    { prompt_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } } | undefined;
+  const prompt = u?.prompt_tokens ?? 0;
+  const cached = u?.prompt_tokens_details?.cached_tokens;
+  if (typeof cached !== "number" || cached <= 0) return { inputTokens: prompt };
+  // Clamp: a host reporting more cached than prompt tokens would otherwise
+  // yield a negative fresh count and corrupt every downstream sum.
+  const cacheReadTokens = Math.min(cached, prompt);
+  return { inputTokens: prompt - cacheReadTokens, cacheReadTokens };
+}
+
 export class OpenAIProvider implements LlmProvider {
   readonly name: ProviderName;
   private client: OpenAI;
+  /**
+   * Whether this host forwards `cache_control` breakpoints upstream. Derived
+   * from the base URL rather than `name`, because OpenRouterProvider wraps this
+   * adapter WITHOUT passing its own name — `this.name` is "openai" there.
+   */
+  private readonly forwardsCacheControl: boolean;
 
   // `name` lets OpenAI-compatible hosts (Groq, xAI, DeepSeek, a custom endpoint,
   // OpenRouter) register under their own identity while sharing this adapter.
@@ -36,6 +93,7 @@ export class OpenAIProvider implements LlmProvider {
     },
   ) {
     this.name = name;
+    this.forwardsCacheControl = (baseUrl ?? "").includes("openrouter.ai");
     const resolvedKey = apiKey ?? process.env.OPENAI_API_KEY ?? "dummy";
     this.client = new OpenAI({
       apiKey: resolvedKey,
@@ -103,7 +161,13 @@ export class OpenAIProvider implements LlmProvider {
     const response = await this.client.chat.completions.create(
       {
         model: request.model,
-        messages: this.toOpenAIMessages(request.messages, request.system),
+        messages: this.toOpenAIMessages(
+          request.messages,
+          request.system,
+          this.wantsCacheBreakpoints(request.model)
+            ? { breakpointIndex: request.cacheBreakpointIndex }
+            : undefined,
+        ),
         tools: request.tools ? this.toOpenAITools(request.tools) : undefined,
         stop: request.stopSequences,
         ...(this.buildTuningParams(request) as object),
@@ -119,7 +183,7 @@ export class OpenAIProvider implements LlmProvider {
       content,
       stopReason: this.mapFinishReason(choice.finish_reason),
       usage: {
-        inputTokens: response.usage?.prompt_tokens ?? 0,
+        ...inputUsageFrom(response.usage),
         outputTokens: response.usage?.completion_tokens ?? 0,
       },
       model: response.model,
@@ -144,7 +208,13 @@ export class OpenAIProvider implements LlmProvider {
       const stream = await this.client.chat.completions.create(
         {
           model: request.model,
-          messages: this.toOpenAIMessages(request.messages, request.system),
+          messages: this.toOpenAIMessages(
+            request.messages,
+            request.system,
+            this.wantsCacheBreakpoints(request.model)
+              ? { breakpointIndex: request.cacheBreakpointIndex }
+              : undefined,
+          ),
           tools: request.tools ? this.toOpenAITools(request.tools) : undefined,
           stop: request.stopSequences,
           stream: true,
@@ -260,7 +330,7 @@ export class OpenAIProvider implements LlmProvider {
           // choices-empty chunk (include_usage) — capture it wherever it shows.
           if (chunk.usage) {
             finalUsage = {
-              inputTokens: chunk.usage.prompt_tokens ?? 0,
+              ...inputUsageFrom(chunk.usage),
               outputTokens: chunk.usage.completion_tokens ?? 0,
             };
           }
@@ -331,18 +401,62 @@ export class OpenAIProvider implements LlmProvider {
 
   // ─── Translation Helpers ───
 
+  /**
+   * Whether to emit explicit `cache_control` breakpoints for this request.
+   *
+   * Only for Anthropic models behind OpenRouter, where the pass-through is
+   * documented. Every other upstream on OpenRouter (OpenAI, DeepSeek, Grok,
+   * and the stealth ids) does IMPLICIT prefix caching, which needs no
+   * breakpoint — only a prompt prefix that stays byte-stable between turns.
+   *
+   * Measured on stealth/ox-alpha, cold prefix, 2026-08-26
+   * (scripts/verify-cache.ts, with and without --force-breakpoints):
+   *
+   *   implicit  turn 1 cached=64 → turn 2 cached=4288  (input 4316)
+   *   forced    turn 1 cached=64 → turn 2 cached=4288  (input 4318)
+   *
+   * Identical hit rate; the explicit field is accepted rather than rejected,
+   * but buys nothing and costs the two tokens it serializes to. So the narrow
+   * gate is a measured decision, not caution — widening it would add an
+   * undocumented shape to the wire for no gain.
+   */
+  private wantsCacheBreakpoints(model: string): boolean {
+    return this.forwardsCacheControl && model.toLowerCase().startsWith("anthropic/");
+  }
+
+  /**
+   * The index in `result` that should carry the conversation cache breakpoint:
+   * the last user/assistant message at or before `breakpointIndex`. Tool-role
+   * messages are skipped — the OpenAI schema types their content as a bare
+   * string, so an array-form part there is not portable.
+   */
+  private static breakpointSlot(result: OpenAI.ChatCompletionMessageParam[], upTo: number): number {
+    for (let i = Math.min(upTo, result.length - 1); i >= 0; i--) {
+      const role = result[i]?.role;
+      if (role === "user" || role === "assistant") return i;
+    }
+    return -1;
+  }
+
   private toOpenAIMessages(
     messages: Message[],
     system?: string,
+    cache?: { breakpointIndex?: number },
   ): OpenAI.ChatCompletionMessageParam[] {
     const result: OpenAI.ChatCompletionMessageParam[] = [];
+    // Where the caller's stable prefix ends, translated into `result` indices
+    // as we go (one source message can emit several tool messages, and the
+    // system prompt adds a leading entry, so the indices do not line up).
+    const stableUpTo = cache?.breakpointIndex;
+    let stableSlot = -1;
 
     if (system) {
       result.push({ role: "system", content: system });
     }
 
-    for (const msg of messages) {
+    for (const [srcIdx, msg] of messages.entries()) {
       if (msg.role === "system") continue;
+      if (stableUpTo != null && srcIdx <= stableUpTo) stableSlot = result.length;
 
       if (msg.role === "assistant") {
         const textParts: string[] = [];
@@ -410,6 +524,15 @@ export class OpenAIProvider implements LlmProvider {
           result.push({ role: "user", content: textParts.join("\n") + note });
         }
       }
+    }
+
+    if (cache) {
+      // System prompt and tool schemas are the largest always-stable block, so
+      // they get a breakpoint of their own; the conversation gets a second one
+      // at the end of its stable prefix.
+      if (system) markCacheBreakpoint(result[0]);
+      const slot = OpenAIProvider.breakpointSlot(result, stableSlot >= 0 ? stableSlot : -1);
+      if (slot >= 0) markCacheBreakpoint(result[slot]);
     }
 
     return result;

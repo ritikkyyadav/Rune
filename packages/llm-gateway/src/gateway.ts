@@ -1,5 +1,4 @@
 import type {
-  CostEntry,
   CostLedger,
   GatewayConfig,
   GatewayIncidentEvent,
@@ -11,7 +10,8 @@ import type {
   StreamOpts,
   TokenUsage,
 } from "./types";
-import { MODEL_PRICING as PRICING } from "./types";
+import { CostTracker } from "./cost-tracker";
+import { providerFallbackRank } from "@gear/shared";
 
 // Default model for each provider, used during fallback.
 //
@@ -71,7 +71,14 @@ const MAX_COOLDOWN_MS = 60 * 60_000;
 export class LlmGateway {
   private providers: Map<ProviderName, LlmProvider> = new Map();
   private config: GatewayConfig;
-  private ledger: CostLedger = { entries: [], totalCostUsd: 0 };
+  /**
+   * Single source of pricing truth. This used to be a hand-rolled ledger with
+   * its own copy of the arithmetic — exact-match lookup only, no cache
+   * awareness, silently skipping unknown models. Two implementations of "what
+   * did this cost" drift the moment either is corrected, so the gateway now
+   * delegates to the same tracker the engine uses.
+   */
+  private costTracker = new CostTracker();
   /**
    * Providers whose model is GONE (404/410/"retired"), pruned for this
    * gateway's lifetime — a retired model does not come back mid-session.
@@ -81,6 +88,14 @@ export class LlmGateway {
   private prunedProviders = new Set<ProviderName>();
   /** Providers cooling down after a rate/usage cap: epoch ms when usable again. */
   private cooldownUntil = new Map<ProviderName, number>();
+  /**
+   * The subset of cooldowns that are PLAN/QUOTA caps rather than throttles,
+   * with the message that announced it. Tracked separately because the two
+   * deserve opposite handling: a throttle is a pause, a cap is the end of this
+   * model's availability for a long window, and only the second is a reason to
+   * stop the run rather than continue somewhere weaker.
+   */
+  private cappedUntil = new Map<ProviderName, { until: number; message: string }>();
 
   constructor(config: GatewayConfig) {
     this.config = config;
@@ -92,8 +107,64 @@ export class LlmGateway {
     const isCap = USAGE_CAP_RE.test(err?.message ?? "");
     const base = isCap ? USAGE_CAP_COOLDOWN_MS : RATE_LIMIT_COOLDOWN_MS;
     const waitMs = Math.min(Math.max(retryAfter, base), MAX_COOLDOWN_MS);
-    this.cooldownUntil.set(provider, Date.now() + waitMs);
+    const until = Date.now() + waitMs;
+    this.cooldownUntil.set(provider, until);
+    if (isCap) {
+      this.cappedUntil.set(provider, {
+        until,
+        message: err?.message?.split("\n")[0]?.slice(0, 150) ?? "usage limit reached",
+      });
+    }
     return waitMs;
+  }
+
+  /** True when this failure is a plan/quota cap rather than a passing throttle. */
+  private isUsageCap(err: Error | undefined): boolean {
+    return USAGE_CAP_RE.test(err?.message ?? "");
+  }
+
+  /** Whether a quota cap should end the run instead of degrading. Default: yes. */
+  private get stopOnQuota(): boolean {
+    return (this.config.quotaPolicy ?? "stop") === "stop";
+  }
+
+  /** A live quota cap on this provider, or null. */
+  private activeCap(provider: ProviderName): { until: number; message: string } | null {
+    const cap = this.cappedUntil.get(provider);
+    if (!cap) return null;
+    if (cap.until <= Date.now()) {
+      this.cappedUntil.delete(provider);
+      return null;
+    }
+    return cap;
+  }
+
+  /**
+   * The one message the user sees when a cap stops the run. It has to answer
+   * four questions at once: what happened, why nothing else took over, whether
+   * the work survived, and when to come back.
+   */
+  private quotaStopError(
+    provider: ProviderName,
+    model: string,
+    until: number,
+    why: string,
+    /** False when the chain simply ran out rather than a substitute being refused. */
+    declinedSubstitute = true,
+  ): string {
+    const mins = Math.max(1, Math.ceil((until - Date.now()) / 60_000));
+    // Only claim to have refused a handover when one was actually available and
+    // refused. If the cap landed on a provider we had already fallen back to,
+    // nothing was declined — saying otherwise would misdescribe the run in the
+    // one message the user gets to reconstruct it from.
+    const stance = declinedSubstitute
+      ? "Stopped here instead of handing your task to a weaker model."
+      : "No provider is left to continue on.";
+    return (
+      `Quota exceeded on ${provider}/${model}${why ? ` — ${why}` : ""}. ${stance} ` +
+      `Your work is saved: resume this session in ~${mins}m, ` +
+      `switch now with /model, or set [fallback] onQuotaExceeded = "degrade" to allow automatic downgrade.`
+    );
   }
 
   /** True when the failure means the MODEL is gone (not a transient fault). */
@@ -258,6 +329,26 @@ export class LlmGateway {
           // provider instantly instead of re-walking a doomed cascade.
           if (isRateLimit) this.coolDown(providerName, lastError);
 
+          // ── A plan/quota cap on the provider the user CHOSE ends the run ──
+          // Not a fallback: a frontier model halfway through an extensive task
+          // is not interchangeable with whatever happens to be registered next.
+          // The substitute inherits the transcript and the authority, produces
+          // work at a different standard, and nothing in the output says so —
+          // which is exactly how a long run comes back subtly wrong. A cap is
+          // also not brief (15m+ here, often much longer), so this is not the
+          // "wait it out" case either. Stop, say when to return, keep the work.
+          //
+          // Scoped to the REQUESTED provider: once we are already on a
+          // substitute, stopping buys nothing the first stop did not.
+          if (
+            isRateLimit &&
+            this.stopOnQuota &&
+            this.isUsageCap(lastError) &&
+            providerName === request.provider
+          ) {
+            break;
+          }
+
           // Another provider is available → switch NOW. A bad key, exhausted
           // credits, or an over-quota 429 won't clear by retrying the same
           // provider, so falling back immediately is both faster and likelier
@@ -380,6 +471,24 @@ export class LlmGateway {
           error: `No credits on ${providerName}. Add billing or switch providers with /model.`,
           retryable: false,
         };
+      } else if (lastStatus === 429 && this.stopOnQuota && this.isUsageCap(lastError)) {
+        // A CAP, not a throttle. Deliberately worded without "rate limit" and
+        // in minutes, so the loop's rateLimitWaitSecs() cannot read it as a
+        // short, waitable pause and sit on it — this run is over, and the
+        // agent loop's retryable:false path writes the resume handoff.
+        const cap = this.activeCap(providerName);
+        const until = cap?.until ?? Date.now() + USAGE_CAP_COOLDOWN_MS;
+        yield {
+          type: "error",
+          error: this.quotaStopError(
+            providerName,
+            adjustedRequest.model,
+            until,
+            cleanMsg,
+            providerName === request.provider,
+          ),
+          retryable: false,
+        };
       } else if (lastStatus === 429) {
         const waitMs = this.getRetryAfterMs(lastError);
         const waitHint = waitMs > 0 ? ` Retry in ~${Math.ceil(waitMs / 1000)}s` : " Wait a moment";
@@ -407,20 +516,56 @@ export class LlmGateway {
   }
 
   /**
-   * Returns an ordered list of providers to try: primary first, then fallbacks.
+   * Returns an ordered list of providers to try: primary first, then fallbacks
+   * ranked by how little capability the handover costs.
    *
    * Pruned providers (model gone) and providers inside a rate/usage cooldown
    * are skipped — with one exception: when EVERY registered provider is
    * unusable, the primary is returned alone so the attempt produces a clean,
    * actionable terminal error (and self-heals the moment the limit resets)
    * instead of a lying "No providers available".
+   *
+   * The ORDER of `rest` used to be raw Map insertion order — i.e. the order
+   * `buildGateway` happened to walk PROVIDER_PRESETS, which is a display list.
+   * That is how a capped frontier session handed a deep code audit to a free
+   * model: openrouter simply sat next in the table. Registration order carries
+   * no information about what a handover costs, so it is now a tie-break
+   * WITHIN a capacity class rather than the whole policy (the sort is stable,
+   * so a user's configured ordering still shows through inside a class).
+   *
+   * `config.fallbackOrder` overrides the ranking head-first: providers named
+   * there are tried in that order before any unnamed one. Omitting a provider
+   * DEPRIORITIZES it — it does not remove it, because a degraded answer beats a
+   * dead run, and the loop now labels the degradation instead of hiding it.
    */
   private getFallbackProviders(primary: ProviderName): ProviderName[] {
     const now = Date.now();
+    // ── A quota-capped primary gets NO substitutes ──
+    // Returning it alone (rather than short-circuiting before the call) keeps
+    // the author's self-heal: re-attempting is how the gateway learns the cap
+    // has lifted, and caps often clear sooner than the 15m we assume. Refusing
+    // to try would lock the user out for the full cooldown with no recourse —
+    // worse than the silent downgrade this policy exists to prevent. One cheap
+    // 429 is the price of noticing recovery; what must not happen is another
+    // model quietly inheriting the task, and that is what this prevents.
+    if (this.stopOnQuota && this.activeCap(primary) && this.providers.has(primary)) {
+      return [primary];
+    }
     const usable = (p: ProviderName) =>
       !this.prunedProviders.has(p) && (this.cooldownUntil.get(p) ?? 0) <= now;
     const all = [...this.providers.keys()];
-    const rest = all.filter((p) => p !== primary && usable(p));
+    const preferred = this.config.fallbackOrder ?? [];
+    const rankOf = (p: ProviderName): number => {
+      const explicit = preferred.indexOf(p);
+      // Explicit picks sort ahead of every capacity class; -1 means unnamed.
+      return explicit >= 0 ? explicit - preferred.length : providerFallbackRank(p);
+    };
+    const rest = all
+      .filter((p) => p !== primary && usable(p))
+      .map((p, i) => ({ p, i, rank: rankOf(p) }))
+      // Stable by construction: equal ranks keep registration order.
+      .sort((a, b) => a.rank - b.rank || a.i - b.i)
+      .map((e) => e.p);
     if (this.providers.has(primary) && usable(primary)) {
       return [primary, ...rest];
     }
@@ -448,11 +593,16 @@ export class LlmGateway {
   }
 
   getCostLedger(): CostLedger {
-    return { ...this.ledger };
+    return this.costTracker.getLedger();
   }
 
   getTotalCost(): number {
-    return this.ledger.totalCostUsd;
+    return this.costTracker.getLedger().totalCostUsd;
+  }
+
+  /** Metered-equivalent total — what this gateway's traffic is worth at list rates. */
+  getTotalListCost(): number {
+    return this.costTracker.getLedger().totalListCostUsd;
   }
 
   // ─── Private ───
@@ -591,23 +741,11 @@ export class LlmGateway {
   }
 
   private recordCost(model: string, provider: ProviderName, usage: TokenUsage): void {
-    const pricing = PRICING[model];
-    if (!pricing) return;
-
-    const costUsd =
-      (usage.inputTokens * pricing.inputPerMillion) / 1_000_000 +
-      (usage.outputTokens * pricing.outputPerMillion) / 1_000_000;
-
-    const entry: CostEntry = {
-      model,
-      provider,
-      inputTokens: usage.inputTokens,
-      outputTokens: usage.outputTokens,
-      costUsd,
-      timestamp: new Date(),
-    };
-
-    this.ledger.entries.push(entry);
-    this.ledger.totalCostUsd += costUsd;
+    try {
+      this.costTracker.record(model, provider, usage);
+    } catch {
+      // record() throws only on a budget cap, which this gateway does not set.
+      // Accounting must never abort a response the provider already billed for.
+    }
   }
 }

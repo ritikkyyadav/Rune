@@ -162,10 +162,32 @@ export interface InferenceRequest {
 
 export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "stop_sequence";
 
+/**
+ * Provider-reported token usage for one request.
+ *
+ * THE CONTRACT — the three input fields are DISJOINT, and the total input a
+ * request consumed is their sum:
+ *
+ *     total input = inputTokens + cacheReadTokens + cacheCreationTokens
+ *
+ * This is Anthropic's native shape, and every other transport normalizes to
+ * it. That matters because the two consumers pull in opposite directions:
+ * ContextEngine.noteRealUsage sums all three to get window occupancy, while
+ * CostTracker prices each at its own rate. A field that means "total" to one
+ * and "fresh" to the other silently breaks both.
+ *
+ * OpenAI-family and Google APIs report the opposite shape — their prompt
+ * token count INCLUDES the cached portion — so their adapters must subtract
+ * before filling these fields. Getting that wrong double-counts the cache and
+ * compacts the conversation at a fraction of the real window.
+ */
 export interface TokenUsage {
+  /** Fresh input tokens, billed at full rate. EXCLUDES anything cached. */
   inputTokens: number;
   outputTokens: number;
+  /** Input served from a warm cache, billed at a discount. */
   cacheReadTokens?: number;
+  /** Input written INTO the cache, billed at a premium (Anthropic only). */
   cacheCreationTokens?: number;
 }
 
@@ -289,58 +311,228 @@ export interface LlmProvider {
 export interface ModelPricing {
   inputPerMillion: number;
   outputPerMillion: number;
+  /**
+   * Rate for input served from cache. Absent means "10% of input" — true for
+   * Anthropic and the GPT-5 family. Models that discount differently (GPT-4o
+   * at 50%, Gemini at 25%) MUST state it, or the meter overstates the saving.
+   */
+  cacheReadPerMillion?: number;
+  /** Rate for input written into the cache. Anthropic only; 1.25x input. */
+  cacheWritePerMillion?: number;
+  /**
+   * True when the rate is inferred rather than taken from a published price
+   * list — unreleased models, open-weight models with no first-party rate.
+   * Surfaced as a "~" in every readout: a meter that hides its own
+   * uncertainty is the problem this table was built to fix.
+   */
+  estimated?: boolean;
 }
 
+/** Multiplier applied to input rate when a model states no cache-read rate. */
+export const DEFAULT_CACHE_READ_RATIO = 0.1;
+/** Multiplier applied to input rate when a model states no cache-write rate. */
+export const DEFAULT_CACHE_WRITE_RATIO = 1.25;
+
+/**
+ * How the tokens were actually paid for. Pricing says what a model's tokens
+ * are WORTH; this says whether a dollar left the building. A subscription
+ * seat and a free tier both cost $0 at the margin, and conflating that with
+ * "we don't know the price" is exactly the blindness this table fixes.
+ */
+export type BillingMode = "metered" | "subscription" | "free";
+
+/**
+ * Resolve billing mode from the account the request is spent against.
+ *
+ * Deliberately keyed on provider + model id rather than the pricing table:
+ * the same model is metered on one account and free on another
+ * (gemini-2.5-flash on a paid key vs the free tier), so this is a property of
+ * how it was bought, never of what it is.
+ */
+export function billingModeFor(provider: string, model: string): BillingMode {
+  // Deliberately NOT derived from PROVIDER_CAPACITY in @gear/shared, which
+  // looks like the same table and is not. That map ranks rate-limit headroom
+  // for fallback ordering, and marks openrouter "free" — true of its free
+  // pool, false of the paid models on the same account. Billing has to be
+  // decided per request, so it lives here.
+
+  // The free pool advertises itself in the id. Checked FIRST: a ":free" model
+  // is free on any provider that serves it.
+  if (model.endsWith(":free")) return "free";
+  // Subscription transports: a plan the user already pays for monthly. The
+  // tokens are real; the marginal dollar is zero.
+  if (provider === "codex" || provider === "copilot" || provider === "ollama-turbo") {
+    return "subscription";
+  }
+  // Local runtimes cost electricity, not API dollars.
+  if (provider === "ollama" || provider === "lmstudio") return "free";
+  return "metered";
+}
+
+/**
+ * List rates, US dollars per million tokens.
+ *
+ * These state what a model's tokens are WORTH, never what was paid — a model
+ * on a subscription seat keeps its real rate here and is zeroed at record()
+ * time via billingModeFor(). That split is what lets the meter answer both
+ * "what did this cost me?" and "what would this have cost metered?" — the
+ * second being the only number that compares to a competitor.
+ *
+ * Entries flagged `estimated` are inferred from comparable models because no
+ * first-party price list exists (unreleased ids, open-weight models served by
+ * many hosts at different rates). They are marked in every readout.
+ *
+ * Coverage is checked by a test against the provider catalog: a model users
+ * can select but the meter cannot price is a reporting hole, and the previous
+ * table had 21 of them — including the three that carried most traffic.
+ */
 export const MODEL_PRICING: Record<string, ModelPricing> = {
-  // Anthropic — current generation
+  // ─── Anthropic — current generation ───
+  // Cache reads at 10% and writes at 125% are the standard Anthropic terms,
+  // so these take the defaults rather than restating them per row.
+  "claude-fable-5": { inputPerMillion: 10, outputPerMillion: 50 },
+  "claude-mythos-5": { inputPerMillion: 10, outputPerMillion: 50 },
+  "claude-opus-5": { inputPerMillion: 5, outputPerMillion: 25 },
   "claude-opus-4-8": { inputPerMillion: 5, outputPerMillion: 25 },
   "claude-opus-4-7": { inputPerMillion: 5, outputPerMillion: 25 },
   "claude-opus-4-6": { inputPerMillion: 5, outputPerMillion: 25 },
-  "claude-sonnet-5": { inputPerMillion: 3, outputPerMillion: 15 },
+  "claude-sonnet-5": { inputPerMillion: 2, outputPerMillion: 10 },
   "claude-sonnet-4-6": { inputPerMillion: 3, outputPerMillion: 15 },
   "claude-sonnet-4-5": { inputPerMillion: 3, outputPerMillion: 15 },
+  "claude-sonnet-4": { inputPerMillion: 3, outputPerMillion: 15 },
   "claude-haiku-4-5": { inputPerMillion: 1, outputPerMillion: 5 },
-  // Anthropic — legacy
+  // ─── Anthropic — legacy ───
+  "claude-3.5-sonnet": { inputPerMillion: 3, outputPerMillion: 15 },
   "claude-opus-4-20250514": { inputPerMillion: 15, outputPerMillion: 75 },
+  "claude-sonnet-4-20250514": { inputPerMillion: 3, outputPerMillion: 15 },
   "claude-haiku-4-5-20251001": { inputPerMillion: 0.8, outputPerMillion: 4 },
+
+  // ─── OpenAI ───
+  // The GPT-5 line discounts cached input to 10%; GPT-4o only to 50%, which
+  // is why those rows state it and the GPT-5 rows do not.
   "gpt-5": { inputPerMillion: 1.25, outputPerMillion: 10 },
   "gpt-5-mini": { inputPerMillion: 0.25, outputPerMillion: 2 },
-  "gpt-4o": { inputPerMillion: 2.5, outputPerMillion: 10 },
-  "gpt-4o-mini": { inputPerMillion: 0.15, outputPerMillion: 0.6 },
+  "gpt-4.1": { inputPerMillion: 2, outputPerMillion: 8, cacheReadPerMillion: 0.5 },
+  "gpt-4o": { inputPerMillion: 2.5, outputPerMillion: 10, cacheReadPerMillion: 1.25 },
+  "gpt-4o-mini": { inputPerMillion: 0.15, outputPerMillion: 0.6, cacheReadPerMillion: 0.075 },
   o3: { inputPerMillion: 2, outputPerMillion: 8 },
-  // DeepSeek
-  "deepseek-chat": { inputPerMillion: 0.27, outputPerMillion: 1.1 },
+  "o4-mini": { inputPerMillion: 1.1, outputPerMillion: 4.4 },
+  // Codex-plan models. Reached through a ChatGPT subscription, so the marginal
+  // cost is zero — but they are priced at the GPT-5 line's rates so the "what
+  // would this have cost metered?" column is real. Estimated until published.
+  "gpt-5.5": { inputPerMillion: 1.25, outputPerMillion: 10, estimated: true },
+  "gpt-5.6-sol": { inputPerMillion: 1.25, outputPerMillion: 10, estimated: true },
+  "gpt-5.6-terra": { inputPerMillion: 1.25, outputPerMillion: 10, estimated: true },
+  "gpt-5.6-luna": { inputPerMillion: 1.25, outputPerMillion: 10, estimated: true },
+
+  // ─── DeepSeek ───
+  "deepseek-chat": { inputPerMillion: 0.27, outputPerMillion: 1.1, cacheReadPerMillion: 0.07 },
   "deepseek-reasoner": { inputPerMillion: 0.55, outputPerMillion: 2.19 },
-  // xAI
+  "deepseek-coder-v2": { inputPerMillion: 0.27, outputPerMillion: 1.1, estimated: true },
+  deepseek: { inputPerMillion: 0.27, outputPerMillion: 1.1, estimated: true },
+
+  // ─── xAI ───
   "grok-4": { inputPerMillion: 3, outputPerMillion: 15 },
   "grok-4-fast": { inputPerMillion: 0.2, outputPerMillion: 0.5 },
-  // OpenRouter model IDs
+  "grok-code-fast-1": { inputPerMillion: 0.2, outputPerMillion: 1.5 },
+
+  // ─── Google Gemini ───
+  // Gemini discounts cached input to 25%, not the 10% default.
+  "gemini-2.5-flash": {
+    inputPerMillion: 0.15,
+    outputPerMillion: 0.6,
+    cacheReadPerMillion: 0.0375,
+  },
+  "gemini-2.5-pro": {
+    inputPerMillion: 1.25,
+    outputPerMillion: 10,
+    cacheReadPerMillion: 0.3125,
+  },
+  "gemini-2.0-flash": {
+    inputPerMillion: 0.1,
+    outputPerMillion: 0.4,
+    cacheReadPerMillion: 0.025,
+  },
+  "gemini-2.0-flash-001": {
+    inputPerMillion: 0.1,
+    outputPerMillion: 0.4,
+    cacheReadPerMillion: 0.025,
+  },
+
+  // ─── Open-weight coder models ───
+  // Served by many hosts at different rates; these are mid-market estimates so
+  // the metered-equivalent column is populated rather than silently zero.
+  "qwen3-coder:480b": { inputPerMillion: 0.3, outputPerMillion: 1.2, estimated: true },
+  "qwen3-coder-next": { inputPerMillion: 0.3, outputPerMillion: 1.2, estimated: true },
+  "qwen2.5-coder": { inputPerMillion: 0.06, outputPerMillion: 0.18, estimated: true },
+  "qwen2.5-coder:32b": { inputPerMillion: 0.06, outputPerMillion: 0.18, estimated: true },
+  "glm-4.7": { inputPerMillion: 0.6, outputPerMillion: 2.2, estimated: true },
+  "minimax-m3": { inputPerMillion: 0.3, outputPerMillion: 1.2, estimated: true },
+  "gpt-oss:120b": { inputPerMillion: 0.1, outputPerMillion: 0.5, estimated: true },
+  "gpt-oss:20b": { inputPerMillion: 0.05, outputPerMillion: 0.2, estimated: true },
+  "openai/gpt-oss-120b": { inputPerMillion: 0.1, outputPerMillion: 0.5, estimated: true },
+  "llama-3.3-70b-versatile": { inputPerMillion: 0.59, outputPerMillion: 0.79, estimated: true },
+  "llama3.1": { inputPerMillion: 0.05, outputPerMillion: 0.08, estimated: true },
+  "nemotron-3-ultra": { inputPerMillion: 0.6, outputPerMillion: 1.8, estimated: true },
+  "nemotron-3-super": { inputPerMillion: 0.3, outputPerMillion: 0.9, estimated: true },
+  "nemotron-3-nano:30b": { inputPerMillion: 0.06, outputPerMillion: 0.18, estimated: true },
+  "gemma4:31b": { inputPerMillion: 0.06, outputPerMillion: 0.18, estimated: true },
+
+  // ─── OpenRouter-prefixed ids for the same models ───
   "anthropic/claude-sonnet-4": { inputPerMillion: 3, outputPerMillion: 15 },
   "anthropic/claude-sonnet-4-6": { inputPerMillion: 3, outputPerMillion: 15 },
+  "anthropic/claude-sonnet-4-20250514": { inputPerMillion: 3, outputPerMillion: 15 },
   "anthropic/claude-haiku-4-5-20251001": { inputPerMillion: 0.8, outputPerMillion: 4 },
-  "openai/gpt-4o": { inputPerMillion: 2.5, outputPerMillion: 10 },
-  // Google Gemini (free tier = $0, but track usage for when paid tier is used)
-  "gemini-2.5-flash": { inputPerMillion: 0.15, outputPerMillion: 0.6 },
-  "gemini-2.5-pro": { inputPerMillion: 1.25, outputPerMillion: 10 },
-  "gemini-2.0-flash": { inputPerMillion: 0.1, outputPerMillion: 0.4 },
-  // OpenRouter free models (actual cost is $0 but track usage)
+  "openai/gpt-4o": { inputPerMillion: 2.5, outputPerMillion: 10, cacheReadPerMillion: 1.25 },
+  "qwen/qwen3-coder": { inputPerMillion: 0.3, outputPerMillion: 1.2, estimated: true },
+
+  // ─── Zero-rate pools ───
+  // A real rate of zero, NOT an unknown one. billingModeFor() reaches the same
+  // conclusion from the id; these rows keep the distinction explicit so a
+  // ":free" id that later starts charging shows up as a pricing change.
+  "qwen/qwen3-coder:free": { inputPerMillion: 0, outputPerMillion: 0 },
   "deepseek/deepseek-v4-flash:free": { inputPerMillion: 0, outputPerMillion: 0 },
   "deepseek/deepseek-r1:free": { inputPerMillion: 0, outputPerMillion: 0 },
+  "minimax/minimax-m3:free": { inputPerMillion: 0, outputPerMillion: 0 },
+  "nvidia/nemotron-3-ultra-550b-a55b:free": { inputPerMillion: 0, outputPerMillion: 0 },
   "stealth/ox-alpha": { inputPerMillion: 0, outputPerMillion: 0 },
 };
 
 export interface CostEntry {
   model: string;
   provider: ProviderName;
+  /** Fresh input tokens — see the TokenUsage contract. */
   inputTokens: number;
   outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  /** Dollars actually spent. Zero on a subscription seat or a free tier. */
   costUsd: number;
+  /**
+   * What these tokens would have cost metered at list rates. Always computed,
+   * even when costUsd is zero — this is the number that compares to a
+   * competitor, and the reason the meter exists.
+   */
+  listCostUsd: number;
+  billing: BillingMode;
+  /** False when the model is absent from MODEL_PRICING — both figures are 0 and MEANINGLESS. */
+  priced: boolean;
+  /** True when the rate is inferred rather than published. */
+  estimated: boolean;
   timestamp: Date;
 }
 
 export interface CostLedger {
   entries: CostEntry[];
   totalCostUsd: number;
+  /** Metered-equivalent total across every entry, including free ones. */
+  totalListCostUsd: number;
+  /**
+   * Models seen that MODEL_PRICING could not price. Non-empty means the
+   * totals understate reality and the UI must say so rather than print a
+   * confident number.
+   */
+  unpricedModels: string[];
 }
 
 // ─── Gateway Config ───
@@ -356,6 +548,29 @@ export interface GatewayConfig {
    * guards every invocation — a throwing handler can never break a stream.
    */
   onIncident?: (incident: GatewayIncidentEvent) => void;
+  /**
+   * Preferred order to fall back through, head-first, overriding the built-in
+   * capacity ranking (see providerFallbackRank). Providers left out are not
+   * excluded — they follow, in ranked order. Sourced from `[fallback] order`
+   * in config.toml.
+   */
+  fallbackOrder?: ProviderName[];
+  /**
+   * What to do when a provider reports a PLAN/QUOTA cap ("usage limit
+   * reached", weekly caps, exhausted credits) rather than a passing throttle.
+   *
+   *   "stop"    — end the run with a clear message and the retry window
+   *               (default). A frontier model halfway through an extensive task
+   *               is not interchangeable with whatever is registered next;
+   *               continuing on a weaker one silently produces work the user
+   *               did not ask for and cannot tell apart.
+   *   "degrade" — the historical behaviour: fall through the chain.
+   *
+   * Sourced from `[fallback] onQuotaExceeded` in config.toml. This governs CAPS
+   * only — an ordinary rate limit still retries and falls back, because it
+   * clears in seconds.
+   */
+  quotaPolicy?: "stop" | "degrade";
 }
 
 /** What the gateway reports to the black box (kept provider-agnostic). */

@@ -102,7 +102,17 @@ export function toResponsesInput(messages: Message[]): unknown[] {
  *     variants encode effort in the model name, and a top-level `reasoning.effort`
  *     is rejected here (it's an API-key-only param).
  *   - `prompt_cache_key` (the session id) is included like Codex does.
- *   - `parallel_tool_calls` is false, matching Codex.
+ *   - `parallel_tool_calls` is TRUE. This used to be false "matching Codex",
+ *     and it was the single largest source of wall-clock in the product: the
+ *     backend honors the flag, so every tool call became its own round trip
+ *     re-sending the whole (40k–150k token) prompt. Measured over 20 recorded
+ *     codex sessions: 1030 assistant turns carried exactly one tool call and
+ *     11 carried more — and all 11 landed in the two windows where a FALLBACK
+ *     provider was serving, the last of them one second before control
+ *     returned to codex. An agent reading fifteen files paid fifteen full
+ *     inferences for work that is one batch. Codex-CLI fidelity is not worth
+ *     that; the agent loop already bounds real concurrency itself
+ *     (maxParallelTools, default 8) and runs non-parallel-safe tools serially.
  */
 export function toResponsesBody(
   request: InferenceRequest,
@@ -115,7 +125,7 @@ export function toResponsesBody(
     instructions: request.system ?? "",
     input: toResponsesInput(request.messages),
     tool_choice: "auto",
-    parallel_tool_calls: false,
+    parallel_tool_calls: true,
     store: false,
     stream,
   };
@@ -283,14 +293,30 @@ export async function* parseResponsesStream(body: ByteStream): AsyncGenerator<St
         case "response.incomplete": {
           const resp = ev.response as
             | {
-                usage?: { input_tokens?: number; output_tokens?: number };
+                usage?: {
+                  input_tokens?: number;
+                  output_tokens?: number;
+                  input_tokens_details?: { cached_tokens?: number };
+                };
                 status?: string;
                 incomplete_details?: { reason?: string };
               }
             | undefined;
+          // The Responses API prefix-caches automatically — no breakpoints to
+          // send — but it only reports the saving if you read it back. Until
+          // this was read, every Codex turn looked like a full-price cache
+          // miss, which is why the ledger could not show what caching was
+          // worth on the transport carrying most of the traffic.
+          //
+          // `input_tokens` INCLUDES the cached portion, so subtract it: the
+          // TokenUsage contract is three DISJOINT counts that sum to the total.
+          const promptTokens = resp?.usage?.input_tokens ?? 0;
+          const cached = resp?.usage?.input_tokens_details?.cached_tokens ?? 0;
+          const cacheReadTokens = Math.min(Math.max(cached, 0), promptTokens);
           usage = {
-            inputTokens: resp?.usage?.input_tokens ?? 0,
+            inputTokens: promptTokens - cacheReadTokens,
             outputTokens: resp?.usage?.output_tokens ?? 0,
+            ...(cacheReadTokens > 0 ? { cacheReadTokens } : {}),
           };
           yield* flushContentStop();
           // A tool call in the response MUST stop as "tool_use" so the loop runs
@@ -360,10 +386,17 @@ export class CodexProvider implements LlmProvider {
 
   async *inferStream(request: InferenceRequest, opts?: StreamOpts): AsyncGenerator<StreamEvent> {
     // Wedged-stream protection: previously no timeout — a stalled SSE session
-    // hung the turn until the user hit Esc. Very generous allowances: the
-    // Codex backend serves hidden-reasoning gpt-5.x models that legitimately
-    // go silent for minutes while they think.
-    const guard = new IdleWatchdog(this.name, opts?.signal, 300_000, 240_000);
+    // hung the turn until the user hit Esc. The FIRST-token allowance stays
+    // very generous: the Codex backend serves hidden-reasoning gpt-5.x models
+    // that legitimately go silent for minutes before they emit anything.
+    //
+    // The BETWEEN-chunk allowance was 240s, and that was pure loss. Once the
+    // stream is producing, this backend emits reasoning-summary deltas while
+    // it thinks, so mid-stream silence means wedged, not busy — and every
+    // recorded stall ("stream stalled — no data for 240s") cost four minutes
+    // before the gateway was allowed to retry or fall back. 120s is still
+    // twice any healthy gap observed, and halves the price of a dead socket.
+    const guard = new IdleWatchdog(this.name, opts?.signal, 300_000, 120_000);
     const res = await fetch(RESPONSES_URL, {
       method: "POST",
       headers: this.headers(),

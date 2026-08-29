@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { Engine } from "../engine";
+import { formatCostReport } from "../cost-report";
 import type { PermissionHandler, UserPermissionDecision } from "../engine";
 import {
   loadConfig,
@@ -17,6 +18,8 @@ import {
   getPreset,
   PROVIDER_PRESETS,
   AUTO_PROVIDER_PRIORITY,
+  normalizeFallbackOrder,
+  normalizeQuotaPolicy,
   CUSTOM_PROVIDER_ID,
   applySearchKeysToEnv,
   searchKeyStatus,
@@ -83,7 +86,8 @@ import {
   formatModelLine,
 } from "./ui/model-picker";
 import { renderWorkspaceDiff } from "./ui/workspace-diff";
-import { truncate } from "./ui/render";
+import { truncate, visLen } from "./ui/render";
+import * as F from "./ui/flow";
 import { runTui } from "./ui/tui";
 import { resolveSurface } from "./ui/surface";
 import { exportSession } from "../session-export";
@@ -532,6 +536,21 @@ function resolveSessionArg(engine: Engine, arg: string) {
 /** Print a session's replayed history to stdout (classic path). Renders the same
  *  two-partition language as a live turn — work inside the rail, each turn's final
  *  answer outside it — so a resumed session is faithful. */
+/**
+ * The `resumed <title> <id>` marker that opens a replayed session.
+ *
+ * The title is budgeted against the measure rather than printed whole: a long
+ * session title ran this row two cells past an 80-column window, and a line
+ * that reaches the terminal's last cell soft-wraps -- which is the one thing
+ * every other row in this UI is careful not to do.
+ */
+function resumedBanner(title: string | null | undefined, id: string): string {
+  const lead = `  ${faint("\u2576\u2500")} ${muted("resumed")} `;
+  const tail = ` ${faint(id.slice(0, 8))} ${faint("\u2576\u2500")}`;
+  const room = Math.max(8, F.measure() - visLen(lead) - visLen(tail));
+  return `${lead}${text(truncate(title?.trim() || "untitled", room))}${tail}`;
+}
+
 function printSessionTranscript(engine: Engine, id: string): void {
   const lines = engine.getTranscript(id);
   if (lines.length === 0) {
@@ -762,6 +781,18 @@ async function main() {
     credentials = {};
   }
 
+  // ─── [fallback] order: validate before it can quietly do nothing ───
+  const fallbackOrder = normalizeFallbackOrder(config.fallback?.order);
+  if (fallbackOrder.unknown.length > 0) {
+    console.warn(
+      `  ${brass("!")} ${dim(
+        `[fallback] order: ignoring unknown provider${
+          fallbackOrder.unknown.length === 1 ? "" : "s"
+        } ${fallbackOrder.unknown.join(", ")} — the rest of the list still applies`,
+      )}`,
+    );
+  }
+
   const engine = new Engine({
     model,
     provider,
@@ -776,6 +807,8 @@ async function main() {
     sandboxRequireOs: config.sandbox?.requireOs === true,
     lspAutoFeedback: config.lsp?.autoFeedback === true,
     reliability: config.reliability,
+    fallbackOrder: fallbackOrder.order as ProviderName[],
+    quotaPolicy: normalizeQuotaPolicy(config.fallback?.onQuotaExceeded),
     // [verify] — previously EngineConfig-only, unreachable from any config.
     enableVerification: config.verify?.enabled,
     verifyCommand: config.verify?.commands,
@@ -1076,6 +1109,32 @@ async function main() {
         // best-effort
       }
     });
+    // ─── Terminal closed / killed: exit cleanly instead of faking a crash ───
+    // Node's DEFAULT disposition for SIGHUP and SIGTERM terminates the process
+    // WITHOUT running "exit" hooks, so the sentinel above stayed armed and the
+    // next startup filed a `critical` crash.dirty_exit. Closing the terminal
+    // window is not a crash. It was the single most common incident in this
+    // install's black box — 143 records, six of them inside six minutes — and
+    // the noise is worse than the miss: a real SIGKILL is indistinguishable
+    // from a closed tab, which is the one thing this sentinel exists to tell
+    // apart. Registered here, next to the arming, so BOTH front ends get it
+    // (the classic-readline path had a SIGTERM handler; the TUI — the default
+    // UI — had none). Conventional 128+signo exit codes; process.exit runs the
+    // "exit" hooks above, which disarm the sentinel and drop the spool.
+    const exitOnSignal = (signal: "SIGHUP" | "SIGTERM", code: number) => {
+      process.on(signal, () => {
+        try {
+          discardSessionIfEmpty(engine, sessionId);
+          engine.close();
+        } catch {
+          // Shutting down anyway — never let cleanup keep the process alive.
+        }
+        process.exit(code);
+      });
+    };
+    exitOnSignal("SIGHUP", 129);
+    exitOnSignal("SIGTERM", 143);
+
     process.on("uncaughtException", (err: Error) => {
       recorder.recordFatal({
         class: "crash.uncaught_exception",
@@ -1169,9 +1228,7 @@ async function main() {
   // own viewport). A brand-new session has no history and prints nothing.
   if (engine.getTranscript(sessionId).length > 0) {
     const info = engine.getSessionInfo(sessionId);
-    process.stdout.write(
-      `  ${faint("╶─")} ${muted("resumed")} ${text(info?.title?.trim() || "untitled")} ${faint(sessionId.slice(0, 8))} ${faint("╶─")}\n`,
-    );
+    process.stdout.write(resumedBanner(info?.title, sessionId) + "\n");
     printSessionTranscript(engine, sessionId);
     process.stdout.write(`  ${faint("continue where you left off ↓")}\n\n`);
   }
@@ -1326,8 +1383,12 @@ async function main() {
           const wasSpinning = spinner.isRunning?.() ?? false;
           spinner.stop();
 
+          // `2 of 4`, so a batched round reads as a round and not as four
+          // unrelated interruptions. See UserQuestion.index in ask-user.ts.
+          const round =
+            q.total && q.total > 1 ? `  ${faint(`${(q.index ?? 0) + 1} of ${q.total}`)}` : "";
           process.stdout.write("\n");
-          process.stdout.write(`  ${info("?")} ${bold(text(q.question))}\n`);
+          process.stdout.write(`  ${info("?")} ${bold(text(q.question))}${round}\n`);
           q.options.forEach((opt, i) => {
             process.stdout.write(`    ${info(String(i + 1))} ${text(opt)}\n`);
           });
@@ -1726,7 +1787,15 @@ async function main() {
       }
 
       if (input === "/cost") {
-        console.log(dim(`  $${engine.getCost().toFixed(4)}\n`));
+        // Same readout as the TUI — one formatter, so the two front ends can
+        // never drift into reporting different numbers for the same session.
+        const rows = formatCostReport(engine.getCostBreakdown());
+        const width = Math.max(...rows.map((r) => r.label.length));
+        for (const row of rows) {
+          const note = row.note ? dim(` (${row.note})`) : "";
+          console.log(`  ${dim(row.label.padStart(width))}  ${row.value}${note}`);
+        }
+        console.log("");
         showPrompt();
         return;
       }
@@ -1760,6 +1829,7 @@ async function main() {
               workspace: status.workspace,
               sessionId,
               cost: status.cost,
+              costSummary: status.costSummary,
               yoloMode: status.yoloMode,
               trustWorkspace: status.trustWorkspace,
               permissionMode: status.permissionMode,
@@ -2817,9 +2887,7 @@ async function main() {
         const res = engine.resumeSession(target.id);
         sessionId = target.id;
         discardSessionIfEmpty(engine, previous);
-        process.stdout.write(
-          `\n  ${faint("╶─")} ${muted("resumed")} ${text(target.title?.trim() || "untitled")} ${faint(target.id.slice(0, 8))} ${faint("╶─")}\n`,
-        );
+        process.stdout.write("\n" + resumedBanner(target.title, target.id) + "\n");
         printSessionTranscript(engine, sessionId);
         if (res?.switched) {
           process.stdout.write(

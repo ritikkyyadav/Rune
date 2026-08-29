@@ -9,14 +9,16 @@
   ],
   "scripts": {
     "build": "turbo build",
-    "test": "turbo test",
+    "test": "bun test tests/unit/",
     "test:unit": "bun test tests/unit/",
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "eval": "bun run tests/eval/runner.ts",
-    "eval:auto-safety": "bun run tests/eval/auto-mode-safety.ts"
+    "eval:auto-safety": "bun run tests/eval/auto-mode-safety.ts",
+    "test:integration": "bun test tests/integration/",
+    "test:packages": "turbo test"
   },
   "devDependencies": {
     "turbo": "^2.10.11",

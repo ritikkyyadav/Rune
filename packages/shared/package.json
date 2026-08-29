@@ -8,7 +8,7 @@
     "build": "bun build ./src/index.ts --outdir ./dist --target bun",
     "typecheck": "tsc --noEmit",
     "lint": "prettier --check src/",
-    "test": "bun test"
+    "test": "bun test ../../tests/unit/shared"
   },
   "devDependencies": {
     "typescript": "^5.8"

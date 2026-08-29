@@ -89,8 +89,24 @@ export type AgentTurnEvent =
   // context-budget snapshot so UIs can keep a live meter without polling.
   | {
       type: "usage";
+      /** Fresh input only — cached input is reported separately below. */
       inputTokens: number;
       outputTokens: number;
+      /**
+       * Input served from a warm prompt cache, and input written into it.
+       * Carried so the ledger can price them at their discounted rates and
+       * report what caching is actually worth; without these the cheapest
+       * part of every turn is billed as if it were the most expensive.
+       */
+      cacheReadTokens?: number;
+      cacheCreationTokens?: number;
+      /**
+       * The model this usage was actually billed against. Carried because a
+       * run can switch models mid-flight (provider fallback, /model), and
+       * pricing the tokens against the session's nominal model would quietly
+       * misreport spend. Consumers that don't care may ignore it.
+       */
+      model?: string;
       /** Context window occupancy after this report, when an engine tracks it. */
       context?: { used: number; limit: number; percent: number };
     }
@@ -196,6 +212,18 @@ export interface AgentLoopConfig {
   maxParallelTools?: number;
   /** Max times to nudge a stuck agent before bailing. Default 1. */
   maxStuckNudges?: number;
+  /**
+   * Tell the model, every request, which turn it is on and how many remain.
+   *
+   * Nested loops (`task`, `worker`) are handed a prompt that says "you have at
+   * most N turns, track them" — and then nothing ever tells them the count, so
+   * the instruction is unfollowable. A scout that cannot see the clock spends
+   * its last turn on one more `read_file` and returns nothing at all: a
+   * recorded whole-subsystem audit burned all 32 turns and came back with a
+   * list of files it had opened. Off by default (the lead loop has a 80-turn
+   * ceiling nobody needs counted at them); on for the sub-agent tools.
+   */
+  turnBudgetNotice?: boolean;
   /** Screens tool outputs before they enter the transcript/model context. */
   toolResultProcessor?: ToolResultProcessor;
   /** Bounded all-providers-throttled waits per run. Default 2. */
@@ -658,6 +686,32 @@ export class AgentLoop {
         ];
       }
 
+      // ── Turn-budget tail injection ──
+      // Same ephemeral contract again: the clock a sub-agent was told to watch
+      // but was never shown. Escalates in the last two turns, because "write
+      // up now" is only actionable while a turn remains to write it in.
+      if (this.config.turnBudgetNotice) {
+        const left = this.config.maxTurns - turn;
+        // Role-NEUTRAL wording on purpose: this same block is injected into
+        // read-only scouts and into build workers, so "stop investigating and
+        // summarize" would be telling a worker mid-build to do the wrong verb.
+        // Each one's system prompt names its own deliverable; this names the
+        // deadline and the rule that decides whether anything is returned.
+        const budgetBlock =
+          left <= 2
+            ? `[Budget: turn ${turn} of ${this.config.maxTurns} — ${left} turn${
+                left === 1 ? "" : "s"
+              } left. WRAP UP NOW: stop taking on new work and write your final report. ` +
+              `The text you write after your last tool call is the ENTIRE result; end on a ` +
+              `tool call and this run returns nothing. A partial report naming what you did ` +
+              `and what you did not reach is worth far more than silence.]`
+            : `[Budget: turn ${turn} of ${this.config.maxTurns} — ${left} turns left.]`;
+        requestMessages = [
+          ...requestMessages,
+          { role: "user", content: [{ type: "text", text: budgetBlock }] },
+        ];
+      }
+
       const request: InferenceRequest = {
         messages: requestMessages,
         ...(stableMessageCount > 0 && { cacheBreakpointIndex: stableMessageCount - 1 }),
@@ -723,6 +777,9 @@ export class AgentLoop {
               type: "usage",
               inputTokens: result.usage.inputTokens ?? 0,
               outputTokens: result.usage.outputTokens ?? 0,
+              cacheReadTokens: result.usage.cacheReadTokens ?? 0,
+              cacheCreationTokens: result.usage.cacheCreationTokens ?? 0,
+              model: activeRequestModel,
               context: this.contextSnapshot(),
             };
           }
