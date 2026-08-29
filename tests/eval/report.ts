@@ -38,6 +38,9 @@ export interface SuiteReport {
   cleanPassRate: number;
   totalCost: number;
   avgCostPerTask: number;
+  /** Metered-equivalent totals — see the note at the computation site. */
+  totalListCost: number;
+  avgListCostPerTask: number;
   avgDurationMs: number;
   avgTurns: number;
   categories: CategoryStats[];
@@ -74,6 +77,12 @@ export function buildReport(
   const cleanPassRate = measured > 0 ? passed / measured : 0;
   const totalCost = results.reduce((s, r) => s + r.cost, 0);
   const avgCostPerTask = total > 0 ? totalCost / total : 0;
+  // Metered-equivalent cost. Tracked separately because eval runs ride
+  // subscription and free routes where `cost` is $0 by definition — the suite
+  // could burn ten times the tokens and report the same number. This is the
+  // figure the cost-regression gate compares.
+  const totalListCost = results.reduce((s, r) => s + (r.listCost ?? 0), 0);
+  const avgListCostPerTask = total > 0 ? totalListCost / total : 0;
   const avgDurationMs = total > 0 ? results.reduce((s, r) => s + r.durationMs, 0) / total : 0;
   const avgTurns = total > 0 ? results.reduce((s, r) => s + r.turns, 0) / total : 0;
 
@@ -119,6 +128,8 @@ export function buildReport(
     cleanPassRate,
     totalCost,
     avgCostPerTask,
+    totalListCost,
+    avgListCostPerTask,
     avgDurationMs,
     avgTurns,
     categories,
@@ -207,6 +218,12 @@ export function printReport(report: SuiteReport): void {
     );
   }
 
+  if (report.totalListCost > 0) {
+    lines.push(
+      `  \x1b[2mMetered-equivalent: $${report.totalListCost.toFixed(4)} total · ` +
+        `$${report.avgListCostPerTask.toFixed(4)}/task\x1b[0m`,
+    );
+  }
   if (report.totalCost > 0) {
     console.log(
       `  \x1b[2mTotal cost: $${report.totalCost.toFixed(4)} · avg $/task: $${report.avgCostPerTask.toFixed(4)}\x1b[0m`,
@@ -229,6 +246,8 @@ function baselineShape(report: SuiteReport) {
     total: report.total,
     totalCost: report.totalCost,
     avgCostPerTask: report.avgCostPerTask,
+    totalListCost: report.totalListCost,
+    avgListCostPerTask: report.avgListCostPerTask,
     avgDurationMs: report.avgDurationMs,
     avgTurns: report.avgTurns,
     categories: report.categories.map((c) => ({
@@ -255,6 +274,8 @@ function baselineShape(report: SuiteReport) {
 // ─── Baseline comparison (--compare): the regression gate ───
 
 export interface BaselineComparison {
+  /** Fractional change in metered-equivalent cost per task vs baseline. */
+  costDelta?: number;
   /** False when the run regressed beyond the noise band. */
   ok: boolean;
   /** Non-null when comparison was impossible (no/incompatible baseline) — not a failure. */
@@ -268,7 +289,7 @@ export interface BaselineComparison {
   reasons: string[];
 }
 
-interface BaselineFile {
+export interface BaselineFile {
   mode?: "mock" | "real";
   model?: string;
   provider?: string;
@@ -286,15 +307,26 @@ interface BaselineFile {
  * Comparing across modes or across different real models measures nothing, so
  * those comparisons are skipped (ok=true, skipped=reason) rather than guessed.
  */
+/**
+ * Fractional rise in metered-equivalent cost per task tolerated before the
+ * gate fails. Cost is noisier than pass/fail — a model's verbosity drifts, a
+ * retry lands differently — so the band is wide enough that only a structural
+ * change trips it. A broken prompt cache roughly quintuples the figure; that
+ * is the class of regression this is here to catch.
+ */
+export const DEFAULT_COST_DRIFT_TOLERANCE = 0.5;
+
 export function compareToBaseline(
   report: SuiteReport,
   baseline: BaselineFile | null,
   noise: number,
+  costTolerance: number = DEFAULT_COST_DRIFT_TOLERANCE,
 ): BaselineComparison {
   const out: BaselineComparison = {
     ok: true,
     skipped: null,
     rateDelta: 0,
+    costDelta: 0,
     newlyFailing: [],
     missing: [],
     reasons: [],
@@ -325,6 +357,22 @@ export function compareToBaseline(
         `${(-out.rateDelta * 100).toFixed(1)}pt below baseline ` +
         `${(baseline.cleanPassRate * 100).toFixed(1)}% (noise band ${(noise * 100).toFixed(1)}pt)`,
     );
+  }
+
+  // Cost gate. Only meaningful once a baseline has recorded the figure, and
+  // only when the baseline actually spent something — dividing by zero
+  // manufactures an infinite regression on the first run that records cost.
+  const baseCost = baseline.avgListCostPerTask;
+  if (typeof baseCost === "number" && baseCost > 0 && report.avgListCostPerTask > 0) {
+    out.costDelta = (report.avgListCostPerTask - baseCost) / baseCost;
+    if (out.costDelta > costTolerance) {
+      out.ok = false;
+      out.reasons.push(
+        `metered-equivalent cost per task rose ${(out.costDelta * 100).toFixed(0)}% ` +
+          `($${baseCost.toFixed(4)} → $${report.avgListCostPerTask.toFixed(4)}), ` +
+          `past the ${(costTolerance * 100).toFixed(0)}% tolerance`,
+      );
+    }
   }
 
   if (Array.isArray(baseline.tasks)) {

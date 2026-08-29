@@ -55,21 +55,64 @@ describe("TurnRenderer — customizer activity stream", () => {
     expect(h.output()).not.toContain("◉ Gear");
   });
 
-  it("commits every call as it lands — no burst is hidden behind a summary", () => {
+  it("collapses a long gathering burst into one row, above the finding it led to", () => {
     const h = harness();
     for (let index = 0; index < 30; index++) {
-      h.turn.onEvent(toolEnd("read_file", { path: `src/file-${index}.ts` }));
+      h.turn.onEvent(
+        toolEnd(
+          "read_file",
+          { path: `src/file-${index}.ts` },
+          JSON.stringify({ path: `src/file-${index}.ts`, total_lines: 10 }),
+        ),
+      );
     }
-    expect(h.commits).toHaveLength(30);
+    // Nothing with news in it has landed, so nothing has been set down yet.
+    expect(h.commits).toHaveLength(0);
     expect(h.preview()).toContain("thinking"); // the rung: label + receipt, no ledger
     expect((h.previews.at(-1) ?? []).length).toBeLessThanOrEqual(2);
 
     h.turn.onEvent({ type: "text_delta", text: "The implementation is mapped." });
     h.turn.finish();
-    // Each row is one line, so 30 of them cost 30 lines and hide nothing.
-    expect(h.output()).toContain("src/file-0.ts");
-    expect(h.output()).toContain("src/file-29.ts");
+    // One row for the burst, and it says what the burst covered.
+    expect(h.output()).toContain("30 files");
+    expect(h.output()).toContain("300 lines");
+    expect(h.output()).not.toContain("src/file-7.ts");
+    // The reads still land ABOVE the sentence they produced.
+    expect(h.output().indexOf("30 files")).toBeLessThan(
+      h.output().indexOf("The implementation is mapped."),
+    );
+    // The receipt still counts every one of them.
     expect(h.output()).toContain("30 files reviewed");
+  });
+
+  it("keeps a short gathering burst per call — two paths are worth naming", () => {
+    const h = harness();
+    h.turn.onEvent(
+      toolEnd("read_file", { path: "src/a.ts" }, JSON.stringify({ path: "src/a.ts" })),
+    );
+    h.turn.onEvent(
+      toolEnd("read_file", { path: "src/b.ts" }, JSON.stringify({ path: "src/b.ts" })),
+    );
+    h.turn.finish();
+    expect(h.output()).toContain("src/a.ts");
+    expect(h.output()).toContain("src/b.ts");
+  });
+
+  it("keeps the full detail of a collapsed burst in the work log", () => {
+    const h = harness();
+    for (let index = 0; index < 5; index++) {
+      h.turn.onEvent(
+        toolEnd(
+          "read_file",
+          { path: `src/file-${index}.ts` },
+          JSON.stringify({ path: `src/file-${index}.ts` }),
+        ),
+      );
+    }
+    h.turn.finish();
+    // Collapsed on screen, complete underneath — the burst is summarised, not lost.
+    expect(h.output()).not.toContain("src/file-3.ts");
+    expect(stripAnsi(h.turn.fullLog() ?? "")).toContain("src/file-3.ts");
   });
 
   it("renders model progress prose in the agent's own voice, before the matching action", async () => {
@@ -409,5 +452,44 @@ describe("helpers", () => {
     }
     expect(isVerificationCommand("mkdir -p dist")).toBe(false);
     expect(isVerificationCommand("git status --short")).toBe(false);
+  });
+});
+
+describe("TurnRenderer — the plan is set down once, not on every tick", () => {
+  const plan = (states: string[]) => ({
+    type: "todo_updated",
+    items: [
+      { content: "Map the repository", status: states[0] },
+      { content: "Audit the backend", status: states[1] },
+      { content: "Run the checks", status: states[2] },
+    ],
+  });
+
+  it("commits the shape once and the final state once, never the ticks between", () => {
+    const h = harness();
+    h.turn.onEvent(plan(["in_progress", "pending", "pending"]));
+    h.turn.onEvent(plan(["completed", "in_progress", "pending"]));
+    h.turn.onEvent(plan(["completed", "completed", "in_progress"]));
+    // Three updates, one commit so far: the shape, when it was first known.
+    expect(h.commits).toHaveLength(1);
+
+    h.turn.onEvent(plan(["completed", "completed", "completed"]));
+    h.turn.finish();
+    const rendered = h.output().split("Map the repository").length - 1;
+    expect(rendered).toBe(2); // the opening shape, and the close
+  });
+
+  it("does not reprint an unchanged plan at the close", () => {
+    const h = harness();
+    h.turn.onEvent(plan(["in_progress", "pending", "pending"]));
+    h.turn.finish();
+    expect(h.output().split("Map the repository").length - 1).toBe(1);
+  });
+
+  it("carries the live step and the ratio on the rung while the ticks are hidden", () => {
+    const h = harness();
+    h.turn.onEvent(plan(["completed", "in_progress", "pending"]));
+    expect(h.rung()).toContain("Audit the backend");
+    expect(h.rung()).toContain("1/3 steps");
   });
 });

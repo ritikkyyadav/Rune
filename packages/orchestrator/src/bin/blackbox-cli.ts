@@ -28,6 +28,28 @@ function shortTs(iso: string): string {
   return iso.replace("T", " ").slice(0, 16);
 }
 
+/**
+ * A wall-clock stamp, in the reader's own timezone.
+ *
+ * The build line used to go through shortTs(new Date(...).toISOString()), which
+ * renders UTC. Everything the reader would check it against -- the file's mtime,
+ * the clock in the corner of their screen, their memory of running the installer
+ * -- is local, so a binary compiled at 15:03 reported itself as built at 09:33
+ * and read as five and a half hours stale. The one line whose whole job is to
+ * make the build trustworthy was the line quietly changing timezone.
+ *
+ * The incident timestamps above keep shortTs: those are ISO strings stored in
+ * the database, compared against each other, and are not claims about now.
+ */
+function localTs(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+    `${pad(d.getHours())}:${pad(d.getMinutes())}`
+  );
+}
+
 function sevPaint(severity: string, s: string): string {
   if (severity === "critical") return danger(s);
   if (severity === "error") return danger(s);
@@ -226,7 +248,7 @@ function doctorToolchain(): void {
       );
       return;
     }
-    const builtLabel = shortTs(new Date(builtAtMs).toISOString());
+    const builtLabel = localTs(builtAtMs);
     const sourceCommit = meta.GEAR_SOURCE_COMMIT ?? "";
     const sourceBranch = meta.GEAR_SOURCE_BRANCH || "detached";
     const dirty = meta.GEAR_SOURCE_DIRTY === "1";

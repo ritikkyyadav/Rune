@@ -586,11 +586,97 @@ export function outputRail(
   return lines;
 }
 
-/** Keep the head and tail of a long output; say exactly what was dropped. */
+/** How much runner self-talk it takes before stripping it is worth an elision
+ *  marker. One stray warning line is cheaper to leave in place than to
+ *  annotate; a block of them is the thing that buries the verdict. */
+const NOISE_FLOOR = 3;
+
+/**
+ * Lines a test runner writes about itself rather than about your code. A
+ * deprecation notice from a transitive dependency is not evidence of anything
+ * the reader is here to judge, and pytest prints its warnings block BEFORE the
+ * failures — so a head-and-tail clip spends its whole head on the noise and
+ * elides the assertions. Matched conservatively: when in doubt a line is kept.
+ *
+ * The last alternative is the bare vendored path pytest prints as the HEADER of
+ * each warning (`.../site-packages/fastapi/testclient.py:1`). It has to be
+ * matched explicitly because it otherwise reads as signal — a file and a line
+ * number is exactly the shape of a real stack frame.
+ */
+const NOISE =
+  /^\s*(?:-{2,}\s*Docs:|={3,}\s*warnings summary|\/?\S*(?:site-packages|node_modules)\/\S*:\d+:?\s*\w*(?:Deprecation|Pending|User|Future)Warning|\w*(?:Deprecation|Pending|Future)Warning:|warnings\.warn\(|from \S+ import .* # noqa|\/?\S*(?:site-packages|node_modules)\/\S*:\d+\s*$)/;
+
+/** Lines that carry the verdict. A clip that has to drop something drops
+ *  everything else before it drops one of these.
+ *
+ *  The two failure marks runners print (U+2715, U+00D7) are written as
+ *  escapes, not as characters. The closed-glyph gate forbids non-ASCII literals
+ *  in this directory and it is right to: it exists so nobody types ornament
+ *  into a renderer. These are neither ornament nor ours — they are marks we
+ *  RECOGNISE in someone else's output — and the escape keeps the source honest
+ *  to the rule while still matching them. */
+const SIGNAL =
+  /(?:^\s*(?:FAILED|ERROR|FAIL|\u2715|\u00d7|AssertionError|E\s{3})|\bassert\b|\berror(?::|\b)|\bexpected\b|\breceived\b|\d+\s+(?:failed|passed|error)|Traceback|panicked|\.(?:ts|tsx|js|jsx|py|rs|go):\d+)/i;
+
+/**
+ * Keep what a long output is FOR, and say exactly what was dropped.
+ *
+ * The old rule was positional — first 22 lines, last 8 — which is right for a
+ * build log and wrong for a test runner, the one case where this rail is the
+ * whole point of showing the command at all. `make verify` came back with the
+ * head spent on a StarletteDeprecationWarning and a link to the pytest docs,
+ * while the failing assertions sat in the elided middle: verbatim noise, elided
+ * news. So the budget is now spent in order of what the line is worth.
+ *
+ * Order is always preserved — this drops lines, it never reorders them, because
+ * output that has been rearranged is no longer a transcript of what happened.
+ */
 export function clip(lines: string[], head = 22, tail = 8): string[] {
-  if (lines.length <= head + tail + 1) return lines;
-  const hidden = lines.length - head - tail;
-  return [...lines.slice(0, head), `${glyph("elision")} ${hidden} lines`, ...lines.slice(-tail)];
+  const budget = head + tail;
+  const noise = lines.reduce((n, line) => n + (NOISE.test(line) ? 1 : 0), 0);
+  // Two separate reasons to intervene, and either is enough. Length is the
+  // obvious one. The other is that a runner buried its verdict in its own
+  // deprecation notices -- which it does in twenty lines as readily as in two
+  // hundred, and which was the actual complaint: `make verify` came back short
+  // enough to escape the old length test and still spent most of its rail on
+  // warnings from a transitive dependency.
+  if (lines.length <= budget + 1 && noise < NOISE_FLOOR) return lines;
+
+  // Everything that is not runner self-talk, in order; then, if that alone
+  // still overruns, the lines that carry the verdict win the remaining budget.
+  const consider = lines.map((line, index) => ({ line, index })).filter((l) => !NOISE.test(l.line));
+  const overflowed = consider.length > budget;
+  const pool = overflowed ? consider.filter((l) => SIGNAL.test(l.line)) : consider;
+  // Long, and nothing in it claims to be a verdict: a build log. There is
+  // nothing to prefer, so the positional rule is still the right shape.
+  if (overflowed && pool.length === 0) {
+    const hidden = lines.length - head - tail;
+    return [...lines.slice(0, head), `${glyph("elision")} ${hidden} lines`, ...lines.slice(-tail)];
+  }
+  const kept = new Set<number>();
+  for (const { index } of pool.slice(-budget)) kept.add(index);
+  // A verdict is usually the last thing written, so the closing lines are held
+  // even when nothing in them matched -- but not when they are the very noise
+  // this is here to drop. pytest signs off with a link to its own docs.
+  for (let i = Math.max(0, lines.length - 3); i < lines.length; i++) {
+    if (!NOISE.test(lines[i]!)) kept.add(i);
+  }
+
+  const out: string[] = [];
+  let dropped = 0;
+  for (let i = 0; i < lines.length; i++) {
+    if (kept.has(i)) {
+      if (dropped > 0) {
+        out.push(`${glyph("elision")} ${dropped} line${dropped === 1 ? "" : "s"}`);
+        dropped = 0;
+      }
+      out.push(lines[i]!);
+    } else {
+      dropped++;
+    }
+  }
+  if (dropped > 0) out.push(`${glyph("elision")} ${dropped} line${dropped === 1 ? "" : "s"}`);
+  return out;
 }
 
 // --- Checklists ---

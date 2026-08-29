@@ -528,3 +528,60 @@ export function renderTranscript(lines: TranscriptLineView[]): string {
   }
   return out.join("\n");
 }
+
+// --- The routine batch ---
+// Context-gathering is the bulk of every turn and almost none of its news. A
+// run of thirty reads is one fact ("it read the module"), and printing it as
+// thirty rows spends the reader's whole screen establishing that fact while the
+// sentence that matters scrolls past. These two exports are what let the live
+// stream do what the replay renderer already did: show each call while it runs,
+// and set down one line when the run is over.
+
+/** Tools whose individual rows are context, not news. */
+const ROUTINE = new Set(["read_file", "list_dir", "grep", "glob", "symbol_search", "lsp"]);
+
+export function isRoutineTool(name: string): boolean {
+  return ROUTINE.has(name);
+}
+
+/** `1,204` — thousands grouped without a locale, so the row reads the same on
+ *  every machine and in every test. */
+function group(n: number): string {
+  return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+/**
+ * The collapsed receipt for a run of context-gathering calls: what was covered
+ * and how much of it, in one row. Nothing here is estimated — the counts are the
+ * calls that actually returned, and the line total is what the reads reported
+ * reading. The per-call detail is not lost; it stays in the work log.
+ */
+export function renderRoutineBatch(views: ToolActivityView[]): string {
+  let files = 0;
+  let dirs = 0;
+  let searches = 0;
+  let lines = 0;
+  for (const view of views) {
+    const out = tryJson(view.result);
+    if (view.toolName === "read_file") {
+      files++;
+      const total = typeof out?.total_lines === "number" ? out.total_lines : null;
+      const shown = typeof out?.lines_shown === "number" ? out.lines_shown : total;
+      if (typeof shown === "number" && shown > 0) lines += shown;
+    } else if (view.toolName === "list_dir") {
+      dirs++;
+    } else {
+      searches++;
+    }
+  }
+  const parts = [
+    files > 0 ? `${files} file${files === 1 ? "" : "s"}` : "",
+    dirs > 0 ? `${dirs} director${dirs === 1 ? "y" : "ies"}` : "",
+    searches > 0 ? `${searches} search${searches === 1 ? "" : "es"}` : "",
+  ].filter(Boolean);
+  return F.toolRow({
+    name: files >= searches ? "read" : "grep",
+    arg: parts.join(", "),
+    metric: lines > 0 ? `${group(lines)} lines` : "",
+  });
+}

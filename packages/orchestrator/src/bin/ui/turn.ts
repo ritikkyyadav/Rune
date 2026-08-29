@@ -8,6 +8,8 @@ import { glyph } from "./glyphs";
 import { truncate, wrap } from "./render";
 import * as F from "./flow";
 import {
+  isRoutineTool,
+  renderRoutineBatch,
   renderToolActivity,
   renderTranscript,
   runningLabel,
@@ -115,6 +117,11 @@ const GAP_MS = 300;
 /** How long a turn runs before its elapsed clock is worth a column. `0s`
  *  beside every step is noise pretending to be data. */
 const ELAPSED_AFTER_MS = 2000;
+
+/** How long a run of context-gathering has to get before it is worth more as a
+ *  count than as a list. Two paths are worth naming; twelve are one fact, and
+ *  printing them individually spends the screen saying it twelve times. */
+const ROUTINE_COLLAPSE_AT = 3;
 
 function oneLine(raw: string, max = 100): string {
   const clean = raw
@@ -408,6 +415,11 @@ export class TurnRenderer {
   private hardError = false;
   private committedErrors = new Set<string>();
   private routineQueue: ToolActivityView[] = [];
+  /** The plan as last committed to scrollback, and as last rendered. The first
+   *  version goes to the timeline; the final one goes to the close if it moved.
+   *  The revisions in between belong to the live rung. */
+  private committedPlan: string | null = null;
+  private latestPlan: string | null = null;
   private narratedPlan = false;
   private verificationRunning = false;
   private readonly startedAt = Date.now();
@@ -600,6 +612,13 @@ export class TurnRenderer {
       if (this.toolProgressNote?.callId === this.currentTool.callId) {
         return `${base} | ${this.toolProgressNote.note}`;
       }
+      // Mid-burst, the running tally. Scrollback will keep one collapsed row
+      // for the whole run, so this is where the reader gets to watch it climb
+      // -- which is the part of a long exploration that reads as progress.
+      const held = this.routineQueue.length;
+      if (held >= ROUTINE_COLLAPSE_AT - 1 && isRoutineTool(this.currentTool.name)) {
+        return `${base} | ${held + 1} so far`;
+      }
       return base;
     }
     const active = this.todos.find((item) => item.status === "in_progress");
@@ -675,11 +694,27 @@ export class TurnRenderer {
     this.sink.commit(tight ? block : `\n${block}`);
   }
 
-  /** Retained as the ordering hook the event handlers already call: work is
-   *  committed as it lands, so there is nothing left to flush. */
+  /**
+   * Set down the context-gathering held since the last thing worth reading.
+   *
+   * Every handler that is about to commit something with news in it calls this
+   * first, which is what keeps the order true: the reads that led to a finding
+   * land above the finding, never after it. A short run prints per call --
+   * two paths cost two lines and both are worth naming. A long one collapses to
+   * a single row, because the twelfth consecutive `read` tells the reader
+   * nothing the first eleven did not, and the whole burst is one fact.
+   *
+   * Nothing is discarded either way: `addLog` has already taken the full row
+   * for the work log, which is what /details prints.
+   */
   private flushRoutine(): void {
-    if (this.routineQueue.length === 0) return;
-    for (const view of this.routineQueue.splice(0)) this.commitTimeline(renderToolActivity(view));
+    const queued = this.routineQueue.splice(0);
+    if (queued.length === 0) return;
+    if (queued.length < ROUTINE_COLLAPSE_AT) {
+      for (const view of queued) this.commitTimeline(renderToolActivity(view));
+      return;
+    }
+    this.commitTimeline(renderRoutineBatch(queued));
   }
 
   private captureProseAsIntent(): void {
@@ -752,6 +787,17 @@ export class TurnRenderer {
     };
     const rendered = renderToolActivity(view);
     this.addLog(rendered, name === "edit_file" || name === "multi_edit");
+    if (success && isRoutineTool(name)) {
+      // Context, not news. Held until something worth reading lands, then set
+      // down as one row -- see flushRoutine. The rung above the composer is
+      // already naming this call as it runs, so nothing is invisible meanwhile.
+      this.routineQueue.push(view);
+      this.updateLive();
+      return;
+    }
+    // Anything with news in it closes the burst that led to it, so the reads
+    // land above the result rather than trailing it.
+    this.flushRoutine();
     if (!success) {
       this.commitErrorOnce(rendered);
     } else {
@@ -901,7 +947,18 @@ export class TurnRenderer {
           { tone: "muted" },
         ).join("\n");
         this.addLog(plan);
-        this.commitTimeline(plan);
+        // The shape of the work is committed ONCE, when it is first known --
+        // that is the part a reader needs in scrollback, and it is the moment
+        // they can still object to it. Every later revision is a tick moving,
+        // and a tick moving does not justify reprinting all seven steps: four
+        // updates cost twenty-eight rows to convey three state changes. The
+        // live rung carries the current step and the ratio while the work runs,
+        // and finish() sets down the final state beside the evidence.
+        if (this.committedPlan === null) {
+          this.committedPlan = plan;
+          this.commitTimeline(plan);
+        }
+        this.latestPlan = plan;
         if (this.editedFiles.size === 0)
           this.setPhase("plan", active?.content ?? "Planning the work");
         else if (active) this.intent = active.content;
@@ -1245,6 +1302,13 @@ export class TurnRenderer {
     const answer = this.prose.trim();
     const aborted = options.aborted === true;
     this.flushRoutine();
+    // The plan's final state, once, if it moved since it was set down. This is
+    // the row that answers "did it finish what it said it would" -- and it is
+    // the only reprint of the checklist the turn is allowed.
+    if (this.latestPlan && this.latestPlan !== this.committedPlan) {
+      this.committedPlan = this.latestPlan;
+      this.commitTimeline(this.latestPlan);
+    }
     if (this.worked || this.errored || aborted || this.verificationRunning || this.stoppedEarly) {
       const closing = this.completionBlock(aborted);
       if (closing) this.commitTimeline(closing);
