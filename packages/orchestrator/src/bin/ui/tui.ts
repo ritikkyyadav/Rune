@@ -1,25 +1,31 @@
 // ─── TUI controller (raw mode) ───
-// Gear's terminal UI. ONE render surface, since Phase 03:
+// Gear's terminal UI. TWO layouts, and the default has fixed chrome:
 //
-//   COMMITTED  the transcript, printed into the terminal's NORMAL buffer and
-//              never touched again. The terminal owns it, so native momentum
-//              scrolling, real scrollback, ⌘F, mouse selection and `| tee` all
-//              work for free — and history cannot develop rendering bugs,
-//              because nothing rewrites it.
-//   LIVE       the composer and the live rung, pinned to the bottom rows
-//              (BottomRegion) and erased with relative cursor moves only.
+//   FIXED (default, ./viewport.ts)
+//     The alternate screen split into three zones. The identity header holds
+//     the top rows, the composer and status hold the bottom rows, and the
+//     transcript in between is the ONLY thing that scrolls. Chrome that is
+//     chrome: a wheel flick, a Page Up or a streaming turn move the middle and
+//     nothing else. Gear owns the scrollback for the transcript and provides
+//     the gestures itself (wheel, PgUp/PgDn, shift+arrows, End).
 //
-// What was deleted: an alternate-screen surface that repainted the whole
-// viewport each frame to paint a theme background edge-to-edge. It bought a
-// cohesive window on terminals that ignore OSC 11 (Warp) and cost scrollback,
-// native scroll, pipeability, and — most visibly — an empty session rendered as
-// a full viewport of painted nothing, because a program that owns every cell
-// must fill every cell. Taking the alternate screen means signing up to be
-// correct about every cell forever, through resize, tmux reattach, and a
-// dropped ssh frame. Almost nothing is.
+//   INLINE (--inline / GEAR_INLINE, ./screen.ts)
+//     The transcript is committed to the terminal's OWN scrollback and only the
+//     composer is pinned. Native momentum scrolling, ⌘F, mouse selection and
+//     `| tee` all work — at the cost of the frame, because the terminal scrolls
+//     the header and the field away along with the text.
+//
+// The fixed layout is what a previous phase deleted, and the reason it was
+// deleted is worth keeping straight, because it is NOT "the alternate screen is
+// bad": that surface asserted a theme BACKGROUND across every cell, so an empty
+// session rendered as a viewport of painted nothing and every terminal whose
+// palette disagreed looked broken. This compositor asserts no background. Rows
+// no zone claims are erased to the terminal's own colour, exactly like the
+// inline surface, so the window inherits the user's theme instead of fighting
+// it. What it does own is layout — and layout is the thing that was wrong.
 //
 // Selected over the readline path with `--tui` / GEAR_TUI=1; `--classic` opts
-// out to the plain printer. `--inline` and `--fullscreen` are accepted no-ops.
+// out to the plain printer. `--fullscreen` names the default and is a no-op.
 
 import type {
   Engine,
@@ -29,6 +35,8 @@ import type {
 } from "../../engine";
 import { findCommand, type SlashCommand } from "../../commands";
 import {
+  hasStoredCredential,
+  openCredentialStore,
   setProviderKey as persistKey,
   addProviderKey as persistAddKey,
   removeProviderKey as persistRemoveKey,
@@ -53,10 +61,21 @@ import {
   getSystemMemoryPath,
 } from "@gear/shared";
 import type { CustomEndpoint } from "@gear/shared";
-import { providerChoices, accountChoices, modelChoices, fetchLiveModels } from "./model-picker";
+import type { ReasoningEffort } from "@gear/llm-gateway";
+import { routeChoices, loginTargets, connectedSummary, type LoginTarget } from "./login-picker";
+import { getStrategy, type AuthContext } from "@gear/llm-gateway";
+import { openBrowser } from "../byop-cli-shared";
+import {
+  providerChoices,
+  accountChoices,
+  modelChoices,
+  effortChoices,
+  fetchLiveModels,
+} from "./model-picker";
 import { configModeToPermissionMode } from "../../permissions";
 import { runTeamCommand } from "../../team/command";
 import { BottomRegion } from "./screen";
+import { Viewport, composeFrame, zones, VIEWPORT_RESTORE, type Zones } from "./viewport";
 import { parseKeys, type Key } from "./keys";
 import { fmtTokens } from "./events";
 import { PasteScanner, shouldCollapse, pasteChip, expandPastes, livePasteIds } from "./paste";
@@ -158,7 +177,12 @@ export interface TuiContext {
   customCommands: SlashCommand[];
   /** Show the "resume a session" picker on launch (default flow with prior history). */
   launchPick?: boolean;
-  /** Use the customizer-backed alternate-screen product surface. This is the default from CLI. */
+  /**
+   * Opt out of the fixed-chrome viewport and use the legacy layout that commits
+   * the transcript to the terminal's own scrollback (--inline / GEAR_INLINE).
+   * Undefined means the default: pinned header, scrolling body, pinned footer.
+   */
+  inline?: boolean;
 }
 
 type Mode =
@@ -259,16 +283,22 @@ export function holdOpenRows(viewport: number, printedRows: number, blockRows: n
 }
 const MAX_TRANSCRIPT = 5000; // cap the in-memory scrollback
 const SCROLL_STEP = 3; // lines per mouse-wheel notch
+/** Ceiling on the live block above the composer: the rung, its detail row, and
+ *  up to a fleet's worth of sub-agent rows plus their `+N more`. Past this the
+ *  status stops being a status. */
+const LIVE_BLOCK_ROWS = 9;
 
 export async function runTui(ctx: TuiContext): Promise<void> {
   await new Tui(ctx).run();
 }
 
 class Tui {
-  private region = new BottomRegion(); // explicit inline compatibility surface
-  /** False for the default full Gear card; true only through --inline / GEAR_INLINE. */
+  private region = new BottomRegion(); // --inline compatibility surface only
+  /** The fixed-chrome surface: pinned header, scrolling body, pinned footer. */
+  private viewport = new Viewport();
+  /** False for the default fixed-chrome layout; true only through --inline / GEAR_INLINE. */
   private readonly inline: boolean;
-  private transcript: string[] = []; // alt-screen only: themed lines, self-managed scrollback window
+  private transcript: string[] = []; // fixed layout: themed lines, self-managed scrollback window
   /**
    * Rows committed into the terminal's own scrollback so far.
    *
@@ -279,12 +309,22 @@ class Tui {
    * gone for good.
    */
   private printedRows = 0;
-  private scroll = 0; // alt-screen only: lines scrolled up from the bottom (0 = following latest)
+  private scroll = 0; // fixed layout: lines scrolled up from the bottom (0 = following latest)
   private onResize = () => {
-    // Native scrollback reflows itself; just redraw the pinned composer at the
-    // new width. There is no frame to invalidate — history above the composer
-    // was written once and is the terminal's to reflow, not ours to repaint.
-    this.renderRegion();
+    if (this.inline) {
+      // Native scrollback reflows itself; just redraw the pinned composer at the
+      // new width. There is no frame to invalidate — history above the composer
+      // was written once and is the terminal's to reflow, not ours to repaint.
+      this.renderRegion();
+      return;
+    }
+    // The fixed layout owns every cell, and a resize invalidates all of them:
+    // the row a line was on is not the row it belongs on at the new size, and
+    // the diff would happily leave the old ones there. Re-measure the width the
+    // flow grammar bounds itself to, forget the screen, repaint it whole.
+    setTermWidthOverride(this.contentCols());
+    this.viewport.invalidate();
+    this.scheduleDraw();
   };
   private input = "";
   private caret = 0;
@@ -435,10 +475,10 @@ class Tui {
   } | null = null;
 
   constructor(private ctx: TuiContext) {
-    // Phase 03: one surface. The transcript is committed into the terminal's
-    // OWN scrollback and only the composer is pinned; nothing takes the
-    // alternate screen, so nothing has to fill a viewport it does not own.
-    this.inline = true;
+    // Default: the fixed-chrome viewport. --inline keeps the legacy layout,
+    // where the transcript is committed to the terminal's own scrollback and
+    // only the composer is pinned.
+    this.inline = Boolean(ctx.inline);
     setTermWidthOverride(this.inline ? null : this.contentCols());
   }
 
@@ -488,15 +528,13 @@ class Tui {
     stdin.setEncoding("utf8");
     if (stdin.isTTY) stdin.setRawMode(true);
     process.stdout.write("\x1b[?2004h"); // bracketed paste on
-    // Alt-screen captures the wheel to drive its self-managed scroll; inline leaves the wheel to
-    // the terminal so native momentum scrollback works. So only report the mouse in alt-screen.
     // Safety net: if we ever exit without running this.exit() (a crash), still leave the terminal
-    // usable -- drop mouse/paste reporting, restore the user's colours, and show the cursor.
+    // usable -- leave the alternate screen, drop mouse/paste reporting, restore autowrap and the
+    // user's colours, and show the cursor. A process that dies holding the alternate screen with
+    // the mouse captured leaves the shell unusable, which is the one failure this must not have.
     process.once("exit", () => {
       try {
-        process.stdout.write(
-          "\x1b[?1000l\x1b[?1006l\x1b[?2004l\x1b[0 q" + TERMINAL_THEME_RESET + "\x1b[?25h",
-        );
+        process.stdout.write("\x1b[?2004l\x1b[0 q" + VIEWPORT_RESTORE + TERMINAL_THEME_RESET);
         clearTitle();
       } catch {
         /* terminal already gone */
@@ -504,7 +542,7 @@ class Tui {
     });
     stdin.resume();
 
-    this.enterInline();
+    this.enterSurface();
     process.stdout.on("resize", this.onResize);
     // Replay prior conversation when launched straight into a session (--resume /
     // `gear resume <id>`). When launchPick is set, the picker runs once input is
@@ -547,7 +585,7 @@ class Tui {
         }
         process.stdout.write("\x1b[?2004l"); // bracketed paste off
         if (this.drawTimer) clearTimeout(this.drawTimer); // cancel any pending coalesced paint
-        this.region.clear(); // unmount the composer, leaving the transcript in scrollback
+        this.leaveSurface();
         process.stdout.write(TERMINAL_THEME_RESET); // restore the user's terminal colours
         clearTitle(); // and its name -- see ./title.ts
         if (stdin.isTTY) stdin.setRawMode(false);
@@ -595,7 +633,8 @@ class Tui {
       process.on("SIGCONT", () => {
         // Whatever the shell drew while we were stopped is gone from our idea
         // of the screen, so remount rather than redraw in place.
-        this.region.clear();
+        if (this.inline) this.region.clear();
+        else this.viewport.invalidate();
         this.scheduleDraw();
       });
     });
@@ -616,6 +655,7 @@ class Tui {
     return statusLine(
       {
         model: this.ctx.engine.getModel(),
+        effort: this.ctx.engine.getReasoningEffortLabel(),
         workspace: this.ctx.workspaceRoot,
         mode: this.ctx.engine.getPermissionMode(),
         contextPercent,
@@ -699,39 +739,52 @@ class Tui {
   // -- slash palette (live `/` menu) --
 
   private slashCatalog(): SlashItem[] {
+    // Ordered by what a person actually reaches for, not alphabetically and
+    // not by when it was written. /theme led this list for a long time -- a
+    // cosmetic toggle, above the two things (which model, how do I connect)
+    // that decide whether the product works at all.
+    //
+    // What was REMOVED from the surface, and why:
+    //   /providers /keys   folded into /login, which asks what you have instead
+    //                      of what the system calls it.
+    //   /research
+    //   /deepresearch      research is already a TOOL the agent reaches for on
+    //                      its own (see the doctrine's Research line). Two
+    //                      commands that only set a mode taught users to drive
+    //                      manually something the agent should decide.
+    //   /rename            belongs to a session, so it lives in /sessions where
+    //                      you can see which one you are renaming.
+    //   /resume            /sessions already opens the picker.
+    //   /autonomy          legacy alias for /gear.
+    //   /mode              same thing as /gear, twice.
+    // All of them still WORK when typed -- they are hidden, not deleted, so no
+    // muscle memory or script breaks.
     const builtins: SlashItem[] = [
-      { name: "/theme", desc: "Switch accent colors and light / dark mode", tag: "cosmetic" },
-      { name: "/model", desc: "Choose model and provider", tag: "settings" },
+      { name: "/model", desc: "Choose model, provider, and thinking depth", tag: "settings" },
+      { name: "/login", desc: "Connect a subscription, an API key, or a local model" },
       { name: "/sessions", desc: "Browse, resume, rename, archive & delete", tag: "history" },
       {
-        name: "/mode",
-        desc: "Shift gears -- 1st | 2nd | 3rd | 4th | auto | default",
+        name: "/gear",
+        desc: "Shift gears -- 1 | 2 | 3 | 4 | auto (empty shifts up)",
         tag: "shift+tab",
       },
       { name: "/diff", desc: "Inspect staged and uncommitted workspace changes", tag: "git" },
+      { name: "/undo", desc: "Revert the last Gear auto-commit" },
+      { name: "/rewind", desc: "Roll back the conversation" },
+      { name: "/cost", desc: "Session cost" },
+      { name: "/status", desc: "Session status" },
       { name: "/loop", desc: "Repeat a prompt while this session stays open" },
       { name: "/loops", desc: "List and manage this session's loops" },
-      { name: "/resume", desc: "Open the session picker to continue past work" },
-      { name: "/rename", desc: "Rename the current session" },
-      { name: "/status", desc: "Session status" },
-      { name: "/providers", desc: "List providers" },
-      { name: "/keys", desc: "Manage API keys" },
-      { name: "/mcp", desc: "Connected MCP servers and tools" },
       { name: "/team", desc: "Other Gear instances here -- status | send | claim | intent" },
+      { name: "/mcp", desc: "Connected MCP servers and tools" },
       { name: "/skills", desc: "Browse or search available skills" },
-      { name: "/research", desc: "Research -- propose a plan, then a cited report" },
-      { name: "/deepresearch", desc: "Deep research -- multi-round, long-form" },
-      { name: "/cost", desc: "Session cost" },
-      { name: "/gear", desc: "Shift gears -- /gear 1 | 2 | 3 | 4 | auto (empty shifts up)" },
-      { name: "/autonomy", desc: "Legacy alias -- /autonomy I | II | III = 2nd | 3rd | 4th gear" },
-      { name: "/sandbox", desc: "OS sandbox for commands -- on | off (off = full access)" },
-      { name: "/browser", desc: "Agent web browser -- on | off" },
-      { name: "/rewind", desc: "Roll back the conversation" },
-      { name: "/compress", desc: "Summarize & shrink context" },
-      { name: "/undo", desc: "Revert the last Gear auto-commit" },
-      { name: "/interactive", desc: "Live dashboard -- [focus] | auto on|off | open" },
       { name: "/memory", desc: "System memory -- your evergreen profile" },
       { name: "/notebook", desc: "Learned tactics for this workspace" },
+      { name: "/interactive", desc: "Live dashboard -- [focus] | auto on|off | open" },
+      { name: "/sandbox", desc: "OS sandbox for commands -- on | off (off = full access)" },
+      { name: "/browser", desc: "Agent web browser -- on | off" },
+      { name: "/compress", desc: "Summarize & shrink context" },
+      { name: "/theme", desc: "Switch accent colors and light / dark mode", tag: "cosmetic" },
       { name: "/bug", desc: "Flag a problem -- records the flight trail" },
       { name: "/clear", desc: "Clear the screen" },
       { name: "/help", desc: "Show commands" },
@@ -974,14 +1027,97 @@ class Tui {
     this.scheduleDraw();
   }
 
-  /** Inline surface only: redraw just the pinned composer block (the transcript lives in the
-   *  terminal's own scrollback). The alt-screen surface uses drawComposer() instead. */
+  /** --inline only: redraw just the pinned composer block (the transcript lives in the
+   *  terminal's own scrollback). The fixed layout uses renderViewport() instead. */
   private renderRegion(): void {
     const comp = this.pinnedBlock();
     this.region.render(comp.lines, comp.caretRow, comp.caretCol, this.ownsCaret());
   }
 
-  /** The pinned composer block, themed, width-bounded, and height-clamped to the viewport. The
+  /** The zones of the current frame, without building it. Used by the scroll
+   *  keys, which need to know how tall a page is before they can move by one. */
+  private frameZones(): Zones {
+    const headerRows = this.bannerLines().length;
+    return zones(rowsCount(), headerRows, this.footerBlock(headerRows).lines.length);
+  }
+
+  /** How far back the transcript can be scrolled: everything that does not fit
+   *  in the body. Clamping here (and again in composeFrame) is what stops a
+   *  fast wheel from scrolling past the top into a screen of blank rows. */
+  private maxScroll(): number {
+    return Math.max(0, this.transcript.length - this.frameZones().bodyRows);
+  }
+
+  /**
+   * The pinned FOOTER of the fixed layout.
+   *
+   * Same block as the inline surface's, minus the padding: the inline layout
+   * has to hold blank rows open beneath the transcript to push the field to the
+   * bottom of the window, because the terminal decides where the block lands.
+   * Here the footer is at the bottom by construction, so the padding would be
+   * a hole in the middle of the screen.
+   *
+   * A full-height panel (sessions, keys, memory, the work review) is still a
+   * footer as far as layout is concerned; it just claims almost every row. The
+   * clamp leaves the header standing and one row of transcript behind it, so
+   * even a panel never erases where you are.
+   */
+  private footerBlock(headerRows: number): { lines: string[]; caretRow: number; caretCol: number } {
+    const comp = this.composerBlock();
+    let lines = comp.lines.map((l) => withThemeBg(this.bound(l)));
+    let caretRow = comp.caretRow;
+    const max = Math.max(3, rowsCount() - headerRows - 1);
+    if (lines.length > max) {
+      const drop = lines.length - max;
+      const marker = withThemeBg(
+        this.bound(
+          `  ${faint(`... ${drop} more line${drop === 1 ? "" : "s"} above (ctrl+r to expand)`)}`,
+        ),
+      );
+      lines = [marker, ...lines.slice(drop + 1)];
+      caretRow = Math.max(0, caretRow - drop);
+    }
+    return { lines, caretRow, caretCol: comp.caretCol };
+  }
+
+  /**
+   * Paint one whole frame of the fixed layout.
+   *
+   * The header is re-rendered every frame rather than drawn once, so a model
+   * switch, a gear change or a theme change is reflected in the band the moment
+   * it happens -- and costs nothing, because the diff only writes the rows whose
+   * text actually changed.
+   */
+  private renderViewport(): void {
+    const header = this.bannerLines().map((l) => withThemeBg(l));
+    const footer = this.footerBlock(header.length);
+    const frame = composeFrame({
+      rows: rowsCount(),
+      header,
+      transcript: this.transcript,
+      themeBody: (l) => withThemeBg(l),
+      footer: footer.lines,
+      scroll: this.scroll,
+      caretRow: footer.caretRow,
+      caretCol: footer.caretCol,
+      blank: "",
+      scrolledMarker: (hidden) =>
+        withThemeBg(
+          this.bound(
+            `  ${faint(`${hidden} earlier line${hidden === 1 ? "" : "s"} above -- pgdn to follow the latest`)}`,
+          ),
+        ),
+    });
+    // composeFrame clamps the scroll to what the transcript can offer; adopting
+    // its answer is what keeps a held PgUp from accumulating an offset the body
+    // cannot honour, then swallowing the first N presses of PgDn on the way back.
+    this.scroll = frame.scroll;
+    this.viewport.render(frame, !this.ownsCaret());
+  }
+
+  /** --inline only. The pinned composer block, themed, width-bounded, and height-clamped to the
+   *  viewport. (The fixed layout's equivalent is footerBlock(), which needs none of the padding
+   *  below because its footer is at the bottom of the window by construction.) The
    *  inline region draws with *relative* cursor moves, so a block taller than the screen would
    *  scroll the terminal mid-draw and desync that math (garbled/duplicated footer under heavy
    *  streaming). Keep the tail -- the composer + status the user is actually using -- and elide the
@@ -1080,28 +1216,56 @@ class Tui {
     );
   }
 
-  private enterInline(): void {
+  /**
+   * Mount the render surface. Called at launch and again after anything that
+   * hands the terminal to a child (the $EDITOR path), so both layouts have
+   * exactly one place that knows how they are put on screen.
+   */
+  private enterSurface(): void {
     // The cursor is the one piece of terminal chrome that sits inside our own
     // field, so it takes the theme's accent — see terminalThemeSeq. Handed back
     // on exit and by the crash handler; a terminal that ignores OSC 12 ignores
     // it harmlessly.
     process.stdout.write(terminalThemeSeq());
+    if (!this.inline) {
+      this.viewport.enter();
+      // The wheel is the terminal's scroll gesture, and on the alternate screen
+      // there is nothing for it to scroll. Capture it and give it the body.
+      this.viewport.captureMouse();
+    }
     this.warp("session_start");
     // Name the tab the moment we own the pane. Without this the tab keeps
     // whatever the terminal derived from the command until the first turn
     // starts, so a session sitting at the prompt looks like a bare shell --
     // which is most of the time anyone is actually glancing at the tab strip.
     setTitle({ kind: "idle" }, this.titleProject());
-    this.printBanner();
+    // Inline commits the banner into scrollback once. In the fixed layout the
+    // banner IS the header zone, re-rendered live every frame -- printing it
+    // into the transcript as well would leave a stale copy scrolling around
+    // underneath the real one.
+    if (this.inline) this.printBanner();
+    else this.scheduleDraw();
+  }
+
+  /** Unmount the render surface, leaving the terminal as it was found. */
+  private leaveSurface(): void {
+    if (this.inline)
+      this.region.clear(); // leaves the transcript in scrollback
+    else this.viewport.leave(); // restores the shell's screen untouched
   }
 
   /** Apply a runtime theme change to the terminal surface as well as future tokens. */
   private refreshThemeSurface(): void {
+    // Reset first so switching from an explicit palette back to Auto truly hands
+    // foreground/background control back to the host terminal.
+    process.stdout.write(TERMINAL_THEME_RESET + terminalThemeSeq());
     if (this.inline) {
-      // Reset first so switching from an explicit palette back to Auto truly hands
-      // foreground/background control back to the host terminal.
-      process.stdout.write(TERMINAL_THEME_RESET + terminalThemeSeq());
       this.region.setBgFill(themeBgSeq());
+    } else {
+      // Every row on screen was written in the old palette, and the diff would
+      // keep every one of them because their text is unchanged. Forget the
+      // screen so the new palette actually reaches the rows already drawn.
+      this.viewport.invalidate();
     }
     this.scheduleDraw();
   }
@@ -1141,6 +1305,7 @@ class Tui {
         model: engine.getModel(),
         modelLabel: this.modelLabel(),
         provider: engine.getProvider(),
+        effort: engine.getReasoningEffort(),
         sessionId: this.ctx.sessionId,
         workspace: this.ctx.workspaceRoot,
         version: this.ctx.version,
@@ -1160,6 +1325,15 @@ class Tui {
   private resetTranscript(): void {
     this.transcript = [];
     this.scroll = 0;
+    if (!this.inline) {
+      // The fixed layout's screen is ours: dropping the transcript and
+      // repainting IS the clear, and it leaves the user's shell scrollback
+      // (which is behind the alternate screen) alone.
+      this.printedRows = 0;
+      this.viewport.invalidate();
+      this.scheduleDraw();
+      return;
+    }
     this.region.clear();
     process.stdout.write("\x1b[2J\x1b[3J\x1b[H");
     // The screen is empty again, so the row count that decides how much space
@@ -1172,13 +1346,14 @@ class Tui {
   }
 
   /** The banner, rendered live (re-themed every frame) so the header always matches the
-   *  current theme -- pinned at the top of the viewport. */
+   *  current theme -- pinned at the top of the viewport by renderViewport(). */
   private bannerLines(): string[] {
     const { engine } = this.ctx;
     return renderBanner({
       model: engine.getModel(),
       modelLabel: this.modelLabel(),
       provider: engine.getProvider(),
+      effort: engine.getReasoningEffort(),
       sessionId: this.ctx.sessionId,
       workspace: this.ctx.workspaceRoot,
       version: this.ctx.version,
@@ -1204,14 +1379,32 @@ class Tui {
     this.drawScheduled = false;
     this.drawTimer = null;
     this.lastPaint = Date.now();
-    this.renderRegion();
+    if (this.inline) this.renderRegion();
+    else this.renderViewport();
   }
 
-  /** No-op: the terminal owns its scrollback, so there is nothing to emulate. */
-  private scrollBy(_pages: number): void {}
+  /** Scroll the body by whole screens (PgUp/PgDn). One row of overlap, so the
+   *  line you were reading at the seam is still there after the jump. */
+  private scrollBy(pages: number): void {
+    this.scrollLines(pages * Math.max(1, this.frameZones().bodyRows - 1));
+  }
 
-  /** No-op: the terminal scrolls its own buffer natively. */
-  private scrollLines(_lines: number): void {}
+  /**
+   * Scroll the body. Positive moves back through history, negative returns
+   * toward the live tail -- matching `scroll`, which counts lines ABOVE the
+   * bottom.
+   *
+   * Under --inline this stays a no-op on purpose: there the transcript is in
+   * the terminal's own buffer, and a program that also scrolled it would be
+   * fighting the scrollbar the user is already holding.
+   */
+  private scrollLines(lines: number): void {
+    if (this.inline) return;
+    const next = Math.max(0, Math.min(this.maxScroll(), this.scroll + lines));
+    if (next === this.scroll) return;
+    this.scroll = next;
+    this.scheduleDraw();
+  }
 
   private workingText(): string {
     if (this.aborting) return `${accent(HEX)} ${bold(text("Interrupting..."))}`;
@@ -1224,8 +1417,10 @@ class Tui {
   }
 
   /** The v2 status ladder rung directly above the composer: the TurnRenderer's
-   *  live lines (label + receipt, then a faint detail row) -- or the
-   *  interrupting state while an abort drains. */
+   *  live lines (label + receipt, a faint detail row, then whatever the turn
+   *  has to show for itself -- a row per sub-agent in flight, or the tail of
+   *  the answer as it streams) -- or the interrupting state while an abort
+   *  drains. */
   private turnStateLines(): string[] {
     if (this.aborting) return [`  ${this.workingText()}`];
     const lines = [...(this.turnPreview ?? [])];
@@ -1235,7 +1430,15 @@ class Tui {
         `  ${brand(GEAR_MARK)} ${bold(brand("Thinking"))}${faint("...")} ${faint(`(${secs}s)`)}`,
       ];
     }
-    return lines.slice(0, 2).map((line) => clampVisible(line, Math.max(8, cols() - 1)));
+    // This was a flat two rows, which is why a fan-out of sub-agents could only
+    // ever be a count: there was nowhere to put the other five. The block earns
+    // rows now, and it is trimmed from the BOTTOM, so a short window loses the
+    // fleet's later members and keeps the rung and its clock -- the opposite of
+    // what the viewport's own footer trim would do. It never takes more than a
+    // third of the window either way: this is the last few lines of the screen,
+    // not the screen.
+    const budget = Math.max(2, Math.min(LIVE_BLOCK_ROWS, Math.floor(rowsCount() / 3)));
+    return lines.slice(0, budget).map((line) => clampVisible(line, Math.max(8, cols() - 1)));
   }
 
   // -- stdin routing --
@@ -1834,6 +2037,10 @@ class Tui {
         );
         return true;
       }
+      case "login":
+      case "signin":
+        void this.openLogin();
+        return true;
       case "keys":
         this.openKeys();
         return true;
@@ -2604,7 +2811,54 @@ class Tui {
     }
     if (a3.index > models.length) return this.modelTree();
     const pickM = models[a3.index]!;
-    this.applyModelSwitch(chosen.id, pickM.id, a3.alt);
+    await this.applyModelWithEffort(chosen.id, pickM.id, pickM.label, a3.alt);
+  }
+
+  /**
+   * Switch the model, then — where the model actually has a depth dial — ask
+   * for it in the same breath, with the same keys.
+   *
+   * Depth used to live behind `/config effort max`, which is the wrong shape
+   * twice over: nobody discovers a setting they have to already know the name
+   * of, and a person mid-decision about a model should not have to leave the
+   * decision to type an incantation. It is a property of the model being
+   * chosen, so it is asked for where the model is chosen. Escape keeps
+   * whatever was already set — backing out of the depth question must never
+   * undo the model switch that already happened.
+   */
+  private async applyModelWithEffort(
+    prov: string,
+    model: string,
+    label: string,
+    asDefault: boolean,
+  ): Promise<void> {
+    this.applyModelSwitch(prov, model, asDefault);
+    const engine = this.ctx.engine;
+    const current = engine.getReasoningEffort() as ReasoningEffort;
+    const efforts = effortChoices(prov, model, current);
+    if (efforts.length === 0) return;
+
+    const items: PickerItem[] = efforts.map((e) => ({
+      label: e.label,
+      hint: e.hint,
+      current: e.current,
+    }));
+    const picked = await this.pick(
+      `Thinking depth | ${label}`,
+      items,
+      Math.max(
+        0,
+        efforts.findIndex((e) => e.current),
+      ),
+      undefined,
+      "enter set depth | esc keep " + current,
+    );
+    if (picked == null) return;
+    const chosenEffort = efforts[picked]!.id;
+    engine.setReasoningEffort(chosenEffort);
+    this.print(
+      `  ${ok(glyph("verified"))} ${muted("thinking depth")} ${info(chosenEffort)} ${faint(`| ${efforts[picked]!.hint}`)}`,
+    );
   }
 
   // -- picker mode --
@@ -2688,6 +2942,108 @@ class Tui {
   }
 
   // -- ask mode (transient single-line text prompt; used by /research) --
+
+  /**
+   * `/login` -- the three-step connect flow.
+   *
+   * It replaces /providers + /keys as the way in. Those exposed the plumbing
+   * and neither answered the only question someone who just installed Gear
+   * actually has: how do I connect this? A person who pays for ChatGPT knows
+   * that; they do not know the provider is called "codex", that it signs in by
+   * OAuth, or why a "provider" and a "key" are two different screens.
+   *
+   * So it asks what you HAVE (subscription / key / offline), names the products
+   * the way you would say them, and runs the provider's own auth strategy --
+   * the same one `gear login` uses, so there is one code path for real auth.
+   */
+  private async openLogin(): Promise<void> {
+    const routes = routeChoices();
+    const connectedIds = PROVIDER_PRESETS.map((p) => p.id).filter((id) => hasStoredCredential(id));
+    this.print(
+      [`  ${bold(text("Connect a model"))}`, `  ${faint(connectedSummary(connectedIds))}`].join(
+        "\n",
+      ),
+    );
+
+    const r = await this.pick(
+      "Connect | how do you want to sign in?",
+      routes.map((c) => ({ label: c.label, hint: c.hint })),
+      0,
+      undefined,
+      "enter choose | esc cancel",
+    );
+    if (r == null) return;
+    const route = routes[r]!;
+
+    const targets = loginTargets(route.id, { connected: (id) => hasStoredCredential(id) });
+    if (targets.length === 0) {
+      this.print(`  ${faint("nothing to connect on that route")}`);
+      return;
+    }
+    const t = await this.pick(
+      `Connect | ${route.label}`,
+      targets.map((x) => ({
+        label: x.label,
+        hint: x.hint,
+        current: x.connected,
+      })),
+      0,
+      undefined,
+      "enter connect | esc back",
+    );
+    if (t == null) return;
+    const target = targets[t]!;
+    await this.runLoginFor(target);
+  }
+
+  /** Run one target's real auth strategy and apply the result to this session. */
+  private async runLoginFor(target: LoginTarget): Promise<void> {
+    const preset = getPreset(target.providerId);
+    if (!preset) return;
+
+    // Local runtimes have nothing to authenticate: connecting IS pointing at
+    // the endpoint, so confirm reachability instead of asking for a secret.
+    if (target.method === "local") {
+      this.applyModelSwitch(target.providerId, preset.defaultModel, false);
+      this.print(`  ${faint("if it is not running, start it first -")} ${info(target.hint)}`);
+      return;
+    }
+
+    const strategy = getStrategy(target.method, target.providerId);
+    if (!strategy) {
+      this.print(`  ${warn("!")} ${muted("that sign-in method is not wired up yet")}`);
+      return;
+    }
+
+    this.print(`  ${faint("signing in to")} ${info(target.label)}${faint("...")}`);
+    try {
+      const store = await openCredentialStore();
+      const cred = await strategy.authenticate({
+        providerId: target.providerId,
+        preset,
+        store,
+        env: process.env,
+        baseUrl: preset.baseUrl,
+        openBrowser,
+        prompt: async (q: string) => (await this.promptLine(q)) ?? "",
+        log: (line?: string) => this.print(`  ${faint(line ?? "")}`),
+      } as AuthContext);
+      const valid = await strategy.validate(
+        { providerId: target.providerId, preset, store, env: process.env } as AuthContext,
+        cred,
+      );
+      this.print(
+        `  ${ok(glyph("verified"))} ${muted("connected")} ${info(target.label)}${valid ? "" : faint(" (unverified)")}`,
+      );
+      // A fresh sign-in is almost always what you want to use next -- and this
+      // is the moment the choice is unambiguous, so it is made here rather than
+      // left as a second errand.
+      this.applyModelSwitch(target.providerId, preset.defaultModel, false);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.print(`  ${danger(glyph("failure"))} ${muted("sign-in failed --")} ${faint(message)}`);
+    }
+  }
 
   private promptLine(title: string): Promise<string | null> {
     return new Promise((resolve) => {
@@ -3286,7 +3642,9 @@ class Tui {
       this.drawTimer = null;
     }
     process.stdout.write("\x1b[?2004l"); // bracketed paste off
-    this.region.clear();
+    // Hand the whole terminal back: $EDITOR takes the alternate screen itself,
+    // and two programs on one alternate screen is one program with a corrupt one.
+    this.leaveSurface();
     process.stdout.write(TERMINAL_THEME_RESET);
     if (stdin.isTTY) stdin.setRawMode(false);
     stdin.pause();
@@ -3305,7 +3663,7 @@ class Tui {
     if (stdin.isTTY) stdin.setRawMode(true);
     stdin.resume();
     process.stdout.write("\x1b[?2004h");
-    this.enterInline();
+    this.enterSurface();
 
     if (okEdit) {
       try {

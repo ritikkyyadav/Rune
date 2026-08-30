@@ -602,3 +602,34 @@ describe("the Auto chip — only decisions that changed something", () => {
     expect(halted).not.toContain("risk");
   });
 });
+
+// Depth belongs beside the model in the pinned status line: the same
+// gpt-5.6-sol at "low" and at "max" are not the same collaborator, and that
+// difference used to be invisible everywhere in the product. The banner is
+// committed scrollback and goes stale the moment /model switches; this region
+// redraws every frame, so live state put here is live by construction.
+describe("ui/composer statusLine — thinking depth", () => {
+  const wide = 200;
+
+  it("rides beside the model when the provider has the dial", () => {
+    const out = stripAnsi(
+      statusLine({ model: "gpt-5.6-sol", effort: "max", workspace: "/w" }, wide),
+    );
+    expect(out).toContain("gpt-5.6-sol");
+    expect(out).toContain("max");
+  });
+
+  it("says nothing when the model has no dial, rather than printing a lie", () => {
+    // Anthropic and Google ignore the effort field entirely; a readout there
+    // would name a control that does not exist.
+    const out = stripAnsi(statusLine({ model: "claude-sonnet-4-6", workspace: "/w" }, wide));
+    expect(out).toContain("claude-sonnet-4-6");
+    expect(out).not.toContain("high");
+  });
+
+  it("keeps the model name when the width forces a choice", () => {
+    // Squeezed, a model's identity outranks its dial.
+    const out = stripAnsi(statusLine({ model: "gpt-5.6-sol", effort: "max", workspace: "/w" }, 44));
+    expect(out).toContain("gpt-5.6-sol");
+  });
+});

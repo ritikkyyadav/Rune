@@ -182,10 +182,16 @@ export function isVerificationCommand(command: string): boolean {
   );
 }
 
-/** `2.6s` / `840ms` -- a duration only when the harness actually timed the call. */
+/** `840ms` / `2.6s` / `2m 58s` -- a duration only when the harness actually
+ *  timed the call. Past a minute it switches to minutes: a delegation routinely
+ *  runs for several, and `178.0s` is a number a reader has to divide before it
+ *  means anything. */
 function elapsed(ms?: number): string {
   if (ms == null || !Number.isFinite(ms) || ms < 0) return "";
-  return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const seconds = Math.round(ms / 1000);
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
 /**
@@ -215,6 +221,44 @@ function outputOf(parsed: Record<string, unknown> | null): string {
   const stdout = typeof parsed?.stdout === "string" ? parsed.stdout : "";
   const stderr = typeof parsed?.stderr === "string" ? parsed.stderr : "";
   return (stdout + (stdout && stderr ? "\n" : "") + stderr).trimEnd();
+}
+
+/**
+ * The one line of a sub-agent's report worth setting down beside its row.
+ *
+ * A delegation is the only call whose result is PROSE, and the only one that
+ * can run for minutes, so the usual receipt (`2m 58s`) leaves a reader knowing
+ * exactly how long they waited and nothing about what came back. This is the
+ * first substantive sentence of what it said -- not a summary of the summary,
+ * just its opening, which is where a scout puts its finding.
+ *
+ * The two banner cases lead instead of the prose, because when a report is
+ * marked unverified the fact that it is unverified IS the news about it. Both
+ * are rendered in the failure tone: they are the two states that must not slide
+ * past as ordinary output.
+ */
+function delegationTakeaway(result: string): { text: string; tone: "muted" | "fail" } | null {
+  const body = result.trim();
+  if (!body) return null;
+  if (body.startsWith("[PROVENANCE")) {
+    return { text: "came back on a fallback model -- re-check before relying on it", tone: "fail" };
+  }
+  if (body.startsWith("INCOMPLETE")) {
+    return { text: truncate(firstLine(body), 120), tone: "fail" };
+  }
+  for (const raw of body.split("\n")) {
+    if (raw.trimStart().startsWith("#")) continue; // a section heading names nothing
+    // A worker opens with its own file tally, which is already the row's
+    // receipt; repeating it here would spend the note saying nothing new.
+    if (/^worker changed \d+ files?\b/.test(raw.trim())) continue;
+    const line = raw
+      .replace(/^[\s>*\-+]+/, "")
+      .replace(/[`*_]/g, "")
+      .trim();
+    if (line.length < 12) continue;
+    return { text: truncate(line, 120), tone: "muted" };
+  }
+  return null;
 }
 
 /** A failed call, in one row and one reason. Nothing is hidden and nothing is
@@ -417,13 +461,29 @@ export function renderToolActivity(v: ToolActivityView): string {
 
     case "worker":
     case "task": {
-      const brief = firstLine(s(v.args.prompt ?? v.args.description ?? ""));
+      const brief =
+        s(v.args.label ?? "") ||
+        firstLine(s(v.args.prompt ?? v.args.description ?? "")) ||
+        (v.toolName === "worker" ? "a build" : "an investigation");
       const changed = /worker changed (\d+) files?/.exec(v.result ?? "")?.[1];
-      return F.toolRow({
-        name,
-        arg: brief,
-        metric: changed ? `${changed} files` : elapsed(v.durationMs),
-      });
+      const steps = /\(sub-agent made (\d+) tool calls?/.exec(v.result ?? "")?.[1];
+      const rows = [
+        F.toolRow({
+          name,
+          arg: brief,
+          metric: F.receiptOf([
+            changed ? `${changed} files` : steps ? `${steps} steps` : "",
+            elapsed(v.durationMs),
+          ]),
+        }),
+      ];
+      // What came BACK. Without this a three-minute scout left one row naming
+      // what it was asked and nothing at all about what it found -- the whole
+      // investigation reduced to a duration. The banner cases lead instead,
+      // because a report that has to be re-checked is the news about it.
+      const takeaway = delegationTakeaway(v.result ?? "");
+      if (takeaway) rows.push(F.toolNote(takeaway.text, takeaway.tone));
+      return rows.join("\n");
     }
 
     case "interactive_dashboard": {
@@ -468,7 +528,7 @@ function compactTarget(v: ToolActivityView): string {
       return s(v.args.title ?? v.args.id ?? v.args.action ?? "");
     case "worker":
     case "task":
-      return firstLine(s(v.args.prompt ?? v.args.description ?? ""));
+      return s(v.args.label ?? "") || firstLine(s(v.args.prompt ?? v.args.description ?? ""));
     default:
       return compactArgs(v.args);
   }
