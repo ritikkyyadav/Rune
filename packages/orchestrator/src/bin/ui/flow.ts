@@ -225,16 +225,20 @@ export function receiptOf(parts: Array<string | undefined | null>): string {
 // --- Header ---
 
 export interface FlowHeader {
-  /** Product name, set in the identity colour. */
+  /** Product name. Set as the wordmark -- letterspaced, in the identity colour. */
   name: string;
-  /** Version, no `v` prefix -- `gear 0.3.0`. */
+  /** Version, no `v` prefix -- `G E A R  0.3.0`. */
   version: string;
   /** Workspace folder name. */
   workspace?: string;
   /** Git branch, when the workspace has one. */
   branch?: string;
-  /** Anything else true about the tree right now (`3 files changed`). */
-  state?: string;
+  /** Neutral facts about the tree right now (`3 files changed`, `mcp 2`). */
+  state?: string[];
+  /** Guardrails that have been REMOVED. These are the only loud words on the
+   *  row, because they are the only ones that change what the agent may do to
+   *  your machine without telling you again. */
+  alerts?: string[];
   /** Model id or label. */
   model?: string;
   /** What the agent may do without asking -- the gear, in words. */
@@ -243,89 +247,176 @@ export interface FlowHeader {
   caution?: string;
 }
 
+// --- The masthead ---
+//
+// One row, and the name on it is set as a MARK rather than as a word.
+//
+// A terminal has no type family to switch to, no weight axis, and no size: the
+// only typographic instruments in the box are TRACKING, CASE, WEIGHT and
+// COLOUR. So the wordmark is built from all four -- letterspaced, capitalised,
+// bold, in the identity pigment -- which is what separates a logotype from the
+// first word of a sentence. `gear · evolab4` read as a breadcrumb because it
+// used exactly one of the four; `G E A R  0.3.0 │ evolab4` reads as a masthead
+// because a name spaced out like that cannot be mistaken for running text.
+//
+// This is still not artwork. The old rule here -- no mark, no avatar, no
+// wordmark, because a terminal that opens with a picture has spent its first
+// screen on itself -- was about ARTWORK, and it survives: nothing below draws a
+// glyph the product did not already own, and the whole masthead is one row
+// tall, the same row it has always been.
+
 /**
- * The identity block: a rule with the name set into it, two lines that say
- * where you are and what the agent is allowed to do, and a closing rule. No
- * mark, no avatar, no wordmark -- the terminal already knows it is a terminal.
+ * The identity lockup: the wordmark, then the version, as one block.
+ *
+ * Returns the painted string with the number of CELLS it occupies, because the
+ * rule underneath changes colour at exactly that column and a caller cannot
+ * measure a painted string without stripping it again.
  */
+export function lockup(name: string, version?: string): { text: string; cells: number } {
+  // Tracking, done the only way a fixed grid allows: one cell between letters.
+  // It costs three columns and buys the entire difference between a name and a
+  // logotype.
+  const mark = name.toUpperCase().split("").join(" ");
+  const plain = version ? `${mark}  ${version}` : mark;
+  // The version is `quiet`, not `faint`. It rides directly beneath the eye's
+  // first stop and has to be legible there; `faint` is the rail-and-gutter grey
+  // and would have made it a smudge next to the mark.
+  const text = version ? `${bold(info(mark))}  ${quiet(version)}` : bold(info(mark));
+  return { text, cells: plain.length };
+}
+
+/** The masthead's divider: what separates the product from the session. It is
+ *  the alphabet's only vertical, and it is the one cell on the row that says
+ *  "two zones", which is why the rule beneath changes colour underneath it. */
+const DIVIDER = () => faint(glyph("gutter"));
+
 /**
- * The header, as one line and a hairline.
+ * The header: a masthead and the rule that carries it.
  *
- * It used to be six rows: a blank, a full-width rule with the product name
- * inlaid, a location row, a model row, another full-width rule, another blank —
- * before a single word of the session. Two heavy rules and two blanks is a lot
- * of screen spent saying "a program started", and the dashes read as texture
- * rather than as structure.
+ * It used to be six rows -- a blank, a full-width rule with the name inlaid, a
+ * location row, a model row, another rule, another blank -- before a single
+ * word of the session. That collapsed to one row, correctly, and then stayed
+ * flat: name, dot, folder, dot, branch -- every field the same size, the same
+ * weight and very nearly the same grey. One row is right. One row of
+ * undifferentiated text is a breadcrumb, and that is what it was reported as.
  *
- * One row carries all of it: who you are talking to, where, on what, in which
- * gear. The mode sits hard against the right edge because it is the one field
- * that changes under you. The hairline beneath is the only chrome, and it marks
- * the boundary the session scrolls away from.
+ * So the row has two zones and says so three times over:
+ *
+ *   IDENTITY   the letterspaced wordmark and the version, in the identity
+ *              pigment, bold -- who you are talking to and which build of it.
+ *   DIVIDER    the alphabet's vertical, at the seam.
+ *   SESSION    where you are, on what branch, in what shape -- and any
+ *              guardrail that has been taken off, which is the only thing here
+ *              allowed to be loud.
+ *
+ * ...and the rule beneath is drawn in two tones that change colour directly
+ * under the divider, so the seam is stated by the row and confirmed by the rule
+ * under it. That two-tone rule is the whole reason this reads as designed
+ * rather than as printed: it is the one element that makes the wordmark sit on
+ * something instead of merely starting a line. It also costs nothing -- the
+ * rule was already being drawn, in one colour, on that exact row.
+ *
+ * Everything on this row is still only what does not move. It is committed
+ * scrollback under --inline: written once, never rewritten, so a field that
+ * changes mid-session would sit here stating the wrong thing for the rest of
+ * the run. That is what the model and the gear did before they moved to the
+ * status line above the composer, which redraws. What is left is the product,
+ * its version, and the shape the tree was in when you opened it.
  */
 export function header(opts: FlowHeader): string {
+  // Budgeted to the SURFACE, not to the reading column. The header is chrome:
+  // it is divided by a rule that spans the window, so it aligns to the window
+  // it divides. Back when measure() capped at 120 this row stopped at column
+  // 120 while its rule ran to 164 -- a 44-column gap that reads as a broken
+  // right edge rather than as a chosen column.
   const surface = surfaceWidth();
-  // Ordered by how much you need it when the line has to be cut: who and where
-  // first, then what it is running on, then the tree's shape. The mode goes
-  // hard right on its own, because it is the field that changes under you and
-  // the one whose absence would be dangerous rather than merely inconvenient.
-  // Only what stays true.
-  //
-  // This row is committed scrollback: written once and never rewritten, which
-  // is what makes history in this UI incapable of developing rendering bugs. It
-  // also means everything on it is a record of how the session STARTED. The
-  // model and the gear both change mid-session, so naming them here produced a
-  // header that confidently stated the wrong model for the rest of the run —
-  // and, worse, contradicted the status line one row above the composer, which
-  // was right. Under the old alt screen the banner repainted every frame and
-  // this never showed; deleting that surface exposed it.
-  //
-  // Live state lives in the pinned region, which redraws. What is left here is
-  // what does not move: who you are talking to, where, and the shape the tree
-  // was in when you opened it.
-  const left = [
-    info(opts.name),
-    opts.workspace && text(opts.workspace),
-    opts.branch && muted(opts.branch),
-    opts.state && muted(opts.state),
-  ]
-    .filter(Boolean)
-    .join(faint(` ${glyph("observed")} `));
-  // Just the gear, not its explanation. The caution ("every action asks first")
-  // is already spelled out on the status line above the composer, and repeating
-  // it here cost more of this row than the dirty-file count it displaced.
-  // The gear moves too — shift+tab changes it — so it is not written down
-  // here either. The status line above the composer carries it, live.
-  const right = "";
   // The indent is paid for out of the row's own budget. Prepending MARK to a
   // row already sized to the full measure pushes the line onto the terminal's
-  // last cell, and a line that touches the last cell wraps — which desyncs the
+  // last cell, and a line that touches the last cell wraps -- which desyncs the
   // relative cursor math for the pinned region below it.
-  // Budgeted to the SURFACE, not to the reading column.
+  const budget = surface - MARK.length;
+
+  const mark = lockup(opts.name, opts.version);
+
+  // The session half, in three steps of emphasis, each one deliberate.
   //
-  // The header is chrome: it is divided by a hairline that spans the window, so
-  // it is budgeted to the surface rather than to the content column. Back when
-  // measure() capped at 120, this row parked its mode badge at column 120 while
-  // the rule beneath it ran to 164 — a 44-column gap on a wide terminal, which
-  // reads as a broken right edge rather than as a deliberate column. Chrome
-  // aligns to the window it divides, and no width in this file stops early now.
+  // The folder is `text`: it answers "where am I", and it is the one fact on
+  // this row a person actually reads. The branch is `quiet` -- the readable
+  // muted slot, NOT the rail grey it used to share with the separators, which
+  // is how the branch ended up dimmer than the dots between the words. The
+  // counts are `faint`, because they are background until they are not.
+  const where = opts.workspace ? text(opts.workspace) : "";
+  const branch = opts.branch ? quiet(opts.branch) : "";
+  const state = (opts.state ?? []).map((fact) => faint(fact));
+  // The only loud words on the row. Amber is already what this palette means by
+  // "this one governs your machine", so a removed guardrail needs no other
+  // decoration to be found.
+  const alerts = (opts.alerts ?? []).map((alert) => warn(alert));
+
+  // What is given up first, at each width -- the same ladder the status line
+  // above the composer climbs down, for the same reason.
   //
-  // The indent is still paid for out of the row's own budget: prepending MARK
-  // to a row already sized to the full surface pushes the line onto the
-  // terminal's last cell, and a line that touches the last cell wraps — which
-  // desyncs the relative cursor math for the pinned region below it.
-  // The top of the frame: an identity row and the rule that closes it.
-  //
+  // The alerts are LAST in reading order and FIRST in priority, which sounds
+  // like a contradiction and is the whole point: amber at the end of the row is
+  // where the eye stops, and a guardrail that has been switched off is the one
+  // thing here that must never be the character the ellipsis ate. Ordering
+  // alone could not give both -- clipping the row at 80 columns dropped exactly
+  // the word it could least afford to. So the row sheds whole facts instead of
+  // characters, and `sandbox off` is in every tier it can still reach.
+  const sep = faint(` ${glyph("observed")} `);
+  const tiers = [
+    [where, branch, ...state, ...alerts],
+    [where, branch, ...alerts],
+    [where, ...alerts],
+    // Below this width the folder name goes too. That is the right trade and
+    // not a close one: you can always ask where you are, and the shell prompt
+    // two rows down already answered it.
+    [...alerts],
+  ].map((tier) => tier.filter(Boolean).join(sep));
+  // `- 5` is the divider block the context is measured against: two spaces, the
+  // vertical, two spaces.
+  const room = Math.max(0, budget - mark.cells - 5);
+  const context = tiers.find((tier) => visLen(tier) <= room) ?? tiers[tiers.length - 1]!;
+
+  // The divider only exists to divide. A session with nothing on its right-hand
+  // side gets the mark alone rather than a bar with empty space after it.
+  const left = context ? `${mark.text}  ${DIVIDER()}  ${context}` : mark.text;
+  // Where the rule changes tone: through the divider's own column, so the
+  // vertical and the colour break are the same seam seen twice. `+ 3` is the
+  // two spaces after the lockup plus the divider cell itself.
+  const seam = context ? Math.min(budget, mark.cells + 3) : Math.min(budget, mark.cells);
+
+  // Nothing goes to the right margin. `row` is the chrome layout and still
+  // accepts a right half, but the model and the gear -- the only fields that
+  // ever lived there -- are live state and live on the status line now, and a
+  // lone badge parked 200 columns from the mark reads as two reports rather
+  // than one row.
+  const right = "";
+
   // The rule belongs here. Without it the header is just another line of text
   // above the transcript and stops reading as chrome at all. What it must NOT
   // do is collide with the composer's own top rule on a fresh session, where
-  // there is no transcript between them — that is solved at the other end, by
-  // the composer carrying a blank line above itself, so the two rules can
-  // never end up on adjacent rows however empty the session is.
-  return [
-    "",
-    `${MARK}${pad(row(left, right, surface - MARK.length), surface - MARK.length)}`,
-    hairline(surface),
-  ].join("\n");
+  // there is no transcript between them -- that is solved at the other end, by
+  // the composer carrying a blank line above itself, so the two rules can never
+  // end up on adjacent rows however empty the session is.
+  return ["", `${MARK}${pad(row(left, right, budget), budget)}`, seamRule(surface, seam)].join(
+    "\n",
+  );
+}
+
+/**
+ * The header's rule, in two tones: identity under the masthead, dim under the
+ * session. `lead` is measured in cells from the left margin, so a caller that
+ * knows where its seam is does not have to know how the rule is drawn.
+ *
+ * Same span and same total width as hairline() -- this is that rule with a
+ * colour change in it, not a second kind of rule.
+ */
+export function seamRule(width = surfaceWidth(), lead = 0): string {
+  const inner = Math.max(1, width - MARK.length);
+  const identity = Math.max(0, Math.min(inner, lead));
+  const rest = inner - identity;
+  return `${MARK}${info(glyph("rule").repeat(identity))}${faint(glyph("rule").repeat(rest))}`;
 }
 
 /**

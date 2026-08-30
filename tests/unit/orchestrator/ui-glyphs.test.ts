@@ -89,7 +89,7 @@ describe("ASCII rung", () => {
         // description, which the status line above the composer already carries.
         // The assertion below is unchanged — this still proves non-ASCII DATA is
         // transliterated, not merely that glyphs have twins.
-        header({ name: "Gear", version: "0.3.0", workspace: "Jos\u00e9", scope: "workspace", state: "leave 東京 alone" }),
+        header({ name: "Gear", version: "0.3.0", workspace: "Jos\u00e9", scope: "workspace", state: ["leave 東京 alone"] }),
         said("Checked \u201cJos\u00e9\u201d \u2014 no change to 東京."),
         toolRow({ name: "test", arg: "suite", status: "pass", metric: "3 passed" }),
       ].join("\\n");

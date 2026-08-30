@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { renderStatus } from "../../../packages/orchestrator/src/bin/ui/status";
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
+import * as F from "../../../packages/orchestrator/src/bin/ui/flow";
 
 // /status is the header expanded — these pin that it renders the live facts
 // and reads gear labels from the one modeInfo table instead of a drifted copy.
@@ -12,6 +13,24 @@ describe("ui/status renderStatus", () => {
     sessionId: "abc12345",
     cost: 0.42,
   };
+
+  it("opens with the SAME masthead the session opens with", () => {
+    // This card called itself "the header, expanded" while drawing a header of
+    // its own: a lowercase name inlaid into a line of repeated hyphens, which
+    // is the dash-rule texture the rest of the UI dropped, in a different case
+    // from the row pinned at the top of the same window. Two dialects, one
+    // claim of being one thing. It now calls the header's own lockup.
+    const lines = stripAnsi(renderStatus({ ...base, version: "0.3.0" })).split("\n");
+    const mark = lines.find((line) => line.includes("G E A R"))!;
+    expect(mark).toBe(`${F.MARK}G E A R  0.3.0`);
+    // …carried on the header's two-tone rule, at the header's own width.
+    expect(lines[lines.indexOf(mark) + 1]).toBe(
+      stripAnsi(F.seamRule(F.surfaceWidth(), F.lockup("Gear", "0.3.0").cells)),
+    );
+    // And no dash rules anywhere: a dash rule reads as texture, a hairline as
+    // structure, and this card was the last place still drawing them.
+    expect(stripAnsi(renderStatus({ ...base }))).not.toMatch(/-{10}/);
+  });
 
   it("renders the gear row from the shared table", () => {
     const out = stripAnsi(renderStatus({ ...base, permissionMode: "gear-2" as const }));

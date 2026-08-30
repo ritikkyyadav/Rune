@@ -1,14 +1,15 @@
 // --- Gear identity header ---
-// Four lines and no logo. A rule with the name set into it, where you are, what
-// this agent is allowed to do to your machine, and a closing rule. That is the
-// whole header -- a mark would only tell you something the window title already
-// says, and a terminal that opens with artwork has spent its first screen on
-// itself instead of on your work.
+// The masthead, and the facts it is a masthead for. One row, two zones, and a
+// rule that changes tone under the seam between them:
 //
-//   ---- gear 0.3.0 ---------------------------------------------
-//     alan | gear/phase-0-stabilize | 3 files changed
-//     claude-opus-5 | 1st gear -- every action asks first
-//   -------------------------------------------------------------
+//   G E A R  0.3.0  │  alan · gear/phase-0-stabilize · 3 files changed
+//   ═════════════════────────────────────────────────────────────────────
+//   ^ identity      ^ the seam: the rule changes tone under the divider
+//
+// This file resolves the right-hand half -- the folder you are in, the branch,
+// the shape of the tree, and any guardrail that has been switched off -- and
+// hands the parts to flow.header(), which sets the type. Still no artwork: the
+// name is set as a mark, not drawn as one.
 
 import * as os from "os";
 import { execFile, execFileSync } from "child_process";
@@ -172,18 +173,31 @@ export function wordmark(): string {
 }
 
 /**
- * Environment facts that belong on the state line rather than in a badge: how
- * dirty the tree is, whether the sandbox is off, and how many MCP servers are
- * attached. Only the sandbox is ever loud, because only the sandbox is a
- * guardrail you can remove.
+ * Neutral environment facts for the session half of the masthead: how dirty the
+ * tree is and how many MCP servers are attached. Quiet by definition -- these
+ * are background until you go looking for them.
+ *
+ * They used to be joined with ` | ` and handed over as one pre-formatted
+ * string, which put a second separator dialect on a row that was already using
+ * ` · ` for exactly the same job. The header now receives the parts and joins
+ * them itself, in the one separator the rest of the UI speaks.
  */
-export function bannerBadges(opts: Pick<BannerOptions, "sandbox" | "mcpServers">): string[] {
+export function bannerBadges(opts: Pick<BannerOptions, "mcpServers">): string[] {
   const badges: string[] = [];
-  if (opts.sandbox === false) badges.push("sandbox off");
   if (opts.mcpServers && opts.mcpServers > 0) {
     badges.push(`mcp ${opts.mcpServers}`);
   }
   return badges;
+}
+
+/**
+ * Guardrails that have been taken off. Kept apart from the facts above because
+ * the header paints these amber and everything else grey: a removed guardrail
+ * is the only thing on that row that changes what the agent may do to your
+ * machine, and it is stated, never implied.
+ */
+export function bannerAlerts(opts: Pick<BannerOptions, "sandbox">): string[] {
+  return opts.sandbox === false ? ["sandbox off"] : [];
 }
 
 export function renderBanner(opts: BannerOptions): string {
@@ -192,16 +206,15 @@ export function renderBanner(opts: BannerOptions): string {
   const state = [
     dirty > 0 ? `${dirty} file${dirty === 1 ? "" : "s"} changed` : "",
     ...bannerBadges(opts),
-  ]
-    .filter(Boolean)
-    .join(" | ");
+  ].filter(Boolean);
 
   return flowHeader({
-    name: PRODUCT_NAME.toLowerCase(),
+    name: PRODUCT_NAME,
     version: opts.version,
     workspace: folderName(opts.workspace),
     branch: branch || undefined,
-    state: state || undefined,
+    state,
+    alerts: bannerAlerts(opts),
     model: [opts.modelLabel || opts.model, opts.effort ? `${opts.effort} effort` : ""]
       .filter(Boolean)
       .join(" | "),
