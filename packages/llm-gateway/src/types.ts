@@ -44,6 +44,20 @@ export interface ToolDefinition {
 
 // ─── Provider Names ───
 
+/**
+ * Reasoning depth, in the vocabulary the backends actually use.
+ *
+ * Measured against the ChatGPT/Codex Responses backend on 2026-08-30 — it
+ * validates the field and names the set in its own 400:
+ *   "Supported values are: 'none', 'minimal', 'low', 'medium', 'high',
+ *    'xhigh', and 'max'."
+ * Per-model subsets exist (gpt-5.6-sol rejects 'minimal'), so providers clamp;
+ * see `codexEffortFor`. Gear previously topped out at "high" and never sent the
+ * field to Codex at all, which pinned every ChatGPT-subscription session to the
+ * server default while `max` sat unreachable.
+ */
+export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
 export type ProviderName =
   | "anthropic"
   | "openai"
@@ -74,6 +88,54 @@ const NATIVE_SEARCH_PROVIDERS: ReadonlySet<ProviderName> = new Set<ProviderName>
 
 export function providerSupportsNativeSearch(provider: ProviderName): boolean {
   return NATIVE_SEARCH_PROVIDERS.has(provider);
+}
+
+/**
+ * Providers whose wire format cannot carry an image block. Ollama's native
+ * `/api/chat` translation understands text and tool calls only, so an image
+ * block sent there is silently dropped — and a silently dropped screenshot is
+ * worse than none, because the agent believes it looked. Everything else routes
+ * through the Anthropic, OpenAI-compatible, Google, or Codex translations, all
+ * of which encode images.
+ *
+ * This is a claim about the TRANSPORT, not about the model: an
+ * OpenAI-compatible endpoint serving a text-only checkpoint will accept the
+ * block and ignore it. The transport is the part the harness can actually know.
+ */
+const IMAGE_BLIND_PROVIDERS: ReadonlySet<ProviderName> = new Set<ProviderName>(["ollama"]);
+
+export function providerCarriesImages(provider: ProviderName): boolean {
+  return !IMAGE_BLIND_PROVIDERS.has(provider);
+}
+
+/**
+ * The reasoning depths a given provider+model actually accepts, or [] where the
+ * dial does not exist.
+ *
+ * Provider wire knowledge, so it lives here rather than in the picker that
+ * renders it — the engine needs the same answer to decide whether "depth" is
+ * even a meaningful thing to show for the current model.
+ *
+ * Codex values are MEASURED against the live ChatGPT backend (2026-08-30),
+ * which validates the field and 400s on anything the model rejects. The OpenAI
+ * API path is deliberately narrower: low/medium/high are known-good there and
+ * xhigh/max have not been probed on that endpoint. Anthropic and Google honour
+ * no effort field at all (they approximate depth by thinking budget), so they
+ * return [] and no control is offered for them anywhere.
+ *
+ * `none` and `minimal` are never listed: `none` is the internal value for
+ * thinking-off, and `minimal` is rejected by the gpt-5.6 line.
+ */
+export function reasoningEffortsFor(provider: string, model: string): ReasoningEffort[] {
+  const m = model.toLowerCase();
+  if (provider === "codex") {
+    if (/^gpt-5\.6/.test(m)) return ["low", "medium", "high", "xhigh", "max"];
+    return ["low", "medium", "high"];
+  }
+  if (provider === "openai" && /^(gpt-5|o[134])(-|:|$)/.test(m)) {
+    return ["low", "medium", "high"];
+  }
+  return [];
 }
 
 /**
@@ -154,7 +216,7 @@ export interface InferenceRequest {
    * (OpenAI `reasoning_effort`; others approximate via budget). Agentic work
    * defaults to "high": shallow reasoning is how tasks get half-done fast.
    */
-  thinking?: { enabled: boolean; budgetTokens?: number; effort?: "low" | "medium" | "high" };
+  thinking?: { enabled: boolean; budgetTokens?: number; effort?: ReasoningEffort };
   stream: boolean;
 }
 

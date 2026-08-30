@@ -132,6 +132,42 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
     sensitive: true,
   },
   {
+    key: "effort",
+    tomlPath: "llm.reasoningEffort",
+    description:
+      "How hard the model thinks before answering. Sent as the provider's reasoning dial " +
+      "(Codex/OpenAI reasoning effort). 'max' is the deepest and slowest; 'high' is the " +
+      "default and the right daily driver; 'low' rushes. A value a given model does not " +
+      "accept falls back to its nearest supported one rather than failing the request.",
+    kind: "enum",
+    values: ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+    valueAliases: {
+      off: "none",
+      lowest: "minimal",
+      min: "minimal",
+      fast: "low",
+      quick: "low",
+      balanced: "medium",
+      normal: "high",
+      default: "high",
+      deep: "xhigh",
+      "very high": "xhigh",
+      "extra high": "xhigh",
+      deepest: "max",
+      maximum: "max",
+      ultra: "max",
+    },
+    nameAliases: [
+      "reasoning",
+      "reasoning effort",
+      "thinking",
+      "thinking effort",
+      "model effort",
+      "reasoning_effort",
+    ],
+    live: true,
+  },
+  {
     key: "auto_commit",
     tomlPath: "git.autoCommit",
     description:

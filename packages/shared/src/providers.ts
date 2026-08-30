@@ -343,11 +343,15 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     defaultModel: "gpt-5.6-sol",
     docsUrl: "https://learn.chatgpt.com/docs/models",
     auth: ["oauth"],
+    // The three current Codex models, and only those. gpt-5.5 is gone from the
+    // picker: it is the previous frontier, it 400s on some Plus tiers, and a
+    // fourth row that may not work is clutter in the one list a person reads
+    // while deciding. Depth is a SEPARATE choice now (see effortChoices) —
+    // sol/terra/luna are model weights, not effort levels.
     models: [
       { id: "gpt-5.6-sol", label: "GPT-5.6 Sol (flagship)" },
       { id: "gpt-5.6-terra", label: "GPT-5.6 Terra (balanced)" },
       { id: "gpt-5.6-luna", label: "GPT-5.6 Luna (fast)" },
-      { id: "gpt-5.5", label: "GPT-5.5 (previous frontier)" },
     ],
   },
   {

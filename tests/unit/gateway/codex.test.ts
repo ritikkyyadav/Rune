@@ -248,8 +248,13 @@ describe("toResponsesInput / toResponsesBody", () => {
     // concurrency itself.
     expect(body.parallel_tool_calls).toBe(true);
     expect(body.prompt_cache_key).toBe("sess-1");
-    // reasoning carries summary ONLY — the backend 400s on a top-level effort.
-    expect(body.reasoning).toEqual({ summary: "auto" });
+    // reasoning carries summary AND effort. This used to assert summary alone,
+    // with a comment claiming "the backend 400s on a top-level effort" — an
+    // assumption nobody had tested. Probed live on 2026-08-30: gpt-5.6-sol
+    // returns 200 for low/medium/high/xhigh/max and 400s only on values the
+    // model genuinely rejects, naming the param. Sending nothing left every
+    // ChatGPT-subscription session at the server default with max unreachable.
+    expect(body.reasoning).toEqual({ summary: "auto", effort: "high" });
     expect(body.include).toEqual(["reasoning.encrypted_content"]);
     expect((body.tools as unknown[]).length).toBe(1);
     expect((body.tools as Array<Record<string, unknown>>)[0]).toMatchObject({
