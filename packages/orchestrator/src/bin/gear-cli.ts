@@ -82,6 +82,7 @@ import {
 import { renderWorkspaceDiff } from "./ui/workspace-diff";
 import { truncate } from "./ui/render";
 import { runTui } from "./ui/tui";
+import { MissionRenderer } from "./ui/mission-renderer";
 import { resolveSurface } from "./ui/surface";
 import { exportSession } from "../session-export";
 import { loadCommands, findCommand } from "../commands";
@@ -121,6 +122,9 @@ const { values, positionals } = parseArgs({
     tui: { type: "boolean", default: false },
     classic: { type: "boolean", default: false },
     fullscreen: { type: "boolean", default: false },
+    // A surface of its own, beside the existing ones: renders the turn as a mission —
+    // a stream, a one-row ledger, and a terminus. Every other mode is unchanged.
+    mission: { type: "boolean", default: false },
     inline: { type: "boolean", default: false },
     pristine: { type: "boolean", default: false },
     sandbox: { type: "boolean" },
@@ -192,6 +196,7 @@ if (values.help) {
       `    --classic                    Plain readline prompt (default is the pinned composer)\n` +
       `    --tui                        Force the Codex-style pinned composer\n` +
       `    --fullscreen                 Use the focused Gear terminal surface (default)\n` +
+      `    --mission                    Mission surface: stream + ledger + terminus (experimental)\n` +
       `    --inline                     Use legacy native-scrollback layout\n` +
       `    --pristine                   Run without the learned tactics notebook (evolution control group)\n` +
       `    --sandbox / --no-sandbox     Force the OS command sandbox on/off for this run (overrides /sandbox + config)\n` +
@@ -943,7 +948,10 @@ async function main() {
     inline: (values.inline as boolean) || !!process.env.GEAR_INLINE,
     fullscreenForced: (values.fullscreen as boolean) || !!process.env.GEAR_FULLSCREEN,
   });
-  const useTui = surface.useTui;
+  // `--mission` is a whole surface — a stream plus a summoned hold — so it never
+  // shares the screen with the TUI. It opts out and leaves every other mode intact.
+  const missionSurface = values.mission as boolean;
+  const useTui = surface.useTui && !missionSurface;
   const fullscreenTui = surface.fullscreen;
 
   // ─── Create or resume session (one native flow) ───
@@ -1135,6 +1143,9 @@ async function main() {
     .filter((s) => s.id !== sessionId && isMeaningfulSession(s));
 
   const startingGear = modeInfo(engine.getPermissionMode());
+  // The mission surface prints its own four rows — a repo, a branch, a model and a
+  // permission posture, because those are the facts — and then gets out of the way.
+  if (!missionSurface)
   process.stdout.write(
     renderWelcome({
       model: engine.getModel(),
@@ -1186,6 +1197,8 @@ async function main() {
   let pasteCount = 0;
   let pasteAccum = "";
   let pasteFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  // --mission only: built on first use so the default surfaces pay nothing for it.
+  let mission: MissionRenderer | undefined;
   let busy = false;
   let turnAborted = false; // Ctrl-C mid-turn: close the record as "interrupted"
   let activeLoopId: string | null = null;
@@ -1387,6 +1400,13 @@ async function main() {
   }
 
   function showPrompt() {
+    if (missionSurface) {
+      // The ledger is always current. A second status line beside it would be exactly
+      // the stale panel this design exists to remove.
+      process.stdout.write("\n");
+      rl.prompt();
+      return;
+    }
     let contextPercent: number | undefined;
     try {
       contextPercent = engine.getContextUsage().percent;
@@ -3065,6 +3085,35 @@ async function main() {
     busy = true;
     turnAborted = false;
     activeLoopId = scheduledLoop?.id ?? null;
+
+    // ─── the mission surface (--mission) ───
+    // Same engine, same events, a different projection of them. Everything below —
+    // the composer, the spinner, the turn renderer, every theme mode — is untouched
+    // and still the default.
+    if (missionSurface) {
+      if (!mission) {
+        mission = await MissionRenderer.create({
+          version: GEAR_VERSION,
+          model: engine.getModel(),
+          sandboxed: sandboxEnabled,
+          posture: modeInfo(engine.getPermissionMode()).desc,
+          workspace: workspaceRoot,
+        });
+        mission.banner();
+      }
+      mission.open(input);
+      try {
+        for await (const event of engine.chat(sessionId, input)) {
+          mission.onEvent(event as Parameters<MissionRenderer["onEvent"]>[0]);
+        }
+      } catch (err) {
+        if (!turnAborted) mission.onError(err);
+      }
+      mission.finish();
+      busy = false;
+      showPrompt();
+      return;
+    }
 
     // Close the composer frame: a matching rule beneath the submitted input, then
     // the user's message set down as the loud block (same language as the TUI).

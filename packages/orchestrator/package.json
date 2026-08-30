@@ -18,7 +18,8 @@
     "@gear/shared": "workspace:*",
     "@gear/llm-gateway": "workspace:*",
     "@gear/tool-registry": "workspace:*",
-    "@gear/telemetry": "workspace:*"
+    "@gear/telemetry": "workspace:*",
+    "@gear/mission": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.8"

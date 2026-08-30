@@ -43,6 +43,16 @@
         "typescript": "^5.8",
       },
     },
+    "packages/mission": {
+      "name": "@gear/mission",
+      "version": "0.2.0",
+      "bin": {
+        "mission-demo": "src/demo/play.ts",
+      },
+      "devDependencies": {
+        "typescript": "^5.8",
+      },
+    },
     "packages/orchestrator": {
       "name": "@gear/orchestrator",
       "version": "0.3.0",
@@ -51,6 +61,7 @@
       },
       "dependencies": {
         "@gear/llm-gateway": "workspace:*",
+        "@gear/mission": "workspace:*",
         "@gear/shared": "workspace:*",
         "@gear/telemetry": "workspace:*",
         "@gear/tool-registry": "workspace:*",
@@ -210,6 +221,8 @@
     "@gear/eval": ["@gear/eval@workspace:tests/eval"],
 
     "@gear/llm-gateway": ["@gear/llm-gateway@workspace:packages/llm-gateway"],
+
+    "@gear/mission": ["@gear/mission@workspace:packages/mission"],
 
     "@gear/orchestrator": ["@gear/orchestrator@workspace:packages/orchestrator"],
 
