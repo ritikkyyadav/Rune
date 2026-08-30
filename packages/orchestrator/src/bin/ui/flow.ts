@@ -227,24 +227,17 @@ export function receiptOf(parts: Array<string | undefined | null>): string {
 export interface FlowHeader {
   /** Product name. Set as the wordmark -- letterspaced, in the identity colour. */
   name: string;
-  /** Version, no `v` prefix -- `G E A R  0.3.0`. */
+  /** CLI version. Rendered `v0.3.0`, hard against the right edge. */
   version: string;
-  /** Workspace folder name. */
+  /** Where you are: the whole directory coordinate, `~`-shortened by the caller.
+   *  Not the folder name -- two sessions in `web` and `api` under different
+   *  projects produced identical headers, which is the one question a location
+   *  field exists to answer. */
   workspace?: string;
-  /** Git branch, when the workspace has one. */
-  branch?: string;
-  /** Neutral facts about the tree right now (`3 files changed`, `mcp 2`). */
-  state?: string[];
-  /** Guardrails that have been REMOVED. These are the only loud words on the
-   *  row, because they are the only ones that change what the agent may do to
-   *  your machine without telling you again. */
-  alerts?: string[];
-  /** Model id or label. */
-  model?: string;
-  /** What the agent may do without asking -- the gear, in words. */
-  scope?: string;
-  /** The part of `scope` that is a guardrail rather than a permission. */
-  caution?: string;
+  /** The branch a LINKED git worktree is checked out on. Absent in the main
+   *  checkout, which is the point: the row says nothing until you are somewhere
+   *  that can surprise you. */
+  worktree?: string;
 }
 
 // --- The masthead ---
@@ -256,8 +249,7 @@ export interface FlowHeader {
 // COLOUR. So the wordmark is built from all four -- letterspaced, capitalised,
 // bold, in the identity pigment -- which is what separates a logotype from the
 // first word of a sentence. `gear · evolab4` read as a breadcrumb because it
-// used exactly one of the four; `G E A R  0.3.0 │ evolab4` reads as a masthead
-// because a name spaced out like that cannot be mistaken for running text.
+// used exactly one of the four; `G E A R` cannot be mistaken for running text.
 //
 // This is still not artwork. The old rule here -- no mark, no avatar, no
 // wordmark, because a terminal that opens with a picture has spent its first
@@ -266,29 +258,31 @@ export interface FlowHeader {
 // tall, the same row it has always been.
 
 /**
- * The identity lockup: the wordmark, then the version, as one block.
+ * The wordmark.
  *
  * Returns the painted string with the number of CELLS it occupies, because the
- * rule underneath changes colour at exactly that column and a caller cannot
+ * rule underneath changes tone at exactly that column and a caller cannot
  * measure a painted string without stripping it again.
  */
-export function lockup(name: string, version?: string): { text: string; cells: number } {
+export function lockup(name: string): { text: string; cells: number } {
   // Tracking, done the only way a fixed grid allows: one cell between letters.
   // It costs three columns and buys the entire difference between a name and a
   // logotype.
   const mark = name.toUpperCase().split("").join(" ");
-  const plain = version ? `${mark}  ${version}` : mark;
-  // The version is `quiet`, not `faint`. It rides directly beneath the eye's
-  // first stop and has to be legible there; `faint` is the rail-and-gutter grey
-  // and would have made it a smudge next to the mark.
-  const text = version ? `${bold(info(mark))}  ${quiet(version)}` : bold(info(mark));
-  return { text, cells: plain.length };
+  return { text: bold(info(mark)), cells: mark.length };
 }
 
-/** The masthead's divider: what separates the product from the session. It is
- *  the alphabet's only vertical, and it is the one cell on the row that says
- *  "two zones", which is why the rule beneath changes colour underneath it. */
-const DIVIDER = () => faint(glyph("gutter"));
+/** The build, for the far right of a masthead. Quiet: it is the least urgent
+ *  thing on the row and the only one you go looking for rather than read. */
+export function versionTag(version: string): string {
+  return quiet(`v${version}`);
+}
+
+/** The gap that does the dividing. A vertical bar sat here while the row still
+ *  carried four fields and needed a seam drawn for it; with one field left, the
+ *  wordmark's own tracking already separates it and the bar was one mark more
+ *  than the row was saying. */
+const LOCKUP_GAP = "   ";
 
 /**
  * The header: a masthead and the rule that carries it.
@@ -296,32 +290,30 @@ const DIVIDER = () => faint(glyph("gutter"));
  * It used to be six rows -- a blank, a full-width rule with the name inlaid, a
  * location row, a model row, another rule, another blank -- before a single
  * word of the session. That collapsed to one row, correctly, and then stayed
- * flat: name, dot, folder, dot, branch -- every field the same size, the same
- * weight and very nearly the same grey. One row is right. One row of
- * undifferentiated text is a breadcrumb, and that is what it was reported as.
+ * flat: name, dot, folder, dot, branch, dot, counts -- every field the same
+ * size, the same weight and very nearly the same grey. One row is right. One
+ * row of undifferentiated text is a breadcrumb, and that is what it was
+ * reported as.
  *
- * So the row has two zones and says so three times over:
+ * Three things, and the row is read left to right in exactly that order:
  *
- *   IDENTITY   the letterspaced wordmark and the version, in the identity
- *              pigment, bold -- who you are talking to and which build of it.
- *   DIVIDER    the alphabet's vertical, at the seam.
- *   SESSION    where you are, on what branch, in what shape -- and any
- *              guardrail that has been taken off, which is the only thing here
- *              allowed to be loud.
+ *   WHO    the letterspaced wordmark, in the identity pigment, bold.
+ *   WHERE  the whole directory coordinate -- and, only when the checkout is a
+ *          linked git worktree, which branch that worktree is on.
+ *   WHICH  the build, hard against the right edge.
  *
- * ...and the rule beneath is drawn in two tones that change colour directly
- * under the divider, so the seam is stated by the row and confirmed by the rule
- * under it. That two-tone rule is the whole reason this reads as designed
- * rather than as printed: it is the one element that makes the wordmark sit on
- * something instead of merely starting a line. It also costs nothing -- the
- * rule was already being drawn, in one colour, on that exact row.
+ * ...and the rule beneath is drawn in two tones that change under the last cell
+ * of the wordmark, so the mark sits on something instead of merely starting a
+ * line. It costs nothing: the rule was already being drawn, in one colour, on
+ * that exact row.
  *
- * Everything on this row is still only what does not move. It is committed
- * scrollback under --inline: written once, never rewritten, so a field that
- * changes mid-session would sit here stating the wrong thing for the rest of
- * the run. That is what the model and the gear did before they moved to the
- * status line above the composer, which redraws. What is left is the product,
- * its version, and the shape the tree was in when you opened it.
+ * Nothing else is here, and the deletions are the design. The dirty-file count,
+ * the MCP count and `sandbox off` all moved out because the status line above
+ * the composer already carries the live ones -- a fact stated twice is a fact
+ * you stop reading, and the header's copy was the stale one. This row is
+ * committed scrollback under --inline: written once, never rewritten. Every
+ * field left on it is immutable for the life of the session by construction,
+ * which is the only reason it can be trusted at hour four.
  */
 export function header(opts: FlowHeader): string {
   // Budgeted to the SURFACE, not to the reading column. The header is chrome:
@@ -336,81 +328,88 @@ export function header(opts: FlowHeader): string {
   // relative cursor math for the pinned region below it.
   const budget = surface - MARK.length;
 
-  const mark = lockup(opts.name, opts.version);
+  const mark = lockup(opts.name);
+  const version = versionTag(opts.version);
 
-  // The session half, in three steps of emphasis, each one deliberate.
+  // What is left after the two fixed ends have taken their columns: the
+  // wordmark and its gap on the left, the version and the two-space minimum
+  // that keeps it from touching the location on the right.
+  const room = Math.max(8, budget - mark.cells - LOCKUP_GAP.length - visLen(version) - 2);
+  const SEP = ` ${glyph("observed")} `;
+
+  // The path is served first, and it is served a FLOOR rather than a share.
   //
-  // The folder is `text`: it answers "where am I", and it is the one fact on
-  // this row a person actually reads. The branch is `quiet` -- the readable
-  // muted slot, NOT the rail grey it used to share with the separators, which
-  // is how the branch ended up dimmer than the dots between the words. The
-  // counts are `faint`, because they are background until they are not.
-  const where = opts.workspace ? text(opts.workspace) : "";
-  const branch = opts.branch ? quiet(opts.branch) : "";
-  const state = (opts.state ?? []).map((fact) => faint(fact));
-  // The only loud words on the row. Amber is already what this palette means by
-  // "this one governs your machine", so a removed guardrail needs no other
-  // decoration to be found.
-  const alerts = (opts.alerts ?? []).map((alert) => warn(alert));
+  // Letting the clause take what it wanted produced the worst row of the set on
+  // a narrow window -- `…ream-wt · worktree fix/stream`, in which the branch is
+  // spelled out twice and the folder you are standing in has been reduced to
+  // three letters of its own name. The location field exists to answer "where
+  // am I". Whatever else the row gives up, it keeps enough columns to name the
+  // directory you are in.
+  const floor = opts.workspace ? Math.min(room, tailSegment(opts.workspace).length) : 0;
 
-  // What is given up first, at each width -- the same ladder the status line
-  // above the composer climbs down, for the same reason.
-  //
-  // The alerts are LAST in reading order and FIRST in priority, which sounds
-  // like a contradiction and is the whole point: amber at the end of the row is
-  // where the eye stops, and a guardrail that has been switched off is the one
-  // thing here that must never be the character the ellipsis ate. Ordering
-  // alone could not give both -- clipping the row at 80 columns dropped exactly
-  // the word it could least afford to. So the row sheds whole facts instead of
-  // characters, and `sandbox off` is in every tier it can still reach.
-  const sep = faint(` ${glyph("observed")} `);
-  const tiers = [
-    [where, branch, ...state, ...alerts],
-    [where, branch, ...alerts],
-    [where, ...alerts],
-    // Below this width the folder name goes too. That is the right trade and
-    // not a close one: you can always ask where you are, and the shell prompt
-    // two rows down already answered it.
-    [...alerts],
-  ].map((tier) => tier.filter(Boolean).join(sep));
-  // `- 5` is the divider block the context is measured against: two spaces, the
-  // vertical, two spaces.
-  const room = Math.max(0, budget - mark.cells - 5);
-  const context = tiers.find((tier) => visLen(tier) <= room) ?? tiers[tiers.length - 1]!;
+  // What the worktree clause may spend, and how it shortens. The branch is the
+  // qualifier; the word is the warning -- so the branch goes first and the word
+  // survives on any window that can hold it at all.
+  const forClause = room - floor - SEP.length;
+  const full = opts.worktree ? `worktree ${opts.worktree}` : "";
+  const clause = full.length <= forClause ? full : "worktree".length <= forClause ? "worktree" : "";
 
-  // The divider only exists to divide. A session with nothing on its right-hand
-  // side gets the mark alone rather than a bar with empty space after it.
-  const left = context ? `${mark.text}  ${DIVIDER()}  ${context}` : mark.text;
-  // Where the rule changes tone: through the divider's own column, so the
-  // vertical and the colour break are the same seam seen twice. `+ 3` is the
-  // two spaces after the lockup plus the divider cell itself.
-  const seam = context ? Math.min(budget, mark.cells + 3) : Math.min(budget, mark.cells);
+  const path = opts.workspace
+    ? pathTail(opts.workspace, room - (clause ? clause.length + SEP.length : 0))
+    : "";
+  const location = [path && text(path), clause && quiet(clause)].filter(Boolean).join(faint(SEP));
 
-  // Nothing goes to the right margin. `row` is the chrome layout and still
-  // accepts a right half, but the model and the gear -- the only fields that
-  // ever lived there -- are live state and live on the status line now, and a
-  // lone badge parked 200 columns from the mark reads as two reports rather
-  // than one row.
-  const right = "";
-
-  // The rule belongs here. Without it the header is just another line of text
-  // above the transcript and stops reading as chrome at all. What it must NOT
-  // do is collide with the composer's own top rule on a fresh session, where
-  // there is no transcript between them -- that is solved at the other end, by
-  // the composer carrying a blank line above itself, so the two rules can never
-  // end up on adjacent rows however empty the session is.
-  return ["", `${MARK}${pad(row(left, right, budget), budget)}`, seamRule(surface, seam)].join(
-    "\n",
-  );
+  return [
+    "",
+    `${MARK}${row(`${mark.text}${location ? LOCKUP_GAP + location : ""}`, version, budget)}`,
+    seamRule(surface, mark.cells),
+  ].join("\n");
 }
 
 /**
- * The header's rule, in two tones: identity under the masthead, dim under the
- * session. `lead` is measured in cells from the left margin, so a caller that
+ * A path cut to fit, from the LEFT.
+ *
+ * Every other truncation in this file drops the tail, which is right for prose
+ * and wrong for a path: `~/Project/Alan/packages/orchestr…` has spent thirty
+ * columns to tell you nothing you did not already know, while the segment that
+ * says where you actually are is the one it threw away. So the head goes and
+ * the tail stays, marked with the alphabet's elision.
+ */
+export function pathTail(p: string, max: number): string {
+  if (max <= 1) return "";
+  if (p.length <= max) return p;
+  const mark = glyph("elision");
+  const room = max - mark.length;
+  // Cut on a separator: `…/src/bin/ui` reads as a path, `…rc/bin/ui` reads as a
+  // word that lost its beginning. Take whole segments from the end until the
+  // next one will not fit.
+  const segments = p.split("/");
+  let tail = "";
+  for (let i = segments.length - 1; i > 0; i--) {
+    const next = `/${segments[i]}${tail}`;
+    if (next.length > room) break;
+    tail = next;
+  }
+  // Not even one whole segment fits. Keep its end, which is still the half that
+  // identifies it -- `…-stabilize` over `…gear/phase`.
+  return `${mark}${tail || p.slice(-room)}`;
+}
+
+/** The last segment with its separator (`/evolab4`), plus the elision that
+ *  would precede it -- the shortest form of a path that still names a place,
+ *  and therefore the floor the location field is guaranteed. */
+function tailSegment(p: string): string {
+  const last = p.split("/").filter(Boolean).at(-1) ?? p;
+  return `${glyph("elision")}/${last}`;
+}
+
+/**
+ * The header's rule, in two tones: identity under the wordmark, dim under the
+ * rest. `lead` is measured in cells from the left margin, so a caller that
  * knows where its seam is does not have to know how the rule is drawn.
  *
  * Same span and same total width as hairline() -- this is that rule with a
- * colour change in it, not a second kind of rule.
+ * tone change in it, not a second kind of rule.
  */
 export function seamRule(width = surfaceWidth(), lead = 0): string {
   const inner = Math.max(1, width - MARK.length);
@@ -435,20 +434,6 @@ export function seamRule(width = surfaceWidth(), lead = 0): string {
  */
 export function hairline(width = surfaceWidth()): string {
   return `${MARK}${faint(glyph("rule").repeat(Math.max(1, width - MARK.length)))}`;
-}
-
-/** What the agent may do, and where that stops -- one amber clause, because
- *  this is the only line in the header that governs your machine. */
-function scopeClause(opts: FlowHeader): string | undefined {
-  const clause = [opts.scope, opts.caution && `-- ${opts.caution}`].filter(Boolean).join(" ");
-  return clause ? warn(clause) : undefined;
-}
-
-/** A middot-joined meta line under the header rule, or nothing when empty. */
-function place(parts: Array<string | undefined | false>, width: number): string[] {
-  const shown = parts.filter((part): part is string => Boolean(part));
-  if (shown.length === 0) return [];
-  return [`${MARK}${truncate(shown.join(faint(` ${glyph("observed")} `)), width - MARK.length)}`];
 }
 
 // --- Turn markers ---

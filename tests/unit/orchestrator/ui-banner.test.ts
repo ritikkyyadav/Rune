@@ -5,9 +5,9 @@ import { glyph } from "../../../packages/orchestrator/src/bin/ui/glyphs";
 import * as F from "../../../packages/orchestrator/src/bin/ui/flow";
 import * as os from "os";
 
-// Hermetic: the header names the folder you are in, not the whole path — but
-// the workspace still has to exist under THIS machine's home for the branch and
-// dirty-file probes to behave the same everywhere.
+// Hermetic: the header prints the whole directory coordinate, so the workspace
+// has to sit under THIS machine's home for the `~` substitution — and for the
+// git probes — to behave the same everywhere.
 const WORKSPACE = `${os.homedir()}/Projects/sample-app`;
 
 const originalColumns = process.stdout.columns;
@@ -28,13 +28,18 @@ function banner(columns: number, extra: Record<string, unknown> = {}): string {
       version: "0.2.0",
       workspace: WORKSPACE,
       branch: "main",
-      dirtyFiles: 0,
-      sandbox: true,
       scope: "1st gear",
       caution: "every action asks first",
       ...extra,
     }),
   );
+}
+
+/** The identity row, without the leading blank or the rule under it. */
+function row(columns: number, extra: Record<string, unknown> = {}): string {
+  return banner(columns, extra)
+    .split("\n")
+    .filter((line) => line.trim())[0]!;
 }
 
 describe("ui/banner", () => {
@@ -49,14 +54,6 @@ describe("ui/banner", () => {
     // would land on the row above the composer's own top rule and draw as a
     // doubled border. The composer's rule is the divider.
     expect(lines).toHaveLength(2);
-    // Identity and location only. The model and the gear both change during a
-    // session, and this row is committed scrollback that is never rewritten —
-    // naming them here produced a header that stated the wrong model for the
-    // rest of the run and contradicted the live status line. They live in the
-    // pinned region now, which redraws.
-    expect(lines[0]).toContain("sample-app · main");
-    expect(lines[0]).not.toContain("claude-sonnet-4-6");
-    expect(lines[0]).not.toContain("1st gear");
     // Indented to the content column: a rule begins where the row above it does.
     expect(lines[1]).toMatch(/^ {2}─+$/);
     // Still no artwork. The name is SET as a mark, never drawn as one.
@@ -67,101 +64,83 @@ describe("ui/banner", () => {
     expect(output).not.toMatch(/-{10}/);
   });
 
-  it("sets the name as a wordmark: letterspaced, capitalised, versioned", () => {
+  it("sets the name as a wordmark: letterspaced and capitalised", () => {
     // The complaint that started this was "it just looks like text", and it was
-    // right: `gear · sample-app · main` used one of the four instruments a
-    // terminal actually has (colour) and none of the other three. A monospace
-    // grid cannot change family, size or width — it can change TRACKING, CASE
-    // and WEIGHT, and a name spaced out across the grid cannot be read as the
-    // first word of a sentence.
-    const row = banner(100).split("\n")[1]!;
-    expect(row).toContain("G E A R  0.2.0");
-    // …and the version rides WITH the mark rather than being dropped. It was
-    // plumbed through this header for months and never printed.
-    expect(row.indexOf("0.2.0")).toBeLessThan(row.indexOf("sample-app"));
+    // right: `gear · sample-app` used one of the four instruments a terminal
+    // actually has (colour) and none of the other three. A monospace grid
+    // cannot change family, size or width — it can change TRACKING, CASE and
+    // WEIGHT, and a name spaced out across the grid cannot be read as the first
+    // word of a sentence.
+    expect(row(100)).toContain("G E A R");
+    expect(row(100)).not.toContain("gear ·");
   });
 
-  it("divides the row with the alphabet's own vertical, and only when there is something to divide", () => {
-    expect(banner(100)).toContain("│");
-    // Nothing on the right-hand side means nothing to divide from: a bar with
-    // empty space after it is a bar that is not doing its job.
-    const bare = banner(100, { workspace: "", branch: "", dirtyFiles: 0 });
-    expect(bare.split("\n")[1]).not.toContain("│");
+  it("names the whole directory coordinate, not the folder", () => {
+    // The folder name alone was ambiguous in exactly the case that matters:
+    // `web` under two different projects produced two identical headers. The
+    // path is `~`-shortened, which is the form a person recognises.
+    expect(row(100)).toContain("~/Projects/sample-app");
+    expect(row(100)).not.toContain(os.homedir());
   });
 
-  it("speaks ONE separator dialect", () => {
-    // The environment facts arrived pre-joined with ` | ` while the row around
-    // them used ` · ` for the identical job, so the header shipped two
-    // punctuation systems on one line. The header receives the parts now.
+  it("puts the build hard against the right edge, and nothing after it", () => {
+    for (const columns of [60, 100, 165]) {
+      expect(row(columns).trimEnd(), `@${columns}`).toMatch(/v0\.2\.0$/);
+    }
+    // `v`-prefixed, and it is the only thing on the right — the row reads
+    // who / where / which build, in that order, and stops.
+    expect(row(100)).not.toContain("0.2.0 ·");
+  });
+
+  it("carries nothing that the status line already carries", () => {
+    // These were on the row and are gone by request: the dirty-file count, the
+    // MCP count, and the sandbox state. Every one of them is live, every one of
+    // them is already on the status line above the composer, and this row is
+    // committed scrollback under --inline — so the header held the stale copy
+    // of a fact stated twice on one screen.
     const output = banner(100, { dirtyFiles: 3, sandbox: false, mcpServers: 2 });
-    expect(output).toContain("sample-app · main · 3 files changed · mcp 2 · sandbox off");
-    expect(output.split("\n")[1]).not.toContain("|");
+    expect(output).not.toContain("files changed");
+    expect(output).not.toContain("sandbox");
+    expect(output).not.toContain("mcp");
+    // The model and the gear left earlier, for the same reason.
+    expect(output).not.toContain("claude-sonnet-4-6");
+    expect(output).not.toContain("1st gear");
   });
 
-  it("the rule changes tone directly under the divider", () => {
-    // The seam is stated twice: once by the vertical on the row, once by the
-    // rule beneath changing colour at the same column. Colour is unreachable in
-    // a test process (no tty, so every role paints to plain text), so what is
-    // pinned here is the column the two share — which is the claim that would
-    // actually break if the lockup and the rule ever drifted apart.
-    const [row, rule] = banner(120)
+  it("says nothing about the branch in the main checkout", () => {
+    // The row is silent until you are somewhere that can surprise you. A branch
+    // on every line is a line you stop reading.
+    expect(row(100, { branch: "gear/phase-0-stabilize" })).not.toContain("gear/phase-0-stabilize");
+  });
+
+  it("the rule changes tone under the last cell of the wordmark", () => {
+    // The mark sits on something instead of merely starting a line. Colour is
+    // unreachable in a test process (no tty, so every role paints to plain
+    // text), so what is pinned here is the column the tone change lands on —
+    // the claim that would actually break if the lockup and the rule drifted.
+    const lines = banner(120)
       .split("\n")
       .filter((line) => line.trim());
-    const { cells } = F.lockup("Gear", "0.2.0");
-    expect(row!.indexOf("│")).toBe(F.MARK.length + cells + 2);
-    expect(stripAnsi(F.seamRule(F.surfaceWidth(), cells + 3))).toBe(rule);
+    expect(stripAnsi(F.seamRule(F.surfaceWidth(), F.lockup("Gear").cells))).toBe(lines[1]);
   });
 
-  it("sheds whole facts, so a removed guardrail is never the character the ellipsis ate", () => {
-    // Ordering alone could not do this. `sandbox off` is last in reading order
-    // because amber at the end of the row is where the eye stops — and last is
-    // exactly what a truncating row drops first. At 80 columns the old row
-    // clipped the one word it could least afford to.
-    for (const columns of [44, 60, 80, 100, 160]) {
-      const row = banner(columns, {
-        workspace: `${os.homedir()}/Projects/sample-app`,
-        branch: "gear/phase-0-stabilize",
-        dirtyFiles: 3,
-        sandbox: false,
-        mcpServers: 2,
-      }).split("\n")[1]!;
-      expect(row, `@${columns}`).toContain("sandbox off");
-      // The folder is the last thing to go, and it only goes on a window too
-      // narrow to hold both it and the guardrail.
-      if (columns >= 60) expect(row, `@${columns}`).toContain("sample-app");
-      // Whole facts, not half words: nothing here is ever cut mid-value.
-      expect(row, `@${columns}`).not.toContain("…");
-    }
-  });
-
-  it("prefers the preset's model label and carries the effort dial", () => {
-    // The label still resolves — it is simply not printed in the header any
-    // more, because a model named in committed scrollback goes stale on the
-    // next /model. statusLine carries it.
-    const output = banner(100, { modelLabel: "Gemini 2.5 Flash", effort: "high" });
-    expect(output).not.toContain("Gemini 2.5 Flash");
-    expect(output).not.toContain("gemini-2.5-flash");
-  });
-
-  it("chrome aligns to the WINDOW, so the mode badge lands on the hairline's right edge", () => {
+  it("chrome aligns to the WINDOW, so the build lands on the rule's right edge", () => {
     // Regression: the header row was budgeted to measure(), which caps at 120
     // so prose never becomes a 200-column sentence. Right for prose, wrong for
-    // chrome — on a 165-column terminal it parked the gear at column 120 while
-    // the rule beneath ran to 164, a 44-column gap that reads as a broken edge.
+    // chrome — on a 165-column terminal it parked the right-hand field at
+    // column 120 while the rule beneath ran to 164, a 44-column gap that reads
+    // as a broken edge.
     for (const columns of [80, 120, 165, 220]) {
       const lines = banner(columns)
         .split("\n")
         .filter((line) => line.trim());
-      const content = lines[0]!;
-      // The badge is the right edge, and the row fills the window it is chrome
-      // for — measured against the surface, not the 120-column reading column.
       // Symmetric margin: MARK on the left, the same on the right.
-      expect(content.length).toBe(Math.max(20, columns - 2));
-      expect(content.trimEnd()).toMatch(/sample-app/);
+      expect(lines[0]!.length).toBe(Math.max(20, columns - 2));
+      expect(lines[0]!.trimEnd()).toMatch(/sample-app/);
     }
   });
 
-  it("rules span the window; content stays in the reading column", () => {
+  it("rules span the window; every line stays inside it", () => {
     for (const columns of [44, 60, 100, 220]) {
       const lines = banner(columns)
         .split("\n")
@@ -182,14 +161,44 @@ describe("ui/banner", () => {
   });
 });
 
-// ─── The render-path git caches ───
+describe("ui/flow pathTail", () => {
+  const deep = "~/Project/Alan/packages/orchestrator/src/bin/ui";
+
+  it("cuts from the LEFT, on a separator", () => {
+    // Dropping the tail is right for prose and wrong for a path:
+    // `~/Project/Alan/packages/orchestr…` spends thirty columns saying nothing
+    // you did not already know, and throws away the segment that says where you
+    // actually are.
+    expect(F.pathTail(deep, 22)).toBe("…/src/bin/ui");
+    expect(F.pathTail(deep, 30)).toBe("…/orchestrator/src/bin/ui");
+    // Whole segments only — never `…rc/bin/ui`.
+    for (const max of [8, 12, 16, 20, 24, 28, 32, 40]) {
+      const cut = F.pathTail(deep, max);
+      expect(cut.length, `max ${max}`).toBeLessThanOrEqual(max);
+      expect(cut[0], `max ${max}`).toBe("…");
+      expect(cut.slice(1), `max ${max}`).toBe(deep.slice(deep.length - cut.length + 1));
+    }
+  });
+
+  it("returns the path untouched when it fits", () => {
+    expect(F.pathTail(deep, deep.length)).toBe(deep);
+    expect(F.pathTail("~/a", 40)).toBe("~/a");
+  });
+
+  it("keeps the END of a segment too long to fit whole", () => {
+    // `…gle-segment` still identifies the place; `~/one-very-l…` does not.
+    expect(F.pathTail("~/one-very-long-single-segment", 12)).toBe("…gle-segment");
+  });
+});
+
+// ─── The render-path git facts ───
 // The header renders every frame. These pin the contract that replaced the
 // immortal branch cache and the synchronous every-2s `git status`: first
 // resolve is synchronous, steady-state renders return instantly from cache,
 // and a stale entry refreshes in the background.
 
 import { execFileSync } from "child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { __resetBannerCachesForTest } from "../../../packages/orchestrator/src/bin/ui/banner";
@@ -198,26 +207,48 @@ function git(repo: string, ...args: string[]): void {
   execFileSync("git", ["-C", repo, ...args], { stdio: "ignore" });
 }
 
-describe("ui/banner git caches", () => {
-  it("resolves branch + dirty count synchronously on first render, then refreshes in the background", async () => {
-    const repo = mkdtempSync(join(tmpdir(), "gear-banner-git-"));
+describe("ui/banner git facts", () => {
+  it("names a linked worktree by its branch, and stays quiet in the main checkout", () => {
+    const root = mkdtempSync(join(tmpdir(), "gear-banner-wt-"));
+    const repo = join(root, "repo");
+    const tree = join(root, "stream-wt");
     try {
-      git(repo, "init", "-b", "first-branch");
+      execFileSync("git", ["init", "-q", "-b", "main", repo], { stdio: "ignore" });
       git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "x");
+      git(repo, "worktree", "add", "-q", "-b", "fix/stream", tree);
+      __resetBannerCachesForTest();
+
+      // The main checkout of a repo that HAS worktrees is still the main
+      // checkout, and the row stays quiet. This is the case that separates
+      // "is a worktree" from "has worktrees".
+      expect(banner(140, { workspace: repo, branch: undefined })).not.toContain("worktree");
+
+      // Inside the linked worktree it says so, and names the branch.
+      expect(banner(140, { workspace: tree, branch: undefined })).toContain("worktree fix/stream");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves the branch synchronously on first render, then refreshes in the background", async () => {
+    const root = mkdtempSync(join(tmpdir(), "gear-banner-branch-"));
+    const repo = join(root, "repo");
+    const tree = join(root, "wt");
+    try {
+      execFileSync("git", ["init", "-q", "-b", "main", repo], { stdio: "ignore" });
+      git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "x");
+      git(repo, "worktree", "add", "-q", "-b", "first-branch", tree);
       __resetBannerCachesForTest();
 
       // First frame: right immediately (synchronous resolve).
-      const first = banner(100, { workspace: repo, branch: undefined, dirtyFiles: undefined });
-      expect(first).toContain("first-branch");
+      expect(banner(140, { workspace: tree, branch: undefined })).toContain("first-branch");
 
-      // The world changes: new branch, a dirty file.
-      git(repo, "checkout", "-q", "-b", "second-branch");
-      writeFileSync(join(repo, "dirty.txt"), "x");
+      // The world changes under the session.
+      git(tree, "checkout", "-q", "-b", "second-branch");
 
       // Within the TTL the header serves the cache — instantly, and still the
       // old branch (staleness bounded by the TTL is the accepted trade).
-      const cached = banner(100, { workspace: repo, branch: undefined, dirtyFiles: undefined });
-      expect(cached).toContain("first-branch");
+      expect(banner(140, { workspace: tree, branch: undefined })).toContain("first-branch");
 
       // Age the cache out and render once: the frame returns the OLD value
       // (never blocks) while kicking one background refresh…
@@ -225,23 +256,20 @@ describe("ui/banner git caches", () => {
         (await import("../../../packages/orchestrator/src/bin/ui/banner")) as unknown as {
           __bannerCachesForTest?: { age(): void };
         };
-      // (test hook ages entries; fall back to waiting out the TTL if absent)
       if (__bannerCachesForTest) __bannerCachesForTest.age();
-      const stale = banner(100, { workspace: repo, branch: undefined, dirtyFiles: undefined });
-      expect(stale).toContain("first-branch");
+      expect(banner(140, { workspace: tree, branch: undefined })).toContain("first-branch");
 
       // …which lands within a few tens of ms.
       const deadline = Date.now() + 3000;
       let fresh = "";
       while (Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 25));
-        fresh = banner(100, { workspace: repo, branch: undefined, dirtyFiles: undefined });
+        fresh = banner(140, { workspace: tree, branch: undefined });
         if (fresh.includes("second-branch")) break;
       }
       expect(fresh).toContain("second-branch");
-      expect(fresh).toContain("1 file changed");
     } finally {
-      rmSync(repo, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });
