@@ -1309,8 +1309,6 @@ class Tui {
         sessionId: this.ctx.sessionId,
         workspace: this.ctx.workspaceRoot,
         version: this.ctx.version,
-        sandbox: engine.isSandboxEnabled(),
-        mcpServers: this.mcpServerCount(),
         ...this.gearScope(),
       }),
     );
@@ -1357,8 +1355,6 @@ class Tui {
       sessionId: this.ctx.sessionId,
       workspace: this.ctx.workspaceRoot,
       version: this.ctx.version,
-      sandbox: engine.isSandboxEnabled(),
-      mcpServers: this.mcpServerCount(),
       ...this.gearScope(),
     })
       .split("\n")

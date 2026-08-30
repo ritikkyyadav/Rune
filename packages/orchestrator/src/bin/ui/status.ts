@@ -147,16 +147,17 @@ export function renderStatus(s: StatusView): string {
   // Values are already colored -- keep kv's value pass as identity.
   const kvRows = kv(rows, { labelWidth: 12, labelColor: muted, valueColor: (x) => x });
   const surface = F.surfaceWidth();
-  // /status is the header, expanded -- so it opens with the header's own
-  // masthead and the header's own two-tone rule. It used to say the same thing
-  // in a different dialect: a lowercase name inlaid into a line of repeated
-  // hyphens, which is the texture the rest of the UI dropped when hairlines
-  // replaced dash rules, and a card whose first row disagreed with the row
-  // pinned at the top of the same window.
-  const mark = F.lockup(PRODUCT_NAME, s.version ?? PRODUCT_VERSION);
+  // /status is the header, expanded -- so its first row IS the header's first
+  // row: the same wordmark, the same build at the same right edge, carried on
+  // the same two-tone rule. It used to say this in a different dialect -- a
+  // lowercase name inlaid into a line of repeated hyphens, the texture the rest
+  // of the UI dropped when hairlines replaced dash rules -- so a card that
+  // called itself "the header, expanded" disagreed with the row pinned at the
+  // top of the same window.
+  const mark = F.lockup(PRODUCT_NAME);
   return [
     "",
-    `${F.MARK}${mark.text}`,
+    `${F.MARK}${F.row(mark.text, F.versionTag(s.version ?? PRODUCT_VERSION), surface - F.MARK.length)}`,
     F.seamRule(surface, mark.cells),
     ...kvRows.map((row) => `${F.MARK}${row.trimStart()}`),
     F.hairline(surface),

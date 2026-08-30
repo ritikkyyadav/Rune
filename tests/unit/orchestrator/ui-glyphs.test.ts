@@ -85,11 +85,10 @@ describe("ASCII rung", () => {
       import { header, said, toolRow } from ${JSON.stringify(flowUrl)};
       import { withThemeBg } from ${JSON.stringify(themeUrl)};
       const out = [
-        // state rather than caution: the header stopped repeating the gear
-        // description, which the status line above the composer already carries.
-        // The assertion below is unchanged — this still proves non-ASCII DATA is
-        // transliterated, not merely that glyphs have twins.
-        header({ name: "Gear", version: "0.3.0", workspace: "Jos\u00e9", scope: "workspace", state: ["leave 東京 alone"] }),
+        // The header carries arbitrary data in two fields now — the directory
+        // coordinate and the worktree clause — and both are transliterated. This
+        // proves non-ASCII DATA is folded, not merely that glyphs have twins.
+        header({ name: "Gear", version: "0.3.0", workspace: "Jos\u00e9", worktree: "leave 東京 alone" }),
         said("Checked \u201cJos\u00e9\u201d \u2014 no change to 東京."),
         toolRow({ name: "test", arg: "suite", status: "pass", metric: "3 passed" }),
       ].join("\\n");
@@ -112,7 +111,7 @@ describe("ASCII rung", () => {
     expect(stdout).not.toContain("\x1b");
     expect(stdout).not.toMatch(/[^\x00-\x7f]/);
     expect(stdout).toContain("Jose");
-    expect(stdout).toContain("leave ?? alone");
+    expect(stdout).toContain("worktree leave ?? alone");
     expect(stdout).toContain("3 passed");
   });
 
