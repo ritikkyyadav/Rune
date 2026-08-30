@@ -19,7 +19,9 @@ import {
   ROLE_SLOT,
   adaptiveTheme,
   contrastRatio,
+  displayWeight,
   findTheme,
+  nearestAnsi256,
   productionThemes,
 } from "./themes";
 
@@ -346,42 +348,37 @@ export const danger = (value: string): string => fmt("danger", value);
 export const quiet = (value: string): string => fmtSlot("muted", value);
 
 /**
- * The wordmark, knocked out of a filled chip.
+ * Display weight: the one call in the UI that asks for WEIGHT rather than
+ * colour, and asks for it twice because once is not enough.
  *
- * This is the SECOND place in the product that paints a background, and the
- * rule it bends is worth restating so the exceptions stay countable. Never
- * painting a background is about the GROUND -- the surface behind everything,
- * which belongs to the user, and which is why a TUI that claims it looks broken
- * under someone else's theme. A caret is not ground; neither is a mark nine
- * cells wide. Both are ink.
+ * `SGR 1` goes out and the terminal may do nothing with it -- a font with no
+ * bold face, or a host that reads an explicit 24-bit foreground as "the
+ * emphasis is already handled", renders it as no change at all. That is exactly
+ * what the wordmark hit: the bytes were right and the screen was flat.
  *
- * It is here because a terminal has exactly one weight axis, `SGR 1`, and it is
- * a request the host is free to refuse -- a font with no bold face, or a host
- * that reads an explicit 24-bit foreground as "the emphasis is already handled",
- * renders it as no change at all. That is what the wordmark hit: the bytes were
- * right and the screen was flat, and no amount of pigment fixes a stroke that
- * is one pixel wide. Reverse video is the only thing in a terminal that makes a
- * stroke genuinely heavier, because it stops drawing the letter and starts
- * drawing everything around it: the cell becomes the ink.
+ * Two answers, both cheap, neither of them a painted background. The colour is
+ * emitted BEFORE the attribute, because the terminals that drop synthetic bold
+ * are the ones that drop it when it arrives first. And the pigment itself is
+ * lifted off the ground (see displayWeight), so the strokes gain contrast --
+ * which is the only proxy for weight a host cannot refuse -- whether or not the
+ * attribute is ever honoured.
  *
- * The foreground is chosen by measured contrast against the fill rather than
- * fixed, so the letters stay legible on a pale accent as well as a dark one --
- * the same rule, and the same helper, as the caret.
+ * A reverse-video chip WAS tried here, and it is the only thing in a terminal
+ * that makes a stroke genuinely heavier: the cell stops being paper and becomes
+ * ink. It was also a block sitting in the corner of every session rather than a
+ * name, which is a different product from the one this frame is. Weight is
+ * worth a lot; it is not worth painting ground that belongs to the reader.
  */
 export const heavy = (value: string): string => {
   const safe = terminalText(value);
-  // Nothing to paint with, and nothing that may be painted: a piped or
-  // NO_COLOR run emits no escapes at all.
-  if (!COLOR_CAPABLE) return safe;
-  const pigment = pigmentFor(ROLE_SLOT.accent);
-  // Reverse video is the fallback at both ends -- a theme that keeps the host's
-  // own colours, and a terminal that only speaks ANSI-16. It is understood
-  // everywhere, and the host's palette makes it legible by definition.
-  if (active.useNativeColors || DEPTH === "ansi16") return `\x1b[7m${safe}${RESET}`;
-  const [r, g, b] = pigment.rgb;
-  const ink = caretForeground([r, g, b]) === "black" ? "30" : "97";
-  const fill = DEPTH === "truecolor" ? `\x1b[48;2;${r};${g};${b}m` : `\x1b[48;5;${pigment.ansi}m`;
-  return `${fill}\x1b[${ink}m\x1b[1m${safe}${RESET}`;
+  if (!COLOR_CAPABLE || active.useNativeColors) return safe;
+  if (DEPTH === "ansi16") return `\x1b[${ANSI16.accent}m\x1b[1m${safe}${RESET}`;
+  const rgb = displayWeight(pigmentFor(ROLE_SLOT.accent).rgb, active.appearance);
+  const paint =
+    DEPTH === "truecolor"
+      ? `\x1b[38;2;${rgb[0]};${rgb[1]};${rgb[2]}m`
+      : `\x1b[38;5;${nearestAnsi256(rgb)}m`;
+  return `${paint}\x1b[1m${safe}${RESET}`;
 };
 
 export const bold = (value: string): string => {

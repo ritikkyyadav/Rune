@@ -219,6 +219,70 @@ export function contrastRatio(a: Rgb, b: Rgb): number {
   return (lighter + 0.05) / (darker + 0.05);
 }
 
+/**
+ * A pigment pushed AWAY from the ground -- the identity colour at display
+ * weight.
+ *
+ * A terminal has one weight axis, `SGR 1`, and it is a REQUEST the host is free
+ * to refuse: a font with no bold face, or a terminal that reads an explicit
+ * 24-bit foreground as "the emphasis is already handled", renders the bold
+ * attribute as no change at all. That is what the wordmark hit -- the bytes were
+ * correct and the screen was flat.
+ *
+ * So weight is asked for twice, and the second way cannot be refused. Strokes
+ * read heavier the further they sit from the ground beneath them, which is why
+ * this lifts LIGHTNESS rather than mixing toward white: mixing desaturates, and
+ * a washed-out mark reads lighter, not heavier. Saturation rises a little with
+ * it, and the direction follows the surface -- brighter on a dark theme, darker
+ * on a light one -- so it never reduces contrast anywhere.
+ */
+export function displayWeight(rgb: Rgb, appearance: "dark" | "light"): Rgb {
+  const [h, s, l] = toHsl(rgb);
+  return fromHsl(
+    h,
+    Math.min(1, s + 0.1),
+    appearance === "light" ? Math.max(0.08, l - 0.16) : Math.min(0.95, l + 0.16),
+  );
+}
+
+function toHsl([r, g, b]: Rgb): [number, number, number] {
+  const [rn, gn, bn] = [r / 255, g / 255, b / 255];
+  const max = Math.max(rn, gn, bn);
+  const min = Math.min(rn, gn, bn);
+  const l = (max + min) / 2;
+  const d = max - min;
+  if (d === 0) return [0, 0, l];
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  const h =
+    max === rn
+      ? ((gn - bn) / d + (gn < bn ? 6 : 0)) / 6
+      : max === gn
+        ? ((bn - rn) / d + 2) / 6
+        : ((rn - gn) / d + 4) / 6;
+  return [h, s, l];
+}
+
+function fromHsl(h: number, s: number, l: number): Rgb {
+  if (s === 0) {
+    const v = Math.round(l * 255);
+    return [v, v, v];
+  }
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  const channel = (t: number): number => {
+    const shifted = t < 0 ? t + 1 : t > 1 ? t - 1 : t;
+    if (shifted < 1 / 6) return p + (q - p) * 6 * shifted;
+    if (shifted < 1 / 2) return q;
+    if (shifted < 2 / 3) return p + (q - p) * (2 / 3 - shifted) * 6;
+    return p;
+  };
+  return [
+    Math.round(channel(h + 1 / 3) * 255),
+    Math.round(channel(h) * 255),
+    Math.round(channel(h - 1 / 3) * 255),
+  ];
+}
+
 function mix(from: Rgb, to: Rgb, amount: number): Rgb {
   return from.map((value, index) => Math.round(value + (to[index]! - value) * amount)) as Rgb;
 }
