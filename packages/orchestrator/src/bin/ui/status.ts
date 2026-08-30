@@ -2,9 +2,9 @@
 
 import type { PermissionMode } from "../../permissions";
 import * as os from "os";
-import { bold, danger, text, muted, faint, info, warn } from "./theme";
+import { bold, danger, text, muted, info, warn } from "./theme";
 import { modeInfo } from "./composer";
-import { kv, visLen } from "./render";
+import { kv } from "./render";
 import * as F from "./flow";
 import { PRODUCT_NAME, PRODUCT_VERSION } from "./brand";
 
@@ -64,9 +64,6 @@ function permissionsLabel(s: StatusView): string {
 }
 
 export function renderStatus(s: StatusView): string {
-  // The same rule the session opens with -- /status is the header, expanded.
-  const header = `${info(PRODUCT_NAME.toLowerCase())} ${muted(s.version ?? PRODUCT_VERSION)}`;
-
   const rows: [string, string][] = [
     ["model", info(s.model)],
     ["provider", text(s.provider)],
@@ -149,14 +146,20 @@ export function renderStatus(s: StatusView): string {
 
   // Values are already colored -- keep kv's value pass as identity.
   const kvRows = kv(rows, { labelWidth: 12, labelColor: muted, valueColor: (x) => x });
-  const width = F.measure();
-  const lead = faint("---- ");
-  const tail = Math.max(3, width - visLen(lead) - visLen(header) - 1);
+  const surface = F.surfaceWidth();
+  // /status is the header, expanded -- so it opens with the header's own
+  // masthead and the header's own two-tone rule. It used to say the same thing
+  // in a different dialect: a lowercase name inlaid into a line of repeated
+  // hyphens, which is the texture the rest of the UI dropped when hairlines
+  // replaced dash rules, and a card whose first row disagreed with the row
+  // pinned at the top of the same window.
+  const mark = F.lockup(PRODUCT_NAME, s.version ?? PRODUCT_VERSION);
   return [
     "",
-    `${lead}${header} ${faint("-".repeat(tail))}`,
+    `${F.MARK}${mark.text}`,
+    F.seamRule(surface, mark.cells),
     ...kvRows.map((row) => `${F.MARK}${row.trimStart()}`),
-    faint("-".repeat(width)),
+    F.hairline(surface),
     "",
   ].join("\n");
 }
