@@ -17,21 +17,54 @@ scaffold the real runnable project, make the core loop work, THEN apply this
 skill to its UI. Satisfying an application request with a static page is a
 failed task no matter how designed the page looks.
 
-## 1. Commit to ONE art direction before writing markup
+## 1. Decide the art direction WITH the user, before any markup
 
-Pick one and execute it to the last pixel — never average two:
+The failure this replaces: the agent announces "I'll handle the design" and
+produces its house style — one accent on a neutral ground — for a lab, a poem,
+and a music festival alike. Deciding silently is the defect. Four steps, in
+order, and none of them is optional for a user-facing deliverable.
 
-- **Calm instrument panel** — near-black ground (#0b0c0e-ish), one accent, hairline
-  borders (1px, ~12% white), muted grays, tabular numerals. For dashboards, tools,
-  dev products.
-- **Warm editorial** — cream/paper ground, a serif display face, mono microlabels,
-  generous measure (~65ch), rules not boxes. For content, reports, reading.
-- **Brutalist print** — stark white, giant type, numbered sections, thick rules,
-  zero decoration. For portfolios, manifestos, single-message pages.
-- **Soft product light** — off-white ground, one saturated accent, large radii used
-  CONSISTENTLY, real shadows (one elevation system, not soup). For consumer apps.
+**1. Name the subject and its genre, in one line.**
+"This is a comparative-genomics lab: an instrument, read by scientists, whose
+authority comes from rigour." Not "a website".
 
-If the project already has a design system or brand, match it exactly instead.
+**2. Look up how that genre actually looks NOW.**
+One `web_search` round on the subject's design conventions, plus a `web_fetch`
+of one or two real examples in that space. What you remember is a hypothesis;
+current practice moves. Say in one line what the references had in common.
+
+**3. Offer the user two or three directions — then WAIT.**
+Open `art-directions.md` (beside this file), take the candidate row for the
+subject, and put them to the user with `ask_user`. Each option must be concrete
+enough to picture:
+
+> "Swiss / International — white ground, strict visible grid, Helvetica-class
+> type in three sizes, red as the only accent, zero decoration. Reads as an
+> instrument."
+> "Editorial — cream paper, serif display, 65ch measure, rules instead of
+> boxes, marginal notes. Reads as a published study."
+> "Minimal dark — near-black, one cyan accent, hairline borders, tabular
+> numerals. Reads as a live console."
+
+Never "minimal or modern?" — those are not choices, they are adjectives. Name
+the ground, the type, and the one signature move for each.
+
+**4. Commit, and write the tokens first.**
+On the answer, write the token block — ground, surfaces, ink, one accent,
+semantic colours, type scale, spacing scale, radius family — as the FIRST thing
+in the stylesheet. Everything after is composed from those tokens. Never a
+literal colour outside the token block.
+
+**When to skip the ask (and only these):**
+- The project already has a design system, brand, or token file → match it.
+- The user already pinned a direction, a reference image, or a brand.
+- You are editing an existing screen's behaviour, not establishing its look.
+- `ask_user` is unavailable (4th gear with no user present) → then state the
+  direction and WHY it fits the genre in one line, and build that.
+
+**Scale the ceremony, not the care.** A single poem still gets a direction —
+Handwritten on paper texture with a marker underline, say — chosen deliberately
+and named in one line. Small does not mean default.
 
 ## 2. Structure does the design
 
