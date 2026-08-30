@@ -23,19 +23,7 @@
 // else is one of three greys. If a value is unknown it is absent -- no row here
 // ever pads itself with a reassuring guess.
 
-import {
-  bold,
-  colorEnabled,
-  danger,
-  faint,
-  heavy,
-  info,
-  muted,
-  ok,
-  quiet,
-  text,
-  warn,
-} from "./theme";
+import { bold, danger, faint, heavy, info, muted, ok, quiet, text, warn } from "./theme";
 import { glyph } from "./glyphs";
 import { termWidth, truncate, visLen, wrap } from "./render";
 
@@ -270,32 +258,26 @@ export interface FlowHeader {
 // tall, the same row it has always been.
 
 /**
- * The wordmark: letterspaced caps, knocked out of a filled chip.
+ * The wordmark: letterspaced caps at display weight.
  *
  * Tracking and case do the logotype half of the work -- one cell between
  * letters, which costs three columns and buys the entire difference between a
  * name and a mark. WEIGHT is the half a terminal will not sell you: `SGR 1` is
- * a request, and a host with no bold face for its font answers it with nothing,
- * which is exactly what this row looked like. So the mark is reversed out of
- * the identity colour instead (see theme.heavy) -- the one operation that makes
- * a stroke genuinely heavier, because the cell stops being paper and becomes
- * ink.
+ * a request and a host with no bold face answers it with nothing, which is
+ * exactly what this row looked like. theme.heavy() asks twice -- the colour
+ * before the attribute, and the pigment lifted off the ground -- because
+ * contrast is the one proxy for weight a terminal cannot decline.
  *
- * The two padding cells are part of the mark: a chip that starts flush against
- * its first letter reads as a highlight, not a lockup.
+ * It is three cells wider than the name and no cells taller. That ceiling is
+ * the whole constraint: a mark that needs a second row, or a filled block to
+ * be legible, has stopped being a name in a header and become a logo screen.
  *
  * Returns the painted string with the number of CELLS it occupies, because the
  * rule underneath changes weight at exactly that column and a caller cannot
  * measure a painted string without stripping it again.
  */
 export function lockup(name: string): { text: string; cells: number } {
-  const letters = name.toUpperCase().split("").join(" ");
-  // The padding cells belong to the CHIP, so they exist only when there is a
-  // chip to inset. Piped into a file or run under NO_COLOR there is no fill to
-  // sit inside, and two stray spaces around the name would be exactly that:
-  // stray. This also keeps the mark starting in the frame's own column, which
-  // is a law the launch-frame test enforces on every painted line.
-  const mark = colorEnabled ? ` ${letters} ` : letters;
+  const mark = name.toUpperCase().split("").join(" ");
   return { text: heavy(mark), cells: mark.length };
 }
 
@@ -307,10 +289,9 @@ export function versionTag(version: string): string {
 
 /** The gap that does the dividing. A vertical bar sat here while the row still
  *  carried four fields and needed a seam drawn for it; with one field left, the
- *  chip's own edge already separates it and the bar was one mark more than the
- *  row was saying. Two cells rather than three, because the chip ends in a
- *  padding cell of its own and the eye counts that one too. */
-const LOCKUP_GAP = "  ";
+ *  wordmark's own tracking already separates it and the bar was one mark more
+ *  than the row was saying. */
+const LOCKUP_GAP = "   ";
 
 /**
  * The header: a masthead and the rule that carries it.
