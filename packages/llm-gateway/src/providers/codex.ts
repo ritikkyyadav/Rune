@@ -11,6 +11,7 @@
 
 import { randomUUID } from "crypto";
 import type {
+  ReasoningEffort,
   ContentBlock,
   InferenceRequest,
   InferenceResponse,
@@ -98,9 +99,17 @@ export function toResponsesInput(messages: Message[]): unknown[] {
  * CLI sends to the ChatGPT backend. That backend does STRICT top-level parameter
  * validation and 400s ("Unsupported parameter: X") on anything it doesn't expect,
  * so we send ONLY its known fields:
- *   - reasoning carries `summary` only, NOT `effort` — the gpt-5.6 sol/terra/luna
- *     variants encode effort in the model name, and a top-level `reasoning.effort`
- *     is rejected here (it's an API-key-only param).
+ *   - reasoning carries BOTH `summary` and `effort`. This used to send `summary`
+ *     alone, on the belief that the sol/terra/luna variants encode effort in the
+ *     model name and that `reasoning.effort` was "an API-key-only param rejected
+ *     here". Both halves were wrong, and the cost was the whole product: every
+ *     ChatGPT-subscription session ran at the server default with `max`
+ *     unreachable, which is why a frontier model felt weaker here than a small
+ *     one on OpenRouter. Measured against the live backend on 2026-08-30 —
+ *     effort=low/medium/high/xhigh/max all return 200 on gpt-5.6-sol, and the
+ *     backend validates the field, naming its own set in the 400 it returns for
+ *     anything else. The real Codex CLI carries it too
+ *     (`model_reasoning_effort = "max"` in ~/.codex/config.toml).
  *   - `prompt_cache_key` (the session id) is included like Codex does.
  *   - `parallel_tool_calls` is TRUE. This used to be false "matching Codex",
  *     and it was the single largest source of wall-clock in the product: the
@@ -114,6 +123,29 @@ export function toResponsesInput(messages: Message[]): unknown[] {
  *     that; the agent loop already bounds real concurrency itself
  *     (maxParallelTools, default 8) and runs non-parallel-safe tools serially.
  */
+/**
+ * The effort value to send for a model, clamped to what that model accepts.
+ *
+ * The backend validates this and 400s the whole request on a value the model
+ * does not take — gpt-5.6-sol rejects "minimal", for instance, while the family
+ * as a whole lists it. A user's configured preference must never be able to
+ * hard-fail every request, so an unsupported value falls to the nearest
+ * supported neighbour rather than going out as-is.
+ */
+export function codexEffortFor(
+  model: string,
+  thinking?: { enabled: boolean; effort?: ReasoningEffort },
+): ReasoningEffort {
+  // Thinking explicitly off (utility calls, the fast classifier) wants the
+  // floor, not the default: hidden reasoning would eat a small budget whole.
+  if (thinking?.enabled === false) return "none";
+  const wanted = thinking?.effort ?? "high";
+  const m = model.toLowerCase();
+  // The gpt-5.6 line takes everything except "minimal" (measured).
+  if (/^gpt-5\.6/.test(m) && wanted === "minimal") return "low";
+  return wanted;
+}
+
 export function toResponsesBody(
   request: InferenceRequest,
   stream: boolean,
@@ -140,7 +172,7 @@ export function toResponsesBody(
     }));
   }
   if (reason) {
-    body.reasoning = { summary: "auto" };
+    body.reasoning = { summary: "auto", effort: codexEffortFor(request.model, request.thinking) };
     // Ask for encrypted reasoning back so store=false multi-turn works.
     body.include = ["reasoning.encrypted_content"];
   }

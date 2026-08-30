@@ -35,6 +35,14 @@ export interface GearConfig {
      * config needs it.
      */
     authentication?: AuthMethod;
+    /**
+     * Reasoning depth sent to every provider that has the dial (Codex/OpenAI
+     * `reasoning.effort`). Unset means "high" — see AgentLoop. This exists
+     * because the dial was previously unreachable: a ChatGPT-subscription
+     * session ran at the server default forever, with `max` available and no
+     * way to ask for it.
+     */
+    reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
     anthropic?: {
       apiKey: string;
       model: string;

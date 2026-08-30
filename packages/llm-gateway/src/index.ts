@@ -13,6 +13,7 @@ export type {
   ModelPricing,
   ProviderConfig,
   ProviderName,
+  ReasoningEffort,
   ResponseFormat,
   Role,
   StopReason,
@@ -23,6 +24,8 @@ export type {
 } from "./types";
 export {
   MODEL_PRICING,
+  providerCarriesImages,
+  reasoningEffortsFor,
   providerSupportsNativeSearch,
   providerAllowsGroundingWithTools,
 } from "./types";

@@ -238,6 +238,6 @@ describe("Anthropic / Codex fast-classifier params", () => {
       fastRequest({ model: "gpt-5.6-terra", provider: "codex", thinking: { enabled: true } }),
       false,
     );
-    expect(reasoned.reasoning).toEqual({ summary: "auto" });
+    expect(reasoned.reasoning).toEqual({ summary: "auto", effort: "high" });
   });
 });
