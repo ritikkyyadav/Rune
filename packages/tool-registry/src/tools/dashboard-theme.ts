@@ -39,6 +39,78 @@ export const THEME_CSS = `
   --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Inter", sans-serif;
   --mono: ui-monospace, "SF Mono", "IBM Plex Mono", Menlo, monospace;
 }
+
+/* ── Art directions ──
+   The dark bento grid below is one house style, and for a long time it was the
+   ONLY one: every view Gear rendered came out identical except for a single
+   accent hue, whether the subject was a genomics lab, a cost report, or a
+   music festival. That sameness is what reads as "generated".
+
+   These are token-level swaps, so every component class inherits them
+   untouched. Selected with the spec's 'direction' field (or by setting
+   data-direction on <html> from raw html). Each is a real direction, not a
+   recolour: ground, type, and the structural moves that make it read as
+   itself. See the frontend-design skill's art-directions.md for the full
+   catalogue and how to choose one WITH the user. */
+
+/* Editorial paper — for reports, studies, analysis meant to be READ. */
+:root[data-direction="paper"] {
+  --bg: #fbf8f1;
+  --panel: #ffffff;
+  --panel-2: #f4efe4;
+  --line: rgba(43, 35, 24, 0.14);
+  --line-strong: rgba(43, 35, 24, 0.28);
+  --ink: #1d1913;
+  --muted: #6a5f50;
+  --faint: #948873;
+  --accent: #9a3412;
+  --accent-soft: rgba(154, 52, 18, 0.12);
+  --up: #2f6b3f;
+  --down: #a32b32;
+  --warn: #9a6b12;
+  --info: #2c5d86;
+  --font: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+}
+:root[data-direction="paper"] .card { border-radius: 4px; box-shadow: 0 1px 2px rgba(43,35,24,.06); }
+:root[data-direction="paper"] .dash-title { font-size: 34px; font-weight: 600; letter-spacing: -0.01em; }
+:root[data-direction="paper"] .dash-sub { font-size: 15px; max-width: 62ch; }
+:root[data-direction="paper"] .prose { font-size: 15px; line-height: 1.7; color: var(--ink); }
+:root[data-direction="paper"] .kpi-label,
+:root[data-direction="paper"] .sec-title { font-family: var(--mono); letter-spacing: 0.06em; }
+
+/* Swiss / International — for scientific, institutional, archival work.
+   Authority from rigour: white, a strict rule system, red as the only accent,
+   and no decoration anywhere. Cards stop being cards. */
+:root[data-direction="swiss"] {
+  --bg: #ffffff;
+  --panel: #ffffff;
+  --panel-2: #f6f6f6;
+  --line: rgba(0, 0, 0, 0.16);
+  --line-strong: rgba(0, 0, 0, 0.85);
+  --ink: #000000;
+  --muted: #52525b;
+  --faint: #8a8a92;
+  --accent: #e1140a;
+  --accent-soft: rgba(225, 20, 10, 0.10);
+  --up: #1b7f3b;
+  --down: #e1140a;
+  --warn: #8a6d00;
+  --info: #17457a;
+  --font: "Helvetica Neue", Helvetica, Inter, Arial, sans-serif;
+}
+:root[data-direction="swiss"] .card {
+  background: transparent;
+  border: 0;
+  border-top: 2px solid var(--line-strong);
+  border-radius: 0;
+  padding: 14px 0 20px;
+  animation: none;
+}
+:root[data-direction="swiss"] .dash-title { font-size: 40px; font-weight: 700; letter-spacing: -0.03em; }
+:root[data-direction="swiss"] .kpi-value { font-weight: 700; }
+:root[data-direction="swiss"] .sec-rule { background: var(--line-strong); height: 2px; }
+:root[data-direction="swiss"] .chip { border-radius: 0; }
+
 *, *::before, *::after { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; min-height: 100%; }
 body {
@@ -404,6 +476,15 @@ export const SPEC_RENDERER_JS = `
   // Per-view art direction: a spec-level accent recolors the CSS tokens and
   // rotates the chart palette so the accent leads series/slice assignment.
   // Absent or invalid accents restore the defaults (updates can de-theme).
+  function applyDirection(direction) {
+    var allowed = { console: 1, paper: 1, swiss: 1 };
+    var el = document.documentElement;
+    if (direction && allowed[direction] && direction !== "console") {
+      el.setAttribute("data-direction", direction);
+    } else {
+      el.removeAttribute("data-direction");
+    }
+  }
   function applyAccent(accent) {
     var doc = document.documentElement;
     if (window.GEAR && !BASE_PALETTE) BASE_PALETTE = window.GEAR.palette.slice();
@@ -804,6 +885,7 @@ export const SPEC_RENDERER_JS = `
     charts.forEach(function (c) { try { c.destroy(); } catch (e) {} });
     charts = [];
     keyed = {};
+    applyDirection(spec.direction); // ground + type first: the accent sits ON it
     applyAccent(spec.accent); // before any chart exists: palette must lead
     var root = document.getElementById("gear-root");
     if (!root) return;
