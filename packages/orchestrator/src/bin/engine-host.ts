@@ -33,6 +33,8 @@ import {
 } from "../engine";
 import type { ProviderName } from "@gear/llm-gateway";
 import {
+  hasStoredCredential,
+  getPreset,
   adoptLegacyEnv,
   ensureGearHome,
   migrateLegacyHome,
@@ -167,15 +169,24 @@ function buildEngine(): Engine {
     return "openrouter";
   }
 
-  // Sticky last-used model wins if its provider still has credentials.
+  // The model you last used IS the model you get. Same fix as gear-cli's: the
+  // gate used to be a five-id hand-written list plus a credential check that
+  // only understood env vars and API keys, so a subscription provider (codex,
+  // copilot) failed both halves and the session opened on an auto-detected
+  // provider instead of the one that was chosen.
   const lastUsed = loadLastModel();
-  const sticky =
-    lastUsed && isCliProvider(lastUsed.provider) && hasCreds(lastUsed.provider) ? lastUsed : null;
+  const stickyUsable = (p: string): boolean =>
+    getPreset(p) !== undefined &&
+    (p === "ollama" ||
+      p === "lmstudio" ||
+      hasStoredCredential(p) ||
+      (isCliProvider(p) && hasCreds(p)));
+  const sticky = lastUsed && stickyUsable(lastUsed.provider) ? lastUsed : null;
 
-  let provider: CliProvider;
+  let provider: ProviderName;
   let model: string;
   if (sticky) {
-    provider = sticky.provider as CliProvider;
+    provider = sticky.provider as ProviderName;
     model = sticky.model;
   } else {
     const configProvider = config.llm.defaultProvider;
@@ -215,6 +226,7 @@ function buildEngine(): Engine {
     yoloMode: permissionFlags.yoloMode,
     trustWorkspace: permissionFlags.trustWorkspace,
     permissionMode: permissionFlags.permissionMode,
+    reasoningEffort: config.llm?.reasoningEffort,
     autoMode: config.permissions?.autoMode,
     // Same posture resolution as the CLI, minus CLI flags (desktop has none).
     sandboxEnabled: resolveInitialSandbox({

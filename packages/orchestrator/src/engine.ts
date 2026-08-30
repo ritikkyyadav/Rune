@@ -1,6 +1,11 @@
-import { LlmGateway, CostTracker, BudgetExceededError } from "@gear/llm-gateway";
+import {
+  reasoningEffortsFor,
+  LlmGateway,
+  CostTracker,
+  BudgetExceededError,
+} from "@gear/llm-gateway";
 import { formatCostSummary } from "./cost-report";
-import type { Message, ProviderName, ResolvedCredential } from "@gear/llm-gateway";
+import type { ReasoningEffort, Message, ProviderName, ResolvedCredential } from "@gear/llm-gateway";
 import {
   ToolRegistry,
   registerBuiltinTools,
@@ -29,6 +34,7 @@ import type {
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
+  setConfigValue,
   SessionManager,
   hashArgs,
   hashResult,
@@ -117,6 +123,7 @@ import { createToolExecutionGuard } from "./security";
 import {
   AutoModeSafetyController,
   GatewayActionClassifier,
+  isHaltExemptTool,
   resolveAutoModeConfig,
   shouldRecordAutoModeDecision,
   type AutoModePolicyConfig,
@@ -356,6 +363,11 @@ export interface EngineConfig {
   trustWorkspace?: boolean;
   /** Independent reviewer + trust-boundary configuration for Auto mode. */
   autoMode?: AutoModePolicyConfig;
+  /**
+   * Reasoning depth for every model call this session makes. Unset = "high".
+   * Settable live with /config effort, persisted at llm.reasoningEffort.
+   */
+  reasoningEffort?: ReasoningEffort;
   /**
    * Stop the session once its METERED-EQUIVALENT cost passes this many US
    * dollars. Unset by default — a cap that surprises a user mid-task is worse
@@ -1675,9 +1687,21 @@ export class Engine {
         // A halt stands for the rest of the turn. Nothing is re-reviewed,
         // because re-reviewing is exactly the loop a captured agent would use
         // to find the one phrasing that gets through.
+        //
+        // Two things this must get right, both learned the expensive way.
+        // First, in-process bookkeeping still runs: denying `todo_write` while
+        // demanding a truthful report leaves the agent unable to record what
+        // it did not finish. Second, the denial carries `halt` so the agent
+        // loop can END the turn — without it the loop keeps serving turns, the
+        // agent keeps calling tools, and every one comes back with this same
+        // sentence until a generic loop detector eventually kills the session.
         if (this.autoHalt) {
+          if (isHaltExemptTool(toolName)) {
+            return { allowed: true };
+          }
           return {
             allowed: false,
+            halt: { reason: this.autoHalt.reason },
             reason:
               `Auto mode halted this run: ${this.autoHalt.reason} No further tool calls will run this turn. ` +
               "Write your report to the user now — what you were doing, what you had just read, and what you did not finish.",
@@ -1744,6 +1768,7 @@ export class Engine {
           }
           return {
             allowed: false,
+            ...(autoReview.haltRun ? { halt: { reason: autoReview.reason } } : {}),
             reason: `Auto mode blocked this action: ${autoReview.reason}`,
           };
         }
@@ -1794,7 +1819,7 @@ export class Engine {
 
       if (userDecision.kind === "deny") {
         autoRun.noteHumanDecision();
-        return { allowed: false, reason: "User denied" };
+        return { allowed: false, userDecision: true, reason: "User denied" };
       }
       if (userDecision.kind === "allow_session") {
         if (
@@ -3113,6 +3138,7 @@ export class Engine {
         retrievedChunks: repoMapChunks,
         verifier: this.verifier ?? undefined,
         nativeGrounding: this.config.search?.nativeGrounding ?? true,
+        thinkingEffort: this.config.reasoningEffort,
         onIncident: this.recorder ? (i: IncidentInput) => this.recorder?.record(i) : undefined,
         maxConsecutiveErrors: reliability.maxConsecutiveErrors,
         maxStuckNudges: reliability.maxStuckNudges,
@@ -3999,6 +4025,41 @@ export class Engine {
   /** The configured custom endpoint, if any (used to pre-fill the editor). */
   getCustomEndpoint(): CustomEndpoint | undefined {
     return this.customEndpoint;
+  }
+
+  /**
+   * The reasoning depth this session actually sends. Surfaced because the dial
+   * was invisible as well as unreachable: a user could not tell whether their
+   * subscription was being driven at "max" or at whatever the server chose.
+   */
+  getReasoningEffort(): string {
+    return this.config.reasoningEffort ?? "high";
+  }
+
+  /**
+   * Set the depth dial for this session and for the next one. Persisting is the
+   * point: a person who just chose "max" in the picker has made the decision
+   * once, and asking them to make it again at every startup is the jitter this
+   * replaces. Mirrors how a model pick persists without a second confirmation.
+   */
+  /**
+   * The depth to SHOW, or undefined where the model has no dial. The status
+   * line must not display a number that changes nothing — on Anthropic or
+   * Google the field is ignored entirely, and printing "high" there would be a
+   * readout of a control that does not exist.
+   */
+  getReasoningEffortLabel(): string | undefined {
+    const dial = reasoningEffortsFor(this.config.provider, this.getModel());
+    return dial.length > 0 ? this.getReasoningEffort() : undefined;
+  }
+
+  setReasoningEffort(effort: ReasoningEffort): void {
+    this.config.reasoningEffort = effort;
+    try {
+      setConfigValue("llm.reasoningEffort", effort, {});
+    } catch {
+      // A read-only config file must not cost the session its setting.
+    }
   }
 
   getModel(): string {

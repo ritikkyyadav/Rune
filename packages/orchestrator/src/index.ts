@@ -114,6 +114,7 @@ export {
   GatewayActionClassifier,
   resolveAutoModeConfig,
   classifyAutoModeTier,
+  isHaltExemptTool,
   assessActionRisk,
   ruleMatches,
   DEFAULT_AUTO_MODE_ENVIRONMENT,

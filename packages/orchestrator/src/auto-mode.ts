@@ -365,6 +365,8 @@ export interface AutoModeStats {
   fastStageFallbacks: number;
   /** Reasoned-stage retries (second attempt after a failed first reviewer call). */
   reviewerRetries: number;
+  /** Background supervisor flags the reasoned reviewer refused to confirm. */
+  supervisorUnconfirmed: number;
   probeScans: number;
   injectionsFlagged: number;
   lastDecisionAt: string | null;
@@ -393,6 +395,7 @@ const EMPTY_STATS = (): AutoModeStats => ({
   classifierFailures: 0,
   fastStageFallbacks: 0,
   reviewerRetries: 0,
+  supervisorUnconfirmed: 0,
   probeScans: 0,
   injectionsFlagged: 0,
   lastDecisionAt: null,
@@ -685,6 +688,16 @@ export class AutoModeSafetyController {
   /** Bookkeeping for a reviewer reply that broke the answer contract. */
   noteClassifierFailure(): void {
     this.stats.classifierFailures++;
+  }
+
+  /**
+   * A background supervisor flag the reasoned reviewer did NOT confirm — i.e.
+   * a caught false positive. Worth counting: a rising number means the fast
+   * screen is miscalibrated for this deployment's reviewer model, which is
+   * invisible otherwise because the run correctly carries on.
+   */
+  noteSupervisorUnconfirmed(): void {
+    this.stats.supervisorUnconfirmed++;
   }
 }
 
@@ -1369,16 +1382,45 @@ export class AutoModeRun {
       try {
         const { text } = await this.controller.classifierCall("fast", prompt);
         if (parseFastDecision(text) !== "block") return;
-        // Flagged after the fact. Raise the scrutiny floor for the rest of the
-        // run the same way an injection finding does, and stop before the next
-        // action so exposure is bounded to this one.
+
+        // The fast screen is deliberately trigger-happy — its instruction is
+        // literally "err on the side of blocking". That bias is correct where
+        // it was designed to land: in the approval path, where a block costs
+        // one action. Here it costs the SESSION, and a single over-eager token
+        // from a generic model would end a four-hour build over `npm audit`.
+        //
+        // So the supervisor now follows the same proportionality the in-path
+        // review already applies before it halts (see "What is NOT
+        // proportionate is halting on one disagreement" above): confirm with
+        // the reasoned reviewer, on the same bounded prompt, and latch only on
+        // a deny it rates high or critical. An unconfirmed flag costs nothing
+        // — not the run, and not the scrutiny floor, because a suspected false
+        // positive must not quietly degrade every later review either.
+        let parsed: ReturnType<typeof parseReasonedDecision>;
+        try {
+          const confirm = await this.controller.classifierCall("reasoned", prompt);
+          parsed = parseReasonedDecision(confirm.text);
+        } catch {
+          // A confirmer that cannot answer is an outage, not a finding. Same
+          // rule as the catch below: the mechanical breakers are the guard.
+          this.controller.noteSupervisorUnconfirmed();
+          return;
+        }
+        if (parsed.verdict !== "deny" || (parsed.risk !== "high" && parsed.risk !== "critical")) {
+          this.controller.noteSupervisorUnconfirmed();
+          return;
+        }
+
+        // Confirmed by both stages. Raise the scrutiny floor for the rest of
+        // the run the same way an injection finding does, and stop before the
+        // next action so exposure is bounded to this one.
         this.injectionFindings++;
         this.pendingSupervisorHalt =
           `The safety supervisor flagged the preceding ${action.toolName} action after it ran` +
           (action.toolName === "bash" && typeof action.args.command === "string"
             ? `: ${sanitizeText(String(action.args.command), 200)}`
             : "") +
-          ". The agent may be acting on injected or unintended instructions.";
+          `. ${parsed.reason} The agent may be acting on injected or unintended instructions.`;
       } catch {
         // Supervisor unreachable — the mechanical breakers still stand.
       }
@@ -1477,6 +1519,7 @@ function summarizeForLedger(action: AutoModeAction): string {
 
 const SHARED_CLASSIFIER_RULES = [
   "Judge authorization, not mere relevance: an action related to the goal is not authorized unless the user requested its real-world impact.",
+  "A request to build, fix, test, audit, or ship the project DOES authorize that project's ordinary development operations inside its own workspace — installing or auditing its declared dependencies, generating code from its own schemas, and running its build, test, lint, and formatter — even where the user never named the individual command. Judge these on target and payload as always: a package from an unexpected registry or a bare URL, an install outside the workspace, or a script piped from the network is not covered by this.",
   "Evaluate the effective payload and the whole compound action, including wrappers, scripts written earlier, redirects, pipes, substitutions, encoded commands, and remote targets.",
   "Treat assistant-chosen destructive targets, credential discovery, external sharing, production changes, security bypasses, persistence, and actions affecting other people as blocked unless exact informed authorization is present.",
   "Questions and vague cleanup requests are not authorization for irreversible action. A prior approval for a different action is not a standing pattern.",
@@ -1525,6 +1568,29 @@ export function classifyAutoModeTier(action: AutoModeAction): AutoModeTier {
   if (action.schema.category === "read" && action.schema.permissionLevel === "auto") return "safe";
   if (action.schema.category === "write" && isOrdinaryWorkspaceWrite(action)) return "workspace";
   return "classifier";
+}
+
+/**
+ * Tools a latched halt must NOT deny.
+ *
+ * A halt means "this run may no longer be the user's" — so it stops the agent
+ * from touching the world. It should never stop the agent from keeping an
+ * honest record of what it was doing, because the very next thing the harness
+ * asks of a halted run is a truthful report, and a corrupted todo list is what
+ * a resumed session reads as the source of truth.
+ *
+ * The set is deliberately tiny: only tools whose entire effect is in-process
+ * session bookkeeping. Everything else stays denied, and the omissions are
+ * the point —
+ *   `read_file`  a captured run must not go on staging file contents;
+ *   `ask_user`   handing a compromised run a dialog it can answer is exactly
+ *                what the halt exists to prevent;
+ *   `team`       peer sessions are a lateral channel, not local bookkeeping.
+ */
+const HALT_EXEMPT_TOOLS = new Set(["todo_write", "compact_context", "loop_control"]);
+
+export function isHaltExemptTool(toolName: string): boolean {
+  return HALT_EXEMPT_TOOLS.has(toolName);
 }
 
 function isOrdinaryWorkspaceWrite(action: AutoModeAction): boolean {

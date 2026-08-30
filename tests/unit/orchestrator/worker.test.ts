@@ -207,8 +207,117 @@ describe("worker tool — schema + end-to-end run", () => {
 
       expect(out.success).toBe(true);
       expect(out.result).toContain("Created widget.ts");
-      expect(out.result).toContain("worker changed 1 file: widget.ts");
+      // The report now ends in something the worker did not write: what is
+      // actually on disk, measured after the run.
+      expect(out.result).toContain("WORKER MANIFEST");
+      expect(out.result).toContain("widget.ts");
+      expect(out.result).toContain("1 file");
+      expect(out.result).toContain("NOT VERIFIED");
       expect(readFileSync(join(root, "widget.ts"), "utf8")).toContain("widget = () => 42");
+    },
+  );
+
+  // The defect this exists for: in one EvoLab build three workers wrote an
+  // entire backend, an entire frontend, and all the docs, and the orchestrator
+  // accepted their prose after opening seven files out of fifty-four. A file
+  // NAME cannot tell you whether a module is a module or a stub. A line count
+  // can, and the worker cannot inflate it.
+  test.skipIf(!HAS_RUST_BIN)(
+    "the manifest measures the file, so a stub cannot hide behind a confident report",
+    async () => {
+      const root = ws();
+      let call = 0;
+      const gateway = {
+        inferStream: async function* () {
+          call++;
+          if (call === 1) {
+            yield { type: "tool_use_start", toolCallId: "t1", toolName: "write_file" };
+            yield {
+              type: "tool_use_stop",
+              toolCallId: "t1",
+              toolInput: { path: "api.ts", content: "// TODO\nexport {};\n" },
+            };
+            yield { type: "message_stop", stopReason: "tool_use", usage: {} };
+          } else {
+            yield {
+              type: "content_delta",
+              contentIndex: 0,
+              delta: {
+                type: "text_delta",
+                text: "Implemented the complete REST API with full validation and error handling.",
+              },
+            };
+            yield { type: "message_stop", stopReason: "end_turn", usage: {} };
+          }
+        },
+      };
+      const tool = createWorkerTool({
+        binaryPath: RUST_BIN,
+        resolve: () => ({ gateway: gateway as any, model: "m", provider: "google" as any }),
+      });
+      const out = await tool.execute({
+        toolName: "worker",
+        callId: "c1",
+        args: { prompt: "Build the API", files: ["api.ts"] },
+        sessionId: "s",
+        workspaceRoot: root,
+      } as ToolCallInput);
+
+      // The prose claims a complete API ...
+      expect(out.result).toContain("complete REST API");
+      // ... and the measurement, right underneath, says three lines.
+      expect(out.result).toMatch(/\s3 lines\s/);
+      expect(out.result).toContain("NOT VERIFIED");
+    },
+  );
+
+  // The MISSING row is defensive and cannot be staged through the real tool
+  // (only a write that SUCCEEDED enters the changed set), so what is pinned
+  // here is the other half: a file that really landed is never mislabelled.
+  test.skipIf(!HAS_RUST_BIN)(
+    "a file that really was written is reported plainly, with no MISSING row",
+    async () => {
+      const root = ws();
+      let call = 0;
+      const gateway = {
+        inferStream: async function* () {
+          call++;
+          if (call === 1) {
+            // A write the guard will refuse: the path is not owned, so nothing
+            // lands on disk while the worker still reports success.
+            yield { type: "tool_use_start", toolCallId: "t1", toolName: "write_file" };
+            yield {
+              type: "tool_use_stop",
+              toolCallId: "t1",
+              toolInput: { path: "owned.ts", content: "export const a = 1;\n" },
+            };
+            yield { type: "message_stop", stopReason: "tool_use", usage: {} };
+          } else {
+            yield {
+              type: "content_delta",
+              contentIndex: 0,
+              delta: { type: "text_delta", text: "Done." },
+            };
+            yield { type: "message_stop", stopReason: "end_turn", usage: {} };
+          }
+        },
+      };
+      const tool = createWorkerTool({
+        binaryPath: RUST_BIN,
+        resolve: () => ({ gateway: gateway as any, model: "m", provider: "google" as any }),
+      });
+      const out = await tool.execute({
+        toolName: "worker",
+        callId: "c1",
+        args: { prompt: "Write it", files: ["owned.ts"] },
+        sessionId: "s",
+        workspaceRoot: root,
+      } as ToolCallInput);
+
+      // Sanity: this one really was written, so the happy path still reads normally.
+      expect(out.result).toContain("owned.ts");
+      expect(out.result).not.toContain("MISSING");
+      expect(existsSync(join(root, "owned.ts"))).toBe(true);
     },
   );
 

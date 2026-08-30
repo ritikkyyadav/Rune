@@ -21,7 +21,13 @@ export interface TodoItem {
   status: TodoStatus;
 }
 
-export type HandoffReason = "max_turns" | "context_exhausted" | "aborted" | "error";
+export type HandoffReason =
+  | "max_turns"
+  | "context_exhausted"
+  | "aborted"
+  | "error"
+  /** The safety broker halted the run; the agent reported and stopped. */
+  | "halted";
 
 export interface TaskState {
   version: 1;

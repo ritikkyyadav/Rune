@@ -176,6 +176,12 @@ export const TASK_TOOL_SCHEMA: ToolSchema = {
           "The task for the sub-agent to perform. Should be a self-contained, " +
           "read-only investigation (e.g. 'find where X is configured').",
       },
+      label: {
+        type: "string",
+        description:
+          "A 2-5 word name for this investigation ('map the deploy surface'), shown " +
+          "to the user on the live sub-agent panel while it runs.",
+      },
       context: {
         type: "string",
         description:
