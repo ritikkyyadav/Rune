@@ -1,22 +1,28 @@
 // --- Surface choice: which terminal UI a launch gets ---
 // Extracted pure so the DEFAULT is pinned by a test, not by folklore.
 //
-// Phase 03 collapsed two surfaces into one. Gear used to open on the ALTERNATE
-// screen by default, repainting the whole viewport each frame to paint a theme
-// background edge-to-edge. That bought a cohesive window on terminals which
-// ignore OSC 11 (Warp) and cost, in exchange: native scrollback, native
-// momentum scrolling, ⌘F, mouse selection, `| tee`, and — most visibly — an
-// empty session rendered as forty rows of painted nothing, because a program
-// that owns every cell has to fill every cell.
+// TWO layouts, and the default is the one with fixed chrome:
 //
-// None of that was worth a background colour, and the design forbids setting a
-// background anyway. So: one surface. The transcript is committed into ordinary
-// scrollback that the terminal owns, and Gear pins only the composer to the
-// bottom rows. `--classic` still opts into the plain readline printer, and a
-// pipe still gets no TUI at all.
+//   FIXED (default)  the alternate screen, split into a pinned header, a
+//                    scrolling transcript, and a pinned footer. The header and
+//                    the composer hold their rows; only the middle moves. This
+//                    is the product surface.
+//   INLINE (--inline / GEAR_INLINE)  the transcript is committed to the
+//                    terminal's own scrollback with only the composer pinned,
+//                    so native scrollback, momentum scrolling, mouse selection
+//                    and `| tee` keep working -- at the cost of the frame: a
+//                    wheel flick carries the header and the field away with it.
 //
-// `--fullscreen` / GEAR_FULLSCREEN are accepted and ignored, so a muscle-memory
-// invocation or an old alias does not error out.
+// The fixed surface used to be the default, was removed for the inline one, and
+// is the default again. What killed it the first time was not the alternate
+// screen: it was a compositor that asserted a theme BACKGROUND over every cell,
+// so an empty session rendered as a viewport of painted nothing. This one paints
+// no background at all -- unclaimed rows are erased to the terminal's own colour
+// -- so it inherits the user's theme exactly the way the inline surface does.
+//
+// `--classic` still opts into the plain readline printer, and a pipe still gets
+// no TUI at all. `--fullscreen` / GEAR_FULLSCREEN name the default and are
+// accepted as a no-op, so an old alias does not error out.
 
 export interface SurfaceFlags {
   isTTY: boolean;
@@ -24,19 +30,21 @@ export interface SurfaceFlags {
   tuiForced?: boolean;
   /** --classic: the plain readline printer path. */
   classicForced?: boolean;
-  /** --inline / GEAR_INLINE: now the only TUI layout; accepted as a no-op. */
+  /** --inline / GEAR_INLINE: the legacy native-scrollback layout. */
   inline?: boolean;
-  /** --fullscreen / GEAR_FULLSCREEN: retired with the alt screen. Ignored. */
+  /** --fullscreen / GEAR_FULLSCREEN: names the default. Accepted as a no-op. */
   fullscreenForced?: boolean;
 }
 
 export interface SurfaceChoice {
   useTui: boolean;
-  /** Always true when the TUI runs — there is no other layout. */
+  /** True only for the legacy layout: --inline / GEAR_INLINE. */
   inline: boolean;
 }
 
 export function resolveSurface(flags: SurfaceFlags): SurfaceChoice {
   const useTui = flags.isTTY && (Boolean(flags.tuiForced) || !flags.classicForced);
-  return { useTui, inline: true };
+  // --fullscreen asks for what it already gets, so it cannot contradict
+  // --inline; if both are given the explicit opt-out wins.
+  return { useTui, inline: Boolean(flags.inline) };
 }

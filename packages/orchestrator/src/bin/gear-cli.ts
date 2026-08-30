@@ -3,6 +3,7 @@ import { Engine } from "../engine";
 import { formatCostReport } from "../cost-report";
 import type { PermissionHandler, UserPermissionDecision } from "../engine";
 import {
+  hasStoredCredential,
   loadConfig,
   loadSecrets,
   providerKeyEntries,
@@ -204,9 +205,9 @@ if (values.help) {
         `    --trust                      Legacy alias for --gear 3 (workspace trust)\n` +
         `    --classic                    Plain readline prompt (default is the pinned composer)\n` +
         `    --tui                        Force the Codex-style pinned composer\n` +
-        `    --inline                     Accepted, no-op — the only TUI layout since the\n` +
-        `                                 alternate screen was retired\n` +
-        `    --inline                     Use legacy native-scrollback layout\n` +
+        `    --inline                     Legacy layout: transcript in the terminal's own scrollback,\n` +
+        `                                 only the composer pinned (default pins header + composer)\n` +
+        `    --fullscreen                 Accepted, no-op — names the default fixed-chrome layout\n` +
         `    --pristine                   Run without the learned tactics notebook (evolution control group)\n` +
         `    --sandbox / --no-sandbox     Force the OS command sandbox on/off for this run (overrides /sandbox + config)\n` +
         `    --browser / --no-browser     Force the agent browser (Playwright MCP) on/off for this run (overrides /browser + config)\n` +
@@ -688,18 +689,28 @@ async function main() {
     );
   };
 
-  // The model the user last picked sticks across sessions: it wins over the config default (but not
-  // over an explicit --model/--provider) as long as its provider still has credentials — otherwise
-  // we fall through rather than boot a keyless provider. This is why a fresh session resumes e.g.
-  // ollama-turbo/gpt-oss:120b instead of resetting to the built-in google/gemini-2.5-flash.
+  // The model you last used IS the model you get. It loses only to an explicit
+  // --model/--provider on this run; nothing else outranks it, and there is no
+  // separate "default" to keep in sync.
+  //
+  // This used to be gated on `isCliProvider`, a hand-written list of seven ids
+  // that was never updated when the subscription providers were added — so a
+  // sticky `codex` model failed the gate and every new session silently opened
+  // on an auto-detected google/gemini-2.5-flash instead of the GPT-5.6 the user
+  // had chosen. `hasCreds` was the second half of the same bug: it knew env
+  // vars, [llm.*].apiKey and the legacy secrets file, none of which a
+  // subscription provider uses. Both are now asked of the provider registry and
+  // the credential store, so adding a provider cannot break stickiness again.
   const lastUsed = !cliProvider && !values.model ? loadLastModel() : null;
-  const sticky =
-    lastUsed && isCliProvider(lastUsed.provider) && hasCreds(lastUsed.provider) ? lastUsed : null;
+  const stickyUsable = (p: string): boolean =>
+    getPreset(p) !== undefined &&
+    (LOCAL_PROVIDERS.has(p) || hasStoredCredential(p) || (isCliProvider(p) && hasCreds(p)));
+  const sticky = lastUsed && stickyUsable(lastUsed.provider) ? lastUsed : null;
 
-  let provider: CliProvider;
+  let provider: ProviderName;
   let model: string;
   if (sticky) {
-    provider = sticky.provider as CliProvider;
+    provider = sticky.provider as ProviderName;
     model = sticky.model;
   } else {
     // CLI arg first, then config (only if that provider has a key), then auto-detect.
@@ -812,6 +823,7 @@ async function main() {
     trustWorkspace,
     permissionMode,
     autoMode: config.permissions?.autoMode,
+    reasoningEffort: config.llm?.reasoningEffort,
     sandboxEnabled,
     sandboxRequireOs: config.sandbox?.requireOs === true,
     lspAutoFeedback: config.lsp?.autoFeedback === true,
@@ -989,10 +1001,10 @@ async function main() {
 
   // ─── Composer mode decision (needed before session resolution) ───
   // The TUI — the focused terminal workbench from docs/design/gear-customizer.html — is the default on
-  // interactive terminals. The customizer's browser navigation and page canvas are deliberately
-  // excluded. `--inline` remains a compatibility escape hatch for users who value native terminal
-  // scrollback over the product surface. Piped/non-TTY stdin and `--classic` / GEAR_CLASSIC fall
-  // back to the plain readline prompt; `--tui` / GEAR_TUI force the TUI even past `--classic`.
+  // interactive terminals, with fixed chrome: a pinned header, a scrolling transcript and a pinned
+  // composer. `--inline` remains the escape hatch for users who value the terminal's own scrollback
+  // over a fixed frame. Piped/non-TTY stdin and `--classic` / GEAR_CLASSIC fall back to the plain
+  // readline prompt; `--tui` / GEAR_TUI force the TUI even past `--classic`.
   const surface = resolveSurface({
     isTTY: !!process.stdin.isTTY,
     classicForced: (values.classic as boolean) || !!process.env.GEAR_CLASSIC,
@@ -1213,6 +1225,7 @@ async function main() {
       yoloMode,
       trustWorkspace,
       customCommands,
+      inline: surface.inline,
     });
     return;
   }

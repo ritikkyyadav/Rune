@@ -493,3 +493,33 @@ describe("TurnRenderer — the plan is set down once, not on every tick", () => 
     expect(h.rung()).toContain("1/3 steps");
   });
 });
+
+// A run the safety broker halted is not a finished run. Rendering it like one
+// is the same dishonesty the turn-ceiling row was added to fix: silence reads
+// as success, and here it would also invite the user to walk straight back
+// into whatever tripped the halt.
+describe("a halted run closes honestly", () => {
+  it("says the safety broker stopped it, and does not offer a plain retry", () => {
+    const h = harness();
+    h.turn.onEvent({ type: "text_delta", text: "I was verifying the release when I was stopped." });
+    h.turn.onEvent({ type: "turn_complete", stopReason: "halted", totalTurns: 2 } as any);
+    h.turn.finish();
+
+    const out = h.output();
+    expect(out).toContain("safety halted the run");
+    expect(out).toContain("the task is not finished");
+    expect(out).toContain("check what it read");
+    expect(out).not.toContain("send a follow-up to continue");
+  });
+
+  it("still calls a turn ceiling a turn ceiling", () => {
+    const h = harness();
+    h.turn.onEvent({ type: "text_delta", text: "Working." });
+    h.turn.onEvent({ type: "turn_complete", stopReason: "max_turns", totalTurns: 80 } as any);
+    h.turn.finish();
+
+    const out = h.output();
+    expect(out).toContain("ran out of turns");
+    expect(out).toContain("send a follow-up to continue");
+  });
+});

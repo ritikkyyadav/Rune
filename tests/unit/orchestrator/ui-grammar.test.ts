@@ -116,6 +116,36 @@ describe("the grammar law — one left edge", () => {
     setTermWidthOverride(undefined as unknown as number);
   });
 
+  it("the fleet panel stands on the rail, at any width", () => {
+    for (const columns of [60, 100, 160, 240]) {
+      setTermWidthOverride(columns);
+      const commits: string[] = [];
+      const sink: TurnSink = { commit: (b) => commits.push(b), preview: () => {} };
+      const turn = new TurnRenderer(sink, { getCost: () => 0 });
+      for (const [id, label] of [
+        ["c1", "map the deploy surface"],
+        ["c2", "find the auth store"],
+      ] as const) {
+        turn.onEvent({ type: "tool_call_start", callId: id, toolName: "task" });
+        turn.onEvent({
+          type: "tool_call_args_delta",
+          callId: id,
+          partialJson: JSON.stringify({ label, prompt: "…" }),
+        });
+        turn.onEvent({ type: "tool_progress", callId: id, note: "", state: "started" });
+        turn.onEvent({ type: "tool_progress", callId: id, note: "grep content_block_stop" });
+      }
+      for (const line of turn.liveLines()) {
+        expect(hasFarMarginGap(line), `fleet @ ${columns}: ${JSON.stringify(plain(line))}`).toBe(
+          false,
+        );
+        // The panel earns rows, never columns: nothing here outruns the window.
+        expect(plain(line).length).toBeLessThanOrEqual(columns);
+      }
+    }
+    setTermWidthOverride(undefined as unknown as number);
+  });
+
   it("the read-back stands on the same ladder, not its own", () => {
     setTermWidthOverride(120);
     const block = renderReadBack({

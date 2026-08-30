@@ -73,6 +73,77 @@ interface CurrentTool {
   args: Record<string, unknown>;
 }
 
+/**
+ * One member of a delegation fleet, as the panel above the composer sees it.
+ *
+ * A fan-out used to render as `3 sub-agents running | grep backend` -- a count,
+ * and one borrowed heartbeat from whichever of the three reported last. Which
+ * one was greping, what the other two were asked, whether any had already come
+ * back: none of it was on the screen, for however many minutes the slowest
+ * member took. This is the state that makes each of them a row.
+ */
+interface FleetAgent {
+  callId: string;
+  /** `task` (read-only scout) or `worker` (write-capable builder). */
+  kind: "task" | "worker";
+  /** Streamed argument JSON, accumulated per call -- `currentTool` only ever
+   *  holds the newest, so a fleet's earlier members would otherwise be
+   *  anonymous by the time they start running. */
+  argsJson: string;
+  /** What this one was sent to do: its `label`, else the head of its prompt. */
+  brief: string;
+  /** `queued` until the loop actually starts it -- a fan-out wider than the
+   *  parallel ceiling waits, and a waiting scout is not a running one. */
+  state: "queued" | "running" | "done" | "failed";
+  /** When execution began / ended. Absent while queued: an unknown clock is
+   *  left blank rather than started at a convenient moment. */
+  startedAt?: number;
+  endedAt?: number;
+  /** The heartbeat on screen, and the one waiting to replace it. Held to the
+   *  same dwell as the rung: a row that changes four times a second is not
+   *  information, it is a flicker with a name on it. */
+  note: string;
+  noteAt: number;
+  wantNote: string;
+  /** Tool calls this member has completed -- one per heartbeat. */
+  steps: number;
+}
+
+/** How many fleet rows the panel draws before it collapses the remainder into
+ *  a `+N more` line. Six is about where a list stops being scannable, and the
+ *  footer is not allowed to become the screen. */
+const FLEET_ROWS = 6;
+
+/** A worker keys its heartbeats with its own id (`w1 edit_file src/x.ts`) so
+ *  the old single-line rung could tell one member of a fleet from another. On
+ *  a row that already names the member, that prefix is the same fact twice. */
+function stripWorkerId(note: string): string {
+  return note.replace(/^w\d+\s+/, "");
+}
+
+/**
+ * What a fleet member is called on screen.
+ *
+ * The `label` the model wrote for this call, which is the only part of the row
+ * it authors -- else the head of the prompt, which is a whole contract and
+ * therefore reads as a paragraph cut in half, which is exactly why `label`
+ * exists -- else what kind of thing it is, while the arguments are still
+ * streaming and there is genuinely nothing to say yet.
+ */
+function fleetBrief(agent: FleetAgent): string {
+  const args = partialArgs(agent.argsJson);
+  const label = typeof args.label === "string" ? oneLine(args.label, 44) : "";
+  if (label) return label;
+  const prompt = typeof args.prompt === "string" ? oneLine(args.prompt, 44) : "";
+  return prompt || agent.brief;
+}
+
+/** Elapsed between two marks, in the rung's own words. */
+function span(from: number, to: number): string {
+  const seconds = Math.max(0, Math.floor((to - from) / 1000));
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
 const PHASE_DEFAULT: Record<WorkPhase, string> = {
   understand: "Reading the task and gathering context",
   plan: "Shaping a reliable approach",
@@ -238,7 +309,7 @@ function partialArgs(raw: string): Record<string, unknown> {
   const parsed = tryJson(raw);
   if (parsed) return parsed;
   const result: Record<string, unknown> = {};
-  for (const key of ["path", "pattern", "command", "query", "q"]) {
+  for (const key of ["path", "pattern", "command", "query", "q", "label"]) {
     const match = new RegExp(`"${key}"\\s*:\\s*"([^"\\n]*)"`).exec(raw);
     if (match?.[1]) result[key] = match[1].replace(/\\n/g, " ").replace(/\\"/g, '"');
   }
@@ -318,8 +389,7 @@ export function responseBlock(markdown: string): string {
 }
 
 function duration(startedAt: number): string {
-  const seconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
-  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  return span(startedAt, Date.now());
 }
 
 function plural(count: number, singular: string, many = singular + "s"): string {
@@ -397,12 +467,14 @@ export class TurnRenderer {
   private checks: CheckEvidence[] = [];
   private currentTool: CurrentTool | null = null;
   /**
-   * Every started-but-unfinished call this turn, by callId. `currentTool` is
-   * the newest streamed call and goes null on the FIRST end -- with several
-   * parallel sub-agents in flight that read as "thinking" while four workers
-   * were still building. This map keeps the rung honest for the whole fleet.
+   * Every started-but-unfinished DELEGATION this turn, by callId, in the order
+   * the model dispatched them. `currentTool` is the newest streamed call and
+   * goes null on the FIRST end -- with several parallel sub-agents in flight
+   * that read as "thinking" while four workers were still building. This map
+   * keeps the rung honest for the whole fleet, and carries what each member is
+   * doing so the panel can show it (see fleetLines).
    */
-  private pendingCalls = new Map<string, string>();
+  private fleet = new Map<string, FleetAgent>();
   private phase: WorkPhase = "understand";
   private intent = PHASE_DEFAULT.understand;
   private toolCalls = 0;
@@ -505,8 +577,161 @@ export class TurnRenderer {
       F.flowRow(`${F.MARK}${mark} ${muted(label)}`, faint(F.receiptOf(this.receipt()))),
     ];
     if (detail) lines.push(`${F.BODY}${faint(truncate(detail, F.proseWidth()))}`);
+    lines.push(...this.fleetLines());
     lines.push(...this.streamingProseTail());
     return lines;
+  }
+
+  /**
+   * The fleet panel: one row per sub-agent in flight, on the same rail their
+   * finished calls will land on.
+   *
+   *     | > scout  map the deploy surface  grep backend · 1m 2s
+   *     | > scout  find the auth store  read_file src/auth.ts · 58s
+   *     | . work   build the settings page  done · 12 steps · 41s
+   *     |   scout  survey the migration scripts  queued
+   *
+   * The left half is what each one was SENT to do and does not move; the right
+   * half is what it is doing now. That split is the whole point -- a fleet
+   * reported as one shared heartbeat (`3 sub-agents running | grep backend`)
+   * tells you something is happening and nothing about who, and three minutes
+   * of it reads as being locked out of the room the work is in.
+   *
+   * Rows stay in dispatch order, including after one finishes: a list that
+   * re-sorts itself under the eye cannot be tracked, and the point of the panel
+   * is that the second row is still the same sub-agent it was a minute ago.
+   */
+  private fleetLines(): string[] {
+    if (this.fleet.size === 0) return [];
+    const now = Date.now();
+    const agents = [...this.fleet.values()];
+    const rows = agents.slice(0, FLEET_ROWS).map((agent) => this.fleetRow(agent, now));
+    const hidden = agents.length - Math.min(agents.length, FLEET_ROWS);
+    if (hidden > 0) rows.push(F.railRow(faint(`+${hidden} more`)));
+    return rows;
+  }
+
+  /**
+   * Fold one heartbeat -- or one lifecycle marker from the loop -- into the
+   * member it belongs to.
+   *
+   * The two markers are the difference between a panel and a guess. `started`
+   * is when the loop actually ran this call, which is not when the model
+   * finished writing it: a fan-out wider than the parallel ceiling waits its
+   * turn, and drawing a waiting scout as a running one would put a climbing
+   * clock next to work that has not begun. `settled` is when it came back, and
+   * without it a member that finished early keeps its row saying `running`
+   * until the whole batch lands -- which for the fastest of five workers meant
+   * minutes of the screen being wrong.
+   */
+  private trackFleetProgress(
+    callId: string,
+    note: string,
+    state: "started" | "settled" | undefined,
+    ok: boolean,
+  ): void {
+    const agent = this.fleet.get(callId);
+    if (!agent) return;
+    const now = Date.now();
+    if (state === "started") {
+      agent.state = "running";
+      agent.startedAt = now;
+      return;
+    }
+    if (state === "settled") {
+      agent.state = ok ? "done" : "failed";
+      agent.endedAt = now;
+      // What it was doing a second ago stops being the news the moment it is
+      // back; the row reports what it came back AS instead.
+      agent.note = "";
+      agent.wantNote = "";
+      return;
+    }
+    if (!note) return;
+    const clean = stripWorkerId(note);
+    // A mid-run model swap arrives as a MARKER rather than a tool name (see
+    // subagent.ts): news about the run, not a step the sub-agent took, and
+    // counting it would inflate the tally with something it never did. Tool
+    // names are ASCII, so a leading non-ASCII cell is what a marker looks like
+    // -- named that way rather than by the glyph itself, which belongs to the
+    // closed set and not to a literal in here.
+    if (!/^[^\x00-\x7f]/.test(clean)) agent.steps++;
+    agent.wantNote = truncate(clean, 40);
+    if (agent.state === "queued") {
+      // A heartbeat is proof it is running, whichever order the markers arrived
+      // in -- the panel never needs the loop to agree with itself first.
+      agent.state = "running";
+      agent.startedAt ??= now;
+    }
+    // The first note goes up immediately. Only a REPLACEMENT waits its dwell:
+    // there is nothing to protect on a row that has said nothing yet.
+    if (!agent.note) {
+      agent.note = agent.wantNote;
+      agent.noteAt = now;
+    }
+  }
+
+  private fleetRow(agent: FleetAgent, now: number): string {
+    // The heartbeat holds for a beat before it is replaced, for the same reason
+    // the rung above it does -- see steadyFrame. The 125ms tick re-renders, so
+    // a note held here is shown as soon as its predecessor has been read.
+    if (agent.wantNote !== agent.note && now - agent.noteAt >= DWELL_MS) {
+      agent.note = agent.wantNote;
+      agent.noteAt = now;
+    }
+    // Padded to the longer of the two verbs: a fleet is a LIST, and a list of
+    // mixed scouts and workers whose briefs start one column apart reads as
+    // ragged rather than as a column. (toolRow's own pad is 4 and never shrinks
+    // a name, so this only ever adds the cell `work` is missing.)
+    const verb = (agent.kind === "worker" ? "work" : "scout").padEnd(5);
+    // A queued member has no clock to show, and `0s` beside one that started a
+    // moment ago is noise pretending to be data -- the same floor the rung keeps.
+    const until = agent.endedAt ?? now;
+    const elapsed =
+      agent.startedAt == null || until - agent.startedAt < ELAPSED_AFTER_MS
+        ? ""
+        : span(agent.startedAt, until);
+    switch (agent.state) {
+      case "queued":
+        return F.toolRow({ name: verb, arg: agent.brief, metric: "queued", status: "none" });
+      case "done":
+      case "failed": {
+        const outcome = agent.state === "done" ? "done" : "failed";
+        const steps = agent.steps > 0 ? plural(agent.steps, "step") : "";
+        return F.toolRow({
+          name: verb,
+          arg: agent.brief,
+          metric: F.receiptOf([outcome, steps, elapsed]),
+          status: agent.state === "done" ? "ok" : "fail",
+        });
+      }
+      default:
+        return F.toolRow({
+          name: verb,
+          arg: agent.brief,
+          metric: F.receiptOf([this.fittedNote(agent, elapsed), elapsed]),
+          status: "active",
+        });
+    }
+  }
+
+  /**
+   * The heartbeat, cut to what is left of the row after everything that
+   * outranks it.
+   *
+   * Order of precedence on a narrow terminal: WHO (the brief), then HOW LONG
+   * (the clock, which is how a stuck member is spotted), then what it is doing
+   * this second. Letting flowRow truncate the whole line instead put the cut in
+   * the wrong place -- it ate the clock and left three letters of a path, which
+   * is a row that has given up half its meaning to say `read_f…`. Below a
+   * readable remainder the note is dropped whole rather than stubbed.
+   */
+  private fittedNote(agent: FleetAgent, elapsed: string): string {
+    if (!agent.note) return "";
+    // rail + mark + verb + the two-space joins around the brief and the receipt.
+    const spent = 2 + 5 + 2 + agent.brief.length + 2 + (elapsed ? elapsed.length + 3 : 0);
+    const room = F.railWidth() - spent;
+    return room >= 12 ? truncate(agent.note, room) : "";
   }
 
   /**
@@ -550,7 +775,7 @@ export class TurnRenderer {
 
   /** What the rung would say if it could change this instant. */
   private liveLabel(): string {
-    if (this.currentTool || this.pendingCalls.size > 0) return "working";
+    if (this.currentTool || this.fleet.size > 0) return "working";
     if (this.verificationRunning) return "checking";
     return this.prose.trim() ? "answering" : "thinking";
   }
@@ -599,19 +824,21 @@ export class TurnRenderer {
   /** What the rung is waiting on: the in-flight tool, else the active plan step,
    * else the phase intent the renderer inferred from the stream. */
   private liveDetail(): string {
-    // A FLEET of parallel sub-agents reads as one calm sentence -- count plus
-    // the freshest heartbeat -- instead of whichever call streamed last (or,
-    // worse, "thinking" after the first of five workers finished).
-    const fleet = [...this.pendingCalls.values()].filter((n) => n === "task" || n === "worker");
+    // A FLEET of parallel sub-agents reads as one calm sentence -- the count,
+    // and how much of it is already back -- instead of whichever call streamed
+    // last (or, worse, "thinking" after the first of five workers finished).
+    // What each member is DOING is a row of its own now (fleetLines), so this
+    // line no longer borrows one member's heartbeat to speak for all of them.
+    const fleet = [...this.fleet.values()];
     if (fleet.length >= 2 || (fleet.length === 1 && !this.currentTool)) {
-      const uniform = new Set(fleet);
-      const noun = uniform.size === 1 && uniform.has("worker") ? "worker" : "sub-agent";
-      const note =
-        this.toolProgressNote && this.pendingCalls.has(this.toolProgressNote.callId)
-          ? ` | ${this.toolProgressNote.note}`
-          : "";
-      if (fleet.length === 1) return `${noun} running${note}`;
-      return `${fleet.length} ${noun}s running${note}`;
+      const noun = fleet.every((a) => a.kind === "worker") ? "worker" : "sub-agent";
+      const settled = fleet.filter((a) => a.state === "done" || a.state === "failed").length;
+      const queued = fleet.filter((a) => a.state === "queued").length;
+      const head = fleet.length === 1 ? noun : `${fleet.length} ${noun}s`;
+      if (settled > 0 && settled === fleet.length) return F.receiptOf([head, "all back"]);
+      if (settled > 0) return F.receiptOf([head, `${settled} back`]);
+      if (queued === fleet.length) return `${head} dispatched`;
+      return `${head} running`;
     }
     if (this.currentTool) {
       const base = liveToolLabel(this.currentTool.name, this.currentTool.args);
@@ -898,17 +1125,21 @@ export class TurnRenderer {
         this.pulse.feed(PULSE_WEIGHT.callback);
         this.prose = "";
         this.currentTool = null;
-        this.pendingCalls.clear();
+        this.fleet.clear();
         this.activity = null;
         this.updateLive();
         return;
 
-      case "tool_progress":
-        // Sub-agent/worker heartbeat: shown on the rung, never committed.
+      case "tool_progress": {
+        // Sub-agent/worker heartbeat: shown live, never committed.
         this.pulse.feed(PULSE_WEIGHT.heartbeat);
-        this.toolProgressNote = { callId: event.callId, note: String(event.note ?? "") };
+        const callId = String(event.callId ?? "");
+        const note = String(event.note ?? "");
+        if (note) this.toolProgressNote = { callId, note };
+        this.trackFleetProgress(callId, note, event.state, event.ok !== false);
         this.updateLive();
         return;
+      }
 
       case "tool_call_start": {
         this.pulse.feed(PULSE_WEIGHT.callback);
@@ -922,15 +1153,29 @@ export class TurnRenderer {
         // Fleet tracking is DELEGATION-only: ordinary tools keep the single
         // `currentTool` slot (and its unpaired-event tolerance); task/worker
         // calls are the ones that genuinely run as a concurrent fleet.
+        //
+        // Dispatched, not running: the model is still streaming this message
+        // and the loop has not started a thing yet. The row says so until the
+        // loop's `started` marker arrives.
         if (this.currentTool.name === "task" || this.currentTool.name === "worker") {
-          this.pendingCalls.set(this.currentTool.callId, this.currentTool.name);
+          this.fleet.set(this.currentTool.callId, {
+            callId: this.currentTool.callId,
+            kind: this.currentTool.name,
+            argsJson: "",
+            brief: this.currentTool.name === "worker" ? "building" : "investigating",
+            state: "queued",
+            note: "",
+            noteAt: 0,
+            wantNote: "",
+            steps: 0,
+          });
         }
         this.activity = runningLabel(this.currentTool.name);
         this.setPhase(phaseForTool(this.currentTool.name, {}));
         return;
       }
 
-      case "tool_call_args_delta":
+      case "tool_call_args_delta": {
         if (this.currentTool && (!event.callId || event.callId === this.currentTool.callId)) {
           this.pulse.feed(String(event.partialJson ?? "").length);
           this.currentTool.argsJson += String(event.partialJson ?? "");
@@ -938,7 +1183,16 @@ export class TurnRenderer {
           this.activity = liveToolLabel(this.currentTool.name, this.currentTool.args);
           this.setPhase(phaseForTool(this.currentTool.name, this.currentTool.args));
         }
+        // A fleet member keeps its OWN argument stream. `currentTool` holds
+        // only the newest call, so by the time three scouts are running the
+        // first two would have had nothing to be identified by.
+        const member = this.fleet.get(String(event.callId ?? ""));
+        if (member) {
+          member.argsJson += String(event.partialJson ?? "");
+          member.brief = fleetBrief(member);
+        }
         return;
+      }
 
       case "tool_call_end": {
         this.pulse.feed(PULSE_WEIGHT.callback);
@@ -947,7 +1201,9 @@ export class TurnRenderer {
         this.setPhase(phase);
         this.recordTool(event);
         const failedCheck = this.checks.at(-1)?.status === "failed" && phase === "verify";
-        this.pendingCalls.delete(String(event.callId ?? ""));
+        // The member's row has just been set down in the transcript in full, so
+        // the panel gives up its slot rather than reporting the same call twice.
+        this.fleet.delete(String(event.callId ?? ""));
         this.currentTool = null;
         this.lastToolEndAt = Date.now();
         this.activity = null;
@@ -1022,7 +1278,7 @@ export class TurnRenderer {
         this.currentTool = null;
         // Loop invariant: verification only starts once the turn's tool batch
         // is fully done -- anything still marked pending is a stale leftover.
-        this.pendingCalls.clear();
+        this.fleet.clear();
         this.activity = null;
         this.verificationRunning = true;
         this.setPhase("verify", "Running the project checks");
@@ -1177,12 +1433,16 @@ export class TurnRenderer {
 
       case "turn_complete":
         this.turnCount = Math.max(this.turnCount, Number(event.totalTurns ?? 0));
-        this.pendingCalls.clear();
+        this.fleet.clear();
         this.retrying = null;
         // A run that hit a ceiling is NOT a finished run -- remember why so
         // the closing row can say so. Before this, `stopReason` was read by
         // nothing: an 80-turn cap death rendered identically to success.
-        if (event.stopReason === "max_turns" || event.stopReason === "max_tokens") {
+        if (
+          event.stopReason === "max_turns" ||
+          event.stopReason === "max_tokens" ||
+          event.stopReason === "halted"
+        ) {
           this.stoppedEarly = event.stopReason;
         }
         return;
@@ -1210,8 +1470,8 @@ export class TurnRenderer {
     this.commitErrorOnce(block);
   }
 
-  /** Why the run ended before finishing, when a ceiling ended it. */
-  private stoppedEarly: "max_turns" | "max_tokens" | null = null;
+  /** Why the run ended before finishing — a ceiling, or a safety halt. */
+  private stoppedEarly: "max_turns" | "max_tokens" | "halted" | null = null;
 
   /** Last live repaint driven by streaming prose (throttled to ~80ms). */
   private lastProseLiveAt = 0;
@@ -1235,10 +1495,17 @@ export class TurnRenderer {
       const label =
         this.stoppedEarly === "max_turns"
           ? "ran out of turns -- the task is not finished"
-          : "hit the output limit -- the response is incomplete";
+          : this.stoppedEarly === "halted"
+            ? "safety halted the run -- the task is not finished"
+            : "hit the output limit -- the response is incomplete";
+      // A halt is not resumable by nagging: the broker stopped this run because
+      // it may no longer be the user's. Saying "send a follow-up to continue"
+      // there would be advice to walk straight back into it.
+      const nextStep =
+        this.stoppedEarly === "halted" ? "check what it read" : "send a follow-up to continue";
       return F.flowRow(
         `${F.MARK}${warn("!")} ${text(label)}`,
-        faint(F.receiptOf([...this.workReceipt(), "send a follow-up to continue"])),
+        faint(F.receiptOf([...this.workReceipt(), nextStep])),
       );
     }
     if (!aborted && !failed) return null;

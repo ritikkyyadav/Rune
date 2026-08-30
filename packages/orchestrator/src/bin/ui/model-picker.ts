@@ -17,6 +17,11 @@
 // rows and prints the lines it returns, so every level is unit-testable.
 
 import type { ProviderPreset, CustomEndpoint, LastModel } from "@gear/shared";
+import type { ReasoningEffort } from "@gear/llm-gateway";
+import { reasoningEffortsFor } from "@gear/llm-gateway";
+
+/** Re-exported so the picker and its tests speak one vocabulary. */
+export const effortValuesFor = reasoningEffortsFor;
 import { CUSTOM_PROVIDER_ID, maskKey } from "@gear/shared";
 import type { ProviderStatusRow } from "../../provider-registry";
 import { text, muted, faint, accent, info, warn, ok } from "./theme";
@@ -246,6 +251,57 @@ export async function fetchLiveModels(
   } catch {
     return null;
   }
+}
+
+// -- Level 4: reasoning effort --
+//
+// The depth dial belongs HERE, in the flow where a model is chosen, and not
+// behind a `/config effort max` incantation. It is a property of the model you
+// just picked, so it is asked for the way the model was: arrow keys, enter.
+//
+// Shown only where the dial is REAL. Anthropic and Google ignore the field
+// entirely (they approximate depth by thinking budget), so offering it there
+// would be a control that does nothing — worse than no control.
+
+export interface EffortChoice {
+  id: ReasoningEffort;
+  label: string;
+  hint: string;
+  current: boolean;
+}
+
+/**
+ * The efforts a model actually accepts.
+ *
+ * Codex values are MEASURED against the live ChatGPT backend (2026-08-30): it
+ * validates `reasoning.effort` and 400s the whole request on a value the model
+ * rejects, so this list is the model's own answer, not a guess. The OpenAI API
+ * path is deliberately narrower — low/medium/high are known-good there, and
+ * xhigh/max have not been probed on that endpoint. Nothing here is inferred.
+ *
+ * `none` is omitted on purpose: it is the internal value for "thinking off"
+ * (utility calls, the fast classifier), and an agent driven at none is not a
+ * setting anyone wants offered.
+ */
+const EFFORT_HINTS: Record<string, string> = {
+  low: "fastest, shallowest - rushes multi-step work",
+  medium: "balanced",
+  high: "the daily driver",
+  xhigh: "deeper planning, slower",
+  max: "deepest - for long autonomous builds",
+};
+
+export function effortChoices(
+  providerId: string,
+  model: string,
+  current: ReasoningEffort | undefined,
+): EffortChoice[] {
+  return effortValuesFor(providerId, model).map((id) => ({
+    id,
+    label: id,
+    hint: EFFORT_HINTS[id] ?? "",
+    current: (current ?? "high") === id,
+  }));
 }
 
 // -- Line rendering (shared by every level) --

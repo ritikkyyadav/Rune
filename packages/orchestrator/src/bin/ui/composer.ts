@@ -62,6 +62,13 @@ export interface ComposerStatus {
   loop?: string;
   /** Current surface mode, kept visible so light/dark is never hidden state. */
   theme?: "light" | "dark" | "auto" | string;
+  /**
+   * Reasoning depth, on providers that have the dial. Lives beside the model
+   * because it IS part of which model you are talking to: the same
+   * gpt-5.6-sol at "low" and at "max" are not the same collaborator, and the
+   * difference was previously invisible everywhere in the product.
+   */
+  effort?: string;
 }
 
 export type PermissionModeId = PermissionMode;
@@ -231,6 +238,10 @@ export function statusLine(s: ComposerStatus, width = process.stdout.columns || 
   // construction. It outranks the gear's description, which is static and
   // learned once, and the model is the field a person actually re-checks.
   const modelName = s.model ? info(s.model) : "";
+  // Depth rides with the model and is dropped one tier BEFORE it: when space is
+  // short the model's name matters more than its dial.
+  const modelWithEffort =
+    s.model && s.effort ? `${info(s.model)}${faint(` ${s.effort}`)}` : modelName;
   const right = keyHint("?", "keys");
   const fullHints = [keyHint("shift+tab", "gear"), keyHint("esc", "stop")].join("  ");
 
@@ -240,7 +251,8 @@ export function statusLine(s: ComposerStatus, width = process.stdout.columns || 
   // to buy back a hint would be the wrong trade for someone still learning what
   // the gear means. The model survives to the last tier because it is the only
   // field here that changes under the user.
-  const named = [badge, ...(modelName ? [modelName] : [])].join(sep);
+  const named = [badge, ...(modelWithEffort ? [modelWithEffort] : [])].join(sep);
+  const namedBare = [badge, ...(modelName ? [modelName] : [])].join(sep);
   const desc = mode.desc ? [faint(mode.desc)] : [];
   const tiers: Array<[string, string]> = [
     [[named, ...desc, ...(meter ? [meter] : []), ...extras, fullHints].join(sep), right],
@@ -248,6 +260,7 @@ export function statusLine(s: ComposerStatus, width = process.stdout.columns || 
     [[named, ...desc, ...extras].join(sep), right],
     [[named, ...desc].join(sep), right],
     [named, right],
+    [namedBare, right],
     [badge, right],
   ];
   for (const [left, edge] of tiers) {

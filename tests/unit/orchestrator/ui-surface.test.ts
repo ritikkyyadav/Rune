@@ -1,12 +1,14 @@
 import { describe, expect, it } from "bun:test";
 import { resolveSurface } from "../../../packages/orchestrator/src/bin/ui/surface";
 
-// The default-surface contract, pinned. Phase 03: there is exactly ONE TUI
-// layout — the transcript lives in the terminal's own scrollback and only the
-// composer is pinned. The alternate screen is gone, so no flag can ask for it.
+// The default-surface contract, pinned. There are TWO TUI layouts and the
+// DEFAULT is the fixed-chrome one: header pinned to the top rows, composer
+// pinned to the bottom rows, and only the transcript between them scrolling.
+// `--inline` is the opt-out for anyone who wants the terminal's own scrollback
+// back, and it is the only way to get it.
 describe("ui/surface resolveSurface", () => {
-  it("defaults an interactive terminal to the one TUI layout", () => {
-    expect(resolveSurface({ isTTY: true })).toEqual({ useTui: true, inline: true });
+  it("defaults an interactive terminal to the fixed-chrome layout", () => {
+    expect(resolveSurface({ isTTY: true })).toEqual({ useTui: true, inline: false });
   });
 
   it("--classic opts into readline; --tui forces the TUI even past it", () => {
@@ -14,16 +16,21 @@ describe("ui/surface resolveSurface", () => {
     expect(resolveSurface({ isTTY: true, classicForced: true, tuiForced: true }).useTui).toBe(true);
   });
 
-  it("the retired alt-screen flags are accepted and ignored, never resurrecting it", () => {
-    // Muscle memory and old aliases must not error, and must not get a second
-    // surface back. Every combination resolves to the same single layout.
-    for (const flags of [
-      { isTTY: true, inline: true },
-      { isTTY: true, fullscreenForced: true },
-      { isTTY: true, inline: true, fullscreenForced: true },
-    ]) {
-      expect(resolveSurface(flags)).toEqual({ useTui: true, inline: true });
-    }
+  it("--inline is the only way to the legacy native-scrollback layout", () => {
+    expect(resolveSurface({ isTTY: true, inline: true })).toEqual({ useTui: true, inline: true });
+  });
+
+  it("--fullscreen names the default and never contradicts an explicit --inline", () => {
+    // Muscle memory and old aliases must not error, and must not silently
+    // override the one flag the user typed on purpose.
+    expect(resolveSurface({ isTTY: true, fullscreenForced: true })).toEqual({
+      useTui: true,
+      inline: false,
+    });
+    expect(resolveSurface({ isTTY: true, inline: true, fullscreenForced: true })).toEqual({
+      useTui: true,
+      inline: true,
+    });
   });
 
   it("a pipe gets no TUI regardless of flags", () => {
