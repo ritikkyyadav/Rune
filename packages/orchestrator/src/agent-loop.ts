@@ -1,4 +1,5 @@
 import type {
+  ReasoningEffort,
   ContentBlock,
   InferenceRequest,
   LlmProvider,
@@ -11,6 +12,7 @@ import type {
 } from "@gear/llm-gateway";
 import {
   LlmGateway,
+  providerCarriesImages,
   providerSupportsNativeSearch,
   providerAllowsGroundingWithTools,
 } from "@gear/llm-gateway";
@@ -23,7 +25,7 @@ import type { IncidentClass } from "@gear/shared";
 import type { ToolCallInput, ToolCallOutput } from "@gear/tool-registry";
 import { ToolRegistry } from "@gear/tool-registry";
 import type { ContextEngine } from "./context-engine";
-import { buildUserContent } from "./image-attach";
+import { buildUserContent, MAX_IMAGES_PER_MESSAGE } from "./image-attach";
 import type { RetrievedChunk } from "./context-engine";
 import { getMaxOutputTokens } from "./tokenizer";
 import type { Verifier } from "./verifier";
@@ -134,7 +136,22 @@ export type AgentTurnEvent =
   | { type: "replanning"; reason: string; trigger: "verification" | "struggle" }
   // Live progress from a LONG tool call (sub-agent / worker): one short note
   // per meaningful step, rendered on the status rung — never in the transcript.
-  | { type: "tool_progress"; callId: string; note: string };
+  //
+  // `state` is the call's own lifecycle, which the tool cannot report because
+  // it does not know when the loop chose to start it: `started` fires the
+  // instant execution begins (a fan-out wider than maxParallelTools leaves the
+  // rest QUEUED, and a queued scout must not be drawn as a running one), and
+  // `settled` fires the instant it resolves. Both matter because every
+  // `tool_call_end` in a batch is emitted together, after the LAST call
+  // finishes: without `settled`, a scout that came back in twenty seconds was
+  // still reported as running four minutes later.
+  | {
+      type: "tool_progress";
+      callId: string;
+      note: string;
+      state?: "started" | "settled";
+      ok?: boolean;
+    };
 
 // ─── Permission Gate ───
 // The agent loop invokes this before executing every tool call.
@@ -150,6 +167,26 @@ export interface PermissionCheckArgs {
 export interface PermissionCheckResult {
   allowed: boolean;
   reason?: string;
+  /**
+   * The broker has halted the run, not merely refused this call. The loop owes
+   * the user one final report and nothing else: no more tool calls are offered,
+   * and the turn ends after it.
+   *
+   * Without this channel a halt is indistinguishable from an ordinary denial,
+   * so the loop hands the agent another turn, the agent calls another tool, and
+   * it is refused with the identical sentence — for as long as the generic loop
+   * detector takes to notice. That cost 30 turns and three killed runs in one
+   * EvoLab build before this existed.
+   */
+  halt?: { reason: string };
+  /**
+   * A person refused this call. Excluded from the barren-turn breaker: a human
+   * saying no is a decision about THIS call and can go the other way on the
+   * next one, so three of them in a row is a conversation, not a stall. Only
+   * deterministic refusals — a policy rule, a latched halt, the repeated-failure
+   * breaker — mean "trying again cannot work".
+   */
+  userDecision?: boolean;
 }
 
 export type PermissionCheck = (args: PermissionCheckArgs) => Promise<PermissionCheckResult>;
@@ -251,7 +288,15 @@ export interface AgentLoopConfig {
    * medium effort produces exactly the shallow, rushed behavior users report.
    * Turn it down only for latency-critical, trivial workloads.
    */
-  thinkingEffort?: "low" | "medium" | "high";
+  /**
+   * Reasoning depth for every call this loop makes. Unset = "high".
+   *
+   * This field existed for a long time and NOTHING ever set it: no flag, no
+   * config key, no command. Combined with the Codex provider dropping the value
+   * on the floor, a ChatGPT-subscription session ran permanently at the server
+   * default, with `max` available and unreachable.
+   */
+  thinkingEffort?: ReasoningEffort;
   /**
    * Black-box tap for named loop reliability events (breaker trips, evidence
    * gate, nudges, verification failures). Guarded — a throwing reporter can
@@ -287,6 +332,13 @@ const TOOL_RESULT_TAIL_CHARS = 6_000;
 // A SINGLE trivial command (no pipes/chains) proves nothing about written
 // code — listing or printing files is not executing them. Chained commands
 // (`ls && bun test`) still count, deliberately erring toward counting.
+/**
+ * Files whose creation establishes how something LOOKS. Editing one of these is
+ * ordinary work; creating the first one is the moment an art direction gets
+ * chosen, silently, unless someone stops to ask.
+ */
+const VISUAL_FILE_RE = /\.(html?|css|s[ac]ss|tsx|jsx|vue|svelte)$/i;
+
 const TRIVIAL_EVIDENCE_RE =
   /^\s*(?:ls|pwd|echo|cat|cd|which|type|env|printenv|date|whoami|true|head|tail|wc|stat|file|dirname|basename)\b[^|;&]*$/;
 
@@ -556,7 +608,29 @@ export class AgentLoop {
     let executedSinceWrite = false;
     let projectChecksPassed = false;
     let executionNudges = 0;
-    const recentToolSignatures: string[] = [];
+    // ── Delegation-evidence gate ──
+    // Ownership scopes of workers that SUCCEEDED this run, and the files the
+    // agent went on to read. The doctrine is unambiguous that a sub-agent
+    // report is secondhand and never evidence; nothing enforced it, and in one
+    // EvoLab build three workers wrote an entire product that the orchestrator
+    // accepted on prose. The threshold here is the only one that needs no
+    // arbitrary constant: ZERO. Reading none of what you delegated is not a
+    // judgement call about how much is enough.
+    const delegatedScopes: string[] = [];
+    const readPaths = new Set<string>();
+    let delegationNudges = 0;
+    /** Art-direction tripwire: fires once, on the first user-facing screen. */
+    let artDirectionNudges = 0;
+    // Each remembered call carries the write count at the moment it was issued.
+    // Repetition only means "stuck" when nothing changed between the tries —
+    // see the duplicate check below.
+    const recentToolSignatures: Array<{ sig: string; writes: number }> = [];
+    /**
+     * Successful write-effect tool calls this run. This is the loop detector's
+     * notion of "the world moved": a repeated command after an edit is a verify
+     * cycle, the same command with no edit between is a rut.
+     */
+    let writeCount = 0;
     // Repeated-failure circuit breaker: how many times each EXACT call
     // (tool + args) has failed this run. After 2 identical failures the call is
     // refused without executing — a failing fetch/command retried verbatim will
@@ -574,8 +648,29 @@ export class AgentLoop {
     // end the run as a silent no-op — retry bounded, then fail loudly.
     let emptyCompletions = 0;
     let anyUsableOutputThisRun = false;
+    // ── Halt handling ──
+    // The broker halted the run (suspected injection, or a reviewer refusal
+    // streak). Set the moment a permission check reports it; consumed once, to
+    // buy the agent a single tool-free turn in which to write its report.
+    let haltNotice: string | null = null;
+    let haltReportPending = false;
+    let haltReportGranted = false;
+    // ── Barren-turn breaker ──
+    // Consecutive turns in which EVERY tool call was refused before it ran by
+    // something that will refuse it again — a policy rule, a latched halt, the
+    // repeated-failure breaker. Nothing executed, so nothing about the
+    // workspace changed and repeating cannot make progress.
+    //
+    // This is the detector the call-signature one is not: it catches an agent
+    // that varies its arguments while making zero contact with the world. Two
+    // exclusions keep it from misfiring on the cases that matter — a turn that
+    // actually ran something is never barren (so a test failing identically
+    // every iteration stays untouched), and a refusal a PERSON made is never
+    // barren either (they may say yes to the next call).
+    let barrenTurns = 0;
+    let barrenNudges = 0;
 
-    while (turn < this.config.maxTurns) {
+    while (turn < this.config.maxTurns || (haltReportPending && !haltReportGranted)) {
       // Check for abort before starting each turn
       if (signal?.aborted) {
         this.state = "done";
@@ -602,6 +697,10 @@ export class AgentLoop {
       }
 
       turn++;
+      // The report turn is owed even when the turn budget just ran out — a run
+      // that halts on its last turn still has to say what it did not finish.
+      // Latched here so the budget is extended exactly once.
+      if (haltReportPending) haltReportGranted = true;
 
       // Build inference request. Passing the model gates family-specific
       // tools (apply_patch for the Codex lineage); the model is fixed for the
@@ -619,10 +718,21 @@ export class AgentLoop {
       // web_search function tool, which coexists with the rest.
       const hasOtherTools = allTools.some((t) => t.name !== "web_search");
       const useNativeSearch =
+        // Provider-side grounding is a network reach the agent does not have to
+        // ask for, so it goes away with the toolbelt. A halted run writes its
+        // report from what it already knows; it does not get to search first.
+        !haltReportPending &&
         this.config.nativeGrounding === true &&
         providerSupportsNativeSearch(this.config.provider) &&
         (providerAllowsGroundingWithTools(this.config.provider) || !hasOtherTools);
-      const tools = useNativeSearch ? allTools.filter((t) => t.name !== "web_search") : allTools;
+      const advertised = useNativeSearch
+        ? allTools.filter((t) => t.name !== "web_search")
+        : allTools;
+      // On the report turn the agent is offered NO tools. Telling a model to
+      // stop calling tools while still handing it a toolbelt is advice; taking
+      // the toolbelt away is a guarantee, and it is the difference between one
+      // final message and thirty refused calls.
+      const tools = haltReportPending ? [] : advertised;
 
       // Before building the request, apply context engine if available
       let requestMessages = this.messages;
@@ -993,6 +1103,26 @@ export class AgentLoop {
         this.appendMessage({ role: "assistant", content: contentBlocks });
       }
 
+      // ── The report turn always ends the run ──
+      // It was offered no tools, but "offered none" is not the same as "cannot
+      // emit one": a model can hallucinate a call against an empty toolbelt.
+      // Executing it would be exactly the loop this fix exists to close, so
+      // any calls are answered and discarded, and the run ends here on the
+      // text the model did produce.
+      if (haltReportPending) {
+        if (pendingToolCalls.length > 0) {
+          this.closeUnexecutedToolCalls(
+            pendingToolCalls,
+            "the run is halted; no tool calls run and none will. This turn was your report.",
+          );
+        }
+        this.state = "done";
+        this.report("loop.auto_halt_reported", "warn", "autoHalt", "halted run reported and ended");
+        yield* this.handoffEvents("halted");
+        yield { type: "turn_complete", stopReason: "halted", totalTurns: turn };
+        return;
+      }
+
       // ── max_tokens: the response was cut off by the output-token limit ──
       // Never execute tool calls from a truncated response: their JSON args
       // may be salvaged-but-wrong (parseToolArguments degrades partial blobs
@@ -1144,6 +1274,60 @@ export class AgentLoop {
           }
         }
 
+        // ── Delegation-evidence gate ──
+        // Workers built something and the agent is finishing without having
+        // opened a single file any of them owns. Its whole account of the work
+        // is therefore one model's prose about code nobody read — the exact
+        // thing the doctrine calls "never evidence". Refuse the finish once,
+        // name the scopes, and let it look. Bounded and deterministic, like the
+        // execution gate below; the bar is zero reads, so it cannot misfire on
+        // an agent that did look and merely looked less than someone would
+        // have liked.
+        const unreadScopes = delegatedScopes.filter(
+          (scope) =>
+            ![...readPaths].some((r) => r === scope || r.startsWith(scope.replace(/\/?$/, "/"))),
+        );
+        if (
+          delegatedScopes.length > 0 &&
+          unreadScopes.length === delegatedScopes.length &&
+          delegationNudges < 1 &&
+          !signal?.aborted
+        ) {
+          delegationNudges++;
+          this.report(
+            "loop.delegation_gate",
+            "warn",
+            "delegationGate",
+            `finishing on ${delegatedScopes.length} delegated scope(s) with no file read — refused once`,
+          );
+          this.appendMessage({
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text:
+                  "Stop — every line of this work was written by sub-agents and you have not " +
+                  "opened one of their files. Their reports are one model's account of code " +
+                  "you have not read; they are not evidence, and the manifest under each one " +
+                  "tells you only how big the files are, not whether they are right.\n" +
+                  `Unread: ${unreadScopes
+                    .map((s) => relative(workspaceRoot, s) || s)
+                    .slice(0, 8)
+                    .join(", ")}\n` +
+                  "Read the seams first — the shared types, the entry points, and anything " +
+                  "two workers had to agree on — then run the project's checks yourself. " +
+                  "Report only what you verified, and say plainly what you did not.",
+              },
+            ],
+          });
+          yield {
+            type: "notice",
+            message: "Delegated work was never read — asking the agent to check it.",
+          };
+          this.state = "observing";
+          continue;
+        }
+
         // ── Execution-evidence gate ──
         // The agent wrote files but nothing was ever EXECUTED to prove they
         // work: no bash run since the last write, and no project checks
@@ -1228,11 +1412,21 @@ export class AgentLoop {
       // Signatures are normalized (whitespace, key order, UUIDs/timestamps/
       // hashes) so cosmetic arg variance can't defeat the detector — but small
       // numbers stay distinct, or paginated reads would read as a fake loop.
+      //
+      // A repeat only counts when NOTHING WAS WRITTEN between the tries. The
+      // detector used to compare arguments alone, which made the healthiest
+      // pattern in the loop look like its worst: build → read the failure →
+      // fix → re-run the same `tsc --noEmit && vitest run`. Three honest
+      // iterations of that were indistinguishable from three attempts at the
+      // same wall, and the run was killed immediately after a successful fix.
+      // Comparing the write count as well tells the two apart exactly.
       const signature = batchSignature(pendingToolCalls);
-      recentToolSignatures.push(signature);
+      recentToolSignatures.push({ sig: signature, writes: writeCount });
       if (recentToolSignatures.length > 10) recentToolSignatures.shift();
 
-      const duplicateCount = recentToolSignatures.filter((s) => s === signature).length;
+      const duplicateCount = recentToolSignatures.filter(
+        (s) => s.sig === signature && s.writes === writeCount,
+      ).length;
       if (duplicateCount >= 3) {
         if (stuckNudges < (this.config.maxStuckNudges ?? 1)) {
           stuckNudges++;
@@ -1315,6 +1509,14 @@ export class AgentLoop {
          */
         createsTopLevelDir: boolean;
         callSig: string;
+        /**
+         * Refused before execution by something that will refuse it again — a
+         * policy rule, a latched halt, the repeated-failure breaker. Distinct
+         * from a call that ran and failed (the world changed, the next attempt
+         * may differ) and from a call a person declined (they may say yes next
+         * time). Only this kind counts toward the barren-turn breaker.
+         */
+        deterministicallyRefused: boolean;
         output?: ToolCallOutput;
       };
 
@@ -1337,13 +1539,22 @@ export class AgentLoop {
       // input.onProgress; they queue here and are yielded as `tool_progress`
       // events WHILE Phase B awaits — the mechanism that lets a five-minute
       // parallel build show live movement instead of one frozen line.
-      const progressQueue: Array<{ callId: string; note: string }> = [];
+      type ProgressItem = {
+        callId: string;
+        note: string;
+        state?: "started" | "settled";
+        ok?: boolean;
+      };
+      const progressQueue: ProgressItem[] = [];
       let progressSignal: (() => void) | null = null;
+      const pushProgress = (item: ProgressItem): void => {
+        progressQueue.push(item);
+        progressSignal?.();
+      };
       const progressFor = (callId: string) => (note: string) => {
         const t = String(note ?? "").trim();
         if (!t) return;
-        progressQueue.push({ callId, note: t.slice(0, 160) });
-        progressSignal?.();
+        pushProgress({ callId, note: t.slice(0, 160) });
       };
 
       const planned: PlannedCall[] = [];
@@ -1363,6 +1574,7 @@ export class AgentLoop {
 
         let allowed = true;
         let denied: ToolCallOutput | undefined;
+        let refusedByPerson = false;
         if (this.permissionCheck) {
           const decision = await this.permissionCheck({
             callId: tc.callId,
@@ -1371,6 +1583,7 @@ export class AgentLoop {
           });
           if (!decision.allowed) {
             allowed = false;
+            refusedByPerson = decision.userDecision === true;
             denied = {
               callId: tc.callId,
               toolName: tc.toolName,
@@ -1380,6 +1593,8 @@ export class AgentLoop {
               durationMs: 0,
             };
           }
+          // First halt wins; later calls in the same batch report the same one.
+          if (decision.halt && !haltNotice) haltNotice = decision.halt.reason;
         }
 
         // Circuit breaker: this call already failed twice this run — refuse it
@@ -1433,6 +1648,7 @@ export class AgentLoop {
           isWrite,
           createsTopLevelDir: createsNewTopLevelDir(isWrite, parsedArgs),
           callSig,
+          deterministicallyRefused: denied !== undefined && !refusedByPerson,
           output: denied,
         });
       }
@@ -1442,14 +1658,31 @@ export class AgentLoop {
       // progress queue: yields happen the moment a note arrives, not after
       // everything completes.
       const executionDone = { flag: false };
+      // A delegation is the one call that runs for minutes behind a single line,
+      // so its lifecycle is reported as it happens rather than inferred from the
+      // batch. Ordinary tools stay silent here: they finish inside the beat
+      // between two frames, and thirty `started` events for thirty reads would
+      // be noise on a channel whose whole purpose is the calls that are not.
+      const isDelegation = (name: string): boolean => name === "task" || name === "worker";
+      const runCall = async (p: PlannedCall): Promise<void> => {
+        const delegated = isDelegation(p.tc.toolName);
+        if (delegated) pushProgress({ callId: p.tc.callId, note: "", state: "started" });
+        p.output = await this.registry.execute(p.input);
+        if (delegated) {
+          pushProgress({
+            callId: p.tc.callId,
+            note: "",
+            state: "settled",
+            ok: p.output.success,
+          });
+        }
+      };
       const execution = (async () => {
         const parallel = planned.filter((p) => p.allowed && p.parallelSafe && !p.output);
-        await mapWithConcurrency(parallel, this.config.maxParallelTools ?? 8, async (p) => {
-          p.output = await this.registry.execute(p.input);
-        });
+        await mapWithConcurrency(parallel, this.config.maxParallelTools ?? 8, runCall);
         for (const p of planned) {
           if (!p.allowed || p.output) continue; // denied, or already run in parallel
-          p.output = await this.registry.execute(p.input);
+          await runCall(p);
         }
       })().finally(() => {
         executionDone.flag = true;
@@ -1468,7 +1701,13 @@ export class AgentLoop {
           continue;
         }
         const item = progressQueue.shift()!;
-        yield { type: "tool_progress", callId: item.callId, note: item.note };
+        yield {
+          type: "tool_progress",
+          callId: item.callId,
+          note: item.note,
+          state: item.state,
+          ok: item.ok,
+        };
       }
       await execution; // surface any execution error truthfully
 
@@ -1561,7 +1800,13 @@ export class AgentLoop {
         if (output.success && p.tc.toolName === "worker") {
           editsSinceVerify = true;
           anyWritesThisRun = true;
+          writeCount++;
           executedSinceWrite = false;
+          for (const f of Array.isArray(p.parsedArgs.files) ? p.parsedArgs.files : []) {
+            if (typeof f === "string" && f) {
+              delegatedScopes.push(isAbsolute(f) ? resolve(f) : resolve(workspaceRoot, f));
+            }
+          }
         }
 
         if (!p.allowed) {
@@ -1605,6 +1850,50 @@ export class AgentLoop {
               "3+ steps, pause now: record the remaining steps with todo_write (exactly one " +
               "in_progress), then continue. If this is genuinely a single-step task, ignore " +
               "this note and continue.\n\n" +
+              resultContent;
+          }
+
+          // ── Art-direction tripwire (deterministic, once per run) ──
+          // The agent is creating the FIRST screen of a user-facing thing and
+          // has asked the user nothing about how it should look. That is the
+          // exact moment the house style gets applied to a lab, a poem, and a
+          // festival alike — the doctrine has said "commit to one art
+          // direction" for a long time, and prose alone kept losing, because
+          // "commit" reads as "decide" rather than "decide WITH them".
+          //
+          // Fires on creation only: editing an existing screen means a look
+          // already exists to match. Yields to the greenfield note when both
+          // would land on the same write — that one covers scope, this one
+          // covers looks, and two walls of text on one result is not a nudge.
+          if (
+            output.success &&
+            p.tc.toolName === "write_file" &&
+            VISUAL_FILE_RE.test(String(p.parsedArgs.path ?? "")) &&
+            ts &&
+            ts.clarificationCount() === 0 &&
+            artDirectionNudges < 1 &&
+            greenfieldNudges === 0 &&
+            this.registry.get("ask_user")
+          ) {
+            artDirectionNudges++;
+            this.report(
+              "loop.art_direction_nudge",
+              "warn",
+              "artDirection",
+              "first screen written with no art-direction question — nudged once",
+            );
+            resultContent =
+              "[Harness note] This is the first screen of something a person will look at, " +
+              "and the user was never asked how it should look — so its art direction is " +
+              "YOUR default, not their choice. Unless the project already has a design system " +
+              "or brand to match, or they pinned a style: stop now. Name the subject's genre " +
+              "in one line, search how that genre looks today, then put TWO OR THREE concrete " +
+              "directions to them with ask_user — each naming its ground, its type, and its " +
+              'one signature move ("Swiss: white, strict visible grid, Helvetica-class in ' +
+              'three sizes, red as the only accent, zero decoration"), never bare adjectives ' +
+              'like "minimal or modern". The catalogue and the genre→candidates table are in ' +
+              "the frontend-design skill (art-directions.md). Then commit to one and rewrite " +
+              "this file to it.\n\n" +
               resultContent;
           }
 
@@ -1660,12 +1949,19 @@ export class AgentLoop {
           if (output.success && p.isWrite) {
             editsSinceVerify = true;
             anyWritesThisRun = true;
+            // The loop detector reads this: a command repeated AFTER an edit is
+            // a verify cycle, not a rut.
+            writeCount++;
             executedSinceWrite = false; // new writes need fresh execution evidence
           }
           // Only a real bash run counts as execution evidence — other
           // "execute"-category tools (kill_shell, ask_user) prove nothing.
           // Nor does a trivial listing: `ls` after a write used to satisfy the
           // gate, which defeated its whole point.
+          if (output.success && p.tc.toolName === "read_file") {
+            const rp = typeof p.parsedArgs.path === "string" ? p.parsedArgs.path : "";
+            if (rp) readPaths.add(isAbsolute(rp) ? resolve(rp) : resolve(workspaceRoot, rp));
+          }
           if (
             output.success &&
             p.tc.toolName === "bash" &&
@@ -1679,12 +1975,153 @@ export class AgentLoop {
       // Add tool results as user message
       this.appendMessage({ role: "tool", content: toolResults });
 
+      // ── Pixels a tool produced ──
+      // A tool_result is text on every provider's wire, so an image cannot ride
+      // inside one. It follows as a user message instead — which is what turns
+      // "the agent read a screenshot" from a 327 KB pile of mojibake into the
+      // agent actually seeing its own interface. Without this the loop can
+      // build a UI but never look at it, and no automated gate catches a
+      // Newick string rendered raw into a <code> tag.
+      const attached = planned
+        .flatMap((p) => p.output?.attachments ?? [])
+        .filter((a) => a.kind === "image")
+        .slice(0, MAX_IMAGES_PER_MESSAGE);
+      if (attached.length > 0) {
+        const labels = attached.map((a) => a.label).join(", ");
+        if (providerCarriesImages(this.config.provider)) {
+          this.appendMessage({
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text:
+                  `[Attached from your last tool call: ${labels}]\n` +
+                  "These are the real pixels. Describe only what you can actually see in them.",
+              },
+              ...attached.map((a): ContentBlock => ({
+                type: "image",
+                mediaType: a.mediaType,
+                data: a.data,
+              })),
+            ],
+          });
+        } else {
+          // The transport would drop the block on the floor, and a silently
+          // dropped screenshot is worse than none: the agent believes it
+          // looked, and describes an interface it never saw. Say so instead.
+          this.appendMessage({
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text:
+                  `[NOT attached: ${labels}. This session's provider ` +
+                  `(${this.config.provider}) cannot carry images, so you have NOT seen this ` +
+                  "file. Do not describe its contents — say you could not view it, and either " +
+                  "work from something you can read or ask the user to look.]",
+              },
+            ],
+          });
+        }
+      }
+
       // Abort may have fired during tool execution (e.g. a long bash call).
       if (signal?.aborted) {
         this.state = "done";
         yield* this.handoffEvents("aborted");
         yield { type: "turn_complete", stopReason: "aborted", totalTurns: turn };
         return;
+      }
+
+      // ── The run was halted by the broker ──
+      // Buy exactly one more turn, offered no tools at all, so the agent can
+      // write the report the halt asks for. Then the run ends — for real, on
+      // its own terms, instead of grinding against a latch until a loop
+      // detector notices. Everything the finish path normally does on the way
+      // out (verification, the evidence gate, a re-plan nudge) is skipped: all
+      // three exist to push the agent back into tool use, which is precisely
+      // what a halted run must not do.
+      if (haltNotice) {
+        this.report("loop.auto_halt", "error", "autoHalt", haltNotice);
+        this.appendMessage({
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text:
+                `The run has been HALTED by the safety broker: ${haltNotice}\n\n` +
+                "No tools are available to you now and none will be. This is your last " +
+                "message of the run. Write it as a report, briefly and plainly:\n" +
+                "1. What you were doing and why.\n" +
+                "2. What you had just read or run immediately before the halt.\n" +
+                "3. What is finished and verified, and what you did NOT finish.\n" +
+                "Do not argue with the halt, do not propose a workaround, and do not " +
+                "promise to continue. State the position honestly and stop.",
+            },
+          ],
+        });
+        haltReportPending = true;
+        haltNotice = null;
+        yield {
+          type: "notice",
+          message: "Auto mode halted the run — asking the agent for a final report.",
+        };
+        this.state = "observing";
+        continue;
+      }
+
+      // ── Barren-turn breaker ──
+      // Every call this turn was refused before it ran, so the world is exactly
+      // as it was when the turn started. One nudge, then stop: an agent that
+      // cannot reach the world cannot fix that by trying again, and each
+      // attempt re-sends the entire context for nothing.
+      const barren = planned.length > 0 && planned.every((p) => p.deterministicallyRefused);
+      barrenTurns = barren ? barrenTurns + 1 : 0;
+      if (barrenTurns >= 3) {
+        this.state = "error";
+        this.report(
+          "loop.barren_turns",
+          "error",
+          "barrenBreaker",
+          `bailed: ${barrenTurns} consecutive turns in which every tool call was refused before running`,
+        );
+        yield* this.handoffEvents("error");
+        yield {
+          type: "error",
+          error:
+            `Stopped after ${barrenTurns} turns in which every tool call was refused before it ran. ` +
+            "Nothing executed, so retrying could not have made progress. Last refusal: " +
+            (planned[0]?.output?.error ?? "permission denied").slice(0, 300),
+          recoverable: false,
+        };
+        return;
+      }
+      if (barrenTurns >= 2 && barrenNudges < 1) {
+        barrenNudges++;
+        this.report(
+          "loop.barren_nudge",
+          "warn",
+          "barrenBreaker",
+          "two consecutive turns fully refused — nudged for a different approach",
+        );
+        this.appendMessage({
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text:
+                "Every tool call in your last two turns was refused before it ran. Nothing " +
+                "has executed and nothing has changed, so repeating or rephrasing these calls " +
+                "cannot work. Do one of two things now: take a genuinely different approach " +
+                "that does not need the refused action, or stop and report plainly what you " +
+                "were blocked from doing and what remains unfinished.",
+            },
+          ],
+        });
+        yield {
+          type: "notice",
+          message: "Two turns fully refused — asking the agent to change approach or stop.",
+        };
       }
 
       // After processing the assistant response, compact the working set —

@@ -17,6 +17,7 @@
 //     runs would collide anyway).
 //   - No recursion: a worker's registry contains neither `task` nor `worker`.
 
+import { readFileSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { LlmGateway, ProviderName } from "@gear/llm-gateway";
 import type { ModelTier } from "@gear/shared";
@@ -107,6 +108,12 @@ export const WORKER_TOOL_SCHEMA: ToolSchema = {
         items: { type: "string" },
         description:
           "Workspace-relative files (or directories, end with '/') this worker exclusively owns and may create/edit. Keep disjoint from every other concurrent worker.",
+      },
+      label: {
+        type: "string",
+        description:
+          "A 2-5 word name for this piece ('build the settings page'), shown to the " +
+          "user on the live sub-agent panel while the worker runs.",
       },
       context: {
         type: "string",
@@ -493,9 +500,7 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
           );
         }
 
-        const summary = `\n\n(worker changed ${changed.size} file${changed.size === 1 ? "" : "s"}${
-          changed.size ? `: ${[...changed].join(", ")}` : ""
-        } in ${toolCalls} tool call${toolCalls === 1 ? "" : "s"})`;
+        const summary = buildManifest(changed, input.workspaceRoot, toolCalls);
         // A worker that finished on a different model than it was dispatched
         // to WROTE CODE from somewhere the caller did not choose. Louder than
         // the scout's banner for that reason: the parent owns verification.
@@ -533,4 +538,66 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
       }
     },
   };
+}
+
+/**
+ * What the worker ACTUALLY left on disk, measured after the run.
+ *
+ * The doctrine is unambiguous that a sub-agent's report is secondhand and never
+ * evidence, and it was ignored exactly where it mattered most: in one EvoLab
+ * build, three workers wrote an entire backend, an entire frontend, and all the
+ * docs, and the orchestrator accepted their prose after opening seven files out
+ * of fifty-four. The old footer — "(worker changed 12 files: a.py, b.py …)" —
+ * could not have caught that, because a name tells you nothing about whether a
+ * module is a module or a stub.
+ *
+ * So the report now ends in something the worker did not write: per-file line
+ * counts and sizes read back off disk, and a standing note that none of it has
+ * been run. A twelve-line "complete FastAPI backend" stops being invisible.
+ */
+function buildManifest(changed: Set<string>, workspaceRoot: string, toolCalls: number): string {
+  const calls = `${toolCalls} tool call${toolCalls === 1 ? "" : "s"}`;
+  if (changed.size === 0) return `\n\n[WORKER MANIFEST] No files were written (${calls}).`;
+
+  const MAX_LISTED = 40;
+  const paths = [...changed].sort();
+  const rows: string[] = [];
+  let totalLines = 0;
+  let totalBytes = 0;
+
+  for (const p of paths) {
+    const full = isAbsolute(p) ? p : resolve(workspaceRoot, p);
+    let detail: string;
+    try {
+      const bytes = statSync(full).size;
+      // Line count from the file itself: the one number that separates a
+      // finished module from a placeholder, and the worker cannot inflate it.
+      const lines = readFileSync(full, "utf8").split("\n").length;
+      totalLines += lines;
+      totalBytes += bytes;
+      detail = `${String(lines).padStart(5)} lines  ${humanBytes(bytes).padStart(9)}`;
+    } catch {
+      // Claimed but absent: a worker that says it wrote a file and did not is
+      // precisely what this manifest exists to surface.
+      detail = "      MISSING — claimed but not on disk";
+    }
+    if (rows.length < MAX_LISTED) rows.push(`  ${detail}  ${p}`);
+  }
+  if (paths.length > MAX_LISTED) rows.push(`  … and ${paths.length - MAX_LISTED} more`);
+
+  return (
+    `\n\n[WORKER MANIFEST — measured from disk, not taken from the report above]\n` +
+    `${rows.join("\n")}\n` +
+    `  ${paths.length} file${paths.length === 1 ? "" : "s"}, ${totalLines} lines, ` +
+    `${humanBytes(totalBytes)}, ${calls}.\n` +
+    `NOT VERIFIED: workers have no shell, so nothing here was compiled, run, or ` +
+    `tested. Open these files and run the project's checks yourself before you ` +
+    `rely on the report above or mark this step done.`
+  );
+}
+
+function humanBytes(n: number): string {
+  if (n >= 1_048_576) return `${(n / 1_048_576).toFixed(1)} MB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${n} B`;
 }

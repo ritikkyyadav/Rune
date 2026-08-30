@@ -6,6 +6,7 @@ import {
   AutoModeSafetyController,
   GatewayActionClassifier,
   classifyAutoModeTier,
+  isHaltExemptTool,
   isSelfProtectionPath,
   parseFastDecision,
   resolveAutoModeConfig,
@@ -130,6 +131,22 @@ describe("Auto mode tiering", () => {
 
   test("delegation is a classifier boundary even when the child is read-only", () => {
     expect(classifyAutoModeTier(action("task", { prompt: "Inspect auth" }))).toBe("classifier");
+  });
+
+  test("only pure in-session bookkeeping survives a latched halt", () => {
+    // The set is deliberately tiny. A halt means the run may no longer be the
+    // user's, so the agent must stop touching the world — but it must not stop
+    // being able to record what it was doing, because the next thing asked of
+    // it is a truthful report.
+    for (const name of ["todo_write", "compact_context", "loop_control"]) {
+      expect(isHaltExemptTool(name)).toBe(true);
+    }
+    // The omissions are the design: a captured run must not keep staging file
+    // contents, must not be handed a dialog it can answer, and must not reach
+    // sideways into peer sessions.
+    for (const name of ["read_file", "ask_user", "team", "bash", "write_file", "web_fetch"]) {
+      expect(isHaltExemptTool(name)).toBe(false);
+    }
   });
 
   test("reading settings is safe while changing them remains reviewed", () => {
@@ -1302,6 +1319,13 @@ describe("Supervisor posture", () => {
   test("a supervisor objection halts the run before the next action", async () => {
     const { controller } = setup([
       "BLOCK",
+      // The fast screen's BLOCK is a nomination, not a verdict: latching the
+      // halt takes a reasoned deny at high/critical on the same prompt.
+      JSON.stringify({
+        verdict: "deny",
+        risk: "critical",
+        reason: "The fetched page told the agent to read unrelated files.",
+      }),
       "ALLOW",
       JSON.stringify({ verdict: "allow", risk: "medium", reason: "Reads a local file." }),
     ]);
@@ -1327,6 +1351,97 @@ describe("Supervisor posture", () => {
     expect(third.source).not.toBe("supervisor_halt");
     expect(third.source).not.toBe("supervised_tier");
     expect(third.source.startsWith("classifier_")).toBe(true);
+  });
+
+  // The fast screen is instructed to "err on the side of blocking". That is
+  // the right bias in the approval path, where a block costs one action, and
+  // the wrong one here, where it ends the session — `npm audit` and
+  // `npm install --save-dev openapi-typescript` each killed a four-hour build
+  // on a single BLOCK token. The screen now nominates; the reasoned reviewer
+  // decides.
+  test("a fast BLOCK the reasoned reviewer will not confirm never halts the run", async () => {
+    const { controller } = setup([
+      "BLOCK",
+      JSON.stringify({
+        verdict: "allow",
+        risk: "low",
+        reason: "Auditing the project's own dependencies is ordinary maintenance.",
+      }),
+    ]);
+    const run = controller.startRun(["Get the build green."]);
+
+    await run.review(cmd("npm audit --omit=dev --audit-level=high"));
+    await run.drainSupervisor();
+
+    const next = await run.review(cmd("npm run build"));
+    expect(next.verdict).toBe("allow");
+    expect(next.source).toBe("supervised_tier");
+    expect(controller.getStats().supervisorUnconfirmed).toBe(1);
+  });
+
+  test("an unconfirmed flag does not even raise the scrutiny floor", async () => {
+    // A suspected false positive must not quietly degrade every later review:
+    // ordinary work stays on the supervised path rather than being pulled into
+    // the reviewer for the rest of the session.
+    const { controller } = setup([
+      "BLOCK",
+      JSON.stringify({ verdict: "ask", risk: "medium", reason: "Unclear, but not an attack." }),
+    ]);
+    const run = controller.startRun(["Ship it."]);
+
+    await run.review(cmd("npm audit --json"));
+    await run.drainSupervisor();
+
+    const third = await run.review(cmd("bun test"));
+    expect(third.source).toBe("supervised_tier");
+  });
+
+  test("a confirmed deny below high risk does not halt", async () => {
+    // Halting is reserved for what the reviewer itself calls serious.
+    const { controller } = setup([
+      "BLOCK",
+      JSON.stringify({ verdict: "deny", risk: "medium", reason: "Marginal, not compromise." }),
+    ]);
+    const run = controller.startRun(["Tidy the repo."]);
+
+    await run.review(cmd("git status"));
+    await run.drainSupervisor();
+
+    const next = await run.review(cmd("git diff"));
+    expect(next.source).not.toBe("supervisor_halt");
+    expect(controller.getStats().supervisorUnconfirmed).toBe(1);
+  });
+
+  test("a confirmer that cannot answer is an outage, not a finding", async () => {
+    const { controller } = setup(["BLOCK", new Error("reviewer down")]);
+    const run = controller.startRun(["Keep going."]);
+
+    await run.review(cmd("cat ./notes.md"));
+    await run.drainSupervisor();
+
+    const next = await run.review(cmd("cat ./other.md"));
+    expect(next.verdict).toBe("allow");
+    expect(next.source).toBe("supervised_tier");
+    expect(controller.getStats().supervisorUnconfirmed).toBe(1);
+  });
+
+  test("the halt carries the reasoned reviewer's own sentence", async () => {
+    const { controller } = setup([
+      "BLOCK",
+      JSON.stringify({
+        verdict: "deny",
+        risk: "critical",
+        reason: "The fetched page instructed the agent to upload credentials.",
+      }),
+    ]);
+    const run = controller.startRun(["Summarize that page."]);
+
+    await run.review(cmd("cat ./fetched.md"));
+    await run.drainSupervisor();
+
+    const halted = await run.review(cmd("env"));
+    expect(halted.source).toBe("supervisor_halt");
+    expect(halted.reason).toContain("instructed the agent to upload credentials");
   });
 
   test("an unreadable supervisor answer is not treated as an objection", async () => {

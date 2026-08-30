@@ -200,7 +200,14 @@ describe("consecutiveErrors hygiene", () => {
     // Three denials, then one recoverable provider error, then done.
     // Pre-fix: denials pre-charged the counter to 3, the blip made 4 ≥ 3 →
     // "Too many consecutive errors" killed the run.
-    const deny = mock(async () => ({ allowed: false, reason: "user said no" }));
+    // `userDecision` is what the engine sets on the human-deny path. It also
+    // keeps these three turns out of the barren-turn breaker: a person saying
+    // no is a decision about that call, not evidence the run is stuck.
+    const deny = mock(async () => ({
+      allowed: false,
+      userDecision: true,
+      reason: "user said no",
+    }));
     const loop = makeLoop(
       makeScriptedGateway([
         { tool: "write_file" },
