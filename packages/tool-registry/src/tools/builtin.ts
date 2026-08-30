@@ -22,6 +22,7 @@ import { createN8nTriggerHandler } from "./n8n";
 import { createLspHandler } from "./lsp/tool";
 import { LspServerManager } from "./lsp/manager";
 import { withSyntaxCheck } from "./diagnostics";
+import { withFormatting } from "./format-on-write";
 import { withNetworkPreflight } from "./net-preflight";
 
 const READ_FILE_SCHEMA: ToolSchema = {
@@ -297,7 +298,7 @@ export function registerBuiltinTools(registry: ToolRegistry, binaryPath: string)
     // feedback when [lsp] autoFeedback is on (both inside freshness so the
     // added fields never disturb hash extraction).
     if (schema.category === "write") {
-      handler = withLspFeedback(withSyntaxCheck(handler), lspManager);
+      handler = withLspFeedback(withSyntaxCheck(withFormatting(handler)), lspManager);
     }
     const opts = FRESHNESS_TOOLS[schema.name];
     registry.register(opts ? withFreshness(handler, freshness, opts) : handler);
@@ -316,7 +317,7 @@ export function registerBuiltinTools(registry: ToolRegistry, binaryPath: string)
   registry.register(createGlobHandler());
   registry.register(
     withFreshness(
-      withLspFeedback(withSyntaxCheck(createMultiEditHandler()), lspManager),
+      withLspFeedback(withSyntaxCheck(withFormatting(createMultiEditHandler())), lspManager),
       freshness,
     ),
   );
