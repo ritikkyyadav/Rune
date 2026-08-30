@@ -345,6 +345,45 @@ export const danger = (value: string): string => fmt("danger", value);
  */
 export const quiet = (value: string): string => fmtSlot("muted", value);
 
+/**
+ * The wordmark, knocked out of a filled chip.
+ *
+ * This is the SECOND place in the product that paints a background, and the
+ * rule it bends is worth restating so the exceptions stay countable. Never
+ * painting a background is about the GROUND -- the surface behind everything,
+ * which belongs to the user, and which is why a TUI that claims it looks broken
+ * under someone else's theme. A caret is not ground; neither is a mark nine
+ * cells wide. Both are ink.
+ *
+ * It is here because a terminal has exactly one weight axis, `SGR 1`, and it is
+ * a request the host is free to refuse -- a font with no bold face, or a host
+ * that reads an explicit 24-bit foreground as "the emphasis is already handled",
+ * renders it as no change at all. That is what the wordmark hit: the bytes were
+ * right and the screen was flat, and no amount of pigment fixes a stroke that
+ * is one pixel wide. Reverse video is the only thing in a terminal that makes a
+ * stroke genuinely heavier, because it stops drawing the letter and starts
+ * drawing everything around it: the cell becomes the ink.
+ *
+ * The foreground is chosen by measured contrast against the fill rather than
+ * fixed, so the letters stay legible on a pale accent as well as a dark one --
+ * the same rule, and the same helper, as the caret.
+ */
+export const heavy = (value: string): string => {
+  const safe = terminalText(value);
+  // Nothing to paint with, and nothing that may be painted: a piped or
+  // NO_COLOR run emits no escapes at all.
+  if (!COLOR_CAPABLE) return safe;
+  const pigment = pigmentFor(ROLE_SLOT.accent);
+  // Reverse video is the fallback at both ends -- a theme that keeps the host's
+  // own colours, and a terminal that only speaks ANSI-16. It is understood
+  // everywhere, and the host's palette makes it legible by definition.
+  if (active.useNativeColors || DEPTH === "ansi16") return `\x1b[7m${safe}${RESET}`;
+  const [r, g, b] = pigment.rgb;
+  const ink = caretForeground([r, g, b]) === "black" ? "30" : "97";
+  const fill = DEPTH === "truecolor" ? `\x1b[48;2;${r};${g};${b}m` : `\x1b[48;5;${pigment.ansi}m`;
+  return `${fill}\x1b[${ink}m\x1b[1m${safe}${RESET}`;
+};
+
 export const bold = (value: string): string => {
   const safe = terminalText(value);
   return COLOR_CAPABLE && !active.useNativeColors ? `\x1b[1m${safe}${RESET}` : safe;
