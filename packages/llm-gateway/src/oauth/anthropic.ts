@@ -14,20 +14,53 @@
 
 import type { OAuthFlow, ExchangeResult } from "../auth/oauth-strategy";
 
-// Endpoint hosts as of Claude Code 2.1.198 (read from the first-party client):
-// Anthropic migrated the OAuth surface off claude.ai/console.anthropic.com —
-// the legacy claude.ai/oauth/authorize now bounces every request with
-// "Authorization failed: Invalid request format". The Claude-account (Pro/Max)
-// authorize lives at claude.com/cai/…; token + the manual-code callback moved
-// to platform.claude.com.
-const AUTHORIZE_URL = "https://claude.com/cai/oauth/authorize";
+// Endpoints, client id and scopes are the FIRST-PARTY constants, read out of
+// the installed Claude Code binary (2.1.198). The client keeps TWO flows and
+// each has its OWN endpoint and redirect style — they cannot be mixed:
+//
+//   Pro/Max (chat account) : claude.com/cai/oauth/authorize + LOOPBACK
+//                            redirect (http://localhost:<port>/callback)
+//   Console (API billing)  : platform.claude.com/oauth/authorize + the manual
+//                            paste-the-code page
+//
+// Gear used the MANUAL redirect for a Pro/Max sign-in. That is the mismatch
+// behind "Authorization failed: Invalid request format", and it survived three
+// fixes aimed at the query string because the query string was never wrong.
+//
+// Demonstrated in a real browser (headless Chromium, 2026-08-30) — the same
+// params, only the redirect differing:
+//   claude.ai + LOOPBACK -> proceeds to claude.ai/login, "Continue with your
+//                           Claude.ai account to authenticate connections"
+//   claude.ai + MANUAL   -> never proceeds
+// A curl check could not have seen this: the page returns 200 with the right
+// <title> and renders the failure from JavaScript after hydration.
+const AUTHORIZE_URL =
+  process.env.GEAR_ANTHROPIC_AUTHORIZE_URL ?? "https://claude.com/cai/oauth/authorize";
 const TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
-const REDIRECT_URI = "https://platform.claude.com/oauth/code/callback";
 const CLIENT_ID =
   process.env.GEAR_ANTHROPIC_OAUTH_CLIENT_ID ?? "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-// `user:inference` is the scope that lets a Pro/Max subscription serve inference;
-// the others match what the first-party client requests during the same flow.
-const SCOPES = "org:create_api_key user:profile user:inference";
+/**
+ * `Ovn` from the first-party client: the deduped union of its two scope lists,
+ * which is what BOTH the claude.ai and console flows send.
+ *
+ *   r  = ["org:create_api_key", "user:profile"]
+ *   Tq = ["user:profile", "user:inference", "user:sessions:claude_code",
+ *         "user:mcp_servers", "user:file_upload"]
+ *   Ovn = dedupe([...r, ...Tq])
+ *
+ * Gear sent a three-scope subset and the authorize endpoint answered
+ * "Authorization failed: Invalid request format" — which reads like a malformed
+ * query and actually means the scope set is not one it grants. Guessing at a
+ * plausible-looking subset failed twice; this is copied.
+ */
+const SCOPES = [
+  "org:create_api_key",
+  "user:profile",
+  "user:inference",
+  "user:sessions:claude_code",
+  "user:mcp_servers",
+  "user:file_upload",
+].join(" ");
 
 interface TokenResponse {
   access_token?: string;
@@ -60,29 +93,37 @@ export const anthropicOAuthFlow: OAuthFlow = {
   // API key) — buildGateway sees `bearer` and puts the transport in OAuth mode.
   credentialKind: "bearer",
   usesState: true,
-  // Anthropic renders the code on its console page to paste back (no loopback).
-  redirect: "manual",
-  manualRedirectUri: REDIRECT_URI,
+  // Loopback — NOT the manual paste-the-code page. The comment that used to sit
+  // here claimed "Anthropic only redirects to its OWN console callback ... no
+  // arbitrary loopback is accepted". That is false, and it cost four attempts:
+  // the loopback redirect is exactly what the Pro/Max flow requires, and the
+  // manual one is what it rejects. `startLoopback` binds an ephemeral port and
+  // "/callback", matching the first-party `http://localhost:${port}/callback`.
 
   authorizeUrl({ redirectUri, codeChallenge, state }) {
-    // Built by hand with encodeURIComponent, NOT URLSearchParams: the form
-    // serializer encodes the scope's spaces as `+`, and claude.ai's authorize
-    // endpoint parses `+` literally — the request bounces with "Authorization
-    // failed: Invalid request format". `%20` is what the first-party client
-    // sends and the only encoding this endpoint accepts. (Live-verified.)
-    const params: [string, string][] = [
-      // `code=true` asks Anthropic to render the code on the page for manual copy.
-      ["code", "true"],
-      ["client_id", CLIENT_ID],
-      ["response_type", "code"],
-      ["redirect_uri", redirectUri],
-      ["scope", SCOPES],
-      ["code_challenge", codeChallenge],
-      ["code_challenge_method", "S256"],
-      ["state", state],
-    ];
-    const query = params.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
-    return `${AUTHORIZE_URL}?${query}`;
+    // Mirrors the first-party builder verbatim, INCLUDING its encoding.
+    //
+    // This used to be hand-rolled with encodeURIComponent so the scope's
+    // separators were `%20`, under a comment asserting that is "what the
+    // first-party client sends and the only encoding this endpoint accepts".
+    // That assertion is false: the client builds the URL with `new URL()` +
+    // `searchParams.append()`, and URLSearchParams serializes a space as `+`.
+    // So `+` is what actually reaches Anthropic from the client that works,
+    // and Gear's careful `%20` was the anomaly.
+    //
+    // Using URLSearchParams here is therefore not a style choice — it is the
+    // thing being copied. Param order matches the first-party call order.
+    const url = new URL(AUTHORIZE_URL);
+    // `code=true` asks Anthropic to render the code on the page for manual copy.
+    url.searchParams.append("code", "true");
+    url.searchParams.append("client_id", CLIENT_ID);
+    url.searchParams.append("response_type", "code");
+    url.searchParams.append("redirect_uri", redirectUri);
+    url.searchParams.append("scope", SCOPES);
+    url.searchParams.append("code_challenge", codeChallenge);
+    url.searchParams.append("code_challenge_method", "S256");
+    url.searchParams.append("state", state);
+    return url.toString();
   },
 
   exchange({ code, codeVerifier, redirectUri, state }): Promise<ExchangeResult> {

@@ -81,7 +81,11 @@ describe("loopback capture", () => {
       expect(loop.redirectUri).toMatch(/^http:\/\/localhost:\d+\/callback$/);
       const res = await fetch(`${loop.redirectUri}?code=abc&state=xyz`);
       expect(res.status).toBe(200);
-      expect(await res.text()).toMatch(/Authorized/);
+      // The page names what was connected and carries the Gear mark; it is the
+      // only surface of Gear a person sees outside their terminal.
+      const body = await res.text();
+      expect(body).toMatch(/connected to/i);
+      expect(body).toContain("<svg");
       expect(await loop.waitForCode).toEqual({ code: "abc", state: "xyz" });
     } finally {
       loop.close();
@@ -348,11 +352,15 @@ describe("OAuthStrategy manual code-paste redirect (Anthropic-style)", () => {
 
 // ─── Anthropic Claude Pro/Max flow shape ───
 describe("Anthropic subscription flow (Claude Pro/Max)", () => {
-  it("is a manual-redirect, stateful, bearer flow", () => {
+  it("is a LOOPBACK, stateful, bearer flow", () => {
+    // It was manual. A comment asserted "Anthropic only redirects to its OWN
+    // console callback ... no arbitrary loopback is accepted" -- false, and it
+    // is the whole bug: the Pro/Max flow requires the loopback and rejects the
+    // manual paste page. Verified in a real browser.
     expect(anthropicOAuthFlow.credentialKind).toBe("bearer");
-    expect(anthropicOAuthFlow.redirect).toBe("manual");
+    expect(anthropicOAuthFlow.redirect ?? "loopback").toBe("loopback");
     expect(anthropicOAuthFlow.usesState).toBe(true);
-    expect(anthropicOAuthFlow.manualRedirectUri).toContain("platform.claude.com");
+    expect(anthropicOAuthFlow.manualRedirectUri).toBeUndefined();
   });
 
   it("authorize URL carries PKCE (S256), the user:inference scope, and code=true", () => {
@@ -363,6 +371,9 @@ describe("Anthropic subscription flow (Claude Pro/Max)", () => {
         state: "STATE",
       }),
     );
+    // claude.ai endpoint: the Pro/Max flow, which pairs with the loopback
+    // redirect. Verified in a real browser -- this combination proceeds to
+    // claude.ai/login, "Continue with your Claude.ai account".
     expect(u.origin + u.pathname).toBe("https://claude.com/cai/oauth/authorize");
     expect(u.searchParams.get("code")).toBe("true");
     expect(u.searchParams.get("code_challenge")).toBe("CHAL");
@@ -372,17 +383,24 @@ describe("Anthropic subscription flow (Claude Pro/Max)", () => {
     expect(u.searchParams.get("client_id")).toBeTruthy();
   });
 
-  it("encodes the scope's spaces as %20 — claude.ai rejects the form-style + as 'Invalid request format'", () => {
+  it("serializes exactly like the first-party client — URLSearchParams, so spaces are +", () => {
     // Raw-string assertion on purpose: URLSearchParams.get() decodes + and %20
-    // identically, which is exactly how the live regression slipped past the
-    // parsed-param checks above.
+    // identically, so a parsed-param check cannot tell these apart.
+    //
+    // This test previously asserted the OPPOSITE, citing a comment that "%20 is
+    // what the first-party client sends and the only encoding this endpoint
+    // accepts". The client's decompiled builder does
+    // `new URL(...).searchParams.append("scope", L.join(" "))`, and
+    // URLSearchParams writes a space as `+`. The `%20` was Gear's invention.
     const raw = anthropicOAuthFlow.authorizeUrl({
       redirectUri: "https://platform.claude.com/oauth/code/callback",
       codeChallenge: "CHAL",
       state: "STATE",
     });
-    expect(raw).toContain("scope=org%3Acreate_api_key%20user%3Aprofile%20user%3Ainference");
-    expect(raw.split("?")[1]).not.toContain("+");
+    expect(raw).toContain(
+      "scope=org%3Acreate_api_key+user%3Aprofile+user%3Ainference" +
+        "+user%3Asessions%3Aclaude_code+user%3Amcp_servers+user%3Afile_upload",
+    );
     expect(raw).toContain(
       "redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback",
     );

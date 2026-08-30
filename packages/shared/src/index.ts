@@ -65,6 +65,7 @@ export {
   describeCredentialBackend,
   apiKeyAccount,
   oauthAccount,
+  hasStoredCredential,
   migrateLegacySecrets,
 } from "./credential-store.js";
 export {
