@@ -59,3 +59,5 @@ tests/fixtures/tmp/
 _to_delete/
 *.tgz
 *.tar.gz
+# terminal captures from TUI debugging (raw ANSI dumps)
+*.cv.txt
