@@ -21,7 +21,15 @@ export class OpenRouterProvider implements LlmProvider {
   private inner: OpenAIProvider;
 
   constructor(apiKey?: string) {
-    this.inner = new OpenAIProvider(apiKey ?? process.env.OPENROUTER_API_KEY, OPENROUTER_BASE_URL);
+    // The name MUST be forwarded: the inner adapter gates real behaviour on it
+    // (vision translation, first-party reasoning params), and it defaults to
+    // "openai" — which would make OpenRouter traffic impersonate first-party
+    // OpenAI on the wire. Every other openai-compat host passes its own id here.
+    this.inner = new OpenAIProvider(
+      apiKey ?? process.env.OPENROUTER_API_KEY,
+      OPENROUTER_BASE_URL,
+      "openrouter",
+    );
   }
 
   infer(request: InferenceRequest): Promise<InferenceResponse> {
