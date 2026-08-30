@@ -23,7 +23,19 @@
 // else is one of three greys. If a value is unknown it is absent -- no row here
 // ever pads itself with a reassuring guess.
 
-import { bold, danger, faint, info, muted, ok, quiet, text, warn } from "./theme";
+import {
+  bold,
+  colorEnabled,
+  danger,
+  faint,
+  heavy,
+  info,
+  muted,
+  ok,
+  quiet,
+  text,
+  warn,
+} from "./theme";
 import { glyph } from "./glyphs";
 import { termWidth, truncate, visLen, wrap } from "./render";
 
@@ -258,18 +270,33 @@ export interface FlowHeader {
 // tall, the same row it has always been.
 
 /**
- * The wordmark.
+ * The wordmark: letterspaced caps, knocked out of a filled chip.
+ *
+ * Tracking and case do the logotype half of the work -- one cell between
+ * letters, which costs three columns and buys the entire difference between a
+ * name and a mark. WEIGHT is the half a terminal will not sell you: `SGR 1` is
+ * a request, and a host with no bold face for its font answers it with nothing,
+ * which is exactly what this row looked like. So the mark is reversed out of
+ * the identity colour instead (see theme.heavy) -- the one operation that makes
+ * a stroke genuinely heavier, because the cell stops being paper and becomes
+ * ink.
+ *
+ * The two padding cells are part of the mark: a chip that starts flush against
+ * its first letter reads as a highlight, not a lockup.
  *
  * Returns the painted string with the number of CELLS it occupies, because the
- * rule underneath changes tone at exactly that column and a caller cannot
+ * rule underneath changes weight at exactly that column and a caller cannot
  * measure a painted string without stripping it again.
  */
 export function lockup(name: string): { text: string; cells: number } {
-  // Tracking, done the only way a fixed grid allows: one cell between letters.
-  // It costs three columns and buys the entire difference between a name and a
-  // logotype.
-  const mark = name.toUpperCase().split("").join(" ");
-  return { text: bold(info(mark)), cells: mark.length };
+  const letters = name.toUpperCase().split("").join(" ");
+  // The padding cells belong to the CHIP, so they exist only when there is a
+  // chip to inset. Piped into a file or run under NO_COLOR there is no fill to
+  // sit inside, and two stray spaces around the name would be exactly that:
+  // stray. This also keeps the mark starting in the frame's own column, which
+  // is a law the launch-frame test enforces on every painted line.
+  const mark = colorEnabled ? ` ${letters} ` : letters;
+  return { text: heavy(mark), cells: mark.length };
 }
 
 /** The build, for the far right of a masthead. Quiet: it is the least urgent
@@ -280,9 +307,10 @@ export function versionTag(version: string): string {
 
 /** The gap that does the dividing. A vertical bar sat here while the row still
  *  carried four fields and needed a seam drawn for it; with one field left, the
- *  wordmark's own tracking already separates it and the bar was one mark more
- *  than the row was saying. */
-const LOCKUP_GAP = "   ";
+ *  chip's own edge already separates it and the bar was one mark more than the
+ *  row was saying. Two cells rather than three, because the chip ends in a
+ *  padding cell of its own and the eye counts that one too. */
+const LOCKUP_GAP = "  ";
 
 /**
  * The header: a masthead and the rule that carries it.
@@ -404,18 +432,20 @@ function tailSegment(p: string): string {
 }
 
 /**
- * The header's rule, in two tones: identity under the wordmark, dim under the
- * rest. `lead` is measured in cells from the left margin, so a caller that
- * knows where its seam is does not have to know how the rule is drawn.
+ * The rule the masthead stands on: heavy and in the identity colour under the
+ * mark, a hairline for the rest of the window. `lead` is measured in cells from
+ * the left margin, so a caller that knows where its seam is does not have to
+ * know how the rule is drawn.
  *
- * Same span and same total width as hairline() -- this is that rule with a
- * tone change in it, not a second kind of rule.
+ * Same span and same total width as hairline(). The weight change is the point:
+ * a chip sitting on a hairline floats, and the bar under it is what makes the
+ * two read as one lockup rather than as a label with a line beneath it.
  */
 export function seamRule(width = surfaceWidth(), lead = 0): string {
   const inner = Math.max(1, width - MARK.length);
   const identity = Math.max(0, Math.min(inner, lead));
   const rest = inner - identity;
-  return `${MARK}${info(glyph("rule").repeat(identity))}${faint(glyph("rule").repeat(rest))}`;
+  return `${MARK}${info(glyph("ruleHeavy").repeat(identity))}${faint(glyph("rule").repeat(rest))}`;
 }
 
 /**

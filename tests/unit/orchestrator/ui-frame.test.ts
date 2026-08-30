@@ -74,8 +74,12 @@ describe("the launch frame", () => {
   it("a rule is exactly as wide as the row it divides", () => {
     for (const columns of [80, 145]) {
       const lines = launchFrame(columns);
-      const rules = lines.filter((l) => /^\s*─+$/.test(l));
-      const content = lines.filter((l) => !/^\s*─+$/.test(l));
+      // The masthead's rule is two weights — heavy under the chip, hairline
+      // for the rest of the window — so a rule is any line made only of the
+      // alphabet's horizontals.
+      const isRule = (line: string) => /^\s*[━─]+$/.test(line);
+      const rules = lines.filter(isRule);
+      const content = lines.filter((line) => !isRule(line));
       expect(rules.length).toBeGreaterThanOrEqual(3); // header + field top + field bottom
       for (const r of rules) {
         expect(startsAt(r)).toBe(2);

@@ -23,6 +23,10 @@ export const GLYPH_DEFINITIONS = {
   failure: { utf8: "✗", ascii: "x", role: "danger" },
   gutter: { utf8: "│", ascii: "|", role: "dim" },
   rule: { utf8: "─", ascii: "-", role: "dim" },
+  // The rule the wordmark stands on. One weight heavier than `rule`, and used
+  // in exactly one place -- a second rule weight anywhere else would turn a
+  // distinction into texture.
+  ruleHeavy: { utf8: "━", ascii: "=", role: "accent" },
   selection: { utf8: "›", ascii: ">", role: "accent" },
   elision: { utf8: "…", ascii: ".", role: "dim" },
   retry: { utf8: "↻", ascii: "r", role: "warn" },
