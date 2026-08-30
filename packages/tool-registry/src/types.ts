@@ -35,6 +35,22 @@ export interface ToolCallInput {
   onProgress?: (note: string) => void;
 }
 
+/**
+ * Non-text output a tool produced, carried beside the result rather than inside
+ * it. Pixels must never reach a transcript as characters: a 130 KB screenshot
+ * lossy-decoded into `result` was ~327 KB of mojibake that taught the model
+ * nothing and cost more context than the rest of the turn.
+ */
+export interface ToolAttachment {
+  kind: "image";
+  /** e.g. "image/png" — one of the formats every vision provider accepts. */
+  mediaType: string;
+  /** Base64-encoded bytes. */
+  data: string;
+  /** Short human label, used as the caption when the block is attached. */
+  label: string;
+}
+
 export interface ToolCallOutput {
   callId: string;
   toolName: string;
@@ -42,6 +58,9 @@ export interface ToolCallOutput {
   result: string;
   error?: string;
   durationMs: number;
+  /** Images this call produced. The agent loop turns these into real content
+   *  blocks; they are never serialized into `result`. */
+  attachments?: ToolAttachment[];
 }
 
 export interface ToolHandler {

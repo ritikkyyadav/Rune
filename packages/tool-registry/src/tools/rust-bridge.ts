@@ -1,6 +1,34 @@
 import { isOsIsolationAvailable, isOsIsolationRequired } from "../sandbox-capability";
 import { isSandboxEnabled } from "../sandbox-mode";
-import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
+import type {
+  ToolAttachment,
+  ToolCallInput,
+  ToolCallOutput,
+  ToolHandler,
+  ToolSchema,
+} from "../types";
+
+/** Media types every vision-capable provider accepts. */
+const ATTACHABLE = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+
+/**
+ * Move a tool's base64 payload out of its JSON result and into a typed
+ * attachment, DELETING it from the object first so the stringified result the
+ * model reads carries only the description.
+ */
+function liftAttachments(result: unknown): ToolAttachment[] {
+  if (!result || typeof result !== "object") return [];
+  const r = result as Record<string, unknown>;
+  const data = r.base64;
+  const mediaType = r.media_type;
+  // Always drop the raw payload, even when it is unusable — leaving a rejected
+  // 3 MB blob in the transcript is the failure this exists to prevent.
+  delete r.base64;
+  if (typeof data !== "string" || !data) return [];
+  if (typeof mediaType !== "string" || !ATTACHABLE.has(mediaType)) return [];
+  const label = typeof r.path === "string" ? r.path : "image";
+  return [{ kind: "image", mediaType, data, label }];
+}
 
 /**
  * Creates a ToolHandler that delegates to the gear-tools Rust binary.
@@ -138,6 +166,11 @@ export function createRustToolHandler(
         }
 
         const parsed = JSON.parse(stdout);
+        // Pixels ride beside the result, never inside it. `result` is
+        // JSON.stringify'd straight into the model's transcript, so a base64
+        // field left in place would be the same context bomb the binary read
+        // used to be — just spelled differently.
+        const attachments = liftAttachments(parsed.result);
         return {
           callId: input.callId,
           toolName: input.toolName,
@@ -145,6 +178,7 @@ export function createRustToolHandler(
           result: JSON.stringify(parsed.result),
           error: parsed.error,
           durationMs,
+          ...(attachments.length > 0 && { attachments }),
         };
       } catch (err) {
         const durationMs = Math.round(performance.now() - start);
