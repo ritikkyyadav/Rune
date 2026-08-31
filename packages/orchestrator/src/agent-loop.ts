@@ -30,6 +30,7 @@ import type { RetrievedChunk } from "./context-engine";
 import { getMaxOutputTokens } from "./tokenizer";
 import type { Verifier } from "./verifier";
 import type { HandoffReason, TaskStateStore } from "./task-state";
+import { TASK_STATE_BLOCK_BUDGET_AFTER_COMPACTION } from "./task-state";
 
 // ─── Agent Turn Events (yielded to caller) ───
 
@@ -220,6 +221,12 @@ export interface AgentLoopConfig {
   temperature?: number;
   priorMessages?: Message[];
   contextEngine?: ContextEngine;
+  /**
+   * Brief-ledger status for the fix-verified gate, wired by the engine. Null
+   * when no brief covers the CURRENT task (no read_back, or the brief drifted
+   * from the live goal) — the gate is then silently inapplicable.
+   */
+  ledgerStatus?: () => { total: number; verified: number } | null;
   /** Request-specific local context, budgeted alongside all other auxiliary context. */
   retrievedChunks?: RetrievedChunk[];
   /** Runs project checks after edits; on failure the agent is asked to fix. */
@@ -338,6 +345,12 @@ const TOOL_RESULT_TAIL_CHARS = 6_000;
  * chosen, silently, unless someone stops to ask.
  */
 const VISUAL_FILE_RE = /\.(html?|css|s[ac]ss|tsx|jsx|vue|svelte)$/i;
+
+// A goal that reads as a FIX: the fix-verified gate applies only to these, and
+// only when a read-back brief exists — a false positive costs one refused
+// finish, which the nudge itself converts into a stronger check.
+const FIX_SHAPED_RE =
+  /\b(fix(es|ed|ing)?|bugs?|regression|broken|crash(es|ed|ing)?|fail(s|ed|ing)?|defect|repair)\b/i;
 
 const TRIVIAL_EVIDENCE_RE =
   /^\s*(?:ls|pwd|echo|cat|cd|which|type|env|printenv|date|whoami|true|head|tail|wc|stat|file|dirname|basename)\b[^|;&]*$/;
@@ -621,6 +634,33 @@ export class AgentLoop {
     let delegationNudges = 0;
     /** Art-direction tripwire: fires once, on the first user-facing screen. */
     let artDirectionNudges = 0;
+    // ── Fix-verified gate ──
+    // A fix-shaped task with a read-back brief may not finish with zero
+    // criteria at `verified` — that rung is the only mechanical difference
+    // between "fixed" and "edited until green". Refuse-once, like every gate.
+    let fixVerifiedNudges = 0;
+    // ── Product-sight gate ──
+    // The run wrote something a person will LOOK at; finishing without ever
+    // looking at it is how a phylogenetic tree ships as a raw string dump
+    // with every check green. "Looked" = a browser tool ran, or a tool result
+    // carried an image the model was actually shown.
+    let wroteVisualThisRun = false;
+    let sawOwnWork = false;
+    let productSightNudges = 0;
+    // ── Batching nudge ──
+    // Four consecutive turns of exactly one read each is a serial crawl the
+    // model could have run as one parallel batch. One corrective note per run.
+    let consecutiveSingleReadTurns = 0;
+    let batchNudges = 0;
+    // ── Wrap-up reserve ──
+    // Past ~85% of the turn budget with todos still open, the remaining turns
+    // belong to closing and verifying, not widening — injected once. Quota and
+    // context death do not announce themselves; the reserve is how a run ends
+    // FINISHED instead of mid-flight.
+    let wrapUpInjected = false;
+    // The request right after a compaction carries a boosted task-state block:
+    // that is the moment the verbatim spec just left the transcript.
+    let justCompacted = false;
     // Each remembered call carries the write count at the moment it was issued.
     // Repetition only means "stuck" when nothing changed between the tries —
     // see the duplicate check below.
@@ -702,6 +742,47 @@ export class AgentLoop {
       // Latched here so the budget is extended exactly once.
       if (haltReportPending) haltReportGranted = true;
 
+      // ── Wrap-up reserve (main loop only; sub-agents get turnBudgetNotice) ──
+      // Observed failure this answers: a 4-hour build spent its whole budget
+      // widening and died on a quota wall at turn 101 with verification still
+      // at "none" — the acceptance pass was scheduled after the horizon. The
+      // reserve converts the tail of the budget into a protected close-out.
+      if (
+        !this.config.turnBudgetNotice &&
+        !wrapUpInjected &&
+        this.config.maxTurns >= 20 &&
+        turn >= Math.ceil(this.config.maxTurns * 0.85) &&
+        this.config.taskState?.hasOpenTodos()
+      ) {
+        wrapUpInjected = true;
+        this.report(
+          "loop.wrapup_reserve",
+          "warn",
+          "wrapUp",
+          `turn ${turn} of ${this.config.maxTurns} with open todos — injected the wrap-up protocol`,
+        );
+        this.appendMessage({
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text:
+                `[Harness note] Budget reserve: turn ${turn} of ${this.config.maxTurns}. ` +
+                "From here the remaining turns belong to FINISHING, not widening: take on " +
+                "nothing new, close the open todos in priority order (rewrite the list now " +
+                "if some no longer matter), run verification, and end with the honest " +
+                "completion report — what works (with evidence), what is cut, what is " +
+                "untested. A run that ends finished-but-smaller beats one that dies " +
+                "mid-flight; if the budget runs out anyway, the handoff carries your state.",
+            },
+          ],
+        });
+        yield {
+          type: "notice",
+          message: "Turn budget nearly spent — directed the agent to close out and verify.",
+        };
+      }
+
       // Build inference request. Passing the model gates family-specific
       // tools (apply_patch for the Codex lineage); the model is fixed for the
       // life of this loop, so the advertised set stays stable per session.
@@ -771,7 +852,10 @@ export class AgentLoop {
       // rebuilt every request and prevent the next turn from reading it back.
       const stableMessageCount = requestMessages.length;
 
-      const taskBlock = this.config.taskState?.renderBlock();
+      const taskBlock = this.config.taskState?.renderBlock(
+        justCompacted ? TASK_STATE_BLOCK_BUDGET_AFTER_COMPACTION : undefined,
+      );
+      justCompacted = false;
       if (taskBlock) {
         requestMessages = [
           ...requestMessages,
@@ -957,6 +1041,7 @@ export class AgentLoop {
               });
               if (r.compacted) {
                 this.messages = r.messages;
+                justCompacted = true;
                 yield this.compactionEvent(r, true);
                 yield {
                   type: "notice",
@@ -1376,12 +1461,108 @@ export class AgentLoop {
           continue;
         }
 
+        // ── Fix-verified gate ──
+        // A fix-shaped task, a read-back brief with criteria, edits made — and
+        // not one criterion reached `verified`: nothing was shown to FAIL on
+        // the parent commit and pass now. That rung is the only mechanical
+        // difference between "fixed" and "edited until green", and the only
+        // way to reach it is to author or cite a check — which is exactly the
+        // verification artifact the repo gets to keep. Refuse the finish once.
+        const ledger = this.config.ledgerStatus?.() ?? null;
+        if (
+          ledger !== null &&
+          ledger.total > 0 &&
+          ledger.verified === 0 &&
+          anyWritesThisRun &&
+          fixVerifiedNudges < 1 &&
+          !signal?.aborted &&
+          FIX_SHAPED_RE.test(this.config.taskState?.snapshot().goal ?? "")
+        ) {
+          fixVerifiedNudges++;
+          this.report(
+            "loop.fix_verified_gate",
+            "warn",
+            "fixVerifiedGate",
+            "fix-shaped task finishing with zero verified criteria — refused once",
+          );
+          this.appendMessage({
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text:
+                  "Stop — this task is a FIX and none of your done_when criteria reached " +
+                  "`verified`: no cited check has been shown to fail on the parent commit " +
+                  "and pass now. Before finishing: write or identify a check that reproduces " +
+                  "the original defect (a real test file is best — it stays in the repo and " +
+                  "guards the fix forever), run it, then cite it with record_evidence against " +
+                  "the matching criterion — the runtime replays it on the pre-change tree " +
+                  "itself and sets the rung. If no such check can exist here (no reproduction " +
+                  "path, missing environment), finish anyway but say that plainly and leave " +
+                  "the criterion honestly short of verified.",
+              },
+            ],
+          });
+          yield {
+            type: "notice",
+            message: "Fix finishing without a verified check — asking for one.",
+          };
+          this.state = "observing";
+          continue;
+        }
+
+        // ── Product-sight gate ──
+        // The run wrote something a person will LOOK at and never looked at
+        // it. Every automated check can be green while the screen is wrong —
+        // the observed case: a phylogenetic tree shipped as a raw Newick
+        // string in a <code> tag, typecheck and tests all passing. "Looked"
+        // means a browser tool ran or an image came back through a tool
+        // result; one refused finish converts into one review pass.
+        if (
+          wroteVisualThisRun &&
+          !sawOwnWork &&
+          productSightNudges < 1 &&
+          !signal?.aborted
+        ) {
+          productSightNudges++;
+          this.report(
+            "loop.product_sight_gate",
+            "warn",
+            "productSightGate",
+            "visual files written but the agent never looked at the result — refused once",
+          );
+          this.appendMessage({
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text:
+                  "Stop — you built or changed something a person will LOOK at, and you " +
+                  "never looked at it. Green checks cannot see a broken screen. Before " +
+                  "finishing: open what you built and read it back — with the browser tool " +
+                  "(navigate, then snapshot) if available; otherwise serve or render the " +
+                  "page and inspect what it ACTUALLY shows (a screenshot you then read with " +
+                  "read_file, or the served response's real rendered structure). Then fix " +
+                  "the worst thing you can see, once, and finish. If nothing in this " +
+                  "environment can show it, say so and mark the UI explicitly as unreviewed.",
+              },
+            ],
+          });
+          yield {
+            type: "notice",
+            message: "UI was written but never viewed — asking the agent to look at it.",
+          };
+          this.state = "observing";
+          continue;
+        }
+
         // Compact only when context is near budget (avoids a summarization
         // LLM call every turn).
         if (this.config.contextEngine && this.config.contextEngine.shouldCompact()) {
           const r = await this.config.contextEngine.compactWorkingSet(this.messages);
           if (r.compacted) {
             this.messages = r.messages;
+            justCompacted = true;
             yield this.compactionEvent(r);
           } else if (r.failed) {
             this.report(
@@ -1738,6 +1919,31 @@ export class AgentLoop {
       }
 
       // ── Phase C: emit events + assemble tool_result blocks in original order ──
+      // Batching nudge bookkeeping first: a turn that ran exactly ONE
+      // read-category tool (todo_write is read-category but is planning, not
+      // reading) extends the serial-crawl streak; anything else resets it.
+      // Four in a row earns one corrective note — independent reads execute in
+      // parallel when batched, and a 100-turn run at ~1.7 calls per turn was
+      // measured spending most of its wall-clock on this.
+      const singleReadTurn =
+        planned.length === 1 &&
+        planned[0].allowed &&
+        planned[0].output?.success === true &&
+        planned[0].tc.toolName !== "todo_write" &&
+        this.registry.get(planned[0].tc.toolName)?.schema.category === "read";
+      consecutiveSingleReadTurns = singleReadTurn ? consecutiveSingleReadTurns + 1 : 0;
+      let batchNudgeDue = false;
+      if (consecutiveSingleReadTurns >= 4 && batchNudges < 1) {
+        batchNudges++;
+        batchNudgeDue = true;
+        consecutiveSingleReadTurns = 0;
+        this.report(
+          "loop.batch_nudge",
+          "warn",
+          "batchNudge",
+          "four consecutive single-read turns — nudged once to batch independent reads",
+        );
+      }
       const toolResults: ContentBlock[] = [];
       for (const p of planned) {
         const output = p.output!;
@@ -1805,8 +2011,14 @@ export class AgentLoop {
           for (const f of Array.isArray(p.parsedArgs.files) ? p.parsedArgs.files : []) {
             if (typeof f === "string" && f) {
               delegatedScopes.push(isAbsolute(f) ? resolve(f) : resolve(workspaceRoot, f));
+              if (VISUAL_FILE_RE.test(f)) wroteVisualThisRun = true;
             }
           }
+        }
+
+        // The product-sight gate's "looked" signal: a browser tool actually ran.
+        if (output.success && p.tc.toolName.startsWith("mcp_browser")) {
+          sawOwnWork = true;
         }
 
         if (!p.allowed) {
@@ -1823,6 +2035,18 @@ export class AgentLoop {
           let resultContent = truncateForTranscript(
             output.success ? output.result : `Error: ${output.error}`,
           );
+
+          // ── Batching nudge (deterministic, once per run) ──
+          if (batchNudgeDue) {
+            batchNudgeDue = false;
+            resultContent =
+              "[Harness note] The last four turns each ran exactly ONE read. Independent " +
+              "reads — files, searches, listings — execute in PARALLEL when you issue them " +
+              "in a single response. Unless each read genuinely depends on the previous " +
+              "result, batch the next several into one response; on a long task this is " +
+              "minutes of wall-clock, not style.\n\n" +
+              resultContent;
+          }
 
           // ── Plan-discipline tripwire (deterministic, once per run) ──
           // Multi-file work proceeding with NO recorded plan gets exactly one
@@ -1953,6 +2177,9 @@ export class AgentLoop {
             // a verify cycle, not a rut.
             writeCount++;
             executedSinceWrite = false; // new writes need fresh execution evidence
+            if (VISUAL_FILE_RE.test(String(p.parsedArgs.path ?? ""))) {
+              wroteVisualThisRun = true; // the product-sight gate reads this
+            }
           }
           // Only a real bash run counts as execution evidence — other
           // "execute"-category tools (kill_shell, ask_user) prove nothing.
@@ -1989,6 +2216,10 @@ export class AgentLoop {
       if (attached.length > 0) {
         const labels = attached.map((a) => a.label).join(", ");
         if (providerCarriesImages(this.config.provider)) {
+          // The model is about to actually SEE pixels — that satisfies the
+          // product-sight gate. The else branch below does not: a dropped
+          // image the model is told it has NOT seen is not looking.
+          sawOwnWork = true;
           this.appendMessage({
             role: "user",
             content: [

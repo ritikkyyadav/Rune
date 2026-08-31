@@ -31,7 +31,7 @@ import type {
   SkillSearchHit,
   ToolCallOutput,
 } from "@gear/tool-registry";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   setConfigValue,
@@ -2983,6 +2983,12 @@ export class Engine {
       TaskStateStore.fromEvents(priorEvents) ??
       new TaskStateStore();
     this.taskStates.set(sessionId, taskState);
+    // The mission dossier: the same state at full fidelity, on disk, where it
+    // survives everything — and where the model can read it back with an
+    // ordinary read_file. The injected block names this path when it had to
+    // truncate. Workspace-relative on purpose: the path is FOR the model.
+    const missionRelPath = join(".gear", "mission.md");
+    taskState.setMissionPath(missionRelPath);
     const persistTaskState = (): void => {
       try {
         this.sessions.appendEvent(sessionId, {
@@ -2991,6 +2997,13 @@ export class Engine {
         });
       } catch {
         // persistence of the spine must never break the run
+      }
+      try {
+        const missionAbs = join(this.config.workspaceRoot, missionRelPath);
+        mkdirSync(join(this.config.workspaceRoot, ".gear"), { recursive: true });
+        writeFileSync(missionAbs, taskState.renderMissionFile(), "utf8");
+      } catch {
+        // the dossier is best-effort; the event log remains the source of truth
       }
     };
 
@@ -3153,6 +3166,15 @@ export class Engine {
         maxGreenfieldNudges: reliability.maxGreenfieldNudges,
         toolResultProcessor: this.processToolResult,
         teamContext: this.teamBus ? () => this.renderTeamBlock() : undefined,
+        // The fix-verified gate reads the brief ledger, but only the CURRENT
+        // task's: a ledger read back against an earlier goal must not gate
+        // this one, so drift between brief.request and the live goal returns
+        // null (gate silently inapplicable).
+        ledgerStatus: () => {
+          if (!this.ledger || !this.brief) return null;
+          if (this.brief.request && this.brief.request !== this.currentGoal()) return null;
+          return { total: this.ledger.total, verified: this.ledger.met };
+        },
       },
       this.gateway,
       this.registry,
@@ -3203,6 +3225,7 @@ export class Engine {
     };
 
     let runError: string | null = null;
+    let spinePersistedThisRun = false;
     try {
       for await (const event of runner.run(
         userMessage,
@@ -3210,6 +3233,14 @@ export class Engine {
         this.config.workspaceRoot,
         signal,
       )) {
+        // The loop applied the task-boundary rule when the generator started;
+        // persist that decision (new goal or directive) on the FIRST event so
+        // the mission file carries the new spec from minute zero, not from the
+        // first todo_write.
+        if (!spinePersistedThisRun) {
+          spinePersistedThisRun = true;
+          persistTaskState();
+        }
         if (event.type === "error" && !event.recoverable) {
           runError = event.error;
         }

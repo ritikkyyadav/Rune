@@ -91,6 +91,50 @@ describe("task boundary rule (beginTurn)", () => {
     expect(s.beginTurn("continue")).toBe(true);
     expect(s.snapshot().goal).toBe("continue");
   });
+
+  test("a short INSPECTION of finished work never becomes the goal (observed: evolab4)", () => {
+    const s = new TaskStateStore();
+    s.beginTurn("# EvoLab — Master Product, Scientific, and Engineering Implementation Prompt …");
+    s.setTodos([{ content: "built it", status: "completed" }]);
+    // The observed rot this pins: this exact message became a 4-hour build's
+    // goal because "show" was not on the push-word list.
+    expect(s.beginTurn("well then show me the preview if its done !!")).toBe(false);
+    const snap = s.snapshot();
+    expect(snap.goal).toContain("EvoLab");
+    expect(snap.directive).toBe("well then show me the preview if its done !!");
+  });
+
+  test("a trailing question mark is an inspection, not a new goal", () => {
+    const s = new TaskStateStore();
+    s.beginTurn("build the API");
+    s.setTodos([{ content: "done", status: "completed" }]);
+    expect(s.beginTurn("tell me which model are you and on which effort ?")).toBe(false);
+    expect(s.snapshot().goal).toBe("build the API");
+  });
+
+  test("the boundary ARCHIVES: files, decisions, and verification survive a new goal", () => {
+    const s = new TaskStateStore();
+    s.beginTurn("build the parser");
+    s.setTodos([{ content: "build", status: "completed" }]);
+    s.noteFileWritten("src/parser.ts");
+    s.addDecision("recursive descent, not a generator");
+    s.noteVerification(true, true, "12 tests passed");
+    expect(s.beginTurn("now migrate the whole CLI to use the new parser end to end")).toBe(true);
+    const snap = s.snapshot();
+    expect(snap.todos).toEqual([]); // the plan belongs to the mission
+    expect(snap.filesWritten).toEqual(["src/parser.ts"]); // the ledger does not
+    expect(snap.decisions).toEqual(["recursive descent, not a generator"]);
+    expect(snap.verification.status).toBe("passed"); // known state of the tree
+    expect(snap.verification.attempts).toBe(0); // but the counter is per-task
+  });
+
+  test("a long goal survives capture far beyond the old 2k cap", () => {
+    const s = new TaskStateStore();
+    const spec = "SPEC-START " + "requirement detail ".repeat(600) + "SPEC-END";
+    s.beginTurn(spec);
+    expect(s.snapshot().goal.length).toBeGreaterThan(10_000);
+    expect(s.snapshot().goal).toContain("SPEC-START");
+  });
 });
 
 describe("renderBlock", () => {
@@ -164,6 +208,21 @@ describe("renderBlock", () => {
     expect(block).toContain("Earlier goals this session: build me a clone of cluely");
   });
 
+  test("the post-compaction budget carries far more of the goal, plus the mission pointer", () => {
+    const s = new TaskStateStore();
+    s.setMissionPath(".gear/mission.md");
+    const spec = "SPEC-HEAD " + "the requirement continues ".repeat(200);
+    s.beginTurn(spec);
+    s.setTodos([{ content: "step", status: "in_progress" }]);
+    const normal = s.renderBlock()!;
+    const boosted = s.renderBlock(1_400)!;
+    const goalLine = (b: string) => b.split("\n").find((l) => l.startsWith("Goal:"))!;
+    expect(goalLine(boosted).length).toBeGreaterThan(goalLine(normal).length + 1_000);
+    // A truncated goal always names where the full brief lives.
+    expect(boosted).toContain(".gear/mission.md");
+    expect(normal).toContain(".gear/mission.md");
+  });
+
   test("verification 'unavailable' always states WHY — the nothing-runnable red flag", () => {
     const s = new TaskStateStore();
     s.beginTurn("build me an app");
@@ -194,6 +253,42 @@ describe("renderHandoff", () => {
     expect(h).toContain("· port to new client");
     expect(h).toContain("Files touched: db/client.ts");
     expect(h).toContain("Next step: port to new client");
+  });
+});
+
+describe("renderMissionFile", () => {
+  test("the dossier carries the verbatim goal, plan, ledger, and lineage at full fidelity", () => {
+    const s = new TaskStateStore();
+    const spec = ("BUILD-SPEC " + "every requirement matters ".repeat(300)).trim();
+    s.beginTurn(spec);
+    s.setTodos([
+      { content: "scaffold", status: "completed" },
+      { content: "core loop", status: "in_progress" },
+    ]);
+    s.noteFileWritten("src/app.ts");
+    s.addDecision("SQLite over Postgres for the local case");
+    s.addClarification("which platform?", "web");
+    s.noteVerification(true, false, "2 failures in core.test.ts");
+    const doc = s.renderMissionFile();
+    expect(doc).toContain("# Mission");
+    expect(doc).toContain(spec); // VERBATIM — the whole point
+    expect(doc).toContain("[x] scaffold");
+    expect(doc).toContain("[>] core loop");
+    expect(doc).toContain("src/app.ts");
+    expect(doc).toContain("SQLite over Postgres");
+    expect(doc).toContain("which platform? → web");
+    expect(doc).toContain("failed");
+  });
+
+  test("earlier goals ride along after a boundary", () => {
+    const s = new TaskStateStore();
+    s.beginTurn("first mission text");
+    s.setTodos([{ content: "a", status: "completed" }]);
+    s.beginTurn("second mission entirely different and clearly substantive work");
+    const doc = s.renderMissionFile();
+    expect(doc).toContain("second mission entirely different");
+    expect(doc).toContain("Earlier goals this session");
+    expect(doc).toContain("first mission text");
   });
 });
 

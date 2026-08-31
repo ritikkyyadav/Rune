@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterAll } from "bun:test";
 import { TokenCounter, tokenCounter } from "../../../packages/orchestrator/src/tokenizer";
 import { ContextEngine } from "../../../packages/orchestrator/src/context-engine";
 
@@ -135,4 +135,9 @@ describe("ContextEngine token feedback", () => {
       built.messages.filter((m) => !String(m.content[0]).includes("Session context")).length,
     ).toBeGreaterThanOrEqual(messages.length);
   });
+});
+
+// The counter is a process singleton; leave it as real sessions start.
+afterAll(() => {
+  tokenCounter.resetCalibrations();
 });

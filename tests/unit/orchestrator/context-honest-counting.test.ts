@@ -13,7 +13,7 @@
  *    session could overflow the summarizer too.
  */
 
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterAll } from "bun:test";
 import { ContextEngine } from "../../../packages/orchestrator/src/context-engine";
 import { tokenCounter } from "../../../packages/orchestrator/src/tokenizer";
 import type { Message } from "../../../packages/llm-gateway/src/types";
@@ -176,3 +176,8 @@ function plain(n: number): Message[] {
     i % 2 === 0 ? userMsg(`turn ${i}`) : assistantMsg(`reply ${i}`),
   );
 }
+
+// The counter is a process singleton; leave it as real sessions start.
+afterAll(() => {
+  tokenCounter.resetCalibrations();
+});
