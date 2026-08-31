@@ -24,6 +24,8 @@
  */
 
 import { join } from "node:path";
+import { createLogger } from "@gear/shared";
+const hookLog = createLogger("hooks");
 import { workspaceConfigPath } from "@gear/shared";
 
 // ─── Types ───
@@ -236,7 +238,7 @@ export class HookRunner {
   ) {
     this.config = config ?? {};
     this.workspaceRoot = workspaceRoot;
-    this.logger = options?.logger ?? ((m) => console.warn(m));
+    this.logger = options?.logger ?? ((m) => hookLog.warn(m));
   }
 
   /** Convenience: load `<workspaceRoot>/.gear/hooks.json` then build a runner. */

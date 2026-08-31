@@ -220,6 +220,12 @@ export interface GearConfig {
   fallback?: {
     order?: string[];
     /**
+     * Auto-resume the interactive session when a quota stop's retry window
+     * passes (default true). `false` restores the old behavior: the run stays
+     * stopped until the user sends something.
+     */
+    autoResume?: boolean;
+    /**
      * What a plan/QUOTA cap does mid-task: "stop" (default) ends the run with
      * the retry window and keeps the work, rather than letting a weaker model
      * inherit an extensive task; "degrade" restores automatic downgrade.

@@ -1,7 +1,9 @@
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
 import { readdirSync, existsSync, watchFile, unwatchFile } from "fs";
 import { join, extname } from "path";
-import { workspaceConfigPath } from "@gear/shared";
+import { createLogger, workspaceConfigPath } from "@gear/shared";
+
+const customLog = createLogger("custom-tools");
 
 // ─── Custom Tool Interface ───
 // Users drop files in .gear/tools/ that export this shape.
@@ -51,7 +53,7 @@ export class CustomToolsLoader {
           this.handlers.set(handler.schema.name, handler);
         }
       } catch (err) {
-        console.error(
+        customLog.error(
           `[CustomTools] Failed to load ${file}: ${err instanceof Error ? err.message : err}`,
         );
       }
@@ -136,18 +138,22 @@ export class CustomToolsLoader {
     const exported: CustomToolExport = mod.default ?? mod;
 
     if (!exported.schema?.name || !exported.execute) {
-      console.warn(`[CustomTools] ${filePath}: missing schema.name or execute`);
+      customLog.warn(`[CustomTools] ${filePath}: missing schema.name or execute`);
       return null;
     }
 
     // Run validation
     const validation = this.validate(exported);
     if (!validation.valid) {
-      console.warn(`[CustomTools] ${filePath} failed validation: ${validation.errors.join("; ")}`);
+      customLog.warn(
+        `[CustomTools] ${filePath} failed validation: ${validation.errors.join("; ")}`,
+      );
       return null;
     }
     if (validation.riskLevel === "review") {
-      console.warn(`[CustomTools] ${filePath} flagged for review (risk: ${validation.riskLevel})`);
+      customLog.warn(
+        `[CustomTools] ${filePath} flagged for review (risk: ${validation.riskLevel})`,
+      );
     }
 
     const prefixedName = `custom_${exported.schema.name}`;

@@ -27,12 +27,14 @@
  *
  * Loading is lenient by design (mirrors hooks.ts):
  *   - Missing `.gear/commands` dir -> returns [] (never throws).
- *   - A file that can't be read    -> skipped with a console.warn (never throws).
+ *   - A file that can't be read    -> skipped with a logged warning (never throws).
  */
 
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { workspaceConfigPath } from "@gear/shared";
+import { createLogger, workspaceConfigPath } from "@gear/shared";
+
+const cmdLog = createLogger("commands");
 
 // ─── Types ───
 
@@ -60,7 +62,7 @@ export interface SlashCommand {
  * any plugin command directories (each tagged with its plugin's name).
  *
  * - Missing `.gear/commands` directory -> returns [] (never throws).
- * - A `.md` file that cannot be read    -> skipped (logged via console.warn).
+ * - A `.md` file that cannot be read    -> skipped (logged via the shared logger).
  * - Name conflicts: user commands win over plugins; a plugin command whose
  *   name is already taken is REFUSED with a warning (never silently shadowed).
  *
@@ -81,7 +83,7 @@ export async function loadCommands(
     for (const cmd of await loadCommandDir(dir, source, false)) {
       const owner = taken.get(cmd.name);
       if (owner) {
-        console.warn(
+        cmdLog.warn(
           `[commands] plugin "${source}": /${cmd.name} conflicts with ${owner === "user" ? "a user command" : `plugin "${owner}"`} — not loaded`,
         );
         continue;
@@ -106,12 +108,12 @@ async function loadCommandDir(
     // Missing directory is the common, expected case — no commands configured.
     if (isNotFound(err) && isDefaultDir) return [];
     if (isNotFound(err)) {
-      console.warn(`[commands] ${source}: commands dir ${dir} does not exist`);
+      cmdLog.warn(`[commands] ${source}: commands dir ${dir} does not exist`);
       return [];
     }
     // Any other read failure (e.g. permissions) is also non-fatal: a workspace
     // with no usable commands dir simply has no commands.
-    console.warn(
+    cmdLog.warn(
       `[commands] could not read ${dir}: ${err instanceof Error ? err.message : String(err)}`,
     );
     return [];
@@ -127,7 +129,7 @@ async function loadCommandDir(
       text = await readFile(path, "utf8");
     } catch (err) {
       // A single unreadable file should not abort the whole load.
-      console.warn(
+      cmdLog.warn(
         `[commands] skipping ${path}: ${err instanceof Error ? err.message : String(err)}`,
       );
       continue;

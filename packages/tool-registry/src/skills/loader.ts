@@ -1,4 +1,7 @@
 import { readdir, readFile } from "node:fs/promises";
+import { createLogger } from "@gear/shared";
+
+const skillLog = createLogger("skills");
 import { existsSync } from "node:fs";
 import { basename, dirname, join, relative, sep } from "node:path";
 import type {
@@ -54,7 +57,7 @@ export class SkillLoader {
       try {
         files = await this.findSkillFiles(root, 0);
       } catch (err) {
-        console.warn(
+        skillLog.warn(
           `[skills] could not scan ${root}: ${err instanceof Error ? err.message : String(err)}`,
         );
         continue;
@@ -63,7 +66,7 @@ export class SkillLoader {
         try {
           await this.ingest(root, path);
         } catch (err) {
-          console.warn(
+          skillLog.warn(
             `[skills] skipping ${path}: ${err instanceof Error ? err.message : String(err)}`,
           );
         }

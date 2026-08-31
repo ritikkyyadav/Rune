@@ -183,6 +183,14 @@ export interface TuiContext {
    * Undefined means the default: pinned header, scrolling body, pinned footer.
    */
   inline?: boolean;
+  /**
+   * Auto-resume after a quota stop (default true; `[fallback] autoResume =
+   * false` opts out). The stop message carries the retry window; the session
+   * waits it out visibly and continues from the handoff instead of sitting
+   * stuck until someone notices — the observed failure was a run dead for
+   * hours because a 429 stop scrolled by.
+   */
+  quotaAutoResume?: boolean;
 }
 
 type Mode =
@@ -528,6 +536,7 @@ class Tui {
     stdin.setEncoding("utf8");
     if (stdin.isTTY) stdin.setRawMode(true);
     process.stdout.write("\x1b[?2004h"); // bracketed paste on
+    process.env.GEAR_TUI_ACTIVE = "1"; // loggers: file sink only, never stderr over the alt screen
     // Safety net: if we ever exit without running this.exit() (a crash), still leave the terminal
     // usable -- leave the alternate screen, drop mouse/paste reporting, restore autowrap and the
     // user's colours, and show the cursor. A process that dies holding the alternate screen with
@@ -584,6 +593,7 @@ class Tui {
           this.loopPoll = null;
         }
         process.stdout.write("\x1b[?2004l"); // bracketed paste off
+        delete process.env.GEAR_TUI_ACTIVE; // terminal is the shell's again — loggers may use stderr
         if (this.drawTimer) clearTimeout(this.drawTimer); // cancel any pending coalesced paint
         this.leaveSurface();
         process.stdout.write(TERMINAL_THEME_RESET); // restore the user's terminal colours
@@ -1792,6 +1802,9 @@ class Tui {
   /** Echo, record, and execute one line of input -- a slash command or a model turn. Shared by
    *  submit() and the type-ahead queue drained when a turn completes, so both run identically. */
   private async runInput(raw: string, scheduledLoop?: LoopTask): Promise<void> {
+    // A new message supersedes any pending quota auto-resume — the user is
+    // driving again.
+    this.cancelQuotaResume(true);
     if (!scheduledLoop) this.history.push(raw);
 
     // Echo the prompt into the transcript. A slash command is an instruction to the
@@ -3645,6 +3658,7 @@ class Tui {
     if (stdin.isTTY) stdin.setRawMode(false);
     stdin.pause();
     process.stdout.write("\x1b[?25h"); // show cursor for the editor
+    delete process.env.GEAR_TUI_ACTIVE; // the editor owns the terminal now
 
     let okEdit = true;
     try {
@@ -3659,6 +3673,7 @@ class Tui {
     if (stdin.isTTY) stdin.setRawMode(true);
     stdin.resume();
     process.stdout.write("\x1b[?2004h");
+    process.env.GEAR_TUI_ACTIVE = "1";
     this.enterSurface();
 
     if (okEdit) {
@@ -4432,6 +4447,7 @@ class Tui {
     let toolErrors = 0;
     let filesChanged = 0;
     let turnFailed = false;
+    let quotaStop: string | null = null;
     this.activeLoopId = scheduledLoop?.id ?? null;
 
     try {
@@ -4453,6 +4469,15 @@ class Tui {
         }
         if (ev.type === "checkpoint_saved") {
           this.lastCheckpoint = { sessionId: this.ctx.sessionId, label: `v${ev.version}` };
+        }
+        // A quota stop ends the run but names its retry window — captured here
+        // so the finally block can schedule the auto-resume.
+        if (
+          ev.type === "error" &&
+          typeof (ev as { error?: unknown }).error === "string" &&
+          (ev as { error: string }).error.includes("Quota exceeded")
+        ) {
+          quotaStop = (ev as { error: string }).error;
         }
         // Session-wide edited-files readout on the footer.
         if (
@@ -4511,7 +4536,59 @@ class Tui {
       this.aborting = false;
       this.mode = "input";
       this.drainQueue(wasAborted);
+      if (quotaStop && !wasAborted) {
+        this.scheduleQuotaResume(quotaStop);
+      } else if (!quotaStop) {
+        this.quotaResumeAttempts = 0; // a turn without a wall resets the backoff
+      }
     }
+  }
+
+  // -- quota auto-resume --
+  // The stop message is honest about the window ("resume this session in
+  // ~15m"); this makes the waiting real instead of leaving the session dead
+  // until someone notices. Each retry re-parses the FRESH window from the next
+  // stop message, so backoff follows the provider's own clock.
+
+  private quotaResume: { timer: ReturnType<typeof setTimeout>; at: number } | null = null;
+  private quotaResumeAttempts = 0;
+
+  private scheduleQuotaResume(stopMessage: string): void {
+    if (this.ctx.quotaAutoResume === false) return;
+    if (this.mode !== "input" || this.queued.length > 0) return; // user is already driving
+    if (this.quotaResume) return;
+    if (this.quotaResumeAttempts >= 8) {
+      this.print(
+        `  ${warn(glyph("retry"))} ${muted("quota wall again - giving up on auto-resume after 8 tries.")} ${faint("send a message to continue manually")}`,
+      );
+      return;
+    }
+    this.quotaResumeAttempts++;
+    const m = stopMessage.match(/resume this session in ~(\d+)m/);
+    const mins = m ? Number(m[1]) : 15;
+    const delayMs = Math.min(Math.max(mins * 60_000 + 30_000, 60_000), 6 * 60 * 60_000);
+    const at = Date.now() + delayMs;
+    const hhmm = new Date(at).toTimeString().slice(0, 5);
+    this.print(
+      `  ${warn(glyph("retry"))} ${muted(`quota wall - auto-resume at ${hhmm}`)} ${faint(`(attempt ${this.quotaResumeAttempts}, send any message to cancel)`)}`,
+    );
+    this.scheduleDraw();
+    const timer = setTimeout(() => {
+      this.quotaResume = null;
+      if (this.mode !== "input" || this.queued.length > 0) return; // user took over
+      this.print(
+        `  ${info(glyph("retry"))} ${muted("quota window should be open - resuming from the handoff")}`,
+      );
+      void this.runInput("continue");
+    }, delayMs);
+    this.quotaResume = { timer, at };
+  }
+
+  private cancelQuotaResume(silent = false): void {
+    if (!this.quotaResume) return;
+    clearTimeout(this.quotaResume.timer);
+    this.quotaResume = null;
+    if (!silent) this.print(`  ${faint("auto-resume cancelled")}`);
   }
 
   private renderLoopCompletion(task: LoopTask, completion: LoopCompletion): string {

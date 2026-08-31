@@ -583,6 +583,8 @@ const MAX_TOKENS = 32000;
 // 80 agentic rounds: long autonomous builds (scaffold → install → run →
 // fix → verify → polish) legitimately spend 30-50; the cap is a runaway
 // guard, not a work budget. Context compaction keeps long runs viable.
+const loaderLog = createLogger("engine:loaders");
+
 const MAX_TURNS = 80;
 
 // Per-provider cheap-model routing now lives in @gear/shared tiers.ts
@@ -1439,7 +1441,7 @@ export class Engine {
     if (this.pluginDiscovery === null) {
       this.pluginDiscovery = discoverPlugins(this.config.workspaceRoot);
       for (const error of this.pluginDiscovery.errors) {
-        console.warn(`[plugins] ${error}`);
+        loaderLog.warn(`[plugins] ${error}`);
       }
     }
     return this.pluginDiscovery.plugins;
@@ -1463,7 +1465,7 @@ export class Engine {
       const extraHookFiles = this.getPlugins().flatMap((p) => p.hookFiles);
       this.hookRunner = await HookRunner.load(this.config.workspaceRoot, { extraHookFiles });
     } catch (err) {
-      console.warn(`[hooks] failed to load: ${err instanceof Error ? err.message : String(err)}`);
+      loaderLog.warn(`[hooks] failed to load: ${err instanceof Error ? err.message : String(err)}`);
       this.hookRunner = null;
     }
   }
@@ -1551,7 +1553,7 @@ export class Engine {
         this.skillCatalog = this.skillLoader.catalogPrompt();
       }
     } catch (err) {
-      console.warn(`[skills] load failed: ${err instanceof Error ? err.message : String(err)}`);
+      loaderLog.warn(`[skills] load failed: ${err instanceof Error ? err.message : String(err)}`);
       this.skillLoader = null;
     }
   }
@@ -2942,6 +2944,11 @@ export class Engine {
    * is enabled; otherwise falls back to the flat ReAct loop.
    */
   async *chat(sessionId: string, userMessage: string): AsyncGenerator<AgentTurnEvent> {
+    // Line-ending normalization at INGESTION, whatever the entry path (TUI
+    // paste, desktop, CLI arg, resume). Terminals paste line breaks as bare
+    // CR; everything downstream — the model prompt, the mission file, every
+    // renderer — splits on \n. Belt to the paste scanner's suspenders.
+    userMessage = userMessage.replace(/\r\n?/g, "\n");
     const session = this.sessions.getSession(sessionId);
     if (!session) {
       yield { type: "error", error: "Session not found", recoverable: false };

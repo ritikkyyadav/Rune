@@ -257,7 +257,7 @@ export function renderMarkdown(md: string, opts: MarkdownOpts = {}): string[] {
   // narrower region still pass their own budget; the default follows the window.
   const width = Math.max(24, (opts.width ?? termWidth() - 2) - indent.length);
   const out: string[] = [];
-  const src = md.replace(/\r\n/g, "\n").split("\n");
+  const src = md.replace(/\r\n?/g, "\n").split("\n");
 
   const codeRow = (plainText: string, painted: string): string =>
     codeSurface(`${painted}${" ".repeat(Math.max(0, width - plainText.length))}`);

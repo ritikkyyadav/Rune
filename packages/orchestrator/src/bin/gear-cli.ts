@@ -1228,6 +1228,7 @@ async function main() {
       trustWorkspace,
       customCommands,
       inline: surface.inline,
+      quotaAutoResume: config.fallback?.autoResume !== false,
     });
     return;
   }
