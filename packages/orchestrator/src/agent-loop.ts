@@ -19,7 +19,7 @@ import {
 import { existsSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { parseToolArguments } from "@gear/shared";
-import { batchSignature, breakerSignature } from "./call-signature";
+import { batchSignature, breakerSignature, failureShapeSignature } from "./call-signature";
 import type { IncidentContext, IncidentReporter, IncidentSeverity } from "@gear/shared";
 import type { IncidentClass } from "@gear/shared";
 import type { ToolCallInput, ToolCallOutput } from "@gear/tool-registry";
@@ -723,6 +723,18 @@ export class AgentLoop {
     // refused without executing — a failing fetch/command retried verbatim will
     // fail the same way, and re-hammering it burns turns and floods the log.
     const failedCalls = new Map<string, number>();
+    // Same-SHAPE failure streak: the tool and the ERROR match while the args
+    // wander. The breaker above catches a verbatim retry; this catches a model
+    // REWORDING a call that dies on the same rule every time — nine
+    // differently-phrased ask_user calls, one identical validation rejection,
+    // seven minutes of orbit (observed live 2026-08-31, minimax-m3:free).
+    // Strictly consecutive: ANY successful call resets it, because a run that
+    // is making contact with the world is not orbiting — that conservatism is
+    // what keeps this breaker from joining the false-positive kill chain the
+    // last one had to be walked back from. Three identical rejections earn one
+    // harness note naming the way out; five make the tool refuse-before-run,
+    // which the barren-turn breaker already knows how to land honestly.
+    let sameShapeFailure = { key: "", tool: "", count: 0, noted: false };
     // Rate-limit recovery: when every provider is throttled, wait out the
     // advertised retry window (bounded) and resume, instead of dying mid-task.
     let rateWaits = 0;
@@ -1888,6 +1900,40 @@ export class AgentLoop {
           };
         }
 
+        // The same-shape streak's own refusal: five consecutive failures of
+        // this tool on one error, and rewording clearly is not fixing it. From
+        // here the tool refuses before running, the refusals feed the
+        // barren-turn breaker, and the run lands instead of orbiting.
+        if (
+          allowed &&
+          !denied &&
+          sameShapeFailure.count >= 5 &&
+          tc.toolName === sameShapeFailure.tool
+        ) {
+          this.report(
+            "loop.same_shape_refused",
+            "warn",
+            "breaker",
+            `${tc.toolName} refused without running after ${sameShapeFailure.count} same-shaped failures`,
+            { tool: tc.toolName },
+          );
+          denied = {
+            callId: tc.callId,
+            toolName: tc.toolName,
+            success: false,
+            result: "",
+            error:
+              `Refused without running: ${tc.toolName} has now failed ${sameShapeFailure.count} ` +
+              `times in a row with the same error, with the wording varied each time. Rewording ` +
+              "does not change the outcome. Stop calling this tool. " +
+              (tc.toolName === "ask_user"
+                ? "If you need the user's input, write the question as plain prose and END YOUR " +
+                  "TURN — they will answer as an ordinary message."
+                : "Achieve the goal another way, or finish with an honest report of what remains undone."),
+            durationMs: 0,
+          };
+        }
+
         // Auto-permission read tools are safe to run concurrently, plus tools
         // that explicitly opt in (schema.parallelSafe — e.g. `worker`, whose
         // ownership claims make parallel writers safe). Unknown tools default
@@ -2275,11 +2321,44 @@ export class AgentLoop {
             isError: !output.success,
           });
           // Tool failures are the MODEL's problem to react to (the result says
-          // what went wrong) and are policed per-call by `failedCalls` and
-          // per-tool by the registry's circuit breaker. They no longer feed
-          // `consecutiveErrors`, which guards PROVIDER health only.
+          // what went wrong) and are policed per-call by `failedCalls`, per
+          // SHAPE by the same-shape streak, and per-tool by the registry's
+          // circuit breaker. They no longer feed `consecutiveErrors`, which
+          // guards PROVIDER health only.
           if (!output.success) {
             failedCalls.set(p.callSig, (failedCalls.get(p.callSig) ?? 0) + 1);
+            // A refusal this loop manufactured is not a NEW failure of the
+            // tool — counting it would re-key the streak onto the refusal
+            // text and release the very breaker that produced it.
+            if (!p.deterministicallyRefused) {
+              const shapeKey = failureShapeSignature(p.tc.toolName, output.error ?? "");
+              if (sameShapeFailure.key === shapeKey) sameShapeFailure.count++;
+              else sameShapeFailure = { key: shapeKey, tool: p.tc.toolName, count: 1, noted: false };
+            }
+            if (sameShapeFailure.count === 3 && !sameShapeFailure.noted) {
+              sameShapeFailure.noted = true;
+              this.report(
+                "loop.same_shape_failures",
+                "warn",
+                "breaker",
+                `${p.tc.toolName} failed 3× with the same error while the args varied`,
+                { tool: p.tc.toolName },
+              );
+              this.injectHarnessNote(
+                `Your last 3 ${p.tc.toolName} calls all failed with the same error: ` +
+                  `${(output.error ?? "").split("\n")[0]?.slice(0, 160)}. Rewording the call ` +
+                  "does not fix it — the arguments must satisfy the tool's schema exactly. " +
+                  "Fix them once, or achieve the goal WITHOUT this tool." +
+                  (p.tc.toolName === "ask_user"
+                    ? " If you are trying to ask the user something, write the question as " +
+                      "plain prose and end your turn — they will answer as an ordinary message."
+                    : ""),
+              );
+            }
+          } else {
+            // A successful call of ANY tool means the run is making contact
+            // with the world — that is not an orbit, so the streak resets.
+            sameShapeFailure = { key: "", tool: "", count: 0, noted: false };
           }
           if (output.success && p.isWrite) {
             editsSinceVerify = true;

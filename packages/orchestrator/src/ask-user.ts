@@ -55,13 +55,15 @@ export const ASK_USER_SCHEMA: ToolSchema = {
             },
             options: {
               type: "array",
-              description: "2-6 short, mutually exclusive answer options.",
+              description:
+                "2-6 short, mutually exclusive answer options. Omit for a " +
+                "free-form question the user answers in their own words.",
               items: { type: "string" },
               minItems: 2,
               maxItems: 6,
             },
           },
-          required: ["question", "options"],
+          required: ["question"],
         },
         minItems: 1,
         maxItems: 4,
@@ -85,37 +87,61 @@ export const ASK_USER_SCHEMA: ToolSchema = {
   category: "execute",
 };
 
-/** Accept both wire shapes; reject anything that isn't 1-4 valid questions. */
+/**
+ * Whatever the model sent for `options`, as displayable strings.
+ *
+ * This tool exists to hand a decision to a human, and it used to refuse to do
+ * that over a formatting slip: a weak model that wrote a perfectly good
+ * question with no options (or options as `{label}` objects) got
+ * `Validation failed` back, reworded the question, and got it again — nine
+ * times in one observed run, seven minutes of orbit, and the user was never
+ * asked anything. A malformed OPTION list is not a reason to withhold the
+ * QUESTION. So options are salvaged, not policed: strings pass, labeled
+ * objects give up their label, everything unusable drops, and anything past
+ * six is cut. What cannot be salvaged degrades to a free-form question — the
+ * picker already accepts an answer typed in the user's own words.
+ */
+function salvageOptions(raw: unknown): string[] {
+  const list = Array.isArray(raw) ? raw : typeof raw === "string" && raw.trim() ? [raw] : [];
+  const strings = list
+    .map((o) => {
+      if (typeof o === "string") return o;
+      if (o && typeof o === "object") {
+        const c = o as Record<string, unknown>;
+        const label = c.label ?? c.option ?? c.text ?? c.value ?? c.answer;
+        return typeof label === "string" ? label : "";
+      }
+      return typeof o === "number" || typeof o === "boolean" ? String(o) : "";
+    })
+    .map((s) => s.trim())
+    .filter(Boolean);
+  // One option is not a choice; the free-form field serves that question
+  // better than a picker with a single button would.
+  return strings.length >= 2 ? strings.slice(0, 6) : [];
+}
+
+/** Accept both wire shapes. The QUESTION text is the only hard requirement --
+ *  see salvageOptions for why the option list never blocks the ask. */
 function normalizeQuestions(args: Record<string, unknown>): UserQuestion[] | { error: string } {
-  const validOne = (q: unknown): q is UserQuestion => {
+  const salvageOne = (q: unknown): UserQuestion | null => {
     const c = q as { question?: unknown; options?: unknown };
-    return (
-      typeof c?.question === "string" &&
-      c.question.trim().length > 0 &&
-      Array.isArray(c.options) &&
-      c.options.length >= 2 &&
-      c.options.length <= 6 &&
-      c.options.every((o) => typeof o === "string" && o.trim())
-    );
+    if (typeof c?.question !== "string" || !c.question.trim()) return null;
+    return { question: c.question.trim(), options: salvageOptions(c.options) };
   };
   if (Array.isArray(args.questions)) {
-    if (args.questions.length < 1 || args.questions.length > 4) {
-      return { error: "questions must contain 1-4 entries" };
+    const salvaged = args.questions.map(salvageOne).filter((q): q is UserQuestion => q !== null);
+    if (salvaged.length === 0) {
+      return { error: "each question needs non-empty question text" };
     }
-    if (!args.questions.every(validOne)) {
-      return { error: "each question needs text and 2-6 non-empty options" };
-    }
-    return (args.questions as UserQuestion[]).map((q) => ({
-      question: q.question.trim(),
-      options: q.options,
-    }));
+    // More than four: the first four are asked rather than none of them.
+    return salvaged.slice(0, 4);
   }
-  if (validOne(args)) {
-    return [{ question: (args.question as string).trim(), options: args.options as string[] }];
-  }
+  const single = salvageOne(args);
+  if (single) return [single];
   return {
     error:
-      "provide either `questions` (1-4 of {question, options}) or a single `question` with `options` (2-6 strings)",
+      "provide either `questions` (1-4 of {question, options}) or a single `question` " +
+      "(with 2-6 short string `options` when the answer has natural choices)",
   };
 }
 

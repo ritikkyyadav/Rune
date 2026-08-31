@@ -75,6 +75,20 @@ export function breakerSignature(toolName: string, argsJson: string): string {
 }
 
 /**
+ * Signature for the same-SHAPE failure streak: the tool and its ERROR, with
+ * the arguments ignored entirely. breakerSignature stops a verbatim retry;
+ * nothing stopped a model REWORDING a call that dies on the same rule every
+ * time — nine differently-phrased ask_user calls, one identical validation
+ * error, seven minutes of orbit (observed live 2026-08-31 on a free-tier
+ * model). Only the error's first line is kept: stack tails and byte offsets
+ * vary between attempts, the rule that refused the call does not.
+ */
+export function failureShapeSignature(toolName: string, error: string): string {
+  const first = error.split("\n")[0] ?? "";
+  return `${toolName}:${normalizeText(first, true).toLowerCase().slice(0, 160)}`;
+}
+
+/**
  * Signature for the repeated-batch loop detector. Conservative: whitespace,
  * key order, and by-construction-volatile tokens only — numeric args that can
  * legitimately advance (offsets, limits, line numbers) stay distinct.

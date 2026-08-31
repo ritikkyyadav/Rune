@@ -64,6 +64,10 @@ export interface QuestionView {
  * telling you to describe a change while the agent waits on an answer.
  */
 export function questionPlaceholder(optionCount: number): string {
+  // A free-form question (ask_user salvaged an unusable option list, or the
+  // model deliberately offered none) has exactly one path, so the field names
+  // exactly one path.
+  if (optionCount === 0) return "type an answer in your own words";
   return `press 1-${optionCount}, or type an answer in your own words`;
 }
 
@@ -93,23 +97,34 @@ export function questionHint(view: QuestionView): string {
   const hints: Array<{ long: string; short: string; keep: number }> = answering
     ? [
         { long: "enter  send this answer", short: "enter  send", keep: 3 },
-        { long: "esc  back to the choices", short: "esc  back", keep: 2 },
-      ]
-    : [
-        // The number IS the picker. Everything else is a way of doing what a
-        // digit already does in one keystroke, so everything else goes first.
-        // Its short form is its long form. Nine columns is not what makes this
-        // row too wide, and "1-4" on its own is a range with no verb -- the one
-        // hint that must survive is also the one that must stay readable.
         {
-          long: `1-${view.options.length}  pick`,
-          short: `1-${view.options.length}  pick`,
-          keep: 5,
+          long: view.options.length > 0 ? "esc  back to the choices" : "esc  clear",
+          short: view.options.length > 0 ? "esc  back" : "esc  clear",
+          keep: 2,
         },
-        { long: "up/down  move", short: "up/down", keep: 1 },
-        { long: "enter  choose", short: "enter", keep: 2 },
-        { long: "esc  skip", short: "esc  skip", keep: 3 },
-      ];
+      ]
+    : view.options.length === 0
+      ? // Free-form: there is nothing to pick, so the hints only name the two
+        // things a key can actually do here.
+        [
+          { long: "type your answer, enter sends it", short: "type + enter", keep: 5 },
+          { long: "esc  skip", short: "esc  skip", keep: 3 },
+        ]
+      : [
+          // The number IS the picker. Everything else is a way of doing what a
+          // digit already does in one keystroke, so everything else goes first.
+          // Its short form is its long form. Nine columns is not what makes this
+          // row too wide, and "1-4" on its own is a range with no verb -- the one
+          // hint that must survive is also the one that must stay readable.
+          {
+            long: `1-${view.options.length}  pick`,
+            short: `1-${view.options.length}  pick`,
+            keep: 5,
+          },
+          { long: "up/down  move", short: "up/down", keep: 1 },
+          { long: "enter  choose", short: "enter", keep: 2 },
+          { long: "esc  skip", short: "esc  skip", keep: 3 },
+        ];
   // The grace window outranks the bindings. Every other hint tells you how to
   // do something; this one tells you that not deciding is itself about to
   // decide, and it is the only line on screen that is spending while you read.
@@ -177,15 +192,17 @@ export function questionAction(key: Key, view: QuestionView): QuestionAction {
 
   // Up/down walk the choices, wrapping, so a short list never dead-ends at
   // either edge. While an answer is being written they belong to the composer.
-  if (!answering && (key.type === "up" || key.type === "down")) {
+  // With no choices there is nothing to walk.
+  if (!answering && count > 0 && (key.type === "up" || key.type === "down")) {
     const step = key.type === "down" ? 1 : -1;
     return { kind: "move", selected: (view.selected + step + count) % count };
   }
 
   // A bare digit answers in ONE keystroke -- no Enter, no confirmation. This is
   // the fast path the picker exists for, and the reason it is worth having a
-  // picker at all rather than a text prompt.
-  if (key.type === "char" && !answering && /^[1-9]$/.test(key.value)) {
+  // picker at all rather than a text prompt. On a free-form question a digit
+  // is just the first character of an answer, so it falls through to the edit.
+  if (key.type === "char" && !answering && count > 0 && /^[1-9]$/.test(key.value)) {
     const n = Number(key.value);
     if (n >= 1 && n <= count) return { kind: "answer", text: view.options[n - 1]!, chosen: n - 1 };
     // A number with no option behind it does nothing. Letting it fall through
@@ -198,7 +215,10 @@ export function questionAction(key: Key, view: QuestionView): QuestionAction {
     const typed = view.input.trim();
     if (typed) return { kind: "answer", text: typed };
     // Enter commits what is HIGHLIGHTED -- the row carrying the marker -- and
-    // never a fixed first option.
+    // never a fixed first option. With nothing highlighted and nothing typed
+    // there is nothing to commit, and inventing an answer would be worse than
+    // waiting for one.
+    if (count === 0) return { kind: "ignore" };
     return { kind: "answer", text: view.options[view.selected]!, chosen: view.selected };
   }
 

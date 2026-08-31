@@ -1445,14 +1445,22 @@ async function main() {
           q.options.forEach((opt, i) => {
             process.stdout.write(`    ${info(String(i + 1))} ${text(opt)}\n`);
           });
-          process.stdout.write(`  ${muted("number to choose · or type an answer · Enter = 1")}\n`);
+          // A free-form question (no salvageable options) has no numbers to
+          // offer and no default for a bare Enter to mean.
+          process.stdout.write(
+            `  ${muted(
+              q.options.length > 0
+                ? "number to choose · or type an answer · Enter = 1"
+                : "type an answer in your own words",
+            )}\n`,
+          );
 
           rl.question(`  ${info("›")} `, (answer) => {
             const a = answer.trim();
             let result: string;
             const n = Number.parseInt(a, 10);
             if (!a) {
-              result = q.options[0];
+              result = q.options[0] ?? "(no answer -- proceed with your best judgment)";
             } else if (!Number.isNaN(n) && n >= 1 && n <= q.options.length && String(n) === a) {
               result = q.options[n - 1];
             } else {
