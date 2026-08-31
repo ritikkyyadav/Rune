@@ -268,6 +268,8 @@ export function resolveStartupPermissionFlags(opts: {
 export class PermissionBroker {
   private sessionGrants: PermissionRule[] = [];
   private mode: PermissionMode;
+  /** The 4th-gear bypass announces itself once, not once per tool call. */
+  private warned4thGear = false;
   private workspaceRoot?: string;
   private orgPolicy: OrgPolicy | null;
 
@@ -337,11 +339,19 @@ export class PermissionBroker {
       if (denial) return { type: "denied", reason: denial };
     }
 
-    // 4th gear — allow everything after signed policy/security checks.
+    // 4th gear — allow everything after signed policy/security checks. The
+    // warning fires ONCE per broker: it used to print on EVERY tool call,
+    // straight over the TUI's alt screen, and three parallel workers tore it
+    // into "[SEC[SECURITY]…" mid-line. One announcement is a safety feature;
+    // hundreds are a rendering attack on your own UI. Per-call bypasses are
+    // already recorded as safety_decision events.
     if (this.mode === "gear-4") {
-      console.warn(
-        `[SECURITY] 4th gear active — all interactive permission checks bypassed for: ${schema.name}`,
-      );
+      if (!this.warned4thGear) {
+        this.warned4thGear = true;
+        console.warn(
+          "[SECURITY] 4th gear active — interactive permission checks are bypassed for this session.",
+        );
+      }
       return { type: "allowed", basis: "bypass" };
     }
 

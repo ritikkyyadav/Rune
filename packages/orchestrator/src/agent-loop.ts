@@ -654,10 +654,14 @@ export class AgentLoop {
     let batchNudges = 0;
     // ── Wrap-up reserve ──
     // Past ~85% of the turn budget with todos still open, the remaining turns
-    // belong to closing and verifying, not widening — injected once. Quota and
-    // context death do not announce themselves; the reserve is how a run ends
-    // FINISHED instead of mid-flight.
+    // belong to closing and verifying, not widening — injected once. The turn
+    // ceiling alone proved insufficient live: evolab6 died on a quota 429 at
+    // turn 64 of 80 with every finish-time gate unreached, because quota walls
+    // arrive before turn walls. So one SURVIVED rate/quota 429 also arms the
+    // reserve — the first wall sighting is the only advance warning a
+    // subscription quota ever gives.
     let wrapUpInjected = false;
+    let quotaWallSighted = false;
     // The request right after a compaction carries a boosted task-state block:
     // that is the moment the verbatim spec just left the transcript.
     let justCompacted = false;
@@ -747,11 +751,12 @@ export class AgentLoop {
       // widening and died on a quota wall at turn 101 with verification still
       // at "none" — the acceptance pass was scheduled after the horizon. The
       // reserve converts the tail of the budget into a protected close-out.
+      const nearTurnCeiling =
+        this.config.maxTurns >= 20 && turn >= Math.ceil(this.config.maxTurns * 0.85);
       if (
         !this.config.turnBudgetNotice &&
         !wrapUpInjected &&
-        this.config.maxTurns >= 20 &&
-        turn >= Math.ceil(this.config.maxTurns * 0.85) &&
+        (nearTurnCeiling || quotaWallSighted) &&
         this.config.taskState?.hasOpenTodos()
       ) {
         wrapUpInjected = true;
@@ -767,8 +772,11 @@ export class AgentLoop {
             {
               type: "text",
               text:
-                `[Harness note] Budget reserve: turn ${turn} of ${this.config.maxTurns}. ` +
-                "From here the remaining turns belong to FINISHING, not widening: take on " +
+                `[Harness note] Budget reserve: turn ${turn} of ${this.config.maxTurns}.` +
+                (quotaWallSighted
+                  ? " The provider has already thrown one rate/quota wall this run, so the window may close well before the turn ceiling."
+                  : "") +
+                " From here the remaining turns belong to FINISHING, not widening: take on " +
                 "nothing new, close the open todos in priority order (rewrite the list now " +
                 "if some no longer matter), run verification, and end with the honest " +
                 "completion report — what works (with evidence), what is cut, what is " +
@@ -994,6 +1002,9 @@ export class AgentLoop {
                 !signal?.aborted
               ) {
                 rateWaits++;
+                // The wall exists and we just touched it — arm the wrap-up
+                // reserve so the run spends what remains FINISHING.
+                quotaWallSighted = true;
                 this.report(
                   "provider.rate_limit_wait",
                   "warn",

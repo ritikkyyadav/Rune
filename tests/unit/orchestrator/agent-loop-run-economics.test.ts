@@ -79,8 +79,7 @@ function makeRegistry() {
       callId: input.callId,
       toolName: input.toolName,
       success: true,
-      result:
-        input.toolName === "todo_write" ? JSON.stringify({ items: input.args.items }) : "ok",
+      result: input.toolName === "todo_write" ? JSON.stringify({ items: input.args.items }) : "ok",
       durationMs: 1,
     })),
   } as any;
@@ -108,7 +107,13 @@ const read = (path: string): Step => ({ tools: [{ name: "read_file", args: { pat
 describe("batching nudge", () => {
   test("four consecutive single-read turns → exactly one note, on the fourth result", async () => {
     const ts = new TaskStateStore();
-    const gw = makeGateway([read("a.ts"), read("b.ts"), read("c.ts"), read("d.ts"), { text: "done" }]);
+    const gw = makeGateway([
+      read("a.ts"),
+      read("b.ts"),
+      read("c.ts"),
+      read("d.ts"),
+      { text: "done" },
+    ]);
     const loop = makeLoop(gw, ts);
     await collect(loop.run("map the subsystem", "s1", "/tmp"));
     const t = transcriptText(loop);
@@ -119,10 +124,30 @@ describe("batching nudge", () => {
   test("batched reads never trip it", async () => {
     const ts = new TaskStateStore();
     const gw = makeGateway([
-      { tools: [{ name: "read_file", args: { path: "a.ts" } }, { name: "read_file", args: { path: "b.ts" } }] },
-      { tools: [{ name: "read_file", args: { path: "c.ts" } }, { name: "read_file", args: { path: "d.ts" } }] },
-      { tools: [{ name: "read_file", args: { path: "e.ts" } }, { name: "read_file", args: { path: "f.ts" } }] },
-      { tools: [{ name: "read_file", args: { path: "g.ts" } }, { name: "read_file", args: { path: "h.ts" } }] },
+      {
+        tools: [
+          { name: "read_file", args: { path: "a.ts" } },
+          { name: "read_file", args: { path: "b.ts" } },
+        ],
+      },
+      {
+        tools: [
+          { name: "read_file", args: { path: "c.ts" } },
+          { name: "read_file", args: { path: "d.ts" } },
+        ],
+      },
+      {
+        tools: [
+          { name: "read_file", args: { path: "e.ts" } },
+          { name: "read_file", args: { path: "f.ts" } },
+        ],
+      },
+      {
+        tools: [
+          { name: "read_file", args: { path: "g.ts" } },
+          { name: "read_file", args: { path: "h.ts" } },
+        ],
+      },
       { text: "done" },
     ]);
     const loop = makeLoop(gw, ts);
@@ -151,7 +176,14 @@ describe("wrap-up reserve", () => {
   test("past 85% of the budget with open todos → one close-out directive", async () => {
     const ts = new TaskStateStore();
     const steps: Step[] = [
-      { tools: [{ name: "todo_write", args: { items: [{ content: "never done", status: "in_progress" }] } }] },
+      {
+        tools: [
+          {
+            name: "todo_write",
+            args: { items: [{ content: "never done", status: "in_progress" }] },
+          },
+        ],
+      },
     ];
     for (let k = 0; k < 17; k++) steps.push(read(`file-${k}.ts`));
     steps.push({ text: "final answer" });
@@ -162,9 +194,7 @@ describe("wrap-up reserve", () => {
     expect(t).toContain("Budget reserve");
     expect(t.split("Budget reserve").length - 1).toBe(1);
     expect(
-      events.some(
-        (e) => e.type === "notice" && String((e as any).message).includes("close out"),
-      ),
+      events.some((e) => e.type === "notice" && String((e as any).message).includes("close out")),
     ).toBe(true);
   });
 
@@ -179,10 +209,64 @@ describe("wrap-up reserve", () => {
     expect(transcriptText(loop)).not.toContain("Budget reserve");
   });
 
+  test("one SURVIVED rate/quota 429 arms the reserve immediately, at any turn count", async () => {
+    // evolab6 pinned this: quota killed the run at turn 64 of 80, so a reserve
+    // keyed on turns alone protected nothing. The first survived wall sighting
+    // is the only advance warning a subscription quota gives.
+    const ts = new TaskStateStore();
+    let call = 0;
+    const gw = {
+      inferStream: mock(async function* () {
+        call++;
+        if (call === 1) {
+          yield ev("tool_use_start", { toolCallId: "t1", toolName: "todo_write" });
+          yield ev("tool_use_stop", {
+            toolCallId: "t1",
+            toolInput: { items: [{ content: "big open step", status: "in_progress" }] },
+          });
+          yield ev("message_stop", { stopReason: "tool_use" });
+          return;
+        }
+        if (call === 2) {
+          yield ev("error", {
+            error: "All providers rate limited — retry in 1s",
+            retryable: false,
+          });
+          return;
+        }
+        yield ev("content_delta", { delta: { type: "text_delta", text: "closing out" } });
+        yield ev("message_stop", { stopReason: "end_turn" });
+      }),
+      infer: mock(async () => ({
+        content: [],
+        model: "m",
+        stopReason: "end_turn",
+        usage: { inputTokens: 1, outputTokens: 1 },
+      })),
+      registerProvider: mock(() => {}),
+      getProvider: mock(() => null),
+      getTotalCost: mock(() => 0),
+    } as any;
+    const loop = makeLoop(gw, ts, { maxTurns: 40, maxRateWaits: 2 });
+    const events = await collect(loop.run("a long build", "s1", "/tmp"));
+    const t = transcriptText(loop);
+    expect(t).toContain("Budget reserve");
+    expect(t).toContain("rate/quota wall");
+    expect(
+      events.some(
+        (e) => e.type === "notice" && String((e as any).message).includes("rate limited"),
+      ),
+    ).toBe(true);
+  });
+
   test("small budgets (sub-agent scale) never get the reserve", async () => {
     const ts = new TaskStateStore();
     const steps: Step[] = [
-      { tools: [{ name: "todo_write", args: { items: [{ content: "open", status: "in_progress" }] } }] },
+      {
+        tools: [
+          { name: "todo_write", args: { items: [{ content: "open", status: "in_progress" }] } },
+        ],
+      },
     ];
     for (let k = 0; k < 12; k++) steps.push(read(`f-${k}.ts`));
     const gw = makeGateway(steps);
