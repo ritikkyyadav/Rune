@@ -132,9 +132,6 @@ import {
   type AutoModeRun,
   type ReviewerIdentity,
 } from "./auto-mode";
-import { MemoryManager } from "./memory/manager";
-import { EpisodicMemory } from "./memory/episodic";
-import { WorkingMemory } from "./memory/working";
 import { HookRunner } from "./hooks";
 import { createSubagentTool } from "./subagent";
 import { TeamBus } from "./team/bus";
@@ -461,7 +458,6 @@ export interface EngineConfig {
   checkpointPolicy?: Partial<CheckpointPolicy>;
   egressAllowlist?: string[];
   redactOutputs?: boolean;
-  userId?: string;
   /** Web-search configuration (backend preference + native grounding). */
   search?: {
     /** Preferred web_search backend: auto | tavily | brave | duckduckgo. */
@@ -744,7 +740,6 @@ export class Engine {
   private readonly sessionInjectionFindings = new Map<string, number>();
   private checkpointStore: CheckpointStore | null = null;
   private checkpointPolicy: CheckpointPolicy;
-  private memoryManager: MemoryManager | null = null;
   private autoVerifier: ReturnType<typeof createAutoVerifier> | null = null;
   private currentAbort: AbortController | null = null;
   private hookRunner: HookRunner | null = null;
@@ -1316,17 +1311,6 @@ export class Engine {
 
     // Auto audit verifier
     this.autoVerifier = createAutoVerifier(this.sessions);
-
-    // Memory manager
-    try {
-      const { Database } = require("bun:sqlite");
-      const db = new Database(this.config.dbPath);
-      const episodic = new EpisodicMemory(db);
-      const working = new WorkingMemory();
-      this.memoryManager = new MemoryManager(episodic, working);
-    } catch {
-      // Memory subsystem unavailable
-    }
   }
 
   createSession(model?: string): string {
@@ -3644,12 +3628,6 @@ export class Engine {
         } else {
           this.recorder.endRun("recovered");
         }
-      }
-
-      // Episodic memory: extract facts from this run
-      if (this.memoryManager && this.config.userId) {
-        const summary = `User asked: "${userMessage.slice(0, 200)}". Turns: ${turnCount}. ${runError ? `Error: ${runError}` : "Completed successfully."}`;
-        this.memoryManager.onRunComplete(this.config.userId, summary).catch(() => {});
       }
 
       // Clear the abort controller reference when the run is done

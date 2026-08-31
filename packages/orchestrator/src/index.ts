@@ -132,16 +132,6 @@ export type {
   ClassifierCall,
 } from "./auto-mode";
 
-// ─── Memory (Section 5) ───
-export { EpisodicMemory, WorkingMemory, estimateTokens } from "./memory/index";
-export { MemoryManager } from "./memory/manager";
-export type {
-  EpisodicFact,
-  EpisodicMemoryConfig,
-  WorkingMemoryConfig,
-  ContextSlot,
-} from "./memory/index";
-
 // ─── Tokenizer ───
 export { TokenCounter, tokenCounter, countTokens, getContextLimit } from "./tokenizer";
 
