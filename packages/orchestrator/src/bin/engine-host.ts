@@ -227,6 +227,8 @@ function buildEngine(): Engine {
     trustWorkspace: permissionFlags.trustWorkspace,
     permissionMode: permissionFlags.permissionMode,
     reasoningEffort: config.llm?.reasoningEffort,
+    doctrineDelivery: config.llm?.doctrineDelivery,
+    effortRouting: config.llm?.effortRouting,
     autoMode: config.permissions?.autoMode,
     // Same posture resolution as the CLI, minus CLI flags (desktop has none).
     sandboxEnabled: resolveInitialSandbox({

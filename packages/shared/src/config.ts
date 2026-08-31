@@ -43,6 +43,10 @@ export interface GearConfig {
      * way to ask for it.
      */
     reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+    /** "jit" (default) injects situational doctrine at first relevance; "full" keeps it in every request. */
+    doctrineDelivery?: "jit" | "full";
+    /** "conservative" (default) steps ordinary turns one effort notch down, escalating on difficulty; "off" disables routing. */
+    effortRouting?: "conservative" | "off";
     anthropic?: {
       apiKey: string;
       model: string;

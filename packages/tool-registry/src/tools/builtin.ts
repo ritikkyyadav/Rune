@@ -4,6 +4,7 @@ import { isOsIsolationAvailable, onSandboxCapabilityChange } from "../sandbox-ca
 import { isSandboxEnabled, onSandboxModeChange } from "../sandbox-mode";
 import { createRustToolHandler } from "./rust-bridge";
 import { FileFreshness, withFreshness } from "./freshness";
+import { createReadManyHandler } from "./read-many";
 import {
   BackgroundShellManager,
   createBashOutputHandler,
@@ -287,6 +288,9 @@ export function registerBuiltinTools(registry: ToolRegistry, binaryPath: string)
   // would mean two typescript-language-servers per workspace.
   const lspManager = new LspServerManager();
 
+  // Captured after its freshness wrap so read_many's inner reads record
+  // hashes exactly like plain read_file calls (edits stay valid either way).
+  let readFileHandler: import("../types").ToolHandler | null = null;
   for (const { schema, subcommand } of ALL_SCHEMAS) {
     let handler = createRustToolHandler(schema, subcommand, binaryPath);
     // Order matters: preflight sees the raw args first, so a sandboxed
@@ -301,7 +305,14 @@ export function registerBuiltinTools(registry: ToolRegistry, binaryPath: string)
       handler = withLspFeedback(withSyntaxCheck(withFormatting(handler)), lspManager);
     }
     const opts = FRESHNESS_TOOLS[schema.name];
-    registry.register(opts ? withFreshness(handler, freshness, opts) : handler);
+    const wrapped = opts ? withFreshness(handler, freshness, opts) : handler;
+    if (schema.name === "read_file") readFileHandler = wrapped;
+    registry.register(wrapped);
+  }
+  // Batched reads: one model round-trip for up to 12 files. Registered right
+  // after the single-read tool it composes.
+  if (readFileHandler) {
+    registry.register(createReadManyHandler(readFileHandler));
   }
   registry.register(createBashOutputHandler(shells));
   registry.register(createKillShellHandler(shells));
