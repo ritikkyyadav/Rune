@@ -103,7 +103,7 @@ describe("renderToolActivity — one call, one row", () => {
     expect(out.split("\n")).toHaveLength(1);
   });
 
-  it("keeps a check's real output, closed by the runner's own last line", () => {
+  it("states a passing check as its verdict alone -- the print-out is the fold's", () => {
     const out = plain(
       renderToolActivity(
         tool({
@@ -122,11 +122,35 @@ describe("renderToolActivity — one call, one row", () => {
     expect(out[0]).toContain("run   bun test tests/unit/");
     expect(out[0]).toContain("2.6s");
     expect(out[1]).toBe("    │ │ 37 passed");
-    expect(out[2]).toBe("    │ bun test tests/unit/");
-    expect(out.at(-1)).toBe("    │ 37 passed in 1.9s");
-    // The rail's closing line is moved, not duplicated.
-    expect(out.filter((l) => l.includes("37 passed in 1.9s"))).toHaveLength(1);
+    expect(out).toHaveLength(2);
     expect(out.join()).not.toContain("exit_code");
+  });
+
+  it("shows a failed command as a signal excerpt closed by its own verdict", () => {
+    const noise = Array.from({ length: 30 }, (_, i) => `collecting item ${i}`).join("\n");
+    const out = plain(
+      renderToolActivity(
+        tool({
+          toolName: "bash",
+          args: { command: "pytest -q" },
+          result: JSON.stringify({
+            stdout: `${noise}\nFAILED tests/a.py::test_x\nAssertionError: boom\n2 failed, 5 passed in 0.2s`,
+            stderr: "",
+            exit_code: 1,
+            timed_out: false,
+          }),
+        }),
+      ),
+    ).split("\n");
+    expect(out[0]).toContain("run   pytest -q");
+    // The excerpt keeps the verdict-carrying lines and drops the chatter.
+    expect(out.join("\n")).toContain("FAILED tests/a.py::test_x");
+    expect(out.at(-1)).toBe("    │ 2 failed, 5 passed in 0.2s");
+    expect(out.join("\n")).not.toContain("collecting item 2\n");
+    // Contained: a failure never commits a wall.
+    expect(out.length).toBeLessThanOrEqual(12);
+    // The row above already names the command; the rail does not repeat it.
+    expect(out.filter((l) => l.includes("pytest -q"))).toHaveLength(1);
   });
 
   it("prefers a runner's tally over the shell's exit code when both are known", () => {
@@ -313,7 +337,7 @@ describe("renderTranscript — batch replay", () => {
     const reads = [1, 2, 3].map((n) =>
       L({ role: "tool", toolName: "read_file", args: { path: `${n}.ts` } }),
     );
-    expect(plain(renderTranscript(reads))).toBe("    │ · read  3 files");
+    expect(plain(renderTranscript(reads))).toBe("    │ › read 3 files");
   });
 
   it("keeps a single read as its own row", () => {

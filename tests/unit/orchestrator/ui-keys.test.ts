@@ -68,8 +68,12 @@ describe("ui/keys parseKeys", () => {
     // modifier-shifted wheel (e.g. ctrl+wheel = 64+16) still scrolls
     expect(types("\x1b[<80;1;1M")).toEqual(["wheel-up"]);
     expect(types("\x1b[<81;1;1M")).toEqual(["wheel-down"]);
-    // a left-click press + release yields no keys and leaks no coordinate chars
-    expect(types("\x1b[<0;10;5M\x1b[<0;10;5m")).toEqual([]);
+    // a plain left-click press surfaces with its cell; the release is consumed
+    expect(parseKeys("\x1b[<0;10;5M\x1b[<0;10;5m")).toEqual([{ type: "click", x: 10, y: 5 }]);
+    // modifier-clicks (the host's own selection gestures) and drags stay consumed
+    expect(types("\x1b[<4;10;5M")).toEqual([]);
+    expect(types("\x1b[<32;10;5M")).toEqual([]);
+    expect(types("\x1b[<2;10;5M")).toEqual([]);
     // wheeling then typing: the char after the sequence still registers
     expect(types("\x1b[<64;1;1Mx")).toEqual(["wheel-up", "char"]);
   });

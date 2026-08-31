@@ -159,6 +159,7 @@ import { formatCostReport } from "../../cost-report";
 import { glyph } from "./glyphs";
 import { saveTheme } from "./theme-store";
 import { buildPermissionPreview, type PermissionPreview } from "./permission-preview";
+import { FoldLedger, type FoldRegion } from "./folds";
 import { renderWorkspaceDiff } from "./workspace-diff";
 import { workspaceConfigPath } from "@gear/shared";
 import {
@@ -307,6 +308,15 @@ class Tui {
   /** False for the default fixed-chrome layout; true only through --inline / GEAR_INLINE. */
   private readonly inline: boolean;
   private transcript: string[] = []; // fixed layout: themed lines, self-managed scrollback window
+  /** Blocks that hold more than they show, openable in place -- see ./folds. */
+  private folds = new FoldLedger();
+  /** Where the body zone sat on the last painted frame, for click -> row math. */
+  private lastBodyMap: {
+    bodyTop: number;
+    bodyRows: number;
+    hiddenAbove: number;
+    marked: boolean;
+  } | null = null;
   /**
    * Rows committed into the terminal's own scrollback so far.
    *
@@ -671,6 +681,7 @@ class Tui {
         contextPercent,
         filesEdited: this.filesEdited.size || undefined,
         sandboxOff: !this.ctx.engine.isSandboxEnabled(),
+        folds: !this.inline && this.folds.size > 0,
         theme: getTheme().name === "auto" ? "auto" : getTheme().appearance,
         loop:
           loop.count > 0 && loop.nextRunAt !== null
@@ -1005,16 +1016,20 @@ class Tui {
     // Store semantic ANSI only. Card/canvas backgrounds are applied per frame,
     // so a light/dark or accent change recolours the whole existing timeline.
     for (const ln of lines) this.transcript.push(this.bound(ln));
-    if (this.transcript.length > MAX_TRANSCRIPT) {
-      this.transcript.splice(0, this.transcript.length - MAX_TRANSCRIPT);
+    const overflow = this.transcript.length - MAX_TRANSCRIPT;
+    if (overflow > 0) {
+      this.transcript.splice(0, overflow);
+      this.folds.noteTrim(overflow);
     }
     return lines.length;
   }
 
-  private print(block: string): void {
+  private print(block: string, detail?: string): void {
     if (this.inline) {
       // Inline: completed blocks flow into the terminal's native scrollback above the pinned
       // composer (the terminal owns scrolling from here). printAbove redraws the composer after.
+      // A fold's detail has no home here -- the terminal owns those rows now --
+      // so it is dropped; ctrl+r's work log still carries the full record.
       const lines = block.split("\n").map((l) => withThemeBg(this.bound(l)));
       this.printedRows += lines.length;
       const comp = this.pinnedBlock();
@@ -1029,12 +1044,68 @@ class Tui {
       );
       return;
     }
+    const raw = block.split("\n");
     const added = this.pushLines(block);
+    // A block that holds more than it shows registers its two forms with the
+    // fold ledger -- the region starts at its first visible row, so the blank
+    // rhythm line above a group never becomes part of what a click toggles.
+    if (detail) {
+      let first = 0;
+      while (first < raw.length && !stripAnsi(raw[first]!).trim()) first++;
+      const start = this.transcript.length - added + first;
+      if (first < raw.length && start >= 0) {
+        this.folds.register(
+          start,
+          raw.slice(first).map((l) => this.bound(l)),
+          detail.split("\n").map((l) => this.bound(l)),
+        );
+      }
+    }
     // Follow the bottom when already there; if the user has scrolled up to read, hold their
     // view stationary as new lines stream in (don't yank them back down). Typing or submitting
     // resets scroll to 0, returning to the live tail.
     if (this.scroll > 0) this.scroll += added;
     this.scheduleDraw();
+  }
+
+  /**
+   * Open or close a fold: splice one form out and the other in, in place.
+   *
+   * The scroll adjustment is the part with a reason to exist. `scroll` measures
+   * from the TAIL, so a splice above the reader's window moves their content and
+   * the tail by the same amount and needs nothing -- but a splice at or below
+   * the window's top row grows (or shrinks) the distance between their content
+   * and the tail, and without the correction the view visibly lurches by the
+   * size of the fold.
+   */
+  private toggleFold(region: FoldRegion): void {
+    const top = this.transcript.length - this.scroll - this.frameZones().bodyRows;
+    const splice = this.folds.toggle(region);
+    this.transcript.splice(splice.start, splice.remove, ...splice.insert);
+    const overflow = this.transcript.length - MAX_TRANSCRIPT;
+    if (overflow > 0) {
+      this.transcript.splice(0, overflow);
+      this.folds.noteTrim(overflow);
+    }
+    if (this.scroll > 0 && splice.start >= top) {
+      this.scroll = Math.max(0, this.scroll + splice.delta);
+    }
+    this.scheduleDraw();
+  }
+
+  /** A left click landing in the transcript toggles the fold under it. */
+  private clickTranscript(_x: number, y: number): void {
+    if (this.inline || !this.lastBodyMap) return;
+    if (this.mode !== "input" && this.mode !== "turn") return;
+    const map = this.lastBodyMap;
+    const row = y - 1; // SGR cells are 1-based
+    const first = map.bodyTop + (map.marked ? 1 : 0);
+    const last = map.bodyTop + map.bodyRows - 1;
+    if (row < first || row > last) return;
+    const index = map.hiddenAbove + (row - first);
+    if (index < 0 || index >= this.transcript.length) return;
+    const fold = this.folds.at(index);
+    if (fold) this.toggleFold(fold);
   }
 
   /** --inline only: redraw just the pinned composer block (the transcript lives in the
@@ -1122,6 +1193,15 @@ class Tui {
     // its answer is what keeps a held PgUp from accumulating an offset the body
     // cannot honour, then swallowing the first N presses of PgDn on the way back.
     this.scroll = frame.scroll;
+    // Where the body landed, for the click -> transcript-row math. Recorded
+    // from the frame actually painted, never recomputed later against state
+    // that may have moved.
+    this.lastBodyMap = {
+      bodyTop: frame.zones.bodyTop,
+      bodyRows: frame.zones.bodyRows,
+      hiddenAbove: frame.hiddenAbove,
+      marked: frame.scroll > 0 && frame.zones.bodyRows > 1,
+    };
     this.viewport.render(frame, !this.ownsCaret());
   }
 
@@ -1332,6 +1412,7 @@ class Tui {
    *  the way a per-frame absolute address does. No background is painted. */
   private resetTranscript(): void {
     this.transcript = [];
+    this.folds.clear();
     this.scroll = 0;
     if (!this.inline) {
       // The fixed layout's screen is ours: dropping the transcript and
@@ -1473,6 +1554,23 @@ class Tui {
     }
     if (key.type === "wheel-down") {
       this.scrollLines(-SCROLL_STEP);
+      return;
+    }
+    // A left click opens or closes the fold under it; ctrl+o answers for the
+    // newest fold without leaving the keyboard, and falls back to the full
+    // work log where there is nothing to open.
+    if (key.type === "click") {
+      this.clickTranscript(key.x, key.y);
+      return;
+    }
+    if (
+      key.type === "ctrl" &&
+      key.name === "o" &&
+      (this.mode === "input" || this.mode === "turn")
+    ) {
+      const fold = this.inline ? undefined : this.folds.newest();
+      if (fold) this.toggleFold(fold);
+      else this.expandWorkLog();
       return;
     }
     // Shift+Tab cycles confirm -> Autonomy I -> II -> III -> Auto -> confirm while composing.
@@ -4411,7 +4509,7 @@ class Tui {
     // edit chips, the plan's final state, the record line, and the answer.
     const turn = new TurnRenderer(
       {
-        commit: (block) => this.print(block),
+        commit: (block, detail) => this.print(block, detail),
         preview: (lines) => {
           this.turnPreview = lines;
           this.scheduleDraw();
@@ -4770,7 +4868,7 @@ class Tui {
 
     const turn = new TurnRenderer(
       {
-        commit: (block) => this.print(block),
+        commit: (block, detail) => this.print(block, detail),
         preview: (lines) => {
           this.turnPreview = lines;
           this.scheduleDraw();

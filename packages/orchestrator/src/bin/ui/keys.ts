@@ -20,6 +20,7 @@ export type Key =
   | { type: "pagedown" }
   | { type: "wheel-up" }
   | { type: "wheel-down" }
+  | { type: "click"; x: number; y: number } // 1-based cell, SGR left press only
   | { type: "ctrl"; name: string } // e.g. "c", "d", "l", "t"
   | { type: "esc" }
   | { type: "paste-start" }
@@ -91,16 +92,23 @@ export function parseKeys(data: string): Key[] {
           if (/[A-Za-z~]/.test(c)) break;
           j++;
         }
-        // -- Mouse (wheel -> scroll) --
+        // -- Mouse --
         // SGR form (ESC [ < b ; x ; y M|m) when ?1006h is honoured; legacy X10
-        // (ESC [ M b x y) otherwise. Only the wheel is surfaced (buttons 64/65, plus
-        // modifier-shifted variants); clicks/drags are consumed silently so their
-        // coordinate bytes never leak into the input as stray characters.
+        // (ESC [ M b x y) otherwise. The wheel is surfaced (buttons 64/65, plus
+        // modifier-shifted variants), and a PLAIN left press is surfaced with
+        // its cell -- it opens and closes folds in the transcript. Everything
+        // else -- releases, drags, right/middle, modifier-clicks (the host's
+        // own selection gestures) -- is consumed silently so the coordinate
+        // bytes never leak into the input as stray characters.
         if (body.charCodeAt(0) === 0x3c /* '<' */) {
-          const semi = body.indexOf(";");
-          const btn = parseInt(body.slice(1, semi < 0 ? body.length : semi), 10);
+          const parts = body.slice(1, -1).split(";");
+          const btn = parseInt(parts[0] ?? "", 10);
           if (Number.isFinite(btn) && (btn & 0x40) !== 0) {
             keys.push((btn & 1) === 0 ? { type: "wheel-up" } : { type: "wheel-down" });
+          } else if (btn === 0 && body.endsWith("M")) {
+            const x = parseInt(parts[1] ?? "", 10);
+            const y = parseInt(parts[2] ?? "", 10);
+            if (Number.isFinite(x) && Number.isFinite(y)) keys.push({ type: "click", x, y });
           }
           i = j + 1;
           continue;

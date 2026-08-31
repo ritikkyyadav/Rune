@@ -23,10 +23,11 @@
 // replay renderer (renderTranscript) -- which can see the whole list -- collapses
 // a run of reads into one row; the live stream cannot look ahead.
 
-import { faint } from "./theme";
+import { faint, info, muted } from "./theme";
 import { glyph } from "./glyphs";
 import { truncate } from "./render";
 import { renderMarkdown } from "./markdown";
+import { langOfPath } from "./code-paint";
 import * as F from "./flow";
 
 /** The assistant-narration marker. */
@@ -223,6 +224,39 @@ function outputOf(parsed: Record<string, unknown> | null): string {
   return (stdout + (stdout && stderr ? "\n" : "") + stderr).trimEnd();
 }
 
+/** Output as rail rows: split, with trailing blank lines dropped. */
+function railLines(body: string): string[] {
+  const all = body.split("\n");
+  while (all.length > 0 && !all.at(-1)!.trim()) all.pop();
+  return all;
+}
+
+// The committed excerpt of a failed command: enough signal to know WHAT failed
+// without opening anything, sized so the verdict is never further than a
+// glance from the row. The full output lives behind the fold.
+const EXCERPT_HEAD = 5;
+const EXCERPT_TAIL = 3;
+
+/** How much of an expanded fold a single call may spend. Bounds memory and the
+ *  worst-case splice, not the truth: the ledger under ctrl+r keeps going. */
+const DETAIL_HEAD = 240;
+const DETAIL_TAIL = 60;
+
+/** How much of a NEW file rides inline under its row. */
+const WRITE_PREVIEW_ROWS = 12;
+
+/** New-file content as add rows, numbered from 1, elided past `limit`. */
+function writeRows(content: string, limit: number): F.DiffRow[] {
+  const lines = content.split("\n");
+  const rows: F.DiffRow[] = lines
+    .slice(0, limit)
+    .map((text, i) => ({ kind: "add" as const, line: i + 1, text }));
+  if (lines.length > limit) {
+    rows.push({ kind: "elide", text: `${lines.length - limit} more lines` });
+  }
+  return rows;
+}
+
 /**
  * The one line of a sub-agent's report worth setting down beside its row.
  *
@@ -362,13 +396,22 @@ export function renderToolActivity(v: ToolActivityView): string {
       const path = s(out?.path ?? v.args.path);
       const body = s(v.args.content);
       const added = body ? body.split("\n").length : 0;
-      return F.toolRow({
-        name,
-        arg: listingPath(path),
-        argTone: "path",
-        status: "none",
-        metric: F.editMetric(added, 0, "new file"),
-      });
+      const rows = [
+        F.toolRow({
+          name,
+          arg: listingPath(path),
+          argTone: "path",
+          status: "none",
+          metric: F.editMetric(added, 0, "new file"),
+        }),
+      ];
+      // A new file IS a change to the tree, so it shows its opening the way an
+      // edit shows its hunk -- enough to judge what arrived, never the whole
+      // file. The rest sits behind the fold like any long evidence.
+      if (body) {
+        rows.push(...F.diffRows(writeRows(body, WRITE_PREVIEW_ROWS), langOfPath(path)));
+      }
+      return rows.join("\n");
     }
 
     case "edit_file":
@@ -388,7 +431,7 @@ export function renderToolActivity(v: ToolActivityView): string {
           status: "none",
           metric: F.editMetric(diff.added, diff.removed, hunkNote),
         }),
-        ...F.diffRows(diff.rows),
+        ...F.diffRows(diff.rows, langOfPath(path)),
       ].join("\n");
     }
 
@@ -416,15 +459,22 @@ export function renderToolActivity(v: ToolActivityView): string {
           metric: elapsed(v.durationMs),
         }),
       ];
-      if (summary) rows.push(F.toolNote(summary, failed ? "fail" : checked ? "ok" : "muted"));
-      // The output itself is kept only when it is the evidence: a failure to
-      // diagnose, or a check whose result is the whole point of running it. Its
-      // own last line closes the rail, rather than being printed twice.
-      if (body && (failed || checked)) {
-        const all = body.split("\n");
-        while (all.length > 0 && !all.at(-1)!.trim()) all.pop();
+      // A FAILURE shows a short excerpt of its evidence -- the budget is spent
+      // on signal lines (assertions, FAILED names, the tally), and its own last
+      // line closes the rail as the verdict. That is the whole print-out the
+      // transcript gets: two hundred raw lines under a row is not evidence, it
+      // is the reader doing the tool's summarising, and the full output stays
+      // one keystroke away behind the row's fold (see renderToolDetail). A
+      // check that PASSED needs only its verdict; a command that merely ran
+      // already said everything in its receipt.
+      if (failed && body) {
+        const all = railLines(body);
         const closing = all.length > 1 ? all.pop()!.trim() : "";
-        rows.push(...F.outputRail(command, F.clip(all), closing || undefined, failed));
+        rows.push(
+          ...F.outputRail("", F.clip(all, EXCERPT_HEAD, EXCERPT_TAIL), closing || summary, true),
+        );
+      } else if (summary) {
+        rows.push(F.toolNote(summary, failed ? "fail" : checked ? "ok" : "muted"));
       }
       return rows.join("\n");
     }
@@ -564,19 +614,19 @@ export function renderTranscript(lines: TranscriptLineView[]): string {
       out.push(`  ${faint(`-- ${ln.text} --`)}`);
       i++;
     } else if (ln.role === "tool") {
-      // Collapse a run of successful reads into one count line.
+      // Collapse a run of chamber-eligible calls into one chamber row -- the
+      // same reading a live turn commits, so a resumed session and a watched
+      // one cannot be told apart.
       let j = i;
-      while (
-        j < lines.length &&
-        lines[j]!.role === "tool" &&
-        lines[j]!.toolName === "read_file" &&
-        !lines[j]!.isError
-      ) {
+      const run: ToolActivityView[] = [];
+      while (j < lines.length && lines[j]!.role === "tool") {
+        const view = toView(lines[j]!);
+        if (!isChamberView(view)) break;
+        run.push(view);
         j++;
       }
-      const run = j - i;
-      if (run >= 2) {
-        out.push(F.toolRow({ name: "read", arg: `${run} files` }));
+      if (run.length >= CHAMBER_AT) {
+        out.push(renderChamberHead(run));
         i = j;
       } else {
         out.push(renderToolActivity(toView(ln)));
@@ -589,13 +639,93 @@ export function renderTranscript(lines: TranscriptLineView[]): string {
   return out.join("\n");
 }
 
-// --- The routine batch ---
+// --- Folds: the full evidence behind a committed row ---
+// The transcript states outcomes; the fold holds the print-out. Everything
+// here renders the OPEN form of a block whose committed form held something
+// back -- the same rows, plus the evidence the summary elided -- so the fixed
+// viewport can swap one for the other in place. Returning null means the
+// committed form already shows everything and the row has nothing to open.
+
+/**
+ * The expanded rendering for one successful call, or null when the committed
+ * row already is the whole story. Kept in this module so the two forms of a
+ * call are written next to each other and cannot drift apart.
+ */
+export function renderToolDetail(v: ToolActivityView): string | null {
+  if (!v.success) return null;
+  const out = tryJson(v.result);
+  switch (v.toolName) {
+    case "bash": {
+      const command = firstLine(s(v.args.command));
+      const body = outputOf(out);
+      if (!body) return null;
+      const all = railLines(body);
+      const exit = typeof out?.exit_code === "number" ? out.exit_code : null;
+      const failed = out?.timed_out === true || (exit != null && exit !== 0);
+      // A failure already showed an excerpt; anything else showed one line.
+      const shownInline = failed ? EXCERPT_HEAD + EXCERPT_TAIL + 2 : 1;
+      if (all.length <= shownInline) return null;
+      const checked = isVerificationCommand(command);
+      const closing = all.length > 1 ? all.pop()!.trim() : "";
+      return [
+        F.toolRow({
+          name: VERB.bash!,
+          arg: command,
+          status: failed ? "fail" : checked ? "pass" : "ok",
+          metric: elapsed(v.durationMs),
+        }),
+        ...F.outputRail("", F.clip(all, DETAIL_HEAD, DETAIL_TAIL), closing || undefined, failed),
+      ].join("\n");
+    }
+    case "edit_file":
+    case "multi_edit": {
+      const path = s(out?.path ?? v.args.path);
+      const raw = s(out?.diff);
+      if (!raw) return null;
+      const full = F.parseDiff(raw, DETAIL_HEAD);
+      const shown = F.parseDiff(raw);
+      // Worth opening only when the committed hunk actually dropped rows.
+      if (full.rows.length <= shown.rows.length) return null;
+      const hunkNote = full.hunks > 0 ? `${full.hunks} hunk${full.hunks === 1 ? "" : "s"}` : "";
+      return [
+        F.toolRow({
+          name: "edit",
+          arg: listingPath(path),
+          argTone: "path",
+          status: "none",
+          metric: F.editMetric(full.added, full.removed, hunkNote),
+        }),
+        ...F.diffRows(full.rows, langOfPath(path)),
+      ].join("\n");
+    }
+    case "write_file": {
+      const path = s(out?.path ?? v.args.path);
+      const body = s(v.args.content);
+      const total = body ? body.split("\n").length : 0;
+      if (total <= WRITE_PREVIEW_ROWS) return null;
+      return [
+        F.toolRow({
+          name: VERB.write_file!,
+          arg: listingPath(path),
+          argTone: "path",
+          status: "none",
+          metric: F.editMetric(total, 0, "new file"),
+        }),
+        ...F.diffRows(writeRows(body, DETAIL_HEAD), langOfPath(path)),
+      ].join("\n");
+    }
+    default:
+      return null;
+  }
+}
+
+// --- The chamber ---
 // Context-gathering is the bulk of every turn and almost none of its news. A
 // run of thirty reads is one fact ("it read the module"), and printing it as
 // thirty rows spends the reader's whole screen establishing that fact while the
-// sentence that matters scrolls past. These two exports are what let the live
-// stream do what the replay renderer already did: show each call while it runs,
-// and set down one line when the run is over.
+// sentence that matters scrolls past. So a finished burst sets down as ONE row
+// -- the chamber -- with its per-call record behind the fold, where a reader who
+// wants to know exactly what ran in that stretch opens it in place.
 
 /** Tools whose individual rows are context, not news. */
 const ROUTINE = new Set(["read_file", "list_dir", "grep", "glob", "symbol_search", "lsp"]);
@@ -604,22 +734,41 @@ export function isRoutineTool(name: string): boolean {
   return ROUTINE.has(name);
 }
 
+/**
+ * Whether a finished call may ride in a chamber instead of standing alone.
+ * Gathering always may. A web call is gathering with a different network. A
+ * command may ONLY when it succeeded and was not a check: a failure is news, a
+ * check is evidence, and both must stand where the eye will hit them.
+ */
+export function isChamberView(v: ToolActivityView): boolean {
+  if (!v.success) return false;
+  if (ROUTINE.has(v.toolName)) return true;
+  if (v.toolName === "web_search" || v.toolName === "web_fetch") return true;
+  if (v.toolName === "bash") {
+    const out = tryJson(v.result);
+    const exit = typeof out?.exit_code === "number" ? out.exit_code : null;
+    if (out?.timed_out === true || (exit != null && exit !== 0)) return false;
+    return !isVerificationCommand(firstLine(s(v.args.command)));
+  }
+  return false;
+}
+
 /** `1,204` — thousands grouped without a locale, so the row reads the same on
  *  every machine and in every test. */
 function group(n: number): string {
   return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
-/**
- * The collapsed receipt for a run of context-gathering calls: what was covered
- * and how much of it, in one row. Nothing here is estimated — the counts are the
- * calls that actually returned, and the line total is what the reads reported
- * reading. The per-call detail is not lost; it stays in the work log.
- */
-export function renderRoutineBatch(views: ToolActivityView[]): string {
+/** How long a run of chamber-eligible calls has to get before it is worth more
+ *  as one row than as a list. Two paths are worth naming; twelve are one fact. */
+export const CHAMBER_AT = 3;
+
+function chamberPhrase(views: ToolActivityView[]): { phrase: string; lines: number } {
   let files = 0;
   let dirs = 0;
   let searches = 0;
+  let commands = 0;
+  let web = 0;
   let lines = 0;
   for (const view of views) {
     const out = tryJson(view.result);
@@ -628,20 +777,42 @@ export function renderRoutineBatch(views: ToolActivityView[]): string {
       const total = typeof out?.total_lines === "number" ? out.total_lines : null;
       const shown = typeof out?.lines_shown === "number" ? out.lines_shown : total;
       if (typeof shown === "number" && shown > 0) lines += shown;
-    } else if (view.toolName === "list_dir") {
-      dirs++;
-    } else {
-      searches++;
-    }
+    } else if (view.toolName === "list_dir") dirs++;
+    else if (view.toolName === "bash") commands++;
+    else if (view.toolName === "web_search" || view.toolName === "web_fetch") web++;
+    else searches++;
   }
-  const parts = [
-    files > 0 ? `${files} file${files === 1 ? "" : "s"}` : "",
-    dirs > 0 ? `${dirs} director${dirs === 1 ? "y" : "ies"}` : "",
+  const phrase = [
+    files > 0 ? `read ${files} file${files === 1 ? "" : "s"}` : "",
+    dirs > 0 ? `listed ${dirs} director${dirs === 1 ? "y" : "ies"}` : "",
     searches > 0 ? `${searches} search${searches === 1 ? "" : "es"}` : "",
-  ].filter(Boolean);
-  return F.toolRow({
-    name: files >= searches ? "read" : "grep",
-    arg: parts.join(", "),
-    metric: lines > 0 ? `${group(lines)} lines` : "",
-  });
+    commands > 0 ? `ran ${commands} command${commands === 1 ? "" : "s"}` : "",
+    web > 0 ? `${web} web source${web === 1 ? "" : "s"}` : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
+  return { phrase, lines };
+}
+
+/**
+ * The chamber's committed row: what the burst covered, in one reading. The
+ * open-mark leads the row -- it is the affordance the click and ctrl+o answer
+ * -- and the counts are the calls that actually returned, never an estimate.
+ */
+export function renderChamberHead(views: ToolActivityView[]): string {
+  const { phrase, lines } = chamberPhrase(views);
+  return F.flowRow(
+    F.railRow(`${info(glyph("selection"))} ${muted(phrase)}`),
+    lines > 0 ? faint(`${group(lines)} lines`) : "",
+  );
+}
+
+/** The chamber, opened: the same head, then every call it holds, per row. */
+export function renderChamberDetail(views: ToolActivityView[]): string {
+  return [renderChamberHead(views), ...views.map((view) => renderToolActivity(view))].join("\n");
+}
+
+/** Back-compat name for the collapsed gathering row. */
+export function renderRoutineBatch(views: ToolActivityView[]): string {
+  return renderChamberHead(views);
 }

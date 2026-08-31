@@ -1,10 +1,15 @@
 // Flow's six foreground roles, painted from the active theme's palette.
 //
-// Body text inherits the terminal's own foreground and backgrounds are never
-// painted — both of those are law and both survive. What does NOT survive is
-// the idea that six roles means six fixed codes: see themes.ts for why that
-// collapsed thirty palettes into one, and why ANSI-16 is the reason the same
-// build looked rich in Warp and washed out in Terminal.app.
+// Body text inherits the terminal's own foreground, and the GROUND is never
+// painted — the surface behind everything belongs to the user. Two marks are
+// allowed to carry a background because they are marks, not ground, and each
+// states its own defence where it lives: the caret (cursorCell), and the diff
+// evidence bands (positiveSurface/negativeSurface), which tint one row from
+// the theme's own bg and degrade to foreground-only wherever the ground is
+// unknown. What does NOT survive is the idea that six roles means six fixed
+// codes: see themes.ts for why that collapsed thirty palettes into one, and
+// why ANSI-16 is the reason the same build looked rich in Warp and washed out
+// in Terminal.app.
 
 import { glyph } from "./glyphs";
 import { terminalText } from "./glyphs";
@@ -278,12 +283,59 @@ export function selection(value: string): string {
   return accent(value);
 }
 
+// --- Evidence bands ---
+// The second place a background exists, and the same defence as the caret: a
+// band is not GROUND. It is one row of a diff, saying "this exact line changed"
+// the way every code review surface the reader already lives in says it. The
+// no-backgrounds law protects the user's surface from being repainted; a tint
+// mixed FROM that surface — the theme's own bg pulled a few steps toward the
+// role's pigment — asserts nothing over it.
+//
+// Honesty about capability is the other half. A band needs to know the ground
+// to mix from it, so it exists only when the theme knows its background:
+// follow-terminal themes, ANSI-16 hosts, NO_COLOR and pipes all degrade to the
+// foreground-only rendering these rows always had. Nothing is ever the band
+// alone — the sign column and the +/- foreground survive every degrade.
+
+type Rgb = [number, number, number];
+
+function mixRgb(a: Rgb, b: Rgb, t: number): Rgb {
+  return [
+    Math.round(a[0] + (b[0] - a[0]) * t),
+    Math.round(a[1] + (b[1] - a[1]) * t),
+    Math.round(a[2] + (b[2] - a[2]) * t),
+  ];
+}
+
+/** Whether evidence bands can be painted honestly on this host + theme. */
+export function bandsEnabled(): boolean {
+  return COLOR_CAPABLE && DEPTH !== "ansi16" && !active.useNativeColors;
+}
+
+function bandSeq(role: "ok" | "danger"): string {
+  const ground = active.bg.rgb as Rgb;
+  const tone = pigmentFor(ROLE_SLOT[role]).rgb as Rgb;
+  // Further toward the pigment on a dark ground: dark mixes lose chroma faster.
+  const t = active.appearance === "light" ? 0.14 : 0.24;
+  const [r, g, b] = mixRgb(ground, tone, t);
+  if (DEPTH === "truecolor") return `\x1b[48;2;${r};${g};${b}m`;
+  return `\x1b[48;5;${nearestAnsi256([r, g, b])}m`;
+}
+
+/** Lay `value` on a band. Inner resets are re-armed so a row assembled from
+ *  several painted fragments keeps one continuous tint to its last cell. */
+function banded(value: string, role: "ok" | "danger"): string {
+  if (!bandsEnabled()) return body(value);
+  const seq = bandSeq(role);
+  return `${seq}${value.split(RESET).join(RESET + seq)}${RESET}`;
+}
+
 export function positiveSurface(value: string): string {
-  return body(value);
+  return banded(value, "ok");
 }
 
 export function negativeSurface(value: string): string {
-  return body(value);
+  return banded(value, "danger");
 }
 
 export function cardSurface(value: string): string {
