@@ -263,6 +263,7 @@ ${clarifyBranch}
 
 Rules:
 - Decompose into at most ${maxSubQuestions} focused, non-overlapping sub-questions that together fully answer the request.
+- For analytical or evaluative topics (markets, trends, decisions, comparisons, "should…", "why…", "what happens if…"), make ONE sub-question adversarial: aim it at the strongest disconfirming evidence ("what is the best case that X is wrong, overstated, or about to change?"). Skip this for purely factual lookups.
 - sourceScope defaults to "web". Use "local" ONLY when a sub-question is about the user's OWN project/codebase/files; use "both" when it needs the project AND external information. For purely external topics (markets, news, products, science, history), always use "web".
 - Prefer "web". Never invent a reason to read local files for a purely external topic.`;
 }
@@ -496,10 +497,22 @@ export async function* runResearch(
     return;
   }
 
-  yield { type: "research_synthesizing", sourceCount: allSources.length };
-
   const model = opts?.model ?? deps.model;
   const provider = opts?.provider ?? deps.provider;
+
+  // The analyst stage: one judgment call between evidence and prose. Failure
+  // degrades the report (no analysis layer), never kills it.
+  yield {
+    type: "notice",
+    message: "Forming the analyst's read — thesis, counter-case, implications…",
+  };
+  const analysis = await analyze(deps, plan, subResults, model, provider, signal);
+  if (signal?.aborted) {
+    yield { type: "error", error: "Research aborted.", recoverable: false };
+    return;
+  }
+
+  yield { type: "research_synthesizing", sourceCount: allSources.length };
 
   // Long-form synthesis: for standard/deep this outlines the report then writes
   // each section in its own streamed call, so total length scales with section
@@ -513,6 +526,7 @@ export async function* runResearch(
     s,
     model,
     provider,
+    analysis,
     signal,
   )) {
     if (ev.type === "research_report_delta") report += ev.text;
@@ -904,14 +918,15 @@ export interface ReportSection {
 /** Cap on source chars fed to EACH section call (the prefix repeats per section). */
 const SECTION_SOURCE_CHAR_CAP = 48000;
 
-const SYNTHESIS_SYSTEM_PROMPT = `You are a senior research analyst. Write a comprehensive, well-structured report that fully answers the user's research question using ONLY the numbered SOURCES provided.
+const SYNTHESIS_SYSTEM_PROMPT = `You are a senior research analyst. Write a comprehensive, well-structured report that fully answers the user's research question. Facts come ONLY from the numbered SOURCES provided; judgment comes from the ANALYST NOTES and is presented AS judgment.
 
 Requirements:
-- Open with a 3-5 sentence executive summary, then develop the answer in depth with markdown headings, subheadings, and bullet points or tables where they aid clarity.
+- Open with a 3-5 sentence executive summary that TAKES A POSITION, then develop the answer in depth with markdown headings, subheadings, and bullet points or tables where they aid clarity.
 - Cover every sub-question. Compare and reconcile what different sources say; surface disagreements, caveats, and dates for time-sensitive facts rather than flattening them into a single bland claim.
+- The report must carry an ANALYSIS LAYER, not just organized findings: the thesis, the strongest disconfirming case, implications and second-order effects, and concrete signals to watch. Draw these from the ANALYST NOTES when provided (deepen them, don't copy); state them as reasoned judgment ("the evidence points to…", "the strongest case against this is…"), never as sourced fact.
 - Be thorough and specific: prefer concrete figures, dates, names, and mechanisms over generalities. Depth means substantive detail, not repetition or filler.
-- Cite every non-obvious factual claim with an inline marker like [3], referring to the numbered sources. Cite multiple where relevant, e.g. [2][5].
-- Use ONLY the provided sources. Do NOT invent facts, figures, or URLs. If the sources are insufficient or conflict, say so explicitly.
+- Cite every non-obvious factual claim with an inline marker like [3], referring to the numbered sources. Cite multiple where relevant, e.g. [2][5]. Judgments and projections carry no [n] — their support is the argument itself.
+- Do NOT invent facts, figures, or URLs. If the sources are insufficient or conflict, say so explicitly.
 - Do NOT write a "Sources" or "References" section — it is appended automatically. Just use the [n] markers inline.`;
 
 const OUTLINE_SYSTEM_PROMPT_TMPL = (maxSections: number) =>
@@ -922,7 +937,8 @@ Respond with ONLY a single JSON object — no prose, no code fences:
 
 Rules:
 - Produce ${maxSections} sections that together cover the topic EXHAUSTIVELY, with NO overlap.
-- Begin with an "Executive Summary" and end with a "Conclusion"; include analysis sections such as background/context, comparisons, mechanisms, implications, risks, and open questions where they fit the topic.
+- Begin with an "Executive Summary" and end with a "Conclusion"; include background/context, comparisons, and mechanism sections where they fit the topic.
+- ALWAYS include at least one ANALYSIS section (implications and risks, the case against the emerging thesis, what to watch) — a report that only organizes findings is incomplete; the judgment layer is what the reader is paying for.
 - Make every section substantive and specific to THIS topic (not generic boilerplate) — each should be worth 1-3 pages of detail.
 - Order the sections so the report reads as one coherent document.`;
 
@@ -933,7 +949,76 @@ Requirements:
 - Use specific facts, figures, dates, names, examples, and mechanisms drawn from the SOURCES. Compare and reconcile conflicting evidence; note caveats and dates.
 - Cite every non-obvious claim inline with [n] referring to the numbered sources (e.g. [3] or [2][5]). Use ONLY the provided sources; never invent facts or URLs.
 - Stay strictly within THIS section's focus; do not duplicate what other sections cover.
+- When the section is analytical (implications, risks, the disconfirming case, outlook), draw on the ANALYST NOTES if provided and go beyond them: state judgments as judgments ("the evidence points to…"), argue them from the cited facts, and never dress a projection up as a sourced claim.
 - Do NOT repeat the section heading (it is added for you) and do NOT write a "Sources"/"References" list — sources are appended once at the very end.`;
+
+// ─── The analyst stage ───
+//
+// The stage between evidence and prose that the pipeline used to lack. The
+// investigators gather, the reflector checks COVERAGE, and synthesis was
+// bound to "ONLY the numbered SOURCES" — which is exactly why reports read as
+// the internet organized rather than analyzed: the pipeline had no step whose
+// job was judgment. This one call produces the thesis, the strongest case
+// against it, implications, and signals to watch; synthesis then presents
+// that layer AS judgment, kept distinct from sourced fact. Best-effort: any
+// failure returns null and the report ships without it.
+
+const ANALYST_SYSTEM_PROMPT = `You are the ANALYST in a deep-research pipeline. The evidence has already been gathered; your job is the one thing evidence cannot provide: judgment. Write compact analyst notes with exactly these five parts, in this order, as short markdown sections:
+
+1. THESIS — the strongest defensible answer to the research question, in 2-4 sentences. Take a position; hedged mush is a failed thesis.
+2. THE DISCONFIRMING CASE — the best honest argument that the thesis is wrong or overstated, built from the evidence's genuinely weakest points, not a strawman.
+3. IMPLICATIONS — what follows if the thesis holds: consequences, second-order effects, who is affected and how.
+4. SIGNALS TO WATCH — concrete, observable events or numbers that would confirm or break the thesis.
+5. CONFIDENCE AND GAPS — where the evidence is thin or conflicting, and what specific information would settle it.
+
+Ground every judgment in the findings (name the specific facts you rely on); label speculation as speculation. No preamble, no extra sections, under 700 words.`;
+
+function analystUserPrompt(plan: ResearchPlan, subResults: SubQuestionResult[]): string {
+  return `RESEARCH QUESTION:
+${plan.question}
+
+FINDINGS FROM INVESTIGATION (per sub-question):
+${findingsBlock(subResults, 1_500)}
+
+Write the analyst notes now.`;
+}
+
+/**
+ * One judgment call over the gathered findings → analyst notes for synthesis,
+ * or null when the call fails or returns nothing usable (the report still
+ * ships, merely without its analysis layer — degraded, never dead).
+ */
+export async function analyze(
+  deps: Pick<ResearchDeps, "gateway">,
+  plan: ResearchPlan,
+  subResults: SubQuestionResult[],
+  model: string,
+  provider: ProviderName,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  const request: InferenceRequest = {
+    messages: [
+      { role: "user", content: [{ type: "text", text: analystUserPrompt(plan, subResults) }] },
+    ],
+    system: ANALYST_SYSTEM_PROMPT,
+    model,
+    provider,
+    maxTokens: 2_048,
+    stream: true,
+  };
+  try {
+    const text = (await collectText(deps.gateway, request, signal)).trim();
+    return text.length >= 80 ? text : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The block that carries analyst notes into a synthesis prompt. */
+function analystNotesBlock(analysis: string | null): string {
+  if (!analysis) return "";
+  return `\nANALYST NOTES (reasoned judgment over these findings — weave the thesis, disconfirming case, implications, and signals into the report, presented AS analysis, distinct from sourced facts):\n${analysis}\n`;
+}
 
 /**
  * Pack source bodies for the synthesis prompt within a total-character budget,
@@ -980,6 +1065,7 @@ function synthesisUserPrompt(
   subResults: SubQuestionResult[],
   sources: ResearchSource[],
   s: Settings,
+  analysis: string | null = null,
 ): string {
   const sourceBlocks = selectSynthesisSources(sources, s.charsPerSource, s.maxSynthesisChars).join(
     "\n\n",
@@ -991,7 +1077,7 @@ ${plan.question}${fmt}
 
 FINDINGS FROM INVESTIGATION (per sub-question):
 ${findingsBlock(subResults)}
-
+${analystNotesBlock(analysis)}
 NUMBERED SOURCES (cite these by [n]):
 ${sourceBlocks}
 
@@ -1062,6 +1148,7 @@ async function planReportOutline(
   s: Settings,
   model: string,
   provider: ProviderName,
+  analysis: string | null = null,
   signal?: AbortSignal,
 ): Promise<ReportSection[]> {
   const fmt = plan.outputFormat ? `\nDesired overall format: ${plan.outputFormat}` : "";
@@ -1070,7 +1157,7 @@ ${plan.question}${fmt}
 
 FINDINGS GATHERED (per sub-question, abridged):
 ${findingsBlock(subResults, 900)}
-
+${analystNotesBlock(analysis)}
 Design the section outline now.`;
 
   const request: InferenceRequest = {
@@ -1101,6 +1188,7 @@ function sectionUserPrompt(
   written: ReportSection[],
   index: number,
   sec: ReportSection,
+  analysis: string | null = null,
 ): string {
   const outlineList = outline.map((o, i) => `${i + 1}. ${o.title}`).join("\n");
   // A compact reminder of what's already covered, to avoid repetition.
@@ -1123,7 +1211,7 @@ Focus: ${sec.focus || "Cover this section thoroughly."}
 
 FINDINGS FROM INVESTIGATION (raw material, per sub-question):
 ${findingsBlock(subResults)}
-
+${analystNotesBlock(analysis)}
 NUMBERED SOURCES (cite these by [n]):
 ${sourceBlocks}
 
@@ -1175,6 +1263,7 @@ export async function* synthesizeReport(
   s: Settings,
   model: string,
   provider: ProviderName,
+  analysis: string | null = null,
   signal?: AbortSignal,
 ): AsyncGenerator<ResearchEvent> {
   // Quick: one call.
@@ -1183,7 +1272,9 @@ export async function* synthesizeReport(
       messages: [
         {
           role: "user",
-          content: [{ type: "text", text: synthesisUserPrompt(plan, subResults, sources, s) }],
+          content: [
+            { type: "text", text: synthesisUserPrompt(plan, subResults, sources, s, analysis) },
+          ],
         },
       ],
       system: SYNTHESIS_SYSTEM_PROMPT,
@@ -1197,7 +1288,16 @@ export async function* synthesizeReport(
   }
 
   // Long-form: outline, then write each section.
-  const outline = await planReportOutline(deps, plan, subResults, s, model, provider, signal);
+  const outline = await planReportOutline(
+    deps,
+    plan,
+    subResults,
+    s,
+    model,
+    provider,
+    analysis,
+    signal,
+  );
   if (signal?.aborted) {
     yield { type: "error", error: "Research aborted.", recoverable: false };
     return;
@@ -1227,7 +1327,16 @@ export async function* synthesizeReport(
           content: [
             {
               type: "text",
-              text: sectionUserPrompt(plan, subResults, sourceBlocks, outline, written, i, sec),
+              text: sectionUserPrompt(
+                plan,
+                subResults,
+                sourceBlocks,
+                outline,
+                written,
+                i,
+                sec,
+                analysis,
+              ),
             },
           ],
         },

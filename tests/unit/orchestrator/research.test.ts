@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { LlmGateway } from "../../../packages/llm-gateway/src/gateway";
 import type {
+  InferenceRequest,
   InferenceResponse,
   LlmProvider,
   StreamEvent,
@@ -21,6 +22,7 @@ import {
   parseOutline,
   synthesizeReport,
   resolveSettings,
+  analyze,
 } from "../../../packages/orchestrator/src/research";
 import type {
   ResearchEvent,
@@ -789,5 +791,134 @@ describe("synthesizeReport", () => {
           e.type === "notice" && /could not be completed/.test((e as { message: string }).message),
       ),
     ).toBe(true);
+  });
+});
+
+// ─── the analyst stage ───
+
+describe("analyze (the analyst stage)", () => {
+  /** Streams one scripted body and captures every request it served. */
+  class CapturingProvider implements LlmProvider {
+    readonly name = "anthropic" as const;
+    requests: InferenceRequest[] = [];
+    constructor(private readonly body: string) {}
+    async infer(): Promise<InferenceResponse> {
+      throw new Error("not used");
+    }
+    async *inferStream(req: InferenceRequest): AsyncGenerator<StreamEvent> {
+      this.requests.push(req);
+      yield {
+        type: "content_delta",
+        contentIndex: 0,
+        delta: { type: "text_delta", text: this.body },
+      };
+      yield {
+        type: "message_stop",
+        stopReason: "end_turn",
+        usage: { inputTokens: 1, outputTokens: 1 },
+      };
+    }
+    async countTokens(): Promise<number> {
+      return 1;
+    }
+    async healthCheck(): Promise<boolean> {
+      return true;
+    }
+  }
+
+  function capturingGw(body: string) {
+    const g = new LlmGateway({
+      providers: {},
+      defaultProvider: "anthropic",
+      maxRetries: 0,
+      retryBaseMs: 1,
+    });
+    const p = new CapturingProvider(body);
+    g.registerProvider(p);
+    return { g, p };
+  }
+
+  const plan: ResearchPlan = {
+    id: "p",
+    question: "Is the widget market about to consolidate?",
+    subQuestions: [{ index: 0, question: "a", rationale: "", sourceScope: "web" }],
+    createdAt: "",
+  };
+  const subResults = [
+    { index: 0, question: "a", status: "ok" as const, findings: "finding a", sourceCount: 1 },
+  ];
+
+  test("produces the notes and demands judgment, not coverage", async () => {
+    const notes =
+      "1. THESIS — consolidation within 18 months. 2. THE DISCONFIRMING CASE — margins say otherwise. " +
+      "3. IMPLICATIONS — pricing power shifts. 4. SIGNALS TO WATCH — the next two earnings. 5. CONFIDENCE AND GAPS — thin on private players.";
+    const { g, p } = capturingGw(notes);
+    const out = await analyze({ gateway: g }, plan, subResults, "m", "anthropic");
+    expect(out).toBe(notes);
+    const sys = String(p.requests[0].system ?? "");
+    expect(sys).toContain("THE DISCONFIRMING CASE");
+    expect(sys).toContain("SIGNALS TO WATCH");
+    const user = JSON.stringify(p.requests[0].messages);
+    expect(user).toContain("Is the widget market about to consolidate?");
+    expect(user).toContain("finding a");
+  });
+
+  test("a trivially short answer degrades to null instead of shipping filler", async () => {
+    const { g } = capturingGw("ok.");
+    expect(await analyze({ gateway: g }, plan, subResults, "m", "anthropic")).toBeNull();
+  });
+
+  test("a failing call degrades to null — the report ships without its analysis layer", async () => {
+    const g = new LlmGateway({
+      providers: {},
+      defaultProvider: "anthropic",
+      maxRetries: 0,
+      retryBaseMs: 1,
+    });
+    expect(await analyze({ gateway: g }, plan, subResults, "m", "anthropic")).toBeNull();
+  });
+
+  test("quick synthesis threads ANALYST NOTES into the prompt; null omits the block", async () => {
+    const s = resolveSettings({ depth: "quick" });
+    const sources = [
+      { index: 1, title: "S1", url: "https://s1", fetched: true, text: "b", fromSubQuestion: 0 },
+    ];
+    const withNotes = capturingGw("report body");
+    for await (const _ of synthesizeReport(
+      { gateway: withNotes.g },
+      plan,
+      subResults,
+      sources,
+      s,
+      "m",
+      "anthropic",
+      "THESIS: consolidation is coming.",
+    )) {
+      // drain
+    }
+    const prompt = JSON.stringify(withNotes.p.requests[0].messages);
+    expect(prompt).toContain("ANALYST NOTES");
+    expect(prompt).toContain("consolidation is coming");
+
+    const without = capturingGw("report body");
+    for await (const _ of synthesizeReport(
+      { gateway: without.g },
+      plan,
+      subResults,
+      sources,
+      s,
+      "m",
+      "anthropic",
+      null,
+    )) {
+      // drain
+    }
+    expect(JSON.stringify(without.p.requests[0].messages)).not.toContain("ANALYST NOTES");
+  });
+
+  test("the planner is told to include an adversarial sub-question", async () => {
+    const { g, p } = capturingGw('{"clarification":"c","subQuestions":[{"question":"q1"}]}');
+    await planResearch({ gateway: g, model: "m", provider: "anthropic" }, "should we enter?");
+    expect(String(p.requests[0].system ?? "")).toContain("adversarial");
   });
 });
