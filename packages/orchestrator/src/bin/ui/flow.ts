@@ -513,7 +513,7 @@ function echoed(part: string): string {
 export function asked(body: string): string {
   const lines: string[] = [""];
   let first = true;
-  for (const source of body.replace(/\r\n/g, "\n").split("\n")) {
+  for (const source of body.replace(/\r\n?/g, "\n").split("\n")) {
     for (const part of wrap(source, proseWidth())) {
       lines.push(
         first ? `${MARK}${info(glyph("selection"))} ${echoed(part)}` : `${BODY}${echoed(part)}`,
@@ -544,7 +544,7 @@ export function dot(lines: string[]): string[] {
 export function said(body: string, paint: (v: string) => string = text): string {
   const lines: string[] = [];
   let first = true;
-  for (const source of body.replace(/\r\n/g, "\n").split("\n")) {
+  for (const source of body.replace(/\r\n?/g, "\n").split("\n")) {
     if (!source.trim()) {
       if (!first) lines.push("");
       continue;

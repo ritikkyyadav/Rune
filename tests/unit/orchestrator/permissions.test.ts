@@ -58,8 +58,12 @@ describe("PermissionBroker", () => {
     expect(result.type).toBe("allowed");
   });
 
-  test("legacy yolo startup logs a 4th-gear warning", () => {
-    const warnSpy = spyOn(console, "warn");
+  test("legacy yolo startup logs a 4th-gear warning, once, via the logger", () => {
+    // The announcement goes through the shared logger (stderr outside the TUI,
+    // file sink under it) — the per-call console.warn it replaced printed over
+    // the alt screen on EVERY tool call and tore across parallel workers.
+    delete process.env.GEAR_TUI_ACTIVE;
+    const writeSpy = spyOn(process.stderr, "write");
     const yoloBroker = new PermissionBroker(true);
     const schema = {
       name: "bash",
@@ -68,10 +72,12 @@ describe("PermissionBroker", () => {
       parameters: [],
     };
     yoloBroker.check(schema, {});
-    expect(warnSpy).toHaveBeenCalled();
-    const msg = warnSpy.mock.calls[0]?.[0] as string;
-    expect(msg).toContain("4th gear");
-    warnSpy.mockRestore();
+    yoloBroker.check(schema, {});
+    const lines = writeSpy.mock.calls
+      .map((c) => String(c[0]))
+      .filter((l) => l.includes("4th gear"));
+    writeSpy.mockRestore();
+    expect(lines.length).toBe(1); // once per broker, not once per call
   });
 
   test("session grant allows subsequent calls", () => {

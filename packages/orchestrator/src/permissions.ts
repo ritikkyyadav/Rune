@@ -1,7 +1,10 @@
 import { isAbsolute, relative, resolve } from "path";
 import { isOsIsolationAvailable, isSandboxEnabled, patchTargetPaths } from "@gear/tool-registry";
 import type { PermissionLevel, ToolSchema } from "@gear/tool-registry";
+import { createLogger } from "@gear/shared";
 import { policyDenial, type OrgPolicy } from "./org-policy";
+
+const permLog = createLogger("permissions");
 
 export type PermissionScope = "once" | "session" | "project" | "global";
 
@@ -348,7 +351,7 @@ export class PermissionBroker {
     if (this.mode === "gear-4") {
       if (!this.warned4thGear) {
         this.warned4thGear = true;
-        console.warn(
+        permLog.warn(
           "[SECURITY] 4th gear active — interactive permission checks are bypassed for this session.",
         );
       }

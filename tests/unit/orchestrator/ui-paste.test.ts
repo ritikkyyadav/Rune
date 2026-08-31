@@ -92,3 +92,34 @@ describe("ui/paste — PasteScanner (stream splitting)", () => {
     ]);
   });
 });
+
+describe("line-ending normalization (the Warp wall-of-text defect)", () => {
+  // Terminals paste line breaks as bare CR (observed live: a 40KB spec arrived
+  // as 2,381 CRs and zero LFs, reaching the model as ONE line). The scanner is
+  // the single choke point every bracketed paste crosses.
+  it("CR-only paste bodies come out with real newlines", () => {
+    const s = new PasteScanner();
+    const segs = s.push(`${PASTE_START}line one\rline two\rline three${PASTE_END}`);
+    expect(segs).toEqual([{ type: "paste", content: "line one\nline two\nline three" }]);
+  });
+
+  it("CRLF paste bodies normalize without doubling", () => {
+    const s = new PasteScanner();
+    const segs = s.push(`${PASTE_START}a\r\nb\r\nc${PASTE_END}`);
+    expect(segs).toEqual([{ type: "paste", content: "a\nb\nc" }]);
+  });
+
+  it("normalization spans chunk boundaries (CR at a split point)", () => {
+    const s = new PasteScanner();
+    expect(s.push(`${PASTE_START}head\r`)).toEqual([]);
+    const segs = s.push(`tail${PASTE_END}`);
+    expect(segs).toEqual([{ type: "paste", content: "head\ntail" }]);
+  });
+
+  it("the chip's +K lines count is now honest for a CR paste", () => {
+    const s = new PasteScanner();
+    const [seg] = s.push(`${PASTE_START}one\rtwo\rthree${PASTE_END}`);
+    if (seg.type !== "paste") throw new Error("expected paste");
+    expect(pasteChip(1, seg.content)).toBe("[Pasted text #1 +3 lines]");
+  });
+});

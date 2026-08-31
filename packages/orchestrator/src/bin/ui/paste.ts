@@ -67,7 +67,13 @@ export class PasteScanner {
           return out;
         }
         this.buf += rest.slice(0, end);
-        out.push({ type: "paste", content: this.buf });
+        // Terminals deliver pasted line breaks as CR (xterm behavior Warp and
+        // others follow), so a multi-line paste arrives with \r and not one
+        // \n. Everything downstream splits on \n only — the model's prompt,
+        // the mission file, the flow renderer — so a 40KB spec pasted in Warp
+        // reached the model as ONE line (observed: 2,381 CRs, zero LFs).
+        // Normalize at the single choke point every paste passes through.
+        out.push({ type: "paste", content: this.buf.replace(/\r\n?/g, "\n") });
         this.buf = "";
         this.inPaste = false;
         rest = rest.slice(end + PASTE_END.length);

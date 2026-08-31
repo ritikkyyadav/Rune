@@ -1,5 +1,6 @@
 import { appendFileSync, mkdirSync } from "fs";
 import { join } from "path";
+import { getGearHome } from "./paths.js";
 
 // ─── Minimal structured logger ───
 // Zero-dependency, leveled, namespaced. Routes to stderr (so it never corrupts
@@ -46,12 +47,16 @@ function threshold(): number {
 let fileSinkChecked = false;
 let fileSinkPath: string | null = null;
 
-/** Resolve (once) the optional file sink under GEAR_LOG_DIR. Never throws. */
+/**
+ * Resolve (once) the file sink: GEAR_LOG_DIR when set, else ~/.gear/logs.
+ * A default exists because under the TUI the stderr line is suppressed (see
+ * emit) — a warning with nowhere else to go would otherwise vanish. Never
+ * throws.
+ */
 function fileSink(): string | null {
   if (fileSinkChecked) return fileSinkPath;
   fileSinkChecked = true;
-  const dir = process.env.GEAR_LOG_DIR;
-  if (!dir) return (fileSinkPath = null);
+  const dir = process.env.GEAR_LOG_DIR ?? join(getGearHome(), "logs");
   try {
     mkdirSync(dir, { recursive: true });
     fileSinkPath = join(dir, "gear.log");
@@ -88,10 +93,17 @@ function emit(
 ): void {
   if (levelNum < threshold()) return;
   const line = format(level, namespace, msg, meta);
-  try {
-    process.stderr.write(`${line}\n`);
-  } catch {
-    // stderr closed — nothing we can do.
+  // While the TUI owns the terminal (alt screen), a stderr line is not a log —
+  // it is a rendering defect: it prints OVER the pinned chrome, and parallel
+  // writers tear it mid-line (observed as "[SEC[SECURITY]…" in a live run).
+  // The TUI sets GEAR_TUI_ACTIVE for exactly this window; the file sink below
+  // still records every line.
+  if (process.env.GEAR_TUI_ACTIVE !== "1") {
+    try {
+      process.stderr.write(`${line}\n`);
+    } catch {
+      // stderr closed — nothing we can do.
+    }
   }
   const sink = fileSink();
   if (sink) {
