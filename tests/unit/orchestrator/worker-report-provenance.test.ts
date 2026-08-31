@@ -13,7 +13,7 @@
  */
 
 import { describe, test, expect } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createWorkerTool } from "../../../packages/orchestrator/src/worker";
@@ -155,9 +155,44 @@ describe("the worker can see its turn budget", () => {
   });
 
   test("the last two turns say to write the report now", async () => {
-    const g = scriptedGateway([{ text: "still building", tool: true }]);
-    await runWorker(g, ws());
-    const tail = JSON.stringify(g.requests.at(-1).messages.at(-1));
+    // The tool turns must SUCCEED for the run to march the full budget:
+    // `read_file` here shells out to the (deliberately nonexistent)
+    // gear-tools binary, so every read fails identically — and twelve
+    // identical failures with nothing succeeding between them is an orbit
+    // the same-shape breaker now (correctly) lands before the budget
+    // expires. This test is about the clock, not the orbit, so its turns
+    // run `ast_query` — TypeScript-native — against real seeded files.
+    const root = ws();
+    mkdirSync(join(root, "src"), { recursive: true });
+    for (let i = 1; i <= 14; i++) writeFileSync(join(root, "src", `f${i}.ts`), "export {};\n");
+    let turn = 0;
+    const requests: any[] = [];
+    const g = {
+      requests,
+      inferStream: async function* (req: any): AsyncGenerator<StreamEvent> {
+        requests.push(req);
+        turn++;
+        yield { type: "message_start", messageId: `m${turn}` };
+        yield {
+          type: "content_delta",
+          contentIndex: 0,
+          delta: { type: "text_delta", text: "still building" },
+        };
+        yield { type: "tool_use_start", toolCallId: `t${turn}`, toolName: "ast_query" };
+        yield {
+          type: "tool_use_stop",
+          toolCallId: `t${turn}`,
+          toolInput: { file: `src/f${turn}.ts`, pattern: "exports" },
+        };
+        yield {
+          type: "message_stop",
+          stopReason: "tool_use",
+          usage: { inputTokens: 1, outputTokens: 1 },
+        };
+      },
+    };
+    await runWorker(g, root);
+    const tail = JSON.stringify(requests.at(-1).messages.at(-1));
     expect(tail).toContain("WRAP UP NOW");
   });
 });

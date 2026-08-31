@@ -36,6 +36,8 @@ export const INCIDENT_CLASSES = [
   "tool.permission_denied",
   "tool.mcp_error",
   "loop.repeated_call_refused",
+  "loop.same_shape_failures",
+  "loop.same_shape_refused",
   "loop.stuck_nudge",
   "loop.infinite_loop",
   "loop.barren_nudge",

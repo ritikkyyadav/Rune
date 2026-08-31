@@ -79,14 +79,69 @@ describe("ask_user", () => {
     expect(out.result).toBe("late answer");
   });
 
-  test("validation: question and 2-6 options required", () => {
+  test("validation: only the question text is a hard requirement", () => {
     const tool = createAskUserTool(() => undefined);
     expect(tool.validate({ question: "", options: ["a", "b"] }).valid).toBe(false);
-    expect(tool.validate({ question: "q", options: ["only-one"] }).valid).toBe(false);
+    expect(tool.validate({ options: ["a", "b"] }).valid).toBe(false);
+    expect(tool.validate({ questions: [{ options: ["a", "b"] }] }).valid).toBe(false);
+    expect(tool.validate({ question: "q", options: ["a", "b"] }).valid).toBe(true);
+    // A malformed option list no longer withholds the question -- see
+    // salvageOptions: the 2026-08-31 run reworded a rejected ask nine times
+    // and the user was never asked anything.
+    expect(tool.validate({ question: "q" }).valid).toBe(true);
+    expect(tool.validate({ question: "q", options: ["only-one"] }).valid).toBe(true);
     expect(
       tool.validate({ question: "q", options: ["a", "b", "c", "d", "e", "f", "g"] }).valid,
-    ).toBe(false);
-    expect(tool.validate({ question: "q", options: ["a", "b"] }).valid).toBe(true);
+    ).toBe(true);
+  });
+
+  test("salvage: missing or unusable options degrade to a free-form question", async () => {
+    const seen: string[][] = [];
+    const tool = createAskUserTool(() => async (q) => {
+      seen.push(q.options);
+      return "typed answer";
+    });
+    await tool.execute(makeInput({ question: "What kind of reaudit do you want?" }));
+    await tool.execute(makeInput({ question: "Scope?", options: ["only-one"] }));
+    expect(seen).toEqual([[], []]);
+  });
+
+  test("salvage: labeled-object options give up their labels; overflow is cut", async () => {
+    const seen: string[][] = [];
+    const tool = createAskUserTool(() => async (q) => {
+      seen.push(q.options);
+      return q.options[0] ?? "typed";
+    });
+    await tool.execute(
+      makeInput({
+        question: "Which?",
+        options: [{ label: "full audit" }, { label: "delta only" }, 3, "  ", null],
+      }),
+    );
+    await tool.execute(
+      makeInput({ question: "Pick", options: ["a", "b", "c", "d", "e", "f", "g", "h"] }),
+    );
+    expect(seen[0]).toEqual(["full audit", "delta only", "3"]);
+    expect(seen[1]).toEqual(["a", "b", "c", "d", "e", "f"]);
+  });
+
+  test("salvage: a batch keeps its askable questions and drops the textless", async () => {
+    const asked: string[] = [];
+    const tool = createAskUserTool(() => async (q) => {
+      asked.push(q.question);
+      return "ans";
+    });
+    const out = await tool.execute(
+      makeInput({
+        questions: [
+          { question: "Scope?" },
+          { options: ["a", "b"] },
+          { question: "Depth?", options: ["core", "full"] },
+        ],
+      }),
+    );
+    expect(out.success).toBe(true);
+    expect(asked).toEqual(["Scope?", "Depth?"]);
   });
 
   test("schema keeps ask_user out of the parallel-safe read pool", () => {

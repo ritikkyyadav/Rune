@@ -117,6 +117,189 @@ describe("repeated-failure circuit breaker", () => {
   });
 });
 
+/**
+ * Gateway that keeps ASKING with different wording every turn — the shape of
+ * the 2026-08-31 incident: nine differently-phrased ask_user calls, one
+ * identical validation rejection, and no other call in between. The per-call
+ * breaker never fires (args differ); the same-shape streak must.
+ */
+// Genuinely different WORDS each time, the way a model rewords -- the
+// aggressive per-call signature folds digits, so varying only a number would
+// (correctly) trip the exact-call breaker instead of the shape streak.
+const REWORDINGS = [
+  "What kind of reaudit do you want today?",
+  "Which scope should this audit take?",
+  "How deep should the reaudit go?",
+  "What flavor of audit fits tonight?",
+  "Where should the audit focus first?",
+  "Should this be delta or full coverage?",
+  "Pick the audit lane you want.",
+  "Choose how thorough we go.",
+];
+
+function makeRewordingFailureGateway(turns: number) {
+  let turn = 0;
+  return {
+    inferStream: mock(async function* () {
+      turn++;
+      if (turn <= turns) {
+        yield ev("tool_use_start", { toolCallId: `ask-${turn}`, toolName: "ask_user" });
+        yield ev("tool_use_stop", {
+          toolCallId: `ask-${turn}`,
+          toolInput: { questions: [{ question: REWORDINGS[(turn - 1) % REWORDINGS.length] }] },
+        });
+        yield ev("message_stop", { stopReason: "tool_use" });
+      } else {
+        yield ev("content_delta", { delta: { type: "text_delta", text: "done" } });
+        yield ev("message_stop", { stopReason: "end_turn" });
+      }
+    }),
+    infer: mock(async () => ({
+      content: [{ type: "text", text: "s" }],
+      model: "t",
+      stopReason: "end_turn",
+      usage: { inputTokens: 1, outputTokens: 1 },
+    })),
+    registerProvider: mock(() => {}),
+    getProvider: mock(() => null),
+    getTotalCost: mock(() => 0),
+  } as any;
+}
+
+function makeAlwaysFailingRegistry(error: string) {
+  const executed: string[] = [];
+  const registry = {
+    toLlmTools: mock(() => []),
+    get: mock((name: string) => ({
+      schema: {
+        name,
+        version: "0.1.0",
+        description: "",
+        inputSchema: { type: "object", properties: {} },
+        category: "read",
+        permissionLevel: "auto",
+      },
+    })),
+    execute: mock(async (input: { toolName: string; callId: string }) => {
+      executed.push(input.toolName);
+      return {
+        callId: input.callId,
+        toolName: input.toolName,
+        success: false,
+        result: "",
+        error,
+        durationMs: 1,
+      };
+    }),
+  } as any;
+  return { registry, executed };
+}
+
+describe("same-shape failure streak", () => {
+  test("reworded calls dying on one error get a note at 3 and refuse at 5", async () => {
+    const { registry, executed } = makeAlwaysFailingRegistry(
+      "Validation failed: each question needs text and 2-6 non-empty options",
+    );
+    const loop = new AgentLoop(
+      { maxTurns: 12, maxConsecutiveErrors: 50 },
+      makeRewordingFailureGateway(8),
+      registry,
+    );
+    const events = (await collect(loop.run("go", "s", "/w"))) as AgentTurnEvent[];
+
+    // Five real executions at most: the streak refuses the shape from there,
+    // however inventively the model rewords it.
+    expect(executed.filter((n) => n === "ask_user").length).toBeLessThanOrEqual(5);
+
+    const ends = events.filter(
+      (e): e is Extract<AgentTurnEvent, { type: "tool_call_end" }> => e.type === "tool_call_end",
+    );
+    const refusals = ends.filter((e) =>
+      (e.output.error ?? "").includes("Refused without running"),
+    );
+    expect(refusals.length).toBeGreaterThanOrEqual(1);
+    // The ask_user refusal names the conversational way out.
+    expect(refusals.some((e) => (e.output.error ?? "").includes("END YOUR TURN"))).toBe(true);
+
+    // The corrective note landed in the transcript after the third failure.
+    const transcript = JSON.stringify(loop.getMessages());
+    expect(transcript).toContain("[Harness note] Your last 3 ask_user calls");
+    expect(transcript).toContain("write the question as plain prose");
+  });
+
+  test("a successful call between failures resets the streak", async () => {
+    // fail, fail, SUCCEED, fail, fail... — never three consecutive, never
+    // refused. The reset is what keeps this breaker off legitimate runs that
+    // are making contact with the world between misses.
+    let turn = 0;
+    const gw = {
+      inferStream: mock(async function* () {
+        turn++;
+        if (turn <= 6) {
+          const tool = turn === 3 ? "read_file" : "ask_user";
+          yield ev("tool_use_start", { toolCallId: `c-${turn}`, toolName: tool });
+          yield ev("tool_use_stop", {
+            toolCallId: `c-${turn}`,
+            toolInput:
+              tool === "read_file"
+                ? { path: "a.ts" }
+                : { questions: [{ question: REWORDINGS[(turn - 1) % REWORDINGS.length] }] },
+          });
+          yield ev("message_stop", { stopReason: "tool_use" });
+        } else {
+          yield ev("content_delta", { delta: { type: "text_delta", text: "done" } });
+          yield ev("message_stop", { stopReason: "end_turn" });
+        }
+      }),
+      infer: mock(async () => ({
+        content: [{ type: "text", text: "s" }],
+        model: "t",
+        stopReason: "end_turn",
+        usage: { inputTokens: 1, outputTokens: 1 },
+      })),
+      registerProvider: mock(() => {}),
+      getProvider: mock(() => null),
+      getTotalCost: mock(() => 0),
+    } as any;
+    const executed: string[] = [];
+    const registry = {
+      toLlmTools: mock(() => []),
+      get: mock((name: string) => ({
+        schema: {
+          name,
+          version: "0.1.0",
+          description: "",
+          inputSchema: { type: "object", properties: {} },
+          category: "read",
+          permissionLevel: "auto",
+        },
+      })),
+      execute: mock(async (input: { toolName: string; callId: string }) => {
+        executed.push(input.toolName);
+        const ok = input.toolName === "read_file";
+        return {
+          callId: input.callId,
+          toolName: input.toolName,
+          success: ok,
+          result: ok ? "ok" : "",
+          error: ok ? undefined : "Validation failed: same shape",
+          durationMs: 1,
+        };
+      }),
+    } as any;
+    const loop = new AgentLoop({ maxTurns: 10, maxConsecutiveErrors: 50 }, gw, registry);
+    const events = (await collect(loop.run("go", "s", "/w"))) as AgentTurnEvent[];
+    // Every ask_user ran for real — nothing was refused.
+    expect(executed.filter((n) => n === "ask_user").length).toBe(5);
+    const ends = events.filter(
+      (e): e is Extract<AgentTurnEvent, { type: "tool_call_end" }> => e.type === "tool_call_end",
+    );
+    expect(ends.some((e) => (e.output.error ?? "").includes("Refused without running"))).toBe(
+      false,
+    );
+  });
+});
+
 describe("rateLimitWaitSecs", () => {
   test("parses the retry window (with slack)", () => {
     expect(

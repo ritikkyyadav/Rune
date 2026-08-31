@@ -115,6 +115,41 @@ describe("what a keystroke means", () => {
   });
 });
 
+describe("a free-form question (no salvageable options)", () => {
+  // ask_user degrades an unusable option list to options: [] rather than
+  // refusing the question -- the picker has to hold with nothing to pick.
+  const free = (over: Partial<QuestionView> = {}) => view({ options: [], ...over });
+
+  it("a digit is just the first character of an answer", () => {
+    expect(questionAction(char("2"), free())).toEqual({ kind: "edit" });
+  });
+
+  it("arrows have nothing to walk and fall through to the composer", () => {
+    expect(questionAction({ type: "up" }, free())).toEqual({ kind: "edit" });
+    expect(questionAction({ type: "down" }, free())).toEqual({ kind: "edit" });
+  });
+
+  it("enter with nothing typed commits nothing -- an answer is never invented", () => {
+    expect(questionAction({ type: "enter" }, free())).toEqual({ kind: "ignore" });
+  });
+
+  it("enter sends the typed words; escape still backs out", () => {
+    expect(questionAction({ type: "enter" }, free({ input: "a full reaudit" }))).toEqual({
+      kind: "answer",
+      text: "a full reaudit",
+    });
+    expect(questionAction({ type: "esc" }, free())).toEqual({ kind: "skip" });
+  });
+
+  it("the placeholder and hint name the one live path", () => {
+    expect(questionPlaceholder(0)).toBe("type an answer in your own words");
+    const hint = questionHint(free());
+    expect(hint).toContain("type your answer");
+    expect(hint).not.toContain("1-0");
+    expect(hint).not.toContain("up/down");
+  });
+});
+
 describe("what the screen says the keys mean", () => {
   it("marks the highlighted choice without moving the number column", () => {
     // A list that shifts sideways as the selection travels is the cheapest way
