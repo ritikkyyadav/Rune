@@ -12,14 +12,22 @@
  * lowered as sections are trimmed, and a rise has to be argued for in review
  * rather than discovered in a bill three months later.
  */
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import {
   AGENT_DOCTRINE,
   FULL_DOCTRINE_CONTEXT,
   renderDoctrine,
   type DoctrineContext,
 } from "../../../packages/orchestrator/src/prompts";
-import { countTokens } from "../../../packages/orchestrator/src/tokenizer";
+import { countTokens, tokenCounter } from "../../../packages/orchestrator/src/tokenizer";
+
+// The counter is a process singleton: a calibration another suite taught it
+// (tokenizer-calibration, context-honest-counting) re-scales every count here
+// and turns these ceilings into a function of test-file ORDER. Measure with
+// the calibration all real sessions start from.
+beforeAll(() => {
+  tokenCounter.resetCalibrations();
+});
 
 /**
  * Ceiling for the full doctrine with every section on. Set just above the
