@@ -1518,12 +1518,7 @@ export class AgentLoop {
         // string in a <code> tag, typecheck and tests all passing. "Looked"
         // means a browser tool ran or an image came back through a tool
         // result; one refused finish converts into one review pass.
-        if (
-          wroteVisualThisRun &&
-          !sawOwnWork &&
-          productSightNudges < 1 &&
-          !signal?.aborted
-        ) {
+        if (wroteVisualThisRun && !sawOwnWork && productSightNudges < 1 && !signal?.aborted) {
           productSightNudges++;
           this.report(
             "loop.product_sight_gate",
