@@ -38,8 +38,14 @@ beforeAll(() => {
  * not drifted: the same change set makes "jit" doctrine delivery the default,
  * which ships ~2,000 FEWER tokens per request than this ceiling measures, and
  * the batching line exists to cut round-trips, the larger cost by far.
+ *
+ * Raised 7,620 → 7,660 on 2026-08-31 for the storytelling narration register
+ * (Communication rhythm): four worked example beats teach the voice the
+ * transcript overhaul is built around, and after two compression passes the
+ * section was 23 tokens over with nothing left to cut but the examples that
+ * ARE the feature. The prose is cached after the first request of a session.
  */
-const FULL_DOCTRINE_CEILING = 7_620;
+const FULL_DOCTRINE_CEILING = 7_660;
 
 /** Ceiling for a session that can use none of the gated capabilities. */
 const MINIMAL_DOCTRINE_CEILING = 6_000;

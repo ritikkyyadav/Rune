@@ -8,9 +8,13 @@ import { glyph } from "./glyphs";
 import { truncate, wrap } from "./render";
 import * as F from "./flow";
 import {
+  CHAMBER_AT,
+  isChamberView,
   isRoutineTool,
-  renderRoutineBatch,
+  renderChamberDetail,
+  renderChamberHead,
   renderToolActivity,
+  renderToolDetail,
   renderTranscript,
   runningLabel,
   planBlock,
@@ -33,8 +37,13 @@ export function turnWidth(): number {
 }
 
 export interface TurnSink {
-  /** Append a finished block to terminal scrollback. */
-  commit(block: string): void;
+  /** Append a finished block to terminal scrollback. A block committed with
+   *  `detail` holds more than it shows: the detail is the same block opened --
+   *  full output, the whole diff, a chamber's per-call record -- and a sink
+   *  that owns its buffer (the fixed viewport) offers it as the block's
+   *  in-place expansion. A sink that writes to real scrollback ignores it;
+   *  ctrl+r's work log still carries everything. */
+  commit(block: string, detail?: string): void;
   /** Replace the small live focus above the composer. */
   preview?(lines: string[] | null): void;
 }
@@ -189,10 +198,8 @@ const GAP_MS = 300;
  *  beside every step is noise pretending to be data. */
 const ELAPSED_AFTER_MS = 2000;
 
-/** How long a run of context-gathering has to get before it is worth more as a
- *  count than as a list. Two paths are worth naming; twelve are one fact, and
- *  printing them individually spends the screen saying it twelve times. */
-const ROUTINE_COLLAPSE_AT = 3;
+// How long a run of chamber-eligible work has to get before it collapses is
+// CHAMBER_AT, owned by ./activity so the live stream and the replay agree.
 
 function oneLine(raw: string, max = 100): string {
   const clean = raw
@@ -851,7 +858,10 @@ export class TurnRenderer {
       // for the whole run, so this is where the reader gets to watch it climb
       // -- which is the part of a long exploration that reads as progress.
       const held = this.routineQueue.length;
-      if (held >= ROUTINE_COLLAPSE_AT - 1 && isRoutineTool(this.currentTool.name)) {
+      const name = this.currentTool.name;
+      const gathering =
+        isRoutineTool(name) || name === "bash" || name === "web_search" || name === "web_fetch";
+      if (held >= CHAMBER_AT - 1 && gathering) {
         return `${base} | ${held + 1} so far`;
       }
       return base;
@@ -940,13 +950,58 @@ export class TurnRenderer {
    * a run of one-line calls stays tight, and anything with a body -- a diff, an
    * output rail, a call with a note -- gets air on both sides. Blank-lining every
    * row would double the cost of a thirty-file read for no added meaning.
+   *
+   * Every commit closes the failure streak first, so a run of suppressed
+   * repeats is accounted for before anything newer lands -- see flushFailStreak.
    */
-  private commitTimeline(block: string): void {
+  private commitTimeline(block: string, detail?: string): void {
+    this.flushFailStreak();
+    this.pushBlock(block, detail);
+  }
+
+  private pushBlock(block: string, detail?: string): void {
     if (!stripAnsi(block).trim()) return;
     const rows = block.split("\n").filter((row) => stripAnsi(row).trim()).length;
     const tight = rows === 1 && this.lastBlockRows === 1;
     this.lastBlockRows = rows;
-    this.sink.commit(tight ? block : `\n${block}`);
+    this.sink.commit(tight ? block : `\n${block}`, detail);
+  }
+
+  /**
+   * A run of calls dying the same way is one fact, not a column of blocks.
+   *
+   * Eleven consecutive reads refused by the same rate limit committed eleven
+   * two-row failure blocks -- the same sentence eleven times with a different
+   * path in it, which is the single least professional screen this product has
+   * shipped. Now the FIRST failure of a kind commits in full, repeats are
+   * counted instead of printed (the work log still records every one), and the
+   * count lands as one closing row the moment anything else commits.
+   */
+  private failStreak: { key: string; extra: number } | null = null;
+
+  /** What makes two failures "the same": the verb and the reason, with numbers
+   *  neutralised -- a retry window that counts down (`after 31075ms`, `after
+   *  29001ms`) is one failure, not a parade of novel ones. */
+  private static failKey(name: string, reason: string): string {
+    return `${name}:${stripAnsi(reason)
+      .toLowerCase()
+      .replace(/\d[\d,._]*\s*(ms|s|m)\b/g, "n$1")
+      .replace(/\d{3,}/g, "n")
+      .trim()}`;
+  }
+
+  private flushFailStreak(): void {
+    const streak = this.failStreak;
+    if (!streak) return;
+    this.failStreak = null;
+    if (streak.extra > 0) {
+      this.pushBlock(
+        F.toolNote(
+          `same failure repeated ${streak.extra} more time${streak.extra === 1 ? "" : "s"}`,
+          "fail",
+        ),
+      );
+    }
   }
 
   /**
@@ -956,8 +1011,10 @@ export class TurnRenderer {
    * first, which is what keeps the order true: the reads that led to a finding
    * land above the finding, never after it. A short run prints per call --
    * two paths cost two lines and both are worth naming. A long one collapses to
-   * a single row, because the twelfth consecutive `read` tells the reader
-   * nothing the first eleven did not, and the whole burst is one fact.
+   * a single chamber row, because the twelfth consecutive `read` tells the
+   * reader nothing the first eleven did not, and the whole burst is one fact --
+   * with its per-call record committed as the row's fold, so the reader who
+   * comes back asking "what exactly ran here?" opens it in place.
    *
    * Nothing is discarded either way: `addLog` has already taken the full row
    * for the work log, which is what /details prints.
@@ -965,11 +1022,11 @@ export class TurnRenderer {
   private flushRoutine(): void {
     const queued = this.routineQueue.splice(0);
     if (queued.length === 0) return;
-    if (queued.length < ROUTINE_COLLAPSE_AT) {
+    if (queued.length < CHAMBER_AT) {
       for (const view of queued) this.commitTimeline(renderToolActivity(view));
       return;
     }
-    this.commitTimeline(renderRoutineBatch(queued));
+    this.commitTimeline(renderChamberHead(queued), renderChamberDetail(queued));
   }
 
   private captureProseAsIntent(): void {
@@ -1042,10 +1099,11 @@ export class TurnRenderer {
     };
     const rendered = renderToolActivity(view);
     this.addLog(rendered, name === "edit_file" || name === "multi_edit");
-    if (success && isRoutineTool(name)) {
-      // Context, not news. Held until something worth reading lands, then set
-      // down as one row -- see flushRoutine. The rung above the composer is
-      // already naming this call as it runs, so nothing is invisible meanwhile.
+    if (isChamberView(view)) {
+      // Context, not news -- gathering, a clean command, a web source. Held
+      // until something worth reading lands, then set down as one chamber row
+      // -- see flushRoutine. The rung above the composer is already naming
+      // this call as it runs, so nothing is invisible meanwhile.
       this.routineQueue.push(view);
       this.updateLive();
       return;
@@ -1054,9 +1112,21 @@ export class TurnRenderer {
     // land above the result rather than trailing it.
     this.flushRoutine();
     if (!success) {
-      this.commitErrorOnce(rendered);
+      const reason = String(event.output?.error ?? "failed").split("\n")[0] ?? "failed";
+      const key = TurnRenderer.failKey(name, reason);
+      if (this.failStreak?.key === key) {
+        // The same failure again: counted, logged, not reprinted. The streak's
+        // closing row will say how many the reader was spared.
+        this.failStreak.extra++;
+      } else {
+        this.flushFailStreak();
+        this.commitErrorOnce(rendered);
+        this.failStreak = { key, extra: 0 };
+      }
     } else {
-      this.commitTimeline(rendered);
+      // The row states the outcome; whatever it held back -- full output, the
+      // whole diff, the rest of a new file -- rides behind it as the fold.
+      this.commitTimeline(rendered, renderToolDetail(view) ?? undefined);
     }
 
     // The default stays one line, but review mode must preserve enough command
@@ -1084,7 +1154,13 @@ export class TurnRenderer {
   }
 
   private commitErrorOnce(block: string): void {
-    const key = oneLine(stripAnsi(block), 180);
+    // Numbers are neutralised in the key the way the streak neutralises them:
+    // a retry window that counts down is the same error each time it is
+    // reported, and it used to dodge this dedupe by the milliseconds alone.
+    const key = oneLine(stripAnsi(block), 180)
+      .toLowerCase()
+      .replace(/\d[\d,._]*\s*(ms|s|m)\b/g, "n$1")
+      .replace(/\d{3,}/g, "n");
     if (!key || this.committedErrors.has(key)) return;
     this.committedErrors.add(key);
     this.commitTimeline(block);
@@ -1599,6 +1675,8 @@ export class TurnRenderer {
     const answer = this.prose.trim();
     const aborted = options.aborted === true;
     this.flushRoutine();
+    // A run that ends mid-streak still owes the reader the count.
+    this.flushFailStreak();
     // The plan's final state, once, if it moved since it was set down. This is
     // the row that answers "did it finish what it said it would" -- and it is
     // the only reprint of the checklist the turn is allowed.

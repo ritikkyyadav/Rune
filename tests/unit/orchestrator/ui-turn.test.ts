@@ -11,17 +11,23 @@ import type { TranscriptLineView } from "../../../packages/orchestrator/src/bin/
 
 function harness() {
   const commits: string[] = [];
+  const details: string[] = [];
   const previews: (string[] | null)[] = [];
   const sink: TurnSink = {
-    commit: (block) => commits.push(block),
+    commit: (block, detail) => {
+      commits.push(block);
+      if (detail) details.push(detail);
+    },
     preview: (lines) => previews.push(lines),
   };
   const turn = new TurnRenderer(sink, { getCost: () => 0.01 });
   return {
     commits,
+    details,
     previews,
     turn,
     output: () => stripAnsi(commits.join("\n")),
+    detail: () => stripAnsi(details.join("\n")),
     preview: () => stripAnsi((previews.at(-1) ?? []).join("\n")),
     /** What the 125ms TUI tick would paint right now. The sink only receives a
      *  rung when an event changes it, so a frame released by the passage of
@@ -150,7 +156,7 @@ describe("TurnRenderer — customizer activity stream", () => {
     expect(h.output()).toContain("● The stale branch is isolated.");
   });
 
-  it("renders a mixed exploration burst as one row per call", () => {
+  it("collapses a mixed exploration burst into one chamber, calls behind the fold", () => {
     const h = harness();
     h.turn.onEvent(toolEnd("read_file", { path: "src/app.ts" }));
     h.turn.onEvent(toolEnd("list_dir", { path: "src" }));
@@ -159,10 +165,22 @@ describe("TurnRenderer — customizer activity stream", () => {
     );
     h.turn.onEvent({ type: "text_delta", text: "The implementation is mapped." });
     h.turn.finish();
+    // One chamber row states the whole burst; the per-call record is the fold.
+    expect(h.output()).toContain("read 1 file, listed 1 directory, ran 1 command");
+    expect(h.output()).not.toContain("│ · read  src/app.ts");
+    expect(h.detail()).toContain("│ · read  src/app.ts");
+    expect(h.detail()).toContain("│ · list  src/");
+    expect(h.detail()).toContain("│ · run   git status --short");
+  });
+
+  it("keeps a short exploration burst as one row per call", () => {
+    const h = harness();
+    h.turn.onEvent(toolEnd("read_file", { path: "src/app.ts" }));
+    h.turn.onEvent(toolEnd("list_dir", { path: "src" }));
+    h.turn.onEvent({ type: "text_delta", text: "Two calls, both worth naming." });
+    h.turn.finish();
     expect(h.output()).toContain("│ · read  src/app.ts");
     expect(h.output()).toContain("│ · list  src/");
-    expect(h.output()).toContain("│ · run   git status --short");
-    expect(h.output()).toContain("│ M src/app.ts");
   });
 
   it("advances through Plan, Act, and Verify while retaining the completed rows", async () => {
@@ -359,7 +377,7 @@ describe("TurnRenderer — customizer activity stream", () => {
     expect(stripAnsi(h.turn.fullLog() ?? "")).not.toContain("private hidden reasoning");
   });
 
-  it("keeps a check's real output, because the output is the evidence", () => {
+  it("states a passing check's verdict inline and holds the print-out in the fold", () => {
     const h = harness();
     const result = JSON.stringify({
       stdout: "suite A passed\nsuite B passed\n42 tests passed",
@@ -370,9 +388,53 @@ describe("TurnRenderer — customizer activity stream", () => {
     h.turn.onEvent(toolEnd("bash", { command: "bun test" }, result));
     h.turn.onEvent({ type: "text_delta", text: "All checks pass." });
     h.turn.finish();
+    expect(h.output()).toContain("✓ run   bun test");
     expect(h.output()).toContain("│ 42 passed");
-    expect(h.output()).toContain("suite A passed");
-    expect(h.output()).toContain("│ bun test");
+    expect(h.output()).not.toContain("suite A passed");
+    expect(h.detail()).toContain("suite A passed");
+  });
+
+  it("shows a failing check's evidence excerpt, closed by its own verdict", () => {
+    const h = harness();
+    const noise = Array.from({ length: 40 }, (_, i) => `collecting item ${i}`).join("\n");
+    const result = JSON.stringify({
+      stdout: `${noise}\nFAILED tests/storage.py::test_round_trip\nAssertionError: boom\n9 failed, 61 passed in 0.29s`,
+      stderr: "",
+      exit_code: 1,
+      timed_out: false,
+    });
+    h.turn.onEvent(toolEnd("bash", { command: "pytest -q" }, result));
+    h.turn.onEvent({ type: "text_delta", text: "Nine failures to fix." });
+    h.turn.finish();
+    const out = h.output();
+    expect(out).toContain("✗ run   pytest -q");
+    expect(out).toContain("FAILED tests/storage.py::test_round_trip");
+    expect(out).toContain("9 failed, 61 passed in 0.29s");
+    // The excerpt is an excerpt: the forty lines of runner chatter stay folded.
+    expect(out).not.toContain("collecting item 2\n");
+    expect(h.detail()).toContain("collecting item 2");
+  });
+
+  it("collapses a run of same-reason failures into one block and one count", () => {
+    const h = harness();
+    for (let i = 0; i < 11; i++) {
+      h.turn.onEvent({
+        type: "tool_call_end",
+        callId: `r${i}`,
+        args: { path: `src/file${i}.ts` },
+        output: {
+          toolName: "read_file",
+          result: "",
+          success: false,
+          error: `Rate limit exceeded for "read_file". Retry after ${31075 - i * 900}ms`,
+        },
+      });
+    }
+    h.turn.onEvent({ type: "text_delta", text: "Backing off." });
+    h.turn.finish();
+    const out = h.output();
+    expect(out.split("Rate limit exceeded").length - 1).toBe(1);
+    expect(out).toContain("same failure repeated 10 more times");
   });
 
   it("surfaces the same error only once and never labels it done", () => {
@@ -419,7 +481,9 @@ describe("renderReplay", () => {
     );
     expect(output).toContain("› fix the bug");
     expect(output).toContain("● I am reading the files.");
-    expect(output).toContain("│ · read  2 files");
+    // Two reads are below the chamber threshold: both worth naming.
+    expect(output).toContain("│ · read  a.ts");
+    expect(output).toContain("│ · read  b.ts");
     expect(output).toContain("1 file changed · 1 check passed");
     expect(output).toContain("Fixed and verified.");
   });

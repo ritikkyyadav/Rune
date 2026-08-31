@@ -69,6 +69,9 @@ export interface ComposerStatus {
    * difference was previously invisible everywhere in the product.
    */
   effort?: string;
+  /** True when the transcript holds at least one openable fold -- shows the
+   *  ctrl+o hint, so the affordance is discoverable exactly when it exists. */
+  folds?: boolean;
 }
 
 export type PermissionModeId = PermissionMode;
@@ -243,7 +246,11 @@ export function statusLine(s: ComposerStatus, width = process.stdout.columns || 
   const modelWithEffort =
     s.model && s.effort ? `${info(s.model)}${faint(` ${s.effort}`)}` : modelName;
   const right = keyHint("?", "keys");
-  const fullHints = [keyHint("shift+tab", "gear"), keyHint("esc", "stop")].join("  ");
+  const fullHints = [
+    ...(s.folds ? [keyHint("ctrl+o", "open")] : []),
+    keyHint("shift+tab", "gear"),
+    keyHint("esc", "stop"),
+  ].join("  ");
 
   // What is given up first, at each width. The key hints go before the gear's
   // description does: a hint is discovery, useful once, and 80 columns is the

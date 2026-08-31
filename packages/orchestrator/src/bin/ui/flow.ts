@@ -1,8 +1,10 @@
 // --- Flow: the terminal design system ---
 // A coding agent's terminal UI, as it reads under a real pty. One rule underneath
 // everything here: never own the screen, own the last four lines. So there are no
-// cards, no boxes, no painted surfaces, no logo -- just a fixed reading measure, a
-// left rail where work happens, and one left edge that nothing escapes.
+// cards, no boxes, no painted grounds, no logo -- just a fixed reading measure, a
+// left rail where work happens, and one left edge that nothing escapes. (Two
+// MARKS carry a background where the theme knows its ground -- the caret, and
+// the diff evidence bands; see theme.ts for why a mark is not ground.)
 //
 // Nothing in the transcript right-aligns. A receipt sits two spaces after the
 // thing it is a receipt for, because at 240 columns a path and its metric a
@@ -24,6 +26,7 @@
 // ever pads itself with a reassuring guess.
 
 import {
+  bandsEnabled,
   bold,
   colorEnabled,
   danger,
@@ -31,12 +34,15 @@ import {
   heavy,
   info,
   muted,
+  negativeSurface,
   ok,
+  positiveSurface,
   quiet,
   text,
   warn,
 } from "./theme";
 import { glyph } from "./glyphs";
+import { paintCode, type CodeLang } from "./code-paint";
 import { termWidth, truncate, visLen, wrap } from "./render";
 
 // --- The grid ---
@@ -164,13 +170,6 @@ export function verbatimWidth(): number {
  * edge of the measure. When the two cannot both fit, the receipt wins and the
  * content truncates -- a metric you cannot read is worse than a clipped path.
  */
-/** Fill a chrome row to its budget. A frame whose rows are different lengths is
- *  not a frame — the hairlines above and below would overhang it. Transcript
- *  rows are NOT padded: trailing whitespace on content is noise in a pipe. */
-function pad(line: string, width: number): string {
-  return line + " ".repeat(Math.max(0, width - visLen(line)));
-}
-
 export function row(left: string, right = "", budgetWidth = measure()): string {
   const width = budgetWidth;
   const rightCells = visLen(right);
@@ -657,19 +656,41 @@ export interface DiffRow {
 
 /**
  * A hunk as it actually reads: a line-number gutter, one sign column, and the
- * source's own indentation preserved. Added lines are green, removed red,
- * context grey -- no background wash, because a wash makes code harder to read,
- * not easier.
+ * source's own indentation preserved.
+ *
+ * Two registers, chosen by what the host can honestly show. Where the theme
+ * knows its ground (see theme.bandsEnabled), a changed row is laid on a band
+ * tinted from that ground -- the reading every review surface already taught
+ * the eye -- and the code keeps its syntax colour, because the row exists to be
+ * JUDGED as code and the band is already saying "changed". Everywhere else --
+ * pipes, NO_COLOR, ANSI-16, follow-terminal -- the original rendering holds:
+ * whole-line green for added, red for removed, grey context. The sign column
+ * survives both registers, so the diff still reads with the colour stripped.
  */
-export function diffRows(rows: DiffRow[]): string[] {
+export function diffRows(rows: DiffRow[], lang: CodeLang = null): string[] {
   const codeWidth = Math.max(8, verbatimWidth() - 8);
+  const bands = bandsEnabled();
   return rows.map((r) => {
     if (r.kind === "elide") return `${rail()}   ${faint(`${glyph("elision")} ${r.text}`)}`;
     const number = faint(String(r.line ?? "").padStart(4));
-    const body = truncate(r.text, codeWidth);
-    if (r.kind === "add") return `${rail()}${number} ${ok("+")} ${ok(body)}`;
-    if (r.kind === "remove") return `${rail()}${number} ${danger("-")} ${danger(body)}`;
-    return `${rail()}${number}   ${muted(body)}`;
+    const body = truncate(r.text.replace(/\t/g, "  "), codeWidth);
+    if (!bands) {
+      if (r.kind === "add") return `${rail()}${number} ${ok("+")} ${ok(body)}`;
+      if (r.kind === "remove") return `${rail()}${number} ${danger("-")} ${danger(body)}`;
+      return `${rail()}${number}   ${muted(body)}`;
+    }
+    if (r.kind === "context") {
+      return `${rail()}${number}   ${paintCode(body, lang, muted)}`;
+    }
+    // The band runs the full evidence width, not just to the last glyph: a
+    // ragged right edge reads as texture, one column reads as a block of
+    // change. Trailing cells are pad inside the band, so nothing here trips
+    // the no-right-alignment law -- stripped of colour they are trailing
+    // whitespace, which the law ignores, and with colour off this branch is
+    // never taken at all.
+    const pad = " ".repeat(Math.max(0, codeWidth - visLen(body)));
+    const laid = `${number} ${r.kind === "add" ? ok("+") : danger("-")} ${paintCode(body, lang, text)}${pad}`;
+    return `${rail()}${r.kind === "add" ? positiveSurface(laid) : negativeSurface(laid)}`;
   });
 }
 
@@ -729,7 +750,9 @@ export function editMetric(added: number, removed: number, note = ""): string {
  * A command's real output, kept whole in its own rail: `+ the command`, the
  * bytes it printed, `+ what happened`. The rail sits in the same column as the
  * work above it, so output reads as the continuation of the call rather than a
- * new region of the screen.
+ * new region of the screen. An empty `command` skips the echo row -- for the
+ * excerpt form, where the tool row directly above already names the command
+ * and repeating it would spend the first evidence line saying nothing new.
  */
 export function outputRail(
   command: string,
@@ -738,7 +761,9 @@ export function outputRail(
   failed = false,
 ): string[] {
   const width = verbatimWidth();
-  const lines = [`${BODY}${faint(glyph("gutter"))} ${muted(truncate(command, width))}`];
+  const lines = command
+    ? [`${BODY}${faint(glyph("gutter"))} ${muted(truncate(command, width))}`]
+    : [];
   for (const source of body) {
     lines.push(
       `${BODY}${faint(glyph("gutter"))} ${muted(truncate(source.replace(/\t/g, "  "), width))}`,
