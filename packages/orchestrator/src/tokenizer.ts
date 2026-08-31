@@ -87,7 +87,6 @@ export class TokenCounter {
     if (model) this.activeModel = model;
   }
 
-
   /**
    * Windows learned from a provider's live catalog, keyed by model id. These
    * OUTRANK the static table below: the table can only guess at families it

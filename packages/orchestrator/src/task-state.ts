@@ -393,7 +393,9 @@ export class TaskStateStore {
         this.missionPath &&
         (s.goal.length > goalChars || (s.priorGoals?.length ?? 0) > 0)
       ) {
-        lines.push(`Full brief and history: ${this.missionPath} — read it if unsure of the mission.`);
+        lines.push(
+          `Full brief and history: ${this.missionPath} — read it if unsure of the mission.`,
+        );
       }
       if (detail >= 2 && s.priorGoals && s.priorGoals.length > 0) {
         lines.push(
