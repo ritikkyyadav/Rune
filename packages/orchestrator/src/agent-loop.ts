@@ -227,6 +227,23 @@ export interface AgentLoopConfig {
    * from the live goal) — the gate is then silently inapplicable.
    */
   ledgerStatus?: () => { total: number; verified: number } | null;
+  /**
+   * Just-in-time doctrine, wired by the engine in "jit" delivery mode: returns
+   * a section's verbatim text exactly ONCE per session at its first moment of
+   * relevance (first sub-agent report, first visual write), null after — the
+   * loop prefixes it to that tool result, where it lands in cached history.
+   */
+  jitDoctrine?: (section: "delegation" | "interfaces") => string | null;
+  /**
+   * Per-request reasoning-effort routing. "conservative" runs ordinary turns
+   * one notch below the thinkingEffort ceiling and LATCHES back to the ceiling
+   * for the rest of the run on the first sign of difficulty (verification
+   * failure, replan/stuck nudge, any gate refusal, a halt). Fix-shaped goals
+   * and turn 1 (planning) always run at the ceiling. Off = ceiling everywhere.
+   * The engine defaults the MAIN loop to "conservative"; sub-agents, which
+   * already route via model tiers, leave it off.
+   */
+  effortRouting?: "conservative" | "off";
   /** Request-specific local context, budgeted alongside all other auxiliary context. */
   retrievedChunks?: RetrievedChunk[];
   /** Runs project checks after edits; on failure the agent is asked to fix. */
@@ -351,6 +368,17 @@ const VISUAL_FILE_RE = /\.(html?|css|s[ac]ss|tsx|jsx|vue|svelte)$/i;
 // finish, which the nudge itself converts into a stronger check.
 const FIX_SHAPED_RE =
   /\b(fix(es|ed|ing)?|bugs?|regression|broken|crash(es|ed|ing)?|fail(s|ed|ing)?|defect|repair)\b/i;
+
+/**
+ * One notch below the ceiling, for effort routing. Deliberately never below
+ * "medium", and asymmetric: only the deep end steps down — a user who chose
+ * "low" already chose economy and is left alone.
+ */
+export function stepDownEffort(ceiling: ReasoningEffort): ReasoningEffort {
+  if (ceiling === "max" || ceiling === "xhigh") return "high";
+  if (ceiling === "high") return "medium";
+  return ceiling;
+}
 
 const TRIVIAL_EVIDENCE_RE =
   /^\s*(?:ls|pwd|echo|cat|cd|which|type|env|printenv|date|whoami|true|head|tail|wc|stat|file|dirname|basename)\b[^|;&]*$/;
@@ -665,6 +693,21 @@ export class AgentLoop {
     // The request right after a compaction carries a boosted task-state block:
     // that is the moment the verbatim spec just left the transcript.
     let justCompacted = false;
+    // ── Effort routing ──
+    // Latched to the ceiling for the rest of the run on the first sign of
+    // difficulty; every transition is reported so the routing is auditable.
+    let effortLatched = false;
+    let effortRoutedReported = false;
+    const latchEffort = (why: string): void => {
+      if (effortLatched || (this.config.effortRouting ?? "off") !== "conservative") return;
+      effortLatched = true;
+      this.report(
+        "loop.effort_latched",
+        "warn",
+        "effortRoute",
+        `reasoning effort pinned to the ceiling for the rest of the run: ${why}`,
+      );
+    };
     // Each remembered call carries the write count at the moment it was issued.
     // Repetition only means "stuck" when nothing changed between the tries —
     // see the duplicate check below.
@@ -928,7 +971,31 @@ export class AgentLoop {
         enableWebSearch: useNativeSearch ? true : undefined,
         thinking: {
           enabled: this.config.thinking !== false,
-          effort: this.config.thinkingEffort ?? "high",
+          effort: ((): ReasoningEffort => {
+            const ceiling = this.config.thinkingEffort ?? "high";
+            if ((this.config.effortRouting ?? "off") !== "conservative") return ceiling;
+            // Ceiling stays for: the planning turn, anything fix-shaped
+            // (diagnosis must never be routed down), and everything after the
+            // first difficulty latch.
+            if (
+              effortLatched ||
+              turn <= 1 ||
+              FIX_SHAPED_RE.test(this.config.taskState?.snapshot().goal ?? "")
+            ) {
+              return ceiling;
+            }
+            const routed = stepDownEffort(ceiling);
+            if (routed !== ceiling && !effortRoutedReported) {
+              effortRoutedReported = true;
+              this.report(
+                "loop.effort_routed",
+                "warn",
+                "effortRoute",
+                `ordinary turns run at ${routed} under a ${ceiling} ceiling — escalates on difficulty`,
+              );
+            }
+            return routed;
+          })(),
         },
         stream: true,
       };
@@ -1306,6 +1373,7 @@ export class AgentLoop {
             }
             if (result.ran && !result.passed) {
               verifyStillFailing = true;
+              latchEffort("verification failed");
               this.report(
                 "loop.verification_failed",
                 "warn",
@@ -1337,6 +1405,7 @@ export class AgentLoop {
             // worst case maxVerifyAttempts × (maxReplanNudges + 1) runs.
             replanNudges++;
             verifyAttempts = 0;
+            latchEffort("replan after repeated failed fixes");
             this.report(
               "loop.replan_nudge",
               "warn",
@@ -1390,6 +1459,7 @@ export class AgentLoop {
           !signal?.aborted
         ) {
           delegationNudges++;
+          latchEffort("delegation-evidence gate refused the finish");
           this.report(
             "loop.delegation_gate",
             "warn",
@@ -1440,6 +1510,7 @@ export class AgentLoop {
           !signal?.aborted
         ) {
           executionNudges++;
+          latchEffort("execution-evidence gate refused the finish");
           this.report(
             "loop.evidence_gate",
             "warn",
@@ -1490,6 +1561,7 @@ export class AgentLoop {
           FIX_SHAPED_RE.test(this.config.taskState?.snapshot().goal ?? "")
         ) {
           fixVerifiedNudges++;
+          latchEffort("fix-verified gate refused the finish");
           this.report(
             "loop.fix_verified_gate",
             "warn",
@@ -1531,6 +1603,7 @@ export class AgentLoop {
         // result; one refused finish converts into one review pass.
         if (wroteVisualThisRun && !sawOwnWork && productSightNudges < 1 && !signal?.aborted) {
           productSightNudges++;
+          latchEffort("product-sight gate refused the finish");
           this.report(
             "loop.product_sight_gate",
             "warn",
@@ -1617,6 +1690,7 @@ export class AgentLoop {
       if (duplicateCount >= 3) {
         if (stuckNudges < (this.config.maxStuckNudges ?? 1)) {
           stuckNudges++;
+          latchEffort("repeating tool calls");
           this.report(
             "loop.stuck_nudge",
             "warn",
@@ -1936,6 +2010,7 @@ export class AgentLoop {
         planned[0].allowed &&
         planned[0].output?.success === true &&
         planned[0].tc.toolName !== "todo_write" &&
+        planned[0].tc.toolName !== "read_many" && // read_many IS the batch
         this.registry.get(planned[0].tc.toolName)?.schema.category === "read";
       consecutiveSingleReadTurns = singleReadTurn ? consecutiveSingleReadTurns + 1 : 0;
       let batchNudgeDue = false;
@@ -1995,6 +2070,10 @@ export class AgentLoop {
             if (q) ts.addClarification(q, output.result.slice(0, 300));
           } else if (p.tc.toolName === "read_file" && pathArg) {
             ts.noteFileRead(pathArg);
+          } else if (p.tc.toolName === "read_many" && Array.isArray(p.parsedArgs.paths)) {
+            for (const rp of p.parsedArgs.paths) {
+              if (typeof rp === "string" && rp) ts.noteFileRead(rp);
+            }
           } else if (p.isWrite && pathArg) {
             ts.noteFileWritten(pathArg);
           } else if (p.tc.toolName === "worker" && Array.isArray(p.parsedArgs.files)) {
@@ -2048,9 +2127,9 @@ export class AgentLoop {
             resultContent =
               "[Harness note] The last four turns each ran exactly ONE read. Independent " +
               "reads — files, searches, listings — execute in PARALLEL when you issue them " +
-              "in a single response. Unless each read genuinely depends on the previous " +
-              "result, batch the next several into one response; on a long task this is " +
-              "minutes of wall-clock, not style.\n\n" +
+              "in a single response, and read_many fetches up to 12 files in ONE call. " +
+              "Unless each read genuinely depends on the previous result, batch the next " +
+              "several; on a long task this is minutes of wall-clock, not style.\n\n" +
               resultContent;
           }
 
@@ -2163,6 +2242,32 @@ export class AgentLoop {
               resultContent;
           }
 
+          // ── Just-in-time doctrine (once per session, at first relevance) ──
+          // In "jit" delivery these sections are NOT in the system prompt;
+          // each arrives exactly when it starts to matter: delegation doctrine
+          // rides the FIRST sub-agent result (the moment reports need reading
+          // rules), interface doctrine rides the FIRST visual write. Applied
+          // last so the section sits at the top of the result.
+          if (output.success && this.config.jitDoctrine) {
+            if (p.tc.toolName === "task" || p.tc.toolName === "worker") {
+              const sec = this.config.jitDoctrine("delegation");
+              if (sec) {
+                resultContent = `[Doctrine — applies for the rest of the session]\n${sec}\n\n${resultContent}`;
+              }
+            }
+            const visualWrite =
+              (p.isWrite && VISUAL_FILE_RE.test(String(p.parsedArgs.path ?? ""))) ||
+              (p.tc.toolName === "worker" &&
+                Array.isArray(p.parsedArgs.files) &&
+                p.parsedArgs.files.some((f) => typeof f === "string" && VISUAL_FILE_RE.test(f)));
+            if (visualWrite) {
+              const sec = this.config.jitDoctrine("interfaces");
+              if (sec) {
+                resultContent = `[Doctrine — applies for the rest of the session]\n${sec}\n\n${resultContent}`;
+              }
+            }
+          }
+
           toolResults.push({
             type: "tool_result",
             toolCallId: p.tc.callId,
@@ -2194,6 +2299,17 @@ export class AgentLoop {
           if (output.success && p.tc.toolName === "read_file") {
             const rp = typeof p.parsedArgs.path === "string" ? p.parsedArgs.path : "";
             if (rp) readPaths.add(isAbsolute(rp) ? resolve(rp) : resolve(workspaceRoot, rp));
+          }
+          if (
+            output.success &&
+            p.tc.toolName === "read_many" &&
+            Array.isArray(p.parsedArgs.paths)
+          ) {
+            for (const rp of p.parsedArgs.paths) {
+              if (typeof rp === "string" && rp) {
+                readPaths.add(isAbsolute(rp) ? resolve(rp) : resolve(workspaceRoot, rp));
+              }
+            }
           }
           if (
             output.success &&

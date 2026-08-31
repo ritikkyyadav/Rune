@@ -168,6 +168,47 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
     live: true,
   },
   {
+    key: "doctrine",
+    tomlPath: "llm.doctrineDelivery",
+    description:
+      "How situational doctrine reaches the model. 'jit' (default) keeps the Delegation and " +
+      "Building-interfaces sections out of the per-request system prompt (~2k tokens on every " +
+      "request) and injects each once at its first moment of relevance. 'full' restores the " +
+      "always-on prompt — use it if sub-agent or UI behavior seems to have lost guidance.",
+    kind: "enum",
+    values: ["jit", "full"],
+    valueAliases: {
+      lean: "jit",
+      lazy: "jit",
+      "just in time": "jit",
+      always: "full",
+      "always on": "full",
+      big: "full",
+    },
+    nameAliases: ["doctrine delivery", "prompt mode", "doctrine mode", "doctrine_delivery"],
+    live: true,
+  },
+  {
+    key: "routing",
+    tomlPath: "llm.effortRouting",
+    description:
+      "Per-turn reasoning-effort routing. 'conservative' (default) runs ordinary turns one " +
+      "notch below the effort ceiling and pins the ceiling for the rest of the run at the " +
+      "first sign of difficulty (failed check, replan, refused finish) — the planning turn " +
+      "and fix-shaped tasks always get the ceiling. 'off' runs the ceiling on every turn.",
+    kind: "enum",
+    values: ["conservative", "off"],
+    valueAliases: {
+      on: "conservative",
+      auto: "conservative",
+      smart: "conservative",
+      disabled: "off",
+      none: "off",
+    },
+    nameAliases: ["effort routing", "effort_routing", "routing mode"],
+    live: true,
+  },
+  {
     key: "auto_commit",
     tomlPath: "git.autoCommit",
     description:

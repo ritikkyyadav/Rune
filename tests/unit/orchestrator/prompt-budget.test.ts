@@ -33,8 +33,13 @@ beforeAll(() => {
  * Ceiling for the full doctrine with every section on. Set just above the
  * 2026-08-29 measurement of 7,461. LOWER this as sections are trimmed; raising
  * it means every request in the product got more expensive.
+ *
+ * Raised 7,600 → 7,620 on 2026-08-31 for the read_many batching line — argued,
+ * not drifted: the same change set makes "jit" doctrine delivery the default,
+ * which ships ~2,000 FEWER tokens per request than this ceiling measures, and
+ * the batching line exists to cut round-trips, the larger cost by far.
  */
-const FULL_DOCTRINE_CEILING = 7_600;
+const FULL_DOCTRINE_CEILING = 7_620;
 
 /** Ceiling for a session that can use none of the gated capabilities. */
 const MINIMAL_DOCTRINE_CEILING = 6_000;

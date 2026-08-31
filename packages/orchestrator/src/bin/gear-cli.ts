@@ -824,6 +824,8 @@ async function main() {
     permissionMode,
     autoMode: config.permissions?.autoMode,
     reasoningEffort: config.llm?.reasoningEffort,
+    doctrineDelivery: config.llm?.doctrineDelivery,
+    effortRouting: config.llm?.effortRouting,
     sandboxEnabled,
     sandboxRequireOs: config.sandbox?.requireOs === true,
     lspAutoFeedback: config.lsp?.autoFeedback === true,

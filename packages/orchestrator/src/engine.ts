@@ -170,6 +170,7 @@ import {
 import {
   AGENT_DOCTRINE,
   renderDoctrine,
+  extractDoctrineSection,
   type DoctrineContext,
   countTrackedFiles,
   workspaceHasInterface,
@@ -365,6 +366,21 @@ export interface EngineConfig {
    * Settable live with /config effort, persisted at llm.reasoningEffort.
    */
   reasoningEffort?: ReasoningEffort;
+  /**
+   * How situational doctrine reaches the model. "jit" (default) drops the
+   * Delegation and Building-interfaces sections from the per-request system
+   * prompt (~2k tokens on EVERY request) and injects each ONCE into history
+   * at its first moment of relevance. "full" restores the always-on prompt.
+   * Persisted at llm.doctrineDelivery (/config doctrine).
+   */
+  doctrineDelivery?: "jit" | "full";
+  /**
+   * Reasoning-effort routing for the MAIN loop. "conservative" (default) runs
+   * ordinary turns one notch below the reasoningEffort ceiling and latches
+   * back to the ceiling on the first sign of difficulty; "off" runs the
+   * ceiling everywhere. Persisted at llm.effortRouting (/config routing).
+   */
+  effortRouting?: "conservative" | "off";
   /**
    * Stop the session once its METERED-EQUIVALENT cost passes this many US
    * dollars. Unset by default — a cap that surprises a user mid-task is worse
@@ -3071,8 +3087,16 @@ export class Engine {
           }).then((map) => (map ? [map] : []));
     const projectMemory = loadProjectMemory(this.config.workspaceRoot);
     const notebookBlock = this.buildNotebookInjection(sessionId);
+    // In jit delivery the Delegation/Building-interfaces sections leave the
+    // per-request prompt; the loop injects each once at first relevance via
+    // the jitDoctrine callback below.
+    const doctrineCtx = this.doctrineContext();
+    const promptDoctrineCtx =
+      this.doctrineDelivery() === "jit"
+        ? { ...doctrineCtx, canDelegate: false, buildsInterfaces: false }
+        : doctrineCtx;
     const systemPrompt = [
-      renderDoctrine(this.doctrineContext()),
+      renderDoctrine(promptDoctrineCtx),
       renderInteractiveDoctrine(this.interactiveAuto),
       renderAutoModeDoctrine(this.permissions.getMode() === "auto"),
       renderBrowserDoctrine(this.browserEnabled),
@@ -3136,6 +3160,7 @@ export class Engine {
         verifier: this.verifier ?? undefined,
         nativeGrounding: this.config.search?.nativeGrounding ?? true,
         thinkingEffort: this.config.reasoningEffort,
+        effortRouting: this.config.effortRouting ?? "conservative",
         onIncident: this.recorder ? (i: IncidentInput) => this.recorder?.record(i) : undefined,
         maxConsecutiveErrors: reliability.maxConsecutiveErrors,
         maxStuckNudges: reliability.maxStuckNudges,
@@ -3159,6 +3184,7 @@ export class Engine {
           if (this.brief.request && this.brief.request !== this.currentGoal()) return null;
           return { total: this.ledger.total, verified: this.ledger.met };
         },
+        jitDoctrine: (section) => this.takeJitDoctrine(sessionId, section),
       },
       this.gateway,
       this.registry,
@@ -4115,6 +4141,31 @@ export class Engine {
    * Resolved per turn but from session-stable inputs, so the prompt prefix
    * stays byte-identical between turns and keeps earning its cache discount.
    */
+  private doctrineDelivery(): "jit" | "full" {
+    return this.config.doctrineDelivery ?? "jit";
+  }
+
+  /**
+   * Sections already JIT-delivered, per session — each is injected once and
+   * then lives in (cached, persisted) history for the rest of the session.
+   */
+  private jitDelivered = new Map<string, Set<string>>();
+
+  /** One section, once. Null = not jit mode, not applicable, or already sent. */
+  private takeJitDoctrine(sessionId: string, section: "delegation" | "interfaces"): string | null {
+    if (this.doctrineDelivery() !== "jit") return null;
+    if (section === "delegation" && !this.doctrineContext().canDelegate) return null;
+    const sent = this.jitDelivered.get(sessionId) ?? new Set<string>();
+    if (sent.has(section)) return null;
+    const text = extractDoctrineSection(
+      section === "delegation" ? "# Delegation" : "# Building interfaces",
+    );
+    if (!text) return null;
+    sent.add(section);
+    this.jitDelivered.set(sessionId, sent);
+    return text;
+  }
+
   private doctrineContext(): DoctrineContext {
     const hasDelegation =
       this.registry.get("task") !== undefined || this.registry.get("worker") !== undefined;

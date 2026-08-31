@@ -142,7 +142,7 @@ The finish line for user-facing work (a website, an app, a dashboard) is the use
 - Never run interactive or watch-mode commands in the foreground (git rebase -i, npx create-* prompts, vitest/jest watch mode, top): they hang until the timeout. Use non-interactive flags (--yes, --no-watch, CI=1) or run_in_background.
 - For long-running commands (dev servers, watch builds), use bash with run_in_background: true, then poll bash_output and stop with kill_shell. Never run a server in the foreground — it will block until timeout.
 - Always read a file before editing it, in this conversation. edit_file rejects stale edits; re-read the file if it changed.
-- Batch independent tool calls in a single response — e.g. read several files at once, or run grep and glob together. Independent reads execute in parallel.
+- Batch independent tool calls — read_many reads up to 12 files in ONE call (prefer it over serial read_file), grep accepts regex alternation, and calls batched in one response run in parallel.
 - For open-ended exploration ("where is X handled?", "how does Y work across the codebase?") that would take several rounds of searching, delegate to the task tool and act on its summary.
 - Use symbol_search to find definitions (functions, classes, types) faster than text grep.
 - When the NAME is ambiguous (shadowed, overloaded, re-exported) or you need a resolved type, use lsp — definition/references/hover are compiler truth, not text matches. Run lsp diagnostics on a file after non-trivial edits to catch type errors before running tests.
@@ -254,6 +254,31 @@ const GATED_SECTIONS: Array<{ heading: string; keep: (c: DoctrineContext) => boo
  * Splits on top-level `# ` headings; the preamble before the first heading is
  * always kept.
  */
+/**
+ * Extract ONE top-level doctrine section (heading line + body) verbatim, for
+ * just-in-time delivery: in "jit" doctrine mode the Delegation and
+ * Building-interfaces sections leave the per-request system prompt and are
+ * instead injected ONCE into history at the moment of first relevance — the
+ * first sub-agent report, the first visual write. Guidance at the moment it
+ * applies beats guidance buried at position 4,000 of a prefix (the
+ * art-direction tripwire already proved that trade), and history is cached, so
+ * the section is paid for once per session instead of on every request.
+ * Returns "" for an unknown heading.
+ */
+export function extractDoctrineSection(headingPrefix: string): string {
+  const lines = AGENT_DOCTRINE.split("\n");
+  const out: string[] = [];
+  let taking = false;
+  for (const line of lines) {
+    if (line.startsWith("# ")) {
+      if (taking) break;
+      taking = line.startsWith(headingPrefix);
+    }
+    if (taking) out.push(line);
+  }
+  return out.join("\n").trimEnd();
+}
+
 export function renderDoctrine(ctx: DoctrineContext = FULL_DOCTRINE_CONTEXT): string {
   const lines = AGENT_DOCTRINE.split("\n");
   const out: string[] = [];

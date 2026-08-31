@@ -57,6 +57,8 @@ export const INCIDENT_CLASSES = [
   "loop.product_sight_gate",
   "loop.batch_nudge",
   "loop.wrapup_reserve",
+  "loop.effort_routed",
+  "loop.effort_latched",
   "loop.handoff",
   "context.forced_compaction",
   "context.budget_overflow",
