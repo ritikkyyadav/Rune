@@ -123,8 +123,10 @@ import { createToolExecutionGuard } from "./security";
 import {
   AutoModeSafetyController,
   GatewayActionClassifier,
+  assessActionRisk,
   isHaltExemptTool,
   resolveAutoModeConfig,
+  ruleMatches,
   shouldRecordAutoModeDecision,
   type AutoModePolicyConfig,
   type AutoModeReview,
@@ -246,6 +248,16 @@ export type UserPermissionDecision =
   { kind: "allow_once" } | { kind: "allow_session" } | { kind: "deny" };
 
 export type PermissionHandler = (prompt: PermissionPrompt) => Promise<UserPermissionDecision>;
+
+/** The outcome of running one held step at the user's explicit request. */
+export interface HeldStepRunResult {
+  /** True when the step executed (successfully or not); false when it was refused before running. */
+  ran: boolean;
+  /** Why it was refused: signed org policy, a configured deny rule, a hook veto, a live run. */
+  refusal?: string;
+  /** The tool's output when it ran. */
+  output?: ToolCallOutput;
+}
 
 // ─── Transcript replay ───
 
@@ -714,6 +726,13 @@ export class Engine {
   private permissionHandler?: PermissionHandler;
   private autoApprovalNotifier?: (notice: AutoApprovalNotice) => void;
   private autoDeferralNotifier?: (deferrals: readonly AutoModeDeferral[]) => void;
+  /**
+   * Notes queued for the NEXT run's first turn — the bridge that tells the
+   * model what happened to its held steps while no run was in flight. Drained
+   * into the loop as harness notes when chat() starts, the same way teammate
+   * mail is.
+   */
+  private pendingTurnNotes: string[] = [];
   private questionHandler?: QuestionHandler;
   /** Wired by the frontend so a read-back can be accepted, edited or queried.
    *  Unwired means headless: the brief still stands, nothing blocks on it. */
@@ -1362,6 +1381,125 @@ export class Engine {
     notifier: ((deferrals: readonly AutoModeDeferral[]) => void) | null,
   ): void {
     this.autoDeferralNotifier = notifier ?? undefined;
+  }
+
+  /**
+   * Run one held step, exactly as the agent asked for it.
+   *
+   * This is the second half of the end-of-turn ledger. The list shows the
+   * outward steps Auto declined to take unattended; this runs the one the
+   * user just approved — the human decision the deferral was recorded to
+   * wait for, so nothing is re-reviewed and no model is consulted. Nothing
+   * ABOVE the human is bypassed either: signed org policy, the user's own
+   * configured deny rules, and preToolUse hooks still refuse.
+   *
+   * The approval is registered as an EXACT session grant — this payload,
+   * nothing broader — so the safety layer stops teaching people that the way
+   * past a held publish is a blanket "allow everything". For a bash step the
+   * widened shape (network reachable) is granted and run too: a held step is
+   * outward by definition, and running it inside the sandbox it was never
+   * going to fit would fail the very thing that was just approved.
+   */
+  async runHeldStep(
+    sessionId: string,
+    step: AutoModeDeferral,
+    signal?: AbortSignal,
+  ): Promise<HeldStepRunResult> {
+    if (this.currentAbort && !this.currentAbort.signal.aborted) {
+      return { ran: false, refusal: "a run is in flight — held steps run between turns" };
+    }
+    const handler = this.registry.get(step.toolName);
+    if (!handler) {
+      return { ran: false, refusal: `unknown tool: ${step.toolName}` };
+    }
+    // Signed policy outranks the approval, exactly as it outranks a mid-run yes.
+    const decision = this.permissions.check(handler.schema, step.args);
+    if (decision.type === "denied") {
+      return { ran: false, refusal: decision.reason };
+    }
+    // The user's own hard lines hold too: a deny rule is configuration they
+    // wrote deliberately, and an end-of-turn keystroke is not where it gets
+    // unwritten.
+    const action = {
+      callId: "held-step",
+      toolName: step.toolName,
+      args: step.args,
+      schema: handler.schema,
+      workspaceRoot: this.config.workspaceRoot,
+    };
+    const denyRule = this.autoModeSafety
+      .getConfig()
+      .denyRules.find((rule) => ruleMatches(rule, action));
+    if (denyRule) {
+      return { ran: false, refusal: `denied by configured rule: ${denyRule}` };
+    }
+    if (this.hookRunner) {
+      const hookDecision = await this.hookRunner.runPreToolUse(step.toolName, step.args);
+      if (!hookDecision.allow) {
+        return { ran: false, refusal: hookDecision.reason ?? "blocked by preToolUse hook" };
+      }
+    }
+
+    this.permissions.grantExact(step.toolName, step.args, "session");
+    let execArgs = step.args;
+    if (step.toolName === "bash" && execArgs.network !== true) {
+      execArgs = { ...execArgs, network: true };
+      // Both shapes are granted: the agent's original call (so an identical
+      // retry next turn passes as exact_grant) and the widened one that runs.
+      this.permissions.grantExact(step.toolName, execArgs, "session");
+    }
+    this.recordAutoModeDecision(sessionId, step.toolName, step.args, {
+      verdict: "allow",
+      tier: "classifier",
+      risk: assessActionRisk(action),
+      source: "human_escalation",
+      reason: `User approved this exact held step at the end of the turn (route: ${step.route}).`,
+      stage: 0,
+      durationMs: 0,
+    });
+
+    let output = await this.registry.execute({
+      toolName: step.toolName,
+      callId: `held-${Date.now().toString(36)}`,
+      args: execArgs,
+      sessionId,
+      workspaceRoot: this.config.workspaceRoot,
+      signal,
+    });
+    // Same untrusted-output boundary as an in-run call: probe before anything
+    // downstream — the next turn's note included — treats it as content.
+    try {
+      output = await this.processToolResult({
+        toolName: step.toolName,
+        args: execArgs,
+        output,
+        sessionId,
+        workspaceRoot: this.config.workspaceRoot,
+      });
+    } catch {
+      // The probe is a screen, not a gate — the output stands as produced.
+    }
+    const bounded = (s: string) => s.replace(/\s+/g, " ").trim().slice(0, 400);
+    this.pendingTurnNotes.push(
+      output.success
+        ? `At the end of the last turn the user approved the held step \`${step.summary}\` and Gear ran it — it succeeded. Output (bounded): ${bounded(output.result || "(no output)")}`
+        : `At the end of the last turn the user approved the held step \`${step.summary}\` and Gear ran it — it FAILED: ${bounded(output.error ?? "unknown error")}`,
+    );
+    return { ran: true, output };
+  }
+
+  /**
+   * Record that the user reviewed the held steps and left these unrun. The
+   * next run opens knowing the decision, so it neither re-attempts the step
+   * nor waits for an answer that was already given.
+   */
+  dismissHeldSteps(steps: readonly AutoModeDeferral[]): void {
+    if (steps.length === 0) return;
+    const list = steps.map((s) => `\`${s.summary}\``).join(", ");
+    this.pendingTurnNotes.push(
+      `At the end of the last turn the user reviewed Auto mode's held steps and chose NOT to run: ${list}. ` +
+        "They remain not done. Do not re-attempt them unless the user asks; work around them.",
+    );
   }
 
   /** Print one Auto decision inline. Presentation only — never blocks a call. */
@@ -3208,6 +3346,9 @@ export class Engine {
     // Teammate mail queued while this session sat idle lands at the run's
     // first turn boundary — before the model's first completion.
     this.deliverTeamMessages();
+    // Held-step outcomes decided between turns land the same way, so the
+    // model never replans around a step the user already ran or declined.
+    for (const note of this.pendingTurnNotes.splice(0)) loop.injectHarnessNote(note);
 
     // ── Incremental persistence ──
     // Session events are written as the run PRODUCES them, not in one sweep at

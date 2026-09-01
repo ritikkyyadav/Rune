@@ -1229,6 +1229,7 @@ async function main() {
       customCommands,
       inline: surface.inline,
       quotaAutoResume: config.fallback?.autoResume !== false,
+      heldStepPrompt: config.permissions?.autoMode?.heldStepPrompt !== false,
     });
     return;
   }

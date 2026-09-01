@@ -165,6 +165,12 @@ export interface GearConfig {
        * failing closed. Stays within the session's existing data boundary.
        */
       reviewerFallback?: boolean;
+      /**
+       * Default true. The end-of-turn list of held steps is interactive: each
+       * one can be approved ("run exactly this") or left unrun, per step.
+       * `false` keeps the plain printed list.
+       */
+      heldStepPrompt?: boolean;
     };
   };
   sandbox: {

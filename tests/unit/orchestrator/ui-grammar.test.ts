@@ -23,6 +23,7 @@ import { describe, expect, it } from "bun:test";
 import * as F from "../../../packages/orchestrator/src/bin/ui/flow";
 import { renderToolActivity } from "../../../packages/orchestrator/src/bin/ui/activity";
 import { autoApprovedChip } from "../../../packages/orchestrator/src/bin/ui/composer";
+import { heldCloseReceipt, heldOutcomeRow } from "../../../packages/orchestrator/src/bin/ui/held";
 import { TurnRenderer, type TurnSink } from "../../../packages/orchestrator/src/bin/ui/turn";
 import { renderReadBack } from "../../../packages/orchestrator/src/bin/ui/read-back";
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
@@ -83,6 +84,15 @@ function rows(): Array<[string, string]> {
       ])[1]!,
     ],
     ["chip", autoApprovedChip({ toolName: "bash", risk: "high", kind: "contained" })],
+    [
+      "held outcome",
+      heldOutcomeRow(
+        { toolName: "bash", summary: "npm publish", reason: "outward", route: "publication" },
+        "ran",
+        "published",
+      ),
+    ],
+    ["held close", heldCloseReceipt(["ran", "failed", "skipped"])],
   ];
 }
 
