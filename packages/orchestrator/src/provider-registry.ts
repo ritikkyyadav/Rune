@@ -55,6 +55,8 @@ export interface BuildGatewayOpts {
   fallbackOrder?: ProviderName[];
   /** `[fallback] onQuotaExceeded` — stop the run on a plan cap, or degrade. */
   quotaPolicy?: "stop" | "degrade";
+  /** `[fallback] modelIntegrity` — pin the task to its model, or allow the substitute chain. */
+  modelIntegrity?: "pin" | "flex";
   /** Injectable for tests; defaults to process.env. */
   env?: NodeJS.ProcessEnv;
   /** Black-box tap forwarded into the gateway (survives gateway rebuilds). */
@@ -95,6 +97,7 @@ export function buildGateway(opts: BuildGatewayOpts): LlmGateway {
       onIncident: opts.onIncident,
       fallbackOrder: opts.fallbackOrder,
       quotaPolicy: opts.quotaPolicy,
+      modelIntegrity: opts.modelIntegrity,
     },
     // Opt into cross-session provider health. This is the ONE place that should:
     // it builds the gateway a real CLI session runs on, where remembering a dead

@@ -20,6 +20,9 @@ import {
   PROVIDER_PRESETS,
   AUTO_PROVIDER_PRIORITY,
   normalizeFallbackOrder,
+  normalizeModelIntegrity,
+  normalizeSubagentEffort,
+  normalizeSubagentMode,
   normalizeQuotaPolicy,
   CUSTOM_PROVIDER_ID,
   applySearchKeysToEnv,
@@ -832,6 +835,7 @@ async function main() {
     reliability: config.reliability,
     fallbackOrder: fallbackOrder.order as ProviderName[],
     quotaPolicy: normalizeQuotaPolicy(config.fallback?.onQuotaExceeded),
+    modelIntegrity: normalizeModelIntegrity(config.fallback?.modelIntegrity),
     // [verify] — previously EngineConfig-only, unreachable from any config.
     enableVerification: config.verify?.enabled,
     verifyCommand: config.verify?.commands,
@@ -862,6 +866,11 @@ async function main() {
     research: config.research,
     memory: config.memory,
     tiers: config.tiers,
+    subagents: {
+      mode: normalizeSubagentMode(config.subagents?.mode),
+      model: config.subagents?.model,
+      effort: normalizeSubagentEffort(config.subagents?.effort),
+    },
     git: config.git,
     context: config.context,
     // Autonomy toggle precedence: /interactive sidecar > [interactive] auto.

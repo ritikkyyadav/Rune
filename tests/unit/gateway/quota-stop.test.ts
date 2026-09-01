@@ -68,6 +68,9 @@ function setup(failure: string, quotaPolicy?: "stop" | "degrade") {
     defaultProvider: "codex",
     maxRetries: 0,
     retryBaseMs: 1,
+    // These suites document the SUBSTITUTE chain, which is now the explicit
+    // flex opt-in (model integrity pins by default — see model-pin.test.ts).
+    modelIntegrity: "flex",
     ...(quotaPolicy ? { quotaPolicy } : {}),
   });
   gw.registerProvider(primary);

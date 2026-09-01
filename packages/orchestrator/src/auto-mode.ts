@@ -1114,67 +1114,25 @@ export class AutoModeRun {
       );
     }
     try {
-      // Fast stage: a single ALLOW/BLOCK token. Any failure here — timeout,
-      // empty or unparseable output (reasoning models that cannot switch
-      // thinking off, chatty local models) — is NOT an outage: it falls
-      // through to the reasoned stage, which alone decides availability.
-      let fastDecision: "allow" | "block" | null = null;
-      let fastReviewer: { provider: string; model: string } | undefined;
-      let fastText: string | undefined;
-      let fastTimedOut = false;
-      try {
-        const fast = await this.controller.classifierCall("fast", prompt);
-        fastText = fast.text;
-        fastReviewer = fast.reviewer;
-      } catch (fastError) {
-        // Transport/timeout/empty failures are already counted by classifierCall.
-        // A timeout suggests the primary reviewer endpoint is unhealthy, so
-        // the reasoned stage starts on the fallback identity when one exists.
-        fastTimedOut = /timed out/i.test(safeError(fastError));
-      }
-      if (fastText !== undefined) {
-        try {
-          fastDecision = parseFastDecision(fastText);
-        } catch {
-          // A reply that is neither ALLOW nor BLOCK is a classifier failure too:
-          // the reviewer answered, but not in the contract.
-          this.controller.noteClassifierFailure();
-        }
-      }
-      if (fastDecision === null) this.controller.noteFastStageFallback();
-      // Known high-risk families always receive the careful pass, even if the
-      // generic fast model says ALLOW. This compensates for deployments whose
-      // reviewer has not been specially trained as a safety classifier.
-      if (fastDecision === "allow" && risk !== "high") {
-        this.consecutiveClassifierDenials = 0;
-        return this.finish({
-          verdict: "allow",
-          tier,
-          risk,
-          source: "classifier_fast",
-          reason: "The isolated fast reviewer found the action aligned with the user's request.",
-          stage: 1,
-          reviewer: fastReviewer,
-          durationMs: elapsed(started),
-        });
-      }
-
-      // Reasoned stage with one retry. The first attempt prefers the fallback
-      // identity only when the primary just timed out on the fast stage; the
-      // retry uses whichever identity the first attempt did not.
+      // The one-token fast stage no longer runs in path. The supervised tier
+      // already clears every low/medium action, so anything that reaches this
+      // point is high risk — where a fast ALLOW could never settle the action
+      // (the careful pass always ran anyway) and a fast BLOCK settled nothing
+      // either. The token bought nothing and cost a measured 2-4 seconds on
+      // every risky write and outbound call, stacked on the ~9s reasoned
+      // pass. It survives as the out-of-band supervisor's trigger-happy
+      // screen (superviseInBackground below); in path, high risk pays exactly
+      // one reasoned call, with one retry on the fallback identity.
       const fallbackAvailable = this.controller.hasFallbackReviewer();
-      const firstOnFallback = fastTimedOut && fallbackAvailable;
       let reasoned: { text: string; reviewer: { provider: string; model: string } };
       let parsed: ReturnType<typeof parseReasonedDecision>;
       try {
-        reasoned = await this.controller.classifierCall("reasoned", prompt, {
-          useFallback: firstOnFallback,
-        });
+        reasoned = await this.controller.classifierCall("reasoned", prompt);
         parsed = parseReasonedDecision(reasoned.text);
       } catch {
         this.controller.noteReviewerRetry();
         reasoned = await this.controller.classifierCall("reasoned", prompt, {
-          useFallback: fallbackAvailable && !firstOnFallback,
+          useFallback: fallbackAvailable,
         });
         parsed = parseReasonedDecision(reasoned.text);
       }

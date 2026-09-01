@@ -61,6 +61,7 @@ export const INCIDENT_CLASSES = [
   "loop.wrapup_reserve",
   "loop.effort_routed",
   "loop.effort_latched",
+  "loop.effort_released",
   "loop.handoff",
   "context.forced_compaction",
   "context.budget_overflow",

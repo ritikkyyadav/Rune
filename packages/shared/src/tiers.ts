@@ -18,6 +18,72 @@
 
 export type ModelTier = "heavy" | "standard" | "light";
 
+/**
+ * How sub-agents are orchestrated (`[subagents] mode`):
+ *
+ *   "auto"       — (default) the agent delegates when it helps and routes each
+ *                  call's model weight per tier: light scouts, standard
+ *                  workers, heavy on request.
+ *   "off"        — no sub-agents at all. The task/worker tools are never
+ *                  registered, the doctrine never mentions them, and one agent
+ *                  with the session's full capability does everything itself.
+ *   "configured" — every sub-agent runs the model the user named in
+ *                  `[subagents] model`, regardless of tier.
+ *   "mirror"     — every sub-agent runs the SESSION's exact model, provider,
+ *                  and reasoning effort. No compromise between the work you
+ *                  watch and the work that gets delegated.
+ */
+export type SubagentMode = "off" | "auto" | "configured" | "mirror";
+
+/** The reasoning dials a `[subagents] effort` may name (mirrors ReasoningEffort). */
+const SUBAGENT_EFFORT_VALUES = new Set([
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]);
+
+/** Read `[subagents] effort`; anything unrecognized means "not set". */
+export function normalizeSubagentEffort(
+  value: unknown,
+): "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | undefined {
+  const v = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  return SUBAGENT_EFFORT_VALUES.has(v)
+    ? (v as "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max")
+    : undefined;
+}
+
+/** Read `[subagents] mode`; anything unrecognized keeps today's behavior. */
+export function normalizeSubagentMode(value: unknown): SubagentMode {
+  switch (
+    String(value ?? "")
+      .trim()
+      .toLowerCase()
+  ) {
+    case "off":
+    case "none":
+    case "solo":
+    case "single":
+      return "off";
+    case "configured":
+    case "manual":
+    case "fixed":
+      return "configured";
+    case "mirror":
+    case "static":
+    case "same":
+    case "session":
+      return "mirror";
+    default:
+      return "auto";
+  }
+}
+
 export interface TierRef {
   provider: string;
   model: string;

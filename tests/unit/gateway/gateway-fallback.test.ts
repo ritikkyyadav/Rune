@@ -80,6 +80,9 @@ function gateway(quotaPolicy?: "stop" | "degrade"): LlmGateway {
     defaultProvider: "google",
     maxRetries: 1,
     retryBaseMs: 1,
+    // These suites document the SUBSTITUTE chain, which is now the explicit
+    // flex opt-in (model integrity pins by default — see model-pin.test.ts).
+    modelIntegrity: "flex",
     ...(quotaPolicy ? { quotaPolicy } : {}),
   });
 }

@@ -44,6 +44,7 @@ export {
   providerFallbackRank,
   normalizeFallbackOrder,
   type QuotaPolicy,
+  normalizeModelIntegrity,
   normalizeQuotaPolicy,
   CUSTOM_PROVIDER_ID,
   getPreset,
@@ -107,9 +108,12 @@ export { loadSavedSandboxState, resolveInitialSandbox, saveSandboxState } from "
 export { loadSavedBrowserState, resolveInitialBrowser, saveBrowserState } from "./browser-store.js";
 export {
   type ModelTier,
+  type SubagentMode,
   type TierRef,
   type TiersConfig,
   PROVIDER_TIER_DEFAULTS,
+  normalizeSubagentEffort,
+  normalizeSubagentMode,
   parseTierRef,
   resolveTier,
 } from "./tiers.js";
