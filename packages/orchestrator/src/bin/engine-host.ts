@@ -49,6 +49,8 @@ import {
   AUTO_PROVIDER_PRIORITY,
   normalizeFallbackOrder,
   normalizeQuotaPolicy,
+  normalizeSubagentEffort,
+  normalizeSubagentMode,
   loadLastModel,
   saveLastModel,
   loadSavedSandboxState,
@@ -254,6 +256,11 @@ function buildEngine(): Engine {
     search: config.search,
     research: config.research,
     tiers: config.tiers,
+    subagents: {
+      mode: normalizeSubagentMode(config.subagents?.mode),
+      model: config.subagents?.model,
+      effort: normalizeSubagentEffort(config.subagents?.effort),
+    },
     // Same mid-task fallback policy as the CLI. Unknown ids are dropped here
     // silently — this host has no console to warn into; the CLI reports them.
     fallbackOrder: normalizeFallbackOrder(config.fallback?.order).order as ProviderName[],

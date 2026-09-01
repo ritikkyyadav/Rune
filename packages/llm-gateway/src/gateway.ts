@@ -161,6 +161,16 @@ export class LlmGateway {
     return (this.config.quotaPolicy ?? "stop") === "stop";
   }
 
+  /** Whether mid-task inference may move to a different provider/model. Default: never. */
+  private get pinModel(): boolean {
+    // An explicit `[fallback] onQuotaExceeded = "degrade"` is an existing,
+    // deliberate opt-in to substitution — it implies "flex" rather than being
+    // silently neutered by the pin default. An explicit modelIntegrity wins
+    // over everything.
+    const fallback = this.config.quotaPolicy === "degrade" ? "flex" : "pin";
+    return (this.config.modelIntegrity ?? fallback) === "pin";
+  }
+
   /** A live quota cap on this provider, or null. */
   private activeCap(provider: ProviderName): { until: number; message: string } | null {
     const cap = this.cappedUntil.get(provider);
@@ -313,14 +323,30 @@ export class LlmGateway {
       // re-probed rather than blocked forever.
       if (this.health.isRetired(providerName, adjustedRequest.model)) {
         this.prunedProviders.add(providerName);
+        const reason =
+          this.health.retirementReason(providerName, adjustedRequest.model) ?? "model gone";
         this.reportIncident({
           kind: "terminal",
           provider: providerName,
           model: adjustedRequest.model,
-          message: `skipped without a request — known retired: ${
-            this.health.retirementReason(providerName, adjustedRequest.model) ?? "model gone"
-          }`,
+          message: `skipped without a request — known retired: ${reason}`,
         });
+        // With no registered provider left after this one (the pinned case,
+        // or a chain that simply ran out), skipping silently would fall
+        // through to "No providers available" — a lie. Stop with the truth.
+        const laterRegistered = fallbackOrder
+          .slice(fallbackOrder.indexOf(providerName) + 1)
+          .some((p) => this.providers.has(p));
+        if (!laterRegistered) {
+          yield {
+            type: "error",
+            error:
+              `${providerName}/${adjustedRequest.model} is gone — ${reason}. ` +
+              "The model was retired or renamed: pick a current one with /model.",
+            retryable: false,
+          };
+          return;
+        }
         continue;
       }
 
@@ -609,6 +635,17 @@ export class LlmGateway {
    */
   private getFallbackProviders(primary: ProviderName): ProviderName[] {
     const now = Date.now();
+    // ── Model integrity: the task finishes on the model that started it ──
+    // Under "pin" (the default) there IS no substitute chain: a cooling or
+    // capped primary is returned alone, so it is retried and waited out (one
+    // cheap 429 is how the gateway notices recovery) and a genuinely dead one
+    // produces a clean, actionable stop. This deliberately covers ordinary
+    // rate-limit cooldowns too — the observed failure was a rate-limited
+    // frontier session handing its task to a free model mid-turn, which no
+    // "using X for now" banner makes acceptable.
+    if (this.pinModel && this.providers.has(primary)) {
+      return [primary];
+    }
     // ── A quota-capped primary gets NO substitutes ──
     // Returning it alone (rather than short-circuiting before the call) keeps
     // the author's self-heal: re-attempting is how the gateway learns the cap

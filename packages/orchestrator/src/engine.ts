@@ -42,6 +42,7 @@ import {
   DEFAULT_CHECKPOINT_POLICY,
   createAutoVerifier,
   deriveSessionTitle,
+  PROVIDER_CAPACITY,
   PROVIDER_PRESETS,
   getPreset,
   loadSystemMemory,
@@ -61,7 +62,8 @@ import {
   workspaceConfigPath,
   setToolArgsSalvageListener,
 } from "@gear/shared";
-import type { ModelTier, TierRef, TiersConfig } from "@gear/shared";
+import type { ModelTier, SubagentMode, TierRef, TiersConfig } from "@gear/shared";
+import { parseTierRef } from "@gear/shared";
 import type { IncidentClass, IncidentInput, IncidentSeverity } from "@gear/shared";
 import { Recorder } from "@gear/telemetry";
 import type {
@@ -135,6 +137,8 @@ import {
   type ReviewerIdentity,
 } from "./auto-mode";
 import { HookRunner } from "./hooks";
+import { pickFallbackReviewer } from "./reviewer-fallback";
+import { turnBudgetForMessage } from "./turn-budget";
 import { createSubagentTool } from "./subagent";
 import { TeamBus } from "./team/bus";
 import { createTeamTool, renderTeamStatus } from "./team/tool";
@@ -437,6 +441,14 @@ export interface EngineConfig {
    * weaker model inherit the task; "degrade" restores automatic downgrade.
    */
   quotaPolicy?: "stop" | "degrade";
+  /**
+   * Whether mid-task inference may move to a different provider/model at all
+   * (`[fallback] modelIntegrity`). "pin" (default): the model that started
+   * the task finishes it — rate limits wait, caps stop with the resume
+   * window, nothing weaker inherits the work. "flex" restores the labeled
+   * substitute chain.
+   */
+  modelIntegrity?: "pin" | "flex";
   /** Enable Planner-Executor two-tier mode. */
   anthropicApiKey?: string;
   openaiApiKey?: string;
@@ -562,6 +574,14 @@ export interface EngineConfig {
    * summaries, and other internal utility calls.
    */
   tiers?: TiersConfig;
+  /**
+   * `[subagents]` — how delegation is orchestrated. `mode` "off" never
+   * registers the task/worker tools; "auto" (default) keeps tier routing;
+   * "configured" pins every sub-agent to `model` (and `effort` when set);
+   * "mirror" pins every sub-agent to the session's exact model, provider,
+   * and reasoning effort.
+   */
+  subagents?: { mode: SubagentMode; model?: string; effort?: ReasoningEffort };
   /**
    * Black box (flight recorder): incident capture to ~/.gear/blackbox.db.
    * OFF unless enabled — unit tests and embedders stay hermetic; the CLI and
@@ -951,30 +971,14 @@ export class Engine {
     this.registry = new ToolRegistry();
     registerBuiltinTools(this.registry, this.config.toolsBinaryPath);
 
-    // Register the `task` sub-agent tool. It runs nested investigations against
-    // a SEPARATE read-only registry (built-ins only, without `task` itself) so a
-    // sub-agent can never write/execute and can never recurse into more agents.
-    // The resolver routes sub-agents to the cheap "light" tier and hands over
-    // the CURRENT gateway at call time (the gateway is rebuilt on key edits).
-    const subRegistry = new ToolRegistry();
-    registerBuiltinTools(subRegistry, this.config.toolsBinaryPath);
-    this.registry.register(
-      createSubagentTool({
-        gateway: this.gateway,
-        registry: subRegistry,
-        model: this.config.model,
-        provider: this.config.provider,
-        resolve: (tier) => {
-          const ref = this.resolveModelTier(tier ?? "light");
-          return {
-            gateway: this.gateway,
-            model: ref.model,
-            provider: ref.provider as ProviderName,
-          };
-        },
-        toolResultProcessor: (ctx) => this.processToolResult(ctx),
-      }),
-    );
+    // Register the delegation tools (task + worker) — unless `[subagents]
+    // mode = "off"`, in which case neither exists, the doctrine never
+    // advertises them (doctrineContext derives canDelegate from registry
+    // presence), and one agent with the session's full capability does
+    // everything itself.
+    if ((this.config.subagents?.mode ?? "auto") !== "off") {
+      this.registerDelegationTools();
+    }
 
     // ask_user: blocking clarification questions. The handler is wired later
     // by the frontend (CLI/TUI) via setQuestionHandler — the closure reads it
@@ -1055,31 +1059,8 @@ export class Engine {
       ),
     );
 
-    // `worker`: write-capable parallel sub-agents with disjoint file
-    // ownership — the lead splits implementation, workers run concurrently
-    // (parallelSafe + ownership claims), the lead integrates and verifies.
-    // Routed to the STANDARD tier: workers write production code. Main
-    // registry only — workers cannot spawn workers.
-    this.registry.register(
-      createWorkerTool({
-        binaryPath: this.config.toolsBinaryPath,
-        resolve: (tier) => {
-          const ref = this.resolveModelTier(tier ?? "standard");
-          return {
-            gateway: this.gateway,
-            model: ref.model,
-            provider: ref.provider as ProviderName,
-          };
-        },
-        toolResultProcessor: (ctx) => this.processToolResult(ctx),
-        // Repo-wide worker leases: peers' workers stay off these files while
-        // the build runs (and this engine's workers respect THEIR leases).
-        team: {
-          claim: (paths, label) => this.teamWorkerClaim(paths, label),
-          release: (label) => this.teamWorkerRelease(label),
-        },
-      }),
-    );
+    // (The `worker` tool is registered alongside `task` in
+    // registerDelegationTools above, and absent in the same "off" mode.)
 
     // ── Multi-instance teamwork ──
     // Register this session on the local shared bus so concurrent Gear
@@ -1246,10 +1227,14 @@ export class Engine {
       new GatewayActionClassifier(),
       resolvePrimaryReviewer,
       undefined,
-      // Fallback reviewer for the retry after a failed reviewer call: the
-      // engine's own model tiers, which already serve this session — so the
-      // retry never widens the data boundary. Only a tier DISTINCT from the
-      // primary qualifies; otherwise the retry simply re-uses the primary.
+      // Fallback reviewer for the retry after a failed reviewer call. The
+      // engine's own tiers come first (the session's existing data boundary) —
+      // but on a subscription session every tier resolves to the SESSION'S
+      // provider, so a quota cap used to kill the reviewer with the model it
+      // was reviewing. The picker may therefore widen to another provider the
+      // user already connected (funded/subscription capacity only, healthy
+      // only, never when signed policy pinned the classifier). See
+      // reviewer-fallback.ts for the full policy and its reasons.
       () => {
         let primary: { provider: string; model: string } | null = null;
         try {
@@ -1258,17 +1243,23 @@ export class Engine {
         } catch {
           primary = null;
         }
-        for (const tier of ["heavy", "standard"] as const) {
-          const ref = this.resolveModelTier(tier);
-          const provider = ref.provider as ProviderName;
-          if (primary && primary.provider === provider && primary.model === ref.model) continue;
-          if (!this.gateway.getProvider(provider)) continue;
-          if (this.orgPolicy && policyAllowsModel(this.orgPolicy.policy, provider, ref.model)) {
-            continue;
-          }
-          return { gateway: this.gateway, provider, model: ref.model };
-        }
-        return null;
+        const pick = pickFallbackReviewer({
+          primary,
+          tierRefs: (["heavy", "standard"] as const).map((tier) => {
+            const ref = this.resolveModelTier(tier);
+            return { provider: ref.provider, model: ref.model };
+          }),
+          registered: this.gateway.getRegisteredProviderNames(),
+          health: this.gateway.getProviderHealth(),
+          pinnedByPolicy: Boolean(autoConfig.classifierProvider),
+          defaultModelFor: (provider) => getPreset(provider)?.defaultModel,
+          capacityOf: (provider) => PROVIDER_CAPACITY[provider],
+          policyDenies: (provider, model) =>
+            this.orgPolicy ? policyAllowsModel(this.orgPolicy.policy, provider, model) : null,
+        });
+        return pick
+          ? { gateway: this.gateway, provider: pick.provider as ProviderName, model: pick.model }
+          : null;
       },
     );
 
@@ -2914,6 +2905,19 @@ export class Engine {
       case "auto_commit":
         this.setAutoCommit(canonicalValue === "true");
         return { ok: true };
+      case "effort":
+        this.setReasoningEffort(canonicalValue as ReasoningEffort);
+        return { ok: true };
+      case "doctrine":
+        this.config.doctrineDelivery = canonicalValue as "jit" | "full";
+        return { ok: true };
+      case "routing":
+        this.config.effortRouting = canonicalValue as "conservative" | "off";
+        return { ok: true };
+      case "subagents": {
+        this.setSubagentMode(canonicalValue as SubagentMode);
+        return { ok: true };
+      }
       default:
         return { ok: false, reason: `no live handler for "${key}"` };
     }
@@ -2929,6 +2933,14 @@ export class Engine {
         return this.isSandboxEnabled() ? "true" : "false";
       case "auto_commit":
         return this.isAutoCommitEnabled() ? "true" : "false";
+      case "effort":
+        return this.getReasoningEffort();
+      case "doctrine":
+        return this.doctrineDelivery();
+      case "routing":
+        return this.config.effortRouting ?? "conservative";
+      case "subagents":
+        return this.config.subagents?.mode ?? "auto";
       default:
         return undefined;
     }
@@ -3203,9 +3215,28 @@ export class Engine {
       payload: { summary: "session_started" },
     });
 
-    await this.ensureHookRunner();
-    await this.ensureMcpServers();
-    await this.ensureSkills();
+    // The message's turn budget: a greeting or short question gets a small
+    // conversational ceiling (measured: a 24-character question once ran the
+    // full 80-turn loop for 53 minutes); real work keeps the full one.
+    const turnBudget = turnBudgetForMessage(userMessage, MAX_TURNS);
+
+    // The map is intentionally per request rather than per session: ranking is
+    // query-aware. It remains outside the cache-sensitive system prompt and is
+    // admitted or evicted by ContextEngine with the rest of retrieved context.
+    // A conversational turn skips it outright — a question about the run does
+    // not need retrieval, and the map was a measured 2-4s of every turn.
+    // Started BEFORE the first-turn ensures so the four costs overlap instead
+    // of queueing (hooks, MCP spawn, skills, and the map are independent).
+    const repoMapPromise: Promise<NonNullable<Awaited<ReturnType<typeof buildRepoMap>>>[]> =
+      this.config.context?.repoMap === false || turnBudget.conversational
+        ? Promise.resolve([])
+        : buildRepoMap({
+            workspaceRoot: this.config.workspaceRoot,
+            binaryPath: this.config.toolsBinaryPath,
+            query: userMessage,
+          }).then((map) => (map ? [map] : []));
+
+    await Promise.all([this.ensureHookRunner(), this.ensureMcpServers(), this.ensureSkills()]);
 
     // Assemble the system prompt: doctrine + environment snapshot + project
     // memory (ALAN.md/CLAUDE.md/AGENTS.md) + the evergreen System Memory
@@ -3219,17 +3250,7 @@ export class Engine {
       );
       this.envBlocks.set(sessionId, envBlock);
     }
-    // The map is intentionally per request rather than per session: ranking is
-    // query-aware. It remains outside the cache-sensitive system prompt and is
-    // admitted or evicted by ContextEngine with the rest of retrieved context.
-    const repoMapChunks =
-      this.config.context?.repoMap === false
-        ? []
-        : await buildRepoMap({
-            workspaceRoot: this.config.workspaceRoot,
-            binaryPath: this.config.toolsBinaryPath,
-            query: userMessage,
-          }).then((map) => (map ? [map] : []));
+    const repoMapChunks = await repoMapPromise;
     const projectMemory = loadProjectMemory(this.config.workspaceRoot);
     const notebookBlock = this.buildNotebookInjection(sessionId);
     // In jit delivery the Delegation/Building-interfaces sections leave the
@@ -3297,7 +3318,7 @@ export class Engine {
         model: session.model,
         provider: this.config.provider,
         maxTokens: MAX_TOKENS,
-        maxTurns: MAX_TURNS,
+        maxTurns: turnBudget.maxTurns,
         systemPrompt,
         priorMessages,
         contextEngine: this.contextEngine,
@@ -3349,6 +3370,9 @@ export class Engine {
     // Held-step outcomes decided between turns land the same way, so the
     // model never replans around a step the user already ran or declined.
     for (const note of this.pendingTurnNotes.splice(0)) loop.injectHarnessNote(note);
+    // A conversational turn opens with the answer-first steer — same channel,
+    // same completion; the note costs tokens, never a round trip.
+    if (turnBudget.note) loop.injectHarnessNote(turnBudget.note);
 
     // ── Incremental persistence ──
     // Session events are written as the run PRODUCES them, not in one sweep at
@@ -3923,6 +3947,106 @@ export class Engine {
    * then the active provider's built-in tier table, then the session model.
    * Only ever returns providers that are registered (credentials present).
    */
+  /**
+   * Register the delegation tools (task + worker). Called from the
+   * constructor unless `[subagents] mode = "off"`, and again on a live flip
+   * back from "off". The task tool runs nested investigations against a
+   * SEPARATE read-only registry (built-ins only, without `task` itself) so a
+   * sub-agent can never write/execute and can never recurse into more
+   * agents; the worker tool gets write-capable children with disjoint file
+   * ownership. Both route their model through resolveSubagentModel, so the
+   * orchestration mode is enforced in exactly one place.
+   */
+  private registerDelegationTools(): void {
+    const subRegistry = new ToolRegistry();
+    registerBuiltinTools(subRegistry, this.config.toolsBinaryPath);
+    this.registry.register(
+      createSubagentTool({
+        gateway: this.gateway,
+        registry: subRegistry,
+        model: this.config.model,
+        provider: this.config.provider,
+        resolve: (tier) => this.resolveSubagentModel(tier, "light"),
+        toolResultProcessor: (ctx) => this.processToolResult(ctx),
+      }),
+    );
+    this.registry.register(
+      createWorkerTool({
+        binaryPath: this.config.toolsBinaryPath,
+        resolve: (tier) => this.resolveSubagentModel(tier, "standard"),
+        toolResultProcessor: (ctx) => this.processToolResult(ctx),
+        // Repo-wide worker leases: peers' workers stay off these files while
+        // the build runs (and this engine's workers respect THEIR leases).
+        team: {
+          claim: (paths, label) => this.teamWorkerClaim(paths, label),
+          release: (label) => this.teamWorkerRelease(label),
+        },
+      }),
+    );
+  }
+
+  /**
+   * The model, provider, and reasoning effort a sub-agent runs on, per
+   * `[subagents] mode`. "mirror" hands back the session's exact
+   * configuration — no compromise between the work the user watches and the
+   * work that gets delegated; "configured" pins the user's named pair (an
+   * unusable pair — no key, a typo — falls through to tier routing rather
+   * than 401ing every delegation mid-task); "auto" keeps tier routing.
+   */
+  resolveSubagentModel(
+    tier: ModelTier | undefined,
+    fallback: ModelTier,
+  ): {
+    gateway: LlmGateway;
+    model: string;
+    provider: ProviderName;
+    thinkingEffort?: ReasoningEffort;
+  } {
+    const sub = this.config.subagents;
+    const mode = sub?.mode ?? "auto";
+    if (mode === "mirror") {
+      return {
+        gateway: this.gateway,
+        model: this.config.model,
+        provider: this.config.provider,
+        thinkingEffort: this.config.reasoningEffort,
+      };
+    }
+    if (mode === "configured" && sub?.model?.trim()) {
+      const known = new Set<string>(PROVIDER_PRESETS.map((p) => p.id));
+      known.add("custom");
+      const ref = parseTierRef(sub.model, this.config.provider, known);
+      if (ref && this.gateway.getRegisteredProviderNames().includes(ref.provider as ProviderName)) {
+        return {
+          gateway: this.gateway,
+          model: ref.model,
+          provider: ref.provider as ProviderName,
+          thinkingEffort: sub.effort,
+        };
+      }
+    }
+    const auto = this.resolveModelTier(tier ?? fallback);
+    return { gateway: this.gateway, model: auto.model, provider: auto.provider as ProviderName };
+  }
+
+  /**
+   * Live flip of the orchestration mode (the /config surface). "off"
+   * unregisters the delegation tools — the doctrine's canDelegate follows
+   * registry presence, so the next turn's prompt stops advertising them;
+   * any other mode re-registers them (idempotent: register overwrites).
+   */
+  setSubagentMode(mode: SubagentMode): void {
+    this.config.subagents = { ...(this.config.subagents ?? {}), mode };
+    if (mode === "off") {
+      this.registry.unregister("task");
+      this.registry.unregister("worker");
+      return;
+    }
+    if (!this.registry.get("task") || !this.registry.get("worker")) {
+      this.registerDelegationTools();
+    }
+  }
+
   resolveModelTier(tier: ModelTier): TierRef {
     const registered = new Set<string>(this.gateway.getRegisteredProviderNames());
     const known = new Set<string>(PROVIDER_PRESETS.map((p) => p.id));
@@ -4028,6 +4152,7 @@ export class Engine {
       credentials: this.resolvedCredentials,
       fallbackOrder: this.config.fallbackOrder,
       quotaPolicy: this.config.quotaPolicy,
+      modelIntegrity: this.config.modelIntegrity,
       // Closure reads this.recorder lazily, so key-edit rebuilds keep the tap.
       onIncident: (gi) => {
         if (!this.recorder) return;

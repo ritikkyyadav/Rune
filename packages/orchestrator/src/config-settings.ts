@@ -209,6 +209,30 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
     live: true,
   },
   {
+    key: "subagents",
+    tomlPath: "subagents.mode",
+    description:
+      "How sub-agents are orchestrated. 'auto' (default): the agent delegates when it helps and " +
+      "routes each call's model weight (light scouts, standard workers). 'off': no sub-agents at " +
+      "all — one agent with the session's full capability does everything itself. 'configured': " +
+      "every sub-agent runs the model named in [subagents] model. 'mirror': every sub-agent runs " +
+      "the session's exact model, provider, and reasoning effort — no compromise on delegated work.",
+    kind: "enum",
+    values: ["off", "auto", "configured", "mirror"],
+    valueAliases: {
+      none: "off",
+      solo: "off",
+      single: "off",
+      manual: "configured",
+      fixed: "configured",
+      static: "mirror",
+      same: "mirror",
+      session: "mirror",
+    },
+    nameAliases: ["subagent mode", "subagents mode", "sub-agents", "sub_agents", "orchestration"],
+    live: true,
+  },
+  {
     key: "auto_commit",
     tomlPath: "git.autoCommit",
     description:

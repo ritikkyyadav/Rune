@@ -19,7 +19,7 @@
 
 import { readFileSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import type { LlmGateway, ProviderName } from "@gear/llm-gateway";
+import type { LlmGateway, ProviderName, ReasoningEffort } from "@gear/llm-gateway";
 import type { ModelTier } from "@gear/shared";
 import {
   ToolRegistry,
@@ -64,7 +64,14 @@ export interface WorkerDeps {
    * implementation, so the engine routes them to the STANDARD tier (the main
    * loop's model) by default — a per-call `tier` argument overrides.
    */
-  resolve: (tier?: ModelTier) => { gateway: LlmGateway; model: string; provider: ProviderName };
+  resolve: (tier?: ModelTier) => {
+    gateway: LlmGateway;
+    model: string;
+    provider: ProviderName;
+    /** Set by mirror/configured orchestration modes: the child's reasoning
+     *  ceiling. Absent keeps the historical hard-coded "high". */
+    thinkingEffort?: ReasoningEffort;
+  };
   maxTurns?: number;
   maxTokens?: number;
   /** Same prompt-injection probe used by the lead agent. */
@@ -419,6 +426,9 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
             maxTokens: budget.maxTokens,
             maxTurns: budget.maxTurns,
             systemPrompt: workerSystemPrompt(ownership.describe(input.workspaceRoot)),
+            // Mirror/configured orchestration passes the session's reasoning
+            // dial through; absent, the child keeps its historical "high".
+            ...(live.thinkingEffort ? { thinkingEffort: live.thinkingEffort } : {}),
             toolResultProcessor: deps.toolResultProcessor,
             // Workers average four minutes and run to a fixed turn ceiling;
             // like scouts, they were told to budget without being shown a clock.

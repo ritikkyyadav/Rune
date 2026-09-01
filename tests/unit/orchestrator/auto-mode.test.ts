@@ -203,9 +203,8 @@ describe("Auto mode independent classifier", () => {
     released();
   });
 
-  test("flagged actions receive a careful second review", async () => {
+  test("flagged actions receive the careful review, with no fast token spent first", async () => {
     const { controller, classifier } = setup([
-      "BLOCK",
       JSON.stringify({
         verdict: "deny",
         risk: "high",
@@ -220,12 +219,14 @@ describe("Auto mode independent classifier", () => {
     expect(review.verdict).toBe("deny");
     expect(review.stage).toBe(2);
     expect(review.reason).toContain("did not authorize");
-    expect(classifier.calls.map((c) => c.stage)).toEqual(["fast", "reasoned"]);
+    // High risk pays exactly one reviewer call. The fast stage could never
+    // settle a high-risk action, so it is not consulted at all — the token
+    // was a measured 2-4s tax on every risky write and outbound call.
+    expect(classifier.calls.map((c) => c.stage)).toEqual(["reasoned"]);
   });
 
-  test("known high-risk actions receive the careful pass even after a fast allow", async () => {
+  test("known high-risk actions go straight to the careful pass", async () => {
     const { controller, classifier } = setup([
-      "ALLOW",
       JSON.stringify({
         verdict: "ask",
         risk: "high",
@@ -244,7 +245,7 @@ describe("Auto mode independent classifier", () => {
     expect(review.containment?.kind).toBe("redirect");
     expect(review.containment?.route).toBe("force-push");
     expect(review.reason).toContain("scratch branch");
-    expect(classifier.calls.map((c) => c.stage)).toEqual(["fast", "reasoned"]);
+    expect(classifier.calls.map((c) => c.stage)).toEqual(["reasoned"]);
   });
 
   test("no reviewer verdict reaches a modal prompt, whatever conversationalEscalation says", async () => {
@@ -617,9 +618,8 @@ describe("Fast-stage robustness", () => {
     expect(() => parseFastDecision("")).toThrow();
   });
 
-  test("an unparseable fast answer falls through to the reasoned stage instead of failing closed", async () => {
+  test("high risk pays exactly one reviewer call — the fast token belongs to the supervisor now", async () => {
     const { controller, classifier } = setup([
-      "I think this is probably fine but",
       JSON.stringify({ verdict: "allow", risk: "medium", reason: "Aligned with the request." }),
     ]);
     const review = await controller
@@ -628,43 +628,34 @@ describe("Fast-stage robustness", () => {
 
     expect(review.verdict).toBe("allow");
     expect(review.source).toBe("classifier_reasoned");
-    expect(classifier.calls.map((c) => c.stage)).toEqual(["fast", "reasoned"]);
-    expect(controller.getStats().fastStageFallbacks).toBe(1);
-    expect(controller.getStats().classifierFailures).toBe(1);
+    expect(classifier.calls.map((c) => c.stage)).toEqual(["reasoned"]);
+    expect(controller.getStats().fastStageFallbacks).toBe(0);
   });
 
-  test("an empty fast answer (reasoning model spent the budget) also falls through", async () => {
-    const { controller } = setup([
-      "   ",
-      JSON.stringify({ verdict: "allow", risk: "medium", reason: "Aligned with the request." }),
-    ]);
-    const review = await controller
-      .startRun(["Tidy up remote branches."])
-      .review(action("bash", { command: "git push --force origin main" }));
-    expect(review.verdict).toBe("allow");
-    expect(review.source).toBe("classifier_reasoned");
-  });
-
-  test("a fast-stage timeout aborts its signal and the reasoned stage still decides", async () => {
-    const seen: Array<{ stage: string; aborted?: boolean }> = [];
-    const slowThenFast: ActionClassifier = {
+  test("a reasoned-stage timeout aborts its signal and the retry still decides", async () => {
+    const seen: Array<{ attempt: number; aborted?: boolean }> = [];
+    let attempts = 0;
+    const slowThenDecisive: ActionClassifier = {
       async classify(call) {
-        if (call.stage === "fast") {
+        attempts++;
+        const attempt = attempts;
+        if (attempt === 1) {
           await new Promise<void>((resolveWait) => {
             call.signal?.addEventListener("abort", () => {
-              seen.push({ stage: "fast", aborted: call.signal?.aborted });
+              seen.push({ attempt, aborted: call.signal?.aborted });
               resolveWait();
             });
           });
-          return "ALLOW"; // arrives after the timeout; must be ignored
+          // Arrives after the timeout; must be ignored.
+          return JSON.stringify({ verdict: "allow", risk: "low", reason: "late" });
         }
-        seen.push({ stage: "reasoned" });
+        seen.push({ attempt });
         return JSON.stringify({ verdict: "deny", risk: "high", reason: "Not authorized." });
       },
     };
     const controller = new AutoModeSafetyController(
       resolveAutoModeConfig({ timeoutMs: 1_000 }),
-      slowThenFast,
+      slowThenDecisive,
       () => ({ gateway: {} as LlmGateway, provider: "anthropic", model: "m" }),
     );
     const review = await controller
@@ -672,8 +663,9 @@ describe("Fast-stage robustness", () => {
       .review(action("bash", { command: "git push origin --delete old" }));
     expect(review.verdict).toBe("deny");
     expect(review.stage).toBe(2);
-    expect(seen[0]).toEqual({ stage: "fast", aborted: true });
-    expect(seen[1]).toEqual({ stage: "reasoned" });
+    expect(seen[0]).toEqual({ attempt: 1, aborted: true });
+    expect(seen[1]).toEqual({ attempt: 2 });
+    expect(controller.getStats().reviewerRetries).toBe(1);
   });
 
   test("when both stages fail the review falls back to containment, not to a human", async () => {
@@ -1052,11 +1044,7 @@ describe("Reviewer redundancy", () => {
   }
 
   test("a failed reasoned attempt retries on the fallback reviewer instead of failing closed", async () => {
-    const { controller, classifier } = setupWithFallback([
-      "BLOCK",
-      new Error("provider 500"),
-      allowJson,
-    ]);
+    const { controller, classifier } = setupWithFallback([new Error("provider 500"), allowJson]);
     const review = await controller
       .startRun(["Publish my notes gist as I asked."])
       .review(action("bash", { command: "gh gist create ./notes.md" }));
@@ -1066,14 +1054,13 @@ describe("Reviewer redundancy", () => {
     expect(review.reviewer?.model).toBe("fallback-model");
     expect(classifier.calls.map((c) => c.reviewer.model)).toEqual([
       "primary-model",
-      "primary-model",
       "fallback-model",
     ]);
     expect(controller.getStats().reviewerRetries).toBe(1);
   });
 
   test("reviewerFallback=false keeps the retry on the pinned reviewer", async () => {
-    const { controller, classifier } = setupWithFallback(["BLOCK", new Error("blip"), allowJson], {
+    const { controller, classifier } = setupWithFallback([new Error("blip"), allowJson], {
       reviewerFallback: false,
     });
     const review = await controller
@@ -1084,38 +1071,8 @@ describe("Reviewer redundancy", () => {
     expect(classifier.calls.map((c) => c.reviewer.model)).toEqual([
       "primary-model",
       "primary-model",
-      "primary-model",
     ]);
     expect(controller.getStatus().reviewerFallback).toEqual({ enabled: false, available: false });
-  });
-
-  test("a fast-stage timeout routes the reasoned attempt straight to the fallback", async () => {
-    const reasonedModels: string[] = [];
-    const classifier: ActionClassifier = {
-      async classify(call) {
-        if (call.stage === "fast") {
-          await new Promise<void>((resolveWait) => {
-            call.signal?.addEventListener("abort", () => resolveWait());
-          });
-          return "ALLOW"; // late; discarded
-        }
-        reasonedModels.push(call.reviewer.model);
-        return allowJson;
-      },
-    };
-    const controller = new AutoModeSafetyController(
-      resolveAutoModeConfig({ timeoutMs: 1_000 }),
-      classifier,
-      () => ({ gateway: {} as LlmGateway, provider: "anthropic", model: "primary-model" }),
-      undefined,
-      () => ({ gateway: {} as LlmGateway, provider: "anthropic", model: "fallback-model" }),
-    );
-    const review = await controller
-      .startRun(["Tidy up remote branches."])
-      .review(action("bash", { command: "git push --force origin main" }));
-
-    expect(review.verdict).toBe("allow");
-    expect(reasonedModels[0]).toBe("fallback-model");
   });
 
   test("when the retry also fails the review still contains", async () => {
@@ -1133,18 +1090,18 @@ describe("Reviewer redundancy", () => {
 });
 
 describe("Injection-aware escalation", () => {
-  test("after a flagged tool result, a fast allow is no longer sufficient", async () => {
+  test("after a flagged tool result, ordinary commands leave the supervised tier for the careful pass", async () => {
     const allowJson = JSON.stringify({ verdict: "allow", risk: "medium", reason: "Aligned." });
-    const { controller, classifier } = setup(["ALLOW", allowJson]);
+    const { controller, classifier } = setup([allowJson]);
     const run = controller.startRun(["Summarize the fetched page."]);
     run.noteInjectionFinding();
 
     const review = await run.review(action("bash", { command: "bun test tests/unit" }));
 
-    // The risk floor forces the careful reasoned pass even though the fast
-    // stage said ALLOW, and the reviewer prompt carries the alert.
+    // The risk floor lifts the action out of the supervised tier into the
+    // reasoned pass, and the reviewer prompt carries the alert.
     expect(review.verdict).toBe("allow");
-    expect(classifier.calls.map((c) => c.stage)).toEqual(["fast", "reasoned"]);
+    expect(classifier.calls.map((c) => c.stage)).toEqual(["reasoned"]);
     for (const call of classifier.calls) {
       expect(call.prompt).toContain("SECURITY ALERT");
     }
@@ -1152,12 +1109,12 @@ describe("Injection-aware escalation", () => {
 
   test("prior-session findings arm the alert from the first action of a new run", async () => {
     const allowJson = JSON.stringify({ verdict: "allow", risk: "medium", reason: "Aligned." });
-    const { controller, classifier } = setup(["ALLOW", allowJson]);
+    const { controller, classifier } = setup([allowJson]);
     const run = controller.startRun(["Continue the task."], { priorInjectionFindings: 2 });
     await run.review(action("bash", { command: "bun test tests/unit" }));
 
     expect(classifier.calls[0]!.prompt).toContain("SECURITY ALERT: 2 tool result(s)");
-    expect(classifier.calls.map((c) => c.stage)).toEqual(["fast", "reasoned"]);
+    expect(classifier.calls.map((c) => c.stage)).toEqual(["reasoned"]);
   });
 
   test("safe reads and workspace writes stay silent under the alert", async () => {

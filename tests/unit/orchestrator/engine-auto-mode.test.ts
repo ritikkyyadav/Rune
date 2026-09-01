@@ -70,7 +70,6 @@ describe("Engine Auto-mode wiring", () => {
     });
     internals = engine as unknown as EngineInternals;
     classifier = new QueueClassifier([
-      "BLOCK",
       JSON.stringify({
         verdict: "deny",
         risk: "high",
@@ -109,7 +108,7 @@ describe("Engine Auto-mode wiring", () => {
 
     expect(decision.allowed).toBe(false);
     expect(decision.reason).toContain("did not authorize");
-    expect(classifier.calls.map((call) => call.stage)).toEqual(["fast", "reasoned"]);
+    expect(classifier.calls.map((call) => call.stage)).toEqual(["reasoned"]);
 
     const safety = internals.sessions
       .getEvents(sessionId, 1)
@@ -239,7 +238,6 @@ describe("Engine Auto-mode wiring", () => {
     internals.autoModeSafety = new AutoModeSafetyController(
       resolveAutoModeConfig(),
       new QueueClassifier([
-        "BLOCK",
         JSON.stringify({
           verdict: "ask",
           risk: "medium",
@@ -367,7 +365,6 @@ describe("Engine Auto-mode wiring", () => {
     });
 
     const classifier = new QueueClassifier([
-      "ALLOW",
       JSON.stringify({ verdict: "allow", risk: "medium", reason: "Aligned." }),
     ]);
     internals.autoModeSafety = new AutoModeSafetyController(
@@ -387,7 +384,7 @@ describe("Engine Auto-mode wiring", () => {
 
     // The fast ALLOW is not enough under the alert: the careful pass ran too.
     expect(decision.allowed).toBe(true);
-    expect(classifier.calls.map((call) => call.stage)).toEqual(["fast", "reasoned"]);
+    expect(classifier.calls.map((call) => call.stage)).toEqual(["reasoned"]);
     expect(classifier.calls[0]!.prompt).toContain("SECURITY ALERT");
   });
   test("allow-for-session on an askRule ask silences identical retries only", async () => {

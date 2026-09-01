@@ -29,6 +29,9 @@ function gatewayWith(...providers: LlmProvider[]): LlmGateway {
     defaultProvider: "anthropic",
     maxRetries: 2,
     retryBaseMs: 1,
+    // The cross-provider case documents the substitute chain — the explicit
+    // flex opt-in now that model integrity pins by default.
+    modelIntegrity: "flex",
   });
   for (const p of providers) gw.registerProvider(p);
   return gw;

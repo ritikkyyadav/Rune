@@ -77,6 +77,9 @@ function gatewayWith(names: ProviderName[], capped: ProviderName, fallbackOrder?
     defaultProvider: capped,
     maxRetries: 0,
     retryBaseMs: 1,
+    // Ranking documents the SUBSTITUTE chain, which is now the explicit flex
+    // opt-in (model integrity pins by default — see model-pin.test.ts).
+    modelIntegrity: "flex",
     ...(fallbackOrder ? { fallbackOrder } : {}),
   });
   const stubs = new Map<ProviderName, Stub>();

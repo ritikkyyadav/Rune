@@ -708,6 +708,21 @@ export class AgentLoop {
         `reasoning effort pinned to the ceiling for the rest of the run: ${why}`,
       );
     };
+    // The latch used to hold for the REMAINDER of the run: one failed check
+    // at turn 3 pinned an xhigh ceiling for the next seventy turns, at a
+    // measured ~20s per completion. Green checks are the one mechanical
+    // signal that the difficulty has actually passed, so they release it —
+    // the next failure latches again, and every transition stays audited.
+    const releaseEffortLatch = (why: string): void => {
+      if (!effortLatched) return;
+      effortLatched = false;
+      this.report(
+        "loop.effort_released",
+        "debug",
+        "effortRoute",
+        `reasoning effort unpinned — ${why}; mechanical turns route down again`,
+      );
+    };
     // Each remembered call carries the write count at the moment it was issued.
     // Repetition only means "stuck" when nothing changed between the tries —
     // see the duplicate check below.
@@ -1382,6 +1397,7 @@ export class AgentLoop {
             if (result.ran && result.passed) {
               projectChecksPassed = true;
               verifyStillFailing = false;
+              releaseEffortLatch("project checks passed");
             }
             if (result.ran && !result.passed) {
               verifyStillFailing = true;
@@ -2333,7 +2349,8 @@ export class AgentLoop {
             if (!p.deterministicallyRefused) {
               const shapeKey = failureShapeSignature(p.tc.toolName, output.error ?? "");
               if (sameShapeFailure.key === shapeKey) sameShapeFailure.count++;
-              else sameShapeFailure = { key: shapeKey, tool: p.tc.toolName, count: 1, noted: false };
+              else
+                sameShapeFailure = { key: shapeKey, tool: p.tc.toolName, count: 1, noted: false };
             }
             if (sameShapeFailure.count === 3 && !sameShapeFailure.noted) {
               sameShapeFailure.noted = true;

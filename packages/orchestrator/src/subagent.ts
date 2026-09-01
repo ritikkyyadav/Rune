@@ -1,4 +1,4 @@
-import type { LlmGateway, ProviderName } from "@gear/llm-gateway";
+import type { LlmGateway, ProviderName, ReasoningEffort } from "@gear/llm-gateway";
 import type { ModelTier } from "@gear/shared";
 import type {
   ToolCallInput,
@@ -38,7 +38,14 @@ export interface SubagentDeps {
    * rebuilds its gateway on every key edit/provider toggle, and a snapshot
    * taken at startup would go stale.
    */
-  resolve?: (tier?: ModelTier) => { gateway: LlmGateway; model: string; provider: ProviderName };
+  resolve?: (tier?: ModelTier) => {
+    gateway: LlmGateway;
+    model: string;
+    provider: ProviderName;
+    /** Set by mirror/configured orchestration modes: the child's reasoning
+     *  ceiling. Absent keeps the historical hard-coded "high". */
+    thinkingEffort?: ReasoningEffort;
+  };
   /** Same prompt-injection probe used by the parent agent. */
   toolResultProcessor?: ToolResultProcessor;
 }
@@ -310,6 +317,9 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
             // The budget is stated in the prompt, not just enforced behind it:
             // a scout that does not know its limit cannot summarize before it.
             systemPrompt: systemPrompt + budgetContract(budget.maxTurns),
+            // Mirror/configured orchestration passes the session's reasoning
+            // dial through; absent, the child keeps its historical "high".
+            ...(live.thinkingEffort ? { thinkingEffort: live.thinkingEffort } : {}),
             toolResultProcessor: deps.toolResultProcessor,
             // Show the clock the contract above tells it to watch.
             turnBudgetNotice: true,

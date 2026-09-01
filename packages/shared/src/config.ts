@@ -238,6 +238,31 @@ export interface GearConfig {
      * Ordinary rate limits are unaffected — they clear in seconds.
      */
     onQuotaExceeded?: string;
+    /**
+     * Whether mid-task inference may move to a different provider/model at
+     * all. "pin" (default): the model that started the task finishes it —
+     * rate limits wait it out, caps stop with the resume window, and nothing
+     * weaker ever inherits the work. "flex" restores the substitute chain
+     * (capacity-ranked, labeled) for lineups that prefer a degraded answer
+     * over a paused run. `[fallback] order` only matters under "flex".
+     */
+    modelIntegrity?: string;
+  };
+  /**
+   * Sub-agent orchestration (`[subagents]`).
+   *   mode = "auto"       (default) delegate freely, tier-routed
+   *   mode = "off"        no sub-agents; one agent does everything itself
+   *   mode = "configured" every sub-agent runs `model` ("provider/model" or a
+   *                       model id on the session's provider) at `effort`
+   *   mode = "mirror"     every sub-agent runs the session's exact model,
+   *                       provider, and reasoning effort
+   */
+  subagents?: {
+    mode?: string;
+    /** "configured": the model sub-agents run — "provider/model" or a model id. */
+    model?: string;
+    /** "configured": sub-agent reasoning effort (none|minimal|low|medium|high|xhigh|max). */
+    effort?: string;
   };
   /**
    * Post-edit verification (`[verify]`). Auto-detection covers the common

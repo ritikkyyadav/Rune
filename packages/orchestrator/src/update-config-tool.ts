@@ -46,15 +46,17 @@ export const UPDATE_CONFIG_TOOL_SCHEMA: ToolSchema = {
       setting: {
         type: "string",
         description:
-          "Which setting to change: gear, sandbox, or auto_commit (aliases like " +
-          '"mode" or "permission_mode" work). Omit to list all current settings.',
+          "Which setting to change: gear, sandbox, effort, doctrine, routing, subagents, or " +
+          'auto_commit (aliases like "mode" or "permission_mode" work). Omit to list all ' +
+          "current settings.",
       },
       value: {
         type: "string",
         description:
           'The new value, e.g. "1" / "2" / "3" / "4" / "auto" for gear (1 guided · 2 edits · ' +
-          "3 workspace + sandboxed shell · 4 full autonomy · auto classifier), or " +
-          '"on"/"off" for sandbox and auto_commit. Omit to read the current value.',
+          "3 workspace + sandboxed shell · 4 full autonomy · auto classifier), " +
+          '"off"/"auto"/"configured"/"mirror" for subagents, or "on"/"off" for booleans. ' +
+          "Omit to read the current value.",
       },
     },
     required: [],

@@ -116,6 +116,22 @@ export function normalizeQuotaPolicy(value: unknown): QuotaPolicy {
   return value === "degrade" ? "degrade" : "stop";
 }
 
+/** Whether mid-task inference may move to a different provider/model. */
+export type ModelIntegrity = "pin" | "flex";
+
+/**
+ * Read `[fallback] modelIntegrity`. Anything unrecognized resolves to "pin",
+ * the safe direction: the model that started a task finishes it. A cooling or
+ * capped provider WAITS (and self-heals the moment the limit lifts) instead of
+ * handing the work to whatever registered next — a weaker model quietly
+ * inheriting a frontier model's task poisons the work in a way no banner
+ * undoes. "flex" restores the substitute chain for lineups where a degraded
+ * answer genuinely beats a dead run.
+ */
+export function normalizeModelIntegrity(value: unknown): ModelIntegrity {
+  return value === "flex" ? "flex" : "pin";
+}
+
 /**
  * Validate a user-written `[fallback] order` list: keep the known provider ids,
  * in order, without duplicates, and report the rest.

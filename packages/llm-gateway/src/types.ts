@@ -645,6 +645,19 @@ export interface GatewayConfig {
    * clears in seconds.
    */
   quotaPolicy?: "stop" | "degrade";
+  /**
+   * Whether mid-task inference may move to a DIFFERENT provider/model at all.
+   *
+   *   "pin"  — the model that started the task finishes it (default). A
+   *            cooling or capped provider is retried and waited out rather
+   *            than substituted; a retired model stops the run with /model
+   *            guidance. Nothing weaker ever quietly inherits the work.
+   *   "flex" — the historical substitute chain: capacity-ranked fallback
+   *            providers, each handover labeled.
+   *
+   * Sourced from `[fallback] modelIntegrity` in config.toml.
+   */
+  modelIntegrity?: "pin" | "flex";
 }
 
 /** What the gateway reports to the black box (kept provider-agnostic). */
