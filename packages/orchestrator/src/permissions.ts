@@ -363,6 +363,16 @@ export class PermissionBroker {
       return { type: "allowed", basis: "safe_tool" };
     }
 
+    // An EXACT grant is the most specific decision the broker holds: a human
+    // approved this precise payload. It answers before the mode shortcuts so
+    // its basis survives to the Auto reviewer — which treats an exact human
+    // grant as a capability for exactly this call, where a workspace-tier
+    // allow would send the same payload back through the classifier.
+    const exact = this.findExactGrant(schema.name, args);
+    if (exact) {
+      return { type: "allowed", basis: "exact_grant" };
+    }
+
     // 2nd gear permits only deterministic, workspace-confined edits. It does
     // not approve shell commands or delegated workers.
     if (this.mode === "gear-2" && this.isWorkspaceEditConfined(schema, args)) {
@@ -543,6 +553,17 @@ export class PermissionBroker {
   private static escapesContainment(tool: string, args: Record<string, unknown>): boolean {
     if (tool !== "bash") return false;
     return args.network === true || args.run_in_background === true;
+  }
+
+  /** The narrow lookup behind the exact-grant fast path in check(). */
+  private findExactGrant(tool: string, args: Record<string, unknown>): PermissionRule | undefined {
+    const serialized = stableArgs(args);
+    return this.sessionGrants.find(
+      (grant) =>
+        grant.tool === tool &&
+        grant.exactArgs === serialized &&
+        !(grant.expiresAt && new Date() > grant.expiresAt),
+    );
   }
 
   private findGrant(tool: string, args: Record<string, unknown>): PermissionRule | undefined {

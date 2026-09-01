@@ -9,7 +9,11 @@ import {
   type ToolSchema,
 } from "@gear/tool-registry";
 
-import { routeContainment, type ContainmentOutcome } from "./auto-containment";
+import {
+  routeContainment,
+  type ContainmentKind,
+  type ContainmentOutcome,
+} from "./auto-containment";
 import { configModeToPermissionMode } from "./permissions";
 import {
   hasHighConfidenceFinding,
@@ -747,6 +751,21 @@ export interface AutoModeDeferral {
   /** One line the user reads: what would have happened, and why it did not. */
   reason: string;
   at: Date;
+  /**
+   * The exact arguments of the declined call, held verbatim so "run exactly
+   * this" can run precisely what the agent asked for — never a paraphrase of
+   * it. Raw and unredacted, and it stays in-process: every displayed form
+   * uses `summary`, which is bounded and secret-scrubbed.
+   */
+  args: Record<string, unknown>;
+  /**
+   * Which route family held it. A `defer` left the step entirely undone; a
+   * `redirect` already ran a safe stand-in, so only the real effect is
+   * outstanding.
+   */
+  kind: ContainmentKind;
+  /** `redirect` — the stand-in that ran instead, so the list can say the knowledge half is done. */
+  substitute?: string;
 }
 
 /** Newest user answers kept for the reviewer (each Q+A is already bounded). */
@@ -1310,6 +1329,9 @@ export class AutoModeRun {
         route: outcome.route,
         reason: breaker,
         at: new Date(),
+        args: action.args,
+        kind: outcome.kind,
+        substitute: outcome.substitute,
       });
     }
 

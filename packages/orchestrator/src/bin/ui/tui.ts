@@ -121,6 +121,15 @@ import {
   QUESTION_SKIPPED,
   QUESTION_UNANSWERED,
 } from "./question";
+import {
+  heldAction,
+  heldCloseReceipt,
+  heldLines,
+  heldOutcomeRow,
+  nextUndecided,
+  type HeldOutcome,
+} from "./held";
+import type { AutoModeDeferral } from "../../auto-mode";
 import type { Brief } from "../../brief";
 import { TurnRenderer, userBlock, renderReplay, HEX } from "./turn";
 import { truncate, clampVisible, setTermWidthOverride } from "./render";
@@ -192,6 +201,13 @@ export interface TuiContext {
    * hours because a 429 stop scrolled by.
    */
   quotaAutoResume?: boolean;
+  /**
+   * Interactive end-of-turn held steps (default true; `[permissions.autoMode]
+   * heldStepPrompt = false` opts out). Each outward step Auto declined can be
+   * approved — "run exactly this" — or left unrun, per step; off, the list
+   * prints as plain text the way it always did.
+   */
+  heldStepPrompt?: boolean;
 }
 
 type Mode =
@@ -202,6 +218,7 @@ type Mode =
   | "keys"
   | "ask"
   | "question"
+  | "held"
   | "sessions"
   | "memory"
   | "review";
@@ -491,6 +508,19 @@ class Tui {
      *  instead of stating a 60 that was true only when the question opened. */
     deadline?: number;
   } | null = null;
+  /** End-of-turn held steps: the interactive half of Auto's deferral ledger. */
+  private heldState: {
+    steps: AutoModeDeferral[];
+    outcomes: Array<HeldOutcome | null>;
+    sel: number;
+    running: boolean;
+    /** Cancels the step executing right now (esc while running). */
+    abort?: AbortController;
+  } | null = null;
+  /** Deferrals delivered by the engine mid-teardown, held until the turn's
+   *  finally decides whether the panel may open (an aborted or queued-over
+   *  turn gets the plain printed list instead). */
+  private pendingHeld: AutoModeDeferral[] | null = null;
 
   constructor(private ctx: TuiContext) {
     // Default: the fixed-chrome viewport. --inline keeps the legacy layout,
@@ -532,8 +562,15 @@ class Tui {
       if (chip) this.print(chip);
     });
     engine.setAutoDeferralNotifier?.((deferrals) => {
-      const block = autoDeferralSummary(deferrals);
-      if (block) this.print(block);
+      if (this.ctx.heldStepPrompt === false) {
+        const block = autoDeferralSummary(deferrals);
+        if (block) this.print(block);
+        return;
+      }
+      // The engine fires this from the run's teardown, while runTurn is still
+      // consuming events. Hold the list; the finally block opens the panel
+      // only when the person is actually free to answer it.
+      this.pendingHeld = [...deferrals];
     });
     engine.setQuestionHandler(this.questionHandler);
     engine.setBriefHandler(this.briefHandler);
@@ -861,6 +898,19 @@ class Tui {
         caretRow: card.caretRow + 1,
         caretCol: card.caretCol,
       };
+    }
+    if (this.mode === "held" && this.heldState) {
+      const st = this.heldState;
+      const lines = heldLines({
+        steps: st.steps,
+        outcomes: st.outcomes,
+        selected: st.sel,
+        running: st.running,
+        width: this.contentCols(),
+      });
+      // The caret parks on the hint row: there is no field here, and the
+      // marker already says where the selection is.
+      return { lines, caretRow: lines.length - 1, caretCol: F.BODY.length };
     }
     if (this.mode === "ask" && this.askState) {
       const base = renderComposer({
@@ -1608,6 +1658,9 @@ class Tui {
         break;
       case "question":
         this.questionKey(key);
+        break;
+      case "held":
+        this.heldKey(key);
         break;
       case "review":
         this.workReviewKey(key);
@@ -4633,13 +4686,154 @@ class Tui {
       this.activeLoopId = null;
       this.aborting = false;
       this.mode = "input";
+      // Captured BEFORE the drain: drainQueue starts a queued turn without
+      // synchronously leaving "input" mode, so the mode alone cannot say
+      // whether the person's type-ahead is already driving.
+      const hadQueued = this.queued.length > 0;
       this.drainQueue(wasAborted);
       if (quotaStop && !wasAborted) {
         this.scheduleQuotaResume(quotaStop);
       } else if (!quotaStop) {
         this.quotaResumeAttempts = 0; // a turn without a wall resets the backoff
       }
+      // Held steps open their panel only when the person is free to answer:
+      // not mid-abort, not with typed-ahead input already driving, not for a
+      // scheduled loop iteration, and not over a quota wall's auto-resume.
+      // Everywhere else the list prints exactly as it used to.
+      if (this.pendingHeld?.length) {
+        const held = this.pendingHeld;
+        this.pendingHeld = null;
+        if (!wasAborted && !quotaStop && !scheduledLoop && !hadQueued && this.mode === "input") {
+          this.openHeldPanel(held);
+        } else {
+          const block = autoDeferralSummary(held);
+          if (block) this.print(block);
+        }
+      }
     }
+  }
+
+  // -- held steps --
+  // The interactive half of Auto's end-of-turn ledger. The engine holds the
+  // exact declined call; approving a row runs precisely that call as an exact
+  // session grant — the "approve exactly this" surface, so the way past a held
+  // publish stops being a grant of everything.
+
+  private openHeldPanel(steps: AutoModeDeferral[]): void {
+    this.heldState = {
+      steps,
+      outcomes: steps.map(() => null),
+      sel: 0,
+      running: false,
+    };
+    this.mode = "held";
+    setTitle({ kind: "waiting" }, this.titleProject());
+    this.warp("permission_request", { toolName: "held steps" });
+    this.scheduleDraw();
+  }
+
+  private heldKey(key: Key): void {
+    const st = this.heldState;
+    if (!st) return;
+    const action = heldAction(key, {
+      steps: st.steps,
+      outcomes: st.outcomes,
+      selected: st.sel,
+      running: st.running,
+    });
+    switch (action.kind) {
+      case "move":
+        st.sel = action.selected;
+        this.scheduleDraw();
+        break;
+      case "run":
+        void this.runHeldSelected(action.index);
+        break;
+      case "skip":
+        st.outcomes[action.index] = "skipped";
+        this.advanceHeld(action.index);
+        break;
+      case "cancel":
+        st.abort?.abort();
+        break;
+      case "leave":
+        this.closeHeldPanel();
+        break;
+      default:
+        break;
+    }
+  }
+
+  private async runHeldSelected(index: number): Promise<void> {
+    const st = this.heldState;
+    if (!st || st.running) return;
+    const step = st.steps[index]!;
+    st.sel = index;
+    st.running = true;
+    st.abort = new AbortController();
+    this.scheduleDraw();
+    const firstLine = (v: string): string => v.split("\n").find((l) => l.trim()) ?? "";
+    let outcome: HeldOutcome;
+    let detail: string;
+    try {
+      const result = await this.ctx.engine.runHeldStep(this.ctx.sessionId, step, st.abort.signal);
+      if (!result.ran) {
+        outcome = "refused";
+        detail = result.refusal ?? "refused";
+      } else if (result.output?.success) {
+        outcome = "ran";
+        detail = firstLine(result.output.result ?? "").slice(0, 60) || "done";
+      } else {
+        outcome = "failed";
+        detail = firstLine(result.output?.error ?? "failed").slice(0, 80);
+      }
+    } catch (error) {
+      outcome = "failed";
+      detail = firstLine(error instanceof Error ? error.message : String(error)).slice(0, 80);
+    }
+    // The panel may have been superseded (a due loop task) while the step ran;
+    // the transcript row still records what happened.
+    this.print(heldOutcomeRow(step, outcome, detail));
+    if (this.heldState !== st) return;
+    st.running = false;
+    st.abort = undefined;
+    st.outcomes[index] = outcome;
+    this.advanceHeld(index);
+  }
+
+  private advanceHeld(from: number): void {
+    const st = this.heldState;
+    if (!st) return;
+    const next = nextUndecided(st.outcomes, from);
+    if (next === -1) {
+      this.closeHeldPanel();
+      return;
+    }
+    st.sel = next;
+    this.scheduleDraw();
+  }
+
+  /** Close the panel; whatever is still undecided stays unrun, and the next
+   *  run is told so instead of re-litigating it. */
+  private closeHeldPanel(): void {
+    const st = this.heldState;
+    if (!st) return;
+    st.abort?.abort();
+    // A step executing right now is not "left unrun" — its own outcome note
+    // (ran or failed) tells the truth when it settles.
+    const runningIndex = st.running ? st.sel : -1;
+    const unrun = st.steps.filter(
+      (_, i) => i !== runningIndex && (st.outcomes[i] === null || st.outcomes[i] === "skipped"),
+    );
+    for (let i = 0; i < st.outcomes.length; i++) {
+      if (st.outcomes[i] === null) st.outcomes[i] = "skipped";
+    }
+    this.ctx.engine.dismissHeldSteps(unrun);
+    this.print(heldCloseReceipt(st.outcomes));
+    this.heldState = null;
+    this.mode = "input";
+    setTitle({ kind: "idle" }, this.titleProject());
+    this.scheduleDraw();
   }
 
   // -- quota auto-resume --
@@ -4703,6 +4897,11 @@ class Tui {
   }
 
   private async runDueLoopTask(): Promise<void> {
+    // A due loop iteration outranks an unanswered held panel: leaving it open
+    // would stall every later iteration of an unattended session, which is the
+    // exact strand-the-run failure this release keeps paying for. The panel
+    // closes as "left unrun" and the loop proceeds.
+    if (this.mode === "held" && !this.heldState?.running) this.closeHeldPanel();
     if (this.mode !== "input" || this.queued.length > 0 || this.activeLoopId) return;
     const task = this.ctx.engine.claimDueLoopTask(this.ctx.sessionId);
     if (!task) return;
