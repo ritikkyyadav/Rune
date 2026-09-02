@@ -20,6 +20,7 @@ import { NotebookStore } from "../notebook/store";
 import { repoKey as repoKeyOf } from "../notebook/fingerprint";
 import { PLAYBOOK_PENDING_REL, PLAYBOOK_REL, playbookEntries } from "../playbook";
 import {
+  GARDENER_OFF_LIMITS,
   deriveRunRetro,
   foldTurnRetros,
   gardenerBrief,
@@ -33,6 +34,7 @@ import type { RetroSample, RunRetro, ScoreRow } from "../retro";
 import { TaskStateStore } from "../task-state";
 import { configHash } from "../evolve/config-hash";
 import { consentPath, learnedSkillsEnabled, setLearnedSkills } from "../evolve/consent";
+import { installGardenerGuard } from "../evolve/gardener-guard";
 import { activeThreshold, lessonBaseline, stageCounts } from "../evolve/lessons";
 import {
   activePromotions,
@@ -438,6 +440,19 @@ async function cmdGardener(
       say();
       return 2;
     }
+    // The off-limits list was enforced as text in a prompt, which is a request,
+    // not a boundary. Install the mechanical write-deny into the shared hooks
+    // directory BEFORE the run starts, so the branch it produces cannot carry a
+    // change to the doctrine, the permission broker, org policy or the secret
+    // stores. A person still reviews the branch; this is what makes that review
+    // about the fix rather than about what else the run touched.
+    const guard = installGardenerGuard(workspaceRoot);
+    say(
+      guard.installed
+        ? `  ${dim("guard")}     ${info(guard.path)} ${dim(`· refuses a commit touching ${GARDENER_OFF_LIMITS.length} off-limits paths`)}`
+        : `  ${warn("!")} ${dim(`no write-deny installed: ${guard.reason}`)}`,
+    );
+    say();
     const { runDetach } = await import("./detach-cli");
     await runDetach(["detach", brief], { worktree: true, workspace: workspaceRoot });
     return 0;
