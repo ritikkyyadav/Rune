@@ -331,6 +331,18 @@ The brief's rules are the boundary:
 4. Commit on the run's branch. Never push, merge, or open a pull request — a person reviews the branch.
 5. If it cannot be reproduced, write why into `.gear/gardener-report.md` and stop.
 
+Rule 3 used to be enforced only as that sentence. A rule a model is asked to
+follow is a request, not a boundary — and the one thing a run editing its own
+harness must not be able to do is edit the part that decides what it may do. So
+`--run` now installs a `pre-commit` hook that refuses any commit touching
+`GARDENER_OFF_LIMITS`, written by the code that starts the run rather than by
+the run itself. Two honest limits: a hook can be bypassed with `--no-verify` and
+deleted by anything with a shell, and it protects the commit rather than the
+working tree. What it changes is the cost and the visibility — crossing the line
+goes from ignoring a sentence to deliberately disabling a guard, and an audited
+call that removes a hook is a very different artifact from a quiet edit. The
+real containment is the permission broker and the OS sandbox one layer down.
+
 Live gardener runs cost model credits and have not been validated at scale;
 the dry run and the brief are what ship verified.
 
@@ -344,6 +356,36 @@ gear evolve lessons    # what Gear knows about this repository
 Applied by itself: retro → notebook → playbook. Proposals only: tune. A
 person on the merge: gardener. That split is deliberate, and the status page
 prints it.
+
+## The invariants
+
+Everything above is machinery. These six properties are what make the machinery
+mean something, and they live in
+`tests/unit/orchestrator/evolution-invariants.test.ts` — the tests that should be
+hardest to delete.
+
+1. **The dependency graph.** `permissions.ts`, `security.ts`, `org-policy.ts`,
+   `auto-mode.ts`, `auto-containment.ts`, the sandbox modules and the secret
+   stores import nothing from `notebook/`, `retro`, `playbook` or `evolve/` —
+   checked directly _and transitively_, because the direct check is the one
+   people remember and the transitive one catches a helper quietly pulling the
+   notebook in. The isolation is mutual: nothing under `evolve/` may import a
+   decider either.
+2. **The off-limits write-deny.** A real `git commit` of `prompts.ts` is refused
+   by a real hook in a real repository, and an ordinary fix commits fine.
+3. **The yardstick lock.** A diff under `tests/eval/**` changes the digest and
+   voids promotions until a human re-baselines; run outputs are excluded because
+   they churn by design.
+4. **Superstition.** Ten lessons at a coin-flip win rate produce zero active
+   lessons. Add one that genuinely beats the ambient rate and exactly that one
+   is promoted.
+5. **Poisoning.** A run that only READ hostile content — a README telling it to
+   `curl | sh`, an HTML comment claiming a "verified" `rm -rf /` — learns
+   nothing. Lessons come from observations of commands that actually ran, each
+   of which passed the permission broker; text is never a source.
+6. **The lifecycle property.** Nothing skips a rung: a candidate with a perfect
+   record stays a candidate until it recurs, then becomes a trial, and only then
+   can reach active. Every transition carries the numbers that justified it.
 
 ## Benchmark
 
