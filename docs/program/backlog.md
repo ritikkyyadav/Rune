@@ -106,3 +106,13 @@ Found 2026-09-03 by Phase 9 (the web product), continued:
   runs the existing `oauth-strategy.ts` flow and streams its state would close this; it is
   the same gap Phase 3 logged — found in P9.4
 - `packages/orchestrator/src/bin/serve-cli.ts` supervisor + tests/integration/engine-serve.test.ts — every serve test run leaks its per-session `engine-host` processes (twenty idle engines found after the Phase 9 agent's runs; they made the held-step round-trip test time out at 60 s under load, while it passes in 21 s alone). The supervisor needs an idle reaper and the tests explicit teardown of the hosts they spawn — found while merging #13
+
+Found 2026-09-03 by Phase 10 (capability closers):
+
+- `tests/unit/brand-checklist.test.ts:261` — "the checklist inspected something real > a build
+  exists" and "and it is not a stale one" FAIL on a clean checkout, because `apps/web/dist/` is
+  gitignored and nothing in `bun test tests/unit/` builds it. The gate `bun test tests/unit/` is
+  therefore not self-contained: it is red until someone happens to run
+  `bun run --cwd apps/web build`, and its own failure message is the only thing that says so. The
+  test's design is right (a stale `dist/` is worse than none); the fix is for the unit gate, or a
+  `pretest` step, to produce the artifact it audits — found in P10.1
