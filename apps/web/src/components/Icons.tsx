@@ -1,3 +1,10 @@
+// ─── Icons ───
+//
+// Lucide geometry, drawn inline: 16px, 1.5px stroke, `currentColor`, no fill.
+// Inline rather than an icon font or a sprite because an icon that inherits the
+// text colour can never disagree with the token beside it, and because a
+// dependency for twenty-nine paths is a dependency.
+
 import type { ReactNode, SVGProps } from "react";
 
 export type IconProps = SVGProps<SVGSVGElement>;
@@ -5,12 +12,12 @@ export type IconProps = SVGProps<SVGSVGElement>;
 function IconBase({ children, ...props }: IconProps & { children: ReactNode }) {
   return (
     <svg
-      width="18"
-      height="18"
+      width="16"
+      height="16"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="1.75"
+      strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
@@ -276,6 +283,42 @@ export function CloseIcon(props: IconProps) {
   return (
     <IconBase {...props}>
       <path d="m6 6 12 12M18 6 6 18" />
+    </IconBase>
+  );
+}
+
+export function FileIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+      <path d="M14 2v6h6" />
+    </IconBase>
+  );
+}
+
+export function PlugIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M9 2v6" />
+      <path d="M15 2v6" />
+      <path d="M6 8h12v3a6 6 0 0 1-12 0Z" />
+      <path d="M12 17v5" />
+    </IconBase>
+  );
+}
+
+export function CommandIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M15 6a3 3 0 1 1 3 3h-3Zm0 0v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12" />
+    </IconBase>
+  );
+}
+
+export function CheckIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="m5 12 5 5L20 7" />
     </IconBase>
   );
 }

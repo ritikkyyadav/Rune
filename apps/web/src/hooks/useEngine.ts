@@ -103,6 +103,28 @@ export function useEngine(options: UseEngineOptions) {
 
   const connectRef = useRef<(() => Promise<void>) | null>(null);
   /**
+   * Ask the server for the page again, once, when it is up but our token is not.
+   *
+   * Returns whether a reload was started. Everything here is best-effort: a
+   * browser that refuses session storage, a fetch that throws, a location that
+   * cannot be assigned — each falls back to a plain retry, which is the
+   * behaviour this replaced.
+   */
+  const recoverByReload = useCallback(async (): Promise<boolean> => {
+    const KEY = "gear.reloadedForToken";
+    try {
+      if (window.sessionStorage?.getItem(KEY)) return false;
+      const probe = await fetch(window.location.href, { cache: "no-store" });
+      if (!probe.ok) return false;
+      window.sessionStorage?.setItem(KEY, String(Date.now()));
+      window.location.reload();
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  /**
    * Reconnect, and on loopback recover a RESTARTED server rather than only a
    * dropped socket.
    *
@@ -121,16 +143,20 @@ export function useEngine(options: UseEngineOptions) {
     retriesRef.current += 1;
     reconnectTimerRef.current = setTimeout(() => {
       if (attempt >= RELOAD_AFTER_ATTEMPTS && canReloadForToken(activeEndpointSource())) {
-        try {
-          window.location.reload();
-          return;
-        } catch {
-          /* no location (tests): fall through to a plain retry */
-        }
+        // Reload only if the SERVER is answering and it is our token that is
+        // stale. If the page itself cannot be fetched the engine is simply
+        // down, and reloading would replace a quiet retry with a reload loop.
+        // Once per page, recorded in session storage, because a bug that makes
+        // a browser tab reload forever is worse than a connection that stays
+        // red until someone looks at it.
+        void recoverByReload().then((reloading) => {
+          if (!reloading) void connectRef.current?.();
+        });
+        return;
       }
       void connectRef.current?.();
     }, delay);
-  }, []);
+  }, [recoverByReload]);
 
   const onStream = useCallback(
     (name: string, payload: Record<string, unknown>) => {
@@ -201,6 +227,13 @@ export function useEngine(options: UseEngineOptions) {
       // No engine (browser preview): stay usable, and clearly labelled.
       setConnectionState("connected");
       retriesRef.current = 0;
+      try {
+        // A successful connection clears the one-shot reload guard, so a LATER
+        // restart can recover the same way.
+        window.sessionStorage?.removeItem("gear.reloadedForToken");
+      } catch {
+        /* storage refused: the guard simply stays set for this tab */
+      }
     } catch (err) {
       optionsRef.current.onError?.(
         `connect failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -465,6 +498,78 @@ export function useEngine(options: UseEngineOptions) {
     [command],
   );
 
+  /**
+   * A session's whole history, in order, from the engine.
+   *
+   * `resume_session` returns the user's turns and nothing else — no tool calls,
+   * no diffs, no permissions, no answers. `subscribe` returns the settled event
+   * stream plus those user turns with their sequences, which is the same union
+   * the live stream carries, so a resumed session rebuilds through the SAME
+   * reducer as a running one and looks identical. A page can be closed; the
+   * engine keeps the work, and this is the call that makes that true.
+   */
+  const subscribeSession = useCallback(
+    async (sessionId: string) => {
+      const r = await command<{
+        sessionId: string;
+        seq: number;
+        backfill: Array<{ seq: number; event: EngineEvent }>;
+        userTurns: Array<{ seq: number; text: string }>;
+        live: EngineEvent[];
+      }>("subscribe", { sessionId }, "open session");
+      return r.ok ? r.value : null;
+    },
+    [command],
+  );
+
+  // ─── The workspace, read-only (P9.4) ───
+
+  const listFiles = useCallback(
+    async (path?: string) => {
+      const r = await command<{
+        root: string;
+        path: string;
+        entries: Array<{ name: string; path: string; dir: boolean; size: number }>;
+        reason?: string;
+      }>("list_files", { path }, "list files");
+      return r.ok ? r.value : null;
+    },
+    [command],
+  );
+
+  const readTextFile = useCallback(
+    async (path: string) => {
+      const r = await command<{
+        path: string;
+        text: string;
+        bytes: number;
+        truncated: boolean;
+        binary: boolean;
+        reason?: string;
+      }>("read_text_file", { path }, "read file");
+      return r.ok ? r.value : null;
+    },
+    [command],
+  );
+
+  const listConnectors = useCallback(async () => {
+    const r = await command<{
+      servers: Array<{
+        name: string;
+        scope: string;
+        where: string;
+        enabled: boolean;
+        health: "ok" | "failed" | "disabled" | "unknown";
+        authed: boolean;
+        needsAuth: boolean;
+        toolCount: number;
+        error?: string;
+      }>;
+      reason?: string;
+    }>("list_connectors", {}, "list connectors");
+    return r.ok ? r.value : null;
+  }, [command]);
+
   /** Prompt assembly for a model span — the inspector's evidence (P3.4). */
   const getTurnContext = useCallback(
     async (sessionId?: string) => {
@@ -516,6 +621,10 @@ export function useEngine(options: UseEngineOptions) {
     revertPaths,
     runChecks,
     openPath,
+    listFiles,
+    readTextFile,
+    listConnectors,
+    subscribeSession,
     isProcessing,
     setIsProcessing,
     connectionState,

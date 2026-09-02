@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import type { SessionInfo, ChatMessage, MessageAttachment, ToolCallInfo, Plan } from "../lib/types";
 import { activeTransport } from "../lib/transport";
 
@@ -72,9 +72,12 @@ export function useSession() {
     }
   }, []);
 
-  useEffect(() => {
-    loadSessions();
-  }, [loadSessions]);
+  // NOT on mount: the transport opens asynchronously, so a list_sessions at
+  // mount reaches `activeTransport() === null`, returns nothing, and the list
+  // stays empty for the life of the page. That was invisible until a reload
+  // needed to bring existing sessions BACK, which is exactly the case the
+  // product depends on — a page can be closed; the engine keeps the work.
+  // App.tsx calls this when the engine reports connected.
 
   // ─── Create session ───
 

@@ -608,13 +608,11 @@ export function Transcript(props: {
       <div className="stream-inner">
         {props.turns.length === 0 ? (
           <div className="empty-state">
-            <GearMark size={40} />
-            <h2>Give Gear a coding task.</h2>
+            <GearMark size={36} />
+            <h2>Nothing running.</h2>
             <p>
-              It narrates what it will do before it does it, shows every tool it runs with the
-              evidence, asks before anything risky in your current gear, and leaves a checkpoint you
-              can rewind. The trace rail on the right records every model call, tool, permission and
-              checkpoint of each turn.
+              Ask Gear to do something. It says what it will do before it does it, shows every tool
+              it runs with the evidence, and asks before anything your current gear does not cover.
             </p>
             <div className="starters">
               {STARTERS.map((s) => (
@@ -625,9 +623,8 @@ export function Transcript(props: {
               ))}
               {props.demo?.available ? (
                 <button className="starter" onClick={props.demo.onRun}>
-                  <b>Run the demo turn</b>
-                  Browser preview only: replays a recorded turn through the real renderers — no
-                  engine attached.
+                  <b>Replay a recorded turn</b>A reference run through the real renderers — no model
+                  called, nothing spent.
                 </button>
               ) : null}
             </div>

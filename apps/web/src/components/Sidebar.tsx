@@ -1,9 +1,31 @@
+// ─── The sidebar ───
+//
+// Workspace at the top, five ways in, then every session grouped by day, then a
+// quiet footer that says which gear you are in, what today has cost and which
+// version is running.
+//
+// Sessions are grouped rather than paginated because the question a person
+// actually has is "the thing I was doing yesterday", not "page 2". The groups
+// are the same ones the console prints, so switching surfaces does not mean
+// re-learning where anything is.
+
 import { useMemo } from "react";
 import { GearMark } from "./GearMark";
+import {
+  ChatIcon,
+  ChevronDownIcon,
+  FolderIcon,
+  PlugIcon,
+  ReviewIcon,
+  SearchIcon,
+  SettingsIcon,
+} from "./Icons";
 import type { SessionInfo } from "../lib/types";
 import type { GearInfo } from "../lib/gears";
 
-/** Today · Thu Aug 20 / Yesterday · … / Past 7 days / Mon YYYY — the CLI's grouping. */
+export type NavItem = "sessions" | "files" | "connect" | "settings";
+
+/** Today · Thu Aug 20 / Yesterday · … / Past 7 days / Mon YYYY — the console's grouping. */
 export function sessionGroupLabel(iso: string, now = new Date()): string {
   const value = new Date(iso);
   if (Number.isNaN(value.getTime())) return "Earlier";
@@ -17,30 +39,33 @@ export function sessionGroupLabel(iso: string, now = new Date()): string {
   return value.toLocaleDateString([], { month: "short", year: "numeric" });
 }
 
-function shortHome(path: string): string {
+export function shortHome(path: string): string {
   return path.replace(/^\/Users\/[^/]+/, "~").replace(/^\/home\/[^/]+/, "~");
+}
+
+function folderName(path: string): string {
+  const parts = path.replace(/\/+$/, "").split("/");
+  return parts[parts.length - 1] || path;
 }
 
 export function Sidebar(props: {
   sessions: SessionInfo[];
   activeId: string | null;
   loading: boolean;
-  query: string;
-  onQuery: (q: string) => void;
+  nav: NavItem;
+  onNav: (item: NavItem) => void;
   onSelect: (id: string) => void;
   onNew: () => void;
+  onSearch: () => void;
   reviewCount: number;
-  onReview: () => void;
-  env: { gear: GearInfo; model: string; ctxPercent?: number; workspace: string; branch?: string };
-  onOpenSettings: () => void;
-  searchRef?: React.RefObject<HTMLInputElement | null>;
+  workspace: string;
+  version: string;
+  gear: GearInfo;
+  /** Today's spend, from the engine. `null` means no data — never zero. */
+  costToday: number | null;
 }) {
   const groups = useMemo(() => {
-    const q = props.query.trim().toLowerCase();
-    const list = props.sessions
-      .filter((s) => !q || `${s.title} ${s.workspace} ${s.model} ${s.id}`.toLowerCase().includes(q))
-      .slice()
-      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+    const list = props.sessions.slice().sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
     const out: Array<{ label: string; items: SessionInfo[] }> = [];
     for (const s of list) {
       const label = sessionGroupLabel(s.updatedAt);
@@ -49,41 +74,67 @@ export function Sidebar(props: {
       else out.push({ label, items: [s] });
     }
     return out;
-  }, [props.sessions, props.query]);
+  }, [props.sessions]);
 
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" aria-label="Sessions and navigation">
+      {/* The workspace switcher. One folder at a time is the engine's own
+          model, so the chevron opens the honest answer — how to point it
+          somewhere else — rather than a picker that cannot deliver. */}
+      <div className="side-head">
+        <GearMark size={18} />
+        <b title={props.workspace}>{folderName(props.workspace)}</b>
+        <ChevronDownIcon className="side-chev" />
+      </div>
+      <div className="side-path" title={props.workspace}>
+        {shortHome(props.workspace)}
+      </div>
+
       <div className="side-top">
         <button className="new-task" onClick={props.onNew}>
-          ＋ New task <kbd>⌘N</kbd>
+          <ChatIcon />
+          New session <kbd>⌘N</kbd>
         </button>
-        <label className="side-search">
-          /
-          <input
-            ref={props.searchRef}
-            value={props.query}
-            onChange={(e) => props.onQuery(e.target.value)}
-            placeholder="Search title, path, model…"
-            aria-label="Search sessions"
-          />
-          <kbd>⌘K</kbd>
-        </label>
+        <button className="side-item" onClick={props.onSearch}>
+          <SearchIcon />
+          Search <kbd>⌘K</kbd>
+        </button>
       </div>
-      <nav className="side-nav">
-        <button className="side-item on">All tasks</button>
-        <button className="side-item" onClick={props.onReview}>
-          Review changes{" "}
-          {props.reviewCount > 0 ? <span className="count">{props.reviewCount}</span> : null}
+
+      <nav className="side-nav" aria-label="Sections">
+        <button
+          className={`side-item ${props.nav === "files" ? "on" : ""}`}
+          onClick={() => props.onNav("files")}
+        >
+          <FolderIcon />
+          Files
         </button>
+        <button
+          className={`side-item ${props.nav === "connect" ? "on" : ""}`}
+          onClick={() => props.onNav("connect")}
+        >
+          <PlugIcon />
+          Connect
+        </button>
+        <button
+          className={`side-item ${props.nav === "settings" ? "on" : ""}`}
+          onClick={() => props.onNav("settings")}
+        >
+          <SettingsIcon />
+          Settings
+        </button>
+        {props.reviewCount > 0 ? (
+          <button className="side-item" onClick={() => props.onNav("sessions")}>
+            <ReviewIcon />
+            Review changes <span className="count">{props.reviewCount}</span>
+          </button>
+        ) : null}
       </nav>
+
       <div className="side-sessions">
         {groups.length === 0 ? (
           <div className="side-empty">
-            {props.loading
-              ? "Loading sessions…"
-              : props.query
-                ? "No sessions match."
-                : "No sessions yet — start a task."}
+            {props.loading ? "Reading sessions…" : "No sessions yet."}
           </div>
         ) : null}
         {groups.map((group) => (
@@ -91,10 +142,6 @@ export function Sidebar(props: {
             <div className="tl-head">{group.label}</div>
             {group.items.map((s) => {
               const current = s.id === props.activeId;
-              const time = new Date(s.updatedAt).toLocaleTimeString([], {
-                hour: "numeric",
-                minute: "2-digit",
-              });
               return (
                 <button
                   key={s.id}
@@ -106,12 +153,8 @@ export function Sidebar(props: {
                   <span className="s-body">
                     <span className="s-title">{s.title || "untitled"}</span>
                     <span className="s-sub">
-                      {s.id.slice(0, 8)} · {shortHome(s.workspace)} · {s.model} · {s.eventCount}{" "}
-                      events · {time}
+                      {s.id.slice(0, 8)} · {s.model}
                     </span>
-                  </span>
-                  <span className={`s-pill ${current ? "active" : "done"}`}>
-                    {current ? "active" : "saved"}
                   </span>
                 </button>
               );
@@ -119,36 +162,16 @@ export function Sidebar(props: {
           </div>
         ))}
       </div>
+
       <div className="side-foot">
-        <div className="side-env">
-          <span className={`env-badge ${props.env.gear.id === "auto" ? "auto" : "gear"}`}>
-            {props.env.gear.arrows} {props.env.gear.label}
-          </span>
-          <span className="env-badge">{props.env.model}</span>
-          {props.env.ctxPercent ? (
-            <span className="env-badge">ctx {Math.round(props.env.ctxPercent)}%</span>
-          ) : null}
-        </div>
-        <button
-          className="side-account"
-          onClick={props.onOpenSettings}
-          style={{
-            background: "none",
-            border: "none",
-            cursor: "pointer",
-            textAlign: "left",
-            width: "100%",
-          }}
-        >
-          <GearMark size={18} />
-          <span style={{ minWidth: 0 }}>
-            <b>Local workspace</b>
-            <small>
-              {shortHome(props.env.workspace)}
-              {props.env.branch ? ` · ${props.env.branch}` : ""}
-            </small>
-          </span>
-        </button>
+        <span className={`env-badge ${props.gear.id === "auto" ? "auto" : "gear"}`}>
+          {props.gear.arrows} {props.gear.label}
+        </span>
+        <span className="side-meta">
+          {/* `null` is "no data", never zero: an invented $0.00 is a claim. */}
+          {props.costToday == null ? "cost —" : `$${props.costToday.toFixed(2)} today`}
+        </span>
+        <span className="side-meta">v{props.version}</span>
       </div>
     </aside>
   );
