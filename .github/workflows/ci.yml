@@ -287,6 +287,12 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: cargo build --release
       - run: bun run build
+      - name: Incident coverage (every recurring failure class has a regression eval)
+        # Reads the committed class snapshot, never a database: a CI runner has
+        # no ~/.gear/blackbox.db. Fails when an eval-able class that has fired
+        # ≥3 times has neither a task nor a dated waiver — a failure that keeps
+        # happening and is not in the suite will keep happening.
+        run: bun run tests/eval/from-incidents.ts --check
       - name: Run eval suite (regression-gated vs committed mock baseline)
         # --compare fails the job if any task that passes in baseline-mock.json
         # fails now (mock runs are deterministic — zero noise band), on top of
