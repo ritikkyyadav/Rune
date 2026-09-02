@@ -151,15 +151,6 @@ export interface GearConfig {
        */
       probeToolResults?: boolean;
       /**
-       * Default true. Reviewer "ask" verdicts return to the ACTING AGENT as an
-       * actionable block ("needs explicit user authorization — ask the user
-       * directly via ask_user") instead of an immediate modal prompt; the
-       * user's typed answer authorizes the retry. Modal prompts remain the
-       * backstop (repeated blocks, catastrophic circuit breakers, guardrail
-       * changes, reviewer outage, askRules).
-       */
-      conversationalEscalation?: boolean;
-      /**
        * Default true. Retry a failed reviewer call once — against the engine's
        * own heavy/standard tier when distinct from the pinned reviewer — before
        * failing closed. Stays within the session's existing data boundary.
@@ -466,6 +457,19 @@ export interface GearConfig {
     claimEnforcement?: "warn" | "block" | "off";
     /** Presence heartbeat interval in seconds (default 15). */
     heartbeatSecs?: number;
+  };
+  /**
+   * Staying current. `gear upgrade` is always explicit — nothing is ever
+   * downloaded or replaced without the user typing the command. `check`
+   * governs only the once-a-day background look at the latest release that
+   * produces a one-line nag; set it false and Gear never talks to GitHub on
+   * its own.
+   */
+  update?: {
+    /** Daily startup check for a newer release. Default true. */
+    check?: boolean;
+    /** GitHub repo the releases come from. Default ritikkyyadav/Alan. */
+    repo?: string;
   };
 }
 

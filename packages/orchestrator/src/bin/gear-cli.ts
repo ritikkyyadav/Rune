@@ -187,6 +187,7 @@ if (values.help) {
         `    gear use <provider> [model]   Set the active provider (+ model) for new sessions\n` +
         `    gear models [provider]        List a provider's models (live discovery, static fallback)\n` +
         `    gear doctor                   Health: incidents, crash sentinel, gear-tools, build freshness\n` +
+        `    gear upgrade [--check]        Install the latest release (checksum-verified); --check only reports\n` +
         `    gear tools-smoke              Verify the native tool executor end to end (write/read/edit/bash)\n` +
         `    gear incidents [sub]          Browse recorded failures — list | show <id> | top [--by-version] | export\n` +
         `    gear audit [session|last]     One page on a session: plan with evidence, log, safety decisions, held steps, cost\n` +
@@ -240,6 +241,10 @@ if (command === "tools-smoke") {
   }
   const { runToolsSmoke } = await import("./tools-smoke-cli");
   process.exit(await runToolsSmoke(lookup.path));
+}
+if (command === "upgrade") {
+  const { runUpgrade } = await import("./upgrade-cli");
+  process.exit(await runUpgrade(process.argv.slice(3)));
 }
 if (command === "incidents") {
   const { runIncidents } = await import("./blackbox-cli");
@@ -619,6 +624,11 @@ async function main() {
   adoptLegacyEnv();
   const homeMigrationNote = migrateLegacyHome();
   if (homeMigrationNote) console.error(`  ${dim(`gear: ${homeMigrationNote}`)}`);
+  // Staying current: one line, from cache, never a network wait at startup.
+  // The refresh that feeds it runs detached below, after the one-shot check.
+  const { cachedUpdateNag, refreshUpdateCheck } = await import("./upgrade-cli");
+  const updateNag = cachedUpdateNag();
+  if (updateNag) console.error(`  ${dim(`gear: ${updateNag}`)}`);
   const dataDir = ensureDataDir();
   const toolsLookup = await findToolsBinary();
   const toolsBinary = toolsLookup.path;
@@ -644,6 +654,10 @@ async function main() {
     Boolean(values.list) ||
     typeof values.print === "string";
   if (!oneShotCommand) configureAutoTheme(await detectTerminalColors());
+  // Detached, and only for a session that will outlive it: a one-shot printer
+  // exits before the fetch lands, and an unawaited request racing process exit
+  // is how a --print run learns to hang.
+  if (!oneShotCommand) void refreshUpdateCheck();
 
   // Apply the persisted / configured color mode before anything renders.
   // GEAR_THEME (legacy ALAN_THEME is adopted at startup).

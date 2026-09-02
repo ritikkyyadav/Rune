@@ -2,7 +2,7 @@
 
 > A local-first, sandboxed, multi-provider agentic coding assistant — a headless engine with CLI and desktop surfaces.
 
-**Status:** early, active development. The engine, CLI, tool suite, and evals work end-to-end; interfaces are still evolving and not all blueprint features are built yet. Current release: **Gear v0.3.0**.
+**Status:** early, active development. The engine, CLI, tool suite, and evals work end-to-end; interfaces are still evolving and not all blueprint features are built yet. Latest release: **v0.2.0**; `main` is v0.3.0-dev and the tag is not cut.
 
 > _Gear is the sole public product identity. Older internal identifiers remain only as migration-compatible package, data, and launcher aliases._
 
@@ -129,8 +129,18 @@ native `gear-tools` executor for your OS from the
 `~/.gear/bin`; file, search, and shell tools depend on `gear-tools`):
 
 ```bash
+# macOS, Linux
 curl -fsSL https://raw.githubusercontent.com/ritikkyyadav/Alan/main/scripts/web-install.sh | bash
 ```
+
+```powershell
+# Windows
+irm https://raw.githubusercontent.com/ritikkyyadav/Alan/main/scripts/install.ps1 | iex
+```
+
+Both installers verify every download against the release's `SHA256SUMS` **before** anything reaches
+the install directory, and both take `--uninstall` / `-Uninstall`. See
+[docs/release.md](docs/release.md) for `GEAR_INSTALL_DIR`, the PATH behaviour, and the Homebrew tap.
 
 While this repo is **private**, anonymous `curl` can't reach it — use the
 authenticated equivalent (one-time `gh auth login` with the [GitHub CLI](https://cli.github.com)):
@@ -169,6 +179,55 @@ Or run straight from the source tree without installing:
 bun install
 cargo build --release -p gear-tools    # required — file, search, and shell tools run through it
 ./bin/gear
+```
+
+### Verifying a download
+
+Every release carries a `SHA256SUMS` generated in the same CI job that built the binaries, so
+checksum drift is impossible by construction. macOS and Windows binaries are code-signed when the
+signing secrets are configured; Linux gets a detached Ed25519 signature over `SHA256SUMS`, which
+covers every artifact in the release at once.
+
+```bash
+# 1. the signature is genuine
+bun scripts/sign-release.ts verify <dir> gear-release.pub
+# 2. the binaries are the ones it describes
+cd <dir> && sha256sum -c SHA256SUMS
+```
+
+The release signing public key:
+
+```
+-----BEGIN PUBLIC KEY-----
+NOT YET PUBLISHED - run `bun scripts/keygen.ts`, set GEAR_SIGNING_PRIVATE_KEY,
+and replace this block with the public half. See docs/release.md.
+-----END PUBLIC KEY-----
+```
+
+Releases also carry a [build provenance attestation](https://docs.github.com/actions/security-guides/using-artifact-attestations):
+
+```bash
+gh attestation verify gear-linux-x64 --repo ritikkyyadav/Alan
+```
+
+### Staying current
+
+```bash
+gear upgrade --check    # is there a newer release?
+gear upgrade            # download it, verify it against the release's SHA256SUMS, install it
+```
+
+`gear upgrade` never runs by itself. Gear looks at the latest release at most once a day, in the
+background, and the only thing that ever comes of it is one line at startup telling you a newer
+version exists; replacing a binary always takes you typing the command. The download is verified
+against the release's own `SHA256SUMS` **before** anything is written into `~/.gear/bin`, and the
+previous build is kept beside the new one as `.backup`.
+
+Turn the daily look off entirely in `~/.gear/config.toml`:
+
+```toml
+[update]
+check = false
 ```
 
 ## Quickstart
@@ -327,4 +386,8 @@ Full details in [`PRIVACY.md`](PRIVACY.md).
 
 ## License
 
-TBD.
+[Apache-2.0](LICENSE).
+
+This is the program's D1 default (open-core: engine and clients under Apache-2.0, the compliance
+layer commercial), not a settled decision. It landed in its own commit so it can be dropped without
+touching anything else.

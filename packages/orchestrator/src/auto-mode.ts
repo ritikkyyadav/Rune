@@ -71,16 +71,6 @@ export interface AutoModePolicyConfig {
   /** Screen untrusted-source tool results before they reach an agent context. Default true. */
   probeToolResults?: boolean;
   /**
-   * Default true. Deliver reviewer "ask" verdicts to the ACTING AGENT as an
-   * actionable block ("needs explicit user authorization — ask the user
-   * directly") instead of an immediate modal prompt. The agent then asks in
-   * plain language via ask_user; the user's typed answer joins the reviewer's
-   * trusted context, so a clear yes authorizes the retry. The modal prompt
-   * remains the backstop: repeated blocks, catastrophic circuit breakers,
-   * guardrail changes, reviewer outage, and explicit askRules still pause.
-   */
-  conversationalEscalation?: boolean;
-  /**
    * Default true. When the reviewer call fails (timeout, transport error,
    * malformed reply), retry once — against the engine's heavy-tier model when
    * it differs from the pinned reviewer — before failing closed. The heavy
@@ -106,7 +96,6 @@ export interface ResolvedAutoModeConfig extends Required<
     | "maxAutomaticDenials"
     | "failClosed"
     | "probeToolResults"
-    | "conversationalEscalation"
     | "reviewerFallback"
   >
 > {
@@ -167,7 +156,7 @@ export function resolveAutoModeConfig(
     ...managedEnvironment,
   ];
 
-  return {
+  const resolved: ResolvedAutoModeConfig = {
     enabled: managed.enabled === false ? false : user.enabled !== false,
     classifierProvider: managed.classifierProvider ?? user.classifierProvider,
     classifierModel: managed.classifierModel ?? user.classifierModel,
@@ -196,10 +185,40 @@ export function resolveAutoModeConfig(
     ),
     ...resolveFailClosed(user, managed),
     probeToolResults: managed.probeToolResults ?? user.probeToolResults ?? true,
-    conversationalEscalation:
-      managed.conversationalEscalation ?? user.conversationalEscalation ?? true,
     reviewerFallback: managed.reviewerFallback ?? user.reviewerFallback ?? true,
   };
+  resolved.warnings.push(...retiredKeyWarnings(user, managed));
+  return resolved;
+}
+
+/**
+ * Keys that were an option once and are now the only behaviour.
+ *
+ * `conversationalEscalation` shipped as a switch and was never read by
+ * `review()`: escalating through `ask_user` rather than a modal prompt is what
+ * Auto mode does, full stop. A config that still sets it is not wrong, it is
+ * out of date — so it is reported once and ignored. A retired key is never an
+ * error: a config file that used to work keeps working.
+ */
+const RETIRED_KEYS: Array<{ key: string; note: string }> = [
+  {
+    key: "conversationalEscalation",
+    note: 'conversational escalation is now unconditional \u2014 a reviewer "ask" verdict always reaches the acting agent as an actionable block it raises through ask_user, and the modal prompt remains the backstop for repeated blocks, circuit breakers, guardrail changes, reviewer outage and askRules',
+  },
+];
+
+function retiredKeyWarnings(user: AutoModePolicyConfig, managed: AutoModePolicyConfig): string[] {
+  const out: string[] = [];
+  for (const { key, note } of RETIRED_KEYS) {
+    const where: string[] = [];
+    if ((user as Record<string, unknown>)[key] !== undefined) where.push("user config");
+    if ((managed as Record<string, unknown>)[key] !== undefined) where.push("org policy");
+    if (where.length === 0) continue;
+    out.push(
+      `permissions.autoMode.${key} (${where.join(" and ")}) is retired and ignored: ${note}.`,
+    );
+  }
+  return out;
 }
 
 /**
@@ -515,7 +534,6 @@ export class AutoModeSafetyController {
     warnings: string[];
     reviewer: { provider: string; model: string; isolatedContext: true } | null;
     /** Reviewer "ask" verdicts return to the agent for a conversational check instead of a modal. */
-    conversationalEscalation: boolean;
     /** Retry posture: whether a failed reviewer call may retry against a distinct fallback identity. */
     reviewerFallback: { enabled: boolean; available: boolean };
     policy: {
@@ -547,7 +565,6 @@ export class AutoModeSafetyController {
       failOpenAllowed: this.config.failOpenAllowed,
       warnings: [...(this.config.warnings ?? [])],
       reviewer,
-      conversationalEscalation: this.config.conversationalEscalation,
       reviewerFallback: {
         enabled: this.config.reviewerFallback,
         available: this.hasFallbackReviewer(),

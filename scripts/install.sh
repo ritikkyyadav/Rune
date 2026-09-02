@@ -35,7 +35,12 @@ dim()    { printf '\033[38;5;245m%s\033[0m' "$*"; }
 bold()   { printf '\033[1m%s\033[0m' "$*"; }
 
 echo ""
-echo "  $(bold '  Gear Installer')  $(dim 'v0.3.0')"
+# One version source, shared with build-release.sh and release.yml.
+# shellcheck source=scripts/version.sh
+. "$GEAR_ROOT/scripts/version.sh"
+BUILD_VERSION="$(gear_version)"
+
+echo "  $(bold '  Gear Installer')  $(dim "v$BUILD_VERSION")"
 echo "  $(dim '──────────────────────────────────────')"
 echo "  $(dim "Repo root: $GEAR_ROOT")"
 echo ""
@@ -170,7 +175,7 @@ CLI_OUT="$STAGE_DIR/gear-compiled"
 
 echo ""
 echo "  $(dim '...') Compiling TypeScript CLI (bun build --compile)"
-echo "  $(dim "    $BUN build --compile $CLI_ENTRY --outfile $CLI_OUT")"
+echo "  $(dim "    $BUN build --compile --define GEAR_BUILD_VERSION=$BUILD_VERSION $CLI_ENTRY")"
 
 # Install bun dependencies first so the build can resolve imports
 (cd "$GEAR_ROOT" && "$BUN" install --frozen-lockfile 2>&1 | tail -2)
@@ -178,7 +183,8 @@ echo "  $(dim "    $BUN build --compile $CLI_ENTRY --outfile $CLI_OUT")"
 # Compile to a self-contained executable.
 # The compiled binary reads GEAR_TOOLS_BIN from the environment at runtime
 # (set by the wrapper script written in step 5).
-(cd "$GEAR_ROOT" && "$BUN" build --compile "$CLI_ENTRY" --outfile "$CLI_OUT")
+(cd "$GEAR_ROOT" && "$BUN" build --compile \
+  --define=GEAR_BUILD_VERSION="\"$BUILD_VERSION\"" "$CLI_ENTRY" --outfile "$CLI_OUT")
 chmod +x "$CLI_OUT"
 echo "  $(green '✓') Compiled CLI staged"
 
@@ -192,6 +198,7 @@ GEAR_SOURCE_COMMIT=$CANDIDATE_COMMIT
 GEAR_SOURCE_BRANCH=$CANDIDATE_BRANCH
 GEAR_SOURCE_DIRTY=$CANDIDATE_DIRTY
 GEAR_INSTALL_FILE_GUARD=$INSTALL_FILE_GUARD
+GEAR_BUILD_VERSION=$BUILD_VERSION
 META
 
 # ─── 4. Build Rust gear-tools binary ───
