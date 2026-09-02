@@ -34,3 +34,23 @@ export type {
   ProtectedResourceMetadata,
   AuthorizationServerMetadata,
 } from "./oauth";
+export {
+  loadVendoredCatalog,
+  fetchRegistryCatalog,
+  resolveConnector,
+  nearestNames,
+  skillCatalogRoots,
+  DEFAULT_REGISTRY_URL,
+} from "./catalog";
+export type { CatalogEntry } from "./catalog";
+export {
+  mcpConfigPath,
+  readMcpConfig,
+  writeMcpConfig,
+  mergedServers,
+  mergedServerRecord,
+  upsertServer,
+  removeServer,
+  setServerEnabled,
+} from "./config-file";
+export type { McpScope, McpConfigFile, MergedServer } from "./config-file";

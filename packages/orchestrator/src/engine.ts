@@ -568,6 +568,8 @@ export interface EngineConfig {
   };
   /** Deep-research ("/research") defaults: depth, fan-out, sources. */
   research?: ResearchOptions;
+  /** Connector defaults (config.toml [mcp]). */
+  mcp?: { defaultScope?: "user" | "workspace"; timeoutSecs?: number; registry?: boolean; deferTools?: boolean };
   /** System Memory ("dreaming") — evergreen profile config (enabled/schedule/model/maxTokens). */
   memory?: {
     enabled?: boolean;
@@ -987,6 +989,9 @@ export class Engine {
 
     // Initialize Tool Registry with built-in tools
     this.registry = new ToolRegistry();
+    // [mcp] deferTools = false ships every connector schema on every request
+    // (the pre-P4.1 behaviour). An escape, not a recommendation.
+    if (this.config.mcp?.deferTools === false) this.registry.setDeferralEnabled(false);
     registerBuiltinTools(this.registry, this.config.toolsBinaryPath);
 
     // Register the delegation tools (task + worker) — unless `[subagents]
