@@ -172,6 +172,10 @@ const { values, positionals } = parseArgs({
     token: { type: "string" },
     prompt: { type: "string" },
     session: { type: "string" },
+    // `gear pr <n>`: review rather than work on it, and print the brief
+    // instead of starting a session.
+    review: { type: "boolean", default: false },
+    brief: { type: "boolean", default: false },
     // `gear desktop --check` / `gear web --open`: headless proof, browser open.
     check: { type: "boolean", default: false },
     open: { type: "boolean", default: false },
@@ -211,6 +215,7 @@ if (values.help) {
         `    gear attach ws://host:port    Attach to a remote \`gear serve\` (--token or GEAR_SERVE_TOKEN, --prompt runs a turn)\n` +
         `    gear desktop [dev|--check]    Open Gear Desktop (alias: gear app) — dev runs the Vite preview, --check proves the engine headless\n` +
         `    gear web [--port N] [--open]  The same client in a browser, engine attached (--host exposes it on the LAN)\n` +
+        `    gear pr <n> [--review]        Check a pull request out into its own worktree and start on it (--brief prints the brief)\n` +
         `    gear login [provider]         Authenticate a provider — API key, or OAuth where supported (--method, --no-browser, --migrate)\n` +
         `    gear logout <provider>        Remove a provider's stored key/OAuth from the secure store\n` +
         `    gear providers                List providers, their auth method, and credential status\n` +
@@ -348,6 +353,12 @@ if (command === "web") {
   // Long-lived: `web` returns only on shutdown, exactly like `serve`.
   const { runWeb } = await import("./web-cli");
   process.exit(await runWeb(positionals.slice(1) as string[], values as Record<string, unknown>));
+}
+if (command === "pr") {
+  // `gear pr <n>`: the PR head in its own worktree, with the author's
+  // description as the session's brief. See bin/pr-cli.ts.
+  const { runPr } = await import("./pr-cli");
+  process.exit(await runPr(positionals.slice(1) as string[], values as Record<string, unknown>));
 }
 
 // ─── BYOP: provider authentication surfaces (no Engine boot) ───
@@ -1309,7 +1320,7 @@ async function main() {
     });
     process.stdout.write(
       values.json === true || streamJson
-        ? `${headlessEnvelope(result, { compact: streamJson })}\n`
+        ? `${headlessEnvelope(result, { compact: streamJson, sessionId })}\n`
         : `${result.text}\n`,
     );
     if (!result.ok && result.error) process.stderr.write(`${result.error}\n`);
