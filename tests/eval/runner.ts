@@ -29,7 +29,7 @@ const DEFAULT_MODEL = "gemini-2.5-flash";
 
 /**
  * Providers that authenticate from a stored OAuth credential rather than an
- * env var — a ChatGPT or Copilot plan, logged in once with `gear login`.
+ * env var — a ChatGPT plan, logged in once with `gear login`.
  *
  * They were absent from the map below, and the map was also the allowlist, so
  * `--real` refused to run on them at all: the suite could not measure the
@@ -37,7 +37,7 @@ const DEFAULT_MODEL = "gemini-2.5-flash";
  * to demand here; a missing login surfaces as an auth error on the first call,
  * which is the same failure the env-var check exists to pre-empt.
  */
-const SUBSCRIPTION_PROVIDERS = new Set(["codex", "copilot"]);
+const SUBSCRIPTION_PROVIDERS = new Set(["codex"]);
 
 /** Which env var holds the API key for each provider. */
 const PROVIDER_KEY_ENV: Record<string, string> = {

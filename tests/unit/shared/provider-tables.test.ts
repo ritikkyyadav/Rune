@@ -113,19 +113,24 @@ describe("capacity and billing tell the same story", () => {
 });
 
 describe("the dropped providers are gone from every table", () => {
-  test.each(["lmstudio"])("%s has no preset", (id) => {
+  // `lmstudio` (P8.6) and `copilot` (P8.5) were removed under program decision
+  // D5. Copilot's evidence: zero sessions had ever run on it in ~/.gear/gear.db
+  // across 601 recorded sessions, against an undocumented internal endpoint,
+  // VS Code header impersonation, a stale catalog, and streams that reported no
+  // usage at all.
+  test.each(["lmstudio", "copilot"])("%s has no preset", (id) => {
     expect(getPreset(id)).toBeUndefined();
   });
 
-  test.each(["lmstudio"])("%s has no capacity rank", (id) => {
+  test.each(["lmstudio", "copilot"])("%s has no capacity rank", (id) => {
     expect(PROVIDER_CAPACITY[id]).toBeUndefined();
   });
 
-  test.each(["lmstudio"])("%s has no tier defaults", (id) => {
+  test.each(["lmstudio", "copilot"])("%s has no tier defaults", (id) => {
     expect(PROVIDER_TIER_DEFAULTS[id]).toBeUndefined();
   });
 
-  test.each(["lmstudio"])("%s has no fallback model", (id) => {
+  test.each(["lmstudio", "copilot"])("%s has no fallback model", (id) => {
     expect(defaultModelForProvider(id)).toBeUndefined();
   });
 });

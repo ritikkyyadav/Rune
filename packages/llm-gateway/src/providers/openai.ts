@@ -237,10 +237,9 @@ export class OpenAIProvider implements LlmProvider {
           // Ask for the trailing usage chunk. Without it this whole family
           // (openai/openrouter/groq/deepseek/…) reports zero usage on streams,
           // the context engine never learns the REAL prompt size, and
-          // compaction can't fire until the provider hard-rejects. Copilot's
-          // proxy is the one host known to reject unrecognized params, so it
-          // keeps the legacy behavior.
-          ...(this.name !== "copilot" && { stream_options: { include_usage: true } }),
+          // compaction can't fire until the provider hard-rejects. The one host
+          // that was excluded here was Copilot's proxy, removed in P8.5.
+          stream_options: { include_usage: true },
           ...(this.buildTuningParams(request) as object),
           ...this.cacheParams(request),
         },

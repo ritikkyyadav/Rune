@@ -13,7 +13,6 @@ export type ProviderKind =
   | "google"
   | "ollama"
   // Subscription transports with their own auth + endpoints:
-  | "copilot" // GitHub Copilot (device login → api.githubcopilot.com)
   | "codex"; // ChatGPT Plus/Pro via the Codex "responses" backend
 
 // ─── Authentication methods ───
@@ -44,14 +43,14 @@ export const AUTO_PROVIDER_PRIORITY = ["anthropic", "openai", "google", "openrou
  * This is deliberately NOT `AUTO_PROVIDER_PRIORITY`, which answers a different
  * question: "which keyed provider should this session boot into?" That list is
  * env-var-shaped (its element type keys a `Record<…, string>` of env var names
- * in gear-cli), so the OAuth-only transports — codex, copilot — can never
- * appear in it, and they are precisely the ones a fallback has to reason about.
+ * in gear-cli), so the OAuth-only transports — codex — can never appear in
+ * it, and they are precisely the ones a fallback has to reason about.
  *
  * The classes carry the same principle its doc states, generalized:
  *
  *   funded       — a direct API key you top up. Falling here costs money, not
  *                  capability, and it is the smallest possible drop.
- *   subscription — a plan seat with a hard periodic cap (ChatGPT/Copilot).
+ *   subscription — a plan seat with a hard periodic cap (ChatGPT Plus/Pro).
  *                  Strong models, but the cap is exactly why we are here.
  *   free         — quota-constrained free tiers. Cheap and weak, and they rot:
  *                  ids retire without notice and balances hit 402 mid-run.
@@ -85,7 +84,6 @@ export const PROVIDER_CAPACITY: Record<string, ProviderCapacity> = {
   // it is treated as funded capacity rather than guessed at.
   custom: "funded",
   codex: "subscription",
-  copilot: "subscription",
   openrouter: "free",
   // The ids Gear ships for Ollama Cloud are the ones verified on the DEFAULT,
   // no-subscription plan (the subscription-gated models are deliberately
@@ -398,27 +396,6 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     ],
   },
   {
-    // GitHub Copilot subscription. Signs in with GitHub's device flow (no API
-    // key); the CopilotProvider mints short-lived Copilot tokens from the GitHub
-    // token and talks to api.githubcopilot.com (OpenAI-compatible). Model ids are
-    // Copilot's own catalog (plan-dependent) — pick with `/model copilot/<id>`,
-    // or list live with `gear models copilot`.
-    id: "copilot",
-    label: "GitHub Copilot",
-    kind: "copilot",
-    defaultModel: "gpt-4o",
-    docsUrl: "https://github.com/settings/copilot",
-    auth: ["device"],
-    models: [
-      { id: "gpt-4o", label: "GPT-4o" },
-      { id: "gpt-4.1", label: "GPT-4.1" },
-      { id: "o4-mini", label: "o4-mini" },
-      { id: "claude-3.5-sonnet", label: "Claude 3.5 Sonnet" },
-      { id: "claude-sonnet-4", label: "Claude Sonnet 4" },
-      { id: "gemini-2.0-flash-001", label: "Gemini 2.0 Flash" },
-    ],
-  },
-  {
     // Ollama's hosted cloud ("Turbo"). Distinct id from local "ollama" so the
     // two never collide in the gateway: this one is a keyed OpenAI-compatible
     // host (https://ollama.com/v1), while "ollama" stays the keyless localhost
@@ -490,8 +467,8 @@ export function getPreset(id: string): ProviderPreset | undefined {
  * The auth methods a provider effectively supports, in preference order.
  * Falls back to a sensible default when a preset omits `auth`, so the field is
  * truly optional: local runtimes → `["local"]`, everyone else → `["api_key"]`.
- * Providers that genuinely offer more (OpenRouter/Anthropic OAuth, Copilot
- * device-code, Codex OAuth) declare it explicitly via `preset.auth`.
+ * Providers that genuinely offer more (OpenRouter/Anthropic OAuth, Codex
+ * OAuth) declare it explicitly via `preset.auth`.
  *
  * The `env` parameter is retained for signature stability (callers thread it
  * through `getProviderDescriptor`) and future env-gated methods; it is currently
@@ -542,8 +519,6 @@ export function accountLoginLabel(providerId: string): string | undefined {
       return "Claude Pro/Max subscription";
     case "codex":
       return "ChatGPT Plus/Pro subscription";
-    case "copilot":
-      return "GitHub Copilot subscription";
     case "openrouter":
       return "OpenRouter account";
     default:

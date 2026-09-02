@@ -11,7 +11,6 @@ import {
   OpenRouterProvider,
   GoogleProvider,
   OllamaProvider,
-  CopilotProvider,
   CodexProvider,
   getStrategy,
   ProviderHealthStore,
@@ -156,11 +155,6 @@ export function buildGateway(opts: BuildGatewayOpts): LlmGateway {
               cacheBreakpoints: cacheBreakpointPolicyFor(preset.id),
             }),
           );
-        break;
-      case "copilot":
-        // `key` is the durable GitHub OAuth token; CopilotProvider mints and
-        // rotates the short-lived Copilot API token from it internally.
-        gw.registerProvider(new CopilotProvider(key));
         break;
       case "codex":
         // `key` is the ChatGPT access token; the account id (from the id_token,
