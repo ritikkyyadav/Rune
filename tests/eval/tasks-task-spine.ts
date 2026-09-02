@@ -196,6 +196,14 @@ const askOnAmbiguous: EvalTask = {
 // ─── 3. Todos survive compaction ───
 // After an explicit compaction squashes the transcript, the NEXT model request
 // still carries the [Task state] block with the todo list.
+//
+// The script does the reads BEFORE the plan claims a step done. Since b150dd2
+// ("the plan is a ledger") todo_write is no longer a pure echo: a completion
+// with no effect behind it is refused and the WHOLE list is dropped
+// (docs/plan-ledger.md, "A step is completed by evidence"). The old script
+// opened with `survey the notes: completed` before anything had run, so the
+// plan never landed, `renderBlock()` had no substance to inject, and this task
+// was asserting on a spine that was empty for reasons unrelated to compaction.
 
 const todosSurviveCompaction: EvalTask = {
   name: "spine_todos_survive_compaction",
@@ -203,8 +211,13 @@ const todosSurviveCompaction: EvalTask = {
   description: "The todo list reaches the model after compaction rewrote the transcript.",
   setup: async ({ workspace }) => {
     await writeFile(join(workspace, "notes.txt"), "alpha\nbeta\ngamma\n");
+    await writeFile(join(workspace, "notes-2.txt"), "delta\nepsilon\n");
+    await writeFile(join(workspace, "notes-3.txt"), "zeta\neta\ntheta\n");
   },
   script: [
+    // Survey first — the evidence the ledger now requires before a completion.
+    { toolCalls: [{ name: "read_file", args: { path: "notes.txt" } }] },
+    { toolCalls: [{ name: "read_file", args: { path: "notes-2.txt" } }] },
     {
       toolCalls: [
         {
@@ -218,11 +231,23 @@ const todosSurviveCompaction: EvalTask = {
         },
       ],
     },
-    { toolCalls: [{ name: "read_file", args: { path: "notes.txt" } }] },
-    { toolCalls: [{ name: "read_file", args: { path: "notes.txt" } }] },
     { toolCalls: [{ name: "compact_context", args: {} }] },
-    { toolCalls: [{ name: "read_file", args: { path: "notes.txt" } }] },
-    { text: "Summary: three Greek letters." },
+    // Post-compaction work: also the evidence that closes the second step.
+    { toolCalls: [{ name: "read_file", args: { path: "notes-3.txt" } }] },
+    {
+      toolCalls: [
+        {
+          name: "todo_write",
+          args: {
+            items: [
+              { content: "survey the notes", status: "completed" },
+              { content: "summarize them", status: "completed" },
+            ],
+          },
+        },
+      ],
+    },
+    { text: "Summary: eight Greek letters across three files." },
   ],
   prompts: ["survey notes.txt and summarize it (long-session drill)"],
   verify: async ({ mock }) => {
@@ -233,6 +258,11 @@ const todosSurviveCompaction: EvalTask = {
       .flatMap((m) => m.content)
       .map((b: any) => (b.type === "text" ? b.text : ""))
       .join("\n");
+    // Guard the guard: without a transcript that actually got squashed, the two
+    // assertions below pass without testing compaction at all.
+    if (!text.includes("[Earlier conversation summary]")) {
+      return { pass: false, reason: "transcript was never compacted — nothing was tested" };
+    }
     if (!text.includes("[Task state — maintained by the harness")) {
       return { pass: false, reason: "final request lost the [Task state] block" };
     }
@@ -247,14 +277,28 @@ const todosSurviveCompaction: EvalTask = {
 // A run that errors out with open todos persists a handoff (reason + state of
 // work) so resume knows exactly where it stood. The mock script exhausting is
 // the deterministic stand-in for a provider hard-failing mid-task.
+//
+// The inventory is done by reading before the plan claims it done. Since
+// b150dd2 ("the plan is a ledger") an evidence-free completion is refused and
+// the whole list is dropped (docs/plan-ledger.md, "A step is completed by
+// evidence"). The old script's opening list claimed `inventory call sites:
+// completed` with nothing behind it, so no plan landed, `hasOpenTodos()` was
+// false, and the handoff safety net in engine.ts never fired — the task failed
+// on its premise, not on the handoff it exists to guard.
 
 const handoffOnError: EvalTask = {
   name: "spine_handoff_on_error",
   category: "core",
   description: "A run dying mid-task persists a state-of-work handoff with open todos.",
+  setup: async ({ workspace }) => {
+    await writeFile(join(workspace, "db.ts"), "export const query = (sql: string) => sql;\n");
+  },
   script: [
     {
       text: "Starting the long migration.",
+      toolCalls: [{ name: "read_file", args: { path: "db.ts" } }],
+    },
+    {
       toolCalls: [
         {
           name: "todo_write",
@@ -275,8 +319,18 @@ const handoffOnError: EvalTask = {
   verify: async ({ dbPath, sessionId }) => {
     const state = latestTaskState(dbPath, sessionId);
     if (!state?.handoff) return { pass: false, reason: "no handoff recorded for the dead run" };
-    if (state.handoff.reason !== "error") {
-      return { pass: false, reason: `handoff reason ${state.handoff.reason}, expected error` };
+    // `provider_lost`, not the plain `error` this asserted before b150dd2. A
+    // run whose provider stops answering with steps still open now hands off
+    // under that specific reason so the record, the scorecard and `gear
+    // resume` know the network failed rather than the model
+    // (agent-loop.ts `providerLostEnd`; the reason is listed in
+    // docs/self-evolution.md, and docs/plan-ledger.md requires the handoff to
+    // say why). The mock's exhausted script is exactly that scenario.
+    if (state.handoff.reason !== "provider_lost") {
+      return {
+        pass: false,
+        reason: `handoff reason ${state.handoff.reason}, expected provider_lost`,
+      };
     }
     if (!/port the client/.test(state.handoff.state)) {
       return { pass: false, reason: "handoff state-of-work does not name the remaining step" };
