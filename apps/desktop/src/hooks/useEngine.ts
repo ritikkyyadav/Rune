@@ -391,6 +391,58 @@ export function useEngine(options: UseEngineOptions) {
     [command],
   );
 
+  // ─── The review workspace (P3.5) ───
+
+  const reviewDiff = useCallback(async () => {
+    const r = await command<{
+      repo: boolean;
+      branch?: string;
+      files: Array<{
+        path: string;
+        status: string;
+        added: number;
+        removed: number;
+        untracked: boolean;
+      }>;
+      patch: string;
+      reason?: string;
+    }>("review_diff", {}, "read the working tree");
+    return r.ok ? r.value : null;
+  }, [command]);
+
+  const revertPaths = useCallback(
+    async (paths: string[]) => {
+      const r = await command<{ ok: boolean; reverted?: string[]; reason?: string }>(
+        "revert_paths",
+        { paths },
+        "revert",
+      );
+      return r.ok ? r.value : null;
+    },
+    [command],
+  );
+
+  const runChecks = useCallback(async () => {
+    const r = await command<{ ran: boolean; passed: boolean; report: string }>(
+      "run_checks",
+      {},
+      "run checks",
+    );
+    return r.ok ? r.value : null;
+  }, [command]);
+
+  const openPath = useCallback(
+    async (path: string) => {
+      const r = await command<{ opened: boolean; with?: string; reason?: string }>(
+        "open_path",
+        { path },
+        "open in editor",
+      );
+      return r.ok ? r.value : null;
+    },
+    [command],
+  );
+
   /** Prompt assembly for a model span — the inspector's evidence (P3.4). */
   const getTurnContext = useCallback(
     async (sessionId?: string) => {
@@ -438,6 +490,10 @@ export function useEngine(options: UseEngineOptions) {
     dismissHeldSteps,
     getTurnContext,
     exportTrace,
+    reviewDiff,
+    revertPaths,
+    runChecks,
+    openPath,
     isProcessing,
     setIsProcessing,
     connectionState,

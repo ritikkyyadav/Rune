@@ -180,6 +180,50 @@ export interface HostCommands {
     };
   };
 
+  // ── the review workspace (P3.5) ──
+  /** What differs from HEAD in the workspace, per file and as one patch. */
+  review_diff: {
+    args: Record<string, never>;
+    result: {
+      repo: boolean;
+      branch?: string;
+      files: Array<{
+        path: string;
+        status: string;
+        added: number;
+        removed: number;
+        untracked: boolean;
+      }>;
+      patch: string;
+      reason?: string;
+    };
+  };
+  /**
+   * Revert exactly these paths. A tracked path is restored from HEAD; an
+   * untracked one is deleted, which is what "revert" means for a file git has
+   * never seen. Every path is checked against the workspace root first.
+   */
+  revert_paths: {
+    args: { paths: string[] };
+    result: { ok: boolean; reverted?: string[]; reason?: string };
+  };
+  /** Run the project's own checks and report what ran, verbatim. */
+  run_checks: {
+    args: { fast?: boolean };
+    result: { ran: boolean; passed: boolean; report: string };
+  };
+  /**
+   * Open a workspace path in the person's editor.
+   *
+   * The host spawns it, not the webview: a browser cannot, and a Tauri shell
+   * plugin would be a second implementation of the same rule about which
+   * paths may be touched.
+   */
+  open_path: {
+    args: { path: string };
+    result: { opened: boolean; with?: string; reason?: string };
+  };
+
   // ── model and providers ──
   switch_model: { args: { model: string; provider?: string }; result: EngineStatus };
   list_providers: {
@@ -244,6 +288,10 @@ export const HOST_COMMANDS = [
   "dismiss_held_steps",
   "get_turn_context",
   "export_trace",
+  "review_diff",
+  "revert_paths",
+  "run_checks",
+  "open_path",
   "switch_model",
   "list_providers",
   "save_settings",

@@ -207,6 +207,12 @@ function dbPath(): string {
   return engineDbPath;
 }
 
+/** The directory this host is working in — the review workspace's root. */
+let engineWorkspaceRoot = "";
+function workspaceRootOf(): string {
+  return engineWorkspaceRoot || process.env.GEAR_WORKSPACE || process.cwd();
+}
+
 function buildEngine(): Engine {
   adoptLegacyEnv();
   migrateLegacyHome();
@@ -280,6 +286,7 @@ function buildEngine(): Engine {
   });
 
   engineDbPath = config.engine.dbPath;
+  engineWorkspaceRoot = workspaceRoot;
   const engine = new Engine({
     model,
     provider: provider as ProviderName,
@@ -750,6 +757,64 @@ async function dispatch(cmd: HostCommandName, args: Record<string, unknown>): Pr
         // second source of truth for one fact.
         chainOk: sign ? result.chainHead != null : true,
       };
+    }
+
+    // ─── The review workspace (P3.5) ───
+
+    case "review_diff": {
+      const { workspaceDiff } = await import("../git-undo");
+      return workspaceDiff(workspaceRootOf());
+    }
+
+    case "revert_paths": {
+      // Every git operation lives in git-undo.ts, including the path checks.
+      // A UI that composed its own pathspec is how "revert this file" becomes
+      // `checkout .`.
+      const { revertPaths } = await import("../git-undo");
+      const paths = optionalStringArray(args, "paths") ?? [];
+      const result = revertPaths(workspaceRootOf(), paths);
+      return result.ok
+        ? { ok: true, reverted: result.reverted }
+        : { ok: false, reason: result.reason };
+    }
+
+    case "run_checks": {
+      // The project's OWN checks, detected the same way the agent's verifier
+      // detects them, so the button and the run agree on what "the checks"
+      // are. `ran: false` means the project has none — reported, not faked.
+      const { CommandVerifier } = await import("../verifier");
+      const verifier = new CommandVerifier({
+        workspaceRoot: workspaceRootOf(),
+        commands: undefined,
+        timeoutMs: 300_000,
+      });
+      const fast = optionalBoolean(args, "fast") === true;
+      const result =
+        fast && verifier.verifyFast ? await verifier.verifyFast() : await verifier.verify();
+      return { ran: result.ran, passed: result.passed, report: result.report };
+    }
+
+    case "open_path": {
+      const rel = requireString(args, "path");
+      if (rel.startsWith("/") || rel.split("/").includes("..")) {
+        return { opened: false, reason: `refusing a path outside the workspace: ${rel}` };
+      }
+      const full = `${workspaceRootOf()}/${rel}`;
+      // $EDITOR wins because it is the person's own answer to this question.
+      const editor = process.env.GEAR_EDITOR || process.env.VISUAL || process.env.EDITOR;
+      const opener = editor
+        ? [editor, full]
+        : process.platform === "darwin"
+          ? ["open", full]
+          : process.platform === "win32"
+            ? ["cmd", "/c", "start", "", full]
+            : ["xdg-open", full];
+      try {
+        Bun.spawn(opener, { stdin: "ignore", stdout: "ignore", stderr: "ignore" }).unref();
+        return { opened: true, with: opener[0] };
+      } catch (err) {
+        return { opened: false, reason: err instanceof Error ? err.message : String(err) };
+      }
     }
 
     case "save_settings": {

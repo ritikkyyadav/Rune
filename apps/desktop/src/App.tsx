@@ -14,6 +14,7 @@ import {
   type HeldOutcome,
 } from "./components/Cards";
 import { FirstRun, SettingsPanel, firstRunDone } from "./components/Settings";
+import { ReviewPanel, type CheckResult, type ReviewDiff } from "./components/Review";
 import { INITIAL_FLEET, fleetReducer, fleetRows, type Fleet } from "./lib/fleet";
 import { isTauriRuntime, useEngine, type ProviderListing } from "./hooks/useEngine";
 import { useSession } from "./hooks/useSession";
@@ -113,6 +114,11 @@ export default function App() {
   const [fleet, setFleet] = useState<Fleet>(INITIAL_FLEET);
   const [showFirstRun, setShowFirstRun] = useState(() => !firstRunDone());
   const [turnContext, setTurnContext] = useState<TurnContext | null>(null);
+  // ── the review workspace ──
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [review, setReview] = useState<ReviewDiff | null>(null);
+  const [checks, setChecks] = useState<CheckResult | null>(null);
+  const [reviewBusy, setReviewBusy] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const searchRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -674,6 +680,44 @@ export default function App() {
     [engine],
   );
 
+  // ── review ──
+  const refreshReview = useCallback(async () => {
+    setReviewBusy(true);
+    setReview((await engine.reviewDiff()) as ReviewDiff | null);
+    setReviewBusy(false);
+  }, [engine]);
+  const openReview = useCallback(() => {
+    setReviewOpen(true);
+    void refreshReview();
+  }, [refreshReview]);
+  const revertFiles = useCallback(
+    async (paths: string[]) => {
+      setReviewBusy(true);
+      const result = await engine.revertPaths(paths);
+      setReviewBusy(false);
+      if (result?.ok) showToast(`reverted <b>${escapeHtml(paths.join(", "))}</b>`);
+      else showToast(`revert refused — ${escapeHtml(result?.reason ?? "no engine")}`);
+      await refreshReview();
+    },
+    [engine, refreshReview, showToast],
+  );
+  const runProjectChecks = useCallback(async () => {
+    setReviewBusy(true);
+    setChecks(null);
+    const result = (await engine.runChecks()) as CheckResult | null;
+    setReviewBusy(false);
+    setChecks(result);
+    if (result && !result.ran) showToast("this project has no checks Gear can detect");
+  }, [engine, showToast]);
+  const openInEditor = useCallback(
+    async (path: string) => {
+      const result = await engine.openPath(path);
+      if (result && !result.opened)
+        showToast(`could not open — ${escapeHtml(result.reason ?? "")}`);
+    },
+    [engine, showToast],
+  );
+
   const saveProviderKey = useCallback(
     async (provider: string, key: string) => {
       const ok = await engine.saveKeys({ [provider]: key });
@@ -699,13 +743,7 @@ export default function App() {
         onToggleRail={() => setRailOpen((v) => !v)}
         onToggleSide={() => setSideOpen((v) => !v)}
         onOpenSettings={() => void openSettings()}
-        onOpenReview={() =>
-          showToast(
-            reviewCount
-              ? `${reviewCount} file${reviewCount === 1 ? "" : "s"} changed this session — the Review workspace lands in M2; every edit's diff is in the transcript and the trace`
-              : "no changes yet",
-          )
-        }
+        onOpenReview={openReview}
       />
       <Sidebar
         sessions={session.sessions}
@@ -716,9 +754,7 @@ export default function App() {
         onSelect={(id) => void openSession(id)}
         onNew={() => void newTask()}
         reviewCount={reviewCount}
-        onReview={() =>
-          showToast("Review workspace lands in M2 — diffs are in the transcript and the trace")
-        }
+        onReview={openReview}
         env={{ gear, model: status.model, ctxPercent, workspace: status.workspace ?? "~" }}
         onOpenSettings={() => void openSettings()}
         searchRef={searchRef}
@@ -784,6 +820,19 @@ export default function App() {
             onAnswer={answerAsk}
           />
         ))}
+
+        {reviewOpen ? (
+          <ReviewPanel
+            diff={review}
+            checks={checks}
+            busy={reviewBusy}
+            onRefresh={() => void refreshReview()}
+            onRevert={(paths) => void revertFiles(paths)}
+            onOpen={(path) => void openInEditor(path)}
+            onRunChecks={() => void runProjectChecks()}
+            onClose={() => setReviewOpen(false)}
+          />
+        ) : null}
 
         <FleetPanel rows={fleetRows(fleet)} now={now} />
 
