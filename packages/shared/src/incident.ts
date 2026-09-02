@@ -44,6 +44,13 @@ export const INCIDENT_CLASSES = [
   "loop.barren_turns",
   "loop.auto_halt",
   "loop.auto_halt_reported",
+  /**
+   * A step Auto held was then approved and run unchanged by the user. The
+   * containment stopped an action that was fine — the direction of error that
+   * costs trust rather than safety, and the ground truth the corpus is
+   * labelled from.
+   */
+  "auto.supervisor_false_positive",
   "loop.evidence_gate",
   "loop.delegation_gate",
   "loop.verification_failed",

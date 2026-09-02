@@ -284,3 +284,80 @@ and least-privilege posture also follows the direction of
 [NIST IR 8596](https://nvlpubs.nist.gov/nistpubs/ir/2025/NIST.IR.8596.iprd.pdf). Anthropic's
 [containment write-up](https://www.anthropic.com/engineering/how-we-contain-claude) is an important
 reminder that model-side screening should not be treated as a perfect security boundary.
+
+---
+
+# Assurance
+
+*Added by Phase 6A (lane C). This section is appended deliberately: the sections above are being
+rewritten in parallel by Phase 1.1 to describe the design as built. Everything below concerns what
+Auto mode **records** and what its numbers **are** — it is additive to that rewrite, not a
+replacement for any part of it.*
+
+## What a decision records
+
+Every decision Auto makes that is worth persisting (classifier-tier reviews, every non-allow
+verdict, human escalations, rule matches and exact grants — `shouldRecordAutoModeDecision`) becomes
+one `safety_decision` session event and one hash-chained `audit_log` entry.
+
+| Field | Meaning |
+|---|---|
+| `toolName`, `argsHash` | The action. Arguments are **hashed, never stored** — the audit log is exportable. |
+| `verdict`, `tier`, `risk` | allow / ask / deny · safe \| workspace \| classifier · low → critical. |
+| `source` | Which of the sixteen decision sources produced it (thirteen in-path, three supervisor). |
+| `stage` | 0 mechanical · 1 fast screen · 2 reasoned. |
+| `reason`, `reviewer`, `matchedRule` | Why, by whom, and against which configured rule. |
+| `callId` | The tool call this decision gated, so a row joins to the `tool_result` that followed. |
+| `turn` | The turn it belongs to. |
+| `durationMs` | Total wall clock, unchanged. |
+| `timings` | `{ mechanicalMs, classifierMs, retryMs }` — the three parts sum to `durationMs`. |
+
+The timing split exists because one average over both phases described neither: mechanical routing
+costs microseconds and a reviewer call costs seconds, so a p50 over `durationMs` was a statement
+about the *mix*, not about latency.
+
+## The supervisor writes down what it decided
+
+Low- and medium-risk actions run immediately and a supervisor watches out of band. It can halt the
+*next* action, never the one it is looking at. Its verdicts are now recorded as `safety_decision`
+rows under their own sources:
+
+- `supervisor_screen` — the fast screen's verdict on an action that already ran, recorded **whether
+  or not it fires**. Recording only the flags left the false-positive rate without a denominator.
+- `supervisor_reasoned` — the careful confirmation. A screen that fires and a reasoned pass that
+  refuses to confirm it *is* a caught false positive, and that pair is the measurement.
+- `supervisor_late` — a confirmed halt that landed after the run ended.
+
+These rows gate nothing, so they do not enter the tamper-evident chain of approvals and do not move
+the decision counters. Before this, the "screen fired, review disagreed" event incremented a
+process-local counter that reset on restart — the risk that now matters most was, in practice,
+unmeasured.
+
+## Held steps are the ground truth
+
+A step Auto declines to take unattended is carried to the end of the turn and offered to the user.
+What they do next is the strongest safety label the system produces, and it is produced for free:
+
+| Outcome | What it means |
+|---|---|
+| `ran` | The user approved and ran it **unchanged** — the containment was a **false positive**. |
+| `skipped` | They reviewed it and left it unrun — the containment was right. |
+| `refused` | Signed policy, a deny rule or a hook stood by the decision. |
+| `failed` | It ran and broke on its own terms. **Not** a safety signal; do not read it as one. |
+
+Each becomes a `held_step_outcome` event keyed to the deferral. A `ran` outcome additionally files
+an `auto.supervisor_false_positive` incident in the black box. Previously `runHeldStep` recorded a
+synthetic allow and dismissal recorded nothing at all, so this signal evaporated every turn.
+
+## Raw arguments: `collectForEval`
+
+A decision whose input was deliberately discarded cannot be replayed as a test case. That is why 913
+recorded decisions across 601 sessions could not become 913 labelled corpus rows.
+
+`[permissions.autoMode] collectForEval = true` — **off by default** — keeps the raw arguments in a
+separate encrypted store, `~/.gear/auto-eval.db`, AES-256-GCM under `~/.gear/auto-eval.key` (mode
+0600, generated on first write), keyed by the same `argsHash` the audit row carries.
+
+It never leaves the machine. No telemetry path, no export, and no black-box writer reads it; the
+audit chain keeps hashing exactly what it always hashed. Losing the key loses the sidecar, which is
+the correct failure mode for a file whose only purpose is local evaluation.

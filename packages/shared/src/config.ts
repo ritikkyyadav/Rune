@@ -171,6 +171,18 @@ export interface GearConfig {
        * `false` keeps the plain printed list.
        */
       heldStepPrompt?: boolean;
+      /**
+       * Default FALSE. Keep an encrypted local sidecar of the raw arguments
+       * behind each safety decision (`~/.gear/auto-eval.db`, AES-256-GCM under
+       * `~/.gear/auto-eval.key`), so recorded decisions can be replayed as
+       * labelled eval scenarios.
+       *
+       * The audit log deliberately stores only `argsHash`, which is why the
+       * decisions of 601 sessions could not be turned into a corpus. This is
+       * the opt-in that makes them labellable. It never leaves the machine:
+       * no telemetry path, no export, no black box reads it.
+       */
+      collectForEval?: boolean;
     };
   };
   sandbox: {
