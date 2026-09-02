@@ -304,6 +304,38 @@ impl PathGuard {
                 env.insert((*var).to_string(), val);
             }
         }
+        // Windows needs more than PATH to run anything at all: `cmd.exe`
+        // refuses to start without `SystemRoot`, `PATHEXT` is what makes
+        // `foo` find `foo.exe`, and `TEMP`/`TMP` are the Windows spelling of
+        // `TMPDIR`. The caller does `env_clear()` before applying this map, so
+        // an omission here is not "less environment" — it is a shell that does
+        // not start (P10.2).
+        if cfg!(windows) {
+            let win_vars = [
+                "SystemRoot",
+                "SystemDrive",
+                "windir",
+                "COMSPEC",
+                "ComSpec",
+                "PATHEXT",
+                "TEMP",
+                "TMP",
+                "USERPROFILE",
+                "USERNAME",
+                "APPDATA",
+                "LOCALAPPDATA",
+                "PROGRAMFILES",
+                "PROGRAMDATA",
+                "NUMBER_OF_PROCESSORS",
+                "PROCESSOR_ARCHITECTURE",
+                "OS",
+            ];
+            for var in &win_vars {
+                if let Ok(val) = std::env::var(var) {
+                    env.insert((*var).to_string(), val);
+                }
+            }
+        }
 
         // Workspace-scoped overrides.
         env.insert(

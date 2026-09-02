@@ -19,6 +19,7 @@ pub mod linux;
 pub mod macos;
 pub mod noop;
 pub mod path_guard;
+pub mod shell;
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -30,6 +31,7 @@ use serde::{Deserialize, Serialize};
 pub use crate::error::SandboxError;
 pub use crate::factory::{SandboxProbe, create_sandbox, probe_capability};
 pub use crate::path_guard::PathGuard;
+pub use crate::shell::{Shell, command_shell};
 
 /// Describes the level of sandboxing available on the current platform.
 #[derive(Debug, Clone, PartialEq)]

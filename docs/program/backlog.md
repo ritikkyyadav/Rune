@@ -105,7 +105,7 @@ Found 2026-09-03 by Phase 9 (the web product), continued:
   listener a page cannot open, so it prints `gear login <provider>`. A host command that
   runs the existing `oauth-strategy.ts` flow and streams its state would close this; it is
   the same gap Phase 3 logged — found in P9.4
-- `packages/orchestrator/src/bin/serve-cli.ts` supervisor + tests/integration/engine-serve.test.ts — every serve test run leaks its per-session `engine-host` processes (twenty idle engines found after the Phase 9 agent's runs; they made the held-step round-trip test time out at 60 s under load, while it passes in 21 s alone). The supervisor needs an idle reaper and the tests explicit teardown of the hosts they spawn — found while merging #13
+- ~~`packages/orchestrator/src/bin/serve-cli.ts` supervisor + tests/integration/engine-serve.test.ts — every serve test run leaks its per-session `engine-host` processes (twenty idle engines found after the Phase 9 agent's runs; they made the held-step round-trip test time out at 60 s under load, while it passes in 21 s alone). The supervisor needs an idle reaper and the tests explicit teardown of the hosts they spawn — found while merging #13~~ **FIXED in P10.0**: idle reaper (`[serve] idleHostSecs`, 10 min, client- and turn-aware), hosts stopped on server exit unless `--keep-hosts`, `--parent-pid` dead-man's switch in the host, teardown in the serve/ACP suites, and `tests/integration/zz-no-leaked-hosts.test.ts` as the standing assertion
 
 Found 2026-09-03 by Phase 10 (capability closers):
 
@@ -115,4 +115,47 @@ Found 2026-09-03 by Phase 10 (capability closers):
   therefore not self-contained: it is red until someone happens to run
   `bun run --cwd apps/web build`, and its own failure message is the only thing that says so. The
   test's design is right (a stale `dist/` is worse than none); the fix is for the unit gate, or a
-  `pretest` step, to produce the artifact it audits — found in P10.1
+  `pretest` step, to produce the artifact it audits — found in P10.1. **Half closed in P10.2**:
+  `ts-lint` and `ts-windows` build `apps/web` before running the suite, so CI's gate now produces
+  what it audits and `ts-lint` is green again (it had been red on every run — see 33688734929).
+  A local `bun test tests/unit/` on a clean checkout is still red until you build the bundle,
+  because nothing in the bare `bun test` invocation can hook it
+
+Found 2026-09-03 by P10.0 (the host reaper):
+
+- `packages/orchestrator/src/bin/serve-cli.ts` — `detachAll()`'s comment says "the next
+  `gear serve` reattaches", and nothing does: `HostPool.spawn` always mints a fresh socket
+  and never reads `~/.gear/run/serve-hosts.json`. So `--keep-hosts` genuinely orphans its
+  hosts rather than handing them over, and only the idle reaper (which the new server does
+  not know about them for) or a restart cleans them up. Either implement reattach or stop
+  claiming it — found in P10.0
+
+Found 2026-09-03 by P10.2 (Windows parity):
+
+- `packages/tool-registry/src/tools/format-on-write.ts` — the project-formatter
+  resolver looks for `node_modules/.bin/prettier`, which on Windows is
+  `prettier.cmd` (npm/bun write a `.cmd` shim, not a shebang script). So
+  format-on-write silently never runs on Windows even in a project that
+  configured prettier: no error, no note, just unformatted output. Its unit
+  suite skips there for the same reason — found in P10.2
+- `packages/orchestrator/src/parent-check.ts` and the verifier's check commands —
+  every fixture and most real check commands are `sh`-shaped (`sh check.sh`,
+  `bash -c`). Nothing establishes what a check command means on Windows
+  (cmd.exe? PowerShell? Git Bash if present?). `tests/unit/orchestrator/parent-check.test.ts`
+  skips there rather than pretend. Decide the Windows shell contract before
+  claiming the verifier works on Windows — found in P10.2
+- `packages/shared/src/credential-store.ts` / `secrets.ts` — file privacy is
+  enforced with POSIX mode 0600, which is a no-op on Windows (no rwx bits; the
+  ACL inherited from the parent directory decides). `secretsArePrivate()`
+  therefore cannot answer honestly on Windows. Either implement an ACL check or
+  say plainly that Windows credential files are as private as `%USERPROFILE%` —
+  found in P10.2
+- `packages/orchestrator/src/hooks.ts:386`, `verifier.ts:280`, `worker-worktree.ts:248` — every
+  command string these run goes through a hardcoded POSIX shell (`/bin/sh -c`, `bash -c`), so on
+  Windows the spawn fails and hooks, the verifier and worker checks are inert with no message
+  saying so. **The Rust half is fixed**: `crates/gear-sandbox/src/shell.rs` resolves a shell once
+  (Git for Windows' bash, else `cmd.exe /C`, `GEAR_SHELL` overrides) and both `bash` paths use it.
+  These three TypeScript callers should route through the same rule — the resolver needs a TS
+  twin, or the callers need to ask gear-tools. Their unit suites skip on Windows meanwhile,
+  because what they would assert depends on which shell the machine happens to have — found in
+  P10.2

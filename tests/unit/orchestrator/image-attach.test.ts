@@ -18,6 +18,7 @@ import {
   findImagePathCandidates,
   MAX_IMAGES_PER_MESSAGE,
   MAX_IMAGE_BYTES,
+  normalizeCandidate,
 } from "../../../packages/orchestrator/src/image-attach";
 import { AgentLoop } from "../../../packages/orchestrator/src/agent-loop";
 
@@ -68,14 +69,33 @@ describe("findImagePathCandidates", () => {
 });
 
 describe("attachReferencedImages", () => {
-  test("the incident paste attaches for real (escaped spaces, parens, trailing-space dir)", () => {
-    const text = `well ${root}/Sample\\ images\\ /_\\ \\(4\\).webp build me like this provided image`;
-    const { blocks, labels, notes } = attachReferencedImages(text, "/");
-    expect(blocks.length).toBe(1);
-    expect(blocks[0]).toMatchObject({ type: "image", mediaType: "image/webp" });
-    expect((blocks[0] as { data: string }).data).toBe(PNG_BYTES.toString("base64"));
-    expect(labels[0]).toContain("_ (4).webp");
-    expect(notes).toEqual([]);
+  // POSIX-only fixture: this path is shell-escaped the way a macOS or Linux
+  // drag-and-drop produces it. On Windows a backslash is the path separator and
+  // nothing unescapes it (see `normalizeCandidate`), so the same string is not
+  // a path there — a Windows paste with spaces arrives quoted, which the quoted
+  // scan handles and which is covered above.
+  test.skipIf(process.platform === "win32")(
+    "the incident paste attaches for real (escaped spaces, parens, trailing-space dir)",
+    () => {
+      const text = `well ${root}/Sample\\ images\\ /_\\ \\(4\\).webp build me like this provided image`;
+      const { blocks, labels, notes } = attachReferencedImages(text, "/");
+      expect(blocks.length).toBe(1);
+      expect(blocks[0]).toMatchObject({ type: "image", mediaType: "image/webp" });
+      expect((blocks[0] as { data: string }).data).toBe(PNG_BYTES.toString("base64"));
+      expect(labels[0]).toContain("_ (4).webp");
+      expect(notes).toEqual([]);
+    },
+  );
+
+  test("a pasted WINDOWS path is not mangled by shell unescaping", () => {
+    // The defect: `normalizeCandidate` used to strip every backslash, so
+    // `C:\Users\me\shot.png` became `C:Usersmeshot.png` and every pasted
+    // Windows path silently attached nothing. Asserted from any OS.
+    expect(normalizeCandidate("C:\\Users\\me\\Pictures\\shot.png", "C:\\ws", "win32")).toBe(
+      "C:\\Users\\me\\Pictures\\shot.png",
+    );
+    // …while POSIX escaping still means what it did.
+    expect(normalizeCandidate("/tmp/a\\ b.png", "/ws", "linux")).toBe("/tmp/a b.png");
   });
 
   test("relative paths resolve against the base dir; jpg maps to image/jpeg", () => {

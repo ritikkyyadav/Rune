@@ -18,7 +18,7 @@ import {
 } from "@gear/llm-gateway";
 import { existsSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
-import { parseToolArguments } from "@gear/shared";
+import { isPathInside, parseToolArguments } from "@gear/shared";
 import { batchSignature, breakerSignature, failureShapeSignature } from "./call-signature";
 import type { IncidentContext, IncidentReporter, IncidentSeverity } from "@gear/shared";
 import type { IncidentClass } from "@gear/shared";
@@ -1539,9 +1539,12 @@ export class AgentLoop {
         // the moment one file in one scope was opened. Reading is anything
         // that put the scope's code in front of the model — a file read, a
         // search inside it, a listing of it.
+        // `isPathInside`, not `startsWith(scope + "/")`: the old shape was
+        // never true on Windows, where both sides are backslash-separated, so
+        // every delegated scope read as unread and this gate refused every
+        // sub-agent finish on that platform (P10.2).
         const unreadScopes = delegatedScopes.filter(
-          (scope) =>
-            ![...readPaths].some((r) => r === scope || r.startsWith(scope.replace(/\/?$/, "/"))),
+          (scope) => ![...readPaths].some((r) => isPathInside(scope, r)),
         );
         if (
           delegatedScopes.length > 0 &&

@@ -14,7 +14,7 @@
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, resolve } from "node:path";
+import { posix, win32 } from "node:path";
 import type { ContentBlock } from "@gear/llm-gateway";
 
 /** Extension → media type. Only formats every vision provider accepts. */
@@ -101,11 +101,29 @@ export function findImagePathCandidates(text: string): string[] {
   return found;
 }
 
-/** Undo shell escaping ("\ " → " ", "\(" → "(", …) and expand a leading ~. */
-function normalizeCandidate(candidate: string, baseDir: string): string {
-  let p = candidate.replace(/\\(.)/g, "$1").trim();
+/**
+ * Undo shell escaping ("\ " → " ", "\(" → "(", …) and expand a leading ~.
+ *
+ * The unescape is POSIX-ONLY, and that is the whole point of the platform
+ * parameter. On Windows a backslash is the path separator, so
+ * `C:\Users\me\shot.png` came out of the old unconditional
+ * `replace(/\\(.)/g, "$1")` as `C:Usersmeshot.png` — a path that exists
+ * nowhere. Every pasted Windows path silently attached nothing (P10.2).
+ *
+ * Windows loses nothing by this: the escaping being undone is a POSIX shell's,
+ * which is not how paths arrive on Windows. A path with spaces arrives quoted
+ * there, and the quoted scan handles it.
+ */
+export function normalizeCandidate(
+  candidate: string,
+  baseDir: string,
+  platform: string = process.platform,
+): string {
+  const windows = platform === "win32";
+  const api = windows ? win32 : posix;
+  let p = (windows ? candidate : candidate.replace(/\\(.)/g, "$1")).trim();
   if (p === "~" || p.startsWith("~/")) p = homedir() + p.slice(1);
-  return isAbsolute(p) ? p : resolve(baseDir, p);
+  return api.isAbsolute(p) ? api.resolve(p) : api.resolve(baseDir, p);
 }
 
 export interface AttachedImages {

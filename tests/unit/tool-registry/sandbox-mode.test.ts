@@ -102,7 +102,10 @@ describe("bash tool description follows the mode", () => {
   });
 });
 
-describe("rust bridge --sandbox flag follows the mode", () => {
+// POSIX-only: the fake tools binary is a `#!/bin/sh` script (no shebang
+// dispatch on Windows) and `--sandbox` selects seatbelt or bwrap, neither of
+// which exists there. Every other suite in this file is pure policy.
+describe.skipIf(process.platform === "win32")("rust bridge --sandbox flag follows the mode", () => {
   // A stand-in "gear-tools" that just echoes its argv back as the result, so
   // the test asserts the exact flag surface the real binary would see.
   function fakeToolsBinary(): string {

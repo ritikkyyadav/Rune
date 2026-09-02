@@ -89,11 +89,16 @@ pub async fn execute(input: BashInput, workspace_root: &Path) -> Result<BashOutp
 
     let timeout_ms = input.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
 
+    // The platform's shell. `bash` by name works on macOS and Linux and fails
+    // to spawn on Windows, where nothing puts a bash on PATH unless Git for
+    // Windows did — which the resolver looks for, falling back to cmd.exe so a
+    // command at least RUNS. See gear_sandbox::shell.
+    let sh = gear_sandbox::command_shell();
     // Inherit the full parent environment (like Claude Code / Codex): stripping
     // it breaks SSH agents, proxies, toolchain managers (nvm/pyenv/cargo), and
     // anything the user exported. Only guarantee the basics have sane values.
-    let mut cmd = Command::new("bash");
-    cmd.arg("-c")
+    let mut cmd = Command::new(&sh.program);
+    cmd.args(&sh.args)
         .arg(&input.command)
         .current_dir(workspace_root)
         .env(
@@ -113,9 +118,9 @@ pub async fn execute(input: BashInput, workspace_root: &Path) -> Result<BashOutp
     #[cfg(unix)]
     cmd.process_group(0);
 
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| ToolError::CommandFailed(format!("Failed to spawn bash: {e}")))?;
+    let mut child = cmd.spawn().map_err(|e| {
+        ToolError::CommandFailed(format!("Failed to spawn {}: {e}", sh.program.display()))
+    })?;
 
     let child_pid = child.id();
     // Register for the SIGTERM handler in main(): an interrupt (Esc in the

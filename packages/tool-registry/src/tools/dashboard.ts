@@ -32,6 +32,7 @@ import {
 } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { isPathInside } from "@gear/shared";
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
 import { CHART_UMD, CHART_UMD_VERSION } from "./assets/chart-umd";
 import { CHART_DEFAULTS_JS, FAB_CSS, THEME_CSS, specShellHtml } from "./dashboard-theme";
@@ -311,8 +312,10 @@ function resolveExportPath(
 ): string {
   const rel = path && path.trim() ? path.trim() : fallback;
   const abs = isAbsolute(rel) ? resolve(rel) : resolve(workspaceRoot, rel);
-  const root = resolve(workspaceRoot);
-  if (abs !== root && !abs.startsWith(root + "/") && !abs.startsWith(root + "\\")) {
+  // `isPathInside` rather than two hand-written separator cases: the "\\" arm
+  // here happened to cover Windows, the watch-path check below did not, and one
+  // tested helper beats remembering which spellings a platform uses (P10.2).
+  if (!isPathInside(workspaceRoot, abs)) {
     throw new Error(`export path must be inside the workspace (got ${rel})`);
   }
   mkdirSync(dirname(abs), { recursive: true });
@@ -521,7 +524,10 @@ export class DashboardManager {
     } catch {
       root = resolve(workspaceRoot);
     }
-    if (canonical !== root && !canonical.startsWith(root + "/")) {
+    // Both sides are already canonical, so this is purely the containment
+    // question — and on Windows the old `startsWith(root + "/")` answered "no"
+    // for every path in the workspace.
+    if (!isPathInside(root, canonical)) {
       throw new Error(`watch_file must be inside the workspace (got ${path})`);
     }
     return canonical;

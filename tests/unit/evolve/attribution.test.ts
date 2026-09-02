@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -27,6 +27,7 @@ import {
   abConfigOf,
   configHash,
 } from "../../../packages/orchestrator/src/evolve/config-hash";
+import { rmTemp } from "../../helpers/tmp";
 
 describe("doctrine attribution", () => {
   it("has a hand-maintained version", () => {
@@ -71,7 +72,7 @@ describe("session records the prompt it ran under", () => {
       expect(sm.listSessions({ status: "all" })[0]?.systemPromptHash).toBe("abc123def456");
       sm.close();
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      rmTemp(dir);
     }
   });
 
@@ -84,7 +85,7 @@ describe("session records the prompt it ran under", () => {
       expect(sm.getSession(created.id)?.systemPromptHash).toBeNull();
       sm.close();
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      rmTemp(dir);
     }
   });
 });

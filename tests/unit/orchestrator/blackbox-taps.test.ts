@@ -5,7 +5,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AgentLoop } from "../../../packages/orchestrator/src/agent-loop";
@@ -13,6 +13,7 @@ import { Engine, classifyToolFailure } from "../../../packages/orchestrator/src/
 import { parseToolArguments } from "../../../packages/shared/src/json";
 import type { IncidentInput } from "../../../packages/shared/src/incident";
 import { BlackboxStore } from "../../../packages/telemetry/src/store";
+import { rmTemp } from "../../helpers/tmp";
 
 function ev(type: string, extra: Record<string, unknown> = {}) {
   return { type, ...extra };
@@ -164,7 +165,7 @@ describe("engine blackbox integration", () => {
   });
 
   afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
+    rmTemp(dir);
   });
 
   test("engine with blackbox enabled records salvage incidents to its own db", () => {

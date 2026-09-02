@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NotebookStore } from "../../../packages/orchestrator/src/notebook/store";
@@ -11,6 +11,7 @@ import {
 } from "../../../packages/orchestrator/src/notebook/capture";
 import { buildNotebookBlock } from "../../../packages/orchestrator/src/notebook/retrieval";
 import { CostGovernor } from "../../../packages/orchestrator/src/notebook/governor";
+import { rmTemp } from "../../helpers/tmp";
 
 let dir: string;
 let store: NotebookStore;
@@ -22,7 +23,7 @@ beforeEach(() => {
 
 afterEach(() => {
   store.close();
-  rmSync(dir, { recursive: true, force: true });
+  rmTemp(dir);
 });
 
 const obs = (toolName: string, command: string, success: boolean): ToolObservation => ({
