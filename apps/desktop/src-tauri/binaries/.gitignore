@@ -1,0 +1,4 @@
+# Staged by scripts/stage-desktop-sidecar.sh before every desktop build.
+# The binary is a build output, not a source file.
+*
+!.gitignore

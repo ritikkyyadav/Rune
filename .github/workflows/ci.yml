@@ -194,12 +194,21 @@ jobs:
       - run: cargo build --release -p gear-tools
       - name: Frontend typecheck + build
         run: bun run --filter @gear/desktop build
+      - name: Stage the engine sidecar
+        # `cargo check` fails without it: externalBin is not optional at build
+        # time, and a bundled app runs `gear engine-host` rather than Bun.
+        run: bash scripts/stage-desktop-sidecar.sh
       - name: Tauri shell compiles
         run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
-      - name: Desktop reducers and launcher
+      - name: Desktop reducers, launcher, review workspace
         env:
           GEAR_TOOLS_BIN: ${{ github.workspace }}/target/release/gear-tools
-        run: bun test tests/unit/desktop
+        run: bun test tests/unit/desktop tests/unit/brand-checklist.test.ts
+      - name: No shadows in the built CSS
+        # The brand's fingerprint, checked on the ARTIFACT rather than the
+        # source: a shadow that arrives through a dependency still counts.
+        run: |
+          test "$(grep -c 'box-shadow' apps/desktop/dist/assets/*.css)" = "0"
       - name: gear desktop --check (headless engine handshake)
         env:
           GEAR_TOOLS_BIN: ${{ github.workspace }}/target/release/gear-tools
