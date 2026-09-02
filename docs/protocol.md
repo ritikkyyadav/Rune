@@ -238,6 +238,16 @@ eighteen lines is not NDJSON and a line-by-line consumer would choke on it.
 Exit codes are unchanged: `0` ok, `1` failed, `3` needed permission and had
 nobody to ask.
 
+## The SDK
+
+`@gear/sdk` is `GearClient` over a WebSocket with this protocol, re-exporting
+the whole of `@gear/protocol` so a consumer installs one package. The
+round-trips are first-class: register a handler and the client answers for you;
+leave one unset and the host applies the unattended policy above.
+
+See `packages/sdk/README.md` for the worked example — it is executed by
+`tests/integration/engine-serve.test.ts`, so it cannot rot silently.
+
 ## Exhaustiveness — the drift law
 
 `AgentTurnEvent` has 22 members and is consumed by five reducers: the TUI
