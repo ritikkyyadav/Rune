@@ -152,6 +152,9 @@ export {
   type GearBaseName,
   type GearBaseCss,
   type GearTerminalPalette,
+  type Rgb,
+  SAVOIR,
+  SAVOIR_STATUS_COLORS,
   GEAR_ACCENT_NAMES,
   GEAR_ACCENT_LABELS,
   GEAR_BASE_CSS,
@@ -159,7 +162,11 @@ export {
   GEAR_SCALE,
   gearTerminalPalette,
   gearAccentHex,
+  savoirTerminalRoles,
   solidOver,
+  mixToward,
+  hexToRgbTuple,
+  rgbTupleToHex,
 } from "./design-tokens.js";
 export {
   adoptLegacyEnv,

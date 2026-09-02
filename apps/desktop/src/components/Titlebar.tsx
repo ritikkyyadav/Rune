@@ -1,4 +1,4 @@
-import { GearMark } from "./GearMark";
+import { Wordmark } from "./Wordmark";
 import type { ConnectionState } from "../lib/types";
 import type { GearInfo } from "../lib/gears";
 
@@ -38,8 +38,8 @@ export function Titlebar(props: {
         </button>
       ) : null}
       <div className="tb-brand">
-        <GearMark size={18} />
-        Gear <span className="version">v{props.version} · preview</span>
+        <Wordmark size={15} />
+        <span className="version">v{props.version}</span>
       </div>
       <div className="tb-task" data-tauri-drag-region>
         <b>{props.task || "New task"}</b>

@@ -227,3 +227,58 @@ asymmetry is the round-trips: the sidecar streams `{requestId, prompt}` and the
 client answers by name, while the SDK holds a promise and answers for you, so
 ws mode mints a local id and both present the same `(id, payload)` shape
 upward.
+
+---
+
+## 8. One design system (Phase 3 · P3.3)
+
+Three visual identities existed in this repository at once: the customizer's
+five accents × two bases (ported into `bin/ui/themes.ts`), the desktop's own
+2,074 lines of CSS, and the Savoir rebrand. A product cannot have three. Under
+D2 the Savoir brand DNA is the one, and everything below derives from
+`packages/shared/src/design-tokens.ts`.
+
+**The palette.** Paper `#E7E8E3` and ink `#14161A` are the two grounds — cool
+drafting paper, explicitly not cream. Graphite `#4A4F55` and `#7C8088` carry
+secondary and tertiary text. Hairlines are `#C7CABF` on paper and `#2C3036` on
+ink. There is ONE chromatic hue: the datum `#0E5E63`, which becomes the signal
+`#17A0A8` on ink. Caution `#E2A23A` and negative `#9A4A3A` are status colours —
+they signal state and never decorate.
+
+**There is no green.** A green for "added lines" would be a second brand colour
+arriving through the back door of a diff. An addition is a datum: the thing
+that is now there. The on-ink negative is the brand's own brick lifted 30%
+toward paper, because `#9A4A3A` is 2.2:1 on ink — fine as a rule, unreadable as
+a word — and deriving it means changing `--negative` moves both.
+
+**The rules, enforced rather than described.** Zero `box-shadow`: depth is a 1px
+hairline. Every radius is 3px, with a pill and the 6px icon tile as the only
+exceptions. Inter for voice, IBM Plex Mono for the record — labels, metadata,
+paths, commands, diffs and every figure, with tabular numerals. Mono labels are
+uppercase, 11px, tracked `+.04em`. A 28px graticule sits behind everything.
+`tests/unit/shared/design-tokens-parity.test.ts` pins the values and the rules;
+`tests/unit/brand-checklist.test.ts` re-checks the BUILT stylesheet, because a
+shadow can arrive through a component or a dependency without ever touching a
+token.
+
+**Two generators, one source.** `scripts/generate-tokens-css.ts` emits
+`tokens.css` for the desktop and the web client (the same bundle).
+`scripts/generate-terminal-colors.ts` prints the TUI's table — exact 24-bit RGB
+plus the ANSI-256 index a terminal without truecolor is given instead. It
+prints rather than writes: `bin/ui/themes.ts` already derives from the token
+module, and a second checked-in copy would be a third place to drift. What it
+gives you is a reviewable form — swatches in a terminal, not a diff of hexes.
+
+**The picker is gone.** Light, dark, auto, on both surfaces. `[data-accent]`
+survives with one value as the undocumented `[ui] accent` override, because a
+seam that says "this was a choice, and the choice is one" is more honest than
+deleting it. Every retired accent id still resolves: `gear-violet-dark` in
+`~/.gear/theme.json` opens the dark mode rather than erroring, and so does
+`flow`, the dark palette that used to be the default.
+
+**The mark, pending D2.** The founder has not supplied a Gear mark or ruled on
+"Gear" versus "Savoir Gear". Until then the mark is the word, set in the Savoir
+lockup construction: bold tight-tracked sans terminated by the block cursor, a
+true rectangle sized in `em` so the proportion cannot drift. The nine-tooth cog
+survives only as the working indicator — a spinning gear is a state, and the
+brand does not spin.
