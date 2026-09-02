@@ -23,7 +23,11 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { hasStoredCredential, getPreset } from "../../../packages/shared/src/index";
+import {
+  hasStoredCredential,
+  getPreset,
+  CUSTOM_PROVIDER_ID,
+} from "../../../packages/shared/src/index";
 
 let dir: string;
 let env: NodeJS.ProcessEnv;
@@ -70,9 +74,18 @@ describe("credentials a subscription provider actually uses", () => {
 });
 
 describe("the gate the sticky model has to pass", () => {
-  // Mirrors the predicate both entry points now use.
-  const stickyUsable = (p: string, e: NodeJS.ProcessEnv) =>
-    getPreset(p) !== undefined && (p === "ollama" || hasStoredCredential(p, e));
+  // Mirrors the predicate both entry points now use. `custom` is checked
+  // FIRST because it deliberately has no preset: it is the escape hatch for a
+  // provider the catalogue does not know, so the preset gate would reject it
+  // forever. It is usable exactly when the gateway would register it.
+  const stickyUsable = (
+    p: string,
+    e: NodeJS.ProcessEnv,
+    custom?: { baseUrl?: string; key?: string },
+  ) =>
+    p === CUSTOM_PROVIDER_ID
+      ? !!(custom?.baseUrl && custom?.key)
+      : getPreset(p) !== undefined && (p === "ollama" || hasStoredCredential(p, e));
 
   test("a signed-in Codex account passes — the case that was broken", () => {
     writeIndex(["provider:codex:oauth"]);
@@ -103,5 +116,29 @@ describe("the gate the sticky model has to pass", () => {
   test("a real provider with no credentials falls through rather than booting keyless", () => {
     writeIndex([]);
     expect(stickyUsable("anthropic", env)).toBe(false);
+  });
+
+  // P8.6 removed the `lmstudio` preset and told people to reach a local
+  // OpenAI-compatible server through `/keys custom …` instead. `/model`
+  // accepts `custom`, but the startup gate threw it away on the preset check,
+  // so the replacement path was reachable and never kept: pick it, restart,
+  // and the session came up on the auto-detected provider again.
+  test("a configured custom endpoint survives a restart", () => {
+    writeIndex([]);
+    expect(
+      stickyUsable(CUSTOM_PROVIDER_ID, env, {
+        baseUrl: "http://localhost:1234/v1",
+        key: "lm-studio",
+      }),
+    ).toBe(true);
+  });
+
+  test("an unconfigured custom endpoint does not — half a config is not a provider", () => {
+    writeIndex([]);
+    expect(stickyUsable(CUSTOM_PROVIDER_ID, env, undefined)).toBe(false);
+    expect(stickyUsable(CUSTOM_PROVIDER_ID, env, { baseUrl: "http://localhost:1234/v1" })).toBe(
+      false,
+    );
+    expect(stickyUsable(CUSTOM_PROVIDER_ID, env, { key: "lm-studio" })).toBe(false);
   });
 });

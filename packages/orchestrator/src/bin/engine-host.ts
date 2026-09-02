@@ -55,6 +55,7 @@ import type { ProviderName } from "@gear/llm-gateway";
 import {
   hasStoredCredential,
   getPreset,
+  CUSTOM_PROVIDER_ID,
   adoptLegacyEnv,
   ensureGearHome,
   migrateLegacyHome,
@@ -224,9 +225,16 @@ function buildEngine(): Engine {
   // failed both halves and the session opened on an auto-detected
   // provider instead of the one that was chosen.
   const lastUsed = loadLastModel();
+  // `custom` has no preset by design — it IS the escape hatch for a provider
+  // the catalogue does not know — so the preset gate would reject it forever.
+  // It is usable exactly when the gateway would register it (P4/P8: base URL
+  // plus key in secrets), which is what `/keys custom …` writes.
+  const customUsable = !!(secrets.custom?.baseUrl && secrets.custom?.key);
   const stickyUsable = (p: string): boolean =>
-    getPreset(p) !== undefined &&
-    (p === "ollama" || hasStoredCredential(p) || (isCliProvider(p) && hasCreds(p)));
+    p === CUSTOM_PROVIDER_ID
+      ? customUsable
+      : getPreset(p) !== undefined &&
+        (p === "ollama" || hasStoredCredential(p) || (isCliProvider(p) && hasCreds(p)));
   const sticky = lastUsed && stickyUsable(lastUsed.provider) ? lastUsed : null;
 
   let provider: ProviderName;
