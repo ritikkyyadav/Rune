@@ -1,0 +1,740 @@
+// ─── The retro: a run's account of itself, in numbers, and what it taught ───
+//
+// Gear recorded everything and read nothing back. The black box holds every
+// failure under a fingerprint, the notebook holds command facts, the spine
+// holds every step's evidence — and none of it changed the next run, because
+// no organ turned a finished run into a lesson. This is that organ: a
+// zero-model-call pass over the run's own session log (the same rows `gear
+// audit` reads) that states what happened — outcome, steps by evidence,
+// checks, gates, cost — and extracts the few lessons a rule can vouch for.
+//
+// Precision over recall, like the notebook capture it feeds: a wrong "avoid X
+// here" costs turns on every later run; a missed one costs nothing.
+
+import { createHash } from "node:crypto";
+import type { SessionEvent } from "@gear/shared";
+import { isVerificationCommand } from "./brief";
+import { categorizeProjectCommand } from "./notebook/capture";
+import type { ToolObservation } from "./notebook/capture";
+import type { NotebookStore } from "./notebook/store";
+import { TaskStateStore } from "./task-state";
+import type { HandoffReason, StepLogKind, TaskState } from "./task-state";
+
+export type EventRow = { seq: number; event: SessionEvent };
+
+/** How a run ended. `finished` is the only clean one; the rest are handoffs. */
+export type RunOutcome = "finished" | HandoffReason;
+
+export interface RetroLesson {
+  /**
+   * check   — a verification command that passed here (beyond the runner
+   *           facts the notebook already keeps)
+   * pitfall — a command that failed repeatedly with one error and never passed
+   * fix     — the same command failing, then passing with different arguments
+   */
+  kind: "check" | "pitfall" | "fix";
+  /** Notebook dedupe key within the repo scope. */
+  title: string;
+  /** The advice, ≤ 400 chars — it is injected under the notebook's budget. */
+  body: string;
+  /** Why the rule believed it, one line. */
+  evidence: string;
+  /** The exact command the lesson is about (for later contradiction checks). */
+  command?: string;
+}
+
+export interface RunRetro {
+  v: 1;
+  at: string;
+  outcome: RunOutcome;
+  /** The task's goal, clipped — for the scorecard's eye, not for the model. */
+  goal: string;
+  steps: { total: number; done: number; unproven: number; open: number };
+  checks: { passed: number; failed: number; lastPassed?: string };
+  tools: { calls: number; failed: number; byName: Record<string, number> };
+  /** Spine log kinds counted over the run (gate, unproven, dropped, …). */
+  gates: Partial<Record<StepLogKind, number>>;
+  /** Model completions the run took (assistant messages persisted). */
+  completions: number;
+  filesWritten: number;
+  cost: { usd: number; listUsd: number; inputTokens: number; outputTokens: number };
+  durationMs: number;
+  lessons: RetroLesson[];
+  /** Derived after the fact from a whole session, not written at run end. */
+  backfilled?: boolean;
+}
+
+export interface DeriveOptions {
+  /** The run was aborted by the user. */
+  aborted?: boolean;
+  /** The loop threw; the message is not used, only its presence. */
+  runError?: string | null;
+  /** Only spine log entries at/after this ISO time count — the run's own. */
+  sinceAt?: string;
+  durationMs?: number;
+  /** Set when deriving from a whole session rather than one run. */
+  backfilled?: boolean;
+  now?: string;
+}
+
+// ─── Observations, rebuilt from the log ───
+// The engine collects the same shape live; rebuilding it from persisted rows
+// means the retro can be derived after the fact for any session, which is
+// what lets the scorecard cover history the retro never saw.
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+export function observationsFromRows(rows: EventRow[]): ToolObservation[] {
+  const uses = new Map<string, { toolName: string; args: Record<string, unknown> }>();
+  const out: ToolObservation[] = [];
+  for (const r of rows) {
+    const e = r.event;
+    if (e.type === "assistant_msg") {
+      const list = (
+        e.payload as {
+          toolUses?: Array<{ callId?: unknown; toolName?: unknown; toolInput?: unknown }>;
+        }
+      ).toolUses;
+      if (!Array.isArray(list)) continue;
+      for (const u of list) {
+        if (!u || typeof u.callId !== "string" || typeof u.toolName !== "string") continue;
+        uses.set(u.callId, {
+          toolName: u.toolName,
+          args: isRecord(u.toolInput) ? u.toolInput : {},
+        });
+      }
+    } else if (e.type === "tool_result") {
+      const p = e.payload as { callId?: unknown; content?: unknown; isError?: unknown };
+      const use = typeof p.callId === "string" ? uses.get(p.callId) : undefined;
+      if (!use) continue;
+      const failed = p.isError === true;
+      const content = typeof p.content === "string" ? p.content : "";
+      out.push({
+        toolName: use.toolName,
+        args: use.args,
+        success: !failed,
+        ...(failed ? { error: content.slice(0, 400) } : {}),
+      });
+    }
+  }
+  return out;
+}
+
+// ─── The numbers ───
+
+const WRITE_TOOLS = new Set(["write_file", "edit_file", "multi_edit", "apply_patch"]);
+
+function bashCommandOf(o: ToolObservation): string | null {
+  if (o.toolName !== "bash") return null;
+  const c = o.args.command;
+  if (typeof c !== "string") return null;
+  const cmd = c.trim();
+  // Multi-line scripts and monsters are not "a command" a lesson can name.
+  if (cmd.length === 0 || cmd.length > 160 || cmd.includes("\n")) return null;
+  return cmd;
+}
+
+const TERMINATED_RE = /agent loop terminated/i;
+
+/** The seq at which the spine first carried this handoff; -1 when these rows never did. */
+function handoffRecordedSeq(rows: EventRow[], at: string): number {
+  for (const r of rows) {
+    if (r.event.type !== "task_state") continue;
+    const state = (r.event.payload as unknown as { state?: { handoff?: { at?: string } } })?.state;
+    if (state?.handoff?.at === at) return r.seq;
+  }
+  return -1;
+}
+
+/**
+ * How rows ended when the spine's handoff and a termination note disagree.
+ * The note wins only when the handoff was recorded in an EARLIER run — before
+ * the last user message that precedes the note. evolab7: max_turns at 20:26,
+ * "well show me the preview" at 20:27, "agent loop terminated" at 22:08 — the
+ * session ended in error. A handoff the dying run itself recorded
+ * (provider_lost, error) keeps its reason: it is the more specific record.
+ */
+export function runEnding(
+  rows: EventRow[],
+  handoffAt: string | undefined,
+): { diedSeq: number; handoffSeq: number; diedWins: boolean } {
+  let diedSeq = -1;
+  let lastUserBeforeDeath = -1;
+  for (const r of rows) {
+    if (
+      r.event.type === "system_note" &&
+      TERMINATED_RE.test(String(r.event.payload?.content ?? ""))
+    ) {
+      diedSeq = r.seq;
+    }
+  }
+  if (diedSeq >= 0) {
+    for (const r of rows) {
+      if (r.event.type === "user_msg" && r.seq < diedSeq) lastUserBeforeDeath = r.seq;
+    }
+  }
+  const handoffSeq = handoffAt ? handoffRecordedSeq(rows, handoffAt) : -1;
+  const diedWins = diedSeq >= 0 && (handoffSeq < 0 || handoffSeq < lastUserBeforeDeath);
+  return { diedSeq, handoffSeq, diedWins };
+}
+
+function outcomeOf(state: TaskState | null, rows: EventRow[], opts: DeriveOptions): RunOutcome {
+  if (opts.aborted) return "aborted";
+  // A handoff older than this run's start (`sinceAt`) was an earlier run's
+  // and says nothing about this one; one this run recorded is its own.
+  const handoff = state?.handoff;
+  const handoffAt = String(handoff?.at ?? "");
+  const stale = !!handoff && !!opts.sinceAt && handoffAt < opts.sinceAt;
+  const ending = runEnding(rows, handoff && !stale ? handoffAt : undefined);
+  const own = !!handoff?.reason && !stale && ending.handoffSeq >= 0 && !ending.diedWins;
+  // provider_lost is the loop's own account of the error that follows it.
+  if (own && handoff?.reason === "provider_lost") return "provider_lost";
+  if (opts.runError) return "error";
+  if (own && handoff?.reason) return handoff.reason;
+  if (ending.diedWins) return "error";
+  return "finished";
+}
+
+/**
+ * Derive one run's retro from its rows (everything at/after the run's first
+ * event). Returns null only when the rows hold nothing a run leaves behind —
+ * no completion, no tool call, no spine — so a conversational turn that
+ * produced one sentence still gets a (tiny) retro.
+ */
+export function deriveRunRetro(rows: EventRow[], opts: DeriveOptions = {}): RunRetro | null {
+  if (rows.length === 0) return null;
+  const observations = observationsFromRows(rows);
+  const store = TaskStateStore.fromEvents(rows);
+  const state = store?.snapshot() ?? null;
+  const completions = rows.filter((r) => r.event.type === "assistant_msg").length;
+  if (completions === 0 && observations.length === 0 && !state) return null;
+
+  const counts = store?.todoCounts() ?? { done: 0, total: 0, unproven: 0, open: 0 };
+
+  let checksPassed = 0;
+  let checksFailed = 0;
+  let lastPassed: string | undefined;
+  const byName: Record<string, number> = {};
+  let failed = 0;
+  const written = new Set<string>();
+  for (const o of observations) {
+    byName[o.toolName] = (byName[o.toolName] ?? 0) + 1;
+    if (!o.success) failed++;
+    const cmd = bashCommandOf(o);
+    if (cmd && isVerificationCommand(cmd)) {
+      if (o.success) {
+        checksPassed++;
+        lastPassed = cmd;
+      } else checksFailed++;
+    }
+    if (o.success && WRITE_TOOLS.has(o.toolName) && typeof o.args.path === "string") {
+      written.add(o.args.path);
+    }
+  }
+
+  const gates: Partial<Record<StepLogKind, number>> = {};
+  for (const entry of state?.log ?? []) {
+    if (opts.sinceAt && entry.at < opts.sinceAt) continue;
+    gates[entry.kind] = (gates[entry.kind] ?? 0) + 1;
+  }
+
+  const cost = { usd: 0, listUsd: 0, inputTokens: 0, outputTokens: 0 };
+  for (const r of rows) {
+    if (r.event.type !== "cost") continue;
+    const p = r.event.payload;
+    cost.usd += Number(p.costUsd ?? 0) || 0;
+    cost.listUsd += Number(p.listCostUsd ?? 0) || 0;
+    cost.inputTokens += Number(p.inputTokens ?? 0) || 0;
+    cost.outputTokens += Number(p.outputTokens ?? 0) || 0;
+  }
+  // Sums of list prices carry float dust; the record keeps micro-dollars.
+  cost.usd = Math.round(cost.usd * 1e6) / 1e6;
+  cost.listUsd = Math.round(cost.listUsd * 1e6) / 1e6;
+
+  const outcome = outcomeOf(state, rows, opts);
+  const retro: RunRetro = {
+    v: 1,
+    at: opts.now ?? new Date().toISOString(),
+    outcome,
+    goal: (state?.goal ?? "").replace(/\s+/g, " ").slice(0, 200),
+    steps: { total: counts.total, done: counts.done, unproven: counts.unproven, open: counts.open },
+    checks: { passed: checksPassed, failed: checksFailed, ...(lastPassed ? { lastPassed } : {}) },
+    tools: { calls: observations.length, failed, byName },
+    gates,
+    completions,
+    filesWritten: written.size,
+    cost,
+    durationMs: Math.max(0, Math.round(opts.durationMs ?? 0)),
+    lessons: retroLessons(observations),
+  };
+  if (opts.backfilled) retro.backfilled = true;
+  return retro;
+}
+
+// ─── The lessons ───
+// Three rules, each demanding evidence a later run can act on. Anything that
+// smells transient (a timeout, a rate limit, a user saying no) is excluded:
+// those are the harness's business, or the user's, never the repo's.
+
+const TRANSIENT_RE =
+  /timed? ?out|timeout|rate.?limit|\b429\b|econnreset|econnrefused|socket hang up|network is unreachable|temporary failure|killed by signal|\bsigkill\b|\bsigterm\b/i;
+const USER_SAID_NO_RE =
+  /by the user|user (declined|denied|rejected)|not approved|approval (was )?(denied|declined)|held for approval/i;
+
+function firstLine(s: string): string {
+  return (
+    s
+      .split("\n")
+      .find((l) => l.trim().length > 0)
+      ?.trim() ?? ""
+  );
+}
+
+function errorKey(line: string): string {
+  return line.toLowerCase().replace(/\s+/g, " ").replace(/\d+/g, "#").slice(0, 160);
+}
+
+function head(cmd: string): string {
+  return (cmd.split(/\s+/)[0] ?? cmd).replace(/[^a-zA-Z0-9_.-]/g, "").slice(0, 24) || "cmd";
+}
+
+function hash6(s: string): string {
+  return createHash("sha1").update(s).digest("hex").slice(0, 6);
+}
+
+function clip(s: string, n: number): string {
+  return s.length > n ? `${s.slice(0, n - 1)}…` : s;
+}
+
+/** Runners the notebook's command facts do not already cover. */
+const SECONDARY_RUNNER_RE =
+  /^(\.\/[\w.-]+|bash|sh|zsh|make|just|tox|poetry|uv|pipenv|bundle|rake|mix|sbt|dotnet|swift|xcodebuild|deno|nx|lerna|mise|ctest|cmake)\b/;
+
+function argDiff(before: Record<string, unknown>, after: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  for (const [k, v] of Object.entries(after)) {
+    if (k === "command") continue;
+    if (JSON.stringify(before[k]) === JSON.stringify(v)) continue;
+    const shown = typeof v === "string" ? `"${clip(v, 40)}"` : JSON.stringify(v);
+    out.push(`${k}: ${shown}`);
+  }
+  return out.slice(0, 3);
+}
+
+export function retroLessons(observations: ToolObservation[]): RetroLesson[] {
+  const lessons: RetroLesson[] = [];
+
+  // pitfall — the same command, the same error, twice or more, never a pass
+  const failures = new Map<string, { count: number; key: string; line: string }>();
+  const passed = new Set<string>();
+  // fix — the same command failing, then passing with different arguments
+  const failedArgs = new Map<string, Record<string, unknown>>();
+  const fixes: RetroLesson[] = [];
+  // check — a secondary runner's verification that passed
+  let lastCheck: string | undefined;
+
+  for (const o of observations) {
+    const cmd = bashCommandOf(o);
+    if (!cmd) continue;
+    if (o.success) {
+      passed.add(cmd);
+      const prior = failedArgs.get(cmd);
+      if (prior) {
+        const diff = argDiff(prior, o.args);
+        if (diff.length > 0) {
+          fixes.push({
+            kind: "fix",
+            title: `fix:${head(cmd)}:${hash6(cmd)}`,
+            body: `\`${clip(cmd, 80)}\` needs ${diff.join(", ")} here — it failed without.`,
+            evidence: `failed, then passed with ${diff.join(", ")} in one run`,
+            command: cmd,
+          });
+        }
+        failedArgs.delete(cmd);
+      }
+      if (
+        isVerificationCommand(cmd) &&
+        SECONDARY_RUNNER_RE.test(cmd) &&
+        !categorizeProjectCommand(cmd)
+      ) {
+        lastCheck = cmd;
+      }
+      continue;
+    }
+    const line = firstLine(o.error ?? "");
+    if (!failedArgs.has(cmd)) failedArgs.set(cmd, o.args);
+    if (!line || TRANSIENT_RE.test(line) || USER_SAID_NO_RE.test(line)) continue;
+    const key = errorKey(line);
+    const f = failures.get(cmd);
+    if (!f) failures.set(cmd, { count: 1, key, line });
+    else if (f.key === key) f.count++;
+  }
+
+  for (const [cmd, f] of failures) {
+    if (f.count < 2 || passed.has(cmd)) continue;
+    lessons.push({
+      kind: "pitfall",
+      title: `avoid:${head(cmd)}:${hash6(cmd)}`,
+      body: `\`${clip(cmd, 80)}\` fails here: ${clip(f.line, 140)}`,
+      evidence: `failed ${f.count}× in one run with the same error, never passed`,
+      command: cmd,
+    });
+  }
+  lessons.push(...fixes);
+  if (lastCheck) {
+    lessons.push({
+      kind: "check",
+      title: "verified-check",
+      body: `Verification that passed here: \`${clip(lastCheck, 100)}\``,
+      evidence: "passed in this run",
+      command: lastCheck,
+    });
+  }
+  return lessons;
+}
+
+// ─── Lessons → notebook ───
+// Same store, same scope, same budget the model already reads. A pitfall a
+// later run contradicts (the command passes as-is) is retired on the spot:
+// the notebook must converge on what is true now, not on what once happened.
+
+export function recordLessons(
+  store: NotebookStore,
+  keys: { repoKey: string; sessionId: string },
+  lessons: RetroLesson[],
+  observations: ToolObservation[] = [],
+): { written: string[]; retired: string[] } {
+  const written: string[] = [];
+  const retired: string[] = [];
+  try {
+    const passedNow = new Set<string>();
+    for (const o of observations) {
+      const cmd = bashCommandOf(o);
+      if (cmd && o.success) passedNow.add(cmd);
+    }
+    for (const e of store.listRepo(keys.repoKey)) {
+      if (!e.title.startsWith("avoid:") || e.retired) continue;
+      const cmd = e.provenance.note;
+      if (cmd && passedNow.has(cmd) && store.retire(e.id)) retired.push(e.id);
+    }
+    for (const l of lessons) {
+      written.push(
+        store.upsert({
+          kind: l.kind === "check" ? "fact" : "tactic",
+          scope: "repo",
+          repoKey: keys.repoKey,
+          title: l.title,
+          body: l.body,
+          sessionId: keys.sessionId,
+          note: l.command,
+        }),
+      );
+    }
+  } catch {
+    // Learning must never affect the run it learns from.
+  }
+  return { written, retired };
+}
+
+// ─── The scorecard ───
+// Per model or per workspace, from retros — the ones runs wrote, and the ones
+// derived after the fact for sessions that predate the organ.
+
+export interface RetroSample {
+  retro: RunRetro;
+  model: string;
+  provider?: string | null;
+  workspaceRoot: string;
+  sessionId: string;
+}
+
+export interface ScoreRow {
+  key: string;
+  runs: number;
+  finished: number;
+  openSteps: number;
+  stalled: number;
+  errored: number;
+  aborted: number;
+  /** max_turns, context_exhausted, halted, provider_lost. */
+  other: number;
+  stepsTotal: number;
+  stepsDone: number;
+  stepsUnproven: number;
+  checksPassed: number;
+  checksFailed: number;
+  toolCalls: number;
+  toolFailed: number;
+  /** Gates that refused something: gate + unproven + dropped log lines. */
+  gates: number;
+  completions: number;
+  listUsd: number;
+  durationMs: number;
+  /** Runs that carried a lesson. */
+  lessons: number;
+}
+
+function emptyRow(key: string): ScoreRow {
+  return {
+    key,
+    runs: 0,
+    finished: 0,
+    openSteps: 0,
+    stalled: 0,
+    errored: 0,
+    aborted: 0,
+    other: 0,
+    stepsTotal: 0,
+    stepsDone: 0,
+    stepsUnproven: 0,
+    checksPassed: 0,
+    checksFailed: 0,
+    toolCalls: 0,
+    toolFailed: 0,
+    gates: 0,
+    completions: 0,
+    listUsd: 0,
+    durationMs: 0,
+    lessons: 0,
+  };
+}
+
+export function scorecard(samples: RetroSample[], by: "model" | "workspace"): ScoreRow[] {
+  const rows = new Map<string, ScoreRow>();
+  for (const s of samples) {
+    const key = by === "model" ? s.model || "?" : s.workspaceRoot || "?";
+    const row = rows.get(key) ?? emptyRow(key);
+    const r = s.retro;
+    row.runs++;
+    switch (r.outcome) {
+      case "finished":
+        row.finished++;
+        break;
+      case "open_steps":
+        row.openSteps++;
+        break;
+      case "stalled":
+        row.stalled++;
+        break;
+      case "error":
+        row.errored++;
+        break;
+      case "aborted":
+        row.aborted++;
+        break;
+      default:
+        row.other++;
+    }
+    row.stepsTotal += r.steps.total;
+    row.stepsDone += r.steps.done;
+    row.stepsUnproven += r.steps.unproven;
+    row.checksPassed += r.checks.passed;
+    row.checksFailed += r.checks.failed;
+    row.toolCalls += r.tools.calls;
+    row.toolFailed += r.tools.failed;
+    row.gates += (r.gates.gate ?? 0) + (r.gates.unproven ?? 0) + (r.gates.dropped ?? 0);
+    row.completions += r.completions;
+    row.listUsd += r.cost.listUsd;
+    row.durationMs += r.durationMs;
+    if (r.lessons.length > 0) row.lessons++;
+    rows.set(key, row);
+  }
+  return [...rows.values()].sort((a, b) => b.runs - a.runs || a.key.localeCompare(b.key));
+}
+
+export interface ScoreRates {
+  finishedRate: number;
+  openStepsRate: number;
+  stalledRate: number;
+  /** Unproven completions over all completions. */
+  unprovenRate: number;
+  checkPassRate: number | null;
+  toolFailRate: number;
+  usdPerRun: number;
+  completionsPerRun: number;
+}
+
+export function scoreRates(row: ScoreRow): ScoreRates {
+  const runs = Math.max(1, row.runs);
+  const checks = row.checksPassed + row.checksFailed;
+  return {
+    finishedRate: row.finished / runs,
+    openStepsRate: row.openSteps / runs,
+    stalledRate: row.stalled / runs,
+    unprovenRate: row.stepsDone > 0 ? row.stepsUnproven / row.stepsDone : 0,
+    checkPassRate: checks > 0 ? row.checksPassed / checks : null,
+    toolFailRate: row.toolCalls > 0 ? row.toolFailed / row.toolCalls : 0,
+    usdPerRun: row.listUsd / runs,
+    completionsPerRun: row.completions / runs,
+  };
+}
+
+// ─── Tuning proposals ───
+// Rule-based, printed with their evidence, never applied by themselves. The
+// A/B that would justify applying one is not built; saying so is part of the
+// contract. Each names a knob that exists.
+
+export interface TuneProposal {
+  key: string;
+  signal: string;
+  proposal: string;
+  config: string;
+  confidence: "low" | "medium";
+}
+
+export function tuneProposals(rows: ScoreRow[], opts: { minRuns?: number } = {}): TuneProposal[] {
+  const minRuns = opts.minRuns ?? 5;
+  const out: TuneProposal[] = [];
+  for (const row of rows) {
+    if (row.runs < minRuns) continue;
+    const r = scoreRates(row);
+    if (row.stepsDone >= 5 && r.unprovenRate >= 0.3) {
+      out.push({
+        key: row.key,
+        signal: `${row.stepsUnproven} of ${row.stepsDone} completed steps had no evidence (${Math.round(r.unprovenRate * 100)}%)`,
+        proposal:
+          "This model closes steps it did not do. Keep the step check on and route planning-heavy work to a heavier tier.",
+        config: '[verify] perStep = true · [tiers] heavy = "provider/model"',
+        confidence: "medium",
+      });
+    }
+    if (r.stalledRate >= 0.2) {
+      out.push({
+        key: row.key,
+        signal: `${row.stalled} of ${row.runs} runs ended stalled (same results, nothing written)`,
+        proposal:
+          "The results-side breaker is doing the stopping. Give this model the broad reads up front (read_many, repo map) rather than a longer leash.",
+        config: "[context] repoMap = true · [routing] effort = high",
+        confidence: "low",
+      });
+    }
+    if (
+      r.checkPassRate !== null &&
+      row.checksPassed + row.checksFailed >= 10 &&
+      r.checkPassRate < 0.5
+    ) {
+      out.push({
+        key: row.key,
+        signal: `${row.checksFailed} of ${row.checksPassed + row.checksFailed} verification commands failed`,
+        proposal:
+          "Verification fails more than it passes. Pin the checks to the commands that matter, so a flaky default check does not burn the fix loop.",
+        config: '[verify] commands = ["<typecheck>", "<test>"]',
+        confidence: "medium",
+      });
+    }
+    if (r.openStepsRate >= 0.4 && row.other + row.errored < row.openSteps) {
+      out.push({
+        key: row.key,
+        signal: `${row.openSteps} of ${row.runs} runs ended with planned steps still open`,
+        proposal:
+          "Runs stop before the plan does. Use sub-agents for the parallel parts and let the open-steps gate keep the resume note.",
+        config: '[subagents] mode = "auto"',
+        confidence: "low",
+      });
+    }
+  }
+  return out;
+}
+
+// ─── The gardener's reading of the black box ───
+// Which fingerprints are harness defects a run on Gear's own repository could
+// fix, as opposed to the user's commands failing or a provider misbehaving.
+
+export const GARDENER_CLASSES: ReadonlySet<string> = new Set([
+  "crash.uncaught_exception",
+  "crash.unhandled_rejection",
+  "crash.dirty_exit",
+  "crash.rust_tool_panic",
+  "crash.store_corruption",
+  "provider.malformed_tool_json_fatal",
+  "provider.empty_completion",
+  "context.budget_overflow",
+  "tool.mcp_error",
+]);
+
+export interface GardenerFingerprint {
+  fingerprint: string;
+  class: string;
+  component: string;
+  messageSample: string;
+  count: number;
+  firstSeen: string;
+  lastSeen: string;
+  versions: string[];
+}
+
+export function gardenerCandidates<T extends GardenerFingerprint>(
+  rows: T[],
+  opts: { min?: number; limit?: number } = {},
+): T[] {
+  const min = opts.min ?? 3;
+  return rows
+    .filter((r) => GARDENER_CLASSES.has(r.class) && r.count >= min)
+    .sort((a, b) => b.count - a.count || (a.lastSeen < b.lastSeen ? 1 : -1))
+    .slice(0, opts.limit ?? 5);
+}
+
+export interface GardenerSample {
+  ts: string;
+  message: string;
+  stack?: string;
+  context?: Record<string, unknown>;
+}
+
+/** Paths a gardener run must leave to a person. */
+export const GARDENER_OFF_LIMITS = [
+  "packages/orchestrator/src/prompts.ts",
+  "packages/orchestrator/src/security.ts",
+  "packages/orchestrator/src/permissions.ts",
+  "packages/orchestrator/src/org-policy.ts",
+  "packages/orchestrator/src/auto-mode.ts",
+  "packages/orchestrator/src/auto-containment.ts",
+  "packages/shared/src/secrets.ts",
+  "packages/shared/src/credential-store.ts",
+];
+
+/**
+ * The brief a gardener run is given: one fingerprint, its evidence, and the
+ * rules. Reproduce in a test first, fix, run the gates, commit on the run's
+ * branch — never push, merge, or touch the doctrine and the safety layer.
+ */
+export function gardenerBrief(fp: GardenerFingerprint, samples: GardenerSample[]): string {
+  const stack = samples.find((s) => s.stack)?.stack;
+  const contexts = samples
+    .slice(0, 3)
+    .map((s) => {
+      const ctx = s.context ? JSON.stringify(s.context).slice(0, 240) : "{}";
+      return `- ${s.ts.slice(0, 16).replace("T", " ")}: ${s.message.replace(/\s+/g, " ").slice(0, 160)}\n  context: ${ctx}`;
+    })
+    .join("\n");
+  const lines = [
+    "You are working on Gear's own source, in this repository. Fix ONE recurring harness defect, evidenced by Gear's black box.",
+    "",
+    `Fingerprint ${fp.fingerprint} · class ${fp.class} · component ${fp.component}`,
+    `Seen ${fp.count}× (first ${fp.firstSeen.slice(0, 10)}, last ${fp.lastSeen.slice(0, 10)}) across versions ${fp.versions.join(", ") || "?"}.`,
+    `Sample message: ${fp.messageSample.replace(/\s+/g, " ").slice(0, 300)}`,
+  ];
+  if (stack) {
+    lines.push(
+      "",
+      "Stack (latest):",
+      ...stack
+        .split("\n")
+        .slice(0, 12)
+        .map((l) => `  ${l}`),
+    );
+  }
+  if (contexts) lines.push("", "Recent occurrences:", contexts);
+  lines.push(
+    "",
+    "Rules:",
+    "1. Reproduce first: write a failing unit test under tests/unit/ that fails for exactly this reason. Then make it pass with the smallest fix that addresses the cause, not the symptom.",
+    "2. Before finishing, run and pass all of: `bun run typecheck`, `bun run lint`, `bun test tests/unit/`, `bunx prettier --check .`.",
+    `3. Do not edit these files — they need a person: ${GARDENER_OFF_LIMITS.join(", ")}. Do not change the doctrine token ceiling or any test that guards it.`,
+    "4. Commit on this branch with a message starting `fix(gardener):` that cites the fingerprint. Do not push, merge, or open a pull request — a person reviews the branch.",
+    "5. If the defect cannot be reproduced in a test, stop: write what you found and why it could not be reproduced into .gear/gardener-report.md, and do not guess at a fix.",
+  );
+  return lines.join("\n");
+}

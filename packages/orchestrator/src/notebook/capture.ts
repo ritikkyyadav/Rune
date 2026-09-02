@@ -60,9 +60,13 @@ function bashCommand(o: ToolObservation): string | null {
   return cmd;
 }
 
-function categorize(cmd: string): string | null {
-  // Only project-runner shapes qualify — `bun test`, `cargo build`, `npm run x`,
-  // `make check`… An arbitrary `grep test file` must not become a "test command".
+/**
+ * The command-fact category a project-runner command falls in, or null. Only
+ * project-runner shapes qualify — `bun test`, `cargo build`, `npm run x`,
+ * `make check`… An arbitrary `grep test file` must not become a "test command".
+ * Exported so the retro can tell which passing checks the facts already cover.
+ */
+export function categorizeProjectCommand(cmd: string): string | null {
   if (!/^(bun|bunx|npm|npx|pnpm|yarn|cargo|go|make|python|pytest|mvn|gradle|turbo)\b/.test(cmd)) {
     return null;
   }
@@ -71,6 +75,8 @@ function categorize(cmd: string): string | null {
   }
   return null;
 }
+
+const categorize = categorizeProjectCommand;
 
 function captureCommandFacts(ctx: CaptureContext, observations: ToolObservation[]): string[] {
   const written: string[] = [];

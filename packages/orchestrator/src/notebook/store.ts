@@ -185,6 +185,30 @@ export class NotebookStore {
     return rows.map(rowToEntry);
   }
 
+  /**
+   * Everything learned about one workspace, retired entries included — the
+   * playbook renders from this, and the retro checks it for contradictions.
+   */
+  listRepo(repoKey: string): NotebookEntry[] {
+    const rows = this.db
+      .query(`SELECT * FROM entries WHERE scope = 'repo' AND repo_key = ? ORDER BY updated_at DESC`)
+      .all(repoKey) as Row[];
+    return rows.map(rowToEntry);
+  }
+
+  /**
+   * Retire one entry now — a later run contradicted it. It stays inspectable
+   * and revives if re-learned, exactly like decay.
+   */
+  retire(id: string): boolean {
+    const now = new Date().toISOString();
+    return (
+      this.db
+        .query(`UPDATE entries SET retired = 1, updated_at = ? WHERE id = ? AND retired = 0`)
+        .run(now, id).changes > 0
+    );
+  }
+
   /** Short-id match — suffix first (UUIDv7 prefixes collide for same-time ids). */
   getByPrefix(shortId: string): NotebookEntry | null {
     const bySuffix = this.db
