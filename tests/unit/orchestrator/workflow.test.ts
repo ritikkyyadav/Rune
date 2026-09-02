@@ -34,7 +34,11 @@ function tmp(): string {
   return d;
 }
 
-function node(id: string, dependsOn: string[] = [], extra: Partial<WorkflowNode> = {}): WorkflowNode {
+function node(
+  id: string,
+  dependsOn: string[] = [],
+  extra: Partial<WorkflowNode> = {},
+): WorkflowNode {
   return { id, kind: "task", prompt: `do ${id}`, dependsOn, retry: 1, ...extra };
 }
 
@@ -104,7 +108,15 @@ describe("P6B.6 — topological waves", () => {
 
 describe("P6B.6 — the cache key covers upstream results", () => {
   const upstream: NodeResult[] = [
-    { id: "a", status: "completed", output: "one", attempts: 1, durationMs: 1, cached: false, hash: "h" },
+    {
+      id: "a",
+      status: "completed",
+      output: "one",
+      attempts: 1,
+      durationMs: 1,
+      cached: false,
+      hash: "h",
+    },
   ];
 
   test("the same node with the same inputs hashes the same", () => {
@@ -126,7 +138,15 @@ describe("P6B.6 — the cache key covers upstream results", () => {
 
 describe("P6B.6 — prompt assembly", () => {
   const upstream: NodeResult[] = [
-    { id: "a", status: "completed", output: "FINDINGS", attempts: 1, durationMs: 1, cached: false, hash: "h" },
+    {
+      id: "a",
+      status: "completed",
+      output: "FINDINGS",
+      attempts: 1,
+      durationMs: 1,
+      cached: false,
+      hash: "h",
+    },
   ];
 
   test("a named token is substituted", () => {
@@ -149,7 +169,12 @@ describe("P6B.6 — execution, resume and caching", () => {
     const order: string[] = [];
     await runWorkflow(
       { name: "w", nodes: DIAMOND },
-      { runNode: async (n) => { order.push(n.id); return { output: n.id }; } },
+      {
+        runNode: async (n) => {
+          order.push(n.id);
+          return { output: n.id };
+        },
+      },
     );
     expect(order[0]).toBe("a");
     expect(order.at(-1)).toBe("d");

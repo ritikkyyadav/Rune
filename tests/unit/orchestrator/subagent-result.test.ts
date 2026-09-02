@@ -40,9 +40,7 @@ describe("P6B.3 — both delegation tools declare an outputSchema", () => {
   });
 
   test("the schema names every field the contract promises", () => {
-    const props = Object.keys(
-      (SUBAGENT_RESULT_SCHEMA.properties ?? {}) as Record<string, unknown>,
-    );
+    const props = Object.keys((SUBAGENT_RESULT_SCHEMA.properties ?? {}) as Record<string, unknown>);
     for (const field of [
       "summary",
       "findings",

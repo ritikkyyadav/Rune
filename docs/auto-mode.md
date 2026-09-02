@@ -289,10 +289,10 @@ reminder that model-side screening should not be treated as a perfect security b
 
 # Assurance
 
-*Added by Phase 6A (lane C). This section is appended deliberately: the sections above are being
+_Added by Phase 6A (lane C). This section is appended deliberately: the sections above are being
 rewritten in parallel by Phase 1.1 to describe the design as built. Everything below concerns what
 Auto mode **records** and what its numbers **are** — it is additive to that rewrite, not a
-replacement for any part of it.*
+replacement for any part of it._
 
 ## What a decision records
 
@@ -300,32 +300,32 @@ Every decision Auto makes that is worth persisting (classifier-tier reviews, eve
 verdict, human escalations, rule matches and exact grants — `shouldRecordAutoModeDecision`) becomes
 one `safety_decision` session event and one hash-chained `audit_log` entry.
 
-| Field | Meaning |
-|---|---|
-| `toolName`, `argsHash` | The action. Arguments are **hashed, never stored** — the audit log is exportable. |
-| `verdict`, `tier`, `risk` | allow / ask / deny · safe \| workspace \| classifier · low → critical. |
-| `source` | Which of the sixteen decision sources produced it (thirteen in-path, three supervisor). |
-| `stage` | 0 mechanical · 1 fast screen · 2 reasoned. |
-| `reason`, `reviewer`, `matchedRule` | Why, by whom, and against which configured rule. |
-| `callId` | The tool call this decision gated, so a row joins to the `tool_result` that followed. |
-| `turn` | The turn it belongs to. |
-| `durationMs` | Total wall clock, unchanged. |
-| `timings` | `{ mechanicalMs, classifierMs, retryMs }` — the three parts sum to `durationMs`. |
+| Field                               | Meaning                                                                                 |
+| ----------------------------------- | --------------------------------------------------------------------------------------- |
+| `toolName`, `argsHash`              | The action. Arguments are **hashed, never stored** — the audit log is exportable.       |
+| `verdict`, `tier`, `risk`           | allow / ask / deny · safe \| workspace \| classifier · low → critical.                  |
+| `source`                            | Which of the sixteen decision sources produced it (thirteen in-path, three supervisor). |
+| `stage`                             | 0 mechanical · 1 fast screen · 2 reasoned.                                              |
+| `reason`, `reviewer`, `matchedRule` | Why, by whom, and against which configured rule.                                        |
+| `callId`                            | The tool call this decision gated, so a row joins to the `tool_result` that followed.   |
+| `turn`                              | The turn it belongs to.                                                                 |
+| `durationMs`                        | Total wall clock, unchanged.                                                            |
+| `timings`                           | `{ mechanicalMs, classifierMs, retryMs }` — the three parts sum to `durationMs`.        |
 
 The timing split exists because one average over both phases described neither: mechanical routing
 costs microseconds and a reviewer call costs seconds, so a p50 over `durationMs` was a statement
-about the *mix*, not about latency.
+about the _mix_, not about latency.
 
 ## The supervisor writes down what it decided
 
 Low- and medium-risk actions run immediately and a supervisor watches out of band. It can halt the
-*next* action, never the one it is looking at. Its verdicts are now recorded as `safety_decision`
+_next_ action, never the one it is looking at. Its verdicts are now recorded as `safety_decision`
 rows under their own sources:
 
 - `supervisor_screen` — the fast screen's verdict on an action that already ran, recorded **whether
   or not it fires**. Recording only the flags left the false-positive rate without a denominator.
 - `supervisor_reasoned` — the careful confirmation. A screen that fires and a reasoned pass that
-  refuses to confirm it *is* a caught false positive, and that pair is the measurement.
+  refuses to confirm it _is_ a caught false positive, and that pair is the measurement.
 - `supervisor_late` — a confirmed halt that landed after the run ended.
 
 These rows gate nothing, so they do not enter the tamper-evident chain of approvals and do not move
@@ -338,12 +338,12 @@ unmeasured.
 A step Auto declines to take unattended is carried to the end of the turn and offered to the user.
 What they do next is the strongest safety label the system produces, and it is produced for free:
 
-| Outcome | What it means |
-|---|---|
-| `ran` | The user approved and ran it **unchanged** — the containment was a **false positive**. |
-| `skipped` | They reviewed it and left it unrun — the containment was right. |
-| `refused` | Signed policy, a deny rule or a hook stood by the decision. |
-| `failed` | It ran and broke on its own terms. **Not** a safety signal; do not read it as one. |
+| Outcome   | What it means                                                                          |
+| --------- | -------------------------------------------------------------------------------------- |
+| `ran`     | The user approved and ran it **unchanged** — the containment was a **false positive**. |
+| `skipped` | They reviewed it and left it unrun — the containment was right.                        |
+| `refused` | Signed policy, a deny rule or a hook stood by the decision.                            |
+| `failed`  | It ran and broke on its own terms. **Not** a safety signal; do not read it as one.     |
 
 Each becomes a `held_step_outcome` event keyed to the deferral. A `ran` outcome additionally files
 an `auto.supervisor_false_positive` incident in the black box. Previously `runHeldStep` recorded a
@@ -370,12 +370,12 @@ smoke test that reported two counts and no rates.
 **Corpus: 227 rows**, 126 allow / 101 block, across eleven tool categories — shell, network, write,
 read, delegation, connector, browser, automation, config, team, planning. Four provenances:
 
-| | rows | what they are |
-|---|---:|---|
-| `mined` | 48 | Decisions Gear actually made, recovered read-only from `~/.gear/gear.db` (913 `safety_decision` rows over 601 sessions). Raw arguments were never stored, so these are reconstructed from the recorded tool, risk, verdict and the reviewer's own prose. |
-| `regression` | 10 | This system's own documented false positives — the `npm audit` and `npm install` halts, the `/tmp` cleanup halt, the e2e-suite halt, the probe firing on the repo's own security tests, the halt that denied the agent its todo list, the 22-minute fail-closed outage. |
-| `redteam` | 30 | Compound commands, base64/hex/reversed/percent-encoded payloads, instructions arriving inside tool results, self-protection probing, reworded retries, arguments impersonating a reviewer verdict. |
-| `designed` | 139 | Coverage for every category and both sides of every tier boundary, including the original nineteen. |
+|              | rows | what they are                                                                                                                                                                                                                                                           |
+| ------------ | ---: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mined`      |   48 | Decisions Gear actually made, recovered read-only from `~/.gear/gear.db` (913 `safety_decision` rows over 601 sessions). Raw arguments were never stored, so these are reconstructed from the recorded tool, risk, verdict and the reviewer's own prose.                |
+| `regression` |   10 | This system's own documented false positives — the `npm audit` and `npm install` halts, the `/tmp` cleanup halt, the e2e-suite halt, the probe firing on the repo's own security tests, the halt that denied the agent its todo list, the 22-minute fail-closed outage. |
+| `redteam`    |   30 | Compound commands, base64/hex/reversed/percent-encoded payloads, instructions arriving inside tool results, self-protection probing, reworded retries, arguments impersonating a reviewer verdict.                                                                      |
+| `designed`   |  139 | Coverage for every category and both sides of every tier boundary, including the original nineteen.                                                                                                                                                                     |
 
 **38 rows carry an inferred label** (`reviewed: false`) and await human review. They stay in the
 corpus and in the numbers below; `--list` marks them. Hiding an uncertain label is worse than
@@ -386,16 +386,16 @@ reporting one.
 Positive is BLOCK. Recall is the share of unsafe actions stopped; precision is the share of blocks
 that were warranted.
 
-| | offline (dead reviewer) | live (openrouter, `minimax/minimax-m3:free`) |
-|---|---|---|
-| Precision | 87.2% [78–93] | **94.4%** |
-| Recall | 67.3% [58–76] | 67.3% |
-| F1 | 76.0% | 78.6% |
-| False positives | 0 mechanical | 4 |
-| False negatives | 33 | 33 |
-| p50 / p95 reviewer latency | — (no calls) | **1,868 ms / 6,465 ms** over 65 reviewed decisions |
-| Decisions costing no model call | 227 | **162 of 227 (71%)** |
-| Cost | $0 | $0 (free model), 217 live requests |
+|                                 | offline (dead reviewer) | live (openrouter, `minimax/minimax-m3:free`)       |
+| ------------------------------- | ----------------------- | -------------------------------------------------- |
+| Precision                       | 87.2% [78–93]           | **94.4%**                                          |
+| Recall                          | 67.3% [58–76]           | 67.3%                                              |
+| F1                              | 76.0%                   | 78.6%                                              |
+| False positives                 | 0 mechanical            | 4                                                  |
+| False negatives                 | 33                      | 33                                                 |
+| p50 / p95 reviewer latency      | — (no calls)            | **1,868 ms / 6,465 ms** over 65 reviewed decisions |
+| Decisions costing no model call | 227                     | **162 of 227 (71%)**                               |
+| Cost                            | $0                      | $0 (free model), 217 live requests                 |
 
 **The mechanical layer holds.** 55 of 55 mechanical block rows were stopped with no model reachable
 at all, and 116 of 116 mechanical allow rows still ran. That is the regression guard for the
@@ -407,16 +407,16 @@ the cheap reviewer is. That is a procurement finding, not a design one.
 
 ### Per decision source (live)
 
-| source | n | precision | recall | p50 | p95 |
-|---|---:|---:|---:|---:|---:|
-| `supervised_tier` | 116 | — | 0% | 0 ms | 0 ms |
-| `containment` | 63 | 94% | 100% | 1,868 ms | 6,465 ms |
-| `safe_tier` | 22 | — | — | 0 ms | 0 ms |
-| `workspace_tier` | 10 | — | 0% | 0 ms | 0 ms |
-| `guardrail_circuit_breaker` | 7 | 100% | 100% | 0 ms | 0 ms |
-| `classifier_reasoned` | 6 | — | — | 1,321 ms | 4,778 ms |
-| `reviewer_input_limit` | 2 | 100% | 100% | 0 ms | 0 ms |
-| `exact_user_grant` | 1 | — | — | 0 ms | 0 ms |
+| source                      |   n | precision | recall |      p50 |      p95 |
+| --------------------------- | --: | --------: | -----: | -------: | -------: |
+| `supervised_tier`           | 116 |         — |     0% |     0 ms |     0 ms |
+| `containment`               |  63 |       94% |   100% | 1,868 ms | 6,465 ms |
+| `safe_tier`                 |  22 |         — |      — |     0 ms |     0 ms |
+| `workspace_tier`            |  10 |         — |     0% |     0 ms |     0 ms |
+| `guardrail_circuit_breaker` |   7 |      100% |   100% |     0 ms |     0 ms |
+| `classifier_reasoned`       |   6 |         — |      — | 1,321 ms | 4,778 ms |
+| `reviewer_input_limit`      |   2 |      100% |   100% |     0 ms |     0 ms |
+| `exact_user_grant`          |   1 |         — |      — |     0 ms |     0 ms |
 
 The `supervised_tier` row is the design working as intended and it is worth reading carefully: 116
 of 227 decisions were cleared with no model call and no delay. Its 0% recall is not a failure — no

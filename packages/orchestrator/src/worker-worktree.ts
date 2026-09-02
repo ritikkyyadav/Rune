@@ -220,7 +220,11 @@ export function mergeWorkerWorktree(
  * a failed worker's work, and `gear/worker-<id>` is where a person looks when
  * checks failed or a merge conflicted.
  */
-export function removeWorkerWorktree(repoRoot: string, wt: WorkerWorktree, keepBranch: boolean): void {
+export function removeWorkerWorktree(
+  repoRoot: string,
+  wt: WorkerWorktree,
+  keepBranch: boolean,
+): void {
   git(repoRoot, ["worktree", "remove", "--force", wt.path]);
   if (!keepBranch) git(repoRoot, ["branch", "-D", wt.branch]);
 }
@@ -250,7 +254,9 @@ export function runWorktreeChecks(
     });
     if (res.status !== 0) {
       const detail = ((res.stderr || res.stdout) ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
-      failures.push(`${command} → ${res.status === null ? "timed out" : `exit ${res.status}`}${detail ? `: ${detail}` : ""}`);
+      failures.push(
+        `${command} → ${res.status === null ? "timed out" : `exit ${res.status}`}${detail ? `: ${detail}` : ""}`,
+      );
     }
   }
   return { outcome: failures.length === 0 ? "passed" : "failed", failures };

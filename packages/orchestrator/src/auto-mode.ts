@@ -1435,10 +1435,7 @@ export class AutoModeRun {
     // it keeps the three parts summing to the total the audit row already
     // reports, so the split can never contradict the number beside it.
     review.timings = {
-      mechanicalMs: Math.max(
-        0,
-        review.durationMs - this.currentClassifierMs - this.currentRetryMs,
-      ),
+      mechanicalMs: Math.max(0, review.durationMs - this.currentClassifierMs - this.currentRetryMs),
       classifierMs: this.currentClassifierMs,
       retryMs: this.currentRetryMs,
     };

@@ -20,7 +20,10 @@ import {
   type AutoModeReview,
   type ClassifierCall,
 } from "../../packages/orchestrator/src/auto-mode";
-import { buildGateway, resolveProviderCredentials } from "../../packages/orchestrator/src/provider-registry";
+import {
+  buildGateway,
+  resolveProviderCredentials,
+} from "../../packages/orchestrator/src/provider-registry";
 
 import {
   SCENARIOS,
@@ -78,7 +81,9 @@ function parseOptions(argv: string[]): Options {
     const inline = argv.find((a) => a.startsWith(`--${name}=`));
     if (inline) return inline.slice(name.length + 3);
     const idx = argv.indexOf(`--${name}`);
-    return idx >= 0 && argv[idx + 1] && !argv[idx + 1]!.startsWith("--") ? argv[idx + 1] : undefined;
+    return idx >= 0 && argv[idx + 1] && !argv[idx + 1]!.startsWith("--")
+      ? argv[idx + 1]
+      : undefined;
   };
   const num = (name: string, fallback: number) => {
     const raw = value(name);
@@ -168,7 +173,12 @@ function emptyConfusion(): Confusion {
   return { tp: 0, fp: 0, tn: 0, fn: 0 };
 }
 
-function tally(bucket: Map<string, Confusion>, key: string, expected: Expected, observed: Expected) {
+function tally(
+  bucket: Map<string, Confusion>,
+  key: string,
+  expected: Expected,
+  observed: Expected,
+) {
   const c = bucket.get(key) ?? emptyConfusion();
   if (expected === "block" && observed === "block") c.tp++;
   else if (expected === "allow" && observed === "block") c.fp++;
@@ -697,8 +707,11 @@ async function main(): Promise<void> {
     printTable("Per tool category", perCategory);
 
     if (mechanicalMisses.length) {
-      console.log(`\nMECHANICAL MISSES (${mechanicalMisses.length}) — blocked offline is the contract:`);
-      for (const r of mechanicalMisses) console.log(`  ✗ ${r.scenario} → ${r.source}: ${r.reason.slice(0, 120)}`);
+      console.log(
+        `\nMECHANICAL MISSES (${mechanicalMisses.length}) — blocked offline is the contract:`,
+      );
+      for (const r of mechanicalMisses)
+        console.log(`  ✗ ${r.scenario} → ${r.source}: ${r.reason.slice(0, 120)}`);
     }
     if (mechanicalOverBlocks.length) {
       console.log(
@@ -722,7 +735,9 @@ async function main(): Promise<void> {
     const baseline = loadBaseline(opts.baselinePath);
     const mode = opts.offline ? "offline" : "live";
     if (!baseline) {
-      console.log(`\nNo baseline at ${opts.baselinePath}; nothing to compare. Use --write-baseline.`);
+      console.log(
+        `\nNo baseline at ${opts.baselinePath}; nothing to compare. Use --write-baseline.`,
+      );
     } else if (baseline.mode !== mode || (mode === "live" && baseline.model !== model)) {
       // Comparing an offline run against a live baseline, or one reviewer model
       // against another, would produce a number that looks like a regression and
@@ -731,7 +746,9 @@ async function main(): Promise<void> {
         `\nBaseline is ${baseline.mode}/${baseline.model}; this run is ${mode}/${model ?? "offline"}. Skipping comparison.`,
       );
     } else {
-      console.log(`\nvs baseline recorded ${baseline.recordedAt} (${baseline.rows} rows, noise ${opts.noise}):`);
+      console.log(
+        `\nvs baseline recorded ${baseline.recordedAt} (${baseline.rows} rows, noise ${opts.noise}):`,
+      );
       const cmp = (label: string, now: number | null, then: number | null) => {
         if (now === null || then === null) {
           console.log(`  ${label.padEnd(10)} ${pct(now)} (baseline ${pct(then)}) — not comparable`);

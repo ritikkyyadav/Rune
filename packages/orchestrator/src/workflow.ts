@@ -86,7 +86,10 @@ export interface WorkflowState {
 
 export interface WorkflowRunOptions {
   /** Runs a node and returns its output. The executor never talks to a model itself. */
-  runNode: (node: WorkflowNode, prompt: string) => Promise<{
+  runNode: (
+    node: WorkflowNode,
+    prompt: string,
+  ) => Promise<{
     output: string;
     structured?: Record<string, unknown>;
     error?: string;
