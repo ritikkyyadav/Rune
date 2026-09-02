@@ -6,11 +6,13 @@
 // the tool call that opens the permission card happens on cue instead of
 // whenever a real provider feels like it.
 //
-// The seam that makes this possible is `secrets.endpoints`: the `lmstudio`
-// preset is local, key-less and OpenAI-shaped, and its base URL is overridable
-// from `secrets.json`. That is how a spawned engine host — which builds its own
+// The seam that makes this possible is `secrets.custom`: the user-defined
+// OpenAI-compatible endpoint, whose base URL, model and key all come from
+// `secrets.json`. That is how a spawned engine host — which builds its own
 // Engine from config and secrets rather than from a constructor — gets pointed
-// at a server this test owns.
+// at a server this test owns. It was the `lmstudio` preset until P8.6 removed
+// that provider (decision D5); `custom` is the migration path the removal
+// names, and the only remaining OpenAI-shaped provider a test can own.
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
@@ -144,11 +146,17 @@ export async function standUp(
 
   writeFileSync(
     join(gearHome, "model.json"),
-    JSON.stringify({ provider: "lmstudio", model: "fake-model" }),
+    JSON.stringify({ provider: "custom", model: "fake-model" }),
   );
   writeFileSync(
     join(gearHome, "secrets.json"),
-    JSON.stringify({ endpoints: { lmstudio: `http://127.0.0.1:${modelPort}/v1` } }),
+    JSON.stringify({
+      custom: {
+        baseUrl: `http://127.0.0.1:${modelPort}/v1`,
+        model: "fake-model",
+        key: "fake-key-the-test-server-ignores",
+      },
+    }),
     { mode: 0o600 },
   );
   if (opts.configToml) writeFileSync(join(gearHome, "config.toml"), opts.configToml);
