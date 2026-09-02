@@ -60,3 +60,54 @@ schema tokens: before=9601 after=968 reduction=89.9%
 
 `null` is not zero: a session recorded before this landed has no
 `tool_surface` event and the line is simply absent.
+
+---
+
+## Authentication (OAuth 2.1)
+
+Every remote connector in the vendored catalog — Notion, Slack, Linear,
+Atlassian, GitHub, PagerDuty, Datadog, Google Calendar, Gmail — is
+OAuth-protected. Gear speaks the MCP authorization spec (2025-06-18) and the
+RFCs it cites:
+
+| Step | Spec |
+|---|---|
+| `401` + `WWW-Authenticate: Bearer resource_metadata=…` | MCP auth spec |
+| `/.well-known/oauth-protected-resource` | RFC 9728 |
+| `/.well-known/oauth-authorization-server` (OIDC discovery as fallback) | RFC 8414 |
+| dynamic client registration | RFC 7591 |
+| PKCE S256 (required — `plain` is refused, not downgraded to) | RFC 7636 |
+| resource indicator, so the token is audience-bound to that one server | RFC 8707 |
+
+The redirect is captured on an ephemeral `127.0.0.1` loopback — the same engine
+`gear login` uses for Anthropic, Codex, OpenRouter and Copilot.
+
+**Where tokens live.** Under `mcp:<server>` in the OS credential store: macOS
+Keychain, libsecret on Linux, DPAPI on Windows, and a `0600` file only when
+none of those is reachable (Gear says so when it falls back).
+
+**When a token expires.** The transport refreshes and retries once, silently.
+You do not see it.
+
+**When a refresh fails.** The *connector* becomes unavailable — never the
+session. Its tools stop being advertised, the status line shows it, `gear mcp
+doctor` names it, and the model is told once. The rest of the run continues as
+if the connector were simply absent. This is the case that used to take the
+whole session down.
+
+```
+gear mcp login notion       # runs the flow
+gear mcp logout notion      # forgets the token
+```
+
+**Opting out.** An entry that already carries its own `Authorization` header is
+left alone — a hand-written `${TOKEN}` is an explicit choice and outranks a
+discovered flow. `"oauth": { "enabled": false }` disables it outright, and
+`"oauth": { "clientId": "…" }` supplies a pre-registered client for the
+authorization servers that offer no dynamic registration.
+
+**Proved against a real server.** `tests/helpers/mock-oauth-mcp-server.ts` is a
+local OAuth-protected MCP server that verifies PKCE server-side and rejects a
+reused code, a mismatched `redirect_uri` or a missing bearer the way a real one
+does. `tests/unit/tools/mcp-oauth.test.ts` drives the whole flow against it with
+the browser click replaced by a direct fetch of the authorization URL.
