@@ -276,3 +276,81 @@ describe("ui/viewport Viewport", () => {
     expect(h.all()).not.toContain("\x1b[?25h");
   });
 });
+
+// ─── Held height ───
+// The live block above the composer used to be as tall as its content, and its
+// content changed shape on every tool call (four rows of streaming prose, then
+// none, then four). Each change re-split the frame and re-indexed the whole
+// body. holdHeight pins the block to its high-water mark for the turn.
+
+import {
+  holdHeight,
+  SYNC_BEGIN,
+  SYNC_END,
+} from "../../../packages/orchestrator/src/bin/ui/viewport";
+
+describe("ui/viewport holdHeight", () => {
+  it("grows to the tallest content seen and never shrinks below it", () => {
+    let high = 0;
+    const a = holdHeight(["rung", "detail", "p1", "p2", "p3", "p4"], high, 9);
+    high = a.highWater;
+    expect(a.rows).toHaveLength(6);
+    // The prose collapsed at a tool call: the block keeps its six rows.
+    const b = holdHeight(["rung"], high, 9);
+    expect(b.rows).toHaveLength(6);
+    expect(b.rows.slice(1)).toEqual(["", "", "", "", ""]);
+    expect(b.highWater).toBe(6);
+    // …and grows again only when the content is taller.
+    const c = holdHeight(["rung", "d", "f1", "f2", "f3", "f4", "f5", "f6"], high, 9);
+    expect(c.rows).toHaveLength(8);
+    expect(c.highWater).toBe(8);
+  });
+
+  it("never exceeds the budget, trimming from the bottom", () => {
+    const r = holdHeight(["rung", "detail", "a", "b", "c", "d"], 0, 3);
+    expect(r.rows).toEqual(["rung", "detail", "a"]);
+    expect(r.highWater).toBe(3);
+    // A high-water mark from a taller window is clamped to the new budget.
+    expect(holdHeight(["rung"], 8, 3).rows).toHaveLength(3);
+  });
+
+  it("a fresh turn starts from zero", () => {
+    expect(holdHeight(["rung"], 0, 9).rows).toEqual(["rung"]);
+  });
+});
+
+describe("ui/viewport synchronized output", () => {
+  it("brackets every frame write in DEC 2026 and hides the cursor first", () => {
+    const writes: string[] = [];
+    const vp = new Viewport((s) => writes.push(s));
+    vp.enter();
+    writes.length = 0;
+    vp.render(frame(), true);
+    expect(writes).toHaveLength(1);
+    expect(writes[0]!.startsWith(SYNC_BEGIN + "\x1b[?25l")).toBe(true);
+    expect(writes[0]!.endsWith(SYNC_END)).toBe(true);
+  });
+
+  it("an unchanged frame writes nothing at all", () => {
+    const writes: string[] = [];
+    const vp = new Viewport((s) => writes.push(s));
+    vp.enter();
+    vp.render(frame(), true);
+    writes.length = 0;
+    vp.render(frame(), true);
+    expect(writes).toHaveLength(0);
+  });
+
+  it("invalidate forgets the screen without clearing it — the next frame rewrites every row", () => {
+    const writes: string[] = [];
+    const vp = new Viewport((s) => writes.push(s));
+    vp.enter();
+    vp.render(frame(), true);
+    writes.length = 0;
+    vp.invalidate();
+    expect(writes.join("")).not.toContain("\x1b[2J");
+    vp.render(frame(), true);
+    const rows = (writes.join("").match(/\x1b\[\d+;1H/g) ?? []).length;
+    expect(rows).toBe(24);
+  });
+});

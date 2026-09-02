@@ -31,6 +31,8 @@ const DEFAULT_BUDGET: ContextBudget = {
 
 /** Share of the real context window kept VERBATIM as the recent tail. */
 const COMPACT_TAIL_RATIO = 0.3;
+/** Wall-clock ceiling on one compaction's summarizer walk. */
+const DEFAULT_SUMMARY_BUDGET_MS = 120_000;
 /** Share of the window compaction aims to land at. Comfortably under the
  *  0.7 high-water trigger so the next turn doesn't immediately re-compact. */
 const COMPACT_TARGET_RATIO = 0.5;
@@ -448,6 +450,14 @@ export class ContextEngine {
        * the request was REJECTED by the provider, so shrinking is mandatory).
        */
       force?: boolean;
+      /** The run's own abort: a compaction must not outlive the turn it serves. */
+      signal?: AbortSignal;
+      /**
+       * Wall-clock ceiling for the summarizer walk. Past it, the deterministic
+       * tier (evicting old tool-result bodies) stands in. Default 120s —
+       * compaction used to block a turn for up to 205s with no way to stop it.
+       */
+      budgetMs?: number;
     },
   ): Promise<{
     messages: Message[];
@@ -555,8 +565,28 @@ export class ContextEngine {
     const summaryText = await this.generateSummary(transcriptMessages, {
       comprehensive: true,
       priorState: priorState ?? undefined,
+      signal: opts?.signal,
+      budgetMs: opts?.budgetMs,
     });
     if (!summaryText) {
+      // The summarizer failed, timed out, or was aborted. Before giving up,
+      // take the deterministic tier: evict the old tool-result bodies. Under
+      // `force` it may not satisfy the provider on its own, but it is never
+      // worse than handing back the same over-limit history untouched — and
+      // it needs no model, so it cannot fail the way the summarizer just did.
+      if (safeCutPoint > 0) {
+        const evicted = evictOldToolResults(messages, safeCutPoint);
+        if (evicted.evictedCount > 0) {
+          return {
+            messages: evicted.messages,
+            compacted: true,
+            beforeTokens: countSet(messages),
+            afterTokens: countSet(evicted.messages),
+            summarizedCount: 0,
+            tier: "tool_results",
+          };
+        }
+      }
       return {
         messages,
         compacted: false,
@@ -635,8 +665,25 @@ export class ContextEngine {
 
   private async generateSummary(
     messages: Message[],
-    opts?: { instructions?: string; comprehensive?: boolean; priorState?: string },
+    opts?: {
+      instructions?: string;
+      comprehensive?: boolean;
+      priorState?: string;
+      signal?: AbortSignal;
+      budgetMs?: number;
+    },
   ): Promise<string | null> {
+    // A wall clock and an abort, shared by every candidate below. The
+    // candidate walk plus live-model recovery could try more than a dozen
+    // models, each with its own retry ladder, with nothing bounding the sum.
+    const budgetMs = Math.max(1_000, opts?.budgetMs ?? DEFAULT_SUMMARY_BUDGET_MS);
+    const deadline = Date.now() + budgetMs;
+    const outer = opts?.signal;
+    const expired = (): boolean => outer?.aborted === true || Date.now() >= deadline;
+    const expiredReason = (): string =>
+      outer?.aborted
+        ? "compaction aborted with the turn"
+        : `summarizer budget of ${Math.round(budgetMs / 1000)}s exhausted`;
     // Per-message rendering at SUMMARY fidelity: real tool names, real paths,
     // real command output (head+tail clipped, not cut at 200/500 chars). The
     // summarizer is asked for "files touched, commands run, errors" — feeding
@@ -683,6 +730,10 @@ ${sections}${focus}`
     let lastError = "no summarizer candidates registered";
 
     const attempt = async (provider: ProviderName, model: string): Promise<string | null> => {
+      if (expired()) {
+        lastError = expiredReason();
+        return null;
+      }
       // The compaction request must itself fit the candidate's window. Budget
       // the transcript to ~55% of the model's context (instructions + prior
       // state + the 2k reply need the rest) and keep the NEWEST messages when
@@ -714,6 +765,11 @@ ${sections}${focus}`
       const userText = priorState
         ? `${instructionText}\n\nPRIOR STATE:\n${priorState}\n\nNew conversation segment:\n${transcript}`
         : `${instructionText}\n\nConversation:\n${transcript}`;
+      // One request, bounded by both the turn's abort and the deadline.
+      const bound = new AbortController();
+      const onOuterAbort = (): void => bound.abort();
+      outer?.addEventListener("abort", onOuterAbort, { once: true });
+      const timer = setTimeout(() => bound.abort(), Math.max(0, deadline - Date.now()));
       try {
         const response = await this.gateway.infer({
           messages: [{ role: "user", content: [{ type: "text", text: userText }] }],
@@ -722,12 +778,17 @@ ${sections}${focus}`
           provider,
           maxTokens: comprehensive ? 2000 : 500,
           stream: false,
+          signal: bound.signal,
         });
         const textBlock = response.content.find((b) => b.type === "text");
         const out = textBlock && textBlock.type === "text" ? textBlock.text.trim() : "";
         if (out) return out;
         lastError = `${provider}/${model} returned an empty summary`;
       } catch (err) {
+        if (expired()) {
+          lastError = expiredReason();
+          return null;
+        }
         // Remember WHY, then try the next candidate. A silent catch here was
         // how compaction failures vanished: the run would later die of context
         // overflow with no trace of the summarizer ever having failed.
@@ -735,11 +796,15 @@ ${sections}${focus}`
         // A retired/renamed model cannot come back mid-session: memoize the
         // corpse so the next compaction skips straight past it.
         if (isModelGoneError(err)) this.deadSummarizers.add(`${provider}/${model}`);
+      } finally {
+        clearTimeout(timer);
+        outer?.removeEventListener("abort", onOuterAbort);
       }
       return null;
     };
 
     for (const { provider, model } of this.summarizerCandidates()) {
+      if (expired()) break;
       const out = await attempt(provider, model);
       if (out) return out;
     }
@@ -748,11 +813,15 @@ ${sections}${focus}`
     // what it ACTUALLY serves today and retry on verifiably-live models. The
     // static default tables rot — Ollama Cloud has retired its stock lineup
     // wholesale twice — and this turns the next rot from "this session can
-    // never compact again" into one extra round trip.
-    const recovered = await this.recoverWithLiveModels(attempt);
-    if (recovered) return recovered;
+    // never compact again" into one extra round trip. Not past the deadline:
+    // a dozen more attempts is exactly the unbounded stall the budget exists
+    // to end.
+    if (!expired()) {
+      const recovered = await this.recoverWithLiveModels(attempt);
+      if (recovered) return recovered;
+    }
 
-    this.lastSummaryFailure = lastError;
+    this.lastSummaryFailure = expired() ? expiredReason() : lastError;
     return null;
   }
 

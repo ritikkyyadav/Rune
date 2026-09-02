@@ -1409,11 +1409,23 @@ export class AutoModeRun {
     void task.finally(() => this.supervisorInFlight.delete(task));
   }
 
-  /** Await any in-flight supervisor calls. Test-only determinism helper. */
+  /** Await any in-flight supervisor calls. Used by tests for determinism, and
+   *  by the engine at turn teardown to hear a verdict that lands late. */
   async drainSupervisor(): Promise<void> {
     while (this.supervisorInFlight.size > 0) {
       await Promise.all([...this.supervisorInFlight]);
     }
+  }
+
+  /**
+   * A confirmed supervisor halt nobody consumed — the run ended before the
+   * next review() could. The engine reads this at teardown so a late verdict
+   * becomes a session finding and a message, instead of dying with the run.
+   */
+  takePendingSupervisorHalt(): string | null {
+    const reason = this.pendingSupervisorHalt;
+    this.pendingSupervisorHalt = null;
+    return reason;
   }
 
   private buildPrompt(risk: AutoModeRisk): string {

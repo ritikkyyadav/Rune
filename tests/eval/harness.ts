@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
+import { Database } from "bun:sqlite";
 
 import { Engine } from "@gear/orchestrator";
 import type {
@@ -88,6 +89,57 @@ export interface TaskResult {
   attempts?: number;
   /** True when the run was stopped by the turn/cost cap (reason says which). */
   capped?: boolean;
+  /**
+   * The run's own retro, read from the session log after the run: how it
+   * ended, steps by evidence, checks, gates. The pass/fail above says whether
+   * the artifact appeared; this says how the harness got there.
+   */
+  retro?: RetroSummary;
+}
+
+export interface RetroSummary {
+  outcome: string;
+  steps: { total: number; done: number; unproven: number; open: number };
+  checks: { passed: number; failed: number };
+  toolCalls: number;
+  toolFailed: number;
+  /** Gate refusals + unproven marks + dropped steps. */
+  gates: number;
+  completions: number;
+  lessons: number;
+}
+
+/** The last `retro` event of a session, summarised for the result row. */
+function lastRetro(dbPath: string, sessionId: string): RetroSummary | undefined {
+  try {
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const row = db
+        .prepare(
+          "SELECT payload_json FROM events WHERE session_id = ? AND type = 'retro' ORDER BY seq DESC LIMIT 1",
+        )
+        .get(sessionId) as { payload_json: string } | null;
+      if (!row) return undefined;
+      const parsed = JSON.parse(row.payload_json) as { payload?: { retro?: any } };
+      const r = parsed.payload?.retro;
+      if (!r || r.v !== 1) return undefined;
+      const gates = (r.gates?.gate ?? 0) + (r.gates?.unproven ?? 0) + (r.gates?.dropped ?? 0);
+      return {
+        outcome: String(r.outcome),
+        steps: r.steps,
+        checks: { passed: r.checks?.passed ?? 0, failed: r.checks?.failed ?? 0 },
+        toolCalls: r.tools?.calls ?? 0,
+        toolFailed: r.tools?.failed ?? 0,
+        gates,
+        completions: r.completions ?? 0,
+        lessons: Array.isArray(r.lessons) ? r.lessons.length : 0,
+      };
+    } finally {
+      db.close();
+    }
+  } catch {
+    return undefined;
+  }
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -301,6 +353,8 @@ async function attemptTask(task: EvalTask, opts: RunOptions, real: boolean): Pro
     // the two numbers have never been captured together.
     const cost = engine.getCost();
     const listCost = engine.getListCost();
+    // The run's retro is in the session log by the time chat() returns.
+    const retro = lastRetro(dbPath, sessionId);
 
     if (cappedReason) {
       engine.close();
@@ -317,6 +371,7 @@ async function attemptTask(task: EvalTask, opts: RunOptions, real: boolean): Pro
         provider: real ? provider : "mock",
         capped: true,
         errors: errors.length ? errors : undefined,
+        retro,
       };
     }
 
@@ -352,6 +407,7 @@ async function attemptTask(task: EvalTask, opts: RunOptions, real: boolean): Pro
       provider: real ? provider : "mock",
       throttled,
       errors: errors.length ? errors : undefined,
+      retro,
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -398,7 +454,12 @@ function printResult(r: TaskResult): void {
   const time = `\x1b[2m${r.durationMs}ms\x1b[0m`;
   const retry = (r.attempts ?? 1) > 1 ? `\x1b[2m ×${r.attempts}\x1b[0m` : "";
   const tag = `\x1b[2m${r.name}\x1b[0m`;
-  console.log(`  ${mark} ${tag} ${time}${retry}`);
+  // How the harness got there, next to whether the artifact appeared.
+  const rt = r.retro;
+  const how = rt
+    ? `\x1b[2m · ${rt.outcome} · steps ${rt.steps.done}/${rt.steps.total}${rt.steps.unproven > 0 ? ` ~${rt.steps.unproven}` : ""} · checks ${rt.checks.passed}/${rt.checks.failed}${rt.gates > 0 ? ` · gates ${rt.gates}` : ""}\x1b[0m`
+    : "";
+  console.log(`  ${mark} ${tag} ${time}${retry}${how}`);
   if (!r.pass) {
     const label = r.throttled ? "\x1b[33mthrottled:\x1b[0m" : "\x1b[31mreason:\x1b[0m";
     console.log(`     ${label} ${r.reason ?? "(unspecified)"}`);

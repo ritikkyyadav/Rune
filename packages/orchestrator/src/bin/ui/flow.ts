@@ -558,7 +558,9 @@ export function said(body: string, paint: (v: string) => string = text): string 
 
 // --- Work rails ---
 
-export type Status = "ok" | "pass" | "fail" | "active" | "none";
+/** `unproven`: a step the agent closed with nothing the harness could see
+ *  behind it -- shown as a claim (the suspected-rung tilde), never as a tick. */
+export type Status = "ok" | "pass" | "fail" | "active" | "none" | "unproven";
 
 /**
  * The status column, ordered by how much attention each mark is allowed to ask
@@ -580,6 +582,7 @@ const STATUS_GLYPH: Record<Status, string> = {
   fail: glyph("failure"),
   active: glyph("selection"),
   none: " ",
+  unproven: "~",
 };
 
 /** The rail cell -- a hairline under the prose, marking work rather than boxing it. */
@@ -915,7 +918,9 @@ export function checklist(label: string, items: CheckItem[], opts: ChecklistOpts
             ? danger(STATUS_GLYPH.fail)
             : item.status === "active"
               ? info(STATUS_GLYPH.active)
-              : faint("o");
+              : item.status === "unproven"
+                ? warn(STATUS_GLYPH.unproven)
+                : faint("o");
       const tone = item.metricTone === "ok" ? ok : item.metricTone === "fail" ? danger : muted;
       const metric =
         item.metric && item.metric.includes("\x1b")

@@ -163,10 +163,17 @@ export function formatEvent(ev: any, ctx: { cost?: number } = {}): string | null
 
     case "handoff": {
       // A run that ended BEFORE finishing: render the honest state-of-work so
-      // "ran out of turns" never again looks identical to "done".
+      // "ran out of turns" never again looks identical to "done". The reason
+      // names the shape: steps left open on purpose, or a run that stalled.
       const lines = String(ev.state ?? "").split("\n");
+      const label =
+        ev.reason === "open_steps"
+          ? "ended with planned steps still open"
+          : ev.reason === "stalled"
+            ? "stopped -- nothing new was happening"
+            : "paused before finishing";
       return [
-        F.railRow(`${warn("!")} ${text("paused before finishing")}`),
+        F.railRow(`${warn("!")} ${text(label)}`),
         ...lines.map((l: string) => `${F.BODY}${faint(l)}`),
       ].join("\n");
     }

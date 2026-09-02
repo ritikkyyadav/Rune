@@ -75,7 +75,17 @@ import {
 import { configModeToPermissionMode } from "../../permissions";
 import { runTeamCommand } from "../../team/command";
 import { BottomRegion } from "./screen";
-import { Viewport, composeFrame, zones, VIEWPORT_RESTORE, type Zones } from "./viewport";
+import {
+  Viewport,
+  composeFrame,
+  holdHeight,
+  zones,
+  VIEWPORT_RESTORE,
+  type Zones,
+} from "./viewport";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { homedir } from "node:os";
 import { parseKeys, type Key } from "./keys";
 import { fmtTokens } from "./events";
 import { PasteScanner, shouldCollapse, pasteChip, expandPastes, livePasteIds } from "./paste";
@@ -313,6 +323,8 @@ const SCROLL_STEP = 3; // lines per mouse-wheel notch
  *  up to a fleet's worth of sub-agent rows plus their `+N more`. Past this the
  *  status stops being a status. */
 const LIVE_BLOCK_ROWS = 9;
+/** How long a window drag has to go quiet before the fixed layout repaints. */
+const RESIZE_SETTLE_MS = 50;
 
 export async function runTui(ctx: TuiContext): Promise<void> {
   await new Tui(ctx).run();
@@ -356,11 +368,19 @@ class Tui {
     // The fixed layout owns every cell, and a resize invalidates all of them:
     // the row a line was on is not the row it belongs on at the new size, and
     // the diff would happily leave the old ones there. Re-measure the width the
-    // flow grammar bounds itself to, forget the screen, repaint it whole.
+    // flow grammar bounds itself to, forget the screen, repaint it whole --
+    // once the drag settles. A window drag delivers a resize per step, and
+    // repainting every one of them is the strobe the user watched.
     setTermWidthOverride(this.contentCols());
-    this.viewport.invalidate();
-    this.scheduleDraw();
+    if (this.resizeTimer) clearTimeout(this.resizeTimer);
+    this.resizeTimer = setTimeout(() => {
+      this.resizeTimer = null;
+      setTermWidthOverride(this.contentCols());
+      this.viewport.invalidate();
+      this.scheduleDraw();
+    }, RESIZE_SETTLE_MS);
   };
+  private resizeTimer: ReturnType<typeof setTimeout> | null = null;
   private input = "";
   private caret = 0;
   private history: string[] = [];
@@ -427,6 +447,45 @@ class Tui {
   // Advanced by the turn tick, but only while output is actually arriving --
   // see ./title.ts. Not a clock.
   private titleFrame = 0;
+
+  /**
+   * Redirect console.* to ~/.gear/logs/tui-console.log for the life of the
+   * surface. Never swallowed: the lines are still written, just not over the
+   * screen. Restored by exit().
+   */
+  private guardConsole(): void {
+    if (this.consoleRestore) return;
+    const methods = ["log", "info", "warn", "error", "debug"] as const;
+    const saved = methods.map((m) => [m, console[m]] as const);
+    const logPath = join(homedir(), ".gear", "logs", "tui-console.log");
+    const sink = (level: string, args: unknown[]): void => {
+      try {
+        mkdirSync(dirname(logPath), { recursive: true });
+        const line = args
+          .map((a) =>
+            typeof a === "string"
+              ? a
+              : (() => {
+                  try {
+                    return JSON.stringify(a);
+                  } catch {
+                    return String(a);
+                  }
+                })(),
+          )
+          .join(" ");
+        appendFileSync(logPath, `${new Date().toISOString()} ${level} ${line}\n`);
+      } catch {
+        /* a log that cannot be written is not worth a crash */
+      }
+    };
+    for (const m of methods) console[m] = (...args: unknown[]) => sink(m, args);
+    this.consoleRestore = () => {
+      for (const [m, fn] of saved) console[m] = fn as never;
+      this.consoleRestore = null;
+    };
+  }
+  private consoleRestore: (() => void) | null = null;
 
   /** The tab's own name for this project. */
   private titleProject(): string {
@@ -584,6 +643,12 @@ class Tui {
     if (stdin.isTTY) stdin.setRawMode(true);
     process.stdout.write("\x1b[?2004h"); // bracketed paste on
     process.env.GEAR_TUI_ACTIVE = "1"; // loggers: file sink only, never stderr over the alt screen
+    // Nothing but the compositor may write to this screen. Gear's own loggers
+    // honour the flag above; a third-party module (an MCP client, a plugin)
+    // calling console.log would land on the alternate screen at the cursor and
+    // rot the row diff. Route the console to the log file while the surface
+    // is up, and hand it back on exit.
+    this.guardConsole();
     // Safety net: if we ever exit without running this.exit() (a crash), still leave the terminal
     // usable -- leave the alternate screen, drop mouse/paste reporting, restore autowrap and the
     // user's colours, and show the cursor. A process that dies holding the alternate screen with
@@ -604,8 +669,12 @@ class Tui {
     // `gear resume <id>`). When launchPick is set, the picker runs once input is
     // live (below) instead -- a fresh session has nothing to seed.
     if (!this.ctx.launchPick) this.seedFromHistory();
-    // First frame synchronous so the banner and composer appear instantly.
-    this.renderRegion();
+    // First frame synchronous so the banner and composer appear instantly --
+    // through the surface that owns the screen. Drawing the inline block on
+    // the alternate screen painted a full-height composer at the cursor and
+    // then overwrote it 16ms later: a mispositioned flash on every launch.
+    if (this.inline) this.renderRegion();
+    else this.renderViewport();
 
     // System Memory: a one-time discoverability hint + a background "dream" when the
     // chosen cadence is due. Skipped while the launch picker owns the screen. The
@@ -1063,9 +1132,12 @@ class Tui {
 
   private pushLines(block: string): number {
     const lines = block.split("\n");
-    // Store semantic ANSI only. Card/canvas backgrounds are applied per frame,
-    // so a light/dark or accent change recolours the whole existing timeline.
-    for (const ln of lines) this.transcript.push(this.bound(ln));
+    // Store semantic ANSI only, at full width. Card/canvas backgrounds and the
+    // width bound are applied per frame (renderViewport's themeBody), so a
+    // light/dark or accent change recolours the whole existing timeline, and a
+    // narrower window re-clips every row instead of hard-clipping rows bound at
+    // a width the terminal no longer has.
+    for (const ln of lines) this.transcript.push(ln);
     const overflow = this.transcript.length - MAX_TRANSCRIPT;
     if (overflow > 0) {
       this.transcript.splice(0, overflow);
@@ -1176,7 +1248,15 @@ class Tui {
    *  in the body. Clamping here (and again in composeFrame) is what stops a
    *  fast wheel from scrolling past the top into a screen of blank rows. */
   private maxScroll(): number {
-    return Math.max(0, this.transcript.length - this.frameZones().bodyRows);
+    return Math.max(0, this.transcript.length - this.bodyRowsNow());
+  }
+
+  /** The body height of the frame on screen. Scrolling does not change the
+   *  footer, so the last painted frame's zones are exact -- and a wheel notch
+   *  must not rebuild the banner and the whole composer just to learn two
+   *  integers (a dozen notches arrive in one stdin chunk). */
+  private bodyRowsNow(): number {
+    return this.lastBodyMap?.bodyRows ?? this.frameZones().bodyRows;
   }
 
   /**
@@ -1226,7 +1306,9 @@ class Tui {
       rows: rowsCount(),
       header,
       transcript: this.transcript,
-      themeBody: (l) => withThemeBg(l),
+      // Bound at paint time, for the rows that made the window only: the
+      // transcript is stored unbounded so a resize re-clips it.
+      themeBody: (l) => withThemeBg(this.bound(l)),
       footer: footer.lines,
       scroll: this.scroll,
       caretRow: footer.caretRow,
@@ -1392,6 +1474,7 @@ class Tui {
     if (this.inline)
       this.region.clear(); // leaves the transcript in scrollback
     else this.viewport.leave(); // restores the shell's screen untouched
+    this.consoleRestore?.(); // the console is the terminal's again
   }
 
   /** Apply a runtime theme change to the terminal surface as well as future tokens. */
@@ -1523,7 +1606,7 @@ class Tui {
   /** Scroll the body by whole screens (PgUp/PgDn). One row of overlap, so the
    *  line you were reading at the seam is still there after the jump. */
   private scrollBy(pages: number): void {
-    this.scrollLines(pages * Math.max(1, this.frameZones().bodyRows - 1));
+    this.scrollLines(pages * Math.max(1, this.bodyRowsNow() - 1));
   }
 
   /**
@@ -1559,13 +1642,13 @@ class Tui {
    *  the answer as it streams) -- or the interrupting state while an abort
    *  drains. */
   private turnStateLines(): string[] {
-    if (this.aborting) return [`  ${this.workingText()}`];
+    if (this.aborting) return this.pinLiveHeight([`  ${this.workingText()}`]);
     const lines = [...(this.turnPreview ?? [])];
     if (lines.length === 0) {
       const secs = Math.max(0, Math.floor((Date.now() - this.turnStart) / 1000));
-      return [
+      return this.pinLiveHeight([
         `  ${brand(GEAR_MARK)} ${bold(brand("Thinking"))}${faint("...")} ${faint(`(${secs}s)`)}`,
-      ];
+      ]);
     }
     // This was a flat two rows, which is why a fan-out of sub-agents could only
     // ever be a count: there was nowhere to put the other five. The block earns
@@ -1574,9 +1657,38 @@ class Tui {
     // what the viewport's own footer trim would do. It never takes more than a
     // third of the window either way: this is the last few lines of the screen,
     // not the screen.
-    const budget = Math.max(2, Math.min(LIVE_BLOCK_ROWS, Math.floor(rowsCount() / 3)));
-    return lines.slice(0, budget).map((line) => clampVisible(line, Math.max(8, cols() - 1)));
+    const budget = this.liveBlockBudget();
+    return this.pinLiveHeight(
+      lines.slice(0, budget).map((line) => clampVisible(line, Math.max(8, cols() - 1))),
+    );
   }
+
+  private liveBlockBudget(): number {
+    return Math.max(2, Math.min(LIVE_BLOCK_ROWS, Math.floor(rowsCount() / 3)));
+  }
+
+  /**
+   * Hold the live block at the tallest it has been THIS TURN.
+   *
+   * The block's natural height moves constantly: the streaming prose tail is
+   * four rows while the agent narrates and zero the instant a tool call starts
+   * (the prose is captured as intent), then four again on the next sentence.
+   * Every change re-splits the frame, the body shrinks or grows by that many
+   * rows, and the transcript re-indexes -- the whole body repainted, the text
+   * the user was reading jumping up or down. Twenty tool calls, forty jumps.
+   * Pinning the height to the turn's high-water mark makes the block grow a
+   * few times early and then stand still; the one collapse comes at the end
+   * of the turn, where the reader expects the screen to settle anyway.
+   */
+  private pinLiveHeight(lines: string[]): string[] {
+    const held = holdHeight(lines, this.liveBlockRows, this.liveBlockBudget());
+    this.liveBlockRows = held.highWater;
+    return held.rows;
+  }
+  /** High-water mark of the live block this turn; reset when a turn starts. */
+  private liveBlockRows = 0;
+  /** What the tick last painted, so an unchanged rung costs no frame. */
+  private lastTickKey = "";
 
   // -- stdin routing --
 
@@ -4548,6 +4660,9 @@ class Tui {
     this.aborting = false;
     this.warpBlocked = false;
     this.turnStart = Date.now();
+    // A new turn starts with a fresh high-water mark for the live block.
+    this.liveBlockRows = 0;
+    this.lastTickKey = "";
     this.streamBuf = "";
     this.turnPreview = null;
     // Warp shows the pane as working from here; without this a long run looks
@@ -4579,9 +4694,18 @@ class Tui {
     // still moves no faster than a person can read it.
     this.tick = setInterval(() => {
       if (this.mode === "turn") {
-        this.turnPreview = turn.liveLines();
+        // The title dedupes itself; the frame is scheduled only when the rung
+        // actually reads differently. Eight unconditional repaints a second
+        // rebuilt the banner, the composer and four engine readouts to draw
+        // the same rows, and that CPU was what a keypress waited behind.
         this.paintTitle(turn);
-        this.scheduleDraw();
+        const lines = turn.liveLines();
+        const key = lines.join("\n");
+        if (key !== this.lastTickKey) {
+          this.lastTickKey = key;
+          this.turnPreview = lines;
+          this.scheduleDraw();
+        }
       } else if (this.mode === "question" && this.questionState?.deadline != null) {
         // 4th gear's grace window is real time passing, so it has to LOOK like
         // real time passing. A static "auto-continues in 60s" tells you nothing
@@ -5061,6 +5185,9 @@ class Tui {
     this.aborting = false;
     this.warpBlocked = false;
     this.turnStart = Date.now();
+    // A new turn starts with a fresh high-water mark for the live block.
+    this.liveBlockRows = 0;
+    this.lastTickKey = "";
     this.streamBuf = "";
     this.turnPreview = null;
     this.scheduleDraw();
@@ -5078,9 +5205,14 @@ class Tui {
     this.liveTurn = turn;
     this.tick = setInterval(() => {
       if (this.mode === "turn") {
-        this.turnPreview = turn.liveLines();
         this.paintTitle(turn);
-        this.scheduleDraw();
+        const lines = turn.liveLines();
+        const key = lines.join("\n");
+        if (key !== this.lastTickKey) {
+          this.lastTickKey = key;
+          this.turnPreview = lines;
+          this.scheduleDraw();
+        }
       }
     }, 125);
 

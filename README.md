@@ -71,6 +71,23 @@ compliance-sensitive teams.
   permissions, and expire after seven days. See [`docs/loop-mode.md`](docs/loop-mode.md).
 - **Sessions, checkpoints & rewind** — SQLite-backed session history, automatic checkpoints, and
   `/rewind` to roll the conversation back to an earlier turn.
+- **The plan is a ledger** — every plan step carries the evidence the harness measured while it was
+  open (writes, runs, checks, reads); a step closed with nothing behind it, or right after a failing
+  check, is refused once and then shown as **unproven** rather than done. A step that wrote files
+  gets the project's compile check at the step, finishing with steps open is refused once and then
+  recorded, and a run whose results stop changing is nudged and then stopped with a resumable
+  handoff. See [`docs/plan-ledger.md`](docs/plan-ledger.md).
+- **One page per session (`gear audit`)** — goal, plan with receipts, the run's own log, safety
+  decisions with reasons, held steps, harness gates, and cost — read straight from the session
+  database, no engine needed.
+- **Self-evolution (`gear evolve`)** — every run ends with a **retro** (outcome, steps by evidence,
+  checks, gates, cost) and the lessons a rule can vouch for: a command that fails the same way
+  twice, a fix by different arguments, a check that passed. Lessons feed the notebook the next
+  session is briefed from; ones that recur become a **playbook** skill in the repository
+  (`.gear/skills/playbook/SKILL.md`). A **scorecard** per model measures it, **tune** prints
+  proposals it never applies by itself, and the **gardener** turns crash-class fingerprints into a
+  brief for a detached run on Gear's own repository — a branch, with a person on the merge. See
+  [`docs/self-evolution.md`](docs/self-evolution.md).
 - **Auditable export** — export a session transcript (`md`/`json`) with an optional **Ed25519
   signature** for tamper-evident records.
 - **Opt-in diagnostics** — a local Black Box flight recorder (`gear doctor`) captures every

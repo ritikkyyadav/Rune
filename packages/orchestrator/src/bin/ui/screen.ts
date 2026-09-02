@@ -75,9 +75,12 @@ export class BottomRegion {
    */
   render(lines: string[], caretRow = lines.length - 1, caretCol = 0, ownCursor = false): void {
     ({ lines, caretRow } = this.fit(lines, caretRow));
-    let s = HIDE;
+    // Synchronized output (DEC 2026): the clear-below and the redraw land as
+    // one frame on terminals that understand the mode, so the block never
+    // shows blank between the two. Unknown modes are ignored by the rest.
+    let s = "\x1b[?2026h" + HIDE;
     if (this.mounted) s += this.toTop() + this.bgFill + CLEAR_BELOW;
-    s += this.place(lines, caretRow, caretCol) + (ownCursor ? "" : SHOW);
+    s += this.place(lines, caretRow, caretCol) + (ownCursor ? "" : SHOW) + "\x1b[?2026l";
     this.write(s);
     this.rows = lines.length;
     this.caretRow = caretRow;
