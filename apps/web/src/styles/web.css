@@ -430,50 +430,6 @@ kbd {
   background: var(--ground);
 }
 
-.titlebar {
-  grid-area: head;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 44px;
-  padding: 0 16px;
-  border-bottom: 1px solid var(--hairline);
-  background: var(--ground);
-  flex: none;
-}
-.tb-brand {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  font-weight: 600;
-  letter-spacing: var(--title-tracking);
-}
-.tb-brand .gear-mark {
-  color: var(--accent);
-  align-self: center;
-}
-.tb-brand .version {
-  font-family: var(--mono);
-  font-size: var(--fs-micro);
-  font-weight: 400;
-  color: var(--ink-3);
-}
-.tb-task {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  overflow: hidden;
-}
-.tb-task b {
-  font-size: var(--fs-small);
-  font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.tb-task .turn,
 .tb-meta,
 .tb-label {
   font-family: var(--mono);
