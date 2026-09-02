@@ -27,6 +27,7 @@ import {
 } from "@gear/tool-registry";
 import type {
   DashboardInfo,
+  McpEvent,
   PluginCatalogEntry,
   SkillSearchHit,
   ToolCallOutput,
@@ -762,6 +763,13 @@ export class Engine {
   private pluginDiscovery: { plugins: LoadedPlugin[]; errors: string[] } | null = null;
   /** Sessions whose per-request tool-surface cost has been recorded (once each). */
   private toolSurfaceLogged = new Set<string>();
+  /** Latest lifecycle event per connector (desktop status). */
+  private mcpEvents = new Map<string, McpEvent & { at: string }>();
+  /** Connector notices awaiting the next UI drain (TUI status line). */
+  private mcpNotices: string[] = [];
+  /** Connectors the model cannot use right now, and why. */
+  private mcpUnavailable = new Map<string, string>();
+  private readonly connectorNoteShown = new Set<string>();
   private config: EngineConfig;
   private permissionHandler?: PermissionHandler;
   private autoApprovalNotifier?: (notice: AutoApprovalNotice) => void;
@@ -1693,6 +1701,10 @@ export class Engine {
       };
       this.mcpDiscovery = new McpDiscovery(this.config.workspaceRoot, {
         logger,
+        // The client has always emitted a typed lifecycle stream and nobody
+        // ever subscribed, so under the TUI (which suppresses stderr) a dead
+        // connector was completely silent. This is the subscriber.
+        onEvent: (ev) => this.recordMcpEvent(ev),
         extraServers: Object.keys(extraServers).length > 0 ? extraServers : undefined,
         // Live tool-list changes (or a server restart) reconcile the registry so
         // the model always sees the current tool set without a session restart.
@@ -1741,6 +1753,72 @@ export class Engine {
     } catch {
       // Observability is never allowed to fail a turn.
     }
+  }
+
+  /**
+   * Record one connector lifecycle event, push it to the UI, and remember what
+   * the model still has to be told.
+   *
+   * Three consumers, one event: the TUI status line (through the existing flow
+   * grammar — this is a notice, not a new dialect), the engine status object
+   * the desktop reads, and a once-per-session harness note so the model stops
+   * planning around a connector that is not there.
+   */
+  private recordMcpEvent(ev: McpEvent): void {
+    // progress/log are per-call chatter, not lifecycle. They already route to
+    // the tool-progress channel; repeating them in the status line would turn
+    // a signal into texture.
+    if (ev.type === "progress" || ev.type === "log") return;
+
+    this.mcpEvents.set(ev.server, { ...ev, at: new Date().toISOString() });
+    const line =
+      ev.type === "server-ready"
+        ? `connector ${ev.server} ready — ${ev.toolCount} tool${ev.toolCount === 1 ? "" : "s"}`
+        : ev.type === "server-down"
+          ? `connector ${ev.server} is down: ${ev.reason}`
+          : ev.type === "server-needs-auth"
+            ? `connector ${ev.server} needs authorization — ${ev.reason}`
+            : ev.type === "server-restarted"
+              ? `connector ${ev.server} restarted`
+              : `connector ${ev.server} changed its tools — ${ev.toolCount} now`;
+    this.mcpNotices.push(line);
+    // A connector the model was told about and can no longer use is worth one
+    // sentence; a connector that came up healthy is not.
+    if (ev.type === "server-down" || ev.type === "server-needs-auth") {
+      this.mcpUnavailable.set(
+        ev.server,
+        ev.type === "server-needs-auth"
+          ? `needs authorization (run: gear mcp login ${ev.server})`
+          : ev.reason,
+      );
+    } else if (ev.type === "server-ready" || ev.type === "server-restarted") {
+      this.mcpUnavailable.delete(ev.server);
+    }
+  }
+
+  /** Connector lifecycle notices produced since the last drain (backs the TUI). */
+  drainMcpNotices(): string[] {
+    return this.mcpNotices.splice(0);
+  }
+
+  /** The latest lifecycle event per connector — the desktop reads this. */
+  getMcpEvents(): Array<McpEvent & { at: string }> {
+    return [...this.mcpEvents.values()];
+  }
+
+  /**
+   * One short harness note naming the connectors the model cannot use, said
+   * ONCE per session. Repeating it every turn would train the model to skim
+   * harness notes, which costs more than the connector did.
+   */
+  private connectorNote(sessionId: string): string | null {
+    if (this.mcpUnavailable.size === 0 || this.connectorNoteShown.has(sessionId)) return null;
+    this.connectorNoteShown.add(sessionId);
+    const lines = [...this.mcpUnavailable].map(([name, why]) => `- ${name}: ${why}`);
+    return (
+      "[Harness note] These connectors are configured but unavailable this session — " +
+      `do not plan around their tools:\n${lines.join("\n")}`
+    );
   }
 
   /** Ensure MCP servers are discovered, then return their status (backs `/mcp`). */
@@ -3331,6 +3409,12 @@ export class Engine {
     // What the tool surface costs per request, once the extensions are in.
     // Recorded once per session so `gear audit` can report it (P4.1).
     this.recordToolSurface(sessionId, session.model);
+    // Whatever the connectors said while starting — before the first token, so
+    // "notion needs authorization" arrives ahead of the answer that will not
+    // be using it.
+    for (const line of this.drainMcpNotices()) {
+      yield { type: "notice", message: line };
+    }
 
     // Assemble the system prompt: doctrine + environment snapshot + project
     // memory (ALAN.md/CLAUDE.md/AGENTS.md) + the evergreen System Memory
@@ -3484,6 +3568,11 @@ export class Engine {
       const pitfalls = this.knownPitfallsNote(sessionId);
       if (pitfalls) loop.injectHarnessNote(pitfalls);
     }
+    // A connector that is down is a capability the model does not have. Said
+    // once per session, on any turn — including a conversational one, where
+    // "can you check Notion?" is exactly when it matters.
+    const connectors = this.connectorNote(sessionId);
+    if (connectors) loop.injectHarnessNote(connectors);
 
     // ── Incremental persistence ──
     // Session events are written as the run PRODUCES them, not in one sweep at
@@ -3823,6 +3912,15 @@ export class Engine {
         persistPending();
 
         yield event;
+
+        // Connector lifecycle, through the grammar every other harness message
+        // already uses. A server that dies mid-turn used to be completely
+        // silent under the TUI (logger.ts suppresses stderr while the alt
+        // screen is up), so the model kept calling tools that were gone and
+        // the user saw nothing at all.
+        for (const line of this.drainMcpNotices()) {
+          yield { type: "notice", message: line };
+        }
       }
 
       // Aider-style trust: land this run's writes as ONE revertible commit
@@ -4730,7 +4828,12 @@ export class Engine {
     sessionId?: string;
     contextUsage: { used: number; limit: number; percent: number };
     securityPosture: string;
-    mcp: { servers: number; tools: number };
+    mcp: {
+      servers: number;
+      tools: number;
+      /** Connectors that are configured but unusable right now, named. */
+      down: Array<{ name: string; reason: "needs-auth" | "down"; detail: string | null }>;
+    };
     skills: number;
     orgPolicy: { org?: string; fingerprint: string; source: string } | null;
     autoMode: ReturnType<AutoModeSafetyController["getStatus"]>;
@@ -4757,6 +4860,15 @@ export class Engine {
       mcp: {
         servers: this.getMcpStatus().length,
         tools: this.getMcpStatus().reduce((n, s) => n + s.toolCount, 0),
+        // Named, not counted: a surface that says "1 connector down" makes the
+        // user open another command to find out which.
+        down: this.getMcpStatus()
+          .filter((srv) => srv.needsAuth || srv.health === "down" || !srv.ready)
+          .map((srv) => ({
+            name: srv.name,
+            reason: srv.needsAuth ? "needs-auth" : "down",
+            detail: srv.lastError ?? null,
+          })),
       },
       skills: this.getSkillCount(),
       orgPolicy: this.orgPolicy
