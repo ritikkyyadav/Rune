@@ -14,6 +14,7 @@ import { FROM_INCIDENTS_TASKS } from "./tasks-from-incidents";
 import { TASK_SPINE_TASKS } from "./tasks-task-spine";
 import { LONG_HORIZON_TASKS } from "./tasks-long-horizon";
 import { GREENFIELD_TASKS } from "./tasks-greenfield";
+import { PARALLEL_TASKS } from "./tasks-parallel";
 
 // Each task scripts the LLM behavior deterministically and verifies a
 // concrete invariant after execution. No real model calls.
@@ -351,6 +352,7 @@ export const ALL_TASKS: EvalTask[] = [
   ...TASK_SPINE_TASKS,
   ...LONG_HORIZON_TASKS,
   ...GREENFIELD_TASKS,
+  ...PARALLEL_TASKS,
   ...COMPREHENSION_TASKS,
   ...FIX_FAILING_TEST_TASKS,
   ...MULTI_FILE_REFACTOR_TASKS,

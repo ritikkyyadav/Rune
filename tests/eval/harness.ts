@@ -9,7 +9,7 @@ import type {
   UserPermissionDecision,
 } from "@gear/orchestrator";
 
-import { MockProvider, type Script } from "./mock-provider";
+import { MockProvider, type Responder, type Script } from "./mock-provider";
 
 export interface EvalTask {
   name: string;
@@ -23,6 +23,14 @@ export interface EvalTask {
     | "core";
   /** Required in mock mode; optional in real mode. */
   script?: Script;
+  /**
+   * Content-addressed responses for the parts of a task an index script cannot
+   * express — anything PARALLEL, where concurrent loops interleave their
+   * inference calls nondeterministically. Returning null falls through to
+   * `script`, so a task can use a responder for its fan-out and a script for
+   * the lead's own turns. Mock mode only.
+   */
+  responder?: Responder;
   prompts: string[];
   /** Pre-populate the workspace before the agent runs. */
   setup?: (ctx: { workspace: string }) => Promise<void>;
@@ -281,7 +289,8 @@ async function attemptTask(task: EvalTask, opts: RunOptions, real: boolean): Pro
     if (!real) {
       // Replace the real provider with the mock — reach inside via private access
       // since the engine doesn't expose this (eval-only override).
-      mock = new MockProvider(task.script!);
+      mock = new MockProvider(task.script ?? []);
+      if (task.responder) mock.setResponder(task.responder);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const gw: any = (engine as any).gateway;
       gw.providers.clear();
