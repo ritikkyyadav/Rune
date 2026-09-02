@@ -171,6 +171,26 @@ cargo build --release -p gear-tools    # required — file, search, and shell to
 ./bin/gear
 ```
 
+### Staying current
+
+```bash
+gear upgrade --check    # is there a newer release?
+gear upgrade            # download it, verify it against the release's SHA256SUMS, install it
+```
+
+`gear upgrade` never runs by itself. Gear looks at the latest release at most once a day, in the
+background, and the only thing that ever comes of it is one line at startup telling you a newer
+version exists; replacing a binary always takes you typing the command. The download is verified
+against the release's own `SHA256SUMS` **before** anything is written into `~/.gear/bin`, and the
+previous build is kept beside the new one as `.backup`.
+
+Turn the daily look off entirely in `~/.gear/config.toml`:
+
+```toml
+[update]
+check = false
+```
+
 ## Quickstart
 
 Gear can start on **Gemini 2.5 Flash's free developer tier**. That is suitable
