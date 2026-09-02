@@ -105,3 +105,4 @@ Found 2026-09-03 by Phase 9 (the web product), continued:
   listener a page cannot open, so it prints `gear login <provider>`. A host command that
   runs the existing `oauth-strategy.ts` flow and streams its state would close this; it is
   the same gap Phase 3 logged — found in P9.4
+- `packages/orchestrator/src/bin/serve-cli.ts` supervisor + tests/integration/engine-serve.test.ts — every serve test run leaks its per-session `engine-host` processes (twenty idle engines found after the Phase 9 agent's runs; they made the held-step round-trip test time out at 60 s under load, while it passes in 21 s alone). The supervisor needs an idle reaper and the tests explicit teardown of the hosts they spawn — found while merging #13
