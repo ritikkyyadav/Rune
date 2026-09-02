@@ -159,3 +159,4 @@ Found 2026-09-03 by P10.2 (Windows parity):
   twin, or the callers need to ask gear-tools. Their unit suites skip on Windows meanwhile,
   because what they would assert depends on which shell the machine happens to have — found in
   P10.2
+- `tests/integration/engine-serve.test.ts` "a deferral reaches the client as a held step" — takes 20 s alone against a 60 s timeout and timed out twice under load on the merge gate (with zero leaked hosts the second time); either shorten the round-trip waits it depends on or give it its own timeout, so the gate stops depending on an idle machine — found while merging #15
