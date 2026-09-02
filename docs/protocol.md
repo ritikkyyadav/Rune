@@ -203,7 +203,7 @@ one token.
 
 ```bash
 gear web --port 7788          # loopback; open http://127.0.0.1:7788
-gear web --host 0.0.0.0       # a phone on the LAN; the printed URL carries ?token=
+gear web --host 0.0.0.0       # a phone on the LAN; the printed URL carries #token=
 ```
 
 One port, because a page on 7788 opening a socket on 4762 is a cross-origin
@@ -211,17 +211,58 @@ request the Origin allowlist would have to be widened for, and widening a
 security allowlist to accommodate your own layout is how these things stop
 protecting anything.
 
-The token is embedded in the first page load — `window.__GEAR_SERVE__` — rather
-than typed into a form. Asking a person to paste a 43-character secret into a
-page the server just minted it for is theatre. The rule that keeps that honest:
+On loopback the token is embedded in the first page load —
+`window.__GEAR_SERVE__` — rather than typed into a form. Asking a person to
+paste a 43-character secret into a page the server just minted it for is
+theatre, and a process that can make that request already runs as the user and
+can read `~/.gear/serve.json` anyway.
 
-| Request comes from | Gets the page with the token                              |
-| ------------------ | --------------------------------------------------------- |
-| loopback           | yes — the same user can already read `~/.gear/serve.json` |
-| anywhere else      | only if the request already carries the token             |
+Off-loopback the token travels in the **URL fragment** (P5.5):
 
-So `gear web --host` prints a URL with `?token=` in it, and a stranger on the
-LAN who guesses the port gets a 401 that says why.
+```
+http://192.168.1.9:7788/#token=<token>
+```
+
+A fragment is never sent to the server. That is the point: a bearer token which
+grants remote code execution must not appear in an access log, a proxy log or a
+`Referer` header on the way somewhere else, and `?token=` puts it in all three.
+The page reads it once and removes it from the address bar with
+`history.replaceState`.
+
+The consequence is deliberate: because the server cannot see the fragment, it
+cannot recognise a remote page request, so it serves the bundle **without a
+token in it** and the page supplies its own. That is not a weakening — the
+bundle is public JavaScript and inert without a token — and it removes the
+credential from the request line entirely.
+
+| Request comes from | Gets the page | Token in the page                                                   |
+| ------------------ | ------------- | ------------------------------------------------------------------- |
+| loopback           | yes           | yes, embedded — the same user can already read `~/.gear/serve.json` |
+| anywhere else      | yes           | no — the page reads `#token=` from its own URL                      |
+
+The socket itself is unchanged: no token, no connection, and the Origin
+allowlist still applies. `gear web --host` adds this machine's actual LAN
+addresses to that allowlist, because for a `0.0.0.0` bind the browser's Origin
+is whichever interface the phone reached — never `http://0.0.0.0` — and listing
+the bind address alone loads the page and then refuses its socket with a 403
+that reads as a bug in the app.
+
+## `gear attach ws://host:port` — the terminal as a remote client
+
+The same `GearClient` the desktop and the web page use, in the CLI:
+
+```bash
+export GEAR_SERVE_TOKEN=…                       # preferred: --token lands in shell history
+gear attach ws://192.168.1.9:7788               # stream what the server is doing; Ctrl+C detaches
+gear attach ws://192.168.1.9:7788 "say ok"      # run one turn and wait for it
+```
+
+The five round-trips come with the client, which is the difference between a
+remote console and a log tail: a turn that stops for a permission stops in
+_this_ terminal, and answering here unblocks a run happening on another
+machine. The token is taken from `--token`, then `GEAR_SERVE_TOKEN`, then
+`~/.gear/serve.json` — and the last only for a loopback URL, because a token
+minted for this machine's server is not a credential for someone else's.
 
 The client is the desktop bundle (`apps/desktop`), unchanged: the only
 difference is which transport `apps/desktop/src/lib/transport.ts` picks. That is
@@ -284,6 +325,23 @@ leave one unset and the host applies the unattended policy above.
 
 See `packages/sdk/README.md` for the worked example — it is executed by
 `tests/integration/engine-serve.test.ts`, so it cannot rot silently.
+
+It is a **publishable package**: `npm pack` ships `dist/`, the README and the
+manifest, and nothing else. `@gear/protocol` is private, so it is vendored into
+`dist/protocol/` by the build rather than depended on — one install, and no 404
+on a machine with no workspace. `tests/integration/sdk-pack.test.ts` packs the
+tarball, unpacks it where no workspace can rescue it, imports it and typechecks
+a consumer against its declarations. Publishing to npm is a founder action
+(D1); nothing in this repo publishes.
+
+Two runnable examples live in `examples/sdk/`. With no `gear serve` running
+they stand one up against a fake model, so both work on a fresh clone with no
+API key:
+
+```bash
+bun run examples/sdk/run-task.ts     # runs a prompt, then prints `gear audit` for it
+bun run examples/sdk/policy-bot.ts   # answers permission requests from an allow/deny policy
+```
 
 ## Exhaustiveness — the drift law
 

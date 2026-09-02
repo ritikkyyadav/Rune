@@ -1,23 +1,57 @@
 {
   "name": "@gear/sdk",
   "version": "0.3.0",
-  "private": true,
-  "main": "src/index.ts",
-  "types": "src/index.ts",
+  "description": "Drive a Gear agent session over the Gear protocol — from Node, Bun, a browser, an editor extension or a CI step.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "gear",
+    "agent",
+    "coding-agent",
+    "sdk",
+    "websocket",
+    "jsonrpc"
+  ],
+  "homepage": "https://github.com/ritikkyyadav/Alan/tree/main/packages/sdk",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ritikkyyadav/Alan.git",
+    "directory": "packages/sdk"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./client": "./src/client.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
-    "build": "bun build ./src/index.ts --outdir ./dist --target bun",
+    "build": "bun run scripts/build.ts",
+    "prepack": "bun run scripts/build.ts",
     "typecheck": "tsc --noEmit",
-    "lint": "prettier --check src/",
+    "lint": "prettier --check src/ scripts/",
     "test": "bun test ../../tests/unit/sdk"
   },
-  "dependencies": {
-    "@gear/protocol": "workspace:*"
-  },
   "devDependencies": {
+    "@gear/protocol": "workspace:*",
     "typescript": "^5.8"
   }
 }

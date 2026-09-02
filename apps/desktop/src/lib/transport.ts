@@ -35,7 +35,7 @@ export interface ServeEndpoint {
   url: string;
   token: string;
   /** Where the endpoint came from, for the connection banner. */
-  source: "embedded" | "query" | "saved" | "env";
+  source: "embedded" | "fragment" | "query" | "saved" | "env";
 }
 
 export interface TransportHandlers {
@@ -75,12 +75,46 @@ interface EmbeddedServe {
 const SAVED_SERVER_KEY = "gear.serve.endpoint";
 
 /**
+ * The engine this page's own address implies.
+ *
+ * `gear web` serves the page and the socket on ONE port, so when the fragment
+ * carries only a token the server is wherever the page came from. That is what
+ * lets the printed LAN URL be a token and nothing else.
+ */
+function serverFromLocation(): string | null {
+  try {
+    const loc = window.location;
+    if (!loc?.host) return null;
+    return `${loc.protocol === "https:" ? "wss" : "ws"}://${loc.host}`;
+  } catch {
+    return null;
+  }
+}
+
+/** Take the token out of the address bar once it has been read. */
+function scrubFragment(): void {
+  try {
+    const loc = window.location;
+    window.history?.replaceState?.(null, "", `${loc.pathname}${loc.search}`);
+  } catch {
+    /* no history API: the token stays visible, which is cosmetic, not a leak */
+  }
+}
+
+/**
  * Where a WebSocket engine is, if anything names one.
  *
- * Four sources, in the order that respects intent: the page `gear web` served
- * (it embedded the token it just minted), an explicit `?server=`, a server the
- * user saved in this browser, and finally the build-time `GEAR_SERVE_URL` that
- * a developer set for a dev build.
+ * Five sources, in the order that respects intent: the page `gear web` served
+ * on loopback (it embedded the token it just minted), the URL FRAGMENT that a
+ * LAN or remote link carries, a legacy `?server=&token=` query, a server the
+ * user saved in this browser, and finally the build-time `GEAR_SERVE_URL` a
+ * developer set for a dev build.
+ *
+ * The fragment, not the query, is where a remote link puts its token (P5.5).
+ * A fragment is never sent to the server, so it cannot land in an access log,
+ * a proxy log, or a `Referer` header on the way to somewhere else — and a
+ * bearer token that grants remote code execution has no business in any of
+ * those. It is read once and removed from the address bar.
  */
 export function configuredServer(): ServeEndpoint | null {
   if (typeof window === "undefined") return null;
@@ -88,6 +122,19 @@ export function configuredServer(): ServeEndpoint | null {
   const embedded = (window as unknown as { __GEAR_SERVE__?: EmbeddedServe }).__GEAR_SERVE__;
   if (embedded?.url && embedded.token) {
     return { url: embedded.url, token: embedded.token, source: "embedded" };
+  }
+
+  try {
+    const raw = window.location?.hash ?? "";
+    const params = new URLSearchParams(raw.startsWith("#") ? raw.slice(1) : raw);
+    const token = params.get("token");
+    const url = params.get("server") ?? serverFromLocation();
+    if (url && token) {
+      scrubFragment();
+      return { url, token, source: "fragment" };
+    }
+  } catch {
+    /* no location (tests): fall through */
   }
 
   try {

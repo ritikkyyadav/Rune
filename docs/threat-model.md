@@ -1,6 +1,7 @@
 # Gear threat model
 
-_Last reviewed: 2026-08-25 · covers the engine, CLI, `gear-tools`, and the desktop developer preview._
+_Last reviewed: 2026-09-02 · covers the engine, CLI, `gear-tools`, the desktop developer preview,
+and the served engine (`gear serve` / `gear web` / `gear attach ws://…`)._
 
 Gear is a **local-first agentic coding assistant**: a model plans, and a local harness executes
 tools (file edits, search, shell) inside the user's workspace. The security design starts from one
@@ -38,6 +39,54 @@ status reports `sandboxDegraded` and the UI shows it. `[sandbox] requireOs = tru
 shell tools without real OS isolation. **Treat Windows as a lower-assurance platform** until a
 Job-Object/AppContainer executor lands.
 
+## The served engine (`gear serve`, `gear web`, `gear attach ws://…`)
+
+State the thing plainly, because every control below follows from it:
+
+> **A served engine is remote code execution on this machine, with the user's provider
+> credentials attached.** Anyone holding the bearer token can run tools in the workspace, read
+> whatever the workspace can read, and spend the user's model budget. It is not a read-only
+> dashboard and there is no second authorization step behind it.
+
+So the posture is: **no auth, no server.** There is no anonymous mode, no "just for a minute"
+flag, and no way to start one without a token.
+
+| Control           | Rule                                                                                                                                                           |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Bind              | **Loopback by default.** `--host` is opt-in and prints a banner naming what became reachable and where                                                         |
+| Token             | **Mandatory on every connection.** 32 random bytes, base64url, minted fresh per start, `~/.gear/serve.json` at 0600, compared in constant time                 |
+| Token lifetime    | Per server start. Stopping the server invalidates it; there is no long-lived server key                                                                        |
+| Origin            | Browser origins allowlisted. A missing `Origin` is a non-browser client and is allowed — browsers always send one, so its absence cannot be forged from a page |
+| Credential writes | `save_settings`, login and key writes are **refused over a non-loopback link** unless the token was minted with `--allow-remote-settings`                      |
+| Transport         | **Plaintext `ws://`.** Anyone who can see the traffic sees the token and the session                                                                           |
+| Session isolation | One engine-host process per session; a wedged session cannot take the server with it                                                                           |
+| Shutdown          | Graceful — the front door closes and running session hosts keep going, as `gear detach` does                                                                   |
+
+**The token never goes in a query string.** `gear web --host` prints
+`http://<lan-ip>:<port>/#token=…` — a **fragment**, which the browser does not send to the server
+and which therefore cannot reach an access log, a proxy log, or a `Referer` header on the way
+somewhere else. The page reads it once and removes it from the address bar. The consequence is
+that the server cannot recognise a remote page request, so off-loopback it serves the bundle with
+**no token embedded**; that bundle is public JavaScript and inert without one. On loopback the
+token is embedded directly, because a process that can make that request already runs as the user
+and can read `~/.gear/serve.json` anyway. `?token=` is still accepted for compatibility and is
+documented as a last resort for exactly this reason.
+
+`gear attach ws://host:port` takes its token from `--token`, then `GEAR_SERVE_TOKEN`, then
+`~/.gear/serve.json` — and the last of those **only for a loopback URL**, because a token minted
+for this machine's server is not a credential for someone else's and offering it to a remote host
+would be a disclosure. Prefer the environment variable: a token on a command line is written to
+shell history.
+
+### What a LAN bind is and is not
+
+`--host` is for a trusted network you control — your own LAN, a tailnet, an SSH tunnel. It is
+**not** an internet-facing deployment: there is no TLS, no rate limiting on the door, no account
+model, no revocation beyond restarting, and no audit of who connected. Exposing a port to the
+public internet with `--host 0.0.0.0` is outside this model; put it behind a tunnel or a reverse
+proxy that terminates TLS and authenticates, and treat the token as a second factor rather than
+the only one.
+
 ## Credential storage
 
 Backends in order: macOS Keychain → Linux `secret-tool` (Secret Service) → Windows Credential
@@ -55,7 +104,12 @@ export keys per-session instead.
    against tampering-after-the-fact, not against a compromised machine at export time.
 4. **The desktop app is a developer preview**: it launches the engine from a source checkout and
    inherits that checkout's trust; it is not hardened, signed, or notarized.
-5. No independent third-party security review has been performed yet.
+5. **A served engine speaks plaintext `ws://`** — no TLS, so a LAN bind assumes a trusted network
+   (see above). Anyone who can observe the traffic can take the token.
+6. **A served engine has one credential, not identities**: the token is the whole access model.
+   There is no per-user attribution in the audit trail for a remote connection, and revoking
+   access means restarting the server.
+7. No independent third-party security review has been performed yet.
 
 ## Out of scope
 

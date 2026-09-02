@@ -174,6 +174,16 @@ const { values, positionals } = parseArgs({
     host: { type: "string" },
     origin: { type: "string" },
     "allow-remote-settings": { type: "boolean", default: false },
+    // `gear attach ws://host:port`: the bearer token, and an optional prompt to
+    // run on the remote engine. `GEAR_SERVE_TOKEN` is preferred over --token,
+    // which lands in shell history.
+    token: { type: "string" },
+    prompt: { type: "string" },
+    session: { type: "string" },
+    // `gear pr <n>`: review rather than work on it, and print the brief
+    // instead of starting a session.
+    review: { type: "boolean", default: false },
+    brief: { type: "boolean", default: false },
     // `gear desktop --check` / `gear web --open`: headless proof, browser open.
     check: { type: "boolean", default: false },
     open: { type: "boolean", default: false },
@@ -210,8 +220,11 @@ if (values.help) {
         `    gear export <sessionId>       Export a session transcript\n` +
         `    gear detach "<prompt>"        Start a background run that survives this terminal (--worktree isolates it)\n` +
         `    gear attach [session|latest]  Reattach to a detached run — replay, live-stream, Ctrl+C detaches again\n` +
+        `    gear attach ws://host:port    Attach to a remote \`gear serve\` (--token or GEAR_SERVE_TOKEN, --prompt runs a turn)\n` +
         `    gear desktop [dev|--check]    Open Gear Desktop (alias: gear app) — dev runs the Vite preview, --check proves the engine headless\n` +
         `    gear web [--port N] [--open]  The same client in a browser, engine attached (--host exposes it on the LAN)\n` +
+        `    gear pr <n> [--review]        Check a pull request out into its own worktree and start on it (--brief prints the brief)\n` +
+        `    gear acp                      Agent Client Protocol server on stdio — for Zed and other ACP editors (docs/editors.md)\n` +
         `    gear login [provider]         Authenticate a provider — API key, or OAuth where supported (--method, --no-browser, --migrate)\n` +
         `    gear logout <provider>        Remove a provider's stored key/OAuth from the secure store\n` +
         `    gear providers                List providers, their auth method, and credential status\n` +
@@ -318,6 +331,20 @@ if (command === "detach") {
   process.exit(0);
 }
 if (command === "attach") {
+  // `gear attach ws://host:port` is the same command over the websocket
+  // transport: a unix socket is a file on one machine, so detach stopped at
+  // the machine boundary. See bin/attach-remote.ts.
+  const target = positionals[1] ?? "";
+  if (/^wss?:\/\//i.test(target)) {
+    const { runAttachRemote } = await import("./attach-remote");
+    process.exit(
+      await runAttachRemote(target, {
+        ...(values as Record<string, unknown>),
+        // `gear attach ws://… "do the thing"` and `--prompt "…"` mean the same.
+        prompt: values.prompt ?? positionals[2],
+      }),
+    );
+  }
   const { runAttach } = await import("./detach-cli");
   await runAttach(positionals as string[]);
   process.exit(0);
@@ -350,6 +377,19 @@ if (command === "web") {
   // Long-lived: `web` returns only on shutdown, exactly like `serve`.
   const { runWeb } = await import("./web-cli");
   process.exit(await runWeb(positionals.slice(1) as string[], values as Record<string, unknown>));
+}
+if (command === "acp") {
+  // An Agent Client Protocol server on stdio, for Zed and anything else that
+  // speaks it. Long-lived and stdout-owning: see bin/acp-cli.ts.
+  const { runAcp } = await import("./acp-cli");
+  await runAcp(values as Record<string, unknown>);
+  process.exit(0);
+}
+if (command === "pr") {
+  // `gear pr <n>`: the PR head in its own worktree, with the author's
+  // description as the session's brief. See bin/pr-cli.ts.
+  const { runPr } = await import("./pr-cli");
+  process.exit(await runPr(positionals.slice(1) as string[], values as Record<string, unknown>));
 }
 
 // ─── BYOP: provider authentication surfaces (no Engine boot) ───
@@ -1325,7 +1365,7 @@ async function main() {
     });
     process.stdout.write(
       values.json === true || streamJson
-        ? `${headlessEnvelope(result, { compact: streamJson })}\n`
+        ? `${headlessEnvelope(result, { compact: streamJson, sessionId })}\n`
         : `${result.text}\n`,
     );
     if (!result.ok && result.error) process.stderr.write(`${result.error}\n`);
