@@ -175,7 +175,9 @@ function validateValue(schema: Json, value: unknown, path: string, depth: number
     if (Array.isArray(schema.required)) {
       for (const key of schema.required as string[]) {
         if (!(key in obj) || obj[key] === undefined) {
-          errors.push(`missing required ${path ? `${at}.` : ""}${key}`);
+          // Wording preserved from the required-presence check this replaced:
+          // it is what every existing caller, test and transcript expects.
+          errors.push(`Missing required param: ${path ? `${at}.` : ""}${key}`);
         }
       }
     }

@@ -262,6 +262,8 @@ export class CostTracker {
       edit_file: 0.002,
       list_dir: 0.001,
       grep: 0.001,
+      // Retired in P4.7. The row stays so sessions recorded before then
+      // still price their calls instead of silently costing zero.
       ast_query: 0.002,
       symbol_search: 0.001,
     };

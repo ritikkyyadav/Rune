@@ -11,6 +11,7 @@ import { describe, expect, test } from "bun:test";
 import { ToolRegistry } from "../../../packages/tool-registry/src/registry";
 import { McpClient } from "../../../packages/tool-registry/src/mcp/client";
 import { LOAD_TOOLS_TOOL } from "../../../packages/tool-registry/src/tools/load-tools";
+import type { ToolHandler } from "../../../packages/tool-registry/src/types";
 import type {
   McpIncomingMessage,
   McpTransport,
@@ -91,6 +92,24 @@ async function mockServer(name: string, toolCount: number): Promise<McpClient> {
   return client;
 }
 
+/** A stand-in for the real built-in; its presence is what enables deferral. */
+function loadToolsStub(): ToolHandler {
+  return {
+    schema: {
+      name: LOAD_TOOLS_TOOL,
+      version: "1.0.0",
+      description: "",
+      inputSchema: { type: "object", properties: {} },
+      permissionLevel: "auto",
+      category: "read",
+    },
+    validate: () => ({ valid: true }),
+    execute: async () => {
+      throw new Error("not called");
+    },
+  };
+}
+
 /** Schema tokens for one request, at the repo's standing ~4 chars/token. */
 function schemaTokens(registry: ToolRegistry): number {
   return Math.ceil(JSON.stringify(registry.toLlmTools()).length / 4);
@@ -109,21 +128,9 @@ describe("deferred tool loading — schema tokens per request", () => {
     for (const h of [...notion.toToolHandlers(), ...linear.toToolHandlers()]) {
       registry.register(h);
     }
-    // The catalog only exists if something can render it.
-    registry.register({
-      schema: {
-        name: LOAD_TOOLS_TOOL,
-        version: "1.0.0",
-        description: "",
-        inputSchema: { type: "object", properties: {} },
-        permissionLevel: "auto",
-        category: "read",
-      },
-      validate: () => ({ valid: true }),
-      execute: async () => {
-        throw new Error("not called");
-      },
-    });
+    // Deferral only applies when something can turn a catalog line back into
+    // a schema — otherwise a deferred tool would be unreachable.
+    registry.register(loadToolsStub());
 
     // BEFORE: the pre-P4.1 behaviour — every schema shipped in full.
     registry.setDeferralEnabled(false);
@@ -151,6 +158,7 @@ describe("deferred tool loading — schema tokens per request", () => {
     const registry = new ToolRegistry();
     for (const h of notion.toToolHandlers()) registry.register(h);
 
+    registry.register(loadToolsStub());
     const catalog = registry.deferredCatalog();
     expect(catalog).toHaveLength(20);
     expect(new Set(catalog.map((c) => c.name)).size).toBe(20);
@@ -167,6 +175,7 @@ describe("deferred tool loading — schema tokens per request", () => {
     const registry = new ToolRegistry();
     for (const h of notion.toToolHandlers()) registry.register(h);
 
+    registry.register(loadToolsStub());
     const target = registry.deferredCatalog()[0].name;
     expect(registry.toLlmTools().some((t) => t.name === target)).toBe(false);
 
@@ -213,6 +222,7 @@ describe("deferred tool loading — schema tokens per request", () => {
     for (const h of [...notion.toToolHandlers(), ...linear.toToolHandlers()]) {
       registry.register(h);
     }
+    registry.register(loadToolsStub());
     const report = registry.schemaTokenReport();
     expect(report.deferred).toBe(40);
     expect(report.eagerTokens).toBeGreaterThan(report.tokens);

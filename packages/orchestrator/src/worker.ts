@@ -52,7 +52,6 @@ const WORKER_READ_TOOLS = new Set([
   "grep",
   "glob",
   "symbol_search",
-  "ast_query",
 ]);
 const WORKER_WRITE_TOOLS = new Set(["write_file", "edit_file", "multi_edit"]);
 

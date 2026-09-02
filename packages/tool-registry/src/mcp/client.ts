@@ -302,10 +302,14 @@ export class McpClient {
     // the connection. A server with genuinely no tools answers with an empty
     // list or a -32601, both of which fetchToolsSafe already tolerates.
     this.tools = await this.fetchToolsSafe();
-    // Server→client messages (elicitation, out-of-band notifications) arrive
-    // on the optional GET stream. Best-effort: a server without one is fine.
-    const t = this.transport as { openServerStream?: () => Promise<void> };
-    if (typeof t.openServerStream === "function") void t.openServerStream().catch(() => {});
+    // Server→client messages arrive on the optional GET stream. Opened ONLY
+    // when an elicitation handler is wired: that is the one thing we can act
+    // on, and holding a long-lived connection open against every HTTP server
+    // to receive messages we would ignore is cost without a benefit.
+    if (this.onElicit) {
+      const t = this.transport as { openServerStream?: () => Promise<void> };
+      if (typeof t.openServerStream === "function") void t.openServerStream().catch(() => {});
+    }
     this.ready = true;
     this.lastError = null;
     this.onEvent?.({

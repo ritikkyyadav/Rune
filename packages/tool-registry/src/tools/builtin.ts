@@ -13,7 +13,6 @@ import {
 } from "./background";
 import { createWebFetchHandler } from "./web-fetch";
 import { createWebSearchHandler } from "./web-search";
-import { createAstQueryHandler } from "./ast-query";
 import { createTodoWriteHandler } from "./todo-write";
 import { createGlobHandler } from "./glob";
 import { createMultiEditHandler } from "./multi-edit";
@@ -321,7 +320,6 @@ export function registerBuiltinTools(registry: ToolRegistry, binaryPath: string)
   // TypeScript-native tools (no Rust binary needed)
   registry.register(createWebFetchHandler());
   registry.register(createWebSearchHandler());
-  registry.register(createAstQueryHandler());
   // Real language servers, lazily spawned per language on first use; the
   // manager guarantees teardown (graceful on stopAll, SIGKILL on exit).
   registry.register(createLspHandler(lspManager));

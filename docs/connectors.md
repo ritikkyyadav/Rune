@@ -325,3 +325,28 @@ localTools = true   # load executable tools from <workspace>/.gear/tools
 
 Off by default. A plugin can never point at it: a declaration is not a sandbox,
 and running a stranger's code needs one.
+
+---
+
+## Housekeeping
+
+**`ast_query` is retired.** It was regex tables pretending to be an AST query,
+fully subsumed by `symbol_search` + `grep` + `lsp`, and it cost schema tokens on
+every request to do worse than the tools beside it. Its row in the cost table
+stays, so sessions recorded before the retirement still price their calls
+instead of silently costing zero.
+
+**`n8n_trigger` stays gated** — hidden entirely without `N8N_BASE_URL`, and a
+catalog line rather than a schema when configured.
+
+**`declaredOtherCaps` no longer skips tool discovery.** The handshake used to
+skip `tools/list` whenever a server declared *any* capability without a `tools`
+key. A server advertising resources and prompts *and* tools, in a shape we
+mis-read, silently exposed nothing — the skip saved one request and cost the
+entire point of the connection. Discovery is now always attempted; a server with
+genuinely no tools answers with an empty list or a `-32601`, both of which were
+already tolerated. (Landed with P4.4, where the handshake lives.)
+
+**Deferral fails safe.** With no `load_tools` registered there is nothing that
+could turn a catalog line back into a schema, so every tool is advertised in
+full instead. Saving tokens is never worth making a registered tool unreachable.
