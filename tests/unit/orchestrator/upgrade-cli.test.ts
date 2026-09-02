@@ -200,7 +200,7 @@ describe("gear upgrade", () => {
     const dir = tempDir();
     const bin = join(dir, "bin");
     mkdirSync(bin, { recursive: true });
-    writeFileSync(join(bin, "gear"), "#!/bin/sh\nexec gear-compiled \"$@\"\n");
+    writeFileSync(join(bin, "gear"), '#!/bin/sh\nexec gear-compiled "$@"\n');
     writeFileSync(join(bin, "gear-compiled"), "OLD BINARY");
     expect(cliTarget(bin)).toBe(join(bin, "gear-compiled"));
 

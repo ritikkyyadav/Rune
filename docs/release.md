@@ -1,6 +1,6 @@
 # Releasing Gear
 
-Everything a release needs is automated. What is *not* automated is anything that requires an
+Everything a release needs is automated. What is _not_ automated is anything that requires an
 account, a credential, or a decision only the founder can make — those are listed at the bottom, by
 name, with exactly what to do.
 
@@ -74,13 +74,13 @@ Actions → Release → Run workflow
 
 ## Installing
 
-| Platform | Command |
-| --- | --- |
-| macOS, Linux | `curl -fsSL <url>/web-install.sh \| bash` |
-| Windows | `irm <url>/install.ps1 \| iex` |
-| Homebrew | `brew install savoir/tap/gear` (once the tap exists — see below) |
-| Uninstall (POSIX) | `curl -fsSL <url>/web-install.sh \| bash -s -- --uninstall` |
-| Uninstall (Windows) | `.\install.ps1 -Uninstall` |
+| Platform            | Command                                                          |
+| ------------------- | ---------------------------------------------------------------- |
+| macOS, Linux        | `curl -fsSL <url>/web-install.sh \| bash`                        |
+| Windows             | `irm <url>/install.ps1 \| iex`                                   |
+| Homebrew            | `brew install savoir/tap/gear` (once the tap exists — see below) |
+| Uninstall (POSIX)   | `curl -fsSL <url>/web-install.sh \| bash -s -- --uninstall`      |
+| Uninstall (Windows) | `.\install.ps1 -Uninstall`                                       |
 
 Both installers verify every download against the release's `SHA256SUMS` **before** anything reaches
 the install directory. A mismatch, or a release with no `SHA256SUMS`, exits non-zero with the old
@@ -151,6 +151,7 @@ push to another repository, because that needs a token this workflow should not 
    can write to the source repo has no business in a release workflow.
 
 Verify with:
+
 ```bash
 brew install --build-from-source savoir/tap/gear && gear --version && gear tools-smoke
 ```
@@ -162,17 +163,17 @@ Unsigned macOS downloads hit Gatekeeper ("cannot be opened because the developer
 verified") and unsigned Windows downloads hit SmartScreen. Both are the difference between an
 install that works and one a stranger abandons.
 
-| Secret | What it is | Where it comes from |
-| --- | --- | --- |
-| `MACOS_CERTIFICATE` | Developer ID Application cert + key, exported as `.p12`, base64-encoded | Apple Developer Program membership ($99/yr) → Certificates → Developer ID Application |
-| `MACOS_CERTIFICATE_PWD` | The password used when exporting the `.p12` | You choose it at export time |
-| `MACOS_SIGNING_IDENTITY` | e.g. `Developer ID Application: Savoir Ltd (TEAMID)` | `security find-identity -v -p codesigning` after importing |
-| `APPLE_ID` | The Apple ID used for notarization | Your developer account email |
-| `APPLE_APP_PASSWORD` | An app-specific password, **not** the account password | appleid.apple.com → Sign-In and Security → App-Specific Passwords |
-| `APPLE_TEAM_ID` | 10-character team identifier | developer.apple.com → Membership |
-| `WINDOWS_CERTIFICATE` | Authenticode code-signing cert as base64 `.pfx` | A CA (DigiCert, Sectigo, SSL.com); OV ≈ $200–400/yr, EV more and needs a token |
-| `WINDOWS_CERTIFICATE_PWD` | The `.pfx` password | You choose it |
-| `GEAR_SIGNING_PRIVATE_KEY` | Ed25519 private key (base64) for detached Linux signatures | `bun run scripts/keygen.ts`, or any Ed25519 keypair — see `packages/orchestrator/src/signing.ts` |
+| Secret                     | What it is                                                              | Where it comes from                                                                              |
+| -------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `MACOS_CERTIFICATE`        | Developer ID Application cert + key, exported as `.p12`, base64-encoded | Apple Developer Program membership ($99/yr) → Certificates → Developer ID Application            |
+| `MACOS_CERTIFICATE_PWD`    | The password used when exporting the `.p12`                             | You choose it at export time                                                                     |
+| `MACOS_SIGNING_IDENTITY`   | e.g. `Developer ID Application: Savoir Ltd (TEAMID)`                    | `security find-identity -v -p codesigning` after importing                                       |
+| `APPLE_ID`                 | The Apple ID used for notarization                                      | Your developer account email                                                                     |
+| `APPLE_APP_PASSWORD`       | An app-specific password, **not** the account password                  | appleid.apple.com → Sign-In and Security → App-Specific Passwords                                |
+| `APPLE_TEAM_ID`            | 10-character team identifier                                            | developer.apple.com → Membership                                                                 |
+| `WINDOWS_CERTIFICATE`      | Authenticode code-signing cert as base64 `.pfx`                         | A CA (DigiCert, Sectigo, SSL.com); OV ≈ $200–400/yr, EV more and needs a token                   |
+| `WINDOWS_CERTIFICATE_PWD`  | The `.pfx` password                                                     | You choose it                                                                                    |
+| `GEAR_SIGNING_PRIVATE_KEY` | Ed25519 private key (base64) for detached Linux signatures              | `bun run scripts/keygen.ts`, or any Ed25519 keypair — see `packages/orchestrator/src/signing.ts` |
 
 Add each at Settings → Secrets and variables → Actions → New repository secret.
 
@@ -182,7 +183,7 @@ publishes — it is simply unsigned. A release workflow that fails because a cer
 bought yet would be a worse repository than an unsigned release.
 
 macOS is the one that matters most — Gatekeeper blocks by default, SmartScreen only warns — so if you
-buy one certificate, buy the Apple one. Note that a bare Mach-O executable cannot be *stapled* (there
+buy one certificate, buy the Apple one. Note that a bare Mach-O executable cannot be _stapled_ (there
 is nowhere in the file to put the ticket); the workflow attempts it, says so when it cannot, and the
 notarization ticket is looked up online instead. That is normal for CLI binaries.
 
