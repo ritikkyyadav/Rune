@@ -194,10 +194,15 @@ describe("gear serve (websocket transport, real engine, fake model)", () => {
   /**
    * Start the fake model and `gear serve` against it.
    *
-   * The provider is `lmstudio` — a local, key-less, OpenAI-compatible preset
-   * whose base URL is overridable from `secrets.json`. That is what lets the
-   * spawned engine host, which builds its own Engine from config and secrets
-   * rather than a constructor, be pointed at a server this test owns.
+   * The provider is `custom` — the user-defined OpenAI-compatible endpoint,
+   * configured entirely from `secrets.json`. That is what lets the spawned
+   * engine host, which builds its own Engine from config and secrets rather
+   * than a constructor, be pointed at a server this test owns.
+   *
+   * This was `lmstudio` until P8.6 removed that preset (program decision D5);
+   * `custom` is the migration path the removal names, and it is the only
+   * remaining OpenAI-compatible provider whose base URL a test can own. Its
+   * key is required by the registry but never checked by the fake model.
    */
   async function start(
     script: string[],
@@ -218,11 +223,17 @@ describe("gear serve (websocket transport, real engine, fake model)", () => {
 
     writeFileSync(
       join(gearHome, "model.json"),
-      JSON.stringify({ provider: "lmstudio", model: "fake-model" }),
+      JSON.stringify({ provider: "custom", model: "fake-model" }),
     );
     writeFileSync(
       join(gearHome, "secrets.json"),
-      JSON.stringify({ endpoints: { lmstudio: `http://127.0.0.1:${model.port}/v1` } }),
+      JSON.stringify({
+        custom: {
+          baseUrl: `http://127.0.0.1:${model.port}/v1`,
+          model: "fake-model",
+          key: "fake-key-the-test-server-ignores",
+        },
+      }),
       { mode: 0o600 },
     );
     if (opts.configToml) writeFileSync(join(gearHome, "config.toml"), opts.configToml);

@@ -766,9 +766,17 @@ async function main() {
   // subscription provider uses. Both are now asked of the provider registry and
   // the credential store, so adding a provider cannot break stickiness again.
   const lastUsed = !cliProvider && !values.model ? loadLastModel() : null;
+  // `custom` has no preset by design — it IS the escape hatch for a provider
+  // the catalogue does not know — so the preset gate would reject it forever.
+  // `/model` already accepts it; without this the pick was lost at the next
+  // start, which is how P8.6's replacement for `lmstudio` (`/keys custom …`)
+  // was reached but never kept.
+  const customUsable = !!(secrets.custom?.baseUrl && secrets.custom?.key);
   const stickyUsable = (p: string): boolean =>
-    getPreset(p) !== undefined &&
-    (LOCAL_PROVIDERS.has(p) || hasStoredCredential(p) || (isCliProvider(p) && hasCreds(p)));
+    p === CUSTOM_PROVIDER_ID
+      ? customUsable
+      : getPreset(p) !== undefined &&
+        (LOCAL_PROVIDERS.has(p) || hasStoredCredential(p) || (isCliProvider(p) && hasCreds(p)));
   const sticky = lastUsed && stickyUsable(lastUsed.provider) ? lastUsed : null;
 
   let provider: ProviderName;

@@ -211,6 +211,13 @@ the custom endpoint instead:
 /keys custom http://localhost:1234/v1 <the-model-you-loaded> lm-studio
 ```
 
+Then `/model custom/<the-model-you-loaded>`. The pick is remembered like any
+other: `custom` has no preset — it is the escape hatch for a provider this
+catalogue does not know — so the startup gate treats "is it usable?" as "is a
+base URL and a key configured?" rather than looking it up. Both entry points
+(the terminal and the engine host) ask the same question, so a session opened
+by `gear serve` or the desktop resumes on the same endpoint the terminal does.
+
 ---
 
 ## One catalogue per provider
