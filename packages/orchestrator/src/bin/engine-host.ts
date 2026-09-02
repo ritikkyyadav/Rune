@@ -25,12 +25,32 @@ import * as readline from "node:readline";
 import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 
+import { Engine } from "../engine";
+import type { AgentTurnEvent, HostCommandName, RpcError } from "@gear/protocol";
 import {
-  Engine,
-  type PermissionHandler,
-  type PermissionPrompt,
-  type UserPermissionDecision,
-} from "../engine";
+  HOST_COMMANDS,
+  PROTOCOL_VERSION,
+  ProtocolError,
+  RPC_ERROR,
+  assertNever,
+  decodeFrame,
+  optionalBoolean,
+  optionalCount,
+  optionalString,
+  optionalStringArray,
+  requireBriefDecision,
+  requireCommand,
+  requirePermissionDecision,
+  requireString,
+  rpcFailure,
+  streamNotification,
+  toRequest,
+  toResponse,
+} from "@gear/protocol";
+import { RoundTripRegistry } from "./host-roundtrips";
+import { HeldStepLedger } from "./host-held-steps";
+import type { ResearchEvent, ResearchOptions } from "../research-types";
+import { isClarification } from "../research-types";
 import type { ProviderName } from "@gear/llm-gateway";
 import {
   hasStoredCredential,
@@ -98,12 +118,37 @@ const SOCKET_PATH = socketArgIdx !== -1 ? process.argv[socketArgIdx + 1] : null;
 type SocketLike = { write(data: string): unknown };
 const connectedClients = new Set<SocketLike>();
 
+/**
+ * Extra sinks a wrapper transport registers to receive every stream frame.
+ *
+ * `gear serve` (P2.4) wraps this host rather than reimplementing it: it adds
+ * itself here and fans frames out to its websocket clients, so the websocket,
+ * the unix socket and stdio are provably the same stream and not three
+ * hand-kept copies of one.
+ */
+const streamSinks = new Set<(stream: string, payload: unknown) => void>();
+
+export function addStreamSink(sink: (stream: string, payload: unknown) => void): () => void {
+  streamSinks.add(sink);
+  return () => streamSinks.delete(sink);
+}
+
 function send(obj: unknown): void {
   rawWrite(JSON.stringify(obj) + "\n");
 }
+
 function emitStream(stream: string, payload: unknown): void {
+  for (const sink of streamSinks) {
+    try {
+      sink(stream, payload);
+    } catch {
+      // A wrapper transport that throws must never break the primary one.
+    }
+  }
   if (SOCKET_PATH) {
-    const frame = JSON.stringify({ stream, payload }) + "\n";
+    // Sockets get the JSON-RPC notification envelope; `toStream` in the
+    // protocol reads both, so an old attach client is unaffected.
+    const frame = JSON.stringify(streamNotification(stream, payload)) + "\n";
     for (const client of connectedClients) {
       try {
         client.write(frame);
@@ -113,6 +158,8 @@ function emitStream(stream: string, payload: unknown): void {
     }
     return;
   }
+  // stdio keeps the legacy `{stream,payload}` shape byte-for-byte: the
+  // desktop sidecar contract is a shipped binary's contract.
   send({ stream, payload });
 }
 
@@ -252,6 +299,11 @@ function buildEngine(): Engine {
     ),
     activeKeyId: secrets.activeKeyId,
     customEndpoint: secrets.custom,
+    // Base URLs for local runtimes. The CLI has honoured these since /keys
+    // could edit them; the host never read them, so an Ollama or LM Studio
+    // server on a non-default port worked in the terminal and failed in the
+    // desktop with nothing to explain the difference.
+    localBaseUrls: secrets.endpoints,
     disabledProviders: secrets.disabled,
     search: config.search,
     research: config.research,
@@ -315,43 +367,96 @@ function resolveSession(frontendId: string | undefined): string {
   return engId;
 }
 
-// Permission round-trip: emit a request to the UI, await its decision.
-let permSeq = 0;
-const pendingPerms = new Map<string, (d: UserPermissionDecision) => void>();
-const permissionHandler: PermissionHandler = (prompt: PermissionPrompt) =>
-  new Promise<UserPermissionDecision>((resolve) => {
-    const requestId = `perm-${++permSeq}`;
-    pendingPerms.set(requestId, resolve);
-    emitStream("permission_request", {
-      requestId,
-      prompt: {
-        toolName: prompt.toolName,
-        argsSummary: prompt.argsSummary,
-        rawArgs: prompt.rawArgs,
-        safety: prompt.safety,
-        exactSessionGrant: prompt.exactSessionGrant,
-      },
-    });
-  });
-engine.setPermissionHandler(permissionHandler);
+// ─── The five round-trips (P2.2) ───
+//
+// Every human-in-the-loop path, not just permission. Before this the host
+// wired one of five, so `ask_user` answered "No interactive user is available"
+// for every desktop and detached run, the read-back could not be corrected off
+// the terminal, and Auto mode's held steps were invisible — the work simply
+// did not happen, with nothing on screen to say so.
+//
+// The registry owns timeouts, disconnect handling and the unattended policy;
+// see host-roundtrips.ts for why each substitution is the one it is.
 
-let activeChat = false;
+const roundTrips = new RoundTripRegistry({
+  emit: emitStream,
+  // stdio has exactly one client — the parent process — and it is attached for
+  // as long as this host is alive. Only socket mode can lose its last client.
+  clientCount: () => (SOCKET_PATH ? connectedClients.size : 1),
+});
+
+const heldSteps = new HeldStepLedger();
+
+engine.setPermissionHandler((prompt) => roundTrips.permission(prompt, currentSessionId()));
+engine.setQuestionHandler((question) => roundTrips.question(question, currentSessionId()));
+engine.setBriefHandler((brief) => roundTrips.brief(brief, currentSessionId()));
+engine.setAutoApprovalNotifier((notice) =>
+  emitStream("auto_notice", { sessionId: currentSessionId(), notice }),
+);
+engine.setAutoDeferralNotifier((deferrals) => {
+  const sid = currentSessionId();
+  if (!sid) return;
+  emitStream("held_steps", { sessionId: sid, steps: heldSteps.record(sid, deferrals) });
+});
+
+// ─── Runs (P2.3, in-host half) ───
+//
+// `activeChat` was one module-level boolean, so the host could not name which
+// session was busy, could not abort a specific one, and reported "a turn is
+// already in progress" without saying whose. It is a map now.
+//
+// This host still runs ONE session at a time, because `Engine` holds a single
+// `currentAbort`/`liveLoop` and refactoring it for in-process multiplexing was
+// explicitly declined. True concurrency is `gear serve`'s job: one host process
+// per session, which is the supervisor half of P2.3. What changes here is that
+// the host is HONEST about it — a chat_start for a second session is refused
+// naming the one that holds the engine, instead of a bare "already in progress".
+
+interface RunHandle {
+  sessionId: string;
+  startedAt: number;
+  /** Live frames, newest last. Bounded — see RING_CAPACITY. */
+  ring: AgentTurnEvent[];
+}
+
+/** Enough to cover a reconnect mid-tool-call without unbounded retention. */
+const RING_CAPACITY = 200;
+
+const runs = new Map<string, RunHandle>();
+/** Frames from finished turns, kept per session so a late client still sees them. */
+const rings = new Map<string, AgentTurnEvent[]>();
+
+function currentSessionId(): string | undefined {
+  for (const sid of runs.keys()) return sid;
+  return undefined;
+}
+
+function pushRing(sessionId: string, event: AgentTurnEvent): void {
+  const ring = rings.get(sessionId) ?? [];
+  ring.push(event);
+  // `text_delta` would fill the buffer with keystrokes and evict the tool call
+  // a reconnecting client actually needs to see. It is not kept, for the same
+  // reason it is not persisted: it is not state.
+  if (ring.length > RING_CAPACITY) ring.splice(0, ring.length - RING_CAPACITY);
+  rings.set(sessionId, ring);
+}
 
 async function runChat(
-  id: number,
-  frontendSessionId: string,
+  reply: (outcome: { ok: true; result: unknown } | { ok: false; error: RpcError }) => void,
+  frontendSessionId: string | undefined,
   message: string,
-  respond: (obj: unknown) => void,
 ): Promise<void> {
   const sid = resolveSession(frontendSessionId);
   // Ack immediately with the resolved session id — a detaching client needs
   // it to reattach later. The turn streams via chat_event and ends with
   // turn_complete; in socket mode events are tagged with the session so
   // attach clients can filter (the stdio/desktop shape is unchanged).
-  respond({ id, ok: true, result: { sessionId: sid } });
-  activeChat = true;
+  reply({ ok: true, result: { sessionId: sid } });
+  const handle: RunHandle = { sessionId: sid, startedAt: Date.now(), ring: [] };
+  runs.set(sid, handle);
   let sawTurnComplete = false;
-  const emitChat = (event: unknown): void => {
+  const emitChat = (event: AgentTurnEvent): void => {
+    if (event.type !== "text_delta") pushRing(sid, event);
     emitStream("chat_event", SOCKET_PATH ? { sessionId: sid, event } : event);
   };
   try {
@@ -366,7 +471,7 @@ async function runChat(
       recoverable: false,
     });
   } finally {
-    activeChat = false;
+    runs.delete(sid);
     // Guarantee the UI never hangs in "processing".
     if (!sawTurnComplete) {
       emitChat({ type: "turn_complete", stopReason: "end", totalTurns: 1 });
@@ -375,8 +480,69 @@ async function runChat(
   }
 }
 
-async function dispatch(cmd: string, args: Record<string, unknown>): Promise<unknown> {
+/**
+ * Drive one research run over the protocol (P2.7).
+ *
+ * Plan approval is a round-trip, exactly like the brief: the plan is proposed,
+ * pushed to every client, and the run waits for an answer. Unattended it
+ * declines — a research run costs real money in provider calls and web
+ * fetches, and "nobody answered" is not consent to spend it.
+ */
+async function runResearchOverProtocol(
+  sessionId: string,
+  runId: string,
+  question: string,
+  depth: string | undefined,
+  autoApprove: boolean,
+): Promise<void> {
+  const emit = (event: ResearchEvent): void =>
+    emitStream("research_event", { sessionId, runId, event });
+  try {
+    const proposed = await engine.proposeResearch(sessionId, question, {
+      depth: depth as ResearchOptions["depth"],
+    });
+    if (isClarification(proposed)) {
+      // The planner could not plan it. That is information, not a failure.
+      emit({
+        type: "notice",
+        message: `needs clarification: ${proposed.questions.join(" / ")}`,
+      });
+      return;
+    }
+    emit({ type: "research_plan", plan: proposed });
+    if (!autoApprove) {
+      const decision = await roundTrips.researchPlan(proposed, sessionId);
+      if (!decision.approved) {
+        emit({ type: "notice", message: "research plan was not approved — nothing was run" });
+        return;
+      }
+    }
+    for await (const event of engine.runResearch(sessionId, proposed, {
+      depth: depth as ResearchOptions["depth"],
+    })) {
+      emit(event);
+    }
+  } catch (err) {
+    emit({
+      type: "error",
+      error: err instanceof Error ? err.message : String(err),
+      recoverable: false,
+    });
+  }
+}
+
+async function dispatch(cmd: HostCommandName, args: Record<string, unknown>): Promise<unknown> {
   switch (cmd) {
+    case "hello":
+      // The handshake. A peer on a different protocol MAJOR is told so here,
+      // rather than being left to fail on a field it does not understand three
+      // frames later.
+      return {
+        protocolVersion: PROTOCOL_VERSION,
+        server: "gear-engine-host",
+        commands: [...HOST_COMMANDS],
+      };
+
     case "get_status":
       return mappedStatus(engine, args.sessionId as string | undefined);
 
@@ -434,25 +600,99 @@ async function dispatch(cmd: string, args: Record<string, unknown>): Promise<unk
       return st;
     }
 
-    case "abort_chat":
-      engine.abort();
-      return null;
+    case "subscribe": {
+      // P2.5. Settled history from the store, then the host's live ring for
+      // anything newer than the last row — so a client reconnecting mid-turn
+      // sees the tool call running right now, not just the last write.
+      const sid = resolveSession(optionalString(args, "sessionId"));
+      const sinceSeq = optionalCount(args, "sinceSeq") ?? 0;
+      const { frames, userTurns, lastSeq } = engine.replaySession(sid, sinceSeq);
+      return {
+        sessionId: sid,
+        seq: lastSeq,
+        backfill: frames,
+        userTurns,
+        live: rings.get(sid) ?? [],
+        settled: true as const,
+        running: runs.has(sid),
+      };
+    }
 
-    case "interject_chat":
+    case "abort_chat": {
+      // Named, not global. `Engine` still holds one abort controller, so this
+      // aborts the run in flight — but a client that asked about a session
+      // that is NOT running is told so instead of being quietly told "done".
+      const asked = optionalString(args, "sessionId");
+      const running = currentSessionId();
+      if (asked && running && sessionMap.get(asked) !== running && asked !== running) {
+        return { aborted: false };
+      }
+      if (!running) return { aborted: false };
+      engine.abort();
+      return { aborted: true };
+    }
+
+    case "interject_chat": {
       // Mid-turn steering: fold a user message into the run in flight.
       // Returns whether a live run accepted it — on false the frontend
       // should hold the message and send it as the next turn instead.
-      return { accepted: engine.interject(String(args.text ?? "")) };
+      const asked = optionalString(args, "sessionId");
+      const running = currentSessionId();
+      if (asked && running && sessionMap.get(asked) !== running && asked !== running) {
+        return { accepted: false };
+      }
+      return { accepted: engine.interject(requireString(args, "text")) };
+    }
+
+    // ─── The five round-trips, answered ───
 
     case "respond_permission": {
-      const requestId = args.requestId as string;
-      const decision = args.decision as UserPermissionDecision["kind"];
-      const resolve = pendingPerms.get(requestId);
-      if (resolve) {
-        pendingPerms.delete(requestId);
-        resolve({ kind: decision });
+      const requestId = requireString(args, "requestId");
+      const decision = requirePermissionDecision(args);
+      // `answer` returns false for a request that already timed out or was
+      // settled by policy. Reporting that is the point: a client whose card
+      // was overtaken must learn it, not think its click landed.
+      return roundTrips.answer(requestId, { kind: decision }) ? null : { stale: true };
+    }
+
+    case "respond_question": {
+      const requestId = requireString(args, "requestId");
+      const answer = requireString(args, "answer");
+      return roundTrips.answer(requestId, answer) ? null : { stale: true };
+    }
+
+    case "respond_brief": {
+      const requestId = requireString(args, "requestId");
+      const decision = requireBriefDecision(args);
+      return roundTrips.answer(requestId, decision) ? null : { stale: true };
+    }
+
+    case "list_held_steps":
+      return heldSteps.list(resolveSession(optionalString(args, "sessionId")));
+
+    case "run_held_step": {
+      // The client names an id; the HOST supplies the arguments it already
+      // holds. A client never sends the payload of a declined call back —
+      // that is what keeps "run exactly this" exact and keeps raw, unredacted
+      // arguments off the wire.
+      const sid = resolveSession(optionalString(args, "sessionId"));
+      const stepId = requireString(args, "stepId");
+      const step = heldSteps.get(sid, stepId);
+      if (!step) {
+        return { ran: false, refusal: `no held step ${stepId} in this session` };
       }
-      return null;
+      const result = await engine.runHeldStep(sid, step);
+      // Only forget it once it actually ran. A refusal (org policy, a deny
+      // rule, a hook veto, a live run) leaves it in the ledger to try again.
+      if (result.ran) heldSteps.remove(sid, stepId);
+      return result;
+    }
+
+    case "dismiss_held_steps": {
+      const sid = resolveSession(optionalString(args, "sessionId"));
+      const taken = heldSteps.take(sid, optionalStringArray(args, "stepIds"));
+      engine.dismissHeldSteps(taken);
+      return { dismissed: taken.length };
     }
 
     case "list_providers": {
@@ -525,6 +765,29 @@ async function dispatch(cmd: string, args: Record<string, unknown>): Promise<unk
       return st;
     }
 
+    // ─── Research over the protocol (P2.7) ───
+
+    case "research_start": {
+      // Research was reachable only from the terminal. It streams its own
+      // 9-member union, so it gets its own stream rather than being flattened
+      // into chat_event — a client that renders a report differently from a
+      // turn needs to tell them apart.
+      const sid = resolveSession(optionalString(args, "sessionId"));
+      const question = requireString(args, "question");
+      const depth = optionalString(args, "depth");
+      const autoApprove = optionalBoolean(args, "autoApprove") ?? false;
+      const runId = `research-${Date.now().toString(36)}`;
+      void runResearchOverProtocol(sid, runId, question, depth, autoApprove);
+      return { runId };
+    }
+
+    case "respond_research_plan": {
+      const requestId = requireString(args, "requestId");
+      const approved = optionalBoolean(args, "approved") ?? false;
+      const note = optionalString(args, "note");
+      return roundTrips.answer(requestId, { approved, note }) ? null : { stale: true };
+    }
+
     // ─── System Memory ("dreaming") ───
     case "get_system_memory":
       return engine.getSystemMemory();
@@ -557,47 +820,124 @@ async function dispatch(cmd: string, args: Record<string, unknown>): Promise<unk
       engine.clearSystemMemory();
       return { memory: engine.getSystemMemory() };
 
+    case "chat_start":
+      // Owns its own response + streaming lifecycle, and is intercepted in
+      // `handleRequestLine` before dispatch. Named here only so the switch
+      // stays exhaustive against the protocol's command map.
+      throw new ProtocolError(RPC_ERROR.internal, "chat_start is handled before dispatch");
+
     default:
-      throw new Error(`unknown command: ${cmd}`);
+      // Exhaustive against `HostCommandName`: a command added to the protocol
+      // map is a compile error here until the host serves it. That replaces a
+      // runtime `unknown command` a client only discovered in production.
+      return assertNever(cmd, "host command");
   }
 }
 
-// ─── Request handling (shared by stdio and socket transports) ───
+// ─── Request handling (shared by stdio, socket and websocket) ───
+//
+// One entry point, three transports. The envelope is normalised in
+// `@gear/protocol`: a legacy `{id,cmd,args}` frame and a JSON-RPC 2.0 frame
+// both arrive here as the same thing, and the response goes back in the
+// dialect the request came in — a desktop binary already on someone's machine
+// must keep working against a host it did not ship with.
 
-function handleRequestLine(line: string, respond: (obj: unknown) => void): void {
+export type HostReply = (frame: unknown) => void;
+
+/**
+ * Per-connection policy. `gear serve` supplies one that refuses credential
+ * writes over a non-loopback link; stdio and unix-socket connections are
+ * already as local as a process gets and supply none.
+ */
+export interface RequestPolicy {
+  /** Return a refusal message to block a command, or null to allow it. */
+  refuse?: (cmd: string) => string | null;
+}
+
+export function handleRequestLine(
+  line: string,
+  respond: HostReply,
+  policy: RequestPolicy = {},
+): void {
   const trimmed = line.trim();
   if (!trimmed) return;
-  let req: { id?: number; cmd?: string; args?: Record<string, unknown> };
+
+  let parsed: unknown;
   try {
-    req = JSON.parse(trimmed);
+    parsed = decodeFrame(trimmed);
   } catch (err) {
     logErr("engine-host: bad request line:", trimmed, err);
+    respond(rpcFailure(null, RPC_ERROR.parse, err instanceof Error ? err.message : String(err)));
     return;
   }
-  const { id, cmd, args = {} } = req;
-  if (typeof cmd !== "string" || typeof id !== "number") {
+
+  const req = toRequest(parsed);
+  if (!req) {
     logErr("engine-host: malformed request:", trimmed);
+    respond(rpcFailure(null, RPC_ERROR.invalidRequest, "not a request frame"));
+    return;
+  }
+
+  const fail = (code: number, message: string): void =>
+    respond(toResponse(req, { ok: false, error: { code, message } }));
+
+  const refusal = policy.refuse?.(req.method);
+  if (refusal) {
+    fail(RPC_ERROR.forbidden, refusal);
+    return;
+  }
+
+  let cmd: HostCommandName;
+  try {
+    cmd = requireCommand(req.method);
+  } catch (err) {
+    const e = err as ProtocolError;
+    fail(e.code ?? RPC_ERROR.methodNotFound, e.message);
     return;
   }
 
   // chat_start owns its own response + streaming lifecycle.
   if (cmd === "chat_start") {
-    if (activeChat) {
-      respond({ id, ok: false, error: "a turn is already in progress" });
+    const running = currentSessionId();
+    if (running) {
+      // Name the session that holds the engine. "a turn is already in
+      // progress" told a client nothing it could act on.
+      fail(RPC_ERROR.busy, `a turn is already in progress on session ${running}`);
       return;
     }
-    void runChat(id, args.sessionId as string, String(args.message ?? ""), respond);
+    let message: string;
+    try {
+      message = requireString(req.params, "message");
+    } catch (err) {
+      const e = err as ProtocolError;
+      fail(e.code ?? RPC_ERROR.invalidParams, e.message);
+      return;
+    }
+    void runChat(
+      (outcome) => respond(toResponse(req, outcome)),
+      optionalString(req.params, "sessionId"),
+      message,
+    );
     return;
   }
 
-  void dispatch(cmd, args)
-    .then((result) => respond({ id, ok: true, result }))
-    .catch((err) =>
-      respond({ id, ok: false, error: err instanceof Error ? err.message : String(err) }),
-    );
+  void dispatch(cmd, req.params)
+    .then((result) => respond(toResponse(req, { ok: true, result })))
+    .catch((err) => {
+      const code = err instanceof ProtocolError ? err.code : RPC_ERROR.internal;
+      fail(code, err instanceof Error ? err.message : String(err));
+    });
 }
 
 function shutdown(code: number): void {
+  // Settle every pending round-trip by policy before the process goes. A
+  // permission promise left hanging on a dying process is the wedge this
+  // phase removed; recreating it at shutdown would be the same bug.
+  try {
+    roundTrips.drain();
+  } catch {
+    /* ignore */
+  }
   try {
     engine.close();
   } catch {
@@ -657,7 +997,14 @@ if (SOCKET_PATH) {
         connectedClients.add(socket);
         buffers.set(socket, "");
         // Same readiness contract as stdio, scoped to the new client.
-        socket.write(JSON.stringify({ stream: "ready", payload: mappedStatus(engine) }) + "\n");
+        socket.write(
+          JSON.stringify(
+            streamNotification("ready", {
+              ...mappedStatus(engine),
+              protocolVersion: PROTOCOL_VERSION,
+            }),
+          ) + "\n",
+        );
       },
       data(socket, chunk) {
         const buffered = (buffers.get(socket) ?? "") + chunk.toString();
@@ -677,10 +1024,15 @@ if (SOCKET_PATH) {
         // THE point of socket mode: dropping a client never stops the engine.
         connectedClients.delete(socket);
         buffers.delete(socket);
+        // But a pending question with nobody left to answer it is a wedge, not
+        // resilience. When the LAST client goes, every open round-trip settles
+        // by the stated policy and the run continues, contained.
+        if (connectedClients.size === 0) roundTrips.clientsGone();
       },
       error(socket) {
         connectedClients.delete(socket);
         buffers.delete(socket);
+        if (connectedClients.size === 0) roundTrips.clientsGone();
       },
     },
   });
@@ -695,6 +1047,6 @@ if (SOCKET_PATH) {
   rlEvents.on("close", () => shutdown(0));
 
   // Announce readiness with the initial status so the bridge/UI can render immediately.
-  emitStream("ready", mappedStatus(engine));
+  emitStream("ready", { ...mappedStatus(engine), protocolVersion: PROTOCOL_VERSION });
 }
 logErr("engine-host: ready");

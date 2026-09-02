@@ -228,6 +228,7 @@ import type {
   PermissionPrompt,
   UserPermissionDecision,
 } from "@gear/protocol";
+import { isAgentTurnEvent } from "@gear/protocol";
 
 export type PermissionHandler = (prompt: PermissionPrompt) => Promise<UserPermissionDecision>;
 
@@ -245,6 +246,191 @@ export interface TranscriptLine {
   result?: string;
   /** For tool lines: the tool reported an error. */
   isError?: boolean;
+}
+
+/**
+ * The run-level events that get a `run_trace` row.
+ *
+ * Everything a client needs to reconstruct what a run DID, minus the things
+ * that are either already persisted with a row of their own (`assistant_msg`,
+ * `tool_result`, `compaction`) or that are not state at all (`text_delta`,
+ * `thinking_delta`, the tool-call arg deltas — a keystroke log, not a fact).
+ */
+const RUN_TRACE_EVENTS: ReadonlySet<string> = new Set([
+  "usage",
+  "fallback",
+  "retry",
+  "verification_started",
+  "verification_completed",
+  "handoff",
+  "step_check",
+  "replanning",
+  "todo_updated",
+  "checkpoint_saved",
+  "notice",
+  "context_warning",
+]);
+
+/**
+ * Rebuild a session's agent events from its raw log — the read side of
+ * `subscribe(sessionId, sinceSeq)`.
+ *
+ * Pure (no engine, no db) so it can be unit-tested directly, and deliberately
+ * beside `eventsToTranscript`: they read the same rows for different consumers,
+ * and keeping them apart is how one of them silently stopped handling half the
+ * types. This one maps EVERY persisted type — `run_trace` unpacks back into
+ * the typed event it was written from.
+ *
+ * What it cannot rebuild, and says so instead of faking: `text_delta`. Deltas
+ * are never persisted, so an assistant turn comes back as ONE settled
+ * `text_delta` carrying the whole message. A client is told `settled: true`
+ * rather than being handed a stream it could mis-assemble into a half-typed
+ * sentence that never existed.
+ */
+export function replayEvents(
+  events: Array<{ seq: number; event: { type: string; payload: Record<string, unknown> } }>,
+): {
+  frames: Array<{ seq: number; event: AgentTurnEvent }>;
+  userTurns: Array<{ seq: number; text: string }>;
+  lastSeq: number;
+} {
+  const frames: Array<{ seq: number; event: AgentTurnEvent }> = [];
+  const userTurns: Array<{ seq: number; text: string }> = [];
+  const tools = new Map<string, { toolName: string; toolInput: Record<string, unknown> }>();
+  let lastSeq = 0;
+
+  const str = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);
+  const num = (v: unknown, fallback = 0): number => (typeof v === "number" ? v : fallback);
+
+  for (const { seq, event } of events) {
+    lastSeq = Math.max(lastSeq, seq);
+    const p = event.payload ?? {};
+    switch (event.type) {
+      case "user_msg": {
+        const content = str(p.content);
+        if (content.trim()) userTurns.push({ seq, text: content });
+        break;
+      }
+
+      case "assistant_msg": {
+        const content = str(p.content);
+        // One settled block. See the note above about `text_delta`.
+        if (content.trim()) frames.push({ seq, event: { type: "text_delta", text: content } });
+        for (const tu of (Array.isArray(p.toolUses) ? p.toolUses : []) as Array<
+          Record<string, unknown>
+        >) {
+          if (typeof tu.callId !== "string" || typeof tu.toolName !== "string") continue;
+          tools.set(tu.callId, {
+            toolName: tu.toolName,
+            toolInput:
+              tu.toolInput && typeof tu.toolInput === "object"
+                ? (tu.toolInput as Record<string, unknown>)
+                : {},
+          });
+          frames.push({
+            seq,
+            event: { type: "tool_call_start", callId: tu.callId, toolName: tu.toolName },
+          });
+        }
+        break;
+      }
+
+      case "tool_result": {
+        const callId = str(p.callId);
+        const tu = tools.get(callId);
+        frames.push({
+          seq,
+          event: {
+            type: "tool_call_end",
+            callId,
+            args: tu?.toolInput ?? {},
+            output: {
+              callId,
+              toolName: tu?.toolName ?? str(p.toolName, "tool"),
+              success: p.isError !== true,
+              result: str(p.content),
+              error: p.isError === true ? str(p.content) : undefined,
+              // Durations were never written to this row. Zero would read as
+              // "instant", which is a claim; the field is required, so it is
+              // reported as 0 and the UI treats an absent duration as unknown.
+              durationMs: num(p.durationMs),
+            },
+          },
+        });
+        break;
+      }
+
+      case "compaction":
+      case "auto_compaction": {
+        frames.push({
+          seq,
+          event: {
+            type: "compaction",
+            beforeTokens: num(p.beforeTokens),
+            afterTokens: num(p.afterTokens),
+            limitTokens: num(p.limitTokens),
+            summarizedCount: typeof p.summarizedCount === "number" ? p.summarizedCount : undefined,
+            forced: p.forced === true ? true : undefined,
+          },
+        });
+        break;
+      }
+
+      case "system_note": {
+        const content = str(p.content);
+        if (content.trim()) frames.push({ seq, event: { type: "notice", message: content } });
+        break;
+      }
+
+      case "error": {
+        frames.push({
+          seq,
+          event: {
+            type: "error",
+            error: str(p.error) || str(p.message, "error"),
+            recoverable: p.recoverable === true,
+          },
+        });
+        break;
+      }
+
+      case "notice": {
+        const message = str(p.message) || str(p.content);
+        if (message.trim()) frames.push({ seq, event: { type: "notice", message } });
+        break;
+      }
+
+      case "checkpoint_saved":
+      case "checkpoint": {
+        frames.push({
+          seq,
+          event: {
+            type: "checkpoint_saved",
+            runId: str(p.runId),
+            version: num(p.version),
+            turnCount: num(p.turnCount),
+          },
+        });
+        break;
+      }
+
+      case "run_trace": {
+        // Written verbatim from the live event, so it unpacks verbatim. The
+        // shallow guard is the same one the wire uses: the host is the only
+        // writer, and a row from a newer build with an extra field is not a
+        // reason to drop the run's history.
+        if (isAgentTurnEvent(p)) frames.push({ seq, event: p });
+        break;
+      }
+
+      // Rows that are not turn events: research has its own stream, and cost /
+      // safety / probe / retro / task_state rows belong to `gear audit`.
+      default:
+        break;
+    }
+  }
+
+  return { frames, userTurns, lastSeq };
 }
 
 /**
@@ -2423,6 +2609,24 @@ export class Engine {
       }));
   }
 
+  /**
+   * Rebuild a session's agent events from `sinceSeq` — the read side of the
+   * protocol's `subscribe` (P2.5).
+   *
+   * Thin on purpose: the mapping is `replayEvents`, a pure function beside
+   * `eventsToTranscript`, so it can be tested without an engine or a database.
+   */
+  replaySession(
+    sessionId: string,
+    sinceSeq = 0,
+  ): {
+    frames: Array<{ seq: number; event: AgentTurnEvent }>;
+    userTurns: Array<{ seq: number; text: string }>;
+    lastSeq: number;
+  } {
+    return replayEvents(this.sessions.getEvents(sessionId, sinceSeq + 1));
+  }
+
   /** Roll a session's history back, removing everything after `afterSeq`. */
   rewindTo(sessionId: string, afterSeq: number): number {
     const deleted = this.sessions.deleteEventsAfter(sessionId, afterSeq);
@@ -3756,6 +3960,22 @@ export class Engine {
         // turn, and compaction can no longer erase history that was already
         // written.
         persistPending();
+
+        // Run-level events had no row of their own, so a client that
+        // reconnected saw the assistant text and the tool results and nothing
+        // about what the run COST, which provider it fell back to, why it
+        // retried, whether verification ran, or that it handed off short of
+        // finishing. One compact `run_trace` row carries all of them (P2.5);
+        // `replayEvents` unpacks it back into the same typed events a live
+        // client received. `text_delta` stays deliberately unpersisted — a
+        // keystroke log is not state, and replay says "settled" instead.
+        if (RUN_TRACE_EVENTS.has(event.type)) {
+          try {
+            this.sessions.appendEvent(sessionId, { type: "run_trace", payload: { ...event } });
+          } catch {
+            // A trace row is observability. Losing one must never fail a turn.
+          }
+        }
 
         yield event;
       }

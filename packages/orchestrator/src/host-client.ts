@@ -6,6 +6,9 @@
 // handler. Killing the client — or the whole terminal — never touches the
 // host; reattach and the session store has everything that happened.
 
+import type { HostCommandArgs, HostCommandName, HostCommandResult } from "@gear/protocol";
+import { encodeFrame, rpcRequest, toResult, toStream } from "@gear/protocol";
+
 export interface HostStreamFrame {
   stream: string;
   payload: unknown;
@@ -86,8 +89,26 @@ export class HostClient {
           reject(e);
         },
       });
-      this.socket.write(JSON.stringify({ id, cmd, args }) + "\n");
+      this.socket.write(encodeFrame(rpcRequest(id, cmd, args)));
     });
+  }
+
+  /**
+   * The typed front door: `call("switch_model", { model })` is checked against
+   * the protocol's command map at both ends, so a client cannot invent a
+   * command name or pass the wrong argument shape and find out at runtime.
+   *
+   * `request` stays as the untyped escape hatch for a client talking to a host
+   * older or newer than its own protocol package.
+   */
+  call<K extends HostCommandName>(
+    cmd: K,
+    args: HostCommandArgs<K> = {} as HostCommandArgs<K>,
+    timeoutMs = 30_000,
+  ): Promise<HostCommandResult<K>> {
+    return this.request(cmd, args as Record<string, unknown>, timeoutMs) as Promise<
+      HostCommandResult<K>
+    >;
   }
 
   /** Subscribe to stream frames (chat_event, engine_status, ready, …). */
@@ -123,17 +144,21 @@ export class HostClient {
       } catch {
         continue; // torn frame — nothing sane to do with it
       }
-      if (typeof frame.stream === "string") {
-        const f: HostStreamFrame = { stream: frame.stream, payload: frame.payload };
-        for (const handler of this.streamHandlers) handler(f);
+      // Both envelopes, read by the protocol package rather than by two
+      // hand-written branches here: a host that speaks JSON-RPC and one still
+      // speaking `{stream,payload}` are the same client's problem, not two.
+      const streamFrame = toStream(frame);
+      if (streamFrame) {
+        for (const handler of this.streamHandlers) handler(streamFrame);
         continue;
       }
-      if (typeof frame.id === "number") {
-        const pending = this.pending.get(frame.id);
+      const result = toResult(frame);
+      if (result && typeof result.id === "number") {
+        const pending = this.pending.get(result.id);
         if (!pending) continue;
-        this.pending.delete(frame.id);
-        if (frame.ok) pending.resolve(frame.result);
-        else pending.reject(new Error(String(frame.error ?? "host error")));
+        this.pending.delete(result.id);
+        if (result.ok) pending.resolve(result.result);
+        else pending.reject(new Error(result.error.message));
       }
     }
   }
