@@ -605,7 +605,11 @@ export interface ScoreRow {
   stalled: number;
   errored: number;
   aborted: number;
-  /** max_turns, context_exhausted, halted, provider_lost. */
+  /** Runs stopped by the turn ceiling. */
+  maxTurns: number;
+  /** Runs the supervisor halted. */
+  halted: number;
+  /** context_exhausted and provider_lost — the residual after the named ones. */
   other: number;
   stepsTotal: number;
   stepsDone: number;
@@ -632,6 +636,8 @@ function emptyRow(key: string): ScoreRow {
     stalled: 0,
     errored: 0,
     aborted: 0,
+    maxTurns: 0,
+    halted: 0,
     other: 0,
     stepsTotal: 0,
     stepsDone: 0,
@@ -671,6 +677,12 @@ export function scorecard(samples: RetroSample[], by: "model" | "workspace"): Sc
       case "aborted":
         row.aborted++;
         break;
+      case "max_turns":
+        row.maxTurns++;
+        break;
+      case "halted":
+        row.halted++;
+        break;
       default:
         row.other++;
     }
@@ -695,6 +707,10 @@ export interface ScoreRates {
   finishedRate: number;
   openStepsRate: number;
   stalledRate: number;
+  /** Runs the user stopped by hand. The most common non-clean outcome here. */
+  abortedRate: number;
+  /** Runs that died rather than finishing. */
+  erroredRate: number;
   /** Unproven completions over all completions. */
   unprovenRate: number;
   checkPassRate: number | null;
@@ -710,6 +726,8 @@ export function scoreRates(row: ScoreRow): ScoreRates {
     finishedRate: row.finished / runs,
     openStepsRate: row.openSteps / runs,
     stalledRate: row.stalled / runs,
+    abortedRate: row.aborted / runs,
+    erroredRate: row.errored / runs,
     unprovenRate: row.stepsDone > 0 ? row.stepsUnproven / row.stepsDone : 0,
     checkPassRate: checks > 0 ? row.checksPassed / checks : null,
     toolFailRate: row.toolCalls > 0 ? row.toolFailed / row.toolCalls : 0,
@@ -719,14 +737,30 @@ export function scoreRates(row: ScoreRow): ScoreRates {
 }
 
 // ─── Tuning proposals ───
-// Rule-based, printed with their evidence, never applied by themselves. The
-// A/B that would justify applying one is not built; saying so is part of the
-// contract. Each names a knob that exists.
+// Rule-based, printed with their evidence, and now each one names a VARIANT —
+// an id in the closed registry (`evolve/variants.ts`) that `gear evolve ab`
+// can actually run. Before this the `config` field was prose: a TOML line a
+// person retyped by hand, which is why 128 measured runs produced zero
+// changes. A proposal is still not an application; it is now a proposal you
+// can act on with one command instead of a suggestion.
+//
+// The rules key on the failure modes that OCCUR. Three of the original four
+// keyed on `unproven`, `stalled` and `open_steps` — zero occurrences across
+// 601 sessions — while `aborted` (71), `error` (64), `max_turns` (16) and
+// `halted` (9) were counted by the scorecard and read by nothing.
 
 export interface TuneProposal {
   key: string;
   signal: string;
   proposal: string;
+  /**
+   * The variant id to run. `null` where the evidence points at something no
+   * variant can express (pinning verification commands is a per-project
+   * decision, not a knob in the allowlist) — and saying null is better than
+   * inventing a variant to have something to name.
+   */
+  variant: string | null;
+  /** The config line a person would write by hand; kept for the null cases. */
   config: string;
   confidence: "low" | "medium";
 }
@@ -743,6 +777,9 @@ export function tuneProposals(rows: ScoreRow[], opts: { minRuns?: number } = {})
         signal: `${row.stepsUnproven} of ${row.stepsDone} completed steps had no evidence (${Math.round(r.unprovenRate * 100)}%)`,
         proposal:
           "This model closes steps it did not do. Keep the step check on and route planning-heavy work to a heavier tier.",
+        // No variant: the step check is a verify.* gate, which the allowlist
+        // deliberately cannot reach, and a tier change is a model choice.
+        variant: null,
         config: '[verify] perStep = true · [tiers] heavy = "provider/model"',
         confidence: "medium",
       });
@@ -752,8 +789,9 @@ export function tuneProposals(rows: ScoreRow[], opts: { minRuns?: number } = {})
         key: row.key,
         signal: `${row.stalled} of ${row.runs} runs ended stalled (same results, nothing written)`,
         proposal:
-          "The results-side breaker is doing the stopping. Give this model the broad reads up front (read_many, repo map) rather than a longer leash.",
-        config: "[context] repoMap = true · [routing] effort = high",
+          "The results-side breaker is doing the stopping. Give this model the broad reads up front rather than a longer leash — run the ceiling everywhere instead of a notch below it.",
+        variant: "effort_ceiling",
+        config: '[llm] effortRouting = "off"',
         confidence: "low",
       });
     }
@@ -767,6 +805,10 @@ export function tuneProposals(rows: ScoreRow[], opts: { minRuns?: number } = {})
         signal: `${row.checksFailed} of ${row.checksPassed + row.checksFailed} verification commands failed`,
         proposal:
           "Verification fails more than it passes. Pin the checks to the commands that matter, so a flaky default check does not burn the fix loop.",
+        // Deliberately unvariantable: which commands verify THIS project is a
+        // human judgement, and a loop that could pin its own gates could pin
+        // them to something that always passes.
+        variant: null,
         config: '[verify] commands = ["<typecheck>", "<test>"]',
         confidence: "medium",
       });
@@ -777,8 +819,61 @@ export function tuneProposals(rows: ScoreRow[], opts: { minRuns?: number } = {})
         signal: `${row.openSteps} of ${row.runs} runs ended with planned steps still open`,
         proposal:
           "Runs stop before the plan does. Use sub-agents for the parallel parts and let the open-steps gate keep the resume note.",
+        variant: null,
         config: '[subagents] mode = "auto"',
         confidence: "low",
+      });
+    }
+
+    // ── The failure modes that actually occur ──
+    //
+    // Across 601 sessions: aborted 71, error 64, max_turns 16, halted 9 —
+    // against zero for unproven, stalled and open_steps. The scorecard has
+    // always counted these; until now no rule read them, so the tuner was
+    // answering questions this system does not ask.
+
+    if (r.abortedRate >= 0.25) {
+      out.push({
+        key: row.key,
+        signal: `${row.aborted} of ${row.runs} runs were aborted by the user (${Math.round(r.abortedRate * 100)}%)`,
+        proposal:
+          "A quarter of runs are stopped by hand. That is usually the run going somewhere the user did not want, and the cheapest thing to test is whether the situational doctrine arriving up front rather than just in time keeps it on the rails.",
+        variant: "doctrine_full",
+        config: '[llm] doctrineDelivery = "full"',
+        confidence: "low",
+      });
+    }
+    if (r.erroredRate >= 0.2) {
+      out.push({
+        key: row.key,
+        signal: `${row.errored} of ${row.runs} runs ended in an error (${Math.round(r.erroredRate * 100)}%)`,
+        proposal:
+          "One run in five dies rather than finishing. Before touching the model, measure whether the repository's own learned lessons change the failure rate — that is what the notebook is for and it is off by default.",
+        variant: "notebook_on",
+        config: "[notebook] enabled = true",
+        confidence: "low",
+      });
+    }
+    if (row.maxTurns >= 3 && row.maxTurns / row.runs >= 0.1) {
+      out.push({
+        key: row.key,
+        signal: `${row.maxTurns} of ${row.runs} runs hit the turn ceiling`,
+        proposal:
+          "Runs are burning the turn budget rather than converging. Running every turn at the reasoning ceiling instead of a notch below it is the arm to measure: if conservative routing latches too late, the turns it saves cost more than they save.",
+        variant: "effort_ceiling",
+        config: '[llm] effortRouting = "off"',
+        confidence: "low",
+      });
+    }
+    if (row.halted >= 2) {
+      out.push({
+        key: row.key,
+        signal: `${row.halted} of ${row.runs} runs were halted by the supervisor`,
+        proposal:
+          "The supervisor is stopping sessions. This is NOT a tuning question — no variant may touch Auto mode — read `gear audit` for the halt reasons and the false-positive rate in docs/auto-mode.md before changing anything.",
+        variant: null,
+        config: "(none — the safety layer is outside the allowlist by design)",
+        confidence: "medium",
       });
     }
   }
