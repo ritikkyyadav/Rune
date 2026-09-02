@@ -112,7 +112,10 @@ describe("anthropic — breakpoint lands on the stable prefix", () => {
 });
 
 describe("openai-compatible — breakpoints only where they are documented", () => {
-  const openrouter = new OpenAIProvider("k", "https://openrouter.ai/api/v1");
+  // The policy is DECLARED at construction now, not sniffed from the base URL.
+  const openrouter = new OpenAIProvider("k", "https://openrouter.ai/api/v1", "openrouter", {
+    cacheBreakpoints: "anthropic-style",
+  });
   const plainOpenAI = new OpenAIProvider("k");
 
   const wants = (p: OpenAIProvider, model: string) =>
@@ -128,8 +131,16 @@ describe("openai-compatible — breakpoints only where they are documented", () 
     expect(wants(openrouter, "openai/gpt-5")).toBe(false);
   });
 
-  test("a non-openrouter host never emits breakpoints", () => {
+  test("a host with no declared policy never emits breakpoints", () => {
     expect(wants(plainOpenAI, "anthropic/claude-sonnet-4-6")).toBe(false);
+  });
+
+  test("the same base URL with no declared policy stays silent", () => {
+    // The old gate was `baseUrl.includes("openrouter.ai")`. Nothing is inferred
+    // from the URL any more: an undeclared host gets "none".
+    const undeclared = new OpenAIProvider("k", "https://openrouter.ai/api/v1", "openrouter");
+    expect(undeclared.cacheBreakpoints).toBe("none");
+    expect(wants(undeclared, "anthropic/claude-sonnet-4-6")).toBe(false);
   });
 
   test("the wire shape is untouched when caching is off", () => {
@@ -157,7 +168,9 @@ describe("openai-compatible — breakpoints only where they are documented", () 
 describe("cached-token telemetry", () => {
   /** A provider whose HTTP client returns one canned completion. */
   function providerReturning(usage: Record<string, unknown>): OpenAIProvider {
-    const provider = new OpenAIProvider("k", "https://openrouter.ai/api/v1");
+    const provider = new OpenAIProvider("k", "https://openrouter.ai/api/v1", "openrouter", {
+      cacheBreakpoints: "anthropic-style",
+    });
     (provider as unknown as { client: unknown }).client = {
       chat: {
         completions: {

@@ -9,6 +9,7 @@ import type {
   ToolDefinition,
 } from "../types";
 import { OpenAIProvider } from "./openai";
+import { cacheBreakpointPolicyFor } from "./cache-policy";
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
@@ -29,6 +30,9 @@ export class OpenRouterProvider implements LlmProvider {
       apiKey ?? process.env.OPENROUTER_API_KEY,
       OPENROUTER_BASE_URL,
       "openrouter",
+      // OpenRouter is the one host known to forward Anthropic `cache_control`
+      // upstream; declared here rather than sniffed from the base URL.
+      { cacheBreakpoints: cacheBreakpointPolicyFor("openrouter") },
     );
   }
 

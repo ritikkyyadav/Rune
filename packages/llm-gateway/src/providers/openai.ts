@@ -15,6 +15,11 @@ import type {
 } from "../types";
 import { ApiError } from "../types";
 import { IdleWatchdog } from "./stream-guard";
+import {
+  isAnthropicUpstream,
+  promptCacheKey,
+  type CacheBreakpointPolicy,
+} from "./cache-policy";
 import { parseToolArguments } from "@gear/shared";
 
 /**
@@ -72,17 +77,23 @@ export class OpenAIProvider implements LlmProvider {
   readonly name: ProviderName;
   private client: OpenAI;
   /**
-   * Whether this host forwards `cache_control` breakpoints upstream. Derived
-   * from the base URL rather than `name`, because OpenRouterProvider wraps this
-   * adapter WITHOUT passing its own name — `this.name` is "openai" there.
+   * How this host handles prompt caching. DECLARED by the construction site
+   * (see `cacheBreakpointPolicyFor`), never inferred: this used to be
+   * `baseUrl.includes("openrouter.ai")`, a substring test that silently gave
+   * every other endpoint no caching and had no way to record which hosts had
+   * been measured.
+   *
+   * Defaults to "none" — a provider built without saying gets no invented
+   * cache behaviour.
    */
-  private readonly forwardsCacheControl: boolean;
+  readonly cacheBreakpoints: CacheBreakpointPolicy;
 
   // `name` lets OpenAI-compatible hosts (Groq, xAI, DeepSeek, a custom endpoint,
   // OpenRouter) register under their own identity while sharing this adapter.
-  // `opts.fetch`/`opts.defaultHeaders` let a subscription transport (GitHub
-  // Copilot) reuse this whole translation layer while injecting a rotating bearer
-  // token and its required editor headers on every request.
+  // Every wrapper passes its own id; `this.name` is the real provider, and the
+  // adapter gates behaviour (vision, first-party reasoning params) on it.
+  // `opts.fetch`/`opts.defaultHeaders` let a transport that needs its own bearer
+  // token and headers reuse this whole translation layer.
   constructor(
     apiKey?: string,
     baseUrl?: string,
@@ -90,10 +101,11 @@ export class OpenAIProvider implements LlmProvider {
     opts?: {
       fetch?: (url: string | URL | Request, init?: RequestInit) => Promise<Response>;
       defaultHeaders?: Record<string, string>;
+      cacheBreakpoints?: CacheBreakpointPolicy;
     },
   ) {
     this.name = name;
-    this.forwardsCacheControl = (baseUrl ?? "").includes("openrouter.ai");
+    this.cacheBreakpoints = opts?.cacheBreakpoints ?? "none";
     const resolvedKey = apiKey ?? process.env.OPENAI_API_KEY ?? "dummy";
     this.client = new OpenAI({
       apiKey: resolvedKey,
@@ -171,6 +183,7 @@ export class OpenAIProvider implements LlmProvider {
         tools: request.tools ? this.toOpenAITools(request.tools) : undefined,
         stop: request.stopSequences,
         ...(this.buildTuningParams(request) as object),
+        ...this.cacheParams(request),
       } as Parameters<typeof this.client.chat.completions.create>[0] & { stream?: false },
       { signal: request.signal },
     );
@@ -226,6 +239,7 @@ export class OpenAIProvider implements LlmProvider {
           // keeps the legacy behavior.
           ...(this.name !== "copilot" && { stream_options: { include_usage: true } }),
           ...(this.buildTuningParams(request) as object),
+          ...this.cacheParams(request),
         },
         { signal: guard.signal },
       );
@@ -404,10 +418,12 @@ export class OpenAIProvider implements LlmProvider {
   /**
    * Whether to emit explicit `cache_control` breakpoints for this request.
    *
-   * Only for Anthropic models behind OpenRouter, where the pass-through is
-   * documented. Every other upstream on OpenRouter (OpenAI, DeepSeek, Grok,
-   * and the stealth ids) does IMPLICIT prefix caching, which needs no
-   * breakpoint — only a prompt prefix that stays byte-stable between turns.
+   * Two conditions, both required: the HOST forwards the field
+   * (`cacheBreakpoints === "anthropic-style"`), and the UPSTREAM is Anthropic,
+   * the only family for which an Anthropic-shaped field means anything. Every
+   * other upstream on OpenRouter (OpenAI, DeepSeek, Grok, and the stealth ids)
+   * does IMPLICIT prefix caching, which needs no breakpoint — only a prompt
+   * prefix that stays byte-stable between turns.
    *
    * Measured on stealth/ox-alpha, cold prefix, 2026-08-26
    * (scripts/verify-cache.ts, with and without --force-breakpoints):
@@ -421,7 +437,25 @@ export class OpenAIProvider implements LlmProvider {
    * undocumented shape to the wire for no gain.
    */
   private wantsCacheBreakpoints(model: string): boolean {
-    return this.forwardsCacheControl && model.toLowerCase().startsWith("anthropic/");
+    return this.cacheBreakpoints === "anthropic-style" && isAnthropicUpstream(model);
+  }
+
+  /**
+   * Cache-routing params for hosts that take one. `prompt_cache_key` is
+   * OpenAI's documented hint: requests carrying the same key are routed to the
+   * machine already holding that prefix, which is the difference between a
+   * cache that exists and a cache that is reachable. The key is a hash of the
+   * always-stable head (system prompt + tool names), so no prompt text rides
+   * on it.
+   */
+  private cacheParams(request: InferenceRequest): Record<string, unknown> {
+    if (this.cacheBreakpoints !== "prompt-cache-key") return {};
+    return {
+      prompt_cache_key: promptCacheKey(
+        request.system,
+        (request.tools ?? []).map((t) => t.name),
+      ),
+    };
   }
 
   /**
