@@ -318,25 +318,112 @@ jobs:
           ls -la dist/
 
   install-smoke:
-    name: Fresh-machine install (README gh path, checksum-verified)
+    name: Fresh-machine install (${{ matrix.os }})
     needs: [version, publish]
     if: ${{ needs.version.outputs.publish == 'true' }}
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            suffix: linux-x64
+          - os: macos-latest
+            suffix: darwin-arm64
+          - os: macos-13
+            suffix: darwin-x64
+          - os: windows-latest
+            suffix: windows-x64.exe
+    runs-on: ${{ matrix.os }}
     steps:
-      - name: Install exactly as the README instructs, then run
+      # The scripts (and the print smoke) come from the tree, the binaries from
+      # the release: exactly the split a stranger's machine sees.
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Download and verify the published pair (POSIX)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', needs.version.outputs.version) }}
+          SUFFIX: ${{ matrix.suffix }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/gearbin"
+          cd "$RUNNER_TEMP"
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" \
+            -p "gear-$SUFFIX" -p "gear-tools-$SUFFIX" -p SHA256SUMS --clobber
+          # Verification is the point: an unverified download is a CDN with an
+          # executable bit, which is what the installers were before P1.4.
+          if command -v sha256sum >/dev/null; then
+            grep -E "gear(-tools)?-$SUFFIX\$" SHA256SUMS | sha256sum -c -
+          else
+            grep -E "gear(-tools)?-$SUFFIX\$" SHA256SUMS | shasum -a 256 -c -
+          fi
+          install -m755 "gear-$SUFFIX" "$HOME/gearbin/gear"
+          install -m755 "gear-tools-$SUFFIX" "$HOME/gearbin/gear-tools"
+
+      - name: Download and verify the published pair (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', needs.version.outputs.version) }}
         run: |
-          os="$(uname -s | tr '[:upper:]' '[:lower:]')"
-          arch="$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/')"
-          tmp="$(mktemp -d)"; cd "$tmp"
-          gh release download "$TAG" -R "$GITHUB_REPOSITORY" \
-            -p "gear-$os-$arch" -p "gear-tools-$os-$arch" -p SHA256SUMS
-          grep -E "gear(-tools)?-$os-$arch\$" SHA256SUMS | sha256sum -c -
-          mkdir -p ~/.gear/bin
-          install -m755 "gear-$os-$arch" ~/.gear/bin/gear
-          install -m755 "gear-tools-$os-$arch" ~/.gear/bin/gear-tools
-          export PATH="$HOME/.gear/bin:$PATH"
-          gear --version | grep -E "Gear v"
-          GEAR_TOOLS_BIN="$HOME/.gear/bin/gear-tools" gear tools-smoke
+          $ErrorActionPreference = 'Stop'
+          $bin = Join-Path $env:USERPROFILE 'gearbin'
+          New-Item -ItemType Directory -Force -Path $bin | Out-Null
+          Set-Location $env:RUNNER_TEMP
+          gh release download $env:TAG -R $env:GITHUB_REPOSITORY `
+            -p "gear-windows-x64.exe" -p "gear-tools-windows-x64.exe" -p SHA256SUMS --clobber
+          $sums = @{}
+          foreach ($line in Get-Content SHA256SUMS) {
+            if ($line -match '^([0-9a-fA-F]{64})\s+\*?(.+)$') { $sums[$Matches[2].Trim()] = $Matches[1].ToLower() }
+          }
+          foreach ($name in @('gear-windows-x64.exe','gear-tools-windows-x64.exe')) {
+            $got = (Get-FileHash -Algorithm SHA256 -Path $name).Hash.ToLower()
+            if ($sums[$name] -ne $got) { throw "checksum mismatch for $name" }
+            Write-Host "verified $name"
+          }
+          Copy-Item -Force 'gear-windows-x64.exe' (Join-Path $bin 'gear.exe')
+          Copy-Item -Force 'gear-tools-windows-x64.exe' (Join-Path $bin 'gear-tools.exe')
+
+      - name: Smoke - version, doctor, tools, and a real prompt (POSIX)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="$HOME/gearbin"
+          export GEAR_TOOLS_BIN="$BIN/gear-tools"
+          export GEAR_SMOKE_HOME="$RUNNER_TEMP/gear-home"
+          export GEAR_HOME="$GEAR_SMOKE_HOME"
+          mkdir -p "$GEAR_SMOKE_HOME"
+          "$BIN/gear" --version | grep -E "Gear v[0-9]"
+          "$BIN/gear" doctor
+          "$BIN/gear" tools-smoke
+          # The path a user actually takes: a prompt in, an answer out, through
+          # the real binary and a mock provider that needs no credential.
+          bun scripts/smoke-print.ts "$BIN/gear"
+
+      - name: Smoke - version, doctor, tools, and a real prompt (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bin = Join-Path $env:USERPROFILE 'gearbin'
+          $gear = Join-Path $bin 'gear.exe'
+          $env:GEAR_TOOLS_BIN = Join-Path $bin 'gear-tools.exe'
+          $env:GEAR_SMOKE_HOME = Join-Path $env:RUNNER_TEMP 'gear-home'
+          $env:GEAR_HOME = $env:GEAR_SMOKE_HOME
+          New-Item -ItemType Directory -Force -Path $env:GEAR_HOME | Out-Null
+          $v = & $gear --version
+          Write-Host $v
+          if ($v -notmatch 'Gear v\d') { throw "unexpected --version output: $v" }
+          & $gear doctor
+          if ($LASTEXITCODE -ne 0) { throw "gear doctor exited $LASTEXITCODE" }
+          & $gear tools-smoke
+          if ($LASTEXITCODE -ne 0) { throw "gear tools-smoke exited $LASTEXITCODE" }
+          bun scripts/smoke-print.ts $gear
+          if ($LASTEXITCODE -ne 0) { throw "print smoke exited $LASTEXITCODE" }

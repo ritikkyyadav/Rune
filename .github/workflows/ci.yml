@@ -133,9 +133,12 @@ jobs:
           GEAR_TOOLS_BIN: ${{ github.workspace }}/target/release/gear-tools
         run: bun test tests/integration/
 
-  # ── Stage 4b: Windows TypeScript typecheck ──
-  # Unit-test enablement on Windows is tracked separately; typecheck is the
-  # honest first gate (the suite has POSIX-shell assumptions to burn down).
+  # ── Stage 4b: Windows typecheck + the Windows installer's only compiler ──
+  # The unit suite still has POSIX-shell assumptions (hardcoded /bin/sh, /tmp
+  # paths, `bash -c`) in 21 files, logged in docs/program/backlog.md. Running it
+  # here is a separate piece of work; what Windows CI must cover TODAY is the
+  # things only Windows can check: that the typecheck holds and that
+  # scripts/install.ps1 — the sole Windows install path — actually parses.
   ts-windows:
     runs-on: windows-latest
     steps:
@@ -174,8 +177,9 @@ jobs:
   # ── Stage 4c: Packaged-binary E2E — the artifact users actually download ──
   packaged-e2e:
     strategy:
+      fail-fast: false
       matrix:
-        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["macos-latest","ubuntu-latest"]') }}
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest","windows-latest"]' || '["macos-latest","ubuntu-latest","windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -193,20 +197,39 @@ jobs:
           . scripts/version.sh
           v="$(gear_version)"
           echo "building as $v"
+          out="./gear-packaged"
+          [ "$RUNNER_OS" = "Windows" ] && out="./gear-packaged.exe"
           bun build --compile --define=GEAR_BUILD_VERSION="\"$v\"" \
-            packages/orchestrator/src/bin/gear-cli.ts --outfile ./gear-packaged
+            packages/orchestrator/src/bin/gear-cli.ts --outfile "$out"
           # The injection must actually reach the binary: a define that stops
           # working would otherwise show up first in a shipped release.
-          ./gear-packaged --version | grep -F "Gear v$v"
-      - name: Packaged smoke — version, help, REAL tool execution
+          "$out" --version | grep -F "Gear v$v"
+      # Windows binaries have been built for months with nothing exercising
+      # them at runtime — ci.yml typechecked and stopped there. The packaged
+      # artifact now has to start, answer, and run real tools on Windows too.
+      - name: Packaged smoke - version, help, REAL tool execution
+        shell: bash
         env:
-          GEAR_TOOLS_BIN: ${{ github.workspace }}/target/release/gear-tools
+          GEAR_TOOLS_BIN_POSIX: ${{ github.workspace }}/target/release/gear-tools
         run: |
-          ./gear-packaged --version | grep -E "Gear v[0-9]"
-          ./gear-packaged --help > /dev/null
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            out="./gear-packaged.exe"
+            export GEAR_TOOLS_BIN="$GITHUB_WORKSPACE/target/release/gear-tools.exe"
+          else
+            out="./gear-packaged"
+            export GEAR_TOOLS_BIN="$GEAR_TOOLS_BIN_POSIX"
+          fi
+          export GEAR_HOME="$RUNNER_TEMP/gear-home"
+          mkdir -p "$GEAR_HOME"
+          "$out" --version | grep -E "Gear v[0-9]"
+          "$out" --help > /dev/null
           # The artifact pair must actually work, not merely start: a
-          # write → read → edit → bash round-trip through gear-tools.
-          ./gear-packaged tools-smoke
+          # write -> read -> edit -> bash round-trip through gear-tools.
+          "$out" tools-smoke
+          # And the path a user actually takes: a prompt in, an answer out,
+          # against a mock provider that needs no credential.
+          bun scripts/smoke-print.ts "$out"
 
   # ── Stage 4d: Desktop app (developer preview — must keep compiling) ──
   # Runs on Linux (1x billing vs macOS 10x); the macOS bundle itself is
