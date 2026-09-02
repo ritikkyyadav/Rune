@@ -394,6 +394,16 @@ jobs:
         run: bun scripts/sign-release.ts sign dist
 
       - name: Build provenance attestation
+
+        # Artifact attestations are not available on user-owned private repositories;
+
+        # skip there instead of blocking the release. Re-enable by making the repo public
+
+        # or moving it to an organization plan that includes attestations.
+
+        if: ${{ !github.event.repository.private }}
+
+        continue-on-error: true
         uses: actions/attest-build-provenance@v1
         with:
           subject-path: "dist/gear-*"
