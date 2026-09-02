@@ -1,5 +1,13 @@
 # Gear Desktop — research + design contract (v1 draft, 2026-08-21)
 
+> **Superseded (2026-09-03).** There is no native desktop application. The product is one
+> URL-based web app the engine serves on loopback, identical on Linux, Windows and macOS: see
+> [`docs/program/09-web-product.md`](program/09-web-product.md) for the correction and
+> [`docs/design/web/DIRECTION.md`](design/web/DIRECTION.md) for the visual system that replaced the
+> one described below. §1 (why Claude Code's output reads as mature) and the event-grammar work in
+> §§2-4 still hold; every reference to Tauri, `gear desktop`, `~/.gear/desktop.json`, the
+> customizer palettes and the Savoir tokens is history.
+
 **Ask (user, 2026-08-21):** the terminal is not a good enough surface for a usable product. Build Gear as a proper desktop application (macOS `.dmg`) on the _same harness_, in the `gear-customizer-v2.html` visual language, where — like the traceable open-source harness the user has seen — every chain is traceable: for every answer you can see which prompts, tools, permissions and system facts produced it. Before designing, understand why Claude Code's output feels mature and compelling, and carry that into the desktop UX.
 
 This document is the written half of the contract; `docs/design/gear-desktop-v1.html` (alongside `docs/design/gear-customizer-v2.html`) is the interactive half. The CLI keeps the v2 terminal contract already shipped (`e6fb08f`); the desktop is the primary surface going forward.

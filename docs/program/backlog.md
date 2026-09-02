@@ -75,3 +75,14 @@ Found 2026-09-02 by Phase 7 (lane C):
 Found while merging the lanes (merge captain):
 
 - `tests/unit/brand-checklist.test.ts:26-33` — `builtCss()` skips when `apps/desktop/dist/assets` is absent but trusts it blindly when it is STALE, so the checklist audits whatever bytes happen to be on disk. A `dist/` built before the Savoir tokens existed (gitignored, so it survives every checkout and merge) fails all six rules on a tree that is correct; `bun run --cwd apps/desktop build` turns the same tree green. Either stamp the build with a token hash and skip on mismatch, or have `bun run test` depend on the desktop build — found while merging #9
+
+Found 2026-09-03 by Phase 9 (the web product):
+
+- `apps/web/src/lib/stream.ts:919` — `case "tool_call_args_delta":` duplicates an earlier clause in
+  the same `switch`, so the second is dead. Vite reports it on every build
+  (`This case clause will never be evaluated`). Harmless today because both arms return `t`
+  unchanged, and a defect the moment either one grows a body — found in P9.1
+- `packages/orchestrator/src/bin/gear-cli.ts:198` — `parseArgs` still runs `strict: false`, so an
+  undeclared long option silently swallows the following argument. Phase 9 added `--console` and
+  `--no-browser` to the declaration list for exactly this reason; the underlying trap is unchanged
+  and will catch the next flag somebody adds — found in P9.2

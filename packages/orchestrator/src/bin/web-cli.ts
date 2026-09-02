@@ -1,30 +1,35 @@
-// ─── gear web — the same client, in a browser ───
+// ─── gear web — the product, in a browser ───
 //
-// The desktop and the web client are ONE React bundle (`apps/desktop`). What
-// differs is the transport: inside Tauri it drives the sidecar it spawned; in a
-// browser it drives `gear serve` over a WebSocket. So `gear web` is not a second
-// application — it is `gear serve` that also hands out the page, on the same
-// port, with the token it just minted already in it.
+// Gear's interface is ONE React bundle (`apps/web`) reached over ONE transport,
+// a WebSocket to the engine. `gear web` is not a second application and no
+// longer a second-best one either: it is `gear serve` that also hands out the
+// page, on the same port, with the token it just minted already in it. Phase 9
+// made this the product surface and deleted the native shell that used to sit
+// in front of the same bundle.
 //
 // One port matters. A page on 7788 opening a socket on 4762 is a cross-origin
 // request the allowlist would have to be widened for, and widening a security
 // allowlist to accommodate your own layout is how these things stop protecting
 // anything.
 //
-// What this gets you that the app does not: Linux, a phone on the LAN
-// (`--host`), and a machine you are not sitting at.
+// What one URL gets you: Linux, Windows and macOS running the same bytes, a
+// phone on the LAN (`--host`), and a machine you are not sitting at.
 
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import { adoptLegacyEnv, migrateLegacyHome } from "@gear/shared";
 
-import { engineRoot } from "./desktop-cli";
 import { lanAddresses, serve } from "./serve-cli";
+
+/** The repo root, from this file: bin → src → orchestrator → packages → root. */
+export function engineRoot(): string {
+  return resolve(dirname(new URL(import.meta.url).pathname), "../../../..");
+}
 
 /** Where the built client is, and whether it is there. */
 export function webDistDir(root = engineRoot()): string {
-  return join(root, "apps", "desktop", "dist");
+  return join(root, "apps", "web", "dist");
 }
 
 export function webBundleBuilt(root = engineRoot()): boolean {
@@ -40,7 +45,7 @@ export function webBundleBuilt(root = engineRoot()): boolean {
  */
 async function ensureBundle(root: string): Promise<boolean> {
   if (webBundleBuilt(root)) return true;
-  const app = join(root, "apps", "desktop");
+  const app = join(root, "apps", "web");
   if (!existsSync(join(app, "package.json"))) {
     console.error(`  no web client at ${app}`);
     return false;

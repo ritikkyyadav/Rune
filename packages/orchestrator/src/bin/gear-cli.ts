@@ -229,8 +229,7 @@ if (values.help) {
         `    gear detach "<prompt>"        Start a background run that survives this terminal (--worktree isolates it)\n` +
         `    gear attach [session|latest]  Reattach to a detached run — replay, live-stream, Ctrl+C detaches again\n` +
         `    gear attach ws://host:port    Attach to a remote \`gear serve\` (--token or GEAR_SERVE_TOKEN, --prompt runs a turn)\n` +
-        `    gear desktop [dev|--check]    Open Gear Desktop (alias: gear app) — dev runs the Vite preview, --check proves the engine headless\n` +
-        `    gear web [--port N] [--open]  The same client in a browser, engine attached (--host exposes it on the LAN)\n` +
+        `    gear web [--port N] [--open]  Serve the app and park in the foreground (--host exposes it on the LAN)\n` +
         `    gear pr <n> [--review]        Check a pull request out into its own worktree and start on it (--brief prints the brief)\n` +
         `    gear acp                      Agent Client Protocol server on stdio — for Zed and other ACP editors (docs/editors.md)\n` +
         `    gear login [provider]         Authenticate a provider — API key, or OAuth where supported (--method, --no-browser, --migrate)\n` +
@@ -380,12 +379,6 @@ if (command === "engine-host") {
   // input closes; falling through would start a second, interactive Gear on
   // top of it and both would fight for stdin.
   await new Promise(() => {});
-}
-if (command === "desktop" || command === "app") {
-  const { runDesktop } = await import("./desktop-cli");
-  process.exit(
-    await runDesktop(positionals.slice(1) as string[], values as Record<string, unknown>),
-  );
 }
 if (command === "web") {
   // Long-lived: `web` returns only on shutdown, exactly like `serve`.

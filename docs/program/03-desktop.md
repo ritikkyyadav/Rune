@@ -1,6 +1,11 @@
 # Phase 3 — The flagship surface
 
-> **Superseded in part (2026-09-02).** The native Tauri shell and the Savoir tokens are replaced by [09-web-product.md](09-web-product.md); the web serving, transport seam, reducers and components built here carry forward.
+> **Superseded (2026-09-02, executed 2026-09-03).** The native Tauri shell, the `gear desktop`
+> launcher, the desktop release/updater pipeline and the Savoir visual system are **deleted** — see
+> [09-web-product.md](09-web-product.md). What carries forward: `gear serve --web`, the transport
+> seam (now a single WebSocket), the stream and trace reducers, every card and panel, and the
+> Playwright smoke. `apps/desktop` is now `apps/web`, package `@gear/web`. Read this file as the
+> history of how those parts got built, not as a description of the product.
 
 **Lane B · 15–20 days · needs Phase 2**
 
