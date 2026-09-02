@@ -40,8 +40,6 @@ export interface StatusView {
     enabled: boolean;
     failClosed: boolean;
     reviewer: { provider: string; model: string } | null;
-    /** Reviewer asks resolve in conversation (ask_user) instead of a modal. */
-    conversationalEscalation?: boolean;
     /** Retry posture for failed reviewer calls. */
     reviewerFallback?: { enabled: boolean; available: boolean };
     stats: { allowed: number; asked: number; denied: number; injectionsFlagged: number };
@@ -101,9 +99,7 @@ export function renderStatus(s: StatusView): string {
           ],
           [
             "auto escalation",
-            s.autoMode.conversationalEscalation === false
-              ? text("prompt-first | every reviewer ask pauses")
-              : text("conversational | blocked actions ask you in chat; prompts only as backstop"),
+            text("conversational | blocked actions ask you in chat; prompts only as backstop"),
           ],
           [
             "auto decisions",

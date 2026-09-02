@@ -7,12 +7,12 @@ added, and existing API-key users see zero behavior change.
 
 ## Auth methods
 
-| Method      | What it is                                                        | Providers                                     |
-| ----------- | ----------------------------------------------------------------- | --------------------------------------------- |
-| **api_key** | A bearer secret you paste or supply via env var (today's path).   | all cloud providers                           |
-| **oauth**   | Browser authorization-code + PKCE (loopback redirect).            | OpenRouter, Anthropic, ChatGPT (Codex)        |
-| **device**  | OAuth device-code (headless / SSH-friendly).                      | framework ready; no provider wired by default |
-| **local**   | A localhost runtime reached by URL — connectivity, no credential. | Ollama, LM Studio                             |
+| Method      | What it is                                                        | Providers                              |
+| ----------- | ----------------------------------------------------------------- | -------------------------------------- |
+| **api_key** | A bearer secret you paste or supply via env var (today's path).   | all cloud providers                    |
+| **oauth**   | Browser authorization-code + PKCE (loopback redirect).            | OpenRouter, Anthropic, ChatGPT (Codex) |
+| **device**  | OAuth device-code (headless / SSH-friendly).                      | GitHub Copilot                         |
+| **local**   | A localhost runtime reached by URL — connectivity, no credential. | Ollama, LM Studio                      |
 
 A provider declares its supported methods; when you don't choose one, Gear
 auto-selects: the first method that has stored credentials, else the provider's
