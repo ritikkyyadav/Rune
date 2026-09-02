@@ -12,7 +12,7 @@
 //   2. One chromatic hue outside the status colours. One accent, rationed.
 //   3. Every radius is 3px, except a pill and the icon tile.
 //
-// It reads `apps/desktop/dist/assets/*.css` and skips with a named reason when
+// It reads `apps/web/dist/assets/*.css` and skips with a named reason when
 // the app has not been built, rather than passing on an empty file — a green
 // test that inspected nothing is worse than a red one.
 
@@ -22,7 +22,7 @@ import { join } from "node:path";
 
 import { SAVOIR } from "../../packages/shared/src/design-tokens";
 
-const DIST = join(import.meta.dir, "../../apps/desktop/dist/assets");
+const DIST = join(import.meta.dir, "../../apps/web/dist/assets");
 
 function builtCss(): string | null {
   if (!existsSync(DIST)) return null;
@@ -175,6 +175,6 @@ test("the checklist ran against a real build", () => {
   // reported as six passes over nothing.
   expect(
     BUILT,
-    "apps/desktop/dist/assets/*.css is missing — run `bun run --cwd apps/desktop build` first",
+    "apps/web/dist/assets/*.css is missing — run `bun run --cwd apps/web build` first",
   ).toBe(true);
 });
