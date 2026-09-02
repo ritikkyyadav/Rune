@@ -346,3 +346,50 @@ one host command away and is logged in `docs/program/backlog.md`.
 it a task — with "replay a recorded turn" for someone who has not connected
 anything yet. Copy in the Savoir voice: declarative, specific, and it names what
 Gear declines (no cloud, no account) because a boundary reads as confidence.
+
+---
+
+## 10. The review workspace (Phase 3 · P3.5)
+
+The transcript shows each edit's diff as it happens, which answers "what did it
+just do". The Review tab answers the different question you have at the end:
+**what is different now, and do I want all of it.**
+
+It reports the TREE's answer, not the run's — everything that differs from
+HEAD, including anything you changed yourself. Attributing a change to a turn is
+the transcript's job; conflating the two would let a file you edited disappear
+under a button labelled "revert the agent's work".
+
+**Every git operation lives in `git-undo.ts`**, next to the auto-commit safety
+rules and for the same reason: git plumbing scattered across a UI layer is how a
+"revert this file" button ends up running `checkout .`. The component names
+paths; that file decides what may happen to them. Three rules hold:
+
+- A path with a leading `/`, a `..` segment or a leading `-` is refused before
+  git sees it. From a UI that is either a bug or an attack.
+- A tracked path is restored with `git checkout HEAD -- <path>`, one path at a
+  time. Never `checkout .`, never a caller-composed pathspec.
+- An untracked path is **deleted**, because that is what revert means for a file
+  git has never seen. The panel says so before you confirm, rather than letting
+  you find out.
+
+Reverting is deliberately two clicks: name the file, then confirm what will
+happen to it. A one-click revert of an agent's work is not a review tool.
+
+**Run checks** invokes the same `CommandVerifier` the agent's own verification
+uses, so the button and the run agree on what "the checks" are. The report is
+shown verbatim: a check's own words are the evidence, and a summary of them is
+the agent's claim about the evidence. `ran: false` means the project has no
+detectable checks, and says that rather than painting a green tick.
+
+**Open in editor** is a host command, not a webview capability: `$GEAR_EDITOR` →
+`$VISUAL` → `$EDITOR` → the platform opener. A browser cannot spawn an editor,
+and a Tauri shell plugin would be a second implementation of the same rule about
+which paths may be touched.
+
+One bug worth recording, because the shape recurs. `git status --porcelain`
+output is column-addressed (`slice(0, 2)` for the code, `slice(3)` for the
+path), and the shared `git()` helper trims its whole output — so a first line of
+`" M edited.ts"` lost its leading space and every field on that one file was off
+by one, silently. `parsePorcelain` matches the status code instead of counting
+columns.

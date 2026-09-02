@@ -2604,3 +2604,116 @@ kbd {
   border-top: 1px solid var(--hairline);
   padding-top: 6px;
 }
+
+/* ── the review workspace (P3.5) ── */
+.review {
+  margin: 12px 0 12px 22px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r);
+  max-width: 1000px;
+  background: var(--card-bg);
+}
+.review-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--hairline);
+}
+.review-sub {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.review-checks {
+  border-bottom: 1px solid var(--hairline);
+  padding: 8px 12px;
+  border-left: 3px solid var(--hairline);
+}
+.review-checks.ok {
+  border-left-color: var(--green);
+}
+.review-checks.bad {
+  border-left-color: var(--red);
+}
+.review-checks pre {
+  margin-top: 4px;
+  max-height: 220px;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  color: var(--text-sub);
+}
+.review-body {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+}
+.review-tree {
+  border-right: 1px solid var(--hairline);
+  max-height: 420px;
+  overflow: auto;
+}
+.review-file {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: baseline;
+  padding: 5px 10px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.review-file.sel {
+  background: var(--bar-active);
+}
+.rf-status {
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: var(--label-tracking);
+}
+.rf-status.new {
+  color: var(--green);
+}
+.rf-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+.rf-count .add {
+  color: var(--green);
+}
+.rf-count .rem {
+  color: var(--red);
+}
+.review-detail {
+  min-width: 0;
+  max-height: 420px;
+  overflow: auto;
+  padding: 10px 12px;
+}
+.review-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.review-actions .rf-path {
+  flex: 1;
+  font-family: var(--mono);
+  font-size: 12px;
+  direction: ltr;
+}
+.review-warn {
+  font-size: 11.5px;
+  color: var(--ochre);
+}
+.review-note {
+  font-size: 12px;
+  color: var(--text-muted);
+}

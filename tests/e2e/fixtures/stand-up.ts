@@ -12,7 +12,7 @@
 // Engine from config and secrets rather than from a constructor — gets pointed
 // at a server this test owns.
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -101,6 +101,24 @@ export async function standUp(
   mkdirSync(gearHome, { recursive: true });
   mkdirSync(workspace, { recursive: true });
   writeFileSync(join(workspace, "README.md"), "# smoke\n\nA repository with one file in it.\n");
+
+  // A REAL git repository, because the review tab's whole job is answering
+  // "what is different from HEAD" and a directory git has never seen can only
+  // exercise the empty state. One commit, then one uncommitted edit, so the
+  // panel has a file to show and a file to revert.
+  const git = (...args: string[]): void => {
+    spawnSync("git", args, { cwd: workspace, stdio: "ignore" });
+  };
+  git("init", "-q");
+  git("config", "user.email", "smoke@example.com");
+  git("config", "user.name", "smoke");
+  git("config", "commit.gpgsign", "false");
+  git("add", "-A");
+  git("commit", "-q", "-m", "base");
+  writeFileSync(
+    join(workspace, "README.md"),
+    "# smoke\n\nA repository with one file in it.\nAnd one uncommitted line.\n",
+  );
 
   const requests: unknown[] = [];
   let turn = 0;

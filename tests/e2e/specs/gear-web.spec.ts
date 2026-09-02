@@ -114,6 +114,23 @@ test("a browser drives a whole turn: prompt → permission card → answer → t
   await expect(rail.locator(".span.sel")).toHaveCount(1);
   await expect(rail.locator(".inspector .insp-head")).toBeVisible();
 
+  // ── the review workspace ──
+  // The tree's own answer, not the run's: the fixture leaves one uncommitted
+  // line in README.md, so the panel must find it and offer to revert exactly
+  // that file.
+  await page.getByRole("button", { name: "Review", exact: false }).first().click();
+  const review = page.getByRole("region", { name: "Review changes" });
+  await expect(review).toBeVisible();
+  await expect(review).toContainText("README.md", { timeout: 30_000 });
+  await expect(review).toContainText(/differ from HEAD/);
+  // Reverting is a two-step: naming the file, then confirming what will happen
+  // to it. A one-click revert of the agent's work is not a review tool.
+  await review.getByRole("button", { name: "Revert this file" }).click();
+  await expect(review).toContainText("restore this file from HEAD?");
+  await review.getByRole("button", { name: "Keep" }).click();
+  await review.getByRole("button", { name: /Close/ }).click();
+  await expect(review).toBeHidden();
+
   // ── export ──
   // Signed, and through the engine's own exporter — the same artifact
   // `gear export --sign` produces. A client-side dump of the rail would be a
