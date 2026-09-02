@@ -171,3 +171,31 @@ timeoutSecs  = 30            # per-request tools/call timeout
 registry     = true          # consult the public MCP registry when resolving
 deferTools   = true          # false ships every schema on every request (pre-P4.1)
 ```
+
+---
+
+## When a connector breaks
+
+The MCP client has always emitted a typed lifecycle stream. Nothing subscribed,
+and `logger.ts` suppresses stderr while the TUI owns the screen — so a connector
+that died was silent to the user *and* to the model, which kept planning around
+tools that were gone.
+
+One event now has three consumers:
+
+| Surface | What it shows |
+|---|---|
+| TUI status line | a `notice`, through the same flow grammar every other harness message uses — no new dialect |
+| `gear status` / desktop | `mcp.down` names each unusable connector and why (`needs-auth` or `down`), never a bare count |
+| the model | one harness note, **once per session**: "these connectors are configured but unavailable — do not plan around their tools" |
+
+`gear mcp doctor` prints the same, plus the command that fixes each one.
+
+The note is said once. Repeating it every turn would train the model to skim
+harness notes, which costs more than the connector did.
+
+Events: `server-ready`, `server-down`, `server-needs-auth`, `server-restarted`,
+`tools-changed`. Per-call `progress` and `log` stay on the tool-progress channel
+— repeating them in the status line would turn a signal into texture.
+
+**One broken connector never stops the others**, and never stops the session.
