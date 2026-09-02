@@ -181,6 +181,35 @@ cargo build --release -p gear-tools    # required — file, search, and shell to
 ./bin/gear
 ```
 
+### Verifying a download
+
+Every release carries a `SHA256SUMS` generated in the same CI job that built the binaries, so
+checksum drift is impossible by construction. macOS and Windows binaries are code-signed when the
+signing secrets are configured; Linux gets a detached Ed25519 signature over `SHA256SUMS`, which
+covers every artifact in the release at once.
+
+```bash
+# 1. the signature is genuine
+bun scripts/sign-release.ts verify <dir> gear-release.pub
+# 2. the binaries are the ones it describes
+cd <dir> && sha256sum -c SHA256SUMS
+```
+
+The release signing public key:
+
+```
+-----BEGIN PUBLIC KEY-----
+NOT YET PUBLISHED - run `bun scripts/keygen.ts`, set GEAR_SIGNING_PRIVATE_KEY,
+and replace this block with the public half. See docs/release.md.
+-----END PUBLIC KEY-----
+```
+
+Releases also carry a [build provenance attestation](https://docs.github.com/actions/security-guides/using-artifact-attestations):
+
+```bash
+gh attestation verify gear-linux-x64 --repo ritikkyyadav/Alan
+```
+
 ### Staying current
 
 ```bash
