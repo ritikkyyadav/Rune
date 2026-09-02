@@ -170,6 +170,7 @@ export default function App() {
             callId: tc.callId,
             args: tc.args ?? {},
             output: {
+              callId: tc.callId,
               toolName: tc.toolName,
               success: tc.status !== "error",
               result: tc.result ?? "",

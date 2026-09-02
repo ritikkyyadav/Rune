@@ -159,7 +159,11 @@ import {
 } from "./brief";
 import { runOnParentCommit } from "./parent-check";
 import { isGitRepo } from "./worktree";
-import { isVerificationCommand } from "./bin/ui/activity";
+// From `brief.ts`, where it is defined — NOT from the UI layer's `activity`
+// module, which only re-exports it. The engine importing a UI module was the
+// one place the "no surface reaches into the engine, no engine reaches into a
+// surface" invariant leaked, and closing it is a gate on this phase.
+import { isVerificationCommand } from "./brief";
 import type { QuestionHandler } from "./ask-user";
 export type { QuestionHandler, UserQuestion } from "./ask-user";
 import { createLoopControlTool } from "./loop-control-tool";
@@ -206,64 +210,26 @@ import type {
 } from "./research-types";
 
 // ─── Permission Prompt Handler ───
+//
+// The prompt, the decision, the Auto chip and the held-step result are wire
+// shapes: a client that is not the terminal holds all five round-trips over
+// the socket (P2.2), so `@gear/protocol` owns them and they are re-exported
+// here for the in-repo import sites.
 
-export interface PermissionPrompt {
-  toolName: string;
-  argsSummary: string;
-  suggestedScope: PermissionScope;
-  rawArgs: Record<string, unknown>;
-  /** Present when classifier-backed Auto mode paused for human review. */
-  safety?: {
-    reason: string;
-    risk: string;
-    tier: string;
-    source: string;
-    reviewer?: { provider: string; model: string };
-  };
-  /** "Allow session" is deliberately narrowed to this exact payload in Auto. */
-  exactSessionGrant?: boolean;
-  /**
-   * True when a session grant would be a lie: critical/guardrail circuit
-   * breakers require a fresh human decision on every occurrence, so the card
-   * must not offer "allow for session" at all.
-   */
-  sessionGrantUnavailable?: boolean;
-  /** Live per-minute rate-limit occupancy for this tool, for the risk row. */
-  rateLimit?: { used: number; limit: number };
-}
-
-/**
- * Payload for the inline Auto-mode chip. Every Auto decision prints one — an
- * approval, a containment, a deferral, a halt — because a mode that never
- * interrupts you has to be legible in the scrollback instead.
- */
-export interface AutoApprovalNotice {
-  toolName: string;
-  argsSummary: string;
-  risk: string;
-  tier: string;
-  /** Which decision this was. Absent means the historical "approved". */
-  kind?: "approved" | "contained" | "redirected" | "deferred" | "halted";
-  /** For a non-approval: the containment route that produced it. */
-  route?: string;
-  /** For a redirect: the command offered in place of the one that stopped. */
-  substitute?: string;
-}
-
-export type UserPermissionDecision =
-  { kind: "allow_once" } | { kind: "allow_session" } | { kind: "deny" };
+export type {
+  PermissionPrompt,
+  AutoApprovalNotice,
+  UserPermissionDecision,
+  HeldStepRunResult,
+} from "@gear/protocol";
+import type {
+  AutoApprovalNotice,
+  HeldStepRunResult,
+  PermissionPrompt,
+  UserPermissionDecision,
+} from "@gear/protocol";
 
 export type PermissionHandler = (prompt: PermissionPrompt) => Promise<UserPermissionDecision>;
-
-/** The outcome of running one held step at the user's explicit request. */
-export interface HeldStepRunResult {
-  /** True when the step executed (successfully or not); false when it was refused before running. */
-  ran: boolean;
-  /** Why it was refused: signed org policy, a configured deny rule, a hook veto, a live run. */
-  refusal?: string;
-  /** The tool's output when it ran. */
-  output?: ToolCallOutput;
-}
 
 // ─── Transcript replay ───
 

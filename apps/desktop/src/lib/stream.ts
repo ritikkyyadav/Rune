@@ -7,6 +7,7 @@
 // engine-host's event stream into that structure; components only render it.
 
 import type { EngineEvent, PermissionDecision, PermissionPrompt } from "./types";
+import { assertNeverSoft } from "@gear/protocol";
 
 export interface DiffLine {
   kind: "add" | "rem" | "ctx";
@@ -582,7 +583,9 @@ export function streamReducer(
     case "event": {
       const t0 = current(state);
       if (!t0) return state;
-      const ev = action.event as EngineEvent & Record<string, unknown>;
+      // No cast. The union is `@gear/protocol`'s now, and the switch below is
+      // exhaustive against it — which is the whole point of Phase 2.
+      const ev = action.event;
       const next = patchTurn(state, (t) => {
         switch (ev.type) {
           case "thinking_delta": {
@@ -866,8 +869,60 @@ export function streamReducer(
               statusDetail: undefined,
             };
           }
-          default:
+          // ─── The four events this reducer had never learned ───
+          // All of them are live on the terminal and were dropped here: a
+          // retry looked like a hang, a step check never reached the ledger, a
+          // handoff read as a clean finish, and a sub-agent's progress was
+          // invisible. Named and reduced now; exhaustive from here on.
+          case "retry":
+            return deriveStatus({
+              ...t,
+              statusDetail: `retrying ${ev.provider}/${ev.model} — attempt ${ev.attempt} of ${ev.of}`,
+            });
+
+          case "step_check":
+            return {
+              ...t,
+              checks: [
+                ...t.checks,
+                { label: ev.step, status: !ev.ran ? "not-run" : ev.passed ? "passed" : "failed" },
+              ],
+              failures: t.failures + (ev.ran && !ev.passed ? 1 : 0),
+            };
+
+          case "handoff":
+            // A run that ended BEFORE finishing must never read as a clean
+            // finish. `turn_complete` still closes the turn; this records why.
+            return {
+              ...t,
+              statusDetail: `paused — ${ev.reason.replace(/_/g, " ")}`,
+              items: [...t.items, { kind: "notice", id: `n${t.nextId}`, message: ev.state }],
+              nextId: t.nextId + 1,
+            };
+
+          case "replanning":
+            return {
+              ...t,
+              items: [
+                ...t.items,
+                { kind: "notice", id: `n${t.nextId}`, message: `re-planning — ${ev.reason}` },
+              ],
+              nextId: t.nextId + 1,
+            };
+
+          case "tool_progress":
+            // A sub-agent heartbeat belongs on the live rung, never in the
+            // transcript — the same rule the TUI holds.
+            return ev.note ? { ...t, statusDetail: ev.note } : t;
+
+          // ─── Named, and deliberately not reduced here ───
+          case "tool_call_args_delta":
             return t;
+
+          default:
+            // Compile-time exhaustiveness: adding a member to AgentTurnEvent is
+            // a type error here until the desktop has decided what it means.
+            return assertNeverSoft(ev, t);
         }
       });
       // A completed turn is no longer the one receiving events.

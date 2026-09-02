@@ -15,10 +15,11 @@
     "start": "bun run src/bin/gear-cli.ts"
   },
   "dependencies": {
-    "@gear/shared": "workspace:*",
     "@gear/llm-gateway": "workspace:*",
-    "@gear/tool-registry": "workspace:*",
-    "@gear/telemetry": "workspace:*"
+    "@gear/protocol": "workspace:*",
+    "@gear/shared": "workspace:*",
+    "@gear/telemetry": "workspace:*",
+    "@gear/tool-registry": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.8"

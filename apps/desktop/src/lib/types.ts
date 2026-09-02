@@ -75,102 +75,51 @@ export interface Plan {
 }
 
 // ─── Event Types ───
-// Events streamed from the engine back to the UI.
+//
+// The engine event union is NOT redeclared here any more. It lives in
+// `@gear/protocol`, which the engine yields and the host streams verbatim, and
+// this file's hand-written copy had drifted both ways: stale `plan_*` /
+// `step_*` members the engine stopped emitting long ago, and four live events
+// (`retry`, `tool_progress`, `step_check`, `handoff`) it had never learned. A
+// desktop that renders nothing for an event the terminal renders is the exact
+// failure Phase 2 exists to end.
 
-export type EngineEvent =
-  | { type: "text_delta"; text: string }
-  | { type: "tool_call_start"; callId: string; toolName: string }
-  | {
-      type: "tool_call_args_delta";
-      callId: string;
-      partialJson: string;
-    }
-  | {
-      type: "tool_call_end";
-      callId: string;
-      args: Record<string, unknown>;
-      output: ToolCallOutput;
-    }
-  | { type: "turn_complete"; stopReason: string; totalTurns: number }
-  | { type: "error"; error: string; recoverable: boolean }
-  | { type: "plan_created"; plan: Plan }
-  | { type: "plan_updated"; plan: Plan; reason: string }
-  | { type: "step_started"; stepIndex: number; description: string }
-  | {
-      type: "step_completed";
-      stepIndex: number;
-      result: StepResult;
-    }
-  | { type: "plan_completed"; plan: Plan }
-  | { type: "replanning"; failedStep: number; reason: string }
-  // ── v2 events the engine host forwards verbatim (trace + transcript) ──
-  | { type: "thinking_delta"; text: string }
-  | { type: "stream_reset" }
-  | {
-      type: "usage";
-      inputTokens: number;
-      outputTokens: number;
-      context?: { used: number; limit: number; percent: number };
-    }
-  | {
-      type: "fallback";
-      from: { provider: string; model: string };
-      to: { provider: string; model: string };
-      status?: number;
-      reason?: string;
-      chain?: string[];
-    }
-  | {
-      type: "compaction";
-      beforeTokens: number;
-      afterTokens: number;
-      limitTokens: number;
-      summarizedCount?: number;
-      forced?: boolean;
-    }
-  | { type: "checkpoint_saved"; runId: string; version: number; turnCount?: number }
-  | { type: "todo_updated"; items: { content: string; status: string }[] }
-  | { type: "verification_started"; attempt: number }
-  | {
-      type: "verification_completed";
-      attempt: number;
-      ran: boolean;
-      passed: boolean;
-      report: string;
-    }
-  | { type: "notice"; message: string }
-  | { type: "context_warning"; message: string };
-
-export interface ToolCallOutput {
-  toolName: string;
-  success: boolean;
-  result: string;
-  error?: string;
-  durationMs: number;
-}
+export type {
+  AgentTurnEvent,
+  AgentTurnEvent as EngineEvent,
+  ChildAgentEvent,
+  ToolCallOutput,
+  ToolAttachment,
+  TodoItem,
+  TodoStatus,
+  StepEvidence,
+  HandoffReason,
+} from "@gear/protocol";
 
 // ─── Permission Types ───
+//
+// The five round-trips are protocol shapes: the desktop holds all of them over
+// the socket exactly as the terminal does (P2.2).
 
-export interface PermissionPrompt {
-  toolName: string;
-  argsSummary: string;
-  rawArgs: Record<string, unknown>;
-  safety?: {
-    reason: string;
-    risk: string;
-    tier: string;
-    source: string;
-    reviewer?: { provider: string; model: string };
-  };
-  exactSessionGrant?: boolean;
-  /** Live per-minute rate-limit occupancy for this tool (v2 risk row). */
-  rateLimit?: { used: number; limit: number };
-}
+export type {
+  PermissionPrompt,
+  PermissionScope,
+  UserPermissionDecision,
+  PermissionDecisionKind as PermissionDecision,
+  UserQuestion,
+  Brief,
+  BriefDecision,
+  Criterion,
+  ClaimRung,
+  Evidence,
+  AutoApprovalNotice,
+  HeldStep,
+  HeldStepRunResult,
+  ContainmentKind,
+} from "@gear/protocol";
 
 /** The gear ladder (mirrors packages/orchestrator/src/permissions.ts). */
 export type PermissionMode = "gear-1" | "gear-2" | "gear-3" | "gear-4" | "auto";
-
-export type PermissionDecision = "allow_once" | "allow_session" | "deny";
 
 // ─── Connection Types ───
 

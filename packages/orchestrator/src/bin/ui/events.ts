@@ -4,6 +4,8 @@
 // tool_call_start only flips the activity word). Used by the TUI; the readline
 // path keeps its own inline copy for now (same visual language).
 
+import type { AgentTurnEvent, ResearchEvent } from "@gear/protocol";
+import { assertNever } from "@gear/protocol";
 import { text, muted, faint, info, warn } from "./theme";
 import { glyph } from "./glyphs";
 import { visLen, wrap } from "./render";
@@ -127,7 +129,19 @@ export function formatCompaction(ev: {
 }
 
 /** A completed engine event rendered as transcript text, or null if none. */
-export function formatEvent(ev: any, ctx: { cost?: number } = {}): string | null {
+/**
+ * A completed engine event rendered as transcript text, or null when the event
+ * has no standalone line.
+ *
+ * Every member of BOTH unions is named below, including the ones this reducer
+ * deliberately renders nothing for, and the switch ends in `assertNever`. That
+ * is the point: before Phase 2 this took `any`, so adding a member to
+ * `AgentTurnEvent` compiled clean here and printed nothing forever.
+ */
+export function formatEvent(
+  ev: AgentTurnEvent | ResearchEvent,
+  ctx: { cost?: number } = {},
+): string | null {
   switch (ev.type) {
     case "tool_call_end":
       return renderToolCall({
@@ -205,7 +219,35 @@ export function formatEvent(ev: any, ctx: { cost?: number } = {}): string | null
     case "error":
       return formatError(ev.error);
 
+    // ── Named and deliberately not rendered here ──
+    // Streamed live by the TUI (turn.ts) rather than committed as a block, or
+    // folded into the status rung / live meters. Listed rather than defaulted
+    // so a member added upstream cannot slip past this reducer unnoticed.
+    case "text_delta":
+    case "thinking_delta":
+    case "stream_reset":
+    case "tool_call_start":
+    case "tool_call_args_delta":
+    case "tool_progress":
+    case "retry":
+    case "step_check":
+    case "verification_started":
+    case "verification_completed":
+    case "research_plan":
+    case "research_report_delta":
+      return null;
+
     default:
-      return null; // text_delta, tool_call_start, research_report_delta, etc.
+      // Compile-time exhaustiveness. A new union member is a type error here
+      // until it is named above; at runtime an event from a NEWER host is
+      // ignored rather than thrown, per the additive-minor contract.
+      return assertNeverEvent(ev);
   }
+}
+
+/** `assertNever` at compile time, a no-op at runtime. See the comment above. */
+function assertNeverEvent(ev: never): string | null {
+  void (ev as unknown);
+  void assertNever;
+  return null;
 }
