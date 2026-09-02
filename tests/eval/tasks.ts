@@ -7,6 +7,7 @@ import { SessionManager } from "@gear/shared";
 import type { EvalTask } from "./harness";
 import { COMPREHENSION_TASKS } from "./tasks-comprehension";
 import { FIX_FAILING_TEST_TASKS } from "./tasks-fix-failing-test";
+import { POST_EDIT_DIAGNOSTICS_TASKS } from "./tasks-post-edit-diagnostics";
 import { MULTI_FILE_REFACTOR_TASKS } from "./tasks-multi-file-refactor";
 import { NEW_FEATURE_TASKS } from "./tasks-new-feature";
 import { TOOL_DISCIPLINE_TASKS } from "./tasks-tool-discipline";
@@ -355,6 +356,7 @@ export const ALL_TASKS: EvalTask[] = [
   ...PARALLEL_TASKS,
   ...COMPREHENSION_TASKS,
   ...FIX_FAILING_TEST_TASKS,
+  ...POST_EDIT_DIAGNOSTICS_TASKS,
   ...MULTI_FILE_REFACTOR_TASKS,
   ...NEW_FEATURE_TASKS,
   ...TOOL_DISCIPLINE_TASKS,
