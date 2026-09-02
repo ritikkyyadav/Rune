@@ -2,6 +2,9 @@ import { type Logger, createLogger, openCredentialStore, type CredentialStore } 
 import { McpClient } from "./client";
 import { McpOAuth } from "./oauth";
 import { mergedServers } from "./config-file";
+import { collectPromptCommands, createReadResourceTool } from "./resources";
+import type { McpPromptCommand } from "./resources";
+import type { McpElicitRequest, McpElicitResult } from "./types";
 import type { ToolHandler } from "../types";
 import type { McpEvent, McpServerInfo } from "./types";
 
@@ -56,6 +59,8 @@ export interface McpDiscoveryOptions {
   /** Built-in servers merged BENEATH mcp.json — a user entry with the same
    *  name overrides its built-in counterpart (e.g. the `browser` server). */
   extraServers?: Record<string, McpServerConfig>;
+  /** How a server's elicitation/create reaches the user (the ask_user round-trip). */
+  onElicit?: (req: McpElicitRequest, server: string) => Promise<McpElicitResult>;
 }
 
 export interface McpServerStatus {
@@ -253,6 +258,7 @@ export class McpDiscovery {
           url: serverConfig.url,
           headers: serverConfig.headers,
           auth: await this.oauthFor(name, serverConfig),
+          onElicit: this.options.onElicit,
           logger: this.logger,
           onEvent: this.options.onEvent,
           onToolsChanged: () => this.handleServerToolsChanged(name),
@@ -309,9 +315,59 @@ export class McpDiscovery {
     this.options.onToolsChanged?.();
   }
 
-  /** Current full handler set across all live servers. */
+  /**
+   * Current full handler set across all live servers.
+   *
+   * `read_resource` is appended ONCE, spanning every connector that exposes
+   * resources — a tool per server would cost a schema per connector on every
+   * request and force the model to pick a server before it knows which one
+   * holds the thing it wants.
+   */
   getHandlers(): ToolHandler[] {
-    return [...this.handlers.values()];
+    const out = [...this.handlers.values()];
+    if (this.resourceClients().size > 0) {
+      out.push(createReadResourceTool({ clients: () => this.resourceClients() }));
+    }
+    return out;
+  }
+
+  /** Ready clients that declared a resources capability. */
+  resourceClients(): Map<string, McpClient> {
+    const out = new Map<string, McpClient>();
+    for (const [name, { client }] of this.clients) {
+      if (client.isReady && client.supportsResources) out.set(name, client);
+    }
+    return out;
+  }
+
+  /** Every ready client, for prompt expansion. */
+  allClients(): Map<string, McpClient> {
+    const out = new Map<string, McpClient>();
+    for (const [name, { client }] of this.clients) {
+      if (client.isReady) out.set(name, client);
+    }
+    return out;
+  }
+
+  /** Connector prompts, as `/server:prompt` slash commands. */
+  async listPromptCommands(): Promise<McpPromptCommand[]> {
+    return collectPromptCommands(this.allClients());
+  }
+
+  /**
+   * Every connected server's own operating instructions.
+   *
+   * The field has been typed since the first handshake and thrown away every
+   * time. A server that says "search before you delete" is telling the model
+   * something no tool description carries; it is injected once per session.
+   */
+  getServerInstructions(): Array<{ server: string; instructions: string }> {
+    const out: Array<{ server: string; instructions: string }> = [];
+    for (const [name, { client }] of this.clients) {
+      const text = client.getInstructions();
+      if (client.isReady && text) out.push({ server: name, instructions: text });
+    }
+    return out;
   }
 
   /** Reload config and restart all servers. */

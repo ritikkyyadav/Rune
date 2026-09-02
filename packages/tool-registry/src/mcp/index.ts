@@ -54,3 +54,27 @@ export {
   setServerEnabled,
 } from "./config-file";
 export type { McpScope, McpConfigFile, MergedServer } from "./config-file";
+export { SseTransport } from "./transport";
+export {
+  createReadResourceTool,
+  collectPromptCommands,
+  expandPromptCommand,
+  findResourceMentions,
+  parseResourceMention,
+  resourceMention,
+  readResourceText,
+  describeResources,
+  READ_RESOURCE_TOOL,
+} from "./resources";
+export type { McpPromptCommand, ResourceRegistry } from "./resources";
+export { validateAgainstSchema } from "./validate";
+export type {
+  McpResource,
+  McpResourceContents,
+  McpPrompt,
+  McpPromptArgument,
+  McpPromptMessage,
+  McpGetPromptResult,
+  McpElicitRequest,
+  McpElicitResult,
+} from "./types";

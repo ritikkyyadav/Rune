@@ -130,3 +130,28 @@ export {
   setServerEnabled,
 } from "./mcp/index";
 export type { CatalogEntry, McpScope, McpConfigFile, MergedServer } from "./mcp/index";
+export {
+  SseTransport,
+  createReadResourceTool,
+  collectPromptCommands,
+  expandPromptCommand,
+  findResourceMentions,
+  parseResourceMention,
+  resourceMention,
+  readResourceText,
+  describeResources,
+  validateAgainstSchema,
+  READ_RESOURCE_TOOL,
+} from "./mcp/index";
+export type {
+  McpPromptCommand,
+  ResourceRegistry,
+  McpResource,
+  McpResourceContents,
+  McpPrompt,
+  McpPromptArgument,
+  McpPromptMessage,
+  McpGetPromptResult,
+  McpElicitRequest,
+  McpElicitResult,
+} from "./mcp/index";

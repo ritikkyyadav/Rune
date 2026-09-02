@@ -106,7 +106,13 @@ describe("connector lifecycle reaches a subscriber", () => {
     const discovery = new McpDiscovery(workspace, { onEvent: (e) => events.push(e) });
     const handlers = await discovery.discover();
 
-    expect(handlers).toHaveLength(2);
+    // Two tools, plus the one cross-server read_resource the mock's resources
+    // capability earns.
+    expect(handlers.map((h) => h.schema.name).sort()).toEqual([
+      "mcp_mocknotion_delete_page",
+      "mcp_mocknotion_search",
+      "read_resource",
+    ]);
     const ready = events.find((e) => e.type === "server-ready");
     expect(ready).toBeDefined();
     expect(ready && "toolCount" in ready && ready.toolCount).toBe(2);
