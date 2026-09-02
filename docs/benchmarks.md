@@ -100,6 +100,55 @@ When runs exist this table carries them, newest first:
 | ---- | --------- | ----- | -------- | ------- | ---- | -------- | ---- |
 | —    | —         | —     | —        | —       | —    | —        | —    |
 
+## P10.1 — post-edit diagnostics
+
+Not an external anchor: this is the in-repo mock suite (`bun run eval`), recorded
+here because the item was measured rather than argued.
+
+**The honest finding first.** The two families P10.1 was told to measure on
+cannot show this feature's delta, and no amount of re-running changes that.
+`fix-failing-test` and `multi-file-refactor` were both already at 100%, and
+neither contains a type error anywhere: every scripted edit in them is correct
+by construction, so a feedback channel that reports type errors has nothing to
+report. Their before/after numbers below are therefore evidence that nothing
+regressed, not evidence that anything improved.
+
+| date       | family                | before | after | note                                           |
+| ---------- | --------------------- | ------ | ----- | ---------------------------------------------- |
+| 2026-09-03 | `fix-failing-test`    | 5/5    | 7/7   | +2 new tasks; the 5 pre-existing are unchanged |
+| 2026-09-03 | `multi-file-refactor` | 4/4    | 4/4   | untouched — no type error in the family        |
+
+**So the delta was measured directly**, with a controlled pair added to
+`fix-failing-test` (`tests/eval/tasks-post-edit-diagnostics.ts`). Same brief,
+same script, same responder; the only difference between the arms is whether the
+language server publishes. The model's first edit introduces
+`const discount: number = "0.2"` — a real semantic error the syntax pass parses
+without complaint and that JavaScript's coercion hides at runtime (`1 - "0.2"` is
+0.8, so the behavioural test passes either way). Only a type-aware checker
+objects, which is the class of mistake this feature exists to catch. The
+corrective edit fires if and only if the transcript carries the server's verdict.
+
+| date       | arm                                              | server            | outcome                                 | wall   |
+| ---------- | ------------------------------------------------ | ----------------- | --------------------------------------- | ------ |
+| 2026-09-03 | treatment (`fix_type_error_from_diagnostics`)    | publishes         | type error fixed **in the same turn**   | 225ms  |
+| 2026-09-03 | control (`type_error_ships_without_diagnostics`) | publishes nothing | type error **ships**; tests still green | 2150ms |
+
+Read as a rate on the one task the suite can actually pose: **0/1 → 1/1**. Both
+tasks pass, because the control passes by asserting that the error shipped — a
+control arm that quietly agreed with the treatment would prove nothing.
+
+The control's 2150ms against the treatment's 225ms is the latency bound
+observed from the other side: a server that never publishes costs the full 2s
+budget exactly once, and a server that answers costs almost nothing. Both arms
+drive the fake stdio server in `tests/fixtures/lsp`, so the numbers do not
+depend on `typescript-language-server` being installed;
+`tests/integration/lsp-post-edit-diagnostics.test.ts` runs the same contract
+against the real one and skips cleanly when it is absent.
+
+**What this does not measure.** Whether a live model, given the block, uses it
+as well as the scripted responder does. That needs `--real` capacity this
+machine does not have (see Results above).
+
 ## Changes to the yardstick
 
 Any edit to a pinned subset breaks the series. Record it here.
