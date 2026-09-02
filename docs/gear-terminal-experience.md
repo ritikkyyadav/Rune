@@ -7,7 +7,7 @@
 > **What is frozen.** The whole surface is the transcript, the composer, the
 > held-steps panel, the fleet rows and the footer. No new panels. No new
 > dialects — every row goes through `flowRow`, and `tests/unit/orchestrator/
-> ui-grammar.test.ts` is the enforcement, not this paragraph. No new colours:
+ui-grammar.test.ts` is the enforcement, not this paragraph. No new colours:
 > six semantic roles, two grounds, one accent, from
 > `packages/shared/src/design-tokens.ts`.
 >
@@ -55,15 +55,15 @@ Two grounds and one accent, from the Savoir brand DNA
 (`packages/shared/src/design-tokens.ts`) — the same source the desktop and the
 web client read, so the three surfaces cannot drift.
 
-| Role     | Light (paper) | Dark (ink) | Carries                                  |
-| -------- | ------------- | ---------- | ---------------------------------------- |
-| ground   | `#E7E8E3`     | `#14161A`  | the surface                              |
-| body     | `#14161A`     | `#E7E8E3`  | prose, tool names, the thing you read    |
-| dim      | `#7C8088`     | `#7C8088`  | arguments, metrics, context lines        |
-| accent   | `#0E5E63`     | `#17A0A8`  | identity, paths, branches, option keys   |
-| ok       | `#0E5E63`     | `#17A0A8`  | added lines, passes — an addition is a datum |
-| warn     | `#E2A23A`     | `#E2A23A`  | approval prompts, caution                |
-| danger   | `#9A4A3A`     | `#B1796D`  | removed lines, failures, errors          |
+| Role   | Light (paper) | Dark (ink) | Carries                                      |
+| ------ | ------------- | ---------- | -------------------------------------------- |
+| ground | `#E7E8E3`     | `#14161A`  | the surface                                  |
+| body   | `#14161A`     | `#E7E8E3`  | prose, tool names, the thing you read        |
+| dim    | `#7C8088`     | `#7C8088`  | arguments, metrics, context lines            |
+| accent | `#0E5E63`     | `#17A0A8`  | identity, paths, branches, option keys       |
+| ok     | `#0E5E63`     | `#17A0A8`  | added lines, passes — an addition is a datum |
+| warn   | `#E2A23A`     | `#E2A23A`  | approval prompts, caution                    |
+| danger | `#9A4A3A`     | `#B1796D`  | removed lines, failures, errors              |
 
 Six closed roles: the budget is on MEANINGS, not on pigments. There is no
 green — a second hue for "added" would be a second brand colour arriving
