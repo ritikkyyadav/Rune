@@ -243,10 +243,17 @@ export function headlessExitCode(r: HeadlessResult): number {
  * NDJSON — a consumer reading line by line would choke on the last record.
  * `--json` on its own keeps the indented form, which is what a person reads.
  */
-export function headlessEnvelope(r: HeadlessResult, opts: { compact?: boolean } = {}): string {
+export function headlessEnvelope(
+  r: HeadlessResult,
+  opts: { compact?: boolean; sessionId?: string } = {},
+): string {
   return JSON.stringify(
     {
       ok: r.ok,
+      // The session this run wrote, so a caller can read it back with
+      // `gear audit <id>`. CI otherwise has to guess with `gear audit last`,
+      // which on a shared runner is a different session's page.
+      ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
       text: r.text,
       error: r.error,
       toolCalls: r.toolCalls,

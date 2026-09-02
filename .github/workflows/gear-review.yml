@@ -1,0 +1,74 @@
+# ─── Gear reviews this repository's own pull requests ───
+#
+# The action is in `action/`, and this is the proof it works: the repo that
+# builds Gear is reviewed by the Gear in the pull request, not by the last one
+# that shipped. If a change breaks the review path, it breaks here first.
+#
+# It is GATED ON A SECRET, and the gate is the point. A workflow that needs a
+# provider key and does not check for one fails red on every fork and every
+# pull request opened before the key exists, and a red check nobody can fix
+# teaches people to ignore red checks. With no key this skips cleanly and says
+# so.
+
+name: gear review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  # One review per pull request. A push mid-review cancels the stale one rather
+  # than racing it to the same comment.
+  group: gear-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - id: check
+        env:
+          # A secret cannot be read in an `if:` expression, so it is turned into
+          # an output here and branched on below.
+          KEY: ${{ secrets.GEAR_REVIEW_API_KEY }}
+        run: |
+          if [ -n "${KEY}" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::GEAR_REVIEW_API_KEY is not set — skipping the Gear review."
+          fi
+
+  review:
+    needs: gate
+    if: needs.gate.outputs.configured == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The review diffs against the base branch, so it needs the history
+          # that `merge-base` walks. A shallow clone makes every commit look new.
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: ./action
+        with:
+          gear: "3"
+          # Empty `version` builds from this checkout — see the note above.
+          version: ""
+          source-path: "."
+          workspace: "."
+        env:
+          # One key, whichever provider it belongs to. `gear` reads the
+          # provider-specific variables directly; set the one you use.
+          ANTHROPIC_API_KEY: ${{ secrets.GEAR_REVIEW_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.GEAR_REVIEW_OPENAI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.GEAR_REVIEW_OPENROUTER_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GEAR_REVIEW_GOOGLE_API_KEY }}
