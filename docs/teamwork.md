@@ -291,6 +291,58 @@ config through, which defaults to on.
 - **Not a lock.** `warn` mode is advisory by design — Gear does not stop you editing your own
   repository. `block` is available where you want a hard refusal.
 - **Not remote.** The bus is a local file. Instances on different machines do not see each other.
-- **Not a task queue.** One instance cannot make another do work; it can tell it things.
+- **Not a scheduler.** There IS a task queue now (see The shared ledger, below): an instance can
+  post work and any instance can claim it. What no instance can do is make another instance take a
+  particular task — work is pulled, never pushed.
 - **Not shared context.** Instances exchange messages and claims, not conversation history.
   Each session's transcript stays its own.
+
+
+---
+
+## The shared ledger
+
+The plan was the lead's alone. `TaskState` was passed to the lead's loop and to nothing else, so a
+fleet of four workers building four slices of one feature appeared in the plan as a single
+in-progress item with no way to say which worker held it.
+
+**In-process**, a todo item now carries an `owner` and a `claimedAt`, and the store has `claimNext`:
+
+```
+store.claimNext("w2")        // takes the oldest unowned pending step, marks it in_progress
+store.claimsOf("w2")         // the scoped view a sub-agent is given
+store.releaseClaim("w2")     // a worker that could not finish it hands it back
+```
+
+`claimNext` is what turns a plan into a queue. The alternative — every worker reading the plan and
+picking what looks unclaimed — is a race with no arbiter, and two workers building the same slice is
+the specific failure the ownership model exists to prevent one layer down.
+
+A step whose owner has been silent past a reclaim window can be taken by someone else. Without that,
+a crashed worker strands its step forever and the fleet deadlocks on an item nobody is doing and
+nobody may take. Items written before the ledger became multi-writer simply have no owner, which
+means the lead.
+
+**Across instances**, the bus gains a `tasks` table beside `claims`, with the same TTL and the same
+liveness sweep:
+
+```
+bus.postTask("write the parser")
+bus.claimNextTask()          // atomic: UPDATE … WHERE status='pending' is the arbiter
+bus.completeTask(id, evidence)
+bus.releaseTask(id)
+bus.tasks("pending")
+```
+
+The distinction between the two tables is the point. A **claim** says "these paths are mine, stay
+off them". A **task** says "this needs doing, whoever is free". The bus carried the first and not
+the second, which is why this document previously listed a task queue among what the bus is not.
+
+The atomicity is the `UPDATE … WHERE status = 'pending'`: two instances racing for the same row
+means one UPDATE changes a row and the other changes none, and the loser asks again. A
+read-then-write would let both believe they won.
+
+When an instance dies, the sweep **releases** its tasks rather than deleting them. Deleting — the
+obvious symmetry with `claims` and `writes`, which are advisory and worthless once their owner is
+gone — would silently drop work at exactly the moment it matters most. The same release happens when
+a claim's TTL expires.
