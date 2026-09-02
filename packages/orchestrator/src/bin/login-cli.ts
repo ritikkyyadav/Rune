@@ -210,7 +210,7 @@ async function pickProvider(): Promise<string | undefined> {
   rows.forEach((p, i) => {
     const d = getProviderDescriptor(p.id)!;
     // Prefer the subscription/account name where a provider has one (Claude
-    // Pro/Max, ChatGPT Plus/Pro, GitHub Copilot); otherwise show the methods.
+    // Pro/Max, ChatGPT Plus/Pro); otherwise show the methods.
     const hint = accountLoginLabel(p.id) ?? d.auth.join(", ");
     log(`  ${info(String(i + 1).padStart(2))}. ${text(p.label.padEnd(22))} ${faint(hint)}`);
   });

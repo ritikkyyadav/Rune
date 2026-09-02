@@ -111,7 +111,7 @@ describe("gear providers", () => {
     expect(out).toMatch(/Providers/);
     expect(out).toMatch(/OpenRouter/);
     expect(out).toMatch(/api_key/);
-    expect(out).toMatch(/local/); // ollama/lmstudio
+    expect(out).toMatch(/local/); // ollama
     // file backend forced → the insecure notice must be present
     expect(out).toMatch(/unencrypted/);
   });

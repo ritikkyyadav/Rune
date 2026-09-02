@@ -493,8 +493,10 @@ export interface EngineConfig {
   customEndpoint?: CustomEndpoint;
   /** Provider ids toggled off — kept configured but excluded from the gateway. */
   disabledProviders?: string[];
-  /** Base URLs for local runtimes (ollama / lmstudio) by id; overrides preset defaults. */
+  /** Base URLs for local runtimes (ollama) by id; overrides preset defaults. */
   localBaseUrls?: Record<string, string>;
+  /** `[llm.ollama] keepAlive` - how long Ollama holds the model + KV cache. */
+  ollamaKeepAlive?: string;
   /** Base URL for a local Ollama server (default http://localhost:11434). */
   ollamaBaseUrl?: string;
   /**
@@ -872,7 +874,7 @@ export class Engine {
   private activeProviderKeyId: Record<string, string> = {};
   private customEndpoint?: CustomEndpoint;
   private disabledProviders: Set<string> = new Set();
-  // Base URLs for local runtimes (ollama / lmstudio), live-editable via /keys.
+  // Base URLs for local runtimes (ollama), live-editable via /keys.
   private localBaseUrls: Record<string, string> = {};
   // BYOP: credentials resolved by the auth layer (keychain / OAuth). Seeded at
   // boot and refreshed on login/logout; handed into every gateway (re)build.
@@ -4691,6 +4693,7 @@ export class Engine {
       customEndpoint: this.customEndpoint,
       disabled: this.disabledProviders,
       localBaseUrls: this.localBaseUrls,
+      ollamaKeepAlive: this.config.ollamaKeepAlive,
       ollamaBaseUrl: this.config.ollamaBaseUrl,
       credentials: this.resolvedCredentials,
       fallbackOrder: this.config.fallbackOrder,
@@ -4821,7 +4824,7 @@ export class Engine {
 
   /**
    * Set (or, with null/empty, reset to default) the base URL of a local runtime
-   * (ollama / lmstudio) at runtime and rebuild the gateway. Persistence to the
+   * (ollama) at runtime and rebuild the gateway. Persistence to the
    * secrets file is the caller's job — this only touches in-memory state.
    */
   setLocalEndpoint(id: string, baseUrl: string | null): void {

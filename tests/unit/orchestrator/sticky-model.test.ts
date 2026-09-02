@@ -72,7 +72,7 @@ describe("credentials a subscription provider actually uses", () => {
 describe("the gate the sticky model has to pass", () => {
   // Mirrors the predicate both entry points now use.
   const stickyUsable = (p: string, e: NodeJS.ProcessEnv) =>
-    getPreset(p) !== undefined && (p === "ollama" || p === "lmstudio" || hasStoredCredential(p, e));
+    getPreset(p) !== undefined && (p === "ollama" || hasStoredCredential(p, e));
 
   test("a signed-in Codex account passes — the case that was broken", () => {
     writeIndex(["provider:codex:oauth"]);
@@ -83,7 +83,7 @@ describe("the gate the sticky model has to pass", () => {
     // The original defect was a list that rotted. Anything with a preset and a
     // credential must qualify — including the ones added after that list was
     // written.
-    for (const id of ["codex", "copilot", "groq", "xai", "deepseek"]) {
+    for (const id of ["codex", "groq", "xai", "deepseek"]) {
       writeIndex([`provider:${id}:oauth`]);
       expect({ id, ok: stickyUsable(id, env) }).toEqual({ id, ok: true });
     }
@@ -92,7 +92,7 @@ describe("the gate the sticky model has to pass", () => {
   test("local runtimes need no credential at all", () => {
     writeIndex([]);
     expect(stickyUsable("ollama", env)).toBe(true);
-    expect(stickyUsable("lmstudio", env)).toBe(true);
+    expect(stickyUsable("ollama", env)).toBe(true);
   });
 
   test("an unknown provider id never passes", () => {

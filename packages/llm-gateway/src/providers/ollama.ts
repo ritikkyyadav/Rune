@@ -46,14 +46,35 @@ interface StreamState {
  * Needs no API key — this is the "local-only mode" path for code that may not
  * leave the machine. Talks to /api/chat (NDJSON streaming) and /api/tags.
  */
+/**
+ * How long Ollama holds a model — and its KV cache — in memory after a
+ * request. The server default is 5 minutes, which is shorter than an agent
+ * spends reading a file and thinking, so the cache was routinely evicted
+ * between consecutive turns of ONE task. Every eviction costs a full re-prefill
+ * of the whole transcript: on a local runtime that is not a bill, it is
+ * wall-clock, and it is the difference between a second and a minute on a long
+ * context.
+ *
+ * 30m is long enough to cover a working session and short enough that a
+ * forgotten session releases the GPU before it matters.
+ */
+const DEFAULT_KEEP_ALIVE = "30m";
+
 export class OllamaProvider implements LlmProvider {
   readonly name = "ollama" as const;
   private baseUrl: string;
+  /** Passed as `keep_alive` on every request. See DEFAULT_KEEP_ALIVE. */
+  readonly keepAlive: string;
 
-  constructor(baseUrl?: string) {
+  constructor(baseUrl?: string, opts?: { keepAlive?: string }) {
     let b = baseUrl ?? process.env.OLLAMA_HOST ?? "http://localhost:11434";
     if (!/^https?:\/\//.test(b)) b = `http://${b}`;
     this.baseUrl = b.replace(/\/$/, "");
+    // config.toml `[llm.ollama] keepAlive` wins; GEAR_OLLAMA_KEEP_ALIVE is the
+    // escape hatch for one run. Ollama accepts a duration string ("30m", "1h")
+    // or a number of seconds; "-1" holds the model indefinitely and "0"
+    // unloads immediately.
+    this.keepAlive = opts?.keepAlive ?? process.env.GEAR_OLLAMA_KEEP_ALIVE ?? DEFAULT_KEEP_ALIVE;
   }
 
   async infer(request: InferenceRequest): Promise<InferenceResponse> {
@@ -157,15 +178,36 @@ export class OllamaProvider implements LlmProvider {
     }
   }
 
-  /** Live model discovery via Ollama's /api/tags (locally pulled models). */
+  /**
+   * Live model discovery via Ollama's /api/tags (locally pulled models),
+   * enriched with each model's REAL context window.
+   *
+   * /api/tags returns names only, so every listed model previously fell to the
+   * tokenizer's conservative 100k default: a 256k model was compacted at a
+   * fraction of its window, and the picker could not show what it actually
+   * had. The window lives behind a per-model /api/show, so this fans out — to
+   * localhost, free, bounded — and degrades to the bare name on any failure.
+   */
   async listModels(): Promise<ModelInfo[]> {
     const r = await fetch(`${this.baseUrl}/api/tags`);
     if (!r.ok) throw new Error(`ollama /api/tags failed (${r.status})`);
     const json = (await r.json()) as { models?: { name?: string; model?: string }[] };
-    return (json.models ?? [])
-      .map((m) => m.name ?? m.model)
-      .filter((n): n is string => !!n)
-      .map((id) => ({ id, label: id, live: true }));
+    const ids = (json.models ?? []).map((m) => m.name ?? m.model).filter((n): n is string => !!n);
+
+    const out: ModelInfo[] = [];
+    // Bounded fan-out: a machine with forty pulled models should not open
+    // forty sockets at once just to render a list.
+    const CONCURRENCY = 6;
+    for (let i = 0; i < ids.length; i += CONCURRENCY) {
+      const batch = await Promise.all(
+        ids.slice(i, i + CONCURRENCY).map(async (id) => {
+          const described = await this.describeModel(id).catch(() => null);
+          return described ?? { id, label: id, live: true };
+        }),
+      );
+      out.push(...batch);
+    }
+    return out;
   }
 
   /**
@@ -232,6 +274,10 @@ export class OllamaProvider implements LlmProvider {
       model: request.model,
       messages: this.toOllamaMessages(request.messages, request.system),
       stream,
+      // Hold the model AND its KV cache between turns. Without this the server
+      // unloads after 5 minutes idle and the next turn re-prefills the entire
+      // transcript from scratch.
+      keep_alive: this.keepAlive,
       ...(request.tools?.length && { tools: request.tools.map(toOllamaTool) }),
       // Thinking explicitly disabled → top-level `think: false` so a reasoning
       // model (qwen3, deepseek-r1, gemma) answers directly instead of spending
@@ -262,11 +308,25 @@ export class OllamaProvider implements LlmProvider {
 
       const text: string[] = [];
       const toolCalls: OllamaToolCall[] = [];
+      let images = 0;
       for (const b of m.content) {
         if (b.type === "text") text.push(b.text);
+        else if (b.type === "image") images++;
         else if (b.type === "tool_use") {
           toolCalls.push({ function: { name: b.toolName, arguments: b.toolInput } });
         }
+      }
+
+      // This translation carries text and tool calls only, so an image block
+      // reaching it was DROPPED IN SILENCE — and a silently dropped screenshot
+      // is worse than none, because the agent believes it looked and then
+      // describes what it assumes is there. Say so instead, in the same shape
+      // the OpenAI-compatible adapter uses.
+      if (images > 0) {
+        text.push(
+          `\n[${images} attached image(s) omitted: the ollama transport does not send images ` +
+            `- tell the user you could not view them]`,
+        );
       }
 
       const msg: Record<string, unknown> = {

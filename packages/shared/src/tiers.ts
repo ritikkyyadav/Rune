@@ -16,6 +16,8 @@
 //   2. The active provider's built-in tier defaults below.
 //   3. The active session model (always registered, never wrong).
 
+import { PROVIDER_PRESETS } from "./providers";
+
 export type ModelTier = "heavy" | "standard" | "light";
 
 /**
@@ -101,7 +103,7 @@ export interface TiersConfig {
  * bleeding-edge. Providers absent from this table (local runtimes, custom
  * endpoints) fall through to the session model.
  */
-export const PROVIDER_TIER_DEFAULTS: Record<
+const HAND_MAINTAINED_TIER_DEFAULTS: Record<
   string,
   { heavy: string; standard: string; light: string }
 > = {
@@ -161,18 +163,27 @@ export const PROVIDER_TIER_DEFAULTS: Record<
     standard: "minimax/minimax-m3:free",
     light: "minimax/minimax-m3:free",
   },
-  // Ollama Cloud rotates its free lineup wholesale: qwen3-coder:480b AND its
-  // announced successor qwen3-coder-next both 410'd on 2026-07-15, which left
-  // this table pointing at a corpse for the second time and killed compaction
-  // for ollama-turbo sessions. Current ids verified live (200 + tool calls)
-  // against https://ollama.com/v1/models on 2026-08-26. When these rot again,
-  // the summarizer's live-list recovery (context-engine.ts) keeps compaction
-  // alive; refresh this table to stop the main loop from booting on a corpse.
-  "ollama-turbo": {
-    heavy: "gpt-oss:120b",
-    standard: "gpt-oss:120b",
-    light: "gpt-oss:20b",
-  },
+};
+
+/**
+ * Built-in tier defaults per provider: presets that declare `tiers` win, and
+ * anything else keeps its hand-maintained entry above.
+ *
+ * The fold exists because `ollama-turbo`'s ids lived in three tables at once
+ * and Ollama Cloud rotated its free lineup wholesale twice (qwen3-coder:480b
+ * and its announced successor qwen3-coder-next both 410'd on 2026-07-15),
+ * leaving this table pointing at a corpse while the presets had already been
+ * refreshed — which killed compaction for those sessions. A rot fix now lands
+ * in one place. When ids rot again, the summarizer's live-list recovery
+ * (context-engine.ts) keeps compaction alive; refresh the preset to stop the
+ * main loop from booting on a corpse.
+ */
+export const PROVIDER_TIER_DEFAULTS: Record<
+  string,
+  { heavy: string; standard: string; light: string }
+> = {
+  ...HAND_MAINTAINED_TIER_DEFAULTS,
+  ...Object.fromEntries(PROVIDER_PRESETS.filter((p) => p.tiers).map((p) => [p.id, p.tiers!])),
 };
 
 /**

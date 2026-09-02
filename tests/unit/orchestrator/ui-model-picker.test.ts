@@ -173,16 +173,17 @@ describe("accountChoices (level 2)", () => {
     expect(out[1]).toMatchObject({ kind: "key", active: false });
   });
 
-  it("a device-flow login (Copilot) reads as signed in · device flow", () => {
+  it("a device-flow login reads as signed in · device flow", () => {
+    // Copilot was the device-flow provider until P8.5 removed it; the rendering
+    // is method-driven, not provider-driven, so the case survives it.
     const r = row({
-      id: "copilot",
-      label: "GitHub Copilot",
+      id: "openrouter",
+      label: "OpenRouter",
       hasKey: true,
       source: "oauth",
       authMethod: "device",
     });
-    const out = accountChoices(getPreset("copilot"), r, undefined, {});
-    expect(out).toHaveLength(1);
+    const out = accountChoices(getPreset("openrouter"), r, undefined, {});
     expect(out[0]!.detail).toBe("signed in | device flow");
   });
 

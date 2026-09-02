@@ -32,15 +32,21 @@ export {
 export { LlmGateway, isModelGoneError } from "./gateway";
 export { AnthropicProvider } from "./providers/anthropic";
 export { OpenAIProvider } from "./providers/openai";
+export {
+  cacheBreakpointPolicyFor,
+  declaredCachePolicies,
+  isAnthropicUpstream,
+  promptCacheKey,
+} from "./providers/cache-policy";
+export type { CacheBreakpointPolicy } from "./providers/cache-policy";
 export { OpenRouterProvider } from "./providers/openrouter";
 export { GoogleProvider } from "./providers/google";
 export { OllamaProvider } from "./providers/ollama";
-export { CopilotProvider } from "./providers/copilot";
 export { CodexProvider } from "./providers/codex";
 export { CostTracker, BudgetExceededError } from "./cost-tracker";
 export { ProviderHealthStore, RETIREMENT_TTL_MS } from "./provider-health";
 export type { RetiredModel, CappedProvider } from "./provider-health";
-export type { BudgetScope, BudgetCap, CostBreakdown } from "./cost-tracker";
+export type { BudgetScope, BudgetCap, CostBreakdown, ProviderCacheStats } from "./cost-tracker";
 export { ApiError, parseApiErrorBody } from "./types";
 // ─── BYOP authentication layer ───
 export type { AuthMethod, ResolvedCredential, AuthContext, AuthenticationStrategy } from "./auth";

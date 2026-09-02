@@ -64,14 +64,12 @@ export type ProviderName =
   | "openrouter"
   | "ollama"
   | "ollama-turbo"
-  | "lmstudio"
   | "google"
   | "groq"
   | "xai"
   | "deepseek"
-  // Subscription-backed transports (own endpoints, not the vendor's public API):
-  // GitHub Copilot and the ChatGPT-backend Codex "responses" API.
-  | "copilot"
+  // Subscription-backed transport (its own endpoint, not the vendor's public
+  // API): the ChatGPT-backend Codex "responses" API.
   | "codex"
   | "custom";
 
@@ -134,6 +132,16 @@ export function reasoningEffortsFor(provider: string, model: string): ReasoningE
   }
   if (provider === "openai" && /^(gpt-5|o[134])(-|:|$)/.test(m)) {
     return ["low", "medium", "high"];
+  }
+  // Gemini has no `reasoning_effort` field — depth is a thinking BUDGET — but
+  // the dial is real and is now translated on the wire (geminiThinkingConfig).
+  // It returned [] here while the effort was silently dropped in the adapter,
+  // so the control was correctly hidden for the wrong reason. The 2.5 line
+  // takes a budget; the 3.x line takes a level with only two documented values.
+  if (provider === "google") {
+    if (/^gemini-2\.5-/.test(m)) return ["low", "medium", "high"];
+    if (/^gemini-3/.test(m)) return ["low", "high"];
+    return [];
   }
   return [];
 }
@@ -435,11 +443,15 @@ export function billingModeFor(provider: string, model: string): BillingMode {
   if (model.endsWith(":free")) return "free";
   // Subscription transports: a plan the user already pays for monthly. The
   // tokens are real; the marginal dollar is zero.
-  if (provider === "codex" || provider === "copilot" || provider === "ollama-turbo") {
-    return "subscription";
-  }
+  if (provider === "codex") return "subscription";
+  // Ollama Cloud is NOT one of them. The ids Gear ships for `ollama-turbo` are
+  // the ones verified on the DEFAULT, no-subscription plan; the
+  // subscription-gated models are deliberately omitted from the preset because
+  // they 403. This said "subscription" while PROVIDER_CAPACITY said "free" -
+  // the two now agree, and both say free.
+  if (provider === "ollama-turbo") return "free";
   // Local runtimes cost electricity, not API dollars.
-  if (provider === "ollama" || provider === "lmstudio") return "free";
+  if (provider === "ollama") return "free";
   return "metered";
 }
 
@@ -546,6 +558,9 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   "gpt-oss:20b": { inputPerMillion: 0.05, outputPerMillion: 0.2, estimated: true },
   "openai/gpt-oss-120b": { inputPerMillion: 0.1, outputPerMillion: 0.5, estimated: true },
   "llama-3.3-70b-versatile": { inputPerMillion: 0.59, outputPerMillion: 0.79, estimated: true },
+  // Groq's light tier. Added to the catalogue in P8.6 because the tier table
+  // already resolved to it while the picker never listed it.
+  "llama-3.1-8b-instant": { inputPerMillion: 0.05, outputPerMillion: 0.08, estimated: true },
   "llama3.1": { inputPerMillion: 0.05, outputPerMillion: 0.08, estimated: true },
   "nemotron-3-ultra": { inputPerMillion: 0.6, outputPerMillion: 1.8, estimated: true },
   "nemotron-3-super": { inputPerMillion: 0.3, outputPerMillion: 0.9, estimated: true },

@@ -15,6 +15,8 @@ import { BlackboxStore } from "@gear/telemetry";
 import { TaskStateStore, stepReceipt } from "../task-state";
 import { runEnding, type RunRetro } from "../retro";
 import { accent, danger, dim, faint, info, ok, text, warn } from "./ui/theme";
+import { formatCacheRate } from "../cost-report";
+import { MODEL_PRICING } from "@gear/llm-gateway";
 
 type Row = { seq: number; event: SessionEvent };
 
@@ -298,20 +300,44 @@ export async function runAudit(args: string[], values: Record<string, unknown>):
     let subscription = false;
     let tokIn = 0;
     let tokOut = 0;
+    // Per provider, because that is the axis a cache answer varies on: a run
+    // that fell back from a caching provider to one with none reports a
+    // blended rate describing neither, and the blend is the flattering number.
+    const cache = new Map<string, { read: number; total: number }>();
     for (const r of rows) {
       if (r.event.type !== "cost") continue;
       const p = payloadOf(r);
       usd += Number(p.costUsd ?? 0) || 0;
       list += Number(p.listCostUsd ?? 0) || 0;
       if (p.billing === "subscription") subscription = true;
-      tokIn += Number(p.inputTokens ?? 0) || 0;
+      const fresh = Number(p.inputTokens ?? 0) || 0;
+      const read = Number(p.cacheReadTokens ?? 0) || 0;
+      const written = Number(p.cacheCreationTokens ?? 0) || 0;
+      tokIn += fresh;
       tokOut += Number(p.outputTokens ?? 0) || 0;
+      const provider = String(p.provider ?? "unknown");
+      const acc = cache.get(provider) ?? { read: 0, total: 0 };
+      acc.read += read;
+      acc.total += fresh + read + written;
+      cache.set(provider, acc);
     }
     if (tokIn + tokOut > 0) {
       say();
       say(
         `  ${text("Cost")}  $${list.toFixed(4)} ${dim("list")} ${dim("·")} $${usd.toFixed(4)} ${dim(subscription ? "paid (subscription)" : "paid")} ${dim("·")} ${num(tokIn)} in ${dim("·")} ${num(tokOut)} out`,
       );
+      for (const [provider, acc] of cache) {
+        // null, NOT zero, when the provider reported no input at all. Rendered
+        // through the one formatter every cost surface uses, so "no data"
+        // reads the same here as in /cost and the status line.
+        const rate = acc.total > 0 ? acc.read / acc.total : null;
+        const saved = savedByCache(rows, provider);
+        say(
+          `  ${dim("cache")}  ${text(provider)} ${dim("·")} ${formatCacheRate(rate)}` +
+            `${rate === null ? "" : ` ${dim(`(${num(acc.read)} of ${num(acc.total)} warm)`)}`}` +
+            `${saved > 0 ? ` ${dim("·")} saved $${saved.toFixed(4)} ${dim("list")}` : ""}`,
+        );
+      }
     }
     say();
     say(dim(`  full record: gear export ${id} --format md`));
@@ -320,4 +346,32 @@ export async function runAudit(args: string[], values: Record<string, unknown>):
   } finally {
     sm.close();
   }
+}
+
+/**
+ * What the cache saved on one provider, in list dollars: the cost of the warm
+ * tokens had they all been billed fresh, minus what a cached read costs. The
+ * per-token rates live in MODEL_PRICING, so this reads them per row rather
+ * than assuming one model ran the whole session.
+ */
+function savedByCache(
+  rows: { event: { type: string; payload?: unknown } }[],
+  provider: string,
+): number {
+  let saved = 0;
+  for (const r of rows) {
+    if (r.event.type !== "cost") continue;
+    const p = (r.event.payload ?? {}) as Record<string, unknown>;
+    if (String(p.provider ?? "unknown") !== provider) continue;
+    const read = Number(p.cacheReadTokens ?? 0) || 0;
+    if (read <= 0) continue;
+    const price = MODEL_PRICING[String(p.model ?? "")];
+    if (!price) continue;
+    // A cache read bills at a fraction of the fresh input rate; the saving is
+    // the difference. Anthropic reads at 10%, and the OpenAI-compatible hosts
+    // that report cached tokens discount at least as much, so 90% of the fresh
+    // rate is the conservative floor of what was saved.
+    saved += (read / 1_000_000) * price.inputPerMillion * 0.9;
+  }
+  return saved;
 }

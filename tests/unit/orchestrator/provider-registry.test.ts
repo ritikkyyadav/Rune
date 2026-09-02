@@ -88,19 +88,18 @@ describe("buildGateway", () => {
     expect(provider!.oauth).toBe(false);
   });
 
-  it("registers the Copilot transport from a device credential (durable GitHub token)", () => {
+  it("never registers a provider that was removed, even with a credential", () => {
+    // `copilot` was dropped in P8.5. A leftover credential in the store must
+    // not resurrect it: the preset is the gate.
     const gw = buildGateway({
-      provider: "copilot",
+      provider: "codex",
       keys: {},
-      credentials: { copilot: { kind: "apiKey", secret: "gho_x", meta: { method: "device" } } },
+      credentials: {
+        codex: { kind: "bearer", secret: "tok" },
+        copilot: { kind: "apiKey", secret: "gho_x", meta: { method: "device" } },
+      },
       env: noEnv,
     });
-    expect(gw.getRegisteredProviderNames()).toContain("copilot");
-    expect(gw.getProvider("copilot")?.name).toBe("copilot");
-  });
-
-  it("does not register Copilot without a credential (no env/key fallback exists)", () => {
-    const gw = buildGateway({ provider: "copilot", keys: {}, env: noEnv });
     expect(gw.getRegisteredProviderNames()).not.toContain("copilot");
   });
 
@@ -119,12 +118,11 @@ describe("buildGateway", () => {
   });
 
   it("does NOT phantom-register local runtimes for a cloud session", () => {
-    // ollama/lmstudio must not appear just because they have default localhost
+    // ollama must not appear just because it has a default localhost
     // URLs — a cloud session should never silently fall back to localhost.
     const gw = buildGateway({ provider: "google", keys: { google: "g" }, env: noEnv });
     const names = gw.getRegisteredProviderNames();
     expect(names).not.toContain("ollama");
-    expect(names).not.toContain("lmstudio");
   });
 
   it("registers local ollama when it is the active provider", () => {
@@ -136,10 +134,10 @@ describe("buildGateway", () => {
     const gw = buildGateway({
       provider: "google",
       keys: { google: "g" },
-      localBaseUrls: { lmstudio: "http://localhost:1234/v1" },
+      localBaseUrls: { ollama: "http://box:11434" },
       env: noEnv,
     });
-    expect(gw.getRegisteredProviderNames()).toContain("lmstudio");
+    expect(gw.getRegisteredProviderNames()).toContain("ollama");
   });
 
   it("honors OLLAMA_HOST as a configured local endpoint", () => {
@@ -207,11 +205,6 @@ describe("providerStatus", () => {
     expect(o.endpoint).toBe("http://box:11434");
     expect(o.hasKey).toBe(true); // configured → usable
     expect(o.masked).toBe(""); // never a key
-
-    const lm = rows.find((r) => r.id === "lmstudio")!;
-    expect(lm.local).toBe(true);
-    expect(lm.endpoint).toBe("http://localhost:1234/v1"); // preset default
-    expect(lm.hasKey).toBe(false); // not configured, not active
   });
 
   it("reports the key count and a masked, dated pool for a multi-account provider", () => {
@@ -330,20 +323,25 @@ describe("resolveProviderCredentials + credential-map firewall", () => {
     expect(credentials.groq?.secret).toBe("gsk_store_wins");
   });
 
-  it("resolves a Copilot device credential stored under the oauth account", async () => {
+  it("resolves a JSON credential blob stored under the oauth account", async () => {
+    // Copilot exercised this shape with a device-code flow until P8.5 removed
+    // it; no device-flow provider remains, so the surviving assertion is the
+    // storage shape itself — a JSON blob under the oauth account, unwrapped to
+    // its secret and stamped with the method the STRATEGY ran, not the one
+    // written into the blob.
     const store = await openCredentialStore({ forceBackend: "file", env: storeEnv });
     await store.set(
-      oauthAccount("copilot"),
-      JSON.stringify({ secret: "gho_stored", method: "device" }),
+      oauthAccount("openrouter"),
+      JSON.stringify({ secret: "sk-or-stored", method: "device" }),
     );
     const credentials = await resolveProviderCredentials({
       store,
       keys: {},
-      active: "copilot",
+      active: "openrouter",
       env: noEnv,
     });
-    expect(credentials.copilot?.secret).toBe("gho_stored");
-    expect(credentials.copilot?.meta?.method).toBe("device");
+    expect(credentials.openrouter?.secret).toBe("sk-or-stored");
+    expect(credentials.openrouter?.meta?.method).toBe("oauth");
   });
 
   it("does not emit credentials for local runtimes (they register keylessly)", async () => {
@@ -355,7 +353,6 @@ describe("resolveProviderCredentials + credential-map firewall", () => {
       env: noEnv,
     });
     expect(credentials.ollama).toBeUndefined();
-    expect(credentials.lmstudio).toBeUndefined();
   });
 
   it("skips disabled providers during resolution", async () => {

@@ -43,6 +43,19 @@ function formatPercent(rate: number): string {
 }
 
 /**
+ * A cache hit rate for display. THE rule of this module, in one function:
+ * `null` is "no data", never "0%". They are different facts — a provider that
+ * reports no cache counters and a provider whose cache missed every time — and
+ * rendering them the same is how an invented number reaches a screen.
+ *
+ * Every surface that shows a hit rate calls this: the `/cost` readout, the
+ * status line, and `gear audit`.
+ */
+export function formatCacheRate(rate: number | null): string {
+  return rate === null ? "no data" : formatPercent(rate);
+}
+
+/**
  * The full readout.
  *
  * Ordered by the question each line answers: what did this cost me, what would
@@ -95,6 +108,25 @@ export function formatCostReport(b: CostBreakdown): CostReportLine[] {
     });
   }
 
+  // 3b. Per provider, when more than one was used. A blended rate across a
+  // caching provider and a non-caching one describes neither.
+  const providers = Object.entries(b.cacheByProvider);
+  if (providers.length > 1) {
+    for (const [provider, stats] of providers) {
+      lines.push({
+        label: `  ${provider}`,
+        value: formatCacheRate(stats.hitRate),
+        note:
+          stats.hitRate === null
+            ? "no usage reported"
+            : `${formatTokens(stats.cacheReadTokens)} of ${formatTokens(
+                stats.totalInputTokens,
+              )} warm · saved ${tilde}${formatUsd(stats.savingUsd)}`,
+        tone: stats.hitRate === null ? "muted" : stats.hitRate >= 0.5 ? "good" : "normal",
+      });
+    }
+  }
+
   // 4. Volume, so the dollar figures have a denominator.
   lines.push({
     label: "Tokens",
@@ -136,5 +168,5 @@ export function formatCostSummary(b: CostBreakdown): string {
       ? formatUsd(b.totalCostUsd)
       : `${tilde}${formatUsd(b.totalListCostUsd)} value`;
   if (b.cacheHitRate === null) return spend;
-  return `${spend} · cache ${formatPercent(b.cacheHitRate)}`;
+  return `${spend} · cache ${formatCacheRate(b.cacheHitRate)}`;
 }

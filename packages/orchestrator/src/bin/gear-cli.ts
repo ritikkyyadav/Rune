@@ -208,7 +208,7 @@ if (values.help) {
         `    --out <path>                 Write output to file instead of stdout\n\n` +
         `  Global options:\n` +
         `    -m, --model <model>          LLM model to use\n` +
-        `    -p, --provider <provider>    LLM provider (anthropic|openai|openrouter|google|ollama-turbo|ollama|lmstudio)\n` +
+        `    -p, --provider <provider>    LLM provider (anthropic|openai|openrouter|google|ollama-turbo|ollama)\n` +
         `    -w, --workspace <path>       Workspace root directory\n` +
         `    -r, --resume <sessionId>     Resume an existing session\n` +
         `    -n, --new                    Start a fresh session (skip the resume picker)\n` +
@@ -328,8 +328,7 @@ if (command === "models") {
   process.exit(process.exitCode ?? 0);
 }
 
-type CliProvider =
-  "anthropic" | "openai" | "openrouter" | "google" | "ollama-turbo" | "ollama" | "lmstudio";
+type CliProvider = "anthropic" | "openai" | "openrouter" | "google" | "ollama-turbo" | "ollama";
 
 const DEFAULT_MODELS: Record<CliProvider, string> = {
   anthropic: "claude-sonnet-4-6",
@@ -341,11 +340,10 @@ const DEFAULT_MODELS: Record<CliProvider, string> = {
   google: "gemini-2.5-flash",
   "ollama-turbo": "gpt-oss:120b",
   ollama: "llama3.1",
-  lmstudio: "local-model",
 };
 
 /** Local runtimes that need no API key — reached by base URL on this machine. */
-const LOCAL_PROVIDERS: ReadonlySet<string> = new Set(["ollama", "lmstudio"]);
+const LOCAL_PROVIDERS: ReadonlySet<string> = new Set(["ollama"]);
 
 function isCliProvider(provider: string): provider is CliProvider {
   return (
@@ -354,8 +352,7 @@ function isCliProvider(provider: string): provider is CliProvider {
     provider === "openrouter" ||
     provider === "google" ||
     provider === "ollama-turbo" ||
-    provider === "ollama" ||
-    provider === "lmstudio"
+    provider === "ollama"
   );
 }
 
@@ -374,8 +371,6 @@ function configuredModelForProvider(
       return config.llm.google?.model;
     case "ollama":
       return config.llm.ollama?.model;
-    case "lmstudio":
-      return config.llm.lmstudio?.model;
     case "ollama-turbo":
       // No dedicated config.llm section; fall back to DEFAULT_MODELS / --model.
       return undefined;
@@ -389,7 +384,6 @@ function resolveLocalBaseUrls(
 ): Record<string, string> {
   const out: Record<string, string> = {};
   if (config.llm.ollama?.baseUrl) out.ollama = config.llm.ollama.baseUrl;
-  if (config.llm.lmstudio?.baseUrl) out.lmstudio = config.llm.lmstudio.baseUrl;
   for (const [id, url] of Object.entries(secrets.endpoints ?? {})) {
     if (url) out[id] = url;
   }
@@ -905,8 +899,9 @@ async function main() {
     activeKeyId: secrets.activeKeyId,
     customEndpoint: secrets.custom,
     disabledProviders: secrets.disabled,
-    // Local runtime base URLs (ollama / lmstudio): config.toml defaults + /keys edits.
+    // Local runtime base URLs (ollama): config.toml defaults + /keys edits.
     localBaseUrls: resolveLocalBaseUrls(config, secrets),
+    ollamaKeepAlive: config.llm.ollama?.keepAlive,
     search: config.search,
     research: config.research,
     memory: config.memory,
@@ -2216,7 +2211,7 @@ async function main() {
             `\n  ${muted("Set ")}${info("/keys set <provider> <key>")}${muted(" · ")}${info("/keys clear <provider>")}${muted(" · ")}${info("/keys off|on <provider>")}\n`,
           );
           process.stdout.write(
-            `  ${muted("Local ")}${info("/keys url <ollama|lmstudio> <baseUrl>")}${muted(" · no key needed")}\n`,
+            `  ${muted("Local ")}${info("/keys url <ollama> <baseUrl>")}${muted(" · no key needed")}\n`,
           );
           process.stdout.write(
             `  ${muted("Custom ")}${info("/keys custom <baseUrl> <model> <key>")}${muted(" · providers: ")}${faint(PROVIDER_PRESETS.map((p) => p.id).join(", "))}\n\n`,
@@ -2332,7 +2327,7 @@ async function main() {
           const preset = getPreset(id);
           if (!preset?.local) {
             process.stdout.write(
-              `  ${warn("Unknown local runtime")} ${info(id)}${muted(" · try ")}${faint("ollama, lmstudio")}\n`,
+              `  ${warn("Unknown local runtime")} ${info(id)}${muted(" · try ")}${faint("ollama")}\n`,
             );
             showPrompt();
             return;
@@ -2348,7 +2343,7 @@ async function main() {
           return;
         }
         process.stdout.write(
-          `  ${warn("Usage:")} ${info("/keys")}${muted(" · ")}${info("set <p> <key>")}${muted(" · ")}${info("clear <p>")}${muted(" · ")}${info("off|on <p>")}${muted(" · ")}${info("url <ollama|lmstudio> <baseUrl>")}${muted(" · ")}${info("custom <url> <model> <key>")}\n`,
+          `  ${warn("Usage:")} ${info("/keys")}${muted(" · ")}${info("set <p> <key>")}${muted(" · ")}${info("clear <p>")}${muted(" · ")}${info("off|on <p>")}${muted(" · ")}${info("url <ollama> <baseUrl>")}${muted(" · ")}${info("custom <url> <model> <key>")}\n`,
         );
         showPrompt();
         return;
@@ -2697,7 +2692,7 @@ async function main() {
             provs.forEach((p, i) => process.stdout.write(formatProviderLine(i + 1, p) + "\n"));
             process.stdout.write(`    ${warn("[t]")} ${faint("type provider/model directly")}\n\n`);
             process.stdout.write(
-              `  ${faint("subscriptions (Claude Pro/Max · ChatGPT · Copilot):")} ${info("gear login")}\n`,
+              `  ${faint("subscriptions (Claude Pro/Max · ChatGPT):")} ${info("gear login")}\n`,
             );
 
             const a1 = (await ask(`  ${info("›")} `)).toLowerCase();

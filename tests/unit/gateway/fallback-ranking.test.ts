@@ -134,12 +134,10 @@ describe("capacity ranking", () => {
       "openrouter",
       "ollama",
       "ollama-turbo",
-      "lmstudio",
       "google",
       "groq",
       "xai",
       "deepseek",
-      "copilot",
       "codex",
       "custom",
     ];
