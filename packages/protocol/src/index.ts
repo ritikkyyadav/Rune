@@ -60,6 +60,7 @@ export type {
   HostCommands,
   HostStreamName,
   HostStreams,
+  ReplayFrame,
   SessionSummary,
   SubscribeResult,
   TranscriptMessage,

@@ -51,20 +51,38 @@ export interface TranscriptMessage {
   timestamp: string;
 }
 
+/** One replayed frame, carrying the store sequence it was reconstructed from. */
+export interface ReplayFrame {
+  seq: number;
+  event: AgentTurnEvent;
+}
+
 /** What `subscribe` hands back before live frames begin (P2.5). */
 export interface SubscribeResult {
   sessionId: string;
   /** Sequence the backfill ends at; pass it as `sinceSeq` to resume from here. */
   seq: number;
-  /** Settled history reconstructed from the session store. */
-  backfill: AgentTurnEvent[];
-  /** Recent LIVE frames from the host's ring buffer, newer than the store. */
+  /** Settled agent history reconstructed from the session store. */
+  backfill: ReplayFrame[];
+  /**
+   * The user's own turns, with their sequences, so a client can interleave
+   * them with `backfill` and rebuild the conversation in order. They are not
+   * `AgentTurnEvent`s — the union has no member for "the person said this".
+   */
+  userTurns: Array<{ seq: number; text: string }>;
+  /**
+   * Recent LIVE frames from the host's ring buffer — newer than anything the
+   * store has, so a client reconnecting mid-turn sees the tool call that is
+   * running right now and not only the last thing written to the database.
+   */
   live: AgentTurnEvent[];
   /**
-   * True when the backfill is settled state rather than a keystroke-accurate
-   * replay: `text_delta` is never persisted, so a client reconnecting mid-turn
-   * gets the assistant text it has so far as one settled block and is told so,
-   * rather than being handed a stream it can silently mis-assemble.
+   * Always true, and the client is expected to say so.
+   *
+   * `text_delta` is never persisted, so an assistant turn comes back as ONE
+   * settled block rather than the stream that produced it. Announcing that is
+   * the difference between "here is the state" and handing a client a stream
+   * it can mis-assemble into a half-typed sentence that never existed.
    */
   settled: true;
   /** True when a turn is in flight on this session right now. */
