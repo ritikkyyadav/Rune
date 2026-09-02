@@ -176,11 +176,39 @@ install that works and one a stranger abandons.
 
 Add each at Settings → Secrets and variables → Actions → New repository secret.
 
-For the Linux public key: commit it to the README so anyone can verify a download. It is a public key;
-publishing it is the point.
+Every signing step is guarded on its own secret and prints a GitHub warning naming what was skipped
+and what the consequence is. A release with no secrets configured still builds, checksums, smokes and
+publishes — it is simply unsigned. A release workflow that fails because a certificate has not been
+bought yet would be a worse repository than an unsigned release.
 
 macOS is the one that matters most — Gatekeeper blocks by default, SmartScreen only warns — so if you
-buy one certificate, buy the Apple one.
+buy one certificate, buy the Apple one. Note that a bare Mach-O executable cannot be *stapled* (there
+is nowhere in the file to put the ticket); the workflow attempts it, says so when it cannot, and the
+notarization ticket is looked up online instead. That is normal for CLI binaries.
+
+**The Linux signing key**, which costs nothing and is the one you can do today:
+
+```bash
+bun scripts/keygen.ts
+```
+
+It prints the keypair rather than writing it — a private key inside a git repository is one
+`git add -A` away from being public, and that has happened in this repo before. Paste the base64
+private half into `GEAR_SIGNING_PRIVATE_KEY`, put the public half in the README's verification block
+(replacing the placeholder), and store the private key in a password manager too: losing it means
+publishing a new public key that every existing verifier will reject.
+
+What gets signed is `SHA256SUMS`, not each binary — that file names every artifact with its digest
+and is generated in the same job that built them, so one signature covers the release. The workflow
+verifies its own signature before writing it, against the public key derived from the same private
+key, so a broken signature cannot ship.
+
+Build provenance is free and needs no secret: `actions/attest-build-provenance` runs on every
+release and ties the bytes to this workflow, this commit and this runner.
+
+```bash
+gh attestation verify gear-linux-x64 --repo ritikkyyadav/Alan
+```
 
 ### D1d — External validation
 

@@ -160,14 +160,196 @@ jobs:
           path: out/*
           retention-days: 7
 
-  publish:
-    name: Checksum, smoke, publish
-    needs: [version, cli, tools-native, tools-linux-arm64]
-    runs-on: ubuntu-latest
+  # ── Code signing ──
+  # Every signing step is guarded on its secret being present and prints why it
+  # skipped when it is not. An unsigned release is a worse product; a release
+  # workflow that FAILS because a certificate has not been bought yet is a
+  # worse repository. Secrets are named in docs/release.md.
+  #
+  # These jobs always upload their artifacts, signed or not, so the publish job
+  # can download `signed-*` last and overwrite unconditionally. Making the
+  # presence of a secret change the artifact graph is how a release learns to
+  # depend on which secrets happened to exist that day.
+
+  sign-macos:
+    name: Sign + notarize (macOS)
+    needs: [cli, tools-native]
+    runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
+          pattern: cli
+          path: in
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: gear-tools-darwin-*
+          path: in
+          merge-multiple: true
+      - name: Stage the darwin binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          for f in gear-darwin-arm64 gear-darwin-x64 gear-tools-darwin-arm64 gear-tools-darwin-x64; do
+            [ -f "in/$f" ] && cp "in/$f" "out/$f"
+          done
+          chmod +x out/* || true
+          ls -la out/
+      - name: Developer ID sign, notarize, staple
+        shell: bash
+        env:
+          CERT: ${{ secrets.MACOS_CERTIFICATE }}
+          CERT_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CERT:-}" ] || [ -z "${IDENTITY:-}" ]; then
+            echo "::warning::MACOS_CERTIFICATE / MACOS_SIGNING_IDENTITY not set - macOS binaries ship UNSIGNED and will hit Gatekeeper. See docs/release.md."
+            exit 0
+          fi
+
+          # A throwaway keychain, unlocked only for this job.
+          KEYCHAIN="$RUNNER_TEMP/gear-signing.keychain-db"
+          KEYCHAIN_PWD="$(openssl rand -base64 24)"
+          security create-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+          echo "$CERT" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "${CERT_PWD:-}" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PWD" "$KEYCHAIN" >/dev/null
+          security list-keychain -d user -s "$KEYCHAIN" login.keychain-db
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+          for f in out/*; do
+            echo "signing $f"
+            # --options runtime is what notarization requires; --timestamp is
+            # what makes the signature outlive the certificate.
+            codesign --force --timestamp --options runtime \
+              --sign "$IDENTITY" "$f"
+            codesign --verify --strict --verbose=2 "$f"
+          done
+
+          if [ -z "${APPLE_ID:-}" ] || [ -z "${APPLE_APP_PASSWORD:-}" ] || [ -z "${APPLE_TEAM_ID:-}" ]; then
+            echo "::warning::APPLE_ID / APPLE_APP_PASSWORD / APPLE_TEAM_ID not set - binaries are signed but NOT notarized; Gatekeeper will still warn."
+            exit 0
+          fi
+
+          # notarytool takes an archive, not a bare executable.
+          ( cd out && zip -q ../notarize.zip ./* )
+          xcrun notarytool submit notarize.zip \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+
+          # Stapling attaches the ticket to the file so Gatekeeper needs no
+          # network. It works on bundles, disk images and packages - a bare
+          # Mach-O executable has nowhere to put a ticket, and the ticket is
+          # served online instead. Attempt it, say what happened, do not fail.
+          for f in out/*; do
+            if xcrun stapler staple "$f" 2>/dev/null; then
+              echo "stapled $f"
+            else
+              echo "note: $f is a bare executable and cannot be stapled; its notarization ticket is looked up online."
+            fi
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-darwin
+          path: out/*
+          retention-days: 7
+
+  sign-windows:
+    name: Sign (Windows Authenticode)
+    needs: [cli, tools-native]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cli
+          path: in
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: gear-tools-windows-*
+          path: in
+          merge-multiple: true
+      - name: Stage the windows binaries
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          foreach ($f in @('gear-windows-x64.exe','gear-tools-windows-x64.exe')) {
+            if (Test-Path "in/$f") { Copy-Item "in/$f" "out/$f" }
+          }
+          Get-ChildItem out
+      - name: Authenticode sign
+        shell: pwsh
+        env:
+          CERT: ${{ secrets.WINDOWS_CERTIFICATE }}
+          CERT_PWD: ${{ secrets.WINDOWS_CERTIFICATE_PWD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:CERT)) {
+            Write-Host "::warning::WINDOWS_CERTIFICATE not set - Windows binaries ship UNSIGNED and will hit SmartScreen. See docs/release.md."
+            exit 0
+          }
+          $pfx = Join-Path $env:RUNNER_TEMP 'gear-signing.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT))
+          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe |
+            Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1
+          if (-not $signtool) { throw 'signtool.exe not found on this runner' }
+          foreach ($f in (Get-ChildItem out)) {
+            # A timestamp is what keeps the signature valid after the
+            # certificate expires; without it every install breaks on expiry.
+            & $signtool.FullName sign /f $pfx /p $env:CERT_PWD `
+              /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $f.FullName
+            if ($LASTEXITCODE -ne 0) { throw "signtool failed for $($f.Name)" }
+            & $signtool.FullName verify /pa $f.FullName
+            if ($LASTEXITCODE -ne 0) { throw "verification failed for $($f.Name)" }
+          }
+          Remove-Item -Force $pfx
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-windows
+          path: out/*
+          retention-days: 7
+
+  publish:
+    name: Checksum, smoke, publish
+    needs: [version, cli, tools-native, tools-linux-arm64, sign-macos, sign-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # attest-build-provenance mints a signed statement tying these bytes to
+      # this workflow, this commit and this runner.
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      # Order matters: unsigned first, signed second, so the signed copies
+      # overwrite. `merge-multiple` resolves collisions by download order.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cli
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: gear-tools-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: signed-*
           path: dist
           merge-multiple: true
       - name: Every target the one list names is present
@@ -190,6 +372,20 @@ jobs:
           cd dist
           sha256sum gear-* > SHA256SUMS
           cat SHA256SUMS
+      # ── Linux has no OS-level signing, so it gets a detached signature ──
+      # Signing SHA256SUMS covers every artifact at once: that file names them
+      # all with their digests and was generated in the step above, beside the
+      # binaries it describes. The public key lives in the README.
+      - name: Detached Ed25519 signature over SHA256SUMS
+        env:
+          GEAR_SIGNING_PRIVATE_KEY: ${{ secrets.GEAR_SIGNING_PRIVATE_KEY }}
+        run: bun scripts/sign-release.ts sign dist
+
+      - name: Build provenance attestation
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: "dist/gear-*"
+
       - name: Smoke the Linux pair end-to-end
         run: |
           chmod +x dist/gear-linux-x64 dist/gear-tools-linux-x64
