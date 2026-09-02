@@ -86,3 +86,22 @@ Found 2026-09-03 by Phase 9 (the web product):
   undeclared long option silently swallows the following argument. Phase 9 added `--console` and
   `--no-browser` to the declaration list for exactly this reason; the underlying trap is unchanged
   and will catch the next flag somebody adds — found in P9.2
+
+Found 2026-09-03 by Phase 9 (the web product), continued:
+
+- `packages/orchestrator/src/bin/engine-host.ts` — `resume_session` still returns only the
+  user's turns ("v1" in its own comment) while `subscribe` returns the whole reconstructed
+  event stream. The app now uses `subscribe` and the older command is dead weight with a
+  misleading name; either make it return `engine.getTranscript()` or remove it from the
+  protocol — found in P9.5
+- `apps/web/src/components/Transcript.tsx:337` — a `todo_write` call renders both a raw-JSON
+  tool row AND a "Plan:" line, and the plan ledger above the transcript now shows the same
+  list a third time. The tool row should collapse to "planned 3 steps" — found in P9.5
+- `apps/web/branding/` — the mark is recreated from the geometry in the brief, not the
+  founder's original vector. `scripts/generate-gear-mark.ts` exists so the real file can
+  replace `gear-mark.svg` byte-for-byte; the derivatives are then one command away
+  (`scripts/generate-gear-raster.ts`) — founder action, not a defect
+- The app's Connect tab cannot complete an OAuth login: the callback needs a loopback
+  listener a page cannot open, so it prints `gear login <provider>`. A host command that
+  runs the existing `oauth-strategy.ts` flow and streams its state would close this; it is
+  the same gap Phase 3 logged — found in P9.4
