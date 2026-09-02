@@ -199,3 +199,65 @@ Events: `server-ready`, `server-down`, `server-needs-auth`, `server-restarted`,
 — repeating them in the status line would turn a signal into texture.
 
 **One broken connector never stops the others**, and never stops the session.
+
+---
+
+## The rest of the protocol
+
+Gear used to speak four methods: `initialize`, `tools/list`, `tools/call`,
+`ping`. Everything else was answered `-32601`.
+
+**Resources** — the documents, pages and records a server exposes read-only —
+become two things:
+
+```
+read_resource                       one tool spanning EVERY connector
+@notion:notion://page/abc123        a mention in the composer
+```
+
+One tool, not one per server: a user with four connectors gets one schema, not
+four, and the model does not have to know which server owns a URI before it can
+read anything. Called with no `uri` it lists what every connected service
+exposes, so the model never has to guess a URI scheme it has not seen.
+
+A `@server:uri` mention in a message is expanded into the resource before the
+turn. An unknown mention stays literal text — an email address is not a
+resource, and guessing would be worse than doing nothing.
+
+**Prompts** become slash commands, `/server:prompt`. Positional arguments match
+the prompt's declared argument names in order, `name=value` pairs are honoured,
+and a trailing multi-word argument does not need quoting.
+
+**Elicitation** — a server asking the *user* for input mid-call — maps onto the
+`ask_user` round-trip the harness already owns, so a connector's question lands
+in the same picker as the agent's own. One question surface, not two. With no
+handler wired (headless, CI) the connector is declined promptly rather than
+blocked on a person who is not there. Gear declares the `elicitation` capability
+on `initialize`, because a server reading an empty capabilities object never
+asks and the feature is dead however well the handler works.
+
+**Server instructions** were typed since the first handshake and thrown away
+every time. A server saying "search before you delete" is telling the model
+something no tool description carries; it is injected once per session.
+
+**Annotations** shaped permission and category, which were previously binary:
+
+| Hint | Effect |
+|---|---|
+| `readOnlyHint` | read category, parallel-safe, no prompt |
+| `destructiveHint` | write category, **always** confirms — even under `autoApprove`, because a list written before a server added a delete tool must not silently cover it |
+
+**Argument validation** now runs against the full `inputSchema`: types, enums,
+`required`, ranges, lengths, patterns, the common string formats, arrays, and
+one level of nesting. A wrong type used to travel to the server, cost a round
+trip, and come back as prose the model often could not act on. Caught locally it
+is precise and free — and it names the parameter, what was expected, and (for a
+hallucinated argument on a closed schema) what the real ones are. Anything the
+validator does not understand is ignored rather than guessed at: the server is
+still the authority, and rejecting a valid call is far worse than letting an
+unusual one through.
+
+**Transports.** Streamable HTTP (2025-06-18) with the optional `GET`
+server→client stream, plus the legacy two-endpoint SSE transport (2024-11-05)
+for older deployments. A server that offers no `GET` stream answers 405 and the
+session carries on — that stream is additive.

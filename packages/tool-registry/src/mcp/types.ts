@@ -85,6 +85,66 @@ export interface McpProgress {
   message?: string;
 }
 
+// ─── Resources, prompts, elicitation (2025-06-18) ───
+
+export interface McpResource {
+  uri: string;
+  name?: string;
+  title?: string;
+  description?: string;
+  mimeType?: string;
+}
+
+export interface McpResourceContents {
+  uri?: string;
+  mimeType?: string;
+  text?: string;
+  /** base64, for binary resources. */
+  blob?: string;
+}
+
+export interface McpPromptArgument {
+  name: string;
+  description?: string;
+  required?: boolean;
+}
+
+export interface McpPrompt {
+  name: string;
+  title?: string;
+  description?: string;
+  arguments?: McpPromptArgument[];
+}
+
+export interface McpPromptMessage {
+  role: "user" | "assistant";
+  content: McpContentBlock;
+}
+
+export interface McpGetPromptResult {
+  description?: string;
+  messages?: McpPromptMessage[];
+}
+
+/**
+ * A server asking the USER for input mid-call (elicitation/create). Mapped onto
+ * the ask_user round-trip the harness already owns, so a connector's question
+ * reaches the same picker as the agent's own — one question surface, not two.
+ */
+export interface McpElicitRequest {
+  message: string;
+  requestedSchema?: {
+    type?: "object";
+    properties?: Record<string, { type?: string; description?: string; enum?: string[] }>;
+    required?: string[];
+  };
+}
+
+export type McpElicitResult =
+  | { action: "accept"; content: Record<string, unknown> }
+  | { action: "decline" }
+  | { action: "cancel" };
+
 /** Typed lifecycle/observability events a client emits to an optional sink. */
 export type McpEvent =
   | { type: "server-ready"; server: string; protocolVersion: string; toolCount: number }
@@ -121,6 +181,12 @@ export const MCP_METHODS = {
   ping: "ping",
   cancelled: "notifications/cancelled",
   progress: "notifications/progress",
+  resourcesList: "resources/list",
+  resourcesRead: "resources/read",
+  resourcesTemplatesList: "resources/templates/list",
+  promptsList: "prompts/list",
+  promptsGet: "prompts/get",
+  elicitationCreate: "elicitation/create",
   toolsListChanged: "notifications/tools/list_changed",
   resourcesListChanged: "notifications/resources/list_changed",
   promptsListChanged: "notifications/prompts/list_changed",

@@ -25,6 +25,11 @@ import {
   setRequireOsIsolation,
   setLspAutoFeedback,
 } from "@gear/tool-registry";
+import {
+  expandPromptCommand,
+  findResourceMentions,
+  readResourceText,
+} from "@gear/tool-registry";
 import type {
   DashboardInfo,
   McpEvent,
@@ -363,6 +368,26 @@ function inferProviderFromModel(model: string): string | undefined {
 }
 
 // ─── Engine Config ───
+
+/**
+ * Turn an elicited answer back into the type the server's schema asked for.
+ *
+ * A person types "42" and "yes"; a schema that wants a number or a boolean and
+ * receives a string gets a validation error from its own side, which the user
+ * then has to decode. Anything unrecognized stays a string — guessing past
+ * these three cases would be worse than passing the text through.
+ */
+function coerceElicited(text: string, type?: string): unknown {
+  if (type === "number" || type === "integer") {
+    const n = Number(text);
+    return Number.isFinite(n) ? n : text;
+  }
+  if (type === "boolean") {
+    if (/^(y|yes|true|1)$/i.test(text)) return true;
+    if (/^(n|no|false|0)$/i.test(text)) return false;
+  }
+  return text;
+}
 
 export interface EngineConfig {
   model: string;
@@ -1705,6 +1730,27 @@ export class Engine {
         // ever subscribed, so under the TUI (which suppresses stderr) a dead
         // connector was completely silent. This is the subscriber.
         onEvent: (ev) => this.recordMcpEvent(ev),
+        // A connector's question reaches the ask_user round-trip the harness
+        // already owns, so it lands in the same picker as the agent's own —
+        // one question surface, not two. With no handler wired (headless, CI)
+        // the connector is declined promptly rather than blocked on a person
+        // who is not there.
+        onElicit: async (req, server) => {
+          const handler = this.questionHandler;
+          if (!handler) return { action: "decline" as const };
+          const props = req.requestedSchema?.properties ?? {};
+          const [field, spec] = Object.entries(props)[0] ?? [];
+          const answer = await handler({
+            question: `${server}: ${req.message}`,
+            options: spec?.enum ?? [],
+          });
+          const text = answer.trim();
+          if (!text) return { action: "cancel" as const };
+          return {
+            action: "accept" as const,
+            content: field ? { [field]: coerceElicited(text, spec?.type) } : { value: text },
+          };
+        },
         extraServers: Object.keys(extraServers).length > 0 ? extraServers : undefined,
         // Live tool-list changes (or a server restart) reconcile the registry so
         // the model always sees the current tool set without a session restart.
@@ -1794,6 +1840,70 @@ export class Engine {
     } else if (ev.type === "server-ready" || ev.type === "server-restarted") {
       this.mcpUnavailable.delete(ev.server);
     }
+  }
+
+  /**
+   * Each connected server's own operating instructions, as one harness note,
+   * once per session.
+   *
+   * `instructions` has been typed since the first handshake and discarded every
+   * time. A server saying "search before you delete" or "ids are opaque, never
+   * construct one" is telling the model something no tool description carries.
+   */
+  private serverInstructionsNote(sessionId: string): string | null {
+    if (this.instructionsShown.has(sessionId)) return null;
+    const all = this.mcpDiscovery?.getServerInstructions() ?? [];
+    if (all.length === 0) return null;
+    this.instructionsShown.add(sessionId);
+    const blocks = all.map(
+      (s) => `[${s.server}] ${s.instructions.replace(/\s+/g, " ").slice(0, 800)}`,
+    );
+    return (
+      "[Harness note] Operating instructions from the connected services — follow them when " +
+      `using their tools:\n${blocks.join("\n")}`
+    );
+  }
+  private readonly instructionsShown = new Set<string>();
+
+  /** Connector prompts, as `/server:prompt` slash commands (backs the composer). */
+  async listMcpPromptCommands(): Promise<
+    Awaited<ReturnType<McpDiscovery["listPromptCommands"]>>
+  > {
+    await this.ensureMcpServers();
+    return this.mcpDiscovery?.listPromptCommands() ?? [];
+  }
+
+  /** Expand one connector prompt into the text a turn starts from. */
+  async expandMcpPrompt(name: string, argv: string[]): Promise<string | null> {
+    await this.ensureMcpServers();
+    if (!this.mcpDiscovery) return null;
+    const commands = await this.mcpDiscovery.listPromptCommands();
+    const hit = commands.find((c) => c.name === name);
+    if (!hit) return null;
+    return expandPromptCommand(this.mcpDiscovery.allClients(), hit, argv);
+  }
+
+  /**
+   * Expand every `@server:uri` mention in a message into the resource it
+   * names, appended as context. Unknown mentions are left alone — an email
+   * address is not a resource, and guessing would be worse than doing nothing.
+   */
+  async expandResourceMentions(message: string): Promise<string> {
+    if (!this.mcpDiscovery || !message.includes("@")) return message;
+    const clients = this.mcpDiscovery.resourceClients();
+    if (clients.size === 0) return message;
+    const blocks: string[] = [];
+    for (const mention of findResourceMentions(message)) {
+      const client = clients.get(mention.server);
+      if (!client) continue;
+      try {
+        const { text } = await readResourceText(client, mention.uri);
+        if (text) blocks.push(`<resource uri="@${mention.server}:${mention.uri}">\n${text}\n</resource>`);
+      } catch {
+        // A mention that will not resolve stays literal text.
+      }
+    }
+    return blocks.length > 0 ? `${message}\n\n${blocks.join("\n\n")}` : message;
   }
 
   /** Connector lifecycle notices produced since the last drain (backs the TUI). */
@@ -3573,6 +3683,8 @@ export class Engine {
     // "can you check Notion?" is exactly when it matters.
     const connectors = this.connectorNote(sessionId);
     if (connectors) loop.injectHarnessNote(connectors);
+    const serverInstructions = this.serverInstructionsNote(sessionId);
+    if (serverInstructions) loop.injectHarnessNote(serverInstructions);
 
     // ── Incremental persistence ──
     // Session events are written as the run PRODUCES them, not in one sweep at
