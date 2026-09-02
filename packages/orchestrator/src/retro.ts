@@ -25,6 +25,9 @@ export type EventRow = { seq: number; event: SessionEvent };
 /** How a run ended. `finished` is the only clean one; the rest are handoffs. */
 export type RunOutcome = "finished" | HandoffReason;
 
+/** One run of the loop, or a whole session's log. */
+export type RetroScope = "turn" | "session";
+
 export interface RetroLesson {
   /**
    * check   — a verification command that passed here (beyond the runner
@@ -47,8 +50,31 @@ export interface RunRetro {
   v: 1;
   at: string;
   outcome: RunOutcome;
-  /** The task's goal, clipped — for the scorecard's eye, not for the model. */
-  goal: string;
+  /**
+   * What window this retro covers. A `turn` retro is one run of the loop —
+   * the engine writes one per turn, so a session holds N of them and none of
+   * them is the session. A `session` retro covers a whole log (the backfill
+   * path). The scorecard folds N turn retros into one session-shaped sample;
+   * without this field it counted a greeting turn as a whole run.
+   */
+  scope: RetroScope;
+  /**
+   * The task's goal, clipped — for the scorecard's eye, not for the model.
+   * Omitted on turn scope: the goal belongs to the session, and stamping it on
+   * every turn is what made a two-word turn read as the whole mission.
+   */
+  goal?: string;
+  /**
+   * Steps as a DELTA over the window for the work counters, absolute for the
+   * plan's shape:
+   *   `done` / `unproven` — how many steps closed (and how many closed without
+   *     evidence) inside this window. Summing them across a session's turn
+   *     retros reconstructs the session's totals.
+   *   `total` / `open` — the plan as it stood when the window closed. Taking
+   *     the last turn retro's values gives the session's ending shape.
+   * Before this, every turn reported the session's cumulative counts, so a
+   * turn that closed one step of eight reported eight done.
+   */
   steps: { total: number; done: number; unproven: number; open: number };
   checks: { passed: number; failed: number; lastPassed?: string };
   tools: { calls: number; failed: number; byName: Record<string, number> };
@@ -75,6 +101,15 @@ export interface DeriveOptions {
   /** Set when deriving from a whole session rather than one run. */
   backfilled?: boolean;
   now?: string;
+  /**
+   * The spine as it stood when this window OPENED. Step counters are reported
+   * as a delta against it, so one turn's retro reports the steps that turn
+   * closed rather than every step the session ever closed. Omit it (or pass
+   * null) for a whole-session window, where the delta is the total.
+   */
+  priorState?: TaskState | null;
+  /** Defaults to `session`; the engine's per-run retro passes `turn`. */
+  scope?: RetroScope;
 }
 
 // ─── Observations, rebuilt from the log ───
@@ -211,7 +246,23 @@ export function deriveRunRetro(rows: EventRow[], opts: DeriveOptions = {}): RunR
   const completions = rows.filter((r) => r.event.type === "assistant_msg").length;
   if (completions === 0 && observations.length === 0 && !state) return null;
 
-  const counts = store?.todoCounts() ?? { done: 0, total: 0, unproven: 0, open: 0 };
+  // Steps over the WINDOW, not over all time. The prior snapshot is the spine
+  // as it stood when the window opened; the store rebuilt from these rows is
+  // the spine as it stands now. When the window carried no `task_state` event
+  // at all, nothing about the plan moved and the prior snapshot IS the ending
+  // shape — reporting zeros there is what made real turns look like no-ops.
+  const priorStore = opts.priorState ? TaskStateStore.restore(opts.priorState) : null;
+  const zero = { done: 0, total: 0, unproven: 0, open: 0 };
+  const priorCounts = priorStore?.todoCounts() ?? zero;
+  const endCounts = (store ?? priorStore)?.todoCounts() ?? zero;
+  const counts = {
+    total: endCounts.total,
+    open: endCounts.open,
+    // Clamped: a plan the model rewrote mid-run can shrink, and a negative
+    // "steps done" is a number no scorecard should ever have to explain.
+    done: Math.max(0, endCounts.done - priorCounts.done),
+    unproven: Math.max(0, endCounts.unproven - priorCounts.unproven),
+  };
 
   let checksPassed = 0;
   let checksFailed = 0;
@@ -254,11 +305,15 @@ export function deriveRunRetro(rows: EventRow[], opts: DeriveOptions = {}): RunR
   cost.listUsd = Math.round(cost.listUsd * 1e6) / 1e6;
 
   const outcome = outcomeOf(state, rows, opts);
+  const scope: RetroScope = opts.scope ?? "session";
+  const goal = (state?.goal ?? opts.priorState?.goal ?? "").replace(/\s+/g, " ").slice(0, 200);
   const retro: RunRetro = {
     v: 1,
     at: opts.now ?? new Date().toISOString(),
     outcome,
-    goal: (state?.goal ?? "").replace(/\s+/g, " ").slice(0, 200),
+    scope,
+    // The goal is the session's, not the turn's.
+    ...(scope === "session" ? { goal } : {}),
     steps: { total: counts.total, done: counts.done, unproven: counts.unproven, open: counts.open },
     checks: { passed: checksPassed, failed: checksFailed, ...(lastPassed ? { lastPassed } : {}) },
     tools: { calls: observations.length, failed, byName },
@@ -271,6 +326,88 @@ export function deriveRunRetro(rows: EventRow[], opts: DeriveOptions = {}): RunR
   };
   if (opts.backfilled) retro.backfilled = true;
   return retro;
+}
+
+/**
+ * Fold a session's turn retros into the one session-shaped retro the scorecard
+ * should see.
+ *
+ * The engine writes a retro per RUN, so a 12-turn session left 12 rows and the
+ * scorecard counted 12 "runs" — a two-word greeting weighing exactly as much
+ * as an eight-hour build, and every rate computed against an inflated
+ * denominator. Folding is what makes a sample a session again.
+ *
+ * The arithmetic follows the delta contract in `RunRetro.steps`: work counters
+ * sum, the plan's ending shape is the last turn's, and the outcome is how the
+ * session finished — the last turn's, because that is the one that ended it.
+ */
+export function foldTurnRetros(retros: RunRetro[], goal?: string): RunRetro | null {
+  const parts = retros.filter((r) => r && r.v === 1);
+  if (parts.length === 0) return null;
+  const last = parts[parts.length - 1]!;
+
+  const byName: Record<string, number> = {};
+  const gates: Partial<Record<StepLogKind, number>> = {};
+  const lessons: RetroLesson[] = [];
+  const seenLesson = new Set<string>();
+  const folded: RunRetro = {
+    v: 1,
+    at: last.at,
+    // How the session ended is how its last turn ended.
+    outcome: last.outcome,
+    scope: "session",
+    steps: { total: last.steps.total, done: 0, unproven: 0, open: last.steps.open },
+    checks: { passed: 0, failed: 0 },
+    tools: { calls: 0, failed: 0, byName },
+    gates,
+    completions: 0,
+    filesWritten: 0,
+    cost: { usd: 0, listUsd: 0, inputTokens: 0, outputTokens: 0 },
+    durationMs: 0,
+    lessons,
+  };
+
+  for (const r of parts) {
+    folded.steps.done += r.steps.done;
+    folded.steps.unproven += r.steps.unproven;
+    folded.checks.passed += r.checks.passed;
+    folded.checks.failed += r.checks.failed;
+    if (r.checks.lastPassed) folded.checks.lastPassed = r.checks.lastPassed;
+    folded.tools.calls += r.tools.calls;
+    folded.tools.failed += r.tools.failed;
+    for (const [name, n] of Object.entries(r.tools.byName)) {
+      byName[name] = (byName[name] ?? 0) + n;
+    }
+    for (const [kind, n] of Object.entries(r.gates)) {
+      const k = kind as StepLogKind;
+      gates[k] = (gates[k] ?? 0) + (n ?? 0);
+    }
+    folded.completions += r.completions;
+    // Turns write disjoint file sets only in the happy case; a file rewritten
+    // across two turns is counted twice. The alternative is keeping every path
+    // in every retro, which is a bigger record for a number nothing gates on.
+    folded.filesWritten += r.filesWritten;
+    folded.cost.usd += r.cost.usd;
+    folded.cost.listUsd += r.cost.listUsd;
+    folded.cost.inputTokens += r.cost.inputTokens;
+    folded.cost.outputTokens += r.cost.outputTokens;
+    folded.durationMs += r.durationMs;
+    for (const l of r.lessons) {
+      if (seenLesson.has(l.title)) continue;
+      seenLesson.add(l.title);
+      lessons.push(l);
+    }
+  }
+  folded.cost.usd = Math.round(folded.cost.usd * 1e6) / 1e6;
+  folded.cost.listUsd = Math.round(folded.cost.listUsd * 1e6) / 1e6;
+
+  const g = (goal ?? parts.find((r) => r.goal)?.goal ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 200);
+  if (g) folded.goal = g;
+  if (parts.every((r) => r.backfilled)) folded.backfilled = true;
+  return folded;
 }
 
 // ─── The lessons ───

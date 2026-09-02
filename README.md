@@ -2,7 +2,7 @@
 
 > A local-first, sandboxed, multi-provider agentic coding assistant — a headless engine with CLI and desktop surfaces.
 
-**Status:** early, active development. The engine, CLI, tool suite, and evals work end-to-end; interfaces are still evolving and not all blueprint features are built yet. Current release: **Gear v0.3.0**.
+**Status:** early, active development. The engine, CLI, tool suite, and evals work end-to-end; interfaces are still evolving and not all blueprint features are built yet. Latest release: **v0.2.0**; `main` is v0.3.0-dev and the tag is not cut.
 
 > _Gear is the sole public product identity. Older internal identifiers remain only as migration-compatible package, data, and launcher aliases._
 

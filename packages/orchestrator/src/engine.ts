@@ -153,13 +153,13 @@ import {
   CheckLog,
   createReadBackTool,
   createRecordEvidenceTool,
+  isVerificationCommand,
   summarizeCheck,
   type Brief,
   type BriefHandler,
 } from "./brief";
 import { runOnParentCommit } from "./parent-check";
 import { isGitRepo } from "./worktree";
-import { isVerificationCommand } from "./bin/ui/activity";
 import type { QuestionHandler } from "./ask-user";
 export type { QuestionHandler, UserQuestion } from "./ask-user";
 import { createLoopControlTool } from "./loop-control-tool";
@@ -3200,6 +3200,10 @@ export class Engine {
       TaskStateStore.fromEvents(priorEvents) ??
       new TaskStateStore();
     this.taskStates.set(sessionId, taskState);
+    // The spine as it stands BEFORE this run touches it. The run's retro
+    // reports steps as a delta against this, so one turn's record is that
+    // turn's work and not every step the session ever closed.
+    const priorTaskState = taskState.snapshot();
     // The mission dossier: the same state at full fidelity, on disk, where it
     // survives everything — and where the model can read it back with an
     // ordinary read_file. The injected block names this path when it had to
@@ -3902,6 +3906,8 @@ export class Engine {
           runError,
           sinceAt: runStartedAt,
           durationMs: Date.now() - runStartMs,
+          scope: "turn",
+          priorState: priorTaskState,
         });
         if (retro) {
           this.sessions.appendEvent(sessionId, {
