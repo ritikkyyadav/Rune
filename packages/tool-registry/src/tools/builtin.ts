@@ -298,9 +298,9 @@ export function registerBuiltinTools(registry: ToolRegistry, binaryPath: string)
     if (schema.name === "bash") {
       handler = withNetworkPreflight(withBackgroundSupport(handler, shells));
     }
-    // Write tools get instant post-edit syntax feedback, plus semantic LSP
-    // feedback when [lsp] autoFeedback is on (both inside freshness so the
-    // added fields never disturb hash extraction).
+    // Write tools get instant post-edit syntax feedback, plus the language
+    // server's semantic verdict when [lsp] autoFeedback is on (both inside
+    // freshness so the added fields never disturb hash extraction).
     if (schema.category === "write") {
       handler = withLspFeedback(withSyntaxCheck(withFormatting(handler)), lspManager);
     }
@@ -333,9 +333,9 @@ export function registerBuiltinTools(registry: ToolRegistry, binaryPath: string)
   );
   // Codex-family edit format. Registered for everyone (execution is model-
   // agnostic) but only ADVERTISED to models trained on it — see
-  // ToolRegistry.toLlmTools(forModel). Does its own per-file syntax pass
-  // (withSyntaxCheck is single-path; a patch touches many).
-  registry.register(createApplyPatchHandler());
+  // ToolRegistry.toLlmTools(forModel). Does its own per-file syntax AND
+  // language-server pass (both wrappers are single-path; a patch touches many).
+  registry.register(createApplyPatchHandler(lspManager));
   registry.register(createN8nTriggerHandler());
   // Turns a catalog line into a usable schema. Advertised only while something
   // is still deferred (ToolRegistry.toLlmTools), so a connector-less session

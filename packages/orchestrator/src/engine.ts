@@ -29,6 +29,8 @@ import {
   probeSandboxCapability,
   setRequireOsIsolation,
   setLspAutoFeedback,
+  isLspAutoFeedbackEnabled,
+  lspAutoFeedbackDefault,
 } from "@gear/tool-registry";
 import { expandPromptCommand, findResourceMentions, readResourceText } from "@gear/tool-registry";
 import type {
@@ -624,9 +626,10 @@ export interface EngineConfig {
    */
   sandboxRequireOs?: boolean;
   /**
-   * Pull LSP diagnostics after every successful write/edit on a supported
-   * file and append errors to the tool result (`[lsp] autoFeedback = true`).
-   * Default false.
+   * Attach the language server's errors and warnings for the touched file to
+   * every successful write/edit result (`[lsp] autoFeedback`). UNSET means
+   * "decide from the workspace": on for TypeScript and Python projects whose
+   * server binary is on PATH, off otherwise. true/false pin it.
    */
   lspAutoFeedback?: boolean;
   /**
@@ -1132,8 +1135,12 @@ export class Engine {
     // silent degradation surfaces as prompts instead of uncontained runs.
     probeSandboxCapability(this.config.toolsBinaryPath);
     setRequireOsIsolation(this.config.sandboxRequireOs === true);
-    // Opt-in semantic feedback on the write path ([lsp] autoFeedback).
-    setLspAutoFeedback(this.config.lspAutoFeedback === true);
+    // Semantic feedback on the write path ([lsp] autoFeedback). Explicit
+    // config wins; unset asks the workspace — TypeScript and Python projects
+    // whose server is installed get it, everything else does not.
+    setLspAutoFeedback(
+      this.config.lspAutoFeedback ?? lspAutoFeedbackDefault(this.config.workspaceRoot),
+    );
 
     // Black box first — the gateway build below captures its tap.
     if (this.config.blackbox?.enabled) {
@@ -3679,6 +3686,12 @@ export class Engine {
       case "routing":
         this.config.effortRouting = canonicalValue as "conservative" | "off";
         return { ok: true };
+      case "lsp": {
+        const on = canonicalValue === "true";
+        this.config.lspAutoFeedback = on;
+        setLspAutoFeedback(on);
+        return { ok: true };
+      }
       case "subagents": {
         this.setSubagentMode(canonicalValue as SubagentMode);
         return { ok: true };
@@ -3704,6 +3717,10 @@ export class Engine {
         return this.doctrineDelivery();
       case "routing":
         return this.config.effortRouting ?? "conservative";
+      case "lsp":
+        // The live module state, not the config field: unset config resolves
+        // to a per-workspace default, and the user asked what is in force.
+        return isLspAutoFeedbackEnabled() ? "true" : "false";
       case "subagents":
         return this.config.subagents?.mode ?? "auto";
       default:

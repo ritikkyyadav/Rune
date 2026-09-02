@@ -1011,7 +1011,9 @@ async function main() {
     effortRouting: config.llm?.effortRouting,
     sandboxEnabled,
     sandboxRequireOs: config.sandbox?.requireOs === true,
-    lspAutoFeedback: config.lsp?.autoFeedback === true,
+    // Passed through UNSET on purpose: undefined means "decide from the
+    // workspace" (P10.1), and `=== true` would have collapsed that to off.
+    lspAutoFeedback: config.lsp?.autoFeedback,
     reliability: config.reliability,
     fallbackOrder: fallbackOrder.order as ProviderName[],
     quotaPolicy: normalizeQuotaPolicy(config.fallback?.onQuotaExceeded),
