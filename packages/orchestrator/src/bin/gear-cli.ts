@@ -2663,7 +2663,7 @@ async function main() {
             provs.forEach((p, i) => process.stdout.write(formatProviderLine(i + 1, p) + "\n"));
             process.stdout.write(`    ${warn("[t]")} ${faint("type provider/model directly")}\n\n`);
             process.stdout.write(
-              `  ${faint("subscriptions (Claude Pro/Max · ChatGPT · Copilot):")} ${info("gear login")}\n`,
+              `  ${faint("subscriptions (Claude Pro/Max · ChatGPT):")} ${info("gear login")}\n`,
             );
 
             const a1 = (await ask(`  ${info("›")} `)).toLowerCase();

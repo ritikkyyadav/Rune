@@ -69,6 +69,39 @@ measurement, not a guess.
 
 ## Providers that were removed
 
+### `copilot` — removed 2026-09-02 (P8.5, decision D5)
+
+**Decided from evidence, not preference.** D5 said to drop GitHub Copilot
+*unless the founder uses it*. The answer was in `~/.gear/gear.db`:
+
+```
+$ sqlite3 -readonly ~/.gear/gear.db \
+    "select provider, count(*) from sessions group by provider order by 2 desc"
+(null)|193
+ollama-turbo|132
+codex|115
+google|111
+openrouter|50
+
+$ sqlite3 -readonly ~/.gear/gear.db "select count(*) from sessions where provider='copilot'"
+0
+```
+
+Zero sessions, ever. (224 recorded events contain the string "copilot" — all of
+them prose inside pasted documents about coding agents, not provider traffic.)
+
+What it cost to keep: an undocumented internal endpoint
+(`api.githubcopilot.com`), VS Code header impersonation on every request, a
+hand-maintained catalogue that had gone stale, and — the one that reached other
+providers — a `stream_options` exclusion in the shared OpenAI-compatible
+adapter. Copilot's proxy was believed to reject the param, so its streams
+reported **zero usage**: the context engine never learned the real prompt size
+and compaction could not fire until the provider hard-rejected. That exclusion
+is gone; every OpenAI-compatible host now asks for the usage trailer.
+
+The removal is one commit (`P8.5`) touching only Copilot, so it can be reverted
+on its own if the decision changes.
+
 ### `lmstudio` — removed 2026-09-02 (P8.6, decision D5)
 
 It shipped `models: []` and a placeholder `local-model` default: a provider in

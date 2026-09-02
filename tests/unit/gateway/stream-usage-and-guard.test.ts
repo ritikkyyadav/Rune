@@ -80,13 +80,19 @@ describe("OpenAI-family streamed usage", () => {
     expect(text).toBe("hello");
   });
 
-  test("copilot (strict proxy) does NOT get stream_options", async () => {
-    const capture: { body?: any } = {};
-    const p = new OpenAIProvider("k", "http://localhost:9/v1", "copilot", {
-      fetch: fakeFetch(capture, STREAM),
-    });
-    await collect(p.inferStream(req()));
-    expect(capture.body.stream_options).toBeUndefined();
+  // The one host excluded from `stream_options` was Copilot's proxy, whose
+  // streams therefore reported ZERO usage — the context engine never learned
+  // the real prompt size and compaction could not fire until the provider
+  // hard-rejected. P8.5 removed the provider, so no host is excluded any more.
+  test("every openai-compatible host now asks for the usage trailer", async () => {
+    for (const name of ["openai", "openrouter", "groq", "deepseek"] as const) {
+      const capture: { body?: any } = {};
+      const p = new OpenAIProvider("k", "http://localhost:9/v1", name, {
+        fetch: fakeFetch(capture, STREAM),
+      });
+      await collect(p.inferStream(req()));
+      expect(capture.body.stream_options, name).toEqual({ include_usage: true });
+    }
   });
 
   test("legacy hosts (usage on the finish chunk, no trailer) still report usage", async () => {

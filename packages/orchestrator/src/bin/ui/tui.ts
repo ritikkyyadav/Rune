@@ -2962,7 +2962,7 @@ class Tui {
       l1start,
       undefined,
       provs.length
-        ? "subscriptions (Claude Pro/Max | ChatGPT | Copilot): gear login | keys: /keys"
+        ? "subscriptions (Claude Pro/Max | ChatGPT): gear login | keys: /keys"
         : "no providers configured yet -- add a key with /keys or sign in with gear login",
     );
     if (a1 == null) return;

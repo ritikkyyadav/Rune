@@ -32,7 +32,7 @@ describe("provider presets", () => {
       expect(p.label).toBeTruthy();
       expect(p.defaultModel).toBeTruthy();
       expect(p.docsUrl).toMatch(/^https:\/\//);
-      expect(["anthropic", "openai-compat", "google", "ollama", "copilot", "codex"]).toContain(
+      expect(["anthropic", "openai-compat", "google", "ollama", "codex"]).toContain(
         p.kind,
       );
     }
@@ -100,12 +100,12 @@ describe("auth methods + descriptor", () => {
     expect(getProviderDescriptor("ollama", noEnv)!.local).toBe(true);
   });
 
-  it("adds the three subscription providers with account-style logins", () => {
+  it("adds the subscription providers with account-style logins", () => {
+    // `copilot` was the third until P8.5 dropped it (zero sessions ever ran on
+    // it). Codex → OAuth (ChatGPT); Anthropic → OAuth (Claude Pro/Max).
     expect(getPreset("codex")).toBeDefined();
-    expect(getPreset("copilot")).toBeDefined();
-    // Codex → OAuth (ChatGPT), Copilot → device (GitHub).
     expect(effectiveAuthMethods(getPreset("codex")!, noEnv)).toEqual(["oauth"]);
-    expect(effectiveAuthMethods(getPreset("copilot")!, noEnv)).toEqual(["device"]);
+    expect(effectiveAuthMethods(getPreset("anthropic")!, noEnv)).toEqual(["oauth", "api_key"]);
   });
 });
 
@@ -113,7 +113,7 @@ describe("subscription login labels (pi-style picker)", () => {
   it("frames the account login per subscription provider", () => {
     expect(accountLoginLabel("anthropic")).toMatch(/Claude Pro\/Max/);
     expect(accountLoginLabel("codex")).toMatch(/ChatGPT Plus\/Pro/);
-    expect(accountLoginLabel("copilot")).toMatch(/Copilot/);
+    expect(accountLoginLabel("copilot")).toBeUndefined(); // dropped in P8.5
     expect(accountLoginLabel("groq")).toBeUndefined(); // API-key-only provider
   });
 
@@ -121,9 +121,6 @@ describe("subscription login labels (pi-style picker)", () => {
     expect(authMethodLabel("api_key")).toBe("Sign in with an API key");
     expect(authMethodLabel("oauth", "anthropic")).toBe(
       "Sign in with your Claude Pro/Max subscription",
-    );
-    expect(authMethodLabel("device", "copilot")).toBe(
-      "Sign in with your GitHub Copilot subscription",
     );
     expect(authMethodLabel("oauth", "groq")).toBe("Sign in with an account");
   });

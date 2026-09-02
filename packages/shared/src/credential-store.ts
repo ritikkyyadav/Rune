@@ -491,7 +491,7 @@ export function apiKeyAccount(providerId: string): string {
  * Startup needed this and did not have it. Both entry points decided whether to
  * restore the user's last model by looking only at env vars, `[llm.*].apiKey`,
  * and the legacy secrets file — none of which a subscription provider uses. A
- * ChatGPT/Codex or Copilot session is an OAuth blob in the store, so "do you
+ * ChatGPT/Codex session is an OAuth blob in the store, so "do you
  * have credentials for codex?" answered false, the sticky model was discarded,
  * and every new session opened on an auto-detected provider instead of the one
  * the user had chosen.

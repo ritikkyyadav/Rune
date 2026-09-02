@@ -68,9 +68,8 @@ export type ProviderName =
   | "groq"
   | "xai"
   | "deepseek"
-  // Subscription-backed transports (own endpoints, not the vendor's public API):
-  // GitHub Copilot and the ChatGPT-backend Codex "responses" API.
-  | "copilot"
+  // Subscription-backed transport (its own endpoint, not the vendor's public
+  // API): the ChatGPT-backend Codex "responses" API.
   | "codex"
   | "custom";
 

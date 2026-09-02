@@ -83,7 +83,7 @@ describe("the gate the sticky model has to pass", () => {
     // The original defect was a list that rotted. Anything with a preset and a
     // credential must qualify — including the ones added after that list was
     // written.
-    for (const id of ["codex", "copilot", "groq", "xai", "deepseek"]) {
+    for (const id of ["codex", "groq", "xai", "deepseek"]) {
       writeIndex([`provider:${id}:oauth`]);
       expect({ id, ok: stickyUsable(id, env) }).toEqual({ id, ok: true });
     }

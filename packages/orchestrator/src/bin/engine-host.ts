@@ -174,7 +174,7 @@ function buildEngine(): Engine {
   // The model you last used IS the model you get. Same fix as gear-cli's: the
   // gate used to be a five-id hand-written list plus a credential check that
   // only understood env vars and API keys, so a subscription provider (codex,
-  // copilot) failed both halves and the session opened on an auto-detected
+  // failed both halves and the session opened on an auto-detected
   // provider instead of the one that was chosen.
   const lastUsed = loadLastModel();
   const stickyUsable = (p: string): boolean =>

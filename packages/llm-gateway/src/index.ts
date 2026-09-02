@@ -42,7 +42,6 @@ export type { CacheBreakpointPolicy } from "./providers/cache-policy";
 export { OpenRouterProvider } from "./providers/openrouter";
 export { GoogleProvider } from "./providers/google";
 export { OllamaProvider } from "./providers/ollama";
-export { CopilotProvider } from "./providers/copilot";
 export { CodexProvider } from "./providers/codex";
 export { CostTracker, BudgetExceededError } from "./cost-tracker";
 export { ProviderHealthStore, RETIREMENT_TTL_MS } from "./provider-health";

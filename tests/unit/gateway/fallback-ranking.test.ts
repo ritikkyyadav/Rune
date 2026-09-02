@@ -138,7 +138,6 @@ describe("capacity ranking", () => {
       "groq",
       "xai",
       "deepseek",
-      "copilot",
       "codex",
       "custom",
     ];
