@@ -149,7 +149,12 @@ describe("MCP OAuth 2.1 flow", () => {
     await after.start();
     expect(after.isReady).toBe(true);
     expect(after.needsAuthentication).toBe(false);
-    expect(after.getTools().map((t) => t.name).sort()).toEqual(["delete_page", "search"]);
+    expect(
+      after
+        .getTools()
+        .map((t) => t.name)
+        .sort(),
+    ).toEqual(["delete_page", "search"]);
 
     const result = await after.callTool("search", { query: "hello" });
     expect(result.isError).toBeFalsy();

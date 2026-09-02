@@ -99,9 +99,9 @@ describe("argument validation", () => {
   });
 
   test("catches a bad format, a range violation and an over-long array", () => {
-    expect(validateAgainstSchema(schema, { query: "hi", when: "last tuesday" }).join(" ")).toContain(
-      "not a valid date",
-    );
+    expect(
+      validateAgainstSchema(schema, { query: "hi", when: "last tuesday" }).join(" "),
+    ).toContain("not a valid date");
     expect(validateAgainstSchema(schema, { query: "hi", limit: 500 }).join(" ")).toContain(
       "above the maximum",
     );
@@ -122,11 +122,16 @@ describe("argument validation", () => {
   });
 
   test("still catches a missing required parameter", () => {
-    expect(validateAgainstSchema(schema, { limit: 3 }).join(" ")).toContain("Missing required param: query");
+    expect(validateAgainstSchema(schema, { limit: 3 }).join(" ")).toContain(
+      "Missing required param: query",
+    );
   });
 
   test("an unknown keyword is ignored rather than guessed at", () => {
-    const exotic = { type: "object", properties: { a: { type: "string", contentEncoding: "b64" } } };
+    const exotic = {
+      type: "object",
+      properties: { a: { type: "string", contentEncoding: "b64" } },
+    };
     expect(validateAgainstSchema(exotic, { a: "x" })).toEqual([]);
   });
 
@@ -302,7 +307,12 @@ describe("declaredOtherCaps regression", () => {
     // tools/list whenever any capability was declared without a `tools` key,
     // which silently exposed nothing for exactly this shape of server.
     const client = await connected();
-    expect(client.getTools().map((t) => t.name).sort()).toEqual(["delete_page", "search"]);
+    expect(
+      client
+        .getTools()
+        .map((t) => t.name)
+        .sort(),
+    ).toEqual(["delete_page", "search"]);
     expect(client.supportsResources).toBe(true);
     expect(client.supportsPrompts).toBe(true);
     await client.stop();

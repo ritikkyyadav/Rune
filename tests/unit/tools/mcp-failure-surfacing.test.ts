@@ -128,7 +128,10 @@ describe("connector lifecycle reaches a subscriber", () => {
     const discovery = new McpDiscovery(workspace);
     await discovery.discover();
 
-    const names = discovery.getStatus().map((s) => s.name).sort();
+    const names = discovery
+      .getStatus()
+      .map((s) => s.name)
+      .sort();
     expect(names).toEqual(["ghost", "mocknotion"]);
     // Both are unusable for different reasons, and BOTH are reported —
     // failing the first must not abandon the scan.

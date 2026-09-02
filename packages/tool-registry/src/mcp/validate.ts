@@ -138,8 +138,10 @@ function validateValue(schema: Json, value: unknown, path: string, depth: number
       string,
       unknown
     >;
-    if (typeof minimum === "number" && value < minimum) errors.push(`${at}: below the minimum ${minimum}`);
-    if (typeof maximum === "number" && value > maximum) errors.push(`${at}: above the maximum ${maximum}`);
+    if (typeof minimum === "number" && value < minimum)
+      errors.push(`${at}: below the minimum ${minimum}`);
+    if (typeof maximum === "number" && value > maximum)
+      errors.push(`${at}: above the maximum ${maximum}`);
     if (typeof exclusiveMinimum === "number" && value <= exclusiveMinimum) {
       errors.push(`${at}: must be greater than ${exclusiveMinimum}`);
     }
@@ -159,7 +161,10 @@ function validateValue(schema: Json, value: unknown, path: string, depth: number
     if (typeof maxItems === "number" && value.length > maxItems) {
       errors.push(`${at}: accepts at most ${maxItems} item${maxItems === 1 ? "" : "s"}`);
     }
-    if (uniqueItems === true && new Set(value.map((v) => JSON.stringify(v))).size !== value.length) {
+    if (
+      uniqueItems === true &&
+      new Set(value.map((v) => JSON.stringify(v))).size !== value.length
+    ) {
       errors.push(`${at}: items must be unique`);
     }
     if (items && typeof items === "object" && !Array.isArray(items)) {

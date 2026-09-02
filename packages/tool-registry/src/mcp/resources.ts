@@ -37,7 +37,10 @@ export function parseResourceMention(text: string): { server: string; uri: strin
  * Bounded on purpose: a message that mentions thirty resources is a mistake,
  * and expanding all of them would blow the turn's context before it starts.
  */
-export function findResourceMentions(text: string, limit = 10): Array<{ server: string; uri: string }> {
+export function findResourceMentions(
+  text: string,
+  limit = 10,
+): Array<{ server: string; uri: string }> {
   const out: Array<{ server: string; uri: string }> = [];
   const re = /@([A-Za-z0-9_-]+):([^\s,;)]+)/g;
   let m: RegExpExecArray | null;
@@ -60,7 +63,9 @@ export async function readResourceText(
   for (const c of contents) {
     if (typeof c.text === "string") parts.push(c.text);
     else if (typeof c.blob === "string") {
-      parts.push(`[binary resource ${c.uri ?? uri}${c.mimeType ? ` (${c.mimeType})` : ""}, ${c.blob.length} base64 bytes]`);
+      parts.push(
+        `[binary resource ${c.uri ?? uri}${c.mimeType ? ` (${c.mimeType})` : ""}, ${c.blob.length} base64 bytes]`,
+      );
     }
   }
   const joined = parts.join("\n");
@@ -134,7 +139,9 @@ export function createReadResourceTool(registry: ResourceRegistry): ToolHandler 
         for (const [server, client] of clients) {
           const resources = await client.listResources();
           if (resources.length === 0) continue;
-          lines.push(`[${server}] ${resources.length} resource${resources.length === 1 ? "" : "s"}`);
+          lines.push(
+            `[${server}] ${resources.length} resource${resources.length === 1 ? "" : "s"}`,
+          );
           for (const r of resources.slice(0, 50)) {
             lines.push(
               `  ${resourceMention(server, r.uri)}${r.name ? ` — ${r.name}` : ""}${r.mimeType ? ` (${r.mimeType})` : ""}`,

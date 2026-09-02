@@ -175,7 +175,10 @@ export function createLoadToolsTool(registry: ToolRegistry): ToolHandler {
         toolName: input.toolName,
         success: loaded.length > 0 || unknown.length === 0,
         result: parts.join("\n"),
-        error: loaded.length === 0 && unknown.length > 0 ? `no such tool(s): ${unknown.join(", ")}` : undefined,
+        error:
+          loaded.length === 0 && unknown.length > 0
+            ? `no such tool(s): ${unknown.join(", ")}`
+            : undefined,
         durationMs: Math.round(performance.now() - start),
       };
     },

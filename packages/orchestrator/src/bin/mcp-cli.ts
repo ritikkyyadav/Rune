@@ -59,19 +59,29 @@ function usage(): void {
   say(`${accent("gear mcp")} ${dim("— connect Gear to the services you already use")}`);
   say();
   say(`${text("Commands")}`);
-  say(`  ${accent("add")} <name|url|command> ${dim("[--scope user|workspace] [--header K=V] [--env K=V] [--name N]")}`);
+  say(
+    `  ${accent("add")} <name|url|command> ${dim("[--scope user|workspace] [--header K=V] [--env K=V] [--name N]")}`,
+  );
   say(`  ${accent("remove")} <name> ${dim("[--scope user|workspace]")}`);
-  say(`  ${accent("list")} ${dim("[--catalog]      configured connectors, their scope, auth and health")}`);
-  say(`  ${accent("login")} <name> ${dim("           OAuth 2.1 in the browser; token to the OS keychain")}`);
+  say(
+    `  ${accent("list")} ${dim("[--catalog]      configured connectors, their scope, auth and health")}`,
+  );
+  say(
+    `  ${accent("login")} <name> ${dim("           OAuth 2.1 in the browser; token to the OS keychain")}`,
+  );
   say(`  ${accent("logout")} <name>`);
   say(`  ${accent("enable")} <name> ${dim(" / ")} ${accent("disable")} <name>`);
-  say(`  ${accent("doctor")} ${dim("               start every connector and report what is wrong")}`);
+  say(
+    `  ${accent("doctor")} ${dim("               start every connector and report what is wrong")}`,
+  );
   say();
   say(`${text("Examples")}`);
   say(`  ${dim("$")} gear mcp add notion ${dim("--scope user")}`);
   say(`  ${dim("$")} gear mcp login notion`);
   say(`  ${dim("$")} gear mcp add ${dim("https://mcp.example.com/mcp --name example")}`);
-  say(`  ${dim("$")} gear mcp add ${dim('"npx -y @modelcontextprotocol/server-filesystem ." --name files')}`);
+  say(
+    `  ${dim("$")} gear mcp add ${dim('"npx -y @modelcontextprotocol/server-filesystem ." --name files')}`,
+  );
   say();
 }
 
@@ -166,7 +176,8 @@ async function cmdAdd(args: string[], values: Record<string, unknown>): Promise<
       const vendored = loadVendoredCatalog();
       const near = nearestNames(target, vendored);
       say(`  ${danger(glyph("failure"))} no connector named ${accent(target)} in the catalog`);
-      if (near.length > 0) say(`    ${dim("did you mean")} ${near.map((n) => accent(n)).join(dim(" · "))}`);
+      if (near.length > 0)
+        say(`    ${dim("did you mean")} ${near.map((n) => accent(n)).join(dim(" · "))}`);
       say(`    ${dim("or pass a URL:")} gear mcp add https://… --name ${target}`);
       say(`    ${dim("see everything:")} gear mcp list --catalog`);
       return 1;
@@ -196,12 +207,12 @@ async function cmdAdd(args: string[], values: Record<string, unknown>): Promise<
   say(
     `  ${ok(glyph("verified"))} ${existing ? "updated" : "added"} ${accent(name!)}${provenance ? dim(` — ${provenance}`) : ""}`,
   );
-  say(`    ${dim(config.url ? config.url : `${config.command} ${(config.args ?? []).join(" ")}`.trim())}`);
+  say(
+    `    ${dim(config.url ? config.url : `${config.command} ${(config.args ?? []).join(" ")}`.trim())}`,
+  );
   say(`    ${faint(`${scope} scope · ${path}`)}`);
   if (existing && existing.scope !== scope && scope === "user") {
-    say(
-      `    ${warn(glyph("retry"))} the workspace entry for ${accent(name!)} still wins here`,
-    );
+    say(`    ${warn(glyph("retry"))} the workspace entry for ${accent(name!)} still wins here`);
   }
   if (config.url) {
     const provider = new McpOAuth({
@@ -211,7 +222,9 @@ async function cmdAdd(args: string[], values: Record<string, unknown>): Promise<
     });
     if (!(await provider.hasCredentials())) {
       say();
-      say(`  ${text("Next")}  ${accent(`gear mcp login ${name}`)} ${dim("— most remote connectors require it")}`);
+      say(
+        `  ${text("Next")}  ${accent(`gear mcp login ${name}`)} ${dim("— most remote connectors require it")}`,
+      );
     }
   }
   say();
@@ -275,7 +288,9 @@ async function cmdList(args: string[], values: Record<string, unknown>): Promise
   say();
   if (servers.length === 0) {
     say(`  ${dim("No connectors configured.")}`);
-    say(`  ${text("Add one")}  ${accent("gear mcp add notion")} ${dim("·")} ${accent("gear mcp list --catalog")}`);
+    say(
+      `  ${text("Add one")}  ${accent("gear mcp add notion")} ${dim("·")} ${accent("gear mcp list --catalog")}`,
+    );
     say();
     return 0;
   }
@@ -356,17 +371,23 @@ async function cmdLogin(
   const workspaceRoot = workspaceOf(values);
   const entry = mergedServers(workspaceRoot).servers.find((s) => s.name === name);
   if (!entry) {
-    say(`  ${danger(glyph("failure"))} ${accent(name)} is not configured — ${accent(`gear mcp add ${name}`)} first`);
+    say(
+      `  ${danger(glyph("failure"))} ${accent(name)} is not configured — ${accent(`gear mcp add ${name}`)} first`,
+    );
     return 1;
   }
   if (!entry.config.url) {
-    say(`  ${warn(glyph("retry"))} ${accent(name)} is a local (stdio) server — it has nothing to log in to`);
+    say(
+      `  ${warn(glyph("retry"))} ${accent(name)} is a local (stdio) server — it has nothing to log in to`,
+    );
     return 1;
   }
 
   const store = await openCredentialStore();
   if (!store.secure) {
-    say(`  ${warn(glyph("retry"))} no OS keychain available — the token will be written to a 0600 file`);
+    say(
+      `  ${warn(glyph("retry"))} no OS keychain available — the token will be written to a 0600 file`,
+    );
   }
   const provider = new McpOAuth({
     serverName: name,
@@ -395,7 +416,9 @@ async function cmdLogin(
       `    ${faint(`token stored as ${mcpCredentialAccount(name)} in ${describeCredentialBackend(store)}`)}`,
     );
     if (tokens.expiresAt) {
-      say(`    ${faint(`expires ${new Date(tokens.expiresAt).toISOString().slice(0, 16).replace("T", " ")} — refreshed automatically`)}`);
+      say(
+        `    ${faint(`expires ${new Date(tokens.expiresAt).toISOString().slice(0, 16).replace("T", " ")} — refreshed automatically`)}`,
+      );
     }
     say();
     return 0;
@@ -576,4 +599,3 @@ export async function runMcp(
       return 1;
   }
 }
-

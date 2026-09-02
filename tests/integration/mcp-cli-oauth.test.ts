@@ -18,10 +18,7 @@ import { runMcp } from "../../packages/orchestrator/src/bin/mcp-cli";
 import { McpDiscovery } from "../../packages/tool-registry/src/mcp/discovery";
 import { mcpCredentialAccount } from "../../packages/tool-registry/src/mcp/oauth";
 import { resetGearHomeCache } from "../../packages/shared/src/paths";
-import {
-  startMockOAuthMcpServer,
-  type MockOAuthMcpServer,
-} from "../helpers/mock-oauth-mcp-server";
+import { startMockOAuthMcpServer, type MockOAuthMcpServer } from "../helpers/mock-oauth-mcp-server";
 
 const SERVER = "mocknotion";
 
@@ -83,10 +80,11 @@ const clickAllow = async (url: string): Promise<void> => {
 describe("gear mcp add + login, end to end", () => {
   test("add writes the entry, login completes OAuth, and a session calls a tool", async () => {
     // ── gear mcp add <url> --name mocknotion ──
-    const addCode = await runMcp(
-      ["add", mock.mcpUrl, "--name", SERVER],
-      { name: SERVER, workspace, scope: "workspace" },
-    );
+    const addCode = await runMcp(["add", mock.mcpUrl, "--name", SERVER], {
+      name: SERVER,
+      workspace,
+      scope: "workspace",
+    });
     expect(addCode).toBe(0);
     expect(printed()).toContain("added mocknotion");
 
@@ -97,9 +95,13 @@ describe("gear mcp add + login, end to end", () => {
 
     // ── gear mcp login mocknotion ──
     output.length = 0;
-    const loginCode = await runMcp(["login", SERVER], { workspace }, {
-      openAuthorizationUrl: clickAllow,
-    });
+    const loginCode = await runMcp(
+      ["login", SERVER],
+      { workspace },
+      {
+        openAuthorizationUrl: clickAllow,
+      },
+    );
     expect(loginCode).toBe(0);
     expect(printed()).toContain("connected");
     // Dynamic client registration + PKCE actually happened on the server side.

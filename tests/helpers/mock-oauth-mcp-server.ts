@@ -107,7 +107,10 @@ export async function startMockOAuthMcpServer(
       const path = url.pathname;
 
       // ── RFC 9728: protected-resource metadata ──
-      if (path === "/.well-known/oauth-protected-resource/mcp" || path === "/.well-known/oauth-protected-resource") {
+      if (
+        path === "/.well-known/oauth-protected-resource/mcp" ||
+        path === "/.well-known/oauth-protected-resource"
+      ) {
         json(res, 200, {
           resource: `${origin}/mcp`,
           authorization_servers: [origin],
@@ -211,7 +214,10 @@ export async function startMockOAuthMcpServer(
           const verifier = form.get("code_verifier") ?? "";
           const computed = base64url(createHash("sha256").update(verifier).digest());
           if (!verifier || computed !== pending.codeChallenge) {
-            json(res, 400, { error: "invalid_grant", error_description: "PKCE verification failed" });
+            json(res, 400, {
+              error: "invalid_grant",
+              error_description: "PKCE verification failed",
+            });
             return;
           }
           pending.used = true;
@@ -303,7 +309,12 @@ export async function startMockOAuthMcpServer(
         }
 
         const reply = (result: unknown): void =>
-          json(res, 200, { jsonrpc: "2.0", id: msg.id, result }, { "mcp-session-id": "mock-session" });
+          json(
+            res,
+            200,
+            { jsonrpc: "2.0", id: msg.id, result },
+            { "mcp-session-id": "mock-session" },
+          );
 
         switch (msg.method) {
           case "initialize":
@@ -322,9 +333,7 @@ export async function startMockOAuthMcpServer(
             const name = (msg.params as { name?: string })?.name;
             const args = (msg.params as { arguments?: Record<string, unknown> })?.arguments ?? {};
             reply({
-              content: [
-                { type: "text", text: `${name} ok: ${JSON.stringify(args)}` },
-              ],
+              content: [{ type: "text", text: `${name} ok: ${JSON.stringify(args)}` }],
             });
             return;
           }
@@ -332,7 +341,9 @@ export async function startMockOAuthMcpServer(
             reply({});
             return;
           case "resources/list":
-            reply({ resources: [{ uri: "mock://page/1", name: "Welcome", mimeType: "text/plain" }] });
+            reply({
+              resources: [{ uri: "mock://page/1", name: "Welcome", mimeType: "text/plain" }],
+            });
             return;
           case "resources/read":
             reply({
@@ -347,7 +358,9 @@ export async function startMockOAuthMcpServer(
                 {
                   name: "summarize",
                   description: "Summarize a page.",
-                  arguments: [{ name: "page_id", description: "Page to summarize", required: true }],
+                  arguments: [
+                    { name: "page_id", description: "Page to summarize", required: true },
+                  ],
                 },
               ],
             });
@@ -355,9 +368,7 @@ export async function startMockOAuthMcpServer(
           case "prompts/get":
             reply({
               description: "Summarize a page.",
-              messages: [
-                { role: "user", content: { type: "text", text: "Summarize the page." } },
-              ],
+              messages: [{ role: "user", content: { type: "text", text: "Summarize the page." } }],
             });
             return;
           default:

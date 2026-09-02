@@ -13,7 +13,15 @@
 // Nothing here installs executable tools — a manifest's `permissions` block is
 // disclosure, not a sandbox, and running a stranger's code needs the latter.
 
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { workspaceConfigPath } from "@gear/shared";
@@ -34,7 +42,9 @@ const say = (line = ""): void => {
 
 function usage(): void {
   say();
-  say(`${accent("gear plugin")} ${dim("— install a bundle of skills, commands, connectors and hooks")}`);
+  say(
+    `${accent("gear plugin")} ${dim("— install a bundle of skills, commands, connectors and hooks")}`,
+  );
   say();
   say(`${text("Commands")}`);
   say(`  ${accent("add")} <path|git-url|npm-package> ${dim("[--name N]")}`);
@@ -42,9 +52,7 @@ function usage(): void {
   say(`  ${accent("list")}`);
   say(`  ${accent("enable")} <name> ${dim(" / ")} ${accent("disable")} <name>`);
   say();
-  say(
-    `  ${faint("v1 plugins are declarative: skills, commands, MCP servers, hooks. Executable")}`,
-  );
+  say(`  ${faint("v1 plugins are declarative: skills, commands, MCP servers, hooks. Executable")}`);
   say(`  ${faint("tools stay first-party until they run under the sandbox as subprocesses.")}`);
   say();
 }
@@ -105,7 +113,10 @@ async function stage(source: Source): Promise<{ dir: string } | { error: string 
     return { dir: abs };
   }
 
-  const staging = join(tmpdir(), `gear-plugin-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  const staging = join(
+    tmpdir(),
+    `gear-plugin-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  );
   mkdirSync(staging, { recursive: true });
 
   if (source.kind === "git") {
@@ -211,7 +222,9 @@ async function cmdAdd(args: string[], values: Record<string, unknown>): Promise<
   installed.integrity = computeIntegrity(dest);
   writeManifest(dest, installed);
 
-  say(`  ${ok(glyph("verified"))} ${replacing ? "reinstalled" : "installed"} ${accent(name)}${manifest.version ? dim(` v${manifest.version}`) : ""}`);
+  say(
+    `  ${ok(glyph("verified"))} ${replacing ? "reinstalled" : "installed"} ${accent(name)}${manifest.version ? dim(` v${manifest.version}`) : ""}`,
+  );
   say(`    ${faint(dest)}`);
 
   const contributes: string[] = [];
@@ -239,7 +252,9 @@ async function cmdAdd(args: string[], values: Record<string, unknown>): Promise<
   const refusal = discovery.errors.find((e) => e.includes(`"${name}"`));
   say();
   if (loaded) {
-    say(`  ${ok(glyph("verified"))} loads cleanly${loaded.integrity === "verified" ? dim(" · integrity verified") : ""}`);
+    say(
+      `  ${ok(glyph("verified"))} loads cleanly${loaded.integrity === "verified" ? dim(" · integrity verified") : ""}`,
+    );
   } else {
     say(`  ${danger(glyph("failure"))} installed but NOT loaded: ${refusal ?? "unknown reason"}`);
     say();
@@ -270,7 +285,9 @@ function cmdRemove(args: string[], values: Record<string, unknown>): number {
 function cmdToggle(args: string[], values: Record<string, unknown>, enabled: boolean): number {
   const name = args[0];
   if (!name) {
-    say(`  ${danger(glyph("failure"))} usage: gear plugin ${enabled ? "enable" : "disable"} <name>`);
+    say(
+      `  ${danger(glyph("failure"))} usage: gear plugin ${enabled ? "enable" : "disable"} <name>`,
+    );
     return 1;
   }
   const dest = join(pluginsRoot(workspaceOf(values)), name);
@@ -346,10 +363,7 @@ function cmdList(values: Record<string, unknown>): number {
 
 // ─── dispatch ───
 
-export async function runPlugin(
-  args: string[],
-  values: Record<string, unknown>,
-): Promise<number> {
+export async function runPlugin(args: string[], values: Record<string, unknown>): Promise<number> {
   const sub = args[0];
   const rest = args.slice(1);
   switch (sub) {
