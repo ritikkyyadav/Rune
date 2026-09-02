@@ -44,10 +44,30 @@ export {
 export { modelUsesApplyPatch } from "./registry";
 export { CustomToolsLoader } from "./tools/custom-loader";
 export {
+  createLoadToolsTool,
+  catalogSummary,
+  deferredByDefault,
+  renderCatalog,
+  DEFERRED_BUILTINS,
+  LOAD_TOOLS_TOOL,
+  LOAD_TOOLS_SCHEMA,
+  type DeferredEntry,
+} from "./tools/load-tools";
+export {
   McpClient,
   McpDiscovery,
   McpRpcError,
   McpSessionExpiredError,
+  McpUnauthorizedError,
+  McpOAuth,
+  McpAuthRequiredError,
+  mcpCredentialAccount,
+  parseWwwAuthenticate,
+  protectedResourceUrls,
+  authorizationServerUrls,
+  discoverProtectedResource,
+  discoverAuthorizationServer,
+  registerClient,
   BROWSER_SERVER_NAME,
   buildBrowserServerSpec,
 } from "./mcp/index";
@@ -59,6 +79,11 @@ export type {
   McpEvent,
   McpServerInfo,
   McpServerCapabilities,
+  McpAuthProvider,
+  McpOAuthTokens,
+  McpOAuthOptions,
+  ProtectedResourceMetadata,
+  AuthorizationServerMetadata,
   BrowserServerOptions,
 } from "./mcp/index";
 export { SkillLoader, createSkillTool } from "./skills/index";
@@ -88,3 +113,45 @@ export {
   SPEC_RENDERER_JS,
   DASH_PALETTE,
 } from "./tools/dashboard-theme";
+export {
+  loadVendoredCatalog,
+  fetchRegistryCatalog,
+  resolveConnector,
+  nearestNames,
+  skillCatalogRoots,
+  DEFAULT_REGISTRY_URL,
+  mcpConfigPath,
+  readMcpConfig,
+  writeMcpConfig,
+  mergedServers,
+  mergedServerRecord,
+  upsertServer,
+  removeServer,
+  setServerEnabled,
+} from "./mcp/index";
+export type { CatalogEntry, McpScope, McpConfigFile, MergedServer } from "./mcp/index";
+export {
+  SseTransport,
+  createReadResourceTool,
+  collectPromptCommands,
+  expandPromptCommand,
+  findResourceMentions,
+  parseResourceMention,
+  resourceMention,
+  readResourceText,
+  describeResources,
+  validateAgainstSchema,
+  READ_RESOURCE_TOOL,
+} from "./mcp/index";
+export type {
+  McpPromptCommand,
+  ResourceRegistry,
+  McpResource,
+  McpResourceContents,
+  McpPrompt,
+  McpPromptArgument,
+  McpPromptMessage,
+  McpGetPromptResult,
+  McpElicitRequest,
+  McpElicitResult,
+} from "./mcp/index";

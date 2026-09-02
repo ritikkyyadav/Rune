@@ -49,7 +49,13 @@ compliance-sensitive teams.
   changes it.
 - **Hooks** — run shell commands automatically around tool use and session lifecycle via
   `.gear/hooks.json` (e.g. format/lint after edits, block protected paths).
-- **MCP** — project-scoped tool discovery via `.gear/mcp.json`.
+- **Connectors (MCP)** — `gear mcp add notion && gear mcp login notion` connects a service in two
+  commands: a 58-entry bundled catalog resolves the name, OAuth 2.1 with PKCE runs in your browser,
+  and the token goes to the OS keychain under `mcp:<server>`. `gear mcp list` shows scope, auth and
+  health; `gear mcp doctor` names what is broken and the command that fixes it. Connector tools are
+  advertised as a one-line catalog with schemas loaded on demand, so adding a 40-tool server does not
+  tax every request. Config lives in `~/.gear/mcp.json` (user) and `.gear/mcp.json` (workspace, which
+  wins). See [docs/connectors.md](docs/connectors.md).
 - **Research mode (`/research`, `/deepresearch`)** — ChatGPT/Claude-style Deep Research: the agent
   proposes a decomposed research plan (asking a couple of clarifying questions first when the request
   is vague), **you approve, revise, or cancel**, then it runs an **iterative** loop — bounded parallel
@@ -324,7 +330,8 @@ overrides: `GEAR_RESEARCH_DEPTH`, `GEAR_RESEARCH_MAX_PARALLEL`, `GEAR_RESEARCH_M
 **Project files (under `.gear/` in your workspace):**
 
 - `hooks.json` — pre/post tool-use and session lifecycle hooks.
-- `mcp.json` — project-scoped MCP servers.
+- `mcp.json` — project-scoped MCP servers (workspace scope; `~/.gear/mcp.json` is the user scope
+  and loses on a name collision). Managed by `gear mcp`.
 - `commands/*.md` — custom slash commands. The filename is the command name; the body is the prompt
   template, with `$ARGUMENTS` (or `{{args}}`) replaced by whatever you type after the command.
   Optional `--- description: ... ---` frontmatter.

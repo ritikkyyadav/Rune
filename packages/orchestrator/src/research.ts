@@ -168,7 +168,7 @@ export function resolveSettings(opts?: ResearchOptions): Settings {
 
 // ─── Curated registry + permission gate ───
 
-const READ_TOOLS = ["read_file", "list_dir", "grep", "glob", "symbol_search", "ast_query"];
+const READ_TOOLS = ["read_file", "list_dir", "grep", "glob", "symbol_search"];
 const WEB_TOOLS = ["web_search", "web_fetch"];
 // Anything that can mutate state or shell out is never available to an investigator.
 const FORBIDDEN_TOOLS = [

@@ -1,8 +1,12 @@
-import { type Logger, createLogger } from "@gear/shared";
+import { type Logger, createLogger, openCredentialStore, type CredentialStore } from "@gear/shared";
 import { McpClient } from "./client";
+import { McpOAuth } from "./oauth";
+import { mergedServers } from "./config-file";
+import { collectPromptCommands, createReadResourceTool } from "./resources";
+import type { McpPromptCommand } from "./resources";
+import type { McpElicitRequest, McpElicitResult } from "./types";
 import type { ToolHandler } from "../types";
 import type { McpEvent, McpServerInfo } from "./types";
-import { workspaceConfigPath } from "@gear/shared";
 
 // ─── MCP Config Format ───
 // Loaded from .gear/mcp.json in the workspace root. Supports local subprocess
@@ -27,10 +31,22 @@ export interface McpServerConfig {
   headers?: Record<string, string>;
   /** Auto-approve tool calls: true (all) or a list of tool names. */
   autoApprove?: boolean | string[];
-}
-
-interface McpConfigFile {
-  mcpServers?: Record<string, McpServerConfig>;
+  /**
+   * OAuth 2.1 for a remote connector (P4.2). Present-but-empty is the normal
+   * case: everything is discovered from the server's own metadata. A
+   * pre-registered `clientId` is only needed when the authorization server
+   * offers no dynamic client registration.
+   */
+  oauth?: {
+    clientId?: string;
+    /** Fixed loopback port, for servers that registered exactly one redirect. */
+    callbackPort?: number;
+    scopes?: string[];
+    /** Set false to send static headers only and never attempt OAuth. */
+    enabled?: boolean;
+  };
+  /** Set false to keep the entry on file without starting it (`gear mcp disable`). */
+  enabled?: boolean;
 }
 
 export interface McpDiscoveryOptions {
@@ -43,6 +59,8 @@ export interface McpDiscoveryOptions {
   /** Built-in servers merged BENEATH mcp.json — a user entry with the same
    *  name overrides its built-in counterpart (e.g. the `browser` server). */
   extraServers?: Record<string, McpServerConfig>;
+  /** How a server's elicitation/create reaches the user (the ask_user round-trip). */
+  onElicit?: (req: McpElicitRequest, server: string) => Promise<McpElicitResult>;
 }
 
 export interface McpServerStatus {
@@ -55,6 +73,10 @@ export interface McpServerStatus {
   protocolVersion?: string;
   serverInfo?: McpServerInfo;
   lastError?: string | null;
+  /** The connector answered 401 and holds no usable token — needs `gear mcp login`. */
+  needsAuth?: boolean;
+  /** Whether a token set exists in the credential store for this connector. */
+  hasCredentials?: boolean;
 }
 
 /** Replace `${VAR}` tokens with process.env values, tracking any that are unset
@@ -106,7 +128,7 @@ function sanitizeName(name: string): string {
 export class McpDiscovery {
   private clients: Map<string, { client: McpClient; autoApprove?: (n: string) => boolean }> =
     new Map();
-  private configPath: string;
+  private workspaceRoot: string;
   private options: McpDiscoveryOptions;
   private logger: Logger;
 
@@ -115,11 +137,72 @@ export class McpDiscovery {
   private handlerOwner: Map<string, string> = new Map();
   // Per-server errors (config-invalid or failed-to-start servers have no client).
   private serverErrors: Map<string, { error: string; kind: "stdio" | "http" }> = new Map();
+  // OAuth state per remote connector, kept so login, refresh and doctor all
+  // read the same tokens. Opened lazily -- a workspace with only stdio servers
+  // never touches the keychain.
+  private oauthProviders: Map<string, McpOAuth> = new Map();
+  private credentialStore: CredentialStore | null = null;
+  private credentialStorePromise: Promise<CredentialStore> | null = null;
 
   constructor(workspaceRoot: string, options: McpDiscoveryOptions = {}) {
-    this.configPath = workspaceConfigPath(workspaceRoot, "mcp.json");
+    this.workspaceRoot = workspaceRoot;
     this.options = options;
     this.logger = options.logger ?? createLogger("mcp");
+  }
+
+  /** Which scope each configured server came from, for `gear mcp list`. */
+  getScopes(): Map<string, "user" | "workspace"> {
+    const out = new Map<string, "user" | "workspace">();
+    for (const s of mergedServers(this.workspaceRoot).servers) out.set(s.name, s.scope);
+    return out;
+  }
+
+  /** The credential store, opened at most once per discovery. */
+  private async store(): Promise<CredentialStore> {
+    if (this.credentialStore) return this.credentialStore;
+    if (!this.credentialStorePromise) this.credentialStorePromise = openCredentialStore();
+    this.credentialStore = await this.credentialStorePromise;
+    return this.credentialStore;
+  }
+
+  /**
+   * The OAuth provider for one remote connector, or undefined when the entry
+   * cannot use OAuth: stdio servers, and any entry that already carries its own
+   * Authorization header (a hand-written ${TOKEN} is the user's explicit
+   * choice and outranks a discovered flow).
+   */
+  private async oauthFor(name: string, config: McpServerConfig): Promise<McpOAuth | undefined> {
+    if (!config.url) return undefined;
+    if (config.oauth?.enabled === false) return undefined;
+    const headerNames = Object.keys(config.headers ?? {}).map((h) => h.toLowerCase());
+    if (headerNames.includes("authorization")) return undefined;
+    const existing = this.oauthProviders.get(name);
+    if (existing) return existing;
+    const provider = new McpOAuth({
+      serverName: name,
+      serverUrl: config.url,
+      store: await this.store(),
+      logger: this.logger,
+      clientId: config.oauth?.clientId,
+      callbackPort: config.oauth?.callbackPort,
+      scopes: config.oauth?.scopes,
+    });
+    this.oauthProviders.set(name, provider);
+    return provider;
+  }
+
+  /** The OAuth provider for a connector, if one was built during discovery. */
+  getOAuth(name: string): McpOAuth | undefined {
+    return this.oauthProviders.get(name);
+  }
+
+  /** Re-handshake one connector after an interactive sign-in. */
+  async reconnect(name: string): Promise<boolean> {
+    const entry = this.clients.get(name);
+    if (!entry) return false;
+    const ok = await entry.client.reconnect();
+    if (ok) this.reindexServer(name, entry.client, entry.autoApprove);
+    return ok;
   }
 
   /**
@@ -129,13 +212,16 @@ export class McpDiscovery {
    * the session.
    */
   async discover(): Promise<ToolHandler[]> {
-    const { config, error } = await this.loadConfig();
-    if (error) this.logger.error(`mcp.json: ${error}`);
-    // Built-ins first, then mcp.json — so a user entry with the same name
+    // Two scopes, workspace winning on collision (see config-file.ts).
+    const { servers: scoped, errors } = mergedServers(this.workspaceRoot);
+    for (const e of errors) this.logger.error(e);
+    const configured: Record<string, McpServerConfig> = {};
+    for (const entry of scoped) configured[entry.name] = entry.config;
+    // Built-ins first, then configured — so a user entry with the same name
     // (e.g. their own "browser" server) replaces the built-in spec.
     const servers: Record<string, McpServerConfig> = {
       ...(this.options.extraServers ?? {}),
-      ...(config?.mcpServers ?? {}),
+      ...configured,
     };
     if (Object.keys(servers).length === 0) return [];
 
@@ -148,6 +234,11 @@ export class McpDiscovery {
 
       const kind: "stdio" | "http" =
         serverConfig.type === "http" || serverConfig.url ? "http" : "stdio";
+
+      // A disabled entry stays on file and out of the session: the point of
+      // `gear mcp disable` is to stop paying for a connector without losing
+      // the configuration that took a sign-in to produce.
+      if (serverConfig.enabled === false) continue;
 
       const invalid = validateServer(serverConfig);
       if (invalid) {
@@ -166,6 +257,8 @@ export class McpDiscovery {
           env: serverConfig.env,
           url: serverConfig.url,
           headers: serverConfig.headers,
+          auth: await this.oauthFor(name, serverConfig),
+          onElicit: this.options.onElicit,
           logger: this.logger,
           onEvent: this.options.onEvent,
           onToolsChanged: () => this.handleServerToolsChanged(name),
@@ -222,9 +315,59 @@ export class McpDiscovery {
     this.options.onToolsChanged?.();
   }
 
-  /** Current full handler set across all live servers. */
+  /**
+   * Current full handler set across all live servers.
+   *
+   * `read_resource` is appended ONCE, spanning every connector that exposes
+   * resources — a tool per server would cost a schema per connector on every
+   * request and force the model to pick a server before it knows which one
+   * holds the thing it wants.
+   */
   getHandlers(): ToolHandler[] {
-    return [...this.handlers.values()];
+    const out = [...this.handlers.values()];
+    if (this.resourceClients().size > 0) {
+      out.push(createReadResourceTool({ clients: () => this.resourceClients() }));
+    }
+    return out;
+  }
+
+  /** Ready clients that declared a resources capability. */
+  resourceClients(): Map<string, McpClient> {
+    const out = new Map<string, McpClient>();
+    for (const [name, { client }] of this.clients) {
+      if (client.isReady && client.supportsResources) out.set(name, client);
+    }
+    return out;
+  }
+
+  /** Every ready client, for prompt expansion. */
+  allClients(): Map<string, McpClient> {
+    const out = new Map<string, McpClient>();
+    for (const [name, { client }] of this.clients) {
+      if (client.isReady) out.set(name, client);
+    }
+    return out;
+  }
+
+  /** Connector prompts, as `/server:prompt` slash commands. */
+  async listPromptCommands(): Promise<McpPromptCommand[]> {
+    return collectPromptCommands(this.allClients());
+  }
+
+  /**
+   * Every connected server's own operating instructions.
+   *
+   * The field has been typed since the first handshake and thrown away every
+   * time. A server that says "search before you delete" is telling the model
+   * something no tool description carries; it is injected once per session.
+   */
+  getServerInstructions(): Array<{ server: string; instructions: string }> {
+    const out: Array<{ server: string; instructions: string }> = [];
+    for (const [name, { client }] of this.clients) {
+      const text = client.getInstructions();
+      if (client.isReady && text) out.push({ server: name, instructions: text });
+    }
+    return out;
   }
 
   /** Reload config and restart all servers. */
@@ -242,6 +385,7 @@ export class McpDiscovery {
     this.handlers.clear();
     this.handlerOwner.clear();
     this.serverErrors.clear();
+    this.oauthProviders.clear();
   }
 
   /** Per-server status for the `/mcp` command and `/status`. */
@@ -259,6 +403,7 @@ export class McpDiscovery {
         protocolVersion: info.protocolVersion,
         serverInfo: info.serverInfo,
         lastError: info.lastError,
+        needsAuth: info.needsAuth,
       });
     }
     // Servers that never started (bad config / spawn failure) — surface them too.
@@ -275,23 +420,5 @@ export class McpDiscovery {
       });
     }
     return out;
-  }
-
-  private async loadConfig(): Promise<{ config: McpConfigFile | null; error?: string }> {
-    try {
-      const file = Bun.file(this.configPath);
-      if (!(await file.exists())) return { config: null };
-      const text = await file.text();
-      try {
-        return { config: JSON.parse(text) as McpConfigFile };
-      } catch (e) {
-        return {
-          config: null,
-          error: `invalid JSON: ${e instanceof Error ? e.message : String(e)}`,
-        };
-      }
-    } catch (e) {
-      return { config: null, error: e instanceof Error ? e.message : String(e) };
-    }
   }
 }
