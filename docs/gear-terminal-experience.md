@@ -1,11 +1,47 @@
 # Gear terminal experience
 
-Gear is a calm coding workbench, not a feed of agent internals. The supplied
-`docs/design/gear-customizer.html` is the authoritative visual map for the terminal's
-hierarchy, spacing, palette, typography, activity ledger, diff treatment, and
-interaction language. The browser navigation, theme controls, sage page canvas,
-demo copy, version, model, paths, and fabricated session data are customizer
-scaffolding; the CLI renders the terminal surface with live Gear state.
+> **FROZEN — the terminal is the console (Phase 3 · P3.7, 2026-09-02).**
+>
+> This surface is finished. It gets correctness fixes, and nothing else.
+>
+> **What is frozen.** The whole surface is the transcript, the composer, the
+> held-steps panel, the fleet rows and the footer. No new panels. No new
+> dialects — every row goes through `flowRow`, and `tests/unit/orchestrator/
+> ui-grammar.test.ts` is the enforcement, not this paragraph. No new colours:
+> six semantic roles, two grounds, one accent, from
+> `packages/shared/src/design-tokens.ts`.
+>
+> **What may still change.** A bug. A word that is wrong. A rendering fault at
+> a width nobody tested. An event the engine started emitting that the
+> transcript would otherwise drop. Anything that makes what is already here
+> correct.
+>
+> **Why.** This terminal has been through ten UI programs — the v2 contract,
+> fixed chrome, chambers and folds, the transcript overhaul, one grammar, the
+> held-step surface, the fleet panel, turn collapse, read-back — and the
+> founder still reads it as "stuck in between". That is a medium ceiling, not
+> a polish gap: a terminal cannot show a diff and its trace at once, cannot
+> keep a permission card in view while the stream moves under it, and cannot
+> put the evidence for an answer beside the answer. The eleventh program would
+> not fix it either. UX investment goes to the desktop and the web client,
+> which are one bundle (`docs/gear-desktop-design.md`), and this surface stays
+> exactly what it is good at: fast, minimal, always the same.
+>
+> **What changed in P3.3 and stops changing now.** The five-accent picker is
+> gone. `/theme` is `light | dark | auto`, derived from the Savoir brand DNA
+> like every other surface. Every retired accent id still resolves to the
+> ground it was saved on, so nothing anyone saved errors.
+
+Gear is a calm coding workbench, not a feed of agent internals. The pigments
+come from `packages/shared/src/design-tokens.ts` — the Savoir brand DNA, shared
+with the desktop and the web client. The hierarchy, spacing, activity ledger,
+diff treatment and interaction language are described below and enforced by
+`tests/unit/orchestrator/ui-grammar.test.ts`.
+
+(`docs/design/gear-customizer.html` and `gear-customizer-v2.html` were the
+visual contract until Phase 3. They are kept as history and are no longer
+authoritative for anything: the five accents they specify were removed from
+both surfaces, and the token parity test is bound to the DNA now.)
 
 The interface keeps three questions answered:
 
@@ -15,29 +51,35 @@ The interface keeps three questions answered:
 
 ## Visual system
 
-The theme picker exposes the customizer's five accents on both bases, plus an
-Auto mode that leaves the host terminal profile untouched.
+Two grounds and one accent, from the Savoir brand DNA
+(`packages/shared/src/design-tokens.ts`) — the same source the desktop and the
+web client read, so the three surfaces cannot drift.
 
-| Accent           | Light     | Dark      |
-| ---------------- | --------- | --------- |
-| Electric Cobalt  | `#0038FF` | `#3875FF` |
-| Cyber Orange     | `#FF5500` | `#FF6E26` |
-| Hyper Violet     | `#7C3AED` | `#A78BFA` |
-| Emerald Matrix   | `#059669` | `#10B981` |
-| Stark Monochrome | `#1A1917` | `#FFFFFF` |
+| Role     | Light (paper) | Dark (ink) | Carries                                  |
+| -------- | ------------- | ---------- | ---------------------------------------- |
+| ground   | `#E7E8E3`     | `#14161A`  | the surface                              |
+| body     | `#14161A`     | `#E7E8E3`  | prose, tool names, the thing you read    |
+| dim      | `#7C8088`     | `#7C8088`  | arguments, metrics, context lines        |
+| accent   | `#0E5E63`     | `#17A0A8`  | identity, paths, branches, option keys   |
+| ok       | `#0E5E63`     | `#17A0A8`  | added lines, passes — an addition is a datum |
+| warn     | `#E2A23A`     | `#E2A23A`  | approval prompts, caution                |
+| danger   | `#9A4A3A`     | `#B1796D`  | removed lines, failures, errors          |
 
-The terminal surface itself uses warm ivory (`#FAF9F6`) in light mode and
-near-black (`#080809`) in dark mode. The customizer's sage browser canvas is not
-part of the production terminal. Red, ochre, and green retain semantic error, caution, and success
-meaning. Exact accents paint the Gear mark, cursor, and active controls. Where
-an exact decorative color is not readable enough as small light-mode text,
-paths and labels use a deeper accessible derivative while the brand pigment
-stays exact.
+Six closed roles: the budget is on MEANINGS, not on pigments. There is no
+green — a second hue for "added" would be a second brand colour arriving
+through a diff, so an addition is a datum. On ink the negative is the brand's
+own brick lifted toward paper, because `#9A4A3A` is 2.2:1 on ink: fine as a
+rule, unreadable as a word.
 
-`/theme dark` and `/theme light` retain the current accent. A bare accent such
-as `/theme violet` retains the current light/dark surface. OSC foreground,
-background, and cursor changes recolor the whole terminal; ANSI-256 fallbacks
-cover Terminal.app and Auto covers terminals that should keep their own colors.
+`/theme` is `light | dark | auto`. Auto leaves the host terminal's own profile
+untouched. Every retired accent id (`gear-violet-dark`, `orange`, `flow`, …)
+still resolves to the ground it was saved on rather than erroring. Pigments are
+emitted as exact 24-bit RGB with a derived ANSI-256 fallback, so the product
+looks like itself wherever it runs and degrades on purpose rather than by
+accident; `bun run scripts/generate-terminal-colors.ts` prints the table.
+
+The terminal never claims the host's foreground or background (OSC 10/11). They
+sit behind and beneath everything, including the person's other programs.
 
 ## Frame 1 — arrive
 
