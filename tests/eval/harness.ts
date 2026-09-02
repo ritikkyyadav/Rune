@@ -8,6 +8,10 @@ import type {
   PermissionDecision as BrokerDecision,
   UserPermissionDecision,
 } from "@gear/orchestrator";
+import { openCredentialStore } from "@gear/shared";
+import type { ResolvedCredential } from "@gear/llm-gateway";
+
+import { resolveProviderCredentials } from "../../packages/orchestrator/src/provider-registry";
 
 import { configHash, type AbConfig } from "../../packages/orchestrator/src/evolve/config-hash";
 
@@ -157,6 +161,34 @@ function lastRetro(dbPath: string, sessionId: string): RetroSummary | undefined 
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Real-mode credentials, resolved once per process.
+ *
+ * `runner.ts` has listed `codex` and `copilot` as subscription providers since
+ * the model-sweep work, on the stated belief that "a missing login surfaces as
+ * an auth error on the first call". It could not: the harness built its Engine
+ * with no `credentials`, so a stored OAuth login was invisible to it and every
+ * `--real` run on those providers died with "No providers available" — the
+ * transport carrying most of this agent's real traffic could not be measured
+ * at all. `auto-mode-safety.ts` already resolves credentials this way; the eval
+ * harness simply never did.
+ *
+ * Failure is not fatal here: an env-var provider still works with no store, and
+ * the empty map reproduces exactly the old behaviour.
+ */
+let credentialsPromise: Promise<Record<string, ResolvedCredential>> | null = null;
+function realCredentials(provider: string): Promise<Record<string, ResolvedCredential>> {
+  credentialsPromise ??= (async () => {
+    try {
+      const store = await openCredentialStore();
+      return await resolveProviderCredentials({ store, keys: {}, active: provider as never });
+    } catch {
+      return {};
+    }
+  })();
+  return credentialsPromise;
+}
 
 /** A provider error that means "slow down / out of quota", not "wrong answer". */
 function isThrottleError(msg: string): boolean {
@@ -312,6 +344,7 @@ async function attemptTask(task: EvalTask, opts: RunOptions, real: boolean): Pro
       dbPath,
       toolsBinaryPath: TOOLS_BINARY,
       yoloMode: false,
+      ...(real ? { credentials: await realCredentials(provider) } : {}),
       ...(opts.configOverrides ?? {}),
     });
     // Stamped into every retro this run writes, so the arm survives in the

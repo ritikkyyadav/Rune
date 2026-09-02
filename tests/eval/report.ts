@@ -487,3 +487,233 @@ export function printModelSweep(sweepResults: ModelSweepResult[]): void {
   }
   console.log();
 }
+
+// ─── Paired A/B (P7.4) ───
+//
+// The two-key rule. A variant is promoted only when BOTH gates pass, and they
+// are different kinds of gate on purpose:
+//
+//   · mock mode is deterministic — same scripts, same order, same process — so
+//     any per-task flip is real and the noise band is zero. This is the cheap
+//     gate that runs on every change.
+//   · real mode carries genuine noise, so it gets a band on the aggregate and
+//     still refuses any task that regresses.
+//
+// Three conditions, all of which must hold:
+//   1. No task regresses. An aggregate that improves while one task breaks is
+//      how a "win" ships a defect.
+//   2. cleanPassRate up beyond the noise band. Equal is not a win: the control
+//      already exists, and "no worse" is not a reason to change anything.
+//   3. totalListCost not up beyond its band. Metered-equivalent, not actual
+//      spend, because eval runs ride free and subscription routes where actual
+//      spend is $0 by definition and a cost gate could never fire.
+//
+// Throttled tasks are excluded from every comparison: a rate limit in one arm
+// and not the other is the single easiest way to manufacture a fake win.
+
+/** Cost rise tolerated in a paired A/B before the cost gate refuses. */
+export const DEFAULT_AB_COST_BAND = 0.1;
+/** Pass-rate improvement a real-mode arm must clear to count as a win. */
+export const DEFAULT_AB_NOISE_BAND = 0.05;
+
+export interface ArmTaskDelta {
+  name: string;
+  control: "pass" | "fail" | "throttled";
+  treatment: "pass" | "fail" | "throttled";
+  /** +1 fixed, −1 regressed, 0 unchanged. Null when either side was throttled. */
+  delta: number | null;
+  controlListCost: number;
+  treatmentListCost: number;
+}
+
+export interface ArmComparison {
+  variant: string;
+  mode: "mock" | "real";
+  /** Tasks compared on both arms (throttled rows on either side are excluded). */
+  compared: number;
+  excluded: string[];
+  controlCleanPassRate: number;
+  treatmentCleanPassRate: number;
+  rateDelta: number;
+  controlListCost: number;
+  treatmentListCost: number;
+  /** Fractional change in total metered-equivalent cost. Null when control was $0. */
+  costDelta: number | null;
+  regressions: string[];
+  fixes: string[];
+  noiseBand: number;
+  costBand: number;
+  /** Every gate that refused, in the order they are checked. Empty = a win. */
+  refusals: string[];
+  /** True only when all three gates pass. */
+  win: boolean;
+  /** Per-task rows, so a report can show the work rather than an average. */
+  deltas: ArmTaskDelta[];
+  /** Attribution: the config digests each arm actually ran under. */
+  controlConfigHash?: string;
+  treatmentConfigHash?: string;
+}
+
+function armOutcomeOf(r: TaskResult | undefined): "pass" | "fail" | "throttled" | null {
+  if (!r) return null;
+  if (r.throttled) return "throttled";
+  return r.pass ? "pass" : "fail";
+}
+
+export function compareArms(
+  variant: string,
+  control: SuiteReport,
+  treatment: SuiteReport,
+  opts: { noiseBand?: number; costBand?: number } = {},
+): ArmComparison {
+  const mode = control.mode;
+  // Mock is deterministic: a flip is a flip, so the band is zero. Real mode
+  // gets a band because a single task's outcome genuinely varies.
+  const noiseBand = opts.noiseBand ?? (mode === "mock" ? 0 : DEFAULT_AB_NOISE_BAND);
+  const costBand = opts.costBand ?? DEFAULT_AB_COST_BAND;
+
+  const byName = new Map(treatment.tasks.map((t) => [t.name, t]));
+  const deltas: ArmTaskDelta[] = [];
+  const excluded: string[] = [];
+  for (const c of control.tasks) {
+    const t = byName.get(c.name);
+    const co = armOutcomeOf(c);
+    const to = armOutcomeOf(t);
+    if (co === null || to === null) {
+      excluded.push(`${c.name} (missing from the ${to === null ? "treatment" : "control"} arm)`);
+      continue;
+    }
+    if (co === "throttled" || to === "throttled") {
+      // A rate limit in one arm and not the other is the easiest way to
+      // manufacture a fake win. Neither counts, and the row says why.
+      excluded.push(`${c.name} (throttled)`);
+      deltas.push({
+        name: c.name,
+        control: co,
+        treatment: to,
+        delta: null,
+        controlListCost: c.listCost ?? 0,
+        treatmentListCost: t!.listCost ?? 0,
+      });
+      continue;
+    }
+    deltas.push({
+      name: c.name,
+      control: co,
+      treatment: to,
+      delta: co === to ? 0 : to === "pass" ? 1 : -1,
+      controlListCost: c.listCost ?? 0,
+      treatmentListCost: t!.listCost ?? 0,
+    });
+  }
+
+  const measured = deltas.filter((d) => d.delta !== null);
+  const compared = measured.length;
+  const controlPassed = measured.filter((d) => d.control === "pass").length;
+  const treatmentPassed = measured.filter((d) => d.treatment === "pass").length;
+  const controlCleanPassRate = compared > 0 ? controlPassed / compared : 0;
+  const treatmentCleanPassRate = compared > 0 ? treatmentPassed / compared : 0;
+  const rateDelta = treatmentCleanPassRate - controlCleanPassRate;
+
+  const controlListCost = measured.reduce((s, d) => s + d.controlListCost, 0);
+  const treatmentListCost = measured.reduce((s, d) => s + d.treatmentListCost, 0);
+  const costDelta =
+    controlListCost > 0 ? (treatmentListCost - controlListCost) / controlListCost : null;
+
+  const regressions = measured.filter((d) => d.delta === -1).map((d) => d.name);
+  const fixes = measured.filter((d) => d.delta === 1).map((d) => d.name);
+
+  const refusals: string[] = [];
+  if (compared === 0) {
+    refusals.push("no task was measured on both arms");
+  }
+  if (regressions.length > 0) {
+    refusals.push(
+      `${regressions.length} task(s) regressed: ${regressions.join(", ")} — an aggregate that improves while a task breaks is how a "win" ships a defect`,
+    );
+  }
+  // Float slack: 1.0 − 0.95 is 0.050000000000000044, and a delta that clears a
+  // band by 4e-17 is not evidence of anything.
+  const EPS = 1e-9;
+  if (rateDelta <= noiseBand + EPS) {
+    refusals.push(
+      `cleanPassRate ${rateDelta >= 0 ? "+" : ""}${(rateDelta * 100).toFixed(1)}% did not clear the ${(noiseBand * 100).toFixed(1)}% noise band — equal is not a win`,
+    );
+  }
+  if (costDelta !== null && costDelta > costBand + EPS) {
+    refusals.push(
+      `metered-equivalent cost +${(costDelta * 100).toFixed(1)}% exceeds the ${(costBand * 100).toFixed(0)}% band`,
+    );
+  }
+
+  return {
+    variant,
+    mode,
+    compared,
+    excluded,
+    controlCleanPassRate,
+    treatmentCleanPassRate,
+    rateDelta,
+    controlListCost,
+    treatmentListCost,
+    costDelta,
+    regressions,
+    fixes,
+    noiseBand,
+    costBand,
+    refusals,
+    win: refusals.length === 0,
+    deltas,
+    controlConfigHash: control.tasks.find((t) => t.configHash)?.configHash,
+    treatmentConfigHash: treatment.tasks.find((t) => t.configHash)?.configHash,
+  };
+}
+
+export function printArmComparison(cmp: ArmComparison): void {
+  const pct = (n: number) => `${n >= 0 ? "+" : ""}${(n * 100).toFixed(1)}%`;
+  console.log(`\n  \x1b[1mPaired A/B\x1b[0m \x1b[2m· ${cmp.variant} · ${cmp.mode} mode\x1b[0m\n`);
+  if (cmp.deltas.length > 0) {
+    console.log(
+      `\x1b[2m  ${"Task".padEnd(34)}${"control".padEnd(12)}${"treatment".padEnd(12)}\x1b[0m`,
+    );
+    console.log(`\x1b[2m${"─".repeat(70)}\x1b[0m`);
+    for (const d of cmp.deltas) {
+      const mark = d.delta === 1 ? "\x1b[32m▲\x1b[0m" : d.delta === -1 ? "\x1b[31m▼\x1b[0m" : " ";
+      console.log(
+        `  ${mark} ${d.name.slice(0, 32).padEnd(32)}${d.control.padEnd(12)}${d.treatment.padEnd(12)}`,
+      );
+    }
+    console.log();
+  }
+  console.log(
+    `  clean pass  ${(cmp.controlCleanPassRate * 100).toFixed(1)}%  →  ${(cmp.treatmentCleanPassRate * 100).toFixed(1)}%   \x1b[2m${pct(cmp.rateDelta)} (band ${(cmp.noiseBand * 100).toFixed(1)}%)\x1b[0m`,
+  );
+  console.log(
+    `  list cost   $${cmp.controlListCost.toFixed(4)}  →  $${cmp.treatmentListCost.toFixed(4)}   \x1b[2m${
+      cmp.costDelta === null
+        ? "no data (control cost $0)"
+        : `${pct(cmp.costDelta)} (band ${(cmp.costBand * 100).toFixed(0)}%)`
+    }\x1b[0m`,
+  );
+  console.log(
+    `  tasks       ${cmp.compared} compared, ${cmp.fixes.length} fixed, ${cmp.regressions.length} regressed`,
+  );
+  if (cmp.controlConfigHash || cmp.treatmentConfigHash) {
+    console.log(
+      `  \x1b[2mconfig      control ${cmp.controlConfigHash ?? "?"} → treatment ${cmp.treatmentConfigHash ?? "?"}\x1b[0m`,
+    );
+  }
+  if (cmp.excluded.length > 0) {
+    console.log(`  \x1b[2mexcluded    ${cmp.excluded.join(", ")}\x1b[0m`);
+  }
+  console.log();
+  if (cmp.win) {
+    console.log(
+      `  \x1b[32mWIN\x1b[0m — all three gates pass. \x1b[2mgear evolve promote ${cmp.variant}\x1b[0m\n`,
+    );
+  } else {
+    console.log(`  \x1b[33mNO CHANGE\x1b[0m — the variant is not promoted:`);
+    for (const r of cmp.refusals) console.log(`    · ${r}`);
+    console.log();
+  }
+}
