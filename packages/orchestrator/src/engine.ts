@@ -7,6 +7,7 @@ import {
 import { formatCostSummary } from "./cost-report";
 import type { ReasoningEffort, Message, ProviderName, ResolvedCredential } from "@gear/llm-gateway";
 import {
+  CustomToolsLoader,
   ToolRegistry,
   registerBuiltinTools,
   ToolRateLimiter,
@@ -596,6 +597,8 @@ export interface EngineConfig {
   research?: ResearchOptions;
   /** Connector defaults (config.toml [mcp]). */
   mcp?: { defaultScope?: "user" | "workspace"; timeoutSecs?: number; registry?: boolean; deferTools?: boolean };
+  /** Third-party extensions (config.toml [extensions]). */
+  extensions?: { localTools?: boolean };
   /** System Memory ("dreaming") — evergreen profile config (enabled/schedule/model/maxTokens). */
   memory?: {
     enabled?: boolean;
@@ -1671,6 +1674,9 @@ export class Engine {
       this.pluginDiscovery = discoverPlugins(this.config.workspaceRoot);
       for (const error of this.pluginDiscovery.errors) {
         loaderLog.warn(`[plugins] ${error}`);
+        // A refused plugin looked exactly like one nobody installed, because
+        // the TUI suppresses stderr. It reaches the status line now.
+        this.mcpNotices.push(`plugin refused — ${error}`);
       }
     }
     return this.pluginDiscovery.plugins;
@@ -1680,6 +1686,38 @@ export class Engine {
   listPlugins(): { plugins: LoadedPlugin[]; errors: string[] } {
     this.getPlugins();
     return this.pluginDiscovery ?? { plugins: [], errors: [] };
+  }
+
+  /**
+   * Re-scan plugins and re-run every loader they feed, without a restart.
+   *
+   * The four extension loaders are one-shot latches, so installing a plugin
+   * mid-session did nothing until the next process — and nothing said so.
+   * Clearing all four together is deliberate: a plugin contributes across them
+   * (skills AND an MCP server AND commands), and a partial refresh would leave
+   * a bundle half-installed, which is worse than not refreshing at all.
+   */
+  async invalidatePlugins(): Promise<{ plugins: LoadedPlugin[]; errors: string[] }> {
+    this.pluginDiscovery = null;
+    this.hooksLoaded = false;
+    this.skillsLoaded = false;
+    this.skillCatalog = "";
+    // MCP servers must be STOPPED, not merely re-scanned: their subprocesses
+    // and HTTP sessions belong to the old plugin set.
+    this.mcpLoaded = false;
+    this.localToolsLoaded = false;
+    await this.mcpDiscovery?.stopAll().catch(() => {});
+    this.mcpDiscovery = null;
+    for (const schema of this.registry.list()) {
+      if (schema.name.startsWith("mcp_")) this.registry.unregister(schema.name);
+    }
+    await Promise.all([
+      this.ensureHookRunner(),
+      this.ensureMcpServers(),
+      this.ensureSkills(),
+      this.ensureLocalTools(),
+    ]);
+    return this.listPlugins();
   }
 
   /**
@@ -1936,6 +1974,39 @@ export class Engine {
     await this.ensureMcpServers();
     return this.mcpDiscovery?.getStatus() ?? [];
   }
+
+  /**
+   * Executable tools from `<workspace>/.gear/tools`, behind `[extensions]
+   * localTools = true` (D6).
+   *
+   * This loader has existed and been tested since it was written, and was
+   * never instantiated — 210 lines of dead code. It is wired now for exactly
+   * one case: the USER'S OWN workspace. A plugin can never point at it, because
+   * a declaration is not a sandbox and running a stranger's code needs one.
+   * Off by default, and it says what it loaded when it is on.
+   */
+  private async ensureLocalTools(): Promise<void> {
+    if (this.localToolsLoaded) return;
+    this.localToolsLoaded = true;
+    if (this.config.extensions?.localTools !== true) return;
+    try {
+      const loader = new CustomToolsLoader(this.config.workspaceRoot);
+      const handlers = await loader.loadAll();
+      for (const handler of handlers) this.registry.register(handler);
+      if (handlers.length > 0) {
+        const names = handlers.map((h) => h.schema.name).join(", ");
+        loaderLog.info(`[extensions] loaded ${handlers.length} local tool(s): ${names}`);
+        this.mcpNotices.push(
+          `local tools loaded from .gear/tools — ${handlers.length} (${names})`,
+        );
+      }
+    } catch (err) {
+      loaderLog.warn(
+        `[extensions] local tools failed to load: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  private localToolsLoaded = false;
 
   /**
    * Lazily load skills once per engine: discover SKILL.md files from the bundled
@@ -3515,7 +3586,12 @@ export class Engine {
             query: userMessage,
           }).then((map) => (map ? [map] : []));
 
-    await Promise.all([this.ensureHookRunner(), this.ensureMcpServers(), this.ensureSkills()]);
+    await Promise.all([
+      this.ensureHookRunner(),
+      this.ensureMcpServers(),
+      this.ensureSkills(),
+      this.ensureLocalTools(),
+    ]);
     // What the tool surface costs per request, once the extensions are in.
     // Recorded once per session so `gear audit` can report it (P4.1).
     this.recordToolSurface(sessionId, session.model);

@@ -264,6 +264,12 @@ if (command === "evolve") {
     await runEvolve(positionals.slice(1) as string[], values as Record<string, unknown>),
   );
 }
+if (command === "plugin" || command === "plugins") {
+  const { runPlugin } = await import("./plugin-cli");
+  process.exit(
+    await runPlugin(positionals.slice(1) as string[], values as Record<string, unknown>),
+  );
+}
 if (command === "mcp") {
   const { runMcp } = await import("./mcp-cli");
   process.exit(await runMcp(positionals.slice(1) as string[], values as Record<string, unknown>));
@@ -904,6 +910,7 @@ async function main() {
     // it off). Unit tests construct the Engine directly and stay hermetic.
     team: config.team,
     mcp: config.mcp,
+    extensions: config.extensions,
     // Black box: on by default for the real CLI (config [diagnostics] can turn
     // it off). Unit tests construct the Engine directly and stay hermetic.
     // The trail spool is pid-scoped so two concurrent Gear instances don't
