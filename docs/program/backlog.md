@@ -146,10 +146,12 @@ Found 2026-09-03 by P10.2 (Windows parity):
   therefore cannot answer honestly on Windows. Either implement an ACL check or
   say plainly that Windows credential files are as private as `%USERPROFILE%` —
   found in P10.2
-- `packages/orchestrator/src/hooks.ts:386`, `verifier.ts:280`, `worker-worktree.ts:248` and the
-  Rust executor's bash — every command string Gear runs goes through a hardcoded POSIX shell
-  (`/bin/sh -c`, `bash -c`). On Windows the spawn simply fails, so hooks, the verifier, worker
-  checks and background shells are all inert there with no message saying so. Nothing decides
-  what a command string MEANS on Windows (cmd.exe? PowerShell? Git Bash if installed?); that
-  contract is the missing piece, not the spawn call. Their unit suites skip on Windows with this
-  reason rather than assert a behaviour that does not exist — found in P10.2
+- `packages/orchestrator/src/hooks.ts:386`, `verifier.ts:280`, `worker-worktree.ts:248` — every
+  command string these run goes through a hardcoded POSIX shell (`/bin/sh -c`, `bash -c`), so on
+  Windows the spawn fails and hooks, the verifier and worker checks are inert with no message
+  saying so. **The Rust half is fixed**: `crates/gear-sandbox/src/shell.rs` resolves a shell once
+  (Git for Windows' bash, else `cmd.exe /C`, `GEAR_SHELL` overrides) and both `bash` paths use it.
+  These three TypeScript callers should route through the same rule — the resolver needs a TS
+  twin, or the callers need to ask gear-tools. Their unit suites skip on Windows meanwhile,
+  because what they would assert depends on which shell the machine happens to have — found in
+  P10.2
