@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, afterAll } from "bun:test";
 import { mkdtemp, rm, writeFile, readFile, mkdir } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -8,6 +8,8 @@ import {
   parsePatch,
   patchTargetPaths,
 } from "../../../packages/tool-registry/src/tools/apply-patch";
+import { LspServerManager } from "../../../packages/tool-registry/src/tools/lsp/manager";
+import { setLspAutoFeedback } from "../../../packages/tool-registry/src/tools/lsp/feedback";
 import { ToolRegistry, modelUsesApplyPatch } from "../../../packages/tool-registry/src/registry";
 import type { ToolHandler } from "../../../packages/tool-registry/src/types";
 
@@ -292,5 +294,112 @@ describe("per-model-family tool advertisement", () => {
     for (const list of [forGpt, forClaude, forUnknown]) expect(list).toContain("read_file");
     // Execution is family-agnostic: a hidden tool still runs if called.
     expect(registry.get("apply_patch")).toBeDefined();
+  });
+});
+
+// ─── P10.1: the patch carries the language server's verdict too ───
+//
+// withLspFeedback is single-path and cannot wrap this tool, so apply_patch
+// collects its own block for every file it touched, under ONE shared budget.
+// The fake stdio server (tests/fixtures/lsp) keeps it machine-independent.
+
+describe("apply_patch post-edit diagnostics", () => {
+  const FIXTURE = join(import.meta.dir, "../../fixtures/lsp/fake-lsp-server.ts");
+  const managers: LspServerManager[] = [];
+
+  function fakeManager(args: string[] = []): LspServerManager {
+    const m = new LspServerManager({
+      serversOverride: [
+        {
+          extensions: [".fake"],
+          spec: {
+            id: "fake",
+            command: ["bun", FIXTURE, ...args],
+            installHint: "cannot happen — bun is the test runtime",
+            languageId: () => "fake",
+          },
+        },
+      ],
+    });
+    managers.push(m);
+    return m;
+  }
+
+  afterAll(async () => {
+    for (const m of managers) await m.stopAll();
+    setLspAutoFeedback(false);
+  });
+  afterEach(() => setLspAutoFeedback(false));
+
+  const patch = (body: string) => `*** Begin Patch\n${body}*** End Patch\n`;
+
+  test("one block covers every file the patch touched", async () => {
+    setLspAutoFeedback(true);
+    const h = createApplyPatchHandler(fakeManager(["--case=typecheck"]));
+    const out = await h.execute({
+      callId: "t1",
+      toolName: "apply_patch",
+      args: {
+        patch: patch(
+          "*** Add File: a.fake\n+const a: number = 'one';\n" +
+            "*** Add File: b.fake\n+const b: number = 2;\n" +
+            "*** Add File: c.fake\n+const c: number = 'three';\n",
+        ),
+      },
+      workspaceRoot: workspace,
+      sessionId: "s1",
+    });
+
+    expect(out.success).toBe(true);
+    const result = JSON.parse(out.result) as { files: unknown[]; diagnostics?: string };
+    expect(result.files).toHaveLength(3);
+    // b.fake is clean, so it contributes nothing; the other two do.
+    expect(result.diagnostics?.split("\n")).toEqual([
+      "a.fake:1:17 error Type 'string' is not assignable to type 'number'.",
+      "c.fake:1:17 error Type 'string' is not assignable to type 'number'.",
+    ]);
+  });
+
+  test("no manager, or the feature off, leaves the result exactly as it was", async () => {
+    const noManager = await createApplyPatchHandler().execute({
+      callId: "t1",
+      toolName: "apply_patch",
+      args: { patch: patch("*** Add File: a.fake\n+const a: number = 'one';\n") },
+      workspaceRoot: workspace,
+      sessionId: "s1",
+    });
+    expect(JSON.parse(noManager.result).diagnostics).toBeUndefined();
+
+    const off = await createApplyPatchHandler(fakeManager(["--case=typecheck"])).execute({
+      callId: "t2",
+      toolName: "apply_patch",
+      args: { patch: patch("*** Add File: d.fake\n+const d: number = 'one';\n") },
+      workspaceRoot: workspace,
+      sessionId: "s1",
+    });
+    expect(JSON.parse(off.result).diagnostics).toBeUndefined();
+  });
+
+  test("the shared budget bounds the whole patch, not each file in it", async () => {
+    setLspAutoFeedback(true);
+    const h = createApplyPatchHandler(fakeManager(["--mute"]));
+    const body = ["a", "b", "c", "d"]
+      .map((n) => `*** Add File: ${n}.fake\n+const ${n}: number = 'x';\n`)
+      .join("");
+
+    const start = performance.now();
+    const out = await h.execute({
+      callId: "t1",
+      toolName: "apply_patch",
+      args: { patch: patch(body) },
+      workspaceRoot: workspace,
+      sessionId: "s1",
+    });
+    const elapsed = performance.now() - start;
+
+    expect(out.success).toBe(true);
+    expect(JSON.parse(out.result).diagnostics).toBeUndefined();
+    // One 2s budget plus spawn slack — never 4 × 2s.
+    expect(elapsed).toBeLessThan(5000);
   });
 });
