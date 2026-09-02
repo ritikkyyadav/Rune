@@ -5,6 +5,7 @@ import type {
   LlmProvider,
   Message,
   ModelInfo,
+  ReasoningEffort,
   StreamEvent,
   StopReason,
   StreamOpts,
@@ -431,6 +432,37 @@ export class GoogleProvider implements LlmProvider {
 }
 
 /**
+ * Gemini's thinking budget for a requested reasoning EFFORT.
+ *
+ * Gemini has no `reasoning_effort` field — depth is a token budget — so the
+ * provider-neutral dial has to be translated. Without this translation the
+ * effort a user picked was accepted by the UI, carried all the way down the
+ * request, and then dropped on the floor here: `/effort high` on a Gemini
+ * session changed nothing at all. That is the same defect this repo already
+ * shipped once on Codex, where `reasoning.effort` was never sent and `max` sat
+ * unreachable behind a dial that did nothing.
+ *
+ * Values sit inside the documented range for the 2.5 line (Flash tops out at
+ * 24,576; Pro's floor is 128 and it cannot be switched off).
+ */
+function geminiBudgetForEffort(effort: ReasoningEffort): number {
+  switch (effort) {
+    case "none":
+    case "minimal":
+      return 0;
+    case "low":
+      return 4_096;
+    case "medium":
+      return 8_192;
+    case "high":
+      return 16_384;
+    // xhigh/max: the top of the documented range rather than an invented number.
+    default:
+      return 24_576;
+  }
+}
+
+/**
  * Gemini thinking dial for the request's provider-neutral `thinking` flag.
  * Only models that actually support the field receive it (an unknown
  * generationConfig key is a 400 on older models):
@@ -438,6 +470,8 @@ export class GoogleProvider implements LlmProvider {
  *     2.5 Pro cannot switch thinking off — 128 is its documented floor;
  *     Gemini 3.x uses thinkingLevel, whose floor is "low".
  *   - thinking enabled with an explicit budget → 2.5 family thinkingBudget.
+ *   - thinking enabled with an EFFORT → the budget that effort maps to (2.5),
+ *     or the nearest thinkingLevel (3.x).
  *   - otherwise the model's own default (dynamic thinking) is left alone.
  * Thought summaries are never requested (includeThoughts false).
  */
@@ -453,12 +487,29 @@ export function geminiThinkingConfig(
     if (is3) return { thinkingLevel: "low", includeThoughts: false };
     return undefined;
   }
+  // An explicit budget is the caller being specific; it wins over the effort.
   if (request.thinking?.enabled && request.thinking.budgetTokens && is25) {
     const floor = is25Pro ? 128 : 0;
     return {
       thinkingBudget: Math.max(floor, Math.floor(request.thinking.budgetTokens)),
       includeThoughts: false,
     };
+  }
+  if (request.thinking?.enabled && request.thinking.effort) {
+    if (is25) {
+      const floor = is25Pro ? 128 : 0;
+      return {
+        thinkingBudget: Math.max(floor, geminiBudgetForEffort(request.thinking.effort)),
+        includeThoughts: false,
+      };
+    }
+    if (is3) {
+      // Gemini 3 takes a level, not a budget. Only "low" and "high" are
+      // documented across the line, so the dial collapses onto those two
+      // rather than sending an enum a model might 400 on.
+      const deep = ["high", "xhigh", "max"].includes(request.thinking.effort);
+      return { thinkingLevel: deep ? "high" : "low", includeThoughts: false };
+    }
   }
   return undefined;
 }
