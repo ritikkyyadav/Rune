@@ -23,7 +23,7 @@ import {
   type ToolActivityView,
   type TranscriptLineView,
 } from "./activity";
-import type { AgentTurnEvent, ResearchEvent } from "@gear/protocol";
+import type { AgentTurnEvent, ChildAgentEvent, ResearchEvent } from "@gear/protocol";
 import { assertNeverSoft } from "@gear/protocol";
 import { formatError, formatEvent, fmtTokens } from "./events";
 import { Pulse, PULSE_WEIGHT, pulseGlyph, quietLabel } from "./pulse";
@@ -122,8 +122,20 @@ interface FleetAgent {
   note: string;
   noteAt: number;
   wantNote: string;
-  /** Tool calls this member has completed -- one per heartbeat. */
+  /**
+   * Tool calls this member has completed.
+   *
+   * Counted from the child's own `tool_call_end` (P2.6) when it is carried,
+   * and only from a note otherwise. The note-based tally was a guess that had
+   * to exclude non-ASCII markers by hand so a mid-run model swap did not read
+   * as a step the sub-agent never took.
+   */
   steps: number;
+  /** Provider reroutes inside this member — invisible before the typed channel. */
+  reroutes: number;
+  /** Checks this member ran, and how many passed. Also previously invisible. */
+  checks: number;
+  checksPassed: number;
 }
 
 /** How many fleet rows the panel draws before it collapses the remainder into
@@ -644,6 +656,7 @@ export class TurnRenderer {
     note: string,
     state: "started" | "settled" | undefined,
     ok: boolean,
+    child?: ChildAgentEvent,
   ): void {
     const agent = this.fleet.get(callId);
     if (!agent) return;
@@ -664,13 +677,38 @@ export class TurnRenderer {
     }
     if (!note) return;
     const clean = stripWorkerId(note);
-    // A mid-run model swap arrives as a MARKER rather than a tool name (see
-    // subagent.ts): news about the run, not a step the sub-agent took, and
-    // counting it would inflate the tally with something it never did. Tool
-    // names are ASCII, so a leading non-ASCII cell is what a marker looks like
-    // -- named that way rather than by the glyph itself, which belongs to the
-    // closed set and not to a literal in here.
-    if (!/^[^\x00-\x7f]/.test(clean)) agent.steps++;
+    if (child) {
+      // The typed channel (P2.6). Counting from the child's own event replaces
+      // a guess: the note-based tally had to exclude non-ASCII markers by hand
+      // so a mid-run model swap did not read as a step, and a retry or a
+      // verification result inside a worker was not counted at all because
+      // the string projection never mentioned it.
+      switch (child.event.type) {
+        case "tool_call_end":
+          agent.steps++;
+          break;
+        case "fallback":
+        case "retry":
+          agent.reroutes++;
+          break;
+        case "verification_completed":
+          agent.checks++;
+          if (child.event.passed) agent.checksPassed++;
+          break;
+        case "step_check":
+          if (child.event.ran) {
+            agent.checks++;
+            if (child.event.passed) agent.checksPassed++;
+          }
+          break;
+        default:
+          break;
+      }
+    } else if (!/^[^\x00-\x7f]/.test(clean)) {
+      // No child event: a tool that reports only the string channel. The
+      // marker heuristic stays for exactly that case.
+      agent.steps++;
+    }
     agent.wantNote = truncate(clean, 40);
     if (agent.state === "queued") {
       // A heartbeat is proof it is running, whichever order the markers arrived
@@ -713,10 +751,14 @@ export class TurnRenderer {
       case "failed": {
         const outcome = agent.state === "done" ? "done" : "failed";
         const steps = agent.steps > 0 ? plural(agent.steps, "step") : "";
+        // Only what the child actually reported. A member that ran no checks
+        // says nothing about checks -- absent is not zero.
+        const checks = agent.checks > 0 ? `${agent.checksPassed}/${agent.checks} checks` : "";
+        const reroutes = agent.reroutes > 0 ? plural(agent.reroutes, "reroute") : "";
         return F.toolRow({
           name: verb,
           arg: agent.brief,
-          metric: F.receiptOf([outcome, steps, elapsed]),
+          metric: F.receiptOf([outcome, steps, checks, reroutes, elapsed]),
           status: agent.state === "done" ? "ok" : "fail",
         });
       }
@@ -1228,7 +1270,7 @@ export class TurnRenderer {
         const callId = String(event.callId ?? "");
         const note = String(event.note ?? "");
         if (note) this.toolProgressNote = { callId, note };
-        this.trackFleetProgress(callId, note, event.state, event.ok !== false);
+        this.trackFleetProgress(callId, note, event.state, event.ok !== false, event.child);
         this.updateLive();
         return;
       }
@@ -1260,6 +1302,9 @@ export class TurnRenderer {
             noteAt: 0,
             wantNote: "",
             steps: 0,
+            reroutes: 0,
+            checks: 0,
+            checksPassed: 0,
           });
         }
         this.activity = runningLabel(this.currentTool.name);
