@@ -15,6 +15,7 @@ import {
   CodexProvider,
   getStrategy,
   ProviderHealthStore,
+  cacheBreakpointPolicyFor,
 } from "@gear/llm-gateway";
 import type {
   GatewayIncidentEvent,
@@ -120,7 +121,12 @@ export function buildGateway(opts: BuildGatewayOpts): LlmGateway {
       if (!configured && opts.provider !== preset.id) continue;
       const baseUrl = localBaseUrls[preset.id] ?? preset.baseUrl;
       if (preset.kind === "ollama") gw.registerProvider(new OllamaProvider(baseUrl));
-      else gw.registerProvider(new OpenAIProvider(undefined, baseUrl, preset.id as ProviderName));
+      else
+        gw.registerProvider(
+          new OpenAIProvider(undefined, baseUrl, preset.id as ProviderName, {
+            cacheBreakpoints: cacheBreakpointPolicyFor(preset.id),
+          }),
+        );
       continue;
     }
 
@@ -145,7 +151,11 @@ export function buildGateway(opts: BuildGatewayOpts): LlmGateway {
         // other OpenAI-compatible host runs through OpenAIProvider + base URL.
         if (preset.id === "openrouter") gw.registerProvider(new OpenRouterProvider(key));
         else
-          gw.registerProvider(new OpenAIProvider(key, preset.baseUrl, preset.id as ProviderName));
+          gw.registerProvider(
+            new OpenAIProvider(key, preset.baseUrl, preset.id as ProviderName, {
+              cacheBreakpoints: cacheBreakpointPolicyFor(preset.id),
+            }),
+          );
         break;
       case "copilot":
         // `key` is the durable GitHub OAuth token; CopilotProvider mints and
@@ -165,7 +175,11 @@ export function buildGateway(opts: BuildGatewayOpts): LlmGateway {
   // User-defined custom OpenAI-compatible endpoint.
   const c = opts.customEndpoint;
   if (c?.key && c.baseUrl && !disabled.has(CUSTOM_PROVIDER_ID)) {
-    gw.registerProvider(new OpenAIProvider(c.key, c.baseUrl, CUSTOM_PROVIDER_ID as ProviderName));
+    gw.registerProvider(
+      new OpenAIProvider(c.key, c.baseUrl, CUSTOM_PROVIDER_ID as ProviderName, {
+        cacheBreakpoints: cacheBreakpointPolicyFor(CUSTOM_PROVIDER_ID),
+      }),
+    );
   }
 
   return gw;

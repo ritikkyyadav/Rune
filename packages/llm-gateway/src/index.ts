@@ -32,6 +32,13 @@ export {
 export { LlmGateway, isModelGoneError } from "./gateway";
 export { AnthropicProvider } from "./providers/anthropic";
 export { OpenAIProvider } from "./providers/openai";
+export {
+  cacheBreakpointPolicyFor,
+  declaredCachePolicies,
+  isAnthropicUpstream,
+  promptCacheKey,
+} from "./providers/cache-policy";
+export type { CacheBreakpointPolicy } from "./providers/cache-policy";
 export { OpenRouterProvider } from "./providers/openrouter";
 export { GoogleProvider } from "./providers/google";
 export { OllamaProvider } from "./providers/ollama";
