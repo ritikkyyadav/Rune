@@ -31,22 +31,13 @@
   },
   "bundle": {
     "active": true,
-    "targets": [
-      "dmg",
-      "app",
-      "msi",
-      "nsis",
-      "appimage",
-      "deb"
-    ],
+    "targets": ["dmg", "app", "msi", "nsis", "appimage", "deb"],
     "createUpdaterArtifacts": false,
     "shortDescription": "The agent that proves its work, on any model.",
     "longDescription": "Gear runs an AI coding agent on this machine, against the model you already pay for. Every answer traces to the tools, prompts, permissions and policy that produced it. It is local-first: no cloud, no account.",
     "category": "DeveloperTool",
     "copyright": "Savoir Studio",
-    "externalBin": [
-      "binaries/gear"
-    ],
+    "externalBin": ["binaries/gear"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -59,10 +50,7 @@
     },
     "linux": {
       "deb": {
-        "depends": [
-          "libwebkit2gtk-4.1-0",
-          "libgtk-3-0"
-        ]
+        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"]
       }
     }
   },
@@ -74,9 +62,7 @@
       "active": true,
       "dialog": true,
       "pubkey": "",
-      "endpoints": [
-        "https://github.com/ritikkyyadav/Alan/releases/latest/download/latest.json"
-      ]
+      "endpoints": ["https://github.com/ritikkyyadav/Alan/releases/latest/download/latest.json"]
     }
   }
 }

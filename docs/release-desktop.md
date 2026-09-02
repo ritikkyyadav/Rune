@@ -12,12 +12,12 @@ the Actions tab with `publish: false` for a build-only dry run.
 
 ## What it produces
 
-| Platform      | Artifacts                        | Runner         |
-| ------------- | -------------------------------- | -------------- |
-| macOS arm64   | `.dmg`, `.app`, updater `.tar.gz` | `macos-latest` |
-| macOS x64     | `.dmg`, `.app`, updater `.tar.gz` | `macos-latest` |
-| Windows x64   | `.msi`, NSIS `.exe`               | `windows-latest` |
-| Linux x64     | `.AppImage`, `.deb`              | `ubuntu-22.04` |
+| Platform    | Artifacts                         | Runner           |
+| ----------- | --------------------------------- | ---------------- |
+| macOS arm64 | `.dmg`, `.app`, updater `.tar.gz` | `macos-latest`   |
+| macOS x64   | `.dmg`, `.app`, updater `.tar.gz` | `macos-latest`   |
+| Windows x64 | `.msi`, NSIS `.exe`               | `windows-latest` |
+| Linux x64   | `.AppImage`, `.deb`               | `ubuntu-22.04`   |
 
 `fail-fast` is off. One platform's toolchain breaking must not hide whether the
 others built.
@@ -46,12 +46,12 @@ tree.
 
 From a real unsigned `tauri build` on macOS arm64, 2026-09-02:
 
-| Artifact | Size |
-| --- | --- |
+| Artifact                                     | Size      |
+| -------------------------------------------- | --------- |
 | `Gear_0.3.0_aarch64.dmg` (what you download) | **30 MB** |
-| `Gear.app` (what you install) | **80 MB** |
-| ↳ the `gear` sidecar inside it | 69 MB |
-| ↳ `gear-desktop`, the Tauri shell | 14 MB |
+| `Gear.app` (what you install)                | **80 MB** |
+| ↳ the `gear` sidecar inside it               | 69 MB     |
+| ↳ `gear-desktop`, the Tauri shell            | 14 MB     |
 
 The download meets the 30 MB budget; **the installed app does not, by 50 MB.**
 Nearly all of it is one file: the compiled `gear` CLI embeds Bun's runtime.
@@ -70,12 +70,12 @@ skipped when it is not. This follows the pattern Phase 1 established in
 An unsigned release is a worse product; a release workflow that fails because a
 certificate has not been bought yet is a worse repository.
 
-| Secret | Used for | Absent → |
-| --- | --- | --- |
-| `MACOS_CERTIFICATE`, `MACOS_CERTIFICATE_PWD`, `MACOS_SIGNING_IDENTITY` | Developer ID signing | `.dmg` ships unsigned; Gatekeeper warns |
-| `APPLE_ID`, `APPLE_APP_PASSWORD`, `APPLE_TEAM_ID` | Notarization + stapling | signed but not notarized; Gatekeeper still warns |
-| `WINDOWS_CERTIFICATE`, `WINDOWS_CERTIFICATE_PWD` | Authenticode | `.msi` ships unsigned; SmartScreen warns |
-| `TAURI_UPDATER_PRIVATE_KEY`, `TAURI_UPDATER_KEY_PASSWORD` | The update manifest's own signature | `latest.json` is unsigned and **no installed app will accept the update** |
+| Secret                                                                 | Used for                            | Absent →                                                                  |
+| ---------------------------------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------- |
+| `MACOS_CERTIFICATE`, `MACOS_CERTIFICATE_PWD`, `MACOS_SIGNING_IDENTITY` | Developer ID signing                | `.dmg` ships unsigned; Gatekeeper warns                                   |
+| `APPLE_ID`, `APPLE_APP_PASSWORD`, `APPLE_TEAM_ID`                      | Notarization + stapling             | signed but not notarized; Gatekeeper still warns                          |
+| `WINDOWS_CERTIFICATE`, `WINDOWS_CERTIFICATE_PWD`                       | Authenticode                        | `.msi` ships unsigned; SmartScreen warns                                  |
+| `TAURI_UPDATER_PRIVATE_KEY`, `TAURI_UPDATER_KEY_PASSWORD`              | The update manifest's own signature | `latest.json` is unsigned and **no installed app will accept the update** |
 
 The first three are the CLI's secrets, reused. The last pair is new and specific
 to the app.
