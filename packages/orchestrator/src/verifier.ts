@@ -25,6 +25,22 @@ export interface VerifyResult {
 
 export interface Verifier {
   verify(signal?: AbortSignal): Promise<VerifyResult>;
+  /**
+   * The cheap tier only — compile-class checks (typecheck, cargo check, go
+   * build), never the test suite. Run at a STEP boundary rather than at the
+   * end of the run, so a step that broke the build is caught while it is
+   * still the step being worked on. Optional: verifiers without a cheap tier
+   * simply have no step check.
+   */
+  verifyFast?(signal?: AbortSignal): Promise<VerifyResult>;
+}
+
+/** Compile-class commands: fast, deterministic, and enough to know the tree still builds. */
+const FAST_CHECK_RE = /\b(typecheck|tsc|cargo\s+check|go\s+build)\b/;
+
+/** The step-check subset of a command list: compile-class checks only. */
+export function fastCheckCommands(commands: string[]): string[] {
+  return commands.filter((c) => FAST_CHECK_RE.test(c));
 }
 
 export interface CommandVerifierConfig {
@@ -305,13 +321,38 @@ async function runCommand(
 export class CommandVerifier implements Verifier {
   constructor(private readonly config: CommandVerifierConfig) {}
 
-  async verify(signal?: AbortSignal): Promise<VerifyResult> {
-    const timeoutMs = this.config.timeoutMs ?? 120_000;
-    const commands =
-      this.config.commands && this.config.commands.length > 0
-        ? this.config.commands
-        : detectVerifyCommands(this.config.workspaceRoot);
+  private commands(): string[] {
+    return this.config.commands && this.config.commands.length > 0
+      ? this.config.commands
+      : detectVerifyCommands(this.config.workspaceRoot);
+  }
 
+  async verify(signal?: AbortSignal): Promise<VerifyResult> {
+    return this.run(this.commands(), this.config.timeoutMs ?? 120_000, signal);
+  }
+
+  /**
+   * Step check: the compile-class subset, on a tighter clock (a minute — a
+   * typecheck that takes longer than that is not a step-boundary tool). When
+   * the project has no such check, `ran: false` and the caller moves on.
+   */
+  async verifyFast(signal?: AbortSignal): Promise<VerifyResult> {
+    const fast = fastCheckCommands(this.commands());
+    if (fast.length === 0) {
+      return {
+        passed: true,
+        ran: false,
+        report: "No compile-class check detected for a step check.",
+      };
+    }
+    return this.run(fast, Math.min(this.config.timeoutMs ?? 120_000, 60_000), signal);
+  }
+
+  private async run(
+    commands: string[],
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ): Promise<VerifyResult> {
     if (commands.length === 0) {
       // Word this as the finding it is: after a session that WROTE files,
       // "nothing runnable" usually means the work produced static files, not a

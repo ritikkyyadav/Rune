@@ -278,6 +278,12 @@ export interface GearConfig {
     commands?: string[];
     /** Per-command timeout in seconds. Default 120. */
     timeoutSecs?: number;
+    /**
+     * Run the compile-class check (typecheck / cargo check / go build) when a
+     * plan step that wrote files is closed without any check of its own.
+     * Default true.
+     */
+    perStep?: boolean;
   };
   /**
    * Opt-in, transparent telemetry — the ONLY path by which anything leaves the
@@ -392,6 +398,15 @@ export interface GearConfig {
     enabled?: boolean;
     /** Injection budget in tokens. Default 600. */
     maxInjectTokens?: number;
+  };
+  /**
+   * Self-evolution. Every run writes a retro (outcome, steps by evidence,
+   * checks, cost, lessons) into its session log and folds the lessons into the
+   * notebook. `playbook` additionally renders the repository's recurring
+   * lessons to .gear/skills/playbook/SKILL.md. Default true.
+   */
+  evolve?: {
+    playbook?: boolean;
   };
   /**
    * Git integration. autoCommit: after every successful run that wrote files,

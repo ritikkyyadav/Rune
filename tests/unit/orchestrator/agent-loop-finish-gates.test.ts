@@ -11,7 +11,11 @@
  */
 
 import { describe, test, expect, mock } from "bun:test";
-import { AgentLoop } from "../../../packages/orchestrator/src/agent-loop";
+import {
+  AgentLoop,
+  FIX_SHAPED_MAX_CHARS,
+  isFixShaped,
+} from "../../../packages/orchestrator/src/agent-loop";
 import type { AgentTurnEvent } from "../../../packages/orchestrator/src/agent-loop";
 import { TaskStateStore } from "../../../packages/orchestrator/src/task-state";
 
@@ -87,11 +91,7 @@ function makeRegistry() {
   } as any;
 }
 
-function makeLoop(
-  gateway: any,
-  taskState: TaskStateStore,
-  opts: Record<string, unknown> = {},
-) {
+function makeLoop(gateway: any, taskState: TaskStateStore, opts: Record<string, unknown> = {}) {
   return new AgentLoop(
     {
       model: "m",
@@ -129,7 +129,8 @@ describe("fix-verified gate", () => {
       ),
     ).toBe(true);
     // Refused exactly once — the second finish attempt goes through.
-    const refusals = transcriptText(loop).split("none of your done_when criteria reached").length - 1;
+    const refusals =
+      transcriptText(loop).split("none of your done_when criteria reached").length - 1;
     expect(refusals).toBe(1);
     expect(events.at(-1)?.type).toBe("turn_complete");
   });
@@ -215,5 +216,42 @@ describe("product-sight gate", () => {
     const loop = makeLoop(gw, ts);
     await collect(loop.run("refactor the core module", "s1", "/tmp"));
     expect(transcriptText(loop)).not.toContain("never looked at it");
+  });
+});
+
+describe("fix-shaped means short", () => {
+  test("a long brief that mentions fixing defects is a build, not a fix — no gate", async () => {
+    const ts = new TaskStateStore();
+    const gw = makeGateway([
+      { tools: [{ name: "write_file", args: { path: "a.ts" } }] },
+      { tools: [{ name: "bash", args: { command: "bun test" } }] },
+      { text: "done" },
+    ]);
+    const loop = new AgentLoop(
+      {
+        model: "m",
+        provider: "anthropic",
+        maxTokens: 100,
+        maxTurns: 12,
+        systemPrompt: "s",
+        taskState: ts,
+        ledgerStatus: () => ({ total: 2, verified: 0 }),
+      } as any,
+      gw,
+      makeRegistry(),
+    );
+    const brief =
+      "Build the laboratory end to end.\n" +
+      "Fix scientific correctness defects before new features.\n".repeat(30);
+    await collect(loop.run(brief, "s1", "/tmp"));
+    expect(JSON.stringify(gw.requests)).not.toContain("this task is a FIX");
+  });
+
+  test("isFixShaped: short and fix-worded, nothing else", () => {
+    expect(isFixShaped("fix the date parsing bug")).toBe(true);
+    expect(isFixShaped("the login page is broken on mobile")).toBe(true);
+    expect(isFixShaped("add a login page")).toBe(false);
+    expect(isFixShaped("")).toBe(false);
+    expect(isFixShaped("x".repeat(FIX_SHAPED_MAX_CHARS) + " fix it")).toBe(false);
   });
 });

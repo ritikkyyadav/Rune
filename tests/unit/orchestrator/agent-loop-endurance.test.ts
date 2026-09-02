@@ -117,9 +117,13 @@ describe("AgentLoop — 100+ turn endurance", () => {
 
     const taskState = new TaskStateStore();
     taskState.beginTurn("Audit all 105 artifacts without losing the original objective.");
-    taskState.setTodos([
-      { content: "Inspect all 105 artifacts and preserve the findings", status: "in_progress" },
-    ]);
+    // The step is set up already closed: this test is about the spine
+    // surviving compaction, not about the open-steps finish gate (which would
+    // refuse the scripted model's final answer once and cost a 107th request).
+    taskState.setTodos(
+      [{ content: "Inspect all 105 artifacts and preserve the findings", status: "completed" }],
+      { enforce: false },
+    );
 
     const contextEngine = new ContextEngine({ summarizeTurnsThreshold: 10 }, gateway);
     const loop = new AgentLoop(

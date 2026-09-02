@@ -204,3 +204,40 @@ describe("greenfield-clarify tripwire", () => {
       expect(notesIn(loop)).toBe(0);
     }));
 });
+
+describe("art-direction nudge after the greenfield note", () => {
+  test("the first screen written AFTER the greenfield note still gets the art-direction question", () =>
+    withWorkspace(async (ws) => {
+      const incidents: string[] = [];
+      const ts = new TaskStateStore();
+      const gw = makeGateway([
+        { tool: "write_file", args: { path: "newapp/README.md" } },
+        { tool: "write_file", args: { path: "newapp/src/App.tsx" } },
+        { text: "done" },
+      ]);
+      const loop = makeLoop(gw, ts, makeRegistry(), {
+        onIncident: (i: any) => incidents.push(i.class),
+      });
+      await collect(loop.run("build me a genomics lab", "s1", ws));
+      expect(incidents).toContain("loop.greenfield_nudge");
+      expect(incidents).toContain("loop.art_direction_nudge");
+      const transcript = JSON.stringify(loop.getMessages());
+      expect(transcript.split("art direction is YOUR default").length - 1).toBe(1);
+    }));
+
+  test("a first screen that is also the first file gets both notes", () =>
+    withWorkspace(async (ws) => {
+      const incidents: string[] = [];
+      const ts = new TaskStateStore();
+      const gw = makeGateway([
+        { tool: "write_file", args: { path: "newapp/index.html" } },
+        { text: "done" },
+      ]);
+      const loop = makeLoop(gw, ts, makeRegistry(), {
+        onIncident: (i: any) => incidents.push(i.class),
+      });
+      await collect(loop.run("build me a clone of cluely", "s1", ws));
+      expect(incidents).toContain("loop.greenfield_nudge");
+      expect(incidents).toContain("loop.art_direction_nudge");
+    }));
+});

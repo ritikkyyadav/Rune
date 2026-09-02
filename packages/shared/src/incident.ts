@@ -49,6 +49,7 @@ export const INCIDENT_CLASSES = [
   "loop.verification_failed",
   "loop.consecutive_errors",
   "loop.max_turns",
+  "loop.second_wind",
   "loop.user_abort",
   "loop.plan_nudge",
   "loop.replan_nudge",
@@ -63,6 +64,17 @@ export const INCIDENT_CLASSES = [
   "loop.effort_latched",
   "loop.effort_released",
   "loop.handoff",
+  // The plan as a ledger: step completions judged by evidence, the step
+  // check at a step boundary, the open-steps finish gate, the results-side
+  // progress breaker, and the goal rolling to a pending follow-up.
+  "loop.step_refused",
+  "loop.step_check_passed",
+  "loop.step_check_failed",
+  "loop.open_steps_gate",
+  "loop.open_steps",
+  "loop.stale_nudge",
+  "loop.stalled",
+  "loop.goal_rolled",
   "context.forced_compaction",
   "context.budget_overflow",
   "context.freshness_mismatch",

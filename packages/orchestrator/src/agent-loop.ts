@@ -28,9 +28,10 @@ import type { ContextEngine } from "./context-engine";
 import { buildUserContent, MAX_IMAGES_PER_MESSAGE } from "./image-attach";
 import type { RetrievedChunk } from "./context-engine";
 import { getMaxOutputTokens } from "./tokenizer";
-import type { Verifier } from "./verifier";
-import type { HandoffReason, TaskStateStore } from "./task-state";
+import type { Verifier, VerifyResult } from "./verifier";
+import type { HandoffReason, TaskStateStore, TodoItem } from "./task-state";
 import { TASK_STATE_BLOCK_BUDGET_AFTER_COMPACTION } from "./task-state";
+import { isVerificationCommand } from "./brief";
 
 // ─── Agent Turn Events (yielded to caller) ───
 
@@ -60,10 +61,14 @@ export type AgentTurnEvent =
   // The provider stream was abandoned mid-response and is being re-streamed:
   // UIs must drop any partially-rendered text/thinking for the current turn.
   | { type: "stream_reset" }
-  | {
-      type: "todo_updated";
-      items: { content: string; status: "pending" | "in_progress" | "completed" }[];
-    }
+  // The plan as the spine holds it: each item carries the evidence the harness
+  // measured while it was open, and an `unproven` mark when the model closed
+  // it with nothing behind it. Emitted only when the list was ACCEPTED — a
+  // refused completion surfaces as a failed todo_write instead.
+  | { type: "todo_updated"; items: TodoItem[] }
+  // The harness ran the project's compile-class check at a step boundary
+  // (a step that wrote files was being closed with no check of its own).
+  | { type: "step_check"; step: string; ran: boolean; passed: boolean; report: string }
   // ─── v2 surface events (structured, replacing prose-only signals) ───
   // The gateway abandoned one provider/model and is streaming from another.
   // The turn continues; nothing already accepted is lost.
@@ -217,6 +222,18 @@ export interface AgentLoopConfig {
   maxTokens: number;
   maxTurns: number;
   maxConsecutiveErrors: number;
+  /**
+   * Second winds: how many times the turn ceiling may extend itself when the
+   * plan is open AND moving (a step completed with evidence since the window
+   * began), nothing struggled in the window and no quota wall was sighted.
+   * Each wind adds the original ceiling again. 0 — the default, and every
+   * sub-agent — keeps the hard ceiling; the engine grants 2 to main runs that
+   * are real work. evolab7: a whole-product brief hit 80 turns with four of
+   * five steps done by evidence and handed off; a person had to type
+   * "continue". The ceiling is a guard against runaway loops, not a measure
+   * of the task.
+   */
+  maxSecondWinds?: number;
   systemPrompt: string;
   temperature?: number;
   priorMessages?: Message[];
@@ -273,6 +290,18 @@ export interface AgentLoopConfig {
   maxParallelTools?: number;
   /** Max times to nudge a stuck agent before bailing. Default 1. */
   maxStuckNudges?: number;
+  /**
+   * The cheap project check (typecheck-class), run when a todo_write closes
+   * a step that wrote files no check ever covered. Wired by the engine from
+   * the verifier's fast tier; absent for loops without one.
+   */
+  stepCheck?: (signal?: AbortSignal) => Promise<VerifyResult>;
+  /**
+   * Turns in which every tool result was one already seen this run (and
+   * nothing was written) before the progress breaker nudges; twice that
+   * ends the run with a handoff. Default 6.
+   */
+  maxStaleTurns?: number;
   /**
    * Tell the model, every request, which turn it is on and how many remain.
    *
@@ -370,6 +399,20 @@ const FIX_SHAPED_RE =
   /\b(fix(es|ed|ing)?|bugs?|regression|broken|crash(es|ed|ing)?|fail(s|ed|ing)?|defect|repair)\b/i;
 
 /**
+ * A request is fix-shaped when it is SHORT and reads as a fix. Length is the
+ * guard the regex lacks: a 40,000-character product brief says "fix defects
+ * before new features" somewhere in it, and evolab7's whole build was gated
+ * as a fix because of it — a refused finish over a test-runner config step,
+ * four completions of busywork. A brief that long is a build; the person who
+ * typed "fix the date parsing bug" is asking for a fix.
+ */
+export const FIX_SHAPED_MAX_CHARS = 600;
+export function isFixShaped(request: string): boolean {
+  const text = request.trim();
+  return text.length > 0 && text.length <= FIX_SHAPED_MAX_CHARS && FIX_SHAPED_RE.test(text);
+}
+
+/**
  * One notch below the ceiling, for effort routing. Deliberately never below
  * "medium", and asymmetric: only the deep end steps down — a user who chose
  * "low" already chose economy and is left alone.
@@ -382,6 +425,55 @@ export function stepDownEffort(ceiling: ReasoningEffort): ReasoningEffort {
 
 const TRIVIAL_EVIDENCE_RE =
   /^\s*(?:ls|pwd|echo|cat|cd|which|type|env|printenv|date|whoami|true|head|tail|wc|stat|file|dirname|basename)\b[^|;&]*$/;
+
+/** Tools whose success means the agent LEARNED something — step evidence of the read kind. */
+const READ_EVIDENCE_TOOLS = new Set([
+  "read_file",
+  "read_many",
+  "list_dir",
+  "grep",
+  "glob",
+  "search_code",
+  "symbol_search",
+  "ast_query",
+  "lsp",
+  "web_fetch",
+  "web_search",
+  "bash_output",
+]);
+
+/** Tools whose `path`/`dir` argument scopes what the model read. */
+const SCOPED_READ_TOOLS = new Set([
+  "grep",
+  "glob",
+  "search_code",
+  "ast_query",
+  "symbol_search",
+  "list_dir",
+]);
+
+/** The last non-empty line of a report — the line a failure is usually named on. */
+function lastNonEmptyLine(text: string): string {
+  const lines = text.split("\n").filter((l) => l.trim().length > 0);
+  return lines.length > 0 ? lines[lines.length - 1].trim() : "";
+}
+
+/**
+ * A stable, cheap identity for a tool result: the tool and a hash of what
+ * came back — deliberately NOT the arguments. Differently-shaped calls that
+ * keep returning the same thing ("no matches" for five patterns, the same
+ * status page thirty times) are exactly the pattern the request-side detector
+ * cannot see. FNV-1a; a collision only makes a turn look novel when it was
+ * not, which is the safe direction for a breaker.
+ */
+function resultKey(tool: string, text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return `${tool}|${text.length}|${h.toString(16)}`;
+}
 
 export function truncateForTranscript(text: string): string {
   if (text.length <= TOOL_RESULT_MAX_CHARS) return text;
@@ -582,6 +674,35 @@ export class AgentLoop {
     return { replanReason: notes.find((n) => n.replanReason)?.replanReason ?? null };
   }
 
+  /**
+   * The provider stopped answering after the retry budget. evolab7: the Codex
+   * stream stalled, four connection failures arrived sixteen minutes apart,
+   * and the run was recorded as a plain error — with every check on disk
+   * green. A plan that is COMPLETE ends finished (only the closing report is
+   * missing); a plan with steps open hands off as `provider_lost`, so the
+   * record, the scorecard and `gear resume` know the network failed, not the
+   * model. A run with no plan at all keeps the plain error.
+   */
+  private *providerLostEnd(errors: number, turn: number): Generator<AgentTurnEvent> {
+    const ts = this.config.taskState;
+    if (ts && ts.todos.length > 0 && !ts.hasOpenTodos()) {
+      this.state = "done";
+      yield {
+        type: "notice",
+        message: `The provider stopped answering (${errors} consecutive errors) after every planned step was done — ending the run as finished; only the closing report is missing.`,
+      };
+      yield { type: "turn_complete", stopReason: "end_turn", totalTurns: turn };
+      return;
+    }
+    this.state = "error";
+    yield* this.handoffEvents("provider_lost");
+    yield {
+      type: "error",
+      error: `Too many consecutive errors (${errors})`,
+      recoverable: false,
+    };
+  }
+
   /** Emit a handoff for a run ending with open todos — the honest "state of
    *  work" that replaces today's silent deaths. No-op without a spine or when
    *  the task has no unfinished work. */
@@ -599,6 +720,9 @@ export class AgentLoop {
   private drainInterjections(): boolean {
     if (this.interjections.length === 0) return false;
     const texts = this.interjections.splice(0);
+    // The spine hears it too, so the mission file and the block carry the
+    // latest ask instead of only the transcript.
+    this.config.taskState?.noteSteer(texts.join("\n"));
     // Mid-task steering can reference images too ("match THIS screenshot") —
     // attach them exactly like an initial message would.
     this.appendMessage({
@@ -783,8 +907,63 @@ export class AgentLoop {
     // barren either (they may say yes to the next call).
     let barrenTurns = 0;
     let barrenNudges = 0;
+    // ── Progress breaker (results-side) ──
+    // The loop detector reads the REQUEST side (same batch, no writes between).
+    // This reads the RESULT side: a turn whose every tool result was already
+    // seen this run, with nothing written, moved nothing — however varied the
+    // calls looked. Observed: 29 identical `team status` results over ~30
+    // turns of differently-shaped calls, invisible to the request-side check.
+    const seenResults = new Set<string>();
+    let staleTurns = 0;
+    let staleNudges = 0;
+    // ── Open-steps gate ──
+    // Finishing with planned steps still open is refused once; the second
+    // time the run may end, but on the record, with the resume note kept.
+    let openStepNudges = 0;
+    // ── Second wind ──
+    // At the ceiling, a plan that is open AND moving — a step completed with
+    // evidence since this window began — with nothing struggled and no quota
+    // wall sighted earns the original ceiling again, `maxSecondWinds` times.
+    // The wrap-up reserve re-arms with it. Evaluated lazily in the loop
+    // condition, exactly once per ceiling; the note it owes the model is
+    // delivered at the next boundary.
+    const baseMaxTurns = this.config.maxTurns;
+    let windsUsed = 0;
+    let windDoneAtStart = this.config.taskState?.todoCounts().done ?? 0;
+    let struggleInWindow = false;
+    let pendingWindNote: string | null = null;
+    const secondWind = (): boolean => {
+      if (turn < this.config.maxTurns) return false;
+      const allowed = this.config.maxSecondWinds ?? 0;
+      const ts = this.config.taskState;
+      if (windsUsed >= allowed || !ts || !ts.hasOpenTodos()) return false;
+      if (signal?.aborted || quotaWallSighted || struggleInWindow) return false;
+      const counts = ts.todoCounts();
+      if (counts.done <= windDoneAtStart) return false;
+      windsUsed++;
+      windDoneAtStart = counts.done;
+      wrapUpInjected = false;
+      this.config.maxTurns += baseMaxTurns;
+      this.report(
+        "loop.second_wind",
+        "warn",
+        "run",
+        `turn ceiling reached with the plan open and moving (${counts.done}/${counts.total} steps done) — extended by ${baseMaxTurns} turns (wind ${windsUsed} of ${allowed})`,
+      );
+      pendingWindNote =
+        `Turn ceiling reached at turn ${turn} with ${counts.done} of ${counts.total} steps done ` +
+        `and ${counts.open} still open. Because the plan is moving, the budget is extended by ` +
+        `${baseMaxTurns} turns (wind ${windsUsed} of ${allowed}). The extension is for FINISHING ` +
+        `the open steps in order, not widening: keep the plan as it is, close each step with ` +
+        `evidence, and expect the wrap-up reserve again near the new ceiling.`;
+      return true;
+    };
 
-    while (turn < this.config.maxTurns || (haltReportPending && !haltReportGranted)) {
+    while (
+      turn < this.config.maxTurns ||
+      (haltReportPending && !haltReportGranted) ||
+      secondWind()
+    ) {
       // Check for abort before starting each turn
       if (signal?.aborted) {
         this.state = "done";
@@ -807,7 +986,19 @@ export class AgentLoop {
       // for a genuine change of approach, say so in the UI too.
       const drainedNotes = this.drainHarnessNotes();
       if (drainedNotes?.replanReason) {
+        struggleInWindow = true;
         yield { type: "replanning", reason: drainedNotes.replanReason, trigger: "struggle" };
+      }
+      if (pendingWindNote) {
+        this.appendMessage({
+          role: "user",
+          content: [{ type: "text", text: `[Harness note] ${pendingWindNote}` }],
+        });
+        yield {
+          type: "notice",
+          message: `Turn ceiling reached with the plan open and moving — extended the budget by ${baseMaxTurns} turns (wind ${windsUsed} of ${this.config.maxSecondWinds ?? 0}).`,
+        };
+        pendingWindNote = null;
       }
 
       turn++;
@@ -1007,7 +1198,7 @@ export class AgentLoop {
             if (
               effortLatched ||
               turn <= 1 ||
-              FIX_SHAPED_RE.test(this.config.taskState?.snapshot().goal ?? "")
+              isFixShaped(this.config.taskState?.currentRequest() ?? "")
             ) {
               return ceiling;
             }
@@ -1143,6 +1334,7 @@ export class AgentLoop {
               );
               const r = await this.config.contextEngine.compactWorkingSet(this.messages, 4, {
                 force: true,
+                signal,
               });
               if (r.compacted) {
                 this.messages = r.messages;
@@ -1176,18 +1368,13 @@ export class AgentLoop {
             this.report("provider.stream_error", "warn", "inferStream", result.error);
             yield { type: "error", error: result.error, recoverable: true };
             if (consecutiveErrors >= this.config.maxConsecutiveErrors) {
-              this.state = "error";
               this.report(
                 "loop.consecutive_errors",
                 "error",
                 "inferStream",
                 `run failed after ${consecutiveErrors} consecutive errors: ${result.error}`,
               );
-              yield {
-                type: "error",
-                error: `Too many consecutive errors (${consecutiveErrors})`,
-                recoverable: false,
-              };
+              yield* this.providerLostEnd(consecutiveErrors, turn);
               return;
             }
             streamErrored = true;
@@ -1207,19 +1394,13 @@ export class AgentLoop {
         this.report("provider.stream_error", "warn", "inferStream.catch", msg);
         yield { type: "error", error: msg, recoverable: true };
         if (consecutiveErrors >= this.config.maxConsecutiveErrors) {
-          this.state = "error";
           this.report(
             "loop.consecutive_errors",
             "error",
             "inferStream.catch",
             `run failed after ${consecutiveErrors} consecutive errors: ${msg}`,
           );
-          yield* this.handoffEvents("error");
-          yield {
-            type: "error",
-            error: `Too many consecutive errors (${consecutiveErrors})`,
-            recoverable: false,
-          };
+          yield* this.providerLostEnd(consecutiveErrors, turn);
           return;
         }
         continue;
@@ -1440,6 +1621,7 @@ export class AgentLoop {
               "verify.replan",
               "checks still failing after repeated fixes — demanded a different approach",
             );
+            struggleInWindow = true;
             yield {
               type: "replanning",
               reason: "checks still failing after repeated fixes",
@@ -1476,13 +1658,17 @@ export class AgentLoop {
         // execution gate below; the bar is zero reads, so it cannot misfire on
         // an agent that did look and merely looked less than someone would
         // have liked.
+        // Per scope, not per fleet: a ten-worker build used to pass this gate
+        // the moment one file in one scope was opened. Reading is anything
+        // that put the scope's code in front of the model — a file read, a
+        // search inside it, a listing of it.
         const unreadScopes = delegatedScopes.filter(
           (scope) =>
             ![...readPaths].some((r) => r === scope || r.startsWith(scope.replace(/\/?$/, "/"))),
         );
         if (
           delegatedScopes.length > 0 &&
-          unreadScopes.length === delegatedScopes.length &&
+          unreadScopes.length > 0 &&
           delegationNudges < 1 &&
           !signal?.aborted
         ) {
@@ -1492,18 +1678,27 @@ export class AgentLoop {
             "loop.delegation_gate",
             "warn",
             "delegationGate",
-            `finishing on ${delegatedScopes.length} delegated scope(s) with no file read — refused once`,
+            `finishing with ${unreadScopes.length} of ${delegatedScopes.length} delegated scope(s) never read — refused once`,
           );
+          this.config.taskState?.logEvent(
+            "gate",
+            `finish refused: ${unreadScopes.length} of ${delegatedScopes.length} delegated scopes never read`,
+          );
+          const whole = unreadScopes.length === delegatedScopes.length;
           this.appendMessage({
             role: "user",
             content: [
               {
                 type: "text",
                 text:
-                  "Stop — every line of this work was written by sub-agents and you have not " +
-                  "opened one of their files. Their reports are one model's account of code " +
-                  "you have not read; they are not evidence, and the manifest under each one " +
-                  "tells you only how big the files are, not whether they are right.\n" +
+                  (whole
+                    ? "Stop — every line of this work was written by sub-agents and you have not " +
+                      "opened one of their files. "
+                    : `Stop — sub-agents wrote ${delegatedScopes.length} scopes and you have not ` +
+                      `looked at ${unreadScopes.length} of them. `) +
+                  "Their reports are one model's account of code you have not read; they are " +
+                  "not evidence, and the manifest under each one tells you only how big the " +
+                  "files are, not whether they are right.\n" +
                   `Unread: ${unreadScopes
                     .map((s) => relative(workspaceRoot, s) || s)
                     .slice(0, 8)
@@ -1586,7 +1781,7 @@ export class AgentLoop {
           anyWritesThisRun &&
           fixVerifiedNudges < 1 &&
           !signal?.aborted &&
-          FIX_SHAPED_RE.test(this.config.taskState?.snapshot().goal ?? "")
+          isFixShaped(this.config.taskState?.currentRequest() ?? "")
         ) {
           fixVerifiedNudges++;
           latchEffort("fix-verified gate refused the finish");
@@ -1663,10 +1858,68 @@ export class AgentLoop {
           continue;
         }
 
+        // ── Open-steps gate ──
+        // The plan said N steps and the model is ending with some of them
+        // open. No gate before this one ever looked at the plan: a run could
+        // abandon twelve of fifteen steps, end clean, and have its resume note
+        // deleted on the way out. Refuse once — do them, or rewrite the plan
+        // to say what is cut and why. The second time the run may end, but
+        // the handoff stays so the next message resumes instead of forgetting.
+        const spine = this.config.taskState;
+        if (spine?.hasOpenTodos() && !signal?.aborted) {
+          const c = spine.todoCounts();
+          if (openStepNudges < 1) {
+            openStepNudges++;
+            latchEffort("open-steps gate refused the finish");
+            this.report(
+              "loop.open_steps_gate",
+              "warn",
+              "openStepsGate",
+              `finishing with ${c.open} of ${c.total} planned steps open — refused once`,
+            );
+            spine.logEvent("gate", `finish refused: ${c.open} of ${c.total} steps still open`);
+            const open = spine.todos
+              .filter((t) => t.status !== "completed")
+              .slice(0, 8)
+              .map((t) => `- ${t.content}`)
+              .join("\n");
+            this.appendMessage({
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text:
+                    `Stop — you are finishing with ${c.open} of ${c.total} planned steps still open:\n` +
+                    `${open}\n` +
+                    "Either do them now, or rewrite the plan with todo_write so it says what you " +
+                    "are deliberately cutting (one line on why), then finish. A plan left " +
+                    "half-open is not a finished task, and the user will see it as one.",
+                },
+              ],
+            });
+            yield {
+              type: "notice",
+              message: `${c.open} planned step${c.open === 1 ? "" : "s"} still open — asking the agent to finish or cut them.`,
+            };
+            this.state = "observing";
+            continue;
+          }
+          this.report(
+            "loop.open_steps",
+            "warn",
+            "openStepsGate",
+            `run ended with ${c.open} of ${c.total} planned steps open`,
+          );
+          spine.logEvent("gate", `ended with ${c.open} of ${c.total} steps open`);
+          yield* this.handoffEvents("open_steps");
+        }
+
         // Compact only when context is near budget (avoids a summarization
         // LLM call every turn).
         if (this.config.contextEngine && this.config.contextEngine.shouldCompact()) {
-          const r = await this.config.contextEngine.compactWorkingSet(this.messages);
+          const r = await this.config.contextEngine.compactWorkingSet(this.messages, undefined, {
+            signal,
+          });
           if (r.compacted) {
             this.messages = r.messages;
             justCompacted = true;
@@ -2089,28 +2342,140 @@ export class AgentLoop {
       }
       const toolResults: ContentBlock[] = [];
       for (const p of planned) {
-        const output = p.output!;
+        let output = p.output!;
         toolCallsThisRun++;
+
+        // ── The plan is a ledger ──
+        // todo_write echoes its input; the SPINE decides whether the list is
+        // accepted. A step closing with nothing behind it, or right after a
+        // failing check, comes back as a refused tool call the model reads;
+        // and a step that wrote files no check covered gets the project's
+        // compile check run here, at the step, before the list is accepted —
+        // so step 3 breaking the build is found at step 3, not at step 15.
+        let acceptedPlan: TodoItem[] | null = null;
+        if (output.success && p.tc.toolName === "todo_write" && output.result) {
+          const ts = this.config.taskState;
+          let items: TodoItem[] | null = null;
+          try {
+            const parsed = JSON.parse(output.result) as { items?: TodoItem[] };
+            if (Array.isArray(parsed.items)) items = parsed.items;
+          } catch {
+            // Non-parsable result — the plan stands as it was.
+          }
+          if (items && !ts) {
+            // No spine (utility loops): the list is an echo for the surface.
+            acceptedPlan = items;
+          } else if (items && ts) {
+            const unchecked = ts.planCompletions(items).filter((c) => c.uncheckedWrites);
+            if (unchecked.length > 0 && this.config.stepCheck && !signal?.aborted) {
+              const step = unchecked[0].item.content;
+              let check: VerifyResult | null = null;
+              try {
+                check = await this.config.stepCheck(signal);
+              } catch {
+                check = null; // a broken checker must never block the plan
+              }
+              if (check?.ran) {
+                const cmd = (check.report.split("\n").find((l) => l.startsWith("$ ")) ?? "")
+                  .replace(/^\$ /, "")
+                  .replace(/\s+\((ok|exit \d+)\)$/, "");
+                ts.noteEffect(check.passed ? "check_pass" : "check_fail", {
+                  command: cmd || "project check",
+                  summary: check.passed ? "ok" : lastNonEmptyLine(check.report),
+                });
+                ts.logEvent(
+                  "check",
+                  `step check ${check.passed ? "passed" : "FAILED"} closing "${step.slice(0, 80)}"`,
+                );
+                this.report(
+                  check.passed ? "loop.step_check_passed" : "loop.step_check_failed",
+                  check.passed ? "debug" : "warn",
+                  "stepCheck",
+                  `${cmd || "project check"} ${check.passed ? "passed" : "failed"} at the close of "${step.slice(0, 80)}"`,
+                );
+                yield {
+                  type: "step_check",
+                  step,
+                  ran: true,
+                  passed: check.passed,
+                  report: check.report,
+                };
+              }
+            }
+            const verdict = ts.setTodos(items);
+            if (verdict.accepted) {
+              acceptedPlan = structuredClone(ts.todos);
+              if (verdict.notes.length > 0) {
+                output = {
+                  ...output,
+                  result: `${output.result}\n[Harness note] ${verdict.notes.join(" ")}`,
+                };
+              }
+              if (verdict.rolledGoal) {
+                this.report(
+                  "loop.goal_rolled",
+                  "debug",
+                  "spine",
+                  "a fresh plan rolled the goal to the pending follow-up",
+                );
+              }
+            } else {
+              const lines = verdict.refused.map(
+                (r) => `- step ${r.index + 1} "${r.content.slice(0, 100)}": ${r.reason}`,
+              );
+              this.report(
+                "loop.step_refused",
+                "warn",
+                "stepLedger",
+                `${verdict.refused.length} completion(s) refused: ${verdict.refused.map((r) => r.content.slice(0, 60)).join("; ")}`,
+              );
+              latchEffort("a step completion was refused for lack of evidence");
+              output = {
+                ...output,
+                success: false,
+                error:
+                  `Plan NOT updated — ${verdict.refused.length} completion${verdict.refused.length === 1 ? "" : "s"} refused:\n` +
+                  lines.join("\n") +
+                  (verdict.notes.length > 0 ? `\n${verdict.notes.join(" ")}` : ""),
+              };
+            }
+            p.output = output;
+          }
+        }
+
         yield {
           type: "tool_call_end",
           callId: p.tc.callId,
           args: p.parsedArgs,
           output,
         };
+        if (acceptedPlan) yield { type: "todo_updated", items: acceptedPlan };
 
-        // Emit todo_updated when todo_write succeeds — and record the list in
-        // the task spine, which is what makes it survive compaction/resume.
-        if (output.success && p.tc.toolName === "todo_write" && output.result) {
-          try {
-            const parsed = JSON.parse(output.result) as {
-              items?: { content: string; status: "pending" | "in_progress" | "completed" }[];
-            };
-            if (Array.isArray(parsed.items)) {
-              this.config.taskState?.setTodos(parsed.items);
-              yield { type: "todo_updated", items: parsed.items };
+        // Spine evidence: what this call DID, by kind, attributed to the step
+        // in progress. This is the measurement a "completed" mark is judged
+        // against. A failed verification-shaped command is evidence too — of
+        // the step NOT being done.
+        if (this.config.taskState) {
+          const ts = this.config.taskState;
+          const name = p.tc.toolName;
+          if (name === "bash") {
+            const cmd = String(p.parsedArgs.command ?? "");
+            if (isVerificationCommand(cmd)) {
+              ts.noteEffect(output.success ? "check_pass" : "check_fail", {
+                command: cmd.slice(0, 120),
+                summary: output.success
+                  ? "ok"
+                  : lastNonEmptyLine(output.error ?? output.result ?? "").slice(0, 160),
+              });
+            } else if (!TRIVIAL_EVIDENCE_RE.test(cmd)) {
+              ts.noteEffect("run");
             }
-          } catch {
-            // Non-parsable result — skip todo_updated
+          } else if (output.success) {
+            if (p.isWrite) ts.noteEffect("write");
+            else if (READ_EVIDENCE_TOOLS.has(name)) ts.noteEffect("read");
+            else if (name === "worker" || name === "task") ts.noteEffect("delegate");
+            else if (name === "ask_user") ts.noteEffect("answer");
+            else if (name.startsWith("mcp_browser")) ts.noteEffect("look");
           }
         }
 
@@ -2233,9 +2598,21 @@ export class AgentLoop {
           // "commit" reads as "decide" rather than "decide WITH them".
           //
           // Fires on creation only: editing an existing screen means a look
-          // already exists to match. Yields to the greenfield note when both
-          // would land on the same write — that one covers scope, this one
-          // covers looks, and two walls of text on one result is not a nudge.
+          // already exists to match. Independent of the greenfield note: that
+          // one covers scope, this one covers looks, and a first screen that
+          // is also the first file gets both. It used to stand down for the
+          // rest of the run once the greenfield note had fired — evolab7's
+          // rode the first document at 19:33, and the first screen at 20:23
+          // was written with no question asked at all.
+          const greenfieldWillFire =
+            output.success &&
+            p.isWrite &&
+            p.createsTopLevelDir &&
+            !!ts &&
+            ts.clarificationCount() === 0 &&
+            ts.filesWrittenCount() === 1 &&
+            greenfieldNudges < (this.config.maxGreenfieldNudges ?? 1) &&
+            !!this.registry.get("ask_user");
           if (
             output.success &&
             p.tc.toolName === "write_file" &&
@@ -2243,7 +2620,6 @@ export class AgentLoop {
             ts &&
             ts.clarificationCount() === 0 &&
             artDirectionNudges < 1 &&
-            greenfieldNudges === 0 &&
             this.registry.get("ask_user")
           ) {
             artDirectionNudges++;
@@ -2276,16 +2652,7 @@ export class AgentLoop {
           // silently-chosen platform, stack, and depth — a static mock where a
           // working product was wanted. One corrective note, only when
           // ask_user is actually available (it is withheld in 4th gear).
-          if (
-            output.success &&
-            p.isWrite &&
-            p.createsTopLevelDir &&
-            ts &&
-            ts.clarificationCount() === 0 &&
-            ts.filesWrittenCount() === 1 &&
-            greenfieldNudges < (this.config.maxGreenfieldNudges ?? 1) &&
-            this.registry.get("ask_user")
-          ) {
+          if (greenfieldWillFire) {
             greenfieldNudges++;
             this.report(
               "loop.greenfield_nudge",
@@ -2396,6 +2763,15 @@ export class AgentLoop {
             const rp = typeof p.parsedArgs.path === "string" ? p.parsedArgs.path : "";
             if (rp) readPaths.add(isAbsolute(rp) ? resolve(rp) : resolve(workspaceRoot, rp));
           }
+          // A search or listing scoped to a path is reading too: the model saw
+          // that scope's code. Before this only read_file/read_many counted,
+          // so an agent that reviewed the seams with grep was nudged while one
+          // that opened a single unrelated owned file was not.
+          if (output.success && SCOPED_READ_TOOLS.has(p.tc.toolName)) {
+            const arg = p.parsedArgs.path ?? p.parsedArgs.dir ?? p.parsedArgs.cwd;
+            const rp = typeof arg === "string" ? arg : "";
+            if (rp) readPaths.add(isAbsolute(rp) ? resolve(rp) : resolve(workspaceRoot, rp));
+          }
           if (
             output.success &&
             p.tc.toolName === "read_many" &&
@@ -2438,6 +2814,7 @@ export class AgentLoop {
           // product-sight gate. The else branch below does not: a dropped
           // image the model is told it has NOT seen is not looking.
           sawOwnWork = true;
+          this.config.taskState?.noteEffect("look");
           this.appendMessage({
             role: "user",
             content: [
@@ -2573,10 +2950,88 @@ export class AgentLoop {
         };
       }
 
+      // ── Progress breaker (results-side) ──
+      // Did this turn move anything? A write, an accepted plan change, or any
+      // tool result not seen before this run counts. A turn that only
+      // re-produced known results is stale; six in a row earn one nudge, and
+      // twelve end the run with a handoff — resumable, and honest about why.
+      // Lead loop only (the one with a spine): sub-agents run on small turn
+      // budgets that bound them already, and their loops keep the request-side
+      // detector.
+      if (this.config.taskState) {
+        let novel = false;
+        for (const p of planned) {
+          if (!p.allowed || !p.output) continue;
+          if (p.output.success && (p.isWrite || p.tc.toolName === "todo_write")) novel = true;
+          const key = resultKey(
+            p.tc.toolName,
+            p.output.success ? p.output.result : (p.output.error ?? ""),
+          );
+          if (!seenResults.has(key)) {
+            seenResults.add(key);
+            novel = true;
+          }
+        }
+        staleTurns = planned.length > 0 && !novel ? staleTurns + 1 : 0;
+        const staleLimit = Math.max(2, this.config.maxStaleTurns ?? 6);
+        if (staleTurns >= staleLimit * 2) {
+          this.state = "error";
+          this.report(
+            "loop.stalled",
+            "error",
+            "progressBreaker",
+            `stopped: ${staleTurns} consecutive turns produced no new result and no write`,
+          );
+          this.config.taskState?.logEvent(
+            "handoff",
+            `stalled: ${staleTurns} turns with no new result and no write`,
+          );
+          yield* this.handoffEvents("stalled");
+          yield {
+            type: "error",
+            error:
+              `Stopped: ${staleTurns} turns in a row produced nothing new — every tool result ` +
+              "had been seen already and nothing was written. Send a message to resume with a " +
+              "different approach.",
+            recoverable: false,
+          };
+          return;
+        }
+        if (staleTurns >= staleLimit && staleNudges < 1) {
+          staleNudges++;
+          latchEffort("progress breaker: stale turns");
+          this.report(
+            "loop.stale_nudge",
+            "warn",
+            "progressBreaker",
+            `${staleTurns} consecutive turns produced no new result — nudged once`,
+          );
+          this.appendMessage({
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text:
+                  `[Harness note] Your last ${staleTurns} turns produced nothing new: every tool ` +
+                  "result had already been seen this run and no file was written. Re-read the " +
+                  "goal and the plan, then take a genuinely different action — or, if the task " +
+                  "is done or blocked, stop and say so plainly.",
+              },
+            ],
+          });
+          yield {
+            type: "notice",
+            message: `${staleTurns} turns with nothing new — asking the agent to change course.`,
+          };
+        }
+      }
+
       // After processing the assistant response, compact the working set —
       // but only when context is near budget, not every turn.
       if (this.config.contextEngine && this.config.contextEngine.shouldCompact()) {
-        const r = await this.config.contextEngine.compactWorkingSet(this.messages);
+        const r = await this.config.contextEngine.compactWorkingSet(this.messages, undefined, {
+          signal,
+        });
         if (r.compacted) {
           this.messages = r.messages;
           yield this.compactionEvent(r);

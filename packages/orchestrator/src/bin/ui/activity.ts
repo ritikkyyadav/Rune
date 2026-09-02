@@ -171,17 +171,11 @@ export function runningLabel(toolName: string): string {
   return RUNNING[toolName] ?? toolName;
 }
 
-/** Commands whose result is evidence, rather than merely another action. */
-export function isVerificationCommand(command: string): boolean {
-  const cmd = command.toLowerCase();
-  return (
-    /(^|[\s;&|])(test|tests|pytest|vitest|jest|mocha)([\s;&|]|$)/.test(cmd) ||
-    /(^|[\s;&|])(lint|eslint|ruff|mypy|typecheck|tsc|check|build)([\s;&|]|$)/.test(cmd) ||
-    /\b(cargo\s+(test|check|clippy)|go\s+test|swift\s+test|xcodebuild|gradle\w*\s+test|mvn\w*\s+test)\b/.test(
-      cmd,
-    )
-  );
-}
+/** Commands whose result is evidence, rather than merely another action.
+ *  Defined beside the check log (brief.ts) since the loop and the engine
+ *  judge evidence by it too; re-exported here for the UI's existing imports. */
+import { isVerificationCommand } from "../../brief";
+export { isVerificationCommand };
 
 /** `840ms` / `2.6s` / `2m 58s` -- a duration only when the harness actually
  *  timed the call. Past a minute it switches to minutes: a delegation routinely

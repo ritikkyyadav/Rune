@@ -79,7 +79,13 @@ function makeRegistry() {
       callId: input.callId,
       toolName: input.toolName,
       success: true,
-      result: input.toolName === "todo_write" ? JSON.stringify({ items: input.args.items }) : "ok",
+      // Distinct files read distinctly: the results-side progress breaker
+      // counts a turn whose every result was already seen as stale, and a
+      // stub answering "ok" to every path would read as a stalled run.
+      result:
+        input.toolName === "todo_write"
+          ? JSON.stringify({ items: input.args.items })
+          : `ok: ${String(input.args?.path ?? input.args?.command ?? "")}`,
       durationMs: 1,
     })),
   } as any;
@@ -257,7 +263,9 @@ describe("wrap-up reserve", () => {
         (e) => e.type === "notice" && String((e as any).message).includes("rate limited"),
       ),
     ).toBe(true);
-  });
+    // rateLimitWaitSecs floors the wait at 5s, so this test sleeps a real
+    // five seconds — exactly bun's default timeout. Give it room.
+  }, 20_000);
 
   test("small budgets (sub-agent scale) never get the reserve", async () => {
     const ts = new TaskStateStore();
