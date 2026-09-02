@@ -324,7 +324,6 @@ export async function runAudit(args: string[], values: Record<string, unknown>):
   }
 }
 
-
 /**
  * What the cache saved on one provider, in list dollars: the cost of the warm
  * tokens had they all been billed fresh, minus what a cached read costs. The

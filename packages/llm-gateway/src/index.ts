@@ -46,12 +46,7 @@ export { CodexProvider } from "./providers/codex";
 export { CostTracker, BudgetExceededError } from "./cost-tracker";
 export { ProviderHealthStore, RETIREMENT_TTL_MS } from "./provider-health";
 export type { RetiredModel, CappedProvider } from "./provider-health";
-export type {
-  BudgetScope,
-  BudgetCap,
-  CostBreakdown,
-  ProviderCacheStats,
-} from "./cost-tracker";
+export type { BudgetScope, BudgetCap, CostBreakdown, ProviderCacheStats } from "./cost-tracker";
 export { ApiError, parseApiErrorBody } from "./types";
 // ─── BYOP authentication layer ───
 export type { AuthMethod, ResolvedCredential, AuthContext, AuthenticationStrategy } from "./auth";

@@ -91,8 +91,7 @@ describe("the policy reaches the constructed provider", () => {
 
     for (const id of ["openai", "groq", "deepseek", "xai", "ollama-turbo", "custom"]) {
       const p = gw.getProvider(id as never) as unknown as
-        | { cacheBreakpoints?: CacheBreakpointPolicy }
-        | undefined;
+        { cacheBreakpoints?: CacheBreakpointPolicy } | undefined;
       expect(p, `${id} did not register`).toBeDefined();
       expect(p!.cacheBreakpoints, `${id} policy`).toBe(cacheBreakpointPolicyFor(id));
     }

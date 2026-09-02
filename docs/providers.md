@@ -18,35 +18,35 @@ the wire, is now **declared** per provider in
 `packages/llm-gateway/src/providers/cache-policy.ts` rather than inferred from
 the base URL.
 
-| Policy | What it means | On the wire |
-|---|---|---|
-| `anthropic-style` | The host forwards Anthropic `cache_control` breakpoints upstream. Writing the breakpoint is what creates the entry. | `cache_control: {type:"ephemeral"}` on the system block and on the last stable conversation turn |
-| `prompt-cache-key` | The host caches prefixes automatically and accepts OpenAI's routing hint, which keeps same-prefix requests on the machine holding the prefix. | `prompt_cache_key` (a hash of system prompt + tool names; no prompt text) |
-| `implicit` | The host caches stable prefixes automatically and takes no cache field. Byte-stability of the prefix is the only lever. | nothing |
-| `none` | No prompt caching known for this host. | nothing |
+| Policy             | What it means                                                                                                                                 | On the wire                                                                                      |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `anthropic-style`  | The host forwards Anthropic `cache_control` breakpoints upstream. Writing the breakpoint is what creates the entry.                           | `cache_control: {type:"ephemeral"}` on the system block and on the last stable conversation turn |
+| `prompt-cache-key` | The host caches prefixes automatically and accepts OpenAI's routing hint, which keeps same-prefix requests on the machine holding the prefix. | `prompt_cache_key` (a hash of system prompt + tool names; no prompt text)                        |
+| `implicit`         | The host caches stable prefixes automatically and takes no cache field. Byte-stability of the prefix is the only lever.                       | nothing                                                                                          |
+| `none`             | No prompt caching known for this host.                                                                                                        | nothing                                                                                          |
 
 ### Declared policy per provider
 
-| Provider | Adapter | Policy | Basis |
-|---|---|---|---|
-| `anthropic` | `AnthropicProvider` | native `cache_control` | reference implementation; reads `cache_creation_input_tokens` / `cache_read_input_tokens` |
-| `openai` | `OpenAIProvider` | `prompt-cache-key` | documented automatic prefix caching over 1024 tokens, plus the documented routing field |
-| `openrouter` | `OpenRouterProvider` | `anthropic-style` (Anthropic upstreams only) | measured 2026-08-26, see below |
-| `google` | `GoogleProvider` | `implicit` | **measured 2026-09-02**: 99.7% hit rate with no cache handle |
-| `deepseek` | `OpenAIProvider` | `implicit` | host documents automatic prefix caching |
-| `groq` | `OpenAIProvider` | `implicit` | host documents automatic prefix caching |
-| `xai` | `OpenAIProvider` | `implicit` | host documents automatic prefix caching |
-| `ollama-turbo` | `OpenAIProvider` | `none` | **measured 2026-09-02**: no cached tokens on an identical prefix |
-| `codex` | `CodexProvider` | server-side | the Responses backend manages its own prefix reuse |
-| `ollama` (local) | `OllamaProvider` | KV cache, held by `keep_alive` | local runtime; nothing is billed, but a dropped KV cache costs a full re-prefill |
-| `custom` | `OpenAIProvider` | `none` | a user-supplied endpoint could be anything; claiming a cache it may not have would put an invented number on screen |
+| Provider         | Adapter              | Policy                                       | Basis                                                                                                               |
+| ---------------- | -------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `anthropic`      | `AnthropicProvider`  | native `cache_control`                       | reference implementation; reads `cache_creation_input_tokens` / `cache_read_input_tokens`                           |
+| `openai`         | `OpenAIProvider`     | `prompt-cache-key`                           | documented automatic prefix caching over 1024 tokens, plus the documented routing field                             |
+| `openrouter`     | `OpenRouterProvider` | `anthropic-style` (Anthropic upstreams only) | measured 2026-08-26, see below                                                                                      |
+| `google`         | `GoogleProvider`     | `implicit`                                   | **measured 2026-09-02**: 99.7% hit rate with no cache handle                                                        |
+| `deepseek`       | `OpenAIProvider`     | `implicit`                                   | host documents automatic prefix caching                                                                             |
+| `groq`           | `OpenAIProvider`     | `implicit`                                   | host documents automatic prefix caching                                                                             |
+| `xai`            | `OpenAIProvider`     | `implicit`                                   | host documents automatic prefix caching                                                                             |
+| `ollama-turbo`   | `OpenAIProvider`     | `none`                                       | **measured 2026-09-02**: no cached tokens on an identical prefix                                                    |
+| `codex`          | `CodexProvider`      | server-side                                  | the Responses backend manages its own prefix reuse                                                                  |
+| `ollama` (local) | `OllamaProvider`     | KV cache, held by `keep_alive`               | local runtime; nothing is billed, but a dropped KV cache costs a full re-prefill                                    |
+| `custom`         | `OpenAIProvider`     | `none`                                       | a user-supplied endpoint could be anything; claiming a cache it may not have would put an invented number on screen |
 
 An id with no entry falls to `none`. That is deliberate: a provider added
 without a measurement should report "no data", never a hit rate it never earned.
 
 ### The Anthropic-upstream gate
 
-Under `anthropic-style`, a breakpoint is only emitted when the *model* names an
+Under `anthropic-style`, a breakpoint is only emitted when the _model_ names an
 Anthropic upstream (`anthropic/...`). `cache_control` is an Anthropic-shaped
 field; a host proxying it to an OpenAI upstream either drops it or rejects the
 request.
@@ -97,17 +97,17 @@ them is a guess dressed as a number.
 
 Measured **2026-09-02**.
 
-| Provider | Model | Policy | Turn 1 | Turn 2 | Hit rate | Verdict |
-|---|---|---|---|---|---|---|
-| `openrouter` | `minimax/minimax-m3:free` | implicit (adapter default) | input 4250, cached 132 | input 23, cached 4359 | **99.5%** | works |
-| `openrouter` | `minimax/minimax-m3:free` | `--force-breakpoints` | input 4250, cached 132 | input 23, cached 4359 | **99.5%** | identical — forcing buys nothing |
-| `google` | `gemini-2.5-flash` | implicit | input 5099, cached 0 | input 15, cached 5085 | **99.7%** | works, with no cache handle |
-| `ollama-turbo` | `gpt-oss:20b` | was "implicit" | input 4301, cached 0 | input 4301, cached 0 | **none** | no cache observable → policy corrected to `none` |
-| `codex` | `gpt-5.6-luna` | server-side | — | — | not measured | plan quota exhausted (429) at measurement time |
-| `ollama` (local) | — | KV cache | — | — | not measured | no local runtime on this machine |
-| `anthropic` | `claude-haiku-4-5` | native `cache_control` | — | — | not measured | no credential |
-| `openai` | `gpt-4o-mini` | `prompt-cache-key` | — | — | not measured | no credential |
-| `deepseek` / `groq` / `xai` | — | implicit (documented) | — | — | not measured | no credential |
+| Provider                    | Model                     | Policy                     | Turn 1                 | Turn 2                | Hit rate     | Verdict                                          |
+| --------------------------- | ------------------------- | -------------------------- | ---------------------- | --------------------- | ------------ | ------------------------------------------------ |
+| `openrouter`                | `minimax/minimax-m3:free` | implicit (adapter default) | input 4250, cached 132 | input 23, cached 4359 | **99.5%**    | works                                            |
+| `openrouter`                | `minimax/minimax-m3:free` | `--force-breakpoints`      | input 4250, cached 132 | input 23, cached 4359 | **99.5%**    | identical — forcing buys nothing                 |
+| `google`                    | `gemini-2.5-flash`        | implicit                   | input 5099, cached 0   | input 15, cached 5085 | **99.7%**    | works, with no cache handle                      |
+| `ollama-turbo`              | `gpt-oss:20b`             | was "implicit"             | input 4301, cached 0   | input 4301, cached 0  | **none**     | no cache observable → policy corrected to `none` |
+| `codex`                     | `gpt-5.6-luna`            | server-side                | —                      | —                     | not measured | plan quota exhausted (429) at measurement time   |
+| `ollama` (local)            | —                         | KV cache                   | —                      | —                     | not measured | no local runtime on this machine                 |
+| `anthropic`                 | `claude-haiku-4-5`        | native `cache_control`     | —                      | —                     | not measured | no credential                                    |
+| `openai`                    | `gpt-4o-mini`             | `prompt-cache-key`         | —                      | —                     | not measured | no credential                                    |
+| `deepseek` / `groq` / `xai` | —                         | implicit (documented)      | —                      | —                     | not measured | no credential                                    |
 
 Live requests spent producing this table: **openrouter 5** (one refused 402,
 four served), **google 2**, **ollama-turbo 2**, **codex 1** (refused 429),
@@ -160,8 +160,6 @@ bill to buy 0.3%.
 Not built. Revisit only if a model in use is found whose implicit hit rate is
 poor and whose prefix is large and long-lived enough to amortise storage.
 
-
-
 ---
 
 ## Providers that were removed
@@ -169,7 +167,7 @@ poor and whose prefix is large and long-lived enough to amortise storage.
 ### `copilot` — removed 2026-09-02 (P8.5, decision D5)
 
 **Decided from evidence, not preference.** D5 said to drop GitHub Copilot
-*unless the founder uses it*. The answer was in `~/.gear/gear.db`:
+_unless the founder uses it_. The answer was in `~/.gear/gear.db`:
 
 ```
 $ sqlite3 -readonly ~/.gear/gear.db \
@@ -259,13 +257,13 @@ answered; only the depth was quietly wrong.
 
 Each provider names the dial differently, and one of them does not have one:
 
-| Provider | Wire field | Values | Notes |
-|---|---|---|---|
-| `openai` | `reasoning_effort` | low / medium / high | gpt-5 and o-series only; the family also swaps `max_tokens` for `max_completion_tokens`. Thinking off maps to the model's floor, because omitting the field is not "off" — it defaults to medium and eats the completion budget on hidden reasoning |
-| `codex` | `reasoning.effort` | low / medium / high / xhigh / max | measured against the live backend; the gpt-5.6 line rejects `minimal`, so it is floored to `low` |
-| `google` | `generationConfig.thinkingConfig.thinkingBudget` (2.5) or `thinkingLevel` (3.x) | low → 4,096 · medium → 8,192 · high → 16,384 · xhigh/max → 24,576 | Gemini has no effort field: depth is a token budget. 2.5 Pro's floor is 128 and it cannot be switched off. An explicit `budgetTokens` still wins over the effort |
-| `anthropic` | `thinking: { type, budget_tokens }` | — | adaptive or budgeted thinking; **no effort field exists**, and none is invented |
-| every OpenAI-compatible host | — | — | no dial; a bare `gpt-5` typed against OpenRouter keeps the classic params OpenRouter normalizes |
+| Provider                     | Wire field                                                                      | Values                                                            | Notes                                                                                                                                                                                                                                               |
+| ---------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `openai`                     | `reasoning_effort`                                                              | low / medium / high                                               | gpt-5 and o-series only; the family also swaps `max_tokens` for `max_completion_tokens`. Thinking off maps to the model's floor, because omitting the field is not "off" — it defaults to medium and eats the completion budget on hidden reasoning |
+| `codex`                      | `reasoning.effort`                                                              | low / medium / high / xhigh / max                                 | measured against the live backend; the gpt-5.6 line rejects `minimal`, so it is floored to `low`                                                                                                                                                    |
+| `google`                     | `generationConfig.thinkingConfig.thinkingBudget` (2.5) or `thinkingLevel` (3.x) | low → 4,096 · medium → 8,192 · high → 16,384 · xhigh/max → 24,576 | Gemini has no effort field: depth is a token budget. 2.5 Pro's floor is 128 and it cannot be switched off. An explicit `budgetTokens` still wins over the effort                                                                                    |
+| `anthropic`                  | `thinking: { type, budget_tokens }`                                             | —                                                                 | adaptive or budgeted thinking; **no effort field exists**, and none is invented                                                                                                                                                                     |
+| every OpenAI-compatible host | —                                                                               | —                                                                 | no dial; a bare `gpt-5` typed against OpenRouter keeps the classic params OpenRouter normalizes                                                                                                                                                     |
 
 `reasoningEffortsFor(provider, model)` is the one source the model picker and
 the status line read, so a dial is offered **only where the wire actually
@@ -284,7 +282,7 @@ adapter answers "how should it be described to this model"
 - **gpt**: `edit_file` says to prefer it over `apply_patch` for a single-file
   change — the lineage otherwise reaches for the multi-file envelope on a
   one-line edit, where one context mismatch fails the whole patch.
-- **gemini**: `edit_file` says the call *is* the change — this is the family
+- **gemini**: `edit_file` says the call _is_ the change — this is the family
   most prone to describing an edit it has not made.
 - **claude**: no variant. None has earned one.
 
