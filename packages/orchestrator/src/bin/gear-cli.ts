@@ -166,6 +166,10 @@ const { values, positionals } = parseArgs({
     host: { type: "string" },
     origin: { type: "string" },
     "allow-remote-settings": { type: "boolean", default: false },
+    // `gear desktop --check` / `gear web --open`: headless proof, browser open.
+    check: { type: "boolean", default: false },
+    open: { type: "boolean", default: false },
+    web: { type: "boolean", default: false },
   },
   allowPositionals: true,
   strict: false,
@@ -198,6 +202,7 @@ if (values.help) {
         `    gear export <sessionId>       Export a session transcript\n` +
         `    gear detach "<prompt>"        Start a background run that survives this terminal (--worktree isolates it)\n` +
         `    gear attach [session|latest]  Reattach to a detached run — replay, live-stream, Ctrl+C detaches again\n` +
+        `    gear desktop [dev|--check]    Open Gear Desktop (alias: gear app) — dev runs the Vite preview, --check proves the engine headless\n` +
         `    gear login [provider]         Authenticate a provider — API key, or OAuth where supported (--method, --no-browser, --migrate)\n` +
         `    gear logout <provider>        Remove a provider's stored key/OAuth from the secure store\n` +
         `    gear providers                List providers, their auth method, and credential status\n` +
@@ -298,6 +303,12 @@ if (command === "serve") {
   const { runServe } = await import("./serve-cli");
   await runServe(positionals as string[], values as Record<string, unknown>);
   if (values.status === true || positionals[1] === "status") process.exit(0);
+}
+if (command === "desktop" || command === "app") {
+  const { runDesktop } = await import("./desktop-cli");
+  process.exit(
+    await runDesktop(positionals.slice(1) as string[], values as Record<string, unknown>),
+  );
 }
 
 // ─── BYOP: provider authentication surfaces (no Engine boot) ───
