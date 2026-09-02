@@ -214,9 +214,7 @@ describe("same-shape failure streak", () => {
     const ends = events.filter(
       (e): e is Extract<AgentTurnEvent, { type: "tool_call_end" }> => e.type === "tool_call_end",
     );
-    const refusals = ends.filter((e) =>
-      (e.output.error ?? "").includes("Refused without running"),
-    );
+    const refusals = ends.filter((e) => (e.output.error ?? "").includes("Refused without running"));
     expect(refusals.length).toBeGreaterThanOrEqual(1);
     // The ask_user refusal names the conversational way out.
     expect(refusals.some((e) => (e.output.error ?? "").includes("END YOUR TURN"))).toBe(true);

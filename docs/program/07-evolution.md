@@ -45,6 +45,7 @@ A change is **self-improvement** when it is (1) in a declared, enumerable space,
 **P7.9 External anchors (1 day + monthly).** A pinned SWE-bench Verified subset (50 tasks) and a Terminal-Bench subset run monthly with `--pristine` and evolved arms; numbers published in `docs/benchmarks.md` with dates and models. This is the yardstick nothing inside the loop may edit.
 
 **P7.10 Invariants as tests (1 day).**
+
 - Dependency-graph test: `permissions.ts`, `security.ts`, `org-policy.ts`, `auto-mode.ts`, `auto-containment.ts`, sandbox modules import nothing from `notebook/`, `retro`, `playbook`, `evolve/`.
 - Off-limits enforcement: the gardener worktree gets a mechanical write-deny (pre-commit check) on `GARDENER_OFF_LIMITS`; a test proves a gardener run cannot commit a change to `prompts.ts`.
 - Yardstick lock: any diff under `tests/eval/**` voids promotions until a human re-baselines.
