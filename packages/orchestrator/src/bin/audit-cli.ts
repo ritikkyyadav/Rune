@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { getGearHome, SessionManager } from "@gear/shared";
 import type { SessionEvent } from "@gear/shared";
 import { BlackboxStore } from "@gear/telemetry";
+import { formatAutoSafetyMetrics, readAutoSafetyMetrics } from "../auto-metrics";
 import { TaskStateStore, stepReceipt } from "../task-state";
 import { runEnding, type RunRetro } from "../retro";
 import { accent, danger, dim, faint, info, ok, text, warn } from "./ui/theme";
@@ -224,6 +225,30 @@ export async function runAudit(args: string[], values: Record<string, unknown>):
             .replace(/\s+/g, " ")
             .slice(0, 110)}`,
         );
+      }
+    }
+
+    // ── The supervisor's own record ──
+    //
+    // Sourced from the database, not from a counter in a live process. The
+    // distinction is the whole point: the risk this measures is a halt, and a
+    // halt frequently ends the process that was holding the count.
+    //
+    // Two scopes, because they answer different questions. This session says
+    // what happened here; the whole store says whether the calibration is
+    // drifting, which one session can never show.
+    {
+      const here = readAutoSafetyMetrics(dbPath, { sessionId: id });
+      const everywhere = readAutoSafetyMetrics(dbPath);
+      say();
+      say(`  ${text("Supervisor")}  ${dim("false positives, read back from the log")}`);
+      for (const line of formatAutoSafetyMetrics(everywhere)) {
+        say(`    ${dim("all sessions")}  ${line}`);
+      }
+      if (here.supervisorScreens > 0 || here.heldSteps.total > 0 || here.supervisorHalts > 0) {
+        for (const line of formatAutoSafetyMetrics(here)) {
+          say(`    ${dim("this session")}  ${line}`);
+        }
       }
     }
 
