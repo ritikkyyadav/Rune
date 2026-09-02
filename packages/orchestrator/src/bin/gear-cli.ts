@@ -216,6 +216,7 @@ if (values.help) {
         `    gear desktop [dev|--check]    Open Gear Desktop (alias: gear app) — dev runs the Vite preview, --check proves the engine headless\n` +
         `    gear web [--port N] [--open]  The same client in a browser, engine attached (--host exposes it on the LAN)\n` +
         `    gear pr <n> [--review]        Check a pull request out into its own worktree and start on it (--brief prints the brief)\n` +
+        `    gear acp                      Agent Client Protocol server on stdio — for Zed and other ACP editors (docs/editors.md)\n` +
         `    gear login [provider]         Authenticate a provider — API key, or OAuth where supported (--method, --no-browser, --migrate)\n` +
         `    gear logout <provider>        Remove a provider's stored key/OAuth from the secure store\n` +
         `    gear providers                List providers, their auth method, and credential status\n` +
@@ -353,6 +354,13 @@ if (command === "web") {
   // Long-lived: `web` returns only on shutdown, exactly like `serve`.
   const { runWeb } = await import("./web-cli");
   process.exit(await runWeb(positionals.slice(1) as string[], values as Record<string, unknown>));
+}
+if (command === "acp") {
+  // An Agent Client Protocol server on stdio, for Zed and anything else that
+  // speaks it. Long-lived and stdout-owning: see bin/acp-cli.ts.
+  const { runAcp } = await import("./acp-cli");
+  await runAcp(values as Record<string, unknown>);
+  process.exit(0);
 }
 if (command === "pr") {
   // `gear pr <n>`: the PR head in its own worktree, with the author's
