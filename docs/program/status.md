@@ -1,6 +1,28 @@
 # Program status
 
-**2026-09-02, end of day 1.** All eight phases executed by Opus 5 agents in isolated worktrees and landed as draft pull requests. Nothing is merged. The founder merges; the agents never did.
+**2026-09-03, 00:12 IST.** All nine pull requests are merged into `gear/phase-0-stabilize` at `aedca56`; every gate was green after the last merge (typecheck, lint, format, 3,069 unit tests, 60 integration tests, 48 of 48 mock evals, desktop typecheck). The binary is installed from that commit (`v0.3.0-dev+aedca56`); `gear doctor`, `gear tools-smoke` and a headless prompt pass. No tag yet: the founder corrected the product surface the same evening, and the tag waits for [Phase 9](09-web-product.md), the web product in the current identity, so the release does not carry the dropped theme.
+
+## Merge record
+
+| #   | PR                  | Merge     | Conflicts resolved                                                                                                                  |
+| --- | ------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | #12 spine evals     | `5db0545` | none; eval gate 43/43 from here on                                                                                                  |
+| 2   | #4 Ship             | `daf2bed` | backlog (both lists)                                                                                                                |
+| 3   | #5 Connect anything | `019ef0c` | backlog; `config.ts` kept `update?` and `mcp?`/`extensions?`                                                                        |
+| 4   | #7 Cheaper per task | `3115801` | `registry.ts` kept the deferred catalog and per-family descriptions                                                                 |
+| 5   | #6 One protocol     | `4caaab1` | `gear-cli.ts` kept all option declarations; `engine.ts` one import of `isVerificationCommand` from `./brief`                        |
+| 6   | #9 Flagship surface | `30ec53c` | none (retargeted first)                                                                                                             |
+| 7   | #11 Surfaces        | `4803004` | backlog                                                                                                                             |
+| 8   | #8 Trust            | `71fab59` | `owner`/`claimedAt`/`structured` moved onto the `@gear/protocol` types; `worker.ts` kept `workRoot` and the typed `onEvent` channel |
+| 9   | #10 Self-improving  | `aedca56` | backlog rebuilt as the union                                                                                                        |
+
+Fix commits: `a464234` (the `custom` provider was rejected by the sticky-model preset gate in both entry points, so Phase 8's replacement for the dropped local provider never survived a restart; two tests, doc updated), `84b665e` (lane B fixtures repointed from `lmstudio` to `custom`), `030efb6` (backlog: a stale gitignored `apps/desktop/dist/` makes the brand-checklist test audit old bytes; rebuild first).
+
+## What is true now
+
+- `gear doctor` reports supervisor false-positive kills at 0.98 per 100 runs, with the caveat that the new per-verdict rows have no denominator yet.
+- A run writes `.gear/skills/playbook/PENDING.md` into the workspace and `.gitignore` does not cover it (backlog).
+- The founder's own `filesystem` MCP server points at `/Users/ritikyadav890/Projects/Alan` (typo), so `gear -P` prints a connector-down notice; fix in the user's `mcp.json`.
 
 ## Pull requests
 
