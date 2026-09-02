@@ -37,6 +37,15 @@ const MOUSE_OFF = "\x1b[?1006l\x1b[?1000l";
 const RESET = "\x1b[0m";
 const EL = "\x1b[0K"; // erase from cursor to end of line
 const CLEAR_ALL = "\x1b[2J\x1b[H";
+/**
+ * Synchronized output (DEC private mode 2026). Between these two marks a
+ * terminal that understands them holds the frame and presents it whole, so a
+ * full-body rewrite -- a resize, a theme change, a scroll -- can never be seen
+ * half-painted. Terminals that do not know the mode ignore it; that is the
+ * whole reason it is safe to send unconditionally.
+ */
+export const SYNC_BEGIN = "\x1b[?2026h";
+export const SYNC_END = "\x1b[?2026l";
 
 /** Escapes a caller must send to leave the terminal exactly as it was found.
  *  Exported so the crash/`exit` hook can restore without holding a Viewport. */
@@ -82,6 +91,28 @@ export function zones(rows: number, header: number, footer: number): Zones {
     bodyTop: headerRows,
     footerTop: headerRows + bodyRows,
   };
+}
+
+/**
+ * Hold a block at its high-water height.
+ *
+ * A footer block whose height follows its content re-splits the frame every
+ * time the content changes shape, and every re-split moves the body. Padding
+ * the block up to the tallest it has been (within `budget`) makes it grow a
+ * few times and then stand still. Pure, so the invariant -- never shorter
+ * than the high-water mark, never taller than the budget -- is testable.
+ */
+export function holdHeight(
+  lines: string[],
+  highWater: number,
+  budget: number,
+  blank = "",
+): { rows: string[]; highWater: number } {
+  const cap = Math.max(1, budget);
+  const rows = lines.slice(0, cap);
+  const next = Math.min(cap, Math.max(highWater, rows.length));
+  while (rows.length < next) rows.push(blank);
+  return { rows, highWater: next };
 }
 
 export interface FrameInput {
@@ -233,11 +264,16 @@ export class Viewport {
   }
 
   /** Forget what is on screen, so the next paint writes every row. For a
-   *  resize, a SIGCONT, or anything else that wrote to our screen behind us. */
+   *  resize, a SIGCONT, or anything else that wrote to our screen behind us.
+   *
+   *  Deliberately does NOT clear the screen: forgetting `prev` already makes
+   *  the next frame rewrite every row, and each row ends in an erase-to-end,
+   *  so a clear would only add a blank frame between the old picture and the
+   *  new one -- which, on a window drag, is the flash the user sees at every
+   *  resize step. */
   invalidate(): void {
     this.prev = [];
     this.caret = null;
-    if (this.active) this.write(CLEAR_ALL);
   }
 
   /**
@@ -250,7 +286,7 @@ export class Viewport {
    */
   render(frame: Frame, showCaret = true): void {
     if (!this.active) return;
-    let out = HIDE;
+    let out = "";
     for (let i = 0; i < frame.rows.length; i++) {
       const line = frame.rows[i]!;
       if (this.prev[i] === line) continue;
@@ -267,11 +303,13 @@ export class Viewport {
       this.caret.row !== frame.caretRow ||
       this.caret.col !== frame.caretCol ||
       this.caret.shown !== showCaret;
-    if (out !== HIDE || caretMoved) {
+    if (out !== "" || caretMoved) {
       out += `\x1b[${frame.caretRow + 1};${frame.caretCol + 1}H`;
       if (showCaret) out += SHOW;
       this.caret = { row: frame.caretRow, col: frame.caretCol, shown: showCaret };
-      this.write(out);
+      // One write, one frame: hidden cursor, every changed row, the caret,
+      // all inside a synchronized-output bracket.
+      this.write(SYNC_BEGIN + HIDE + out + SYNC_END);
     }
   }
 }

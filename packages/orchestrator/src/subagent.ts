@@ -1,5 +1,5 @@
 import type { LlmGateway, ProviderName, ReasoningEffort } from "@gear/llm-gateway";
-import type { ModelTier } from "@gear/shared";
+import type { IncidentReporter, ModelTier } from "@gear/shared";
 import type {
   ToolCallInput,
   ToolCallOutput,
@@ -48,6 +48,12 @@ export interface SubagentDeps {
   };
   /** Same prompt-injection probe used by the parent agent. */
   toolResultProcessor?: ToolResultProcessor;
+  /**
+   * The black-box tap. Without it a scout that burned its whole budget on
+   * context overflow, or was swapped onto a fallback model mid-run, left no
+   * incident anywhere — the child loops were an audit blind spot.
+   */
+  onIncident?: IncidentReporter;
 }
 
 const DEFAULT_MAX_TURNS = 16;
@@ -321,6 +327,7 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
             // dial through; absent, the child keeps its historical "high".
             ...(live.thinkingEffort ? { thinkingEffort: live.thinkingEffort } : {}),
             toolResultProcessor: deps.toolResultProcessor,
+            onIncident: deps.onIncident,
             // Show the clock the contract above tells it to watch.
             turnBudgetNotice: true,
             contextEngine: nestedContext,

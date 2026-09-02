@@ -83,10 +83,20 @@ export function titleSeq(text: string): string {
   return `${ESC}]0;${text.replace(/[\x00-\x1f\x7f]/g, "")}${BEL}`;
 }
 
-/** Write one, best-effort. Chrome must never be able to interrupt a session. */
+/** The last title written, so an unchanged one costs nothing. The turn's tick
+ *  asks eight times a second; past the quiet threshold the text changes once a
+ *  second, and the identical OSC used to go out on every ask -- a second,
+ *  unbatched writer interleaving with the frame writes for no change at all. */
+let lastTitle: string | null = null;
+
+/** Write one, best-effort, and only when it differs from what is up. Chrome
+ *  must never be able to interrupt a session. */
 export function setTitle(state: TitleState, project: string): void {
+  const next = titleText(state, project);
+  if (next === lastTitle) return;
   try {
-    process.stdout.write(titleSeq(titleText(state, project)));
+    process.stdout.write(titleSeq(next));
+    lastTitle = next;
   } catch {
     // The terminal is gone; there is nothing to name.
   }
@@ -101,6 +111,7 @@ export function setTitle(state: TitleState, project: string): void {
  * do not assert.
  */
 export function clearTitle(): void {
+  lastTitle = null;
   try {
     process.stdout.write(titleSeq(""));
   } catch {

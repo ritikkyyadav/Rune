@@ -27,6 +27,7 @@ import { formatError, formatEvent, fmtTokens } from "./events";
 import { Pulse, PULSE_WEIGHT, pulseGlyph, quietLabel } from "./pulse";
 import { renderMarkdown } from "./markdown";
 import { renderUnifiedDiff } from "../diff-render";
+import { stepReceipt, type TodoItem as SpineTodo } from "../../task-state";
 
 export { isVerificationCommand };
 
@@ -55,9 +56,14 @@ export interface TurnRendererOpts {
 
 export type WorkPhase = "understand" | "plan" | "act" | "verify";
 
+/** The plan as the spine emits it: status plus the harness-measured evidence
+ *  and the unproven mark. Loose on `status` because replayed sessions predate
+ *  the strict union. */
 interface TodoItem {
   content: string;
   status: string;
+  evidence?: SpineTodo["evidence"];
+  unproven?: SpineTodo["unproven"];
 }
 
 interface EditStat {
@@ -1293,18 +1299,37 @@ export class TurnRenderer {
         this.narratedPlan = true;
         this.todos = Array.isArray(event.items) ? event.items : [];
         const active = this.todos.find((item) => item.status === "in_progress");
+        // A closed step carries its receipt -- what the harness saw happen
+        // while it was open -- and a step closed on nothing wears the
+        // suspected-rung tilde instead of a tick. The head counts them.
+        const done = this.todos.filter((item) => item.status === "completed").length;
+        const unproven = this.todos.filter(
+          (item) => item.status === "completed" && !!item.unproven,
+        ).length;
         const plan = F.checklist(
           "plan",
           this.todos.map((item) => ({
             status:
               item.status === "completed"
-                ? ("ok" as const)
+                ? item.unproven
+                  ? ("unproven" as const)
+                  : ("ok" as const)
                 : item.status === "in_progress"
                   ? ("active" as const)
                   : ("none" as const),
             label: item.content,
+            metric:
+              item.status === "completed" ? stepReceipt(item as SpineTodo) || undefined : undefined,
+            metricTone: item.unproven ? ("fail" as const) : ("muted" as const),
           })),
-          { tone: "muted" },
+          {
+            tone: "muted",
+            ...(unproven > 0
+              ? {
+                  receipt: `${done}/${this.todos.length} ${glyph("observed")} ${unproven} unproven`,
+                }
+              : {}),
+          },
         ).join("\n");
         this.addLog(plan);
         // The shape of the work is committed ONCE, when it is first known --
@@ -1344,6 +1369,37 @@ export class TurnRenderer {
         if (block) {
           this.addLog(block);
           this.commitTimeline(block);
+        }
+        return;
+      }
+
+      case "step_check": {
+        // The harness ran the compile check at a step boundary. It reads like
+        // any other check the turn produced: a mark, the command, the verdict.
+        this.flushRoutine();
+        const report = String(event.report ?? "");
+        const command = oneLine(
+          (report.split("\n").find((line) => line.startsWith("$ ")) ?? "")
+            .replace(/^\$ /, "")
+            .replace(/\s+\((ok|exit \d+)\)$/, "") || "project check",
+          48,
+        );
+        const passed = event.passed === true;
+        this.checks.push({
+          label: command,
+          detail: passed ? "passed" : oneLine(lastNonEmpty(report), 56),
+          status: passed ? "passed" : "failed",
+          count: 1,
+        });
+        const row =
+          `  ${passed ? ok(glyph("verified")) : danger(glyph("failure"))} ` +
+          muted(`step check ${glyph("observed")} ${command} ${passed ? "ok" : "failed"}`) +
+          (passed ? "" : ` ${faint(oneLine(lastNonEmpty(report), 60))}`);
+        this.addLog(row);
+        this.commitTimeline(row);
+        if (!passed) {
+          this.failures++;
+          this.setPhase("act", "Fixing what the step check found");
         }
         return;
       }

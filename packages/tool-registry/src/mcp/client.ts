@@ -534,7 +534,9 @@ export class McpClient {
 
   /** Render mixed content blocks (text/image/audio/resource/structured) into the
    *  single text payload our tool layer consumes. Non-text blocks degrade to a
-   *  compact placeholder rather than vanishing. */
+   *  compact placeholder rather than vanishing -- images ALSO travel intact as
+   *  attachments (see imageAttachments), so the placeholder is a caption, not
+   *  the whole story. */
   flattenContent(result: McpCallToolResult): string {
     const parts: string[] = [];
     for (const c of result.content ?? []) parts.push(this.renderBlock(c));
@@ -667,6 +669,11 @@ export class McpClient {
               }),
           });
           const textContent = client.flattenContent(result);
+          // Pixels ride as attachments, never as text: the agent loop turns
+          // them into real image blocks, so a browser screenshot is something
+          // the model SEES rather than a "[image image/png, 180000 base64
+          // bytes]" placeholder it can only pretend to have looked at.
+          const attachments = imageAttachments(result, mcpTool.name);
           return {
             callId: input.callId,
             toolName: input.toolName,
@@ -674,6 +681,7 @@ export class McpClient {
             result: textContent,
             error: result.isError ? textContent : undefined,
             durationMs: Math.round(performance.now() - start),
+            ...(attachments.length > 0 ? { attachments } : {}),
           };
         } catch (err) {
           return {
@@ -784,4 +792,46 @@ export class McpClient {
       lastError: this.lastError,
     };
   }
+}
+
+// ─── Images an MCP tool returned ───
+
+/** Vision providers accept these; anything else stays a text placeholder. */
+const IMAGE_MEDIA_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+/** Per call. A screenshot tool returns one; a gallery is not something to see whole. */
+const MAX_IMAGE_ATTACHMENTS = 3;
+/** ~3.5 MB of base64 — the same ceiling read_file applies to a local image. */
+const MAX_IMAGE_BASE64_CHARS = 4_800_000;
+
+/**
+ * The image blocks of an MCP result, as tool attachments.
+ *
+ * Playwright's `browser_take_screenshot` returns its PNG as an image content
+ * block. Flattened to text it was a placeholder the model could only describe
+ * from imagination; lifted here it becomes the pixels the agent loop attaches
+ * to the next message -- the difference between an agent that can look at the
+ * screen it built and one that cannot. Oversized or exotic images keep their
+ * placeholder and are not attached.
+ */
+export function imageAttachments(
+  result: McpCallToolResult,
+  toolName: string,
+): Array<{ kind: "image"; mediaType: string; data: string; label: string }> {
+  const out: Array<{ kind: "image"; mediaType: string; data: string; label: string }> = [];
+  let index = 0;
+  for (const c of result.content ?? []) {
+    if (c.type !== "image" || typeof c.data !== "string" || c.data.length === 0) continue;
+    index++;
+    const mediaType = (c.mimeType ?? "image/png").toLowerCase();
+    if (!IMAGE_MEDIA_TYPES.has(mediaType)) continue;
+    if (c.data.length > MAX_IMAGE_BASE64_CHARS) continue;
+    if (out.length >= MAX_IMAGE_ATTACHMENTS) break;
+    out.push({
+      kind: "image",
+      mediaType,
+      data: c.data,
+      label: index > 1 ? `${toolName} image ${index}` : `${toolName} image`,
+    });
+  }
+  return out;
 }

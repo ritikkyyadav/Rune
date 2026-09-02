@@ -31,6 +31,8 @@ tests/eval/results/run-*.json
 # Gear runtime
 .gear/cache/
 .gear/logs/
+# The mission dossier: per-workspace run state the engine rewrites every turn
+.gear/mission.md
 # Local code indexes (rebuilt on demand; WAL/SHM siblings included)
 .gear/symbols.db*
 .gear/search.db*

@@ -20,7 +20,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { LlmGateway, ProviderName, ReasoningEffort } from "@gear/llm-gateway";
-import type { ModelTier } from "@gear/shared";
+import type { IncidentReporter, ModelTier } from "@gear/shared";
 import {
   ToolRegistry,
   registerBuiltinTools,
@@ -76,6 +76,8 @@ export interface WorkerDeps {
   maxTokens?: number;
   /** Same prompt-injection probe used by the lead agent. */
   toolResultProcessor?: ToolResultProcessor;
+  /** The black-box tap, so a worker's breakers and fallbacks leave a record. */
+  onIncident?: IncidentReporter;
   /**
    * Cross-instance ownership (the team bus). Local claims stop THIS engine's
    * workers racing; this hook additionally leases the files repo-wide so a
@@ -430,6 +432,7 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
             // dial through; absent, the child keeps its historical "high".
             ...(live.thinkingEffort ? { thinkingEffort: live.thinkingEffort } : {}),
             toolResultProcessor: deps.toolResultProcessor,
+            onIncident: deps.onIncident,
             // Workers average four minutes and run to a fixed turn ceiling;
             // like scouts, they were told to budget without being shown a clock.
             turnBudgetNotice: true,
