@@ -435,7 +435,6 @@ const READ_EVIDENCE_TOOLS = new Set([
   "glob",
   "search_code",
   "symbol_search",
-  "ast_query",
   "lsp",
   "web_fetch",
   "web_search",
@@ -447,7 +446,6 @@ const SCOPED_READ_TOOLS = new Set([
   "grep",
   "glob",
   "search_code",
-  "ast_query",
   "symbol_search",
   "list_dir",
 ]);

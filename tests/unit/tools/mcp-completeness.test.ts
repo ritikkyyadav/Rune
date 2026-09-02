@@ -122,7 +122,7 @@ describe("argument validation", () => {
   });
 
   test("still catches a missing required parameter", () => {
-    expect(validateAgainstSchema(schema, { limit: 3 }).join(" ")).toContain("missing required query");
+    expect(validateAgainstSchema(schema, { limit: 3 }).join(" ")).toContain("Missing required param: query");
   });
 
   test("an unknown keyword is ignored rather than guessed at", () => {
@@ -135,7 +135,7 @@ describe("argument validation", () => {
     const before = mock.authorizedCalls;
     const result = await client.callTool("search", {});
     expect(result.isError).toBe(true);
-    expect(client.flattenContent(result)).toContain("missing required query");
+    expect(client.flattenContent(result)).toContain("Missing required param: query");
     // Nothing reached the server.
     expect(mock.authorizedCalls).toBe(before);
     await client.stop();

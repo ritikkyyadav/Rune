@@ -192,12 +192,18 @@ export class ToolRegistry {
       return forModel !== undefined && gate(forModel);
     });
 
+    // Without `load_tools` registered there is nothing that could turn a
+    // catalog line back into a schema, so deferring would hide a tool the
+    // model has no way to reach. Advertise everything instead: saving tokens
+    // is never worth making a registered tool unreachable.
+    const canDefer = this.tools.has(LOAD_TOOLS_TOOL);
+
     const defs: ToolDefinition[] = [];
     const catalog: DeferredEntry[] = [];
     for (const h of eligible) {
       // load_tools is appended last, carrying the catalog it just collected.
       if (h.schema.name === LOAD_TOOLS_TOOL) continue;
-      if (this.isDeferred(h.schema.name)) {
+      if (canDefer && this.isDeferred(h.schema.name)) {
         catalog.push({ name: h.schema.name, summary: catalogSummary(h.schema.description) });
         continue;
       }
@@ -210,7 +216,7 @@ export class ToolRegistry {
 
     // Nothing deferred ⇒ no catalog, so `load_tools` itself is not advertised.
     // A session with no connectors pays nothing for the mechanism.
-    if (catalog.length > 0 && this.tools.has(LOAD_TOOLS_TOOL)) {
+    if (catalog.length > 0) {
       catalog.sort((a, b) => (a.name < b.name ? -1 : 1));
       defs.push({
         name: LOAD_TOOLS_TOOL,
