@@ -15,7 +15,7 @@
 //   bun run scripts/generate-terminal-colors.ts          # both grounds
 //   bun run scripts/generate-terminal-colors.ts --json   # machine-readable
 
-import { savoirTerminalRoles, type GearBaseName } from "../packages/shared/src/design-tokens";
+import { gearTerminalRoles, type GearBaseName } from "../packages/shared/src/design-tokens";
 import { nearestAnsi256 } from "../packages/orchestrator/src/bin/ui/themes";
 
 function hexToRgb(hex: string): [number, number, number] {
@@ -32,7 +32,7 @@ export interface TerminalRole {
 }
 
 export function terminalTable(base: GearBaseName): TerminalRole[] {
-  return Object.entries(savoirTerminalRoles(base)).map(([role, hex]) => {
+  return Object.entries(gearTerminalRoles(base)).map(([role, hex]) => {
     const rgb = hexToRgb(hex);
     return { role, hex, rgb, ansi: nearestAnsi256(rgb) };
   });

@@ -35,7 +35,7 @@ with the tag.
 ```bash
 # 1. Update CHANGELOG.md: rename [Unreleased] to the version, date it,
 #    open a fresh [Unreleased] section.
-# 2. Bump the semver in packages/*/package.json and apps/desktop/package.json.
+# 2. Bump the semver in packages/*/package.json and apps/web/package.json.
 #    (This is the fallback for dev builds; the tag is what a release reports.)
 # 3. Commit, then tag and push.
 git tag v0.3.0

@@ -21,6 +21,7 @@
     "bench": "bun run tests/eval/runner.ts --real --tasks long_horizon",
     "bench:mock": "bun run tests/eval/runner.ts --tasks long_horizon",
     "test:integration": "bun test tests/integration/",
+    "test:e2e": "bun run --cwd tests/e2e test",
     "test:packages": "turbo test"
   },
   "devDependencies": {

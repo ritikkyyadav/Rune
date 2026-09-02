@@ -42,6 +42,7 @@ import {
   withThemeBg,
 } from "../../../packages/orchestrator/src/bin/ui/theme";
 import { glyph } from "../../../packages/orchestrator/src/bin/ui/glyphs";
+import { GEAR_PALETTE, hexToRgbTuple } from "../../../packages/shared/src/design-tokens";
 import {
   loadSavedTheme,
   resolveInitialTheme,
@@ -170,11 +171,14 @@ describe("theme palettes", () => {
     }
   });
 
-  it("the accent is the datum on paper and the signal on ink", () => {
-    // One hue, two values of it. `info` is the slot the `accent` ROLE resolves
-    // through — see ROLE_SLOT, where the names read from the other direction.
-    expect(findTheme("gear")!.slots.info.rgb).toEqual([14, 94, 99]);
-    expect(findTheme("gear-dark")!.slots.info.rgb).toEqual([23, 160, 168]);
+  it("the console paints the SAME accent the app does, on both grounds", () => {
+    // One hue, two values of it, and they come from the shared token module —
+    // if the console and the app ever disagree, the terminal is a different
+    // product wearing the same name. `info` is the slot the `accent` ROLE
+    // resolves through: see ROLE_SLOT, where the names read from the other
+    // direction.
+    expect(findTheme("gear")!.slots.info.rgb).toEqual(hexToRgbTuple(GEAR_PALETTE.accent));
+    expect(findTheme("gear-dark")!.slots.info.rgb).toEqual(hexToRgbTuple(GEAR_PALETTE.accentDark));
   });
 
   it("every retired accent name still resolves, to the ground it was saved on", () => {

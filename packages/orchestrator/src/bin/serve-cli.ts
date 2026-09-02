@@ -64,6 +64,17 @@ export interface ServeConfig {
   /** Browser origins allowed to open a socket. Non-browser clients send none. */
   origins: string[];
   pid: number;
+  /**
+   * The folder this server's tools run in.
+   *
+   * Recorded so `gear` can say which workspace the engine it is about to reuse
+   * is actually serving. One server hosts every session; silently attaching a
+   * second project to the first project's tools is the papercut this line
+   * exists to prevent.
+   */
+  workspace: string;
+  /** Whether this server is also handing out the app bundle. */
+  web: boolean;
 }
 
 export function serveConfigPath(): string {
@@ -88,6 +99,8 @@ export function readServeConfig(): ServeConfig | null {
       allowRemoteSettings: raw.allowRemoteSettings === true,
       origins: Array.isArray(raw.origins) ? raw.origins.map(String) : [],
       pid: Number(raw.pid ?? 0),
+      workspace: typeof raw.workspace === "string" ? raw.workspace : "",
+      web: raw.web === true,
     };
   } catch {
     return null;
@@ -761,6 +774,8 @@ export async function serve(opts: ServeOptions = {}): Promise<{ stop: () => void
     allowRemoteSettings,
     origins,
     pid: process.pid,
+    workspace,
+    web: Boolean(opts.web),
   });
 
   const reaper = setInterval(() => pool.reapIdle(), 5 * 60_000);
@@ -824,8 +839,15 @@ function printStatus(): void {
     console.log("gear serve: not running (no ~/.gear/serve.json)");
     return;
   }
+  const dialHost = cfg.host === "0.0.0.0" || cfg.host === "::" ? "127.0.0.1" : cfg.host;
   console.log(`gear serve`);
+  if (cfg.web) {
+    // The one line most people came here for. The token rides in the fragment,
+    // which the browser never sends to the server.
+    console.log(`  open       http://${dialHost}:${cfg.port}/#token=${cfg.token}`);
+  }
   console.log(`  bind       ${cfg.host}:${cfg.port}`);
+  console.log(`  workspace  ${cfg.workspace || "(not recorded)"}`);
   console.log(`  started    ${cfg.createdAt}`);
   console.log(`  pid        ${cfg.pid}`);
   console.log(`  remote settings ${cfg.allowRemoteSettings ? "allowed" : "refused"}`);

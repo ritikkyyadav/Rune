@@ -47,6 +47,7 @@ import {
   toRequest,
   toResponse,
 } from "@gear/protocol";
+import { FrameWriter, type FramedSocket } from "./host-framing";
 import { RoundTripRegistry } from "./host-roundtrips";
 import { HeldStepLedger } from "./host-held-steps";
 import type { ResearchEvent, ResearchOptions } from "../research-types";
@@ -116,8 +117,17 @@ console.warn = logErr as typeof console.warn;
 const socketArgIdx = process.argv.indexOf("--socket");
 const SOCKET_PATH = socketArgIdx !== -1 ? process.argv[socketArgIdx + 1] : null;
 
-type SocketLike = { write(data: string): unknown };
+type SocketLike = FramedSocket;
 const connectedClients = new Set<SocketLike>();
+
+/**
+ * Every socket write goes through here.
+ *
+ * Bun's `write` reports how many bytes it took and queues nothing, so a
+ * response larger than the kernel buffer used to be truncated mid-JSON and the
+ * caller hung for fifteen minutes. See host-framing.ts.
+ */
+const frames = new FrameWriter();
 
 /**
  * Extra sinks a wrapper transport registers to receive every stream frame.
@@ -152,9 +162,10 @@ function emitStream(stream: string, payload: unknown): void {
     const frame = JSON.stringify(streamNotification(stream, payload)) + "\n";
     for (const client of connectedClients) {
       try {
-        client.write(frame);
+        frames.write(client, frame);
       } catch {
         connectedClients.delete(client);
+        frames.forget(client);
       }
     }
     return;
@@ -825,6 +836,129 @@ async function dispatch(cmd: HostCommandName, args: Record<string, unknown>): Pr
       }
     }
 
+    case "list_files": {
+      // Read-only, confined, and REFUSING rather than clamping: a guard that
+      // silently rewrites the path it was handed teaches the caller that what
+      // it sent was acceptable, and the next caller sends something worse.
+      const { readdirSync, statSync } = await import("node:fs");
+      const { join } = await import("node:path");
+      const root = workspaceRootOf();
+      const rel = (optionalString(args, "path") ?? "").replace(/^\/+|\/+$/g, "");
+      if (rel.startsWith("/") || rel.split("/").includes("..")) {
+        return { root, path: rel, entries: [], reason: `refusing a path outside the workspace` };
+      }
+      const dir = rel ? join(root, rel) : root;
+      try {
+        const entries = readdirSync(dir, { withFileTypes: true })
+          // Dotfiles stay; `.git` and `node_modules` do not. A Files tab that
+          // opens on ten thousand dependency directories is not a Files tab.
+          .filter((e) => e.name !== ".git" && e.name !== "node_modules")
+          .map((e) => {
+            const child = rel ? `${rel}/${e.name}` : e.name;
+            let size = 0;
+            try {
+              if (e.isFile()) size = statSync(join(dir, e.name)).size;
+            } catch {
+              /* a symlink to nowhere still belongs in the listing */
+            }
+            return { name: e.name, path: child, dir: e.isDirectory(), size };
+          })
+          .sort((a, b) => (a.dir === b.dir ? a.name.localeCompare(b.name) : a.dir ? -1 : 1));
+        return { root, path: rel, entries };
+      } catch (err) {
+        return {
+          root,
+          path: rel,
+          entries: [],
+          reason: err instanceof Error ? err.message : String(err),
+        };
+      }
+    }
+
+    case "read_text_file": {
+      const { join } = await import("node:path");
+      const rel = requireString(args, "path");
+      const empty = { path: rel, text: "", bytes: 0, truncated: false, binary: false };
+      if (rel.startsWith("/") || rel.split("/").includes("..")) {
+        return { ...empty, reason: "refusing a path outside the workspace" };
+      }
+      // 512 KB: enough for any source file, small enough that a stray log does
+      // not park a megabyte in a websocket with a person waiting on it.
+      const maxBytes = Math.min(Math.max(1_024, Number(args.maxBytes ?? 512_000)), 2_000_000);
+      try {
+        const file = Bun.file(join(workspaceRootOf(), rel));
+        const bytes = file.size;
+        const buf = new Uint8Array(await file.slice(0, maxBytes).arrayBuffer());
+        // A NUL in the first kilobyte is the oldest and still the best binary
+        // test there is. Saying "binary" beats a screenful of U+FFFD.
+        const binary = buf.subarray(0, 1_024).includes(0);
+        return {
+          path: rel,
+          text: binary ? "" : new TextDecoder().decode(buf),
+          bytes,
+          truncated: bytes > maxBytes,
+          binary,
+        };
+      } catch (err) {
+        return { ...empty, reason: err instanceof Error ? err.message : String(err) };
+      }
+    }
+
+    case "list_connectors": {
+      // The same merge and the same discovery `gear mcp list` runs, so the app
+      // and the console cannot disagree about what is connected. Discovery
+      // costs about a second and is worth it: a configured connector and a
+      // working one are different claims.
+      const { mergedServers, McpDiscovery, mcpCredentialAccount } =
+        await import("@gear/tool-registry");
+      const { openCredentialStore } = await import("@gear/shared");
+      const root = workspaceRootOf();
+      const { servers, errors } = mergedServers(root);
+      const statuses = new Map<
+        string,
+        { health: string; toolCount: number; needsAuth?: boolean; lastError?: string | null }
+      >();
+      try {
+        const discovery = new McpDiscovery(root);
+        await discovery.discover();
+        for (const s of discovery.getStatus()) statuses.set(s.name, s);
+      } catch {
+        // A discovery failure still leaves the configured list worth reporting;
+        // those rows read "unknown", which is true.
+      }
+      let accounts = new Set<string>();
+      try {
+        accounts = new Set(await (await openCredentialStore()).list());
+      } catch {
+        /* no keychain on this box: nothing is authorized, which is what shows */
+      }
+      return {
+        servers: servers.map((s) => {
+          const st = statuses.get(s.name);
+          const enabled = s.config.enabled !== false;
+          const health = !enabled
+            ? ("disabled" as const)
+            : !st
+              ? ("unknown" as const)
+              : st.needsAuth || st.health === "down"
+                ? ("failed" as const)
+                : ("ok" as const);
+          return {
+            name: s.name,
+            scope: s.scope,
+            where: s.config.url ?? `${s.config.command} ${(s.config.args ?? []).join(" ")}`.trim(),
+            enabled,
+            health,
+            authed: accounts.has(mcpCredentialAccount(s.name)),
+            needsAuth: st?.needsAuth === true,
+            toolCount: st?.toolCount ?? 0,
+            error: st?.lastError ?? undefined,
+          };
+        }),
+        reason: errors.length > 0 ? errors.join("; ") : undefined,
+      };
+    }
+
     case "save_settings": {
       const apiKeys = (args.apiKeys as Record<string, string>) ?? {};
       let touchedSearch = false;
@@ -1115,7 +1249,8 @@ if (SOCKET_PATH) {
         connectedClients.add(socket);
         buffers.set(socket, "");
         // Same readiness contract as stdio, scoped to the new client.
-        socket.write(
+        frames.write(
+          socket,
           JSON.stringify(
             streamNotification("ready", {
               ...mappedStatus(engine),
@@ -1131,17 +1266,22 @@ if (SOCKET_PATH) {
         for (const line of lines) {
           handleRequestLine(line, (obj) => {
             try {
-              socket.write(JSON.stringify(obj) + "\n");
+              frames.write(socket, JSON.stringify(obj) + "\n");
             } catch {
               /* client vanished mid-response — the run continues regardless */
             }
           });
         }
       },
+      drain(socket) {
+        // The socket can take more: send whatever the last write left behind.
+        frames.flush(socket);
+      },
       close(socket) {
         // THE point of socket mode: dropping a client never stops the engine.
         connectedClients.delete(socket);
         buffers.delete(socket);
+        frames.forget(socket);
         // But a pending question with nobody left to answer it is a wedge, not
         // resilience. When the LAST client goes, every open round-trip settles
         // by the stated policy and the run continues, contained.
@@ -1150,6 +1290,7 @@ if (SOCKET_PATH) {
       error(socket) {
         connectedClients.delete(socket);
         buffers.delete(socket);
+        frames.forget(socket);
         if (connectedClients.size === 0) roundTrips.clientsGone();
       },
     },

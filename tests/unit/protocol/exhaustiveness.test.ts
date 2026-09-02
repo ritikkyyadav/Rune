@@ -61,13 +61,13 @@ const REDUCERS = [
     from: "for await (const event of engine.chat(",
   },
   {
-    name: "desktop transcript (apps/desktop/src/lib/stream.ts)",
-    file: "apps/desktop/src/lib/stream.ts",
+    name: "desktop transcript (apps/web/src/lib/stream.ts)",
+    file: "apps/web/src/lib/stream.ts",
     from: "switch (ev.type)",
   },
   {
-    name: "desktop trace rail (apps/desktop/src/lib/trace.ts)",
-    file: "apps/desktop/src/lib/trace.ts",
+    name: "desktop trace rail (apps/web/src/lib/trace.ts)",
+    file: "apps/web/src/lib/trace.ts",
     from: "switch (ev.type)",
   },
 ] as const;
@@ -152,7 +152,7 @@ describe("ResearchEvent is handled where research is rendered", () => {
 
 describe("no client redeclares the event union", () => {
   test("the desktop imports it instead of hand-writing it", () => {
-    const types = readFileSync(join(ROOT, "apps/desktop/src/lib/types.ts"), "utf8");
+    const types = readFileSync(join(ROOT, "apps/web/src/lib/types.ts"), "utf8");
     // The duplicate that had drifted both ways.
     expect(types).not.toMatch(/export type EngineEvent\s*=/);
     expect(types).toContain("@gear/protocol");

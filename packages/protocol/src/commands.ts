@@ -224,6 +224,69 @@ export interface HostCommands {
     result: { opened: boolean; with?: string; reason?: string };
   };
 
+  // ── the workspace, read-only (P9.4) ──
+  /**
+   * One directory of the workspace, sorted directories first.
+   *
+   * Read-only and confined: an absolute path or a `..` segment is refused
+   * rather than clamped, because a guard that silently rewrites what it was
+   * asked for teaches a caller that the path it sent was fine. `.git` and
+   * `node_modules` are hidden — a Files tab that opens on ten thousand
+   * dependency directories is not a Files tab.
+   */
+  list_files: {
+    args: { path?: string };
+    result: {
+      root: string;
+      path: string;
+      entries: Array<{ name: string; path: string; dir: boolean; size: number }>;
+      reason?: string;
+    };
+  };
+  /**
+   * One text file, bounded.
+   *
+   * `binary: true` and no text rather than a screenful of replacement
+   * characters, and `truncated: true` rather than sending a 200 MB log through
+   * a websocket that has a person waiting on the other end of it.
+   */
+  read_text_file: {
+    args: { path: string; maxBytes?: number };
+    result: {
+      path: string;
+      text: string;
+      bytes: number;
+      truncated: boolean;
+      binary: boolean;
+      reason?: string;
+    };
+  };
+  /**
+   * The MCP connectors this workspace has configured, and whether they work.
+   *
+   * The same merge `gear mcp list` performs — user scope under workspace scope
+   * — plus live discovery, so the app and the console cannot disagree about
+   * what is connected. Health is what discovery actually found; a connector
+   * that has never been reached says so instead of showing a hopeful dot.
+   */
+  list_connectors: {
+    args: Record<string, never>;
+    result: {
+      servers: Array<{
+        name: string;
+        scope: string;
+        where: string;
+        enabled: boolean;
+        health: "ok" | "failed" | "disabled" | "unknown";
+        authed: boolean;
+        needsAuth: boolean;
+        toolCount: number;
+        error?: string;
+      }>;
+      reason?: string;
+    };
+  };
+
   // ── model and providers ──
   switch_model: { args: { model: string; provider?: string }; result: EngineStatus };
   list_providers: {
@@ -292,6 +355,9 @@ export const HOST_COMMANDS = [
   "revert_paths",
   "run_checks",
   "open_path",
+  "list_files",
+  "read_text_file",
+  "list_connectors",
   "switch_model",
   "list_providers",
   "save_settings",
