@@ -143,6 +143,8 @@ const { values, positionals } = parseArgs({
     // --provider's short flag, so this takes -P.
     print: { type: "string", short: "P" },
     json: { type: "boolean", default: false },
+    // NDJSON: every event as it happens, the envelope last. See docs/protocol.md.
+    "stream-json": { type: "boolean", default: false },
     "auto-approve": { type: "boolean", default: false },
     tui: { type: "boolean", default: false },
     classic: { type: "boolean", default: false },
@@ -1242,12 +1244,23 @@ async function main() {
   // captures the answer alone.
   if (typeof values.print === "string") {
     const { runHeadless, headlessExitCode, headlessEnvelope } = await import("../headless");
+    // `--stream-json`: NDJSON on stdout, one typed event per line, the final
+    // envelope LAST. A headless run used to report one envelope after minutes
+    // of silence, so "still working" and "wedged" looked identical to CI, to a
+    // benchmark harness, and to a person watching. Implies --json for the tail,
+    // and leaves exit codes exactly as they were.
+    const streamJson = values["stream-json"] === true;
     const result = await runHeadless(engine, sessionId, values.print as string, {
       autoApprove: values["auto-approve"] === true,
       onProgress: (line) => process.stderr.write(`${line}\n`),
+      onEvent: streamJson
+        ? (event) => process.stdout.write(`${JSON.stringify(event)}\n`)
+        : undefined,
     });
     process.stdout.write(
-      values.json === true ? `${headlessEnvelope(result)}\n` : `${result.text}\n`,
+      values.json === true || streamJson
+        ? `${headlessEnvelope(result, { compact: streamJson })}\n`
+        : `${result.text}\n`,
     );
     if (!result.ok && result.error) process.stderr.write(`${result.error}\n`);
     // Say WHY, once, when the run was blocked rather than incapable. Without
