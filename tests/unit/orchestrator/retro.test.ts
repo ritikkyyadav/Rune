@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   deriveRunRetro,
+  foldTurnRetros,
   gardenerBrief,
   gardenerCandidates,
   observationsFromRows,
@@ -523,5 +524,179 @@ describe("deriveRunRetro — outcome across runs", () => {
     ];
     expect(deriveRunRetro(rows)!.outcome).toBe("max_turns");
     expect(deriveRunRetro(rows, { sinceAt: "2026-09-01T20:27:28.626Z" })!.outcome).toBe("finished");
+  });
+});
+
+// ─── The scope defect ───
+// The engine writes a retro per RUN, and a run is one turn. Before the fix,
+// every turn retro carried the SESSION's cumulative step counts and the
+// SESSION's goal, so `gear audit` showed a two-word greeting as the whole
+// mission and `gear evolve scorecard` counted each turn as a run. The contract
+// now: work counters are a delta over the window, the plan's shape is absolute,
+// the goal belongs to the session, and N turn retros fold into one sample.
+
+/** A spine with `done` of `total` steps completed, `unproven` of them unproven. */
+function spine(total: number, done: number, unproven = 0, goal = "ship the thing") {
+  const store = new TaskStateStore();
+  store.beginTurn(goal);
+  store.setTodos(
+    Array.from({ length: total }, (_, i) => ({
+      content: `step ${i + 1}`,
+      status: i < done ? ("completed" as const) : ("pending" as const),
+    })),
+    { enforce: false },
+  );
+  const state = store.snapshot();
+  // `unproven` is the harness's verdict, never the model's input: `setTodos`
+  // drops it and the step gate stamps it. Stamp the persisted shape directly.
+  for (let i = 0; i < unproven; i++) state.todos[i]!.unproven = true;
+  return state;
+}
+
+describe("retro scope", () => {
+  test("a turn retro reports the steps THAT TURN closed, not the session's", () => {
+    seq = 0;
+    // The session had 8 steps with 5 already done when this turn opened; the
+    // turn closed one more. Before the fix this reported done: 6.
+    const rows: EventRow[] = [
+      ...turn([{ name: "write_file", args: { path: "a.ts", content: "x" }, ok: true }]),
+      row("task_state", { state: spine(8, 6) }),
+    ];
+    const retro = deriveRunRetro(rows, { scope: "turn", priorState: spine(8, 5) })!;
+    expect(retro.scope).toBe("turn");
+    expect(retro.steps.done).toBe(1);
+    // The plan's shape is absolute: 8 steps, 2 still open at the turn's end.
+    expect(retro.steps.total).toBe(8);
+    expect(retro.steps.open).toBe(2);
+  });
+
+  test("a turn that touched no step still reports the plan, not zeros", () => {
+    seq = 0;
+    // No `task_state` row in the window at all — the turn read and answered.
+    // This is the shape that reported "0 steps" for real work.
+    const rows = turn([{ name: "read_file", args: { path: "a.ts" }, ok: true }]);
+    const retro = deriveRunRetro(rows, { scope: "turn", priorState: spine(8, 5) })!;
+    expect(retro.steps).toEqual({ total: 8, done: 0, unproven: 0, open: 3 });
+  });
+
+  test("unproven closes are a delta too, and a shrinking plan never goes negative", () => {
+    seq = 0;
+    const rows: EventRow[] = [
+      ...turn([{ name: "write_file", args: { path: "a.ts", content: "x" }, ok: true }]),
+      row("task_state", { state: spine(8, 6, 2) }),
+    ];
+    expect(deriveRunRetro(rows, { scope: "turn", priorState: spine(8, 5, 1) })!.steps.unproven).toBe(
+      1,
+    );
+    // The model rewrote the plan smaller mid-turn: clamp, never report -3.
+    seq = 0;
+    const shrunk: EventRow[] = [
+      ...turn([{ name: "write_file", args: { path: "a.ts", content: "x" }, ok: true }]),
+      row("task_state", { state: spine(2, 2) }),
+    ];
+    const r = deriveRunRetro(shrunk, { scope: "turn", priorState: spine(8, 5) })!;
+    expect(r.steps.done).toBe(0);
+    expect(r.steps.total).toBe(2);
+  });
+
+  test("the goal belongs to the session: turn scope omits it, session scope keeps it", () => {
+    seq = 0;
+    const rows: EventRow[] = [
+      ...turn([{ name: "read_file", args: { path: "a.ts" }, ok: true }]),
+      row("task_state", { state: spine(3, 1, 0, "build me a config parser") }),
+    ];
+    expect(deriveRunRetro(rows, { scope: "turn" })!.goal).toBeUndefined();
+    expect(deriveRunRetro(rows, { scope: "session" })!.goal).toBe("build me a config parser");
+    // Unspecified scope stays what every derived (backfilled) retro was.
+    expect(deriveRunRetro(rows)!.scope).toBe("session");
+  });
+
+  test("an empty window is still nothing, prior spine or not", () => {
+    seq = 0;
+    expect(deriveRunRetro([], { priorState: spine(8, 5) })).toBeNull();
+    expect(deriveRunRetro([row("user_msg", { content: "hi" })], { priorState: spine(8, 5) })).toBe(
+      null,
+    );
+  });
+});
+
+describe("foldTurnRetros", () => {
+  const turnRetro = (over: Partial<RunRetro> = {}): RunRetro => ({
+    v: 1,
+    at: "2026-09-02T10:00:00.000Z",
+    outcome: "finished",
+    scope: "turn",
+    steps: { total: 4, done: 0, unproven: 0, open: 4 },
+    checks: { passed: 0, failed: 0 },
+    tools: { calls: 0, failed: 0, byName: {} },
+    gates: {},
+    completions: 1,
+    filesWritten: 0,
+    cost: { usd: 0, listUsd: 0, inputTokens: 0, outputTokens: 0 },
+    durationMs: 1000,
+    lessons: [],
+    ...over,
+  });
+
+  test("N turn retros become one session: work sums, the plan's shape is the last", () => {
+    const folded = foldTurnRetros([
+      turnRetro({
+        steps: { total: 4, done: 1, unproven: 0, open: 3 },
+        checks: { passed: 1, failed: 0, lastPassed: "bun test" },
+        tools: { calls: 3, failed: 1, byName: { bash: 2, read_file: 1 } },
+        gates: { gate: 1 },
+        cost: { usd: 0.01, listUsd: 0.05, inputTokens: 100, outputTokens: 10 },
+      }),
+      turnRetro({
+        at: "2026-09-02T11:00:00.000Z",
+        outcome: "open_steps",
+        steps: { total: 5, done: 2, unproven: 1, open: 2 },
+        checks: { passed: 2, failed: 1 },
+        tools: { calls: 4, failed: 0, byName: { bash: 4 } },
+        gates: { gate: 2, unproven: 1 },
+        completions: 3,
+        filesWritten: 2,
+        cost: { usd: 0.02, listUsd: 0.07, inputTokens: 200, outputTokens: 20 },
+        durationMs: 5000,
+      }),
+    ])!;
+    expect(folded.scope).toBe("session");
+    // Deltas sum back to the session's real totals.
+    expect(folded.steps).toEqual({ total: 5, done: 3, unproven: 1, open: 2 });
+    // How the session ended is how its last turn ended.
+    expect(folded.outcome).toBe("open_steps");
+    expect(folded.at).toBe("2026-09-02T11:00:00.000Z");
+    expect(folded.checks).toEqual({ passed: 3, failed: 1, lastPassed: "bun test" });
+    expect(folded.tools).toEqual({ calls: 7, failed: 1, byName: { bash: 6, read_file: 1 } });
+    expect(folded.gates).toEqual({ gate: 3, unproven: 1 });
+    expect(folded.completions).toBe(4);
+    expect(folded.cost).toEqual({ usd: 0.03, listUsd: 0.12, inputTokens: 300, outputTokens: 30 });
+    expect(folded.durationMs).toBe(6000);
+  });
+
+  test("the fold takes the goal it is given, and dedupes lessons by title", () => {
+    const lesson = { kind: "check" as const, title: "bun test", body: "b", evidence: "e" };
+    const folded = foldTurnRetros(
+      [turnRetro({ lessons: [lesson] }), turnRetro({ lessons: [lesson] })],
+      "  build   me a parser ",
+    )!;
+    expect(folded.goal).toBe("build me a parser");
+    expect(folded.lessons).toHaveLength(1);
+  });
+
+  test("nothing folds to nothing", () => {
+    expect(foldTurnRetros([])).toBeNull();
+  });
+
+  test("one session of many turns scores as one run, not many", () => {
+    const session = foldTurnRetros([
+      turnRetro({ steps: { total: 2, done: 1, unproven: 0, open: 1 } }),
+      turnRetro({ steps: { total: 2, done: 1, unproven: 0, open: 0 } }),
+      turnRetro({ steps: { total: 2, done: 0, unproven: 0, open: 0 } }),
+    ])!;
+    const sample: RetroSample = { retro: session, model: "m", workspaceRoot: "/w", sessionId: "s1" };
+    const scored = scorecard([sample], "model");
+    expect(scored[0].runs).toBe(1);
+    expect(scored[0].stepsDone).toBe(2);
   });
 });

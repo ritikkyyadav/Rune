@@ -248,11 +248,12 @@ describe("Auto mode independent classifier", () => {
     expect(classifier.calls.map((c) => c.stage)).toEqual(["reasoned"]);
   });
 
-  test("no reviewer verdict reaches a modal prompt, whatever conversationalEscalation says", async () => {
-    // The setting used to pick between "hand it to the agent" and "pop a
-    // modal". There is no modal any more, so both paths land in the broker
-    // and the setting cannot resurrect one.
-    for (const conversationalEscalation of [true, false]) {
+  test("no reviewer verdict reaches a modal prompt, retired knob or not", async () => {
+    // `conversationalEscalation` used to pick between "hand it to the agent"
+    // and "pop a modal". There is no modal any more, so the setting could not
+    // resurrect one and is retired — but a config that still carries it must
+    // keep working, and land in the broker exactly the same way.
+    for (const stale of [true, false]) {
       const { controller } = setup(
         [
           "ALLOW",
@@ -262,7 +263,7 @@ describe("Auto mode independent classifier", () => {
             reason: "A force push can rewrite shared history and needs explicit confirmation.",
           }),
         ],
-        { conversationalEscalation },
+        { conversationalEscalation: stale } as Record<string, unknown>,
       );
       const review = await controller
         .startRun(["Push my changes."])
@@ -271,6 +272,19 @@ describe("Auto mode independent classifier", () => {
       expect(review.verdict).toBe("deny");
       expect(review.source).toBe("containment");
     }
+  });
+
+  test("a retired key is reported once and ignored, never an error", () => {
+    const resolved = resolveAutoModeConfig({ conversationalEscalation: false } as Record<
+      string,
+      unknown
+    >);
+    expect(resolved.warnings.join(" ")).toContain("conversationalEscalation");
+    expect(resolved.warnings.join(" ")).toContain("retired and ignored");
+    // No such field survives onto the resolved config.
+    expect("conversationalEscalation" in resolved).toBe(false);
+    // A config that never mentioned it stays quiet.
+    expect(resolveAutoModeConfig({}).warnings).toEqual([]);
   });
 
   test("a classifier outage falls back to containment, never to a waiting prompt", async () => {
@@ -1013,10 +1027,9 @@ describe("Conversational escalation", () => {
     expect(prompt).toContain("[A2] bash");
   });
 
-  test("status reports the escalation and fallback posture", () => {
+  test("status reports the fallback posture", () => {
     const { controller } = setup();
     const status = controller.getStatus();
-    expect(status.conversationalEscalation).toBe(true);
     expect(status.reviewerFallback).toEqual({ enabled: true, available: false });
   });
 });

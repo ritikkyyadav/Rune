@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 // --- Product identity (Gear) ---
 // "Gear" is the only product name -- in the UI and in the internals (dirs, env,
 // packages, binaries). Legacy spellings survive only as read-through migration
@@ -11,8 +13,43 @@ export const PRODUCT_NAME = "Gear";
 /** Command shown in help and guidance. */
 export const PRODUCT_COMMAND = "gear";
 
-/** Display version -- rendered as `v0.3.0`. Kept in lockstep with the package semver. */
-export const PRODUCT_VERSION = "0.3.0";
+/**
+ * Injected at build time by `bun build --define=GEAR_BUILD_VERSION="..."`.
+ *
+ * `scripts/version.sh` is the one place that decides what this string is — the
+ * exact git tag at HEAD for a release build, `<package semver>-dev+<sha>` for
+ * everything else — and every build path calls it. The version used to live in
+ * four hand-maintained copies that drifted from each other and from the only
+ * tag in the repo. A binary can no longer disagree with the tag it was built
+ * from, because nothing else knows the version.
+ */
+declare const GEAR_BUILD_VERSION: string | undefined;
 
-/** Full public identifier, e.g. for `--version`: "Gear v0.2.0". */
+/**
+ * The fallback for a source run (`bun packages/orchestrator/src/bin/gear-cli.ts`),
+ * where no define exists: the CLI package's own semver, marked dev. A compiled
+ * binary never takes this path. `0.0.0-unknown` means the package.json could not
+ * be read at all — loud on purpose, because a confidently wrong version is the
+ * exact defect this mechanism exists to end.
+ */
+function sourceRunVersion(): string {
+  try {
+    const url = new URL("../../../package.json", import.meta.url);
+    const parsed = JSON.parse(readFileSync(url, "utf8")) as { version?: string };
+    if (typeof parsed.version === "string" && parsed.version.length > 0) {
+      return `${parsed.version}-dev`;
+    }
+  } catch {
+    // Fall through to the loud value.
+  }
+  return "0.0.0-unknown";
+}
+
+/** Display version -- rendered as `v0.3.0`. */
+export const PRODUCT_VERSION: string =
+  typeof GEAR_BUILD_VERSION !== "undefined" && GEAR_BUILD_VERSION
+    ? GEAR_BUILD_VERSION
+    : sourceRunVersion();
+
+/** Full public identifier, e.g. for `--version`: "Gear v0.3.0". */
 export const PRODUCT_LABEL = `${PRODUCT_NAME} v${PRODUCT_VERSION}`;

@@ -133,9 +133,12 @@ jobs:
           GEAR_TOOLS_BIN: ${{ github.workspace }}/target/release/gear-tools
         run: bun test tests/integration/
 
-  # ── Stage 4b: Windows TypeScript typecheck ──
-  # Unit-test enablement on Windows is tracked separately; typecheck is the
-  # honest first gate (the suite has POSIX-shell assumptions to burn down).
+  # ── Stage 4b: Windows typecheck + the Windows installer's only compiler ──
+  # The unit suite still has POSIX-shell assumptions (hardcoded /bin/sh, /tmp
+  # paths, `bash -c`) in 21 files, logged in docs/program/backlog.md. Running it
+  # here is a separate piece of work; what Windows CI must cover TODAY is the
+  # things only Windows can check: that the typecheck holds and that
+  # scripts/install.ps1 — the sole Windows install path — actually parses.
   ts-windows:
     runs-on: windows-latest
     steps:
@@ -147,12 +150,36 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Typecheck
         run: bun run typecheck
+      - name: PowerShell installer parses and passes PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          # The .ps1 is the only Windows install path, and it cannot be
+          # syntax-checked on the machine it is usually written on. Windows CI
+          # is where it gets a compiler.
+          $errs = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path scripts/install.ps1), [ref]$null, [ref]$errs) | Out-Null
+          if ($errs) { $errs | ForEach-Object { Write-Error $_.Message }; exit 1 }
+          Write-Host "install.ps1 parses"
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -ErrorAction SilentlyContinue
+          if (Get-Module -ListAvailable PSScriptAnalyzer) {
+            $found = Invoke-ScriptAnalyzer -Path scripts/install.ps1 -Severity Error
+            $found | Format-Table -AutoSize
+            if ($found) { exit 1 }
+          }
+      - name: install.ps1 -Uninstall is a clean no-op on a fresh machine
+        shell: pwsh
+        run: |
+          # Exercises the parameter block, the PATH helpers and the uninstall
+          # branch without needing a published release to exist.
+          ./scripts/install.ps1 -Uninstall -InstallDir "$env:RUNNER_TEMP/gear-bin"
 
   # ── Stage 4c: Packaged-binary E2E — the artifact users actually download ──
   packaged-e2e:
     strategy:
+      fail-fast: false
       matrix:
-        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["macos-latest","ubuntu-latest"]') }}
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest","windows-latest"]' || '["macos-latest","ubuntu-latest","windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -162,16 +189,47 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: cargo build --release -p gear-tools
       - name: Compile standalone CLI (same command as release builds)
-        run: bun build --compile packages/orchestrator/src/bin/gear-cli.ts --outfile ./gear-packaged
-      - name: Packaged smoke — version, help, REAL tool execution
-        env:
-          GEAR_TOOLS_BIN: ${{ github.workspace }}/target/release/gear-tools
+        shell: bash
         run: |
-          ./gear-packaged --version | grep -E "Gear v[0-9]"
-          ./gear-packaged --help > /dev/null
+          set -euo pipefail
+          # The same version source release.yml and build-release.sh use, so
+          # CI exercises the injection path rather than a second one.
+          . scripts/version.sh
+          v="$(gear_version)"
+          echo "building as $v"
+          out="./gear-packaged"
+          [ "$RUNNER_OS" = "Windows" ] && out="./gear-packaged.exe"
+          bun build --compile --define=GEAR_BUILD_VERSION="\"$v\"" \
+            packages/orchestrator/src/bin/gear-cli.ts --outfile "$out"
+          # The injection must actually reach the binary: a define that stops
+          # working would otherwise show up first in a shipped release.
+          "$out" --version | grep -F "Gear v$v"
+      # Windows binaries have been built for months with nothing exercising
+      # them at runtime — ci.yml typechecked and stopped there. The packaged
+      # artifact now has to start, answer, and run real tools on Windows too.
+      - name: Packaged smoke - version, help, REAL tool execution
+        shell: bash
+        env:
+          GEAR_TOOLS_BIN_POSIX: ${{ github.workspace }}/target/release/gear-tools
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            out="./gear-packaged.exe"
+            export GEAR_TOOLS_BIN="$GITHUB_WORKSPACE/target/release/gear-tools.exe"
+          else
+            out="./gear-packaged"
+            export GEAR_TOOLS_BIN="$GEAR_TOOLS_BIN_POSIX"
+          fi
+          export GEAR_HOME="$RUNNER_TEMP/gear-home"
+          mkdir -p "$GEAR_HOME"
+          "$out" --version | grep -E "Gear v[0-9]"
+          "$out" --help > /dev/null
           # The artifact pair must actually work, not merely start: a
-          # write → read → edit → bash round-trip through gear-tools.
-          ./gear-packaged tools-smoke
+          # write -> read -> edit -> bash round-trip through gear-tools.
+          "$out" tools-smoke
+          # And the path a user actually takes: a prompt in, an answer out,
+          # against a mock provider that needs no credential.
+          bun scripts/smoke-print.ts "$out"
 
   # ── Stage 4d: Desktop app (developer preview — must keep compiling) ──
   # Runs on Linux (1x billing vs macOS 10x); the macOS bundle itself is

@@ -20,6 +20,7 @@ import { repoKey as repoKeyOf } from "../notebook/fingerprint";
 import { PLAYBOOK_REL, playbookEntries } from "../playbook";
 import {
   deriveRunRetro,
+  foldTurnRetros,
   gardenerBrief,
   gardenerCandidates,
   scorecard,
@@ -27,6 +28,7 @@ import {
   tuneProposals,
 } from "../retro";
 import type { RetroSample, RunRetro, ScoreRow } from "../retro";
+import { TaskStateStore } from "../task-state";
 import { accent, danger, dim, faint, info, ok, text, warn } from "./ui/theme";
 
 type Row = { seq: number; event: SessionEvent };
@@ -75,6 +77,15 @@ function num(v: string | true | undefined, fallback: number): number {
 
 // ─── Reading retros: written by runs, or derived for sessions before the organ ───
 
+/**
+ * The session's goal, from the spine. Turn retros omit it on purpose — the
+ * goal is the session's, not the turn's — so the fold reads it back from the
+ * log the turns were written beside.
+ */
+function sessionGoal(rows: Row[]): string | undefined {
+  return TaskStateStore.fromEvents(rows)?.snapshot().goal || undefined;
+}
+
 function collectSamples(
   sm: SessionManager,
   opts: { days: number; limit: number },
@@ -94,15 +105,32 @@ function collectSamples(
     } catch {
       continue;
     }
-    const retros = rows.filter((r) => r.event.type === "retro");
-    if (retros.length > 0) {
-      for (const r of retros) {
+    // The engine writes one retro per RUN. A session is N of them, and each
+    // one is a turn — so pushing them as N samples made a greeting weigh as
+    // much as a day's work and inflated every rate's denominator. One session
+    // is one sample; the fold does the arithmetic.
+    const retroRows = rows.filter((r) => r.event.type === "retro");
+    if (retroRows.length > 0) {
+      const turns: RunRetro[] = [];
+      let model: string | undefined;
+      let provider: string | undefined;
+      for (const r of retroRows) {
         const p = r.event.payload as { retro?: RunRetro; model?: string; provider?: string };
         if (!p.retro || p.retro.v !== 1) continue;
+        turns.push(p.retro);
+        // The model the session ran on last is the one it is scored as.
+        if (p.model) model = p.model;
+        if (p.provider) provider = p.provider;
+      }
+      const folded =
+        turns.length === 1 && turns[0]!.scope === "session"
+          ? turns[0]!
+          : foldTurnRetros(turns, sessionGoal(rows));
+      if (folded) {
         samples.push({
-          retro: p.retro,
-          model: p.model ?? s.model,
-          provider: p.provider ?? s.provider,
+          retro: folded,
+          model: model ?? s.model,
+          provider: provider ?? s.provider,
           workspaceRoot: s.workspaceRoot,
           sessionId: s.id,
         });
