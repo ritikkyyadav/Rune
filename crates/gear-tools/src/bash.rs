@@ -274,6 +274,7 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn runs_simple_command() {
         let tmp = TempDir::new().unwrap();
@@ -292,6 +293,7 @@ mod tests {
         assert!(!output.timed_out);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn captures_stderr() {
         let tmp = TempDir::new().unwrap();
@@ -308,6 +310,7 @@ mod tests {
         assert_eq!(output.stderr.trim(), "err");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn reports_exit_code() {
         let tmp = TempDir::new().unwrap();
@@ -324,6 +327,7 @@ mod tests {
         assert_eq!(output.exit_code, Some(42));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn times_out() {
         let tmp = TempDir::new().unwrap();
@@ -360,6 +364,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn allows_scoped_recursive_delete() {
         let tmp = TempDir::new().unwrap();
@@ -381,6 +386,7 @@ mod tests {
         assert!(!tmp.path().join("junk").exists());
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn no_deadlock_on_large_stderr() {
         let tmp = TempDir::new().unwrap();
@@ -429,6 +435,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn inherits_parent_environment() {
         let tmp = TempDir::new().unwrap();
@@ -448,6 +455,7 @@ mod tests {
         assert_eq!(output.stdout.trim(), "inherited-42");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn uses_workspace_as_cwd() {
         let tmp = TempDir::new().unwrap();
