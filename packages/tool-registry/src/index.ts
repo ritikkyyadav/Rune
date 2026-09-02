@@ -26,7 +26,7 @@ export {
   type SandboxCapability,
 } from "./sandbox-capability";
 export { createRustToolHandler } from "./tools/rust-bridge";
-export { registerBuiltinTools } from "./tools/builtin";
+export { registerBuiltinTools, stopLanguageServers } from "./tools/builtin";
 export { LspServerManager, serverTable, resetServerTable } from "./tools/lsp/manager";
 export { createLspHandler, LSP_SCHEMA } from "./tools/lsp/tool";
 export {

@@ -31,6 +31,7 @@ import {
   setLspAutoFeedback,
   isLspAutoFeedbackEnabled,
   lspAutoFeedbackDefault,
+  stopLanguageServers,
 } from "@gear/tool-registry";
 import { expandPromptCommand, findResourceMentions, readResourceText } from "@gear/tool-registry";
 import type {
@@ -5717,6 +5718,13 @@ export class Engine {
   close(): void {
     // Best-effort: stop MCP subprocesses / sessions on exit.
     this.mcpDiscovery?.stopAll().catch(() => {});
+    // Language servers outlived close() before: they were only reaped by the
+    // manager's process-exit hook, which is fine for a session that ends with
+    // the process and wrong for anything that closes an engine and keeps
+    // running (`gear -P` batches, the eval suite, the host's session churn).
+    // Post-edit diagnostics spawn one on the write path, so that leak now has
+    // real weight.
+    stopLanguageServers().catch(() => {});
     this.dashboards.closeAll();
     if (this.recorder) {
       setToolArgsSalvageListener(null); // never leave a listener pointing at a closed recorder

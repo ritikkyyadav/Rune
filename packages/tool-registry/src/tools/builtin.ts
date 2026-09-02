@@ -264,6 +264,26 @@ const ALL_SCHEMAS: Array<{ schema: ToolSchema; subcommand: string }> = [
   { schema: SEARCH_CODE_SCHEMA, subcommand: "search-code" },
 ];
 
+// ONE language-server manager per PROCESS, not per registry. The manager
+// already keys its servers by (language, workspace) and installs a
+// process-exit teardown hook, so a manager per registry meant one
+// typescript-language-server per registry — and every sub-agent, worker and
+// research run builds its own registry. That was survivable while servers only
+// spawned when the model called the `lsp` tool by hand; post-edit diagnostics
+// (P10.1) spawn one on the write path, which makes the multiplier real. Shared,
+// a worker's first edit lands on the lead's already-warm server, which is also
+// the difference between a block arriving inside the 2s budget and not.
+let sharedLspManager: LspServerManager | null = null;
+function lspManagerForProcess(): LspServerManager {
+  sharedLspManager ??= new LspServerManager();
+  return sharedLspManager;
+}
+
+/** Stop every language server this process started (engine shutdown, tests). */
+export async function stopLanguageServers(): Promise<void> {
+  await sharedLspManager?.stopAll();
+}
+
 /**
  * Register all built-in tools with the registry.
  * @param binaryPath - Path to the compiled gear-tools binary
@@ -283,10 +303,9 @@ export function registerBuiltinTools(registry: ToolRegistry, binaryPath: string)
   // monitor and stop them. One manager per registry (killed on process exit).
   const shells = new BackgroundShellManager();
 
-  // ONE language-server manager for the whole registry: the on-demand `lsp`
-  // tool and the opt-in post-edit feedback share its servers — two managers
-  // would mean two typescript-language-servers per workspace.
-  const lspManager = new LspServerManager();
+  // The on-demand `lsp` tool, the post-edit feedback wrapper and apply_patch
+  // all share the process's one manager (see lspManagerForProcess above).
+  const lspManager = lspManagerForProcess();
 
   // Captured after its freshness wrap so read_many's inner reads record
   // hashes exactly like plain read_file calls (edits stay valid either way).
