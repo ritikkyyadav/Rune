@@ -255,12 +255,16 @@ jobs:
         # hue that arrives through a dependency still counts. The unit test
         # above does the reading; this line fails loudly if the build is stale.
         run: test -n "$(ls apps/web/dist/assets/*.css)"
-      - name: Browser smoke — gear web, mock provider
+      - name: Browser smoke and the founder screenshots, light and dark
         env:
           GEAR_TOOLS_BIN: ${{ github.workspace }}/target/release/gear-tools
         run: |
           bun x --bun playwright install --with-deps chromium
-          bun run --cwd tests/e2e test
+          bun run test:e2e
+      - name: The screenshots are current
+        # They are committed for review, so a UI change that does not regenerate
+        # them leaves the reviewer looking at the previous product.
+        run: git diff --exit-code --stat -- docs/design/web/
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
