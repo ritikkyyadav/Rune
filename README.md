@@ -291,9 +291,17 @@ enough and is not the same guarantee. Prefer `gear login`: the credential store'
 encrypts each secret with **DPAPI** to a per-user blob, so what lands on disk is ciphertext no
 other account can read. `gear providers` names the backend it resolved to.
 
+**Shell commands go through Git Bash when you have it.** There is no `/bin/sh` on Windows, so the
+`bash` tool resolves a shell once: Git for Windows' `bash.exe` if it is installed (it is, on any
+machine with git), otherwise `cmd.exe /C`. Set `GEAR_SHELL` to override. Git Bash is strongly
+preferred — models write POSIX-shaped commands (`&&`, pipes, `[ -f x ]`), and under `cmd.exe` most
+of them fail with a dialect error rather than doing what they say. The WSL launcher at
+`C:\Windows\System32\bash.exe` is deliberately never chosen: it runs in a Linux namespace where
+your workspace path does not exist.
+
 Two smaller gaps are logged in [`docs/program/backlog.md`](docs/program/backlog.md): format-on-write
-does not find `prettier.cmd`, and the verifier has no defined shell contract on Windows (its check
-commands assume `sh`).
+does not find `prettier.cmd`, and hooks, the verifier and worker checks still spawn `/bin/sh`
+directly rather than going through that resolver, so they are inert on Windows.
 
 ## Quickstart
 
