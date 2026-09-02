@@ -714,6 +714,17 @@ export function printArmComparison(cmp: ArmComparison): void {
   } else {
     console.log(`  \x1b[33mNO CHANGE\x1b[0m — the variant is not promoted:`);
     for (const r of cmp.refusals) console.log(`    · ${r}`);
+    if (cmp.mode === "mock" && cmp.rateDelta === 0 && cmp.regressions.length === 0) {
+      // Worth saying out loud, because a reader expecting the mock arm to
+      // discover wins will read a tie as a broken A/B. The scripted provider
+      // does not reason: it replays a script, so a change to what the model is
+      // TOLD usually cannot change what it answers. Mock is the regression
+      // gate — it detects harm cheaply and deterministically — and real mode
+      // is the only arm that can detect an improvement.
+      console.log(
+        `    \x1b[2m(mock is the regression gate: the scripted provider replays a script rather than reasoning, so a tie is the expected result here. Discovery needs --real.)\x1b[0m`,
+      );
+    }
     console.log();
   }
 }

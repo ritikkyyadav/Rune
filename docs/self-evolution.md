@@ -112,15 +112,15 @@ tried to turn the sandbox off would not fail a check — it would fail to
 compile. `GARDENER_OFF_LIMITS` needs no separate defence here: those are files,
 and a variant cannot name a file at all.
 
-| variant | what it changes |
-| --- | --- |
-| `doctrine_full` | situational doctrine on every request instead of once, just in time |
-| `effort_ceiling` | every turn at the reasoning ceiling instead of a notch below it |
-| `effort_medium` | lower the reasoning ceiling to medium |
-| `notebook_on` | inject the learned notebook under its default budget |
-| `notebook_wide` | the same at double the token budget |
-| `repo_map_off` | drop the structural repository map from context |
-| `playbook_off` | stop writing the repository playbook — the permanent control group |
+| variant          | what it changes                                                     |
+| ---------------- | ------------------------------------------------------------------- |
+| `doctrine_full`  | situational doctrine on every request instead of once, just in time |
+| `effort_ceiling` | every turn at the reasoning ceiling instead of a notch below it     |
+| `effort_medium`  | lower the reasoning ceiling to medium                               |
+| `notebook_on`    | inject the learned notebook under its default budget                |
+| `notebook_wide`  | the same at double the token budget                                 |
+| `repo_map_off`   | drop the structural repository map from context                     |
+| `playbook_off`   | stop writing the repository playbook — the permanent control group  |
 
 Each carries a written **hypothesis**: what it is a bet on, so a promotion can
 be read back and disagreed with. Adding a variant is a source change and a code
@@ -135,16 +135,16 @@ gear evolve tune
 Rule-based proposals from the scorecard, each with its signal, its confidence,
 and — where the allowlist can express it — the variant id to run:
 
-| signal | proposal |
-| --- | --- |
-| ≥ 25% of runs aborted by hand | `doctrine_full` |
-| ≥ 20% of runs ended in an error | `notebook_on` |
-| ≥ 3 runs and ≥ 10% hit the turn ceiling | `effort_ceiling` |
-| ≥ 20% of runs stalled | `effort_ceiling` |
-| ≥ 30% of completed steps unproven | no variant — the step check is a `verify.*` gate |
-| verification failing more than passing | no variant — which commands verify *this* project is a human judgement |
-| ≥ 40% of runs ending with steps open | no variant — `[subagents] mode` is outside the allowlist |
-| ≥ 2 runs halted by the supervisor | **no variant, by design** — read `gear audit` |
+| signal                                  | proposal                                                               |
+| --------------------------------------- | ---------------------------------------------------------------------- |
+| ≥ 25% of runs aborted by hand           | `doctrine_full`                                                        |
+| ≥ 20% of runs ended in an error         | `notebook_on`                                                          |
+| ≥ 3 runs and ≥ 10% hit the turn ceiling | `effort_ceiling`                                                       |
+| ≥ 20% of runs stalled                   | `effort_ceiling`                                                       |
+| ≥ 30% of completed steps unproven       | no variant — the step check is a `verify.*` gate                       |
+| verification failing more than passing  | no variant — which commands verify _this_ project is a human judgement |
+| ≥ 40% of runs ending with steps open    | no variant — `[subagents] mode` is outside the allowlist               |
+| ≥ 2 runs halted by the supervisor       | **no variant, by design** — read `gear audit`                          |
 
 The first four rules are new, and they are the point of the rewrite: the
 original four keyed on `unproven`, `stalled` and `open_steps`, which have zero
@@ -155,11 +155,85 @@ measured runs produced no change.
 
 `proposal.variant` is `null` wherever no variant can express the fix, and
 saying null is better than inventing a variant to have something to name. The
-supervisor-halt rule is null *permanently*: no variant may touch Auto mode, and
+supervisor-halt rule is null _permanently_: no variant may touch Auto mode, and
 a tuner that offered one would be proposing a mutation.
 
 Nothing is applied by itself. A proposal that names a variant is one command
 from evidence — `gear evolve ab <variant>` — and one more from being applied.
+
+## The paired A/B
+
+```bash
+gear evolve ab doctrine_full          # control, then treatment, on the same tasks
+gear evolve ab doctrine_full --real   # the same against a live model
+```
+
+Control first and unconditionally, then treatment: same task set, same order,
+same seeds, same process, with the variant's configuration delta as the only
+difference between them. Without a control group measured on the same machine
+on the same day, a treatment number is a number about the machine.
+
+Three gates, all of which must hold:
+
+1. **No task regresses.** An aggregate that improves while one task breaks is
+   how a "win" ships a defect.
+2. **`cleanPassRate` up beyond the noise band** — zero in mock mode
+   (deterministic: a flip is a flip), 5% with a live model. Equal is not a win:
+   the control already exists, and "no worse" is not a reason to change
+   anything.
+3. **`totalListCost` not up beyond 10%.** Metered-equivalent, not actual spend,
+   because eval runs ride free and subscription routes where actual spend is $0
+   and a cost gate could never fire.
+
+A task throttled on either arm is excluded from every number and named in the
+report: a rate limit landing on one arm is the easiest way to manufacture a
+fake win.
+
+**Mock is the regression gate, not the discovery gate.** The scripted provider
+replays a script rather than reasoning, so a configuration that only changes
+what the model is _told_ usually shows no difference there. Mock catches harm,
+cheaply and deterministically, on every change. Finding an improvement needs
+`--real`.
+
+## Promote, revert, and the four refusals
+
+```bash
+gear evolve promote doctrine_full     # only on a passing A/B for this exact config
+gear evolve revert                    # undo the newest promotion
+gear evolve why doctrine_full         # hypothesis, every measurement, what happened
+gear evolve yardstick --bless         # anchor the eval suite (a human act)
+gear evolve resume                    # clear a halt (also a human act)
+```
+
+A promotion writes the variant's lines into `~/.gear/config.toml` inside a
+generated fenced block — the same marker discipline the playbook uses, for the
+same reason: everything written outside the markers is kept, and the machine's
+contribution is visible, diffable and removable by hand. The block is always
+placed last, because the config parser lets later keys win, which is what makes
+a promotion an override rather than a hope.
+
+It refuses on four grounds, each named after a failure:
+
+- **No passing A/B for this exact arm pair.** The evidence has to be about the
+  change being made, not about a change that shared its name. A measurement
+  taken before someone widened the variant is evidence about something else.
+- **The yardstick moved.** `tests/eval/**` is digested and a promotion is
+  refused when that digest differs from the one a human blessed. A loop that can
+  edit the eval suite and then promote on the result is grading its own exam.
+  Blessing is `gear evolve yardstick --bless` and has no automatic caller.
+- **A promotion already happened inside 24 hours.** Two changes at once cannot
+  be attributed to either.
+- **Two consecutive reverts.** A loop that promotes changes a human keeps
+  undoing has a broken fitness function, and the answer to a broken measurement
+  is to stop measuring, not to measure harder. `gear evolve resume` clears it.
+
+Everything lands in `~/.gear/evolve-ledger.jsonl` — one JSON row per
+measurement, promotion, revert and halt, append-only, readable with `tail`. A
+revert is a new row, never a deletion: a ledger you can rewrite is a ledger that
+can be made to say the change was justified, and "why does it believe this" has
+to survive the belief turning out wrong. The config block is rendered _from_ the
+ledger rather than edited alongside it, so a revert cannot leave the file and
+the history disagreeing.
 
 ## The gardener
 

@@ -16,8 +16,9 @@
 // ruler, and it cannot pick up the ruler.
 
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
+import { getGearHome } from "@gear/shared";
 
 /** Run outputs, not the yardstick: these churn on every run by design. */
 const IGNORED_DIRS = new Set(["results", "node_modules"]);
@@ -102,4 +103,50 @@ export function currentYardstick(from: string = process.cwd()): {
 } {
   const repoRoot = findRepoRoot(from);
   return { repoRoot, hash: repoRoot ? yardstickHash(repoRoot) : null };
+}
+
+// ─── What a human has blessed ───
+
+export const BLESSED_FILE = "evolve-yardstick.json";
+
+export interface BlessedYardstick {
+  hash: string;
+  at: string;
+  /** The repository the blessing was made from — for the message, not the check. */
+  repoRoot?: string;
+}
+
+export function blessedPath(home: string = getGearHome()): string {
+  return join(home, BLESSED_FILE);
+}
+
+/** The digest a human last blessed, or null if never. */
+export function readBlessed(home: string = getGearHome()): BlessedYardstick | null {
+  try {
+    const raw = readFileSync(blessedPath(home), "utf8");
+    const parsed = JSON.parse(raw) as BlessedYardstick;
+    return typeof parsed?.hash === "string" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Record a blessing. Deliberately has no automatic caller: a machine that can
+ * bless its own yardstick has no yardstick.
+ */
+export function writeBlessed(
+  hash: string,
+  repoRoot: string | null,
+  home: string = getGearHome(),
+): BlessedYardstick {
+  const entry: BlessedYardstick = {
+    hash,
+    at: new Date().toISOString(),
+    ...(repoRoot ? { repoRoot } : {}),
+  };
+  const path = blessedPath(home);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(entry, null, 2)}\n`);
+  return entry;
 }
