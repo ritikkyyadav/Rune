@@ -22,34 +22,43 @@ The engine is a server. One typed, versioned protocol package is consumed by the
 ## Work items
 
 ### P2.1 `packages/protocol` (2 days)
+
 - New workspace package `@gear/protocol`: move `AgentTurnEvent`, `ResearchEvent`, the command/result types for all 25 host commands, and the five round-trip shapes (`PermissionPrompt`/`UserPermissionDecision`, `UserQuestion`/answer, brief, auto-approval notice, `AutoModeDeferral` list + `runHeldStep`/`dismissHeldSteps`). `PROTOCOL_VERSION` constant; JSON-RPC 2.0 envelope helpers; zod (or hand-written) validators for inbound frames; `assertNever` exhaustiveness helper.
 - `agent-loop.ts`, `research-types.ts`, `engine-host.ts`, `host-client.ts`, `bin/ui/turn.ts`, `bin/ui/events.ts`, `headless.ts`, `apps/desktop/src/lib/*` import from it. Delete `apps/desktop/src/lib/types.ts:80` `EngineEvent`.
 - Retype `onEvent(event: any)` → `AgentTurnEvent` at `turn.ts:1175` and `formatEvent` at `events.ts:130`; add an exhaustiveness test that fails when a member is unhandled by the TUI reducer, the desktop reducer, or the headless reducer.
 
 ### P2.2 Round-trips for all five handlers (1.5 days)
+
 In `engine-host.ts`, mirror the `pendingPerms` pattern (`:319-335`) for question, brief, and held steps; push auto-approval notices and deferral lists as streams. Every pending promise gets a timeout (default 10 min, configurable) and is rejected when the last client disconnects, with a policy: unattended → `deny` for permissions, "no answer" for questions, and the deferral stays in the held-steps ledger. Tests in `tests/integration/engine-host-socket.test.ts`.
 
 ### P2.3 Sessions and concurrency (2–3 days)
+
 - Replace `activeChat` with a per-session run map. Decision: **process-per-session supervisor** (reuse `detach-cli.ts`'s spawn + `~/.gear/run/registry.json` pattern) rather than refactoring `Engine` for in-process multiplexing. `gear serve` becomes a supervisor that spawns one host per session on demand, proxies frames, and reaps idle hosts.
 - `abort(sessionId)`; `interject(sessionId, text)`.
 
 ### P2.4 `gear serve` (2 days)
+
 - WebSocket transport around `handleRequestLine`/`emitStream`. Loopback bind by default; bearer token minted to `~/.gear/serve.json` (0600) and required on every connection; `Origin` allowlist; `--host 0.0.0.0` opt-in with a printed warning; `--port`; `gear serve --status`; graceful shutdown that leaves running sessions' hosts alive (as detach does today).
 - `save_settings`, `login`, key writes: refuse over non-loopback unless the token was minted with `--allow-remote-settings`.
 
 ### P2.5 Replay and subscribe (2 days)
+
 - `subscribe(sessionId, sinceSeq)`: backfill from DB via a new `replayEvents()` beside `eventsToTranscript` (`engine.ts:289`) that maps every persisted type, then stream live. Persist the missing run-level events (`usage`, `fallback`, `retry`, `verification_*`, `handoff`, `step_check`, `checkpoint_saved`) as a compact `run_trace` event, or as rows of their own; `text_delta` stays unpersisted and the UI says "settled state" on reconnect. Per-session ring buffer of the last N live events in the host so a reconnect mid-turn sees the current tool call.
 
 ### P2.6 Sub-agent event fidelity (1.5 days)
+
 Replace `onProgress: (note: string)` with `onEvent: (ev: AgentTurnEvent, agentId)`; `tool_progress` carries the child event typed under `child`. The fleet panel (`turn.ts:617`) and the desktop fleet view render from real events. Keep a string projection for the TUI's one-line heartbeat.
 
 ### P2.7 Research over the protocol (half a day)
+
 `research_start` command streaming `ResearchEvent` through `emitStream`; plan approval as a round-trip like the brief handler.
 
 ### P2.8 `gear -P --stream-json` (half a day)
+
 `headless.ts` emits every event as NDJSON on stdout when `--stream-json` is set; the final envelope is the last line. Exit codes unchanged.
 
 ### P2.9 `@gear/sdk` seed (half a day)
+
 `HostClient` over WS with the typed protocol, exported from `packages/protocol` (or a new `packages/sdk`). One example in the README: connect, create session, run a prompt, answer a permission.
 
 ## Gate

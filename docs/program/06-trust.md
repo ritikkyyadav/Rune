@@ -9,10 +9,12 @@ Two halves. 6A turns Auto mode's safety claim into a published measurement. 6B m
 ## 6A — Auto mode evidence
 
 ### Goal
+
 A labelled corpus of at least 200 decisions across every tool category, with precision, recall, p50/p95 latency and cost reported per decision source and containment kind, run in CI against the configured reviewer, and the supervisor's false-positive kill rate tracked as a metric.
 
 ### Evidence (2026-09-02)
-- The design as built (`auto-mode.ts:870` `review()`): deny rules → supervisor halt → ask rules → critical route → oversize → guardrail → exact grant → allow rules → safe tier → workspace tier → **low/medium risk allowed on the supervised tier with a fire-and-forget supervisor** (`:1079`) → one reasoned call for high risk only (`:1130`), retried once on a distinct fallback (`reviewer-fallback.ts:60`), failing *contained* to mechanical routes (`:1195-1213`, `auto-containment.ts:44-46`). Containment kinds: `extend | contain | redirect | defer | halt` (`auto-containment.ts:51`). Decision sources: 13 (`auto-mode.ts:264-282`).
+
+- The design as built (`auto-mode.ts:870` `review()`): deny rules → supervisor halt → ask rules → critical route → oversize → guardrail → exact grant → allow rules → safe tier → workspace tier → **low/medium risk allowed on the supervised tier with a fire-and-forget supervisor** (`:1079`) → one reasoned call for high risk only (`:1130`), retried once on a distinct fallback (`reviewer-fallback.ts:60`), failing _contained_ to mechanical routes (`:1195-1213`, `auto-containment.ts:44-46`). Containment kinds: `extend | contain | redirect | defer | halt` (`auto-containment.ts:51`). Decision sources: 13 (`auto-mode.ts:264-282`).
 - Cost: common case zero in-path calls; high risk one reasoned call at the heavy tier (~9 s, `auto-mode.ts:1123`); supervisor fast screen 64 tokens, reasoned 700, `temperature 0`.
 - The fast screen is instructed to "err on the side of blocking" and now sits where a false positive costs the session (`auto-mode.ts:1385-1392`); the two-stage confirm and `supervisorUnconfirmed` counter (`:694-701`) mitigate, but the counter is process-local and resets on restart.
 - Corpus: `tests/eval/auto-mode-safety.ts`, 19 scenarios (6 allow / 13 block), 4 tool types, no P/R, no latency aggregation, no low/medium rows, `--offline` runs against a `DeadClassifier`. Unit tests ~150 across `auto-mode.test.ts`, `auto-containment.test.ts`, `engine-auto-mode.test.ts`, `engine-held-step.test.ts`, `ui-held.test.ts`.
@@ -34,6 +36,7 @@ A labelled corpus of at least 200 decisions across every tool category, with pre
 **P6A.6 Docs (half a day).** `docs/auto-mode.md` describes the built design (started in P1.1) and carries the report as its assurance section. Say plainly: "no claim of parity with another vendor's classifier; here are our numbers."
 
 ### Gate (6A)
+
 ```bash
 GEAR_AUTO_EVAL_PROVIDER=<p> GEAR_AUTO_EVAL_MODEL=<m> bun run eval:auto-safety --json | jq '.rows | length'   # ≥ 200
 bun run eval:auto-safety --compare        # P/R/latency/cost per source & kind; no regression vs baseline
@@ -46,9 +49,11 @@ gear audit last | grep "supervisor"       # false-positive kill rate shown, sour
 ## 6B — Parallel agents
 
 ### Goal
+
 Workers run in their own worktrees with a sandboxed shell and verify their own slice; results are schema-validated; every sub-agent has a cost and wall-clock budget; a shared task ledger lets agents claim work; a deterministic workflow API exists.
 
 ### Evidence (2026-09-02)
+
 - Both sub-agent kinds are in-process nested `AgentLoop`s (`subagent.ts:317`, `worker.ts:424`) with an empty transcript, no `priorMessages`, no AGENTS.md, no repo map, no memory, no `taskState` (compare the lead loop config at `engine.ts:3382-3425`).
 - Isolation is path-shaped: `OwnershipClaims` (`worker.ts:206-236`), `withOwnershipGuard` (`:240-262`), team lease (`:395-403`). Workers have no shell because two parallel `npm run`s in one tree collide (`worker.ts:16-17`). `worktree.ts` (`createRunWorktree` `:47`) is wired only to `detach-cli.ts:76`, `evolve-cli.ts:362`, `parent-check.ts:125`.
 - Result contract is free text: `ToolSchema.outputSchema` (`tool-registry/src/types.ts:9`) unused; `ResponseFormat` (`llm-gateway/src/types.ts:168`) used only by research (`research.ts:304, 751, 1169`); the summary is "text after the last `tool_call_start`" (`subagent.ts:386-441`); `partialReport` (`:131-173`) and `buildManifest` (`worker.ts:571-610`) are hand-rolled substitutes; the no-summary failure (33 of 68 task calls) is mitigated by `partialReport`, not removed.
@@ -59,7 +64,7 @@ Workers run in their own worktrees with a sandboxed shell and verify their own s
 
 ### Work items
 
-**P6B.1 Worktree-isolated workers (3 days).** In `worker.ts:363` after the claim and before `buildWorkerRegistry`: `createRunWorktree(root, workerId)` variant that branches from the *dirty* tree (commit-index snapshot or `stash`-based) so the lead's uncommitted work is visible; pass `wt.path` as `workspaceRoot`; in the `finally` (`:537`) commit the worker's paths with `autoCommitPaths` (`git-undo.ts:49`), merge the branch into the lead's tree (fast-forward or 3-way on the owned paths only), report conflicts as a typed field, remove the worktree. `buildManifest` becomes `git diff --stat` against the base. Ownership still governs which paths may be touched; worktrees govern the filesystem.
+**P6B.1 Worktree-isolated workers (3 days).** In `worker.ts:363` after the claim and before `buildWorkerRegistry`: `createRunWorktree(root, workerId)` variant that branches from the _dirty_ tree (commit-index snapshot or `stash`-based) so the lead's uncommitted work is visible; pass `wt.path` as `workspaceRoot`; in the `finally` (`:537`) commit the worker's paths with `autoCommitPaths` (`git-undo.ts:49`), merge the branch into the lead's tree (fast-forward or 3-way on the owned paths only), report conflicts as a typed field, remove the worktree. `buildManifest` becomes `git diff --stat` against the base. Ownership still governs which paths may be touched; worktrees govern the filesystem.
 
 **P6B.2 Workers get a shell and a verifier (1.5 days).** `WORKER_TOOLS` gains sandboxed `bash` (OS sandbox mandatory, network off, cwd = the worktree) and the verifier runs in the worktree before merge; a worker whose checks fail returns `checks: failed` and its branch is kept for inspection, not merged.
 
@@ -72,6 +77,7 @@ Workers run in their own worktrees with a sandboxed shell and verify their own s
 **P6B.6 Workflows (3 days).** Export the primitives from `index.ts`; a `workflow` tool and `gear workflow <file>` taking a node list `{id, kind: task|worker, prompt, dependsOn[], retry, schema}` executed in topological waves through `mapWithConcurrency`, resumable from the last completed node, each node's result cached by content hash; the fleet view groups by wave (P2.6). `research.ts` is refactored onto it as the first consumer. A `gear review` workflow (reviewers per dimension → verifiers) is the stretch.
 
 ### Gate (6B)
+
 ```bash
 bun test tests/unit/orchestrator/worker* tests/unit/orchestrator/subagent* tests/unit/orchestrator/workflow*
 # greenfield eval task: 4 workers build backend/frontend/docs/tests in worktrees, each runs its checks, all merge clean, lead's verifier passes
