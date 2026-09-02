@@ -215,7 +215,8 @@ export function satisfiesGearVersion(version: string, range: string | undefined)
     const [, op = "=", raw] = m;
     if (/^\d+\.\d+\.x$/.test(raw) || /^\d+\.x$/.test(raw)) {
       const parts = raw.split(".");
-      const lo = parseSemver(parts.map((p) => (p === "x" ? "0" : p)).join(".") + ".0.0".slice(0, 0)) ??
+      const lo =
+        parseSemver(parts.map((p) => (p === "x" ? "0" : p)).join(".") + ".0.0".slice(0, 0)) ??
         parseSemver(`${parts[0]}.${parts[1] === "x" ? 0 : parts[1]}.0`);
       if (!lo) continue;
       const hi: [number, number, number] =

@@ -652,10 +652,10 @@ export class McpClient {
       let cursor: string | undefined;
       let pages = 0;
       do {
-        const res = (await this.send(
-          MCP_METHODS.resourcesList,
-          cursor ? { cursor } : {},
-        )) as { resources?: McpResource[]; nextCursor?: string };
+        const res = (await this.send(MCP_METHODS.resourcesList, cursor ? { cursor } : {})) as {
+          resources?: McpResource[];
+          nextCursor?: string;
+        };
         if (Array.isArray(res?.resources)) all.push(...res.resources);
         const next = res?.nextCursor;
         cursor = next && next !== cursor ? next : undefined;

@@ -34,10 +34,10 @@ second call to a loaded tool costs nothing extra.
 
 **What defers, by default**
 
-| | |
-|---|---|
-| MCP tools (`mcp_*`) | deferred — this is the unbounded set |
-| `n8n_trigger` | deferred — opt-in integration, rarely reached |
+|                      |                                                                |
+| -------------------- | -------------------------------------------------------------- |
+| MCP tools (`mcp_*`)  | deferred — this is the unbounded set                           |
+| `n8n_trigger`        | deferred — opt-in integration, rarely reached                  |
 | every other built-in | eager — the core loop; a round-trip costs more than the schema |
 
 Deferring `read_file` to save 200 tokens would buy an extra round-trip on nearly
@@ -70,14 +70,14 @@ Atlassian, GitHub, PagerDuty, Datadog, Google Calendar, Gmail — is
 OAuth-protected. Gear speaks the MCP authorization spec (2025-06-18) and the
 RFCs it cites:
 
-| Step | Spec |
-|---|---|
-| `401` + `WWW-Authenticate: Bearer resource_metadata=…` | MCP auth spec |
-| `/.well-known/oauth-protected-resource` | RFC 9728 |
-| `/.well-known/oauth-authorization-server` (OIDC discovery as fallback) | RFC 8414 |
-| dynamic client registration | RFC 7591 |
-| PKCE S256 (required — `plain` is refused, not downgraded to) | RFC 7636 |
-| resource indicator, so the token is audience-bound to that one server | RFC 8707 |
+| Step                                                                   | Spec          |
+| ---------------------------------------------------------------------- | ------------- |
+| `401` + `WWW-Authenticate: Bearer resource_metadata=…`                 | MCP auth spec |
+| `/.well-known/oauth-protected-resource`                                | RFC 9728      |
+| `/.well-known/oauth-authorization-server` (OIDC discovery as fallback) | RFC 8414      |
+| dynamic client registration                                            | RFC 7591      |
+| PKCE S256 (required — `plain` is refused, not downgraded to)           | RFC 7636      |
+| resource indicator, so the token is audience-bound to that one server  | RFC 8707      |
 
 The redirect is captured on an ephemeral `127.0.0.1` loopback — the same engine
 `gear login` uses for Anthropic, Codex, OpenRouter and Copilot.
@@ -89,7 +89,7 @@ none of those is reachable (Gear says so when it falls back).
 **When a token expires.** The transport refreshes and retries once, silently.
 You do not see it.
 
-**When a refresh fails.** The *connector* becomes unavailable — never the
+**When a refresh fails.** The _connector_ becomes unavailable — never the
 session. Its tools stop being advertised, the status line shows it, `gear mcp
 doctor` names it, and the model is told once. The rest of the run continues as
 if the connector were simply absent. This is the case that used to take the
@@ -146,9 +146,9 @@ vendored files) is reported as such rather than written out as a broken server.
 
 **Two scopes.**
 
-| | |
-|---|---|
-| `~/.gear/mcp.json` | user — connectors you have everywhere |
+|                              |                                           |
+| ---------------------------- | ----------------------------------------- |
+| `~/.gear/mcp.json`           | user — connectors you have everywhere     |
 | `<workspace>/.gear/mcp.json` | workspace — connectors this project needs |
 
 Workspace wins on collision, and `gear mcp list` says which file each entry came
@@ -178,16 +178,16 @@ deferTools   = true          # false ships every schema on every request (pre-P4
 
 The MCP client has always emitted a typed lifecycle stream. Nothing subscribed,
 and `logger.ts` suppresses stderr while the TUI owns the screen — so a connector
-that died was silent to the user *and* to the model, which kept planning around
+that died was silent to the user _and_ to the model, which kept planning around
 tools that were gone.
 
 One event now has three consumers:
 
-| Surface | What it shows |
-|---|---|
-| TUI status line | a `notice`, through the same flow grammar every other harness message uses — no new dialect |
-| `gear status` / desktop | `mcp.down` names each unusable connector and why (`needs-auth` or `down`), never a bare count |
-| the model | one harness note, **once per session**: "these connectors are configured but unavailable — do not plan around their tools" |
+| Surface                 | What it shows                                                                                                              |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| TUI status line         | a `notice`, through the same flow grammar every other harness message uses — no new dialect                                |
+| `gear status` / desktop | `mcp.down` names each unusable connector and why (`needs-auth` or `down`), never a bare count                              |
+| the model               | one harness note, **once per session**: "these connectors are configured but unavailable — do not plan around their tools" |
 
 `gear mcp doctor` prints the same, plus the command that fixes each one.
 
@@ -228,7 +228,7 @@ resource, and guessing would be worse than doing nothing.
 the prompt's declared argument names in order, `name=value` pairs are honoured,
 and a trailing multi-word argument does not need quoting.
 
-**Elicitation** — a server asking the *user* for input mid-call — maps onto the
+**Elicitation** — a server asking the _user_ for input mid-call — maps onto the
 `ask_user` round-trip the harness already owns, so a connector's question lands
 in the same picker as the agent's own. One question surface, not two. With no
 handler wired (headless, CI) the connector is declined promptly rather than
@@ -242,9 +242,9 @@ something no tool description carries; it is injected once per session.
 
 **Annotations** shaped permission and category, which were previously binary:
 
-| Hint | Effect |
-|---|---|
-| `readOnlyHint` | read category, parallel-safe, no prompt |
+| Hint              | Effect                                                                                                                                                |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `readOnlyHint`    | read category, parallel-safe, no prompt                                                                                                               |
 | `destructiveHint` | write category, **always** confirms — even under `autoApprove`, because a list written before a server added a delete tool must not silently cover it |
 
 **Argument validation** now runs against the full `inputSchema`: types, enums,
@@ -295,12 +295,12 @@ pack` and untarred, so no install script runs.
 
 **The manifest gained four fields.**
 
-| Field | What it does |
-|---|---|
-| `gearVersion` | semver range; a plugin that does not fit is refused with a reason, rather than loaded and left to fail somewhere less legible. An unparseable range is treated as satisfied — our limitation should not become the author's problem |
-| `permissions` | `hosts`, `paths`, `blockingHooks`. **Disclosure, not enforcement** — printed at install and in `list`, and said to be unenforced. Executable third-party tools stay out of v1 precisely because a declaration is not a sandbox |
-| `integrity` | `sha256` over the tree. A digest that no longer matches means the files changed since installation, and the plugin is refused: a plugin contributes hooks that run shell commands, and "probably fine" is not a standard to run someone else's commands under |
-| `source` | where it came from |
+| Field         | What it does                                                                                                                                                                                                                                                  |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gearVersion` | semver range; a plugin that does not fit is refused with a reason, rather than loaded and left to fail somewhere less legible. An unparseable range is treated as satisfied — our limitation should not become the author's problem                           |
+| `permissions` | `hosts`, `paths`, `blockingHooks`. **Disclosure, not enforcement** — printed at install and in `list`, and said to be unenforced. Executable third-party tools stay out of v1 precisely because a declaration is not a sandbox                                |
+| `integrity`   | `sha256` over the tree. A digest that no longer matches means the files changed since installation, and the plugin is refused: a plugin contributes hooks that run shell commands, and "probably fine" is not a standard to run someone else's commands under |
+| `source`      | where it came from                                                                                                                                                                                                                                            |
 
 `disable` keeps the bundle and stops its contributions. Because the manifest is
 part of the hashed tree, toggling recomputes the digest.
@@ -340,8 +340,8 @@ instead of silently costing zero.
 catalog line rather than a schema when configured.
 
 **`declaredOtherCaps` no longer skips tool discovery.** The handshake used to
-skip `tools/list` whenever a server declared *any* capability without a `tools`
-key. A server advertising resources and prompts *and* tools, in a shape we
+skip `tools/list` whenever a server declared _any_ capability without a `tools`
+key. A server advertising resources and prompts _and_ tools, in a shape we
 mis-read, silently exposed nothing — the skip saved one request and cost the
 entire point of the connection. Discovery is now always attempted; a server with
 genuinely no tools answers with an empty list or a `-32601`, both of which were

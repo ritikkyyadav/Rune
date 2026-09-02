@@ -26,11 +26,7 @@ import {
   setRequireOsIsolation,
   setLspAutoFeedback,
 } from "@gear/tool-registry";
-import {
-  expandPromptCommand,
-  findResourceMentions,
-  readResourceText,
-} from "@gear/tool-registry";
+import { expandPromptCommand, findResourceMentions, readResourceText } from "@gear/tool-registry";
 import type {
   DashboardInfo,
   McpEvent,
@@ -596,7 +592,12 @@ export interface EngineConfig {
   /** Deep-research ("/research") defaults: depth, fan-out, sources. */
   research?: ResearchOptions;
   /** Connector defaults (config.toml [mcp]). */
-  mcp?: { defaultScope?: "user" | "workspace"; timeoutSecs?: number; registry?: boolean; deferTools?: boolean };
+  mcp?: {
+    defaultScope?: "user" | "workspace";
+    timeoutSecs?: number;
+    registry?: boolean;
+    deferTools?: boolean;
+  };
   /** Third-party extensions (config.toml [extensions]). */
   extensions?: { localTools?: boolean };
   /** System Memory ("dreaming") — evergreen profile config (enabled/schedule/model/maxTokens). */
@@ -1904,9 +1905,7 @@ export class Engine {
   private readonly instructionsShown = new Set<string>();
 
   /** Connector prompts, as `/server:prompt` slash commands (backs the composer). */
-  async listMcpPromptCommands(): Promise<
-    Awaited<ReturnType<McpDiscovery["listPromptCommands"]>>
-  > {
+  async listMcpPromptCommands(): Promise<Awaited<ReturnType<McpDiscovery["listPromptCommands"]>>> {
     await this.ensureMcpServers();
     return this.mcpDiscovery?.listPromptCommands() ?? [];
   }
@@ -1936,7 +1935,8 @@ export class Engine {
       if (!client) continue;
       try {
         const { text } = await readResourceText(client, mention.uri);
-        if (text) blocks.push(`<resource uri="@${mention.server}:${mention.uri}">\n${text}\n</resource>`);
+        if (text)
+          blocks.push(`<resource uri="@${mention.server}:${mention.uri}">\n${text}\n</resource>`);
       } catch {
         // A mention that will not resolve stays literal text.
       }
@@ -1996,9 +1996,7 @@ export class Engine {
       if (handlers.length > 0) {
         const names = handlers.map((h) => h.schema.name).join(", ");
         loaderLog.info(`[extensions] loaded ${handlers.length} local tool(s): ${names}`);
-        this.mcpNotices.push(
-          `local tools loaded from .gear/tools — ${handlers.length} (${names})`,
-        );
+        this.mcpNotices.push(`local tools loaded from .gear/tools — ${handlers.length} (${names})`);
       }
     } catch (err) {
       loaderLog.warn(
