@@ -43,6 +43,8 @@ export interface BuildGatewayOpts {
   disabled?: Set<string>;
   /** Base URLs for local runtimes (ollama) by id; overrides preset defaults. */
   localBaseUrls?: Record<string, string>;
+  /** `[llm.ollama] keepAlive` - how long Ollama holds the model + KV cache. */
+  ollamaKeepAlive?: string;
   /** Back-compat: explicit local Ollama base URL (folded into localBaseUrls.ollama). */
   ollamaBaseUrl?: string;
   maxRetries?: number;
@@ -119,7 +121,8 @@ export function buildGateway(opts: BuildGatewayOpts): LlmGateway {
       const configured = !!localBaseUrls[preset.id];
       if (!configured && opts.provider !== preset.id) continue;
       const baseUrl = localBaseUrls[preset.id] ?? preset.baseUrl;
-      if (preset.kind === "ollama") gw.registerProvider(new OllamaProvider(baseUrl));
+      if (preset.kind === "ollama")
+        gw.registerProvider(new OllamaProvider(baseUrl, { keepAlive: opts.ollamaKeepAlive }));
       else
         gw.registerProvider(
           new OpenAIProvider(undefined, baseUrl, preset.id as ProviderName, {

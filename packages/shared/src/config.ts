@@ -75,6 +75,8 @@ export interface GearConfig {
       baseUrl: string;
       model: string;
       authentication?: AuthMethod;
+      /** How long Ollama holds the model + KV cache after a request ("30m"). */
+      keepAlive?: string;
     };
     planner?: {
       provider: string;
