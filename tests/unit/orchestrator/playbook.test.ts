@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+  PLAYBOOK_PENDING_REL,
   PLAYBOOK_REL,
   playbookEntries,
   renderPlaybookBlock,
@@ -40,6 +41,10 @@ function entry(
     updatedAt: "2026-09-01T00:00:00.000Z",
     lastUsed: null,
     retired: false,
+    // Active by default here: P7.7 restricts the playbook to ACTIVE lessons,
+    // so every fixture that is meant to reach the file has to have climbed the
+    // ladder. The stage cases are covered in tests/unit/evolve/lessons.test.ts.
+    stage: "active",
     ...extra,
   };
 }
@@ -57,6 +62,11 @@ describe("playbookEntries", () => {
       }),
     ];
     expect(playbookEntries(rows).map((e) => e.title)).toEqual(["test-command"]);
+    // A trial lesson is still being measured; writing it into an executable
+    // skill would be acting on it before the measurement finished.
+    expect(
+      playbookEntries([entry("trial-command", "not yet", ["a", "b"], { stage: "trial" })]),
+    ).toEqual([]);
     expect(playbookEntries(rows, { minSessions: 1 }).map((e) => e.title)).toEqual([
       "build-command",
       "test-command",
@@ -131,10 +141,31 @@ describe("writePlaybook", () => {
     const path = join(dir, PLAYBOOK_REL);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, "---\nname: playbook\n---\n\nAlways run `make setup` first.\n");
-    const w = writePlaybook(dir, recurring)!;
+    const w = writePlaybook(dir, recurring, { enabled: true })!;
+    expect(w.path).toBe(path);
     const text = readFileSync(w.path, "utf8");
     expect(text).toContain("Always run `make setup` first.");
     expect(text).toContain("<!-- gear:learned:start -->");
     expect(text.indexOf("make setup")).toBeLessThan(text.indexOf("<!-- gear:learned:start -->"));
+  });
+
+  // ── The consent gate (P7.7) ──
+
+  test("without consent the block goes to PENDING.md, which the loader never reads", () => {
+    const w = writePlaybook(dir, recurring)!;
+    expect(w.pending).toBe(true);
+    expect(w.path).toBe(join(dir, PLAYBOOK_PENDING_REL));
+    // The whole point: no SKILL.md exists, so nothing the loader globs for is
+    // there to load. A learned skill that can direct multi-step behaviour is
+    // inert until a person turns it on.
+    expect(existsSync(join(dir, PLAYBOOK_REL))).toBe(false);
+    expect(readFileSync(w.path, "utf8")).toContain("<!-- gear:learned:start -->");
+  });
+
+  test("with consent it writes the real skill file", () => {
+    const w = writePlaybook(dir, recurring, { enabled: true })!;
+    expect(w.pending).toBe(false);
+    expect(w.path).toBe(join(dir, PLAYBOOK_REL));
+    expect(existsSync(join(dir, PLAYBOOK_REL))).toBe(true);
   });
 });

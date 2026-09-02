@@ -542,6 +542,15 @@ export function recordLessons(
   keys: { repoKey: string; sessionId: string },
   lessons: RetroLesson[],
   observations: ToolObservation[] = [],
+  /**
+   * The stage a NEW row starts at. Always `candidate` (P7.6): a lesson learned
+   * once is stored and not injected. The backfill path — deriving retros for
+   * sessions that predate the organ — passes the same thing, and it matters
+   * more there: reconstructing a lesson from a log is not the same as having
+   * watched it hold, and a backfill that wrote believable lessons would put
+   * hundreds of unmeasured claims into the prompt at once.
+   */
+  stage: "candidate" = "candidate",
 ): { written: string[]; retired: string[] } {
   const written: string[] = [];
   const retired: string[] = [];
@@ -566,6 +575,7 @@ export function recordLessons(
           body: l.body,
           sessionId: keys.sessionId,
           note: l.command,
+          stage,
         }),
       );
     }

@@ -15,6 +15,24 @@ import { randomUUIDv7 } from "bun";
 export type NotebookKind = "fact" | "tactic";
 export type NotebookScope = "repo" | "stack" | "global";
 
+/**
+ * Where a lesson is in its lifecycle (P7.6).
+ *
+ *   candidate — learned once. STORED AND NEVER INJECTED. The backfill path only
+ *               ever writes candidates: deriving a lesson from history is not
+ *               the same as having watched it hold.
+ *   trial     — learned in ≥2 distinct sessions. Injected, and every injection
+ *               is logged so the win rate means something.
+ *   active    — ≥5 firings with a win rate above the ambient baseline. Only
+ *               active lessons reach the playbook.
+ *   retired   — decayed, disused, contradicted, or turned off by the user.
+ *               Kept and inspectable; revives if re-learned.
+ *
+ * The stages exist because "learned" and "believed" were the same thing before:
+ * one observation was injected into every later run with no measurement between.
+ */
+export type LessonStage = "candidate" | "trial" | "active" | "retired";
+
 export interface NotebookEntry {
   id: string;
   kind: NotebookKind;
@@ -34,6 +52,8 @@ export interface NotebookEntry {
   updatedAt: string;
   lastUsed: string | null;
   retired: boolean;
+  /** Lifecycle stage. `retired` here always agrees with `retired` above. */
+  stage: LessonStage;
 }
 
 const BODY_MAX = 400;
@@ -53,6 +73,7 @@ interface Row {
   updated_at: string;
   last_used: string | null;
   retired: number;
+  stage: string | null;
 }
 
 export class NotebookStore {
@@ -83,6 +104,23 @@ export class NotebookStore {
       CREATE UNIQUE INDEX IF NOT EXISTS idx_entries_dedupe
         ON entries(scope, COALESCE(repo_key,''), COALESCE(stack_key,''), title);
     `);
+    this.migrate();
+  }
+
+  /**
+   * Additive, idempotent. Existing rows were being injected on every run, so
+   * they migrate to `trial`, not to `candidate`: silently withdrawing lessons
+   * the user has been running with would be a behaviour change disguised as a
+   * schema change.
+   */
+  private migrate(): void {
+    const cols = this.db.query("PRAGMA table_info(entries)").all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "stage")) {
+      this.db.exec("ALTER TABLE entries ADD COLUMN stage TEXT");
+      this.db.exec(
+        "UPDATE entries SET stage = CASE WHEN retired = 1 THEN 'retired' ELSE 'trial' END",
+      );
+    }
   }
 
   /**
@@ -99,6 +137,22 @@ export class NotebookStore {
     body: string;
     sessionId?: string;
     note?: string;
+    /**
+     * Stage for a NEW row.
+     *
+     * Defaults to `trial`, which is the notebook's own capture path: a FACT
+     * observed directly by the harness ("`bun test` passed here", "this is a
+     * bun+turbo monorepo") is not advice, it is a reading, and withholding it
+     * until it recurs would degrade the notebook for no gain.
+     *
+     * `recordLessons` passes `candidate` explicitly, because a retro LESSON is
+     * advice — "avoid X here" — and one run's inference is not something later
+     * runs should be told. That is the distinction the stage exists to hold.
+     *
+     * Re-learning an existing row never demotes it; `advanceLessons` is the
+     * only thing that moves a row along.
+     */
+    stage?: LessonStage;
   }): string {
     const now = new Date().toISOString();
     const body = entry.body.slice(0, BODY_MAX);
@@ -120,7 +174,13 @@ export class NotebookStore {
       }
       this.db
         .query(
-          `UPDATE entries SET body = ?, provenance_json = ?, updated_at = ?, retired = 0 WHERE id = ?`,
+          // A revived row (re-learned after being retired) comes back as a
+          // CANDIDATE, whatever it was before: it was retired because it stopped
+          // being true, so it has to earn the ladder again rather than resume
+          // where it left off.
+          `UPDATE entries SET body = ?, provenance_json = ?, updated_at = ?, retired = 0,
+             stage = CASE WHEN stage IS NULL THEN 'trial' WHEN stage = 'retired' THEN 'candidate' ELSE stage END
+           WHERE id = ?`,
         )
         .run(body, JSON.stringify(prov), now, existing.id);
       return existing.id;
@@ -130,8 +190,8 @@ export class NotebookStore {
     this.db
       .query(
         `INSERT INTO entries
-         (id, kind, scope, repo_key, stack_key, title, body, provenance_json, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, kind, scope, repo_key, stack_key, title, body, provenance_json, created_at, updated_at, stage)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -144,6 +204,7 @@ export class NotebookStore {
         JSON.stringify({ sessions: entry.sessionId ? [entry.sessionId] : [], note: entry.note }),
         now,
         now,
+        entry.stage ?? "trial",
       );
     return id;
   }
@@ -156,8 +217,10 @@ export class NotebookStore {
   retrieve(opts: { repoKey: string; stackKey: string; limit?: number }): NotebookEntry[] {
     const rows = this.db
       .query(
+        // Candidates are stored and NEVER injected: one observation is not a
+        // belief. Only trial and active rows reach the prompt.
         `SELECT * FROM entries
-         WHERE retired = 0 AND (
+         WHERE retired = 0 AND COALESCE(stage, 'trial') IN ('trial', 'active') AND (
            (scope = 'repo' AND repo_key = ?) OR
            (scope = 'stack' AND stack_key = ?) OR
            scope = 'global'
@@ -204,8 +267,26 @@ export class NotebookStore {
     const now = new Date().toISOString();
     return (
       this.db
-        .query(`UPDATE entries SET retired = 1, updated_at = ? WHERE id = ? AND retired = 0`)
+        .query(
+          `UPDATE entries SET retired = 1, stage = 'retired', updated_at = ? WHERE id = ? AND retired = 0`,
+        )
         .run(now, id).changes > 0
+    );
+  }
+
+  /**
+   * Move one entry to a stage. The only writer is `advanceLessons`, which
+   * applies the lifecycle rules; nothing else in the codebase may set a stage,
+   * because a stage set without the rule behind it is a claim without evidence.
+   */
+  setStage(id: string, stage: LessonStage): boolean {
+    const now = new Date().toISOString();
+    return (
+      this.db
+        .query(
+          `UPDATE entries SET stage = ?, retired = ?, updated_at = ? WHERE id = ? AND stage IS NOT ?`,
+        )
+        .run(stage, stage === "retired" ? 1 : 0, now, id, stage).changes > 0
     );
   }
 
@@ -256,6 +337,7 @@ export class NotebookStore {
     const r = this.db
       .query(
         `UPDATE entries SET retired = 1
+         , stage = 'retired'
          WHERE retired = 0 AND (
            COALESCE(last_used, updated_at) < ?
            OR (uses >= 5 AND CAST(wins AS REAL) / uses < 0.4)
@@ -293,5 +375,6 @@ function rowToEntry(r: Row): NotebookEntry {
     updatedAt: r.updated_at,
     lastUsed: r.last_used,
     retired: r.retired === 1,
+    stage: (r.retired === 1 ? "retired" : ((r.stage as LessonStage) ?? "trial")) as LessonStage,
   };
 }
