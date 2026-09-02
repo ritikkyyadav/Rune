@@ -18,12 +18,13 @@ import type { SessionEvent } from "@gear/shared";
 import { BlackboxStore } from "@gear/telemetry";
 import { NotebookStore } from "../notebook/store";
 import { repoKey as repoKeyOf } from "../notebook/fingerprint";
-import { PLAYBOOK_REL, playbookEntries } from "../playbook";
+import { PLAYBOOK_PENDING_REL, PLAYBOOK_REL, playbookEntries } from "../playbook";
 import {
   deriveRunRetro,
   foldTurnRetros,
   gardenerBrief,
   gardenerCandidates,
+  recordLessons,
   scorecard,
   scoreRates,
   tuneProposals,
@@ -31,7 +32,15 @@ import {
 import type { RetroSample, RunRetro, ScoreRow } from "../retro";
 import { TaskStateStore } from "../task-state";
 import { configHash } from "../evolve/config-hash";
-import { appendLedger, ledgerPath, readLedger } from "../evolve/ledger";
+import { consentPath, learnedSkillsEnabled, setLearnedSkills } from "../evolve/consent";
+import { activeThreshold, lessonBaseline, stageCounts } from "../evolve/lessons";
+import {
+  activePromotions,
+  appendLedger,
+  haltState,
+  ledgerPath,
+  readLedger,
+} from "../evolve/ledger";
 import { promote, resume, revert } from "../evolve/promote";
 import {
   VARIANT_IDS,
@@ -466,18 +475,22 @@ function cmdStatus(
     const nb = new NotebookStore(join(getGearHome(), "notebook.db"));
     try {
       const all = nb.list({ includeRetired: true, limit: 5000 });
-      const active = all.filter((e) => !e.retired);
-      const pitfalls = active.filter((e) => e.title.startsWith("avoid:")).length;
-      const fixes = active.filter(
-        (e) => e.title.startsWith("fix:") || e.title.startsWith("prefer:"),
-      ).length;
-      const here = nb.listRepo(repoKeyOf(workspaceRoot)).filter((e) => !e.retired);
+      const stages = stageCounts(all);
+      const baseline = lessonBaseline(all);
+      const here = nb.listRepo(repoKeyOf(workspaceRoot));
+      const hereStages = stageCounts(here);
+      // The ladder, not a headcount: "12 entries" said nothing about which of
+      // them anything had been measured about.
       say(
-        `  ${text("Learned")}   ${active.length} active entries ${dim("·")} ${pitfalls} pitfall${pitfalls === 1 ? "" : "s"} ${dim("·")} ${fixes} fix${fixes === 1 ? "" : "es"} ${dim("·")} ${all.length - active.length} retired ${dim("·")} ${lessons} lesson${lessons === 1 ? "" : "s"} from measured runs`,
+        `  ${text("Lessons")}   ${dim("candidate")} ${stages.candidate} ${dim("→ trial")} ${stages.trial} ${dim("→")} ${ok(`active ${stages.active}`)} ${dim("·")} ${warn(`${stages.retired} retired`)} ${dim("·")} ${lessons} from measured runs`,
       );
-      const pb = existsSync(join(workspaceRoot, PLAYBOOK_REL));
       say(
-        `  ${text("Here")}      ${here.length} entr${here.length === 1 ? "y" : "ies"} for this repository ${dim("·")} playbook ${pb ? ok(PLAYBOOK_REL) : dim("not yet written")}`,
+        `  ${text("Bar")}       active needs ≥5 injections and a win rate ≥ ${pct(activeThreshold(baseline))} ${dim(baseline === null ? "(no ambient baseline yet; the floor applies)" : `(ambient ${pct(baseline)} + margin)`)}`,
+      );
+      const live = existsSync(join(workspaceRoot, PLAYBOOK_REL));
+      const draft = existsSync(join(workspaceRoot, PLAYBOOK_PENDING_REL));
+      say(
+        `  ${text("Here")}      ${here.length} entr${here.length === 1 ? "y" : "ies"} ${dim(`(${hereStages.active} active)`)} ${dim("·")} playbook ${live ? ok(PLAYBOOK_REL) : draft ? warn(`${PLAYBOOK_PENDING_REL} — inert, gear evolve playbook --enable`) : dim("not yet written")}`,
       );
     } finally {
       nb.close();
@@ -502,15 +515,35 @@ function cmdStatus(
 
   const proposals = tuneProposals(scorecard(c.samples, "model"));
   say(
-    `  ${text("Tuning")}    ${proposals.length} proposal${proposals.length === 1 ? "" : "s"} ${dim("· printed by gear evolve tune, never applied by themselves")}`,
+    `  ${text("Tuning")}    ${proposals.length} proposal${proposals.length === 1 ? "" : "s"} ${dim("· printed by gear evolve tune, measurable with gear evolve ab")}`,
+  );
+
+  // ── The A/B ledger: the last measured lift, with its date ──
+  const ledger = readLedger(gearHome(opts));
+  const measurements = ledger.filter((e) => e.kind === "measurement");
+  const last = measurements[measurements.length - 1];
+  const standing = activePromotions(ledger);
+  const halt = haltState(ledger);
+  if (last) {
+    const lift = `${(last.rateDelta ?? 0) >= 0 ? "+" : ""}${((last.rateDelta ?? 0) * 100).toFixed(1)}%`;
+    say(
+      `  ${text("Measured")}  ${last.subject} ${dim("·")} ${last.win ? ok(`WIN ${lift}`) : warn(`no change ${lift}`)} ${dim(`· ${last.mode} · ${last.compared ?? 0} tasks · ${last.at.slice(0, 10)}`)}`,
+    );
+  } else {
+    say(
+      `  ${text("Measured")}  ${dim("no A/B has been run — gear evolve ab <variant>; gear evolve ab lists them")}`,
+    );
+  }
+  say(
+    `  ${text("Promoted")}  ${standing.length === 0 ? dim("nothing standing") : standing.map((p) => `${ok(p.subject)} ${dim(p.at.slice(0, 10))}`).join(dim(" · "))}${halt.halted ? ` ${danger("· LOOP HALTED")}` : ""}`,
   );
   say();
   say(
     dim(
-      "  applied by itself: retro → notebook → playbook · proposals only: tune · a person on the merge: gardener",
+      "  applied by itself: retro → notebook (candidates) · measured then promoted: variants, lessons, the playbook · a person on the merge: gardener",
     ),
   );
-  say(dim("  gear evolve scorecard · lessons · tune · gardener"));
+  say(dim("  gear evolve scorecard · lessons · tune · ab · promote · revert · why · playbook"));
   say();
   return 0;
 }
@@ -881,6 +914,167 @@ function whyLesson(workspaceRoot: string, shortId: string): boolean {
   }
 }
 
+/**
+ * `gear evolve backfill` — read history back into the notebook, as candidates.
+ *
+ * `recordLessons` had exactly one call site (the engine's per-run retro) and the
+ * backfill never called it, which is why `gear evolve` could derive 128 retros
+ * carrying lessons and the notebook still held zero pitfalls: the organ read
+ * history and wrote nothing back.
+ *
+ * Everything it writes is a CANDIDATE, and candidates are never injected.
+ * Reconstructing a lesson from a log is not the same as having watched it hold,
+ * and a backfill that wrote believable lessons would put hundreds of unmeasured
+ * claims into the prompt in one go. A candidate becomes a trial the ordinary
+ * way: by being learned again, in a second session, from a real run.
+ *
+ * Dry by default. `--write` applies.
+ */
+function cmdBackfill(
+  sm: SessionManager,
+  workspaceRoot: string,
+  opts: Record<string, string | true>,
+): number {
+  const days = num(opts.days, 90);
+  const limit = num(opts.limit, 500);
+  const apply = opts.write === true;
+  const c = collectSamples(sm, { days, limit });
+
+  const byRepo = new Map<string, { lessons: number; sessions: number }>();
+  for (const s of c.samples) {
+    if (s.retro.lessons.length === 0) continue;
+    const key = repoKeyOf(s.workspaceRoot);
+    const row = byRepo.get(key) ?? { lessons: 0, sessions: 0 };
+    row.lessons += s.retro.lessons.length;
+    row.sessions++;
+    byRepo.set(key, row);
+  }
+  const totalLessons = [...byRepo.values()].reduce((n, r) => n + r.lessons, 0);
+
+  say();
+  say(
+    `  ${accent("Backfill")} ${dim("·")} ${c.samples.length} runs over ${days} days ${dim("·")} ${totalLessons} lesson${totalLessons === 1 ? "" : "s"} across ${byRepo.size} repositor${byRepo.size === 1 ? "y" : "ies"}`,
+  );
+  say();
+  if (totalLessons === 0) {
+    say(dim("  Nothing to write back: no derived retro carries a lesson."));
+    say();
+    return 0;
+  }
+  if (!apply) {
+    say(
+      dim(
+        "  Dry run. Every row would be written as a CANDIDATE — stored, never injected — because a",
+      ),
+    );
+    say(
+      dim("  lesson reconstructed from a log has not been watched to hold. Pass --write to apply."),
+    );
+    say();
+    return 0;
+  }
+
+  let store: NotebookStore;
+  try {
+    store = new NotebookStore(join(getGearHome(), "notebook.db"));
+  } catch {
+    say(dim("  Could not open notebook.db"));
+    return 1;
+  }
+  try {
+    let written = 0;
+    let retired = 0;
+    for (const s of c.samples) {
+      if (s.retro.lessons.length === 0) continue;
+      const r = recordLessons(
+        store,
+        { repoKey: repoKeyOf(s.workspaceRoot), sessionId: s.sessionId },
+        s.retro.lessons,
+        [],
+        "candidate",
+      );
+      written += r.written.length;
+      retired += r.retired.length;
+    }
+    say(
+      `  ${ok("Wrote")} ${written} candidate${written === 1 ? "" : "s"}${retired > 0 ? dim(` · ${retired} contradicted entr${retired === 1 ? "y" : "ies"} retired`) : ""}`,
+    );
+    say(
+      dim(
+        "  None of them is injected yet. A candidate becomes a trial by being learned again, in a second session, from a real run.",
+      ),
+    );
+    say(dim(`  see: gear evolve lessons --all   ·   workspace ${workspaceRoot}`));
+    say();
+    return 0;
+  } finally {
+    store.close();
+  }
+}
+
+/**
+ * `gear evolve playbook [--enable|--disable]` — the consent gate for learned
+ * skills.
+ *
+ * The playbook is a file the skills loader reads and the model can follow, so
+ * turning it on is a capability change. It is off until a person says
+ * otherwise, once, here. Nothing else in the codebase writes this file.
+ */
+function cmdPlaybook(workspaceRoot: string, opts: Record<string, string | true>): number {
+  const home = gearHome(opts);
+  say();
+  if (opts.enable === true || opts.disable === true) {
+    const on = opts.enable === true;
+    setLearnedSkills(on, home);
+    say(
+      `  ${on ? ok("Learned skills ENABLED") : warn("Learned skills disabled")} ${dim(`· recorded at ${consentPath(home)}`)}`,
+    );
+    say();
+    if (on) {
+      say(
+        dim(
+          `  The next run that has an active lesson writes ${PLAYBOOK_REL} and the loader lists it to the model.`,
+        ),
+      );
+      say(
+        dim(
+          "  Undo with `gear evolve playbook --disable`; the file stays for you to read or delete.",
+        ),
+      );
+    } else {
+      say(
+        dim(
+          `  New blocks go to ${PLAYBOOK_PENDING_REL} again. An existing ${PLAYBOOK_REL} is left alone — it is your file now, delete it if you want it gone.`,
+        ),
+      );
+    }
+    say();
+    return 0;
+  }
+
+  const enabled = learnedSkillsEnabled(home);
+  const live = join(workspaceRoot, PLAYBOOK_REL);
+  const pending = join(workspaceRoot, PLAYBOOK_PENDING_REL);
+  say(`  ${accent("Playbook")} ${dim("· the repository's active lessons, as a skill")}`);
+  say();
+  say(
+    `  ${text("learned skills")}  ${enabled ? ok("enabled") : warn("not enabled")} ${dim(enabled ? "· the loader lists the playbook to the model" : "· nothing generated is loaded")}`,
+  );
+  say(`  ${text("live file")}      ${existsSync(live) ? info(PLAYBOOK_REL) : dim("none")}`);
+  say(
+    `  ${text("draft")}          ${existsSync(pending) ? info(PLAYBOOK_PENDING_REL) : dim("none")} ${dim("· readable, never loaded")}`,
+  );
+  say();
+  say(
+    dim(
+      "  Only ACTIVE lessons reach it: ≥5 injections with a win rate above the ambient baseline.",
+    ),
+  );
+  say(dim(`  enable: gear evolve playbook --enable`));
+  say();
+  return 0;
+}
+
 export async function runEvolve(args: string[], values: Record<string, unknown>): Promise<number> {
   const { opts, rest } = flags(Bun.argv.slice(2).filter((a) => a !== "evolve"));
   const sub = rest[0] ?? args[0] ?? "status";
@@ -896,6 +1090,7 @@ export async function runEvolve(args: string[], values: Record<string, unknown>)
   if (sub === "revert") return cmdRevert(rest, opts);
   if (sub === "resume") return cmdResume(opts);
   if (sub === "yardstick") return cmdYardstick(workspaceRoot, opts);
+  if (sub === "playbook") return cmdPlaybook(workspaceRoot, opts);
   if (sub === "why") return cmdWhy(workspaceRoot, rest, opts);
 
   const dbPath =
@@ -913,12 +1108,17 @@ export async function runEvolve(args: string[], values: Record<string, unknown>)
     if (sub === "scorecard") return cmdScorecard(sm, opts);
     if (sub === "tune") return cmdTune(sm, opts);
     if (sub === "status") return cmdStatus(sm, workspaceRoot, opts);
+    if (sub === "backfill") return cmdBackfill(sm, workspaceRoot, opts);
     say(
       dim(
-        "  Usage: gear evolve [status|scorecard|lessons|tune|ab|promote|revert|why|yardstick|resume|gardener]",
+        "  Usage: gear evolve [status|scorecard|lessons|tune|ab|promote|revert|why|yardstick|playbook|backfill|resume|gardener]",
       ),
     );
-    say(dim("         [--days N] [--by model|workspace] [--real] [--bless] [--run]"));
+    say(
+      dim(
+        "         [--days N] [--by model|workspace] [--real] [--bless] [--enable] [--write] [--run]",
+      ),
+    );
     return 2;
   } finally {
     sm.close();

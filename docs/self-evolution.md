@@ -13,11 +13,19 @@ wider blast radius than the last.
 
 ```
 run ──▶ retro ──▶ notebook ──▶ playbook ──▶ next run
+          │        candidate    active only,
+          │         → trial     inert until enabled
+          │         → active
           │
-          ├──▶ scorecard ──▶ tune (proposals only)
+          ├──▶ scorecard ──▶ tune ──▶ variant ──▶ paired A/B ──▶ promote ──▶ revert
+          │                                        (control +                 (one
+          │                                         treatment)              command)
           │
           └──▶ black box ──▶ gardener (a branch, a person on the merge)
 ```
+
+Nothing crosses an arrow without evidence, and every arrow after `retro` is
+reversible in one command.
 
 ## The retro
 
@@ -64,10 +72,58 @@ here" costs turns on every later run and a missed one costs nothing.
   `make`, `just`, `tox`…) passed. Project-runner commands (`bun test`,
   `cargo build`) are already notebook facts and are not duplicated.
 
-Lessons are written to the notebook as repo-scoped entries, which the next
-session is briefed from under the existing 600-token budget. A pitfall that a
-later run contradicts — the command passes as-is — is retired on the spot,
-and revives if learned again. The notebook converges on what is true now.
+Lessons are written to the notebook as repo-scoped entries. A pitfall that a
+later run contradicts — the command passes as-is — is retired on the spot, and
+revives if learned again. The notebook converges on what is true now.
+
+## The lessons lifecycle
+
+"Learned" and "believed" used to be the same thing: one observation in one run
+was injected into every later run, with no measurement in between. The stages
+are the evidence ladder, and each rung costs more than the last.
+
+| stage       | what it means                                            | injected?                           |
+| ----------- | -------------------------------------------------------- | ----------------------------------- |
+| `candidate` | learned once                                             | **no**                              |
+| `trial`     | learned in ≥2 distinct sessions                          | yes, and every injection is counted |
+| `active`    | ≥5 injections with a win rate above the ambient baseline | yes, and it reaches the playbook    |
+| `retired`   | decayed, disused, contradicted, or turned off            | no; kept and inspectable            |
+
+- **Candidates are stored and never injected.** `gear evolve backfill` — which
+  finally reads history back into the notebook, the thing `recordLessons`'s one
+  call site never did — writes only candidates. Reconstructing a lesson from a
+  log is not the same as having watched it hold.
+- **A candidate becomes a trial by recurring**, the same bar the playbook has
+  always used for "a fact about the repository rather than a note".
+- **A trial becomes active on measured firings.** The bar is the _ambient_ win
+  rate computed leave-one-out — how runs go with the OTHER lessons injected —
+  plus a 5% margin, with a 50% floor. A lesson must beat the ambient rate, not
+  merely coexist with it.
+- **Repo scope only.** A `stack`- or `global`-scoped lesson stops at `trial`
+  however good its counters look: promoting advice across projects on one
+  project's runs is the superstition failure, and it needs the offline A/B.
+- **An active lesson that stops helping is retired**, because it costs tokens on
+  every run.
+- **A re-learned retired lesson comes back as a candidate**, not where it left
+  off. It was retired because it stopped being true.
+
+Notebook _facts_ — "`bun test` passed here", "this is a bun+turbo monorepo" —
+still enter at `trial`. A reading the harness took itself is not advice, and
+withholding it until it recurs would degrade the notebook for no gain. The
+ladder is for lessons, which are inferences.
+
+### What counts as a win
+
+A run credits the lessons it injected only when all three hold: the evidence
+gate passed (nothing closed unproven, no verification command failed), the run
+neither errored nor was aborted, and no `struggle.*` signal fired. The old
+signal was `!runError && !aborted`, which counted a run where the user rephrased
+three times and half the checks failed as a win for whatever happened to be
+injected.
+
+Nothing in the lifecycle spends a model token. `CostGovernor.allow()` — built
+when the notebook shipped and never called, because rule-based capture spends
+nothing — is now the gate any model-assisted distillation must pass first.
 
 ## The playbook
 
@@ -79,15 +135,33 @@ file in the workspace:
 .gear/skills/playbook/SKILL.md
 ```
 
-Only lessons that **recurred** get in — two sessions or more. One session's
-observation is a note; two are a fact about the repository. The file is a
-real skill: the loader lists it to the model like any other, a person can read
-it, edit it, diff it and commit it. The generated block sits between markers;
-everything written outside them is kept on every rewrite. It is rewritten
-only when the block changes, and the run says so with one notice.
+Only **active** lessons get in. "Recurred twice" was the old bar, and it was the
+weakest gate in the loop attached to its widest action: two observations, no
+measurement, and an executable skill written into the user's workspace. Active
+means the lesson climbed the same ladder as every other.
 
-`[evolve] playbook = false` turns the file off. The retro itself is always
-written.
+**And it is inert until you enable it once.**
+
+```bash
+gear evolve playbook              # where it stands
+gear evolve playbook --enable     # turn learned skills on, once
+```
+
+A skill can direct multi-step behaviour, so a machine writing one and having it
+load on the next run is a capability change nobody agreed to — however good the
+lessons in it are. Until consent is recorded the block is written to
+`.gear/skills/playbook/PENDING.md`, which the skills loader does not read: it
+globs for `SKILL.md` and ignores every other file, so the draft is inert by
+construction rather than by a flag something could misread. The run says which
+happened.
+
+The file is a real skill: the loader lists it to the model like any other, a
+person can read it, edit it, diff it and commit it. The generated block sits
+between markers; everything written outside them is kept on every rewrite. It is
+rewritten only when the block changes.
+
+`[evolve] playbook = false` turns generation off entirely. The retro itself is
+always written.
 
 ## The scorecard
 

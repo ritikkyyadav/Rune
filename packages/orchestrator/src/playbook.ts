@@ -6,16 +6,32 @@
 // SKILL.md` — where a person can read it, edit it, diff it, and commit it,
 // and where the skills loader lists it to the model like any other skill.
 //
-// Only lessons that RECURRED get in (two sessions or more): one session's
-// observation is a note, two are a fact about the repository. The generated
-// block sits between markers; everything a person writes outside them is
-// kept on every rewrite.
+// Only ACTIVE lessons get in (P7.7). "Recurred twice" was the old bar, and it
+// was the weakest gate in the whole loop attached to its widest action: two
+// observations, no measurement, and an executable skill written into the user's
+// workspace. Active means the lesson was injected at least five times and won
+// more often than the ambient rate — the same ladder every other lesson climbs.
+//
+// The generated block sits between markers; everything a person writes outside
+// them is kept on every rewrite.
+//
+// And the file is INERT until the user enables it once. A skill can direct
+// multi-step behaviour, so a machine writing one into a workspace and having it
+// load on the next run is a capability change nobody consented to. Until
+// consent is recorded the block is written to PENDING.md, which the skills
+// loader does not read (it globs for SKILL.md and nothing else).
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { NotebookEntry } from "./notebook/store";
 
 export const PLAYBOOK_REL = join(".gear", "skills", "playbook", "SKILL.md");
+/**
+ * Where the block lands before the user has enabled learned skills. The loader
+ * globs for `SKILL.md` and ignores every other file, so this is inert by
+ * construction rather than by a flag something could misread.
+ */
+export const PLAYBOOK_PENDING_REL = join(".gear", "skills", "playbook", "PENDING.md");
 
 const START = "<!-- gear:learned:start -->";
 const END = "<!-- gear:learned:end -->";
@@ -28,16 +44,34 @@ export interface PlaybookWrite {
   lessons: number;
   /** Distinct sessions the lessons came from. */
   sessions: number;
+  /**
+   * True when the block went to PENDING.md because learned skills have not been
+   * enabled. The file exists and is readable; nothing loads it.
+   */
+  pending: boolean;
 }
 
-/** The entries a playbook may carry: this repo's, alive, seen in ≥ minSessions sessions. */
+/**
+ * The entries a playbook may carry: this repo's, ACTIVE, and seen in at least
+ * `minSessions` sessions.
+ *
+ * The stage filter is the change P7.7 makes. A `trial` lesson is being measured;
+ * writing it into an executable skill would be acting on it before the
+ * measurement finished.
+ */
 export function playbookEntries(
   entries: NotebookEntry[],
   opts: { minSessions?: number } = {},
 ): NotebookEntry[] {
   const min = opts.minSessions ?? 2;
   return entries
-    .filter((e) => e.scope === "repo" && !e.retired && e.provenance.sessions.length >= min)
+    .filter(
+      (e) =>
+        e.scope === "repo" &&
+        !e.retired &&
+        e.stage === "active" &&
+        e.provenance.sessions.length >= min,
+    )
     .sort((a, b) => a.title.localeCompare(b.title));
 }
 
@@ -100,10 +134,14 @@ function frontmatter(workspaceName: string, sessions: number): string {
 export function writePlaybook(
   workspaceRoot: string,
   entries: NotebookEntry[],
-  opts: { minSessions?: number } = {},
+  opts: { minSessions?: number; enabled?: boolean } = {},
 ): PlaybookWrite | null {
   const rows = playbookEntries(entries, opts);
-  const path = join(workspaceRoot, PLAYBOOK_REL);
+  // Consent gate: until the user has enabled learned skills once, the block
+  // goes to a file the loader does not read. Writing a skill and letting it
+  // load is a capability change; writing a file a person can read is not.
+  const pending = opts.enabled !== true;
+  const path = join(workspaceRoot, pending ? PLAYBOOK_PENDING_REL : PLAYBOOK_REL);
   const exists = existsSync(path);
   if (rows.length === 0 && !exists) return null;
 
@@ -117,7 +155,7 @@ export function writePlaybook(
     if (s !== -1 && e !== -1 && e > s) {
       const existing = current.slice(s, e + END.length);
       if (existing === block) {
-        return { path, changed: false, lessons: rows.length, sessions };
+        return { path, changed: false, lessons: rows.length, sessions, pending };
       }
       next = current.slice(0, s) + block + current.slice(e + END.length);
     } else {
@@ -129,5 +167,5 @@ export function writePlaybook(
   }
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, next);
-  return { path, changed: true, lessons: rows.length, sessions };
+  return { path, changed: true, lessons: rows.length, sessions, pending };
 }
