@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ACCENTS, themeId, type ThemeChoice, type ThemeBase } from "../lib/theme";
+import { THEME_BASES, themeId, type ThemeChoice } from "../lib/theme";
 import { GEARS, type GearId } from "../lib/gears";
 import type { ProviderListing } from "../hooks/useEngine";
 
@@ -144,41 +144,25 @@ export function ThemePicker(props: {
   onChoice: (choice: ThemeChoice) => void;
   onClose: () => void;
 }) {
-  const bases: Array<{ id: ThemeBase; label: string; desc: string }> = [
-    { id: "system", label: "Follow system", desc: "light or dark with macOS" },
-    { id: "light", label: "Light", desc: "warm ivory card" },
-    { id: "dark", label: "Dark", desc: "near-black card" },
-  ];
+  // Two grounds and "follow the system". The five-accent picker that used to
+  // live here is gone: one accent is a brand rule, and a coding agent that
+  // offers a colour gallery is telling you what it thinks it is.
   return (
     <OverlayShell
-      title="Accent palette"
+      title="Appearance"
       sub={themeId(props.choice)}
       onClose={props.onClose}
-      footer="Same ten themes as the CLI (gear[-accent][-dark]) · the CLI persists its own choice in ~/.gear/theme.json"
+      footer="One accent, two grounds · the terminal shares this choice through ~/.gear/theme.json"
     >
-      {bases.map((b) => (
+      {THEME_BASES.map((b) => (
         <button
           key={b.id}
           className={`overlay-item ${props.choice.base === b.id ? "selected" : ""}`}
-          onClick={() => props.onChoice({ ...props.choice, base: b.id })}
+          onClick={() => props.onChoice({ base: b.id })}
         >
           <span className="oi-name">{b.label}</span>
           <span className="oi-desc">{b.desc}</span>
-          <span className="oi-tag">base</span>
-        </button>
-      ))}
-      {ACCENTS.map((a) => (
-        <button
-          key={a.id}
-          className={`overlay-item ${props.choice.accent === a.id ? "selected" : ""}`}
-          onClick={() => props.onChoice({ ...props.choice, accent: a.id })}
-        >
-          <span className="oi-dot" style={{ background: a.swatch }} />
-          <span className="oi-name">{a.label}</span>
-          <span className="oi-desc">{a.desc}</span>
-          <span className="oi-tag">
-            {a.id === "cobalt" ? "gear / gear-dark" : `gear-${a.id}[-dark]`}
-          </span>
+          <span className="oi-tag">{b.id === "system" ? "auto" : b.id}</span>
         </button>
       ))}
     </OverlayShell>

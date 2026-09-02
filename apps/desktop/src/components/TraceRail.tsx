@@ -8,6 +8,7 @@ import {
   type TraceState,
   type TraceTurn,
 } from "../lib/trace";
+import type { TurnContext } from "@gear/protocol";
 
 const GLYPH: Record<SpanKind, string> = {
   model: "◆",
@@ -55,13 +56,58 @@ function spanMeta(span: TraceSpan): string {
   }
 }
 
+/**
+ * The prompt assembly behind a model call (P3.4).
+ *
+ * The rail could always say how long a model call took and what it cost. What
+ * it could not say — the question a person actually has in front of a wrong
+ * answer — is which prompts were in it. This is the exact system prompt the
+ * engine sent, with the pieces named, fetched through `get_turn_context`.
+ */
+function PromptAssembly({ context }: { context: TurnContext | null }) {
+  const [open, setOpen] = useState(false);
+  if (!context) {
+    return (
+      <div className="insp-block">
+        <span className="lbl">prompt assembly</span>
+        No turn has run in this session yet, so there is no assembly to show.
+      </div>
+    );
+  }
+  return (
+    <div className="insp-block">
+      <span className="lbl">prompt assembly</span>
+      <div className="pa-parts">
+        {context.parts.map((part) => (
+          <span key={part.name} className="pa-part">
+            {part.name} <b>{part.chars.toLocaleString()}</b>
+          </span>
+        ))}
+        <span className="pa-part">
+          repo map{" "}
+          <b>
+            {context.repoMap.included ? context.repoMap.chars.toLocaleString() : "not admitted"}
+          </b>
+        </span>
+      </div>
+      <button className="pa-toggle" onClick={() => setOpen((v) => !v)}>
+        {open ? "hide" : "show"} the {context.systemPromptChars.toLocaleString()}-character system
+        prompt
+      </button>
+      {open ? <pre className="pa-prompt">{context.systemPrompt}</pre> : null}
+    </div>
+  );
+}
+
 function Inspector({
   span,
   turn,
+  context,
   onShowInTranscript,
 }: {
   span: TraceSpan | null;
   turn: TraceTurn | null;
+  context: TurnContext | null;
   onShowInTranscript?: (callId: string) => void;
 }) {
   if (!span) {
@@ -283,6 +329,7 @@ function Inspector({
           {block.text}
         </div>
       ) : null}
+      {span.kind === "model" ? <PromptAssembly context={context} /> : null}
       <div className="insp-actions">
         {span.kind === "tool" && onShowInTranscript ? (
           <button onClick={() => onShowInTranscript(span.tool!.callId)}>show in transcript</button>
@@ -299,6 +346,8 @@ export function TraceRail(props: {
   onSelectTurn: (turn: number) => void;
   selectedSpanId: string | null;
   onSelectSpan: (id: string | null) => void;
+  /** The prompt assembly for the session's last turn, from `get_turn_context`. */
+  turnContext?: TurnContext | null;
   onExport: () => void;
   onShowInTranscript?: (callId: string) => void;
   now: number;
@@ -443,7 +492,12 @@ export function TraceRail(props: {
           <span>totals appear as the turn runs</span>
         )}
       </div>
-      <Inspector span={selected} turn={turn} onShowInTranscript={props.onShowInTranscript} />
+      <Inspector
+        span={selected}
+        turn={turn}
+        context={props.turnContext ?? null}
+        onShowInTranscript={props.onShowInTranscript}
+      />
     </aside>
   );
 }

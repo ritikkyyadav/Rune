@@ -195,6 +195,25 @@ function ensureDataDir(): string {
   return ensureGearHome();
 }
 
+/**
+ * Where the session database is, captured when the engine is built.
+ *
+ * `export_trace` must open the SAME file `gear export` opens, and the
+ * resolution lives inside `buildEngine`'s locals — so it is recorded here
+ * rather than re-derived, which is how the two would end up reading different
+ * databases and producing two "exports" of one session.
+ */
+let engineDbPath = "";
+function dbPath(): string {
+  return engineDbPath;
+}
+
+/** The directory this host is working in — the review workspace's root. */
+let engineWorkspaceRoot = "";
+function workspaceRootOf(): string {
+  return engineWorkspaceRoot || process.env.GEAR_WORKSPACE || process.cwd();
+}
+
 function buildEngine(): Engine {
   adoptLegacyEnv();
   migrateLegacyHome();
@@ -271,6 +290,8 @@ function buildEngine(): Engine {
     configTrustWorkspace: config.permissions?.trustWorkspace,
   });
 
+  engineDbPath = config.engine.dbPath;
+  engineWorkspaceRoot = workspaceRoot;
   const engine = new Engine({
     model,
     provider: provider as ProviderName,
@@ -710,6 +731,95 @@ async function dispatch(cmd: HostCommandName, args: Record<string, unknown>): Pr
         search: searchKeyStatus(),
         active: { provider: engine.getProvider(), model: engine.getModel() },
       };
+    }
+
+    // ─── Evidence (P3.4) ───
+
+    case "get_turn_context":
+      // The exact system prompt the engine assembled for this session's last
+      // turn. Null before it has run one — the inspector says "no turn yet"
+      // rather than rendering an empty assembly as if it were the real thing.
+      return engine.getTurnContext(optionalString(args, "sessionId"));
+
+    case "export_trace": {
+      // The SAME exporter `gear export` uses, so a trace exported from the
+      // desktop and one exported from the terminal are one artifact and verify
+      // with one key. Reimplementing it here for the GUI is exactly how the two
+      // would drift into "the desktop's export" and "the real one".
+      const { exportSession } = await import("../session-export");
+      const sid = resolveSession(optionalString(args, "sessionId"));
+      const format = optionalString(args, "format") === "json" ? "json" : "md";
+      const sign = optionalBoolean(args, "sign") === true;
+      const result = await exportSession(dbPath(), sid, { format, sign });
+      return {
+        content: result.content,
+        format,
+        signature: result.signature,
+        publicKey: result.publicKey,
+        // The exporter verifies the audit chain and folds the result into the
+        // document. A chain head is present only when it verified, so its
+        // presence IS the answer — inventing a separate boolean would be a
+        // second source of truth for one fact.
+        chainOk: sign ? result.chainHead != null : true,
+      };
+    }
+
+    // ─── The review workspace (P3.5) ───
+
+    case "review_diff": {
+      const { workspaceDiff } = await import("../git-undo");
+      return workspaceDiff(workspaceRootOf());
+    }
+
+    case "revert_paths": {
+      // Every git operation lives in git-undo.ts, including the path checks.
+      // A UI that composed its own pathspec is how "revert this file" becomes
+      // `checkout .`.
+      const { revertPaths } = await import("../git-undo");
+      const paths = optionalStringArray(args, "paths") ?? [];
+      const result = revertPaths(workspaceRootOf(), paths);
+      return result.ok
+        ? { ok: true, reverted: result.reverted }
+        : { ok: false, reason: result.reason };
+    }
+
+    case "run_checks": {
+      // The project's OWN checks, detected the same way the agent's verifier
+      // detects them, so the button and the run agree on what "the checks"
+      // are. `ran: false` means the project has none — reported, not faked.
+      const { CommandVerifier } = await import("../verifier");
+      const verifier = new CommandVerifier({
+        workspaceRoot: workspaceRootOf(),
+        commands: undefined,
+        timeoutMs: 300_000,
+      });
+      const fast = optionalBoolean(args, "fast") === true;
+      const result =
+        fast && verifier.verifyFast ? await verifier.verifyFast() : await verifier.verify();
+      return { ran: result.ran, passed: result.passed, report: result.report };
+    }
+
+    case "open_path": {
+      const rel = requireString(args, "path");
+      if (rel.startsWith("/") || rel.split("/").includes("..")) {
+        return { opened: false, reason: `refusing a path outside the workspace: ${rel}` };
+      }
+      const full = `${workspaceRootOf()}/${rel}`;
+      // $EDITOR wins because it is the person's own answer to this question.
+      const editor = process.env.GEAR_EDITOR || process.env.VISUAL || process.env.EDITOR;
+      const opener = editor
+        ? [editor, full]
+        : process.platform === "darwin"
+          ? ["open", full]
+          : process.platform === "win32"
+            ? ["cmd", "/c", "start", "", full]
+            : ["xdg-open", full];
+      try {
+        Bun.spawn(opener, { stdin: "ignore", stdout: "ignore", stderr: "ignore" }).unref();
+        return { opened: true, with: opener[0] };
+      } catch (err) {
+        return { opened: false, reason: err instanceof Error ? err.message : String(err) };
+      }
     }
 
     case "save_settings": {
