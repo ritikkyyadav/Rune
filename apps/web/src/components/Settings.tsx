@@ -1,154 +1,137 @@
 // ─── Settings, and the two minutes before them ───
 //
-// Two surfaces that used to exist only in the terminal: the provider list with
-// its auth status, and the place a key gets typed. A desktop that makes you
-// open a terminal to connect a model is not a desktop application; it is a
-// window onto one.
+// Settings is a SECTION, not a dialog. The provider list moved to Connect,
+// where it belongs beside the connectors; what is left here is the handful of
+// defaults a person sets once — appearance, the gear a new session starts in,
+// and whether anything is reported anywhere.
 //
-// What is honest about the OAuth half: the flow itself is `gear login`, which
-// opens a browser, catches a loopback redirect and writes the credential to the
-// OS keychain. That is a terminal-owned flow today and this panel says so
-// exactly, with the command to run, rather than presenting a button that does
-// nothing. Moving it into the app is a host command away and is logged in
-// docs/program/backlog.md rather than faked here.
+// Every row states what it changes and where that change lives, because a
+// preference whose blast radius is unclear is a preference nobody touches.
 
 import { useEffect, useState } from "react";
-import type { ProviderListing } from "../hooks/useEngine";
+import { GearMark } from "./GearMark";
+import { GEARS, type GearId } from "../lib/gears";
+import { THEME_BASES, type ThemeChoice } from "../lib/theme";
 
-type Row = ProviderListing["providers"][number];
-
-/** How a provider is authenticated, and whether the app can do it. */
-function authKind(row: Row): { label: string; inApp: boolean } {
-  const id = row.id;
-  if (row.local) return { label: "local — no credential", inApp: true };
-  if (id === "anthropic" || id === "codex" || id === "openrouter")
-    return { label: "OAuth or API key", inApp: false };
-  if (id === "copilot") return { label: "device flow", inApp: false };
-  return { label: "API key", inApp: true };
-}
-
-export function SettingsPanel(props: {
-  listing: ProviderListing | null;
-  onSaveKey: (provider: string, key: string) => Promise<boolean>;
-  onPickModel: (provider: string, model: string) => void;
-  onRefresh: () => void;
-  onClose: () => void;
+/**
+ * The settings section.
+ *
+ * Theme is applied live and remembered in this browser; the gear applies to the
+ * running engine now; the model default lives with the provider that owns it,
+ * in Connect. Telemetry is reported, not offered: it is off, it is off by
+ * default, and turning it on is `gear telemetry on` because consent for
+ * diagnostics should be given somewhere it can be read back.
+ */
+export function SettingsTab(props: {
+  theme: ThemeChoice;
+  onTheme: (choice: ThemeChoice) => void;
+  gear: GearId;
+  onGear: (gear: GearId) => void;
+  model: { provider: string; model: string };
+  workspace: string;
   transport: string;
+  version: string;
+  onOpenConnect: () => void;
 }) {
-  const [editing, setEditing] = useState<string | null>(null);
-  const [value, setValue] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [saved, setSaved] = useState<string | null>(null);
-
-  const rows = props.listing?.providers ?? [];
-  const active = props.listing?.active;
-
   return (
-    <div className="overlay-scrim" onClick={props.onClose}>
-      <div
-        className="overlay settings"
-        role="dialog"
-        aria-label="Settings"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="overlay-head">
-          <span className="meta">Providers</span>
-          <span className="oi-desc">
-            {active ? `${active.provider}/${active.model}` : "no model selected"} · engine over{" "}
-            {props.transport}
+    <div className="settings-tab" aria-label="Settings">
+      <section className="connect-section">
+        <div className="connect-head">
+          <h3>Appearance</h3>
+          <span className="connect-sub">Remembered in this browser</span>
+        </div>
+        <div className="setting-row">
+          {THEME_BASES.map((b) => (
+            <button
+              key={b.id}
+              className={`choice ${props.theme.base === b.id ? "on" : ""}`}
+              onClick={() => props.onTheme({ base: b.id })}
+              aria-pressed={props.theme.base === b.id}
+            >
+              <b>{b.label}</b>
+              <small>{b.desc}</small>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="connect-section">
+        <div className="connect-head">
+          <h3>Gear</h3>
+          <span className="connect-sub">What proceeds without asking. Shift+Tab shifts up.</span>
+        </div>
+        <div className="setting-row wrap">
+          {GEARS.map((g) => (
+            <button
+              key={g.id}
+              className={`choice ${props.gear === g.id ? "on" : ""}`}
+              data-level={g.id}
+              onClick={() => props.onGear(g.id)}
+              aria-pressed={props.gear === g.id}
+            >
+              <b>
+                {g.arrows} {g.label}
+              </b>
+              <small>{g.detail}</small>
+            </button>
+          ))}
+        </div>
+        <p className="setting-note">
+          Applies to this engine now. The default for new sessions lives in{" "}
+          <span className="mono">~/.gear/config.toml</span> under{" "}
+          <span className="mono">[permissions] gear</span>.
+        </p>
+      </section>
+
+      <section className="connect-section">
+        <div className="connect-head">
+          <h3>Model</h3>
+          <span className="connect-sub">Per session; the default belongs to the provider</span>
+        </div>
+        <div className="setting-row">
+          <span className="prov-name mono">
+            {props.model.provider}/{props.model.model}
           </span>
-          <button className="tb-btn" onClick={props.onClose}>
-            Close <kbd>esc</kbd>
+          <button className="perm-btn" onClick={props.onOpenConnect}>
+            Change in Connect
           </button>
         </div>
+      </section>
 
-        {rows.length === 0 ? (
-          <div className="overlay-empty">
-            No engine attached, so there is nothing to list. Run <code>gear web</code> or{" "}
-            <code>gear desktop</code>.
-          </div>
-        ) : null}
-
-        {rows.map((row) => {
-          const auth = authKind(row);
-          return (
-            <div key={row.id} className={`prov-row ${row.active ? "active" : ""}`}>
-              <span className={`prov-dot ${row.hasKey ? "on" : "off"}`} />
-              <div className="prov-body">
-                <div className="prov-name">
-                  {row.label}
-                  {row.active ? <span className="prov-tag">active</span> : null}
-                </div>
-                <div className="prov-meta">
-                  {row.hasKey ? `connected · ${row.masked || row.source}` : auth.label}
-                  {row.endpoint ? ` · ${row.endpoint}` : ""}
-                </div>
-              </div>
-              <div className="prov-actions">
-                {editing === row.id ? (
-                  <form
-                    onSubmit={async (e) => {
-                      e.preventDefault();
-                      setBusy(true);
-                      const ok = await props.onSaveKey(row.id, value.trim());
-                      setBusy(false);
-                      if (ok) {
-                        setSaved(row.id);
-                        setEditing(null);
-                        setValue("");
-                        props.onRefresh();
-                      }
-                    }}
-                  >
-                    <input
-                      autoFocus
-                      type="password"
-                      value={value}
-                      onChange={(e) => setValue(e.target.value)}
-                      placeholder={`${row.label} API key`}
-                      aria-label={`${row.label} API key`}
-                    />
-                    <button className="perm-btn primary" disabled={busy || !value.trim()}>
-                      Save
-                    </button>
-                    <button
-                      type="button"
-                      className="perm-btn"
-                      onClick={() => {
-                        setEditing(null);
-                        setValue("");
-                      }}
-                    >
-                      Cancel
-                    </button>
-                  </form>
-                ) : auth.inApp ? (
-                  <button className="perm-btn" onClick={() => setEditing(row.id)}>
-                    {row.hasKey ? "Replace key" : "Paste key"}
-                  </button>
-                ) : (
-                  <code className="prov-cmd">gear login {row.id}</code>
-                )}
-                {row.hasKey && !row.active && row.models[0] ? (
-                  <button
-                    className="perm-btn"
-                    onClick={() => props.onPickModel(row.id, row.models[0]!.id)}
-                  >
-                    Use this
-                  </button>
-                ) : null}
-              </div>
-            </div>
-          );
-        })}
-
-        <div className="overlay-foot">
-          {saved ? `${saved} saved to ~/.gear/secrets.json (0600)` : null}
-          {!saved
-            ? "Keys are written to ~/.gear/secrets.json at 0600 and applied live. OAuth and the OS keychain are `gear login`."
-            : null}
+      <section className="connect-section">
+        <div className="connect-head">
+          <h3>Telemetry</h3>
+          <span className="connect-sub">Off, and off by default</span>
         </div>
-      </div>
+        <p className="setting-note">
+          Nothing is sent anywhere. Diagnostics are opt-in and the switch is{" "}
+          <span className="mono">gear telemetry on</span> — consent for diagnostics belongs
+          somewhere it can be read back, which a checkbox in a browser is not.
+        </p>
+      </section>
+
+      <section className="connect-section">
+        <div className="connect-head">
+          <h3>This engine</h3>
+        </div>
+        <div className="setting-facts">
+          <div className="kv">
+            <span>workspace</span>
+            <span className="mono">{props.workspace}</span>
+          </div>
+          <div className="kv">
+            <span>transport</span>
+            <span className="mono">{props.transport}</span>
+          </div>
+          <div className="kv">
+            <span>version</span>
+            <span className="mono">v{props.version}</span>
+          </div>
+        </div>
+        <div className="setting-mark">
+          <GearMark size={22} />
+        </div>
+      </section>
     </div>
   );
 }
@@ -185,7 +168,7 @@ export function FirstRun(props: {
   connected: boolean;
   providerCount: number;
   workspace?: string;
-  onOpenSettings: () => void;
+  onOpenConnect: () => void;
   onRunDemo: () => void;
   onStart: (prompt: string) => void;
   onDismiss: () => void;
@@ -203,8 +186,8 @@ export function FirstRun(props: {
   return (
     <div className="first-run" role="region" aria-label="First run">
       <h1 className="fr-title">
+        <GearMark size={20} />
         Gear
-        <span className="wm-cursor" aria-hidden="true" />
       </h1>
       <p className="fr-lede">
         An agent that proves its work, on the model you already pay for. Every answer traces to the
@@ -221,8 +204,8 @@ export function FirstRun(props: {
               ? `${props.providerCount} providers are configured on this machine. Paste an API key, or run gear login for OAuth.`
               : "Paste an API key for any provider, or run gear login for OAuth."}
           </span>
-          <button className="perm-btn primary" onClick={props.onOpenSettings}>
-            Open providers
+          <button className="perm-btn primary" onClick={props.onOpenConnect}>
+            Connect a model
           </button>
         </li>
         <li className={step >= 1 ? "on" : ""}>

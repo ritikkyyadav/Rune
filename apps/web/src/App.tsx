@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Titlebar } from "./components/Titlebar";
-import { Sidebar } from "./components/Sidebar";
+import { Sidebar, type NavItem } from "./components/Sidebar";
+import { Tabs, type MainTab } from "./components/Tabs";
 import { Transcript } from "./components/Transcript";
 import { Composer, type CommandItem } from "./components/Composer";
 import { TraceRail } from "./components/TraceRail";
-import { GearPicker, ModelPicker, ThemePicker, Toast } from "./components/Overlays";
+import { GearPicker, ModelPicker, Toast } from "./components/Overlays";
+import { Palette, type PaletteItem } from "./components/Palette";
+import { PlanLedger, type PlanStep } from "./components/PlanLedger";
+import { FilesTab } from "./components/Files";
+import { ConnectTab, type Connector } from "./components/Connect";
 import {
   AskCard,
   AutoChip,
@@ -13,7 +17,7 @@ import {
   HeldStepsPanel,
   type HeldOutcome,
 } from "./components/Cards";
-import { FirstRun, SettingsPanel, firstRunDone } from "./components/Settings";
+import { FirstRun, SettingsTab, firstRunDone } from "./components/Settings";
 import { ReviewPanel, type CheckResult, type ReviewDiff } from "./components/Review";
 import { INITIAL_FLEET, fleetReducer, fleetRows, type Fleet } from "./lib/fleet";
 import { useEngine, type ProviderListing } from "./hooks/useEngine";
@@ -26,7 +30,7 @@ import type {
   AutoApprovalNotice,
   Brief,
   BriefDecision,
-  ChatMessage,
+  EngineEvent,
   EngineStatus,
   HeldStep,
   PermissionDecision,
@@ -34,7 +38,7 @@ import type {
 } from "./lib/types";
 import type { TurnContext } from "@gear/protocol";
 
-type Overlay = null | "model" | "theme" | "gear" | "settings";
+type Overlay = null | "model" | "gear" | "palette";
 
 /** A round-trip the person still owes an answer to. */
 interface PendingAsk {
@@ -97,7 +101,6 @@ export default function App() {
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => setToastState(null), 2600);
   }, []);
-  const [query, setQuery] = useState("");
   const [selectedSpan, setSelectedSpan] = useState<string | null>(null);
   const [selectedTurn, setSelectedTurn] = useState<number | null>(null);
   const [queued, setQueued] = useState<string[]>([]);
@@ -120,7 +123,6 @@ export default function App() {
   const [checks, setChecks] = useState<CheckResult | null>(null);
   const [reviewBusy, setReviewBusy] = useState(false);
   const [now, setNow] = useState(() => Date.now());
-  const searchRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // ── engine + turns ──
@@ -214,62 +216,72 @@ export default function App() {
     playDemo();
   }, [engine, playDemo, turns]);
 
-  // ── sessions ──
-  const replayHistory = useCallback(
-    (history: ChatMessage[]) => {
+  // ─── sessions ───
+
+  /**
+   * Rebuild a session from the engine's own event stream.
+   *
+   * The frames and the user turns arrive with sequences, so they interleave
+   * into the order they happened; each one then goes through the SAME reducer
+   * the live stream uses. A resumed session is therefore not an approximation
+   * of a running one — it is the same construction from the same events, with
+   * the tool calls, diffs, checks and permissions intact.
+   */
+  const replayFrames = useCallback(
+    (
+      backfill: Array<{ seq: number; event: EngineEvent }>,
+      userTurns: Array<{ seq: number; text: string }>,
+    ) => {
       turns.reset();
+      const timeline = [
+        ...userTurns.map((t) => ({ seq: t.seq, user: t.text })),
+        ...backfill.map((f) => ({ seq: f.seq, event: f.event })),
+      ].sort((a, b) => a.seq - b.seq);
       let open = false;
-      for (const msg of history) {
-        if (msg.role === "user") {
+      for (const entry of timeline) {
+        if ("user" in entry) {
           if (open)
             turnsRef.current.event({
               type: "turn_complete",
               stopReason: "end_turn",
               totalTurns: 0,
             });
-          turnsRef.current.turnStart(msg.content);
+          turnsRef.current.turnStart(entry.user);
           open = true;
           continue;
         }
-        if (msg.role !== "assistant") continue;
         if (!open) {
+          // Events before any user turn: a detached run, or a session whose
+          // first message predates the store. Open a turn rather than dropping
+          // them — losing the work is worse than an unlabelled heading.
           turnsRef.current.turnStart("(resumed)");
           open = true;
         }
-        for (const tc of msg.toolCalls ?? []) {
-          turnsRef.current.event({
-            type: "tool_call_end",
-            callId: tc.callId,
-            args: tc.args ?? {},
-            output: {
-              callId: tc.callId,
-              toolName: tc.toolName,
-              success: tc.status !== "error",
-              result: tc.result ?? "",
-              error: tc.error,
-              durationMs: tc.durationMs ?? 0,
-            },
-          });
-        }
-        if (msg.content) turnsRef.current.event({ type: "text_delta", text: msg.content });
+        turnsRef.current.event(entry.event);
       }
       if (open)
         turnsRef.current.event({ type: "turn_complete", stopReason: "end_turn", totalTurns: 0 });
     },
     [turns],
   );
+
   const openSession = useCallback(
     async (id: string) => {
       if (processing) {
         showToast("finish or interrupt the running turn first");
         return;
       }
-      const history = await session.selectSession(id);
-      replayHistory(history);
+      await session.selectSession(id);
+      const replay = await engine.subscribeSession(id);
+      if (replay) replayFrames(replay.backfill ?? [], replay.userTurns ?? []);
+      // Frames the host has not written to the store yet — a turn running right
+      // now in another tab, or a detached run. Without these, opening a live
+      // session shows it as finished.
+      for (const ev of replay?.live ?? []) turnsRef.current.event(ev);
       setSelectedSpan(null);
       setSelectedTurn(null);
     },
-    [processing, replayHistory, session, showToast],
+    [engine, processing, replayFrames, session, showToast],
   );
   const newTask = useCallback(async () => {
     if (processing) {
@@ -382,10 +394,6 @@ export default function App() {
     setOverlay("model");
     setListing(await engine.listProviders());
   }, [engine]);
-  const openSettings = useCallback(async () => {
-    setOverlay("settings");
-    setListing(await engine.listProviders());
-  }, [engine]);
   const pickModel = useCallback(
     async (provider: string, model: string) => {
       setOverlay(null);
@@ -430,7 +438,7 @@ export default function App() {
           setOverlay("gear");
           break;
         case "theme":
-          setOverlay("theme");
+          setNav("settings");
           break;
         case "trace":
           setRailOpen((v) => !v);
@@ -439,8 +447,7 @@ export default function App() {
           void newTask();
           break;
         case "sessions":
-          setSideOpen(true);
-          window.setTimeout(() => searchRef.current?.focus(), 50);
+          setOverlay("palette");
           break;
         case "cost":
           showToast(`session cost so far: <b>$${status.totalCost.toFixed(4)}</b>`);
@@ -486,8 +493,7 @@ export default function App() {
           void newTask();
         } else if (k === "k") {
           e.preventDefault();
-          setSideOpen(true);
-          window.setTimeout(() => searchRef.current?.focus(), 50);
+          setOverlay((o) => (o === "palette" ? null : "palette"));
         } else if (k === "t") {
           e.preventDefault();
           setRailOpen((v) => !v);
@@ -496,7 +502,7 @@ export default function App() {
           setSideOpen((v) => !v);
         } else if (e.key === ",") {
           e.preventDefault();
-          setOverlay("theme");
+          setNav("settings");
         }
         return;
       }
@@ -536,11 +542,10 @@ export default function App() {
     ? [
         `turn ${lastTurn.turn}`,
         lastTurn.checkpoint ? `checkpoint v${lastTurn.checkpoint.version}` : "",
-        status.workspace ? status.workspace.replace(/^\/Users\/[^/]+/, "~") : "",
       ]
         .filter(Boolean)
         .join(" · ")
-    : status.workspace?.replace(/^\/Users\/[^/]+/, "~");
+    : undefined;
   const reviewCount = useMemo(
     () => new Set(turns.stream.turns.flatMap((t) => t.files.map((f) => f.path))).size,
     [turns.stream.turns],
@@ -615,8 +620,19 @@ export default function App() {
   // window hanging. (It did. That is why this comment exists.)
   const getTurnContext = engine.getTurnContext;
   const activeSessionId = session.activeSessionId;
+  const connected = engine.connectionState === "connected";
+  // The session list belongs to the ENGINE, so it is fetched when the engine is
+  // reachable rather than when this component mounted. A reload re-attaches and
+  // the sessions come back; without this they came back empty.
+  const loadSessions = session.loadSessions;
   useEffect(() => {
-    if (!railOpen) return;
+    if (connected) void loadSessions();
+  }, [connected, loadSessions]);
+  useEffect(() => {
+    // Only once the transport is actually open. Asking earlier produced a
+    // "still connecting" toast on every page load — an honest message about a
+    // background poll nobody asked for, which is noise.
+    if (!railOpen || !connected) return;
     let cancelled = false;
     void getTurnContext(activeSessionId ?? undefined).then((ctx) => {
       if (!cancelled) setTurnContext((ctx as TurnContext | null) ?? null);
@@ -624,7 +640,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [activeSessionId, getTurnContext, railOpen, turns.trace.turns.length]);
+  }, [activeSessionId, connected, getTurnContext, railOpen, turns.trace.turns.length]);
 
   // ── held steps ──
   const runHeld = useCallback(
@@ -724,168 +740,309 @@ export default function App() {
     [engine, showToast],
   );
 
+  // ─── The shell's own state ───
+
+  const [tab, setTab] = useState<MainTab>("session");
+  const [nav, setNav] = useState<NavItem>("sessions");
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [connectors, setConnectors] = useState<Connector[] | null>(null);
+  const [connectorNote, setConnectorNote] = useState<string | null>(null);
+  const [connectBusy, setConnectBusy] = useState(false);
+  const [ledgerOpen, setLedgerOpen] = useState(true);
+  const [knownFiles, setKnownFiles] = useState<string[]>([]);
+
+  const listFiles = engine.listFiles;
+  const readTextFile = engine.readTextFile;
+  const listConnectors = engine.listConnectors;
+
+  /**
+   * The plan, from the ledger rather than from the prose.
+   *
+   * The most recent `todo_updated` is the plan; a step is `checked` when a
+   * `step_check` with the same label passed. That distinction — closed versus
+   * proven — is the product's whole claim, so it survives into the checklist
+   * instead of being flattened into a tick.
+   */
+  const planSteps = useMemo<PlanStep[]>(() => {
+    let latest: { content: string; status: string }[] = [];
+    const passed = new Set<string>();
+    for (const t of turns.stream.turns) {
+      for (const item of t.items) if (item.kind === "todo") latest = item.items;
+      for (const c of t.checks) if (c.status === "passed") passed.add(c.label);
+    }
+    return latest.map((s) => ({ ...s, checked: passed.has(s.content) }));
+  }, [turns.stream.turns]);
+
+  /** Files the palette can find: whatever the tree has already fetched. */
+  useEffect(() => {
+    if (nav !== "files" && tab !== "files") return;
+    let cancelled = false;
+    void listFiles().then((listing) => {
+      if (cancelled || !listing) return;
+      setKnownFiles((prev) => {
+        const next = new Set(prev);
+        for (const e of listing.entries) if (!e.dir) next.add(e.path);
+        return [...next];
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [listFiles, nav, tab]);
+
+  const openConnect = useCallback(async () => {
+    setNav("connect");
+    setConnectBusy(true);
+    setListing(await engine.listProviders());
+    const result = await listConnectors();
+    setConnectors(result?.servers ?? null);
+    setConnectorNote(result?.reason ?? (result ? null : "no engine attached"));
+    setConnectBusy(false);
+  }, [engine, listConnectors]);
+
+  const openFile = useCallback((path: string) => {
+    setNav("sessions");
+    setTab("files");
+    setSelectedFile(path);
+  }, []);
+
+  const paletteCommands = useMemo(
+    () => commands.map((c) => ({ id: c.id, name: c.name, desc: c.desc, tag: c.tag })),
+    [commands],
+  );
+
+  const onPalettePick = useCallback(
+    (item: PaletteItem) => {
+      setOverlay(null);
+      if (item.kind === "session") void openSession(item.id);
+      else if (item.kind === "file") openFile(item.id);
+      else runCommand(item.id);
+    },
+    [openFile, openSession, runCommand],
+  );
+
   return (
     <div className={`app ${sideOpen ? "" : "side-closed"} ${railOpen ? "" : "rail-closed"}`}>
-      <Titlebar
-        version={VERSION}
-        task={taskTitle}
-        turnLabel={turnLabel}
-        sandboxOn={sandboxOn}
-        gear={gear}
-        connection={engine.connectionState}
-        railOpen={railOpen}
-        sideOpen={sideOpen}
-        reviewCount={reviewCount}
-        onToggleRail={() => setRailOpen((v) => !v)}
-        onToggleSide={() => setSideOpen((v) => !v)}
-        onOpenSettings={() => void openSettings()}
-        onOpenReview={openReview}
-      />
       <Sidebar
         sessions={session.sessions}
         activeId={session.activeSessionId}
         loading={session.sessionsLoading}
-        query={query}
-        onQuery={setQuery}
-        onSelect={(id) => void openSession(id)}
-        onNew={() => void newTask()}
+        nav={nav}
+        onNav={(item) => {
+          if (item === "connect") void openConnect();
+          else if (item === "files") {
+            setNav("sessions");
+            setTab("files");
+          } else setNav(item);
+        }}
+        onSelect={(id) => {
+          setNav("sessions");
+          setTab("session");
+          void openSession(id);
+        }}
+        onNew={() => {
+          setNav("sessions");
+          setTab("session");
+          void newTask();
+        }}
+        onSearch={() => setOverlay("palette")}
         reviewCount={reviewCount}
-        onReview={openReview}
-        env={{ gear, model: status.model, ctxPercent, workspace: status.workspace ?? "~" }}
-        onOpenSettings={() => void openSettings()}
-        searchRef={searchRef}
+        workspace={status.workspace ?? "~"}
+        version={VERSION}
+        gear={gear}
+        costToday={status.totalCost > 0 ? status.totalCost : null}
+      />
+      <Tabs
+        tab={nav === "sessions" ? tab : "session"}
+        onTab={(t) => {
+          setNav("sessions");
+          setTab(t);
+          if (t === "review") openReview();
+        }}
+        title={nav === "connect" ? "Connect" : nav === "settings" ? "Settings" : taskTitle}
+        subtitle={nav === "sessions" ? turnLabel : undefined}
+        reviewCount={reviewCount}
+        connection={engine.connectionState}
+        sideOpen={sideOpen}
+        railOpen={railOpen}
+        onToggleSide={() => setSideOpen((v) => !v)}
+        onToggleRail={() => setRailOpen((v) => !v)}
+        onSearch={() => setOverlay("palette")}
       />
       <section className="main">
-        <Transcript
-          turns={turns.stream.turns}
-          now={now}
-          sandboxed={sandboxOn !== false}
-          gearLabel={gear.label}
-          highlightCallId={highlightCallId}
-          onDecide={decide}
-          onShowInTrace={showInTrace}
-          onStarter={(prompt) => void send(prompt)}
-          demo={{ available: true, onRun: runDemo }}
-          workspace={status.workspace}
-        />
+        {nav === "connect" ? (
+          <div className="pane">
+            <ConnectTab
+              listing={listing}
+              connectors={connectors}
+              connectorsNote={connectorNote}
+              busy={connectBusy}
+              onSaveKey={saveProviderKey}
+              onPickModel={(p, m) => void pickModel(p, m)}
+              onRefresh={() => void openConnect()}
+            />
+          </div>
+        ) : nav === "settings" ? (
+          <div className="pane">
+            <SettingsTab
+              theme={theme}
+              onTheme={setTheme}
+              gear={normalizeGear(status.permissionMode)}
+              onGear={(g) => void pickGear(g)}
+              model={{ provider: status.provider, model: status.model }}
+              workspace={status.workspace ?? "~"}
+              transport={engine.transportLabel || engine.transportKind}
+              version={VERSION}
+              onOpenConnect={() => void openConnect()}
+            />
+          </div>
+        ) : tab === "files" ? (
+          <div className="pane">
+            <FilesTab
+              list={listFiles}
+              read={readTextFile}
+              onOpenInEditor={(path) => void openInEditor(path)}
+              selected={selectedFile}
+              onSelect={setSelectedFile}
+            />
+          </div>
+        ) : (
+          <>
+            {planSteps.length > 0 ? (
+              <div className="column-pad">
+                <PlanLedger
+                  steps={planSteps}
+                  open={ledgerOpen}
+                  onToggle={() => setLedgerOpen((v) => !v)}
+                />
+              </div>
+            ) : null}
+            <Transcript
+              turns={turns.stream.turns}
+              now={now}
+              sandboxed={sandboxOn !== false}
+              gearLabel={gear.label}
+              highlightCallId={highlightCallId}
+              onDecide={decide}
+              onShowInTrace={showInTrace}
+              onStarter={(prompt) => void send(prompt)}
+              demo={{ available: true, onRun: runDemo }}
+              workspace={status.workspace}
+            />
 
-        {/* ── What stops the run, in the run ──
+            {/* ── What stops the run, in the run ──
             Every one of these sits in the flow rather than over it. A modal
             takes the transcript away at the moment you most need to read it. */}
-        {showFirstRun && turns.stream.turns.length === 0 ? (
-          <FirstRun
-            connected={engine.connectionState === "connected"}
-            providerCount={listing?.providers.filter((p) => p.hasKey).length ?? 0}
-            workspace={status.workspace}
-            onOpenSettings={() => void openSettings()}
-            onRunDemo={() => {
-              setShowFirstRun(false);
-              runDemo();
-            }}
-            onStart={(prompt) => {
-              setShowFirstRun(false);
-              void send(prompt);
-            }}
-            onDismiss={() => setShowFirstRun(false)}
-          />
-        ) : null}
+            {showFirstRun && turns.stream.turns.length === 0 ? (
+              <FirstRun
+                connected={engine.connectionState === "connected"}
+                providerCount={listing?.providers.filter((p) => p.hasKey).length ?? 0}
+                workspace={status.workspace}
+                onOpenConnect={() => void openConnect()}
+                onRunDemo={() => {
+                  setShowFirstRun(false);
+                  runDemo();
+                }}
+                onStart={(prompt) => {
+                  setShowFirstRun(false);
+                  void send(prompt);
+                }}
+                onDismiss={() => setShowFirstRun(false)}
+              />
+            ) : null}
 
-        {autoNotices.length > 0 ? (
-          <div className="auto-chips" aria-label="Automatic approvals">
-            {autoNotices.map((n, i) => (
-              <AutoChip key={`${n.toolName}-${i}`} notice={n} />
+            {autoNotices.length > 0 ? (
+              <div className="auto-chips" aria-label="Automatic approvals">
+                {autoNotices.map((n, i) => (
+                  <AutoChip key={`${n.toolName}-${i}`} notice={n} />
+                ))}
+              </div>
+            ) : null}
+
+            {briefs.map((b) => (
+              <BriefCard
+                key={b.requestId}
+                requestId={b.requestId}
+                brief={b.brief}
+                decided={b.decided}
+                onDecide={decideBrief}
+              />
             ))}
-          </div>
-        ) : null}
+            {asks.map((a) => (
+              <AskCard
+                key={a.requestId}
+                requestId={a.requestId}
+                question={a.question}
+                answered={a.answered}
+                onAnswer={answerAsk}
+              />
+            ))}
 
-        {briefs.map((b) => (
-          <BriefCard
-            key={b.requestId}
-            requestId={b.requestId}
-            brief={b.brief}
-            decided={b.decided}
-            onDecide={decideBrief}
-          />
-        ))}
-        {asks.map((a) => (
-          <AskCard
-            key={a.requestId}
-            requestId={a.requestId}
-            question={a.question}
-            answered={a.answered}
-            onAnswer={answerAsk}
-          />
-        ))}
+            {reviewOpen ? (
+              <ReviewPanel
+                diff={review}
+                checks={checks}
+                busy={reviewBusy}
+                onRefresh={() => void refreshReview()}
+                onRevert={(paths) => void revertFiles(paths)}
+                onOpen={(path) => void openInEditor(path)}
+                onRunChecks={() => void runProjectChecks()}
+                onClose={() => setReviewOpen(false)}
+              />
+            ) : null}
 
-        {reviewOpen ? (
-          <ReviewPanel
-            diff={review}
-            checks={checks}
-            busy={reviewBusy}
-            onRefresh={() => void refreshReview()}
-            onRevert={(paths) => void revertFiles(paths)}
-            onOpen={(path) => void openInEditor(path)}
-            onRunChecks={() => void runProjectChecks()}
-            onClose={() => setReviewOpen(false)}
-          />
-        ) : null}
+            <FleetPanel rows={fleetRows(fleet)} now={now} />
 
-        <FleetPanel rows={fleetRows(fleet)} now={now} />
+            {heldOpen ? (
+              <HeldStepsPanel
+                steps={held}
+                outcomes={heldOutcomes}
+                selected={heldSelected}
+                running={heldRunning}
+                onSelect={setHeldSelected}
+                onRun={(i) => void runHeld(i)}
+                onSkip={skipHeld}
+                onClose={closeHeld}
+              />
+            ) : null}
 
-        {heldOpen ? (
-          <HeldStepsPanel
-            steps={held}
-            outcomes={heldOutcomes}
-            selected={heldSelected}
-            running={heldRunning}
-            onSelect={setHeldSelected}
-            onRun={(i) => void runHeld(i)}
-            onSkip={skipHeld}
-            onClose={closeHeld}
-          />
-        ) : null}
-
-        {overlay === "settings" ? (
-          <SettingsPanel
-            listing={listing}
-            transport={engine.transportLabel || engine.transportKind}
-            onSaveKey={saveProviderKey}
-            onPickModel={(p, m) => void pickModel(p, m)}
-            onRefresh={() => void openSettings()}
-            onClose={() => setOverlay(null)}
-          />
-        ) : null}
-        {overlay === "model" ? (
-          <ModelPicker
-            listing={listing}
-            current={{ provider: status.provider, model: status.model }}
-            onPick={(p, m) => void pickModel(p, m)}
-            onClose={() => setOverlay(null)}
-          />
-        ) : null}
-        {overlay === "theme" ? (
-          <ThemePicker choice={theme} onChoice={setTheme} onClose={() => setOverlay(null)} />
-        ) : null}
-        {overlay === "gear" ? (
-          <GearPicker
-            current={normalizeGear(status.permissionMode)}
-            onPick={(g) => void pickGear(g)}
-            onClose={() => setOverlay(null)}
-          />
-        ) : null}
-        <Composer
-          processing={processing}
-          gear={gear}
-          ctxPercent={ctxPercent}
-          queued={queued}
-          commands={commands}
-          onSubmit={(text) => void send(text)}
-          onInterrupt={interrupt}
-          onUnqueue={(i) => setQueued((q) => q.filter((_, k) => k !== i))}
-          onCycleGear={() => void cycleGear()}
-          onCommand={runCommand}
-          inputRef={inputRef}
-        />
+            {overlay === "model" ? (
+              <ModelPicker
+                listing={listing}
+                current={{ provider: status.provider, model: status.model }}
+                onPick={(p, m) => void pickModel(p, m)}
+                onClose={() => setOverlay(null)}
+              />
+            ) : null}
+            {overlay === "gear" ? (
+              <GearPicker
+                current={normalizeGear(status.permissionMode)}
+                onPick={(g) => void pickGear(g)}
+                onClose={() => setOverlay(null)}
+              />
+            ) : null}
+            <Composer
+              processing={processing}
+              gear={gear}
+              ctxPercent={ctxPercent}
+              queued={queued}
+              commands={commands}
+              model={{
+                provider: status.provider,
+                model: status.model,
+                authed: engine.connectionState === "connected",
+              }}
+              onSubmit={(text) => void send(text)}
+              onInterrupt={interrupt}
+              onUnqueue={(i) => setQueued((q) => q.filter((_, k) => k !== i))}
+              onCycleGear={() => void cycleGear()}
+              onPickModel={() => void openModelPicker()}
+              onPickGear={() => setOverlay("gear")}
+              onCommand={runCommand}
+              inputRef={inputRef}
+            />
+          </>
+        )}
       </section>
       <TraceRail
         trace={turns.trace}
@@ -900,6 +1057,15 @@ export default function App() {
         }
         now={now}
       />
+      {overlay === "palette" ? (
+        <Palette
+          sessions={session.sessions}
+          files={knownFiles}
+          commands={paletteCommands}
+          onPick={onPalettePick}
+          onClose={() => setOverlay(null)}
+        />
+      ) : null}
       <Toast message={toast} />
     </div>
   );

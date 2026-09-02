@@ -1,4 +1,16 @@
+// ─── The composer ───
+//
+// One rounded field, 44px at rest, growing to eight lines and then scrolling —
+// a field that grows without limit eats the transcript it is about to be a
+// reply to. Left: attach. Right: the model, the gear, and send.
+//
+// The model and gear pickers live HERE rather than in Settings because they are
+// per-turn decisions, and a decision you make every turn does not belong two
+// clicks away in a preferences panel. Both open in place, above the field, and
+// neither is a modal.
+
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowUpIcon, ChevronDownIcon, PaperclipIcon, StopIcon } from "./Icons";
 import type { GearInfo } from "../lib/gears";
 
 export interface CommandItem {
@@ -32,10 +44,14 @@ export function Composer(props: {
   ctxPercent?: number;
   queued: string[];
   commands: CommandItem[];
+  /** provider/model as the engine reports them, plus whether it is authed. */
+  model: { provider: string; model: string; authed: boolean };
   onSubmit: (text: string) => void;
   onInterrupt: () => void;
   onUnqueue: (index: number) => void;
   onCycleGear: () => void;
+  onPickModel: () => void;
+  onPickGear: () => void;
   onCommand: (id: string) => void;
   onOpenStates?: () => void;
   inputRef?: React.RefObject<HTMLTextAreaElement | null>;
@@ -153,7 +169,18 @@ export function Composer(props: {
           </div>
         ) : null}
         <div className="input-row" onClick={() => ref.current?.focus()}>
-          <span className="input-prompt">›</span>
+          <button
+            className="input-attach"
+            title="Attach a file — paste a path, or drop one in"
+            aria-label="Attach"
+            onClick={(e) => {
+              e.stopPropagation();
+              setValue((v) => (v.endsWith(" ") || v === "" ? v : v + " ") + "@");
+              ref.current?.focus();
+            }}
+          >
+            <PaperclipIcon />
+          </button>
           <div className="input-shell">
             <textarea
               ref={ref}
@@ -172,41 +199,62 @@ export function Composer(props: {
                 <div className="input-placeholder">
                   {props.processing
                     ? "Type to steer or queue the next message (or / for commands)…"
-                    : "Give Gear a coding task (or / for commands)…"}
+                    : "Ask Gear to do something (or / for commands)…"}
                 </div>
               </>
             ) : null}
           </div>
-        </div>
-        <footer className="footer-strip">
-          <button
-            className="mode-indicator"
-            data-level={props.gear.id}
-            onClick={props.onCycleGear}
-            title="Shift+Tab shifts up: 1st → 2nd → 3rd → 4th → auto"
-          >
-            <span>{props.gear.arrows}</span>
-            <span>{props.gear.label}</span>
-          </button>
-          <span className="mode-desc">{props.gear.desc}</span>
-          <span className="footer-sep">·</span>
-          <CtxMeter percent={props.ctxPercent} />
-          {props.ctxPercent ? <span className="footer-sep">·</span> : null}
-          <span className="footer-hint">
-            <kbd>shift+tab</kbd> mode
-          </span>
-          <span className="footer-hint">
-            <kbd>esc</kbd> interrupt
-          </span>
-          <span className="footer-hint">
-            <kbd>⌘T</kbd> trace
-          </span>
-          <div className="footer-right">
-            {props.onOpenStates ? (
-              <button className="footer-link" onClick={props.onOpenStates}>
-                ? states
+          <div className="input-tools" onClick={(e) => e.stopPropagation()}>
+            <button
+              className="picker"
+              onClick={props.onPickModel}
+              title="Provider, model and credential"
+            >
+              <span className={`prov-dot ${props.model.authed ? "on" : ""}`} />
+              <span className="picker-label">{props.model.model || "no model"}</span>
+              <ChevronDownIcon />
+            </button>
+            <button
+              className="picker"
+              data-level={props.gear.id}
+              onClick={props.onPickGear}
+              title={`${props.gear.label} — ${props.gear.desc} · shift+tab shifts up`}
+            >
+              <span className="picker-label">{props.gear.label}</span>
+              <ChevronDownIcon />
+            </button>
+            {props.processing ? (
+              <button className="send stop" onClick={props.onInterrupt} title="Interrupt (esc)">
+                <StopIcon />
               </button>
-            ) : null}
+            ) : (
+              <button
+                className="send"
+                onClick={submit}
+                disabled={!value.trim()}
+                title="Send (⏎)"
+                aria-label="Send"
+              >
+                <ArrowUpIcon />
+              </button>
+            )}
+          </div>
+        </div>
+        {/* What the gear MEANS, under the field that carries it. The picker
+            names the gear; this line says what it will and will not do without
+            asking, which is the part that matters and the part a two-word
+            label cannot carry. */}
+        <footer className="footer-strip">
+          <span className="mode-desc">{props.gear.desc}</span>
+          {props.ctxPercent ? <span className="footer-sep">·</span> : null}
+          <CtxMeter percent={props.ctxPercent} />
+          <div className="footer-right">
+            <span className="footer-hint">
+              <kbd>shift+tab</kbd> gear
+            </span>
+            <span className="footer-hint">
+              <kbd>esc</kbd> interrupt
+            </span>
             <button
               className="footer-link"
               onClick={() => {
