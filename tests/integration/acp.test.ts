@@ -252,11 +252,17 @@ describe("gear acp (an ACP client, a real engine, a fake model)", () => {
 
     writeFileSync(
       join(gearHome, "model.json"),
-      JSON.stringify({ provider: "lmstudio", model: "fake-model" }),
+      JSON.stringify({ provider: "custom", model: "fake-model" }),
     );
     writeFileSync(
       join(gearHome, "secrets.json"),
-      JSON.stringify({ endpoints: { lmstudio: `http://127.0.0.1:${model.port}/v1` } }),
+      JSON.stringify({
+        custom: {
+          baseUrl: `http://127.0.0.1:${model.port}/v1`,
+          model: "fake-model",
+          key: "fake-key-the-test-server-ignores",
+        },
+      }),
       { mode: 0o600 },
     );
 

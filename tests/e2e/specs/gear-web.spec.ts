@@ -67,9 +67,10 @@ test("a browser drives a whole turn: prompt → permission card → answer → t
   await firstRun.getByRole("button", { name: "Open providers" }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
   await expect(settings).toBeVisible();
-  // The mock provider is `lmstudio` — local, key-less, and pointed at the fake
-  // model by `secrets.endpoints`. It reads as connected without a key.
-  await expect(settings).toContainText(/lm ?studio/i);
+  // The mock provider is `custom` — the user-defined OpenAI-compatible
+  // endpoint, pointed at the fake model by `secrets.custom`. It reads as
+  // connected because a base URL and a key are configured.
+  await expect(settings).toContainText(/custom endpoint/i);
   await settings.getByRole("button", { name: /Close/ }).click();
   await expect(settings).toBeHidden();
 
