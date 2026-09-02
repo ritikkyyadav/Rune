@@ -54,15 +54,20 @@ pub fn execute(input: EditFileInput, workspace_root: &Path) -> Result<EditFileOu
         workspace_root.join(&input.path)
     };
 
-    // Validate workspace containment
-    let canonical = fs::canonicalize(&resolved).map_err(|e| ToolError::Io {
-        path: resolved.display().to_string(),
-        detail: e.to_string(),
-    })?;
-    let workspace_canonical = fs::canonicalize(workspace_root).map_err(|e| ToolError::Io {
-        path: workspace_root.display().to_string(),
-        detail: e.to_string(),
-    })?;
+    // Validate workspace containment. `canonicalize` is VERBATIM on Windows
+    // (`\\?\C:\…`); `simplified` puts it back into the spelling every other
+    // tool — and the harness's read-before-edit ledger — uses. See src/paths.rs.
+    let canonical =
+        crate::paths::simplified(&fs::canonicalize(&resolved).map_err(|e| ToolError::Io {
+            path: resolved.display().to_string(),
+            detail: e.to_string(),
+        })?);
+    let workspace_canonical = crate::paths::simplified(&fs::canonicalize(workspace_root).map_err(
+        |e| ToolError::Io {
+            path: workspace_root.display().to_string(),
+            detail: e.to_string(),
+        },
+    )?);
     if !canonical.starts_with(&workspace_canonical) {
         return Err(ToolError::PathEscape {
             path: resolved.display().to_string(),

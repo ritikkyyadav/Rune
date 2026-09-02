@@ -3,6 +3,7 @@ pub mod edit_file;
 pub mod error;
 pub mod grep;
 pub mod list_dir;
+pub mod paths;
 pub mod read_file;
 pub mod repo_map;
 pub mod search_code;
