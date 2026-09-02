@@ -167,3 +167,59 @@ export {
 
 // ─── Session Replay ───
 export { resumeFromCheckpoint } from "./session-replay";
+
+// ── Orchestration primitives ──
+//
+// `createSubagentTool`, `createWorkerTool`, `Ownership` and `TeamBus` were not
+// exported, so nothing outside this package could compose delegation at all —
+// which is a large part of why research.ts hardcoded its own DAG instead of
+// building on them.
+export { createSubagentTool, TASK_TOOL_SCHEMA, type SubagentDeps } from "./subagent";
+export {
+  createWorkerTool,
+  WORKER_TOOL_SCHEMA,
+  Ownership,
+  OwnershipClaims,
+  buildWorkerRegistry,
+  type WorkerDeps,
+} from "./worker";
+export {
+  SUBAGENT_RESULT_SCHEMA,
+  buildSubagentResult,
+  parseSubagentResult,
+  renderTaskResult,
+  renderWorkerResult,
+  validateSubagentResult,
+  type SubagentResult,
+} from "./subagent-result";
+export {
+  EFFORT_BUDGETS,
+  checkBudget,
+  describeBreach,
+  resolveMaxParallel,
+  resolveSubagentBudget,
+  type SubagentBudget,
+} from "./subagent-budget";
+export {
+  createWorkerWorktree,
+  mergeWorkerWorktree,
+  removeWorkerWorktree,
+  runWorktreeChecks,
+  type MergeOutcome,
+  type WorkerWorktree,
+} from "./worker-worktree";
+export {
+  defaultStatePath,
+  loadState as loadWorkflowState,
+  nodeHash,
+  parseWorkflow,
+  renderPrompt,
+  runWorkflow,
+  topologicalWaves,
+  type NodeResult,
+  type WorkflowDefinition,
+  type WorkflowEvent,
+  type WorkflowNode,
+  type WorkflowState,
+} from "./workflow";
+export { createWorkflowTool, WORKFLOW_TOOL_SCHEMA, type WorkflowToolDeps } from "./workflow-tool";

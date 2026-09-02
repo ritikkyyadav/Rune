@@ -1,0 +1,61 @@
+{
+  "name": "review",
+  "description": "Multi-dimension code review: four reviewers in parallel, then a verifier, then a synthesis.",
+  "maxParallel": 4,
+  "nodes": [
+    {
+      "id": "scope",
+      "kind": "task",
+      "label": "map the change",
+      "prompt": "Read the current diff (git diff HEAD) and list every file it touches, grouped by subsystem. For each group say in one line what the change is trying to do. Do not evaluate it yet."
+    },
+    {
+      "id": "correctness",
+      "kind": "task",
+      "label": "correctness",
+      "dependsOn": ["scope"],
+      "tier": "heavy",
+      "effort": "thorough",
+      "prompt": "Review the change below for CORRECTNESS only: logic errors, unhandled cases, race conditions, off-by-ones, wrong assumptions about the code it calls. Cite file:line for every finding. Ignore style, naming and test coverage — other reviewers own those.\n\n{{scope}}"
+    },
+    {
+      "id": "security",
+      "kind": "task",
+      "label": "security",
+      "dependsOn": ["scope"],
+      "tier": "heavy",
+      "effort": "thorough",
+      "prompt": "Review the change below for SECURITY only: injection, path traversal, secret handling, permission and sandbox boundaries, anything that widens what the agent may do without the user asking. Cite file:line. Ignore correctness and style.\n\n{{scope}}"
+    },
+    {
+      "id": "tests",
+      "kind": "task",
+      "label": "test coverage",
+      "dependsOn": ["scope"],
+      "prompt": "Review the change below for TEST COVERAGE only: which new behaviour has no test, which existing test would not have caught the bug this change fixes, which test asserts an implementation detail rather than a behaviour. Cite file:line.\n\n{{scope}}"
+    },
+    {
+      "id": "docs",
+      "kind": "task",
+      "label": "stale prose",
+      "dependsOn": ["scope"],
+      "prompt": "Find prose this change makes WRONG: comments, docstrings, README and docs/ text that describes the old behaviour. A stale doc is a defect. Cite file:line.\n\n{{scope}}"
+    },
+    {
+      "id": "verify",
+      "kind": "task",
+      "label": "check the reviewers",
+      "dependsOn": ["correctness", "security", "tests", "docs"],
+      "tier": "heavy",
+      "retry": 2,
+      "prompt": "Four reviewers reported below. For EACH finding, open the cited file:line and decide whether it is real. Report three lists: CONFIRMED (with the evidence you read), REJECTED (with why the reviewer was wrong), and UNVERIFIABLE (the citation did not resolve). A reviewer's confidence is not evidence."
+    },
+    {
+      "id": "report",
+      "kind": "task",
+      "label": "synthesize",
+      "dependsOn": ["verify"],
+      "prompt": "Write the review. Lead with the findings that would block a merge, then the ones worth fixing, then the ones worth knowing. Use ONLY confirmed findings from the verification below; say plainly how many findings were rejected and why that matters for how much of this review to trust.\n\n{{verify}}"
+    }
+  ]
+}
