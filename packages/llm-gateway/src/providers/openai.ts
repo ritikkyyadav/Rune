@@ -20,6 +20,7 @@ import {
   promptCacheKey,
   type CacheBreakpointPolicy,
 } from "./cache-policy";
+import { modelSeesImages } from "./model-capabilities";
 import { parseToolArguments } from "@gear/shared";
 
 /**
@@ -179,6 +180,7 @@ export class OpenAIProvider implements LlmProvider {
           this.wantsCacheBreakpoints(request.model)
             ? { breakpointIndex: request.cacheBreakpointIndex }
             : undefined,
+          request.model,
         ),
         tools: request.tools ? this.toOpenAITools(request.tools) : undefined,
         stop: request.stopSequences,
@@ -227,6 +229,7 @@ export class OpenAIProvider implements LlmProvider {
             this.wantsCacheBreakpoints(request.model)
               ? { breakpointIndex: request.cacheBreakpointIndex }
               : undefined,
+            request.model,
           ),
           tools: request.tools ? this.toOpenAITools(request.tools) : undefined,
           stop: request.stopSequences,
@@ -476,6 +479,7 @@ export class OpenAIProvider implements LlmProvider {
     messages: Message[],
     system?: string,
     cache?: { breakpointIndex?: number },
+    model?: string,
   ): OpenAI.ChatCompletionMessageParam[] {
     const result: OpenAI.ChatCompletionMessageParam[] = [];
     // Where the caller's stable prefix ends, translated into `result` indices
@@ -535,7 +539,7 @@ export class OpenAIProvider implements LlmProvider {
           (b): b is Extract<ContentBlock, { type: "image" }> => b.type === "image",
         );
 
-        if (imageBlocks.length > 0 && this.supportsVision()) {
+        if (imageBlocks.length > 0 && this.supportsVision(model)) {
           // Vision: images ride as data-URL image_url parts, before the text.
           result.push({
             role: "user",
@@ -548,12 +552,14 @@ export class OpenAIProvider implements LlmProvider {
             ],
           });
         } else {
-          // Hosts with unknown model catalogs (OpenRouter free tiers, local
-          // runtimes) may 400 on image parts. Drop the pixels but SAY so —
-          // the model must report "I couldn't view it", never guess.
+          // A model nobody recognizes may hard-400 on an image part, so unknown
+          // means "do not send pixels". Drop them but SAY so — the model must
+          // report "I couldn't view it", never guess.
           const note =
             imageBlocks.length > 0
-              ? `\n\n[${imageBlocks.length} attached image(s) omitted: the ${this.name} transport does not send images to this host — tell the user you could not view them]`
+              ? `\n\n[${imageBlocks.length} attached image(s) omitted: ${
+                  model ?? "this model"
+                } on the ${this.name} transport is not known to accept images — tell the user you could not view them]`
               : "";
           result.push({ role: "user", content: textParts.join("\n") + note });
         }
@@ -573,14 +579,20 @@ export class OpenAIProvider implements LlmProvider {
   }
 
   /**
-   * Whether this adapter sends image blocks on the wire. First-party OpenAI
-   * models are vision-capable across the board; OpenAI-COMPATIBLE hosts
-   * (OpenRouter, Groq, local runtimes, custom endpoints) serve arbitrary
-   * models where an image part risks a hard 400 — those get an honest
-   * text placeholder instead.
+   * Whether this request may carry image blocks on the wire.
+   *
+   * Keyed on the MODEL, not the provider name. `this.name === "openai"` meant a
+   * session on `anthropic/claude-sonnet-4-6` behind OpenRouter — a model that
+   * reads images perfectly well — had its screenshots stripped and replaced
+   * with "this transport does not send images". The transport sends them fine;
+   * the gate was asking the wrong question.
+   *
+   * The safe direction is unchanged: an unrecognized id gets no pixels and an
+   * honest note, because an OpenAI-compatible host serving an arbitrary
+   * checkpoint can hard-400 on an image part.
    */
-  protected supportsVision(): boolean {
-    return this.name === "openai";
+  protected supportsVision(model?: string): boolean {
+    return model !== undefined && modelSeesImages(model);
   }
 
   private toOpenAITools(tools: ToolDefinition[]): OpenAI.ChatCompletionTool[] {

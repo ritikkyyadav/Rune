@@ -77,7 +77,6 @@ describe("the API-key route", () => {
       expect({ id, listed: list.includes(id) }).toEqual({ id, listed: true });
     }
     expect(list).not.toContain("ollama");
-    expect(list).not.toContain("lmstudio");
   });
 
   test("names the env var, so an existing key is discoverable rather than re-typed", () => {
@@ -92,13 +91,12 @@ describe("the API-key route", () => {
 
 describe("the offline route", () => {
   test("is exactly the local runtimes", () => {
-    expect(ids("offline").sort()).toEqual(["lmstudio", "ollama"]);
+    expect(ids("offline").sort()).toEqual(["ollama"]);
   });
 
   test("says where each one lives, since that is the only thing to get wrong", () => {
     const byId = Object.fromEntries(loginTargets("offline").map((t) => [t.providerId, t]));
     expect(byId.ollama!.hint).toContain("11434");
-    expect(byId.lmstudio!.hint).toContain("1234");
   });
 
   test("needs no credential to count as usable", () => {

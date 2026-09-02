@@ -87,9 +87,12 @@ export const PROVIDER_CAPACITY: Record<string, ProviderCapacity> = {
   codex: "subscription",
   copilot: "subscription",
   openrouter: "free",
+  // The ids Gear ships for Ollama Cloud are the ones verified on the DEFAULT,
+  // no-subscription plan (the subscription-gated models are deliberately
+  // omitted — they 403). So this is free capacity, and `billingModeFor` agrees:
+  // the two used to disagree, one calling it free and the other a subscription.
   "ollama-turbo": "free",
   ollama: "local",
-  lmstudio: "local",
 };
 
 /**
@@ -214,6 +217,26 @@ export interface ProviderPreset {
   capabilities?: ProviderCapabilities;
   /** Optional pricing note; live cost still comes from MODEL_PRICING. */
   pricing?: { source: "static" | "live"; note?: string };
+  /**
+   * Tier model ids, declared HERE rather than repeated in
+   * `PROVIDER_TIER_DEFAULTS`. A provider's model ids used to live in three
+   * hand-maintained tables with no cross-check — the presets, the tier
+   * defaults, and the gateway's fallback defaults — which is how
+   * `ollama-turbo` came to point at a lineup that had been retired wholesale
+   * while the presets had already been refreshed.
+   *
+   * Declaring them once means a rot fix lands in one place. Presets that omit
+   * this keep their entry in `PROVIDER_TIER_DEFAULTS`; the agreement test
+   * (tests/unit/shared/provider-tables.test.ts) holds both forms to the same
+   * rule — every id a table names must be a model this preset actually offers.
+   */
+  tiers?: { heavy: string; standard: string; light: string };
+  /**
+   * The model the gateway falls back to when this provider is reached through
+   * a fallback chain, declared here for the same reason as `tiers`. Presets
+   * that omit it keep their entry in the gateway's own table.
+   */
+  fallbackModel?: string;
 }
 
 /** The reserved id for the single user-defined OpenAI-compatible endpoint. */
@@ -310,6 +333,10 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     models: [
       { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B" },
       { id: "openai/gpt-oss-120b", label: "GPT-OSS 120B" },
+      // The light tier resolves to this. It was reachable only through the
+      // tier table, so the one list a person reads while picking a model did
+      // not contain a model their session would actually run.
+      { id: "llama-3.1-8b-instant", label: "Llama 3.1 8B Instant" },
     ],
   },
   {
@@ -419,6 +446,12 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
       { id: "nemotron-3-nano:30b", label: "Nemotron 3 Nano 30B" },
       { id: "gemma4:31b", label: "Gemma 4 31B" },
     ],
+    // Folded from PROVIDER_TIER_DEFAULTS and the gateway's fallback table.
+    // This lineup rotted twice (qwen3-coder:480b and qwen3-coder-next both
+    // 410'd on 2026-07-15) and each rot had to be chased through three
+    // hand-maintained tables; the ids now live here only.
+    tiers: { heavy: "gpt-oss:120b", standard: "gpt-oss:120b", light: "gpt-oss:20b" },
+    fallbackModel: "gpt-oss:120b",
   },
   {
     // Local Ollama (no key). Reached over /api/chat on the user's machine via
@@ -439,19 +472,13 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
       { id: "qwen2.5-coder:32b", label: "Qwen2.5 Coder 32B" },
     ],
   },
-  {
-    // LM Studio's OpenAI-compatible local server (no key). Runs through
-    // OpenAIProvider against http://localhost:1234/v1. The model id is whatever
-    // you've loaded in LM Studio — pick it with `/model lmstudio/<id>`.
-    id: "lmstudio",
-    label: "LM Studio (local)",
-    kind: "openai-compat",
-    local: true,
-    baseUrl: "http://localhost:1234/v1",
-    defaultModel: "local-model",
-    docsUrl: "https://lmstudio.ai/docs/app/api",
-    models: [],
-  },
+  // NOTE: `lmstudio` was removed 2026-09-02 (P8.6, program decision D5). It
+  // shipped `models: []` and a placeholder `local-model` default, so the picker
+  // offered a provider with nothing to pick and a model id that only works if
+  // the user happens to have named theirs that. It duplicated the local-runtime
+  // slot Ollama already fills properly. LM Studio serves an OpenAI-compatible
+  // API, so anyone who wants it can still reach it through the custom endpoint
+  // (`/keys custom http://localhost:1234/v1 <model> <any-key>`).
 ];
 
 /** Look up a preset by id. */

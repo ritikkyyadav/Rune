@@ -42,7 +42,7 @@ export interface BuildGatewayOpts {
   customEndpoint?: CustomEndpoint;
   /** Provider ids toggled off — registered providers skip these. */
   disabled?: Set<string>;
-  /** Base URLs for local runtimes (ollama / lmstudio) by id; overrides preset defaults. */
+  /** Base URLs for local runtimes (ollama) by id; overrides preset defaults. */
   localBaseUrls?: Record<string, string>;
   /** Back-compat: explicit local Ollama base URL (folded into localBaseUrls.ollama). */
   ollamaBaseUrl?: string;
@@ -112,7 +112,7 @@ export function buildGateway(opts: BuildGatewayOpts): LlmGateway {
   for (const preset of PROVIDER_PRESETS) {
     if (disabled.has(preset.id)) continue;
 
-    // Local runtimes (ollama / lmstudio) need no API key. Register them opt-in:
+    // Local runtimes (ollama) need no API key. Register them opt-in:
     // only when they're the active provider or the user has configured a base URL
     // (in /keys or config), so a cloud session never silently falls back to a
     // (likely-not-running) localhost server.
@@ -308,7 +308,7 @@ export interface ProviderStatusRow {
   masked: string;
   disabled: boolean;
   active: boolean;
-  /** A local runtime (ollama / lmstudio) reached by base URL, no key. */
+  /** A local runtime (ollama) reached by base URL, no key. */
   local?: boolean;
   /** Resolved base URL for a local runtime (for display / editing). */
   endpoint?: string;

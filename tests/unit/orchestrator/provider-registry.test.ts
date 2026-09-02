@@ -119,12 +119,11 @@ describe("buildGateway", () => {
   });
 
   it("does NOT phantom-register local runtimes for a cloud session", () => {
-    // ollama/lmstudio must not appear just because they have default localhost
+    // ollama must not appear just because it has a default localhost
     // URLs — a cloud session should never silently fall back to localhost.
     const gw = buildGateway({ provider: "google", keys: { google: "g" }, env: noEnv });
     const names = gw.getRegisteredProviderNames();
     expect(names).not.toContain("ollama");
-    expect(names).not.toContain("lmstudio");
   });
 
   it("registers local ollama when it is the active provider", () => {
@@ -136,10 +135,10 @@ describe("buildGateway", () => {
     const gw = buildGateway({
       provider: "google",
       keys: { google: "g" },
-      localBaseUrls: { lmstudio: "http://localhost:1234/v1" },
+      localBaseUrls: { ollama: "http://box:11434" },
       env: noEnv,
     });
-    expect(gw.getRegisteredProviderNames()).toContain("lmstudio");
+    expect(gw.getRegisteredProviderNames()).toContain("ollama");
   });
 
   it("honors OLLAMA_HOST as a configured local endpoint", () => {
@@ -207,11 +206,6 @@ describe("providerStatus", () => {
     expect(o.endpoint).toBe("http://box:11434");
     expect(o.hasKey).toBe(true); // configured → usable
     expect(o.masked).toBe(""); // never a key
-
-    const lm = rows.find((r) => r.id === "lmstudio")!;
-    expect(lm.local).toBe(true);
-    expect(lm.endpoint).toBe("http://localhost:1234/v1"); // preset default
-    expect(lm.hasKey).toBe(false); // not configured, not active
   });
 
   it("reports the key count and a masked, dated pool for a multi-account provider", () => {
@@ -355,7 +349,6 @@ describe("resolveProviderCredentials + credential-map firewall", () => {
       env: noEnv,
     });
     expect(credentials.ollama).toBeUndefined();
-    expect(credentials.lmstudio).toBeUndefined();
   });
 
   it("skips disabled providers during resolution", async () => {

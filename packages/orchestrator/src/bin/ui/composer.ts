@@ -975,7 +975,7 @@ export interface KeyRow {
   disabled: boolean;
   /** The session's active provider. */
   active: boolean;
-  /** A local runtime (ollama / lmstudio) reached by base URL, no key. */
+  /** A local runtime (ollama) reached by base URL, no key. */
   local?: boolean;
   /** Resolved base URL for a local runtime (shown in place of a key). */
   endpoint?: string;

@@ -23,7 +23,6 @@ const KNOWN = new Set([
   "openrouter",
   "ollama",
   "ollama-turbo",
-  "lmstudio",
   "custom",
 ]);
 
@@ -96,15 +95,16 @@ describe("resolveTier", () => {
   });
 
   test("unknown provider (local runtime) falls back to the session model", () => {
+    // Local runtimes have no tier table: whatever the user pulled IS the model.
     const ref = resolveTier(
       "light",
       undefined,
-      "lmstudio",
-      "local-model",
-      new Set(["lmstudio"]),
+      "ollama",
+      "qwen2.5-coder:32b",
+      new Set(["ollama"]),
       KNOWN,
     );
-    expect(ref).toEqual({ provider: "lmstudio", model: "local-model" });
+    expect(ref).toEqual({ provider: "ollama", model: "qwen2.5-coder:32b" });
   });
 
   test("every tier table entry has all three tiers", () => {

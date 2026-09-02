@@ -180,7 +180,6 @@ function buildEngine(): Engine {
   const stickyUsable = (p: string): boolean =>
     getPreset(p) !== undefined &&
     (p === "ollama" ||
-      p === "lmstudio" ||
       hasStoredCredential(p) ||
       (isCliProvider(p) && hasCreds(p)));
   const sticky = lastUsed && stickyUsable(lastUsed.provider) ? lastUsed : null;
