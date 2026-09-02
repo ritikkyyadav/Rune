@@ -305,6 +305,18 @@ if (command === "serve") {
   await runServe(positionals as string[], values as Record<string, unknown>);
   if (values.status === true || positionals[1] === "status") process.exit(0);
 }
+if (command === "engine-host") {
+  // The sidecar entry (P3.6). A packaged desktop app ships THIS binary and
+  // spawns `gear engine-host`, so nobody needs Bun or a source checkout on
+  // their machine. Importing the module runs it: engine-host.ts owns stdio (or
+  // a unix socket with --socket) from the moment it loads, which is precisely
+  // the contract the Rust bridge expects.
+  await import("./engine-host");
+  // Park. The host owns the process from here and exits on its own when its
+  // input closes; falling through would start a second, interactive Gear on
+  // top of it and both would fight for stdin.
+  await new Promise(() => {});
+}
 if (command === "desktop" || command === "app") {
   const { runDesktop } = await import("./desktop-cli");
   process.exit(

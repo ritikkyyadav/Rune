@@ -183,14 +183,62 @@ fn resolve_host() -> Result<(String, String, String, Vec<(String, String)>), Str
 }
 
 /// Spawn the engine host child with piped stdio.
+/// The packaged `gear` binary shipped beside this executable, if there is one.
+///
+/// This is what makes a `.dmg` a product rather than a developer preview: a
+/// bundled app runs `gear engine-host`, so nobody needs Bun, a source checkout,
+/// or a pointer file. `~/.gear/desktop.json` remains the path for a checkout,
+/// and is checked SECOND — a developer running the app from source has a reason
+/// to want their own tree, and a stale bundled binary silently winning over it
+/// is the kind of thing that costs an afternoon.
+fn bundled_sidecar() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let name = if cfg!(windows) { "gear.exe" } else { "gear" };
+    // macOS: Contents/MacOS/<exe> with the sidecar beside it, and
+    // Contents/Resources for a resource-bundled copy. Linux/Windows: beside.
+    let candidates = [
+        dir.join(name),
+        dir.join("../Resources").join(name),
+        dir.join("resources").join(name),
+    ];
+    candidates
+        .iter()
+        .find(|p| p.exists())
+        .map(|p| p.to_string_lossy().into_owned())
+}
+
 fn spawn_host() -> Result<Child, String> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let workspace = std::env::var("GEAR_WORKSPACE").unwrap_or(home);
+
+    // ── The packaged path ──
+    if let Some(sidecar) = bundled_sidecar() {
+        let mut cmd = Command::new(&sidecar);
+        cmd.arg("engine-host")
+            .env("GEAR_WORKSPACE", &workspace)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        // gear-tools ships beside the launcher; the CLI finds it on its own,
+        // but naming it here removes one lookup from the startup path.
+        if let Ok(home) = std::env::var("HOME") {
+            let tools = format!("{home}/.gear/bin/gear-tools");
+            if Path::new(&tools).exists() {
+                cmd.env("GEAR_TOOLS_BIN", tools);
+            }
+        }
+        return cmd
+            .spawn()
+            .map_err(|e| format!("failed to start the bundled engine ({sidecar}): {e}"));
+    }
+
+    // ── The source-checkout path ──
     let (bun, engine_root, tools, env) = resolve_host()?;
     let script = format!("{engine_root}/packages/orchestrator/src/bin/engine-host.ts");
     if !Path::new(&script).exists() {
         return Err(format!("engine host not found at {script}"));
     }
-    let home = std::env::var("HOME").unwrap_or_default();
-    let workspace = std::env::var("GEAR_WORKSPACE").unwrap_or(home);
 
     let mut cmd = Command::new(&bun);
     cmd.arg("run")
@@ -300,6 +348,11 @@ fn engine_health(bridge: State<'_, Bridge>) -> Result<Value, String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        // The updater is registered unconditionally and CONFIGURED by
+        // tauri.conf.json. With no public key set it simply has nothing it will
+        // accept, which is the right posture for an unsigned build: an updater
+        // that installs whatever a URL hands it is worse than no updater.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
 

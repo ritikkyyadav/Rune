@@ -7,7 +7,7 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "bun run dev",
-    "beforeBuildCommand": "bun run build"
+    "beforeBuildCommand": "bun run build && bash ../../scripts/stage-desktop-sidecar.sh"
   },
   "app": {
     "windows": [
@@ -25,24 +25,58 @@
     ],
     "withGlobalTauri": false,
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost",
-      "devCsp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1420 http://localhost:1420"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' ipc: http://ipc.localhost ws://127.0.0.1:* ws://localhost:* https://fonts.googleapis.com https://fonts.gstatic.com",
+      "devCsp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' ipc: http://ipc.localhost ws://127.0.0.1:* ws://localhost:* ws://localhost:1420 http://localhost:1420 https://fonts.googleapis.com https://fonts.gstatic.com"
     }
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "dmg",
+      "app",
+      "msi",
+      "nsis",
+      "appimage",
+      "deb"
+    ],
+    "createUpdaterArtifacts": false,
+    "shortDescription": "The agent that proves its work, on any model.",
+    "longDescription": "Gear runs an AI coding agent on this machine, against the model you already pay for. Every answer traces to the tools, prompts, permissions and policy that produced it. It is local-first: no cloud, no account.",
+    "category": "DeveloperTool",
+    "copyright": "Savoir Studio",
+    "externalBin": [
+      "binaries/gear"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    },
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0"
+        ]
+      }
+    }
   },
   "plugins": {
     "shell": {
       "open": true
+    },
+    "updater": {
+      "active": true,
+      "dialog": true,
+      "pubkey": "",
+      "endpoints": [
+        "https://github.com/ritikkyyadav/Alan/releases/latest/download/latest.json"
+      ]
     }
   }
 }

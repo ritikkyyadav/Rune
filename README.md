@@ -114,12 +114,20 @@ crates/
   gear-index/     Code symbol index
   gear-sandbox/   Sandbox primitives
 apps/
-  desktop/        Tauri + React desktop client (developer preview — runs from a source checkout)
+  desktop/        Tauri + React desktop client — also the `gear web` bundle, same code, different transport
 ```
 
-The engine ⇆ client separation is intentional: the same engine powers the CLI, the desktop app, and
-(planned) an MCP-server wrapper. The desktop app is a **developer preview**: it launches the engine
-from this source checkout (Bun required) and is not part of the release assets yet.
+The engine ⇆ client separation is intentional: the same engine powers the CLI, the desktop app, the
+web client and (planned) an MCP-server wrapper — every one of them over `@gear/protocol`
+(`docs/protocol.md`).
+
+**Gear Desktop** is the surface most people should use. `gear desktop` opens it and `gear app` is
+the alias; `gear desktop --check` proves the engine is reachable without opening a window. A
+packaged build ships the compiled `gear` binary and runs `gear engine-host`, so no Bun and no source
+checkout are needed — see `docs/release-desktop.md`, including what is not signed yet and why.
+
+**`gear web`** serves the same bundle in a browser with the engine attached, which is how Linux, a
+phone on the LAN (`--host`) and a machine you are not sitting at get in.
 
 ## Install
 
