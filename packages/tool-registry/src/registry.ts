@@ -1,5 +1,6 @@
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "./types";
 import type { ToolDefinition } from "@gear/llm-gateway";
+import { toolDescriptionFor } from "./model-families";
 
 interface CircuitState {
   failures: number;
@@ -94,7 +95,8 @@ export class ToolRegistry {
       })
       .map((h) => ({
         name: h.schema.name,
-        description: h.schema.description,
+        // Same tool, phrased the way this model family reads instructions.
+        description: toolDescriptionFor(h.schema.description, h.schema.name, forModel),
         inputSchema: h.schema.inputSchema,
       }));
   }

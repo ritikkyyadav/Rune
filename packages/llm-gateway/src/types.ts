@@ -133,6 +133,16 @@ export function reasoningEffortsFor(provider: string, model: string): ReasoningE
   if (provider === "openai" && /^(gpt-5|o[134])(-|:|$)/.test(m)) {
     return ["low", "medium", "high"];
   }
+  // Gemini has no `reasoning_effort` field — depth is a thinking BUDGET — but
+  // the dial is real and is now translated on the wire (geminiThinkingConfig).
+  // It returned [] here while the effort was silently dropped in the adapter,
+  // so the control was correctly hidden for the wrong reason. The 2.5 line
+  // takes a budget; the 3.x line takes a level with only two documented values.
+  if (provider === "google") {
+    if (/^gemini-2\.5-/.test(m)) return ["low", "medium", "high"];
+    if (/^gemini-3/.test(m)) return ["low", "high"];
+    return [];
+  }
   return [];
 }
 

@@ -248,6 +248,51 @@ now say free.
 
 ---
 
+## The reasoning-depth dial, per provider
+
+Gear has shipped a depth dial that went nowhere **twice**: Codex ran at the
+server default because `reasoning.effort` was never sent while "max" sat in the
+picker looking selectable, and Gemini dropped `thinking.effort` inside its
+adapter, so `/effort high` on a Gemini session changed nothing. Both were
+invisible from inside the process — the request looked fine and the model
+answered; only the depth was quietly wrong.
+
+Each provider names the dial differently, and one of them does not have one:
+
+| Provider | Wire field | Values | Notes |
+|---|---|---|---|
+| `openai` | `reasoning_effort` | low / medium / high | gpt-5 and o-series only; the family also swaps `max_tokens` for `max_completion_tokens`. Thinking off maps to the model's floor, because omitting the field is not "off" — it defaults to medium and eats the completion budget on hidden reasoning |
+| `codex` | `reasoning.effort` | low / medium / high / xhigh / max | measured against the live backend; the gpt-5.6 line rejects `minimal`, so it is floored to `low` |
+| `google` | `generationConfig.thinkingConfig.thinkingBudget` (2.5) or `thinkingLevel` (3.x) | low → 4,096 · medium → 8,192 · high → 16,384 · xhigh/max → 24,576 | Gemini has no effort field: depth is a token budget. 2.5 Pro's floor is 128 and it cannot be switched off. An explicit `budgetTokens` still wins over the effort |
+| `anthropic` | `thinking: { type, budget_tokens }` | — | adaptive or budgeted thinking; **no effort field exists**, and none is invented |
+| every OpenAI-compatible host | — | — | no dial; a bare `gpt-5` typed against OpenRouter keeps the classic params OpenRouter normalizes |
+
+`reasoningEffortsFor(provider, model)` is the one source the model picker and
+the status line read, so a dial is offered **only where the wire actually
+carries it**. `tests/unit/gateway/reasoning-wire-fields.test.ts` asserts the
+exact field per provider, including the providers whose correct answer is "no
+field at all".
+
+## Per-family tool descriptions
+
+`apply_patch` was already advertised only to the gpt/o-series/codex lineage —
+those models were trained on the `*** Begin Patch` envelope and nobody else has
+seen it. That gate answers "should this model see this tool". A second, smaller
+adapter answers "how should it be described to this model"
+(`packages/tool-registry/src/model-families.ts`):
+
+- **gpt**: `edit_file` says to prefer it over `apply_patch` for a single-file
+  change — the lineage otherwise reaches for the multi-file envelope on a
+  one-line edit, where one context mismatch fails the whole patch.
+- **gemini**: `edit_file` says the call *is* the change — this is the family
+  most prone to describing an edit it has not made.
+- **claude**: no variant. None has earned one.
+
+A variant may only append; the base description always survives, and an
+unrecognized model gets the plain text.
+
+---
+
 ## Reading a cache number in the product
 
 `gear audit` and the TUI footer read one source: the cost tracker's
