@@ -6,6 +6,7 @@
 // unit-testable without React or Tauri.
 
 import type { EngineEvent, PermissionDecision, PermissionPrompt } from "./types";
+import { assertNeverSoft } from "@gear/protocol";
 
 export type SpanKind =
   | "model"
@@ -320,7 +321,8 @@ export function traceReducer(state: TraceState, action: TraceAction): TraceState
     }
 
     case "event": {
-      const ev = action.event as EngineEvent & Record<string, unknown>;
+      // No cast: the union is `@gear/protocol`'s, and the switch is exhaustive.
+      const ev = action.event;
       if (state.current == null) return state;
       switch (ev.type) {
         case "thinking_delta": {
@@ -601,8 +603,26 @@ export function traceReducer(state: TraceState, action: TraceAction): TraceState
           });
           return { ...next, current: null, openModel: null };
         }
-        default:
+
+        // ─── Named, and deliberately not given a span ───
+        // The trace rail records what the RUN did to the outside world — model
+        // calls, tool calls, permissions, verification. These are transcript or
+        // status-rung material and would only add noise to a causal rail. They
+        // are named rather than defaulted so a member added to AgentTurnEvent
+        // is a type error here until the rail has decided about it.
+        case "notice":
+        case "context_warning":
+        case "todo_updated":
+        case "step_check":
+        case "retry":
+        case "handoff":
+        case "replanning":
+        case "tool_progress":
           return state;
+
+        default:
+          // Compile-time exhaustiveness (see @gear/protocol assertNever).
+          return assertNeverSoft(ev, state);
       }
     }
     default:

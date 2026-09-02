@@ -9,23 +9,11 @@
 
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "@gear/tool-registry";
 
-export interface UserQuestion {
-  question: string;
-  options: string[];
-  /**
-   * Where this question sits in the round, 0-based, and how many there are.
-   *
-   * A round of four is asked one question at a time, each replacing the last.
-   * Without these the person answers four unrelated-looking interruptions and
-   * cannot tell after the first whether they are nearly done or have only just
-   * started. The frontends render them as `2 of 4`; a frontend that ignores
-   * them is unaffected.
-   */
-  index?: number;
-  total?: number;
-}
+// `UserQuestion` is a wire shape: ask_user is one of the five round-trips a
+// non-terminal client must be able to hold (P2.2), so @gear/protocol owns it.
+export type { UserQuestion } from "@gear/protocol";
+import type { UserQuestion } from "@gear/protocol";
 
-/** Resolves with the user's answer (an option or free text). */
 export type QuestionHandler = (q: UserQuestion) => Promise<string>;
 
 export const ASK_USER_SCHEMA: ToolSchema = {

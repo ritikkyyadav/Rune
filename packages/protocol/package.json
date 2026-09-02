@@ -1,0 +1,16 @@
+{
+  "name": "@gear/protocol",
+  "version": "0.3.0",
+  "private": true,
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "build": "bun build ./src/index.ts --outdir ./dist --target bun",
+    "typecheck": "tsc --noEmit",
+    "lint": "prettier --check src/",
+    "test": "bun test ../../tests/unit/protocol"
+  },
+  "devDependencies": {
+    "typescript": "^5.8"
+  }
+}

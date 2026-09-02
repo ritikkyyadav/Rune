@@ -23,6 +23,8 @@ import {
   type ToolActivityView,
   type TranscriptLineView,
 } from "./activity";
+import type { AgentTurnEvent, ResearchEvent } from "@gear/protocol";
+import { assertNeverSoft } from "@gear/protocol";
 import { formatError, formatEvent, fmtTokens } from "./events";
 import { Pulse, PULSE_WEIGHT, pulseGlyph, quietLabel } from "./pulse";
 import { renderMarkdown } from "./markdown";
@@ -1172,7 +1174,15 @@ export class TurnRenderer {
     this.commitTimeline(block);
   }
 
-  onEvent(event: any): void {
+  /**
+   * The one choke point where engine events become rows.
+   *
+   * Typed, and exhaustive: every member of both unions is named and the switch
+   * ends in `assertNever`. It took `any` until Phase 2, which is why adding a
+   * member to `AgentTurnEvent` compiled clean and rendered nothing — the
+   * defect this whole phase exists to make impossible.
+   */
+  onEvent(event: AgentTurnEvent | ResearchEvent): void {
     switch (event.type) {
       case "thinking_delta": {
         // Reasoning remains private. The UI communicates intent and evidence
@@ -1579,7 +1589,16 @@ export class TurnRenderer {
         }
         return;
 
-      default: {
+      // Research runs stream through the same renderer as a turn (the report
+      // IS the answer), so their events are named here and rendered through
+      // the shared formatter rather than falling into a default.
+      case "research_plan":
+      case "research_step_start":
+      case "research_source":
+      case "research_step_done":
+      case "research_synthesizing":
+      case "research_report_delta":
+      case "research_complete": {
         const block = formatEvent(event, { cost: this.opts.getCost?.() });
         if (block) {
           this.flushRoutine();
@@ -1587,7 +1606,14 @@ export class TurnRenderer {
           this.commitTimeline(block);
         }
         this.updateLive();
+        return;
       }
+
+      default:
+        // Compile-time exhaustiveness: a new union member is a type error here
+        // until it is named above. At runtime an event from a NEWER host is
+        // ignored rather than thrown (additive-minor contract).
+        assertNeverSoft(event, undefined);
     }
   }
 

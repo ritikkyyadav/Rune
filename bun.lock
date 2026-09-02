@@ -15,6 +15,7 @@
       "name": "@gear/desktop",
       "version": "0.3.0",
       "dependencies": {
+        "@gear/protocol": "workspace:*",
         "@tauri-apps/api": "^2.0.0",
         "@tauri-apps/plugin-shell": "^2.0.0",
         "react": "^19.0.0",
@@ -51,10 +52,18 @@
       },
       "dependencies": {
         "@gear/llm-gateway": "workspace:*",
+        "@gear/protocol": "workspace:*",
         "@gear/shared": "workspace:*",
         "@gear/telemetry": "workspace:*",
         "@gear/tool-registry": "workspace:*",
       },
+      "devDependencies": {
+        "typescript": "^5.8",
+      },
+    },
+    "packages/protocol": {
+      "name": "@gear/protocol",
+      "version": "0.3.0",
       "devDependencies": {
         "typescript": "^5.8",
       },
@@ -81,6 +90,7 @@
       "version": "0.3.0",
       "dependencies": {
         "@gear/llm-gateway": "workspace:*",
+        "@gear/protocol": "workspace:*",
         "@gear/shared": "workspace:*",
         "@mozilla/readability": "^0.6.0",
         "linkedom": "^0.18.5",
@@ -212,6 +222,8 @@
     "@gear/llm-gateway": ["@gear/llm-gateway@workspace:packages/llm-gateway"],
 
     "@gear/orchestrator": ["@gear/orchestrator@workspace:packages/orchestrator"],
+
+    "@gear/protocol": ["@gear/protocol@workspace:packages/protocol"],
 
     "@gear/shared": ["@gear/shared@workspace:packages/shared"],
 

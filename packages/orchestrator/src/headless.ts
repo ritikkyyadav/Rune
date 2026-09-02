@@ -11,8 +11,9 @@
 // CI step, git hook and shell pipeline needs first: one prompt in, an answer
 // and an exit code out, no cursor addressing, no prompts to answer.
 
-import type { Engine, PermissionPrompt, UserPermissionDecision } from "./engine";
-import type { AgentTurnEvent } from "./agent-loop";
+import type { Engine } from "./engine";
+import type { AgentTurnEvent, PermissionPrompt, UserPermissionDecision } from "@gear/protocol";
+import { assertNeverSoft } from "@gear/protocol";
 
 export interface HeadlessOptions {
   /** Emit a JSON envelope instead of plain text — for machine consumers. */
@@ -144,9 +145,35 @@ export async function runHeadless(
           cacheReadTokens += event.cacheReadTokens ?? 0;
           break;
         case "notice":
+        case "context_warning":
           opts.onProgress?.(event.message);
           break;
+
+        // ── Named and deliberately not counted ──
+        // A headless run reports what the turn DID: text, tools, files, usage.
+        // These carry no counter of their own here, but they are named rather
+        // than defaulted so a member added upstream is a compile error until
+        // this reducer has decided what it means for a machine consumer.
+        case "thinking_delta":
+        case "tool_call_args_delta":
+        case "turn_complete":
+        case "error":
+        case "verification_started":
+        case "verification_completed":
+        case "todo_updated":
+        case "step_check":
+        case "fallback":
+        case "retry":
+        case "compaction":
+        case "checkpoint_saved":
+        case "handoff":
+        case "replanning":
+        case "tool_progress":
+          break;
+
         default:
+          // Compile-time exhaustiveness (see @gear/protocol assertNever).
+          assertNeverSoft(event, undefined);
           break;
       }
     }
