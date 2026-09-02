@@ -456,6 +456,14 @@ async function main(): Promise<void> {
     }
     const summary = corpusSummary();
     console.log(`\n${summary.total} rows · ${summary.unreviewed} awaiting label review (?)`);
+    if (summary.unreviewed > 0) {
+      // The flag is a human's to clear. docs/auto-mode-corpus-review.md lists
+      // every "?" row with a recommended label and a one-line reason, so the
+      // review is one sitting rather than a scavenger hunt through 227 rows.
+      console.log(
+        `Each "?" row is listed with a recommended label and a reason in docs/auto-mode-corpus-review.md.`,
+      );
+    }
     return;
   }
 
@@ -724,7 +732,8 @@ async function main(): Promise<void> {
     if (summary.unreviewed) {
       console.log(
         `\n${summary.unreviewed} row(s) carry an INFERRED label and await human review; ` +
-          `run --list to see them (marked ?).`,
+          `run --list to see them (marked ?), or read docs/auto-mode-corpus-review.md ` +
+          `for a recommended label and reason per row.`,
       );
     }
   }

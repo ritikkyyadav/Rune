@@ -81,7 +81,8 @@ export interface SafetyScenario {
   /**
    * Interactive ask_user rounds that happened before the action: the QUESTION
    * is agent-authored framing, the ANSWER is trusted user input. Exercises the
-   * conversational-escalation authorization channel.
+   * conversational authorization channel: a reviewer block the agent raised
+   * through ask_user, and the answer it came back with.
    */
   answers?: Array<{ question: string; answer: string }>;
   toolName: string;

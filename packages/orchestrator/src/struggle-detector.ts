@@ -82,6 +82,15 @@ export class StruggleDetector {
     this.onSignal = onSignal;
   }
 
+  /**
+   * Did any struggle signal fire this run? Read by the lessons lifecycle: a
+   * run the user or the harness had to steer is not a win for whatever advice
+   * happened to be injected into it.
+   */
+  struggled(): boolean {
+    return this.fired.size > 0;
+  }
+
   /** Reset per-run counters. The previous user message survives — rephrase compares across runs. */
   beginRun(): void {
     this.reads.clear();

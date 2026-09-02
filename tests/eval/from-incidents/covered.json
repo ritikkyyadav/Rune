@@ -1,1 +1,16 @@
-{}
+{
+  "provider.stream_error": "incident_stream_error_recovery",
+  "provider.malformed_tool_json_fatal": "incident_malformed_tool_json",
+  "loop.consecutive_errors": "incident_consecutive_errors_handoff",
+  "provider.empty_completion": "incident_empty_completion",
+  "waivers": {
+    "crash.dirty_exit": {
+      "reason": "A CLI PROCESS exiting non-zero without an incident. The eval harness drives the engine in-process, so there is no child process to exit dirtily and no shape to script — reproducing this needs a process-level harness the suite does not have. 162 occurrences, all from component 'cli'. Tracked in docs/program/backlog.md.",
+      "at": "2026-09-02"
+    },
+    "context.budget_overflow": {
+      "reason": "Requires a context large enough to exceed the assembled budget, which means either a multi-megabyte fixture (slow, and a size the compactor's thresholds would have to be pinned against) or a synthetic budget override the harness cannot express today. Real, worth covering, and out of scope for P7.8 — it needs RunOptions to carry a context-budget override first. 25 occurrences.",
+      "at": "2026-09-02"
+    }
+  }
+}

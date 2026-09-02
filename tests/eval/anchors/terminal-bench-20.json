@@ -1,0 +1,29 @@
+{
+  "benchmark": "Terminal-Bench",
+  "pinnedAt": "2026-09-02",
+  "source": "laude-institute/terminal-bench (core task set)",
+  "note": "Task ids only. Nothing here downloads the dataset or its Docker images — see docs/benchmarks.md. Terminal-Bench runs each task in a container with a real shell, which is the axis SWE-bench does not measure and the one this agent's sandbox and bash discipline actually live on.",
+  "selection": "Twenty core tasks spanning the categories that exercise a terminal agent's weak points: build systems, package management, file surgery, process control, networking and recovery from a broken environment.",
+  "task_ids": [
+    "broken-python",
+    "build-cython-ext",
+    "build-initramfs",
+    "chess-best-move",
+    "conda-env-conflict",
+    "configure-git-webserver",
+    "cron-broken-network",
+    "csv-to-parquet",
+    "extract-safely",
+    "fix-git",
+    "fix-permissions",
+    "git-multibranch",
+    "grid-pattern-transform",
+    "hello-world",
+    "home-server-https",
+    "intrusion-detection",
+    "jupyter-notebook-server",
+    "make-doom-for-mips",
+    "path-tracing-reverse",
+    "swe-bench-astropy-1"
+  ]
+}
