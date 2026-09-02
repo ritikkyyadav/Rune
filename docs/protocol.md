@@ -219,6 +219,25 @@ it would put a sub-agent's sub-agent on the lead's status line).
 
 Recursion stops at one level, which is what keeps the frame bounded.
 
+## `gear -P --stream-json`
+
+Every event as NDJSON on stdout, one JSON object per line, the envelope LAST:
+
+```bash
+gear -P "say ok" --stream-json
+{"type":"text_delta","text":"ok"}
+{"type":"usage","inputTokens":0,"outputTokens":0,...}
+{"type":"turn_complete","stopReason":"end_turn","totalTurns":1}
+{"ok":true,"text":"ok","toolCalls":0,...}
+```
+
+The envelope is compact in this mode and only in this mode: `--json` on its own
+keeps the indented form a person reads, but a pretty-printed record spread over
+eighteen lines is not NDJSON and a line-by-line consumer would choke on it.
+
+Exit codes are unchanged: `0` ok, `1` failed, `3` needed permission and had
+nobody to ask.
+
 ## Exhaustiveness — the drift law
 
 `AgentTurnEvent` has 22 members and is consumed by five reducers: the TUI

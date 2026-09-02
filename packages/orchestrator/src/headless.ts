@@ -29,6 +29,16 @@ export interface HeadlessOptions {
   autoApprove?: boolean;
   /** Sink for progress; defaults to nothing. Never stdout — that is the answer. */
   onProgress?: (line: string) => void;
+  /**
+   * Emit every event as it happens, for `--stream-json`.
+   *
+   * A headless run reported one envelope after several minutes of silence: for
+   * CI, a benchmark harness or a watching human, "still working" and "wedged"
+   * looked identical. This is the same typed union every other surface reads,
+   * one JSON object per line, so a consumer can render progress with the
+   * protocol package and nothing else.
+   */
+  onEvent?: (event: AgentTurnEvent) => void;
 }
 
 export interface HeadlessResult {
@@ -112,6 +122,9 @@ export async function runHeadless(
 
   try {
     for await (const event of engine.chat(sessionId, prompt) as AsyncIterable<AgentTurnEvent>) {
+      // Before the reducer, so a consumer sees the raw event whatever this
+      // function chooses to count.
+      opts.onEvent?.(event);
       switch (event.type) {
         case "text_delta":
           text += event.text;
@@ -222,8 +235,15 @@ export function headlessExitCode(r: HeadlessResult): number {
   return HEADLESS_EXIT.failed;
 }
 
-/** What a machine consumer reads off stdout. */
-export function headlessEnvelope(r: HeadlessResult): string {
+/**
+ * What a machine consumer reads off stdout.
+ *
+ * `compact` matters for `--stream-json`: every line of that output must be one
+ * JSON object, and a pretty-printed envelope spread over eighteen lines is not
+ * NDJSON — a consumer reading line by line would choke on the last record.
+ * `--json` on its own keeps the indented form, which is what a person reads.
+ */
+export function headlessEnvelope(r: HeadlessResult, opts: { compact?: boolean } = {}): string {
   return JSON.stringify(
     {
       ok: r.ok,
@@ -241,6 +261,6 @@ export function headlessEnvelope(r: HeadlessResult): string {
       durationMs: r.durationMs,
     },
     null,
-    2,
+    opts.compact ? undefined : 2,
   );
 }
