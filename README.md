@@ -129,8 +129,18 @@ native `gear-tools` executor for your OS from the
 `~/.gear/bin`; file, search, and shell tools depend on `gear-tools`):
 
 ```bash
+# macOS, Linux
 curl -fsSL https://raw.githubusercontent.com/ritikkyyadav/Alan/main/scripts/web-install.sh | bash
 ```
+
+```powershell
+# Windows
+irm https://raw.githubusercontent.com/ritikkyyadav/Alan/main/scripts/install.ps1 | iex
+```
+
+Both installers verify every download against the release's `SHA256SUMS` **before** anything reaches
+the install directory, and both take `--uninstall` / `-Uninstall`. See
+[docs/release.md](docs/release.md) for `GEAR_INSTALL_DIR`, the PATH behaviour, and the Homebrew tap.
 
 While this repo is **private**, anonymous `curl` can't reach it — use the
 authenticated equivalent (one-time `gh auth login` with the [GitHub CLI](https://cli.github.com)):
