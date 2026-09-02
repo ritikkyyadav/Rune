@@ -9,6 +9,8 @@ import type {
   UserPermissionDecision,
 } from "@gear/orchestrator";
 
+import { configHash, type AbConfig } from "../../packages/orchestrator/src/evolve/config-hash";
+
 import { MockProvider, type Responder, type Script } from "./mock-provider";
 
 export interface EvalTask {
@@ -103,6 +105,10 @@ export interface TaskResult {
    * the artifact appeared; this says how the harness got there.
    */
   retro?: RetroSummary;
+  /** The A/B arm this row belongs to; absent outside a paired run. */
+  arm?: string;
+  /** Digest of the configuration the run actually ran under (P7.1). */
+  configHash?: string;
 }
 
 export interface RetroSummary {
@@ -207,6 +213,20 @@ export interface RunOptions {
   provider?: string;
   /** Model id for real mode. */
   model?: string;
+  /**
+   * Behaviour fields to spread into `new Engine`, so the suite can measure one
+   * configuration against another instead of only one model against another.
+   * Typed as the A/B slice rather than `Partial<EngineConfig>` on purpose: the
+   * registry that produces these values is an allowlist, and widening the type
+   * here would quietly widen the allowlist (`evolve/config-hash.ts`).
+   */
+  configOverrides?: Partial<AbConfig>;
+  /**
+   * Which arm this run belongs to ("control" / a variant id). Recorded on the
+   * result and stamped into the run's retro, so a row in a report can always
+   * be traced back to the configuration that produced it.
+   */
+  arm?: string;
 }
 
 export async function runTask(task: EvalTask, opts: RunOptions = {}): Promise<TaskResult> {
@@ -224,6 +244,7 @@ export async function runTask(task: EvalTask, opts: RunOptions = {}): Promise<Ta
       listCost: 0,
       turns: 0,
       attempts: 0,
+      arm: opts.arm,
     };
   }
 
@@ -249,6 +270,10 @@ export async function runTask(task: EvalTask, opts: RunOptions = {}): Promise<Ta
 /** One full attempt at a task: fresh workspace, engine, chat, verify. */
 async function attemptTask(task: EvalTask, opts: RunOptions, real: boolean): Promise<TaskResult> {
   const start = performance.now();
+  // Computed here rather than read back from the session, so a run that dies
+  // before writing a retro still reports which arm it was: a crashed control
+  // arm is a result, and an unlabelled one is noise.
+  const armConfigHash = configHash(opts.configOverrides ?? {});
   const tmpRoot = await mkdtemp(join(tmpdir(), "gear-eval-"));
   const workspace = join(tmpRoot, "workspace");
   await mkdir(workspace, { recursive: true });
@@ -275,6 +300,11 @@ async function attemptTask(task: EvalTask, opts: RunOptions, real: boolean): Pro
       await task.setup({ workspace });
     }
 
+    // The A/B overrides are spread LAST so a variant can express a
+    // configuration, and they are the only thing between the two arms: same
+    // task set, same order, same seeds, same process. `configOverrides` is the
+    // allowlisted slice, so nothing under permissions/sandbox/autoMode can
+    // reach the engine through this seam even by accident.
     const engine = new Engine({
       model: real ? model : "mock-model",
       provider: real ? (provider as any) : "anthropic",
@@ -282,7 +312,11 @@ async function attemptTask(task: EvalTask, opts: RunOptions, real: boolean): Pro
       dbPath,
       toolsBinaryPath: TOOLS_BINARY,
       yoloMode: false,
+      ...(opts.configOverrides ?? {}),
     });
+    // Stamped into every retro this run writes, so the arm survives in the
+    // session log and not only in the report the runner prints.
+    if (opts.arm) engine.setEvolveArm(opts.arm);
 
     let mock: MockProvider | null = null;
 
@@ -381,6 +415,8 @@ async function attemptTask(task: EvalTask, opts: RunOptions, real: boolean): Pro
         capped: true,
         errors: errors.length ? errors : undefined,
         retro,
+        arm: opts.arm,
+        configHash: armConfigHash,
       };
     }
 
@@ -417,6 +453,8 @@ async function attemptTask(task: EvalTask, opts: RunOptions, real: boolean): Pro
       throttled,
       errors: errors.length ? errors : undefined,
       retro,
+      arm: opts.arm,
+      configHash: armConfigHash,
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -434,6 +472,8 @@ async function attemptTask(task: EvalTask, opts: RunOptions, real: boolean): Pro
       provider: real ? provider : undefined,
       throttled: isThrottleError(msg),
       errors,
+      arm: opts.arm,
+      configHash: armConfigHash,
     };
   } finally {
     await rm(tmpRoot, { recursive: true, force: true });
