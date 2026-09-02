@@ -36,6 +36,8 @@ export const INCIDENT_CLASSES = [
   "tool.permission_denied",
   "tool.mcp_error",
   "loop.repeated_call_refused",
+  /** A tool declared an outputSchema and returned something that does not match it. */
+  "loop.schema_violation",
   "loop.same_shape_failures",
   "loop.same_shape_refused",
   "loop.stuck_nudge",
@@ -44,6 +46,13 @@ export const INCIDENT_CLASSES = [
   "loop.barren_turns",
   "loop.auto_halt",
   "loop.auto_halt_reported",
+  /**
+   * A step Auto held was then approved and run unchanged by the user. The
+   * containment stopped an action that was fine — the direction of error that
+   * costs trust rather than safety, and the ground truth the corpus is
+   * labelled from.
+   */
+  "auto.supervisor_false_positive",
   "loop.evidence_gate",
   "loop.delegation_gate",
   "loop.verification_failed",

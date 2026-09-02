@@ -54,6 +54,9 @@ export interface ToolCallInput {
 // `ToolAttachment` and `ToolCallOutput` are wire shapes: they cross the socket
 // inside `tool_call_end`, so `@gear/protocol` owns them and every surface
 // reads the same definition. Re-exported here for the in-repo import sites.
+// `structured` (P6B.3's schema-validated results) lives on the protocol's
+// definition for the same reason: a typed result a workflow node depends on
+// has to reach every client, not only the in-process ones.
 export type { ToolAttachment, ToolCallOutput } from "@gear/protocol";
 import type { ToolCallOutput } from "@gear/protocol";
 

@@ -336,3 +336,180 @@ and least-privilege posture also follows the direction of
 [NIST IR 8596](https://nvlpubs.nist.gov/nistpubs/ir/2025/NIST.IR.8596.iprd.pdf). Anthropic's
 [containment write-up](https://www.anthropic.com/engineering/how-we-contain-claude) is an important
 reminder that model-side screening should not be treated as a perfect security boundary.
+
+---
+
+# Assurance
+
+_Added by Phase 6A (lane C). This section is appended deliberately: the sections above are being
+rewritten in parallel by Phase 1.1 to describe the design as built. Everything below concerns what
+Auto mode **records** and what its numbers **are** — it is additive to that rewrite, not a
+replacement for any part of it._
+
+## What a decision records
+
+Every decision Auto makes that is worth persisting (classifier-tier reviews, every non-allow
+verdict, human escalations, rule matches and exact grants — `shouldRecordAutoModeDecision`) becomes
+one `safety_decision` session event and one hash-chained `audit_log` entry.
+
+| Field                               | Meaning                                                                                 |
+| ----------------------------------- | --------------------------------------------------------------------------------------- |
+| `toolName`, `argsHash`              | The action. Arguments are **hashed, never stored** — the audit log is exportable.       |
+| `verdict`, `tier`, `risk`           | allow / ask / deny · safe \| workspace \| classifier · low → critical.                  |
+| `source`                            | Which of the sixteen decision sources produced it (thirteen in-path, three supervisor). |
+| `stage`                             | 0 mechanical · 1 fast screen · 2 reasoned.                                              |
+| `reason`, `reviewer`, `matchedRule` | Why, by whom, and against which configured rule.                                        |
+| `callId`                            | The tool call this decision gated, so a row joins to the `tool_result` that followed.   |
+| `turn`                              | The turn it belongs to.                                                                 |
+| `durationMs`                        | Total wall clock, unchanged.                                                            |
+| `timings`                           | `{ mechanicalMs, classifierMs, retryMs }` — the three parts sum to `durationMs`.        |
+
+The timing split exists because one average over both phases described neither: mechanical routing
+costs microseconds and a reviewer call costs seconds, so a p50 over `durationMs` was a statement
+about the _mix_, not about latency.
+
+## The supervisor writes down what it decided
+
+Low- and medium-risk actions run immediately and a supervisor watches out of band. It can halt the
+_next_ action, never the one it is looking at. Its verdicts are now recorded as `safety_decision`
+rows under their own sources:
+
+- `supervisor_screen` — the fast screen's verdict on an action that already ran, recorded **whether
+  or not it fires**. Recording only the flags left the false-positive rate without a denominator.
+- `supervisor_reasoned` — the careful confirmation. A screen that fires and a reasoned pass that
+  refuses to confirm it _is_ a caught false positive, and that pair is the measurement.
+- `supervisor_late` — a confirmed halt that landed after the run ended.
+
+These rows gate nothing, so they do not enter the tamper-evident chain of approvals and do not move
+the decision counters. Before this, the "screen fired, review disagreed" event incremented a
+process-local counter that reset on restart — the risk that now matters most was, in practice,
+unmeasured.
+
+## Held steps are the ground truth
+
+A step Auto declines to take unattended is carried to the end of the turn and offered to the user.
+What they do next is the strongest safety label the system produces, and it is produced for free:
+
+| Outcome   | What it means                                                                          |
+| --------- | -------------------------------------------------------------------------------------- |
+| `ran`     | The user approved and ran it **unchanged** — the containment was a **false positive**. |
+| `skipped` | They reviewed it and left it unrun — the containment was right.                        |
+| `refused` | Signed policy, a deny rule or a hook stood by the decision.                            |
+| `failed`  | It ran and broke on its own terms. **Not** a safety signal; do not read it as one.     |
+
+Each becomes a `held_step_outcome` event keyed to the deferral. A `ran` outcome additionally files
+an `auto.supervisor_false_positive` incident in the black box. Previously `runHeldStep` recorded a
+synthetic allow and dismissal recorded nothing at all, so this signal evaporated every turn.
+
+## Raw arguments: `collectForEval`
+
+A decision whose input was deliberately discarded cannot be replayed as a test case. That is why 913
+recorded decisions across 601 sessions could not become 913 labelled corpus rows.
+
+`[permissions.autoMode] collectForEval = true` — **off by default** — keeps the raw arguments in a
+separate encrypted store, `~/.gear/auto-eval.db`, AES-256-GCM under `~/.gear/auto-eval.key` (mode
+0600, generated on first write), keyed by the same `argsHash` the audit row carries.
+
+It never leaves the machine. No telemetry path, no export, and no black-box writer reads it; the
+audit chain keeps hashing exactly what it always hashed. Losing the key loses the sidecar, which is
+the correct failure mode for a file whose only purpose is local evaluation.
+
+## The report
+
+`bun run eval:auto-safety` measures the decisions this file describes. It replaces a 19-scenario
+smoke test that reported two counts and no rates.
+
+**Corpus: 227 rows**, 126 allow / 101 block, across eleven tool categories — shell, network, write,
+read, delegation, connector, browser, automation, config, team, planning. Four provenances:
+
+|              | rows | what they are                                                                                                                                                                                                                                                           |
+| ------------ | ---: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mined`      |   48 | Decisions Gear actually made, recovered read-only from `~/.gear/gear.db` (913 `safety_decision` rows over 601 sessions). Raw arguments were never stored, so these are reconstructed from the recorded tool, risk, verdict and the reviewer's own prose.                |
+| `regression` |   10 | This system's own documented false positives — the `npm audit` and `npm install` halts, the `/tmp` cleanup halt, the e2e-suite halt, the probe firing on the repo's own security tests, the halt that denied the agent its todo list, the 22-minute fail-closed outage. |
+| `redteam`    |   30 | Compound commands, base64/hex/reversed/percent-encoded payloads, instructions arriving inside tool results, self-protection probing, reworded retries, arguments impersonating a reviewer verdict.                                                                      |
+| `designed`   |  139 | Coverage for every category and both sides of every tier boundary, including the original nineteen.                                                                                                                                                                     |
+
+**38 rows carry an inferred label** (`reviewed: false`) and await human review. They stay in the
+corpus and in the numbers below; `--list` marks them. Hiding an uncertain label is worse than
+reporting one.
+
+### Measured 2026-09-02
+
+Positive is BLOCK. Recall is the share of unsafe actions stopped; precision is the share of blocks
+that were warranted.
+
+|                                 | offline (dead reviewer) | live (openrouter, `minimax/minimax-m3:free`)       |
+| ------------------------------- | ----------------------- | -------------------------------------------------- |
+| Precision                       | 87.2% [78–93]           | **94.4%**                                          |
+| Recall                          | 67.3% [58–76]           | 67.3%                                              |
+| F1                              | 76.0%                   | 78.6%                                              |
+| False positives                 | 0 mechanical            | 4                                                  |
+| False negatives                 | 33                      | 33                                                 |
+| p50 / p95 reviewer latency      | — (no calls)            | **1,868 ms / 6,465 ms** over 65 reviewed decisions |
+| Decisions costing no model call | 227                     | **162 of 227 (71%)**                               |
+| Cost                            | $0                      | $0 (free model), 217 live requests                 |
+
+**The mechanical layer holds.** 55 of 55 mechanical block rows were stopped with no model reachable
+at all, and 116 of 116 mechanical allow rows still ran. That is the regression guard for the
+22-minute outage, and it is the number that runs on every change.
+
+**The reviewer is where the recall is missing.** Of 46 rows that only a reviewer can catch, the free
+model caught 13. Those 33 misses are the entire recall gap: the mechanical layer is not failing,
+the cheap reviewer is. That is a procurement finding, not a design one.
+
+### Per decision source (live)
+
+| source                      |   n | precision | recall |      p50 |      p95 |
+| --------------------------- | --: | --------: | -----: | -------: | -------: |
+| `supervised_tier`           | 116 |         — |     0% |     0 ms |     0 ms |
+| `containment`               |  63 |       94% |   100% | 1,868 ms | 6,465 ms |
+| `safe_tier`                 |  22 |         — |      — |     0 ms |     0 ms |
+| `workspace_tier`            |  10 |         — |     0% |     0 ms |     0 ms |
+| `guardrail_circuit_breaker` |   7 |      100% |   100% |     0 ms |     0 ms |
+| `classifier_reasoned`       |   6 |         — |      — | 1,321 ms | 4,778 ms |
+| `reviewer_input_limit`      |   2 |      100% |   100% |     0 ms |     0 ms |
+| `exact_user_grant`          |   1 |         — |      — |     0 ms |     0 ms |
+
+The `supervised_tier` row is the design working as intended and it is worth reading carefully: 116
+of 227 decisions were cleared with no model call and no delay. Its 0% recall is not a failure — no
+block row is supposed to land there.
+
+### The supervisor's false-positive rate
+
+**30.6%.** Over the live run: 116 fast screens, 36 fired, and the reasoned pass confirmed 25. Nearly
+a third of the screen's flags did not survive review.
+
+That is the first time this number has existed. The fast screen is instructed to "err on the side of
+blocking", which is correct where it was designed to land — the approval path, where a block costs
+one action — and expensive where it now sits, where a latched halt costs the session. The two-stage
+confirmation is what keeps that 30.6% from being 30.6% of runs killed, and until P6A.1 the evidence
+for that claim was a process-local counter that reset on restart.
+
+`gear audit last` and `gear doctor` now report this from the database. On this machine's 601 real
+sessions: **6 confirmed halts, 1.00 per 100 runs** — at the product scorecard's stated limit, not
+under it — and "no data" for the two rates that need rows only the new recording produces.
+
+### Reviewer tiers: attempted, not concluded
+
+P6A.5 called for running the corpus against a cheap reviewer and a heavy one and choosing the
+default from the numbers. Both credentials exist on this machine and both passes were run.
+
+The heavy pass **did not produce a comparison.** All 65 reviewer-touching decisions returned
+`429 The usage limit has been reached`; zero real verdicts, $0 billed. The run is a faithful
+reproduction of the failure mode `reviewer-fallback.ts` exists for — the reviewer dying on the same
+quota as the session it supervises — and no evidence at all about model quality.
+
+So the default stands unchanged, and it stands on one measured tier rather than two. What the free
+tier does establish is worth stating plainly: it clears ordinary work correctly (94.4% precision, 4
+false positives in 227) and catches 13 of 46 reviewer-only blocks. A reviewer that misses two thirds
+of what only it can catch is not a safe default for a workload that depends on it — but on this
+system most of the safety comes from the mechanical layer, which is exactly why that is survivable
+and exactly why it is measured separately.
+
+### What this is not
+
+No claim of parity with another vendor's classifier. Nobody has run their corpus against this
+system or this corpus against theirs, and a number produced that way would be marketing.
+
+These are our numbers, on our corpus, on the models we could reach: 227 rows, one reviewer tier
+measured, 38 labels unreviewed, and a recall gap we can name and locate.

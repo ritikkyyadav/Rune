@@ -750,6 +750,65 @@ export class TaskStateStore {
     return this.state.todos;
   }
 
+  /**
+   * Claim the next unowned pending step for `owner`, and return it.
+   *
+   * This is what makes the ledger a queue rather than a list. The alternative —
+   * every worker reading the plan and picking what looks unclaimed — is a race
+   * with no arbiter, and two workers building the same slice is the specific
+   * failure the ownership model exists to prevent one layer down.
+   *
+   * In-process the claim is atomic because the engine's turns are serial; the
+   * cross-instance version lives on the team bus, which has a real transaction
+   * and the same TTL sweep as `claims`.
+   */
+  claimNext(owner: string, opts: { reclaimAfterMs?: number } = {}): TodoItem | null {
+    const state = this.state;
+    const now = Date.now();
+    const reclaimAfter = opts.reclaimAfterMs ?? 15 * 60_000;
+    const candidate =
+      state.todos.find((t) => t.status === "pending" && !t.owner) ??
+      // A step whose owner has gone quiet for long enough is reclaimable.
+      // Without this a crashed worker strands its step forever, and the fleet
+      // deadlocks on an item nobody is doing and nobody may take.
+      state.todos.find(
+        (t) =>
+          t.status === "in_progress" &&
+          t.owner &&
+          t.owner !== owner &&
+          t.claimedAt !== undefined &&
+          now - Date.parse(t.claimedAt) > reclaimAfter,
+      );
+    if (!candidate) return null;
+    candidate.owner = owner;
+    candidate.claimedAt = new Date().toISOString();
+    candidate.status = "in_progress";
+    this.logEvent("plan", `${owner} claimed: ${candidate.content.slice(0, 80)}`);
+    this.touch();
+    return candidate;
+  }
+
+  /** Release a step back to the queue — a worker that could not finish it. */
+  releaseClaim(owner: string): number {
+    const state = this.state;
+    let released = 0;
+    for (const todo of state.todos) {
+      if (todo.owner === owner && todo.status !== "completed") {
+        delete todo.owner;
+        delete todo.claimedAt;
+        todo.status = "pending";
+        released++;
+      }
+    }
+    if (released > 0) this.touch();
+    return released;
+  }
+
+  /** Every step a given owner holds. The scoped view a sub-agent is given. */
+  claimsOf(owner: string): TodoItem[] {
+    return this.state.todos.filter((t) => t.owner === owner);
+  }
+
   hasOpenTodos(): boolean {
     return this.state.todos.some((t) => t.status !== "completed");
   }

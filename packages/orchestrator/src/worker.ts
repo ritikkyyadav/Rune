@@ -12,9 +12,12 @@
 //   - Ownership is claimed atomically for the duration of a worker run;
 //     two concurrent workers claiming the same path = instant refusal, so
 //     parallel writers can never race on a file.
-//   - Workers have NO shell and NO network — writing code is their whole
-//     job. The lead runs builds/tests after integration (two parallel npm
-//     runs would collide anyway).
+//   - Each worker gets its OWN git worktree, seeded from the lead's working
+//     tree, so it has a shell: two parallel `npm run`s used to collide in one
+//     checkout, which is the only reason the shell was ever withheld. Network
+//     stays off, and the shell exists only where the OS sandbox does.
+//   - A worker runs the project's checks on its own slice before merge. A
+//     worker whose checks fail keeps its branch and does not merge.
 //   - No recursion: a worker's registry contains neither `task` nor `worker`.
 
 import { readFileSync, statSync } from "node:fs";
@@ -22,6 +25,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { LlmGateway, ProviderName, ReasoningEffort } from "@gear/llm-gateway";
 import type { IncidentReporter, ModelTier } from "@gear/shared";
 import {
+  isOsIsolationAvailable,
   ToolRegistry,
   registerBuiltinTools,
   type ToolCallInput,
@@ -30,6 +34,26 @@ import {
   type ToolSchema,
 } from "@gear/tool-registry";
 import { AgentLoop } from "./agent-loop";
+import {
+  SUBAGENT_RESULT_SCHEMA,
+  buildSubagentResult,
+  renderWorkerResult,
+  repairToSchema,
+} from "./subagent-result";
+import {
+  checkBudget,
+  describeBreach,
+  resolveSubagentBudget,
+  type BudgetBreach,
+} from "./subagent-budget";
+import { CostTracker } from "@gear/llm-gateway";
+import {
+  createWorkerWorktree,
+  mergeWorkerWorktree,
+  removeWorkerWorktree,
+  runWorktreeChecks,
+  type WorkerWorktree,
+} from "./worker-worktree";
 import type { PermissionCheck, ToolResultProcessor } from "./agent-loop";
 import { ContextEngine } from "./context-engine";
 
@@ -68,6 +92,25 @@ export interface WorkerDeps {
   maxTurns?: number;
   maxTokens?: number;
   /** Same prompt-injection probe used by the lead agent. */
+  /**
+   * Default per-call cost and wall-clock ceilings, overriding the per-effort
+   * defaults in subagent-budget.ts. A call's own `costCapUsd` / `deadlineMs`
+   * arguments override these in turn.
+   */
+  budgetDefaults?: { costCapUsd?: number; deadlineMs?: number };
+  /**
+   * Give each worker its own git worktree, seeded from the lead's WORKING TREE
+   * (not from HEAD — the lead's uncommitted work is the context the worker was
+   * dispatched to build on). Default true; falls back to the shared tree when
+   * the workspace is not a git repository.
+   */
+  worktrees?: boolean;
+  /**
+   * The project's own checks, run inside the worker's worktree before merge.
+   * Empty means no checks, which the result reports honestly as `not_run`.
+   */
+  checkCommands?: string[];
+  checkTimeoutMs?: number;
   toolResultProcessor?: ToolResultProcessor;
   /** The black-box tap, so a worker's breakers and fallbacks leave a record. */
   onIncident?: IncidentReporter;
@@ -91,7 +134,8 @@ export const WORKER_TOOL_SCHEMA: ToolSchema = {
   description:
     "Delegate a self-contained IMPLEMENTATION task to a write-capable worker sub-agent. " +
     "The worker may create/edit ONLY the files listed in `files` (its exclusive ownership) — " +
-    "it reads anything, writes only what it owns, and has no shell/network. " +
+    "it reads anything, writes only what it owns, runs the project's checks in its OWN git " +
+    "worktree, and has no network. " +
     "To parallelize a build, issue SEVERAL worker calls in ONE response with DISJOINT files — " +
     "they run concurrently; overlapping ownership is refused. Give each worker a complete " +
     "contract: what to build, exact interfaces/exports it must expose, and how its piece fits. " +
@@ -136,8 +180,26 @@ export const WORKER_TOOL_SCHEMA: ToolSchema = {
           "'thorough' for large multi-file pieces.",
       },
     },
+    costCapUsd: {
+      type: "number",
+      description:
+        "Optional list-price ceiling in USD for this sub-agent's own inference. It STOPS " +
+        "and returns what it has when exceeded — a budget never destroys work. Defaults " +
+        "come from `effort`.",
+    },
+    deadlineMs: {
+      type: "number",
+      description:
+        "Optional wall-clock ceiling in milliseconds from dispatch. Same stop-and-return " +
+        "behaviour as costCapUsd. Defaults come from `effort`.",
+    },
     required: ["prompt", "files"],
   },
+  // Declared since the first version of ToolSchema and never populated. The
+  // parent now knows the SHAPE of what comes back, not just that a string
+  // arrives, and the doctrine paragraph that used to describe the shape in
+  // prose shrinks to this.
+  outputSchema: SUBAGENT_RESULT_SCHEMA,
   permissionLevel: "confirm",
   category: "execute",
   // Workers are the one execute-category tool that MUST run concurrently —
@@ -228,7 +290,46 @@ export class OwnershipClaims {
   }
 }
 
-// ── Worker registry: reads + ownership-guarded writes, nothing else ──
+// ── Worker registry: reads, ownership-guarded writes, and a confined shell ──
+
+/**
+ * The worker's shell, pinned to its own worktree with the network off.
+ *
+ * Three properties, and none of them is asked for in a prompt.
+ *
+ * The cwd is the worker's worktree: the tool receives `workspaceRoot`, and the
+ * caller has already set that to the worktree path, so a command cannot reach
+ * the lead's tree by default.
+ *
+ * `network` is forced false. A worker that can reach the network can install,
+ * publish and exfiltrate, and building a slice of a feature needs none of that.
+ *
+ * OS isolation is MANDATORY, and it is enforced by not registering this tool at
+ * all when the machine cannot provide it (see `buildWorkerRegistry`). That is
+ * the difference between a requirement and a preference: the point of giving a
+ * worker a shell is that its build cannot touch anything outside its own tree,
+ * and a shell without the sandbox does not have that property, so on a machine
+ * without isolation a worker goes back to having no shell rather than getting
+ * an uncontained one.
+ */
+function withWorktreeShell(handler: ToolHandler): ToolHandler {
+  return {
+    schema: {
+      ...handler.schema,
+      description:
+        handler.schema.description +
+        " (worker: runs inside this worker's own git worktree, with the network OFF and the " +
+        "OS sandbox mandatory — run the project's checks on your slice before you report)",
+    },
+    validate: (args) => handler.validate(args),
+    execute: async (input: ToolCallInput): Promise<ToolCallOutput> =>
+      handler.execute({
+        ...input,
+        // The model does not get a say in either of these.
+        args: { ...input.args, network: false },
+      }),
+  };
+}
 
 function withOwnershipGuard(handler: ToolHandler, ownership: Ownership): ToolHandler {
   return {
@@ -255,7 +356,11 @@ function withOwnershipGuard(handler: ToolHandler, ownership: Ownership): ToolHan
 }
 
 /** Build the restricted registry one worker run sees. Exported for tests. */
-export function buildWorkerRegistry(binaryPath: string, ownership: Ownership): ToolRegistry {
+export function buildWorkerRegistry(
+  binaryPath: string,
+  ownership: Ownership,
+  opts: { shell?: boolean } = {},
+): ToolRegistry {
   const scratch = new ToolRegistry();
   registerBuiltinTools(scratch, binaryPath);
   const registry = new ToolRegistry();
@@ -265,8 +370,20 @@ export function buildWorkerRegistry(binaryPath: string, ownership: Ownership): T
     if (WORKER_READ_TOOLS.has(schema.name)) registry.register(handler);
     else if (WORKER_WRITE_TOOLS.has(schema.name)) {
       registry.register(withOwnershipGuard(handler, ownership));
+    } else if (opts.shell && schema.name === "bash" && isOsIsolationAvailable()) {
+      // A worker gets a shell only when it has a worktree of its own, and the
+      // shell is confined to it. The reason `bash` was absent was never that
+      // running commands is dangerous — the OS sandbox already handles that —
+      // it was that two parallel builds in ONE tree collide on node_modules,
+      // dist/ and every other unowned artifact. With a worktree per worker
+      // that collision cannot happen, so the tool comes back.
+      //
+      // Network stays off and OS isolation stays mandatory: a worker that can
+      // reach the network can install, publish and exfiltrate, and nothing
+      // about building a slice of a feature needs that.
+      registry.register(withWorktreeShell(handler));
     }
-    // everything else (bash, web, background shells, n8n, todo_write) is
+    // everything else (web, background shells, n8n, todo_write) is
     // deliberately absent from a worker's world.
   }
   return registry;
@@ -294,7 +411,9 @@ export function workerSystemPrompt(ownedList: string): string {
     `You EXCLUSIVELY own these files (relative to the workspace): ${ownedList}`,
     "Rules:",
     "- Create/edit ONLY the files you own — the harness mechanically refuses everything else. All other files are read-only reference: read them freely to match interfaces and style.",
-    "- You have no shell and no network. Verify by re-reading what you wrote; if a write reports syntax errors, fix them before finishing.",
+    "- You work in your OWN git worktree, seeded from the lead's current tree. Nothing you do here touches anyone else's checkout until your slice merges back.",
+    "- You have a shell, confined to that worktree with the network OFF. RUN THE PROJECT'S CHECKS on your slice before you finish — a compile error you could have caught is the one thing the lead cannot fix without redoing your work.",
+    "- If your checks fail and you cannot fix them, say so plainly. Your branch is kept for inspection and your changes are NOT merged, which is the right outcome: merging code that does not compile turns your failure into everyone's.",
     "- Fulfill the contract COMPLETELY. Follow the surrounding codebase's conventions.",
     "- Finish with a short integrator report: what you changed per file, decisions you made, and anything the lead must wire up, verify, or change in files you don't own.",
     "- Only the text you write AFTER YOUR LAST TOOL CALL is returned to the lead — anything typed on the way to a tool call is working narration and is discarded. Write the report once, at the end, self-contained. A turn that ends on a tool call returns no report at all.",
@@ -385,6 +504,10 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
       // from) OTHER Gear instances working in the same repository.
       let teamNote = "";
       let teamClaimed = false;
+      // Visible to the finally block, which owns worktree teardown. The
+      // branch is kept only when the work did NOT land — a failed check or a
+      // conflicted merge — because then the branch is the only copy of it.
+      let keepBranch = false;
       if (deps.team) {
         const lease = deps.team.claim(files, workerId);
         if (!lease.ok) {
@@ -395,8 +518,25 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
         if (lease.note) teamNote = lease.note;
       }
 
+      // The worker's own filesystem. Created AFTER the ownership claim (so a
+      // refused worker never makes one) and BEFORE the registry (so the shell
+      // knows whether it exists). Null means the workspace is not a git
+      // repository, and the worker falls back to the shared tree exactly as
+      // before — losing delegation because a directory is not a repo would be
+      // far worse than losing isolation.
+      let worktree: WorkerWorktree | null = null;
+      if (deps.worktrees !== false) {
+        worktree = createWorkerWorktree(input.workspaceRoot, workerId);
+      }
+      const workRoot = worktree?.path ?? input.workspaceRoot;
+
       try {
-        const registry = buildWorkerRegistry(deps.binaryPath, ownership);
+        // Ownership is re-expressed against the worktree: the guard compares
+        // resolved paths, and the worker writes inside its own checkout.
+        const workOwnership = worktree ? new Ownership(workRoot, files) : ownership;
+        const registry = buildWorkerRegistry(deps.binaryPath, workOwnership, {
+          shell: Boolean(worktree),
+        });
         const live = deps.resolve(tier);
         const budget = effort ? EFFORT_PRESETS[effort] : { maxTurns, maxTokens };
         // Nested loops used to run with NO context engine, which meant the
@@ -447,6 +587,24 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
         let toolCalls = 0;
         const changed = new Set<string>();
         let loopError: string | undefined;
+        let stopReason = "";
+        // Same contract as the scout's: checked between turns, and a breach
+        // stops the worker and returns what it built rather than discarding it.
+        // For a worker that matters more, not less — its output is files.
+        const budgetCaps = resolveSubagentBudget(effort, {
+          costCapUsd: input.args.costCapUsd ?? deps.budgetDefaults?.costCapUsd,
+          deadlineMs: input.args.deadlineMs ?? deps.budgetDefaults?.deadlineMs,
+        });
+        const costTracker = new CostTracker();
+        const budgetState = { spentUsd: 0, startedAt: Date.now() };
+        let breach: BudgetBreach | null = null;
+        // Filled by P6B.2 when the worker runs its own checks in its worktree,
+        // and by P6B.1 when the merge back reports conflicts. `not_run` until
+        // then, which is the honest default: a report that does not say whether
+        // anything was run reads as though something was.
+        let checkOutcome: "passed" | "failed" | "not_run" | undefined;
+        let mergeConflicts: string[] = [];
+        let workerBranch: string | undefined;
         // Mid-run model swap (see subagent.ts): `fallback` used to be ignored
         // here too, so a worker demoted to a fallback model reported in the
         // same voice as one that never left the model it was dispatched to.
@@ -455,12 +613,10 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
 
         // Propagate the abort signal: without it Ctrl-C/Esc could not
         // interrupt a running worker — the turn blocked until it finished.
-        for await (const event of loop.run(
-          fullPrompt,
-          input.sessionId,
-          input.workspaceRoot,
-          input.signal,
-        )) {
+        // `workRoot` (P6B.1), not `input.workspaceRoot`: a worker given its own
+        // git worktree runs inside it, and falls back to the shared tree when
+        // it has none.
+        for await (const event of loop.run(fullPrompt, input.sessionId, workRoot, input.signal)) {
           // The typed channel (P2.6): the parent gets the worker's real event,
           // and the one-line rung note is projected from it. `onProgress` is
           // still called at the two sites below for surfaces that only take
@@ -493,8 +649,21 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
             ) {
               changed.add(event.args.path);
             }
+          } else if (event.type === "usage") {
+            budgetState.spentUsd += costTracker.estimate(event.model ?? live.model, {
+              inputTokens: event.inputTokens,
+              outputTokens: event.outputTokens,
+              cacheReadTokens: event.cacheReadTokens,
+              cacheCreationTokens: event.cacheCreationTokens,
+            });
           } else if (event.type === "error") loopError = event.error;
+          else if (event.type === "turn_complete") stopReason = event.stopReason;
           if (event.type === "turn_complete") break;
+          breach = checkBudget(budgetCaps, budgetState);
+          if (breach) {
+            stopReason = breach.kind === "cost" ? "cost_budget" : "time_budget";
+            break;
+          }
         }
 
         const trimmed = report.trim();
@@ -511,7 +680,108 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
           );
         }
 
-        const summary = buildManifest(changed, input.workspaceRoot, toolCalls);
+        // ── The worker verifies its own slice, in its own tree ──
+        //
+        // This is the half of the isolation story that pays for the other
+        // half. Before it, "NOT VERIFIED: workers have no shell, so nothing
+        // here was compiled, run, or tested" was the honest closing line on
+        // every worker report, and the lead had to re-derive what broke from
+        // files it did not write. Now the worker runs the project's checks
+        // where its own changes are, before anything reaches the lead's tree.
+        if (worktree && changed.size > 0) {
+          const checkResult = runWorktreeChecks(
+            worktree.path,
+            deps.checkCommands ?? [],
+            deps.checkTimeoutMs ?? 120_000,
+          );
+          checkOutcome = checkResult.outcome;
+          if (checkResult.outcome === "failed") {
+            // A failing worker's branch is KEPT and not merged. Merging code
+            // that does not compile into the lead's tree turns one worker's
+            // failure into everyone's, and the branch is where a person looks.
+            mergeConflicts = [];
+            workerBranch = worktree.branch;
+            keepBranch = true;
+            const result = buildSubagentResult({
+              finalText: trimmed,
+              toolCallCount: toolCalls,
+              stopReason,
+              loopError,
+              trail: [],
+              filesChanged: [...changed],
+              servedBy: servedBy ?? undefined,
+              checks: "failed",
+            });
+            result.unresolved = [
+              ...checkResult.failures.map((f) => `check failed: ${f}`),
+              `The worker's branch ${worktree.branch} was kept and NOT merged; its changes are not in your tree.`,
+              ...result.unresolved,
+            ];
+            return {
+              callId: input.callId,
+              toolName: input.toolName,
+              success: true,
+              result: renderWorkerResult(result, worktree.path, { branch: worktree.branch }),
+              structured: result as unknown as Record<string, unknown>,
+              durationMs: Math.round(performance.now() - start),
+            };
+          }
+        }
+
+        // ── Merge back, on the owned paths only ──
+        if (worktree && changed.size > 0) {
+          const merge = mergeWorkerWorktree(input.workspaceRoot, worktree, files, prompt);
+          mergeConflicts = merge.conflicts;
+          if (merge.conflicts.length > 0) {
+            workerBranch = merge.branch;
+            keepBranch = true;
+          }
+          // The manifest is git's diff, not the model's claim. When the merge
+          // produced one it replaces the observed set, because a file the
+          // worker wrote and then reverted is not a change.
+          if (merge.manifest.length > 0) {
+            changed.clear();
+            for (const path of merge.manifest) changed.add(path);
+          }
+        }
+
+        // The typed result. `filesChanged`, `toolCallCount` and `stopReason`
+        // come from the harness, never from the model — those are exactly the
+        // fields a model has an incentive to get wrong, and the manifest that
+        // measures them off disk exists because one once claimed a twelve-line
+        // "complete FastAPI backend".
+        let result = buildSubagentResult({
+          finalText: trimmed,
+          toolCallCount: toolCalls,
+          stopReason,
+          loopError,
+          trail: [],
+          filesChanged: [...changed],
+          servedBy: servedBy ?? undefined,
+          checks: checkOutcome,
+        });
+        if (result.findings.length === 0 && result.unresolved.length === 0 && trimmed) {
+          const repaired = await repairToSchema({
+            gateway: live.gateway,
+            provider: live.provider as ProviderName,
+            model: live.model,
+            text: trimmed,
+            signal: input.signal,
+          });
+          if (repaired) {
+            result = {
+              ...repaired,
+              filesChanged: [...changed],
+              toolCallCount: toolCalls,
+              stopReason,
+              servedBy: servedBy ?? undefined,
+              checks: checkOutcome ?? repaired.checks,
+            };
+          }
+        }
+        if (breach) {
+          result.unresolved = [`The worker ${describeBreach(breach)}.`, ...result.unresolved];
+        }
         // A worker that finished on a different model than it was dispatched
         // to WROTE CODE from somewhere the caller did not choose. Louder than
         // the scout's banner for that reason: the parent owns verification.
@@ -527,7 +797,13 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
           callId: input.callId,
           toolName: input.toolName,
           success: true,
-          result: prefix + (trimmed || "(no report)") + summary,
+          result:
+            prefix +
+            renderWorkerResult(result, input.workspaceRoot, {
+              conflicts: mergeConflicts,
+              branch: workerBranch,
+            }),
+          structured: result as unknown as Record<string, unknown>,
           durationMs: Math.round(performance.now() - start),
         };
       } catch (err) {
@@ -535,6 +811,17 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
       } finally {
         claims.release(workerId);
         if (teamClaimed) deps.team?.release(workerId);
+        // The checkout always goes. The BRANCH survives when the work did not
+        // land — it is the only copy of a failed or conflicted worker's build,
+        // and `gear/worker-<id>` is where a person looks for it.
+        if (worktree) {
+          try {
+            removeWorkerWorktree(input.workspaceRoot, worktree, keepBranch);
+          } catch {
+            // A worktree that will not remove is a leak, not a failure of the
+            // work; `git worktree prune` cleans it up later.
+          }
+        }
       }
 
       function fail(error: string): ToolCallOutput {
@@ -551,61 +838,10 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
   };
 }
 
-/**
- * What the worker ACTUALLY left on disk, measured after the run.
- *
- * The doctrine is unambiguous that a sub-agent's report is secondhand and never
- * evidence, and it was ignored exactly where it mattered most: in one EvoLab
- * build, three workers wrote an entire backend, an entire frontend, and all the
- * docs, and the orchestrator accepted their prose after opening seven files out
- * of fifty-four. The old footer — "(worker changed 12 files: a.py, b.py …)" —
- * could not have caught that, because a name tells you nothing about whether a
- * module is a module or a stub.
- *
- * So the report now ends in something the worker did not write: per-file line
- * counts and sizes read back off disk, and a standing note that none of it has
- * been run. A twelve-line "complete FastAPI backend" stops being invisible.
- */
-function buildManifest(changed: Set<string>, workspaceRoot: string, toolCalls: number): string {
-  const calls = `${toolCalls} tool call${toolCalls === 1 ? "" : "s"}`;
-  if (changed.size === 0) return `\n\n[WORKER MANIFEST] No files were written (${calls}).`;
-
-  const MAX_LISTED = 40;
-  const paths = [...changed].sort();
-  const rows: string[] = [];
-  let totalLines = 0;
-  let totalBytes = 0;
-
-  for (const p of paths) {
-    const full = isAbsolute(p) ? p : resolve(workspaceRoot, p);
-    let detail: string;
-    try {
-      const bytes = statSync(full).size;
-      // Line count from the file itself: the one number that separates a
-      // finished module from a placeholder, and the worker cannot inflate it.
-      const lines = readFileSync(full, "utf8").split("\n").length;
-      totalLines += lines;
-      totalBytes += bytes;
-      detail = `${String(lines).padStart(5)} lines  ${humanBytes(bytes).padStart(9)}`;
-    } catch {
-      // Claimed but absent: a worker that says it wrote a file and did not is
-      // precisely what this manifest exists to surface.
-      detail = "      MISSING — claimed but not on disk";
-    }
-    if (rows.length < MAX_LISTED) rows.push(`  ${detail}  ${p}`);
-  }
-  if (paths.length > MAX_LISTED) rows.push(`  … and ${paths.length - MAX_LISTED} more`);
-
-  return (
-    `\n\n[WORKER MANIFEST — measured from disk, not taken from the report above]\n` +
-    `${rows.join("\n")}\n` +
-    `  ${paths.length} file${paths.length === 1 ? "" : "s"}, ${totalLines} lines, ` +
-    `${humanBytes(totalBytes)}, ${calls}.\n` +
-    `NOT VERIFIED: workers have no shell, so nothing here was compiled, run, or ` +
-    `tested. Open these files and run the project's checks yourself before you ` +
-    `rely on the report above or mark this step done.`
-  );
-}
+// `buildManifest` lived here. It is now the manifest half of
+// `renderWorkerResult` in subagent-result.ts, driven off the result object.
+// The measurement is unchanged and is still the point: per-file line counts
+// and sizes read back off disk, which the worker cannot inflate.
 
 function humanBytes(n: number): string {
   if (n >= 1_048_576) return `${(n / 1_048_576).toFixed(1)} MB`;

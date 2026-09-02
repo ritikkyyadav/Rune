@@ -34,4 +34,13 @@ export interface ToolCallOutput {
    * blocks; they are never serialized into `result`.
    */
   attachments?: ToolAttachment[];
+  /**
+   * The typed result behind `result`, for tools that declare an `outputSchema`.
+   *
+   * `result` stays the rendered text the model reads — nothing downstream has
+   * to change. This is the same content as an object, so the harness can
+   * validate it, a UI can group by it, and a workflow node can depend on a
+   * field of it instead of parsing prose back out of a paragraph.
+   */
+  structured?: Record<string, unknown>;
 }
