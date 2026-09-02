@@ -113,3 +113,20 @@ export {
   SPEC_RENDERER_JS,
   DASH_PALETTE,
 } from "./tools/dashboard-theme";
+export {
+  loadVendoredCatalog,
+  fetchRegistryCatalog,
+  resolveConnector,
+  nearestNames,
+  skillCatalogRoots,
+  DEFAULT_REGISTRY_URL,
+  mcpConfigPath,
+  readMcpConfig,
+  writeMcpConfig,
+  mergedServers,
+  mergedServerRecord,
+  upsertServer,
+  removeServer,
+  setServerEnabled,
+} from "./mcp/index";
+export type { CatalogEntry, McpScope, McpConfigFile, MergedServer } from "./mcp/index";

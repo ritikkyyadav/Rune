@@ -111,3 +111,63 @@ local OAuth-protected MCP server that verifies PKCE server-side and rejects a
 reused code, a mismatched `redirect_uri` or a missing bearer the way a real one
 does. `tests/unit/tools/mcp-oauth.test.ts` drives the whole flow against it with
 the browser click replaced by a direct fetch of the authorization URL.
+
+---
+
+## `gear mcp`
+
+```
+gear mcp add <name|url|command> [--scope user|workspace] [--header K=V] [--env K=V] [--name N]
+gear mcp remove <name> [--scope …]
+gear mcp list [--catalog]
+gear mcp login <name>
+gear mcp logout <name>
+gear mcp enable <name> / disable <name>
+gear mcp doctor
+```
+
+No Engine boot and no provider validation — like `gear doctor`, this is instant.
+`list` and `doctor` do start the servers, because reporting real health is their
+whole job.
+
+**Resolving a name.** `gear mcp add notion` consults two sources, in order:
+
+1. The 20 vendored `skills/*/.mcp.json` files — 58 distinct connectors with the
+   URLs each vendor publishes. This catalog was already in the repo and unused.
+2. The public MCP registry, when it answers. Purely additive, and every failure
+   is soft: offline, slow, or an unfamiliar shape all mean "the bundled catalog
+   is what you get", never an error you have to work around.
+
+The bundled catalog wins on a name collision — a registry entry that shadowed
+`notion` with something else would be a supply-chain surprise.
+
+An entry with no published endpoint (Snowflake, Databricks, Benchling in the
+vendored files) is reported as such rather than written out as a broken server.
+
+**Two scopes.**
+
+| | |
+|---|---|
+| `~/.gear/mcp.json` | user — connectors you have everywhere |
+| `<workspace>/.gear/mcp.json` | workspace — connectors this project needs |
+
+Workspace wins on collision, and `gear mcp list` says which file each entry came
+from and whether it shadows the other. The narrower scope is the more deliberate
+one.
+
+**`disable` keeps the entry.** The point is to stop paying for a connector
+without losing configuration that took a sign-in to produce.
+
+**`remove` keeps the token.** Deleting a credential is not something a `remove`
+should do silently; the command says the token is still there and names
+`gear mcp logout`.
+
+## `[mcp]` in config.toml
+
+```toml
+[mcp]
+defaultScope = "workspace"   # where `gear mcp add` writes without --scope
+timeoutSecs  = 30            # per-request tools/call timeout
+registry     = true          # consult the public MCP registry when resolving
+deferTools   = true          # false ships every schema on every request (pre-P4.1)
+```

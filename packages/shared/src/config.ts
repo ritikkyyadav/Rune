@@ -467,6 +467,36 @@ export interface GearConfig {
     /** Presence heartbeat interval in seconds (default 15). */
     heartbeatSecs?: number;
   };
+  /**
+   * Connectors (config.toml `[mcp]`). Defaults for the MCP layer; every
+   * individual server can still override its own behaviour in mcp.json.
+   */
+  mcp?: {
+    /** Where `gear mcp add` writes when `--scope` is omitted (default workspace). */
+    defaultScope?: "user" | "workspace";
+    /** Per-request timeout in seconds for tools/call (default 30). */
+    timeoutSecs?: number;
+    /** Consult the public MCP registry when resolving a name (default true). */
+    registry?: boolean;
+    /**
+     * Advertise connector tools as a one-line catalog with schemas loaded on
+     * demand (default true). Set false to ship every schema on every request —
+     * the pre-P4.1 behaviour, kept as an escape, not as a recommendation.
+     */
+    deferTools?: boolean;
+  };
+  /**
+   * Third-party extensions (config.toml `[extensions]`). Plugins are
+   * declarative in v1 (skills, commands, MCP servers, hooks); executable tools
+   * stay first-party until they run under the sandbox as subprocesses.
+   */
+  extensions?: {
+    /**
+     * Load executable tools from `<workspace>/.gear/tools` (default false).
+     * This is the user's OWN workspace only — never a path a plugin supplies.
+     */
+    localTools?: boolean;
+  };
 }
 
 export interface PermissionRule {
@@ -525,6 +555,15 @@ const DEFAULT_CONFIG: GearConfig = {
     enabled: true,
     claimEnforcement: "warn",
     heartbeatSecs: 15,
+  },
+  mcp: {
+    defaultScope: "workspace",
+    timeoutSecs: 30,
+    registry: true,
+    deferTools: true,
+  },
+  extensions: {
+    localTools: false,
   },
 };
 

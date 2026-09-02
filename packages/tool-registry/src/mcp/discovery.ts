@@ -1,9 +1,9 @@
 import { type Logger, createLogger, openCredentialStore, type CredentialStore } from "@gear/shared";
 import { McpClient } from "./client";
 import { McpOAuth } from "./oauth";
+import { mergedServers } from "./config-file";
 import type { ToolHandler } from "../types";
 import type { McpEvent, McpServerInfo } from "./types";
-import { workspaceConfigPath } from "@gear/shared";
 
 // ─── MCP Config Format ───
 // Loaded from .gear/mcp.json in the workspace root. Supports local subprocess
@@ -44,10 +44,6 @@ export interface McpServerConfig {
   };
   /** Set false to keep the entry on file without starting it (`gear mcp disable`). */
   enabled?: boolean;
-}
-
-interface McpConfigFile {
-  mcpServers?: Record<string, McpServerConfig>;
 }
 
 export interface McpDiscoveryOptions {
@@ -127,7 +123,7 @@ function sanitizeName(name: string): string {
 export class McpDiscovery {
   private clients: Map<string, { client: McpClient; autoApprove?: (n: string) => boolean }> =
     new Map();
-  private configPath: string;
+  private workspaceRoot: string;
   private options: McpDiscoveryOptions;
   private logger: Logger;
 
@@ -144,9 +140,16 @@ export class McpDiscovery {
   private credentialStorePromise: Promise<CredentialStore> | null = null;
 
   constructor(workspaceRoot: string, options: McpDiscoveryOptions = {}) {
-    this.configPath = workspaceConfigPath(workspaceRoot, "mcp.json");
+    this.workspaceRoot = workspaceRoot;
     this.options = options;
     this.logger = options.logger ?? createLogger("mcp");
+  }
+
+  /** Which scope each configured server came from, for `gear mcp list`. */
+  getScopes(): Map<string, "user" | "workspace"> {
+    const out = new Map<string, "user" | "workspace">();
+    for (const s of mergedServers(this.workspaceRoot).servers) out.set(s.name, s.scope);
+    return out;
   }
 
   /** The credential store, opened at most once per discovery. */
@@ -204,13 +207,16 @@ export class McpDiscovery {
    * the session.
    */
   async discover(): Promise<ToolHandler[]> {
-    const { config, error } = await this.loadConfig();
-    if (error) this.logger.error(`mcp.json: ${error}`);
-    // Built-ins first, then mcp.json — so a user entry with the same name
+    // Two scopes, workspace winning on collision (see config-file.ts).
+    const { servers: scoped, errors } = mergedServers(this.workspaceRoot);
+    for (const e of errors) this.logger.error(e);
+    const configured: Record<string, McpServerConfig> = {};
+    for (const entry of scoped) configured[entry.name] = entry.config;
+    // Built-ins first, then configured — so a user entry with the same name
     // (e.g. their own "browser" server) replaces the built-in spec.
     const servers: Record<string, McpServerConfig> = {
       ...(this.options.extraServers ?? {}),
-      ...(config?.mcpServers ?? {}),
+      ...configured,
     };
     if (Object.keys(servers).length === 0) return [];
 
@@ -360,21 +366,4 @@ export class McpDiscovery {
     return out;
   }
 
-  private async loadConfig(): Promise<{ config: McpConfigFile | null; error?: string }> {
-    try {
-      const file = Bun.file(this.configPath);
-      if (!(await file.exists())) return { config: null };
-      const text = await file.text();
-      try {
-        return { config: JSON.parse(text) as McpConfigFile };
-      } catch (e) {
-        return {
-          config: null,
-          error: `invalid JSON: ${e instanceof Error ? e.message : String(e)}`,
-        };
-      }
-    } catch (e) {
-      return { config: null, error: e instanceof Error ? e.message : String(e) };
-    }
-  }
 }
