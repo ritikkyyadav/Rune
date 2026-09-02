@@ -147,6 +147,10 @@ const { values, positionals } = parseArgs({
     "stream-json": { type: "boolean", default: false },
     "auto-approve": { type: "boolean", default: false },
     tui: { type: "boolean", default: false },
+    // The entry (P9.2): a bare `gear` opens the app in a browser, and this is
+    // how you say you wanted the terminal instead. `--tui` and `--classic`
+    // already imply it; this is the name for "the console, whatever its layout".
+    console: { type: "boolean", default: false },
     classic: { type: "boolean", default: false },
     fullscreen: { type: "boolean", default: false },
     inline: { type: "boolean", default: false },
@@ -201,6 +205,14 @@ const { values, positionals } = parseArgs({
   strict: false,
 });
 
+// `gear tui` is the positional spelling of `--console`. Rewriting it here — as
+// a flag, before the command is read — means the console path sees exactly what
+// `gear --console` produces and there is one route into it rather than two.
+if (rawArgv[0] === "tui" || rawArgv[0] === "console") {
+  positionals.shift();
+  (values as Record<string, unknown>).console = true;
+}
+
 const command = positionals[0] ?? "chat";
 
 // Single version string — stamped on every black-box incident so regressions
@@ -221,8 +233,11 @@ if (values.help) {
     terminalText(
       `\n  ${PRODUCT_LABEL} — AI coding agent\n\n` +
         `  Usage:\n` +
-        `    gear [chat]                   Start chatting — offers to resume recent work (Enter = new)\n` +
-        `    gear --new                    Skip the picker and start a fresh session\n` +
+        `    gear                          Open the app — starts the local engine and a browser tab on it\n` +
+        `    gear open                     Open the tab again (same engine, same URL)\n` +
+        `    gear --console                The terminal console instead (alias: gear tui)\n` +
+        `    gear chat                     The console, explicitly — offers to resume recent work\n` +
+        `    gear --new                    Skip the picker and start a fresh console session\n` +
         `    gear resume [sessionId]       Resume a session (no id → interactive picker)\n` +
         `    gear list [--all]             List stored sessions (--all includes archived)\n` +
         `    gear export <sessionId>       Export a session transcript\n` +
@@ -230,6 +245,7 @@ if (values.help) {
         `    gear attach [session|latest]  Reattach to a detached run — replay, live-stream, Ctrl+C detaches again\n` +
         `    gear attach ws://host:port    Attach to a remote \`gear serve\` (--token or GEAR_SERVE_TOKEN, --prompt runs a turn)\n` +
         `    gear web [--port N] [--open]  Serve the app and park in the foreground (--host exposes it on the LAN)\n` +
+        `    gear serve [--web] [--status] The engine as a server; --status prints the URL of a running one\n` +
         `    gear pr <n> [--review]        Check a pull request out into its own worktree and start on it (--brief prints the brief)\n` +
         `    gear acp                      Agent Client Protocol server on stdio — for Zed and other ACP editors (docs/editors.md)\n` +
         `    gear login [provider]         Authenticate a provider — API key, or OAuth where supported (--method, --no-browser, --migrate)\n` +
@@ -260,6 +276,8 @@ if (values.help) {
         `    --autonomy <I|II|III>        Legacy alias for --gear 2|3|4\n` +
         `    --yolo                       Legacy alias for --gear 4\n` +
         `    --trust                      Legacy alias for --gear 3 (workspace trust)\n` +
+        `    --console                    Start the terminal console instead of the app (alias: gear tui)\n` +
+        `    --no-browser                 Print the app URL and do not open a browser (also GEAR_NO_BROWSER=1)\n` +
         `    --classic                    Plain readline prompt (default is the pinned composer)\n` +
         `    --tui                        Force the Codex-style pinned composer\n` +
         `    --inline                     Legacy layout: transcript in the terminal's own scrollback,\n` +
@@ -384,6 +402,23 @@ if (command === "web") {
   // Long-lived: `web` returns only on shutdown, exactly like `serve`.
   const { runWeb } = await import("./web-cli");
   process.exit(await runWeb(positionals.slice(1) as string[], values as Record<string, unknown>));
+}
+if (command === "open") {
+  const { runOpen } = await import("./app-cli");
+  process.exit((await runOpen(values as Record<string, unknown>)).code);
+}
+if (command === "chat" && positionals.length === 0) {
+  // ─── The entry (P9.2) ───
+  // A bare `gear` is the app: start the engine as a local server if one is not
+  // already up, print the URL, open a tab, and exit. Anything that shapes a
+  // terminal — `--console`, `--tui`, `-P`, `--resume`, `--list` — is a person
+  // asking for the console and falls through to it. `wantsConsole` is where
+  // that rule lives, and it is pinned by tests because it is the one decision
+  // that can annoy every existing user at once.
+  const { runOpen, wantsConsole } = await import("./app-cli");
+  if (!wantsConsole(values as Record<string, unknown>, positionals as string[])) {
+    process.exit((await runOpen(values as Record<string, unknown>)).code);
+  }
 }
 if (command === "acp") {
   // An Agent Client Protocol server on stdio, for Zed and anything else that

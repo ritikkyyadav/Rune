@@ -153,6 +153,28 @@ describe("the page's transport choice", () => {
     expect(configuredServer()?.source).toBe("embedded");
   });
 
+  test("and the losing fragment is still taken out of the address bar", () => {
+    // `gear` opens `…/#token=…` so the printed link also works pasted into a
+    // second browser. On loopback the embedded token wins, and leaving the
+    // fragment behind would park a live credential in this browser's history
+    // for nothing.
+    const w = fakeWindow();
+    w.__GEAR_SERVE__ = { url: "ws://127.0.0.1:7788", token: "abc" };
+    w.location.hash = "#token=zzz";
+    (globalThis as { window?: unknown }).window = w;
+    configuredServer();
+    expect(w.replaced).toEqual(["/"]);
+  });
+
+  test("a fragment that is not a token is left alone", () => {
+    const w = fakeWindow();
+    w.__GEAR_SERVE__ = { url: "ws://127.0.0.1:7788", token: "abc" };
+    w.location.hash = "#section-2";
+    (globalThis as { window?: unknown }).window = w;
+    configuredServer();
+    expect(w.replaced).toEqual([]);
+  });
+
   test("a fragment with no token is not an endpoint", () => {
     const w = fakeWindow();
     w.location.hash = "#section-2";

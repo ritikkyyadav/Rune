@@ -118,6 +118,11 @@ export function configuredServer(): ServeEndpoint | null {
 
   const embedded = (window as unknown as { __GEAR_SERVE__?: EmbeddedServe }).__GEAR_SERVE__;
   if (embedded?.url && embedded.token) {
+    // `gear` prints and opens a URL with `#token=` on it so the same link works
+    // pasted into another browser. On loopback the server also embedded the
+    // CURRENT token, which wins — but the fragment is still in the address bar
+    // and would otherwise sit in this browser's history. Take it out.
+    if (window.location?.hash?.includes("token=")) scrubFragment();
     return { url: embedded.url, token: embedded.token, source: "embedded" };
   }
 
