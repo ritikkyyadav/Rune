@@ -336,8 +336,15 @@ function cmdLessons(workspaceRoot: string, opts: Record<string, string | true>):
           ? ok("fix    ")
           : dim(e.kind.padEnd(7));
       const record = e.uses > 0 ? faint(` · used ${e.uses}× · ${pct(e.wins / e.uses)} wins`) : "";
+      const stage = e.retired
+        ? warn("retired")
+        : e.stage === "active"
+          ? ok("active")
+          : e.stage === "trial"
+            ? info("trial")
+            : dim("candidate");
       say(
-        `  ${kind} ${text(e.body.slice(0, 96))}${e.retired ? warn("  retired") : ""}\n          ${faint(`${n} session${n === 1 ? "" : "s"}`)}${inPlaybook.has(e.id) ? faint(" · in playbook") : ""}${record} ${faint(`· ${e.id.slice(-8)}`)}`,
+        `  ${kind} ${text(e.body.slice(0, 96))}\n          ${stage} ${faint(`· ${n} session${n === 1 ? "" : "s"}`)}${inPlaybook.has(e.id) ? faint(" · in playbook") : ""}${record} ${faint(`· ${e.id.slice(-8)}`)}`,
       );
     }
     const pb = join(workspaceRoot, PLAYBOOK_REL);
@@ -348,8 +355,15 @@ function cmdLessons(workspaceRoot: string, opts: Record<string, string | true>):
         `  ${text("Playbook")}  ${info(PLAYBOOK_REL)} ${dim(`· ${lines} lines · a skill the model can load, a file you can edit`)}`,
       );
     } else {
+      const draft = existsSync(join(workspaceRoot, PLAYBOOK_PENDING_REL));
       say(
-        `  ${text("Playbook")}  ${dim(`not written yet — appears at ${PLAYBOOK_REL} once a lesson recurs across two sessions`)}`,
+        `  ${text("Playbook")}  ${
+          draft
+            ? `${warn(PLAYBOOK_PENDING_REL)} ${dim("· drafted and inert — gear evolve playbook --enable")}`
+            : dim(
+                `not written yet — appears once a lesson reaches ${"active"} and learned skills are enabled`,
+              )
+        }`,
       );
     }
     say(dim("  manage: gear notebook show <id> · gear notebook rm <id>"));
@@ -477,13 +491,12 @@ function cmdStatus(
   say();
   say(`  ${accent("Self-evolution")} ${dim("·")} ${dim(`last ${days} days`)}`);
   say();
+  const outcomeLine = [...outcomes.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, n]) => `${k === "finished" ? ok(k) : warn(k)} ${dim(String(n))}`)
+    .join(dim(" · "));
   say(
-    `  ${text("Measured")}  ${c.samples.length} runs ${dim("·")} ${[...outcomes.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .map(([k, n]) => `${k === "finished" ? ok(k) : warn(k)} ${dim(String(n))}`)
-      .join(
-        dim(" · "),
-      )}${c.backfilled > 0 ? dim(`  (${c.written} written by runs, ${c.backfilled} derived after the fact)`) : ""}`,
+    `  ${text("Measured")}  ${c.samples.length} runs${outcomeLine ? ` ${dim("·")} ${outcomeLine}` : ""}${c.backfilled > 0 ? dim(`  (${c.written} written by runs, ${c.backfilled} derived after the fact)`) : ""}`,
   );
 
   try {
@@ -542,11 +555,11 @@ function cmdStatus(
   if (last) {
     const lift = `${(last.rateDelta ?? 0) >= 0 ? "+" : ""}${((last.rateDelta ?? 0) * 100).toFixed(1)}%`;
     say(
-      `  ${text("Measured")}  ${last.subject} ${dim("·")} ${last.win ? ok(`WIN ${lift}`) : warn(`no change ${lift}`)} ${dim(`· ${last.mode} · ${last.compared ?? 0} tasks · ${last.at.slice(0, 10)}`)}`,
+      `  ${text("Last A/B")}  ${last.subject} ${dim("·")} ${last.win ? ok(`WIN ${lift}`) : warn(`no change ${lift}`)} ${dim(`· ${last.mode} · ${last.compared ?? 0} tasks · ${last.at.slice(0, 10)}`)}`,
     );
   } else {
     say(
-      `  ${text("Measured")}  ${dim("no A/B has been run — gear evolve ab <variant>; gear evolve ab lists them")}`,
+      `  ${text("Last A/B")}  ${dim("none run — gear evolve ab <variant>; bare `gear evolve ab` lists them")}`,
     );
   }
   say(
@@ -920,7 +933,7 @@ function whyLesson(workspaceRoot: string, shortId: string): boolean {
       `  ${dim("win curve")}  ${entry.uses === 0 ? dim("never injected") : `${entry.wins}/${entry.uses} (${pct(entry.wins / entry.uses)})`}`,
     );
     say(
-      `  ${dim("state")}      ${entry.retired ? warn("retired") : ok("live")}${entry.lastUsed ? dim(` · last used ${entry.lastUsed.slice(0, 10)}`) : ""}`,
+      `  ${dim("stage")}      ${entry.retired ? warn("retired") : entry.stage === "active" ? ok("active") : entry.stage === "trial" ? info("trial") : dim("candidate — stored, never injected")}${entry.lastUsed ? dim(` · last used ${entry.lastUsed.slice(0, 10)}`) : ""}`,
     );
     say();
     return true;
