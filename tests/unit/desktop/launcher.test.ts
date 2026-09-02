@@ -114,7 +114,10 @@ describe("gear desktop — the serve endpoint", () => {
 
 interface FakeWindow {
   __GEAR_SERVE__?: { url?: string; token?: string };
-  location: { search: string };
+  location: { search: string; hash: string; host: string; protocol: string; pathname: string };
+  history: { replaceState(state: unknown, title: string, url: string): void };
+  /** Every URL `history.replaceState` was called with, for the scrub check. */
+  replaced: string[];
   localStorage: {
     getItem(k: string): string | null;
     setItem(k: string, v: string): void;
@@ -124,8 +127,19 @@ interface FakeWindow {
 
 function fakeWindow(): FakeWindow {
   const store = new Map<string, string>();
+  const replaced: string[] = [];
   return {
-    location: { search: "" },
+    location: {
+      search: "",
+      hash: "",
+      host: "192.168.1.9:7788",
+      protocol: "http:",
+      pathname: "/",
+    },
+    history: {
+      replaceState: (_s, _t, url) => void replaced.push(url),
+    },
+    replaced,
     localStorage: {
       getItem: (k) => store.get(k) ?? null,
       setItem: (k, v) => void store.set(k, v),
@@ -185,6 +199,61 @@ describe("the page's transport choice", () => {
   test("half an endpoint is no endpoint", () => {
     const w = fakeWindow();
     w.location.search = "?server=ws://127.0.0.1:4762";
+    (globalThis as { window?: unknown }).window = w;
+    expect(configuredServer()).toBeNull();
+  });
+
+  // ─── the fragment (P5.5) ───
+  //
+  // A remote link carries its token in `#token=`, not `?token=`. A fragment is
+  // never sent to the server, so it cannot land in an access log, a proxy log
+  // or a Referer on the way somewhere else — which is the whole point for a
+  // bearer token that grants remote code execution.
+
+  test("a fragment token names the server the page came from", () => {
+    const w = fakeWindow();
+    w.location.hash = "#token=lan-token";
+    (globalThis as { window?: unknown }).window = w;
+    // One port, one origin: `gear web` serves the page and the socket from the
+    // same place, so the fragment only has to carry the secret.
+    expect(configuredServer()).toEqual({
+      url: "ws://192.168.1.9:7788",
+      token: "lan-token",
+      source: "fragment",
+    });
+  });
+
+  test("the token is taken out of the address bar once it is read", () => {
+    const w = fakeWindow();
+    w.location.hash = "#token=lan-token";
+    w.location.search = "?a=1";
+    (globalThis as { window?: unknown }).window = w;
+    configuredServer();
+    expect(w.replaced).toEqual(["/?a=1"]);
+  });
+
+  test("a fragment may name a different server explicitly", () => {
+    const w = fakeWindow();
+    w.location.hash = "#server=ws%3A%2F%2F10.0.0.5%3A4762&token=t";
+    (globalThis as { window?: unknown }).window = w;
+    expect(configuredServer()).toEqual({
+      url: "ws://10.0.0.5:4762",
+      token: "t",
+      source: "fragment",
+    });
+  });
+
+  test("the embedded endpoint still wins over a fragment", () => {
+    const w = fakeWindow();
+    w.__GEAR_SERVE__ = { url: "ws://127.0.0.1:7788", token: "abc" };
+    w.location.hash = "#token=zzz";
+    (globalThis as { window?: unknown }).window = w;
+    expect(configuredServer()?.source).toBe("embedded");
+  });
+
+  test("a fragment with no token is not an endpoint", () => {
+    const w = fakeWindow();
+    w.location.hash = "#section-2";
     (globalThis as { window?: unknown }).window = w;
     expect(configuredServer()).toBeNull();
   });
