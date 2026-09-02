@@ -9,7 +9,7 @@
  * ABOVE the human still refuse: configured deny rules, and a run in flight.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -24,6 +24,7 @@ import {
 } from "../../../packages/orchestrator/src/auto-mode";
 import type { PermissionBroker } from "../../../packages/orchestrator/src/permissions";
 import { Engine } from "../../../packages/orchestrator/src/engine";
+import { rmTemp } from "../../helpers/tmp";
 
 class SilentClassifier implements ActionClassifier {
   async classify(): Promise<string> {
@@ -107,7 +108,7 @@ describe("Engine.runHeldStep", () => {
 
   afterEach(() => {
     engine.close();
-    rmSync(root, { recursive: true, force: true });
+    rmTemp(root);
   });
 
   test("runs the exact call, grants exactly it, records the human decision, tells the next turn", async () => {

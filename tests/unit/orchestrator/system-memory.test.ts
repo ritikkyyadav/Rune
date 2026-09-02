@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { tmpdir } from "os";
-import { mkdtempSync, rmSync } from "fs";
+import { mkdtempSync } from "fs";
 import { join } from "path";
 import { Engine } from "../../../packages/orchestrator/src/engine";
 import { loadSystemMemory, saveSystemMemory } from "../../../packages/shared/src/system-memory";
+import { rmTemp } from "../../helpers/tmp";
 
 let dir: string;
 let prev: string | undefined;
@@ -61,7 +62,7 @@ beforeEach(() => {
 afterEach(() => {
   if (prev === undefined) delete process.env.GEAR_SYSTEM_MEMORY_PATH;
   else process.env.GEAR_SYSTEM_MEMORY_PATH = prev;
-  rmSync(dir, { recursive: true, force: true });
+  rmTemp(dir);
 });
 
 describe("engine/system-memory — injection", () => {

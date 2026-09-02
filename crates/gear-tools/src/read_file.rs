@@ -242,14 +242,21 @@ fn resolve_path(path: &str, workspace_root: &Path) -> Result<PathBuf, ToolError>
 }
 
 fn validate_within_workspace(path: &Path, workspace_root: &Path) -> Result<(), ToolError> {
-    let canonical = fs::canonicalize(path).map_err(|e| ToolError::Io {
-        path: path.display().to_string(),
-        detail: e.to_string(),
-    })?;
-    let workspace_canonical = fs::canonicalize(workspace_root).map_err(|e| ToolError::Io {
-        path: workspace_root.display().to_string(),
-        detail: e.to_string(),
-    })?;
+    // BOTH sides through `simplified`, always. `starts_with` compares
+    // components, so a verbatim `\\?\C:\ws` and a plain `C:\ws\f.txt` share
+    // no prefix at all and containment would fail on Windows for every file in
+    // the workspace. See src/paths.rs.
+    let canonical =
+        crate::paths::simplified(&fs::canonicalize(path).map_err(|e| ToolError::Io {
+            path: path.display().to_string(),
+            detail: e.to_string(),
+        })?);
+    let workspace_canonical = crate::paths::simplified(&fs::canonicalize(workspace_root).map_err(
+        |e| ToolError::Io {
+            path: workspace_root.display().to_string(),
+            detail: e.to_string(),
+        },
+    )?);
 
     if !canonical.starts_with(&workspace_canonical) {
         return Err(ToolError::PathEscape {

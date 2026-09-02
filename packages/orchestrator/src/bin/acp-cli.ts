@@ -32,9 +32,9 @@
 // stderr, because one stray `console.log` desynchronises the client's parser
 // and the failure looks like a protocol bug.
 
-import { adoptLegacyEnv, migrateLegacyHome } from "@gear/shared";
+import { adoptLegacyEnv, loadConfig, migrateLegacyHome } from "@gear/shared";
 
-import { HostPool, noteRequestOwner, routingKey } from "./serve-cli";
+import { DEFAULT_IDLE_HOST_SECS, HostPool, noteRequestOwner, routingKey } from "./serve-cli";
 
 /** The ACP major this build speaks. */
 export const ACP_PROTOCOL_VERSION = 1;
@@ -181,11 +181,20 @@ class AcpServer {
   private readonly pool: HostPool;
   private initialized = false;
 
+  private readonly reaper: ReturnType<typeof setInterval>;
+
   constructor(private readonly workspace: string) {
     this.pool = new HostPool({
       workspace,
+      idleMs:
+        Math.max(1, loadConfig(workspace).serve?.idleHostSecs ?? DEFAULT_IDLE_HOST_SECS) * 1000,
       onStream: (key, stream, payload) => this.onEngineStream(key, stream, payload),
     });
+    // An editor can hold one `gear acp` open for a week. Sessions it opened and
+    // walked away from are stopped on the same window `gear serve` uses; a
+    // session with a turn running is never idle.
+    this.reaper = setInterval(() => this.pool.reapIdle(), 60_000);
+    (this.reaper as unknown as { unref?: () => void }).unref?.();
   }
 
   // ── writing ──
@@ -382,8 +391,22 @@ class AcpServer {
 
   private async call(method: string, params: Json): Promise<unknown> {
     const key = routingKey(method, params, this.requestOwners);
-    const host = await this.pool.acquire(key);
-    return host.client.request(method, params, 15 * 60_000);
+    // Through the pool, not around it: `request` is what counts the call in
+    // flight, and the idle reaper reads that count to tell a parked session
+    // from one that has been compiling for twelve minutes.
+    return this.pool.request(key, method, params, 15 * 60_000);
+  }
+
+  /**
+   * Stop every engine this server started.
+   *
+   * An editor spawns `gear acp` and kills it when the window closes. Before
+   * P10.0 the engines it had spawned stayed up forever, one per session, with
+   * nothing left that knew they existed.
+   */
+  async shutdown(): Promise<number> {
+    clearInterval(this.reaper);
+    return this.pool.shutdownAll();
   }
 
   async handle(req: RpcRequest): Promise<Json | null> {
@@ -545,5 +568,20 @@ export async function runAcp(values: Record<string, unknown> = {}): Promise<void
       ? values.workspace
       : (process.env.GEAR_WORKSPACE ?? process.cwd());
   process.stderr.write(`gear acp — ACP ${ACP_PROTOCOL_VERSION}, workspace ${workspace}\n`);
-  await new AcpServer(workspace).run();
+  const server = new AcpServer(workspace);
+  // Both ways out: the editor closes our stdin, or it signals us. Either way
+  // the session engines this process spawned go with it.
+  let stopping = false;
+  const stop = (): void => {
+    if (stopping) return;
+    stopping = true;
+    void server.shutdown().then(() => process.exit(0));
+  };
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+  try {
+    await server.run();
+  } finally {
+    await server.shutdown();
+  }
 }

@@ -90,7 +90,13 @@ async fn main() {
         }
     });
     let cli = Cli::parse();
-    let workspace = std::fs::canonicalize(&cli.workspace).unwrap_or(cli.workspace.clone());
+    // Canonical, but not VERBATIM. On Windows `canonicalize` returns
+    // `\\?\C:\…`, which every path derived from the workspace would then carry
+    // into the JSON these tools echo — and the harness above keys its
+    // read-before-edit ledger on those strings. See src/paths.rs (P10.2).
+    let workspace = gear_tools::paths::simplified(
+        &std::fs::canonicalize(&cli.workspace).unwrap_or(cli.workspace.clone()),
+    );
     let input_json = read_stdin();
 
     match cli.command {

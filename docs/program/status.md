@@ -99,7 +99,7 @@ Two defects found by the phase's own gate and fixed in it:
 
 ## Open defects found by execution
 
-- Windows: `edit_file` refuses right after `read_file` of the same path (path-key mismatch in the read-before-edit ledger). First Windows runtime smoke ever.
+- ~~Windows: `edit_file` refuses right after `read_file` of the same path (path-key mismatch in the read-before-edit ledger). First Windows runtime smoke ever.~~ **Closed by P10.2.** The executor echoed `\\?\C:\…` (Rust's `canonicalize` is verbatim on Windows) while the ledger looked up `C:\Users\RUNNER~1\…` (`%TEMP%` is an 8.3 short name). Four more Windows defects fell out of turning `ts-windows` into a real test run: `startsWith(root + "/")` as a containment test in three places, shell unescaping that ate every pasted Windows path, and `/bin/sh` as the only shell. `ts-windows` now runs the unit suite; what is genuinely POSIX-only skips with a stated reason.
 - Auto mode: supervisor false-positive rate 30.6%; the cheap reviewer catches 13 of 46 reviewer-only blocks; five breaker gaps with file:line in the backlog.
 - Two flywheel classes waived with dated reasons (`crash.dirty_exit`, `context.budget_overflow`).
 - `scripts/install.sh` never prunes binary backups (~95 generations in `~/.gear/bin`).

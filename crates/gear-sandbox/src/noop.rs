@@ -53,8 +53,13 @@ impl Sandbox for NoopSandbox {
 
             let start = Instant::now();
 
-            let child = Command::new("/bin/sh")
-                .arg("-c")
+            // The platform's shell, not `/bin/sh` — which does not exist on
+            // Windows, where this spawn failed with os error 3 for every
+            // command Gear ran. See shell.rs.
+            let sh = crate::shell::command_shell();
+            let mut builder = Command::new(&sh.program);
+            builder.args(&sh.args);
+            let child = builder
                 .arg(command)
                 .current_dir(working_dir)
                 .env_clear()

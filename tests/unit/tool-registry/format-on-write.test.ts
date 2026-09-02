@@ -136,7 +136,16 @@ describe("the density tripwire", () => {
   });
 });
 
-describe("formatting runs only where the project asked for it", () => {
+/**
+ * POSIX-only: the stub formatter is a `#!/bin/sh` script and the real one is
+ * reached with `ln -sf`, neither of which Windows has. There is a genuine
+ * product gap underneath — `node_modules/.bin/prettier` is `prettier.cmd` on
+ * Windows and the resolver does not look for it — logged in
+ * docs/program/backlog.md rather than papered over here.
+ */
+const POSIX_BIN = process.platform !== "win32";
+
+describe.skipIf(!POSIX_BIN)("formatting runs only where the project asked for it", () => {
   test("no prettier config: the file is left exactly as written", async () => {
     // Binary present, config absent — the binary alone is not consent.
     mkdirSync(join(root, "node_modules", ".bin"), { recursive: true });
@@ -160,7 +169,7 @@ describe("formatting runs only where the project asked for it", () => {
 // project's formatter takes.
 const REPO_PRETTIER = join(process.cwd(), "node_modules", ".bin", "prettier");
 
-describe.skipIf(!existsSync(REPO_PRETTIER))("with a real configured prettier", () => {
+describe.skipIf(!POSIX_BIN || !existsSync(REPO_PRETTIER))("with a real configured prettier", () => {
   beforeEach(() => {
     mkdirSync(join(root, "node_modules", ".bin"), { recursive: true });
     // Symlinking the repo's prettier is how a project's own install looks.

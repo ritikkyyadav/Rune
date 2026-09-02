@@ -122,8 +122,8 @@ export async function runWeb(
   // exits with a token file on disk and nothing behind it.
   await new Promise<void>((resolve) => {
     const finish = (): void => {
-      running.stop();
-      resolve();
+      // `stop()` now stops the session hosts too (P10.0), which is async.
+      void Promise.resolve(running.stop()).then(() => resolve());
     };
     process.once("SIGINT", finish);
     process.once("SIGTERM", finish);

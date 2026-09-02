@@ -98,7 +98,9 @@ describe("FileCredentialStore", () => {
 
     const path = join(dir, "credentials.json");
     expect(existsSync(path)).toBe(true);
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    // POSIX-only: Windows has no rwx mode bits and reports a synthetic 0666.
+    // The store still writes with mode 0o600, which is simply a no-op there.
+    if (process.platform !== "win32") expect(statSync(path).mode & 0o777).toBe(0o600);
 
     expect(await store.list()).toEqual([apiKeyAccount("openrouter")]);
 

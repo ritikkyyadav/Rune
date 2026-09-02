@@ -29,6 +29,11 @@ beforeEach(() => {
   git("config", "user.email", "test@example.com");
   git("config", "user.name", "test");
   git("config", "commit.gpgsign", "false");
+  // Windows git defaults to `core.autocrlf=true`: a file committed with "\n"
+  // is checked back out with "\r\n", and every byte-exact assertion here fails
+  // on content that is otherwise identical. The fixture owns its line endings.
+  git("config", "core.autocrlf", "false");
+  git("config", "core.eol", "lf");
   writeFileSync(join(root, "kept.ts"), "export const kept = 1;\n");
   writeFileSync(join(root, "edited.ts"), "export const value = 1;\n");
   mkdirSync(join(root, "src"), { recursive: true });

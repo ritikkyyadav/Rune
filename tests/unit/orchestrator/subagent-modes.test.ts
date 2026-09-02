@@ -9,12 +9,13 @@
  * user's named pair, "auto" keeps tier routing.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { normalizeSubagentEffort, normalizeSubagentMode } from "../../../packages/shared/src/tiers";
 import { Engine, type EngineConfig } from "../../../packages/orchestrator/src/engine";
+import { rmTemp } from "../../helpers/tmp";
 
 interface EngineInternals {
   registry: { get(name: string): unknown };
@@ -72,7 +73,7 @@ describe("Engine orchestration modes", () => {
   afterEach(() => {
     engine?.close();
     engine = null;
-    rmSync(root, { recursive: true, force: true });
+    rmTemp(root);
   });
 
   test("off: the delegation tools never exist and the doctrine knows it", () => {
