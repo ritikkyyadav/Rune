@@ -11,6 +11,7 @@
 //              detached run on Gear's own repository can take (--run)
 
 import { existsSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getGearHome, SessionManager } from "@gear/shared";
 import type { SessionEvent } from "@gear/shared";
@@ -29,6 +30,18 @@ import {
 } from "../retro";
 import type { RetroSample, RunRetro, ScoreRow } from "../retro";
 import { TaskStateStore } from "../task-state";
+import { configHash } from "../evolve/config-hash";
+import { appendLedger, ledgerPath, readLedger } from "../evolve/ledger";
+import { promote, resume, revert } from "../evolve/promote";
+import {
+  VARIANT_IDS,
+  isVariantId,
+  variant as variantOf,
+  variantConfig,
+  variantConfigLines,
+} from "../evolve/variants";
+import { currentYardstick, findRepoRoot, readBlessed, writeBlessed } from "../evolve/yardstick";
+import { doctrineHash } from "../prompts";
 import { accent, danger, dim, faint, info, ok, text, warn } from "./ui/theme";
 
 type Row = { seq: number; event: SessionEvent };
@@ -502,6 +515,372 @@ function cmdStatus(
   return 0;
 }
 
+// ─── ab · promote · revert · why · yardstick · resume (P7.5) ───
+//
+// The four commands that turn a measurement into a change and back again. They
+// share one rule: everything they do lands in the ledger first, and the config
+// block is rendered FROM the ledger rather than edited alongside it. One source
+// of truth means a revert cannot leave the file and the history disagreeing.
+
+function gearHome(opts: Record<string, string | true>): string {
+  return typeof opts.home === "string" ? opts.home : getGearHome();
+}
+
+function printRefusals(refusals: string[]): void {
+  for (const r of refusals) say(`  ${danger("refused")}  ${text(r)}`);
+}
+
+/**
+ * `gear evolve ab <variant>` — run the paired A/B and record the result.
+ *
+ * The suite lives in the repository, not in the installed binary, so this
+ * shells out to `bun run tests/eval/runner.ts --ab <id>` in a Gear checkout and
+ * reads the report it writes. Outside a checkout it says so rather than
+ * pretending: there is no eval suite to run, and inventing a number would be
+ * the exact failure this phase exists to prevent.
+ */
+async function cmdAb(
+  workspaceRoot: string,
+  rest: string[],
+  opts: Record<string, string | true>,
+): Promise<number> {
+  const id = rest[1];
+  say();
+  if (!id || !isVariantId(id)) {
+    say(`  ${accent("Variants")} ${dim("· the closed set the loop may change")}`);
+    say();
+    for (const v of VARIANT_IDS) {
+      say(`  ${text(v.padEnd(16))} ${dim(variantOf(v).summary)}`);
+    }
+    say();
+    say(dim(`  Usage: gear evolve ab <variant>   ${id ? `("${id}" is not one of them)` : ""}`));
+    say();
+    return id ? 2 : 0;
+  }
+
+  const repoRoot = findRepoRoot(workspaceRoot) ?? findRepoRoot(process.cwd());
+  if (!repoRoot) {
+    say(
+      `  ${danger("!")} no eval suite here. \`gear evolve ab\` runs tests/eval against two configurations,`,
+    );
+    say(`    so it needs a Gear checkout as the workspace (run it there, or pass -w <path>).`);
+    say();
+    return 2;
+  }
+
+  const v = variantOf(id);
+  const mode = opts.real === true ? "real" : "mock";
+  say(`  ${accent("A/B")} ${text(id)} ${dim("·")} ${dim(v.summary)} ${dim("·")} ${mode} mode`);
+  say(`  ${faint(v.hypothesis)}`);
+  say();
+
+  const out = join(tmpdir(), `gear-ab-${id}-${Date.now()}.json`);
+  const args = ["run", join(repoRoot, "tests", "eval", "runner.ts"), "--ab", id, "--ab-out", out];
+  if (mode === "real") args.push("--real");
+  const proc = Bun.spawn(["bun", ...args], {
+    cwd: repoRoot,
+    stdout: "inherit",
+    stderr: "inherit",
+    env: process.env,
+  });
+  const code = await proc.exited;
+  if (code !== 0 || !existsSync(out)) {
+    say(`  ${danger("!")} the A/B did not complete (exit ${code}); nothing recorded.`);
+    say();
+    return 1;
+  }
+
+  let payload: {
+    comparison: {
+      win: boolean;
+      rateDelta: number;
+      costDelta: number | null;
+      compared: number;
+      fixes: string[];
+      regressions: string[];
+      refusals: string[];
+      mode: "mock" | "real";
+      controlConfigHash?: string;
+      treatmentConfigHash?: string;
+    };
+    yardstick?: string | null;
+  };
+  try {
+    payload = JSON.parse(readFileSync(out, "utf8"));
+  } catch (err) {
+    say(
+      `  ${danger("!")} could not read the A/B report: ${err instanceof Error ? err.message : err}`,
+    );
+    return 1;
+  }
+  const c = payload.comparison;
+  appendLedger(
+    {
+      v: 1,
+      at: new Date().toISOString(),
+      kind: "measurement",
+      subject: id,
+      controlConfigHash: c.controlConfigHash ?? configHash({}),
+      treatmentConfigHash: c.treatmentConfigHash ?? configHash(variantConfig(id)),
+      doctrineHash: doctrineHash(),
+      yardstick: payload.yardstick ?? null,
+      mode: c.mode,
+      win: c.win,
+      rateDelta: c.rateDelta,
+      costDelta: c.costDelta,
+      compared: c.compared,
+      fixes: c.fixes,
+      regressions: c.regressions,
+      refusals: c.refusals,
+    },
+    gearHome(opts),
+  );
+  say(
+    `  ${c.win ? ok("recorded: WIN") : warn("recorded: no change")} ${dim("· ledger")} ${info(ledgerPath(gearHome(opts)))}`,
+  );
+  if (c.win) say(`  ${dim("next")}      ${info(`gear evolve promote ${id}`)}`);
+  say();
+  return 0;
+}
+
+function cmdPromote(
+  workspaceRoot: string,
+  rest: string[],
+  opts: Record<string, string | true>,
+): number {
+  const home = gearHome(opts);
+  const id = rest[1];
+  say();
+  if (!id) {
+    say(dim("  Usage: gear evolve promote <variant>"));
+    say();
+    return 2;
+  }
+  const { hash } = currentYardstick(findRepoRoot(workspaceRoot) ?? process.cwd());
+  const blessed = readBlessed(home);
+  const result = promote(id, {
+    home,
+    yardstick: hash,
+    blessedYardstick: blessed?.hash ?? null,
+  });
+  if (!result.ok) {
+    say(`  ${accent("Promote")} ${text(id)} ${dim("· not applied")}`);
+    say();
+    printRefusals(result.refusals);
+    say();
+    return 1;
+  }
+  say(`  ${ok("Promoted")} ${text(id)}`);
+  say();
+  for (const line of result.configLines ?? []) say(`    ${info(line)}`);
+  say();
+  say(`  ${dim("config")}   ${result.configPath}`);
+  say(`  ${dim("ledger")}   ${ledgerPath(home)}`);
+  say(`  ${dim("undo")}     ${info("gear evolve revert")}`);
+  say();
+  return 0;
+}
+
+function cmdRevert(rest: string[], opts: Record<string, string | true>): number {
+  const home = gearHome(opts);
+  const n = num(rest[1], 1);
+  say();
+  const result = revert(n, { home });
+  if (!result.ok) {
+    say(`  ${accent("Revert")} ${dim("· nothing done")}`);
+    say();
+    printRefusals(result.refusals);
+    say();
+    return 1;
+  }
+  say(`  ${ok("Reverted")} ${text(result.reverted.join(", "))}`);
+  say(
+    `  ${dim("config")}   ${result.configPath} ${dim("(block rewritten from what is left standing)")}`,
+  );
+  say(`  ${dim("ledger")}   ${ledgerPath(home)} ${dim("· the revert is a row, not a deletion")}`);
+  if (result.halted) {
+    say();
+    say(`  ${danger("HALTED")}  ${text(result.haltReason ?? "two consecutive reverts")}`);
+    say(`  ${dim("resume")}   ${info("gear evolve resume")}`);
+  }
+  say();
+  return 0;
+}
+
+function cmdResume(opts: Record<string, string | true>): number {
+  const home = gearHome(opts);
+  say();
+  if (!resume({ home })) {
+    say(dim("  The loop is not halted; nothing to resume."));
+    say();
+    return 0;
+  }
+  say(
+    `  ${ok("Resumed")} ${dim("· promotions are allowed again, and the halt stays in the ledger")}`,
+  );
+  say();
+  return 0;
+}
+
+function cmdYardstick(workspaceRoot: string, opts: Record<string, string | true>): number {
+  const home = gearHome(opts);
+  const { repoRoot, hash } = currentYardstick(findRepoRoot(workspaceRoot) ?? process.cwd());
+  const blessed = readBlessed(home);
+  say();
+  say(`  ${accent("Yardstick")} ${dim("· the eval suite promotions are measured against")}`);
+  say();
+  if (!hash) {
+    say(dim("  No tests/eval here — run this from a Gear checkout."));
+    say();
+    return 2;
+  }
+  say(`  ${text("current")}  ${hash} ${dim(`· ${repoRoot}/tests/eval`)}`);
+  say(
+    `  ${text("blessed")}  ${blessed ? `${blessed.hash} ${dim(`· ${blessed.at.slice(0, 10)}`)}` : dim("never")}`,
+  );
+  if (opts.bless === true) {
+    const entry = writeBlessed(hash, repoRoot, home);
+    say();
+    say(`  ${ok("Blessed")} ${entry.hash} ${dim("· promotions may now be measured against it")}`);
+    say();
+    return 0;
+  }
+  say();
+  if (!blessed) {
+    say(dim("  Never blessed: promotions are refused until a human anchors it."));
+  } else if (blessed.hash !== hash) {
+    say(warn("  The suite has moved since it was blessed — promotions are refused."));
+    say(
+      dim(
+        "  A loop that edits the eval suite and then promotes on the result grades its own exam.",
+      ),
+    );
+  } else {
+    say(ok("  Unchanged since it was blessed."));
+  }
+  say(dim("  bless it: gear evolve yardstick --bless"));
+  say();
+  return 0;
+}
+
+/**
+ * `gear evolve why <variant|lesson>` — the lineage.
+ *
+ * The question a promotion has to be able to answer is "why does it believe
+ * this", and the answer is not a confidence score: it is the hypothesis someone
+ * wrote down, the measurements that were run, what each one decided, and what
+ * happened afterwards. All of it comes off the ledger, so a belief that turned
+ * out wrong stays readable.
+ */
+function cmdWhy(
+  workspaceRoot: string,
+  rest: string[],
+  opts: Record<string, string | true>,
+): number {
+  const home = gearHome(opts);
+  const subject = rest[1];
+  say();
+  if (!subject) {
+    say(dim("  Usage: gear evolve why <variant|lesson-id>"));
+    say();
+    return 2;
+  }
+  const entries = readLedger(home).filter((e) => e.subject === subject);
+
+  if (isVariantId(subject)) {
+    const v = variantOf(subject);
+    say(`  ${accent("Why")} ${text(subject)}`);
+    say();
+    say(`  ${dim("changes")}    ${v.summary}`);
+    say(`  ${dim("config")}     ${info(variantConfigLines(subject).join(" · "))}`);
+    say(`  ${dim("hypothesis")} ${text(v.hypothesis)}`);
+    say();
+  } else {
+    // Not a variant: try the notebook, where lessons live.
+    const printed = whyLesson(workspaceRoot, subject);
+    if (!printed && entries.length === 0) {
+      say(`  ${danger("!")} nothing known about "${subject}".`);
+      say(dim(`     variants: ${VARIANT_IDS.join(", ")}`));
+      say(dim("     lessons:  gear evolve lessons"));
+      say();
+      return 2;
+    }
+  }
+
+  if (entries.length === 0) {
+    say(dim("  No ledger history: never measured, never promoted."));
+    say();
+    return 0;
+  }
+  say(`  ${text("History")} ${dim(`· ${entries.length} row${entries.length === 1 ? "" : "s"}`)}`);
+  say();
+  for (const e of entries) {
+    const when = dim(e.at.slice(0, 16).replace("T", " "));
+    if (e.kind === "measurement") {
+      const verdict = e.win ? ok("WIN     ") : warn("no change");
+      const cost =
+        e.costDelta === null || e.costDelta === undefined
+          ? "no data"
+          : `${((e.costDelta ?? 0) * 100).toFixed(1)}%`;
+      say(
+        `  ${when}  ${verdict} ${dim(`${e.mode} · ${e.compared} tasks · pass ${((e.rateDelta ?? 0) * 100).toFixed(1)}% · cost ${cost}`)}`,
+      );
+      for (const r of e.refusals ?? []) say(`                      ${faint(`· ${r}`)}`);
+    } else if (e.kind === "promotion") {
+      say(`  ${when}  ${ok("PROMOTED")} ${dim((e.configLines ?? []).join(" · "))}`);
+    } else if (e.kind === "revert") {
+      say(`  ${when}  ${warn("REVERTED")} ${dim(e.note ?? "")}`);
+    } else {
+      say(`  ${when}  ${danger("HALT")}     ${dim(e.note ?? "")}`);
+    }
+  }
+  say();
+  return 0;
+}
+
+/** Lineage for a notebook lesson. Returns false when the id matches nothing. */
+function whyLesson(workspaceRoot: string, shortId: string): boolean {
+  let store: NotebookStore;
+  try {
+    store = new NotebookStore(join(getGearHome(), "notebook.db"));
+  } catch {
+    return false;
+  }
+  try {
+    const entry = store.getByPrefix(shortId);
+    if (!entry) return false;
+    say(`  ${accent("Why")} ${text(entry.title)} ${dim(`· ${entry.id.slice(-8)}`)}`);
+    say();
+    say(`  ${dim("says")}       ${text(entry.body)}`);
+    say(`  ${dim("scope")}      ${entry.scope}${entry.repoKey ? dim(` · ${entry.repoKey}`) : ""}`);
+    say(
+      `  ${dim("born")}       ${entry.createdAt.slice(0, 10)}${entry.provenance.note ? dim(` · from \`${entry.provenance.note}\``) : ""}`,
+    );
+    say(
+      `  ${dim("fired in")}   ${entry.provenance.sessions.length} session${entry.provenance.sessions.length === 1 ? "" : "s"}${
+        entry.provenance.sessions.length
+          ? dim(
+              ` · ${entry.provenance.sessions
+                .slice(-3)
+                .map((s) => s.slice(-8))
+                .join(", ")}`,
+            )
+          : ""
+      }`,
+    );
+    say(
+      `  ${dim("win curve")}  ${entry.uses === 0 ? dim("never injected") : `${entry.wins}/${entry.uses} (${pct(entry.wins / entry.uses)})`}`,
+    );
+    say(
+      `  ${dim("state")}      ${entry.retired ? warn("retired") : ok("live")}${entry.lastUsed ? dim(` · last used ${entry.lastUsed.slice(0, 10)}`) : ""}`,
+    );
+    say();
+    return true;
+  } finally {
+    store.close();
+  }
+}
+
 export async function runEvolve(args: string[], values: Record<string, unknown>): Promise<number> {
   const { opts, rest } = flags(Bun.argv.slice(2).filter((a) => a !== "evolve"));
   const sub = rest[0] ?? args[0] ?? "status";
@@ -512,6 +891,12 @@ export async function runEvolve(args: string[], values: Record<string, unknown>)
 
   if (sub === "lessons") return cmdLessons(workspaceRoot, opts);
   if (sub === "gardener") return cmdGardener(workspaceRoot, opts);
+  if (sub === "ab") return cmdAb(workspaceRoot, rest, opts);
+  if (sub === "promote") return cmdPromote(workspaceRoot, rest, opts);
+  if (sub === "revert") return cmdRevert(rest, opts);
+  if (sub === "resume") return cmdResume(opts);
+  if (sub === "yardstick") return cmdYardstick(workspaceRoot, opts);
+  if (sub === "why") return cmdWhy(workspaceRoot, rest, opts);
 
   const dbPath =
     (typeof values.db === "string" && values.db) ||
@@ -530,9 +915,10 @@ export async function runEvolve(args: string[], values: Record<string, unknown>)
     if (sub === "status") return cmdStatus(sm, workspaceRoot, opts);
     say(
       dim(
-        "  Usage: gear evolve [status|scorecard|lessons|tune|gardener] [--days N] [--by model|workspace] [--run]",
+        "  Usage: gear evolve [status|scorecard|lessons|tune|ab|promote|revert|why|yardstick|resume|gardener]",
       ),
     );
+    say(dim("         [--days N] [--by model|workspace] [--real] [--bless] [--run]"));
     return 2;
   } finally {
     sm.close();
