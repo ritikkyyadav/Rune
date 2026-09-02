@@ -2,7 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./styles/tokens.css";
-import "./styles/desktop.css";
+import "./styles/web.css";
 import { applyTheme, loadTheme } from "./lib/theme";
 
 // Paint the theme before the first frame so the window never flashes.

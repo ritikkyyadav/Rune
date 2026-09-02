@@ -76,9 +76,9 @@ export interface Theme {
 // One accent (P3.3). The union keeps a single member rather than disappearing,
 // because `[ui] accent` survives as an undocumented override and a type that
 // can only be "datum" states the decision instead of hiding that there was one.
-export type GearAccent = "datum";
+export type GearAccent = "gear";
 
-export const GEAR_ACCENTS: readonly GearAccent[] = ["datum"];
+export const GEAR_ACCENTS: readonly GearAccent[] = ["gear"];
 
 // Gear opens on ink. The picker is `light | dark | auto` and nothing else: the
 // five cosmetic accents are gone from both surfaces, because one accent is a
@@ -396,27 +396,32 @@ const ATLAS: Theme = {
   },
 };
 
-// ─── Gear customizer palettes ───
-// Pigments live in ONE place: packages/shared/src/design-tokens.ts, the
-// machine-readable form of docs/design/gear-customizer-v2.html. This module derives the
-// ten gear themes from those tokens; a parity test locks tokens ↔ HTML, so a
-// contract change propagates here (and to the desktop CSS emitter) from a
-// single edit instead of three hand-synced copies.
+// ─── The product's two modes ───
+// Pigments live in ONE place: packages/shared/src/design-tokens.ts. This module
+// derives the console's light and dark modes from those tokens, so the accent
+// and the three status colours are the SAME values the app paints with and a
+// brand change propagates from one edit instead of three hand-synced copies.
+//
+// The console's `accent` slot is the semantic negative, not the identity blue:
+// it is what the prompt chevron and an error use, and the brand accent arrives
+// as `info` and as `brand`. Those names are the console's, and they read from
+// what each slot MEANS rather than from what colour it happens to be.
 
 const GEAR_ACCENT_LABEL: Record<GearAccent, string> = GEAR_ACCENT_LABELS;
 
-/** Stable persisted id for one customizer base/accent combination. The original
- *  `gear` and `gear-dark` ids remain the cobalt pair so existing installs migrate
- *  without a visible surprise. */
-export function gearThemeName(appearance: "light" | "dark", _accent: GearAccent = "datum"): string {
+/** Stable persisted id for one base. `gear` and `gear-dark` are the ids every
+ *  existing install already has recorded, so a rebrand does not reset anyone's
+ *  theme; only the pigments behind them moved. */
+export function gearThemeName(appearance: "light" | "dark", _accent: GearAccent = "gear"): string {
   return appearance === "light" ? "gear" : "gear-dark";
 }
 
-function gearTheme(appearance: "light" | "dark", accentName: GearAccent = "datum"): Theme {
-  // Exact customizer pigments, derived from the shared token source. The HTML
-  // is the product contract, including its distinction between semantic text
-  // and the cosmetic accent; translucent contract values arrive here already
-  // composited to solid terminal colors.
+function gearTheme(appearance: "light" | "dark", accentName: GearAccent = "gear"): Theme {
+  // Derived from the shared token source, including its distinction between
+  // semantic text and the cosmetic accent. Translucent values arrive here
+  // already composited to solid terminal colours, because a terminal has no
+  // alpha channel and a guess made at render time is a different guess each
+  // time.
   const palette = gearTerminalPalette(appearance);
   const brand = gearAccentHex(appearance, accentName);
   const label = appearance === "light" ? "Light" : "Dark";
@@ -447,7 +452,7 @@ function gearTheme(appearance: "light" | "dark", accentName: GearAccent = "datum
 // ─── The bundled themes (display order) ───
 
 export const THEMES: Theme[] = [
-  // The two Savoir modes are the product. `flow` — the recorded dark palette
+  // The two modes are the product. `flow` — the recorded dark palette
   // that used to sit here — is gone as a theme and kept as an alias
   // (`findTheme("flow")` resolves to the dark mode), because its pigments were
   // a fourth identity in a repository that now has one. The community palettes
@@ -686,7 +691,7 @@ export function findTheme(name: string): Theme | undefined {
   // Someone with `gear-violet-dark` in ~/.gear/theme.json gets the dark Savoir
   // mode, not an "unknown theme" error and a surprise repaint.
   const accentAlias =
-    /^(?:gear-)?(cobalt|orange|violet|emerald|mono|datum)(?:-(light|dark))?$/.exec(normalized);
+    /^(?:gear-)?(cobalt|orange|violet|emerald|mono|datum|gear)(?:-(light|dark))?$/.exec(normalized);
   const canonical = accentAlias
     ? gearThemeName(
         (accentAlias[2] as "light" | "dark" | undefined) ??
