@@ -208,7 +208,7 @@ export class LspServerManager {
   private servers = new Map<string, RunningServer>();
   private initTimeoutMs: number;
   private requestTimeoutMs: number;
-  private serverTable: ServerTable;
+  private override: ServerTable | null;
 
   constructor(
     opts: {
@@ -220,22 +220,32 @@ export class LspServerManager {
   ) {
     this.initTimeoutMs = opts.initTimeoutMs ?? 15_000;
     this.requestTimeoutMs = opts.requestTimeoutMs ?? 8_000;
-    this.serverTable = opts.serversOverride ?? serverTable();
+    this.override = opts.serversOverride ?? null;
     // Hard-exit teardown: kill synchronously, no awaiting allowed here.
     process.on("exit", () => this.killAll());
+  }
+
+  /**
+   * Resolved per lookup, not pinned at construction: the manager is a process
+   * singleton that outlives any one workspace, so a GEAR_LSP_SERVERS change
+   * (followed by resetServerTable) has to reach it. An explicit
+   * serversOverride still wins for its whole life.
+   */
+  private table(): ServerTable {
+    return this.override ?? serverTable();
   }
 
   /** Which server spec (if any) handles this file. */
   specFor(file: string): ServerSpec | null {
     const ext = extname(file).toLowerCase();
-    for (const { extensions, spec } of this.serverTable) {
+    for (const { extensions, spec } of this.table()) {
       if (extensions.includes(ext)) return spec;
     }
     return null;
   }
 
   supportedExtensions(): string[] {
-    return this.serverTable.flatMap((s) => s.extensions);
+    return this.table().flatMap((s) => s.extensions);
   }
 
   async definition(file: string, pos: LspPosition, workspaceRoot: string): Promise<LspLocation[]> {
