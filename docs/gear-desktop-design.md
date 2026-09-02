@@ -182,3 +182,48 @@ Not yet (M2–M4): Review workspace (the old `ReviewWorkspace`/`EnvironmentPanel
 1. Trace rail default: open on every session, or open on demand (`⌘T`)? (Draft: open, collapsible.)
 2. Keep the CLI in lock-step (same words/components) — yes by default; the contract is shared.
 3. Should the desktop replace `gear` as the default `gear` command target, or stay `gear desktop`?
+
+---
+
+## 7. Running it (Phase 3 · P3.1)
+
+Between 2026-08-21 and Phase 3 the app built green and could not start. Three
+things were missing and all three are closed here.
+
+**`gear desktop`** (alias `gear app`) writes `~/.gear/desktop.json` — the file
+`lib.rs` reads to find the engine, which nothing in the repository had ever
+written — and then opens the app. It prefers an installed bundle
+(`/Applications/Gear.app`, `~/Applications/Gear.app`, the checkout's own
+`target/release/bundle`) and falls back to `tauri dev` in a checkout that has
+never been packaged. `gear desktop dev` runs the Vite preview instead: no
+engine, but the recorded demo turn replays through the real reducers.
+
+**`gear desktop --check`** is the headless proof, for CI and for a machine with
+no window server. It writes the pointer, spawns the same sidecar the app
+spawns — or connects to a running `gear serve` when `GEAR_SERVE_URL` is set —
+completes the `ready` → `hello` handshake, reports the protocol version and the
+command count, and exits 0 or 1. It opens no window, so it says nothing about
+rendering; what it proves is that the app's engine is reachable.
+
+**One bridge command.** `lib.rs` used to mirror seventeen host commands by
+hand. That pattern drifted twice: `interject_chat` was never added, so mid-turn
+steering threw and the webview reported a lost connection; `save_settings` grew
+a `persist` field the Rust signature did not have, so serde dropped it and gear
+persistence was a silent no-op. Both are fixed by construction — the bridge is
+now `engine_call(cmd, args)` plus one event pipe, and the types live in
+`@gear/protocol` on both sides. The six `*_system_memory` commands, which no
+webview code ever called, are gone; `engine_call` reaches them if a surface
+ever wants one. `engine_health` is the one addition: it distinguishes "no
+engine configured on this machine" from "the engine dropped", which used to
+look identical.
+
+**Two transports, one bundle.** `apps/desktop/src/lib/transport.ts` decides:
+`GearClient` over a WebSocket when a server is configured (the endpoint `gear
+web` embeds in the page, `?server=&token=`, or one saved in the browser),
+otherwise the Tauri passthrough inside the app, otherwise nothing at all — the
+browser preview, which says so rather than pretending. Everything above that
+file talks to six methods and never learns which transport it got. The only
+asymmetry is the round-trips: the sidecar streams `{requestId, prompt}` and the
+client answers by name, while the SDK holds a promise and answers for you, so
+ws mode mints a local id and both present the same `(id, payload)` shape
+upward.

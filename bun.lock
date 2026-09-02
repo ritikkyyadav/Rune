@@ -16,6 +16,7 @@
       "version": "0.3.0",
       "dependencies": {
         "@gear/protocol": "workspace:*",
+        "@gear/sdk": "workspace:*",
         "@tauri-apps/api": "^2.0.0",
         "@tauri-apps/plugin-shell": "^2.0.0",
         "react": "^19.0.0",
@@ -53,6 +54,7 @@
       "dependencies": {
         "@gear/llm-gateway": "workspace:*",
         "@gear/protocol": "workspace:*",
+        "@gear/sdk": "workspace:*",
         "@gear/shared": "workspace:*",
         "@gear/telemetry": "workspace:*",
         "@gear/tool-registry": "workspace:*",
