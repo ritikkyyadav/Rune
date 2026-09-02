@@ -147,6 +147,29 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Typecheck
         run: bun run typecheck
+      - name: PowerShell installer parses and passes PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          # The .ps1 is the only Windows install path, and it cannot be
+          # syntax-checked on the machine it is usually written on. Windows CI
+          # is where it gets a compiler.
+          $errs = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path scripts/install.ps1), [ref]$null, [ref]$errs) | Out-Null
+          if ($errs) { $errs | ForEach-Object { Write-Error $_.Message }; exit 1 }
+          Write-Host "install.ps1 parses"
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -ErrorAction SilentlyContinue
+          if (Get-Module -ListAvailable PSScriptAnalyzer) {
+            $found = Invoke-ScriptAnalyzer -Path scripts/install.ps1 -Severity Error
+            $found | Format-Table -AutoSize
+            if ($found) { exit 1 }
+          }
+      - name: install.ps1 -Uninstall is a clean no-op on a fresh machine
+        shell: pwsh
+        run: |
+          # Exercises the parameter block, the PATH helpers and the uninstall
+          # branch without needing a published release to exist.
+          ./scripts/install.ps1 -Uninstall -InstallDir "$env:RUNNER_TEMP/gear-bin"
 
   # ── Stage 4c: Packaged-binary E2E — the artifact users actually download ──
   packaged-e2e:
