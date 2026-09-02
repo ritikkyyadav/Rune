@@ -180,8 +180,10 @@ import {
   type LoopRunOutcome,
   type LoopTask,
 } from "./loop-mode";
+import { configHash } from "./evolve/config-hash";
 import {
   AGENT_DOCTRINE,
+  doctrineHash,
   renderDoctrine,
   extractDoctrineSection,
   type DoctrineContext,
@@ -1397,8 +1399,40 @@ export class Engine {
       this.config.workspaceRoot,
       model ?? this.config.model,
       this.config.provider,
+      // Which doctrine this session runs under. The column existed from the
+      // first schema and had never been written; without it a measured
+      // difference between two runs cannot be attributed to the prompt.
+      this.doctrineHashForSession(),
     );
     return session.id;
+  }
+
+  /**
+   * The doctrine digest for this session, memoized. `doctrineContext()` walks
+   * the workspace (tracked-file count, interface detection), so it is resolved
+   * once per session rather than per call — the same reason the environment
+   * block is snapshotted.
+   */
+  private sessionDoctrineHash: string | null = null;
+  private doctrineHashForSession(): string | null {
+    if (this.sessionDoctrineHash) return this.sessionDoctrineHash;
+    try {
+      this.sessionDoctrineHash = doctrineHash(this.doctrineContext());
+    } catch {
+      // Attribution must never be the reason a session fails to start.
+      return null;
+    }
+    return this.sessionDoctrineHash;
+  }
+
+  /**
+   * The arm this engine is running as, when an A/B set one. Only the eval
+   * harness writes it (`RunOptions.arm`); an ordinary session has none, and a
+   * null arm is what "this is not part of an experiment" looks like.
+   */
+  private evolveArm: string | null = null;
+  setEvolveArm(arm: string | null): void {
+    this.evolveArm = arm ?? null;
   }
 
   setPermissionHandler(handler: PermissionHandler): void {
@@ -4091,6 +4125,12 @@ export class Engine {
               retro,
               model: session.model,
               provider: session.provider ?? this.config.provider,
+              // Attribution. Without these three a retro says what happened
+              // and cannot say what it happened UNDER, which is the whole
+              // difference between a measurement and an anecdote.
+              doctrineHash: this.doctrineHashForSession(),
+              configHash: configHash(this.config as unknown as Record<string, unknown>),
+              arm: this.evolveArm,
             },
           });
           if (this.notebookStore && this.notebookKeys) {

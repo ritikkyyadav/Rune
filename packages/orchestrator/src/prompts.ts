@@ -13,6 +13,7 @@
 // deltas) is interpolated after session start.
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { platform, release } from "node:os";
 import { join } from "node:path";
@@ -297,6 +298,42 @@ export function renderDoctrine(ctx: DoctrineContext = FULL_DOCTRINE_CONTEXT): st
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trimEnd();
+}
+
+// ─── Attribution: which doctrine produced this run ───
+//
+// Nothing recorded which prompt a session ran under: `system_prompt_hash` had
+// been NULL for 601 sessions and the doctrine carried no version at all. So a
+// measured difference between two runs could never be attributed to the words
+// that caused it — which is the whole difference between improving and
+// mutating. These two exports are the attribution primitive; `session.ts`
+// stamps the hash on the row and the retro carries it into the record.
+
+/**
+ * Bumped BY HAND when the doctrine's meaning changes in a way that should
+ * invalidate comparisons across the boundary. The hash below already changes
+ * on every byte, so this is not a cache key — it is the human's statement that
+ * "these two runs are not comparable", which a byte hash cannot express (a
+ * typo fix changes the hash and changes nothing that matters).
+ */
+export const DOCTRINE_VERSION = 1;
+
+/**
+ * A short, stable digest of the doctrine as this session will actually render
+ * it — the version, plus the exact text after gated sections are dropped.
+ *
+ * Deliberately NOT a hash of `AGENT_DOCTRINE`: two sessions in the same repo
+ * on the same build can render different doctrine (one has a delegation tool,
+ * one does not), and treating those as one configuration is how an A/B lies.
+ * Twelve hex characters — collision-safe for a corpus of runs, short enough to
+ * sit in a table.
+ */
+export function doctrineHash(ctx: DoctrineContext = FULL_DOCTRINE_CONTEXT): string {
+  return createHash("sha256")
+    .update(`v${DOCTRINE_VERSION}\n`)
+    .update(renderDoctrine(ctx))
+    .digest("hex")
+    .slice(0, 12);
 }
 
 export function renderInteractiveDoctrine(auto: boolean): string {

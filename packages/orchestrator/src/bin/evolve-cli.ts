@@ -114,13 +114,30 @@ function collectSamples(
       const turns: RunRetro[] = [];
       let model: string | undefined;
       let provider: string | undefined;
+      let doctrineHash: string | null = null;
+      let configHash: string | null = null;
+      let arm: string | null = null;
       for (const r of retroRows) {
-        const p = r.event.payload as { retro?: RunRetro; model?: string; provider?: string };
+        const p = r.event.payload as {
+          retro?: RunRetro;
+          model?: string;
+          provider?: string;
+          doctrineHash?: string | null;
+          configHash?: string | null;
+          arm?: string | null;
+        };
         if (!p.retro || p.retro.v !== 1) continue;
         turns.push(p.retro);
         // The model the session ran on last is the one it is scored as.
         if (p.model) model = p.model;
         if (p.provider) provider = p.provider;
+        // Same rule for attribution: the configuration the session ENDED under
+        // is the one it is attributed to. A /config change mid-session makes
+        // the sample unattributable, and the A/B path drops those rather than
+        // averaging two arms into one number.
+        if (p.doctrineHash) doctrineHash = p.doctrineHash;
+        if (p.configHash) configHash = p.configHash;
+        if (p.arm) arm = p.arm;
       }
       const folded =
         turns.length === 1 && turns[0]!.scope === "session"
@@ -133,6 +150,9 @@ function collectSamples(
           provider: provider ?? s.provider,
           workspaceRoot: s.workspaceRoot,
           sessionId: s.id,
+          doctrineHash: doctrineHash ?? s.systemPromptHash ?? null,
+          configHash,
+          arm,
         });
         written++;
       }

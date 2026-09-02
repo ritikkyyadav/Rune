@@ -22,6 +22,7 @@ interface SessionRow {
   status: string;
   event_count: number;
   last_tokens: number | null;
+  system_prompt_hash: string | null;
 }
 
 export interface SessionInfoInternal {
@@ -37,6 +38,13 @@ export interface SessionInfoInternal {
   status: SessionStatus;
   /** Last reported context-window occupancy in tokens (null before any report). */
   lastTokens: number | null;
+  /**
+   * Digest of the doctrine this session was created under. The column has
+   * existed since the first schema and was NULL for every one of the 601
+   * sessions on this machine, which is why no measured difference between two
+   * runs could ever be attributed to the prompt that caused it.
+   */
+  systemPromptHash: string | null;
 }
 
 // ─── Schema (mirrors the Rust session schema exactly) ───
@@ -118,6 +126,7 @@ function rowToSessionInfo(r: SessionRow): SessionInfoInternal {
     title: r.title,
     status: (r.status as SessionStatus) ?? "active",
     lastTokens: r.last_tokens ?? null,
+    systemPromptHash: r.system_prompt_hash ?? null,
   };
 }
 
@@ -159,6 +168,9 @@ export class SessionManager {
     if (!cols.some((c) => c.name === "last_tokens")) {
       this.db.exec("ALTER TABLE sessions ADD COLUMN last_tokens INTEGER");
     }
+    if (!cols.some((c) => c.name === "system_prompt_hash")) {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN system_prompt_hash TEXT");
+    }
   }
 
   /**
@@ -173,15 +185,26 @@ export class SessionManager {
       .run(Math.round(tokens), sessionId);
   }
 
-  createSession(workspaceRoot: string, model: string, provider?: string): SessionInfoInternal {
+  /**
+   * `systemPromptHash` is the doctrine digest the caller is running under
+   * (`doctrineHash()` in the orchestrator). Optional so every existing caller
+   * keeps working; passing it is what makes a run attributable to the prompt
+   * that produced it.
+   */
+  createSession(
+    workspaceRoot: string,
+    model: string,
+    provider?: string,
+    systemPromptHash?: string | null,
+  ): SessionInfoInternal {
     const id = randomUUIDv7();
     const now = new Date().toISOString();
 
     this.db
       .prepare(
-        "INSERT INTO sessions (id, workspace_root, model, provider, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO sessions (id, workspace_root, model, provider, system_prompt_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
       )
-      .run(id, workspaceRoot, model, provider ?? null, now, now);
+      .run(id, workspaceRoot, model, provider ?? null, systemPromptHash ?? null, now, now);
 
     return {
       id,
@@ -194,6 +217,7 @@ export class SessionManager {
       title: null,
       status: "active",
       lastTokens: null,
+      systemPromptHash: systemPromptHash ?? null,
     };
   }
 
@@ -277,7 +301,7 @@ export class SessionManager {
     const status = opts?.status ?? "active";
     const where = status === "all" ? "" : "WHERE s.status = ?";
     const stmt = this.db.prepare(
-      `SELECT s.id, s.created_at, s.updated_at, s.workspace_root, s.model, s.provider, s.title, s.status, s.last_tokens,
+      `SELECT s.id, s.created_at, s.updated_at, s.workspace_root, s.model, s.provider, s.title, s.status, s.last_tokens, s.system_prompt_hash,
               (SELECT COUNT(*) FROM events WHERE session_id = s.id) as event_count
        FROM sessions s
        ${where}
@@ -331,7 +355,7 @@ export class SessionManager {
   getSession(sessionId: string): SessionInfoInternal | null {
     const row = this.db
       .prepare(
-        `SELECT s.id, s.created_at, s.updated_at, s.workspace_root, s.model, s.provider, s.title, s.status, s.last_tokens,
+        `SELECT s.id, s.created_at, s.updated_at, s.workspace_root, s.model, s.provider, s.title, s.status, s.last_tokens, s.system_prompt_hash,
                 (SELECT COUNT(*) FROM events WHERE session_id = s.id) as event_count
          FROM sessions s WHERE s.id = ? AND s.status = 'active'`,
       )
@@ -345,7 +369,7 @@ export class SessionManager {
   getSessionInfo(sessionId: string): SessionInfoInternal | null {
     const row = this.db
       .prepare(
-        `SELECT s.id, s.created_at, s.updated_at, s.workspace_root, s.model, s.provider, s.title, s.status, s.last_tokens,
+        `SELECT s.id, s.created_at, s.updated_at, s.workspace_root, s.model, s.provider, s.title, s.status, s.last_tokens, s.system_prompt_hash,
                 (SELECT COUNT(*) FROM events WHERE session_id = s.id) as event_count
          FROM sessions s WHERE s.id = ?`,
       )
