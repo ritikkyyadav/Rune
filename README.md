@@ -386,4 +386,8 @@ Full details in [`PRIVACY.md`](PRIVACY.md).
 
 ## License
 
-TBD.
+[Apache-2.0](LICENSE).
+
+This is the program's D1 default (open-core: engine and clients under Apache-2.0, the compliance
+layer commercial), not a settled decision. It landed in its own commit so it can be dropped without
+touching anything else.
