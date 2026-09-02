@@ -458,6 +458,19 @@ export interface GearConfig {
     /** Presence heartbeat interval in seconds (default 15). */
     heartbeatSecs?: number;
   };
+  /**
+   * Staying current. `gear upgrade` is always explicit — nothing is ever
+   * downloaded or replaced without the user typing the command. `check`
+   * governs only the once-a-day background look at the latest release that
+   * produces a one-line nag; set it false and Gear never talks to GitHub on
+   * its own.
+   */
+  update?: {
+    /** Daily startup check for a newer release. Default true. */
+    check?: boolean;
+    /** GitHub repo the releases come from. Default ritikkyyadav/Alan. */
+    repo?: string;
+  };
 }
 
 export interface PermissionRule {
