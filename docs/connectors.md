@@ -261,3 +261,67 @@ unusual one through.
 server→client stream, plus the legacy two-endpoint SSE transport (2024-11-05)
 for older deployments. A server that offers no `GET` stream answers 405 and the
 session carries on — that stream is additive.
+
+---
+
+## Plugins
+
+A plugin is one installable bundle of the four extension kinds:
+
+```
+.gear/plugins/<name>/
+  plugin.json          manifest
+  skills/<s>/SKILL.md  auto-discovered, attributed to <name>
+  mcp.json             connectors
+  commands/<c>.md      slash commands
+  hooks.json           hooks
+```
+
+```
+gear plugin add ./my-plugin              a local path
+gear plugin add https://github.com/…      a git repository
+gear plugin add @scope/gear-plugin-x      an npm package
+gear plugin list / remove / enable / disable
+```
+
+Plugins existed as this convention with no way to get a directory there, and
+`PluginDiscovery.errors` were computed on every scan and shown nowhere — so an
+installed-but-refused plugin looked exactly like one nobody had installed.
+`gear plugin list` prints the refusals, and so does the status line.
+
+**v1 plugins are declarative** (D6): skills, commands, MCP servers, hooks.
+Nothing here installs executable tools. `npm` bundles are fetched with `npm
+pack` and untarred, so no install script runs.
+
+**The manifest gained four fields.**
+
+| Field | What it does |
+|---|---|
+| `gearVersion` | semver range; a plugin that does not fit is refused with a reason, rather than loaded and left to fail somewhere less legible. An unparseable range is treated as satisfied — our limitation should not become the author's problem |
+| `permissions` | `hosts`, `paths`, `blockingHooks`. **Disclosure, not enforcement** — printed at install and in `list`, and said to be unenforced. Executable third-party tools stay out of v1 precisely because a declaration is not a sandbox |
+| `integrity` | `sha256` over the tree. A digest that no longer matches means the files changed since installation, and the plugin is refused: a plugin contributes hooks that run shell commands, and "probably fine" is not a standard to run someone else's commands under |
+| `source` | where it came from |
+
+`disable` keeps the bundle and stops its contributions. Because the manifest is
+part of the hashed tree, toggling recomputes the digest.
+
+**`invalidatePlugins()`** re-scans and re-runs all four loaders without a
+restart — installing a plugin mid-session used to do nothing until the next
+process, and nothing said so. All four latches clear together on purpose: a
+plugin contributes across them, and a partial refresh leaves a bundle
+half-installed, which is worse than not refreshing at all. MCP servers are
+stopped rather than merely re-scanned, because their subprocesses and HTTP
+sessions belong to the old plugin set.
+
+## Local executable tools
+
+`custom-loader.ts` was 210 lines of exported, tested, never-instantiated code.
+It is wired now for exactly one case — **the user's own workspace**:
+
+```toml
+[extensions]
+localTools = true   # load executable tools from <workspace>/.gear/tools
+```
+
+Off by default. A plugin can never point at it: a declaration is not a sandbox,
+and running a stranger's code needs one.
