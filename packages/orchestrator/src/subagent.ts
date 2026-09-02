@@ -383,6 +383,14 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
           input.workspaceRoot,
           input.signal,
         )) {
+          // The typed channel (P2.6). A scout's callId is its identity in the
+          // fleet — one sub-agent per call — so the parent can keep a row per
+          // member instead of folding a fan-out into one shared heartbeat.
+          input.onEvent?.({
+            agentId: input.callId,
+            label: String(prompt ?? "").slice(0, 80),
+            event,
+          });
           switch (event.type) {
             case "text_delta":
               finalText += event.text;

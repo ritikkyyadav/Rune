@@ -37,7 +37,8 @@ import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "@ge
  * tests, typechecks, lints, builds. The check log records only these, and a
  * step completed right after one of these FAILED is refused (task-state.ts).
  * Lives here, beside the ledger that consumes it, rather than in the UI layer
- * where it was born — the loop must not import from bin/ui.
+ * where it was born — no engine module may import a surface module, and a gate
+ * on Phase 2 counts the violations.
  */
 export function isVerificationCommand(command: string): boolean {
   const cmd = command.toLowerCase();
@@ -49,9 +50,6 @@ export function isVerificationCommand(command: string): boolean {
     )
   );
 }
-
-/** How much an assertion is worth. Ordered weakest → strongest. */
-export type ClaimRung = "suspected" | "observed" | "reproduced" | "verified";
 
 export const CLAIM_RUNGS: readonly ClaimRung[] = [
   "suspected",
@@ -76,51 +74,11 @@ export const RUNG_MEANING: Record<ClaimRung, string> = {
   verified: "a test that failed on the parent commit passes now.",
 };
 
-/**
- * Evidence that moved a criterion. Every field is something the RUNTIME saw —
- * a command it ran, a file it touched, an exit code it read. None of it is
- * model prose, which is the whole point: a surface that never reads what the
- * model said cannot be made to claim something the model merely asserted.
- */
-export interface Evidence {
-  /** The command or operation that produced this, verbatim. */
-  source: string;
-  /** A short quotable excerpt of what came back. */
-  detail?: string;
-  /**
-   * Required for `verified`: the same check was run on the parent commit and
-   * FAILED there. Without this a green test proves only that it is green now,
-   * not that this change is why.
-   */
-  parentCommitFailed?: boolean;
-  /** The parent commit the check was run against, for the receipt. */
-  parentCommit?: string;
-}
-
-export interface Criterion {
-  /** What must be true, in the person's own frame. Set once, never rewritten. */
-  text: string;
-  /** null until an event moves it. The model can never set this directly. */
-  rung: ClaimRung | null;
-  evidence?: Evidence;
-}
-
-export interface Brief {
-  /**
-   * The agent's reading of what the person wants — the SYMPTOM they described,
-   * not the command they typed.
-   */
-  reading: string;
-  /** Files or areas that will be touched. */
-  touch: string[];
-  /** What will deliberately NOT be touched, and why. */
-  leave: string[];
-  /** How the agent will know it is finished. */
-  criteria: Criterion[];
-  /** Verbatim request this was read back FROM, so drift is checkable. */
-  request: string;
-  createdAt: string;
-}
+// The brief and its criteria cross the wire: the read-back is a round-trip a
+// desktop or web client holds exactly as the terminal does, so @gear/protocol
+// owns the shapes and they are re-exported here.
+export type { Criterion, Brief, ClaimRung, Evidence, BriefDecision } from "@gear/protocol";
+import type { Brief, ClaimRung, Criterion, Evidence } from "@gear/protocol";
 
 /** Why a criterion refused to move. Returned rather than thrown — a rejected
  *  claim is information for the surface, not an exception. */

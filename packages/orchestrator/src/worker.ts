@@ -461,6 +461,11 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
           input.workspaceRoot,
           input.signal,
         )) {
+          // The typed channel (P2.6): the parent gets the worker's real event,
+          // and the one-line rung note is projected from it. `onProgress` is
+          // still called at the two sites below for surfaces that only take
+          // the string — the projection and the legacy note are the same text.
+          input.onEvent?.({ agentId: workerId, label: String(prompt ?? "").slice(0, 80), event });
           if (event.type === "text_delta") report += event.text;
           else if (event.type === "stream_reset") report = "";
           else if (event.type === "fallback") {

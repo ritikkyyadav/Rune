@@ -50,6 +50,7 @@ export function demoSteps(): DemoStep[] {
     callId: "r1",
     args: { path: STATUS_PATH },
     output: {
+      callId: "r1",
       toolName: "read_file",
       success: true,
       result:
@@ -61,13 +62,20 @@ export function demoSteps(): DemoStep[] {
     type: "tool_call_end",
     callId: "r2",
     args: { path: "packages/orchestrator/src/bin/ui/tui.ts" },
-    output: { toolName: "read_file", success: true, result: "…", durationMs: 9 },
+    output: {
+      callId: "r2",
+      toolName: "read_file",
+      success: true,
+      result: "…",
+      durationMs: 9,
+    },
   });
   ev(300, {
     type: "tool_call_end",
     callId: "g1",
     args: { pattern: "renderStatus", path: "packages/orchestrator/src/bin/ui/" },
     output: {
+      callId: "g1",
       toolName: "grep",
       success: true,
       result: JSON.stringify({ total_matches: 3, matches: [{}, {}, {}], truncated: false }),
@@ -97,6 +105,7 @@ export function demoSteps(): DemoStep[] {
     callId: "e1",
     args: { path: STATUS_PATH },
     output: {
+      callId: "e1",
       toolName: "edit_file",
       success: true,
       durationMs: 12,
@@ -120,6 +129,7 @@ export function demoSteps(): DemoStep[] {
       prompt: {
         toolName: "bash",
         argsSummary: "bash: bun test tests/unit/",
+        suggestedScope: "once",
         rawArgs: { command: "bun test tests/unit/" },
         rateLimit: { used: 2, limit: 10 },
       },
@@ -131,6 +141,7 @@ export function demoSteps(): DemoStep[] {
     callId: "b1",
     args: { command: "bun test tests/unit/" },
     output: {
+      callId: "b1",
       toolName: "bash",
       success: true,
       durationMs: 1210,
