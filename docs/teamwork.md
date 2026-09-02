@@ -75,7 +75,9 @@ subtree). Two mechanisms enforce it:
    returns an error to the worker, whatever its prompt says. Ownership is mechanical.
 
 The lead remains the integrator: it designs the seams, dispatches workers, then reads their
-reports, wires the pieces together, and **runs the checks itself** — workers have no shell.
+reports and wires the pieces together. It still runs the checks on the integrated result — but it is
+no longer the first thing to run them, because each worker now verifies its own slice in its own
+worktree before merging (below).
 
 ### What a sub-agent returns
 
@@ -111,6 +113,45 @@ original defect, and it discarded 33 of 68 recorded `task` results.
 A structured result that fails its schema is dropped (the parent reads the prose) and filed as a
 `loop.schema_violation` incident, so a provider that quietly stops honouring structured output is
 visible rather than merely disappointing.
+
+### Each worker gets a filesystem
+
+Every worker runs in its own git worktree at `.gear/worktrees/<workerId>`, on a `gear/worker-<id>`
+branch.
+
+The two isolation mechanisms compose rather than compete: **ownership governs which paths a worker
+may touch; the worktree governs which filesystem it touches them in.**
+
+The worktree is seeded from the lead's **working tree**, not from HEAD. Branching from the last
+commit would hide the lead's uncommitted work, which is exactly the context a worker was dispatched
+to build on — a worker that cannot see the interface the lead just wrote will re-invent it. The seed
+is `git diff HEAD --binary` applied into the new checkout, deliberately **not** `git stash`: a stash
+is repository-global state shared with every other worktree and every other Gear session on the
+machine, so a stash/pop pair here would race anything else running, and a crash between the two
+would strand the user's work in a stash entry they never made. Untracked files are not carried —
+that set is unbounded (build output, `node_modules`, caches) and a worker that needs one can be told
+about it in its prompt.
+
+Because the collision is gone, **workers now have a shell.** `bash` is registered for a worker only
+when it has a worktree AND the machine provides OS isolation, with the network forced off and the
+cwd pinned to the worktree. On a machine without isolation a worker goes back to having no shell
+rather than getting an uncontained one — that is the difference between a requirement and a
+preference. The reason `bash` was absent was never that running commands is dangerous; it was that
+two parallel builds in one tree collide on `node_modules`, `dist/` and every other unowned artifact.
+
+**The worker verifies its own slice** before anything merges. The project's compile-class checks run
+inside the worktree; a worker whose checks fail returns `checks: failed`, its branch is **kept and
+not merged**, and its changes never reach the lead's tree — merging code that does not compile turns
+one worker's failure into everyone's.
+
+Merge-back takes **only the owned paths**. Because ownership is exclusive, `git checkout <branch> --
+<path>` is a copy rather than a merge, and that is correct: nobody else was allowed to write those
+paths. A path the lead changed anyway (a manual edit, a hook) is a genuine conflict, reported as a
+typed `conflicts[]` field rather than as prose, with the branch kept for inspection. The manifest is
+`git diff --name-only`, not the model's claim.
+
+The checkout is always removed in the `finally`. The branch survives only when the work did not
+land, because then it is the only copy of it.
 
 ### Budgets
 
