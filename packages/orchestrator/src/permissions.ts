@@ -1,7 +1,7 @@
 import { isAbsolute, relative, resolve } from "path";
 import { isOsIsolationAvailable, isSandboxEnabled, patchTargetPaths } from "@gear/tool-registry";
 import type { PermissionLevel, ToolSchema } from "@gear/tool-registry";
-import { createLogger } from "@gear/shared";
+import { createLogger, isPathInside as pathInside } from "@gear/shared";
 import { policyDenial, type OrgPolicy } from "./org-policy";
 
 const permLog = createLogger("permissions");
@@ -528,10 +528,11 @@ export class PermissionBroker {
    * before any write actually lands.
    */
   private isPathInside(root: string, target: string): boolean {
-    const absRoot = resolve(root);
-    const abs = isAbsolute(target) ? resolve(target) : resolve(absRoot, target);
-    const rel = relative(absRoot, abs);
-    return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+    // The shared helper IS this implementation — it was lifted out of here in
+    // P10.2 so the three copies that got it wrong on Windows could stop being
+    // copies. Kept as a method because every call site in this file reads
+    // better with it.
+    return pathInside(root, target);
   }
 
   /**

@@ -60,7 +60,11 @@ function fakeProbeBinary(json: string): string {
   return bin;
 }
 
-describe("probeSandboxCapability", () => {
+// POSIX-only: `fakeProbeBinary` writes a `#!/bin/sh` script and Windows has no
+// shebang dispatch, so `Bun.spawn` cannot run it. The capability being probed —
+// seatbelt or bwrap — has no Windows equivalent either; the four suites below
+// are pure policy and DO run there.
+describe.skipIf(process.platform === "win32")("probeSandboxCapability", () => {
   test("parses the sandbox-check payload from the binary", () => {
     const bin = fakeProbeBinary(
       '{"success":true,"result":{"mechanism":"bwrap","os_isolation":true,"platform":"linux"}}',

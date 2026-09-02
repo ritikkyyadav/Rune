@@ -33,7 +33,17 @@ async function waitFor(
   }
 }
 
-describe("BackgroundShellManager", () => {
+/**
+ * POSIX-only. Background shells run their command through the Rust executor's `sh`, and the fixtures are `sh` one-liners.
+ *
+ * Gear has no Windows shell contract yet — nothing decides whether a command
+ * string means cmd.exe, PowerShell or Git Bash — so there is no Windows
+ * behaviour to assert, only a decision to make. Logged in
+ * docs/program/backlog.md.
+ */
+const POSIX_SHELL = process.platform !== "win32";
+
+describe.skipIf(!POSIX_SHELL)("BackgroundShellManager", () => {
   test("start → read output → completed", async () => {
     const m = new BackgroundShellManager();
     const { shellId } = m.start("echo hello && echo world", "/tmp");
@@ -115,7 +125,7 @@ describe("BackgroundShellManager", () => {
   });
 });
 
-describe("tool handlers", () => {
+describe.skipIf(!POSIX_SHELL)("tool handlers", () => {
   test("bash with run_in_background returns shell_id; bash_output reads it", async () => {
     const m = new BackgroundShellManager();
     const fgBash: ToolHandler = {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,6 +8,7 @@ import {
   formatAutoSafetyMetrics,
   readAutoSafetyMetrics,
 } from "../../../packages/orchestrator/src/auto-metrics";
+import { rmTemp } from "../../helpers/tmp";
 
 /**
  * P6A.4 — the metric comes from the log, not from a live process.
@@ -20,7 +21,7 @@ import {
 const dirs: string[] = [];
 
 afterEach(() => {
-  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  for (const d of dirs.splice(0)) rmTemp(d);
 });
 
 function makeDb(

@@ -55,7 +55,16 @@ function commitCheck(code: number, message: string): void {
   git("commit", "-q", "-m", message);
 }
 
-describe("runOnParentCommit", () => {
+/**
+ * POSIX-only: the fixture check IS `sh check.sh`, and the subject is "did this
+ * check pass on the PARENT commit", not the shell that ran it. Windows has no
+ * `sh`; a `.cmd` fixture would exercise the same logic through a different
+ * shell, which is worth doing when someone runs Gear's verifier on Windows and
+ * not before. Logged in docs/program/backlog.md.
+ */
+const POSIX_SHELL = process.platform !== "win32";
+
+describe.skipIf(!POSIX_SHELL)("runOnParentCommit", () => {
   test("a check that FAILS on the parent commit is reported as failed", () => {
     commitCheck(1, "broken check");
     // The working tree now "fixes" it — uncommitted, as agent work usually is.
@@ -120,7 +129,7 @@ describe("runOnParentCommit", () => {
   });
 });
 
-describe("resolveParentCommit", () => {
+describe.skipIf(!POSIX_SHELL)("resolveParentCommit", () => {
   test("HEAD is the pre-change tree when the agent's work is uncommitted", () => {
     commitCheck(0, "base");
     expect(resolveParentCommit(repo)).toEqual({ sha: git("rev-parse", "HEAD"), ref: "HEAD" });

@@ -10,10 +10,11 @@
  */
 
 import { describe, test, expect, afterAll } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Engine } from "../../../packages/orchestrator/src/engine";
+import { rmTemp } from "../../helpers/tmp";
 
 const dir = mkdtempSync(join(tmpdir(), "askuser-hf-"));
 const engine = new Engine({
@@ -26,7 +27,7 @@ const engine = new Engine({
 
 afterAll(() => {
   engine.close();
-  rmSync(dir, { recursive: true, force: true });
+  rmTemp(dir);
 });
 
 async function askViaRegistry() {

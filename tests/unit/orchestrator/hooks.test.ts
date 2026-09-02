@@ -154,7 +154,17 @@ describe("HookRunner no-op behavior", () => {
 
 // ─── runPreToolUse: blocking semantics ───
 
-describe("runPreToolUse blocking", () => {
+/**
+ * POSIX-only. `HookRunner` runs every hook through `Bun.spawn(["/bin/sh", "-c", …])` (hooks.ts:386), and these fixtures are `sh` one-liners: `exit 0`, `echo done`, `[ "$GEAR_TOOL_NAME" = … ]`.
+ *
+ * Gear has no Windows shell contract yet — nothing decides whether a command
+ * string means cmd.exe, PowerShell or Git Bash — so there is no Windows
+ * behaviour to assert, only a decision to make. Logged in
+ * docs/program/backlog.md.
+ */
+const POSIX_SHELL = process.platform !== "win32";
+
+describe.skipIf(!POSIX_SHELL)("runPreToolUse blocking", () => {
   test("blocking hook that exits non-zero -> allow:false with reason", async () => {
     const runner = createHookRunner(
       { preToolUse: [{ command: "echo 'guard rejected' 1>&2; exit 1", blocking: true }] },
@@ -234,7 +244,7 @@ describe("runPreToolUse blocking", () => {
 
 // ─── match filtering ───
 
-describe("runPreToolUse match filtering", () => {
+describe.skipIf(!POSIX_SHELL)("runPreToolUse match filtering", () => {
   test("match 'edit_*' runs for edit_file but not read_file", async () => {
     const config: HookConfig = {
       preToolUse: [{ match: "edit_*", command: "exit 1", blocking: true }],
@@ -259,7 +269,7 @@ describe("runPreToolUse match filtering", () => {
 
 // ─── timeout ───
 
-describe("runPreToolUse timeout", () => {
+describe.skipIf(!POSIX_SHELL)("runPreToolUse timeout", () => {
   test("a blocking hook that sleeps longer than timeoutMs is treated as failure", async () => {
     const runner = createHookRunner(
       { preToolUse: [{ command: "sleep 5", timeoutMs: 50, blocking: true }] },
@@ -290,7 +300,7 @@ describe("runPreToolUse timeout", () => {
 
 // ─── runPostToolUse / lifecycle: report-only ───
 
-describe("runPostToolUse and lifecycle hooks", () => {
+describe.skipIf(!POSIX_SHELL)("runPostToolUse and lifecycle hooks", () => {
   test("postToolUse never throws even when the command fails", async () => {
     const logs: string[] = [];
     const runner = createHookRunner({ postToolUse: [{ command: "exit 1" }] }, workspace, {
@@ -354,7 +364,7 @@ describe("runPostToolUse and lifecycle hooks", () => {
 
 // ─── end-to-end via loadHookConfig + HookRunner.load ───
 
-describe("end-to-end: load + run from disk", () => {
+describe.skipIf(!POSIX_SHELL)("end-to-end: load + run from disk", () => {
   test("writes a real hooks.json and enforces a blocking guard", async () => {
     await writeConfig({
       preToolUse: [

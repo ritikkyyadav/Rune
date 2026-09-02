@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { IncidentInput } from "../../../packages/shared/src/incident";
@@ -11,6 +11,7 @@ import {
   consumeDirtyExit,
   disarmSentinel,
 } from "../../../packages/telemetry/src/sentinel";
+import { rmTemp } from "../../helpers/tmp";
 
 let dir: string;
 
@@ -19,7 +20,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  rmTemp(dir);
 });
 
 const sample = (over: Partial<IncidentInput> = {}): IncidentInput => ({
@@ -178,7 +179,7 @@ describe("Recorder", () => {
     // a directory path that cannot be a db file (path exists as dir)
     const bad = join(dir, "as-dir");
     // create the path as a directory so sqlite open fails
-    rmSync(bad, { recursive: true, force: true });
+    rmTemp(bad);
     require("node:fs").mkdirSync(bad, { recursive: true });
     const rec = new Recorder({
       dbPath: bad,

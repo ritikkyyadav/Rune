@@ -125,3 +125,31 @@ Found 2026-09-03 by P10.0 (the host reaper):
   hosts rather than handing them over, and only the idle reaper (which the new server does
   not know about them for) or a restart cleans them up. Either implement reattach or stop
   claiming it — found in P10.0
+
+Found 2026-09-03 by P10.2 (Windows parity):
+
+- `packages/tool-registry/src/tools/format-on-write.ts` — the project-formatter
+  resolver looks for `node_modules/.bin/prettier`, which on Windows is
+  `prettier.cmd` (npm/bun write a `.cmd` shim, not a shebang script). So
+  format-on-write silently never runs on Windows even in a project that
+  configured prettier: no error, no note, just unformatted output. Its unit
+  suite skips there for the same reason — found in P10.2
+- `packages/orchestrator/src/parent-check.ts` and the verifier's check commands —
+  every fixture and most real check commands are `sh`-shaped (`sh check.sh`,
+  `bash -c`). Nothing establishes what a check command means on Windows
+  (cmd.exe? PowerShell? Git Bash if present?). `tests/unit/orchestrator/parent-check.test.ts`
+  skips there rather than pretend. Decide the Windows shell contract before
+  claiming the verifier works on Windows — found in P10.2
+- `packages/shared/src/credential-store.ts` / `secrets.ts` — file privacy is
+  enforced with POSIX mode 0600, which is a no-op on Windows (no rwx bits; the
+  ACL inherited from the parent directory decides). `secretsArePrivate()`
+  therefore cannot answer honestly on Windows. Either implement an ACL check or
+  say plainly that Windows credential files are as private as `%USERPROFILE%` —
+  found in P10.2
+- `packages/orchestrator/src/hooks.ts:386`, `verifier.ts:280`, `worker-worktree.ts:248` and the
+  Rust executor's bash — every command string Gear runs goes through a hardcoded POSIX shell
+  (`/bin/sh -c`, `bash -c`). On Windows the spawn simply fails, so hooks, the verifier, worker
+  checks and background shells are all inert there with no message saying so. Nothing decides
+  what a command string MEANS on Windows (cmd.exe? PowerShell? Git Bash if installed?); that
+  contract is the missing piece, not the spawn call. Their unit suites skip on Windows with this
+  reason rather than assert a behaviour that does not exist — found in P10.2

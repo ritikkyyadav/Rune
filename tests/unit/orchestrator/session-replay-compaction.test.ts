@@ -11,7 +11,7 @@
  */
 
 import { describe, test, expect, afterAll } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -20,6 +20,7 @@ import {
 } from "../../../packages/orchestrator/src/session-replay";
 import { SessionManager } from "../../../packages/shared/src/session";
 import type { SessionEvent } from "../../../packages/shared/src/session";
+import { rmTemp } from "../../helpers/tmp";
 
 type Ev = { seq: number; event: SessionEvent };
 
@@ -201,7 +202,7 @@ describe("eventsToMessages — compaction replay", () => {
 
 describe("compaction round-trip via SessionManager", () => {
   const dir = mkdtempSync(join(tmpdir(), "gear-compaction-test-"));
-  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  afterAll(() => rmTemp(dir));
 
   test("persisted compaction event shrinks the replay but not the event log", () => {
     const sm = new SessionManager(join(dir, "gear.db"));

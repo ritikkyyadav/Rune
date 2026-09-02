@@ -1,7 +1,9 @@
 import { describe, test, expect, beforeEach, afterEach, afterAll } from "bun:test";
-import { mkdtemp, rm, writeFile, readFile, mkdir } from "fs/promises";
+import { mkdtemp, writeFile, readFile, mkdir } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
+
+import { rmTemp } from "../../helpers/tmp";
 
 import {
   createApplyPatchHandler,
@@ -36,7 +38,11 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await rm(workspace, { recursive: true, force: true });
+  // rmTemp, not `rm`: on Windows the language server this suite starts still
+  // holds files under the workspace for a beat after it is asked to stop, and
+  // a locked directory is a teardown artifact rather than a finding. See
+  // tests/helpers/tmp.ts.
+  rmTemp(workspace);
 });
 
 describe("parsePatch", () => {

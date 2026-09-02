@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -19,6 +19,7 @@ import type {
   ToolResultProcessor,
 } from "../../../packages/orchestrator/src/agent-loop";
 import { Engine } from "../../../packages/orchestrator/src/engine";
+import { rmTemp } from "../../helpers/tmp";
 
 class QueueClassifier implements ActionClassifier {
   readonly calls: ClassifierCall[] = [];
@@ -89,7 +90,7 @@ describe("Engine Auto-mode wiring", () => {
 
   afterEach(() => {
     engine.close();
-    rmSync(root, { recursive: true, force: true });
+    rmTemp(root);
   });
 
   test("blocks a risky call and records a queryable, hash-chained decision", async () => {

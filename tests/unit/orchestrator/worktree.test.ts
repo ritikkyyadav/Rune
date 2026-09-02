@@ -26,6 +26,12 @@ beforeEach(() => {
   sh(["init", "-q"]);
   sh(["config", "user.email", "t@example.com"]);
   sh(["config", "user.name", "t"]);
+  // Windows git installs default to `core.autocrlf=true`, so a file committed
+  // with "\n" comes back out of a checkout with "\r\n" and every byte-exact
+  // assertion below fails on content that is otherwise identical. The fixture
+  // owns its own line endings.
+  sh(["config", "core.autocrlf", "false"]);
+  sh(["config", "core.eol", "lf"]);
   writeFileSync(join(repo, "shared.txt"), "base content\n");
   sh(["add", "."]);
   sh(["commit", "-qm", "base"]);

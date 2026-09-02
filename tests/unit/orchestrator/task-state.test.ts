@@ -9,8 +9,9 @@
  *  - a step is COMPLETED BY EVIDENCE (nothing ran → refused once → unproven).
  */
 
-import { describe, test, expect } from "bun:test";
+import { beforeEach, describe, test, expect } from "bun:test";
 import { TaskStateStore, stepReceipt } from "../../../packages/orchestrator/src/task-state";
+import { tokenCounter } from "../../../packages/orchestrator/src/tokenizer";
 
 /** A finished single-step task, set up without going through the evidence rule. */
 function finished(goal: string): TaskStateStore {
@@ -311,6 +312,18 @@ describe("a step is completed by evidence", () => {
 });
 
 describe("renderBlock", () => {
+  // `renderBlock` sheds sections until the block fits a token BUDGET, and the
+  // counter it asks is a module-level singleton whose calibration another test
+  // file can have taught. Bun runs the suite in one process in directory order,
+  // and that order differs per platform — so "under a tight budget the extras
+  // drop" passed on macOS and failed on Windows, where a polluted ratio made a
+  // 1,000-character block measure under 60 tokens and nothing ever dropped.
+  // Same class as ede10e9; start every case from a clean counter.
+  beforeEach(() => {
+    tokenCounter.resetCalibrations();
+    tokenCounter.clearCache();
+  });
+
   test("nothing beyond a bare goal renders nothing (trivial tasks cost nothing)", () => {
     const s = new TaskStateStore();
     s.beginTurn("what does this function do?");
