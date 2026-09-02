@@ -5,20 +5,75 @@ name: Release
 # the same job that assembled the binaries (checksum drift is impossible by
 # construction), smoke-runs the Linux pair, publishes the GitHub release, and
 # then re-installs from that release exactly the way the README tells users to.
+#
+# The version is not written down anywhere in this file. `scripts/version.sh`
+# is the one source, `scripts/targets.sh` is the one target list, and the
+# binary carries what it was built with (`bun build --define`). Publishing
+# REFUSES when the tag and the binary's own `--version` disagree — the failure
+# that used to ship silently, because four hand-maintained copies of the
+# version had no way to notice each other.
+#
+# `workflow_dispatch` runs the whole pipeline WITHOUT publishing (a dry run),
+# so the release path can be exercised on a branch before a tag exists.
 
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build as (e.g. 0.3.0). Defaults to the dev version from scripts/version.sh."
+        required: false
+        type: string
+      publish:
+        description: "Actually publish a release. Leave false for a dry run: build, checksum and smoke only."
+        required: false
+        default: false
+        type: boolean
+      prerelease:
+        description: "Mark the published release as a prerelease."
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
+  # A tag push is a real release; a manual run publishes only when asked.
+  GEAR_PUBLISH: ${{ github.event_name == 'push' || inputs.publish == true }}
 
 jobs:
+  version:
+    name: Resolve the one version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      publish: ${{ steps.v.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: v
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A tag push names the version. A manual run may name one, else the
+          # dev version scripts/version.sh computes. Either way, ONE source.
+          if [ "${{ github.event_name }}" = "push" ]; then
+            export GEAR_VERSION="${GITHUB_REF_NAME}"
+          elif [ -n "${{ inputs.version }}" ]; then
+            export GEAR_VERSION="${{ inputs.version }}"
+          fi
+          v="$(bash scripts/version.sh)"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "publish=${GEAR_PUBLISH}" >> "$GITHUB_OUTPUT"
+          echo "Building as: $v (publish=${GEAR_PUBLISH})"
+
   cli:
     name: CLI (bun cross-compile, all platforms)
+    needs: [version]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,13 +82,22 @@ jobs:
           bun-version: latest
       - run: bun install --frozen-lockfile
       - name: Compile standalone CLIs
+        shell: bash
+        env:
+          GEAR_VERSION: ${{ needs.version.outputs.version }}
         run: |
+          set -euo pipefail
+          # One target list, one version source — the same files the local
+          # scripts/build-release.sh reads, so a local build and a release
+          # build cannot cover different platforms.
+          . scripts/targets.sh
+          . scripts/version.sh
+          v="$(gear_version)"
           mkdir -p out
-          for pair in bun-darwin-arm64:darwin-arm64 bun-darwin-x64:darwin-x64 \
-                      bun-linux-x64:linux-x64 bun-linux-arm64:linux-arm64 \
-                      bun-windows-x64:windows-x64.exe; do
+          for pair in "${GEAR_TARGETS[@]}"; do
             target="${pair%%:*}"; suffix="${pair##*:}"
             bun build --compile --minify --target="$target" \
+              --define=GEAR_BUILD_VERSION="\"$v\"" \
               packages/orchestrator/src/bin/gear-cli.ts --outfile "out/gear-$suffix"
           done
           ls -la out/
@@ -41,7 +105,7 @@ jobs:
         with:
           name: cli
           path: out/gear-*
-          retention-days: 1
+          retention-days: 7
 
   tools-native:
     name: ${{ matrix.asset }}
@@ -75,7 +139,7 @@ jobs:
         with:
           name: ${{ matrix.asset }}
           path: out/*
-          retention-days: 1
+          retention-days: 7
 
   tools-linux-arm64:
     name: gear-tools-linux-arm64 (cross)
@@ -94,55 +158,468 @@ jobs:
         with:
           name: gear-tools-linux-arm64
           path: out/*
-          retention-days: 1
+          retention-days: 7
 
-  publish:
-    name: Checksum, smoke, publish
-    needs: [cli, tools-native, tools-linux-arm64]
-    runs-on: ubuntu-latest
+  # ── Code signing ──
+  # Every signing step is guarded on its secret being present and prints why it
+  # skipped when it is not. An unsigned release is a worse product; a release
+  # workflow that FAILS because a certificate has not been bought yet is a
+  # worse repository. Secrets are named in docs/release.md.
+  #
+  # These jobs always upload their artifacts, signed or not, so the publish job
+  # can download `signed-*` last and overwrite unconditionally. Making the
+  # presence of a secret change the artifact graph is how a release learns to
+  # depend on which secrets happened to exist that day.
+
+  sign-macos:
+    name: Sign + notarize (macOS)
+    needs: [cli, tools-native]
+    runs-on: macos-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
+          pattern: cli
+          path: in
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: gear-tools-darwin-*
+          path: in
+          merge-multiple: true
+      - name: Stage the darwin binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          for f in gear-darwin-arm64 gear-darwin-x64 gear-tools-darwin-arm64 gear-tools-darwin-x64; do
+            [ -f "in/$f" ] && cp "in/$f" "out/$f"
+          done
+          chmod +x out/* || true
+          ls -la out/
+      - name: Developer ID sign, notarize, staple
+        shell: bash
+        env:
+          CERT: ${{ secrets.MACOS_CERTIFICATE }}
+          CERT_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CERT:-}" ] || [ -z "${IDENTITY:-}" ]; then
+            echo "::warning::MACOS_CERTIFICATE / MACOS_SIGNING_IDENTITY not set - macOS binaries ship UNSIGNED and will hit Gatekeeper. See docs/release.md."
+            exit 0
+          fi
+
+          # A throwaway keychain, unlocked only for this job.
+          KEYCHAIN="$RUNNER_TEMP/gear-signing.keychain-db"
+          KEYCHAIN_PWD="$(openssl rand -base64 24)"
+          security create-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+          echo "$CERT" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "${CERT_PWD:-}" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PWD" "$KEYCHAIN" >/dev/null
+          security list-keychain -d user -s "$KEYCHAIN" login.keychain-db
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+          for f in out/*; do
+            echo "signing $f"
+            # --options runtime is what notarization requires; --timestamp is
+            # what makes the signature outlive the certificate.
+            codesign --force --timestamp --options runtime \
+              --sign "$IDENTITY" "$f"
+            codesign --verify --strict --verbose=2 "$f"
+          done
+
+          if [ -z "${APPLE_ID:-}" ] || [ -z "${APPLE_APP_PASSWORD:-}" ] || [ -z "${APPLE_TEAM_ID:-}" ]; then
+            echo "::warning::APPLE_ID / APPLE_APP_PASSWORD / APPLE_TEAM_ID not set - binaries are signed but NOT notarized; Gatekeeper will still warn."
+            exit 0
+          fi
+
+          # notarytool takes an archive, not a bare executable.
+          ( cd out && zip -q ../notarize.zip ./* )
+          xcrun notarytool submit notarize.zip \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+
+          # Stapling attaches the ticket to the file so Gatekeeper needs no
+          # network. It works on bundles, disk images and packages - a bare
+          # Mach-O executable has nowhere to put a ticket, and the ticket is
+          # served online instead. Attempt it, say what happened, do not fail.
+          for f in out/*; do
+            if xcrun stapler staple "$f" 2>/dev/null; then
+              echo "stapled $f"
+            else
+              echo "note: $f is a bare executable and cannot be stapled; its notarization ticket is looked up online."
+            fi
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-darwin
+          path: out/*
+          retention-days: 7
+
+  sign-windows:
+    name: Sign (Windows Authenticode)
+    needs: [cli, tools-native]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cli
+          path: in
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: gear-tools-windows-*
+          path: in
+          merge-multiple: true
+      - name: Stage the windows binaries
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          foreach ($f in @('gear-windows-x64.exe','gear-tools-windows-x64.exe')) {
+            if (Test-Path "in/$f") { Copy-Item "in/$f" "out/$f" }
+          }
+          Get-ChildItem out
+      - name: Authenticode sign
+        shell: pwsh
+        env:
+          CERT: ${{ secrets.WINDOWS_CERTIFICATE }}
+          CERT_PWD: ${{ secrets.WINDOWS_CERTIFICATE_PWD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:CERT)) {
+            Write-Host "::warning::WINDOWS_CERTIFICATE not set - Windows binaries ship UNSIGNED and will hit SmartScreen. See docs/release.md."
+            exit 0
+          }
+          $pfx = Join-Path $env:RUNNER_TEMP 'gear-signing.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT))
+          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe |
+            Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1
+          if (-not $signtool) { throw 'signtool.exe not found on this runner' }
+          foreach ($f in (Get-ChildItem out)) {
+            # A timestamp is what keeps the signature valid after the
+            # certificate expires; without it every install breaks on expiry.
+            & $signtool.FullName sign /f $pfx /p $env:CERT_PWD `
+              /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $f.FullName
+            if ($LASTEXITCODE -ne 0) { throw "signtool failed for $($f.Name)" }
+            & $signtool.FullName verify /pa $f.FullName
+            if ($LASTEXITCODE -ne 0) { throw "verification failed for $($f.Name)" }
+          }
+          Remove-Item -Force $pfx
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-windows
+          path: out/*
+          retention-days: 7
+
+  publish:
+    name: Checksum, smoke, publish
+    needs: [version, cli, tools-native, tools-linux-arm64, sign-macos, sign-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # attest-build-provenance mints a signed statement tying these bytes to
+      # this workflow, this commit and this runner.
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      # Order matters: unsigned first, signed second, so the signed copies
+      # overwrite. `merge-multiple` resolves collisions by download order.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cli
           path: dist
           merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: gear-tools-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: signed-*
+          path: dist
+          merge-multiple: true
+      - name: Every target the one list names is present
+        shell: bash
+        run: |
+          set -euo pipefail
+          . scripts/targets.sh
+          missing=0
+          for pair in "${GEAR_TARGETS[@]}"; do
+            f="dist/gear-${pair##*:}"
+            [ -f "$f" ] || { echo "::error::missing CLI asset $f"; missing=1; }
+          done
+          for suffix in "${GEAR_TOOLS_ASSETS[@]}"; do
+            f="dist/gear-tools-$suffix"
+            [ -f "$f" ] || { echo "::error::missing tools asset $f"; missing=1; }
+          done
+          exit "$missing"
       - name: Checksums (generated beside the binaries they describe)
         run: |
           cd dist
           sha256sum gear-* > SHA256SUMS
           cat SHA256SUMS
+      # ── Linux has no OS-level signing, so it gets a detached signature ──
+      # Signing SHA256SUMS covers every artifact at once: that file names them
+      # all with their digests and was generated in the step above, beside the
+      # binaries it describes. The public key lives in the README.
+      - name: Detached Ed25519 signature over SHA256SUMS
+        env:
+          GEAR_SIGNING_PRIVATE_KEY: ${{ secrets.GEAR_SIGNING_PRIVATE_KEY }}
+        run: bun scripts/sign-release.ts sign dist
+
+      - name: Build provenance attestation
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: "dist/gear-*"
+
       - name: Smoke the Linux pair end-to-end
         run: |
           chmod +x dist/gear-linux-x64 dist/gear-tools-linux-x64
           GEAR_TOOLS_BIN=dist/gear-tools-linux-x64 dist/gear-linux-x64 --version | grep -E "Gear v"
           # Not just "it starts": the pair must execute real tools together.
           GEAR_TOOLS_BIN="$PWD/dist/gear-tools-linux-x64" dist/gear-linux-x64 tools-smoke
+      - name: The binary must agree with the tag
+        shell: bash
+        env:
+          EXPECTED: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # `gear --version` prints "Gear v<version>". A release whose binary
+          # disagrees with its tag is the exact failure four hand-maintained
+          # version copies used to ship; it is now a hard stop.
+          reported="$(dist/gear-linux-x64 --version | sed -n 's/^Gear v//p' | head -1)"
+          echo "tag/input: $EXPECTED"
+          echo "binary   : $reported"
+          if [ "$reported" != "$EXPECTED" ]; then
+            echo "::error::version mismatch — the tag says '$EXPECTED', the binary reports '$reported'. Refusing to publish."
+            exit 1
+          fi
+      # ── Homebrew formula ──
+      # Generated from the checksums this job just computed, so the formula and
+      # the binaries it points at cannot drift. The founder copies it into the
+      # tap repo (see docs/release.md); nothing here pushes to another repo.
+      - name: Generate the Homebrew formula
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p homebrew-tap/Formula
+          sum() { grep -E "  $1\$" dist/SHA256SUMS | awk '{print $1}'; }
+          cat > homebrew-tap/Formula/gear.rb <<RUBY
+          # Generated by .github/workflows/release.yml. Do not edit by hand.
+          class Gear < Formula
+            desc "The agent that proves its work, on any model"
+            homepage "https://github.com/${GITHUB_REPOSITORY}"
+            version "${VERSION}"
+            license "Apache-2.0"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/gear-darwin-arm64"
+                sha256 "$(sum gear-darwin-arm64)"
+                resource "gear-tools" do
+                  url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/gear-tools-darwin-arm64"
+                  sha256 "$(sum gear-tools-darwin-arm64)"
+                end
+              end
+              on_intel do
+                url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/gear-darwin-x64"
+                sha256 "$(sum gear-darwin-x64)"
+                resource "gear-tools" do
+                  url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/gear-tools-darwin-x64"
+                  sha256 "$(sum gear-tools-darwin-x64)"
+                end
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/gear-linux-arm64"
+                sha256 "$(sum gear-linux-arm64)"
+                resource "gear-tools" do
+                  url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/gear-tools-linux-arm64"
+                  sha256 "$(sum gear-tools-linux-arm64)"
+                end
+              end
+              on_intel do
+                url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/gear-linux-x64"
+                sha256 "$(sum gear-linux-x64)"
+                resource "gear-tools" do
+                  url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/gear-tools-linux-x64"
+                  sha256 "$(sum gear-tools-linux-x64)"
+                end
+              end
+            end
+
+            def install
+              # The CLI is useless without its native executor: file, search and
+              # shell tools all run through gear-tools.
+              bin.install stable.url.split("/").last => "gear"
+              resource("gear-tools").stage do
+                bin.install Dir["*"].first => "gear-tools"
+              end
+            end
+
+            def caveats
+              <<~EOS
+                Gear reads GEAR_TOOLS_BIN, falling back to the gear-tools beside it.
+                Check the install with:  gear doctor && gear tools-smoke
+              EOS
+            end
+
+            test do
+              assert_match "Gear v#{version}", shell_output("#{bin}/gear --version")
+            end
+          end
+          RUBY
+          cat homebrew-tap/Formula/gear.rb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: homebrew-tap
+          path: homebrew-tap/**
+          retention-days: 7
+
       - name: Publish release
+        if: ${{ needs.version.outputs.publish == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', needs.version.outputs.version) }}
+          PRERELEASE: ${{ inputs.prerelease == true && '--prerelease' || '' }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* \
+          gh release create "$TAG" dist/* \
             --repo "$GITHUB_REPOSITORY" \
-            --title "Gear $GITHUB_REF_NAME" \
+            --title "Gear $TAG" \
+            $PRERELEASE \
             --generate-notes
+      - name: Dry run — built, checksummed and smoked, nothing published
+        if: ${{ needs.version.outputs.publish != 'true' }}
+        run: |
+          echo "Dry run complete for ${{ needs.version.outputs.version }}."
+          echo "Artifacts are attached to this workflow run; no GitHub release was created."
+          ls -la dist/
 
   install-smoke:
-    name: Fresh-machine install (README gh path, checksum-verified)
-    needs: [publish]
-    runs-on: ubuntu-latest
+    name: Fresh-machine install (${{ matrix.os }})
+    needs: [version, publish]
+    if: ${{ needs.version.outputs.publish == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            suffix: linux-x64
+          - os: macos-latest
+            suffix: darwin-arm64
+          - os: macos-13
+            suffix: darwin-x64
+          - os: windows-latest
+            suffix: windows-x64.exe
+    runs-on: ${{ matrix.os }}
     steps:
-      - name: Install exactly as the README instructs, then run
+      # The scripts (and the print smoke) come from the tree, the binaries from
+      # the release: exactly the split a stranger's machine sees.
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Download and verify the published pair (POSIX)
+        if: runner.os != 'Windows'
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', needs.version.outputs.version) }}
+          SUFFIX: ${{ matrix.suffix }}
         run: |
-          os="$(uname -s | tr '[:upper:]' '[:lower:]')"
-          arch="$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/')"
-          tmp="$(mktemp -d)"; cd "$tmp"
-          gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" \
-            -p "gear-$os-$arch" -p "gear-tools-$os-$arch" -p SHA256SUMS
-          grep -E "gear(-tools)?-$os-$arch\$" SHA256SUMS | sha256sum -c -
-          mkdir -p ~/.gear/bin
-          install -m755 "gear-$os-$arch" ~/.gear/bin/gear
-          install -m755 "gear-tools-$os-$arch" ~/.gear/bin/gear-tools
-          export PATH="$HOME/.gear/bin:$PATH"
-          gear --version | grep -E "Gear v"
-          GEAR_TOOLS_BIN="$HOME/.gear/bin/gear-tools" gear tools-smoke
+          set -euo pipefail
+          mkdir -p "$HOME/gearbin"
+          cd "$RUNNER_TEMP"
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" \
+            -p "gear-$SUFFIX" -p "gear-tools-$SUFFIX" -p SHA256SUMS --clobber
+          # Verification is the point: an unverified download is a CDN with an
+          # executable bit, which is what the installers were before P1.4.
+          if command -v sha256sum >/dev/null; then
+            grep -E "gear(-tools)?-$SUFFIX\$" SHA256SUMS | sha256sum -c -
+          else
+            grep -E "gear(-tools)?-$SUFFIX\$" SHA256SUMS | shasum -a 256 -c -
+          fi
+          install -m755 "gear-$SUFFIX" "$HOME/gearbin/gear"
+          install -m755 "gear-tools-$SUFFIX" "$HOME/gearbin/gear-tools"
+
+      - name: Download and verify the published pair (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', needs.version.outputs.version) }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bin = Join-Path $env:USERPROFILE 'gearbin'
+          New-Item -ItemType Directory -Force -Path $bin | Out-Null
+          Set-Location $env:RUNNER_TEMP
+          gh release download $env:TAG -R $env:GITHUB_REPOSITORY `
+            -p "gear-windows-x64.exe" -p "gear-tools-windows-x64.exe" -p SHA256SUMS --clobber
+          $sums = @{}
+          foreach ($line in Get-Content SHA256SUMS) {
+            if ($line -match '^([0-9a-fA-F]{64})\s+\*?(.+)$') { $sums[$Matches[2].Trim()] = $Matches[1].ToLower() }
+          }
+          foreach ($name in @('gear-windows-x64.exe','gear-tools-windows-x64.exe')) {
+            $got = (Get-FileHash -Algorithm SHA256 -Path $name).Hash.ToLower()
+            if ($sums[$name] -ne $got) { throw "checksum mismatch for $name" }
+            Write-Host "verified $name"
+          }
+          Copy-Item -Force 'gear-windows-x64.exe' (Join-Path $bin 'gear.exe')
+          Copy-Item -Force 'gear-tools-windows-x64.exe' (Join-Path $bin 'gear-tools.exe')
+
+      - name: Smoke - version, doctor, tools, and a real prompt (POSIX)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="$HOME/gearbin"
+          export GEAR_TOOLS_BIN="$BIN/gear-tools"
+          export GEAR_SMOKE_HOME="$RUNNER_TEMP/gear-home"
+          export GEAR_HOME="$GEAR_SMOKE_HOME"
+          mkdir -p "$GEAR_SMOKE_HOME"
+          "$BIN/gear" --version | grep -E "Gear v[0-9]"
+          "$BIN/gear" doctor
+          "$BIN/gear" tools-smoke
+          # The path a user actually takes: a prompt in, an answer out, through
+          # the real binary and a mock provider that needs no credential.
+          bun scripts/smoke-print.ts "$BIN/gear"
+
+      - name: Smoke - version, doctor, tools, and a real prompt (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bin = Join-Path $env:USERPROFILE 'gearbin'
+          $gear = Join-Path $bin 'gear.exe'
+          $env:GEAR_TOOLS_BIN = Join-Path $bin 'gear-tools.exe'
+          $env:GEAR_SMOKE_HOME = Join-Path $env:RUNNER_TEMP 'gear-home'
+          $env:GEAR_HOME = $env:GEAR_SMOKE_HOME
+          New-Item -ItemType Directory -Force -Path $env:GEAR_HOME | Out-Null
+          $v = & $gear --version
+          Write-Host $v
+          if ($v -notmatch 'Gear v\d') { throw "unexpected --version output: $v" }
+          & $gear doctor
+          if ($LASTEXITCODE -ne 0) { throw "gear doctor exited $LASTEXITCODE" }
+          & $gear tools-smoke
+          if ($LASTEXITCODE -ne 0) { throw "gear tools-smoke exited $LASTEXITCODE" }
+          bun scripts/smoke-print.ts $gear
+          if ($LASTEXITCODE -ne 0) { throw "print smoke exited $LASTEXITCODE" }

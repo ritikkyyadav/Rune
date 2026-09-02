@@ -53,7 +53,6 @@ describe("ui/status renderStatus", () => {
           enabled: true,
           failClosed: true,
           reviewer: { provider: "anthropic", model: "isolated-reviewer" },
-          conversationalEscalation: true,
           reviewerFallback: { enabled: true, available: true },
           stats: { allowed: 12, asked: 1, denied: 2, injectionsFlagged: 0 },
         },
