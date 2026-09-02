@@ -112,6 +112,42 @@ A structured result that fails its schema is dropped (the parent reads the prose
 `loop.schema_violation` incident, so a provider that quietly stops honouring structured output is
 visible rather than merely disappointing.
 
+### Budgets
+
+Every delegated call is bounded by money and by wall clock, not only by turns:
+
+| Argument | Default | Meaning |
+|---|---|---|
+| `costCapUsd` | 0.5 / 2 / 6 by effort | list-price ceiling for the sub-agent's own inference |
+| `deadlineMs` | 3 / 10 / 25 min by effort | wall clock from dispatch |
+
+Both are checked **between turns**, never mid-call — aborting a request already in flight pays for
+it and loses the reply. A breach is a **stop, not a failure**: the loop ends, the sub-agent returns
+what it has exactly as it does on a turn limit, and `unresolved[]` names the budget and the number
+so "re-dispatch with more" is actionable rather than a guess. A budget that destroyed work would
+be worse than no budget.
+
+Config sets the defaults for a workspace:
+
+```toml
+[subagents]
+maxParallel = 4      # concurrent sub-agents; default 8, clamped 1-16
+costCapUsd = 3.0
+deadlineMs = 900000
+```
+
+`maxParallel` was a hard 8 in the agent loop with no key at all — a reasonable default and an
+unreasonable ceiling, since eight concurrent heavy workers is a lot of money at once and eight
+worktrees is a lot of disk on a small machine.
+
+An unpriced model contributes 0 to the cost meter, so its effective budget is the deadline. That is
+the correct behaviour: a price nobody knows cannot be capped, and inventing one would be worse.
+
+`todo_write` is no longer in a `task` sub-agent's registry. Its category is "read", so it was
+reachable, and a scout that called it wrote a plan into a throwaway store nobody read while leaving
+the lead's real ledger untouched — a scout that believes it is keeping a plan is worse than one
+that knows it is not.
+
 ### What you see while a fleet runs
 
 Each sub-agent's nested tool calls are reported to the parent as progress notes. The status

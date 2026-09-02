@@ -275,6 +275,22 @@ export interface GearConfig {
     model?: string;
     /** "configured": sub-agent reasoning effort (none|minimal|low|medium|high|xhigh|max). */
     effort?: string;
+    /**
+     * How many sub-agents may run at once. Default 8, clamped to 1–16.
+     *
+     * This was a hard 8 in the agent loop with no key at all — a reasonable
+     * default and an unreasonable ceiling, since eight concurrent heavy workers
+     * is a lot of money at once and eight worktrees is a lot of disk on a small
+     * machine. Zero is not accepted: "no delegation" is `mode = "off"`.
+     */
+    maxParallel?: number;
+    /**
+     * Default per-call ceilings for delegated work, overriding the per-effort
+     * defaults. A sub-agent that hits one STOPS and returns what it has, the
+     * same way it does on a turn limit — a budget must never destroy work.
+     */
+    costCapUsd?: number;
+    deadlineMs?: number;
   };
   /**
    * Post-edit verification (`[verify]`). Auto-detection covers the common

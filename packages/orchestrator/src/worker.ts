@@ -36,6 +36,13 @@ import {
   renderWorkerResult,
   repairToSchema,
 } from "./subagent-result";
+import {
+  checkBudget,
+  describeBreach,
+  resolveSubagentBudget,
+  type BudgetBreach,
+} from "./subagent-budget";
+import { CostTracker } from "@gear/llm-gateway";
 import type { PermissionCheck, ToolResultProcessor } from "./agent-loop";
 import { ContextEngine } from "./context-engine";
 
@@ -81,6 +88,12 @@ export interface WorkerDeps {
   maxTurns?: number;
   maxTokens?: number;
   /** Same prompt-injection probe used by the lead agent. */
+  /**
+   * Default per-call cost and wall-clock ceilings, overriding the per-effort
+   * defaults in subagent-budget.ts. A call's own `costCapUsd` / `deadlineMs`
+   * arguments override these in turn.
+   */
+  budgetDefaults?: { costCapUsd?: number; deadlineMs?: number };
   toolResultProcessor?: ToolResultProcessor;
   /** The black-box tap, so a worker's breakers and fallbacks leave a record. */
   onIncident?: IncidentReporter;
@@ -149,6 +162,19 @@ export const WORKER_TOOL_SCHEMA: ToolSchema = {
           "'thorough' for large multi-file pieces.",
       },
     },
+      costCapUsd: {
+        type: "number",
+        description:
+          "Optional list-price ceiling in USD for this sub-agent's own inference. It STOPS " +
+          "and returns what it has when exceeded — a budget never destroys work. Defaults " +
+          "come from `effort`.",
+      },
+      deadlineMs: {
+        type: "number",
+        description:
+          "Optional wall-clock ceiling in milliseconds from dispatch. Same stop-and-return " +
+          "behaviour as costCapUsd. Defaults come from `effort`.",
+      },
     required: ["prompt", "files"],
   },
   // Declared since the first version of ToolSchema and never populated. The
@@ -466,6 +492,16 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
         const changed = new Set<string>();
         let loopError: string | undefined;
         let stopReason = "";
+        // Same contract as the scout's: checked between turns, and a breach
+        // stops the worker and returns what it built rather than discarding it.
+        // For a worker that matters more, not less — its output is files.
+        const budgetCaps = resolveSubagentBudget(effort, {
+          costCapUsd: input.args.costCapUsd ?? deps.budgetDefaults?.costCapUsd,
+          deadlineMs: input.args.deadlineMs ?? deps.budgetDefaults?.deadlineMs,
+        });
+        const costTracker = new CostTracker();
+        const budgetState = { spentUsd: 0, startedAt: Date.now() };
+        let breach: BudgetBreach | null = null;
         // Filled by P6B.2 when the worker runs its own checks in its worktree,
         // and by P6B.1 when the merge back reports conflicts. `not_run` until
         // then, which is the honest default: a report that does not say whether
@@ -514,9 +550,21 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
             ) {
               changed.add(event.args.path);
             }
+          } else if (event.type === "usage") {
+            budgetState.spentUsd += costTracker.estimate(event.model ?? live.model, {
+              inputTokens: event.inputTokens,
+              outputTokens: event.outputTokens,
+              cacheReadTokens: event.cacheReadTokens,
+              cacheCreationTokens: event.cacheCreationTokens,
+            });
           } else if (event.type === "error") loopError = event.error;
           else if (event.type === "turn_complete") stopReason = event.stopReason;
           if (event.type === "turn_complete") break;
+          breach = checkBudget(budgetCaps, budgetState);
+          if (breach) {
+            stopReason = breach.kind === "cost" ? "cost_budget" : "time_budget";
+            break;
+          }
         }
 
         const trimmed = report.trim();
@@ -566,6 +614,9 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
               checks: checkOutcome ?? repaired.checks,
             };
           }
+        }
+        if (breach) {
+          result.unresolved = [`The worker ${describeBreach(breach)}.`, ...result.unresolved];
         }
         // A worker that finished on a different model than it was dispatched
         // to WROTE CODE from somewhere the caller did not choose. Louder than
