@@ -107,6 +107,67 @@ const SERVERS: Array<{ extensions: string[]; spec: ServerSpec }> = [
   },
 ];
 
+export type ServerTable = Array<{ extensions: string[]; spec: ServerSpec }>;
+
+/**
+ * Process-wide server table override, as JSON in `GEAR_LSP_SERVERS`:
+ *
+ *   [{ "id": "fake", "extensions": [".ts"], "command": ["bun", "server.ts"] }]
+ *
+ * The seam exists because post-edit diagnostics have to be measurable without
+ * a language server installed: the benchmark suite points this at the fake
+ * stdio server in tests/fixtures/lsp so the measurement is deterministic on
+ * any machine. It is also the escape hatch for a language whose server is not
+ * in the built-in table. Malformed JSON is ignored and the built-in table
+ * stands — a typo in an env var must never silently disable code intelligence.
+ */
+function envServerTable(): ServerTable | null {
+  const raw = process.env.GEAR_LSP_SERVERS;
+  if (!raw || !raw.trim()) return null;
+  try {
+    const parsed = JSON.parse(raw) as Array<{
+      id?: string;
+      extensions?: string[];
+      command?: string[];
+      installHint?: string;
+      languageId?: string;
+    }>;
+    if (!Array.isArray(parsed)) return null;
+    const table: ServerTable = [];
+    for (const e of parsed) {
+      if (!Array.isArray(e?.extensions) || !Array.isArray(e?.command) || e.command.length === 0) {
+        continue;
+      }
+      const languageId = typeof e.languageId === "string" ? e.languageId : (e.id ?? "plaintext");
+      table.push({
+        extensions: e.extensions.map((x) => String(x).toLowerCase()),
+        spec: {
+          id: String(e.id ?? "custom"),
+          command: e.command.map(String),
+          installHint: String(e.installHint ?? `install ${e.command[0]} and put it on PATH`),
+          languageId: () => languageId,
+        },
+      });
+    }
+    return table.length > 0 ? table : null;
+  } catch {
+    return null;
+  }
+}
+
+let cachedTable: ServerTable | null = null;
+
+/** The server table in force for this process (built-in unless overridden). */
+export function serverTable(): ServerTable {
+  cachedTable ??= envServerTable() ?? SERVERS;
+  return cachedTable;
+}
+
+/** Test seam: re-read GEAR_LSP_SERVERS after a test changes it. */
+export function resetServerTable(): void {
+  cachedTable = null;
+}
+
 export interface LspPosition {
   /** 1-based, the way models and editors talk about lines. */
   line: number;
@@ -147,19 +208,19 @@ export class LspServerManager {
   private servers = new Map<string, RunningServer>();
   private initTimeoutMs: number;
   private requestTimeoutMs: number;
-  private serverTable: Array<{ extensions: string[]; spec: ServerSpec }>;
+  private serverTable: ServerTable;
 
   constructor(
     opts: {
       initTimeoutMs?: number;
       requestTimeoutMs?: number;
       /** Test seam: replace the real server table with fixtures. */
-      serversOverride?: Array<{ extensions: string[]; spec: ServerSpec }>;
+      serversOverride?: ServerTable;
     } = {},
   ) {
     this.initTimeoutMs = opts.initTimeoutMs ?? 15_000;
     this.requestTimeoutMs = opts.requestTimeoutMs ?? 8_000;
-    this.serverTable = opts.serversOverride ?? SERVERS;
+    this.serverTable = opts.serversOverride ?? serverTable();
     // Hard-exit teardown: kill synchronously, no awaiting allowed here.
     process.on("exit", () => this.killAll());
   }

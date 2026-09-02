@@ -184,10 +184,17 @@ export interface GearConfig {
     requireOs?: boolean;
   };
   /**
-   * Language-server integration. `autoFeedback = true` pulls LSP diagnostics
-   * after every successful write/edit on a supported file (1.5s budget,
-   * errors only, appended to the tool result). Default false until
-   * eval-proven — servers are heavyweight where edits are hot.
+   * Language-server integration. `autoFeedback` attaches the language
+   * server's errors and warnings for the touched file to every successful
+   * write_file / edit_file / multi_edit / apply_patch result (2s budget, at
+   * most 20 lines), so type errors are corrected in the same turn instead of
+   * at the verifier.
+   *
+   * UNSET is not "off": it defaults ON for TypeScript and Python workspaces
+   * whose server binary is on PATH, and off everywhere else. Set it to false
+   * to turn it off for a project regardless of what is installed, or true to
+   * force it on (Rust and Go included, which are excluded from the default
+   * because their first publish usually lands after the 2s budget).
    */
   lsp?: {
     autoFeedback?: boolean;

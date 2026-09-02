@@ -315,6 +315,8 @@ function buildEngine(): Engine {
     reasoningEffort: config.llm?.reasoningEffort,
     doctrineDelivery: config.llm?.doctrineDelivery,
     effortRouting: config.llm?.effortRouting,
+    // Unset means "decide from the workspace" (P10.1), same as the CLI.
+    lspAutoFeedback: config.lsp?.autoFeedback,
     autoMode: config.permissions?.autoMode,
     // Same posture resolution as the CLI, minus CLI flags (desktop has none).
     sandboxEnabled: resolveInitialSandbox({

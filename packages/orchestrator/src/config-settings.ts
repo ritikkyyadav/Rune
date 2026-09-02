@@ -233,6 +233,24 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
     live: true,
   },
   {
+    key: "lsp",
+    tomlPath: "lsp.autoFeedback",
+    description:
+      "Attach the language server's errors and warnings for the touched file to every " +
+      "successful edit, so type errors are fixed in the same turn instead of at the verifier. " +
+      "On by default in TypeScript and Python projects whose server is installed.",
+    kind: "boolean",
+    nameAliases: [
+      "lsp feedback",
+      "auto feedback",
+      "autofeedback",
+      "post edit diagnostics",
+      "diagnostics",
+      "language server",
+    ],
+    live: true,
+  },
+  {
     key: "auto_commit",
     tomlPath: "git.autoCommit",
     description:
