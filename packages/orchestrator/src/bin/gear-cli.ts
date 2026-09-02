@@ -203,6 +203,7 @@ if (values.help) {
         `    gear detach "<prompt>"        Start a background run that survives this terminal (--worktree isolates it)\n` +
         `    gear attach [session|latest]  Reattach to a detached run — replay, live-stream, Ctrl+C detaches again\n` +
         `    gear desktop [dev|--check]    Open Gear Desktop (alias: gear app) — dev runs the Vite preview, --check proves the engine headless\n` +
+        `    gear web [--port N] [--open]  The same client in a browser, engine attached (--host exposes it on the LAN)\n` +
         `    gear login [provider]         Authenticate a provider — API key, or OAuth where supported (--method, --no-browser, --migrate)\n` +
         `    gear logout <provider>        Remove a provider's stored key/OAuth from the secure store\n` +
         `    gear providers                List providers, their auth method, and credential status\n` +
@@ -309,6 +310,11 @@ if (command === "desktop" || command === "app") {
   process.exit(
     await runDesktop(positionals.slice(1) as string[], values as Record<string, unknown>),
   );
+}
+if (command === "web") {
+  // Long-lived: `web` returns only on shutdown, exactly like `serve`.
+  const { runWeb } = await import("./web-cli");
+  process.exit(await runWeb(positionals.slice(1) as string[], values as Record<string, unknown>));
 }
 
 // ─── BYOP: provider authentication surfaces (no Engine boot) ───

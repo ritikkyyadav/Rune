@@ -403,8 +403,101 @@ export interface ServeOptions {
   workspace?: string;
   allowRemoteSettings?: boolean;
   origins?: string[];
+  /**
+   * Serve the built web client from this directory on the same port (P3.2).
+   *
+   * Same port because the alternative — a page on one port opening a socket on
+   * another — is a cross-origin request the allowlist would have to be widened
+   * for, and widening an allowlist to accommodate your own layout is how these
+   * things stop protecting anything.
+   */
+  web?: { dist: string };
   /** Injected by tests so they do not have to parse stdout. */
   onListening?: (info: { port: number; host: string; token: string }) => void;
+}
+
+// ─── The web client (P3.2) ───
+
+const CONTENT_TYPES: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".ico": "image/x-icon",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+};
+
+/**
+ * Put the connection details into the page that will use them.
+ *
+ * The alternative is asking a person to paste a 43-character token into a form
+ * on the page it was minted for, which is theatre: the server just generated
+ * the token and is serving the page over the same connection.
+ */
+export function injectServeEndpoint(html: string, url: string, token: string): string {
+  // Escape `<` INSIDE the JSON only. An HTML parser ends a script at the first
+  // literal `</script>` wherever it appears, so a value containing one would
+  // truncate the tag; escaping the tag's own terminator instead (which an
+  // earlier draft of this did) leaves the script unclosed and swallows the
+  // whole document.
+  const json = JSON.stringify({ url, token }).replace(/</g, "\\u003c");
+  const tag = `<script>window.__GEAR_SERVE__=${json};</script>\n`;
+  // It must run before the bundle, which reads it during module init.
+  return html.includes("</head>") ? html.replace("</head>", `${tag}</head>`) : tag + html;
+}
+
+/**
+ * Whether this request may be handed a page with the token in it.
+ *
+ * On loopback, yes: any process that could make this request already runs as
+ * the user and can read `~/.gear/serve.json` directly, so refusing would buy
+ * nothing. Off-loopback, the token must already be in the request — which is
+ * why `gear web --host` prints a URL that carries it.
+ */
+export function mayReceiveEmbeddedToken(
+  loopback: boolean,
+  supplied: string | null,
+  token: string,
+): boolean {
+  return loopback || (supplied != null && timingSafeEqual(supplied, token));
+}
+
+/** Serve one file out of `dist`, refusing anything that climbs out of it. */
+async function serveStatic(
+  dist: string,
+  pathname: string,
+  embed: { url: string; token: string } | null,
+): Promise<Response> {
+  const rel = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
+  const resolved = join(dist, rel);
+  // `..` in a URL path is the oldest static-server bug there is.
+  if (!resolved.startsWith(dist)) return new Response("not found", { status: 404 });
+
+  const file = Bun.file(resolved);
+  if (!(await file.exists())) {
+    // A single-page client: unknown paths are routes, not missing files.
+    if (rel.includes(".")) return new Response("not found", { status: 404 });
+    return serveStatic(dist, "/", embed);
+  }
+
+  const ext = resolved.slice(resolved.lastIndexOf("."));
+  const type = CONTENT_TYPES[ext] ?? "application/octet-stream";
+  if (ext !== ".html") {
+    return new Response(file, { headers: { "content-type": type } });
+  }
+  const html = await file.text();
+  return new Response(embed ? injectServeEndpoint(html, embed.url, embed.token) : html, {
+    headers: {
+      "content-type": type,
+      // A page carrying a bearer token has no business in any cache.
+      "cache-control": "no-store",
+    },
+  });
 }
 
 export async function runServe(
@@ -492,6 +585,25 @@ export async function serve(opts: ServeOptions = {}): Promise<{ stop: () => void
       // something is listening, which the TCP handshake already revealed.
       if (url.pathname === "/health") {
         return Response.json({ ok: true, protocolVersion: PROTOCOL_VERSION });
+      }
+
+      // ── the web client (P3.2) ──
+      // Anything that is not a websocket upgrade is a page request when the
+      // server was started with a bundle to serve.
+      if (opts.web && req.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+        const fromHere = isLoopbackAddress(srv.requestIP(req)?.address);
+        if (!mayReceiveEmbeddedToken(fromHere, extractToken(req), token)) {
+          return new Response(
+            "This page carries the connection token, so it is served only to this " +
+              "machine or to a request that already has the token. Open the URL " +
+              "`gear web` printed — it includes `?token=`.",
+            { status: 401, headers: { "content-type": "text/plain; charset=utf-8" } },
+          );
+        }
+        return serveStatic(opts.web.dist, url.pathname, {
+          url: `ws://${url.host}`,
+          token,
+        });
       }
 
       const origin = req.headers.get("origin");
@@ -616,8 +728,14 @@ export async function serve(opts: ServeOptions = {}): Promise<{ stop: () => void
   (reaper as unknown as { unref?: () => void }).unref?.();
 
   const url = `ws://${loopbackOnly ? "127.0.0.1" : host}:${boundPort}`;
-  console.log(`gear serve — protocol ${PROTOCOL_VERSION}`);
+  console.log(`gear ${opts.web ? "web" : "serve"} — protocol ${PROTOCOL_VERSION}`);
   console.log(`  listening  ${url}`);
+  if (opts.web) {
+    const pageHost = loopbackOnly ? "127.0.0.1" : host;
+    const page = `http://${pageHost}:${boundPort}`;
+    console.log(`  open       ${loopbackOnly ? page : `${page}/?token=${token}`}`);
+    console.log(`  bundle     ${opts.web.dist}`);
+  }
   console.log(`  workspace  ${workspace}`);
   console.log(`  token      ${serveConfigPath()} (0600)`);
   if (!loopbackOnly) {

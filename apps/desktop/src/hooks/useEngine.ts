@@ -205,9 +205,16 @@ export function useEngine(options: UseEngineOptions) {
       args: Record<string, unknown> | undefined,
       what: string,
     ): Promise<CommandResult<T>> => {
+      const transport = transportRef.current;
+      // Not connected YET is not the same as "there is no engine". Reporting it
+      // as a null result made a message typed during the first second of the
+      // page's life vanish into a spinner that never stopped — the transport
+      // was still opening, and nothing said so.
+      if (!transport) {
+        optionsRef.current.onError?.(`${what} — still connecting to the engine; try again`);
+        return { ok: false };
+      }
       try {
-        const transport = transportRef.current;
-        if (!transport) return { ok: true, value: null };
         const value = (await transport.call(
           cmd as Parameters<EngineTransport["call"]>[0],
           args as never,

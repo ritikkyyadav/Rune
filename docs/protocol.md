@@ -196,6 +196,43 @@ Shutdown is graceful and leaves running session hosts alive, exactly as
 
 ---
 
+## `gear web` — the same client, in a browser
+
+`gear web` is `gear serve` that also hands out the page. One process, one port,
+one token.
+
+```bash
+gear web --port 7788          # loopback; open http://127.0.0.1:7788
+gear web --host 0.0.0.0       # a phone on the LAN; the printed URL carries ?token=
+```
+
+One port, because a page on 7788 opening a socket on 4762 is a cross-origin
+request the Origin allowlist would have to be widened for, and widening a
+security allowlist to accommodate your own layout is how these things stop
+protecting anything.
+
+The token is embedded in the first page load — `window.__GEAR_SERVE__` — rather
+than typed into a form. Asking a person to paste a 43-character secret into a
+page the server just minted it for is theatre. The rule that keeps that honest:
+
+| Request comes from | Gets the page with the token |
+| ------------------ | ---------------------------- |
+| loopback           | yes — the same user can already read `~/.gear/serve.json` |
+| anywhere else      | only if the request already carries the token |
+
+So `gear web --host` prints a URL with `?token=` in it, and a stranger on the
+LAN who guesses the port gets a 401 that says why.
+
+The client is the desktop bundle (`apps/desktop`), unchanged: the only
+difference is which transport `apps/desktop/src/lib/transport.ts` picks. That is
+what makes the web client free rather than a second application to maintain.
+
+`tests/e2e` is the browser smoke — the only place Playwright is a dependency. It
+stands up a fake OpenAI-compatible model, runs `gear web` against it in a temp
+home, and drives the whole path in Chromium: prompt → permission card (asserted
+inline, with no `[role=dialog]` on screen) → answer → the tool output in the
+transcript → spans in the trace rail → export.
+
 ## Sub-agent events
 
 A sub-agent runs the same loop the lead does and produces the same union. That
