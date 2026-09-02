@@ -75,6 +75,56 @@ export interface TeamClaim {
   expiresAt: number;
 }
 
+/**
+ * A unit of work any instance in this repository can take.
+ *
+ * Distinct from a `TeamClaim`, and the distinction is the point: a claim says
+ * "these paths are mine, stay off them", a task says "this needs doing, whoever
+ * is free". The bus carried the first and not the second, which is why
+ * docs/teamwork.md said it was not a task queue.
+ */
+export interface TeamTask {
+  id: string;
+  content: string;
+  status: "pending" | "in_progress" | "completed";
+  /** The instance holding it; absent when the task is free. */
+  ownerId?: string;
+  createdBy: string;
+  createdAt: number;
+  claimedAt?: number;
+  /** Claim TTL. An owner that goes quiet past this releases the task. */
+  expiresAt?: number;
+  /** What closed it. A task completed with no evidence is a task nobody can check. */
+  evidence?: string;
+}
+
+interface TaskRow {
+  id: string;
+  repo_key: string;
+  content: string;
+  status: string;
+  owner_id: string | null;
+  created_by: string;
+  created_at: number;
+  claimed_at: number | null;
+  expires_at: number | null;
+  evidence: string | null;
+}
+
+function rowToTask(row: TaskRow): TeamTask {
+  return {
+    id: row.id,
+    content: row.content,
+    status: (row.status as TeamTask["status"]) ?? "pending",
+    ...(row.owner_id ? { ownerId: row.owner_id } : {}),
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+    ...(row.claimed_at ? { claimedAt: row.claimed_at } : {}),
+    ...(row.expires_at ? { expiresAt: row.expires_at } : {}),
+    ...(row.evidence ? { evidence: row.evidence } : {}),
+  };
+}
+
 export interface TeamMessage {
   seq: number;
   fromId: string;
@@ -130,6 +180,28 @@ const SCHEMA = `
     expires_at   INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_claims_repo ON claims(repo_key);
+
+  -- The cross-instance work queue.
+  --
+  -- docs/teamwork.md said plainly that the bus "is not a task queue", and that
+  -- was correct: it carried presence, path claims and messages, so two Gear
+  -- instances in one repository could avoid each other but could not divide
+  -- work. A task here is claimed the same way a path is — atomically, with a
+  -- TTL, swept by the same liveness pass — so an instance that dies releases
+  -- its task instead of stranding it.
+  CREATE TABLE IF NOT EXISTS tasks (
+    id           TEXT PRIMARY KEY,
+    repo_key     TEXT NOT NULL,
+    content      TEXT NOT NULL,
+    status       TEXT NOT NULL,            -- pending | in_progress | completed
+    owner_id     TEXT,                     -- instance holding it, NULL when free
+    created_by   TEXT NOT NULL,
+    created_at   INTEGER NOT NULL,
+    claimed_at   INTEGER,
+    expires_at   INTEGER,                  -- claim TTL; NULL when unclaimed
+    evidence     TEXT                      -- what closed it
+  );
+  CREATE INDEX IF NOT EXISTS idx_tasks_repo ON tasks(repo_key, status);
 
   CREATE TABLE IF NOT EXISTS messages (
     seq         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -503,6 +575,103 @@ export class TeamBus {
    * repository (no `toId`). Returns a human-readable error instead of
    * throwing when the target is unknown.
    */
+  /** Publish work for any instance in this repository to pick up. */
+  postTask(content: string): TeamTask | null {
+    return this.guard<TeamTask | null>(null, (db) => {
+      const now = Date.now();
+      const id = `t${now.toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+      db.query(
+        `INSERT INTO tasks (id, repo_key, content, status, owner_id, created_by, created_at)
+         VALUES (?, ?, ?, 'pending', NULL, ?, ?)`,
+      ).run(id, this.opts.repoKey, content.slice(0, 2000), this.instanceId, now);
+      return {
+        id,
+        content,
+        status: "pending",
+        createdBy: this.instanceId,
+        createdAt: now,
+      };
+    });
+  }
+
+  /**
+   * Take the oldest unclaimed task, atomically.
+   *
+   * The UPDATE … WHERE status='pending' is the arbiter: two instances racing
+   * for the same row means one UPDATE changes a row and the other changes
+   * none, and the loser simply asks again. A read-then-write would let both
+   * believe they won, which is the failure the path-claim model already exists
+   * to prevent one layer down.
+   */
+  claimNextTask(ttlMs?: number): TeamTask | null {
+    return this.guard<TeamTask | null>(null, (db) => {
+      const now = Date.now();
+      if (now - this.lastSweep > SWEEP_INTERVAL_MS) this.sweep(now);
+      const ttl = ttlMs ?? this.claimTtlMs;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const row = db
+          .query(
+            `SELECT * FROM tasks WHERE repo_key = ? AND status = 'pending'
+             ORDER BY created_at ASC LIMIT 1`,
+          )
+          .get(this.opts.repoKey) as TaskRow | null;
+        if (!row) return null;
+        const res = db
+          .query(
+            `UPDATE tasks SET status = 'in_progress', owner_id = ?, claimed_at = ?, expires_at = ?
+             WHERE id = ? AND status = 'pending'`,
+          )
+          .run(this.instanceId, now, now + ttl, row.id);
+        if ((res.changes ?? 0) > 0) return rowToTask({ ...row, status: "in_progress", owner_id: this.instanceId });
+      }
+      return null;
+    });
+  }
+
+  /** Close a task with the evidence that closed it. */
+  completeTask(id: string, evidence?: string): boolean {
+    return this.guard(false, (db) => {
+      const res = db
+        .query(
+          `UPDATE tasks SET status = 'completed', expires_at = NULL, evidence = ?
+           WHERE id = ? AND owner_id = ?`,
+        )
+        .run(evidence?.slice(0, 1000) ?? null, id, this.instanceId);
+      return (res.changes ?? 0) > 0;
+    });
+  }
+
+  /** Put a task back. A worker that could not finish it must not hold it. */
+  releaseTask(id: string): boolean {
+    return this.guard(false, (db) => {
+      const res = db
+        .query(
+          `UPDATE tasks SET status = 'pending', owner_id = NULL, claimed_at = NULL, expires_at = NULL
+           WHERE id = ? AND owner_id = ? AND status != 'completed'`,
+        )
+        .run(id, this.instanceId);
+      return (res.changes ?? 0) > 0;
+    });
+  }
+
+  /** Every task in this repository, newest last. */
+  tasks(status?: TeamTask["status"]): TeamTask[] {
+    return this.guard<TeamTask[]>([], (db) => {
+      const now = Date.now();
+      if (now - this.lastSweep > SWEEP_INTERVAL_MS) this.sweep(now);
+      const rows = (
+        status
+          ? db
+              .query(`SELECT * FROM tasks WHERE repo_key = ? AND status = ? ORDER BY created_at ASC`)
+              .all(this.opts.repoKey, status)
+          : db
+              .query(`SELECT * FROM tasks WHERE repo_key = ? ORDER BY created_at ASC`)
+              .all(this.opts.repoKey)
+      ) as TaskRow[];
+      return rows.map(rowToTask);
+    });
+  }
+
   send(body: string, toId?: string): { ok: boolean; error?: string } {
     const text = body.trim().slice(0, MAX_MESSAGE_CHARS);
     if (!text) return { ok: false, error: "empty message" };
@@ -635,9 +804,22 @@ export class TeamBus {
         db.query(`DELETE FROM instances WHERE id = ?`).run(row.id);
         db.query(`DELETE FROM claims WHERE instance_id = ?`).run(row.id);
         db.query(`DELETE FROM writes WHERE instance_id = ?`).run(row.id);
+        // A dead peer's TASK is released, not deleted: the work still needs
+        // doing and somebody else can now take it. Deleting it — the obvious
+        // symmetry with claims and writes — would silently drop work the
+        // moment a session crashed, which is exactly when it matters most.
+        db.query(
+          `UPDATE tasks SET status = 'pending', owner_id = NULL, claimed_at = NULL, expires_at = NULL
+           WHERE owner_id = ? AND status != 'completed'`,
+        ).run(row.id);
       }
     }
     db.query(`DELETE FROM claims WHERE expires_at <= ?`).run(now);
+    // An expired task claim is released the same way, for the same reason.
+    db.query(
+      `UPDATE tasks SET status = 'pending', owner_id = NULL, claimed_at = NULL, expires_at = NULL
+       WHERE expires_at IS NOT NULL AND expires_at <= ? AND status != 'completed'`,
+    ).run(now);
     db.query(`DELETE FROM messages WHERE created_at <= ?`).run(now - this.messageTtlMs);
     db.query(`DELETE FROM writes WHERE at <= ?`).run(now - this.writeWindowMs);
   }
