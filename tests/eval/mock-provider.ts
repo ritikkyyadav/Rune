@@ -17,6 +17,27 @@ export interface ScriptedResponse {
   text?: string;
   toolCalls?: Array<{ name: string; args: Record<string, unknown> }>;
   stopReason?: "end_turn" | "tool_use" | "max_tokens" | "stop_sequence";
+  /**
+   * Fail the stream instead of completing it (P7.8).
+   *
+   * `provider.stream_error` has fired 59 times on this machine and the eval
+   * suite could not express it at all: every scripted response succeeded, so
+   * the recovery path — the one that decides whether a mid-stream failure costs
+   * a turn or the run — was never measured. The text/tool events emitted before
+   * this fire first, so a stream can fail PART WAY, which is the shape that
+   * actually happens.
+   */
+  streamError?: string;
+  /**
+   * Emit these bytes as the tool-call arguments instead of `JSON.stringify`.
+   *
+   * `provider.malformed_tool_json_fatal` has fired 22 times. The salvage path
+   * in the gateway exists for exactly this and had no deterministic test above
+   * the unit level. Paired with `toolCalls` so the call's name is still
+   * scripted; `toolInput` carries the parsed args when they parse and `{}` when
+   * they do not, which is what a real provider hands over.
+   */
+  rawToolArgs?: string;
 }
 
 export type Script = ScriptedResponse[];
@@ -128,18 +149,35 @@ export class MockProvider implements LlmProvider {
         toolCallId: callId,
         toolName: tc.name,
       };
-      const argsJson = JSON.stringify(tc.args);
+      const argsJson = r.rawToolArgs ?? JSON.stringify(tc.args);
       yield {
         type: "tool_use_delta",
         toolCallId: callId,
         partialJson: argsJson,
       };
+      let toolInput: Record<string, unknown> = tc.args;
+      if (r.rawToolArgs !== undefined) {
+        // What a real provider hands over when its own JSON is broken: the
+        // partial bytes are on the wire and the parsed object is empty.
+        try {
+          toolInput = JSON.parse(r.rawToolArgs) as Record<string, unknown>;
+        } catch {
+          toolInput = {};
+        }
+      }
       yield {
         type: "tool_use_stop",
         toolCallId: callId,
-        toolInput: tc.args,
+        toolInput,
       };
       contentIndex++;
+    }
+
+    // A stream that fails PART WAY: whatever was scripted above is already on
+    // the wire, and then the connection dies.
+    if (r.streamError) {
+      yield { type: "error", error: r.streamError };
+      return;
     }
 
     const stopReason =
