@@ -22,6 +22,7 @@ import {
   getContextLimit,
   registerContextLimit,
   UNKNOWN_MODEL_CONTEXT_LIMIT,
+  tokenCounter,
 } from "../../../packages/orchestrator/src/tokenizer";
 import type { Message } from "../../../packages/llm-gateway/src/types";
 
@@ -67,6 +68,16 @@ const bodiesOf = (messages: Message[]): string[] =>
   );
 
 const EVICTED = "[tool result evicted to reclaim context]";
+
+// The token counter is a module-level singleton shared by every ContextEngine,
+// so calibration learned by another test file leaks into this one: bun runs
+// the suite in one process, in directory order, and that order differs between
+// macOS and Linux. Start every test from a clean counter.
+beforeEach(() => {
+  tokenCounter.resetCalibrations();
+  tokenCounter.clearCache();
+  TokenCounter.clearContextLimits();
+});
 
 describe("context-window discovery", () => {
   afterEach(() => TokenCounter.clearContextLimits());
