@@ -115,9 +115,10 @@ jobs:
           - os: macos-latest
             asset: gear-tools-darwin-arm64
             bin: gear-tools
-          - os: macos-13
+          - os: macos-latest
             asset: gear-tools-darwin-x64
             bin: gear-tools
+            target: x86_64-apple-darwin
           - os: ubuntu-latest
             asset: gear-tools-linux-x64
             bin: gear-tools
@@ -129,12 +130,23 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release -p gear-tools
+      - name: Add cross target
+        if: ${{ matrix.target }}
+        run: rustup target add ${{ matrix.target }}
+      - name: Build
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.target }}" ]; then
+            cargo build --release -p gear-tools --target "${{ matrix.target }}"
+          else
+            cargo build --release -p gear-tools
+          fi
       - name: Stage asset
         shell: bash
         run: |
           mkdir -p out
-          cp "target/release/${{ matrix.bin }}" "out/${{ matrix.asset }}"
+          src="target/release/${{ matrix.bin }}"; [ -n "${{ matrix.target }}" ] && src="target/${{ matrix.target }}/release/${{ matrix.bin }}"
+          cp "$src" "out/${{ matrix.asset }}"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
@@ -525,8 +537,6 @@ jobs:
             suffix: linux-x64
           - os: macos-latest
             suffix: darwin-arm64
-          - os: macos-13
-            suffix: darwin-x64
           - os: windows-latest
             suffix: windows-x64.exe
     runs-on: ${{ matrix.os }}
