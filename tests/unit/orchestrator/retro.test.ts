@@ -585,9 +585,9 @@ describe("retro scope", () => {
       ...turn([{ name: "write_file", args: { path: "a.ts", content: "x" }, ok: true }]),
       row("task_state", { state: spine(8, 6, 2) }),
     ];
-    expect(deriveRunRetro(rows, { scope: "turn", priorState: spine(8, 5, 1) })!.steps.unproven).toBe(
-      1,
-    );
+    expect(
+      deriveRunRetro(rows, { scope: "turn", priorState: spine(8, 5, 1) })!.steps.unproven,
+    ).toBe(1);
     // The model rewrote the plan smaller mid-turn: clamp, never report -3.
     seq = 0;
     const shrunk: EventRow[] = [
@@ -694,7 +694,12 @@ describe("foldTurnRetros", () => {
       turnRetro({ steps: { total: 2, done: 1, unproven: 0, open: 0 } }),
       turnRetro({ steps: { total: 2, done: 0, unproven: 0, open: 0 } }),
     ])!;
-    const sample: RetroSample = { retro: session, model: "m", workspaceRoot: "/w", sessionId: "s1" };
+    const sample: RetroSample = {
+      retro: session,
+      model: "m",
+      workspaceRoot: "/w",
+      sessionId: "s1",
+    };
     const scored = scorecard([sample], "model");
     expect(scored[0].runs).toBe(1);
     expect(scored[0].stepsDone).toBe(2);
