@@ -245,16 +245,17 @@ function cmdTune(sm: SessionManager, opts: Record<string, string | true>): numbe
   const proposals = tuneProposals(rows, { minRuns: num(opts["min-runs"], 5) });
   say();
   say(
-    `  ${accent("Tuning proposals")} ${dim("·")} from ${c.samples.length} runs over ${days} days ${dim("·")} ${dim("printed, never applied — the A/B that would justify applying one is not built")}`,
+    `  ${accent("Tuning proposals")} ${dim("·")} from ${c.samples.length} runs over ${days} days ${dim("·")} ${dim("never applied by themselves — each one that names a variant is measurable with gear evolve ab")}`,
   );
   say();
   if (proposals.length === 0) {
     say(dim("  Nothing to propose: no model crosses a threshold with enough runs behind it."));
     say(
       dim(
-        "  (thresholds: ≥5 runs; unproven ≥30% of ≥5 completed steps; stalled ≥20%; checks <50% of ≥10; open steps ≥40%)",
+        "  (thresholds: ≥5 runs; unproven ≥30% of ≥5 completed steps; stalled ≥20%; checks <50% of ≥10; open steps ≥40%;",
       ),
     );
+    say(dim("   aborted ≥25%; errored ≥20%; max_turns ≥3 and ≥10%; halted ≥2)"));
     say();
     return 0;
   }
@@ -264,7 +265,16 @@ function cmdTune(sm: SessionManager, opts: Record<string, string | true>): numbe
     );
     say(`    ${dim("signal")}    ${p.signal}`);
     say(`    ${dim("proposal")}  ${p.proposal}`);
-    say(`    ${dim("config")}    ${info(p.config)}`);
+    if (p.variant) {
+      // A proposal that names a variant is one command from evidence. That is
+      // the whole change: before, `config` was a TOML line to retype by hand,
+      // which is why 128 measured runs produced no change at all.
+      say(`    ${dim("measure")}   ${info(`gear evolve ab ${p.variant}`)} ${dim(`→ ${p.config}`)}`);
+    } else {
+      say(
+        `    ${dim("config")}    ${info(p.config)} ${dim("· no variant: outside the allowlist")}`,
+      );
+    }
     say();
   }
   return 0;

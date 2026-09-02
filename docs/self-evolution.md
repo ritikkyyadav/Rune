@@ -102,23 +102,64 @@ had no evidence, verification pass rate, tool failure rate, list price per
 run. This is the measure the rest of the loop is judged against. It reads
 `~/.gear/gear.db` read-only — no engine, no provider.
 
-## Tuning: proposals, never applications
+## The variants registry: everything the loop may change
+
+`packages/orchestrator/src/evolve/variants.ts` is the declared space. It is a
+closed, typed map from a variant id to a configuration delta, and the delta's
+type (`AbConfig`) has no field under `permissions`, `sandbox`, `autoMode`,
+`yoloMode`, `trustWorkspace`, cost caps or the `verify.*` gates. A variant that
+tried to turn the sandbox off would not fail a check — it would fail to
+compile. `GARDENER_OFF_LIMITS` needs no separate defence here: those are files,
+and a variant cannot name a file at all.
+
+| variant | what it changes |
+| --- | --- |
+| `doctrine_full` | situational doctrine on every request instead of once, just in time |
+| `effort_ceiling` | every turn at the reasoning ceiling instead of a notch below it |
+| `effort_medium` | lower the reasoning ceiling to medium |
+| `notebook_on` | inject the learned notebook under its default budget |
+| `notebook_wide` | the same at double the token budget |
+| `repo_map_off` | drop the structural repository map from context |
+| `playbook_off` | stop writing the repository playbook — the permanent control group |
+
+Each carries a written **hypothesis**: what it is a bet on, so a promotion can
+be read back and disagreed with. Adding a variant is a source change and a code
+review; that is the intended cost.
+
+## Tuning: proposals that name a variant
 
 ```bash
 gear evolve tune
 ```
 
-Rule-based proposals from the scorecard, each with its signal, its
-confidence, and the config line that would apply it:
+Rule-based proposals from the scorecard, each with its signal, its confidence,
+and — where the allowlist can express it — the variant id to run:
 
-- ≥ 30% of completed steps unproven → keep the step check, route planning to a heavier tier
-- ≥ 20% of runs stalled → broad reads up front, not a longer leash
-- verification failing more than passing → pin `[verify] commands`
-- ≥ 40% of runs ending with steps open → sub-agents for the parallel parts
+| signal | proposal |
+| --- | --- |
+| ≥ 25% of runs aborted by hand | `doctrine_full` |
+| ≥ 20% of runs ended in an error | `notebook_on` |
+| ≥ 3 runs and ≥ 10% hit the turn ceiling | `effort_ceiling` |
+| ≥ 20% of runs stalled | `effort_ceiling` |
+| ≥ 30% of completed steps unproven | no variant — the step check is a `verify.*` gate |
+| verification failing more than passing | no variant — which commands verify *this* project is a human judgement |
+| ≥ 40% of runs ending with steps open | no variant — `[subagents] mode` is outside the allowlist |
+| ≥ 2 runs halted by the supervisor | **no variant, by design** — read `gear audit` |
 
-Nothing is applied by itself. The A/B over enough runs that would justify
-applying a proposal is not built, and this page says so rather than
-pretending the rule is the evidence.
+The first four rules are new, and they are the point of the rewrite: the
+original four keyed on `unproven`, `stalled` and `open_steps`, which have zero
+occurrences across 601 sessions, while `aborted` (71), `error` (64),
+`max_turns` (16) and `halted` (9) were counted by the scorecard and read by
+nothing. A tuner answering questions this system does not ask is why 128
+measured runs produced no change.
+
+`proposal.variant` is `null` wherever no variant can express the fix, and
+saying null is better than inventing a variant to have something to name. The
+supervisor-halt rule is null *permanently*: no variant may touch Auto mode, and
+a tuner that offered one would be proposing a mutation.
+
+Nothing is applied by itself. A proposal that names a variant is one command
+from evidence — `gear evolve ab <variant>` — and one more from being applied.
 
 ## The gardener
 
