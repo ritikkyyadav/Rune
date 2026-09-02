@@ -16,6 +16,13 @@ import {
   renderTaskResult,
   repairToSchema,
 } from "./subagent-result";
+import {
+  checkBudget,
+  describeBreach,
+  resolveSubagentBudget,
+  type BudgetBreach,
+} from "./subagent-budget";
+import { CostTracker } from "@gear/llm-gateway";
 
 /**
  * Dependencies the orchestrator must supply when constructing the `task` tool.
@@ -52,6 +59,12 @@ export interface SubagentDeps {
      *  ceiling. Absent keeps the historical hard-coded "high". */
     thinkingEffort?: ReasoningEffort;
   };
+  /**
+   * Default per-call cost and wall-clock ceilings, overriding the per-effort
+   * defaults in subagent-budget.ts. A call's own `costCapUsd` / `deadlineMs`
+   * arguments override these in turn.
+   */
+  budgetDefaults?: { costCapUsd?: number; deadlineMs?: number };
   /** Same prompt-injection probe used by the parent agent. */
   toolResultProcessor?: ToolResultProcessor;
   /**
@@ -173,6 +186,19 @@ export const TASK_TOOL_SCHEMA: ToolSchema = {
           "'thorough' for wide surveys that must visit many files.",
       },
     },
+      costCapUsd: {
+        type: "number",
+        description:
+          "Optional list-price ceiling in USD for this sub-agent's own inference. It STOPS " +
+          "and returns what it has when exceeded — a budget never destroys work. Defaults " +
+          "come from `effort`.",
+      },
+      deadlineMs: {
+        type: "number",
+        description:
+          "Optional wall-clock ceiling in milliseconds from dispatch. Same stop-and-return " +
+          "behaviour as costCapUsd. Defaults come from `effort`.",
+      },
     required: ["prompt"],
   },
   // Declared since the first version of ToolSchema and never populated. The
@@ -331,6 +357,15 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
         // of turns and genuinely returning nothing were reported identically —
         // all 33 recorded failures carried no cause at all.
         let stopReason = "";
+        // Cost and wall clock, checked between turns. Never mid-call: aborting
+        // a request already in flight pays for it and loses the reply.
+        const budgetCaps = resolveSubagentBudget(effort, {
+          costCapUsd: input.args.costCapUsd ?? deps.budgetDefaults?.costCapUsd,
+          deadlineMs: input.args.deadlineMs ?? deps.budgetDefaults?.deadlineMs,
+        });
+        const costTracker = new CostTracker();
+        const budgetState = { spentUsd: 0, startedAt: Date.now() };
+        let breach: BudgetBreach | null = null;
         // What the scout actually did, kept so an empty summary still returns
         // the ground it covered instead of nothing. Bounded: this rides back
         // into the parent's context.
@@ -388,6 +423,17 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
               }
               break;
             }
+            case "usage":
+              // List price, from the provider's own numbers. An unpriced model
+              // contributes 0, which means its budget is effectively the
+              // deadline — correct, since a price nobody knows cannot be capped.
+              budgetState.spentUsd += costTracker.estimate(event.model ?? live.model, {
+                inputTokens: event.inputTokens,
+                outputTokens: event.outputTokens,
+                cacheReadTokens: event.cacheReadTokens,
+                cacheCreationTokens: event.cacheCreationTokens,
+              });
+              break;
             case "error":
               // Keep the last error; only fatal (non-recoverable) errors end the run.
               loopError = event.error;
@@ -400,6 +446,15 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
               break;
           }
           if (event.type === "turn_complete") break;
+          // A budget is a stop, not a failure: the loop ends here and whatever
+          // the scout has found so far comes back, exactly as it does on
+          // max_turns. The parent is told which budget and by how much, so
+          // "re-dispatch with more" is actionable rather than a guess.
+          breach = checkBudget(budgetCaps, budgetState);
+          if (breach) {
+            stopReason = breach.kind === "cost" ? "cost_budget" : "time_budget";
+            break;
+          }
         }
 
         const trimmed = finalText.trim();
@@ -521,6 +576,8 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
           ];
         } else if (stopReason === "aborted") {
           result.unresolved = ["Aborted before finishing.", ...result.unresolved];
+        } else if (breach) {
+          result.unresolved = [`The sub-agent ${describeBreach(breach)}.`, ...result.unresolved];
         }
 
         return {

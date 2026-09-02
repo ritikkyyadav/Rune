@@ -6,6 +6,7 @@ import {
 } from "@gear/llm-gateway";
 import { AutoEvalSidecar } from "./auto-eval-sidecar";
 import { validateSubagentResult } from "./subagent-result";
+import { resolveMaxParallel } from "./subagent-budget";
 import { formatCostSummary } from "./cost-report";
 import type { ReasoningEffort, Message, ProviderName, ResolvedCredential } from "@gear/llm-gateway";
 import {
@@ -592,7 +593,16 @@ export interface EngineConfig {
    * "mirror" pins every sub-agent to the session's exact model, provider,
    * and reasoning effort.
    */
-  subagents?: { mode: SubagentMode; model?: string; effort?: ReasoningEffort };
+  subagents?: {
+    mode: SubagentMode;
+    model?: string;
+    effort?: ReasoningEffort;
+    /** Concurrent sub-agents. Default 8, clamped 1–16. */
+    maxParallel?: number;
+    /** Default per-call budgets, overriding the per-effort defaults. */
+    costCapUsd?: number;
+    deadlineMs?: number;
+  };
   /**
    * Black box (flight recorder): incident capture to ~/.gear/blackbox.db.
    * OFF unless enabled — unit tests and embedders stay hermetic; the CLI and
@@ -3543,6 +3553,9 @@ export class Engine {
         provider: this.config.provider,
         maxTokens: MAX_TOKENS,
         maxTurns: turnBudget.maxTurns,
+        // Was a hard 8 with no key. Eight concurrent heavy workers is a lot of
+        // money at once, and eight worktrees is a lot of disk on a small machine.
+        maxParallelTools: resolveMaxParallel(this.config.subagents?.maxParallel),
         maxSecondWinds: turnBudget.conversational ? 0 : 2,
         systemPrompt,
         priorMessages,
@@ -4344,12 +4357,22 @@ export class Engine {
   private registerDelegationTools(): void {
     const subRegistry = new ToolRegistry();
     registerBuiltinTools(subRegistry, this.config.toolsBinaryPath);
+    // `todo_write` has category "read", so it was reachable from a `task`
+    // sub-agent — which then wrote its plan into a throwaway store that nobody
+    // ever read, and left the lead's real ledger untouched. A scout that
+    // believes it is keeping a plan is worse than one that knows it is not.
+    // (docs/program/backlog.md, seeded from the audits.)
+    subRegistry.unregister("todo_write");
     this.registry.register(
       createSubagentTool({
         gateway: this.gateway,
         registry: subRegistry,
         model: this.config.model,
         provider: this.config.provider,
+        budgetDefaults: {
+          costCapUsd: this.config.subagents?.costCapUsd,
+          deadlineMs: this.config.subagents?.deadlineMs,
+        },
         resolve: (tier) => this.resolveSubagentModel(tier, "light"),
         toolResultProcessor: (ctx) => this.processToolResult(ctx),
         onIncident: this.recorder ? (i: IncidentInput) => this.recorder?.record(i) : undefined,
@@ -4358,6 +4381,10 @@ export class Engine {
     this.registry.register(
       createWorkerTool({
         binaryPath: this.config.toolsBinaryPath,
+        budgetDefaults: {
+          costCapUsd: this.config.subagents?.costCapUsd,
+          deadlineMs: this.config.subagents?.deadlineMs,
+        },
         resolve: (tier) => this.resolveSubagentModel(tier, "standard"),
         toolResultProcessor: (ctx) => this.processToolResult(ctx),
         onIncident: this.recorder ? (i: IncidentInput) => this.recorder?.record(i) : undefined,
