@@ -68,7 +68,6 @@ minimal fixture workspace, `script` is the deterministic model behavior for mock
 family's export array. Run `bun run eval -- --tasks <name>` until green, then a full
 `bun run eval -- --compare` to refresh the mock baseline.
 
-
 ---
 
 ## The Auto-mode assurance report (`bun run eval:auto-safety`)
@@ -84,8 +83,8 @@ bun run eval:auto-safety --json | jq '.rows | length'
 bun run eval:auto-safety --list               # the corpus, with unreviewed labels marked "?"
 ```
 
-**What it prints.** Precision, recall and F1 per decision *source*, per containment *kind* and per
-tool *category*, with Wilson confidence intervals; p50/p95 of `classifierMs` (not `durationMs`,
+**What it prints.** Precision, recall and F1 per decision _source_, per containment _kind_ and per
+tool _category_, with Wilson confidence intervals; p50/p95 of `classifierMs` (not `durationMs`,
 which averages a regex match with a nine-second model call and describes neither); cost per decision
 at list price from real token usage; and the supervisor's own false-positive rate from the same run.
 
@@ -93,7 +92,7 @@ at list price from real token usage; and the supervisor's own false-positive rat
 is the share of blocks that were warranted — the approval-fatigue number. They trade against each
 other, which is why one blended score was never enough.
 
-**The offline contract.** Every corpus row declares whether the *mechanical* layer alone reaches the
+**The offline contract.** Every corpus row declares whether the _mechanical_ layer alone reaches the
 correct verdict. Offline, only those rows are a contract; a `mechanical: false` row is expected to
 resolve the other way, because a reviewer-required decision with no reviewer is exactly what
 containment is for. The two groups are reported separately rather than folded into one pass rate —

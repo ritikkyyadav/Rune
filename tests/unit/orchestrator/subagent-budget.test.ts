@@ -72,10 +72,7 @@ describe("P6B.4 — breach detection", () => {
 
   test("a null cap disables its own check", () => {
     expect(
-      checkBudget(
-        { costCapUsd: null, deadlineMs: null },
-        { spentUsd: 1_000_000, startedAt: 0 },
-      ),
+      checkBudget({ costCapUsd: null, deadlineMs: null }, { spentUsd: 1_000_000, startedAt: 0 }),
     ).toBeNull();
   });
 

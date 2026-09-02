@@ -187,19 +187,19 @@ export const WORKER_TOOL_SCHEMA: ToolSchema = {
           "'thorough' for large multi-file pieces.",
       },
     },
-      costCapUsd: {
-        type: "number",
-        description:
-          "Optional list-price ceiling in USD for this sub-agent's own inference. It STOPS " +
-          "and returns what it has when exceeded — a budget never destroys work. Defaults " +
-          "come from `effort`.",
-      },
-      deadlineMs: {
-        type: "number",
-        description:
-          "Optional wall-clock ceiling in milliseconds from dispatch. Same stop-and-return " +
-          "behaviour as costCapUsd. Defaults come from `effort`.",
-      },
+    costCapUsd: {
+      type: "number",
+      description:
+        "Optional list-price ceiling in USD for this sub-agent's own inference. It STOPS " +
+        "and returns what it has when exceeded — a budget never destroys work. Defaults " +
+        "come from `effort`.",
+    },
+    deadlineMs: {
+      type: "number",
+      description:
+        "Optional wall-clock ceiling in milliseconds from dispatch. Same stop-and-return " +
+        "behaviour as costCapUsd. Defaults come from `effort`.",
+    },
     required: ["prompt", "files"],
   },
   // Declared since the first version of ToolSchema and never populated. The
@@ -620,12 +620,7 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
 
         // Propagate the abort signal: without it Ctrl-C/Esc could not
         // interrupt a running worker — the turn blocked until it finished.
-        for await (const event of loop.run(
-          fullPrompt,
-          input.sessionId,
-          workRoot,
-          input.signal,
-        )) {
+        for await (const event of loop.run(fullPrompt, input.sessionId, workRoot, input.signal)) {
           if (event.type === "text_delta") report += event.text;
           else if (event.type === "stream_reset") report = "";
           else if (event.type === "fallback") {
@@ -734,12 +729,7 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
 
         // ── Merge back, on the owned paths only ──
         if (worktree && changed.size > 0) {
-          const merge = mergeWorkerWorktree(
-            input.workspaceRoot,
-            worktree,
-            files,
-            prompt,
-          );
+          const merge = mergeWorkerWorktree(input.workspaceRoot, worktree, files, prompt);
           mergeConflicts = merge.conflicts;
           if (merge.conflicts.length > 0) {
             workerBranch = merge.branch;
@@ -851,7 +841,6 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
 // `renderWorkerResult` in subagent-result.ts, driven off the result object.
 // The measurement is unchanged and is still the point: per-file line counts
 // and sizes read back off disk, which the worker cannot inflate.
-
 
 function humanBytes(n: number): string {
   if (n >= 1_048_576) return `${(n / 1_048_576).toFixed(1)} MB`;

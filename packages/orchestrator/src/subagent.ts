@@ -186,19 +186,19 @@ export const TASK_TOOL_SCHEMA: ToolSchema = {
           "'thorough' for wide surveys that must visit many files.",
       },
     },
-      costCapUsd: {
-        type: "number",
-        description:
-          "Optional list-price ceiling in USD for this sub-agent's own inference. It STOPS " +
-          "and returns what it has when exceeded — a budget never destroys work. Defaults " +
-          "come from `effort`.",
-      },
-      deadlineMs: {
-        type: "number",
-        description:
-          "Optional wall-clock ceiling in milliseconds from dispatch. Same stop-and-return " +
-          "behaviour as costCapUsd. Defaults come from `effort`.",
-      },
+    costCapUsd: {
+      type: "number",
+      description:
+        "Optional list-price ceiling in USD for this sub-agent's own inference. It STOPS " +
+        "and returns what it has when exceeded — a budget never destroys work. Defaults " +
+        "come from `effort`.",
+    },
+    deadlineMs: {
+      type: "number",
+      description:
+        "Optional wall-clock ceiling in milliseconds from dispatch. Same stop-and-return " +
+        "behaviour as costCapUsd. Defaults come from `effort`.",
+    },
     required: ["prompt"],
   },
   // Declared since the first version of ToolSchema and never populated. The

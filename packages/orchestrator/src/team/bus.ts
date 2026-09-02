@@ -622,7 +622,8 @@ export class TeamBus {
              WHERE id = ? AND status = 'pending'`,
           )
           .run(this.instanceId, now, now + ttl, row.id);
-        if ((res.changes ?? 0) > 0) return rowToTask({ ...row, status: "in_progress", owner_id: this.instanceId });
+        if ((res.changes ?? 0) > 0)
+          return rowToTask({ ...row, status: "in_progress", owner_id: this.instanceId });
       }
       return null;
     });
@@ -662,7 +663,9 @@ export class TeamBus {
       const rows = (
         status
           ? db
-              .query(`SELECT * FROM tasks WHERE repo_key = ? AND status = ? ORDER BY created_at ASC`)
+              .query(
+                `SELECT * FROM tasks WHERE repo_key = ? AND status = ? ORDER BY created_at ASC`,
+              )
               .all(this.opts.repoKey, status)
           : db
               .query(`SELECT * FROM tasks WHERE repo_key = ? ORDER BY created_at ASC`)
