@@ -41,10 +41,10 @@ output verbatim. Do not widen scope; log extras in docs/program/backlog.md.
 
 **What the code says** (seven read-only audits, 2026-09-02, every claim file:line verified):
 
-- **The engine is already a server in waiting.** `packages/orchestrator/src/bin/engine-host.ts` is JSON-RPC in all but the envelope: 25 commands, four push streams, over stdio *and* unix sockets. A 146-line `HostClient` exists. The desktop app and `gear detach/attach` both drive the engine through it today. `gear serve` is a transport swap plus four gaps, not a re-architecture. Estimate 8 to 12 engineering days.
+- **The engine is already a server in waiting.** `packages/orchestrator/src/bin/engine-host.ts` is JSON-RPC in all but the envelope: 25 commands, four push streams, over stdio _and_ unix sockets. A 146-line `HostClient` exists. The desktop app and `gear detach/attach` both drive the engine through it today. `gear serve` is a transport swap plus four gaps, not a re-architecture. Estimate 8 to 12 engineering days.
 - **The desktop app is real and bit-drifting.** `apps/desktop`: Tauri 2 + React 19, 8,386 lines, builds green, CI-gated, 11/11 tests. It has the trace rail, the one surface no rival has. It also cannot launch on this machine: no `gear desktop` command exists, the bootstrap file points at a path that does not exist, `interject_chat` is missing from the Rust bridge, `persist` is silently dropped, and four live engine events are ignored by its reducer.
 - **Connectors cannot connect.** The MCP client speaks streamable HTTP but has no OAuth. Every remote server in the vendored catalog (Notion, Slack, Linear, Atlassian) is OAuth-protected and returns a 401 that becomes an error string. A complete OAuth 2.1 + PKCE engine exists in `packages/llm-gateway/src/auth/oauth-strategy.ts` and is not wired to MCP. There is no `gear mcp add`. MCP failures are silent under the TUI. Every MCP tool ships its full schema on every request forever.
-- **Auto mode is not what its doc says.** The doc describes a two-stage in-path classifier that fails closed to a prompt. The code is 4th-gear autonomy inside the OS sandbox with an out-of-band supervisor and a mechanical containment broker that never asks. Common work costs zero extra model calls; only high-risk actions pay one reasoned call (about 9 s). It fails *contained*, not closed. The labelled corpus is 19 scenarios across 4 tool types; there is no precision, recall or latency reporting; the supervisor's false-positive kill rate, the risk that now matters, is unmeasured.
+- **Auto mode is not what its doc says.** The doc describes a two-stage in-path classifier that fails closed to a prompt. The code is 4th-gear autonomy inside the OS sandbox with an out-of-band supervisor and a mechanical containment broker that never asks. Common work costs zero extra model calls; only high-risk actions pay one reasoned call (about 9 s). It fails _contained_, not closed. The labelled corpus is 19 scenarios across 4 tool types; there is no precision, recall or latency reporting; the supervisor's false-positive kill rate, the risk that now matters, is unmeasured.
 - **Sub-agents share one dirty tree.** Workers are isolated by path prefixes, not by filesystem, which is why they have no shell. `worktree.ts` exists and is wired only to detached runs. Results are free text: `outputSchema` is declared and unused; `responseFormat` plumbing exists and is used only by research. There is no cost or wall-clock budget per agent, no workflow API, and the task ledger belongs to the lead alone.
 - **The release pipeline is strong and unreachable.** Tag-driven builds for five targets, checksums beside the binaries, an install-smoke job. But the repo is private so the README's `curl | bash` cannot work, nothing is code-signed anywhere, Windows binaries are built and cannot be installed, there is no auto-update, the version string lives in four hand-maintained places, and the only tag is v0.2.0.
 - **Caching covers one provider fully.** Anthropic is the reference implementation. OpenAI and Google read cache counters and never write breakpoints. OpenRouter emits breakpoints only for `anthropic/*`. Ollama and Copilot have none, and Copilot streams report zero usage.
@@ -64,7 +64,7 @@ Two claims Claude Code structurally cannot make:
 
 What Gear declines: a hosted cloud, a proprietary model, a marketplace, a chat toy. It is local-first and auditable, and it says so.
 
-The July 2026 assessment concluded "competing with Claude Code head-on is unwinnable." That remains true on model co-training and distribution scale. It is not the fight. The fight is being the agent a team is *allowed* to run and can *trust*, on whichever model they choose. Both differentiators already exist in the code. This program makes them reachable.
+The July 2026 assessment concluded "competing with Claude Code head-on is unwinnable." That remains true on model co-training and distribution scale. It is not the fight. The fight is being the agent a team is _allowed_ to run and can _trust_, on whichever model they choose. Both differentiators already exist in the code. This program makes them reachable.
 
 ---
 
@@ -111,16 +111,16 @@ Invariant: the engine never imports a UI module (today it does, once: `engine.ts
 
 ## 5. Phases
 
-| # | Phase | Lane | Days | Gate in one line |
-|---|---|---|---|---|
-| 1 | [Ship](01-ship.md) | A | 6–9 | Fresh machine, one command, three OSes, `gear doctor` clean; `gh release view v0.3.0` |
-| 2 | [One protocol](02-protocol.md) | B | 10–14 | WS client runs a turn with permission + ask_user + held-step round-trips; reconnect replays |
-| 3 | [The flagship surface](03-desktop.md) | B | 15–20 | First-time-user script passes on three OSes; one accent, zero shadows, brand checklist test green |
-| 4 | [Connect anything](04-connectors.md) | C | 12–16 | `gear mcp add notion` → browser OAuth → tool call in a session; schema tokens/request reported |
-| 5 | [Everywhere the work happens](05-surfaces.md) | B | 8–12 | Zed drives a session over ACP; a GitHub workflow in this repo runs Gear on a PR |
-| 6 | [Trust you can measure](06-trust.md) | C | 14–18 | Auto-mode P/R/latency table on ≥200 rows; 4-worker worktree build merges clean |
-| 7 | [Self-improving, not self-mutating](07-evolution.md) | C | 10–14 | One lesson active with lineage, one retired; lift measured vs `--pristine`; red-team tests green |
-| 8 | [Cheaper per task](08-economics.md) | A | 5–8 | Cache hit rate non-null on ≥5 providers; cost/task on the eval suite down vs baseline |
+| #   | Phase                                                | Lane | Days  | Gate in one line                                                                                  |
+| --- | ---------------------------------------------------- | ---- | ----- | ------------------------------------------------------------------------------------------------- |
+| 1   | [Ship](01-ship.md)                                   | A    | 6–9   | Fresh machine, one command, three OSes, `gear doctor` clean; `gh release view v0.3.0`             |
+| 2   | [One protocol](02-protocol.md)                       | B    | 10–14 | WS client runs a turn with permission + ask_user + held-step round-trips; reconnect replays       |
+| 3   | [The flagship surface](03-desktop.md)                | B    | 15–20 | First-time-user script passes on three OSes; one accent, zero shadows, brand checklist test green |
+| 4   | [Connect anything](04-connectors.md)                 | C    | 12–16 | `gear mcp add notion` → browser OAuth → tool call in a session; schema tokens/request reported    |
+| 5   | [Everywhere the work happens](05-surfaces.md)        | B    | 8–12  | Zed drives a session over ACP; a GitHub workflow in this repo runs Gear on a PR                   |
+| 6   | [Trust you can measure](06-trust.md)                 | C    | 14–18 | Auto-mode P/R/latency table on ≥200 rows; 4-worker worktree build merges clean                    |
+| 7   | [Self-improving, not self-mutating](07-evolution.md) | C    | 10–14 | One lesson active with lineage, one retired; lift measured vs `--pristine`; red-team tests green  |
+| 8   | [Cheaper per task](08-economics.md)                  | A    | 5–8   | Cache hit rate non-null on ≥5 providers; cost/task on the eval suite down vs baseline             |
 
 Total: 80 to 110 engineering days. With three lanes running as three model sessions in three worktrees, twelve calendar weeks.
 
@@ -148,19 +148,19 @@ On the existing bench the projection is capability about 120 to 125 and maturity
 
 ### Product scorecard (north stars)
 
-| Measure | Today | Week 12 target |
-|---|---|---|
-| Install: one command, three OSes, under 5 minutes to first response | 0 of 3 (private repo) | 3 of 3 |
-| People running it on machines that are not the author's | 1 | 10, with ≥3 written reports |
-| Surfaces that can drive a session | 1 (terminal) | 5 (terminal, desktop, web, editor, CI) |
-| Connectors that authenticate in one command | 0 | Notion, GitHub, Linear, Slack |
-| Completed steps without evidence | 0 / 87 | 0 / n (hold) |
-| Auto-mode labelled corpus with published precision/recall | 19 rows, no report | ≥200 rows, per-source P/R, p50/p95 latency, cost |
-| Supervisor false-positive session kills | unmeasured | measured, < 1 per 100 runs |
-| Parallel workers in isolated worktrees, merge clean | 0 | 4-worker build passes its own checks |
-| Lessons active with lineage / lift vs pristine | 0 / unmeasured | ≥1 / measured monthly |
-| Cache hit rate visible on metered providers | 1 of 5 | 5 of 5; cost per eval task −20% |
-| Release cadence | 1 tag (v0.2.0) | tag every 2 weeks, CHANGELOG, auto-update |
+| Measure                                                             | Today                 | Week 12 target                                   |
+| ------------------------------------------------------------------- | --------------------- | ------------------------------------------------ |
+| Install: one command, three OSes, under 5 minutes to first response | 0 of 3 (private repo) | 3 of 3                                           |
+| People running it on machines that are not the author's             | 1                     | 10, with ≥3 written reports                      |
+| Surfaces that can drive a session                                   | 1 (terminal)          | 5 (terminal, desktop, web, editor, CI)           |
+| Connectors that authenticate in one command                         | 0                     | Notion, GitHub, Linear, Slack                    |
+| Completed steps without evidence                                    | 0 / 87                | 0 / n (hold)                                     |
+| Auto-mode labelled corpus with published precision/recall           | 19 rows, no report    | ≥200 rows, per-source P/R, p50/p95 latency, cost |
+| Supervisor false-positive session kills                             | unmeasured            | measured, < 1 per 100 runs                       |
+| Parallel workers in isolated worktrees, merge clean                 | 0                     | 4-worker build passes its own checks             |
+| Lessons active with lineage / lift vs pristine                      | 0 / unmeasured        | ≥1 / measured monthly                            |
+| Cache hit rate visible on metered providers                         | 1 of 5                | 5 of 5; cost per eval task −20%                  |
+| Release cadence                                                     | 1 tag (v0.2.0)        | tag every 2 weeks, CHANGELOG, auto-update        |
 
 ---
 
@@ -168,31 +168,31 @@ On the existing bench the projection is capability about 120 to 125 and maturity
 
 What Claude Code has, and what Gear does about each. "Have" means it exists and works; "build" names the phase.
 
-| Surface | Gear | Action |
-|---|---|---|
-| Terminal CLI | have | freeze as the console (3.7) |
-| Desktop app (macOS, Windows) | have, cannot launch | build, plus Linux (3) |
-| Web app | none | build `gear web` from the same bundle (3.2) |
-| Cloud-hosted sessions | none | **decline** (local-first positioning) |
-| VS Code / JetBrains | none | build VS Code thin client (5.2); JetBrains defer |
-| GitHub Actions | none | build `gear-action` (5.3) |
-| Agent SDK | 80% (`HostClient`) | build `@gear/sdk` (5.4) |
-| MCP client, OAuth, registry install | HTTP only, no OAuth | build (4.2–4.4) |
-| Hooks | have | keep |
-| Plugins, marketplace | directory only | build install from URL (4.6); marketplace defer |
-| Skills | have (181 bundled) | keep |
-| Subagents, teammates | have (task/worker, team bus) | isolate + schema + budgets (6B) |
-| Deterministic workflows | none (research.ts is hardcoded) | build (6B.6) |
-| Worktree isolation | detach only | per worker (6B.1) |
-| Background / scheduled / loop | detach, loop-mode | keep; cron routines defer |
-| Memory | project + system + notebook | keep; close the loop (7) |
-| Auto mode with classifier + sandbox | have, different design | measure (6A) |
-| Sandbox on Windows | none (noop) | **defer**; honesty banner (D4) |
-| Plan mode | have (plan ledger) | keep |
-| Multi-agent code review | pattern exists | defer; a `gear review` workflow is a 6B stretch |
-| Remote control | serve `--host` | build (5.5); cloud decline |
-| Multi-provider, local models | have | Gear-only differentiator |
-| Audit page, trace rail, black box, signed export, org policy | have | Gear-only differentiator; make them reachable (3) |
+| Surface                                                      | Gear                            | Action                                            |
+| ------------------------------------------------------------ | ------------------------------- | ------------------------------------------------- |
+| Terminal CLI                                                 | have                            | freeze as the console (3.7)                       |
+| Desktop app (macOS, Windows)                                 | have, cannot launch             | build, plus Linux (3)                             |
+| Web app                                                      | none                            | build `gear web` from the same bundle (3.2)       |
+| Cloud-hosted sessions                                        | none                            | **decline** (local-first positioning)             |
+| VS Code / JetBrains                                          | none                            | build VS Code thin client (5.2); JetBrains defer  |
+| GitHub Actions                                               | none                            | build `gear-action` (5.3)                         |
+| Agent SDK                                                    | 80% (`HostClient`)              | build `@gear/sdk` (5.4)                           |
+| MCP client, OAuth, registry install                          | HTTP only, no OAuth             | build (4.2–4.4)                                   |
+| Hooks                                                        | have                            | keep                                              |
+| Plugins, marketplace                                         | directory only                  | build install from URL (4.6); marketplace defer   |
+| Skills                                                       | have (181 bundled)              | keep                                              |
+| Subagents, teammates                                         | have (task/worker, team bus)    | isolate + schema + budgets (6B)                   |
+| Deterministic workflows                                      | none (research.ts is hardcoded) | build (6B.6)                                      |
+| Worktree isolation                                           | detach only                     | per worker (6B.1)                                 |
+| Background / scheduled / loop                                | detach, loop-mode               | keep; cron routines defer                         |
+| Memory                                                       | project + system + notebook     | keep; close the loop (7)                          |
+| Auto mode with classifier + sandbox                          | have, different design          | measure (6A)                                      |
+| Sandbox on Windows                                           | none (noop)                     | **defer**; honesty banner (D4)                    |
+| Plan mode                                                    | have (plan ledger)              | keep                                              |
+| Multi-agent code review                                      | pattern exists                  | defer; a `gear review` workflow is a 6B stretch   |
+| Remote control                                               | serve `--host`                  | build (5.5); cloud decline                        |
+| Multi-provider, local models                                 | have                            | Gear-only differentiator                          |
+| Audit page, trace rail, black box, signed export, org policy | have                            | Gear-only differentiator; make them reachable (3) |
 
 ---
 
