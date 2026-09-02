@@ -12,9 +12,20 @@ import { join } from "node:path";
 
 /** New run worktrees live here; pre-rename `.alan/worktrees` checkouts are still recognized. */
 const WORKTREE_DIR = join(".gear", "worktrees");
-const WORKTREE_DIRS = [WORKTREE_DIR, join(".alan", "worktrees")];
+const WORKTREE_DIRS = [".gear/worktrees", ".alan/worktrees"];
+/**
+ * Whether a path from `git worktree list --porcelain` is one of ours.
+ *
+ * Compared with FORWARD SLASHES on both sides. `join()` produces
+ * `.gear\worktrees` on Windows and git prints `D:/a/repo/.gear/worktrees/run-a`
+ * whatever the platform, so a native-separator needle matched nothing there:
+ * `listRunWorktrees` returned an empty list on Windows and every run worktree
+ * became invisible to the code that cleans them up (P10.2).
+ */
 function isRunWorktreePath(path: string | undefined): boolean {
-  return !!path && WORKTREE_DIRS.some((dir) => path.includes(dir));
+  if (!path) return false;
+  const normalized = path.replace(/\\/g, "/");
+  return WORKTREE_DIRS.some((dir) => normalized.includes(dir));
 }
 
 export interface RunWorktree {

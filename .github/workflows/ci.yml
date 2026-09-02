@@ -161,7 +161,14 @@ jobs:
       - name: Build the web bundle the brand checklist audits
         run: bun run --cwd apps/web build
       - name: Unit tests
-        run: bun test tests/unit/
+        # The Windows runner takes 190s for a suite that takes 40s on a
+        # developer's machine — five times slower on disk-bound work, which is
+        # most of what building an Engine (SQLite, config, skills) does. At
+        # bun's 5s default that is one second of real budget per test, and the
+        # first green run had one case fail on the clock alone at 6.4s while
+        # its identical siblings passed at 1.2s. Raised, not removed: a hung
+        # test still fails, thirty seconds later.
+        run: bun test tests/unit/ --timeout 30000
       - name: PowerShell installer parses and passes PSScriptAnalyzer
         shell: pwsh
         run: |
