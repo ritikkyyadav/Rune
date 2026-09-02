@@ -47,6 +47,130 @@ function payloadOf(row: Row): Record<string, unknown> {
   return row.event.payload ?? {};
 }
 
+// ─── Post-edit diagnostics (P10.1) ───
+
+/** Tools whose results can carry a `diagnostics` block. */
+const WRITE_TOOLS = new Set(["write_file", "edit_file", "multi_edit", "apply_patch"]);
+
+export interface DiagnosticsLedger {
+  /** Successful edits whose result carried a diagnostics block. */
+  edits: number;
+  /** Diagnostic lines across those blocks (bounded per edit, so: reported). */
+  reported: number;
+  /** Distinct files a block ever named. */
+  files: number;
+  /**
+   * Files whose block was gone by the next edit of that same file, before the
+   * verifier ran — the loop this feature exists to close.
+   */
+  cleared: number;
+  /** Files still carrying a block when the verifier ran (or at the end). */
+  outstanding: number;
+  /** Seq at which project checks first ran; null when they never did. */
+  verifierSeq: number | null;
+}
+
+/** The first row whose task-state snapshot shows the verifier having run. */
+function firstVerificationSeq(rows: Row[]): number | null {
+  for (const r of rows) {
+    if (r.event.type !== "task_state") continue;
+    const state = (payloadOf(r) as { state?: { verification?: { status?: string } } }).state;
+    if (state?.verification && state.verification.status !== "none") return r.seq;
+  }
+  return null;
+}
+
+/**
+ * How post-edit diagnostics actually behaved in this session: how many edits
+ * came back carrying the language server's verdict, and how many of those
+ * files were clean again by the next edit — before the verifier ran, which is
+ * the whole point of putting the block in the edit's own result.
+ *
+ * "Cleared" means the NEXT edit of that file came back with no block. That is
+ * the same evidence the model had, and it is deliberately not called "fixed":
+ * a block can also be absent because the server had not published in time.
+ * Pure, so it can be tested without a database.
+ */
+export function diagnosticsLedger(rows: Row[]): DiagnosticsLedger {
+  const verifierSeq = firstVerificationSeq(rows);
+  // callId → the write tool it belongs to (results carry no tool name).
+  const calls = new Map<string, string>();
+  // file → whether its most recent edit left a block outstanding.
+  const dirty = new Map<string, boolean>();
+  let edits = 0;
+  let reported = 0;
+  let cleared = 0;
+
+  for (const r of rows) {
+    if (r.event.type === "assistant_msg") {
+      const uses = payloadOf(r).toolUses;
+      if (!Array.isArray(uses)) continue;
+      for (const u of uses as Array<{ callId?: string; toolName?: string }>) {
+        if (typeof u.callId === "string" && typeof u.toolName === "string") {
+          calls.set(u.callId, u.toolName);
+        }
+      }
+      continue;
+    }
+    if (r.event.type !== "tool_result") continue;
+    const p = payloadOf(r);
+    if (p.isError === true) continue;
+    const toolName = calls.get(String(p.callId ?? ""));
+    if (!toolName || !WRITE_TOOLS.has(toolName)) continue;
+
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(String(p.content ?? "")) as Record<string, unknown>;
+    } catch {
+      continue; // truncated or non-JSON result — nothing to account for
+    }
+    const block = typeof parsed.diagnostics === "string" ? parsed.diagnostics : "";
+    const touched = filesInResult(parsed, block);
+
+    if (block) {
+      edits++;
+      // The `+N more` tail is a count, not a diagnostic.
+      reported += block.split("\n").filter((l) => !/^\+\d+ more$/.test(l)).length;
+      for (const f of touched) dirty.set(f, true);
+    } else {
+      for (const f of touched) {
+        // Only before the verifier: after it, the checks are the evidence and
+        // this stops being the loop the number is about.
+        if (dirty.get(f) && (verifierSeq === null || r.seq < verifierSeq)) cleared++;
+        dirty.set(f, false);
+      }
+    }
+  }
+
+  return {
+    edits,
+    reported,
+    files: dirty.size,
+    cleared,
+    outstanding: [...dirty.values()].filter(Boolean).length,
+    verifierSeq,
+  };
+}
+
+/** Which files an edit result is about: its own path, or a patch's file list. */
+function filesInResult(parsed: Record<string, unknown>, block: string): string[] {
+  const out = new Set<string>();
+  if (typeof parsed.path === "string" && parsed.path) out.add(parsed.path);
+  if (Array.isArray(parsed.files)) {
+    for (const f of parsed.files as Array<{ path?: string; moved_to?: string }>) {
+      const p = f?.moved_to ?? f?.path;
+      if (typeof p === "string" && p) out.add(p);
+    }
+  }
+  // A block names its own files, which covers results whose shape we don't
+  // otherwise recognise.
+  for (const line of block.split("\n")) {
+    const m = /^(.+?):\d+:\d+ (?:error|warning) /.exec(line);
+    if (m) out.add(m[1]);
+  }
+  return [...out];
+}
+
 export async function runAudit(args: string[], values: Record<string, unknown>): Promise<number> {
   const dbPath =
     (typeof values.db === "string" && values.db) ||
@@ -196,6 +320,27 @@ export async function runAudit(args: string[], values: Record<string, unknown>):
         .join(dim(" · "));
       say(
         `  ${text("Tools")}  ${num(totalCalls)} calls${failures > 0 ? `, ${warn(`${failures} failed`)}` : ""}  ${top}`,
+      );
+    }
+
+    // ── Post-edit diagnostics (P10.1) ──
+    //
+    // The claim the feature makes is that a type error is corrected in the
+    // edit's own turn instead of at the verifier. This is the line that says
+    // whether it happened here, from the log rather than from a live counter.
+    const diag = diagnosticsLedger(rows);
+    if (diag.edits > 0) {
+      const before =
+        diag.verifierSeq === null
+          ? dim("no checks ran")
+          : dim(`before the verifier at #${diag.verifierSeq}`);
+      say(
+        `  ${text("Diagnostics")}  ${num(diag.edits)} edit${diag.edits === 1 ? "" : "s"} carried a language-server block` +
+          ` ${dim("·")} ${num(diag.reported)} error${diag.reported === 1 ? "" : "s"}/warnings reported` +
+          ` ${dim("·")} ${diag.cleared > 0 ? ok(`${diag.cleared} cleared`) : dim("0 cleared")} ${before}` +
+          (diag.outstanding > 0
+            ? ` ${dim("·")} ${warn(`${diag.outstanding} still outstanding`)}`
+            : ""),
       );
     }
 
