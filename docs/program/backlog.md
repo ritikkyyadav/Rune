@@ -115,7 +115,11 @@ Found 2026-09-03 by Phase 10 (capability closers):
   therefore not self-contained: it is red until someone happens to run
   `bun run --cwd apps/web build`, and its own failure message is the only thing that says so. The
   test's design is right (a stale `dist/` is worse than none); the fix is for the unit gate, or a
-  `pretest` step, to produce the artifact it audits — found in P10.1
+  `pretest` step, to produce the artifact it audits — found in P10.1. **Half closed in P10.2**:
+  `ts-lint` and `ts-windows` build `apps/web` before running the suite, so CI's gate now produces
+  what it audits and `ts-lint` is green again (it had been red on every run — see 33688734929).
+  A local `bun test tests/unit/` on a clean checkout is still red until you build the bundle,
+  because nothing in the bare `bun test` invocation can hook it
 
 Found 2026-09-03 by P10.0 (the host reaper):
 
