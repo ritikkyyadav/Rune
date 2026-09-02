@@ -40,7 +40,10 @@ describe("secrets store", () => {
     expect(loadSecrets().keys.groq).toBe("gsk_test_123456789");
   });
 
-  it("writes the file with 0600 permissions", () => {
+  // POSIX-only: Windows has no rwx mode bits — `statSync().mode` reports a
+  // synthetic 0666/0444 there, and file privacy is an ACL question this code
+  // does not (yet) answer. The BEHAVIOUR is POSIX-specific, not the test.
+  it.skipIf(process.platform === "win32")("writes the file with 0600 permissions", () => {
     setProviderKey("anthropic", "sk-ant-abcdefgh");
     expect(existsSync(getSecretsPath())).toBe(true);
     expect(statSync(getSecretsPath()).mode & 0o777).toBe(0o600);

@@ -58,6 +58,13 @@ jobs:
         run: bun run typecheck
       - name: Lint
         run: bun run lint
+      - name: Build the web bundle the brand checklist audits
+        # `apps/web/dist/` is gitignored and `tests/unit/brand-checklist.test.ts`
+        # refuses to audit a missing or stale one — correctly, since a green
+        # test that inspected nothing is worse than a red one. The gate has to
+        # PRODUCE the artifact it inspects, or it is red on every clean
+        # checkout, which is what it has been. 3 seconds.
+        run: bun run --cwd apps/web build
       - name: Unit tests
         run: bun test tests/unit/
       - name: Repo-wide format check
@@ -133,12 +140,13 @@ jobs:
           GEAR_TOOLS_BIN: ${{ github.workspace }}/target/release/gear-tools
         run: bun test tests/integration/
 
-  # ── Stage 4b: Windows typecheck + the Windows installer's only compiler ──
-  # The unit suite still has POSIX-shell assumptions (hardcoded /bin/sh, /tmp
-  # paths, `bash -c`) in 21 files, logged in docs/program/backlog.md. Running it
-  # here is a separate piece of work; what Windows CI must cover TODAY is the
-  # things only Windows can check: that the typecheck holds and that
-  # scripts/install.ps1 — the sole Windows install path — actually parses.
+  # ── Stage 4b: Windows unit suite + the Windows installer's only compiler ──
+  # Until P10.2 this job typechecked and stopped, because the unit suite carried
+  # POSIX-shell and POSIX-path assumptions. Those are burned down now: what is
+  # genuinely POSIX-only (the OS sandbox backend, `sh`, file modes) skips with a
+  # stated reason, and everything else runs. A typecheck cannot see a path key
+  # that is built differently on Windows — that defect shipped for months under
+  # a green ts-windows.
   ts-windows:
     runs-on: windows-latest
     steps:
@@ -150,6 +158,10 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Typecheck
         run: bun run typecheck
+      - name: Build the web bundle the brand checklist audits
+        run: bun run --cwd apps/web build
+      - name: Unit tests
+        run: bun test tests/unit/
       - name: PowerShell installer parses and passes PSScriptAnalyzer
         shell: pwsh
         run: |

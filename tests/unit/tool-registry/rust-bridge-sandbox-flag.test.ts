@@ -21,10 +21,19 @@ const BASH_SCHEMA: ToolSchema = {
   category: "execute",
 };
 
-let dir: string;
-let stub: string;
+/**
+ * POSIX-only, twice over: the stub is a `#!/bin/bash` script and Windows has no
+ * shebang dispatch, so `Bun.spawn` cannot run it at all; and the `--sandbox`
+ * flag under test selects an OS isolation backend (seatbelt, bwrap) that does
+ * not exist on Windows. There is no Windows behaviour here to assert.
+ */
+const POSIX = process.platform !== "win32";
+
+let dir = "";
+let stub = "";
 
 beforeAll(() => {
+  if (!POSIX) return;
   dir = mkdtempSync(join(tmpdir(), "bridge-test-"));
   stub = join(dir, "stub-tools");
   // Echoes argv as the JSON result so the test can assert which flags the
@@ -40,7 +49,7 @@ printf '{"success":true,"result":{"argv":"%s"}}\\n' "$*"
 });
 
 afterAll(() => {
-  rmSync(dir, { recursive: true, force: true });
+  if (dir) rmSync(dir, { recursive: true, force: true });
 });
 
 async function argvFor(args: Record<string, unknown>): Promise<string> {
@@ -56,7 +65,7 @@ async function argvFor(args: Record<string, unknown>): Promise<string> {
   return (JSON.parse(out.result) as { argv: string }).argv;
 }
 
-describe("rust-bridge sandbox flag routing", () => {
+describe.skipIf(!POSIX)("rust-bridge sandbox flag routing", () => {
   test("plain bash runs sandboxed (--sandbox present)", async () => {
     const argv = await argvFor({ command: "bun test" });
     expect(argv).toContain("--sandbox");
