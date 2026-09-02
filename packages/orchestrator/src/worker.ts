@@ -30,6 +30,12 @@ import {
   type ToolSchema,
 } from "@gear/tool-registry";
 import { AgentLoop } from "./agent-loop";
+import {
+  SUBAGENT_RESULT_SCHEMA,
+  buildSubagentResult,
+  renderWorkerResult,
+  repairToSchema,
+} from "./subagent-result";
 import type { PermissionCheck, ToolResultProcessor } from "./agent-loop";
 import { ContextEngine } from "./context-engine";
 
@@ -145,6 +151,11 @@ export const WORKER_TOOL_SCHEMA: ToolSchema = {
     },
     required: ["prompt", "files"],
   },
+  // Declared since the first version of ToolSchema and never populated. The
+  // parent now knows the SHAPE of what comes back, not just that a string
+  // arrives, and the doctrine paragraph that used to describe the shape in
+  // prose shrinks to this.
+  outputSchema: SUBAGENT_RESULT_SCHEMA,
   permissionLevel: "confirm",
   category: "execute",
   // Workers are the one execute-category tool that MUST run concurrently —
@@ -454,6 +465,14 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
         let toolCalls = 0;
         const changed = new Set<string>();
         let loopError: string | undefined;
+        let stopReason = "";
+        // Filled by P6B.2 when the worker runs its own checks in its worktree,
+        // and by P6B.1 when the merge back reports conflicts. `not_run` until
+        // then, which is the honest default: a report that does not say whether
+        // anything was run reads as though something was.
+        let checkOutcome: "passed" | "failed" | "not_run" | undefined;
+        let mergeConflicts: string[] = [];
+        let workerBranch: string | undefined;
         // Mid-run model swap (see subagent.ts): `fallback` used to be ignored
         // here too, so a worker demoted to a fallback model reported in the
         // same voice as one that never left the model it was dispatched to.
@@ -496,6 +515,7 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
               changed.add(event.args.path);
             }
           } else if (event.type === "error") loopError = event.error;
+          else if (event.type === "turn_complete") stopReason = event.stopReason;
           if (event.type === "turn_complete") break;
         }
 
@@ -513,7 +533,40 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
           );
         }
 
-        const summary = buildManifest(changed, input.workspaceRoot, toolCalls);
+        // The typed result. `filesChanged`, `toolCallCount` and `stopReason`
+        // come from the harness, never from the model — those are exactly the
+        // fields a model has an incentive to get wrong, and the manifest that
+        // measures them off disk exists because one once claimed a twelve-line
+        // "complete FastAPI backend".
+        let result = buildSubagentResult({
+          finalText: trimmed,
+          toolCallCount: toolCalls,
+          stopReason,
+          loopError,
+          trail: [],
+          filesChanged: [...changed],
+          servedBy: servedBy ?? undefined,
+          checks: checkOutcome,
+        });
+        if (result.findings.length === 0 && result.unresolved.length === 0 && trimmed) {
+          const repaired = await repairToSchema({
+            gateway: live.gateway,
+            provider: live.provider as ProviderName,
+            model: live.model,
+            text: trimmed,
+            signal: input.signal,
+          });
+          if (repaired) {
+            result = {
+              ...repaired,
+              filesChanged: [...changed],
+              toolCallCount: toolCalls,
+              stopReason,
+              servedBy: servedBy ?? undefined,
+              checks: checkOutcome ?? repaired.checks,
+            };
+          }
+        }
         // A worker that finished on a different model than it was dispatched
         // to WROTE CODE from somewhere the caller did not choose. Louder than
         // the scout's banner for that reason: the parent owns verification.
@@ -529,7 +582,13 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
           callId: input.callId,
           toolName: input.toolName,
           success: true,
-          result: prefix + (trimmed || "(no report)") + summary,
+          result:
+            prefix +
+            renderWorkerResult(result, input.workspaceRoot, {
+              conflicts: mergeConflicts,
+              branch: workerBranch,
+            }),
+          structured: result as unknown as Record<string, unknown>,
           durationMs: Math.round(performance.now() - start),
         };
       } catch (err) {
@@ -553,61 +612,11 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
   };
 }
 
-/**
- * What the worker ACTUALLY left on disk, measured after the run.
- *
- * The doctrine is unambiguous that a sub-agent's report is secondhand and never
- * evidence, and it was ignored exactly where it mattered most: in one EvoLab
- * build, three workers wrote an entire backend, an entire frontend, and all the
- * docs, and the orchestrator accepted their prose after opening seven files out
- * of fifty-four. The old footer — "(worker changed 12 files: a.py, b.py …)" —
- * could not have caught that, because a name tells you nothing about whether a
- * module is a module or a stub.
- *
- * So the report now ends in something the worker did not write: per-file line
- * counts and sizes read back off disk, and a standing note that none of it has
- * been run. A twelve-line "complete FastAPI backend" stops being invisible.
- */
-function buildManifest(changed: Set<string>, workspaceRoot: string, toolCalls: number): string {
-  const calls = `${toolCalls} tool call${toolCalls === 1 ? "" : "s"}`;
-  if (changed.size === 0) return `\n\n[WORKER MANIFEST] No files were written (${calls}).`;
+// `buildManifest` lived here. It is now the manifest half of
+// `renderWorkerResult` in subagent-result.ts, driven off the result object.
+// The measurement is unchanged and is still the point: per-file line counts
+// and sizes read back off disk, which the worker cannot inflate.
 
-  const MAX_LISTED = 40;
-  const paths = [...changed].sort();
-  const rows: string[] = [];
-  let totalLines = 0;
-  let totalBytes = 0;
-
-  for (const p of paths) {
-    const full = isAbsolute(p) ? p : resolve(workspaceRoot, p);
-    let detail: string;
-    try {
-      const bytes = statSync(full).size;
-      // Line count from the file itself: the one number that separates a
-      // finished module from a placeholder, and the worker cannot inflate it.
-      const lines = readFileSync(full, "utf8").split("\n").length;
-      totalLines += lines;
-      totalBytes += bytes;
-      detail = `${String(lines).padStart(5)} lines  ${humanBytes(bytes).padStart(9)}`;
-    } catch {
-      // Claimed but absent: a worker that says it wrote a file and did not is
-      // precisely what this manifest exists to surface.
-      detail = "      MISSING — claimed but not on disk";
-    }
-    if (rows.length < MAX_LISTED) rows.push(`  ${detail}  ${p}`);
-  }
-  if (paths.length > MAX_LISTED) rows.push(`  … and ${paths.length - MAX_LISTED} more`);
-
-  return (
-    `\n\n[WORKER MANIFEST — measured from disk, not taken from the report above]\n` +
-    `${rows.join("\n")}\n` +
-    `  ${paths.length} file${paths.length === 1 ? "" : "s"}, ${totalLines} lines, ` +
-    `${humanBytes(totalBytes)}, ${calls}.\n` +
-    `NOT VERIFIED: workers have no shell, so nothing here was compiled, run, or ` +
-    `tested. Open these files and run the project's checks yourself before you ` +
-    `rely on the report above or mark this step done.`
-  );
-}
 
 function humanBytes(n: number): string {
   if (n >= 1_048_576) return `${(n / 1_048_576).toFixed(1)} MB`;

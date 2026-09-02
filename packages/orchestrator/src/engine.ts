@@ -5,6 +5,7 @@ import {
   BudgetExceededError,
 } from "@gear/llm-gateway";
 import { AutoEvalSidecar } from "./auto-eval-sidecar";
+import { validateSubagentResult } from "./subagent-result";
 import { formatCostSummary } from "./cost-report";
 import type { ReasoningEffort, Message, ProviderName, ResolvedCredential } from "@gear/llm-gateway";
 import {
@@ -2236,6 +2237,28 @@ export class Engine {
 
   /** Shared by the lead loop, read-only tasks and workers. */
   private processToolResult: ToolResultProcessor = async (ctx: ToolResultProcessArgs) => {
+    // A tool that declares an outputSchema has to honour it. Today that is the
+    // two delegation tools; the check is generic so the next one is free.
+    //
+    // This never fails the call. A delegation that produced real work must not
+    // be thrown away over the shape of its report — that was the exact defect
+    // that discarded 33 of 68 `task` results. What it does is tell the parent
+    // the object is unreliable, so it reads the prose instead of trusting a
+    // field, and file an incident so a provider that quietly stops honouring
+    // structured output is visible rather than merely disappointing.
+    if (ctx.output.structured !== undefined) {
+      const check = validateSubagentResult(ctx.output.structured);
+      if (!check.valid) {
+        this.recorder?.record({
+          class: "loop.schema_violation",
+          severity: "warn",
+          component: "subagent",
+          where: `engine#processToolResult:${ctx.toolName}`,
+          message: `structured result failed its outputSchema: ${check.problems.join(", ")}`,
+        });
+        delete ctx.output.structured;
+      }
+    }
     const screened = this.autoModeSafety.screenToolResult(ctx.toolName, ctx.output, {
       args: ctx.args,
       workspaceRoot: ctx.workspaceRoot,
