@@ -174,6 +174,10 @@ const { values, positionals } = parseArgs({
     host: { type: "string" },
     origin: { type: "string" },
     "allow-remote-settings": { type: "boolean", default: false },
+    // `gear desktop --check` / `gear web --open`: headless proof, browser open.
+    check: { type: "boolean", default: false },
+    open: { type: "boolean", default: false },
+    web: { type: "boolean", default: false },
   },
   allowPositionals: true,
   strict: false,
@@ -206,6 +210,8 @@ if (values.help) {
         `    gear export <sessionId>       Export a session transcript\n` +
         `    gear detach "<prompt>"        Start a background run that survives this terminal (--worktree isolates it)\n` +
         `    gear attach [session|latest]  Reattach to a detached run — replay, live-stream, Ctrl+C detaches again\n` +
+        `    gear desktop [dev|--check]    Open Gear Desktop (alias: gear app) — dev runs the Vite preview, --check proves the engine headless\n` +
+        `    gear web [--port N] [--open]  The same client in a browser, engine attached (--host exposes it on the LAN)\n` +
         `    gear login [provider]         Authenticate a provider — API key, or OAuth where supported (--method, --no-browser, --migrate)\n` +
         `    gear logout <provider>        Remove a provider's stored key/OAuth from the secure store\n` +
         `    gear providers                List providers, their auth method, and credential status\n` +
@@ -321,6 +327,29 @@ if (command === "serve") {
   const { runServe } = await import("./serve-cli");
   await runServe(positionals as string[], values as Record<string, unknown>);
   if (values.status === true || positionals[1] === "status") process.exit(0);
+}
+if (command === "engine-host") {
+  // The sidecar entry (P3.6). A packaged desktop app ships THIS binary and
+  // spawns `gear engine-host`, so nobody needs Bun or a source checkout on
+  // their machine. Importing the module runs it: engine-host.ts owns stdio (or
+  // a unix socket with --socket) from the moment it loads, which is precisely
+  // the contract the Rust bridge expects.
+  await import("./engine-host");
+  // Park. The host owns the process from here and exits on its own when its
+  // input closes; falling through would start a second, interactive Gear on
+  // top of it and both would fight for stdin.
+  await new Promise(() => {});
+}
+if (command === "desktop" || command === "app") {
+  const { runDesktop } = await import("./desktop-cli");
+  process.exit(
+    await runDesktop(positionals.slice(1) as string[], values as Record<string, unknown>),
+  );
+}
+if (command === "web") {
+  // Long-lived: `web` returns only on shutdown, exactly like `serve`.
+  const { runWeb } = await import("./web-cli");
+  process.exit(await runWeb(positionals.slice(1) as string[], values as Record<string, unknown>));
 }
 
 // ─── BYOP: provider authentication surfaces (no Engine boot) ───
@@ -1574,7 +1603,7 @@ async function main() {
   // ─── Slash Command Definitions ───
 
   const SLASH_CMDS: [string, string][] = [
-    ["/theme", "Switch accent colors and light/dark mode"],
+    ["/theme", "Appearance — light | dark | auto"],
     ["/model", "Choose model/provider"],
     ["/sessions", "Browse, resume, rename, archive, or delete sessions"],
     ["/mode", "Shift gears — 1st · 2nd · 3rd · 4th · auto"],
@@ -2168,8 +2197,9 @@ async function main() {
         const themes = listThemes();
         const arg = input.slice("/theme".length).trim().toLowerCase();
         if (arg) {
-          // Legacy palette names still migrate onto Flow; the active choices
-          // are the six foreground roles or terminal-native mode.
+          // Every retired accent name still resolves (findTheme migrates it to
+          // the ground it was saved on); the active choices are light, dark and
+          // terminal-native.
           const labelMatch = themes.find((t) => t.label.toLowerCase() === arg);
           const applied = setTheme(arg) || (labelMatch ? setTheme(labelMatch.name) : false);
           if (applied) {
@@ -2185,11 +2215,16 @@ async function main() {
           return;
         }
         const current = getTheme().name;
-        process.stdout.write(`  ${bold(text("Color modes"))}\n\n`);
+        process.stdout.write(`  ${bold(text("Appearance"))}\n\n`);
         themes.forEach((t, i) => {
           const isCurrent = t.name === current;
           const marker = isCurrent ? ` ${info(`${glyph("selection")} current`)}` : "";
-          const description = t.name === "auto" ? "host terminal" : "six ANSI16 foreground roles";
+          const description =
+            t.name === "auto"
+              ? "follow the host terminal"
+              : t.name === "gear"
+                ? "drafting paper"
+                : "ink";
           process.stdout.write(
             `    ${warn(`[${String(i + 1).padStart(2)}]`)} ${(isCurrent ? text : muted)(t.label.padEnd(18))} ${swatch(t.name)}  ${faint(description)}${marker}\n`,
           );

@@ -1,13 +1,22 @@
 import { useState, useCallback, useEffect } from "react";
 import type { SessionInfo, ChatMessage, MessageAttachment, ToolCallInfo, Plan } from "../lib/types";
+import { activeTransport } from "../lib/transport";
 
-// ─── Safe Tauri invoke wrapper ───
-async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T | null> {
+// ─── Session commands, over whichever transport is up ───
+//
+// This used to `invoke()` Tauri directly, which meant the session list existed
+// only in the app and never in `gear web`. It goes through the same transport as
+// every other command now; `null` means there is no engine at all (the browser
+// preview), which the caller renders as an empty list rather than an error.
+async function hostCall<T>(cmd: string, args?: Record<string, unknown>): Promise<T | null> {
+  const transport = activeTransport();
+  if (!transport || transport.kind === "none") return null;
   try {
-    const { invoke } = await import("@tauri-apps/api/core");
-    return await invoke<T>(cmd, args);
+    return (await transport.call(
+      cmd as Parameters<typeof transport.call>[0],
+      args as never,
+    )) as T | null;
   } catch {
-    console.warn(`Tauri not available, using mock for: ${cmd}`);
     return null;
   }
 }
@@ -44,7 +53,7 @@ export function useSession() {
   const loadSessions = useCallback(async () => {
     setState((prev) => ({ ...prev, sessionsLoading: true, error: null }));
     try {
-      const sessions = await safeInvoke<SessionInfo[]>("list_sessions");
+      const sessions = await hostCall<SessionInfo[]>("list_sessions");
       if (sessions) {
         setState((prev) => ({
           ...prev,
@@ -107,7 +116,7 @@ export function useSession() {
     }));
 
     try {
-      const history = await safeInvoke<ChatMessage[]>("resume_session", {
+      const history = await hostCall<ChatMessage[]>("resume_session", {
         sessionId,
       });
       if (history) {
@@ -118,7 +127,7 @@ export function useSession() {
         }));
         return history;
       }
-      // Tauri not available -- just clear loading
+      // No engine attached — clear loading and show the empty state.
       setState((prev) => ({ ...prev, isLoading: false }));
       return [];
     } catch (err) {
@@ -135,7 +144,7 @@ export function useSession() {
 
   const deleteSession = useCallback(async (sessionId: string) => {
     try {
-      await safeInvoke("delete_session", { sessionId });
+      await hostCall("delete_session", { sessionId });
     } catch {
       // Best effort -- remove from local state regardless
     }

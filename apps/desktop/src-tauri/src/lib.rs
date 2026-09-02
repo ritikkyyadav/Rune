@@ -3,11 +3,17 @@
 //
 //  The desktop app runs the same local orchestrator engine as the CLI. On
 //  startup we spawn the TypeScript "engine-host" sidecar (via bun) and pump its
-//  stdin/stdout. The webview's existing `invoke()`/`listen()` calls are bridged
-//  to the host over line-delimited JSON:
+//  stdin/stdout. The webview drives it through ONE passthrough command and one
+//  event pipe — see "The bridge, as ONE command" below for why there is no
+//  per-command mirror any more:
 //
-//    invoke("chat_start", {...})  →  {"id":N,"cmd":"chat_start","args":{...}}  →  host
-//    host streams {"stream":"chat_event","payload":{...}}  →  emit("chat_event", …)  →  webview
+//    invoke("engine_call", {cmd:"chat_start", args:{…}})
+//                                 →  {"id":N,"cmd":"chat_start","args":{…}}  →  host
+//    host streams {"stream":"chat_event","payload":{…}}  →  emit("chat_event", …)  →  webview
+//
+//  `~/.gear/desktop.json` says where the engine checkout is; `gear desktop`
+//  writes it. Before that command existed, nothing in the repository did, and
+//  the app could not start on a machine it had not been hand-configured on.
 //
 //  Because it is the real local engine reading the user's existing configuration,
 //  every model, BYOK key, web-search backend (Brave/Tavily), MCP server and
@@ -99,8 +105,9 @@ fn resolve_host() -> Result<(String, String, String, Vec<(String, String)>), Str
         .unwrap_or(gear_pointer);
         let txt = std::fs::read_to_string(&pointer).map_err(|_| {
             format!(
-                "Gear's local engine is not configured. Launch it once from the source checkout \
-                 (no GEAR_ROOT value and no {pointer})."
+                "Gear's local engine is not configured: no GEAR_ROOT and no {pointer}. \
+                 Run `gear desktop` once from the terminal — it writes that file and \
+                 opens this app."
             )
         })?;
         let v: Value = serde_json::from_str(&txt).map_err(|e| format!("bad {pointer}: {e}"))?;
@@ -176,14 +183,62 @@ fn resolve_host() -> Result<(String, String, String, Vec<(String, String)>), Str
 }
 
 /// Spawn the engine host child with piped stdio.
+/// The packaged `gear` binary shipped beside this executable, if there is one.
+///
+/// This is what makes a `.dmg` a product rather than a developer preview: a
+/// bundled app runs `gear engine-host`, so nobody needs Bun, a source checkout,
+/// or a pointer file. `~/.gear/desktop.json` remains the path for a checkout,
+/// and is checked SECOND — a developer running the app from source has a reason
+/// to want their own tree, and a stale bundled binary silently winning over it
+/// is the kind of thing that costs an afternoon.
+fn bundled_sidecar() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let name = if cfg!(windows) { "gear.exe" } else { "gear" };
+    // macOS: Contents/MacOS/<exe> with the sidecar beside it, and
+    // Contents/Resources for a resource-bundled copy. Linux/Windows: beside.
+    let candidates = [
+        dir.join(name),
+        dir.join("../Resources").join(name),
+        dir.join("resources").join(name),
+    ];
+    candidates
+        .iter()
+        .find(|p| p.exists())
+        .map(|p| p.to_string_lossy().into_owned())
+}
+
 fn spawn_host() -> Result<Child, String> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let workspace = std::env::var("GEAR_WORKSPACE").unwrap_or(home);
+
+    // ── The packaged path ──
+    if let Some(sidecar) = bundled_sidecar() {
+        let mut cmd = Command::new(&sidecar);
+        cmd.arg("engine-host")
+            .env("GEAR_WORKSPACE", &workspace)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        // gear-tools ships beside the launcher; the CLI finds it on its own,
+        // but naming it here removes one lookup from the startup path.
+        if let Ok(home) = std::env::var("HOME") {
+            let tools = format!("{home}/.gear/bin/gear-tools");
+            if Path::new(&tools).exists() {
+                cmd.env("GEAR_TOOLS_BIN", tools);
+            }
+        }
+        return cmd
+            .spawn()
+            .map_err(|e| format!("failed to start the bundled engine ({sidecar}): {e}"));
+    }
+
+    // ── The source-checkout path ──
     let (bun, engine_root, tools, env) = resolve_host()?;
     let script = format!("{engine_root}/packages/orchestrator/src/bin/engine-host.ts");
     if !Path::new(&script).exists() {
         return Err(format!("engine host not found at {script}"));
     }
-    let home = std::env::var("HOME").unwrap_or_default();
-    let workspace = std::env::var("GEAR_WORKSPACE").unwrap_or(home);
 
     let mut cmd = Command::new(&bun);
     cmd.arg("run")
@@ -244,131 +299,48 @@ fn reader_loop(stdout: ChildStdout, handle: AppHandle, pending: PendingMap) {
     }
 }
 
-// ─── Tauri commands (bridged 1:1 to the engine host) ───
+// ─── The bridge, as ONE command ───
+//
+// This file used to hand-type a Tauri command per host command: seventeen of
+// them, each a three-line mirror of a name the host already knows. That pattern
+// drifted twice in the two ways it always drifts. `interject_chat` was added to
+// the host and called by the UI and never added here, so mid-turn steering threw
+// and the webview reported it as a lost connection. `save_settings` grew a
+// `persist` field this signature did not have, so serde dropped it and gear
+// persistence was a permanent silent no-op.
+//
+// Neither was visible to CI, because nothing type-checked across the seam. The
+// fix is to stop having a seam: `engine_call(cmd, args)` forwards whatever the
+// webview asks for, and the checking happens where the types actually live — in
+// `@gear/protocol`, on both sides of the wire. Adding a host command now costs
+// zero Rust.
+//
+// The six `*_system_memory` commands that used to live here were never called
+// by any webview code. They are gone; the host still serves them, and
+// `engine_call` reaches them the moment a surface wants one.
 
 #[tauri::command]
-fn get_status(bridge: State<'_, Bridge>, session_id: Option<String>) -> Result<Value, String> {
-    bridge.call("get_status", json!({ "sessionId": session_id }))
-}
-
-#[tauri::command]
-fn create_session(bridge: State<'_, Bridge>, model: Option<String>) -> Result<Value, String> {
-    bridge.call("create_session", json!({ "model": model }))
-}
-
-#[tauri::command]
-fn list_sessions(bridge: State<'_, Bridge>) -> Result<Value, String> {
-    bridge.call("list_sessions", json!({}))
-}
-
-#[tauri::command]
-fn resume_session(bridge: State<'_, Bridge>, session_id: String) -> Result<Value, String> {
-    bridge.call("resume_session", json!({ "sessionId": session_id }))
-}
-
-#[tauri::command]
-fn delete_session(bridge: State<'_, Bridge>, session_id: String) -> Result<Value, String> {
-    bridge.call("delete_session", json!({ "sessionId": session_id }))
-}
-
-#[tauri::command]
-fn chat_start(
+fn engine_call(
     bridge: State<'_, Bridge>,
-    session_id: String,
-    message: String,
+    cmd: String,
+    args: Option<Value>,
 ) -> Result<Value, String> {
-    bridge.call(
-        "chat_start",
-        json!({ "sessionId": session_id, "message": message }),
-    )
+    bridge.call(&cmd, args.unwrap_or_else(|| json!({})))
 }
 
+/// Whether the sidecar started, and why not when it did not.
+///
+/// The UI needs this to tell "no engine configured on this machine" apart from
+/// "the engine dropped": the first has a fix the user can act on
+/// (`gear desktop`, which writes the pointer), and before this it was
+/// indistinguishable from a lost connection.
 #[tauri::command]
-fn abort_chat(bridge: State<'_, Bridge>) -> Result<Value, String> {
-    bridge.call("abort_chat", json!({}))
-}
-
-#[tauri::command]
-fn switch_model(
-    bridge: State<'_, Bridge>,
-    model: String,
-    provider: Option<String>,
-) -> Result<Value, String> {
-    bridge.call(
-        "switch_model",
-        json!({ "model": model, "provider": provider }),
-    )
-}
-
-#[tauri::command]
-fn respond_permission(
-    bridge: State<'_, Bridge>,
-    request_id: String,
-    decision: String,
-) -> Result<Value, String> {
-    bridge.call(
-        "respond_permission",
-        json!({ "requestId": request_id, "decision": decision }),
-    )
-}
-
-#[tauri::command]
-fn list_providers(bridge: State<'_, Bridge>) -> Result<Value, String> {
-    bridge.call("list_providers", json!({}))
-}
-
-#[tauri::command]
-fn save_settings(
-    bridge: State<'_, Bridge>,
-    provider: Option<String>,
-    model: Option<String>,
-    permission_level: Option<String>,
-    api_keys: Option<Value>,
-) -> Result<Value, String> {
-    bridge.call(
-        "save_settings",
-        json!({
-            "provider": provider,
-            "model": model,
-            "permissionLevel": permission_level,
-            "apiKeys": api_keys.unwrap_or_else(|| json!({})),
-        }),
-    )
-}
-
-// ─── System Memory ("dreaming") ───
-
-#[tauri::command]
-fn get_system_memory(bridge: State<'_, Bridge>) -> Result<Value, String> {
-    bridge.call("get_system_memory", json!({}))
-}
-
-#[tauri::command]
-fn save_system_memory(bridge: State<'_, Bridge>, content: String) -> Result<Value, String> {
-    bridge.call("save_system_memory", json!({ "content": content }))
-}
-
-#[tauri::command]
-fn add_memory_note(bridge: State<'_, Bridge>, text: String) -> Result<Value, String> {
-    bridge.call("add_memory_note", json!({ "text": text }))
-}
-
-#[tauri::command]
-fn set_memory_schedule(bridge: State<'_, Bridge>, schedule: String) -> Result<Value, String> {
-    bridge.call("set_memory_schedule", json!({ "schedule": schedule }))
-}
-
-#[tauri::command]
-fn reflect_system_memory(
-    bridge: State<'_, Bridge>,
-    focus: Option<String>,
-) -> Result<Value, String> {
-    bridge.call("reflect_system_memory", json!({ "focus": focus }))
-}
-
-#[tauri::command]
-fn clear_system_memory(bridge: State<'_, Bridge>) -> Result<Value, String> {
-    bridge.call("clear_system_memory", json!({}))
+fn engine_health(bridge: State<'_, Bridge>) -> Result<Value, String> {
+    let err = bridge.start_error.lock().unwrap().clone();
+    let pointer = std::env::var("HOME")
+        .map(|h| format!("{h}/.gear/desktop.json"))
+        .unwrap_or_default();
+    Ok(json!({ "started": err.is_none(), "error": err, "pointer": pointer }))
 }
 
 // ─── App entry ───
@@ -376,6 +348,11 @@ fn clear_system_memory(bridge: State<'_, Bridge>) -> Result<Value, String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        // The updater is registered unconditionally and CONFIGURED by
+        // tauri.conf.json. With no public key set it simply has nothing it will
+        // accept, which is the right posture for an unsigned build: an updater
+        // that installs whatever a URL hands it is worse than no updater.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
 
@@ -421,25 +398,7 @@ pub fn run() {
             app.manage(bridge);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            get_status,
-            create_session,
-            list_sessions,
-            resume_session,
-            delete_session,
-            chat_start,
-            abort_chat,
-            switch_model,
-            respond_permission,
-            list_providers,
-            save_settings,
-            get_system_memory,
-            save_system_memory,
-            add_memory_note,
-            set_memory_schedule,
-            reflect_system_memory,
-            clear_system_memory,
-        ])
+        .invoke_handler(tauri::generate_handler![engine_call, engine_health])
         .run(tauri::generate_context!())
         .expect("error while running Gear desktop");
 }

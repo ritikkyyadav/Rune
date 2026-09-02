@@ -1,50 +1,43 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
+  AutoApprovalNotice,
+  Brief,
+  BriefDecision,
   EngineEvent,
+  HeldStep,
   PermissionPrompt,
   PermissionDecision,
   ConnectionState,
   EngineStatus,
+  UserQuestion,
 } from "../lib/types";
+import {
+  configuredServer,
+  isTauriRuntime,
+  openTransport,
+  type EngineTransport,
+  type RoundTripKind,
+} from "../lib/transport";
 
-// ─── Safe Tauri invoke wrapper ───
-// Outside the Tauri shell (browser preview) there is no engine: resolve null
-// so the preview stays usable. INSIDE the shell a failed invoke throws to the
-// caller — swallowing it here once made every reconnect/backoff path
-// unreachable and turned a dead engine into a silent stuck spinner.
-export async function safeInvoke<T>(
-  cmd: string,
-  args?: Record<string, unknown>,
-): Promise<T | null> {
-  if (!isTauriRuntime()) return null;
-  const { invoke } = await import("@tauri-apps/api/core");
-  return await invoke<T>(cmd, args);
-}
-
-type ListenUnlisten = () => void;
-
-async function safeListen(
-  event: string,
-  handler: (payload: unknown) => void,
-): Promise<ListenUnlisten> {
-  if (!isTauriRuntime()) return () => {};
-  const { listen } = await import("@tauri-apps/api/event");
-  const unlisten = await listen(event, (ev: { payload: unknown }) => {
-    handler(ev.payload);
-  });
-  return unlisten;
-}
+export { isTauriRuntime } from "../lib/transport";
 
 // ─── Hook interface ───
-// The hook is a thin, typed bridge to the engine-host (via the Rust sidecar
-// bridge). Every engine event reaches `onEvent` verbatim — the transcript and
-// the trace are both built from that one stream.
+// A thin, typed bridge to the engine over whichever transport `openTransport`
+// picked. Every engine event reaches `onEvent` verbatim — the transcript and the
+// trace are both built from that one stream — and all five round-trips arrive
+// with an id the UI answers by.
 
 interface UseEngineOptions {
   onEvent: (event: EngineEvent) => void;
   onPermissionRequest: (requestId: string, prompt: PermissionPrompt) => void;
+  onQuestion?: (requestId: string, question: UserQuestion) => void;
+  onBrief?: (requestId: string, brief: Brief) => void;
+  onHeldSteps?: (steps: HeldStep[]) => void;
+  onAutoNotice?: (notice: AutoApprovalNotice) => void;
+  onRoundTripResolved?: (requestId: string, reason: string, applied: string) => void;
   onStatus?: (status: EngineStatus) => void;
   onError?: (error: string) => void;
+  onNote?: (note: string) => void;
 }
 
 const DEFAULT_STATUS: EngineStatus = {
@@ -59,10 +52,6 @@ const DEFAULT_STATUS: EngineStatus = {
 const MAX_BACKOFF_MS = 30_000;
 const BASE_BACKOFF_MS = 1_000;
 
-export function isTauriRuntime(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
-
 export interface ProviderListing {
   providers: Array<{
     id: string;
@@ -74,6 +63,7 @@ export interface ProviderListing {
     source: string;
     masked: string;
     endpoint?: string;
+    auth?: string;
     models: Array<{ id: string; label: string }>;
   }>;
   active: { provider: string; model: string };
@@ -83,9 +73,13 @@ export function useEngine(options: UseEngineOptions) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
   const [status, setStatus] = useState<EngineStatus>(DEFAULT_STATUS);
+  const [transportKind, setTransportKind] = useState<"tauri" | "ws" | "none">(() =>
+    configuredServer() ? "ws" : isTauriRuntime() ? "tauri" : "none",
+  );
+  const [transportLabel, setTransportLabel] = useState<string>("");
   const retriesRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const unlistenRef = useRef<ListenUnlisten | null>(null);
+  const transportRef = useRef<EngineTransport | null>(null);
   const optionsRef = useRef(options);
   optionsRef.current = options;
 
@@ -106,6 +100,7 @@ export function useEngine(options: UseEngineOptions) {
 
   // ─── Connection management ───
 
+  const connectRef = useRef<(() => Promise<void>) | null>(null);
   const scheduleReconnect = useCallback(() => {
     if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
     const delay = Math.min(BASE_BACKOFF_MS * Math.pow(2, retriesRef.current), MAX_BACKOFF_MS);
@@ -115,67 +110,100 @@ export function useEngine(options: UseEngineOptions) {
     }, delay);
   }, []);
 
-  const connectRef = useRef<(() => Promise<void>) | null>(null);
+  const onStream = useCallback(
+    (name: string, payload: Record<string, unknown>) => {
+      switch (name) {
+        case "chat_event": {
+          // Socket mode tags events with the session; the sidecar shape is bare.
+          const raw = payload as { event?: EngineEvent } | EngineEvent;
+          handleEvent((raw as { event?: EngineEvent }).event ?? (raw as EngineEvent));
+          return;
+        }
+        case "ready":
+        case "engine_status":
+          applyStatus(payload as Partial<EngineStatus>);
+          return;
+        case "auto_notice":
+          // What Auto did without asking. A push, not a question.
+          if (payload.notice)
+            optionsRef.current.onAutoNotice?.(payload.notice as AutoApprovalNotice);
+          return;
+        case "held_steps":
+          optionsRef.current.onHeldSteps?.(
+            Array.isArray(payload.steps) ? (payload.steps as HeldStep[]) : [],
+          );
+          return;
+        case "roundtrip_resolved":
+          optionsRef.current.onRoundTripResolved?.(
+            String(payload.requestId ?? ""),
+            String(payload.reason ?? ""),
+            String(payload.applied ?? ""),
+          );
+          return;
+        case "transport_note":
+          optionsRef.current.onNote?.(String(payload.note ?? ""));
+          return;
+        default:
+          // A stream this build does not know is a NEWER host, not a bug.
+          return;
+      }
+    },
+    [applyStatus, handleEvent],
+  );
+
+  const onRoundTrip = useCallback((kind: RoundTripKind, id: string, payload: unknown) => {
+    if (kind === "permission")
+      optionsRef.current.onPermissionRequest(id, payload as PermissionPrompt);
+    else if (kind === "question") optionsRef.current.onQuestion?.(id, payload as UserQuestion);
+    else optionsRef.current.onBrief?.(id, payload as Brief);
+  }, []);
 
   const connect = useCallback(async () => {
     setConnectionState("connecting");
     try {
-      const engineStatus = await safeInvoke<EngineStatus>("get_status");
-      if (engineStatus) {
-        applyStatus(engineStatus);
-        setConnectionState("connected");
-      } else {
-        // No Tauri runtime (browser preview): stay usable, clearly labelled.
-        setConnectionState("connected");
-      }
-      retriesRef.current = 0;
+      transportRef.current?.close();
+      const transport = await openTransport({
+        onStream,
+        onRoundTrip,
+        onClose: () => {
+          setConnectionState("error");
+          scheduleReconnect();
+        },
+      });
+      transportRef.current = transport;
+      setTransportKind(transport.kind);
+      setTransportLabel(transport.label);
 
-      if (unlistenRef.current) unlistenRef.current();
-      const unlistenChat = await safeListen("chat_event", (payload) => {
-        // Socket mode tags events with the session; the desktop shape is bare.
-        const raw = payload as { event?: EngineEvent } | EngineEvent;
-        const event = (raw as { event?: EngineEvent }).event ?? (raw as EngineEvent);
-        handleEvent(event);
-      });
-      const unlistenStatus = await safeListen("engine_status", (payload) => {
-        applyStatus(payload as Partial<EngineStatus>);
-      });
-      // Permission prompts: surface them inline; the UI answers via
-      // respondPermission(requestId, decision). The engine blocks the tool
-      // until it hears back.
-      const unlistenPerm = await safeListen("permission_request", (payload) => {
-        const { requestId, prompt } = (payload ?? {}) as {
-          requestId: string;
-          prompt: PermissionPrompt;
-        };
-        if (requestId && prompt) optionsRef.current.onPermissionRequest(requestId, prompt);
-      });
-      unlistenRef.current = () => {
-        unlistenChat();
-        unlistenStatus();
-        unlistenPerm();
-      };
-    } catch {
+      const engineStatus = await transport.call("get_status", {});
+      if (engineStatus) applyStatus(engineStatus as Partial<EngineStatus>);
+      // No engine (browser preview): stay usable, and clearly labelled.
+      setConnectionState("connected");
+      retriesRef.current = 0;
+    } catch (err) {
+      optionsRef.current.onError?.(
+        `connect failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
       setConnectionState("error");
       scheduleReconnect();
     }
-  }, [applyStatus, handleEvent, scheduleReconnect]);
+  }, [applyStatus, onRoundTrip, onStream, scheduleReconnect]);
   connectRef.current = connect;
 
   useEffect(() => {
     void connect();
     return () => {
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
-      if (unlistenRef.current) unlistenRef.current();
+      transportRef.current?.close();
+      transportRef.current = null;
     };
   }, [connect]);
 
-  // ─── Commands (bridged 1:1 to the engine host) ───
-  // Every command funnels through `command`, which turns an invoke failure
-  // into three real consequences instead of a silent null: the error toast,
-  // an honest "error" connection state, and an armed reconnect. `ok: false`
-  // means the engine did not hear the command; `value: null` means there is
-  // no engine at all (browser preview).
+  // ─── Commands ───
+  // Every command funnels through `command`, which turns a transport failure
+  // into three real consequences instead of a silent null: the error toast, an
+  // honest "error" connection state, and an armed reconnect. `ok: false` means
+  // the engine did not hear the command; `value: null` means there is no engine
+  // at all (browser preview).
 
   type CommandResult<T> = { ok: true; value: T | null } | { ok: false };
   const command = useCallback(
@@ -184,8 +212,21 @@ export function useEngine(options: UseEngineOptions) {
       args: Record<string, unknown> | undefined,
       what: string,
     ): Promise<CommandResult<T>> => {
+      const transport = transportRef.current;
+      // Not connected YET is not the same as "there is no engine". Reporting it
+      // as a null result made a message typed during the first second of the
+      // page's life vanish into a spinner that never stopped — the transport
+      // was still opening, and nothing said so.
+      if (!transport) {
+        optionsRef.current.onError?.(`${what} — still connecting to the engine; try again`);
+        return { ok: false };
+      }
       try {
-        return { ok: true, value: await safeInvoke<T>(cmd, args) };
+        const value = (await transport.call(
+          cmd as Parameters<EngineTransport["call"]>[0],
+          args as never,
+        )) as T | null;
+        return { ok: true, value };
       } catch (err) {
         optionsRef.current.onError?.(
           `${what} failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -197,6 +238,8 @@ export function useEngine(options: UseEngineOptions) {
     },
     [scheduleReconnect],
   );
+
+  const hasEngine = useCallback(() => transportRef.current?.kind !== "none", []);
 
   const createSession = useCallback(
     async (model?: string) => {
@@ -221,16 +264,16 @@ export function useEngine(options: UseEngineOptions) {
         setIsProcessing(false);
         return;
       }
-      if (!isTauriRuntime()) {
+      if (!hasEngine()) {
         // Browser preview: no engine. Say so honestly, then end the turn.
         handleEvent({
           type: "text_delta",
-          text: "This is Gear's browser preview — no engine is attached, so nothing ran. Launch the desktop app (gear desktop) to work against your real workspace, tools, and models.",
+          text: "This is Gear's browser preview — no engine is attached, so nothing ran. Run `gear web` for the same interface with your real workspace, tools and models, or `gear desktop` for the app.",
         });
         handleEvent({ type: "turn_complete", stopReason: "end_turn", totalTurns: 1 });
       }
     },
-    [command, handleEvent],
+    [command, handleEvent, hasEngine],
   );
 
   /** Mid-turn steering: fold text into the running turn. False → send as the next turn instead. */
@@ -254,9 +297,23 @@ export function useEngine(options: UseEngineOptions) {
   );
 
   const listProviders = useCallback(async (): Promise<ProviderListing | null> => {
-    const r = await command<ProviderListing>("list_providers", undefined, "provider list");
+    const r = await command<ProviderListing>("list_providers", {}, "provider list");
     return r.ok ? r.value : null;
   }, [command]);
+
+  /** Write a provider key through the engine's credential store. */
+  const saveKeys = useCallback(
+    async (apiKeys: Record<string, string>, provider?: string, model?: string) => {
+      const r = await command<EngineStatus>(
+        "save_settings",
+        { apiKeys, provider, model, persist: true },
+        "save credentials",
+      );
+      if (r.ok && r.value) applyStatus(r.value);
+      return r.ok;
+    },
+    [applyStatus, command],
+  );
 
   /** Shift gears (this engine only; pass persist to write config.toml). */
   const setGear = useCallback(
@@ -275,18 +332,143 @@ export function useEngine(options: UseEngineOptions) {
   );
 
   const refreshStatus = useCallback(async () => {
-    const r = await command<EngineStatus>("get_status", undefined, "status refresh");
+    const r = await command<EngineStatus>("get_status", {}, "status refresh");
     if (r.ok && r.value) applyStatus(r.value);
   }, [applyStatus, command]);
 
   const abort = useCallback(async () => {
-    await command("abort_chat", undefined, "stop");
+    await command("abort_chat", {}, "stop");
     setIsProcessing(false);
   }, [command]);
 
+  // ─── The round-trips ───
+  // Each is answered through the transport, so the same call works whether the
+  // host is streaming `{requestId, …}` (sidecar) or the SDK is holding a
+  // promise for us (websocket).
+
+  const answer = useCallback((kind: RoundTripKind, id: string, body: unknown) => {
+    transportRef.current?.answer(kind, id, body);
+  }, []);
+
   const respondPermission = useCallback(
     async (requestId: string, decision: PermissionDecision) => {
-      await command("respond_permission", { requestId, decision }, "permission reply");
+      answer("permission", requestId, { decision });
+    },
+    [answer],
+  );
+  const respondQuestion = useCallback(
+    (requestId: string, text: string) => answer("question", requestId, { answer: text }),
+    [answer],
+  );
+  const respondBrief = useCallback(
+    (requestId: string, decision: BriefDecision) => answer("brief", requestId, { decision }),
+    [answer],
+  );
+
+  // ─── Held steps (Auto mode's end-of-turn ledger) ───
+
+  const listHeldSteps = useCallback(async (): Promise<HeldStep[]> => {
+    const r = await command<HeldStep[]>("list_held_steps", {}, "held steps");
+    return r.ok && Array.isArray(r.value) ? r.value : [];
+  }, [command]);
+
+  const runHeldStep = useCallback(
+    async (stepId: string) => {
+      const r = await command<{ ok: boolean; detail?: string }>(
+        "run_held_step",
+        { stepId },
+        "run held step",
+      );
+      return r.ok ? r.value : null;
+    },
+    [command],
+  );
+
+  const dismissHeldSteps = useCallback(
+    async (stepIds?: string[]) => {
+      await command("dismiss_held_steps", stepIds ? { stepIds } : {}, "dismiss held steps");
+    },
+    [command],
+  );
+
+  // ─── The review workspace (P3.5) ───
+
+  const reviewDiff = useCallback(async () => {
+    const r = await command<{
+      repo: boolean;
+      branch?: string;
+      files: Array<{
+        path: string;
+        status: string;
+        added: number;
+        removed: number;
+        untracked: boolean;
+      }>;
+      patch: string;
+      reason?: string;
+    }>("review_diff", {}, "read the working tree");
+    return r.ok ? r.value : null;
+  }, [command]);
+
+  const revertPaths = useCallback(
+    async (paths: string[]) => {
+      const r = await command<{ ok: boolean; reverted?: string[]; reason?: string }>(
+        "revert_paths",
+        { paths },
+        "revert",
+      );
+      return r.ok ? r.value : null;
+    },
+    [command],
+  );
+
+  const runChecks = useCallback(async () => {
+    const r = await command<{ ran: boolean; passed: boolean; report: string }>(
+      "run_checks",
+      {},
+      "run checks",
+    );
+    return r.ok ? r.value : null;
+  }, [command]);
+
+  const openPath = useCallback(
+    async (path: string) => {
+      const r = await command<{ opened: boolean; with?: string; reason?: string }>(
+        "open_path",
+        { path },
+        "open in editor",
+      );
+      return r.ok ? r.value : null;
+    },
+    [command],
+  );
+
+  /** Prompt assembly for a model span — the inspector's evidence (P3.4). */
+  const getTurnContext = useCallback(
+    async (sessionId?: string) => {
+      const r = await command<unknown>("get_turn_context", { sessionId }, "turn context");
+      return r.ok ? r.value : null;
+    },
+    [command],
+  );
+
+  /**
+   * The session, exported through the engine's own exporter and signed.
+   *
+   * Deliberately NOT a client-side dump of the rail: an export that cannot be
+   * verified by someone who was not watching the screen is a picture, not
+   * evidence. This is the same artifact `gear export --sign` produces.
+   */
+  const exportTrace = useCallback(
+    async (sessionId?: string, sign = true) => {
+      const r = await command<{
+        content: string;
+        format: string;
+        signature?: string;
+        publicKey?: string;
+        chainOk: boolean;
+      }>("export_trace", { sessionId, format: "md", sign }, "export");
+      return r.ok ? r.value : null;
     },
     [command],
   );
@@ -297,12 +479,26 @@ export function useEngine(options: UseEngineOptions) {
     createSession,
     switchModel,
     listProviders,
+    saveKeys,
     setGear,
     refreshStatus,
     respondPermission,
+    respondQuestion,
+    respondBrief,
+    listHeldSteps,
+    runHeldStep,
+    dismissHeldSteps,
+    getTurnContext,
+    exportTrace,
+    reviewDiff,
+    revertPaths,
+    runChecks,
+    openPath,
     isProcessing,
     setIsProcessing,
     connectionState,
+    transportKind,
+    transportLabel,
     status,
     abort,
   };

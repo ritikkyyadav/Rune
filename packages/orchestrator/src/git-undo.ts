@@ -131,3 +131,155 @@ export function undoLastGearCommit(root: string): UndoResult {
 
   return { ok: true, undoneSha: sha.slice(0, 7), subject: subject.out };
 }
+
+// ─── The review workspace (P3.5) ───
+//
+// Every git operation the desktop's Review tab performs lives here, next to the
+// safety rules above and for the same reason: git plumbing scattered across a
+// UI layer is how a "revert this file" button ends up running `checkout .`.
+// The UI names paths; this file decides what may happen to them.
+
+export interface ChangedFile {
+  path: string;
+  /** Porcelain status: "M", "A", "D", "??", "R" … */
+  status: string;
+  added: number;
+  removed: number;
+  /** True when git has never seen this path, so reverting means deleting it. */
+  untracked: boolean;
+}
+
+/**
+ * Parse `git status --porcelain=v1`.
+ *
+ * Column arithmetic (`slice(0, 2)`, `slice(3)`) is the obvious way to read this
+ * and it is wrong here, because `git()` above trims the whole output: a first
+ * line of ` M edited.ts` loses its leading space and every subsequent slice is
+ * off by one, silently, on exactly one file. Matching the code instead of
+ * counting columns is immune to that.
+ */
+function parsePorcelain(out: string): Array<{ code: string; path: string; untracked: boolean }> {
+  const rows: Array<{ code: string; path: string; untracked: boolean }> = [];
+  for (const line of out.split("\n")) {
+    if (!line.trim()) continue;
+    const m = /^([ MADRCU!?]{1,2})\s+(.+)$/.exec(line);
+    if (!m) continue;
+    const code = m[1]!;
+    // A rename reads `R  old -> new`; the new path is the one on disk.
+    const raw = m[2]!;
+    const arrow = raw.indexOf(" -> ");
+    rows.push({
+      code,
+      path: arrow === -1 ? raw : raw.slice(arrow + 4),
+      untracked: code.includes("?"),
+    });
+  }
+  return rows;
+}
+
+export interface WorkspaceDiff {
+  repo: boolean;
+  branch?: string;
+  files: ChangedFile[];
+  /** Unified diff for the whole working tree, tracked files only. */
+  patch: string;
+  reason?: string;
+}
+
+/**
+ * What has changed in the working tree, and by how much.
+ *
+ * Deliberately the WORKING TREE and not "the files this run wrote": a person
+ * reviewing an agent's work needs to see everything that differs from the last
+ * commit, including anything they changed themselves. Attributing a change to
+ * the run is the transcript's job; this is the tree's own answer.
+ */
+export function workspaceDiff(root: string, maxPatchBytes = 400_000): WorkspaceDiff {
+  if (!isGitRepo(root)) {
+    return { repo: false, files: [], patch: "", reason: "not a git repository" };
+  }
+  const branch = git(root, ["rev-parse", "--abbrev-ref", "HEAD"]).out;
+  const status = git(root, ["status", "--porcelain=v1", "--untracked-files=all"]);
+  if (!status.ok) return { repo: true, files: [], patch: "", reason: status.out };
+
+  const numstat = git(root, ["diff", "HEAD", "--numstat"]);
+  const counts = new Map<string, { added: number; removed: number }>();
+  for (const line of numstat.out.split("\n")) {
+    const m = /^(\d+|-)\t(\d+|-)\t(.+)$/.exec(line);
+    if (!m) continue;
+    counts.set(m[3]!, {
+      added: m[1] === "-" ? 0 : Number(m[1]),
+      removed: m[2] === "-" ? 0 : Number(m[2]),
+    });
+  }
+
+  const files: ChangedFile[] = [];
+  for (const entry of parsePorcelain(status.out)) {
+    const count = counts.get(entry.path) ?? { added: 0, removed: 0 };
+    files.push({
+      path: entry.path,
+      status: entry.code.trim() || "M",
+      added: count.added,
+      removed: count.removed,
+      untracked: entry.untracked,
+    });
+  }
+
+  const diff = git(root, ["diff", "HEAD"]);
+  // A patch that takes a second to paint is not a review aid. Truncation is
+  // announced in the payload rather than silently returning half a hunk.
+  const patch =
+    diff.out.length > maxPatchBytes
+      ? diff.out.slice(0, maxPatchBytes) + "\n… diff truncated; open the file to see the rest\n"
+      : diff.out;
+
+  return { repo: true, branch, files, patch };
+}
+
+export type RevertResult = { ok: true; reverted: string[] } | { ok: false; reason: string };
+
+/**
+ * Revert exactly the named paths, and nothing else.
+ *
+ * Three rules, each there because the naive version eats work:
+ *
+ *  - Only paths INSIDE the workspace. A `..` or a leading `/` arriving from a
+ *    UI is either a bug or an attack; either way it does not touch the disk.
+ *  - A tracked path is restored from HEAD, one `git checkout HEAD -- <path>`
+ *    per path. Never `checkout .`, never a pathspec the caller composed.
+ *  - An untracked path is DELETED, because that is what "revert" means for a
+ *    file git has never seen — stated here rather than discovered afterwards.
+ */
+export function revertPaths(root: string, paths: string[]): RevertResult {
+  if (paths.length === 0) return { ok: false, reason: "no paths given" };
+  if (!isGitRepo(root)) return { ok: false, reason: "not a git repository" };
+
+  for (const p of paths) {
+    if (p.startsWith("/") || p.split("/").includes("..") || p.startsWith("-")) {
+      return { ok: false, reason: `refusing a path outside the workspace: ${p}` };
+    }
+  }
+
+  const status = git(root, ["status", "--porcelain=v1", "--untracked-files=all"]);
+  if (!status.ok) return { ok: false, reason: `git unavailable: ${status.out}` };
+  const untracked = new Set(
+    parsePorcelain(status.out)
+      .filter((r) => r.untracked)
+      .map((r) => r.path),
+  );
+
+  const reverted: string[] = [];
+  for (const p of paths) {
+    if (untracked.has(p)) {
+      const rm = git(root, ["clean", "-f", "--", p]);
+      if (!rm.ok) return { ok: false, reason: `could not remove ${p}: ${rm.out}` };
+      reverted.push(p);
+      continue;
+    }
+    // `--` before the path so a filename that looks like a flag stays a filename.
+    const restore = git(root, ["checkout", "HEAD", "--", p]);
+    if (!restore.ok) return { ok: false, reason: `could not revert ${p}: ${restore.out}` };
+    reverted.push(p);
+  }
+  return { ok: true, reverted };
+}

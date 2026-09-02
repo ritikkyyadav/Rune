@@ -182,3 +182,214 @@ Not yet (M2–M4): Review workspace (the old `ReviewWorkspace`/`EnvironmentPanel
 1. Trace rail default: open on every session, or open on demand (`⌘T`)? (Draft: open, collapsible.)
 2. Keep the CLI in lock-step (same words/components) — yes by default; the contract is shared.
 3. Should the desktop replace `gear` as the default `gear` command target, or stay `gear desktop`?
+
+---
+
+## 7. Running it (Phase 3 · P3.1)
+
+Between 2026-08-21 and Phase 3 the app built green and could not start. Three
+things were missing and all three are closed here.
+
+**`gear desktop`** (alias `gear app`) writes `~/.gear/desktop.json` — the file
+`lib.rs` reads to find the engine, which nothing in the repository had ever
+written — and then opens the app. It prefers an installed bundle
+(`/Applications/Gear.app`, `~/Applications/Gear.app`, the checkout's own
+`target/release/bundle`) and falls back to `tauri dev` in a checkout that has
+never been packaged. `gear desktop dev` runs the Vite preview instead: no
+engine, but the recorded demo turn replays through the real reducers.
+
+**`gear desktop --check`** is the headless proof, for CI and for a machine with
+no window server. It writes the pointer, spawns the same sidecar the app
+spawns — or connects to a running `gear serve` when `GEAR_SERVE_URL` is set —
+completes the `ready` → `hello` handshake, reports the protocol version and the
+command count, and exits 0 or 1. It opens no window, so it says nothing about
+rendering; what it proves is that the app's engine is reachable.
+
+**One bridge command.** `lib.rs` used to mirror seventeen host commands by
+hand. That pattern drifted twice: `interject_chat` was never added, so mid-turn
+steering threw and the webview reported a lost connection; `save_settings` grew
+a `persist` field the Rust signature did not have, so serde dropped it and gear
+persistence was a silent no-op. Both are fixed by construction — the bridge is
+now `engine_call(cmd, args)` plus one event pipe, and the types live in
+`@gear/protocol` on both sides. The six `*_system_memory` commands, which no
+webview code ever called, are gone; `engine_call` reaches them if a surface
+ever wants one. `engine_health` is the one addition: it distinguishes "no
+engine configured on this machine" from "the engine dropped", which used to
+look identical.
+
+**Two transports, one bundle.** `apps/desktop/src/lib/transport.ts` decides:
+`GearClient` over a WebSocket when a server is configured (the endpoint `gear
+web` embeds in the page, `?server=&token=`, or one saved in the browser),
+otherwise the Tauri passthrough inside the app, otherwise nothing at all — the
+browser preview, which says so rather than pretending. Everything above that
+file talks to six methods and never learns which transport it got. The only
+asymmetry is the round-trips: the sidecar streams `{requestId, prompt}` and the
+client answers by name, while the SDK holds a promise and answers for you, so
+ws mode mints a local id and both present the same `(id, payload)` shape
+upward.
+
+---
+
+## 8. One design system (Phase 3 · P3.3)
+
+Three visual identities existed in this repository at once: the customizer's
+five accents × two bases (ported into `bin/ui/themes.ts`), the desktop's own
+2,074 lines of CSS, and the Savoir rebrand. A product cannot have three. Under
+D2 the Savoir brand DNA is the one, and everything below derives from
+`packages/shared/src/design-tokens.ts`.
+
+**The palette.** Paper `#E7E8E3` and ink `#14161A` are the two grounds — cool
+drafting paper, explicitly not cream. Graphite `#4A4F55` and `#7C8088` carry
+secondary and tertiary text. Hairlines are `#C7CABF` on paper and `#2C3036` on
+ink. There is ONE chromatic hue: the datum `#0E5E63`, which becomes the signal
+`#17A0A8` on ink. Caution `#E2A23A` and negative `#9A4A3A` are status colours —
+they signal state and never decorate.
+
+**There is no green.** A green for "added lines" would be a second brand colour
+arriving through the back door of a diff. An addition is a datum: the thing
+that is now there. The on-ink negative is the brand's own brick lifted 30%
+toward paper, because `#9A4A3A` is 2.2:1 on ink — fine as a rule, unreadable as
+a word — and deriving it means changing `--negative` moves both.
+
+**The rules, enforced rather than described.** Zero `box-shadow`: depth is a 1px
+hairline. Every radius is 3px, with a pill and the 6px icon tile as the only
+exceptions. Inter for voice, IBM Plex Mono for the record — labels, metadata,
+paths, commands, diffs and every figure, with tabular numerals. Mono labels are
+uppercase, 11px, tracked `+.04em`. A 28px graticule sits behind everything.
+`tests/unit/shared/design-tokens-parity.test.ts` pins the values and the rules;
+`tests/unit/brand-checklist.test.ts` re-checks the BUILT stylesheet, because a
+shadow can arrive through a component or a dependency without ever touching a
+token.
+
+**Two generators, one source.** `scripts/generate-tokens-css.ts` emits
+`tokens.css` for the desktop and the web client (the same bundle).
+`scripts/generate-terminal-colors.ts` prints the TUI's table — exact 24-bit RGB
+plus the ANSI-256 index a terminal without truecolor is given instead. It
+prints rather than writes: `bin/ui/themes.ts` already derives from the token
+module, and a second checked-in copy would be a third place to drift. What it
+gives you is a reviewable form — swatches in a terminal, not a diff of hexes.
+
+**The picker is gone.** Light, dark, auto, on both surfaces. `[data-accent]`
+survives with one value as the undocumented `[ui] accent` override, because a
+seam that says "this was a choice, and the choice is one" is more honest than
+deleting it. Every retired accent id still resolves: `gear-violet-dark` in
+`~/.gear/theme.json` opens the dark mode rather than erroring, and so does
+`flow`, the dark palette that used to be the default.
+
+**The mark, pending D2.** The founder has not supplied a Gear mark or ruled on
+"Gear" versus "Savoir Gear". Until then the mark is the word, set in the Savoir
+lockup construction: bold tight-tracked sans terminated by the block cursor, a
+true rectangle sized in `em` so the proportion cannot drift. The nine-tooth cog
+survives only as the working indicator — a spinning gear is a state, and the
+brand does not spin.
+
+---
+
+## 9. M2–M4 (Phase 3 · P3.4)
+
+Everything added here obeys one rule from §3: the agent stops for you INSIDE the
+stream, never over it. A modal takes the transcript away at the moment you most
+need to read it, and the browser smoke asserts that no `[role=dialog]` is on
+screen while a permission card is up.
+
+**The round-trips, all of them.** The permission card was already inline. The
+`ask_user` card and the read-back card are new to this surface, and until Phase
+2 they could not exist — the host wired one of five, so `ask_user` answered "No
+interactive user is available" for every desktop run. Both say what happens if
+nobody answers, because the host's unattended policy is stated in
+`docs/protocol.md` and a card that hides it is inviting a surprise.
+
+**Held steps, with exact-grant semantics.** The panel is the desktop half of
+Auto's contract: an outward step it declined to take unattended is recorded, and
+approving one runs EXACTLY that call — the host holds the arguments and the
+client sends an id, so nothing broader is granted and raw arguments never cross
+the wire. Keys are the terminal's: `Enter` runs the selection, a digit picks and
+runs, `s` leaves one, `Esc` closes and leaves the rest in the ledger. The state
+machine is ported from `bin/ui/held.ts` and tested in the same shape, so the two
+surfaces cannot drift on what a key means.
+
+**Auto chips carry their authority.** Each chip names the tool, the containment
+kind, and the classifier's risk and tier. "Approved automatically" with nothing
+after it is not a statement anyone can audit.
+
+**The fleet reads events, not prose.** One row per sub-agent in DISPATCH order —
+arrival order is whichever worker happened to speak first, which makes the panel
+reorder itself while you read it. The reducer consumes `tool_progress.child`,
+the typed child event P2.6 added, so a worker's retries, checks and handoffs are
+events here rather than a parsed heartbeat. A silent child event keeps the row's
+last real line rather than overwriting it with a shrug.
+
+**The inspector answers the actual question.** `get_turn_context` is a new host
+command backed by `Engine.getTurnContext()`: the EXACT system prompt that was
+sent, with its pieces named — doctrine, environment, project memory, system
+memory, notebook, skills — and whether a repo map was admitted. Characters, not
+tokens, and it says so: the provider reports tokens exactly in `usage`, and a
+tokenizer here would be a second estimate of a known number. `null` before the
+session has run a turn, rendered as "no turn yet" rather than as an empty
+assembly pretending to be real.
+
+**Export is signed, and is the same artifact.** `export_trace` calls
+`session-export.ts` — the exporter `gear export --sign` uses — so a trace
+exported from the desktop verifies with the same key as one exported from the
+terminal. What it replaces was a client-side JSON dump of the rail: a picture of
+the screen, verifiable by nobody who was not watching it.
+
+**Settings own the keys.** The provider list shows auth status and where each
+credential came from, and a key can be pasted and is written to
+`~/.gear/secrets.json` at 0600 and applied live. The OAuth half is honest rather
+than complete: the flow is `gear login`, which opens a browser and catches a
+loopback redirect, and the panel prints that exact command for the providers
+that need it instead of offering a button that does nothing. Moving it in-app is
+one host command away and is logged in `docs/program/backlog.md`.
+
+**First run.** Three steps, no tour: connect a model, confirm the folder, give
+it a task — with "replay a recorded turn" for someone who has not connected
+anything yet. Copy in the Savoir voice: declarative, specific, and it names what
+Gear declines (no cloud, no account) because a boundary reads as confidence.
+
+---
+
+## 10. The review workspace (Phase 3 · P3.5)
+
+The transcript shows each edit's diff as it happens, which answers "what did it
+just do". The Review tab answers the different question you have at the end:
+**what is different now, and do I want all of it.**
+
+It reports the TREE's answer, not the run's — everything that differs from
+HEAD, including anything you changed yourself. Attributing a change to a turn is
+the transcript's job; conflating the two would let a file you edited disappear
+under a button labelled "revert the agent's work".
+
+**Every git operation lives in `git-undo.ts`**, next to the auto-commit safety
+rules and for the same reason: git plumbing scattered across a UI layer is how a
+"revert this file" button ends up running `checkout .`. The component names
+paths; that file decides what may happen to them. Three rules hold:
+
+- A path with a leading `/`, a `..` segment or a leading `-` is refused before
+  git sees it. From a UI that is either a bug or an attack.
+- A tracked path is restored with `git checkout HEAD -- <path>`, one path at a
+  time. Never `checkout .`, never a caller-composed pathspec.
+- An untracked path is **deleted**, because that is what revert means for a file
+  git has never seen. The panel says so before you confirm, rather than letting
+  you find out.
+
+Reverting is deliberately two clicks: name the file, then confirm what will
+happen to it. A one-click revert of an agent's work is not a review tool.
+
+**Run checks** invokes the same `CommandVerifier` the agent's own verification
+uses, so the button and the run agree on what "the checks" are. The report is
+shown verbatim: a check's own words are the evidence, and a summary of them is
+the agent's claim about the evidence. `ran: false` means the project has no
+detectable checks, and says that rather than painting a green tick.
+
+**Open in editor** is a host command, not a webview capability: `$GEAR_EDITOR` →
+`$VISUAL` → `$EDITOR` → the platform opener. A browser cannot spawn an editor,
+and a Tauri shell plugin would be a second implementation of the same rule about
+which paths may be touched.
+
+One bug worth recording, because the shape recurs. `git status --porcelain`
+output is column-addressed (`slice(0, 2)` for the code, `slice(3)` for the
+path), and the shared `git()` helper trims its whole output — so a first line of
+`" M edited.ts"` lost its leading space and every field on that one file was off
+by one, silently. `parsePorcelain` matches the status code instead of counting
+columns.

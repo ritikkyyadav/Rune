@@ -73,21 +73,19 @@ export interface Theme {
   useNativeColors?: boolean;
 }
 
-export type GearAccent = "cobalt" | "orange" | "violet" | "emerald" | "mono";
+// One accent (P3.3). The union keeps a single member rather than disappearing,
+// because `[ui] accent` survives as an undocumented override and a type that
+// can only be "datum" states the decision instead of hiding that there was one.
+export type GearAccent = "datum";
 
-export const GEAR_ACCENTS: readonly GearAccent[] = [
-  "cobalt",
-  "orange",
-  "violet",
-  "emerald",
-  "mono",
-];
+export const GEAR_ACCENTS: readonly GearAccent[] = ["datum"];
 
-// Gear opens on Flow — the dark graphite surface of the approved terminal
-// recording. The five gear accents (light and dark) and Follow-terminal stay
-// first-class runtime choices for people who want a light surface or an
-// untouched custom terminal profile.
-export const DEFAULT_THEME = "flow";
+// Gear opens on ink. The picker is `light | dark | auto` and nothing else: the
+// five cosmetic accents are gone from both surfaces, because one accent is a
+// brand rule and a coding agent offering a colour gallery is telling you what
+// it thinks it is. Every pigment below the Savoir pair comes from
+// packages/shared/src/design-tokens.ts.
+export const DEFAULT_THEME = "gear-dark";
 
 // ─── ANSI-256 nearest-match (xterm cube + grayscale ramp) ───
 
@@ -410,19 +408,18 @@ const GEAR_ACCENT_LABEL: Record<GearAccent, string> = GEAR_ACCENT_LABELS;
 /** Stable persisted id for one customizer base/accent combination. The original
  *  `gear` and `gear-dark` ids remain the cobalt pair so existing installs migrate
  *  without a visible surprise. */
-export function gearThemeName(appearance: "light" | "dark", accent: GearAccent): string {
-  if (accent === "cobalt") return appearance === "light" ? "gear" : "gear-dark";
-  return appearance === "light" ? `gear-${accent}` : `gear-${accent}-dark`;
+export function gearThemeName(appearance: "light" | "dark", _accent: GearAccent = "datum"): string {
+  return appearance === "light" ? "gear" : "gear-dark";
 }
 
-function gearTheme(appearance: "light" | "dark", accentName: GearAccent): Theme {
+function gearTheme(appearance: "light" | "dark", accentName: GearAccent = "datum"): Theme {
   // Exact customizer pigments, derived from the shared token source. The HTML
   // is the product contract, including its distinction between semantic text
   // and the cosmetic accent; translucent contract values arrive here already
   // composited to solid terminal colors.
   const palette = gearTerminalPalette(appearance);
   const brand = gearAccentHex(appearance, accentName);
-  const label = `${GEAR_ACCENT_LABEL[accentName]} ${appearance === "light" ? "Light" : "Dark"}`;
+  const label = appearance === "light" ? "Light" : "Dark";
   return theme(
     gearThemeName(appearance, accentName),
     label,
@@ -450,43 +447,14 @@ function gearTheme(appearance: "light" | "dark", accentName: GearAccent): Theme 
 // ─── The bundled themes (display order) ───
 
 export const THEMES: Theme[] = [
-  // flow — the default. A coding agent's terminal, recorded from the real
-  // program under a pty: one dark ground, a cool-gray text ramp, and exactly
-  // four signals (teal identity, green added, red removed, amber caution).
-  // Nothing here paints a card: every surface resolves to the ground, because
-  // the design owns the last four lines, never the screen.
-  theme(
-    "flow",
-    "Flow (default)",
-    "dark",
-    {
-      bg: "#14171d",
-      text: "#d5dae1", // prose, tool names, the thing you read
-      muted: "#7b7f86", // arguments, metrics, context lines
-      faint: "#565b61", // rails, gutters, elisions
-      accent: "#cf8579", // removed lines, failures, errors
-      info: "#64b7bc", // identity, branches, paths, option keys
-      warn: "#d3ab68", // approval prompts, caution
-      ok: "#8fbc7f", // added lines, passes
-      line: "#6b6f76", // header rules
-    },
-    {
-      brand: "#64b7bc",
-      surfaces: {
-        card: "#14171d",
-        bar: "#14171d",
-        barActive: "#1e242b", // the one lift: a selected row in a picker
-        code: "#14171d",
-        diff: "#14171d",
-        diffHeader: "#14171d",
-        popover: "#14171d",
-        hairline: "#2a2f36",
-      },
-    },
-  ),
-
-  ...GEAR_ACCENTS.map((accentName) => gearTheme("light", accentName)),
-  ...GEAR_ACCENTS.map((accentName) => gearTheme("dark", accentName)),
+  // The two Savoir modes are the product. `flow` — the recorded dark palette
+  // that used to sit here — is gone as a theme and kept as an alias
+  // (`findTheme("flow")` resolves to the dark mode), because its pigments were
+  // a fourth identity in a repository that now has one. The community palettes
+  // below stay reachable by name for anyone who wants them; they are not in
+  // the picker.
+  gearTheme("dark"),
+  gearTheme("light"),
 
   // studio — the default: a dark instrument panel (Codex-style). Near-black ground
   // with a faint green cast, grey mono text, one teal-green signal for live state
@@ -714,14 +682,17 @@ export const THEMES: Theme[] = [
 export function findTheme(name: string): Theme | undefined {
   if (name === "auto") return AUTO_THEME;
   const normalized = name.trim().toLowerCase();
-  const accentAlias = /^(cobalt|orange|violet|emerald|mono)(?:-(light|dark))?$/.exec(normalized);
+  // Every retired accent name still resolves, to the ground it was saved on.
+  // Someone with `gear-violet-dark` in ~/.gear/theme.json gets the dark Savoir
+  // mode, not an "unknown theme" error and a surprise repaint.
+  const accentAlias =
+    /^(?:gear-)?(cobalt|orange|violet|emerald|mono|datum)(?:-(light|dark))?$/.exec(normalized);
   const canonical = accentAlias
     ? gearThemeName(
         (accentAlias[2] as "light" | "dark" | undefined) ??
           // Pre-rename `mono` was Monochrome Black: a saved bare "mono" keeps
-          // its dark surface. The other bare accents default to light.
+          // its dark surface. The other bare accents defaulted to light.
           (accentAlias[1] === "mono" ? "dark" : "light"),
-        accentAlias[1] as GearAccent,
       )
     : normalized === "light"
       ? "gear"
@@ -729,20 +700,17 @@ export function findTheme(name: string): Theme | undefined {
         ? "gear-dark"
         : normalized === "system"
           ? "auto"
-          : normalized;
+          : // `flow` was the dark default before the Savoir modes replaced it.
+            normalized === "flow"
+            ? "gear-dark"
+            : normalized;
   if (canonical === "auto") return AUTO_THEME;
   return THEMES.find((t) => t.name === canonical);
 }
 
 // ─── Production theme set ───
-// The production picker mirrors the supplied customizer: five cosmetic accents
-// across matching light and dark bases, followed by a host-terminal escape hatch.
-export const PRODUCTION_THEME_NAMES: readonly string[] = [
-  "flow",
-  ...GEAR_ACCENTS.map((accentName) => gearThemeName("light", accentName)),
-  ...GEAR_ACCENTS.map((accentName) => gearThemeName("dark", accentName)),
-  "auto",
-];
+// Light, dark, and the host escape hatch. Three modes, not thirteen.
+export const PRODUCTION_THEME_NAMES: readonly string[] = ["gear-dark", "gear", "auto"];
 
 /** Whether `name` is one of the production theme modes. */
 export function isProductionTheme(name: string): boolean {

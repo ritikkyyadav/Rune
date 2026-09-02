@@ -64,6 +64,7 @@ export type {
   SessionSummary,
   SubscribeResult,
   TranscriptMessage,
+  TurnContext,
 } from "./commands";
 export { HOST_COMMANDS, HOST_STREAMS, SETTINGS_COMMANDS } from "./commands";
 

@@ -1,0 +1,6 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicedoc/schemas/main/tauri/2/tauri.conf.json",
+  "bundle": {
+    "createUpdaterArtifacts": true
+  }
+}

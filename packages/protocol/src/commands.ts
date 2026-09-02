@@ -34,6 +34,21 @@ export interface EngineStatus {
   autoMode?: unknown;
 }
 
+/** One model call's prompt assembly, as the desktop inspector shows it. */
+export interface TurnContext {
+  sessionId: string;
+  capturedAt: string;
+  provider: string;
+  model: string;
+  /** The exact system prompt that was sent. Not a reconstruction. */
+  systemPrompt: string;
+  /** The named pieces it was built from. */
+  parts: Array<{ name: string; chars: number }>;
+  repoMap: { included: boolean; chars: number };
+  /** Characters, not tokens — the provider reports tokens exactly in `usage`. */
+  systemPromptChars: number;
+}
+
 export interface SessionSummary {
   id: string;
   title: string;
@@ -137,6 +152,78 @@ export interface HostCommands {
     result: { dismissed: number };
   };
 
+  // ── evidence (P3.4) ──
+  /**
+   * The prompt assembly for a session's most recent turn.
+   *
+   * The trace rail could always show a model call's timing and tokens. What no
+   * surface could answer is "which prompts produced this" — the assembly
+   * happens inside a local in `Engine.chat()` and nothing outside ever saw it.
+   * `null` when the session has not run a turn: an empty assembly rendered as
+   * if it were real is worse than saying there is nothing.
+   */
+  get_turn_context: { args: { sessionId?: string }; result: TurnContext | null };
+  /**
+   * The session's transcript, tool calls, diffs and audit chain, optionally
+   * Ed25519-signed. The same `session-export.ts` that `gear export` uses, so a
+   * trace exported from the desktop and one exported from the terminal are the
+   * same artifact and verify with the same key.
+   */
+  export_trace: {
+    args: { sessionId?: string; format?: "md" | "json"; sign?: boolean };
+    result: {
+      content: string;
+      format: "md" | "json";
+      signature?: string;
+      publicKey?: string;
+      chainOk: boolean;
+    };
+  };
+
+  // ── the review workspace (P3.5) ──
+  /** What differs from HEAD in the workspace, per file and as one patch. */
+  review_diff: {
+    args: Record<string, never>;
+    result: {
+      repo: boolean;
+      branch?: string;
+      files: Array<{
+        path: string;
+        status: string;
+        added: number;
+        removed: number;
+        untracked: boolean;
+      }>;
+      patch: string;
+      reason?: string;
+    };
+  };
+  /**
+   * Revert exactly these paths. A tracked path is restored from HEAD; an
+   * untracked one is deleted, which is what "revert" means for a file git has
+   * never seen. Every path is checked against the workspace root first.
+   */
+  revert_paths: {
+    args: { paths: string[] };
+    result: { ok: boolean; reverted?: string[]; reason?: string };
+  };
+  /** Run the project's own checks and report what ran, verbatim. */
+  run_checks: {
+    args: { fast?: boolean };
+    result: { ran: boolean; passed: boolean; report: string };
+  };
+  /**
+   * Open a workspace path in the person's editor.
+   *
+   * The host spawns it, not the webview: a browser cannot, and a Tauri shell
+   * plugin would be a second implementation of the same rule about which
+   * paths may be touched.
+   */
+  open_path: {
+    args: { path: string };
+    result: { opened: boolean; with?: string; reason?: string };
+  };
+
   // ── model and providers ──
   switch_model: { args: { model: string; provider?: string }; result: EngineStatus };
   list_providers: {
@@ -199,6 +286,12 @@ export const HOST_COMMANDS = [
   "list_held_steps",
   "run_held_step",
   "dismiss_held_steps",
+  "get_turn_context",
+  "export_trace",
+  "review_diff",
+  "revert_paths",
+  "run_checks",
+  "open_path",
   "switch_model",
   "list_providers",
   "save_settings",
