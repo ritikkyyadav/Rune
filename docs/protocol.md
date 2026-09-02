@@ -215,10 +215,10 @@ The token is embedded in the first page load — `window.__GEAR_SERVE__` — rat
 than typed into a form. Asking a person to paste a 43-character secret into a
 page the server just minted it for is theatre. The rule that keeps that honest:
 
-| Request comes from | Gets the page with the token |
-| ------------------ | ---------------------------- |
+| Request comes from | Gets the page with the token                              |
+| ------------------ | --------------------------------------------------------- |
 | loopback           | yes — the same user can already read `~/.gear/serve.json` |
-| anywhere else      | only if the request already carries the token |
+| anywhere else      | only if the request already carries the token             |
 
 So `gear web --host` prints a URL with `?token=` in it, and a stranger on the
 LAN who guesses the port gets a 401 that says why.
