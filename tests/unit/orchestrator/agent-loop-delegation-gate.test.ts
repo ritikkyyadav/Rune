@@ -151,3 +151,106 @@ describe("delegation-evidence gate", () => {
     expect(gateFired(events)).toBe(false);
   });
 });
+
+describe("delegation-evidence gate — per scope, and search-shaped reads", () => {
+  /** Two workers, two scopes; then a scripted list of (tool, path) reads. */
+  function fleet(reads: Array<[string, string]>) {
+    let step = 0;
+    return {
+      inferStream: mock(async function* () {
+        step++;
+        if (step === 1) {
+          for (const [id, scope] of [
+            ["w1", "backend/"],
+            ["w2", "frontend/"],
+          ] as const) {
+            yield ev("tool_use_start", { toolCallId: id, toolName: "worker" });
+            yield ev("tool_use_stop", {
+              toolCallId: id,
+              toolInput: { prompt: `Build ${scope}`, files: [scope] },
+            });
+          }
+          yield ev("message_stop", { stopReason: "tool_use" });
+          return;
+        }
+        const read = reads[step - 2];
+        if (read) {
+          const [tool, path] = read;
+          yield ev("tool_use_start", { toolCallId: `r${step}`, toolName: tool });
+          yield ev("tool_use_stop", {
+            toolCallId: `r${step}`,
+            toolInput: tool === "grep" ? { pattern: "export", path } : { path },
+          });
+          yield ev("message_stop", { stopReason: "tool_use" });
+          return;
+        }
+        yield ev("content_delta", { delta: { type: "text_delta", text: "All built." } });
+        yield ev("message_stop", { stopReason: "end_turn" });
+      }),
+      infer: mock(async () => ({
+        content: [{ type: "text", text: "s" }],
+        model: "t",
+        stopReason: "end_turn",
+        usage: { inputTokens: 1, outputTokens: 1 },
+      })),
+      registerProvider: mock(() => {}),
+      getProvider: mock(() => null),
+      getTotalCost: mock(() => 0),
+    } as any;
+  }
+
+  const fleetRegistry = () => {
+    const base = registry();
+    base.get = mock((name: string) => ({
+      schema: {
+        name,
+        version: "0.1.0",
+        description: "",
+        inputSchema: { type: "object", properties: {} },
+        category: name === "worker" ? "execute" : "read",
+        permissionLevel: "auto",
+      },
+    }));
+    return base;
+  };
+
+  const run = (gw: any) =>
+    collect(
+      new AgentLoop(
+        {
+          model: "m",
+          provider: "anthropic",
+          maxTokens: 100,
+          maxTurns: 12,
+          systemPrompt: "s",
+        } as any,
+        gw,
+        fleetRegistry(),
+      ).run("build it", "s1", "/tmp"),
+    );
+
+  test("one file read in one of two scopes no longer satisfies the fleet", async () => {
+    const events = await run(fleet([["read_file", "backend/app/main.py"]]));
+    expect(gateFired(events)).toBe(true);
+  });
+
+  test("a read in each scope does", async () => {
+    const events = await run(
+      fleet([
+        ["read_file", "backend/app/main.py"],
+        ["read_file", "frontend/src/App.tsx"],
+      ]),
+    );
+    expect(gateFired(events)).toBe(false);
+  });
+
+  test("a grep scoped to a worker's directory counts as reading it", async () => {
+    const events = await run(
+      fleet([
+        ["read_file", "backend/app/main.py"],
+        ["grep", "frontend/"],
+      ]),
+    );
+    expect(gateFired(events)).toBe(false);
+  });
+});

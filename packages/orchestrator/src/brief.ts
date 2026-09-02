@@ -32,6 +32,24 @@
 
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "@gear/tool-registry";
 
+/**
+ * Commands whose result is evidence, rather than merely another action:
+ * tests, typechecks, lints, builds. The check log records only these, and a
+ * step completed right after one of these FAILED is refused (task-state.ts).
+ * Lives here, beside the ledger that consumes it, rather than in the UI layer
+ * where it was born — the loop must not import from bin/ui.
+ */
+export function isVerificationCommand(command: string): boolean {
+  const cmd = command.toLowerCase();
+  return (
+    /(^|[\s;&|])(test|tests|pytest|vitest|jest|mocha)([\s;&|]|$)/.test(cmd) ||
+    /(^|[\s;&|])(lint|eslint|ruff|mypy|typecheck|tsc|check|build)([\s;&|]|$)/.test(cmd) ||
+    /\b(cargo\s+(test|check|clippy)|go\s+test|swift\s+test|xcodebuild|gradle\w*\s+test|mvn\w*\s+test)\b/.test(
+      cmd,
+    )
+  );
+}
+
 /** How much an assertion is worth. Ordered weakest → strongest. */
 export type ClaimRung = "suspected" | "observed" | "reproduced" | "verified";
 

@@ -81,16 +81,21 @@ describe("Engine task-spine resume (end-to-end, fake provider)", () => {
 
   test("todos recorded in run 1 reach the model of run 2 across an engine restart", async () => {
     const requests: Recorded[] = [];
-    // Script: run 1 = todo_write then a wrap-up sentence; run 2 = text only.
+    // Script: run 1 = todo_write, then a wrap-up sentence — which the
+    // open-steps gate refuses once (the plan is still open), then a second
+    // wrap-up that is allowed to end the run with a resume note; run 2 = text
+    // only. No step is marked completed: a completion needs evidence the
+    // harness saw, and this scripted model never does any work.
     const script = [
       sseToolCall("todo_write", {
         items: [
-          { content: "scaffold the parser", status: "completed" },
-          { content: "handle comments", status: "in_progress" },
+          { content: "scaffold the parser", status: "in_progress" },
+          { content: "handle comments", status: "pending" },
           { content: "write tests", status: "pending" },
         ],
       }),
       sseText("paused here for today"),
+      sseText("stopping for today, the plan stands"),
       sseText("resuming where we left off"),
     ];
     server = Bun.serve({
@@ -112,6 +117,9 @@ describe("Engine task-spine resume (end-to-end, fake provider)", () => {
       // drain
     }
     engine1.close();
+    const run1Requests = requests.length;
+    // todo_write, the refused wrap-up, the wrap-up that ended the run.
+    expect(run1Requests).toBe(3);
 
     // ── Run 2: a BRAND NEW engine (fresh process, same DB) resumes. ──
     const engine2 = makeEngine(dir, server.port);
@@ -120,14 +128,16 @@ describe("Engine task-spine resume (end-to-end, fake provider)", () => {
     }
     engine2.close();
 
-    // The resumed run's first request carried the restored spine.
-    const resumed = requests[2];
+    // The resumed run's first request carried the restored spine — plan,
+    // goal, and the resume note the open-steps gate left behind.
+    const resumed = requests[run1Requests];
     expect(resumed).toBeDefined();
     const text = resumed.messages.map((m) => String(m.content ?? "")).join("\n");
     expect(text).toContain("[Task state — maintained by the harness");
-    expect(text).toContain("[x] scaffold the parser");
-    expect(text).toContain("[>] handle comments");
+    expect(text).toContain("[>] scaffold the parser");
+    expect(text).toContain("[ ] handle comments");
     expect(text).toContain("[ ] write tests");
     expect(text).toContain("Goal: build me a config parser");
+    expect(text).toContain("Resume note (open_steps)");
   });
 });

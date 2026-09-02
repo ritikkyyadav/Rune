@@ -11,21 +11,96 @@
 // `task_state` snapshot events in the ordinary session log (latest wins).
 // Everything here is deterministic and zero-token: no model calls, ever.
 //
-// Two later hardenings, each pinned to an observed failure:
-//  - Task boundaries ARCHIVE, never erase (see beginTurn) — a casual
-//    follow-up used to wipe a 4-hour build's ledger to empties.
+// Three hardenings, each pinned to an observed failure:
+//  - Task boundaries FOLLOW THE PLAN, never the message (see beginTurn). A
+//    vocabulary of push-words used to decide whether a follow-up was a new
+//    goal, and vocabularies rot: "well i am unable to see the preview could
+//    you show me" replaced a six-hour build's spec as the goal and emptied
+//    its plan. Now a substantive follow-up is a CANDIDATE goal that only
+//    becomes the goal when the model writes a fresh plan against it.
+//  - A step carries EVIDENCE the harness measured (see noteEffect/setTodos).
+//    "completed" used to be a free-text assertion — the model could mark
+//    "run the tests" done with no command run. A completion with nothing
+//    behind it is refused once; re-submitting attests it, and the attestation
+//    is shown to the user as unproven rather than as a green tick.
 //  - The full state also renders to an on-disk mission file the engine
 //    maintains (renderMissionFile), because a budgeted excerpt of a 10k-word
-//    spec is not a spec.
+//    spec is not a spec — and the file now carries the run's own log, so the
+//    dossier doubles as the audit trail of what moved each step.
 
 import type { SessionEvent } from "@gear/shared";
 import { countTokens } from "./tokenizer";
 
 export type TodoStatus = "pending" | "in_progress" | "completed";
 
+/**
+ * What the RUNTIME observed while a step was in progress. Every field is a
+ * count of something a tool actually did — never model prose — which is what
+ * lets a "completed" mark mean something. Zero across the board is the
+ * signature of a step that was declared rather than done.
+ */
+export interface StepEvidence {
+  /** Files/listings/searches read. */
+  reads: number;
+  /** Files written or edited (worker output counts). */
+  writes: number;
+  /** Non-trivial commands executed, pass or fail. */
+  runs: number;
+  /** Verification-shaped commands (tests, typecheck, lint, build) that passed. */
+  checksPassed: number;
+  /** …and that failed. */
+  checksFailed: number;
+  /** ask_user rounds answered. */
+  answers: number;
+  /** Sub-agents dispatched. */
+  delegations: number;
+  /** Times the agent actually LOOKED at something (browser drive, image seen). */
+  looks: number;
+  /**
+   * Writes since the last check. A failed check followed by more edits is a
+   * fix in progress, not a failed step — the step check runs again instead.
+   */
+  writesSinceCheck: number;
+  /** The most recent verification-shaped command during this step. */
+  lastCheck?: { passed: boolean; command?: string; summary?: string };
+  startedAt?: string;
+  completedAt?: string;
+}
+
+export type EffectKind =
+  "read" | "write" | "run" | "check_pass" | "check_fail" | "answer" | "delegate" | "look";
+
 export interface TodoItem {
   content: string;
   status: TodoStatus;
+  /** Harness-measured evidence; absent on items that never went in progress. */
+  evidence?: StepEvidence;
+  /**
+   * Completed without proof: either nothing ran while the step was open
+   * ("no_evidence"), or the last check during it FAILED ("check_failed"). Set
+   * only when the model re-submitted a completion the harness had refused
+   * once — the mark is what the user sees instead of a clean tick.
+   */
+  unproven?: "no_evidence" | "check_failed";
+}
+
+export type StepLogKind =
+  | "plan"
+  | "replan"
+  | "done"
+  | "unproven"
+  | "dropped"
+  | "check"
+  | "boundary"
+  | "steer"
+  | "gate"
+  | "handoff";
+
+/** One line of the run's own audit trail. Rendered into the mission file. */
+export interface StepLogEntry {
+  at: string;
+  kind: StepLogKind;
+  text: string;
 }
 
 export type HandoffReason =
@@ -34,17 +109,30 @@ export type HandoffReason =
   | "aborted"
   | "error"
   /** The safety broker halted the run; the agent reported and stopped. */
-  | "halted";
+  | "halted"
+  /** The agent ended its turn with steps still open, after one refusal. */
+  | "open_steps"
+  /** The run stopped because nothing had changed for many turns. */
+  | "stalled"
+  /** The provider stopped answering after the retry budget; the work stands where the ledger says. */
+  | "provider_lost";
 
 export interface TaskState {
   version: 1;
   /** Verbatim user ask that started the CURRENT task — never paraphrased. */
   goal: string;
   /**
-   * Latest pure-steering message ("proceed", "fix it properly") — pushes that
-   * carry no content of their own and therefore must NOT replace the goal.
+   * Latest user message that did not start a task of its own — a push
+   * ("proceed"), an inspection ("show me"), or a substantive follow-up
+   * waiting for a plan. Rendered so the model always sees the latest ask.
    */
   directive?: string;
+  /**
+   * A substantive follow-up that arrived when no work was open. It becomes
+   * the goal the moment the model writes a fresh plan against it, and not
+   * before — see beginTurn for why the message alone cannot decide.
+   */
+  pendingGoal?: string;
   /**
    * Goals of earlier tasks in this session, oldest first (capped). Restores
    * lineage after a follow-up starts a new task: "make it work properly" is
@@ -68,6 +156,8 @@ export interface TaskState {
   };
   /** Set when a run ended without finishing; cleared once resumed work folds it in. */
   handoff?: { reason: HandoffReason; state: string; at: string };
+  /** The run's own audit trail, newest last, capped. */
+  log?: StepLogEntry[];
   updatedAt: string;
 }
 
@@ -76,6 +166,7 @@ const DECISIONS_CAP = 10;
 const TODOS_RENDER_CAP = 20;
 const REPORT_CAP = 500;
 const PRIOR_GOALS_CAP = 3;
+const LOG_CAP = 80;
 // The goal is the SPEC. It used to be capped at 2,000 chars, which turned a
 // 10k-word product brief into a stub the moment it left the transcript — the
 // durable record of a 4-hour build held 2,000 chars of requirements. The cap
@@ -200,6 +291,112 @@ function emptyState(): TaskState {
   };
 }
 
+export function emptyEvidence(): StepEvidence {
+  return {
+    reads: 0,
+    writes: 0,
+    runs: 0,
+    checksPassed: 0,
+    checksFailed: 0,
+    answers: 0,
+    delegations: 0,
+    looks: 0,
+    writesSinceCheck: 0,
+  };
+}
+
+/** Total observed effects — the "did anything happen" number. */
+export function evidenceWeight(ev: StepEvidence | undefined): number {
+  if (!ev) return 0;
+  return (
+    ev.reads +
+    ev.writes +
+    ev.runs +
+    ev.checksPassed +
+    ev.checksFailed +
+    ev.answers +
+    ev.delegations +
+    ev.looks
+  );
+}
+
+function mergeEvidence(a: StepEvidence | undefined, b: StepEvidence | undefined): StepEvidence {
+  const out = emptyEvidence();
+  for (const src of [a, b]) {
+    if (!src) continue;
+    out.reads += src.reads;
+    out.writes += src.writes;
+    out.runs += src.runs;
+    out.checksPassed += src.checksPassed;
+    out.checksFailed += src.checksFailed;
+    out.answers += src.answers;
+    out.delegations += src.delegations;
+    out.looks += src.looks;
+    out.writesSinceCheck += src.writesSinceCheck ?? 0;
+  }
+  // The later check wins: `b` is the more recent accumulator by convention.
+  out.lastCheck = b?.lastCheck ?? a?.lastCheck;
+  out.startedAt = a?.startedAt ?? b?.startedAt;
+  out.completedAt = b?.completedAt ?? a?.completedAt;
+  return out;
+}
+
+/**
+ * One short receipt for a step, from its evidence: `2 files · check ok`,
+ * `3 reads`, `unproven`. Shared by the block, the mission file, and the UI so
+ * a step reads the same everywhere.
+ */
+export function stepReceipt(item: TodoItem): string {
+  if (item.unproven === "check_failed") return "unproven — last check failed";
+  if (item.unproven === "no_evidence") return "unproven — nothing ran";
+  const ev = item.evidence;
+  if (!ev || evidenceWeight(ev) === 0) return "";
+  const parts: string[] = [];
+  if (ev.writes > 0) parts.push(`${ev.writes} ${ev.writes === 1 ? "write" : "writes"}`);
+  if (ev.runs > 0) parts.push(`${ev.runs} ${ev.runs === 1 ? "run" : "runs"}`);
+  if (ev.checksPassed > 0 || ev.checksFailed > 0) {
+    parts.push(
+      ev.lastCheck
+        ? ev.lastCheck.passed
+          ? "check ok"
+          : "check failed"
+        : `${ev.checksPassed}/${ev.checksPassed + ev.checksFailed} checks`,
+    );
+  }
+  if (ev.delegations > 0) parts.push(`${ev.delegations} delegated`);
+  if (ev.looks > 0) parts.push("looked");
+  if (ev.answers > 0) parts.push("asked");
+  if (parts.length === 0 && ev.reads > 0)
+    parts.push(`${ev.reads} ${ev.reads === 1 ? "read" : "reads"}`);
+  return parts.join(" · ");
+}
+
+/** Content-keyed identity for matching a resubmitted list against the last one. */
+function todoKey(content: string): string {
+  return content
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export type SetTodosVerdict =
+  | {
+      accepted: true;
+      /** Advisory lines for the tool result (demoted in_progress, dropped steps, roll). */
+      notes: string[];
+      /** Steps that just became completed, in list order. */
+      completed: TodoItem[];
+      /** True when this call rolled the goal to a pending follow-up. */
+      rolledGoal: boolean;
+    }
+  | {
+      accepted: false;
+      /** Which completions were refused and why — the tool result verbatim. */
+      refused: Array<{ index: number; content: string; reason: string }>;
+      notes: string[];
+    };
+
 export class TaskStateStore {
   private state: TaskState = emptyState();
   /**
@@ -209,6 +406,14 @@ export class TaskStateStore {
    * its engine sets it again.
    */
   private missionPath: string | null = null;
+  /**
+   * Effects observed since the last accepted todo_write, attributed to
+   * whichever steps complete on the next call. In-memory on purpose: after a
+   * restart the worst case is one extra refusal, never a wrong acceptance.
+   */
+  private pending: StepEvidence = emptyEvidence();
+  /** Completion keys refused once; the second submission is accepted as unproven. */
+  private refusedOnce = new Set<string>();
 
   setMissionPath(path: string | null): void {
     this.missionPath = path;
@@ -217,48 +422,305 @@ export class TaskStateStore {
   // ─── Task boundary ───
 
   /**
-   * Deterministic task-boundary rule, applied to every incoming user message:
-   * a message that arrives with no open work (no todos, or all completed) and
-   * no pending handoff starts a NEW task. Anything else is mid-task steering:
-   * the goal and plan stand, per the mid-task-steering doctrine.
+   * Deterministic task-boundary rule, applied to every incoming user message.
    *
-   * Three refinements keep the state meaningful across a session:
-   * - A pure-steering push ("proceed", "fix it properly") or a short
-   *   INSPECTION of existing work ("show me the preview", "is it done?")
-   *   NEVER becomes the goal — it lands in `directive` and the previous goal
-   *   stands, because such a message is only intelligible next to it.
-   * - When a substantive message does start a new task, the outgoing goal is
-   *   retained in `priorGoals` so follow-up tasks ("make it actually work")
-   *   keep their lineage to the original ask.
-   * - The boundary ARCHIVES, never erases. The session ledger — files
-   *   written/read, decisions, clarifications, the last verification result —
-   *   records what is true of the WORKSPACE, and a new goal does not
-   *   un-happen any of it. Only the todo list belongs to the mission and
-   *   resets. Observed rot this replaces: a casual follow-up wiped a 4-hour
-   *   build's spine to empties, leaving no plan, no ledger, and a goal of
-   *   "well then show me the preview if its done !!".
+   * The FIRST message is the goal. Every later message is one of:
+   * - mid-task steering (open todos, or a pending handoff): the goal and plan
+   *   stand, per the mid-task-steering doctrine; the message is recorded as
+   *   the latest push;
+   * - a pure push ("proceed") or a short INSPECTION of existing work ("show
+   *   me the preview", "is it done?"): recorded as the latest push, never a
+   *   goal, because such a message is only intelligible next to one;
+   * - a substantive follow-up with no work open: recorded as the latest push
+   *   AND as a candidate goal. It becomes THE goal — with the outgoing goal
+   *   archived into `priorGoals` — the moment the model writes a fresh plan
+   *   against it (setTodos), and not before.
    *
-   * Returns true when a new task began (callers may want to persist).
+   * Why the message alone cannot decide: the rule used to be "no open todos
+   * → new task", patched with push-word and inspection vocabularies. Each
+   * vocabulary missed the next phrasing ("well i am unable to see the
+   * preview could you show me", 57 chars, no question mark), and every miss
+   * replaced a multi-hour build's spec with a casual sentence and emptied its
+   * plan. Deferring the roll to the plan makes the harm asymmetric in the
+   * safe direction: a follow-up that never earns a plan costs nothing, and a
+   * genuine new mission rolls the goal on its first todo_write.
+   *
+   * The boundary ARCHIVES, never erases. The session ledger — files written
+   * and read, decisions, clarifications, the last verification result —
+   * records what is true of the WORKSPACE, and a new goal does not un-happen
+   * any of it. Only the todo list belongs to the mission.
+   *
+   * Returns true when a goal or a candidate goal was recorded — false for
+   * steering, inspection, and mid-task messages, which change only the push.
    */
   beginTurn(userMessage: string): boolean {
-    const open = this.state.todos.some((t) => t.status !== "completed");
-    if (open || this.state.handoff) {
-      this.touch();
-      return false;
-    }
     const trimmed = userMessage.trim();
-    if (this.state.goal && (isPureSteering(trimmed) || isInspection(trimmed))) {
-      this.state.directive = trimmed.slice(0, 200);
+    if (!this.state.goal) {
+      this.state.goal = trimmed.slice(0, GOAL_CAP);
+      delete this.state.directive;
+      delete this.state.pendingGoal;
+      this.touch();
+      return true;
+    }
+    const open = this.state.todos.some((t) => t.status !== "completed");
+    this.state.directive = trimmed.slice(0, 200);
+    if (open || this.state.handoff || isPureSteering(trimmed) || isInspection(trimmed)) {
       this.touch();
       return false;
     }
-    const outgoingGoal = this.state.goal;
-    const lineage = [...(this.state.priorGoals ?? []), outgoingGoal.slice(0, PRIOR_GOAL_CHARS)]
+    this.state.pendingGoal = trimmed.slice(0, GOAL_CAP);
+    this.touch();
+    return true;
+  }
+
+  /**
+   * A mid-run steering message (interjection). It reaches the spine so the
+   * mission file and the block carry the latest ask — before this, a "no,
+   * build Y instead" typed while the run streamed never left the transcript.
+   */
+  noteSteer(text: string): void {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    this.state.directive = trimmed.slice(0, 200);
+    this.logEvent("steer", trimmed.slice(0, 160));
+  }
+
+  // ─── Evidence ───
+
+  /**
+   * Record something a tool actually did. Called from the loop's tool-result
+   * chokepoint, so every effect is one the runtime observed. Attributed to
+   * the step in progress (the first, if the model left several) and to the
+   * pending pool that the next completion draws from.
+   */
+  noteEffect(kind: EffectKind, detail?: { command?: string; summary?: string }): void {
+    const apply = (ev: StepEvidence): void => {
+      switch (kind) {
+        case "read":
+          ev.reads++;
+          break;
+        case "write":
+          ev.writes++;
+          ev.writesSinceCheck = (ev.writesSinceCheck ?? 0) + 1;
+          break;
+        case "run":
+          ev.runs++;
+          break;
+        case "check_pass":
+          ev.checksPassed++;
+          ev.writesSinceCheck = 0;
+          ev.lastCheck = { passed: true, command: detail?.command, summary: detail?.summary };
+          break;
+        case "check_fail":
+          ev.checksFailed++;
+          ev.writesSinceCheck = 0;
+          ev.lastCheck = { passed: false, command: detail?.command, summary: detail?.summary };
+          break;
+        case "answer":
+          ev.answers++;
+          break;
+        case "delegate":
+          ev.delegations++;
+          break;
+        case "look":
+          ev.looks++;
+          break;
+      }
+    };
+    apply(this.pending);
+    const active = this.state.todos.find((t) => t.status === "in_progress");
+    if (active) {
+      active.evidence ??= { ...emptyEvidence(), startedAt: new Date().toISOString() };
+      apply(active.evidence);
+    }
+    this.touch();
+  }
+
+  /**
+   * Pure preview of a proposed list: which steps would newly complete, and
+   * whether each carries writes that no check ever covered. The loop uses
+   * this to decide whether to run the fast project check BEFORE committing
+   * the list — so a step that broke the build is caught at the step, not at
+   * the end of a fifteen-step run.
+   */
+  planCompletions(items: TodoItem[]): Array<{ item: TodoItem; uncheckedWrites: boolean }> {
+    const old = new Map(this.state.todos.map((t) => [todoKey(t.content), t] as const));
+    const out: Array<{ item: TodoItem; uncheckedWrites: boolean }> = [];
+    for (const item of items) {
+      if (item.status !== "completed") continue;
+      const prev = old.get(todoKey(item.content));
+      if (prev?.status === "completed") continue;
+      const ev =
+        prev?.status === "in_progress"
+          ? (prev.evidence ?? emptyEvidence())
+          : mergeEvidence(prev?.evidence, this.pending);
+      out.push({ item, uncheckedWrites: (ev.writesSinceCheck ?? 0) > 0 });
+    }
+    return out;
+  }
+
+  // ─── Mutators (all zero-token, all called from the loop's tool chokepoint) ───
+
+  /**
+   * Replace the plan. This is where "completed" earns its meaning:
+   *
+   * - A step moving to completed takes the evidence measured while it was in
+   *   progress, plus everything observed since the last accepted list (for
+   *   steps that were never marked in progress — the model often works first
+   *   and reports after).
+   * - Zero evidence, or a last check that FAILED, refuses the list once with
+   *   a reason the model reads as the tool result. The same completion
+   *   re-submitted is then accepted and marked `unproven` — the harness
+   *   cannot know whether a thinking-only step needed a tool, so it never
+   *   deadlocks the model; it makes the claim visible instead.
+   * - Exactly one item may be in progress; extras are demoted, and the note
+   *   says so.
+   * - Unfinished steps that vanish from the list are noted and logged. A
+   *   replan is legitimate; a silent shrink is not.
+   * - A FRESH plan (nothing open survives from the old one) written while a
+   *   substantive follow-up is pending rolls the goal to that follow-up.
+   *
+   * `enforce: false` bypasses the evidence rule for restoring known state.
+   */
+  setTodos(items: TodoItem[], opts: { enforce?: boolean } = {}): SetTodosVerdict {
+    const enforce = opts.enforce !== false;
+    const now = new Date().toISOString();
+    const notes: string[] = [];
+
+    // Normalize, exactly as before, then apply the single-in-progress rule.
+    const cleaned: TodoItem[] = items
+      .filter((t) => typeof t.content === "string" && t.content.trim().length > 0)
+      .map((t) => ({
+        content: t.content.slice(0, 300),
+        status: t.status === "in_progress" || t.status === "completed" ? t.status : "pending",
+      }));
+    let seenActive = false;
+    let demoted = 0;
+    for (const t of cleaned) {
+      if (t.status !== "in_progress") continue;
+      if (seenActive) {
+        t.status = "pending";
+        demoted++;
+      }
+      seenActive = true;
+    }
+    if (demoted > 0) {
+      notes.push(
+        `${demoted} extra in_progress item${demoted === 1 ? " was" : "s were"} set back to pending — exactly one step is in progress at a time.`,
+      );
+    }
+
+    const oldByKey = new Map(this.state.todos.map((t) => [todoKey(t.content), t] as const));
+    const newKeys = new Set(cleaned.map((t) => todoKey(t.content)));
+    const oldOpen = this.state.todos.filter((t) => t.status !== "completed");
+
+    // Carry evidence across, decide each completion.
+    const refused: Array<{ index: number; content: string; reason: string }> = [];
+    const completed: TodoItem[] = [];
+    const next: TodoItem[] = cleaned.map((t, index) => {
+      const key = todoKey(t.content);
+      const prev = oldByKey.get(key);
+      const item: TodoItem = { content: t.content, status: t.status };
+      if (prev?.evidence) item.evidence = structuredClone(prev.evidence);
+      if (prev?.unproven && t.status === "completed" && prev.status === "completed") {
+        item.unproven = prev.unproven;
+      }
+      if (t.status === "in_progress" && prev?.status !== "in_progress") {
+        item.evidence = { ...(item.evidence ?? emptyEvidence()), startedAt: now };
+      }
+      if (t.status === "completed" && prev?.status !== "completed") {
+        // Evidence: what accrued while in progress; otherwise the pending pool.
+        const ev =
+          prev?.status === "in_progress"
+            ? (item.evidence ?? emptyEvidence())
+            : mergeEvidence(item.evidence, this.pending);
+        ev.completedAt = now;
+        item.evidence = ev;
+        if (enforce) {
+          const weight = evidenceWeight(ev);
+          const failedCheck =
+            !!ev.lastCheck && !ev.lastCheck.passed && (ev.writesSinceCheck ?? 0) === 0;
+          if (weight === 0 || failedCheck) {
+            if (this.refusedOnce.has(key)) {
+              item.unproven = failedCheck ? "check_failed" : "no_evidence";
+            } else {
+              this.refusedOnce.add(key);
+              refused.push({
+                index,
+                content: t.content,
+                reason: failedCheck
+                  ? `the last check during this step FAILED${ev.lastCheck?.command ? ` (${ev.lastCheck.command})` : ""}${ev.lastCheck?.summary ? `: ${ev.lastCheck.summary}` : ""}. Fix it and re-run the check, or re-submit to mark the step unproven.`
+                  : "nothing ran while it was open — no file written, no command run, no check, no read. Do the step, or re-submit the same list to mark it unproven (the user will see it as unproven, not done).",
+              });
+            }
+          }
+        }
+        completed.push(item);
+      }
+      return item;
+    });
+
+    if (refused.length > 0) {
+      this.touch();
+      return { accepted: false, refused, notes };
+    }
+
+    // Dropped unfinished steps: legitimate in a replan, never silent.
+    const dropped = oldOpen.filter((t) => !newKeys.has(todoKey(t.content)));
+    if (dropped.length > 0) {
+      const names = dropped.map((t) => t.content.slice(0, 60)).join("; ");
+      notes.push(
+        `dropped ${dropped.length} unfinished step${dropped.length === 1 ? "" : "s"}: ${names}. If that was a cut, say why in your next message.`,
+      );
+      this.logEvent("dropped", names.slice(0, 200));
+    }
+
+    // Fresh plan? Nothing open survived from the previous list, and the new
+    // one has work in it. That is a new mission when a follow-up is pending.
+    const hasOpen = next.some((t) => t.status !== "completed");
+    const fresh =
+      hasOpen &&
+      (this.state.todos.length === 0 ||
+        oldOpen.length === 0 ||
+        oldOpen.every((t) => !newKeys.has(todoKey(t.content))));
+    let rolledGoal = false;
+    if (fresh && this.state.pendingGoal) {
+      this.rollGoal(this.state.pendingGoal);
+      rolledGoal = true;
+      notes.push("The goal is now your latest request; the previous goal is archived as lineage.");
+    }
+
+    const before = this.state.todos.length;
+    this.state.todos = next;
+    this.pending = emptyEvidence();
+
+    for (const item of completed) {
+      if (item.unproven) {
+        this.logEvent("unproven", `${item.content.slice(0, 120)} — ${stepReceipt(item)}`);
+      } else {
+        const receipt = stepReceipt(item);
+        this.logEvent("done", `${item.content.slice(0, 120)}${receipt ? ` — ${receipt}` : ""}`);
+      }
+    }
+    if (before === 0 && next.length > 0) {
+      this.logEvent("plan", `${next.length} step${next.length === 1 ? "" : "s"} recorded`);
+    } else if (fresh && before > 0) {
+      this.logEvent("replan", `${next.length} step${next.length === 1 ? "" : "s"}`);
+    }
+    this.touch();
+    return { accepted: true, notes, completed, rolledGoal };
+  }
+
+  private rollGoal(nextGoal: string): void {
+    const outgoing = this.state.goal;
+    const lineage = [...(this.state.priorGoals ?? []), outgoing.slice(0, PRIOR_GOAL_CHARS)]
       .filter(Boolean)
       .slice(-PRIOR_GOALS_CAP);
-    this.state.goal = trimmed.slice(0, GOAL_CAP);
-    delete this.state.directive;
-    this.state.todos = [];
+    this.state.goal = nextGoal.slice(0, GOAL_CAP);
+    delete this.state.pendingGoal;
+    if (this.state.directive && todoKey(this.state.directive) === todoKey(nextGoal.slice(0, 200))) {
+      delete this.state.directive;
+    }
     if (lineage.length > 0) this.state.priorGoals = lineage;
     else delete this.state.priorGoals;
     // Verification describes the tree, which the new goal inherits — keep the
@@ -270,20 +732,9 @@ export class TaskStateStore {
         ? { lastReport: this.state.verification.lastReport }
         : {}),
     };
-    this.touch();
-    return true;
-  }
-
-  // ─── Mutators (all zero-token, all called from the loop's tool chokepoint) ───
-
-  setTodos(items: TodoItem[]): void {
-    this.state.todos = items
-      .filter((t) => typeof t.content === "string" && t.content.trim().length > 0)
-      .map((t) => ({
-        content: t.content.slice(0, 300),
-        status: t.status === "in_progress" || t.status === "completed" ? t.status : "pending",
-      }));
-    this.touch();
+    delete this.state.handoff;
+    this.refusedOnce.clear();
+    this.logEvent("boundary", `new goal: ${nextGoal.slice(0, 120)}`);
   }
 
   addClarification(question: string, answer: string): void {
@@ -324,16 +775,30 @@ export class TaskStateStore {
       attempts: this.state.verification.attempts + (ran ? 1 : 0),
       lastReport: report?.slice(0, REPORT_CAP),
     };
+    if (ran) {
+      this.logEvent("check", `${passed ? "project checks passed" : "project checks FAILED"}`);
+    }
     this.touch();
   }
 
   setHandoff(reason: HandoffReason): void {
     this.state.handoff = { reason, state: this.renderHandoff(), at: new Date().toISOString() };
+    this.logEvent("handoff", reason);
     this.touch();
   }
 
   clearHandoff(): void {
     delete this.state.handoff;
+    this.touch();
+  }
+
+  /** Append to the run's audit trail. Bounded; the newest entries win. */
+  logEvent(kind: StepLogKind, text: string): void {
+    const t = text.trim();
+    if (!t) return;
+    this.state.log ??= [];
+    this.state.log.push({ at: new Date().toISOString(), kind, text: t.slice(0, 240) });
+    if (this.state.log.length > LOG_CAP) this.state.log = this.state.log.slice(-LOG_CAP);
     this.touch();
   }
 
@@ -345,6 +810,27 @@ export class TaskStateStore {
 
   hasOpenTodos(): boolean {
     return this.state.todos.some((t) => t.status !== "completed");
+  }
+
+  /** done / total / unproven — the numbers a close line is made of. */
+  todoCounts(): { done: number; total: number; unproven: number; open: number } {
+    const todos = this.state.todos;
+    const done = todos.filter((t) => t.status === "completed").length;
+    return {
+      done,
+      total: todos.length,
+      unproven: todos.filter((t) => t.status === "completed" && !!t.unproven).length,
+      open: todos.length - done,
+    };
+  }
+
+  /**
+   * The latest substantive ask: the pending follow-up when one is waiting for
+   * a plan, else the goal. What a read-back should be checked against, and
+   * what "is this a fix?" should be judged on.
+   */
+  currentRequest(): string {
+    return this.state.pendingGoal ?? this.state.goal;
   }
 
   filesWrittenCount(): number {
@@ -372,7 +858,8 @@ export class TaskStateStore {
       s.filesWritten.length > 0 ||
       s.decisions.length > 0 ||
       s.verification.status !== "none" ||
-      !!s.handoff;
+      !!s.handoff ||
+      !!s.pendingGoal;
     if (!hasSubstance) return null;
 
     // The goal excerpt scales with the budget: the post-compaction boost
@@ -387,7 +874,14 @@ export class TaskStateStore {
         const shown = s.goal.slice(0, detail >= 1 ? goalChars : 300);
         lines.push(`Goal: ${shown}${s.goal.length > shown.length ? " …" : ""}`);
       }
-      if (s.directive) lines.push(`Latest user push: ${s.directive.slice(0, 200)}`);
+      if (s.pendingGoal) {
+        const shown = s.pendingGoal.slice(0, detail >= 1 ? 600 : 200);
+        lines.push(
+          `Latest request (becomes the goal when you write a fresh plan for it): ${shown}${s.pendingGoal.length > shown.length ? " …" : ""}`,
+        );
+      } else if (s.directive) {
+        lines.push(`Latest user push: ${s.directive.slice(0, 200)}`);
+      }
       if (
         detail >= 1 &&
         this.missionPath &&
@@ -411,11 +905,19 @@ export class TaskStateStore {
         }
       }
       if (s.todos.length > 0) {
-        lines.push("Todos:");
+        const c = this.todoCounts();
+        lines.push(
+          `Todos (${c.done}/${c.total} done${c.unproven > 0 ? `, ${c.unproven} unproven` : ""}):`,
+        );
         for (const t of s.todos.slice(0, TODOS_RENDER_CAP)) {
           const mark =
             t.status === "completed" ? "[x]" : t.status === "in_progress" ? "[>]" : "[ ]";
-          lines.push(`  ${mark} ${t.content}`);
+          const tag = t.unproven
+            ? t.unproven === "check_failed"
+              ? " (unproven — last check failed)"
+              : " (unproven — nothing ran)"
+            : "";
+          lines.push(`  ${mark} ${t.content}${tag}`);
         }
         if (s.todos.length > TODOS_RENDER_CAP) {
           lines.push(`  …+${s.todos.length - TODOS_RENDER_CAP} more`);
@@ -449,7 +951,9 @@ export class TaskStateStore {
             rep,
         );
       }
-      lines.push("Keep this list accurate with todo_write. If the plan changed, rewrite it.");
+      lines.push(
+        "Keep this list accurate with todo_write. If the plan changed, rewrite it. A step is completed only by evidence — something must have run while it was open.",
+      );
       const block = lines.join("\n");
       if (countTokens(block) <= maxTokens || detail === 0) return block;
     }
@@ -470,7 +974,9 @@ export class TaskStateStore {
     if (s.goal) lines.push(`Goal: ${s.goal.slice(0, 300)}`);
     if (done.length > 0) {
       lines.push(`Done (${done.length}):`);
-      for (const t of done.slice(0, 10)) lines.push(`  ✓ ${t.content}`);
+      for (const t of done.slice(0, 10)) {
+        lines.push(`  ✓ ${t.content}${t.unproven ? " (unproven)" : ""}`);
+      }
     }
     if (open.length > 0) {
       lines.push(`Remaining (${open.length}):`);
@@ -495,7 +1001,9 @@ export class TaskStateStore {
    * full fidelity. The ephemeral block is a budgeted excerpt; this file is the
    * document it excerpts. The engine rewrites it whenever the spine persists,
    * so it survives compaction, resume, crash, quota death, and the engine
-   * process itself — and the model can simply read it when unsure.
+   * process itself — and the model can simply read it when unsure. The Log
+   * section is the run's audit trail: what moved each step, what was refused,
+   * what was dropped, where a boundary was crossed.
    */
   renderMissionFile(): string {
     const s = this.state;
@@ -510,7 +1018,9 @@ export class TaskStateStore {
       "",
       s.goal || "(none yet)",
     ];
-    if (s.directive) {
+    if (s.pendingGoal) {
+      lines.push("", "## Latest request (pending a plan)", "", s.pendingGoal);
+    } else if (s.directive) {
       lines.push("", "## Latest user push", "", s.directive);
     }
     if (s.priorGoals && s.priorGoals.length > 0) {
@@ -520,10 +1030,15 @@ export class TaskStateStore {
       });
     }
     if (s.todos.length > 0) {
-      lines.push("", "## Plan");
+      const c = this.todoCounts();
+      lines.push(
+        "",
+        `## Plan (${c.done}/${c.total} done${c.unproven > 0 ? `, ${c.unproven} unproven` : ""})`,
+      );
       for (const t of s.todos.slice(0, MISSION_TODOS_CAP)) {
         const mark = t.status === "completed" ? "[x]" : t.status === "in_progress" ? "[>]" : "[ ]";
-        lines.push(`- ${mark} ${t.content}`);
+        const receipt = stepReceipt(t);
+        lines.push(`- ${mark} ${t.content}${receipt ? ` — ${receipt}` : ""}`);
       }
       if (s.todos.length > MISSION_TODOS_CAP) {
         lines.push(`- …+${s.todos.length - MISSION_TODOS_CAP} more`);
@@ -558,6 +1073,13 @@ export class TaskStateStore {
     }
     if (s.handoff) {
       lines.push("", "## Resume note", `Run ended early (${s.handoff.reason}).`, s.handoff.state);
+    }
+    if (s.log && s.log.length > 0) {
+      lines.push("", "## Log");
+      for (const e of s.log) {
+        const hhmm = e.at.slice(11, 16);
+        lines.push(`- ${hhmm} ${e.kind}: ${e.text}`);
+      }
     }
     lines.push("", `_Updated: ${s.updatedAt}_`, "");
     const doc = lines.join("\n");

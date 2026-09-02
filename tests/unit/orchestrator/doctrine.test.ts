@@ -78,8 +78,9 @@ describe("AGENT_DOCTRINE — investigation layer", () => {
   });
 
   test("todos complete only with evidence from this session", () => {
-    expect(AGENT_DOCTRINE).toContain('"Completed" requires evidence from THIS session');
-    expect(AGENT_DOCTRINE).toContain("Never mark a todo complete to keep moving");
+    expect(AGENT_DOCTRINE).toContain('"Completed" is measured');
+    expect(AGENT_DOCTRINE).toContain("UNPROVEN");
+    expect(AGENT_DOCTRINE).toContain("A failed or blocked step is NOT done");
   });
 
   test("never fabricate observations; blocked calls escalate honestly", () => {
