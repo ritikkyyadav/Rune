@@ -1,5 +1,7 @@
 # Phase 3 — The flagship surface
 
+> **Superseded in part (2026-09-02).** The native Tauri shell and the Savoir tokens are replaced by [09-web-product.md](09-web-product.md); the web serving, transport seam, reducers and components built here carry forward.
+
 **Lane B · 15–20 days · needs Phase 2**
 
 ## Goal
