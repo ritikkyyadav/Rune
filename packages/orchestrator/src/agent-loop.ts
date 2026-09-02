@@ -40,7 +40,8 @@ import { isVerificationCommand } from "./brief";
 // the drift Phase 2 removed. Re-exported here so the ~90 existing import sites
 // (and anything downstream that imports it from the agent loop) keep working.
 
-import type { AgentTurnEvent } from "@gear/protocol";
+import type { AgentTurnEvent, ChildAgentEvent } from "@gear/protocol";
+import { projectChildEvent } from "./subagent-events";
 export type { AgentTurnEvent, ChildAgentEvent } from "@gear/protocol";
 
 // ─── Permission Gate ───
@@ -1970,6 +1971,8 @@ export class AgentLoop {
         note: string;
         state?: "started" | "settled";
         ok?: boolean;
+        /** The sub-agent event this note was projected from (P2.6). */
+        child?: ChildAgentEvent;
       };
       const progressQueue: ProgressItem[] = [];
       let progressSignal: (() => void) | null = null;
@@ -1981,6 +1984,16 @@ export class AgentLoop {
         const t = String(note ?? "").trim();
         if (!t) return;
         pushProgress({ callId, note: t.slice(0, 160) });
+      };
+      // The typed channel. `note` is projected from the child event so a
+      // surface that wants only a heartbeat is unaffected, and the event
+      // itself rides along for the ones that want the truth. A child event
+      // with nothing worth a rung line (a token delta) is dropped rather
+      // than queued as an empty note.
+      const eventFor = (callId: string) => (child: ChildAgentEvent) => {
+        const note = projectChildEvent(child.agentId, child.event);
+        if (!note) return;
+        pushProgress({ callId, note, child });
       };
 
       const planned: PlannedCall[] = [];
@@ -1996,6 +2009,7 @@ export class AgentLoop {
           workspaceRoot,
           signal,
           onProgress: progressFor(tc.callId),
+          onEvent: eventFor(tc.callId),
         };
 
         let allowed = true;
@@ -2167,6 +2181,7 @@ export class AgentLoop {
           note: item.note,
           state: item.state,
           ok: item.ok,
+          child: item.child,
         };
       }
       await execution; // surface any execution error truthfully

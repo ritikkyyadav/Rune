@@ -196,6 +196,29 @@ Shutdown is graceful and leaves running session hosts alive, exactly as
 
 ---
 
+## Sub-agent events
+
+A sub-agent runs the same loop the lead does and produces the same union. That
+was flattened to a string at the tool boundary (`onProgress: (note: string)`),
+so the fleet panel rendered parsed prose and anything the projection did not
+think to include — a retry, a verification result, a handoff inside a worker —
+did not exist upstream at all.
+
+`tool_progress` now carries the child event under `child`:
+
+```ts
+{ type: "tool_progress", callId, note, state?, ok?, child?: { agentId, label?, event } }
+```
+
+`note` is a PROJECTION of `child.event` (`projectChildEvent`), so a surface that
+wants only a one-line heartbeat never has to reduce a second union, and one that
+wants the truth has it. The projection is exhaustive against the union, and
+deliberately silent on the members that would strobe a one-line rung: token
+deltas, usage, and a nested `tool_progress` (already a projection — re-projecting
+it would put a sub-agent's sub-agent on the lead's status line).
+
+Recursion stops at one level, which is what keeps the frame bounded.
+
 ## Exhaustiveness — the drift law
 
 `AgentTurnEvent` has 22 members and is consumed by five reducers: the TUI
