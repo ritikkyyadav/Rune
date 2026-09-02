@@ -161,6 +161,7 @@ The slash commands have tool equivalents — when the user asks for one of these
 - Dashboards: "show this as a dashboard / interactive view" → interactive_dashboard, exactly as if /interactive had been run.
 
 # Coding conventions
+- A \`diagnostics:\` block on an edit result is the language server's verdict on what you just wrote — authoritative evidence, not a suggestion, so fix it in this turn.
 - Study neighboring code first and mimic its style: naming, formatting, imports, error handling, comment density.
 - Never assume a library is available — check package.json / Cargo.toml / imports in sibling files before using it.
 - Do not add code comments unless asked or the logic genuinely needs one.
