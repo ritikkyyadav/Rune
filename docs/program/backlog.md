@@ -14,3 +14,4 @@ Seeded 2026-09-02 from the audits:
 - `tests/eval/tasks-from-incidents.ts:12-15` — flywheel input empty — 7.8
 - `dist/` — stale partial artifacts from 2026-08-25 — 1.3
 - `apps/desktop/src-tauri/src/lib.rs` — six `*_system_memory` commands never called — 3.1
+- `packages/tool-registry/src/tools/freshness.ts` and the gear-tools read/edit path — PR #4's first Windows runtime smoke (packaged-e2e, windows-latest) fails at edit_file with "You must read smoke.txt (read_file) before editing it" immediately after a read_file of the same path: the read-before-edit ledger keys paths differently on Windows (separator or case). Real Windows defect, never observed before because nothing had executed the binary on Windows — 1.7
