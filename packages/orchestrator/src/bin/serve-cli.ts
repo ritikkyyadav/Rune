@@ -548,7 +548,22 @@ export async function runServe(
   const origins =
     typeof values.origin === "string" ? [...DEFAULT_ORIGINS, values.origin] : [...DEFAULT_ORIGINS];
 
-  const running = await serve({ port, host, workspace, allowRemoteSettings, origins });
+  // `gear serve --web` is `gear web` on the serve port: one process that also
+  // hands out the page. The flag has been declared since P3.2 and did nothing,
+  // which is worse than not having it — an editor extension that runs it gets a
+  // socket and a 404 where the client should be. `gear web` stays the command a
+  // person types; this is the form a program spawns.
+  //
+  // Imported lazily because `web-cli` imports `serve` from here, and a static
+  // cycle between them is a class of bug nobody should have to debug twice.
+  let web: { dist: string } | undefined;
+  if (values.web === true) {
+    const { webBundleBuilt, webDistDir } = await import("./web-cli");
+    if (webBundleBuilt()) web = { dist: webDistDir() };
+    else console.error("  the web client is not built — run `bun run --cwd apps/desktop build`");
+  }
+
+  const running = await serve({ port, host, workspace, allowRemoteSettings, origins, web });
 
   // `serve()` returns as soon as it is listening, so the CLI must park here or
   // the process falls straight through and exits with a token file on disk and

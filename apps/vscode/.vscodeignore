@@ -1,0 +1,10 @@
+# The .vsix should be the extension, not the repository. Everything here is
+# either bundled into out/extension.js already or has no business shipping.
+src/**
+esbuild.mjs
+tsconfig.json
+node_modules/**
+.turbo/**
+.gitignore
+**/*.map
+**/*.vsix
