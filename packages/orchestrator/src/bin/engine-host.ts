@@ -194,6 +194,19 @@ function ensureDataDir(): string {
   return ensureGearHome();
 }
 
+/**
+ * Where the session database is, captured when the engine is built.
+ *
+ * `export_trace` must open the SAME file `gear export` opens, and the
+ * resolution lives inside `buildEngine`'s locals — so it is recorded here
+ * rather than re-derived, which is how the two would end up reading different
+ * databases and producing two "exports" of one session.
+ */
+let engineDbPath = "";
+function dbPath(): string {
+  return engineDbPath;
+}
+
 function buildEngine(): Engine {
   adoptLegacyEnv();
   migrateLegacyHome();
@@ -266,6 +279,7 @@ function buildEngine(): Engine {
     configTrustWorkspace: config.permissions?.trustWorkspace,
   });
 
+  engineDbPath = config.engine.dbPath;
   const engine = new Engine({
     model,
     provider: provider as ProviderName,
@@ -704,6 +718,37 @@ async function dispatch(cmd: HostCommandName, args: Record<string, unknown>): Pr
         providers: rows,
         search: searchKeyStatus(),
         active: { provider: engine.getProvider(), model: engine.getModel() },
+      };
+    }
+
+    // ─── Evidence (P3.4) ───
+
+    case "get_turn_context":
+      // The exact system prompt the engine assembled for this session's last
+      // turn. Null before it has run one — the inspector says "no turn yet"
+      // rather than rendering an empty assembly as if it were the real thing.
+      return engine.getTurnContext(optionalString(args, "sessionId"));
+
+    case "export_trace": {
+      // The SAME exporter `gear export` uses, so a trace exported from the
+      // desktop and one exported from the terminal are one artifact and verify
+      // with one key. Reimplementing it here for the GUI is exactly how the two
+      // would drift into "the desktop's export" and "the real one".
+      const { exportSession } = await import("../session-export");
+      const sid = resolveSession(optionalString(args, "sessionId"));
+      const format = optionalString(args, "format") === "json" ? "json" : "md";
+      const sign = optionalBoolean(args, "sign") === true;
+      const result = await exportSession(dbPath(), sid, { format, sign });
+      return {
+        content: result.content,
+        format,
+        signature: result.signature,
+        publicKey: result.publicKey,
+        // The exporter verifies the audit chain and folds the result into the
+        // document. A chain head is present only when it verified, so its
+        // presence IS the answer — inventing a separate boolean would be a
+        // second source of truth for one fact.
+        chainOk: sign ? result.chainHead != null : true,
       };
     }
 
