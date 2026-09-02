@@ -49,7 +49,9 @@ export function resolveSubagentBudget(
   overrides: { costCapUsd?: unknown; deadlineMs?: unknown } = {},
 ): SubagentBudget {
   const base =
-    EFFORT_BUDGETS[(effort as SubagentEffort) in EFFORT_BUDGETS ? (effort as SubagentEffort) : "standard"];
+    EFFORT_BUDGETS[
+      (effort as SubagentEffort) in EFFORT_BUDGETS ? (effort as SubagentEffort) : "standard"
+    ];
   const cost = Number(overrides.costCapUsd);
   const deadline = Number(overrides.deadlineMs);
   return {
@@ -65,7 +67,9 @@ export interface BudgetState {
   startedAt: number;
 }
 
-export type BudgetBreach = { kind: "cost"; spentUsd: number; capUsd: number } | { kind: "time"; elapsedMs: number; deadlineMs: number };
+export type BudgetBreach =
+  | { kind: "cost"; spentUsd: number; capUsd: number }
+  | { kind: "time"; elapsedMs: number; deadlineMs: number };
 
 /**
  * Has this sub-agent run past a budget? Checked between turns, never mid-call:

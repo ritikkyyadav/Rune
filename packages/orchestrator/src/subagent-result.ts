@@ -56,10 +56,24 @@ export interface SubagentResult {
 export const SUBAGENT_RESULT_SCHEMA: Record<string, unknown> = {
   type: "object",
   additionalProperties: false,
-  required: ["summary", "findings", "filesExamined", "filesChanged", "checks", "confidence", "unresolved", "stopReason", "toolCallCount"],
+  required: [
+    "summary",
+    "findings",
+    "filesExamined",
+    "filesChanged",
+    "checks",
+    "confidence",
+    "unresolved",
+    "stopReason",
+    "toolCallCount",
+  ],
   properties: {
     summary: { type: "string", description: "One paragraph a parent agent can act on." },
-    findings: { type: "array", items: { type: "string" }, description: "Discrete, checkable conclusions." },
+    findings: {
+      type: "array",
+      items: { type: "string" },
+      description: "Discrete, checkable conclusions.",
+    },
     filesExamined: { type: "array", items: { type: "string" }, description: "Paths read." },
     filesChanged: { type: "array", items: { type: "string" }, description: "Paths written." },
     checks: { type: "string", enum: ["passed", "failed", "not_run"] },
@@ -88,7 +102,9 @@ function asStringArray(value: unknown): string[] {
 }
 
 function asEnum<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
-  const v = String(value ?? "").trim().toLowerCase();
+  const v = String(value ?? "")
+    .trim()
+    .toLowerCase();
   return (allowed as readonly string[]).includes(v) ? (v as T) : fallback;
 }
 
@@ -174,8 +190,10 @@ export function validateSubagentResult(value: unknown): { valid: boolean; proble
   for (const field of STRING_ARRAY_FIELDS) {
     if (!Array.isArray(obj[field])) problems.push(`${field} is not an array`);
   }
-  if (!["passed", "failed", "not_run"].includes(String(obj.checks))) problems.push("checks invalid");
-  if (!["high", "medium", "low"].includes(String(obj.confidence))) problems.push("confidence invalid");
+  if (!["passed", "failed", "not_run"].includes(String(obj.checks)))
+    problems.push("checks invalid");
+  if (!["high", "medium", "low"].includes(String(obj.confidence)))
+    problems.push("confidence invalid");
   return { valid: problems.length === 0, problems };
 }
 
@@ -236,7 +254,8 @@ export function buildSubagentResult(observed: ObservedRun): SubagentResult {
 
 function describeIncomplete(o: ObservedRun): string {
   if (o.loopError) return `The sub-agent hit an error and stopped (${o.loopError}).`;
-  if (o.stopReason === "max_turns") return "The sub-agent ran out of turns before writing its summary.";
+  if (o.stopReason === "max_turns")
+    return "The sub-agent ran out of turns before writing its summary.";
   if (o.stopReason === "aborted") return "The sub-agent was aborted before writing its summary.";
   return `The sub-agent ended without writing a summary (stopped: ${o.stopReason || "unknown"}).`;
 }
@@ -382,7 +401,7 @@ export function renderWorkerResult(
         `${humanBytes(totalBytes)}, ${calls}.`,
       result.checks === "passed"
         ? "CHECKS PASSED in the worker's own worktree before merge. Re-run the project's full suite " +
-          "against the merged tree before you mark this step done."
+            "against the merged tree before you mark this step done."
         : result.checks === "failed"
           ? "CHECKS FAILED in the worker's worktree; the branch was kept for inspection and NOT merged."
           : "NOT VERIFIED: no checks were run, so nothing here was compiled or tested. Open these " +
