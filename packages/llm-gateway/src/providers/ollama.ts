@@ -192,9 +192,7 @@ export class OllamaProvider implements LlmProvider {
     const r = await fetch(`${this.baseUrl}/api/tags`);
     if (!r.ok) throw new Error(`ollama /api/tags failed (${r.status})`);
     const json = (await r.json()) as { models?: { name?: string; model?: string }[] };
-    const ids = (json.models ?? [])
-      .map((m) => m.name ?? m.model)
-      .filter((n): n is string => !!n);
+    const ids = (json.models ?? []).map((m) => m.name ?? m.model).filter((n): n is string => !!n);
 
     const out: ModelInfo[] = [];
     // Bounded fan-out: a machine with forty pulled models should not open

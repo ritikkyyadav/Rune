@@ -183,9 +183,7 @@ export const PROVIDER_TIER_DEFAULTS: Record<
   { heavy: string; standard: string; light: string }
 > = {
   ...HAND_MAINTAINED_TIER_DEFAULTS,
-  ...Object.fromEntries(
-    PROVIDER_PRESETS.filter((p) => p.tiers).map((p) => [p.id, p.tiers!]),
-  ),
+  ...Object.fromEntries(PROVIDER_PRESETS.filter((p) => p.tiers).map((p) => [p.id, p.tiers!])),
 };
 
 /**

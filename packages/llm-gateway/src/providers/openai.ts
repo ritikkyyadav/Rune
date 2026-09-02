@@ -15,11 +15,7 @@ import type {
 } from "../types";
 import { ApiError } from "../types";
 import { IdleWatchdog } from "./stream-guard";
-import {
-  isAnthropicUpstream,
-  promptCacheKey,
-  type CacheBreakpointPolicy,
-} from "./cache-policy";
+import { isAnthropicUpstream, promptCacheKey, type CacheBreakpointPolicy } from "./cache-policy";
 import { modelSeesImages } from "./model-capabilities";
 import { parseToolArguments } from "@gear/shared";
 

@@ -305,13 +305,7 @@ if (command === "models") {
   process.exit(process.exitCode ?? 0);
 }
 
-type CliProvider =
-  | "anthropic"
-  | "openai"
-  | "openrouter"
-  | "google"
-  | "ollama-turbo"
-  | "ollama";
+type CliProvider = "anthropic" | "openai" | "openrouter" | "google" | "ollama-turbo" | "ollama";
 
 const DEFAULT_MODELS: Record<CliProvider, string> = {
   anthropic: "claude-sonnet-4-6",

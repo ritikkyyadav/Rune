@@ -71,7 +71,9 @@ describe("keep_alive", () => {
     process.env.GEAR_OLLAMA_KEEP_ALIVE = "45m";
     try {
       expect(new OllamaProvider("http://localhost:11434").keepAlive).toBe("45m");
-      expect(new OllamaProvider("http://localhost:11434", { keepAlive: "5m" }).keepAlive).toBe("5m");
+      expect(new OllamaProvider("http://localhost:11434", { keepAlive: "5m" }).keepAlive).toBe(
+        "5m",
+      );
     } finally {
       if (prior === undefined) delete process.env.GEAR_OLLAMA_KEEP_ALIVE;
       else process.env.GEAR_OLLAMA_KEEP_ALIVE = prior;

@@ -179,9 +179,7 @@ function buildEngine(): Engine {
   const lastUsed = loadLastModel();
   const stickyUsable = (p: string): boolean =>
     getPreset(p) !== undefined &&
-    (p === "ollama" ||
-      hasStoredCredential(p) ||
-      (isCliProvider(p) && hasCreds(p)));
+    (p === "ollama" || hasStoredCredential(p) || (isCliProvider(p) && hasCreds(p)));
   const sticky = lastUsed && stickyUsable(lastUsed.provider) ? lastUsed : null;
 
   let provider: ProviderName;

@@ -24,10 +24,7 @@ import { toResponsesBody, codexEffortFor } from "../../../packages/llm-gateway/s
 import { geminiThinkingConfig } from "../../../packages/llm-gateway/src/providers/google";
 import { AnthropicProvider } from "../../../packages/llm-gateway/src/providers/anthropic";
 import { reasoningEffortsFor } from "../../../packages/llm-gateway/src/types";
-import type {
-  InferenceRequest,
-  ReasoningEffort,
-} from "../../../packages/llm-gateway/src/types";
+import type { InferenceRequest, ReasoningEffort } from "../../../packages/llm-gateway/src/types";
 
 const req = (
   over: Partial<InferenceRequest> & Pick<InferenceRequest, "model" | "provider">,
@@ -167,7 +164,10 @@ describe("google — the field is `thinkingConfig.thinkingBudget` / `thinkingLev
 
   test("a model with no thinking field is sent none — an unknown key is a 400", () => {
     expect(
-      geminiThinkingConfig({ model: "gemini-2.0-flash", thinking: { enabled: true, effort: "high" } }),
+      geminiThinkingConfig({
+        model: "gemini-2.0-flash",
+        thinking: { enabled: true, effort: "high" },
+      }),
     ).toBeUndefined();
   });
 
