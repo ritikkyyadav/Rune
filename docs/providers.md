@@ -32,11 +32,11 @@ the base URL.
 | `anthropic` | `AnthropicProvider` | native `cache_control` | reference implementation; reads `cache_creation_input_tokens` / `cache_read_input_tokens` |
 | `openai` | `OpenAIProvider` | `prompt-cache-key` | documented automatic prefix caching over 1024 tokens, plus the documented routing field |
 | `openrouter` | `OpenRouterProvider` | `anthropic-style` (Anthropic upstreams only) | measured 2026-08-26, see below |
-| `google` | `GoogleProvider` | explicit `cachedContent` handles | reads `cachedContentTokenCount` |
+| `google` | `GoogleProvider` | `implicit` | **measured 2026-09-02**: 99.7% hit rate with no cache handle |
 | `deepseek` | `OpenAIProvider` | `implicit` | host documents automatic prefix caching |
 | `groq` | `OpenAIProvider` | `implicit` | host documents automatic prefix caching |
 | `xai` | `OpenAIProvider` | `implicit` | host documents automatic prefix caching |
-| `ollama-turbo` | `OpenAIProvider` | `implicit` | OpenAI-compatible host; no documented cache field |
+| `ollama-turbo` | `OpenAIProvider` | `none` | **measured 2026-09-02**: no cached tokens on an identical prefix |
 | `codex` | `CodexProvider` | server-side | the Responses backend manages its own prefix reuse |
 | `ollama` (local) | `OllamaProvider` | KV cache, held by `keep_alive` | local runtime; nothing is billed, but a dropped KV cache costs a full re-prefill |
 | `custom` | `OpenAIProvider` | `none` | a user-supplied endpoint could be anything; claiming a cache it may not have would put an invented number on screen |
@@ -86,7 +86,81 @@ per-model `/api/show`), instead of names only — every locally pulled model
 previously fell to the tokenizer's conservative default and was compacted far
 below its actual window.
 
-<!-- MEASURED-CACHE-TABLE -->
+## Measured cache behaviour
+
+Every row below is a real pair of requests through Gear's own adapters
+(`scripts/verify-cache.ts --provider <id>`): one turn to write the prefix, one
+to read it back, on a ~4.8k-token prefix unique to each run so a previous run's
+warm cache cannot flatter the result. **Rows that say "not measured" were not
+measured** — no credential on this machine, or the provider refused. None of
+them is a guess dressed as a number.
+
+Measured **2026-09-02**.
+
+| Provider | Model | Policy | Turn 1 | Turn 2 | Hit rate | Verdict |
+|---|---|---|---|---|---|---|
+| `openrouter` | `minimax/minimax-m3:free` | implicit (adapter default) | input 4250, cached 132 | input 23, cached 4359 | **99.5%** | works |
+| `openrouter` | `minimax/minimax-m3:free` | `--force-breakpoints` | input 4250, cached 132 | input 23, cached 4359 | **99.5%** | identical — forcing buys nothing |
+| `google` | `gemini-2.5-flash` | implicit | input 5099, cached 0 | input 15, cached 5085 | **99.7%** | works, with no cache handle |
+| `ollama-turbo` | `gpt-oss:20b` | was "implicit" | input 4301, cached 0 | input 4301, cached 0 | **none** | no cache observable → policy corrected to `none` |
+| `codex` | `gpt-5.6-luna` | server-side | — | — | not measured | plan quota exhausted (429) at measurement time |
+| `ollama` (local) | — | KV cache | — | — | not measured | no local runtime on this machine |
+| `anthropic` | `claude-haiku-4-5` | native `cache_control` | — | — | not measured | no credential |
+| `openai` | `gpt-4o-mini` | `prompt-cache-key` | — | — | not measured | no credential |
+| `deepseek` / `groq` / `xai` | — | implicit (documented) | — | — | not measured | no credential |
+
+Live requests spent producing this table: **openrouter 5** (one refused 402,
+four served), **google 2**, **ollama-turbo 2**, **codex 1** (refused 429),
+everything else **0**.
+
+### What the measurements changed
+
+**No widening on OpenRouter.** P8.2 planned to force breakpoints per upstream
+family and widen `wantsCacheBreakpoints` wherever cached tokens moved. On
+`minimax/minimax-m3:free` implicit and forced are byte-for-byte identical —
+99.5% either way — reproducing the 2026-08-26 `stealth/ox-alpha` result on a
+current model. The gate stays narrow.
+
+The paid upstreams (`anthropic/*`, `openai/*`, `deepseek/*`) could **not** be
+tested: this OpenRouter account has never purchased credits and every paid
+route returns 402. So the per-family sweep is **incomplete**, and the
+`anthropic-style` policy the adapter ships still rests on the earlier
+measurement rather than a fresh one.
+
+**`ollama-turbo` was claiming a cache it does not have.** It was declared
+`implicit` from documentation. Two turns of a byte-identical prefix both
+reported `input=4301, cached=0`. Either the host does not cache or it does not
+report a cached-token count; either way there is nothing to claim, so the
+policy is now `none` and its hit rate reads **"no data"** rather than 0%.
+
+**Google needs no explicit cache.** See below.
+
+### Google `cachedContent`: measured, then declined (P8.3)
+
+P8.3 planned to create explicit `cachedContents` handles for the stable prefix,
+keep a `(model, prefixHash) → handle` map with a TTL, and send `cachedContent`
+on each request. The instruction was to **measure with `verify-cache.ts`
+first**. The measurement says not to build it:
+
+```
+$ bun run scripts/verify-cache.ts --provider google --model gemini-2.5-flash
+turn 1  input=5099  cached=0     written=0
+turn 2  input=15    cached=5085  written=0
+PASS — the shared prefix was served from cache (5085 tokens, 99.7%).
+```
+
+Gemini's **implicit** caching already returns 99.7% of the prefix from cache,
+free and automatic, on exactly the request shape the agent loop produces.
+Explicit context caching would add a create/refresh/delete lifecycle, a TTL to
+get wrong, a per-model minimum-token floor, and — the decisive part —
+**storage billed per token-hour** for content the free path is already serving.
+In a phase whose whole point is cost per task, building it would raise the
+bill to buy 0.3%.
+
+Not built. Revisit only if a model in use is found whose implicit hit rate is
+poor and whose prefix is large and long-lived enough to amortise storage.
+
+
 
 ---
 

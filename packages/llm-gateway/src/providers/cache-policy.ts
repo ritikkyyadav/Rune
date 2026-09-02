@@ -41,11 +41,23 @@ const POLICY: Record<string, CacheBreakpointPolicy> = {
   // documented `prompt_cache_key` field that routes same-prefix requests to
   // the same machine.
   openai: "prompt-cache-key",
-  // Documented automatic prefix caching, no wire field.
+  // Gemini caches stable prefixes automatically on the 2.5 line and reports
+  // `cachedContentTokenCount`. MEASURED 2026-09-02 on gemini-2.5-flash: turn 2
+  // read 5,085 cached tokens against 15 fresh ones, a 99.7% hit rate, with no
+  // explicit cache handle involved. See docs/providers.md.
+  google: "implicit",
+  // Documented automatic prefix caching, no wire field. Neither has been
+  // measured here (no credential on this machine).
   deepseek: "implicit",
   groq: "implicit",
   xai: "implicit",
-  "ollama-turbo": "implicit",
+  // MEASURED 2026-09-02 on gpt-oss:20b: turn 1 and turn 2 both reported
+  // input=4301, cached=0, on a byte-identical prefix. Ollama Cloud either does
+  // not cache or does not report a cached-token count, and either way there is
+  // no cache to claim. This said "implicit" on documentation alone; the
+  // measurement says otherwise, so it says "none" and the hit rate reads as
+  // "no data" rather than a number nobody earned.
+  "ollama-turbo": "none",
   // A user-supplied endpoint could be anything; claiming a cache it may not
   // have would put an invented number on screen.
   custom: "none",

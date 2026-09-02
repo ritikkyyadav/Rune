@@ -42,11 +42,16 @@ describe("the policy table", () => {
     expect(cacheBreakpointPolicyFor("openrouter")).toBe("anthropic-style");
     // First-party OpenAI caches automatically and takes the routing hint.
     expect(cacheBreakpointPolicyFor("openai")).toBe("prompt-cache-key");
-    // Documented automatic prefix caching, no wire field.
+    // Gemini caches automatically and reports it. MEASURED 2026-09-02: 99.7%.
+    expect(cacheBreakpointPolicyFor("google")).toBe("implicit");
+    // Documented automatic prefix caching, no wire field. Unmeasured here.
     expect(cacheBreakpointPolicyFor("deepseek")).toBe("implicit");
     expect(cacheBreakpointPolicyFor("groq")).toBe("implicit");
     expect(cacheBreakpointPolicyFor("xai")).toBe("implicit");
-    expect(cacheBreakpointPolicyFor("ollama-turbo")).toBe("implicit");
+    // MEASURED 2026-09-02 on gpt-oss:20b: cached=0 on both turns of an
+    // identical prefix. The documentation-based "implicit" was wrong, and a
+    // cache nobody can observe is not a cache.
+    expect(cacheBreakpointPolicyFor("ollama-turbo")).toBe("none");
     // A user-supplied endpoint could be anything.
     expect(cacheBreakpointPolicyFor("custom")).toBe("none");
   });
