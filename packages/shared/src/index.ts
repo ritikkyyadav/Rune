@@ -179,6 +179,7 @@ export {
   ensureGearHome,
   gearHomePath,
   getGearHome,
+  isPathInside,
   migrateLegacyHome,
   resetGearHomeCache,
   takeHomeMigrationNote,

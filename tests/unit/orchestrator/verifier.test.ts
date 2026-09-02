@@ -47,7 +47,17 @@ describe("detectVerifyCommands", () => {
   });
 });
 
-describe("CommandVerifier", () => {
+/**
+ * POSIX-only. `CommandVerifier` runs each check through `Bun.spawn(["bash", "-c", …])` (verifier.ts:280).
+ *
+ * Gear has no Windows shell contract yet — nothing decides whether a command
+ * string means cmd.exe, PowerShell or Git Bash — so there is no Windows
+ * behaviour to assert, only a decision to make. Logged in
+ * docs/program/backlog.md.
+ */
+const POSIX_SHELL = process.platform !== "win32";
+
+describe.skipIf(!POSIX_SHELL)("CommandVerifier", () => {
   test("passing command → passed:true, ran:true", async () => {
     const dir = await tmpWorkspace({});
     const r = await new CommandVerifier({ workspaceRoot: dir, commands: ["true"] }).verify();

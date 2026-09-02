@@ -259,6 +259,42 @@ Turn the daily look off entirely in `~/.gear/config.toml`:
 check = false
 ```
 
+### On Windows
+
+The CLI, the native `gear-tools` executor, the web app and the protocol all run natively on
+Windows, and CI exercises them there: `ts-windows` runs the unit suite, `rust-test` and
+`rust-lint` run the crates, and `packaged-e2e (windows-latest)` starts the packaged binary and
+puts a real write → read → edit → bash round-trip through it.
+
+Two things genuinely differ, and neither is a bug you can configure away.
+
+**There is no OS sandbox.** Gear's containment on macOS is `sandbox-exec` (seatbelt) and on Linux
+is `bwrap`; Windows has no equivalent backend wired up. What remains is the path guard — writes
+stay inside the workspace, and the network preflight still refuses commands that would need the
+network — but that is process-level policy, not kernel-enforced isolation, and Gear says so rather
+than pretending. The consequences:
+
+- **Use 1st or 2nd gear.** 3rd gear's workspace trust auto-approves `bash` only when the machine
+  can actually isolate, so on Windows it degrades to confirming every shell command by itself —
+  that part is enforced in code. 4th gear is different: it bypasses the prompt whatever the
+  machine can do, which on Windows means uncontained commands with no confirmation. Nothing stops
+  you; Gear simply cannot make the promise 4th gear rests on. If you want the machine to enforce
+  it, set `[sandbox] requireOs = true` and sandbox-tier commands are refused outright instead of
+  running degraded.
+- **Use WSL2 for unattended work.** Inside WSL2 Gear is a Linux install with `bwrap`: full 4th
+  gear, real containment, and the same `~/.gear` layout. That is the supported path for anything
+  you intend to leave running.
+
+**File modes are advisory.** `~/.gear/secrets.json` is written with mode 0600, which Windows
+ignores — it is as private as your `%USERPROFILE%`, which on a single-user machine is usually
+enough and is not the same guarantee. Prefer `gear login`: the credential store's Windows backend
+encrypts each secret with **DPAPI** to a per-user blob, so what lands on disk is ciphertext no
+other account can read. `gear providers` names the backend it resolved to.
+
+Two smaller gaps are logged in [`docs/program/backlog.md`](docs/program/backlog.md): format-on-write
+does not find `prettier.cmd`, and the verifier has no defined shell contract on Windows (its check
+commands assume `sh`).
+
 ## Quickstart
 
 Gear can start on **Gemini 2.5 Flash's free developer tier**. That is suitable

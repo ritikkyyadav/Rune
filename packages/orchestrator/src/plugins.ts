@@ -19,7 +19,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { workspaceConfigPath } from "@gear/shared";
+import { isPathInside, workspaceConfigPath } from "@gear/shared";
 
 /**
  * This build's version, for `gearVersion` range checks.
@@ -120,7 +120,10 @@ export interface PluginDiscovery {
 function resolveInsidePlugin(root: string, rel: string): string | null {
   if (isAbsolute(rel)) return null;
   const abs = resolve(root, rel);
-  return abs === root || abs.startsWith(root + "/") ? abs : null;
+  // `isPathInside`, not `startsWith(root + "/")`: on Windows both sides are
+  // backslash-separated, so the old shape refused every path in every plugin
+  // and `gear plugin add` loaded nothing at all there (P10.2).
+  return isPathInside(root, abs) ? abs : null;
 }
 
 // ─── Integrity ───

@@ -35,6 +35,10 @@ function makeRepo(): string {
   git(dir, ["init", "-q", "-b", "main"]);
   git(dir, ["config", "user.email", "t@example.com"]);
   git(dir, ["config", "user.name", "T"]);
+  // Windows git defaults to `core.autocrlf=true`, which rewrites "\n" to
+  // "\r\n" on checkout and breaks byte-exact assertions on identical content.
+  git(dir, ["config", "core.autocrlf", "false"]);
+  git(dir, ["config", "core.eol", "lf"]);
   writeFileSync(join(dir, "README.md"), "# base\n");
   mkdirSync(join(dir, "src"), { recursive: true });
   writeFileSync(join(dir, "src", "base.ts"), "export const base = 1;\n");
@@ -161,42 +165,55 @@ describe("P6B.1 — teardown", () => {
   });
 });
 
-describe("P6B.2 — the worker runs the project's checks in its own tree", () => {
-  test("a passing check reports passed", () => {
-    const repo = makeRepo();
-    const wt = createWorkerWorktree(repo, "w1")!;
-    const res = runWorktreeChecks(wt.path, ["true"], 10_000);
-    expect(res.outcome).toBe("passed");
-    expect(res.failures).toEqual([]);
-    removeWorkerWorktree(repo, wt, false);
-  });
+/**
+ * POSIX-only: `runWorktreeChecks` runs each check through
+ * `spawnSync("/bin/sh", ["-c", command])` (worker-worktree.ts:248) and the
+ * fixtures are `sh` one-liners (`true`, `false`). Gear has no Windows shell
+ * contract yet — nothing decides whether a check command means cmd.exe,
+ * PowerShell or Git Bash — so there is no Windows behaviour to assert here,
+ * only a decision to make. Logged in docs/program/backlog.md.
+ *
+ * The worktree half of this file (P6B.1) is pure git and DOES run on Windows.
+ */
+describe.skipIf(process.platform === "win32")(
+  "P6B.2 — the worker runs the project's checks in its own tree",
+  () => {
+    test("a passing check reports passed", () => {
+      const repo = makeRepo();
+      const wt = createWorkerWorktree(repo, "w1")!;
+      const res = runWorktreeChecks(wt.path, ["true"], 10_000);
+      expect(res.outcome).toBe("passed");
+      expect(res.failures).toEqual([]);
+      removeWorkerWorktree(repo, wt, false);
+    });
 
-  test("a failing check reports failed and names the command", () => {
-    const repo = makeRepo();
-    const wt = createWorkerWorktree(repo, "w1")!;
-    const res = runWorktreeChecks(wt.path, ["echo boom >&2; exit 3"], 10_000);
-    expect(res.outcome).toBe("failed");
-    expect(res.failures[0]).toContain("exit 3");
-    expect(res.failures[0]).toContain("boom");
-    removeWorkerWorktree(repo, wt, false);
-  });
+    test("a failing check reports failed and names the command", () => {
+      const repo = makeRepo();
+      const wt = createWorkerWorktree(repo, "w1")!;
+      const res = runWorktreeChecks(wt.path, ["echo boom >&2; exit 3"], 10_000);
+      expect(res.outcome).toBe("failed");
+      expect(res.failures[0]).toContain("exit 3");
+      expect(res.failures[0]).toContain("boom");
+      removeWorkerWorktree(repo, wt, false);
+    });
 
-  test("no configured checks is not_run, never a silent pass", () => {
-    // The difference between "checks passed" and "no checks exist" is the
-    // difference between a report and a claim.
-    const repo = makeRepo();
-    const wt = createWorkerWorktree(repo, "w1")!;
-    expect(runWorktreeChecks(wt.path, [], 10_000).outcome).toBe("not_run");
-    removeWorkerWorktree(repo, wt, false);
-  });
+    test("no configured checks is not_run, never a silent pass", () => {
+      // The difference between "checks passed" and "no checks exist" is the
+      // difference between a report and a claim.
+      const repo = makeRepo();
+      const wt = createWorkerWorktree(repo, "w1")!;
+      expect(runWorktreeChecks(wt.path, [], 10_000).outcome).toBe("not_run");
+      removeWorkerWorktree(repo, wt, false);
+    });
 
-  test("checks run in the worktree, not in the lead's tree", () => {
-    const repo = makeRepo();
-    const wt = createWorkerWorktree(repo, "w1")!;
-    writeFileSync(join(wt.path, "marker.txt"), "in the worktree\n");
-    const res = runWorktreeChecks(wt.path, ["test -f marker.txt"], 10_000);
-    expect(res.outcome).toBe("passed");
-    expect(existsSync(join(repo, "marker.txt"))).toBe(false);
-    removeWorkerWorktree(repo, wt, false);
-  });
-});
+    test("checks run in the worktree, not in the lead's tree", () => {
+      const repo = makeRepo();
+      const wt = createWorkerWorktree(repo, "w1")!;
+      writeFileSync(join(wt.path, "marker.txt"), "in the worktree\n");
+      const res = runWorktreeChecks(wt.path, ["test -f marker.txt"], 10_000);
+      expect(res.outcome).toBe("passed");
+      expect(existsSync(join(repo, "marker.txt"))).toBe(false);
+      removeWorkerWorktree(repo, wt, false);
+    });
+  },
+);

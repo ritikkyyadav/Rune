@@ -22,7 +22,36 @@
 // let the user rename it when they choose. New writes always go to `.gear/`.
 
 import { existsSync, lstatSync, mkdirSync, renameSync, symlinkSync } from "fs";
-import { join } from "path";
+import { isAbsolute, join, relative, resolve } from "path";
+
+// ─── Containment ───
+
+/**
+ * Whether `target` IS `root` or lives inside it.
+ *
+ * The one implementation, because the hand-rolled ones were not portable:
+ * `abs.startsWith(root + "/")` is never true on Windows, where `resolve`
+ * produces backslashes and the drive letter's case is whatever the process that
+ * built the string happened to use. The delegation-evidence gate, the plugin
+ * manifest guard and the dashboard's export and watch paths all carried that
+ * shape, and all three misbehaved on Windows — the gate refused every
+ * sub-agent finish, the other two refused every path (P10.2).
+ *
+ * `relative` knows the platform's separator and folds case where the filesystem
+ * does, so the answer is right on all three OSes. A relative `target` is
+ * resolved against `root`, which is the only reading that makes sense for a
+ * containment question.
+ *
+ * This is a STRING test, not a filesystem one: it does not resolve symlinks. A
+ * caller that must not be fooled by a symlink out of the tree canonicalizes
+ * both sides first (the Rust executor does; so does the dashboard's watch path).
+ */
+export function isPathInside(root: string, target: string): boolean {
+  const absRoot = resolve(root);
+  const abs = isAbsolute(target) ? resolve(target) : resolve(absRoot, target);
+  const rel = relative(absRoot, abs);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
 
 export const GEAR_HOME_DIRNAME = ".gear";
 export const LEGACY_HOME_DIRNAME = ".alan";
