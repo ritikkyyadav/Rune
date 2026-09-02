@@ -44,12 +44,12 @@ describe("subscriptions are named as products", () => {
     const list = labels("subscription");
     expect(list).toContain("ChatGPT Plus / Pro");
     expect(list).toContain("Claude Pro / Max");
-    expect(list).toContain("GitHub Copilot");
+    expect(list).not.toContain("GitHub Copilot"); // dropped in P8.5
     expect(list.join(" ")).not.toContain("codex");
   });
 
   test("the plans people are likeliest to hold come first", () => {
-    expect(ids("subscription").slice(0, 3)).toEqual(["codex", "anthropic", "copilot"]);
+    expect(ids("subscription").slice(0, 2)).toEqual(["codex", "anthropic"]);
   });
 
   test("a plain key mint is not a subscription, so it sorts last", () => {
@@ -66,7 +66,7 @@ describe("subscriptions are named as products", () => {
   test("each carries the sign-in method the strategy will actually run", () => {
     const byId = Object.fromEntries(loginTargets("subscription").map((t) => [t.providerId, t]));
     expect(byId.codex!.method).toBe("oauth");
-    expect(byId.copilot!.method).toBe("device");
+    expect(byId.copilot).toBeUndefined(); // dropped in P8.5
   });
 });
 
@@ -77,7 +77,6 @@ describe("the API-key route", () => {
       expect({ id, listed: list.includes(id) }).toEqual({ id, listed: true });
     }
     expect(list).not.toContain("ollama");
-    expect(list).not.toContain("lmstudio");
   });
 
   test("names the env var, so an existing key is discoverable rather than re-typed", () => {
@@ -92,13 +91,12 @@ describe("the API-key route", () => {
 
 describe("the offline route", () => {
   test("is exactly the local runtimes", () => {
-    expect(ids("offline").sort()).toEqual(["lmstudio", "ollama"]);
+    expect(ids("offline").sort()).toEqual(["ollama"]);
   });
 
   test("says where each one lives, since that is the only thing to get wrong", () => {
     const byId = Object.fromEntries(loginTargets("offline").map((t) => [t.providerId, t]));
     expect(byId.ollama!.hint).toContain("11434");
-    expect(byId.lmstudio!.hint).toContain("1234");
   });
 
   test("needs no credential to count as usable", () => {

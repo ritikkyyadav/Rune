@@ -42,7 +42,7 @@ export function routeChoices(): RouteChoice[] {
     {
       id: "subscription",
       label: "Subscription",
-      hint: "you already pay for ChatGPT, Claude, or Copilot",
+      hint: "you already pay for ChatGPT or Claude",
     },
     { id: "api_key", label: "API key", hint: "paste a key from OpenAI, Anthropic, Google..." },
     { id: "offline", label: "Offline", hint: "Ollama or LM Studio on this machine" },
@@ -66,20 +66,17 @@ export interface LoginTarget {
 const SUBSCRIPTION_LABELS: Record<string, string> = {
   codex: "ChatGPT Plus / Pro",
   anthropic: "Claude Pro / Max",
-  copilot: "GitHub Copilot",
   openrouter: "OpenRouter account",
 };
 
 const SUBSCRIPTION_HINTS: Record<string, string> = {
   codex: "sign in with ChatGPT - no API key needed",
   anthropic: "sign in with Claude - no API key needed",
-  copilot: "sign in with GitHub - device code",
   openrouter: "sign in once; OpenRouter mints the key",
 };
 
 const OFFLINE_HINTS: Record<string, string> = {
   ollama: "localhost:11434 - models you have pulled",
-  lmstudio: "localhost:1234 - whatever LM Studio is serving",
 };
 
 /** True for a provider whose account login IS a paid plan (not a key mint). */
@@ -143,7 +140,7 @@ export function loginTargets(route: LoginRoute, opts: LoginTargetOpts = {}): Log
 }
 
 function rank(id: string): number {
-  const order = ["codex", "anthropic", "copilot", "openrouter"];
+  const order = ["codex", "anthropic", "openrouter"];
   const i = order.indexOf(id);
   return i === -1 ? order.length : i;
 }

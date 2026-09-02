@@ -11,10 +11,10 @@ import {
   OpenRouterProvider,
   GoogleProvider,
   OllamaProvider,
-  CopilotProvider,
   CodexProvider,
   getStrategy,
   ProviderHealthStore,
+  cacheBreakpointPolicyFor,
 } from "@gear/llm-gateway";
 import type {
   GatewayIncidentEvent,
@@ -41,8 +41,10 @@ export interface BuildGatewayOpts {
   customEndpoint?: CustomEndpoint;
   /** Provider ids toggled off — registered providers skip these. */
   disabled?: Set<string>;
-  /** Base URLs for local runtimes (ollama / lmstudio) by id; overrides preset defaults. */
+  /** Base URLs for local runtimes (ollama) by id; overrides preset defaults. */
   localBaseUrls?: Record<string, string>;
+  /** `[llm.ollama] keepAlive` - how long Ollama holds the model + KV cache. */
+  ollamaKeepAlive?: string;
   /** Back-compat: explicit local Ollama base URL (folded into localBaseUrls.ollama). */
   ollamaBaseUrl?: string;
   maxRetries?: number;
@@ -111,7 +113,7 @@ export function buildGateway(opts: BuildGatewayOpts): LlmGateway {
   for (const preset of PROVIDER_PRESETS) {
     if (disabled.has(preset.id)) continue;
 
-    // Local runtimes (ollama / lmstudio) need no API key. Register them opt-in:
+    // Local runtimes (ollama) need no API key. Register them opt-in:
     // only when they're the active provider or the user has configured a base URL
     // (in /keys or config), so a cloud session never silently falls back to a
     // (likely-not-running) localhost server.
@@ -119,8 +121,14 @@ export function buildGateway(opts: BuildGatewayOpts): LlmGateway {
       const configured = !!localBaseUrls[preset.id];
       if (!configured && opts.provider !== preset.id) continue;
       const baseUrl = localBaseUrls[preset.id] ?? preset.baseUrl;
-      if (preset.kind === "ollama") gw.registerProvider(new OllamaProvider(baseUrl));
-      else gw.registerProvider(new OpenAIProvider(undefined, baseUrl, preset.id as ProviderName));
+      if (preset.kind === "ollama")
+        gw.registerProvider(new OllamaProvider(baseUrl, { keepAlive: opts.ollamaKeepAlive }));
+      else
+        gw.registerProvider(
+          new OpenAIProvider(undefined, baseUrl, preset.id as ProviderName, {
+            cacheBreakpoints: cacheBreakpointPolicyFor(preset.id),
+          }),
+        );
       continue;
     }
 
@@ -145,12 +153,11 @@ export function buildGateway(opts: BuildGatewayOpts): LlmGateway {
         // other OpenAI-compatible host runs through OpenAIProvider + base URL.
         if (preset.id === "openrouter") gw.registerProvider(new OpenRouterProvider(key));
         else
-          gw.registerProvider(new OpenAIProvider(key, preset.baseUrl, preset.id as ProviderName));
-        break;
-      case "copilot":
-        // `key` is the durable GitHub OAuth token; CopilotProvider mints and
-        // rotates the short-lived Copilot API token from it internally.
-        gw.registerProvider(new CopilotProvider(key));
+          gw.registerProvider(
+            new OpenAIProvider(key, preset.baseUrl, preset.id as ProviderName, {
+              cacheBreakpoints: cacheBreakpointPolicyFor(preset.id),
+            }),
+          );
         break;
       case "codex":
         // `key` is the ChatGPT access token; the account id (from the id_token,
@@ -165,7 +172,11 @@ export function buildGateway(opts: BuildGatewayOpts): LlmGateway {
   // User-defined custom OpenAI-compatible endpoint.
   const c = opts.customEndpoint;
   if (c?.key && c.baseUrl && !disabled.has(CUSTOM_PROVIDER_ID)) {
-    gw.registerProvider(new OpenAIProvider(c.key, c.baseUrl, CUSTOM_PROVIDER_ID as ProviderName));
+    gw.registerProvider(
+      new OpenAIProvider(c.key, c.baseUrl, CUSTOM_PROVIDER_ID as ProviderName, {
+        cacheBreakpoints: cacheBreakpointPolicyFor(CUSTOM_PROVIDER_ID),
+      }),
+    );
   }
 
   return gw;
@@ -294,7 +305,7 @@ export interface ProviderStatusRow {
   masked: string;
   disabled: boolean;
   active: boolean;
-  /** A local runtime (ollama / lmstudio) reached by base URL, no key. */
+  /** A local runtime (ollama) reached by base URL, no key. */
   local?: boolean;
   /** Resolved base URL for a local runtime (for display / editing). */
   endpoint?: string;

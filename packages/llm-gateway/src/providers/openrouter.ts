@@ -9,6 +9,7 @@ import type {
   ToolDefinition,
 } from "../types";
 import { OpenAIProvider } from "./openai";
+import { cacheBreakpointPolicyFor } from "./cache-policy";
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
@@ -19,16 +20,29 @@ const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 export class OpenRouterProvider implements LlmProvider {
   readonly name = "openrouter" as const;
   private inner: OpenAIProvider;
+  /**
+   * The key this provider was BUILT with. healthCheck() and listModels() used
+   * to read `process.env.OPENROUTER_API_KEY` directly, so a key that arrived
+   * any other way — the keychain, the OAuth flow OpenRouter documents, `/keys
+   * set`, config.toml — produced `Authorization: Bearer undefined`. The health
+   * check then failed for a provider that was working, and listModels() fetched
+   * the catalog unauthenticated, hiding every model the account can reach.
+   */
+  private readonly apiKey?: string;
 
   constructor(apiKey?: string) {
+    this.apiKey = apiKey ?? process.env.OPENROUTER_API_KEY;
     // The name MUST be forwarded: the inner adapter gates real behaviour on it
     // (vision translation, first-party reasoning params), and it defaults to
     // "openai" — which would make OpenRouter traffic impersonate first-party
     // OpenAI on the wire. Every other openai-compat host passes its own id here.
     this.inner = new OpenAIProvider(
-      apiKey ?? process.env.OPENROUTER_API_KEY,
+      this.apiKey,
       OPENROUTER_BASE_URL,
       "openrouter",
+      // OpenRouter is the one host known to forward Anthropic `cache_control`
+      // upstream; declared here rather than sniffed from the base URL.
+      { cacheBreakpoints: cacheBreakpointPolicyFor("openrouter") },
     );
   }
 
@@ -44,10 +58,15 @@ export class OpenRouterProvider implements LlmProvider {
     return this.inner.countTokens(messages, tools);
   }
 
+  /** Authorization header for the key this provider holds, if it has one. */
+  private authHeaders(): Record<string, string> {
+    return this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {};
+  }
+
   async healthCheck(): Promise<boolean> {
     try {
       const res = await fetch(`${OPENROUTER_BASE_URL}/models`, {
-        headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` },
+        headers: this.authHeaders(),
       });
       return res.ok;
     } catch {
@@ -55,9 +74,9 @@ export class OpenRouterProvider implements LlmProvider {
     }
   }
 
-  /** Live model discovery via OpenRouter's public /models catalog. */
+  /** Live model discovery via OpenRouter's /models catalog, as this account. */
   async listModels(): Promise<ModelInfo[]> {
-    const res = await fetch(`${OPENROUTER_BASE_URL}/models`);
+    const res = await fetch(`${OPENROUTER_BASE_URL}/models`, { headers: this.authHeaders() });
     if (!res.ok) throw new Error(`OpenRouter /models failed (${res.status})`);
     const json = (await res.json()) as {
       data?: { id: string; name?: string; context_length?: number }[];

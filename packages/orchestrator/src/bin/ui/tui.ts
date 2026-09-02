@@ -2883,7 +2883,7 @@ class Tui {
     // Data-driven from the provider presets: every registered provider with a
     // curated `models` list contributes its models, so adding a provider is a
     // one-line preset edit -- no picker code to touch. Local runtimes (ollama /
-    // lmstudio) are listed even when not yet active so they're discoverable --
+    // are listed even when not yet active so they're discoverable --
     // picking one switches to it. Free-form `/model <provider>/<id>` still works.
     const localIds = PROVIDER_PRESETS.filter((p) => p.local).map((p) => p.id);
     const ids = [...reg, ...localIds.filter((id) => !reg.includes(id))];
@@ -2962,7 +2962,7 @@ class Tui {
       l1start,
       undefined,
       provs.length
-        ? "subscriptions (Claude Pro/Max | ChatGPT | Copilot): gear login | keys: /keys"
+        ? "subscriptions (Claude Pro/Max | ChatGPT): gear login | keys: /keys"
         : "no providers configured yet -- add a key with /keys or sign in with gear login",
     );
     if (a1 == null) return;

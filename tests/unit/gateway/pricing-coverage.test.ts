@@ -57,7 +57,6 @@ describe("pricing coverage against the provider catalog", () => {
   });
 
   test("a local runtime is free, not unpriced", () => {
-    expect(billingModeFor("lmstudio", "local-model")).toBe("free");
     expect(billingModeFor("ollama", "whatever-you-loaded")).toBe("free");
   });
 
@@ -174,7 +173,10 @@ describe("billing mode separates spend from worth", () => {
   test("the same model is metered or free depending on the account", () => {
     expect(billingModeFor("google", "gemini-2.5-flash")).toBe("metered");
     expect(billingModeFor("openrouter", "deepseek/deepseek-v4-flash:free")).toBe("free");
-    expect(billingModeFor("ollama-turbo", "qwen3-coder:480b")).toBe("subscription");
+    // Ollama Cloud: the ids Gear ships are on the default no-subscription
+    // plan, so this is free - and PROVIDER_CAPACITY says free too. They
+    // used to disagree.
+    expect(billingModeFor("ollama-turbo", "gpt-oss:120b")).toBe("free");
     expect(billingModeFor("ollama", "qwen3-coder:480b")).toBe("free");
   });
 

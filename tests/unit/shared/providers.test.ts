@@ -32,9 +32,7 @@ describe("provider presets", () => {
       expect(p.label).toBeTruthy();
       expect(p.defaultModel).toBeTruthy();
       expect(p.docsUrl).toMatch(/^https:\/\//);
-      expect(["anthropic", "openai-compat", "google", "ollama", "copilot", "codex"]).toContain(
-        p.kind,
-      );
+      expect(["anthropic", "openai-compat", "google", "ollama", "codex"]).toContain(p.kind);
     }
   });
 
@@ -48,7 +46,9 @@ describe("provider presets", () => {
 
   it("local runtimes are keyless and carry a base URL", () => {
     const locals = PROVIDER_PRESETS.filter((p) => p.local);
-    expect(locals.map((p) => p.id).sort()).toEqual(["lmstudio", "ollama"]);
+    // `lmstudio` was the second local runtime until P8.6 dropped it: empty
+    // catalogue, placeholder default, duplicating the slot Ollama fills.
+    expect(locals.map((p) => p.id).sort()).toEqual(["ollama"]);
     for (const p of locals) {
       expect(p.baseUrl).toMatch(/^https?:\/\//);
       expect(p.envVar).toBeUndefined(); // no API key
@@ -68,7 +68,6 @@ describe("auth methods + descriptor", () => {
   it("defaults api_key for cloud providers and local for runtimes", () => {
     expect(effectiveAuthMethods(getPreset("groq")!, noEnv)).toEqual(["api_key"]);
     expect(effectiveAuthMethods(getPreset("ollama")!, noEnv)).toEqual(["local"]);
-    expect(effectiveAuthMethods(getPreset("lmstudio")!, noEnv)).toEqual(["local"]);
   });
 
   it("declares OpenRouter's documented OAuth flow, api_key as fallback", () => {
@@ -99,12 +98,12 @@ describe("auth methods + descriptor", () => {
     expect(getProviderDescriptor("ollama", noEnv)!.local).toBe(true);
   });
 
-  it("adds the three subscription providers with account-style logins", () => {
+  it("adds the subscription providers with account-style logins", () => {
+    // `copilot` was the third until P8.5 dropped it (zero sessions ever ran on
+    // it). Codex → OAuth (ChatGPT); Anthropic → OAuth (Claude Pro/Max).
     expect(getPreset("codex")).toBeDefined();
-    expect(getPreset("copilot")).toBeDefined();
-    // Codex → OAuth (ChatGPT), Copilot → device (GitHub).
     expect(effectiveAuthMethods(getPreset("codex")!, noEnv)).toEqual(["oauth"]);
-    expect(effectiveAuthMethods(getPreset("copilot")!, noEnv)).toEqual(["device"]);
+    expect(effectiveAuthMethods(getPreset("anthropic")!, noEnv)).toEqual(["oauth", "api_key"]);
   });
 });
 
@@ -112,7 +111,7 @@ describe("subscription login labels (pi-style picker)", () => {
   it("frames the account login per subscription provider", () => {
     expect(accountLoginLabel("anthropic")).toMatch(/Claude Pro\/Max/);
     expect(accountLoginLabel("codex")).toMatch(/ChatGPT Plus\/Pro/);
-    expect(accountLoginLabel("copilot")).toMatch(/Copilot/);
+    expect(accountLoginLabel("copilot")).toBeUndefined(); // dropped in P8.5
     expect(accountLoginLabel("groq")).toBeUndefined(); // API-key-only provider
   });
 
@@ -120,9 +119,6 @@ describe("subscription login labels (pi-style picker)", () => {
     expect(authMethodLabel("api_key")).toBe("Sign in with an API key");
     expect(authMethodLabel("oauth", "anthropic")).toBe(
       "Sign in with your Claude Pro/Max subscription",
-    );
-    expect(authMethodLabel("device", "copilot")).toBe(
-      "Sign in with your GitHub Copilot subscription",
     );
     expect(authMethodLabel("oauth", "groq")).toBe("Sign in with an account");
   });

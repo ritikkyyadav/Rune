@@ -12,7 +12,7 @@ import type {
 } from "./types";
 import { CostTracker } from "./cost-tracker";
 import { ProviderHealthStore } from "./provider-health";
-import { providerFallbackRank } from "@gear/shared";
+import { providerFallbackRank, PROVIDER_PRESETS } from "@gear/shared";
 
 // Default model for each provider, used during fallback.
 //
@@ -21,19 +21,38 @@ import { providerFallbackRank } from "@gear/shared";
 // fallback chain down with them — 13 consecutive 410s per run). Keep these
 // current when providers announce retirements; the model-gone pruning below is
 // the safety net that keeps a stale entry from killing runs in the meantime.
-const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
+const HAND_MAINTAINED_DEFAULT_MODELS: Record<string, string> = {
   google: "gemini-2.5-flash",
   anthropic: "claude-sonnet-4-6",
   openai: "gpt-4o",
   // deepseek-v4-flash:free was withdrawn from OpenRouter's free tier
   // ("paid version available now" 404, observed 2026-08-26).
   openrouter: "minimax/minimax-m3:free",
-  ollama: "llama3",
-  // qwen3-coder-next (the previous refresh) was itself retired 2026-07-15.
-  // gpt-oss:120b verified live + tool-capable on the keyed free tier 2026-08-26.
-  "ollama-turbo": "gpt-oss:120b",
+  // The preset's own default. This said "llama3" while the preset said
+  // "llama3.1" - a fallback into Ollama asked for a tag most machines have not
+  // pulled, so the rescue route 404'd.
+  ollama: "llama3.1",
   codex: "gpt-5.6-terra",
 };
+
+// Presets that declare `fallbackModel` own their id here, so a provider whose
+// catalogue rots is fixed in one place instead of three (see ProviderPreset.tiers).
+const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
+  ...HAND_MAINTAINED_DEFAULT_MODELS,
+  ...Object.fromEntries(
+    PROVIDER_PRESETS.filter((p) => p.fallbackModel).map((p) => [p.id, p.fallbackModel!]),
+  ),
+};
+
+/**
+ * The model a fallback into this provider asks for, or undefined when the
+ * provider has no entry. Exported so the provider-table agreement test can
+ * check it against the presets: these ids drifted apart before (`ollama` fell
+ * back to a tag the preset had already moved off).
+ */
+export function defaultModelForProvider(provider: string): string | undefined {
+  return PROVIDER_DEFAULT_MODELS[provider];
+}
 
 // Cap how long we'll wait on a single rate-limited attempt. A free-tier quota
 // 429 often advises tens of seconds; hanging that long is worse than switching

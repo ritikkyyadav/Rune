@@ -13,7 +13,7 @@ export interface GearConfig {
     maxSessions: number;
   };
   llm: {
-    // Full ProviderName set (was missing groq/xai/deepseek/lmstudio/custom, which
+    // Full ProviderName set (was missing groq/xai/deepseek/custom, which
     // are valid providers — widened so config.toml can name any of them).
     defaultProvider:
       | "anthropic"
@@ -21,7 +21,6 @@ export interface GearConfig {
       | "openrouter"
       | "ollama"
       | "ollama-turbo"
-      | "lmstudio"
       | "google"
       | "groq"
       | "xai"
@@ -76,11 +75,8 @@ export interface GearConfig {
       baseUrl: string;
       model: string;
       authentication?: AuthMethod;
-    };
-    lmstudio?: {
-      baseUrl: string;
-      model: string;
-      authentication?: AuthMethod;
+      /** How long Ollama holds the model + KV cache after a request ("30m"). */
+      keepAlive?: string;
     };
     planner?: {
       provider: string;

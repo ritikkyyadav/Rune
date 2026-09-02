@@ -16,12 +16,10 @@ import { DeviceCodeStrategy } from "./device-code-strategy";
 import { openRouterOAuthFlow } from "../oauth/openrouter";
 import { anthropicOAuthFlow } from "../oauth/anthropic";
 import { codexOAuthFlow } from "../oauth/codex";
-import { githubCopilotDeviceFlow } from "../oauth/github-copilot";
 
 let openRouter: OAuthStrategy | undefined;
 let anthropic: OAuthStrategy | undefined;
 let codex: OAuthStrategy | undefined;
-let copilot: DeviceCodeStrategy | undefined;
 
 /** The OAuth (PKCE / authorization-code) strategy for a provider, if any. */
 export function makeOAuthStrategy(
@@ -42,10 +40,5 @@ export function makeOAuthStrategy(
 
 /** The device-code strategy for a provider, if any (headless OAuth login). */
 export function makeDeviceStrategy(providerId: string): AuthenticationStrategy | undefined {
-  // GitHub Copilot signs in with GitHub's device flow → a durable GitHub token
-  // the CopilotProvider exchanges for short-lived Copilot API tokens.
-  if (providerId === "copilot") {
-    return (copilot ??= new DeviceCodeStrategy(githubCopilotDeviceFlow));
-  }
   return undefined;
 }
