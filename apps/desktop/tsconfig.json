@@ -21,7 +21,11 @@
 
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["src/*"],
+      // `@gear/sdk` publishes `dist/` (P5.4). In the workspace we want source,
+      // so the app never depends on the SDK having been built first.
+      "@gear/sdk": ["../../packages/sdk/src/index.ts"],
+      "@gear/sdk/client": ["../../packages/sdk/src/client.ts"]
     }
   },
   "include": ["src"]

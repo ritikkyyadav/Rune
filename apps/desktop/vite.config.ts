@@ -18,6 +18,11 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "src"),
+      // `@gear/sdk` is published (P5.4), so its `exports` point at the compiled
+      // `dist/` a consumer installs. The bundle wants the workspace source —
+      // one build, not two, and no stale dist between them.
+      "@gear/sdk/client": path.resolve(__dirname, "../../packages/sdk/src/client.ts"),
+      "@gear/sdk": path.resolve(__dirname, "../../packages/sdk/src/index.ts"),
     },
   },
 

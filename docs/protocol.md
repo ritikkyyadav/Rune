@@ -285,6 +285,23 @@ leave one unset and the host applies the unattended policy above.
 See `packages/sdk/README.md` for the worked example — it is executed by
 `tests/integration/engine-serve.test.ts`, so it cannot rot silently.
 
+It is a **publishable package**: `npm pack` ships `dist/`, the README and the
+manifest, and nothing else. `@gear/protocol` is private, so it is vendored into
+`dist/protocol/` by the build rather than depended on — one install, and no 404
+on a machine with no workspace. `tests/integration/sdk-pack.test.ts` packs the
+tarball, unpacks it where no workspace can rescue it, imports it and typechecks
+a consumer against its declarations. Publishing to npm is a founder action
+(D1); nothing in this repo publishes.
+
+Two runnable examples live in `examples/sdk/`. With no `gear serve` running
+they stand one up against a fake model, so both work on a fresh clone with no
+API key:
+
+```bash
+bun run examples/sdk/run-task.ts     # runs a prompt, then prints `gear audit` for it
+bun run examples/sdk/policy-bot.ts   # answers permission requests from an allow/deny policy
+```
+
 ## Exhaustiveness — the drift law
 
 `AgentTurnEvent` has 22 members and is consumed by five reducers: the TUI
