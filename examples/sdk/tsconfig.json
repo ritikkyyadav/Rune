@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ESNext"],
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "baseUrl": ".",
+    // In YOUR project this line does not exist: `npm i @gear/sdk` and the
+    // import resolves on its own. Here it points at the workspace source so the
+    // examples run on a fresh clone without building the package first.
+    "paths": {
+      "@gear/sdk": ["../../packages/sdk/src/index.ts"],
+      "@gear/sdk/client": ["../../packages/sdk/src/client.ts"]
+    }
+  },
+  "include": ["*.ts"]
+}

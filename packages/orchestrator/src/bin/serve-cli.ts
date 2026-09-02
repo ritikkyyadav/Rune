@@ -23,6 +23,7 @@
 // was minted for it.
 
 import { chmodSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 
 import type { ServerWebSocket } from "bun";
@@ -452,12 +453,19 @@ export function injectServeEndpoint(html: string, url: string, token: string): s
 }
 
 /**
- * Whether this request may be handed a page with the token in it.
+ * Whether this request may be handed a page with the token already in it.
  *
  * On loopback, yes: any process that could make this request already runs as
  * the user and can read `~/.gear/serve.json` directly, so refusing would buy
- * nothing. Off-loopback, the token must already be in the request — which is
- * why `gear web --host` prints a URL that carries it.
+ * nothing.
+ *
+ * Off-loopback, no — and since P5.5 the remote link carries its token in the
+ * URL **fragment**, which the browser never sends, so the server cannot embed
+ * it even in principle. What goes out instead is the bundle with no token in
+ * it, and the page reads its own `#token=`. That is not a weakening: the
+ * bundle is public JavaScript, inert without a token, and the alternative
+ * (`?token=` so the server can recognise the request) puts a credential for
+ * remote code execution into every access log it passes through.
  */
 export function mayReceiveEmbeddedToken(
   loopback: boolean,
@@ -465,6 +473,26 @@ export function mayReceiveEmbeddedToken(
   token: string,
 ): boolean {
   return loopback || (supplied != null && timingSafeEqual(supplied, token));
+}
+
+/**
+ * The addresses a `--host 0.0.0.0` bind is actually reachable on.
+ *
+ * Needed twice: the URL printed for a phone has to be one a phone can dial
+ * (`http://0.0.0.0:7788` is not), and the Origin allowlist has to contain the
+ * address the browser will send, or the page loads and its socket is refused
+ * with a 403 that looks like a bug in the app.
+ */
+export function lanAddresses(): string[] {
+  const out: string[] = [];
+  for (const addrs of Object.values(networkInterfaces())) {
+    for (const a of addrs ?? []) {
+      if (a.internal) continue;
+      if (String(a.family) !== "IPv4" && String(a.family) !== "4") continue;
+      out.push(a.address);
+    }
+  }
+  return out;
 }
 
 /** Serve one file out of `dist`, refusing anything that climbs out of it. */
@@ -520,7 +548,22 @@ export async function runServe(
   const origins =
     typeof values.origin === "string" ? [...DEFAULT_ORIGINS, values.origin] : [...DEFAULT_ORIGINS];
 
-  const running = await serve({ port, host, workspace, allowRemoteSettings, origins });
+  // `gear serve --web` is `gear web` on the serve port: one process that also
+  // hands out the page. The flag has been declared since P3.2 and did nothing,
+  // which is worse than not having it — an editor extension that runs it gets a
+  // socket and a 404 where the client should be. `gear web` stays the command a
+  // person types; this is the form a program spawns.
+  //
+  // Imported lazily because `web-cli` imports `serve` from here, and a static
+  // cycle between them is a class of bug nobody should have to debug twice.
+  let web: { dist: string } | undefined;
+  if (values.web === true) {
+    const { webBundleBuilt, webDistDir } = await import("./web-cli");
+    if (webBundleBuilt()) web = { dist: webDistDir() };
+    else console.error("  the web client is not built — run `bun run --cwd apps/desktop build`");
+  }
+
+  const running = await serve({ port, host, workspace, allowRemoteSettings, origins, web });
 
   // `serve()` returns as soon as it is listening, so the CLI must park here or
   // the process falls straight through and exits with a token file on disk and
@@ -592,18 +635,14 @@ export async function serve(opts: ServeOptions = {}): Promise<{ stop: () => void
       // server was started with a bundle to serve.
       if (opts.web && req.headers.get("upgrade")?.toLowerCase() !== "websocket") {
         const fromHere = isLoopbackAddress(srv.requestIP(req)?.address);
-        if (!mayReceiveEmbeddedToken(fromHere, extractToken(req), token)) {
-          return new Response(
-            "This page carries the connection token, so it is served only to this " +
-              "machine or to a request that already has the token. Open the URL " +
-              "`gear web` printed — it includes `?token=`.",
-            { status: 401, headers: { "content-type": "text/plain; charset=utf-8" } },
-          );
-        }
-        return serveStatic(opts.web.dist, url.pathname, {
-          url: `ws://${url.host}`,
-          token,
-        });
+        // Loopback gets the token baked into the page it is about to use.
+        // Everyone else gets the bundle with no token in it and supplies one
+        // from the URL fragment — which never reaches this server, and so
+        // never reaches a log. The page is inert until it has one.
+        const embed = mayReceiveEmbeddedToken(fromHere, extractToken(req), token)
+          ? { url: `ws://${url.host}`, token }
+          : null;
+        return serveStatic(opts.web.dist, url.pathname, embed);
       }
 
       const origin = req.headers.get("origin");
@@ -727,13 +766,27 @@ export async function serve(opts: ServeOptions = {}): Promise<{ stop: () => void
   const reaper = setInterval(() => pool.reapIdle(), 5 * 60_000);
   (reaper as unknown as { unref?: () => void }).unref?.();
 
-  const url = `ws://${loopbackOnly ? "127.0.0.1" : host}:${boundPort}`;
+  // `0.0.0.0` is a bind, not an address: nothing can dial it. Print what a
+  // phone on the same network would actually type.
+  const dialHosts =
+    host === "0.0.0.0" || host === "::"
+      ? lanAddresses().length > 0
+        ? lanAddresses()
+        : ["127.0.0.1"]
+      : [loopbackOnly ? "127.0.0.1" : host];
+
+  const url = `ws://${dialHosts[0]}:${boundPort}`;
   console.log(`gear ${opts.web ? "web" : "serve"} — protocol ${PROTOCOL_VERSION}`);
   console.log(`  listening  ${url}`);
   if (opts.web) {
-    const pageHost = loopbackOnly ? "127.0.0.1" : host;
-    const page = `http://${pageHost}:${boundPort}`;
-    console.log(`  open       ${loopbackOnly ? page : `${page}/?token=${token}`}`);
+    // The token goes in the FRAGMENT, never the query: a fragment is not sent
+    // to the server, so it cannot be written to an access log, forwarded in a
+    // Referer, or captured by a proxy on the way. On loopback the page already
+    // has the token embedded, so the bare URL is enough.
+    for (const h of dialHosts) {
+      const page = `http://${h}:${boundPort}`;
+      console.log(`  open       ${loopbackOnly ? page : `${page}/#token=${token}`}`);
+    }
     console.log(`  bundle     ${opts.web.dist}`);
   }
   console.log(`  workspace  ${workspace}`);

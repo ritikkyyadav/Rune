@@ -6,7 +6,27 @@ editor extension, a CI step.
 The whole of `@gear/protocol` is re-exported, so the event union, the round-trip
 shapes and the command map you code against are the same declarations the engine
 and the terminal use. A client cannot drift from the server, because there is
-only one copy.
+only one copy. The protocol is **vendored into this package**, not depended on:
+one install, no private workspace package to resolve, nothing to keep in step.
+
+```bash
+npm i @gear/sdk        # Node 18+, or Bun, or a bundler
+```
+
+ESM only, no runtime dependencies. On Node 18 and 20 pass a `WebSocket`
+implementation (`ws`, `undici`); Node 22+, Bun and browsers have one built in.
+
+## Two worked examples
+
+Both live in [`examples/sdk/`](../../examples/sdk) and run on a fresh clone with
+no API key: with no `gear serve` running they stand one up against a fake model,
+so what you see is the real engine, the real permission broker and the real
+protocol, with only the completions faked.
+
+```bash
+bun run examples/sdk/run-task.ts     # runs a prompt, then prints `gear audit` for it
+bun run examples/sdk/policy-bot.ts   # answers permission requests from an allow/deny policy
+```
 
 ## Start a server
 
@@ -98,3 +118,27 @@ An unknown command is a compile error, not a runtime `unknown command`.
   unless the token was minted with `--allow-remote-settings`.
 
 Full contract: [`docs/protocol.md`](../../docs/protocol.md).
+
+## Building and publishing
+
+```bash
+bun run --cwd packages/sdk build     # dist/ — ESM + declarations, protocol vendored
+npm pack --dry-run                   # what the tarball would contain
+```
+
+`prepack` runs the build, so `npm publish` cannot ship a stale `dist/`. The
+build copies `packages/protocol/src` into `dist/protocol/` and rewrites the one
+bare specifier to a relative path; a surviving `@gear/*` import fails the build
+rather than the install. `tests/integration/sdk-pack.test.ts` packs the tarball,
+unpacks it where no workspace can rescue it, imports it and typechecks a
+consumer against its declarations.
+
+Publishing to npm is a **founder action** (decision D1 in
+[`docs/program/00-program.md`](../../docs/program/00-program.md)): the registry
+scope and the license have to be settled first. Nothing in this repo publishes.
+
+Inside this repo the package resolves to `src/`, through `paths` entries in
+`packages/orchestrator/tsconfig.json`, `apps/desktop/tsconfig.json` and the
+Vite config. That is deliberate: the manifest points at `dist/` for the people
+who install it, and the workspace never has to build the SDK before it can run
+the CLI.

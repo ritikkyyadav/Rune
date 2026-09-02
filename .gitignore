@@ -61,5 +61,8 @@ tests/fixtures/tmp/
 _to_delete/
 *.tgz
 *.tar.gz
+# Packaged VS Code extension + its esbuild output (built, never committed)
+*.vsix
+apps/vscode/out/
 # terminal captures from TUI debugging (raw ANSI dumps)
 *.cv.txt

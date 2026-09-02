@@ -133,7 +133,20 @@ packaged build ships the compiled `gear` binary and runs `gear engine-host`, so 
 checkout are needed — see `docs/release-desktop.md`, including what is not signed yet and why.
 
 **`gear web`** serves the same bundle in a browser with the engine attached, which is how Linux, a
-phone on the LAN (`--host`) and a machine you are not sitting at get in.
+phone on the LAN (`--host`) and a machine you are not sitting at get in. The remote link carries its
+token in the URL **fragment**, which the browser never sends to the server — see
+[`docs/threat-model.md`](docs/threat-model.md), because a served engine is remote code execution
+with your credentials attached and the document says so in those words.
+
+**`gear attach ws://host:port`** is the terminal as a client of a remote engine: the same
+`GearClient` the desktop and the web page use, so a run that stops for a permission on another
+machine stops in your terminal and answering here unblocks it.
+
+**In CI**, `gear -P "<prompt>" --stream-json --gear 3 --workspace .` is the form, with exit codes
+`0` ok, `1` failed, `3` needed permission and had nobody to ask. `action/` is a GitHub composite
+action that runs a review on a pull request and posts one comment carrying both the review and the
+audit of the run that produced it, and `gear pr <n>` checks a pull request out into its own worktree
+with the author's description as the brief. See [`docs/ci.md`](docs/ci.md).
 
 ## Install
 
