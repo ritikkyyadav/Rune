@@ -83,23 +83,23 @@ worktree before merging (below).
 
 Both delegation tools declare an `outputSchema` and return a typed object beside the text:
 
-| Field | Who fills it |
-|---|---|
-| `summary` | the model — one paragraph the parent can act on |
-| `findings[]` | the model — discrete, independently checkable conclusions |
-| `filesExamined[]` | the model, falling back to the observed tool trail |
-| `filesChanged[]` | **the harness** — what was actually written, never what was claimed |
-| `checks` | **the harness** — `passed` / `failed` / `not_run` from the worker's own run |
-| `confidence` | the model |
-| `unresolved[]` | the model — what it could not settle |
-| `stopReason`, `toolCallCount` | **the harness** |
-| `servedBy` | **the harness** — the model that actually answered, if it changed mid-run |
+| Field                         | Who fills it                                                                |
+| ----------------------------- | --------------------------------------------------------------------------- |
+| `summary`                     | the model — one paragraph the parent can act on                             |
+| `findings[]`                  | the model — discrete, independently checkable conclusions                   |
+| `filesExamined[]`             | the model, falling back to the observed tool trail                          |
+| `filesChanged[]`              | **the harness** — what was actually written, never what was claimed         |
+| `checks`                      | **the harness** — `passed` / `failed` / `not_run` from the worker's own run |
+| `confidence`                  | the model                                                                   |
+| `unresolved[]`                | the model — what it could not settle                                        |
+| `stopReason`, `toolCallCount` | **the harness**                                                             |
+| `servedBy`                    | **the harness** — the model that actually answered, if it changed mid-run   |
 
 The split is the design. A model has an incentive to be wrong about what it changed and whether
 checks passed, so those fields come from observation; the model contributes prose and judgement.
 
 `result` remains the rendered text the model reads, so nothing downstream had to change. The
-rendered form is now produced *from* the object — the old `partialReport` and `buildManifest`
+rendered form is now produced _from_ the object — the old `partialReport` and `buildManifest`
 became renderers — which is what stops the prose and the object from disagreeing.
 
 If the sub-agent answers in prose rather than in the schema, exactly one extra tool-less call
@@ -157,10 +157,10 @@ land, because then it is the only copy of it.
 
 Every delegated call is bounded by money and by wall clock, not only by turns:
 
-| Argument | Default | Meaning |
-|---|---|---|
-| `costCapUsd` | 0.5 / 2 / 6 by effort | list-price ceiling for the sub-agent's own inference |
-| `deadlineMs` | 3 / 10 / 25 min by effort | wall clock from dispatch |
+| Argument     | Default                   | Meaning                                              |
+| ------------ | ------------------------- | ---------------------------------------------------- |
+| `costCapUsd` | 0.5 / 2 / 6 by effort     | list-price ceiling for the sub-agent's own inference |
+| `deadlineMs` | 3 / 10 / 25 min by effort | wall clock from dispatch                             |
 
 Both are checked **between turns**, never mid-call — aborting a request already in flight pays for
 it and loses the reply. A breach is a **stop, not a failure**: the loop ends, the sub-agent returns
@@ -296,7 +296,6 @@ config through, which defaults to on.
   particular task — work is pulled, never pushed.
 - **Not shared context.** Instances exchange messages and claims, not conversation history.
   Each session's transcript stays its own.
-
 
 ---
 

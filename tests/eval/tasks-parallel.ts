@@ -32,7 +32,10 @@ import type { ScriptedResponse } from "./mock-provider";
 // which is what lets them run concurrently at all.
 const SLICES = [
   { file: "src/backend.ts", body: "export function serve(): string {\n  return 'backend';\n}\n" },
-  { file: "src/frontend.ts", body: "export function render(): string {\n  return 'frontend';\n}\n" },
+  {
+    file: "src/frontend.ts",
+    body: "export function render(): string {\n  return 'frontend';\n}\n",
+  },
   { file: "docs/design.md", body: "# Design\n\nFour slices, four worktrees.\n" },
   { file: "tests/smoke.test.ts", body: "export const smoke = true;\n" },
 ];
@@ -93,9 +96,7 @@ const greenfieldParallel: EvalTask = {
     // so the PRESENCE of any tool_result is the state machine. Matching on the
     // result's text would couple this to the content-block shape, which is
     // what silently looped the first version of this task.
-    const wrote = request.messages.some((m) =>
-      m.content.some((c) => c.type === "tool_result"),
-    );
+    const wrote = request.messages.some((m) => m.content.some((c) => c.type === "tool_result"));
     if (!wrote) {
       return {
         text: `Writing ${slice.file}.`,

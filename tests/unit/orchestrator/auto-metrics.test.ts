@@ -47,7 +47,13 @@ function makeDb(
     seq++;
     db.prepare(
       "INSERT INTO events (session_id, seq, type, payload_json, created_at) VALUES (?,?,?,?,?)",
-    ).run(e.session ?? "s1", seq, e.type, JSON.stringify({ type: e.type, payload: e.payload }), "2026-09-02");
+    ).run(
+      e.session ?? "s1",
+      seq,
+      e.type,
+      JSON.stringify({ type: e.type, payload: e.payload }),
+      "2026-09-02",
+    );
   }
   db.close();
   return path;

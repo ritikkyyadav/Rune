@@ -99,9 +99,7 @@ export function readAutoSafetyMetrics(
 
     const sessions = opts.sessionId
       ? 1
-      : ((
-          db.prepare("SELECT COUNT(*) AS n FROM sessions").get() as { n: number } | null
-        )?.n ?? 0);
+      : ((db.prepare("SELECT COUNT(*) AS n FROM sessions").get() as { n: number } | null)?.n ?? 0);
 
     const decisionRows = db
       .prepare(
@@ -119,7 +117,8 @@ export function readAutoSafetyMetrics(
     for (const raw of decisionRows) {
       let payload: Record<string, unknown>;
       try {
-        payload = (JSON.parse(raw.payload_json) as { payload?: Record<string, unknown> }).payload ?? {};
+        payload =
+          (JSON.parse(raw.payload_json) as { payload?: Record<string, unknown> }).payload ?? {};
       } catch {
         continue;
       }
@@ -160,12 +159,18 @@ export function readAutoSafetyMetrics(
     for (const raw of heldRows) {
       let payload: Record<string, unknown>;
       try {
-        payload = (JSON.parse(raw.payload_json) as { payload?: Record<string, unknown> }).payload ?? {};
+        payload =
+          (JSON.parse(raw.payload_json) as { payload?: Record<string, unknown> }).payload ?? {};
       } catch {
         continue;
       }
       const outcome = String(payload.outcome ?? "");
-      if (outcome === "ran" || outcome === "skipped" || outcome === "refused" || outcome === "failed") {
+      if (
+        outcome === "ran" ||
+        outcome === "skipped" ||
+        outcome === "refused" ||
+        outcome === "failed"
+      ) {
         metrics.heldSteps[outcome]++;
         metrics.heldSteps.total++;
         metrics.legacyOnly = false;
