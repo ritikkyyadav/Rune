@@ -5,20 +5,75 @@ name: Release
 # the same job that assembled the binaries (checksum drift is impossible by
 # construction), smoke-runs the Linux pair, publishes the GitHub release, and
 # then re-installs from that release exactly the way the README tells users to.
+#
+# The version is not written down anywhere in this file. `scripts/version.sh`
+# is the one source, `scripts/targets.sh` is the one target list, and the
+# binary carries what it was built with (`bun build --define`). Publishing
+# REFUSES when the tag and the binary's own `--version` disagree — the failure
+# that used to ship silently, because four hand-maintained copies of the
+# version had no way to notice each other.
+#
+# `workflow_dispatch` runs the whole pipeline WITHOUT publishing (a dry run),
+# so the release path can be exercised on a branch before a tag exists.
 
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build as (e.g. 0.3.0). Defaults to the dev version from scripts/version.sh."
+        required: false
+        type: string
+      publish:
+        description: "Actually publish a release. Leave false for a dry run: build, checksum and smoke only."
+        required: false
+        default: false
+        type: boolean
+      prerelease:
+        description: "Mark the published release as a prerelease."
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
+  # A tag push is a real release; a manual run publishes only when asked.
+  GEAR_PUBLISH: ${{ github.event_name == 'push' || inputs.publish == true }}
 
 jobs:
+  version:
+    name: Resolve the one version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      publish: ${{ steps.v.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: v
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A tag push names the version. A manual run may name one, else the
+          # dev version scripts/version.sh computes. Either way, ONE source.
+          if [ "${{ github.event_name }}" = "push" ]; then
+            export GEAR_VERSION="${GITHUB_REF_NAME}"
+          elif [ -n "${{ inputs.version }}" ]; then
+            export GEAR_VERSION="${{ inputs.version }}"
+          fi
+          v="$(bash scripts/version.sh)"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "publish=${GEAR_PUBLISH}" >> "$GITHUB_OUTPUT"
+          echo "Building as: $v (publish=${GEAR_PUBLISH})"
+
   cli:
     name: CLI (bun cross-compile, all platforms)
+    needs: [version]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,13 +82,22 @@ jobs:
           bun-version: latest
       - run: bun install --frozen-lockfile
       - name: Compile standalone CLIs
+        shell: bash
+        env:
+          GEAR_VERSION: ${{ needs.version.outputs.version }}
         run: |
+          set -euo pipefail
+          # One target list, one version source — the same files the local
+          # scripts/build-release.sh reads, so a local build and a release
+          # build cannot cover different platforms.
+          . scripts/targets.sh
+          . scripts/version.sh
+          v="$(gear_version)"
           mkdir -p out
-          for pair in bun-darwin-arm64:darwin-arm64 bun-darwin-x64:darwin-x64 \
-                      bun-linux-x64:linux-x64 bun-linux-arm64:linux-arm64 \
-                      bun-windows-x64:windows-x64.exe; do
+          for pair in "${GEAR_TARGETS[@]}"; do
             target="${pair%%:*}"; suffix="${pair##*:}"
             bun build --compile --minify --target="$target" \
+              --define=GEAR_BUILD_VERSION="\"$v\"" \
               packages/orchestrator/src/bin/gear-cli.ts --outfile "out/gear-$suffix"
           done
           ls -la out/
@@ -41,7 +105,7 @@ jobs:
         with:
           name: cli
           path: out/gear-*
-          retention-days: 1
+          retention-days: 7
 
   tools-native:
     name: ${{ matrix.asset }}
@@ -75,7 +139,7 @@ jobs:
         with:
           name: ${{ matrix.asset }}
           path: out/*
-          retention-days: 1
+          retention-days: 7
 
   tools-linux-arm64:
     name: gear-tools-linux-arm64 (cross)
@@ -94,17 +158,33 @@ jobs:
         with:
           name: gear-tools-linux-arm64
           path: out/*
-          retention-days: 1
+          retention-days: 7
 
   publish:
     name: Checksum, smoke, publish
-    needs: [cli, tools-native, tools-linux-arm64]
+    needs: [version, cli, tools-native, tools-linux-arm64]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
+      - name: Every target the one list names is present
+        shell: bash
+        run: |
+          set -euo pipefail
+          . scripts/targets.sh
+          missing=0
+          for pair in "${GEAR_TARGETS[@]}"; do
+            f="dist/gear-${pair##*:}"
+            [ -f "$f" ] || { echo "::error::missing CLI asset $f"; missing=1; }
+          done
+          for suffix in "${GEAR_TOOLS_ASSETS[@]}"; do
+            f="dist/gear-tools-$suffix"
+            [ -f "$f" ] || { echo "::error::missing tools asset $f"; missing=1; }
+          done
+          exit "$missing"
       - name: Checksums (generated beside the binaries they describe)
         run: |
           cd dist
@@ -116,28 +196,56 @@ jobs:
           GEAR_TOOLS_BIN=dist/gear-tools-linux-x64 dist/gear-linux-x64 --version | grep -E "Gear v"
           # Not just "it starts": the pair must execute real tools together.
           GEAR_TOOLS_BIN="$PWD/dist/gear-tools-linux-x64" dist/gear-linux-x64 tools-smoke
+      - name: The binary must agree with the tag
+        shell: bash
+        env:
+          EXPECTED: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # `gear --version` prints "Gear v<version>". A release whose binary
+          # disagrees with its tag is the exact failure four hand-maintained
+          # version copies used to ship; it is now a hard stop.
+          reported="$(dist/gear-linux-x64 --version | sed -n 's/^Gear v//p' | head -1)"
+          echo "tag/input: $EXPECTED"
+          echo "binary   : $reported"
+          if [ "$reported" != "$EXPECTED" ]; then
+            echo "::error::version mismatch — the tag says '$EXPECTED', the binary reports '$reported'. Refusing to publish."
+            exit 1
+          fi
       - name: Publish release
+        if: ${{ needs.version.outputs.publish == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', needs.version.outputs.version) }}
+          PRERELEASE: ${{ inputs.prerelease == true && '--prerelease' || '' }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* \
+          gh release create "$TAG" dist/* \
             --repo "$GITHUB_REPOSITORY" \
-            --title "Gear $GITHUB_REF_NAME" \
+            --title "Gear $TAG" \
+            $PRERELEASE \
             --generate-notes
+      - name: Dry run — built, checksummed and smoked, nothing published
+        if: ${{ needs.version.outputs.publish != 'true' }}
+        run: |
+          echo "Dry run complete for ${{ needs.version.outputs.version }}."
+          echo "Artifacts are attached to this workflow run; no GitHub release was created."
+          ls -la dist/
 
   install-smoke:
     name: Fresh-machine install (README gh path, checksum-verified)
-    needs: [publish]
+    needs: [version, publish]
+    if: ${{ needs.version.outputs.publish == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Install exactly as the README instructs, then run
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', needs.version.outputs.version) }}
         run: |
           os="$(uname -s | tr '[:upper:]' '[:lower:]')"
           arch="$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/')"
           tmp="$(mktemp -d)"; cd "$tmp"
-          gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" \
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" \
             -p "gear-$os-$arch" -p "gear-tools-$os-$arch" -p SHA256SUMS
           grep -E "gear(-tools)?-$os-$arch\$" SHA256SUMS | sha256sum -c -
           mkdir -p ~/.gear/bin

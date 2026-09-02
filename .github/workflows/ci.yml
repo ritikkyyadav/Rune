@@ -162,7 +162,19 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: cargo build --release -p gear-tools
       - name: Compile standalone CLI (same command as release builds)
-        run: bun build --compile packages/orchestrator/src/bin/gear-cli.ts --outfile ./gear-packaged
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The same version source release.yml and build-release.sh use, so
+          # CI exercises the injection path rather than a second one.
+          . scripts/version.sh
+          v="$(gear_version)"
+          echo "building as $v"
+          bun build --compile --define=GEAR_BUILD_VERSION="\"$v\"" \
+            packages/orchestrator/src/bin/gear-cli.ts --outfile ./gear-packaged
+          # The injection must actually reach the binary: a define that stops
+          # working would otherwise show up first in a shipped release.
+          ./gear-packaged --version | grep -F "Gear v$v"
       - name: Packaged smoke — version, help, REAL tool execution
         env:
           GEAR_TOOLS_BIN: ${{ github.workspace }}/target/release/gear-tools
