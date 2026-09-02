@@ -9,6 +9,7 @@ import { getGearHome } from "@gear/shared";
 import type { IncidentRecord } from "@gear/shared";
 import { BlackboxStore } from "@gear/telemetry";
 import { accent, danger, dim, faint, info, ok, text, warn } from "./ui/theme";
+import { formatAutoSafetyMetrics, readAutoSafetyMetrics } from "../auto-metrics";
 import { glyph } from "./ui/glyphs";
 
 const HOME = () => getGearHome();
@@ -61,6 +62,22 @@ function sevPaint(severity: string, s: string): string {
 
 export function runDoctor(): void {
   console.log(`\n  ${dim("§ GEAR DOCTOR")}\n`);
+
+  // Auto mode's own false-positive record, read from the session log.
+  //
+  // This sits at the top rather than the bottom because it is the one number on
+  // this page that describes the harness getting in the user's way rather than
+  // the harness breaking. A rising rate here is not an incident and will never
+  // appear in the black box, which is exactly why it went unmeasured.
+  {
+    const sessionDb = join(HOME(), "gear.db");
+    if (existsSync(sessionDb)) {
+      const metrics = readAutoSafetyMetrics(sessionDb);
+      console.log(`  ${dim("auto mode:")}`);
+      for (const line of formatAutoSafetyMetrics(metrics)) console.log(`    ${dim(line)}`);
+      console.log();
+    }
+  }
 
   // Recorder store health
   const store = openStore();
