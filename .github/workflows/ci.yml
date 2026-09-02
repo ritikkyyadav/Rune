@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, gear/phase-0-stabilize, "lane/**"]
   schedule:
     # Nightly full real-model eval (the capability anchor). Mock evals gate
     # every PR; this catches drift that only shows against a live provider.
