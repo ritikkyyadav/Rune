@@ -73,10 +73,8 @@
     "packages/sdk": {
       "name": "@gear/sdk",
       "version": "0.3.0",
-      "dependencies": {
-        "@gear/protocol": "workspace:*",
-      },
       "devDependencies": {
+        "@gear/protocol": "workspace:*",
         "typescript": "^5.8",
       },
     },
