@@ -67,6 +67,57 @@ measurement, not a guess.
 
 ---
 
+## Providers that were removed
+
+### `lmstudio` — removed 2026-09-02 (P8.6, decision D5)
+
+It shipped `models: []` and a placeholder `local-model` default: a provider in
+the picker with nothing to pick, and a model id that only worked if the user
+happened to have named theirs that. It duplicated the local-runtime slot Ollama
+already fills properly.
+
+LM Studio serves an OpenAI-compatible API, so nothing is lost — reach it through
+the custom endpoint instead:
+
+```
+/keys custom http://localhost:1234/v1 <the-model-you-loaded> lm-studio
+```
+
+---
+
+## One catalogue per provider
+
+A provider's model ids used to live in three hand-maintained tables with no
+cross-check — `PROVIDER_PRESETS` (what the picker offers),
+`PROVIDER_TIER_DEFAULTS` (what heavy/standard/light resolve to), and the
+gateway's fallback defaults. They drifted, and each drift was a live failure:
+
+- `ollama` fell back to `llama3` while its preset said `llama3.1`, so a
+  fallback into Ollama asked for a tag most machines have not pulled;
+- Groq's light tier resolved to `llama-3.1-8b-instant`, which the picker never
+  listed, so the one list a person reads did not contain a model their session
+  would actually run;
+- `ollama-turbo`'s tier table pointed at a lineup that had 410'd — twice —
+  while the preset had already been refreshed, which killed compaction for
+  those sessions.
+
+A preset can now declare `tiers` and `fallbackModel` and own its ids outright.
+`ollama-turbo` is folded that way. `tests/unit/shared/provider-tables.test.ts`
+holds every provider to the rule regardless of which form it uses: **every model
+id any table names must be a model that provider's preset actually offers.**
+
+### Capacity and billing
+
+Two different questions — how much rate-limit headroom a provider has (for
+fallback ordering) and who pays for a token (for the meter) — that must not
+contradict each other about the same account. `ollama-turbo` was ranked `free`
+capacity and billed as `subscription` at the same time. The ids Gear ships for
+Ollama Cloud are the ones verified on the **default, no-subscription plan**
+(subscription-gated models are deliberately omitted because they 403), so both
+now say free.
+
+---
+
 ## Reading a cache number in the product
 
 `gear audit` and the TUI footer read one source: the cost tracker's

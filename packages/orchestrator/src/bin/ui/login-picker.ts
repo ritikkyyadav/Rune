@@ -79,7 +79,6 @@ const SUBSCRIPTION_HINTS: Record<string, string> = {
 
 const OFFLINE_HINTS: Record<string, string> = {
   ollama: "localhost:11434 - models you have pulled",
-  lmstudio: "localhost:1234 - whatever LM Studio is serving",
 };
 
 /** True for a provider whose account login IS a paid plan (not a key mint). */

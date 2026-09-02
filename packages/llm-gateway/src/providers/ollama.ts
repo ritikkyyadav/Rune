@@ -262,11 +262,25 @@ export class OllamaProvider implements LlmProvider {
 
       const text: string[] = [];
       const toolCalls: OllamaToolCall[] = [];
+      let images = 0;
       for (const b of m.content) {
         if (b.type === "text") text.push(b.text);
+        else if (b.type === "image") images++;
         else if (b.type === "tool_use") {
           toolCalls.push({ function: { name: b.toolName, arguments: b.toolInput } });
         }
+      }
+
+      // This translation carries text and tool calls only, so an image block
+      // reaching it was DROPPED IN SILENCE — and a silently dropped screenshot
+      // is worse than none, because the agent believes it looked and then
+      // describes what it assumes is there. Say so instead, in the same shape
+      // the OpenAI-compatible adapter uses.
+      if (images > 0) {
+        text.push(
+          `\n[${images} attached image(s) omitted: the ollama transport does not send images ` +
+            `- tell the user you could not view them]`,
+        );
       }
 
       const msg: Record<string, unknown> = {

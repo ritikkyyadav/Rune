@@ -66,7 +66,7 @@ export interface SecretsFile {
   /** Provider ids the user toggled off (key kept, excluded from use). */
   disabled?: string[];
   /**
-   * Base URLs for local runtimes (ollama / lmstudio), keyed by provider id.
+   * Base URLs for local runtimes (ollama), keyed by provider id.
    * Not secret, but co-located here because the `/keys` panel edits them live and
    * applies them the same way it applies keys. Overrides the config.toml/default.
    */

@@ -34,7 +34,6 @@ function activeProvider(config: GearConfig): string {
 function mergeLocalBaseUrls(config: GearConfig, secrets: SecretsFile): Record<string, string> {
   const o: Record<string, string> = {};
   if (config.llm.ollama?.baseUrl) o.ollama = config.llm.ollama.baseUrl;
-  if (config.llm.lmstudio?.baseUrl) o.lmstudio = config.llm.lmstudio.baseUrl;
   for (const [id, url] of Object.entries(secrets.endpoints ?? {})) if (url) o[id] = url;
   return o;
 }

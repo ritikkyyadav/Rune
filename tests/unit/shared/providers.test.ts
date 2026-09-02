@@ -48,7 +48,9 @@ describe("provider presets", () => {
 
   it("local runtimes are keyless and carry a base URL", () => {
     const locals = PROVIDER_PRESETS.filter((p) => p.local);
-    expect(locals.map((p) => p.id).sort()).toEqual(["lmstudio", "ollama"]);
+    // `lmstudio` was the second local runtime until P8.6 dropped it: empty
+    // catalogue, placeholder default, duplicating the slot Ollama fills.
+    expect(locals.map((p) => p.id).sort()).toEqual(["ollama"]);
     for (const p of locals) {
       expect(p.baseUrl).toMatch(/^https?:\/\//);
       expect(p.envVar).toBeUndefined(); // no API key
@@ -68,7 +70,6 @@ describe("auth methods + descriptor", () => {
   it("defaults api_key for cloud providers and local for runtimes", () => {
     expect(effectiveAuthMethods(getPreset("groq")!, noEnv)).toEqual(["api_key"]);
     expect(effectiveAuthMethods(getPreset("ollama")!, noEnv)).toEqual(["local"]);
-    expect(effectiveAuthMethods(getPreset("lmstudio")!, noEnv)).toEqual(["local"]);
   });
 
   it("declares OpenRouter's documented OAuth flow, api_key as fallback", () => {
