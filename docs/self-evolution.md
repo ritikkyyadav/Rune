@@ -37,6 +37,14 @@ numbers and extracts the lessons a rule can vouch for. It is written as a
 | `cost`        | actual and list-price spend, tokens in and out                                                                                              |
 | `lessons`     | see below                                                                                                                                   |
 
+Beside the retro, the event carries the **attribution** the retro itself cannot know: `doctrineHash`
+(which doctrine this session rendered, version included), `configHash` (a digest over the
+A/B-relevant configuration fields — and only those: nothing under `permissions`, `sandbox`,
+`autoMode`, `yoloMode`, `trustWorkspace`, cost caps or the `verify.*` gates is in it) and `arm` (the
+A/B arm, or null for an ordinary session). The session row's `system_prompt_hash` records the same
+doctrine digest. Before this, a measured difference between two runs could not be attributed to the
+configuration that caused it, which is the difference between a measurement and an anecdote.
+
 `gear audit` prints it as one line under **Retro**. Sessions that predate the
 organ are derived after the fact by `gear evolve`, and marked so.
 

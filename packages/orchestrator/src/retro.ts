@@ -585,6 +585,16 @@ export interface RetroSample {
   provider?: string | null;
   workspaceRoot: string;
   sessionId: string;
+  /**
+   * Attribution, from the retro event's envelope (P7.1). Null on every sample
+   * derived from a session that predates it — which is most of history, and
+   * saying so is the point: a run without these is a run whose configuration
+   * cannot be recovered, and it must never be counted into an arm.
+   */
+  doctrineHash?: string | null;
+  configHash?: string | null;
+  /** The A/B arm this run belongs to, when it was part of one. */
+  arm?: string | null;
 }
 
 export interface ScoreRow {
