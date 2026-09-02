@@ -105,7 +105,7 @@ Found 2026-09-03 by Phase 9 (the web product), continued:
   listener a page cannot open, so it prints `gear login <provider>`. A host command that
   runs the existing `oauth-strategy.ts` flow and streams its state would close this; it is
   the same gap Phase 3 logged — found in P9.4
-- `packages/orchestrator/src/bin/serve-cli.ts` supervisor + tests/integration/engine-serve.test.ts — every serve test run leaks its per-session `engine-host` processes (twenty idle engines found after the Phase 9 agent's runs; they made the held-step round-trip test time out at 60 s under load, while it passes in 21 s alone). The supervisor needs an idle reaper and the tests explicit teardown of the hosts they spawn — found while merging #13
+- ~~`packages/orchestrator/src/bin/serve-cli.ts` supervisor + tests/integration/engine-serve.test.ts — every serve test run leaks its per-session `engine-host` processes (twenty idle engines found after the Phase 9 agent's runs; they made the held-step round-trip test time out at 60 s under load, while it passes in 21 s alone). The supervisor needs an idle reaper and the tests explicit teardown of the hosts they spawn — found while merging #13~~ **FIXED in P10.0**: idle reaper (`[serve] idleHostSecs`, 10 min, client- and turn-aware), hosts stopped on server exit unless `--keep-hosts`, `--parent-pid` dead-man's switch in the host, teardown in the serve/ACP suites, and `tests/integration/zz-no-leaked-hosts.test.ts` as the standing assertion
 
 Found 2026-09-03 by Phase 10 (capability closers):
 
@@ -116,3 +116,12 @@ Found 2026-09-03 by Phase 10 (capability closers):
   `bun run --cwd apps/web build`, and its own failure message is the only thing that says so. The
   test's design is right (a stale `dist/` is worse than none); the fix is for the unit gate, or a
   `pretest` step, to produce the artifact it audits — found in P10.1
+
+Found 2026-09-03 by P10.0 (the host reaper):
+
+- `packages/orchestrator/src/bin/serve-cli.ts` — `detachAll()`'s comment says "the next
+  `gear serve` reattaches", and nothing does: `HostPool.spawn` always mints a fresh socket
+  and never reads `~/.gear/run/serve-hosts.json`. So `--keep-hosts` genuinely orphans its
+  hosts rather than handing them over, and only the idle reaper (which the new server does
+  not know about them for) or a restart cleans them up. Either implement reattach or stop
+  claiming it — found in P10.0

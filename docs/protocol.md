@@ -191,8 +191,28 @@ not only the last thing written to the database.
   any client that could open the socket could call `save_settings`, which
   writes API keys.
 
-Shutdown is graceful and leaves running session hosts alive, exactly as
-`gear detach` does.
+## Session hosts, and when they stop
+
+One `engine-host` process per session (`Engine` holds one abort and one live
+loop, so one process runs one turn). Three things end a host's life:
+
+- **Idle.** No connected client, no request in flight, and untouched for
+  `[serve] idleHostSecs` — ten minutes by default. A turn in flight is never
+  idle however long it runs, and neither is a session someone still has open.
+  The supervisor sweeps once a minute.
+- **The server stops.** `gear serve` stops the hosts it started (SIGTERM, then
+  SIGKILL after a three-second drain). `--keep-hosts` restores the older
+  behaviour of leaving them running, and is what the detached server behind a
+  bare `gear` uses so a session survives the app being restarted.
+- **The supervisor dies without warning.** Hosts started by a supervisor carry
+  `--parent-pid` and poll it every fifteen seconds; a `kill -9` on the server
+  therefore costs you the engines within one poll rather than forever. Hosts
+  started for `--keep-hosts`, and by `gear detach`, carry no parent and are not
+  affected.
+
+Before P10.0 none of this ran: the window was thirty minutes, shutdown
+deliberately let every host live, and 183 idle engines accumulated on one
+machine in a day.
 
 ---
 

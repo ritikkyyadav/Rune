@@ -117,6 +117,23 @@ console.warn = logErr as typeof console.warn;
 const socketArgIdx = process.argv.indexOf("--socket");
 const SOCKET_PATH = socketArgIdx !== -1 ? process.argv[socketArgIdx + 1] : null;
 
+/**
+ * The supervisor that spawned this host, if it wants to be its parent.
+ *
+ * `gear serve` and `gear acp` pass their own pid; `gear detach` deliberately
+ * does not, because a detached run's whole purpose is outliving the terminal
+ * that started it. When it is set, the host polls the pid and exits once it is
+ * gone — the case no shutdown handler can cover, because a `kill -9` on the
+ * supervisor runs no handlers at all. 183 orphaned engines on one machine in a
+ * day is what its absence cost (P10.0).
+ */
+const parentPidArgIdx = process.argv.indexOf("--parent-pid");
+const PARENT_PID =
+  parentPidArgIdx !== -1 ? Number(process.argv[parentPidArgIdx + 1]) || null : null;
+
+/** How often the dead-man's switch looks at its parent. */
+export const PARENT_POLL_MS = 15_000;
+
 type SocketLike = FramedSocket;
 const connectedClients = new Set<SocketLike>();
 
@@ -1209,6 +1226,22 @@ function shutdown(code: number): void {
 
 process.on("SIGTERM", () => shutdown(0));
 process.on("SIGINT", () => shutdown(0));
+
+// ─── The dead-man's switch ───
+// `process.kill(pid, 0)` sends no signal; it asks whether the process is still
+// there. Portable to Windows, unlike watching `ppid` fall to 1.
+if (PARENT_PID) {
+  const watchdog = setInterval(() => {
+    try {
+      process.kill(PARENT_PID, 0);
+    } catch {
+      logErr(`engine-host: supervisor ${PARENT_PID} is gone — exiting`);
+      shutdown(0);
+    }
+  }, PARENT_POLL_MS);
+  // Never the reason the process stays up; only ever the reason it goes.
+  (watchdog as unknown as { unref?: () => void }).unref?.();
+}
 
 if (SOCKET_PATH) {
   // ─── Socket mode: the host outlives its clients ───

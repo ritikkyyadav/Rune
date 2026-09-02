@@ -203,12 +203,29 @@ class AcpClient {
     );
   }
 
-  stop(): void {
+  /**
+   * SIGTERM and WAIT.
+   *
+   * `gear acp` runs one `engine-host` process per session and stops them in its
+   * signal handler (P10.0). Killing it without waiting — what this used to do —
+   * left one engine per ACP test running for the rest of the suite;
+   * `zz-no-leaked-hosts.test.ts` is the assertion that it no longer does.
+   */
+  async stop(graceMs = 10_000): Promise<void> {
     try {
-      this.proc.kill();
+      this.proc.kill("SIGTERM");
     } catch {
       /* already gone */
     }
+    const timer = setTimeout(() => {
+      try {
+        this.proc.kill("SIGKILL");
+      } catch {
+        /* already gone */
+      }
+    }, graceMs);
+    await this.proc.exited.catch(() => {});
+    clearTimeout(timer);
   }
 }
 
@@ -227,11 +244,10 @@ describe("gear acp (an ACP client, a real engine, a fake model)", () => {
   });
 
   afterEach(async () => {
-    client?.stop();
+    await client?.stop();
     client = null;
     model?.stop(true);
     model = null;
-    await new Promise((r) => setTimeout(r, 50));
     rmSync(dir, { recursive: true, force: true });
   });
 

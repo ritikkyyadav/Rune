@@ -503,6 +503,22 @@ export interface GearConfig {
     repo?: string;
   };
   /**
+   * `gear serve` / `gear web` / `gear acp` — the supervisor that runs one
+   * engine host per session.
+   */
+  serve?: {
+    /**
+     * How long a session host may sit with no connected client and no running
+     * turn before the supervisor stops it (default 600 = ten minutes).
+     *
+     * Set it large if you routinely leave sessions parked overnight and want
+     * them warm; the cost is one resident engine per session. Set it small on
+     * a shared box. It does not affect a turn in flight: a host running a turn
+     * is never idle, however long the turn takes.
+     */
+    idleHostSecs?: number;
+  };
+  /**
    * Connectors (config.toml `[mcp]`). Defaults for the MCP layer; every
    * individual server can still override its own behaviour in mcp.json.
    */
@@ -590,6 +606,9 @@ const DEFAULT_CONFIG: GearConfig = {
     enabled: true,
     claimEnforcement: "warn",
     heartbeatSecs: 15,
+  },
+  serve: {
+    idleHostSecs: 600,
   },
   mcp: {
     defaultScope: "workspace",

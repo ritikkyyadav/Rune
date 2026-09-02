@@ -186,6 +186,10 @@ const { values, positionals } = parseArgs({
     host: { type: "string" },
     origin: { type: "string" },
     "allow-remote-settings": { type: "boolean", default: false },
+    // Leave the per-session engine hosts running when the server stops. Off by
+    // default since P10.0 — a server that orphans its engines is a leak, not a
+    // feature — and kept as a flag for detached, long-lived servers.
+    "keep-hosts": { type: "boolean", default: false },
     // `gear attach ws://host:port`: the bearer token, and an optional prompt to
     // run on the remote engine. `GEAR_SERVE_TOKEN` is preferred over --token,
     // which lands in shell history.
@@ -245,7 +249,7 @@ if (values.help) {
         `    gear attach [session|latest]  Reattach to a detached run — replay, live-stream, Ctrl+C detaches again\n` +
         `    gear attach ws://host:port    Attach to a remote \`gear serve\` (--token or GEAR_SERVE_TOKEN, --prompt runs a turn)\n` +
         `    gear web [--port N] [--open]  Serve the app and park in the foreground (--host exposes it on the LAN)\n` +
-        `    gear serve [--web] [--status] The engine as a server; --status prints the URL of a running one\n` +
+        `    gear serve [--web] [--status] The engine as a server; --status prints the URL of a running one (--keep-hosts leaves session engines up)\n` +
         `    gear pr <n> [--review]        Check a pull request out into its own worktree and start on it (--brief prints the brief)\n` +
         `    gear acp                      Agent Client Protocol server on stdio — for Zed and other ACP editors (docs/editors.md)\n` +
         `    gear login [provider]         Authenticate a provider — API key, or OAuth where supported (--method, --no-browser, --migrate)\n` +
