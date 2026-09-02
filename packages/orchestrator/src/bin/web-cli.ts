@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { adoptLegacyEnv, migrateLegacyHome } from "@gear/shared";
 
 import { engineRoot } from "./desktop-cli";
-import { serve } from "./serve-cli";
+import { lanAddresses, serve } from "./serve-cli";
 
 /** Where the built client is, and whether it is there. */
 export function webDistDir(root = engineRoot()): string {
@@ -79,11 +79,15 @@ export async function runWeb(
 
   // The page is served from this server, so its own origin has to be on the
   // allowlist. A LAN bind means the browser's Origin is the LAN address, which
-  // the loopback defaults do not cover.
+  // the loopback defaults do not cover — and for `--host 0.0.0.0` the Origin
+  // is never `http://0.0.0.0`, it is whichever interface the phone reached, so
+  // listing the bind address alone loads the page and then refuses its socket
+  // with a 403 that reads as a bug in the app.
   const origins = [
     `http://127.0.0.1`,
     `http://localhost`,
-    ...(bindAll || host !== "127.0.0.1" ? [`http://${host}`] : []),
+    ...(bindAll ? lanAddresses().map((a) => `http://${a}`) : []),
+    ...(!bindAll && host !== "127.0.0.1" ? [`http://${host}`] : []),
     ...(typeof values.origin === "string" ? [values.origin] : []),
   ];
 

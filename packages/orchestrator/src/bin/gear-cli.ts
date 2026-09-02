@@ -166,6 +166,12 @@ const { values, positionals } = parseArgs({
     host: { type: "string" },
     origin: { type: "string" },
     "allow-remote-settings": { type: "boolean", default: false },
+    // `gear attach ws://host:port`: the bearer token, and an optional prompt to
+    // run on the remote engine. `GEAR_SERVE_TOKEN` is preferred over --token,
+    // which lands in shell history.
+    token: { type: "string" },
+    prompt: { type: "string" },
+    session: { type: "string" },
     // `gear desktop --check` / `gear web --open`: headless proof, browser open.
     check: { type: "boolean", default: false },
     open: { type: "boolean", default: false },
@@ -202,6 +208,7 @@ if (values.help) {
         `    gear export <sessionId>       Export a session transcript\n` +
         `    gear detach "<prompt>"        Start a background run that survives this terminal (--worktree isolates it)\n` +
         `    gear attach [session|latest]  Reattach to a detached run — replay, live-stream, Ctrl+C detaches again\n` +
+        `    gear attach ws://host:port    Attach to a remote \`gear serve\` (--token or GEAR_SERVE_TOKEN, --prompt runs a turn)\n` +
         `    gear desktop [dev|--check]    Open Gear Desktop (alias: gear app) — dev runs the Vite preview, --check proves the engine headless\n` +
         `    gear web [--port N] [--open]  The same client in a browser, engine attached (--host exposes it on the LAN)\n` +
         `    gear login [provider]         Authenticate a provider — API key, or OAuth where supported (--method, --no-browser, --migrate)\n` +
@@ -295,6 +302,20 @@ if (command === "detach") {
   process.exit(0);
 }
 if (command === "attach") {
+  // `gear attach ws://host:port` is the same command over the websocket
+  // transport: a unix socket is a file on one machine, so detach stopped at
+  // the machine boundary. See bin/attach-remote.ts.
+  const target = positionals[1] ?? "";
+  if (/^wss?:\/\//i.test(target)) {
+    const { runAttachRemote } = await import("./attach-remote");
+    process.exit(
+      await runAttachRemote(target, {
+        ...(values as Record<string, unknown>),
+        // `gear attach ws://… "do the thing"` and `--prompt "…"` mean the same.
+        prompt: values.prompt ?? positionals[2],
+      }),
+    );
+  }
   const { runAttach } = await import("./detach-cli");
   await runAttach(positionals as string[]);
   process.exit(0);
