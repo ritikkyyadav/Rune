@@ -117,7 +117,7 @@ import {
 } from "./notebook";
 import type { NotebookBlock, NotebookEntry, ToolObservation } from "./notebook";
 import { deriveRunRetro, recordLessons } from "./retro";
-import { PLAYBOOK_REL, writePlaybook } from "./playbook";
+import { PLAYBOOK_PENDING_REL, PLAYBOOK_REL, writePlaybook } from "./playbook";
 import type { PermissionScope, PermissionMode, PermissionModeInput } from "./permissions";
 
 export type { PermissionMode } from "./permissions";
@@ -187,8 +187,12 @@ import {
   type LoopRunOutcome,
   type LoopTask,
 } from "./loop-mode";
+import { configHash } from "./evolve/config-hash";
+import { learnedSkillsEnabled } from "./evolve/consent";
+import { advanceLessons, isWinningRun } from "./evolve/lessons";
 import {
   AGENT_DOCTRINE,
+  doctrineHash,
   renderDoctrine,
   extractDoctrineSection,
   type DoctrineContext,
@@ -1616,8 +1620,40 @@ export class Engine {
       this.config.workspaceRoot,
       model ?? this.config.model,
       this.config.provider,
+      // Which doctrine this session runs under. The column existed from the
+      // first schema and had never been written; without it a measured
+      // difference between two runs cannot be attributed to the prompt.
+      this.doctrineHashForSession(),
     );
     return session.id;
+  }
+
+  /**
+   * The doctrine digest for this session, memoized. `doctrineContext()` walks
+   * the workspace (tracked-file count, interface detection), so it is resolved
+   * once per session rather than per call — the same reason the environment
+   * block is snapshotted.
+   */
+  private sessionDoctrineHash: string | null = null;
+  private doctrineHashForSession(): string | null {
+    if (this.sessionDoctrineHash) return this.sessionDoctrineHash;
+    try {
+      this.sessionDoctrineHash = doctrineHash(this.doctrineContext());
+    } catch {
+      // Attribution must never be the reason a session fails to start.
+      return null;
+    }
+    return this.sessionDoctrineHash;
+  }
+
+  /**
+   * The arm this engine is running as, when an A/B set one. Only the eval
+   * harness writes it (`RunOptions.arm`); an ordinary session has none, and a
+   * null arm is what "this is not part of an experiment" looks like.
+   */
+  private evolveArm: string | null = null;
+  setEvolveArm(arm: string | null): void {
+    this.evolveArm = arm ?? null;
   }
 
   setPermissionHandler(handler: PermissionHandler): void {
@@ -4637,10 +4673,10 @@ export class Engine {
           },
           nbObservations,
         );
-        const nb = this.notebookBlocks.get(sessionId);
-        if (nb && nb.injectedIds.length > 0 && !runError && !signal.aborted) {
-          this.notebookStore.recordWins(nb.injectedIds);
-        }
+        // Win attribution moved into the retro block below: the outcome
+        // signal needs the retro's evidence counts, and `!runError &&
+        // !aborted` counted a run where the user rephrased three times and
+        // half the checks failed as a win for whatever was injected.
       }
 
       // The retro: the run's own account of itself — outcome, steps by
@@ -4664,6 +4700,12 @@ export class Engine {
               retro,
               model: session.model,
               provider: session.provider ?? this.config.provider,
+              // Attribution. Without these three a retro says what happened
+              // and cannot say what it happened UNDER, which is the whole
+              // difference between a measurement and an anecdote.
+              doctrineHash: this.doctrineHashForSession(),
+              configHash: configHash(this.config as unknown as Record<string, unknown>),
+              arm: this.evolveArm,
             },
           });
           if (this.notebookStore && this.notebookKeys) {
@@ -4673,15 +4715,50 @@ export class Engine {
               retro.lessons,
               nbObservations,
             );
+
+            // ── The outcome signal (P7.6) ──
+            //
+            // A win is not "the run did not crash". It is: the evidence gate
+            // passed (nothing closed unproven, no check failed), the run did
+            // not error or abort, and nothing had to steer it. Only then do the
+            // lessons this run injected get credit, and only credited firings
+            // move a lesson up the ladder.
+            const nb = this.notebookBlocks.get(sessionId);
+            const won = isWinningRun({
+              aborted: signal.aborted,
+              runError: Boolean(runError),
+              unprovenSteps: retro.gates.unproven ?? 0,
+              checksFailed: retro.checks.failed,
+              struggled: this.struggles?.struggled() ?? false,
+            });
+            if (nb && nb.injectedIds.length > 0 && won) {
+              this.notebookStore.recordWins(nb.injectedIds);
+            }
+            // Then walk the ladder: candidate → trial on recurrence, trial →
+            // active on a win rate above the ambient baseline, active → retired
+            // when it stops helping. Repo scope only; anything wider needs the
+            // offline A/B.
+            advanceLessons(
+              this.notebookStore,
+              this.notebookStore.listRepo(this.notebookKeys.repoKey),
+            );
+
             if (this.config.evolve?.playbook !== false) {
+              // Inert until the user has enabled learned skills once: without
+              // consent the block goes to PENDING.md, which the loader does
+              // not read. The notice says which happened.
+              const enabled = learnedSkillsEnabled();
               const pb = writePlaybook(
                 this.config.workspaceRoot,
                 this.notebookStore.listRepo(this.notebookKeys.repoKey),
+                { enabled },
               );
               if (pb?.changed) {
                 yield {
                   type: "notice",
-                  message: `Playbook updated: ${PLAYBOOK_REL} — ${pb.lessons} lesson${pb.lessons === 1 ? "" : "s"} from ${pb.sessions} session${pb.sessions === 1 ? "" : "s"} (gear evolve lessons).`,
+                  message: pb.pending
+                    ? `Playbook drafted: ${PLAYBOOK_PENDING_REL} — ${pb.lessons} active lesson${pb.lessons === 1 ? "" : "s"} from ${pb.sessions} session${pb.sessions === 1 ? "" : "s"}. Nothing loads it yet; \`gear evolve playbook --enable\` turns learned skills on.`
+                    : `Playbook updated: ${PLAYBOOK_REL} — ${pb.lessons} active lesson${pb.lessons === 1 ? "" : "s"} from ${pb.sessions} session${pb.sessions === 1 ? "" : "s"} (gear evolve lessons).`,
                 } as AgentTurnEvent;
               }
             }

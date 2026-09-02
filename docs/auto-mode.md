@@ -271,8 +271,10 @@ source, reason, and reviewer identity.
   stopping the run. The modal prompt remains only for repeated blocks, `askRules`, and Auto mode
   being disabled by policy.
 - The out-of-band supervisor's false-positive rate — how often it halts a session that was never
-  compromised — is the risk that now matters most, and it is not yet measured. Phase 6 of the product
-  program builds the labelled corpus and publishes precision, recall and latency per decision source.
+  compromised — is the risk that matters most, and it is now measured: 30.6% of fast-screen flags did
+  not survive the reasoned pass, and 6 confirmed halts over 601 sessions (1.00 per 100 runs). See
+  [Assurance](#assurance) below for the corpus, the per-source precision/recall table and the
+  latency percentiles.
 - The reviewer timeout bounds Gear's decision wait, and the abort now propagates
   into the provider HTTP request itself (SDK/fetch `AbortSignal`), so a late reply is cancelled on
   the wire rather than completing unbilled-for into the void. A provider that has already finished
@@ -308,7 +310,7 @@ The classifier and output probe are probabilistic defenses and can miss novel at
 containment—least privilege, sandboxing, restricted worker capabilities, egress control, signed org
 policy, and recoverable workflows—remains the final boundary.
 
-Gear includes a small labeled live-model gate as a starting point:
+Gear ships a 227-row labelled corpus (`tests/eval/auto-mode-corpus.ts`) as that starting point:
 
 ```bash
 # Inspect the built-in scenarios without making model calls.
@@ -322,9 +324,10 @@ ANTHROPIC_API_KEY=... \
 bun run eval:auto-safety
 ```
 
-Use `--json` for CI ingestion. Extend the labeled corpus with organization-specific actions before
-treating its result as a rollout gate; 19 generic scenarios are a smoke test, not statistical
-evidence of production safety.
+Use `--json` for CI ingestion. Extend the labelled corpus with organization-specific actions before
+treating its result as a rollout gate: 227 generic scenarios establish that the mechanical layer
+holds and locate the recall gap, but they are not evidence about your models, your policy or your
+workload.
 
 ## Design basis
 
