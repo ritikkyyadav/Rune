@@ -295,8 +295,28 @@ unrecognized model gets the plain text.
 
 ## Reading a cache number in the product
 
-`gear audit` and the TUI footer read one source: the cost tracker's
-`cacheHitRate`, which is `number | null`. **`null` renders as "no data", never
-as 0%** — a provider that reports no cache counters and a provider whose cache
-missed are different facts, and conflating them is how an invented number gets
-on screen.
+Every cost surface — `/cost`, the status line, and `gear audit` — renders a
+hit rate through **one** function, `formatCacheRate` in
+`packages/orchestrator/src/cost-report.ts`. Its whole job is the rule:
+
+> **`null` renders as "no data". NEVER as "0%".**
+
+A provider that reports no cache counters (Ollama Cloud, measured above) and a
+provider whose cache genuinely missed every time are different facts. If they
+produce the same screen, the reader is being shown a number nobody measured.
+
+Rates are broken out **per provider** once a session used more than one,
+because that is the axis the answer varies on: a run that fell back from a
+caching provider to one with none reports a blended rate describing neither,
+and the blend is always the flattering number.
+
+`gear audit` on a real session:
+
+```
+  Cost  $10.0320 list · $0.0000 paid (subscription) · 3,980,405 in · 114,441 out
+  cache  codex · 89% (31,297,024 of 35,277,429 warm) · saved $35.2092 list
+```
+
+The saving is in **list** dollars — the number comparable to a competitor's
+invoice — because on a subscription route the actual spend is $0.00 and says
+nothing.

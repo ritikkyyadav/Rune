@@ -20,6 +20,22 @@ export interface BudgetCap {
   limitUsd: number;
 }
 
+/**
+ * What the cache did on ONE provider. Separated per provider because that is
+ * the axis the answer varies on: a session that fell back from a caching
+ * provider to one with no cache at all reports a blended rate that describes
+ * neither, and the blended number is the one that looks fine.
+ */
+export interface ProviderCacheStats {
+  /** Share of this provider's input served warm, 0-1, or null for no data. */
+  hitRate: number | null;
+  /** Dollars the cache saved on this provider against the no-cache counterfactual. */
+  savingUsd: number;
+  cacheReadTokens: number;
+  /** Every input token on this provider: fresh + read + written. */
+  totalInputTokens: number;
+}
+
 export interface CostBreakdown {
   /** Dollars actually spent — zero for subscription and free routes. */
   totalCostUsd: number;
@@ -43,6 +59,11 @@ export interface CostBreakdown {
   listCostWithoutCacheUsd: number;
   /** Dollars the cache saved against that counterfactual. */
   cacheSavingUsd: number;
+  /**
+   * The same two facts, per provider. `hitRate: null` means this provider
+   * reported no input at all - "no data", which is not "0%".
+   */
+  cacheByProvider: Partial<Record<ProviderName, ProviderCacheStats>>;
   /** Models with no entry in MODEL_PRICING — their tokens are unpriced. */
   unpricedModels: string[];
   /** True when any priced model used an inferred rate. */
@@ -220,9 +241,26 @@ export class CostTracker {
     let cacheCreationTokens = 0;
     let listCostWithoutCacheUsd = 0;
     let hasEstimatedRates = false;
+    // Per-provider accumulators: read tokens, all input tokens, and the
+    // no-cache counterfactual minus what was actually listed.
+    const perProvider = new Map<
+      ProviderName,
+      { read: number; total: number; listed: number; withoutCache: number }
+    >();
 
     for (const e of this.ledger.entries) {
       byProvider[e.provider] = (byProvider[e.provider] ?? 0) + e.costUsd;
+      const acc = perProvider.get(e.provider) ?? {
+        read: 0,
+        total: 0,
+        listed: 0,
+        withoutCache: 0,
+      };
+      acc.read += e.cacheReadTokens;
+      acc.total += e.inputTokens + e.cacheReadTokens + e.cacheCreationTokens;
+      acc.listed += e.listCostUsd;
+      acc.withoutCache += this.estimateWithoutCache(e.model, e);
+      perProvider.set(e.provider, acc);
       byModel[e.model] = (byModel[e.model] ?? 0) + e.costUsd;
       listByModel[e.model] = (listByModel[e.model] ?? 0) + e.listCostUsd;
       inputTokens += e.inputTokens;
@@ -231,6 +269,17 @@ export class CostTracker {
       cacheCreationTokens += e.cacheCreationTokens;
       listCostWithoutCacheUsd += this.estimateWithoutCache(e.model, e);
       if (e.estimated) hasEstimatedRates = true;
+    }
+
+    const cacheByProvider: Partial<Record<ProviderName, ProviderCacheStats>> = {};
+    for (const [provider, acc] of perProvider) {
+      cacheByProvider[provider] = {
+        // Null, not zero, when the provider reported no input at all.
+        hitRate: acc.total > 0 ? acc.read / acc.total : null,
+        savingUsd: Math.max(0, acc.withoutCache - acc.listed),
+        cacheReadTokens: acc.read,
+        totalInputTokens: acc.total,
+      };
     }
 
     const totalInput = inputTokens + cacheReadTokens + cacheCreationTokens;
@@ -247,6 +296,7 @@ export class CostTracker {
       cacheHitRate: totalInput > 0 ? cacheReadTokens / totalInput : null,
       listCostWithoutCacheUsd,
       cacheSavingUsd: Math.max(0, listCostWithoutCacheUsd - this.ledger.totalListCostUsd),
+      cacheByProvider,
       unpricedModels: [...this.unpriced],
       hasEstimatedRates,
     };
