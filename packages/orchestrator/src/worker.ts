@@ -46,14 +46,7 @@ const EFFORT_PRESETS: Record<string, { maxTurns: number; maxTokens: number }> = 
 const TIERS = new Set<ModelTier>(["light", "standard", "heavy"]);
 
 /** Read tools a worker keeps from the builtin set (bash/web/network excluded). */
-const WORKER_READ_TOOLS = new Set([
-  "read_file",
-  "list_dir",
-  "grep",
-  "glob",
-  "symbol_search",
-  "ast_query",
-]);
+const WORKER_READ_TOOLS = new Set(["read_file", "list_dir", "grep", "glob", "symbol_search"]);
 const WORKER_WRITE_TOOLS = new Set(["write_file", "edit_file", "multi_edit"]);
 
 export interface WorkerDeps {

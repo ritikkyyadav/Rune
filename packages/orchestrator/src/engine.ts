@@ -7,6 +7,7 @@ import {
 import { formatCostSummary } from "./cost-report";
 import type { ReasoningEffort, Message, ProviderName, ResolvedCredential } from "@gear/llm-gateway";
 import {
+  CustomToolsLoader,
   ToolRegistry,
   registerBuiltinTools,
   ToolRateLimiter,
@@ -25,8 +26,10 @@ import {
   setRequireOsIsolation,
   setLspAutoFeedback,
 } from "@gear/tool-registry";
+import { expandPromptCommand, findResourceMentions, readResourceText } from "@gear/tool-registry";
 import type {
   DashboardInfo,
+  McpEvent,
   PluginCatalogEntry,
   SkillSearchHit,
   ToolCallOutput,
@@ -363,6 +366,26 @@ function inferProviderFromModel(model: string): string | undefined {
 
 // ─── Engine Config ───
 
+/**
+ * Turn an elicited answer back into the type the server's schema asked for.
+ *
+ * A person types "42" and "yes"; a schema that wants a number or a boolean and
+ * receives a string gets a validation error from its own side, which the user
+ * then has to decode. Anything unrecognized stays a string — guessing past
+ * these three cases would be worse than passing the text through.
+ */
+function coerceElicited(text: string, type?: string): unknown {
+  if (type === "number" || type === "integer") {
+    const n = Number(text);
+    return Number.isFinite(n) ? n : text;
+  }
+  if (type === "boolean") {
+    if (/^(y|yes|true|1)$/i.test(text)) return true;
+    if (/^(n|no|false|0)$/i.test(text)) return false;
+  }
+  return text;
+}
+
 export interface EngineConfig {
   model: string;
   provider: ProviderName;
@@ -568,6 +591,15 @@ export interface EngineConfig {
   };
   /** Deep-research ("/research") defaults: depth, fan-out, sources. */
   research?: ResearchOptions;
+  /** Connector defaults (config.toml [mcp]). */
+  mcp?: {
+    defaultScope?: "user" | "workspace";
+    timeoutSecs?: number;
+    registry?: boolean;
+    deferTools?: boolean;
+  };
+  /** Third-party extensions (config.toml [extensions]). */
+  extensions?: { localTools?: boolean };
   /** System Memory ("dreaming") — evergreen profile config (enabled/schedule/model/maxTokens). */
   memory?: {
     enabled?: boolean;
@@ -758,6 +790,15 @@ export class Engine {
   private orgPolicy: LoadedOrgPolicy | null = null;
   /** Plugin bundles, discovered lazily once (null = not yet scanned). */
   private pluginDiscovery: { plugins: LoadedPlugin[]; errors: string[] } | null = null;
+  /** Sessions whose per-request tool-surface cost has been recorded (once each). */
+  private toolSurfaceLogged = new Set<string>();
+  /** Latest lifecycle event per connector (desktop status). */
+  private mcpEvents = new Map<string, McpEvent & { at: string }>();
+  /** Connector notices awaiting the next UI drain (TUI status line). */
+  private mcpNotices: string[] = [];
+  /** Connectors the model cannot use right now, and why. */
+  private mcpUnavailable = new Map<string, string>();
+  private readonly connectorNoteShown = new Set<string>();
   private config: EngineConfig;
   private permissionHandler?: PermissionHandler;
   private autoApprovalNotifier?: (notice: AutoApprovalNotice) => void;
@@ -985,6 +1026,9 @@ export class Engine {
 
     // Initialize Tool Registry with built-in tools
     this.registry = new ToolRegistry();
+    // [mcp] deferTools = false ships every connector schema on every request
+    // (the pre-P4.1 behaviour). An escape, not a recommendation.
+    if (this.config.mcp?.deferTools === false) this.registry.setDeferralEnabled(false);
     registerBuiltinTools(this.registry, this.config.toolsBinaryPath);
 
     // Register the delegation tools (task + worker) — unless `[subagents]
@@ -1631,6 +1675,9 @@ export class Engine {
       this.pluginDiscovery = discoverPlugins(this.config.workspaceRoot);
       for (const error of this.pluginDiscovery.errors) {
         loaderLog.warn(`[plugins] ${error}`);
+        // A refused plugin looked exactly like one nobody installed, because
+        // the TUI suppresses stderr. It reaches the status line now.
+        this.mcpNotices.push(`plugin refused — ${error}`);
       }
     }
     return this.pluginDiscovery.plugins;
@@ -1640,6 +1687,38 @@ export class Engine {
   listPlugins(): { plugins: LoadedPlugin[]; errors: string[] } {
     this.getPlugins();
     return this.pluginDiscovery ?? { plugins: [], errors: [] };
+  }
+
+  /**
+   * Re-scan plugins and re-run every loader they feed, without a restart.
+   *
+   * The four extension loaders are one-shot latches, so installing a plugin
+   * mid-session did nothing until the next process — and nothing said so.
+   * Clearing all four together is deliberate: a plugin contributes across them
+   * (skills AND an MCP server AND commands), and a partial refresh would leave
+   * a bundle half-installed, which is worse than not refreshing at all.
+   */
+  async invalidatePlugins(): Promise<{ plugins: LoadedPlugin[]; errors: string[] }> {
+    this.pluginDiscovery = null;
+    this.hooksLoaded = false;
+    this.skillsLoaded = false;
+    this.skillCatalog = "";
+    // MCP servers must be STOPPED, not merely re-scanned: their subprocesses
+    // and HTTP sessions belong to the old plugin set.
+    this.mcpLoaded = false;
+    this.localToolsLoaded = false;
+    await this.mcpDiscovery?.stopAll().catch(() => {});
+    this.mcpDiscovery = null;
+    for (const schema of this.registry.list()) {
+      if (schema.name.startsWith("mcp_")) this.registry.unregister(schema.name);
+    }
+    await Promise.all([
+      this.ensureHookRunner(),
+      this.ensureMcpServers(),
+      this.ensureSkills(),
+      this.ensureLocalTools(),
+    ]);
+    return this.listPlugins();
   }
 
   /**
@@ -1686,6 +1765,31 @@ export class Engine {
       };
       this.mcpDiscovery = new McpDiscovery(this.config.workspaceRoot, {
         logger,
+        // The client has always emitted a typed lifecycle stream and nobody
+        // ever subscribed, so under the TUI (which suppresses stderr) a dead
+        // connector was completely silent. This is the subscriber.
+        onEvent: (ev) => this.recordMcpEvent(ev),
+        // A connector's question reaches the ask_user round-trip the harness
+        // already owns, so it lands in the same picker as the agent's own —
+        // one question surface, not two. With no handler wired (headless, CI)
+        // the connector is declined promptly rather than blocked on a person
+        // who is not there.
+        onElicit: async (req, server) => {
+          const handler = this.questionHandler;
+          if (!handler) return { action: "decline" as const };
+          const props = req.requestedSchema?.properties ?? {};
+          const [field, spec] = Object.entries(props)[0] ?? [];
+          const answer = await handler({
+            question: `${server}: ${req.message}`,
+            options: spec?.enum ?? [],
+          });
+          const text = answer.trim();
+          if (!text) return { action: "cancel" as const };
+          return {
+            action: "accept" as const,
+            content: field ? { [field]: coerceElicited(text, spec?.type) } : { value: text },
+          };
+        },
         extraServers: Object.keys(extraServers).length > 0 ? extraServers : undefined,
         // Live tool-list changes (or a server restart) reconcile the registry so
         // the model always sees the current tool set without a session restart.
@@ -1715,11 +1819,192 @@ export class Engine {
     for (const handler of current) this.registry.register(handler);
   }
 
+  /**
+   * Record what the advertised tool surface costs on one request.
+   *
+   * Written once per session, after the extension loaders have run, so the
+   * number reflects the real surface (built-ins + connectors + plugins) rather
+   * than the built-ins alone. `gear audit` reads it back. Deferred loading
+   * (P4.1) is measured against itself here: `eagerTokens` is what the same set
+   * would have cost with every schema shipped in full, which is what makes the
+   * reduction a measurement rather than a claim.
+   */
+  private recordToolSurface(sessionId: string, model: string): void {
+    if (this.toolSurfaceLogged.has(sessionId)) return;
+    this.toolSurfaceLogged.add(sessionId);
+    try {
+      const report = this.registry.schemaTokenReport(model);
+      this.sessions.appendEvent(sessionId, { type: "tool_surface", payload: { ...report } });
+    } catch {
+      // Observability is never allowed to fail a turn.
+    }
+  }
+
+  /**
+   * Record one connector lifecycle event, push it to the UI, and remember what
+   * the model still has to be told.
+   *
+   * Three consumers, one event: the TUI status line (through the existing flow
+   * grammar — this is a notice, not a new dialect), the engine status object
+   * the desktop reads, and a once-per-session harness note so the model stops
+   * planning around a connector that is not there.
+   */
+  private recordMcpEvent(ev: McpEvent): void {
+    // progress/log are per-call chatter, not lifecycle. They already route to
+    // the tool-progress channel; repeating them in the status line would turn
+    // a signal into texture.
+    if (ev.type === "progress" || ev.type === "log") return;
+
+    this.mcpEvents.set(ev.server, { ...ev, at: new Date().toISOString() });
+    const line =
+      ev.type === "server-ready"
+        ? `connector ${ev.server} ready — ${ev.toolCount} tool${ev.toolCount === 1 ? "" : "s"}`
+        : ev.type === "server-down"
+          ? `connector ${ev.server} is down: ${ev.reason}`
+          : ev.type === "server-needs-auth"
+            ? `connector ${ev.server} needs authorization — ${ev.reason}`
+            : ev.type === "server-restarted"
+              ? `connector ${ev.server} restarted`
+              : `connector ${ev.server} changed its tools — ${ev.toolCount} now`;
+    this.mcpNotices.push(line);
+    // A connector the model was told about and can no longer use is worth one
+    // sentence; a connector that came up healthy is not.
+    if (ev.type === "server-down" || ev.type === "server-needs-auth") {
+      this.mcpUnavailable.set(
+        ev.server,
+        ev.type === "server-needs-auth"
+          ? `needs authorization (run: gear mcp login ${ev.server})`
+          : ev.reason,
+      );
+    } else if (ev.type === "server-ready" || ev.type === "server-restarted") {
+      this.mcpUnavailable.delete(ev.server);
+    }
+  }
+
+  /**
+   * Each connected server's own operating instructions, as one harness note,
+   * once per session.
+   *
+   * `instructions` has been typed since the first handshake and discarded every
+   * time. A server saying "search before you delete" or "ids are opaque, never
+   * construct one" is telling the model something no tool description carries.
+   */
+  private serverInstructionsNote(sessionId: string): string | null {
+    if (this.instructionsShown.has(sessionId)) return null;
+    const all = this.mcpDiscovery?.getServerInstructions() ?? [];
+    if (all.length === 0) return null;
+    this.instructionsShown.add(sessionId);
+    const blocks = all.map(
+      (s) => `[${s.server}] ${s.instructions.replace(/\s+/g, " ").slice(0, 800)}`,
+    );
+    return (
+      "[Harness note] Operating instructions from the connected services — follow them when " +
+      `using their tools:\n${blocks.join("\n")}`
+    );
+  }
+  private readonly instructionsShown = new Set<string>();
+
+  /** Connector prompts, as `/server:prompt` slash commands (backs the composer). */
+  async listMcpPromptCommands(): Promise<Awaited<ReturnType<McpDiscovery["listPromptCommands"]>>> {
+    await this.ensureMcpServers();
+    return this.mcpDiscovery?.listPromptCommands() ?? [];
+  }
+
+  /** Expand one connector prompt into the text a turn starts from. */
+  async expandMcpPrompt(name: string, argv: string[]): Promise<string | null> {
+    await this.ensureMcpServers();
+    if (!this.mcpDiscovery) return null;
+    const commands = await this.mcpDiscovery.listPromptCommands();
+    const hit = commands.find((c) => c.name === name);
+    if (!hit) return null;
+    return expandPromptCommand(this.mcpDiscovery.allClients(), hit, argv);
+  }
+
+  /**
+   * Expand every `@server:uri` mention in a message into the resource it
+   * names, appended as context. Unknown mentions are left alone — an email
+   * address is not a resource, and guessing would be worse than doing nothing.
+   */
+  async expandResourceMentions(message: string): Promise<string> {
+    if (!this.mcpDiscovery || !message.includes("@")) return message;
+    const clients = this.mcpDiscovery.resourceClients();
+    if (clients.size === 0) return message;
+    const blocks: string[] = [];
+    for (const mention of findResourceMentions(message)) {
+      const client = clients.get(mention.server);
+      if (!client) continue;
+      try {
+        const { text } = await readResourceText(client, mention.uri);
+        if (text)
+          blocks.push(`<resource uri="@${mention.server}:${mention.uri}">\n${text}\n</resource>`);
+      } catch {
+        // A mention that will not resolve stays literal text.
+      }
+    }
+    return blocks.length > 0 ? `${message}\n\n${blocks.join("\n\n")}` : message;
+  }
+
+  /** Connector lifecycle notices produced since the last drain (backs the TUI). */
+  drainMcpNotices(): string[] {
+    return this.mcpNotices.splice(0);
+  }
+
+  /** The latest lifecycle event per connector — the desktop reads this. */
+  getMcpEvents(): Array<McpEvent & { at: string }> {
+    return [...this.mcpEvents.values()];
+  }
+
+  /**
+   * One short harness note naming the connectors the model cannot use, said
+   * ONCE per session. Repeating it every turn would train the model to skim
+   * harness notes, which costs more than the connector did.
+   */
+  private connectorNote(sessionId: string): string | null {
+    if (this.mcpUnavailable.size === 0 || this.connectorNoteShown.has(sessionId)) return null;
+    this.connectorNoteShown.add(sessionId);
+    const lines = [...this.mcpUnavailable].map(([name, why]) => `- ${name}: ${why}`);
+    return (
+      "[Harness note] These connectors are configured but unavailable this session — " +
+      `do not plan around their tools:\n${lines.join("\n")}`
+    );
+  }
+
   /** Ensure MCP servers are discovered, then return their status (backs `/mcp`). */
   async listMcpServers(): Promise<ReturnType<McpDiscovery["getStatus"]>> {
     await this.ensureMcpServers();
     return this.mcpDiscovery?.getStatus() ?? [];
   }
+
+  /**
+   * Executable tools from `<workspace>/.gear/tools`, behind `[extensions]
+   * localTools = true` (D6).
+   *
+   * This loader has existed and been tested since it was written, and was
+   * never instantiated — 210 lines of dead code. It is wired now for exactly
+   * one case: the USER'S OWN workspace. A plugin can never point at it, because
+   * a declaration is not a sandbox and running a stranger's code needs one.
+   * Off by default, and it says what it loaded when it is on.
+   */
+  private async ensureLocalTools(): Promise<void> {
+    if (this.localToolsLoaded) return;
+    this.localToolsLoaded = true;
+    if (this.config.extensions?.localTools !== true) return;
+    try {
+      const loader = new CustomToolsLoader(this.config.workspaceRoot);
+      const handlers = await loader.loadAll();
+      for (const handler of handlers) this.registry.register(handler);
+      if (handlers.length > 0) {
+        const names = handlers.map((h) => h.schema.name).join(", ");
+        loaderLog.info(`[extensions] loaded ${handlers.length} local tool(s): ${names}`);
+        this.mcpNotices.push(`local tools loaded from .gear/tools — ${handlers.length} (${names})`);
+      }
+    } catch (err) {
+      loaderLog.warn(
+        `[extensions] local tools failed to load: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  private localToolsLoaded = false;
 
   /**
    * Lazily load skills once per engine: discover SKILL.md files from the bundled
@@ -3303,7 +3588,21 @@ export class Engine {
             query: userMessage,
           }).then((map) => (map ? [map] : []));
 
-    await Promise.all([this.ensureHookRunner(), this.ensureMcpServers(), this.ensureSkills()]);
+    await Promise.all([
+      this.ensureHookRunner(),
+      this.ensureMcpServers(),
+      this.ensureSkills(),
+      this.ensureLocalTools(),
+    ]);
+    // What the tool surface costs per request, once the extensions are in.
+    // Recorded once per session so `gear audit` can report it (P4.1).
+    this.recordToolSurface(sessionId, session.model);
+    // Whatever the connectors said while starting — before the first token, so
+    // "notion needs authorization" arrives ahead of the answer that will not
+    // be using it.
+    for (const line of this.drainMcpNotices()) {
+      yield { type: "notice", message: line };
+    }
 
     // Assemble the system prompt: doctrine + environment snapshot + project
     // memory (ALAN.md/CLAUDE.md/AGENTS.md) + the evergreen System Memory
@@ -3457,6 +3756,13 @@ export class Engine {
       const pitfalls = this.knownPitfallsNote(sessionId);
       if (pitfalls) loop.injectHarnessNote(pitfalls);
     }
+    // A connector that is down is a capability the model does not have. Said
+    // once per session, on any turn — including a conversational one, where
+    // "can you check Notion?" is exactly when it matters.
+    const connectors = this.connectorNote(sessionId);
+    if (connectors) loop.injectHarnessNote(connectors);
+    const serverInstructions = this.serverInstructionsNote(sessionId);
+    if (serverInstructions) loop.injectHarnessNote(serverInstructions);
 
     // ── Incremental persistence ──
     // Session events are written as the run PRODUCES them, not in one sweep at
@@ -3796,6 +4102,15 @@ export class Engine {
         persistPending();
 
         yield event;
+
+        // Connector lifecycle, through the grammar every other harness message
+        // already uses. A server that dies mid-turn used to be completely
+        // silent under the TUI (logger.ts suppresses stderr while the alt
+        // screen is up), so the model kept calling tools that were gone and
+        // the user saw nothing at all.
+        for (const line of this.drainMcpNotices()) {
+          yield { type: "notice", message: line };
+        }
       }
 
       // Aider-style trust: land this run's writes as ONE revertible commit
@@ -4705,7 +5020,12 @@ export class Engine {
     sessionId?: string;
     contextUsage: { used: number; limit: number; percent: number };
     securityPosture: string;
-    mcp: { servers: number; tools: number };
+    mcp: {
+      servers: number;
+      tools: number;
+      /** Connectors that are configured but unusable right now, named. */
+      down: Array<{ name: string; reason: "needs-auth" | "down"; detail: string | null }>;
+    };
     skills: number;
     orgPolicy: { org?: string; fingerprint: string; source: string } | null;
     autoMode: ReturnType<AutoModeSafetyController["getStatus"]>;
@@ -4732,6 +5052,15 @@ export class Engine {
       mcp: {
         servers: this.getMcpStatus().length,
         tools: this.getMcpStatus().reduce((n, s) => n + s.toolCount, 0),
+        // Named, not counted: a surface that says "1 connector down" makes the
+        // user open another command to find out which.
+        down: this.getMcpStatus()
+          .filter((srv) => srv.needsAuth || srv.health === "down" || !srv.ready)
+          .map((srv) => ({
+            name: srv.name,
+            reason: srv.needsAuth ? "needs-auth" : "down",
+            detail: srv.lastError ?? null,
+          })),
       },
       skills: this.getSkillCount(),
       orgPolicy: this.orgPolicy

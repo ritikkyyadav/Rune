@@ -1,6 +1,12 @@
 import { type Logger, createLogger } from "@gear/shared";
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
-import { HttpTransport, McpSessionExpiredError, StdioTransport } from "./transport";
+import {
+  HttpTransport,
+  McpSessionExpiredError,
+  McpUnauthorizedError,
+  StdioTransport,
+} from "./transport";
+import type { McpAuthProvider } from "./transport";
 import {
   HEALTH_CHECK_MAX_FAILURES,
   INIT_TIMEOUT_MS,
@@ -17,15 +23,22 @@ import {
 import type {
   McpCallToolResult,
   McpContentBlock,
+  McpElicitRequest,
+  McpElicitResult,
   McpEvent,
+  McpGetPromptResult,
   McpIncomingMessage,
   McpInitializeResult,
   McpProgress,
+  McpPrompt,
+  McpResource,
+  McpResourceContents,
   McpServerCapabilities,
   McpServerInfo,
   McpToolSchema,
   McpTransport,
 } from "./types";
+import { validateAgainstSchema } from "./validate";
 
 /** A JSON-RPC error returned by the server (the server is alive — it answered). */
 export class McpRpcError extends Error {
@@ -49,6 +62,8 @@ export interface McpClientConfig {
   type?: "stdio" | "http";
   url?: string;
   headers?: Record<string, string>;
+  /** OAuth 2.1 provider for this server (P4.2). Absent ⇒ static headers only. */
+  auth?: McpAuthProvider;
   /** Diagnostics. Defaults to a namespaced shared logger. */
   logger?: Logger;
   /** Typed lifecycle/observability sink (server up/down, progress, logs). */
@@ -58,6 +73,14 @@ export interface McpClientConfig {
   onToolsChanged?: () => void;
   /** Per-server cap on concurrent in-flight tools/call requests. */
   maxConcurrentCalls?: number;
+  /**
+   * How a server's elicitation/create reaches the user. Wired to the harness's
+   * existing ask_user round-trip, so a connector's question lands in the same
+   * picker as the agent's own — one question surface, not two. Unwired means
+   * the client declines, which is what the spec says to do when a client
+   * cannot ask.
+   */
+  onElicit?: (req: McpElicitRequest, server: string) => Promise<McpElicitResult>;
 }
 
 type Pending = {
@@ -90,6 +113,11 @@ export class McpClient {
   private protocolVersion: string = LATEST_PROTOCOL_VERSION;
   private serverCapabilities: McpServerCapabilities = {};
   private serverInfo: McpServerInfo = {};
+  /** The server's own operating instructions, injected once per session. */
+  private instructions: string | null = null;
+  private resourcesCache: McpResource[] | null = null;
+  private promptsCache: McpPrompt[] | null = null;
+  private onElicit?: (req: McpElicitRequest, server: string) => Promise<McpElicitResult>;
 
   // Health
   private healthCheckTimer: ReturnType<typeof setInterval> | null = null;
@@ -99,6 +127,10 @@ export class McpClient {
   // Lifecycle
   private closing = false;
   private restarting = false;
+  /** The server answered 401 and no token could be refreshed. Its tools are
+   *  unavailable until an interactive login; the session is NOT failed. */
+  private needsAuth = false;
+  private authProvider?: McpAuthProvider;
   private startupExitReject: ((e: Error) => void) | null = null;
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -113,9 +145,11 @@ export class McpClient {
 
   constructor(config: McpClientConfig) {
     this.serverName = config.name;
+    this.authProvider = config.auth;
     this.logger = (config.logger ?? createLogger("mcp")).child(config.name);
     this.onEvent = config.onEvent;
     this.onToolsChangedCb = config.onToolsChanged;
+    this.onElicit = config.onElicit;
     this.slots = config.maxConcurrentCalls ?? MAX_CONCURRENT_CALLS;
 
     if (config.url || config.type === "http") {
@@ -124,6 +158,7 @@ export class McpClient {
         url: config.url!,
         headers: config.headers,
         logger: this.logger,
+        auth: config.auth,
       });
     } else {
       this.transportKind = "stdio";
@@ -147,6 +182,10 @@ export class McpClient {
   get kind(): "stdio" | "http" {
     return this.transportKind;
   }
+  /** True when this connector is waiting on `gear mcp login <server>`. */
+  get needsAuthentication(): boolean {
+    return this.needsAuth;
+  }
 
   getTools(): McpToolSchema[] {
     return [...this.tools];
@@ -165,8 +204,58 @@ export class McpClient {
     });
     try {
       await Promise.race([this.handshake(), exitDuringInit]);
+      this.needsAuth = false;
+    } catch (err) {
+      // An unauthorized connector is a MISSING CAPABILITY, not a broken
+      // session. It stays registered with zero tools and a clear reason, so
+      // `gear mcp list/doctor` can tell the user exactly what to run, and the
+      // rest of the session proceeds as if the connector were simply absent.
+      if (!this.noteUnauthorized(err)) throw err;
     } finally {
       this.startupExitReject = null;
+    }
+  }
+
+  /**
+   * Record a 401 as "needs login" and tell the sink. Returns true when the
+   * error was an authorization failure and has been handled.
+   */
+  private noteUnauthorized(err: unknown): boolean {
+    if (!(err instanceof McpUnauthorizedError)) return false;
+    this.needsAuth = true;
+    this.ready = false;
+    this.tools = [];
+    this.lastError = err.message;
+    this.onEvent?.({
+      type: "server-needs-auth",
+      server: this.serverName,
+      reason: `run: gear mcp login ${this.serverName}`,
+    });
+    this.logger.warn(`needs authorization — run: gear mcp login ${this.serverName}`);
+    return true;
+  }
+
+  /**
+   * Re-run the handshake after an interactive login. Clears the needs-auth
+   * latch first so a fresh token is actually tried.
+   */
+  async reconnect(): Promise<boolean> {
+    this.needsAuth = false;
+    // A sign-in that happened in another process wrote a token this client has
+    // never read. Pick it up before trying again.
+    await this.authProvider?.reload?.().catch(() => {});
+    try {
+      await this.transport.close();
+      await this.transport.start();
+      await this.handshake();
+      this.onToolsChangedCb?.();
+      return true;
+    } catch (err) {
+      if (this.noteUnauthorized(err)) return false;
+      this.ready = false;
+      this.lastError = err instanceof Error ? err.message : String(err);
+      this.onEvent?.({ type: "server-down", server: this.serverName, reason: this.lastError });
+      return false;
     }
   }
 
@@ -175,7 +264,10 @@ export class McpClient {
       MCP_METHODS.initialize,
       {
         protocolVersion: LATEST_PROTOCOL_VERSION,
-        capabilities: {},
+        // We answer elicitation/create, so we must SAY so — a server that reads
+        // an empty capabilities object will never ask, and the feature is dead
+        // no matter how well the handler works.
+        capabilities: this.onElicit ? { elicitation: {} } : {},
         clientInfo: { name: "gear", version: "0.1.0" },
       },
       { timeoutMs: INIT_TIMEOUT_MS, allowReinit: false },
@@ -192,16 +284,32 @@ export class McpClient {
     this.transport.setProtocolVersion?.(this.protocolVersion);
     this.serverCapabilities = initResult?.capabilities ?? {};
     this.serverInfo = initResult?.serverInfo ?? {};
+    this.instructions =
+      typeof initResult?.instructions === "string" && initResult.instructions.trim()
+        ? initResult.instructions.trim()
+        : null;
+    this.resourcesCache = null;
+    this.promptsCache = null;
 
     await this.notify(MCP_METHODS.initialized, {});
 
-    // Enumerate tools unless the server explicitly declares capabilities WITHOUT
-    // a `tools` entry. Many real servers under-declare (empty capabilities), so
-    // we stay lenient: attempt discovery and tolerate a failure rather than
-    // silently exposing nothing.
-    const caps = this.serverCapabilities;
-    const declaredOtherCaps = Object.keys(caps).length > 0 && caps.tools === undefined;
-    this.tools = declaredOtherCaps ? [] : await this.fetchToolsSafe();
+    // Always attempt tool discovery.
+    //
+    // This used to skip tools/list whenever a server declared ANY capability
+    // without a `tools` key — so a server advertising resources and prompts
+    // AND tools, but listing them in an order or shape we mis-read, silently
+    // exposed nothing. The skip saved one request and cost the entire point of
+    // the connection. A server with genuinely no tools answers with an empty
+    // list or a -32601, both of which fetchToolsSafe already tolerates.
+    this.tools = await this.fetchToolsSafe();
+    // Server→client messages arrive on the optional GET stream. Opened ONLY
+    // when an elicitation handler is wired: that is the one thing we can act
+    // on, and holding a long-lived connection open against every HTTP server
+    // to receive messages we would ignore is cost without a benefit.
+    if (this.onElicit) {
+      const t = this.transport as { openServerStream?: () => Promise<void> };
+      if (typeof t.openServerStream === "function") void t.openServerStream().catch(() => {});
+    }
     this.ready = true;
     this.lastError = null;
     this.onEvent?.({
@@ -288,8 +396,15 @@ export class McpClient {
     }
 
     if (hasId && hasMethod) {
-      // Server→client request. We don't implement sampling/roots/elicitation;
-      // reply with "method not found" so the server doesn't hang awaiting us.
+      if (m.method === MCP_METHODS.elicitationCreate) {
+        void this.handleElicit(
+          m.id as number | string,
+          (m as { params?: Record<string, unknown> }).params ?? {},
+        );
+        return;
+      }
+      // Sampling and roots remain unimplemented; reply "method not found" so
+      // the server doesn't hang awaiting us.
       void this.transport
         .send({
           jsonrpc: "2.0",
@@ -484,21 +599,128 @@ export class McpClient {
     }
   }
 
+  /**
+   * Answer a server's elicitation/create through the harness's own question
+   * round-trip.
+   *
+   * Declining is the safe default and the spec's own fallback: with no handler
+   * wired (headless, CI) the connector is told "no" promptly instead of
+   * blocking on a person who is not there.
+   */
+  private async handleElicit(id: number | string, params: Record<string, unknown>): Promise<void> {
+    const reply = (result: McpElicitResult): void => {
+      void this.transport.send({ jsonrpc: "2.0", id, result }).catch(() => {});
+    };
+    if (!this.onElicit) {
+      reply({ action: "decline" });
+      return;
+    }
+    try {
+      const req: McpElicitRequest = {
+        message: String(params.message ?? `${this.serverName} needs more information`),
+        requestedSchema: params.requestedSchema as McpElicitRequest["requestedSchema"],
+      };
+      reply(await this.onElicit(req, this.serverName));
+    } catch {
+      // A failed ask is a cancel, not a hang.
+      reply({ action: "cancel" });
+    }
+  }
+
+  // ─── Resources ───
+
+  /** True when the server declared a resources capability. */
+  get supportsResources(): boolean {
+    return this.serverCapabilities.resources !== undefined;
+  }
+
+  /** True when the server declared a prompts capability. */
+  get supportsPrompts(): boolean {
+    return this.serverCapabilities.prompts !== undefined;
+  }
+
+  /** The server's own operating instructions, or null. */
+  getInstructions(): string | null {
+    return this.instructions;
+  }
+
+  /** Every resource this server exposes, paginated and cached per handshake. */
+  async listResources(force = false): Promise<McpResource[]> {
+    if (!force && this.resourcesCache) return this.resourcesCache;
+    const all: McpResource[] = [];
+    try {
+      let cursor: string | undefined;
+      let pages = 0;
+      do {
+        const res = (await this.send(MCP_METHODS.resourcesList, cursor ? { cursor } : {})) as {
+          resources?: McpResource[];
+          nextCursor?: string;
+        };
+        if (Array.isArray(res?.resources)) all.push(...res.resources);
+        const next = res?.nextCursor;
+        cursor = next && next !== cursor ? next : undefined;
+      } while (cursor && ++pages < 100);
+    } catch {
+      // A server that declares resources and cannot list them is not a reason
+      // to lose its tools.
+    }
+    this.resourcesCache = all;
+    return all;
+  }
+
+  /** Read one resource by URI. */
+  async readResource(uri: string): Promise<McpResourceContents[]> {
+    const res = (await this.send(MCP_METHODS.resourcesRead, { uri })) as {
+      contents?: McpResourceContents[];
+    };
+    return Array.isArray(res?.contents) ? res.contents : [];
+  }
+
+  // ─── Prompts ───
+
+  async listPrompts(force = false): Promise<McpPrompt[]> {
+    if (!force && this.promptsCache) return this.promptsCache;
+    const all: McpPrompt[] = [];
+    try {
+      let cursor: string | undefined;
+      let pages = 0;
+      do {
+        const res = (await this.send(MCP_METHODS.promptsList, cursor ? { cursor } : {})) as {
+          prompts?: McpPrompt[];
+          nextCursor?: string;
+        };
+        if (Array.isArray(res?.prompts)) all.push(...res.prompts);
+        const next = res?.nextCursor;
+        cursor = next && next !== cursor ? next : undefined;
+      } while (cursor && ++pages < 100);
+    } catch {
+      // Same reasoning as resources.
+    }
+    this.promptsCache = all;
+    return all;
+  }
+
+  /** Expand one prompt into the messages it stands for. */
+  async getPrompt(name: string, args: Record<string, string> = {}): Promise<McpGetPromptResult> {
+    return (await this.send(MCP_METHODS.promptsGet, {
+      name,
+      ...(Object.keys(args).length > 0 ? { arguments: args } : {}),
+    })) as McpGetPromptResult;
+  }
+
   // ─── Tool execution ───
 
   private validateToolInput(
     schema: McpToolSchema | undefined,
     args: Record<string, unknown>,
   ): { valid: boolean; errors: string[] } {
-    const errors: string[] = [];
-    if (schema?.inputSchema) {
-      const s = schema.inputSchema as Record<string, unknown>;
-      if (Array.isArray(s.required)) {
-        for (const req of s.required as string[]) {
-          if (!(req in args)) errors.push(`Missing required param: ${req}`);
-        }
-      }
-    }
+    // Full schema validation, not just required-presence. A wrong type or an
+    // off-enum value used to travel to the server, cost a round trip, and come
+    // back as whatever prose that server felt like — usually one the model
+    // could not act on. Caught here it is a precise, local, free correction.
+    const errors = schema?.inputSchema
+      ? validateAgainstSchema(schema.inputSchema as Record<string, unknown>, args)
+      : [];
     for (const [key, val] of Object.entries(args)) {
       if (typeof val === "string" && val.length > MAX_PARAM_SIZE) {
         errors.push(`Param ${key} exceeds 1MB limit`);
@@ -600,6 +822,22 @@ export class McpClient {
         signal: opts?.signal,
       })) as McpCallToolResult;
       return this.limitResponseSize(result);
+    } catch (err) {
+      // A token revoked mid-run is a connector that needs a sign-in, not a
+      // call that blew up. Handled HERE rather than only in the tool handler
+      // so every caller of callTool gets the same containment.
+      if (this.noteUnauthorized(err)) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${this.serverName} needs authorization — run: gear mcp login ${this.serverName}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+      throw err;
     } finally {
       this.progressHandlers.delete(token);
       this.inFlightCalls--;
@@ -638,6 +876,24 @@ export class McpClient {
     const client = this;
     const prefixedName = `mcp_${this.serverName}_${mcpTool.name}`;
 
+    // Annotations were typed and unused; permission was binary autoApprove, so
+    // a read-only search and an irreversible delete cost the same prompt. The
+    // hints are the server's own declaration of what a call DOES, which is
+    // exactly what the permission layer needed and never had.
+    const ann = mcpTool.annotations ?? {};
+    const readOnly = ann.readOnlyHint === true;
+    const destructive = ann.destructiveHint === true;
+    const category: ToolSchema["category"] = readOnly ? "read" : destructive ? "write" : "network";
+    // A read-only tool is parallel-safe and not worth a prompt from 2nd gear
+    // up. A destructive one always is, whatever autoApprove says: an
+    // auto-approve list written before a server added a delete tool must not
+    // silently cover it.
+    const permissionLevel: ToolSchema["permissionLevel"] = destructive
+      ? "confirm"
+      : readOnly || autoApproved
+        ? "auto"
+        : "confirm";
+
     const schema: ToolSchema = {
       name: prefixedName,
       version: "0.1.0",
@@ -646,13 +902,16 @@ export class McpClient {
         type: "object",
         properties: {},
       },
-      permissionLevel: autoApproved ? "auto" : "confirm",
-      category: "network",
+      permissionLevel,
+      category,
     };
 
     return {
       schema,
-      validate: () => ({ valid: true }),
+      validate: (args) => {
+        const v = client.validateToolInput(mcpTool, args);
+        return v.valid ? { valid: true } : { valid: false, error: v.errors.join("; ") };
+      },
       execute: async (input: ToolCallInput): Promise<ToolCallOutput> => {
         const start = performance.now();
         try {
@@ -684,12 +943,20 @@ export class McpClient {
             ...(attachments.length > 0 ? { attachments } : {}),
           };
         } catch (err) {
+          // A token revoked mid-run surfaces exactly like a token that was
+          // never there: the connector needs a login, the run continues.
+          client.noteUnauthorized(err);
           return {
             callId: input.callId,
             toolName: input.toolName,
             success: false,
             result: "",
-            error: err instanceof Error ? err.message : String(err),
+            error:
+              err instanceof McpUnauthorizedError
+                ? `${client.name} needs authorization — run: gear mcp login ${client.name}`
+                : err instanceof Error
+                  ? err.message
+                  : String(err),
             durationMs: Math.round(performance.now() - start),
           };
         }
@@ -733,7 +1000,7 @@ export class McpClient {
   /** Restart the transport + re-handshake. Skipped while a tool call is running
    *  (don't yank a call out from under the model) or while already restarting. */
   private async tryRestart(reason: string): Promise<void> {
-    if (this.restarting || this.closing) return;
+    if (this.restarting || this.closing || this.needsAuth) return;
     if (this.inFlightCalls > 0) return; // defer to a later tick
     this.restarting = true;
     this.logger.warn(`restarting server (${reason})`);
@@ -746,10 +1013,12 @@ export class McpClient {
       // Tools may have changed across the restart — reconcile the registry.
       this.onToolsChangedCb?.();
     } catch (err) {
-      this.ready = false;
-      this.lastError = err instanceof Error ? err.message : String(err);
-      this.onEvent?.({ type: "server-down", server: this.serverName, reason: this.lastError });
-      this.logger.error(`restart failed: ${this.lastError}`);
+      if (!this.noteUnauthorized(err)) {
+        this.ready = false;
+        this.lastError = err instanceof Error ? err.message : String(err);
+        this.onEvent?.({ type: "server-down", server: this.serverName, reason: this.lastError });
+        this.logger.error(`restart failed: ${this.lastError}`);
+      }
     } finally {
       this.restarting = false;
     }
@@ -783,6 +1052,7 @@ export class McpClient {
     serverInfo: McpServerInfo;
     capabilities: McpServerCapabilities;
     lastError: string | null;
+    needsAuth: boolean;
   } {
     return {
       name: this.serverName,
@@ -790,6 +1060,7 @@ export class McpClient {
       serverInfo: this.serverInfo,
       capabilities: this.serverCapabilities,
       lastError: this.lastError,
+      needsAuth: this.needsAuth,
     };
   }
 }

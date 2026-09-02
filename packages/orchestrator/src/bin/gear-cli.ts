@@ -149,6 +149,14 @@ const { values, positionals } = parseArgs({
     "by-version": { type: "boolean", default: false },
     // `gear detach --worktree`: isolate the run in a git worktree checkout.
     worktree: { type: "boolean", default: false },
+    // `gear mcp` / `gear plugin`. Declared even though parsing is non-strict:
+    // an undeclared `--scope user` parses as a boolean flag plus a stray
+    // positional, silently discarding the value.
+    scope: { type: "string" },
+    name: { type: "string" },
+    header: { type: "string", multiple: true },
+    env: { type: "string", multiple: true },
+    catalog: { type: "boolean", default: false },
   },
   allowPositionals: true,
   strict: false,
@@ -260,6 +268,16 @@ if (command === "evolve") {
   process.exit(
     await runEvolve(positionals.slice(1) as string[], values as Record<string, unknown>),
   );
+}
+if (command === "plugin" || command === "plugins") {
+  const { runPlugin } = await import("./plugin-cli");
+  process.exit(
+    await runPlugin(positionals.slice(1) as string[], values as Record<string, unknown>),
+  );
+}
+if (command === "mcp") {
+  const { runMcp } = await import("./mcp-cli");
+  process.exit(await runMcp(positionals.slice(1) as string[], values as Record<string, unknown>));
 }
 if (command === "notebook") {
   const { runNotebook } = await import("./notebook-cli");
@@ -905,6 +923,8 @@ async function main() {
     // Multi-instance teamwork: on by default for the real CLI ([team] can turn
     // it off). Unit tests construct the Engine directly and stay hermetic.
     team: config.team,
+    mcp: config.mcp,
+    extensions: config.extensions,
     // Black box: on by default for the real CLI (config [diagnostics] can turn
     // it off). Unit tests construct the Engine directly and stay hermetic.
     // The trail spool is pid-scoped so two concurrent Gear instances don't
