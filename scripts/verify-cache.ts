@@ -29,6 +29,8 @@ import { OpenAIProvider } from "../packages/llm-gateway/src/providers/openai";
 import { OpenRouterProvider } from "../packages/llm-gateway/src/providers/openrouter";
 import { GoogleProvider } from "../packages/llm-gateway/src/providers/google";
 import { OllamaProvider } from "../packages/llm-gateway/src/providers/ollama";
+import { CodexProvider } from "../packages/llm-gateway/src/providers/codex";
+import { openCredentialStore, oauthAccount } from "../packages/shared/src/credential-store";
 import { cacheBreakpointPolicyFor } from "../packages/llm-gateway/src/providers/cache-policy";
 import type {
   InferenceRequest,
@@ -53,15 +55,28 @@ const FORCE = process.argv.includes("--force-breakpoints");
 
 // ── credentials ──────────────────────────────────────────────────────────
 
-/** Read an env var, falling back to ~/.gear/.env. Never printed. */
-function secret(name: string): string | undefined {
-  if (process.env[name]) return process.env[name];
+/**
+ * Find this provider's credential. Three sources, in the order the CLI itself
+ * resolves them: the environment, the ~/.gear/.env sidecar, and the saved-keys
+ * map in ~/.gear/secrets.json (what `/keys set` writes).
+ *
+ * The value is returned and never printed, logged, or written anywhere.
+ */
+function secret(envVar: string, providerId: string): string | undefined {
+  if (process.env[envVar]) return process.env[envVar];
   try {
     const env = readFileSync(join(homedir(), ".gear", ".env"), "utf8");
-    const hit = env.match(new RegExp(`^${name}=(.+)$`, "m"));
+    const hit = env.match(new RegExp(`^${envVar}=(.+)$`, "m"));
     if (hit?.[1]) return hit[1].trim();
   } catch {
-    // no sidecar env file; the caller reports the miss
+    // no sidecar env file; fall through
+  }
+  try {
+    const raw = readFileSync(join(homedir(), ".gear", "secrets.json"), "utf8");
+    const saved = (JSON.parse(raw) as { keys?: Record<string, string> }).keys ?? {};
+    if (saved[providerId]) return saved[providerId];
+  } catch {
+    // no secrets sidecar; the caller reports the miss
   }
   return undefined;
 }
@@ -71,9 +86,11 @@ function secret(name: string): string | undefined {
 interface Target {
   /** Env var holding the credential, or undefined for a keyless local runtime. */
   envVar?: string;
+  /** Provider id whose OAuth blob in the secure store holds the credential. */
+  fromStore?: string;
   /** Cheapest model that still reaches the provider's cache minimum. */
   cheapestModel: string;
-  build(key: string | undefined): LlmProvider;
+  build(key: string | undefined, meta?: { accountId?: string }): LlmProvider;
 }
 
 const TARGETS: Record<string, Target> = {
@@ -140,6 +157,14 @@ const TARGETS: Record<string, Target> = {
     cheapestModel: process.env.GEAR_OLLAMA_MODEL ?? "llama3.1",
     build: () => new OllamaProvider(),
   },
+  // The ChatGPT subscription backend. Its credential is an OAuth blob in the
+  // secure store rather than an env var, so it resolves through `storeSecret`
+  // below. Luna is the cheapest weight in the Codex lineup.
+  codex: {
+    fromStore: "codex",
+    cheapestModel: "gpt-5.6-luna",
+    build: (k, meta) => new CodexProvider(k!, meta?.accountId),
+  },
 };
 
 const target = TARGETS[PROVIDER];
@@ -153,10 +178,30 @@ const MODEL = flag("model") ?? target.cheapestModel;
 // ── skip cleanly when we cannot reach the provider ───────────────────────
 
 let key: string | undefined;
-if (target.envVar) {
-  key = secret(target.envVar);
+let meta: { accountId?: string } | undefined;
+if (target.fromStore) {
+  // The secure store (keychain / secret-service / file fallback). Read, used
+  // for one request pair, never printed.
+  try {
+    const store = await openCredentialStore();
+    const raw = await store.get(oauthAccount(target.fromStore));
+    const blob = raw ? (JSON.parse(raw) as { secret?: string; accountId?: string }) : undefined;
+    key = blob?.secret;
+    if (blob?.accountId) meta = { accountId: blob.accountId };
+  } catch {
+    key = undefined;
+  }
   if (!key) {
-    console.log(`${PROVIDER}: SKIPPED — no credential (${target.envVar} unset, not in ~/.gear/.env)`);
+    console.log(`${PROVIDER}: SKIPPED — no credential in the secure store`);
+    process.exit(2);
+  }
+} else if (target.envVar) {
+  key = secret(target.envVar, PROVIDER);
+  if (!key) {
+    console.log(
+      `${PROVIDER}: SKIPPED — no credential (${target.envVar} unset, absent from ` +
+        `~/.gear/.env and ~/.gear/secrets.json)`,
+    );
     process.exit(2);
   }
 } else {
@@ -210,7 +255,7 @@ function request(question: string): InferenceRequest {
   };
 }
 
-const provider = target.build(key);
+const provider = target.build(key, meta);
 
 if (FORCE) {
   // Reach into the adapter (or the wrapped one) and open the gate for this run.
