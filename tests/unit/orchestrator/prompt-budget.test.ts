@@ -44,8 +44,17 @@ beforeAll(() => {
  * transcript overhaul is built around, and after two compression passes the
  * section was 23 tokens over with nothing left to cut but the examples that
  * ARE the feature. The prose is cached after the first request of a session.
+ *
+ * Raised 7,660 → 7,700 on 2026-09-03 for the post-edit diagnostics line
+ * (P10.1, Coding conventions). 43 tokens, and there were 8 of headroom, so it
+ * could not be absorbed; two compression passes got it from 54 to 43 and the
+ * remainder is the claim itself (the block is the language server's verdict on
+ * what you just wrote, authoritative, fix it now). It buys back far more than
+ * it costs: without it the model treats the block as advisory and the type
+ * error travels to the verifier, which is a full re-read/re-edit/re-run cycle
+ * — thousands of tokens, against 43 that are cached after the first request.
  */
-const FULL_DOCTRINE_CEILING = 7_660;
+const FULL_DOCTRINE_CEILING = 7_700;
 
 /** Ceiling for a session that can use none of the gated capabilities. */
 const MINIMAL_DOCTRINE_CEILING = 6_000;

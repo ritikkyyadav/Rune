@@ -29,6 +29,8 @@ import { createHash, randomBytes } from "crypto";
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
 import { applyOneEdit, type EditOp } from "./multi-edit";
 import { checkSyntax } from "./diagnostics";
+import { diagnosticsBlockFor } from "./lsp/feedback";
+import type { LspServerManager } from "./lsp/manager";
 
 // ── Parsing ──
 
@@ -268,7 +270,14 @@ interface FileOutcome {
   syntax_issues?: Array<{ line: number; message: string }>;
 }
 
-export function createApplyPatchHandler(): ToolHandler {
+/**
+ * @param lspManager The registry's ONE language-server manager. When present
+ * and `[lsp] autoFeedback` is on, the patch result carries the servers'
+ * semantic verdict on every file it touched, under one shared 2s budget — the
+ * same contract `withLspFeedback` gives the single-path write tools, which
+ * cannot wrap this one because a patch touches many files at once.
+ */
+export function createApplyPatchHandler(lspManager?: LspServerManager): ToolHandler {
   return {
     schema: APPLY_PATCH_SCHEMA,
 
@@ -459,10 +468,12 @@ export function createApplyPatchHandler(): ToolHandler {
       }
 
       // ── Post-edit syntax feedback, same contract as write_file/edit_file ──
+      const written: string[] = [];
       for (const o of outcomes) {
         if (o.action === "deleted") continue;
         const checkPath = o.moved_to ?? o.path;
         const abs = resolveInside(input.workspaceRoot, checkPath);
+        written.push(abs);
         try {
           const content = await readFile(abs, "utf8");
           const issues = await checkSyntax(abs, content);
@@ -472,11 +483,26 @@ export function createApplyPatchHandler(): ToolHandler {
         }
       }
 
+      // ── Semantic feedback (P10.1), one budget for the whole patch ──
+      const diagnostics = lspManager
+        ? await diagnosticsBlockFor(lspManager, input.workspaceRoot, written)
+        : "";
+      if (diagnostics) {
+        // Superseded for exactly the files the server spoke about, same rule
+        // as the single-path wrapper.
+        for (const o of outcomes) {
+          const checkPath = o.moved_to ?? o.path;
+          if (lspManager?.specFor(resolveInside(input.workspaceRoot, checkPath))) {
+            delete o.syntax_issues;
+          }
+        }
+      }
+
       return {
         callId: input.callId,
         toolName: input.toolName,
         success: true,
-        result: JSON.stringify({ files: outcomes }),
+        result: JSON.stringify({ files: outcomes, ...(diagnostics ? { diagnostics } : {}) }),
         durationMs: Math.round(performance.now() - start),
       };
     },
