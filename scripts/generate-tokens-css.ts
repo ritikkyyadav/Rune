@@ -1,18 +1,23 @@
-// ─── Desktop/web token emitter ───
+// ─── The app's token emitter ───
 //
-// Emits `apps/desktop/src/styles/tokens.css` from the ONE pigment source,
-// `packages/shared/src/design-tokens.ts`, which is the machine-readable form of
-// the Savoir brand DNA.
+// Emits `apps/web/src/styles/tokens.css` from the ONE pigment source,
+// `packages/shared/src/design-tokens.ts`.
 //
-// The attribute API is unchanged, because the stylesheet and the components
-// already speak it and renaming a vocabulary is not a rebrand:
+// The attribute API is the browser's own three-state theme, not a custom one:
 //
-//   [data-theme-base="light"|"dark"]   → the ground
-//   [data-accent="datum"]              → the accent (one, now)
+//   :root                                  the light system, always defined
+//   @media (prefers-color-scheme: dark)     what "system" resolves to
+//   :root[data-theme="dark"|"light"]        an explicit choice, which wins
+//
+// Every token has a value on bare `:root`. A colour whose only definition is
+// inside a media query or an attribute block is a colour that is missing in one
+// of the three states, and the state it is missing in is always the one nobody
+// tested.
 //
 // `[data-accent]` survives with a single value on purpose. It is the hidden
-// `[ui] accent` override the customizer still wants, and a seam that says "this
-// was a choice, and the choice is one" is more honest than deleting it.
+// `[ui] accent` override a custom build still wants, and a seam that says "this
+// was a choice, and the choice is one" is more honest than deleting it and
+// pretending there was never a decision.
 //
 // Usage:  bun run scripts/generate-tokens-css.ts [outfile]
 
@@ -22,61 +27,116 @@ import {
   GEAR_ACCENT_CSS,
   GEAR_BASE_CSS,
   GEAR_SCALE,
-  SAVOIR,
+  GEAR_TYPE,
   type GearBaseName,
 } from "../packages/shared/src/design-tokens";
 
 const CSS_NAME: Record<keyof (typeof GEAR_BASE_CSS)["light"], string> = {
-  canvasBg: "--canvas-bg",
-  cardBg: "--card-bg",
-  textMain: "--text-main",
-  textSub: "--text-sub",
-  textMuted: "--text-muted",
-  textFaint: "--text-faint",
-  ochre: "--ochre",
-  green: "--green",
-  red: "--red",
-  barBg: "--bar-bg",
-  barHover: "--bar-hover",
-  barActive: "--bar-active",
+  ground: "--ground",
+  surface: "--surface",
+  sunk: "--sunk",
+  raised: "--raised",
+  ink: "--ink",
+  ink2: "--ink-2",
+  ink3: "--ink-3",
+  inkFaint: "--ink-faint",
   hairline: "--hairline",
-  codeBg: "--code-bg",
-  codeTag: "--code-tag",
-  diffBg: "--diff-bg",
-  diffHdr: "--diff-hdr",
-  popoverBg: "--popover-bg",
-  kbdBg: "--kbd-bg",
+  hairlineStrong: "--hairline-strong",
+  accent: "--accent",
+  accentHover: "--accent-hover",
+  onAccent: "--on-accent",
+  ok: "--ok",
+  caution: "--caution",
+  danger: "--danger",
+  shadowOverlay: "--shadow-overlay",
 };
 
-/** The brand's own names, alongside the surface vocabulary above. */
-const SAVOIR_NAME: Array<[string, string]> = [
-  ["--paper", SAVOIR.paper],
-  ["--paper-2", SAVOIR.paper2],
-  ["--paper-muted", SAVOIR.paperMuted],
-  ["--ink", SAVOIR.ink],
-  ["--ink-2", SAVOIR.ink2],
-  ["--surface-dark", SAVOIR.surfaceDark],
-  ["--graphite", SAVOIR.graphite],
-  ["--graphite-2", SAVOIR.graphite2],
-  ["--line", SAVOIR.line],
-  ["--line-dark", SAVOIR.lineDark],
-  ["--datum", SAVOIR.datum],
-  ["--datum-deep", SAVOIR.datumDeep],
-  ["--signal", SAVOIR.signal],
-  ["--on-datum", SAVOIR.onDatum],
-  ["--caution", SAVOIR.caution],
-  ["--negative", SAVOIR.negative],
-];
-
-function baseBlock(base: GearBaseName): string {
+/**
+ * The derived tints, as `color-mix` of a colour already in the system.
+ *
+ * Never a second hex. A "light blue" authored by hand is a second brand colour
+ * arriving through the back door of a hover state; 8% of the accent over the
+ * ground is the accent, quieter.
+ */
+function tints(base: GearBaseName): string[] {
   const css = GEAR_BASE_CSS[base];
-  const rows = (Object.keys(CSS_NAME) as Array<keyof typeof CSS_NAME>)
-    .map((key) => `  ${CSS_NAME[key]}: ${css[key]};`)
-    .join("\n");
-  // The graticule is drawn from the ground's own ink, so it reads as texture in
-  // the paper rather than as a grey overlay bolted on top.
-  const grid = base === "light" ? "rgba(20, 22, 26, 0.035)" : "rgba(231, 232, 227, 0.035)";
-  return `[data-theme-base="${base}"] {\n  color-scheme: ${base};\n${rows}\n  --graticule-ink: ${grid};\n}`;
+  const fill = base === "dark" ? 14 : 8;
+  const edge = base === "dark" ? 34 : 30;
+  const statusFill = base === "dark" ? 16 : 10;
+  return [
+    `  --accent-quiet: color-mix(in srgb, ${css.accent} ${fill}%, transparent);`,
+    `  --accent-edge: color-mix(in srgb, ${css.accent} ${edge}%, transparent);`,
+    `  --ok-quiet: color-mix(in srgb, ${css.ok} ${statusFill}%, transparent);`,
+    `  --caution-quiet: color-mix(in srgb, ${css.caution} ${statusFill}%, transparent);`,
+    `  --danger-quiet: color-mix(in srgb, ${css.danger} ${statusFill}%, transparent);`,
+    `  --danger-edge: color-mix(in srgb, ${css.danger} ${edge}%, transparent);`,
+  ];
+}
+
+function groundRows(base: GearBaseName): string[] {
+  const css = GEAR_BASE_CSS[base];
+  const rows = (Object.keys(CSS_NAME) as Array<keyof typeof CSS_NAME>).map(
+    (key) => `  ${CSS_NAME[key]}: ${css[key]};`,
+  );
+  return [`  color-scheme: ${base};`, ...rows, ...tints(base)];
+}
+
+export function renderTokensCss(): string {
+  const scale = [
+    `  --sans: ${GEAR_SCALE.sans};`,
+    `  --mono: ${GEAR_SCALE.mono};`,
+    "",
+    `  --ease: ${GEAR_SCALE.ease};`,
+    `  --t-fast: ${GEAR_SCALE.fast};`,
+    `  --t-panel: ${GEAR_SCALE.panel};`,
+    "",
+    "  /* Three radii. A circle is a circle, not a corner. */",
+    `  --r-chip: ${GEAR_SCALE.radiusChip};`,
+    `  --r: ${GEAR_SCALE.radius};`,
+    `  --r-composer: ${GEAR_SCALE.radiusComposer};`,
+    "",
+    `  --label-tracking: ${GEAR_SCALE.labelTracking};`,
+    `  --title-tracking: ${GEAR_SCALE.titleTracking};`,
+    `  --display-tracking: ${GEAR_SCALE.displayTracking};`,
+    "",
+    `  --sidebar-w: ${GEAR_SCALE.sidebarWidth};`,
+    `  --rail-w: ${GEAR_SCALE.railWidth};`,
+    `  --column-max: ${GEAR_SCALE.columnMax};`,
+    "",
+    "  /* The type scale, so a component asks for a step rather than a number. */",
+    ...(Object.keys(GEAR_TYPE) as Array<keyof typeof GEAR_TYPE>).flatMap((step) => [
+      `  --fs-${step}: ${GEAR_TYPE[step].size};`,
+      `  --lh-${step}: ${GEAR_TYPE[step].line};`,
+    ]),
+  ];
+
+  return [
+    "/* Generated by scripts/generate-tokens-css.ts — DO NOT EDIT.",
+    " * Source of truth: packages/shared/src/design-tokens.ts.",
+    " * Two grounds, one accent, hairlines not shadows, radii from {6, 8, 10}. */",
+    "",
+    ":root {",
+    ...scale,
+    "",
+    ...groundRows("light"),
+    "}",
+    "",
+    "/* What the system setting resolves to. Guarded so an explicit light choice",
+    "   still wins on a machine set to dark. */",
+    "@media (prefers-color-scheme: dark) {",
+    '  :root:not([data-theme="light"]) {',
+    ...groundRows("dark").map((r) => `  ${r}`),
+    "  }",
+    "}",
+    "",
+    "/* An explicit choice, which wins in both directions. */",
+    ':root[data-theme="dark"] {',
+    ...groundRows("dark"),
+    "}",
+    "",
+    accentBlocks(),
+    "",
+  ].join("\n");
 }
 
 function accentBlocks(): string {
@@ -84,70 +144,46 @@ function accentBlocks(): string {
   for (const accent of GEAR_ACCENT_NAMES) {
     const light = GEAR_ACCENT_CSS.light[accent];
     const dark = GEAR_ACCENT_CSS.dark[accent];
-    // The derived tints are alpha of the accent itself — never a second hue.
+    blocks.push(`[data-accent="${accent}"] {\n  --accent: ${light};\n}`);
     blocks.push(
-      `[data-accent="${accent}"] {\n` +
-        `  --accent: ${light};\n` +
-        `  --accent-bg: color-mix(in srgb, ${light} 8%, transparent);\n` +
-        `  --accent-bd: color-mix(in srgb, ${light} 30%, transparent);\n` +
-        `}`,
+      `@media (prefers-color-scheme: dark) {\n` +
+        `  :root:not([data-theme="light"])[data-accent="${accent}"] {\n` +
+        `    --accent: ${dark};\n` +
+        `  }\n}`,
     );
-    blocks.push(
-      `[data-theme-base="dark"][data-accent="${accent}"] {\n` +
-        `  --accent: ${dark};\n` +
-        `  --accent-bg: color-mix(in srgb, ${dark} 12%, transparent);\n` +
-        `  --accent-bd: color-mix(in srgb, ${dark} 34%, transparent);\n` +
-        `}`,
-    );
+    blocks.push(`:root[data-theme="dark"][data-accent="${accent}"] {\n  --accent: ${dark};\n}`);
   }
   return blocks.join("\n\n");
 }
 
-export function renderTokensCss(): string {
-  return [
-    "/* Generated by scripts/generate-tokens-css.ts — DO NOT EDIT.",
-    " * Source of truth: packages/shared/src/design-tokens.ts (the Savoir brand DNA).",
-    " * Two grounds, one accent, no shadows, 3px radii. */",
-    "",
-    ":root {",
-    `  --sans: ${GEAR_SCALE.sans};`,
-    `  --mono: ${GEAR_SCALE.mono};`,
-    `  --ease: ${GEAR_SCALE.ease};`,
-    "",
-    "  /* One radius. A pill is round; the icon tile is the single 6px corner. */",
-    `  --r: ${GEAR_SCALE.radius};`,
-    `  --r-pill: ${GEAR_SCALE.radiusPill};`,
-    `  --r-tile: ${GEAR_SCALE.radiusTile};`,
-    "  /* The old scale names, all resolved to the one radius, so a rule that",
-    "     still asks for --r-card gets 3px instead of a 20px throwback. */",
-    `  --r-card: ${GEAR_SCALE.radius};`,
-    `  --r-panel: ${GEAR_SCALE.radius};`,
-    `  --r-item: ${GEAR_SCALE.radius};`,
-    `  --r-chip: ${GEAR_SCALE.radius};`,
-    "",
-    `  --graticule: ${GEAR_SCALE.graticule};`,
-    `  --label-tracking: ${GEAR_SCALE.labelTracking};`,
-    `  --display-tracking: ${GEAR_SCALE.displayTracking};`,
-    "",
-    "  /* The brand's own names, for anything written against the DNA directly. */",
-    ...SAVOIR_NAME.map(([name, value]) => `  ${name}: ${value};`),
-    "}",
-    "",
-    baseBlock("light"),
-    "",
-    baseBlock("dark"),
-    "",
-    accentBlocks(),
-    "",
-  ].join("\n");
+/**
+ * Format the emitted CSS the way the repository formats everything else.
+ *
+ * Not cosmetic: `format:check` runs over the whole tree, and a generated file
+ * that prettier disagrees with turns "regenerate the tokens" into "regenerate
+ * the tokens and then remember to format them", which is a step somebody will
+ * forget on the one commit where it matters.
+ */
+async function formatted(css: string, filepath: string): Promise<string> {
+  try {
+    const prettier = (await import("prettier")) as {
+      format: (source: string, opts: Record<string, unknown>) => Promise<string>;
+      resolveConfig: (p: string) => Promise<Record<string, unknown> | null>;
+    };
+    const config = (await prettier.resolveConfig(filepath)) ?? {};
+    return await prettier.format(css, { ...config, filepath });
+  } catch {
+    return css; // no prettier: the file is still correct, just unformatted
+  }
 }
 
 if (import.meta.main) {
   const out = process.argv[2];
   const css = renderTokensCss();
   if (out) {
-    writeFileSync(out, css);
-    console.log(`wrote ${out} (${css.length} bytes)`);
+    const text = await formatted(css, out);
+    writeFileSync(out, text);
+    console.log(`wrote ${out} (${text.length} bytes)`);
   } else {
     console.log(css);
   }

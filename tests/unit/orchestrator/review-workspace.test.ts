@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { revertPaths, workspaceDiff } from "../../../packages/orchestrator/src/git-undo";
-import { patchForFile } from "../../../apps/desktop/src/components/Review";
+import { patchForFile } from "../../../apps/web/src/components/Review";
 
 let root: string;
 

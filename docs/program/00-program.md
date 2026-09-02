@@ -203,13 +203,13 @@ What Claude Code has, and what Gear does about each. "Have" means it exists and 
 The program proceeds under the recommendation in bold unless told otherwise.
 
 - **D1 License and distribution.** The repo is private, so the install script cannot serve itself and external validation (25% of maturity, scored 0.5) cannot move. **Recommend open-core:** engine and clients under Apache-2.0; the compliance layer (signed policy tooling, the collector, any hosted service) commercial. If it stays private, Phase 1 ships through a public releases-only mirror and a hosted installer, and the external-validation target drops to 3.
-- **D2 Brand.** The Savoir brand DNA (drafting-paper ground, cool ink, one petrol-teal datum, Inter/Söhne, IBM Plex Mono/Berkeley Mono, the block-cursor wordmark) is assumed to be the rebrand. Confirm, and provide: the Gear product mark or the ruling that Gear is set as a Savoir sub-wordmark, the app icon source, the story copy for first-run and the download page. Also: is the product "Gear" or "Savoir Gear"?
-- **D3 Default surface.** **Recommend:** `gear` stays the terminal; `gear app` opens the desktop; the download page leads with the desktop.
-- **D4 Windows.** **Recommend:** ship the CLI, desktop and web client for Windows with an honest banner ("no OS sandbox on Windows; 1st and 2nd gear only, or run under WSL2"). A native Windows sandbox is deferred.
+- **D2 Brand.** ~~The Savoir brand DNA…~~ **Answered 2026-09-02 and executed in Phase 9:** the Savoir DNA was an identity the founder had already ditched, and the current one is a solid electric-blue eight-tooth gear on a near-white ground (`#1B3FE4` / `#FAFAF8`, Geist + Geist Mono). The system is [`docs/design/web/DIRECTION.md`](../design/web/DIRECTION.md); the mark is generated from geometry in `apps/web/branding/`. Still open for the founder: the original vector (to replace the recreation byte-for-byte), the story copy for first-run and the download page, and whether the product is "Gear" or "Savoir Gear".
+- **D3 Default surface.** ~~`gear` stays the terminal…~~ **Answered 2026-09-02 and executed in Phase 9:** there is no native desktop app. `gear` opens the web app on a local URL; `gear --console` (alias `gear tui`) is the terminal; the download page leads with the app. See [09-web-product.md](09-web-product.md).
+- **D4 Windows.** **Recommend:** ship the CLI and the web app for Windows with an honest banner ("no OS sandbox on Windows; 1st and 2nd gear only, or run under WSL2"). A native Windows sandbox is deferred.
 - **D5 Providers to cut.** **Recommend:** drop `lmstudio` (placeholder model, duplicates Ollama); drop `copilot` unless the founder uses it (undocumented endpoint, VS Code impersonation, zero usage on streams, stale catalog); fold `ollama-turbo`'s three tables into one and reconcile its capacity/billing mismatch.
 - **D6 Third-party executable tools.** **Recommend:** plugins are declarative in v1 (skills, commands, MCP servers, hooks). Executable tools stay first-party until they run under the sandbox as subprocesses.
 
-Assumptions in force until answered: D1 open-core, D2 Savoir DNA as given, D3, D4, D5 and D6 as recommended.
+Assumptions in force until answered: D1 open-core, D4, D5 and D6 as recommended. D2 and D3 are answered above.
 
 ---
 

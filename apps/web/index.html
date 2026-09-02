@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Both grounds, so the browser paints its own chrome to match instead of
+         flashing white around a dark page. -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#FAFAF8" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0F1114" />
+    <meta name="description" content="Gear — the agent that proves its work, on any model." />
+
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="alternate icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!--
+      Geist and Geist Mono, with a real fallback each. `display=swap` because
+      the page must be readable before the network is: a font that never arrives
+      degrades to something chosen — Inter, then the platform sans — rather than
+      to whatever the OS calls "sans-serif", and text is never invisible while
+      waiting.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <title>Gear</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

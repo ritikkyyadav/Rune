@@ -5,10 +5,12 @@ docs/history/
 dist/
 target/
 tests/eval/results/
+tests/e2e/test-results/
+tests/e2e/playwright-report/
 bun.lock
 Cargo.lock
-apps/desktop/src-tauri/target/
-apps/desktop/dist/
+apps/web/dist/
+apps/web/branding/*.png
 .gear/
 .claude/
 .codex/

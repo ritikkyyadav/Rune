@@ -60,10 +60,34 @@ Lane branches received `style: prettier pass` commits and, where needed, an empt
 6. Expected conflict hot spots across lanes: `packages/orchestrator/src/bin/gear-cli.ts`, `engine.ts`, `packages/shared/src/config.ts`, `docs/auto-mode.md` (#4 rewrote sections; #8 and #10 appended), `docs/program/backlog.md` (append-only, keep both).
 7. After the last merge, from the main checkout: `scripts/install.sh`, `gear doctor`, `gear tools-smoke`, then tag `v0.3.0` (the release workflow is tag-driven and refuses a tag that does not match the reported version).
 
+## Phase 9, 2026-09-03
+
+The correction landed. There is no native desktop application: `apps/desktop`
+is `apps/web`, `src-tauri` and every `@tauri-apps` dependency are gone, and
+`gear` with no arguments starts the engine as a local server and opens a
+browser tab on it. `gear --console` (alias `gear tui`) is the terminal.
+
+The Savoir visual system applied in Phase 3.3 is deleted — tokens, stylesheet,
+mark, fonts and the console's palette — and replaced by the solid
+electric-blue eight-tooth gear on a near-white ground. The mark is generated
+from eight numbers so the founder's vector can replace it byte-for-byte.
+
+Two defects found by the phase's own gate and fixed in it:
+
+- **The engine host truncated any response larger than the socket buffer.**
+  Bun's `write` reports the bytes it took and queues nothing; the host ignored
+  the number, so `get_turn_context` (the whole assembled system prompt) went
+  out cut in half and the caller waited fifteen minutes for a line that never
+  ended — wedging every later request on the same connection. Present since
+  `gear serve` shipped, and reachable from the trace rail with one click.
+- **The session list was never fetched after the transport opened**, so a page
+  reload came back to an empty sidebar. Invisible until a reload had to restore
+  something, which is the case the whole URL product rests on.
+
 ## Founder actions the agents could not take
 
 - **D1**: public repo or a public releases mirror + install host; the LICENSE decision; npm scope for `@gear/sdk`; the VS Code marketplace publisher; whether `savoir/gear-action` gets its own repo.
-- **D2**: confirm the Savoir DNA as the rebrand; supply the Gear mark, app icon and story copy; decide "Gear" vs "Savoir Gear".
+- **D2**: ~~confirm the Savoir DNA~~ **answered and executed in Phase 9.** Still wanted: the ORIGINAL vector of the blue gear (the shipped mark is recreated from the brief's geometry and lives at `apps/web/branding/gear-mark.svg`), the story copy for first-run and the download page, and the ruling on "Gear" vs "Savoir Gear".
 - **Certificates and keys**: Apple Developer ID + notarization, Windows Authenticode, the Tauri updater keypair, `GEAR_SIGNING_PRIVATE_KEY` for Linux signatures (`bun scripts/keygen.ts`), `GEAR_REVIEW_API_KEY` for the PR review workflow.
 - **Live capacity**: OpenRouter credits or a Codex quota reset unblock four gates at once: Phase 7's real A/B arm (`gear evolve ab doctrine_full --real`), Phase 8's cost-per-task comparison (`bun run eval -- --real --compare`), Phase 6's second-tier reviewer report, and the anchor benchmarks.
 - **Labels**: review the 38 inferred corpus rows listed by `bun run eval:auto-safety --list` (the review sheet from Phase 7 recommends a label for each).

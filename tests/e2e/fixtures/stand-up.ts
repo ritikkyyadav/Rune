@@ -70,6 +70,15 @@ export interface Stand {
   gearHome: string;
   /** Everything the fake model was asked, in order — for asserting the turn. */
   requests: unknown[];
+  /**
+   * Rewind the script to its first entry.
+   *
+   * The script is consumed in order and its last entry repeats, so a second
+   * test sharing one stand gets only that last entry — a passing first run and
+   * a mystifying second. Standing the whole thing up again costs a minute per
+   * test; rewinding costs nothing and is the same engine, which is the point.
+   */
+  reset(): void;
   stop(): Promise<void>;
 }
 
@@ -200,6 +209,10 @@ export async function standUp(
     workspace,
     gearHome,
     requests,
+    reset() {
+      turn = 0;
+      requests.length = 0;
+    },
     async stop() {
       server.kill();
       await new Promise((r) => setTimeout(r, 250));

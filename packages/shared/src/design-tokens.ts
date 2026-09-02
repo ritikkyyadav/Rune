@@ -1,78 +1,32 @@
 // ─── Gear design tokens — the ONE pigment source ───
 //
-// Derived from the Savoir brand DNA (D2). Every surface reads from here:
+// Every surface reads from here:
 //
-//   • CLI/TUI:   packages/orchestrator/src/bin/ui/themes.ts builds the two
+//   • The app:   scripts/generate-tokens-css.ts emits apps/web/src/styles/tokens.css.
+//   • Console:   packages/orchestrator/src/bin/ui/themes.ts builds the two
 //                terminal modes from gearTerminalPalette(), 24-bit with a
 //                derived ANSI-256 fallback.
-//   • Desktop:   scripts/generate-tokens-css.ts emits tokens.css, which the
-//                desktop AND the web client (the same bundle) consume.
 //   • Guardrail: tests/unit/shared/design-tokens-parity.test.ts pins these
-//                values against the brand's own numbers, and
-//                tests/unit/brand-checklist.test.ts checks the BUILT css.
+//                values and the rules they encode; tests/unit/brand-checklist.test.ts
+//                checks the BUILT stylesheet.
 //
-// What changed in Phase 3, and why it is a deletion rather than a re-skin:
-// there were three visual identities in this repository — the customizer's
-// five accents × two bases, the desktop's own CSS, and the Savoir rebrand — and
-// a product cannot have three. The five-accent picker is gone from both
-// surfaces. One accent, two grounds, and status colors that only ever signal
-// state.
+// What this replaced, and why it is a deletion rather than a re-skin: Phase 3
+// applied a previous identity — drafting paper, petrol teal, a plex mono, a
+// block cursor, a 28px dot grid — that the founder had already ditched. See
+// docs/program/09-web-product.md. Nothing below descends from it, and the brand
+// checklist fails on any byte of it that survives anywhere.
 //
-// The nine rules that make something read as Savoir, in the order they bite:
-// the block cursor is the mark; ONE accent, under ~5% of any surface; hairlines
-// and never shadows; 3px radii (pills and the icon tile excepted); a sans for
-// voice and a mono for the record; mono labels uppercase and tracked; tabular
-// numerals; a 28px graticule ground; tight tracking on large sans.
+// The identity is a solid electric-blue eight-tooth gear on a near-white
+// ground, and the rules that make a surface read as it does, in the order they
+// bite: ink is not black and the ground is not white; every border is one
+// hairline at 1px; one accent, under 5% of any screen, never carrying text; a
+// shadow only on things that float; radii from {6, 8, 10}; Geist for voice and
+// Geist Mono for the record; tabular numerals wherever numbers align.
+//
+// Twelve literal values. Everything else is a function of them — so a change to
+// the brand is a change to twelve lines, and the relationships cannot drift.
 //
 // Pure data + pure functions. No dependencies.
-
-// ─── The brand's own numbers ───
-//
-// Verbatim from the Savoir DNA. Nothing else in the repository may introduce a
-// pigment; everything below is either one of these or derived from them by a
-// function in this file.
-
-export const SAVOIR = {
-  /** Cool drafting ground. NOT cream. */
-  paper: "#E7E8E3",
-  paper2: "#DDDFD8",
-  /** Muted/secondary text ON ink. */
-  paperMuted: "#C9CCC8",
-  /** Cool near-black: text on light, and the inverse ground. */
-  ink: "#14161A",
-  ink2: "#22262B",
-  surfaceDark: "#191C20",
-  graphite: "#4A4F55",
-  graphite2: "#7C8088",
-  line: "#C7CABF",
-  lineDark: "#2C3036",
-  /** THE accent. Petrol/instrument teal, rationed under ~5% of a surface. */
-  datum: "#0E5E63",
-  datumDeep: "#0A4448",
-  /** The same idea, brighter: live readouts and on-dark. Not a second brand color. */
-  signal: "#17A0A8",
-  onDatum: "#EAF6F6",
-  /** Status only. Never decoration. */
-  caution: "#E2A23A",
-  negative: "#9A4A3A",
-  n50: "#F2F3EF",
-  n100: "#E7E8E3",
-  n200: "#C7CABF",
-  n400: "#9DA29A",
-  n500: "#6C7178",
-  n600: "#4A4F55",
-  n800: "#2A2D32",
-  n900: "#14161A",
-} as const;
-
-/**
- * The status colors, named as a set.
- *
- * The brand checklist allows exactly one chromatic hue outside these. Naming
- * the exception list here rather than in the test is deliberate: a designer
- * adding a status color has to add it to the system, not to the assertion.
- */
-export const SAVOIR_STATUS_COLORS = [SAVOIR.caution, SAVOIR.negative] as const;
 
 // ─── Color math ───
 
@@ -122,15 +76,7 @@ export function solidOver(cssColor: string, baseHex: string): string {
   ]);
 }
 
-/**
- * Move `from` a fraction of the way toward `toward`.
- *
- * Used for exactly one thing: the brand gives a single `--negative`
- * (`#9A4A3A`), tuned to be read on paper. On ink it is a dark shape on a dark
- * ground — fine as a rule or a fill, not readable as text. Rather than invent a
- * second brick, the on-ink readout is DERIVED from the brand's own value, so
- * changing `--negative` moves both and the relationship cannot drift.
- */
+/** Move `from` a fraction of the way toward `toward`. The system's one lever. */
 export function mixToward(from: string, toward: string, amount: number): string {
   const a = hexToRgbTuple(from);
   const b = hexToRgbTuple(toward);
@@ -141,6 +87,105 @@ export function mixToward(from: string, toward: string, amount: number): string 
   ]);
 }
 
+// ─── The twelve literals ───
+//
+// Sampled from the mark and the ground it sits on. Every other colour in the
+// product is one of these or `mixToward` of two of them.
+
+export const GEAR_PALETTE = {
+  /** THE accent, on paper. The blue of the mark. */
+  accent: "#1B3FE4",
+  /** THE accent, on ink. The same identity at a legible weight on a dark ground. */
+  accentDark: "#5B79FF",
+
+  /** Light ground, surface, sunk. Never pure white. */
+  ground: "#FAFAF8",
+  surface: "#FFFFFF",
+  sunk: "#F3F3F1",
+  /** Light ink, in three steps. Never pure black. */
+  ink: "#111318",
+  ink2: "#5B6070",
+  ink3: "#8B909C",
+  /** The one border colour on paper. */
+  hairline: "#E6E6E2",
+
+  /** Dark ground, surface, sunk. */
+  groundDark: "#0F1114",
+  surfaceDark: "#15181D",
+  sunkDark: "#0B0D10",
+  /** Dark ink, in three steps. */
+  inkDark: "#E8E9EC",
+  ink2Dark: "#A2A7B3",
+  ink3Dark: "#6C717D",
+  /** The one border colour on ink. */
+  hairlineDark: "#232730",
+
+  /** Status. State only, never decoration, never an accent. */
+  ok: "#1F9D55",
+  caution: "#C98A1A",
+  danger: "#D2453B",
+} as const;
+
+/**
+ * The status colours, named as a set.
+ *
+ * The brand checklist allows exactly one chromatic hue outside these. Naming
+ * the exception list here rather than in the test is deliberate: a designer
+ * adding a status colour has to add it to the system, not to the assertion.
+ */
+export const GEAR_STATUS_COLORS = [
+  GEAR_PALETTE.ok,
+  GEAR_PALETTE.caution,
+  GEAR_PALETTE.danger,
+] as const;
+
+/** WCAG relative luminance. */
+export function relativeLuminance(hex: string): number {
+  const channel = (v: number): number => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  };
+  const [r, g, b] = hexToRgbTuple(hex);
+  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+}
+
+/** WCAG contrast ratio between two solid colours. */
+export function contrastRatio(a: string, b: string): number {
+  const la = relativeLuminance(a);
+  const lb = relativeLuminance(b);
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+
+/** The floor every status colour must clear as TEXT on its own surface. */
+export const STATUS_CONTRAST_FLOOR = 4.5;
+
+/**
+ * The same colour, moved far enough toward the ink to be read on that ground.
+ *
+ * The identity publishes three status colours, and a status colour in this
+ * product is usually a WORD — "refused", "3 checks failed" — not a rule or a
+ * fill. `#C98A1A` on white is 2.9:1, which is a swatch, not a sentence.
+ *
+ * So the readable variant is DERIVED by one rule on both grounds rather than
+ * hand-picked twice: step toward the ground's ink in 2% increments until the
+ * ratio clears the floor. On paper that darkens; on ink it lightens; the hue
+ * does not move, and changing a published status colour moves both grounds by
+ * construction. A hand-picked second set is how a light theme and a dark theme
+ * become two designs that merely resemble each other.
+ */
+export function readableOn(
+  hex: string,
+  surface: string,
+  ink: string,
+  floor = STATUS_CONTRAST_FLOOR,
+): string {
+  for (let step = 0; step <= 50; step++) {
+    const candidate = mixToward(hex, ink, step * 0.02);
+    if (contrastRatio(candidate, surface) >= floor) return candidate;
+  }
+  return ink;
+}
+
 // ─── The two grounds ───
 
 export type GearBaseName = "light" | "dark";
@@ -149,129 +194,157 @@ export type GearBaseName = "light" | "dark";
  * One accent.
  *
  * The union survives with a single member on purpose: `[ui] accent` remains as
- * an undocumented override for anyone maintaining the customizer, and a type
- * that can only ever be `"datum"` says the shape of the decision instead of
+ * an undocumented override for anyone maintaining a custom build, and a type
+ * that can only ever be `"gear"` says the shape of the decision instead of
  * deleting the seam and pretending there was never a choice.
  */
-export type GearAccentName = "datum";
+export type GearAccentName = "gear";
 
-export const GEAR_ACCENT_NAMES: readonly GearAccentName[] = ["datum"] as const;
+export const GEAR_ACCENT_NAMES: readonly GearAccentName[] = ["gear"] as const;
 
 export const GEAR_ACCENT_LABELS: Record<GearAccentName, string> = {
-  datum: "Datum",
+  gear: "Gear blue",
 };
 
 /** Raw CSS custom-property values for one ground. */
 export interface GearBaseCss {
-  canvasBg: string;
-  cardBg: string;
-  textMain: string;
-  textSub: string;
-  textMuted: string;
-  textFaint: string;
-  /** Caution. Amber. Warnings, "needs work", a paused permission. */
-  ochre: string;
-  /** Positive. There is no green in this system: an addition is a datum. */
-  green: string;
-  /** Negative. Errors, removals, refusals. */
-  red: string;
-  barBg: string;
-  barHover: string;
-  barActive: string;
+  /** The page. */
+  ground: string;
+  /** Cards, the composer, the sidebar head — one step above the ground. */
+  surface: string;
+  /** Code, diffs, wells — one step below it. */
+  sunk: string;
+  /** A hover tint. The only other surface level there is. */
+  raised: string;
+  /** Body and prose. */
+  ink: string;
+  /** Secondary: labels, sublines, inactive tabs. */
+  ink2: string;
+  /** Tertiary: timestamps, ids, counts. Meta only, never prose. */
+  ink3: string;
+  /** Quieter than tertiary: disabled text, tree guides. Never a sentence. */
+  inkFaint: string;
+  /** Every border in the product. One weight: 1px. */
   hairline: string;
-  codeBg: string;
-  codeTag: string;
-  diffBg: string;
-  diffHdr: string;
-  popoverBg: string;
-  kbdBg: string;
+  /** The same rule, one step firmer, where a card edge meets a filled header. */
+  hairlineStrong: string;
+  accent: string;
+  /** One step darker on paper, one step lighter on ink. */
+  accentHover: string;
+  /** Text and glyphs ON the accent. */
+  onAccent: string;
+  ok: string;
+  caution: string;
+  danger: string;
+  /** The single shadow token. Legal on floating overlays and nowhere else. */
+  shadowOverlay: string;
 }
 
-/**
- * `[data-theme-base="light"]` and `[data-theme-base="dark"]`.
- *
- * Two decisions in here are worth reading twice.
- *
- * There is NO GREEN. The brand has one chromatic hue, and a second one
- * introduced for "added lines" would be a second brand color arriving through
- * the back door. An addition is a datum — the thing that is now there — which
- * is both on-brand and, once seen, obviously right for a diff.
- *
- * `red` on ink is the brand's `--negative` lifted toward paper, because the
- * brand's single brick is tuned for paper and is unreadable as text on ink. The
- * fill and the rule keep the exact brand value; only the readout moves.
- */
+function baseFor(base: GearBaseName): GearBaseCss {
+  const p = GEAR_PALETTE;
+  const dark = base === "dark";
+  const ground = dark ? p.groundDark : p.ground;
+  const ink = dark ? p.inkDark : p.ink;
+  const ink3 = dark ? p.ink3Dark : p.ink3;
+  const accent = dark ? p.accentDark : p.accent;
+  const surface = dark ? p.surfaceDark : p.surface;
+  const status = (hex: string) => readableOn(hex, surface, ink);
+  return {
+    ground,
+    surface,
+    sunk: dark ? p.sunkDark : p.sunk,
+    // A hover is a surface that moved one step toward the text, not a new
+    // colour: eight percent is the smallest move a person notices and the
+    // largest that still reads as "the same row".
+    raised: mixToward(surface, ink, 0.06),
+    ink,
+    ink2: dark ? p.ink2Dark : p.ink2,
+    ink3,
+    inkFaint: mixToward(ink3, ground, dark ? 0.4 : 0.45),
+    hairline: dark ? p.hairlineDark : p.hairline,
+    hairlineStrong: mixToward(dark ? p.hairlineDark : p.hairline, ink, 0.35),
+    accent,
+    accentHover: mixToward(accent, dark ? "#FFFFFF" : "#000000", 0.16),
+    // White on the paper accent is 7.3:1. White on the ink accent is 3.7:1 —
+    // not enough for a button label — so on ink the accent carries the ground
+    // instead, at 5.2:1. The accent never carries text; text sits on it.
+    onAccent: dark ? p.sunkDark : "#FFFFFF",
+    ok: status(p.ok),
+    caution: status(p.caution),
+    danger: status(p.danger),
+    // Two layers, one soft and one tight, so a floating panel has an edge as
+    // well as a lift. Neutral by construction: a tinted shadow is a second
+    // hue arriving through the back door.
+    shadowOverlay: dark
+      ? "0 12px 32px rgba(0, 0, 0, 0.48), 0 2px 6px rgba(0, 0, 0, 0.32)"
+      : "0 12px 32px rgba(16, 18, 22, 0.10), 0 2px 6px rgba(16, 18, 22, 0.06)",
+  };
+}
+
+/** `:root` and `:root[data-theme="dark"]`. */
 export const GEAR_BASE_CSS: Record<GearBaseName, GearBaseCss> = {
-  light: {
-    canvasBg: SAVOIR.paper2,
-    cardBg: SAVOIR.paper,
-    textMain: SAVOIR.ink,
-    textSub: SAVOIR.graphite,
-    textMuted: SAVOIR.graphite2,
-    textFaint: SAVOIR.n400,
-    ochre: SAVOIR.caution,
-    green: SAVOIR.datum,
-    red: SAVOIR.negative,
-    barBg: SAVOIR.n50,
-    barHover: SAVOIR.paper2,
-    barActive: SAVOIR.line,
-    hairline: SAVOIR.line,
-    codeBg: SAVOIR.n50,
-    codeTag: SAVOIR.paper2,
-    diffBg: SAVOIR.n50,
-    diffHdr: SAVOIR.paper2,
-    popoverBg: SAVOIR.n50,
-    kbdBg: SAVOIR.n50,
-  },
-  dark: {
-    canvasBg: "#0E1013",
-    cardBg: SAVOIR.ink,
-    textMain: SAVOIR.paper,
-    textSub: SAVOIR.paperMuted,
-    textMuted: SAVOIR.graphite2,
-    textFaint: SAVOIR.graphite,
-    ochre: SAVOIR.caution,
-    green: SAVOIR.signal,
-    red: mixToward(SAVOIR.negative, SAVOIR.paper, 0.3),
-    barBg: SAVOIR.surfaceDark,
-    barHover: SAVOIR.ink2,
-    barActive: SAVOIR.n800,
-    hairline: SAVOIR.lineDark,
-    codeBg: SAVOIR.surfaceDark,
-    codeTag: SAVOIR.ink2,
-    diffBg: SAVOIR.surfaceDark,
-    diffHdr: SAVOIR.ink2,
-    popoverBg: SAVOIR.surfaceDark,
-    kbdBg: SAVOIR.ink2,
-  },
+  light: baseFor("light"),
+  dark: baseFor("dark"),
 };
 
-/** The accent per ground: datum on paper, signal on ink. */
+/** The accent per ground. */
 export const GEAR_ACCENT_CSS: Record<GearBaseName, Record<GearAccentName, string>> = {
-  light: { datum: SAVOIR.datum },
-  dark: { datum: SAVOIR.signal },
+  light: { gear: GEAR_PALETTE.accent },
+  dark: { gear: GEAR_PALETTE.accentDark },
 };
 
 /**
- * Non-color scale constants.
+ * Non-colour scale constants.
  *
- * `radius` is 3px everywhere. The two exceptions are named rather than
- * scattered: a pill is fully round, and the icon tile is 6px — the one place in
- * the whole system where a 6px corner is allowed.
+ * Three radii and nothing else: 6 for chips and inline tags, 8 for cards,
+ * fields, buttons and panels, 10 for the composer — the one element that should
+ * read as the softest thing on the page. A circle (`50%`) is a circle, not a
+ * corner, and is allowed for status dots.
  */
 export const GEAR_SCALE = {
-  sans: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-  mono: "'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace",
-  ease: "cubic-bezier(0.16, 1, 0.3, 1)",
-  radius: "3px",
-  radiusPill: "20px",
-  radiusTile: "6px",
-  /** The engineering graticule: a faint dot grid, the texture of drafting paper. */
-  graticule: "28px",
-  /** Mono label tracking. Uppercase, small, +.04em. */
-  labelTracking: "0.04em",
-  /** Large sans tightens as it grows. */
-  displayTracking: "-0.03em",
+  sans: "'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif",
+  mono: "'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace",
+  /** One curve. Decelerating, no overshoot: work finishing, not a thing arriving. */
+  ease: "cubic-bezier(0.2, 0, 0, 1)",
+  /** A state change. */
+  fast: "160ms",
+  /** A panel sliding. */
+  panel: "220ms",
+  radiusChip: "6px",
+  radius: "8px",
+  radiusComposer: "10px",
+  /** Labels open slightly; large type tightens as it grows. */
+  labelTracking: "0.02em",
+  titleTracking: "-0.015em",
+  displayTracking: "-0.02em",
+  /** Layout constants the shell and the reading column agree on. */
+  sidebarWidth: "264px",
+  railWidth: "380px",
+  /** 760px of 15.5px Geist is 72–78 characters. */
+  columnMax: "760px",
+} as const;
+
+/** The radii the brand checklist permits, as a set the test reads. */
+export const GEAR_RADII = [
+  GEAR_SCALE.radiusChip,
+  GEAR_SCALE.radius,
+  GEAR_SCALE.radiusComposer,
+] as const;
+
+/**
+ * The type scale.
+ *
+ * Prose is looser than chrome because it is read rather than scanned, and that
+ * one difference is most of why a transcript is comfortable for two hours.
+ */
+export const GEAR_TYPE = {
+  display: { size: "22px", line: "1.25", tracking: GEAR_SCALE.displayTracking },
+  title: { size: "17px", line: "1.35", tracking: GEAR_SCALE.titleTracking },
+  prose: { size: "15.5px", line: "1.65", tracking: "0" },
+  body: { size: "15px", line: "1.55", tracking: "0" },
+  small: { size: "13px", line: "1.5", tracking: "0" },
+  label: { size: "12px", line: "1.4", tracking: GEAR_SCALE.labelTracking },
+  micro: { size: "11px", line: "1.35", tracking: GEAR_SCALE.labelTracking },
 } as const;
 
 // ─── Terminal derivation ───
@@ -301,40 +374,39 @@ export interface GearTerminalPalette {
 }
 
 /**
- * The ground's variables mapped onto the terminal slot vocabulary:
- * text←text-main, muted←text-sub, faint←text-muted, line←text-faint. Any
- * translucent value is composited over the card background, because a terminal
- * has no alpha channel and a guess made at render time is a guess made
- * differently every time.
+ * The ground's variables mapped onto the terminal slot vocabulary. Any
+ * translucent value is composited over the surface, because a terminal has no
+ * alpha channel and a guess made at render time is a guess made differently
+ * every time.
  */
 export function gearTerminalPalette(base: GearBaseName): GearTerminalPalette {
   const css = GEAR_BASE_CSS[base];
-  const over = (value: string) => solidOver(value, css.cardBg);
+  const over = (value: string) => solidOver(value, css.surface);
   return {
-    bg: over(css.cardBg),
-    canvas: over(css.canvasBg),
-    text: over(css.textMain),
-    muted: over(css.textSub),
-    faint: over(css.textMuted),
-    red: over(css.red),
-    ochre: over(css.ochre),
-    green: over(css.green),
-    line: over(css.textFaint),
+    bg: over(css.surface),
+    canvas: over(css.ground),
+    text: over(css.ink),
+    muted: over(css.ink2),
+    faint: over(css.ink3),
+    red: over(css.danger),
+    ochre: over(css.caution),
+    green: over(css.ok),
+    line: over(css.hairlineStrong),
     surfaces: {
-      card: over(css.cardBg),
-      bar: over(css.barBg),
-      barActive: over(css.barActive),
-      code: over(css.codeBg),
-      diff: over(css.diffBg),
-      diffHeader: over(css.diffHdr),
-      popover: over(css.popoverBg),
+      card: over(css.surface),
+      bar: over(css.sunk),
+      barActive: over(css.raised),
+      code: over(css.sunk),
+      diff: over(css.sunk),
+      diffHeader: over(css.raised),
+      popover: over(css.surface),
       hairline: over(css.hairline),
     },
   };
 }
 
 /** Accent hex for one ground (always solid). */
-export function gearAccentHex(base: GearBaseName, accent: GearAccentName = "datum"): string {
+export function gearAccentHex(base: GearBaseName, accent: GearAccentName = "gear"): string {
   return GEAR_ACCENT_CSS[base][accent].toUpperCase();
 }
 
@@ -342,18 +414,17 @@ export function gearAccentHex(base: GearBaseName, accent: GearAccentName = "datu
  * The terminal's colour table for one ground: exact 24-bit RGB, plus the
  * ANSI-256 index a terminal without truecolor gets instead.
  *
- * `nearestAnsi256` lives in the TUI (it needs no brand knowledge); this
+ * `nearestAnsi256` lives in the console (it needs no brand knowledge); this
  * function is the brand half, and `scripts/generate-terminal-colors.ts` prints
  * what it resolves to so a change is reviewable as a table rather than as a
  * diff of hex strings.
  */
-export function savoirTerminalRoles(base: GearBaseName): Record<string, string> {
+export function gearTerminalRoles(base: GearBaseName): Record<string, string> {
   const p = gearTerminalPalette(base);
   return {
-    // The six closed roles the TUI paints with, in the TUI's own mapping:
-    // `accent` is the identity pigment (the datum) and `danger` is the
-    // negative. The names read from what they MEAN, which is why they do not
-    // line up one-to-one with the slot vocabulary they resolve through.
+    // The six closed roles the console paints with. The names read from what
+    // they MEAN, which is why they do not line up one-to-one with the slot
+    // vocabulary they resolve through.
     body: p.text,
     dim: p.faint,
     accent: gearAccentHex(base),

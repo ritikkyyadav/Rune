@@ -5,9 +5,6 @@ members = [
     "crates/gear-index",
     "crates/gear-tools",
 ]
-exclude = [
-    "apps/desktop/src-tauri",
-]
 
 [workspace.package]
 version = "0.3.0"

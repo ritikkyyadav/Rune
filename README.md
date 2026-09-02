@@ -1,6 +1,6 @@
 # Gear
 
-> A local-first, sandboxed, multi-provider agentic coding assistant — a headless engine with CLI and desktop surfaces.
+> A local-first, sandboxed, multi-provider agentic coding assistant — a headless engine, a web app it serves on your own machine, and a terminal console.
 
 **Status:** early, active development. The engine, CLI, tool suite, and evals work end-to-end; interfaces are still evolving and not all blueprint features are built yet. Latest release: **v0.2.0**; `main` is v0.3.0-dev and the tag is not cut.
 
@@ -10,8 +10,8 @@
 
 Gear is an agentic coding assistant built around a reusable **engine** (TypeScript) that runs the
 agent loop, manages context, enforces permissions and sandboxing, and executes tools. The engine is
-the product — the CLI is one client, a Tauri desktop app is another, and an MCP-server wrapper is
-planned. It is multi-provider (including a fully local path via Ollama) and built to be auditable for
+the product — the web app is one client, the terminal console is another, and an MCP-server wrapper
+is planned. It is multi-provider (including a fully local path via Ollama) and built to be auditable for
 compliance-sensitive teams.
 
 ## Features
@@ -120,27 +120,29 @@ crates/
   gear-index/     Code symbol index
   gear-sandbox/   Sandbox primitives
 apps/
-  desktop/        Tauri + React desktop client — also the `gear web` bundle, same code, different transport
+  web/            The app: one React bundle the engine serves on loopback, identical on every OS
 ```
 
-The engine ⇆ client separation is intentional: the same engine powers the CLI, the desktop app, the
-web client and (planned) an MCP-server wrapper — every one of them over `@gear/protocol`
-(`docs/protocol.md`).
+The engine ⇆ client separation is intentional: the same engine powers the app, the terminal
+console, the editor integrations and (planned) an MCP-server wrapper — every one of them over
+`@gear/protocol` (`docs/protocol.md`).
 
-**Gear Desktop** is the surface most people should use. `gear desktop` opens it and `gear app` is
-the alias; `gear desktop --check` proves the engine is reachable without opening a window. A
-packaged build ships the compiled `gear` binary and runs `gear engine-host`, so no Bun and no source
-checkout are needed — see `docs/release-desktop.md`, including what is not signed yet and why.
+### The app
 
-**`gear web`** serves the same bundle in a browser with the engine attached, which is how Linux, a
-phone on the LAN (`--host`) and a machine you are not sitting at get in. The remote link carries its
-token in the URL **fragment**, which the browser never sends to the server — see
-[`docs/threat-model.md`](docs/threat-model.md), because a served engine is remote code execution
-with your credentials attached and the document says so in those words.
+Type `gear`. The engine starts on a stable loopback port and a browser tab opens on it. That page
+is the product, and it is the same page on Linux, Windows and macOS — one URL, one bundle, one thing
+to maintain. `gear open` reopens the tab, `gear serve --status` prints the URL, and `gear --console`
+(alias `gear tui`) starts the terminal console instead, which is what SSH and CI want. When stdout
+is not a terminal, or `GEAR_NO_BROWSER=1` is set, the URL is printed and nothing is opened.
+
+`gear web --host 0.0.0.0` exposes the same page to a phone on the LAN or a machine you are not
+sitting at. The remote link carries its token in the URL **fragment**, which the browser never sends
+to the server — see [`docs/threat-model.md`](docs/threat-model.md), because a served engine is
+remote code execution with your credentials attached and the document says so in those words.
 
 **`gear attach ws://host:port`** is the terminal as a client of a remote engine: the same
-`GearClient` the desktop and the web page use, so a run that stops for a permission on another
-machine stops in your terminal and answering here unblocks it.
+`GearClient` the page uses, so a run that stops for a permission on another machine stops in your
+terminal and answering here unblocks it.
 
 **In CI**, `gear -P "<prompt>" --stream-json --gear 3 --workspace .` is the form, with exit codes
 `0` ok, `1` failed, `3` needed permission and had nobody to ask. `action/` is a GitHub composite

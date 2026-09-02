@@ -231,52 +231,41 @@ jobs:
           # against a mock provider that needs no credential.
           bun scripts/smoke-print.ts "$out"
 
-  # ── Stage 4d: Desktop app (developer preview — must keep compiling) ──
-  # Runs on Linux (1x billing vs macOS 10x); the macOS bundle itself is
-  # exercised by developers locally and by release-time builds.
-  desktop:
+  # ── Stage 4d: The web product ──
+  # One bundle, one transport, three operating systems. Runs on Linux (1x
+  # billing) because the artifact is platform-independent: what shipped is a
+  # directory of static files and the browser that renders them.
+  web:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: apps/desktop/src-tauri
       - uses: oven-sh/setup-bun@v2
-      - name: Tauri system deps (webkit2gtk)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
-            libayatana-appindicator3-dev librsvg2-dev libxdo-dev
       - run: bun install --frozen-lockfile
       - run: cargo build --release -p gear-tools
-      - name: Frontend typecheck + build
-        run: bun run --filter @gear/desktop build
-      - name: Stage the engine sidecar
-        # `cargo check` fails without it: externalBin is not optional at build
-        # time, and a bundled app runs `gear engine-host` rather than Bun.
-        run: bash scripts/stage-desktop-sidecar.sh
-      - name: Tauri shell compiles
-        run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
-      - name: Desktop reducers, launcher, review workspace
+      - name: Typecheck + build the bundle
+        run: bun run --filter @gear/web build
+      - name: Reducers, cards, entry, review workspace
         env:
           GEAR_TOOLS_BIN: ${{ github.workspace }}/target/release/gear-tools
-        run: bun test tests/unit/desktop tests/unit/brand-checklist.test.ts
-      - name: No shadows in the built CSS
-        # The brand's fingerprint, checked on the ARTIFACT rather than the
-        # source: a shadow that arrives through a dependency still counts.
-        run: |
-          test "$(grep -c 'box-shadow' apps/desktop/dist/assets/*.css)" = "0"
-      - name: gear desktop --check (headless engine handshake)
-        env:
-          GEAR_TOOLS_BIN: ${{ github.workspace }}/target/release/gear-tools
-        run: bun packages/orchestrator/src/bin/gear-cli.ts desktop --check
-      - name: Browser smoke — gear web, mock provider
+        run: bun test tests/unit/web tests/unit/brand-checklist.test.ts
+      - name: The brand checklist, on the built stylesheet
+        # Checked on the ARTIFACT rather than the source: a shadow or a stray
+        # hue that arrives through a dependency still counts. The unit test
+        # above does the reading; this line fails loudly if the build is stale.
+        run: test -n "$(ls apps/web/dist/assets/*.css)"
+      - name: Browser smoke and the founder screenshots, light and dark
         env:
           GEAR_TOOLS_BIN: ${{ github.workspace }}/target/release/gear-tools
         run: |
           bun x --bun playwright install --with-deps chromium
-          bun run --cwd tests/e2e test
+          bun run test:e2e
+      # The screenshots the spec writes are NOT diffed against the committed
+      # set: every run has a fresh temp workspace path, session id and timing
+      # in it, so no two runs are byte-identical and a drift check would fail
+      # on a correct tree forever. They are regenerated deliberately when the
+      # UI changes, and reviewed as images.
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
