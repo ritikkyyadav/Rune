@@ -472,6 +472,8 @@ export interface EngineConfig {
   disabledProviders?: string[];
   /** Base URLs for local runtimes (ollama) by id; overrides preset defaults. */
   localBaseUrls?: Record<string, string>;
+  /** `[llm.ollama] keepAlive` - how long Ollama holds the model + KV cache. */
+  ollamaKeepAlive?: string;
   /** Base URL for a local Ollama server (default http://localhost:11434). */
   ollamaBaseUrl?: string;
   /**
@@ -4370,6 +4372,7 @@ export class Engine {
       customEndpoint: this.customEndpoint,
       disabled: this.disabledProviders,
       localBaseUrls: this.localBaseUrls,
+      ollamaKeepAlive: this.config.ollamaKeepAlive,
       ollamaBaseUrl: this.config.ollamaBaseUrl,
       credentials: this.resolvedCredentials,
       fallbackOrder: this.config.fallbackOrder,

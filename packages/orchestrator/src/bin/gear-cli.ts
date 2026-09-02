@@ -875,6 +875,7 @@ async function main() {
     disabledProviders: secrets.disabled,
     // Local runtime base URLs (ollama): config.toml defaults + /keys edits.
     localBaseUrls: resolveLocalBaseUrls(config, secrets),
+    ollamaKeepAlive: config.llm.ollama?.keepAlive,
     search: config.search,
     research: config.research,
     memory: config.memory,

@@ -63,6 +63,29 @@ Identical hit rate. The explicit field is accepted rather than rejected, but
 buys nothing and costs the tokens it serializes to. Widening the gate is a
 measurement, not a guess.
 
+### Ollama (local): `keep_alive`
+
+Ollama unloads a model — and its KV cache — five minutes after its last
+request. That is shorter than an agent spends reading files and thinking, so
+the cache was routinely evicted **between consecutive turns of one task**, and
+every eviction re-prefills the whole transcript. On a local runtime that is not
+a bill, it is wall-clock: the difference between a second and a minute on a
+long context.
+
+Every request now carries `keep_alive`, default **30m**. Configure it:
+
+```toml
+[llm.ollama]
+keepAlive = "1h"     # or "-1" to hold indefinitely, "0" to unload at once
+```
+
+`GEAR_OLLAMA_KEEP_ALIVE` overrides it for one run.
+
+`listModels` also reports each model's **real context window** now (via
+per-model `/api/show`), instead of names only — every locally pulled model
+previously fell to the tokenizer's conservative default and was compacted far
+below its actual window.
+
 <!-- MEASURED-CACHE-TABLE -->
 
 ---
