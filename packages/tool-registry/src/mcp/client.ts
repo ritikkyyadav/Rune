@@ -1,6 +1,12 @@
 import { type Logger, createLogger } from "@gear/shared";
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
-import { HttpTransport, McpSessionExpiredError, StdioTransport } from "./transport";
+import {
+  HttpTransport,
+  McpSessionExpiredError,
+  McpUnauthorizedError,
+  StdioTransport,
+} from "./transport";
+import type { McpAuthProvider } from "./transport";
 import {
   HEALTH_CHECK_MAX_FAILURES,
   INIT_TIMEOUT_MS,
@@ -49,6 +55,8 @@ export interface McpClientConfig {
   type?: "stdio" | "http";
   url?: string;
   headers?: Record<string, string>;
+  /** OAuth 2.1 provider for this server (P4.2). Absent ⇒ static headers only. */
+  auth?: McpAuthProvider;
   /** Diagnostics. Defaults to a namespaced shared logger. */
   logger?: Logger;
   /** Typed lifecycle/observability sink (server up/down, progress, logs). */
@@ -99,6 +107,10 @@ export class McpClient {
   // Lifecycle
   private closing = false;
   private restarting = false;
+  /** The server answered 401 and no token could be refreshed. Its tools are
+   *  unavailable until an interactive login; the session is NOT failed. */
+  private needsAuth = false;
+  private authProvider?: McpAuthProvider;
   private startupExitReject: ((e: Error) => void) | null = null;
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -113,6 +125,7 @@ export class McpClient {
 
   constructor(config: McpClientConfig) {
     this.serverName = config.name;
+    this.authProvider = config.auth;
     this.logger = (config.logger ?? createLogger("mcp")).child(config.name);
     this.onEvent = config.onEvent;
     this.onToolsChangedCb = config.onToolsChanged;
@@ -124,6 +137,7 @@ export class McpClient {
         url: config.url!,
         headers: config.headers,
         logger: this.logger,
+        auth: config.auth,
       });
     } else {
       this.transportKind = "stdio";
@@ -147,6 +161,10 @@ export class McpClient {
   get kind(): "stdio" | "http" {
     return this.transportKind;
   }
+  /** True when this connector is waiting on `gear mcp login <server>`. */
+  get needsAuthentication(): boolean {
+    return this.needsAuth;
+  }
 
   getTools(): McpToolSchema[] {
     return [...this.tools];
@@ -165,8 +183,58 @@ export class McpClient {
     });
     try {
       await Promise.race([this.handshake(), exitDuringInit]);
+      this.needsAuth = false;
+    } catch (err) {
+      // An unauthorized connector is a MISSING CAPABILITY, not a broken
+      // session. It stays registered with zero tools and a clear reason, so
+      // `gear mcp list/doctor` can tell the user exactly what to run, and the
+      // rest of the session proceeds as if the connector were simply absent.
+      if (!this.noteUnauthorized(err)) throw err;
     } finally {
       this.startupExitReject = null;
+    }
+  }
+
+  /**
+   * Record a 401 as "needs login" and tell the sink. Returns true when the
+   * error was an authorization failure and has been handled.
+   */
+  private noteUnauthorized(err: unknown): boolean {
+    if (!(err instanceof McpUnauthorizedError)) return false;
+    this.needsAuth = true;
+    this.ready = false;
+    this.tools = [];
+    this.lastError = err.message;
+    this.onEvent?.({
+      type: "server-needs-auth",
+      server: this.serverName,
+      reason: `run: gear mcp login ${this.serverName}`,
+    });
+    this.logger.warn(`needs authorization — run: gear mcp login ${this.serverName}`);
+    return true;
+  }
+
+  /**
+   * Re-run the handshake after an interactive login. Clears the needs-auth
+   * latch first so a fresh token is actually tried.
+   */
+  async reconnect(): Promise<boolean> {
+    this.needsAuth = false;
+    // A sign-in that happened in another process wrote a token this client has
+    // never read. Pick it up before trying again.
+    await this.authProvider?.reload?.().catch(() => {});
+    try {
+      await this.transport.close();
+      await this.transport.start();
+      await this.handshake();
+      this.onToolsChangedCb?.();
+      return true;
+    } catch (err) {
+      if (this.noteUnauthorized(err)) return false;
+      this.ready = false;
+      this.lastError = err instanceof Error ? err.message : String(err);
+      this.onEvent?.({ type: "server-down", server: this.serverName, reason: this.lastError });
+      return false;
     }
   }
 
@@ -600,6 +668,22 @@ export class McpClient {
         signal: opts?.signal,
       })) as McpCallToolResult;
       return this.limitResponseSize(result);
+    } catch (err) {
+      // A token revoked mid-run is a connector that needs a sign-in, not a
+      // call that blew up. Handled HERE rather than only in the tool handler
+      // so every caller of callTool gets the same containment.
+      if (this.noteUnauthorized(err)) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${this.serverName} needs authorization — run: gear mcp login ${this.serverName}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+      throw err;
     } finally {
       this.progressHandlers.delete(token);
       this.inFlightCalls--;
@@ -684,12 +768,20 @@ export class McpClient {
             ...(attachments.length > 0 ? { attachments } : {}),
           };
         } catch (err) {
+          // A token revoked mid-run surfaces exactly like a token that was
+          // never there: the connector needs a login, the run continues.
+          client.noteUnauthorized(err);
           return {
             callId: input.callId,
             toolName: input.toolName,
             success: false,
             result: "",
-            error: err instanceof Error ? err.message : String(err),
+            error:
+              err instanceof McpUnauthorizedError
+                ? `${client.name} needs authorization — run: gear mcp login ${client.name}`
+                : err instanceof Error
+                  ? err.message
+                  : String(err),
             durationMs: Math.round(performance.now() - start),
           };
         }
@@ -733,7 +825,7 @@ export class McpClient {
   /** Restart the transport + re-handshake. Skipped while a tool call is running
    *  (don't yank a call out from under the model) or while already restarting. */
   private async tryRestart(reason: string): Promise<void> {
-    if (this.restarting || this.closing) return;
+    if (this.restarting || this.closing || this.needsAuth) return;
     if (this.inFlightCalls > 0) return; // defer to a later tick
     this.restarting = true;
     this.logger.warn(`restarting server (${reason})`);
@@ -746,10 +838,12 @@ export class McpClient {
       // Tools may have changed across the restart — reconcile the registry.
       this.onToolsChangedCb?.();
     } catch (err) {
-      this.ready = false;
-      this.lastError = err instanceof Error ? err.message : String(err);
-      this.onEvent?.({ type: "server-down", server: this.serverName, reason: this.lastError });
-      this.logger.error(`restart failed: ${this.lastError}`);
+      if (!this.noteUnauthorized(err)) {
+        this.ready = false;
+        this.lastError = err instanceof Error ? err.message : String(err);
+        this.onEvent?.({ type: "server-down", server: this.serverName, reason: this.lastError });
+        this.logger.error(`restart failed: ${this.lastError}`);
+      }
     } finally {
       this.restarting = false;
     }
@@ -783,6 +877,7 @@ export class McpClient {
     serverInfo: McpServerInfo;
     capabilities: McpServerCapabilities;
     lastError: string | null;
+    needsAuth: boolean;
   } {
     return {
       name: this.serverName,
@@ -790,6 +885,7 @@ export class McpClient {
       serverInfo: this.serverInfo,
       capabilities: this.serverCapabilities,
       lastError: this.lastError,
+      needsAuth: this.needsAuth,
     };
   }
 }

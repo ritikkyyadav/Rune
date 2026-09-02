@@ -89,6 +89,9 @@ export interface McpProgress {
 export type McpEvent =
   | { type: "server-ready"; server: string; protocolVersion: string; toolCount: number }
   | { type: "server-down"; server: string; reason: string }
+  /** The server answered 401 and no stored token could be refreshed. Its tools
+   *  are unavailable until `gear mcp login <server>`; the session survives. */
+  | { type: "server-needs-auth"; server: string; reason: string }
   | { type: "server-restarted"; server: string }
   | { type: "tools-changed"; server: string; toolCount: number }
   | {

@@ -58,6 +58,16 @@ export {
   McpDiscovery,
   McpRpcError,
   McpSessionExpiredError,
+  McpUnauthorizedError,
+  McpOAuth,
+  McpAuthRequiredError,
+  mcpCredentialAccount,
+  parseWwwAuthenticate,
+  protectedResourceUrls,
+  authorizationServerUrls,
+  discoverProtectedResource,
+  discoverAuthorizationServer,
+  registerClient,
   BROWSER_SERVER_NAME,
   buildBrowserServerSpec,
 } from "./mcp/index";
@@ -69,6 +79,11 @@ export type {
   McpEvent,
   McpServerInfo,
   McpServerCapabilities,
+  McpAuthProvider,
+  McpOAuthTokens,
+  McpOAuthOptions,
+  ProtectedResourceMetadata,
+  AuthorizationServerMetadata,
   BrowserServerOptions,
 } from "./mcp/index";
 export { SkillLoader, createSkillTool } from "./skills/index";

@@ -1,5 +1,6 @@
-import { type Logger, createLogger } from "@gear/shared";
+import { type Logger, createLogger, openCredentialStore, type CredentialStore } from "@gear/shared";
 import { McpClient } from "./client";
+import { McpOAuth } from "./oauth";
 import type { ToolHandler } from "../types";
 import type { McpEvent, McpServerInfo } from "./types";
 import { workspaceConfigPath } from "@gear/shared";
@@ -27,6 +28,22 @@ export interface McpServerConfig {
   headers?: Record<string, string>;
   /** Auto-approve tool calls: true (all) or a list of tool names. */
   autoApprove?: boolean | string[];
+  /**
+   * OAuth 2.1 for a remote connector (P4.2). Present-but-empty is the normal
+   * case: everything is discovered from the server's own metadata. A
+   * pre-registered `clientId` is only needed when the authorization server
+   * offers no dynamic client registration.
+   */
+  oauth?: {
+    clientId?: string;
+    /** Fixed loopback port, for servers that registered exactly one redirect. */
+    callbackPort?: number;
+    scopes?: string[];
+    /** Set false to send static headers only and never attempt OAuth. */
+    enabled?: boolean;
+  };
+  /** Set false to keep the entry on file without starting it (`gear mcp disable`). */
+  enabled?: boolean;
 }
 
 interface McpConfigFile {
@@ -55,6 +72,10 @@ export interface McpServerStatus {
   protocolVersion?: string;
   serverInfo?: McpServerInfo;
   lastError?: string | null;
+  /** The connector answered 401 and holds no usable token — needs `gear mcp login`. */
+  needsAuth?: boolean;
+  /** Whether a token set exists in the credential store for this connector. */
+  hasCredentials?: boolean;
 }
 
 /** Replace `${VAR}` tokens with process.env values, tracking any that are unset
@@ -115,11 +136,65 @@ export class McpDiscovery {
   private handlerOwner: Map<string, string> = new Map();
   // Per-server errors (config-invalid or failed-to-start servers have no client).
   private serverErrors: Map<string, { error: string; kind: "stdio" | "http" }> = new Map();
+  // OAuth state per remote connector, kept so login, refresh and doctor all
+  // read the same tokens. Opened lazily -- a workspace with only stdio servers
+  // never touches the keychain.
+  private oauthProviders: Map<string, McpOAuth> = new Map();
+  private credentialStore: CredentialStore | null = null;
+  private credentialStorePromise: Promise<CredentialStore> | null = null;
 
   constructor(workspaceRoot: string, options: McpDiscoveryOptions = {}) {
     this.configPath = workspaceConfigPath(workspaceRoot, "mcp.json");
     this.options = options;
     this.logger = options.logger ?? createLogger("mcp");
+  }
+
+  /** The credential store, opened at most once per discovery. */
+  private async store(): Promise<CredentialStore> {
+    if (this.credentialStore) return this.credentialStore;
+    if (!this.credentialStorePromise) this.credentialStorePromise = openCredentialStore();
+    this.credentialStore = await this.credentialStorePromise;
+    return this.credentialStore;
+  }
+
+  /**
+   * The OAuth provider for one remote connector, or undefined when the entry
+   * cannot use OAuth: stdio servers, and any entry that already carries its own
+   * Authorization header (a hand-written ${TOKEN} is the user's explicit
+   * choice and outranks a discovered flow).
+   */
+  private async oauthFor(name: string, config: McpServerConfig): Promise<McpOAuth | undefined> {
+    if (!config.url) return undefined;
+    if (config.oauth?.enabled === false) return undefined;
+    const headerNames = Object.keys(config.headers ?? {}).map((h) => h.toLowerCase());
+    if (headerNames.includes("authorization")) return undefined;
+    const existing = this.oauthProviders.get(name);
+    if (existing) return existing;
+    const provider = new McpOAuth({
+      serverName: name,
+      serverUrl: config.url,
+      store: await this.store(),
+      logger: this.logger,
+      clientId: config.oauth?.clientId,
+      callbackPort: config.oauth?.callbackPort,
+      scopes: config.oauth?.scopes,
+    });
+    this.oauthProviders.set(name, provider);
+    return provider;
+  }
+
+  /** The OAuth provider for a connector, if one was built during discovery. */
+  getOAuth(name: string): McpOAuth | undefined {
+    return this.oauthProviders.get(name);
+  }
+
+  /** Re-handshake one connector after an interactive sign-in. */
+  async reconnect(name: string): Promise<boolean> {
+    const entry = this.clients.get(name);
+    if (!entry) return false;
+    const ok = await entry.client.reconnect();
+    if (ok) this.reindexServer(name, entry.client, entry.autoApprove);
+    return ok;
   }
 
   /**
@@ -149,6 +224,11 @@ export class McpDiscovery {
       const kind: "stdio" | "http" =
         serverConfig.type === "http" || serverConfig.url ? "http" : "stdio";
 
+      // A disabled entry stays on file and out of the session: the point of
+      // `gear mcp disable` is to stop paying for a connector without losing
+      // the configuration that took a sign-in to produce.
+      if (serverConfig.enabled === false) continue;
+
       const invalid = validateServer(serverConfig);
       if (invalid) {
         this.serverErrors.set(name, { error: invalid, kind });
@@ -166,6 +246,7 @@ export class McpDiscovery {
           env: serverConfig.env,
           url: serverConfig.url,
           headers: serverConfig.headers,
+          auth: await this.oauthFor(name, serverConfig),
           logger: this.logger,
           onEvent: this.options.onEvent,
           onToolsChanged: () => this.handleServerToolsChanged(name),
@@ -242,6 +323,7 @@ export class McpDiscovery {
     this.handlers.clear();
     this.handlerOwner.clear();
     this.serverErrors.clear();
+    this.oauthProviders.clear();
   }
 
   /** Per-server status for the `/mcp` command and `/status`. */
@@ -259,6 +341,7 @@ export class McpDiscovery {
         protocolVersion: info.protocolVersion,
         serverInfo: info.serverInfo,
         lastError: info.lastError,
+        needsAuth: info.needsAuth,
       });
     }
     // Servers that never started (bad config / spawn failure) — surface them too.

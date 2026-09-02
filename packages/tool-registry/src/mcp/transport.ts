@@ -207,10 +207,39 @@ export class StdioTransport implements McpTransport {
 // A session id returned on initialize is echoed on subsequent requests, and the
 // negotiated protocol version is sent as MCP-Protocol-Version (2025-06-18 spec).
 
+/**
+ * What the transport needs from an authorization provider. Kept to two methods
+ * so the transport never learns what OAuth is: it asks for a header, and on a
+ * 401 it asks whether a retry is worth attempting.
+ */
+export interface McpAuthProvider {
+  /** The Authorization header to send, or null when nothing is stored yet. */
+  authorizationHeader(): Promise<string | null>;
+  /** Try to become authorized again (token refresh). True ⇒ retry the request. */
+  refresh(): Promise<boolean>;
+  /** Re-read stored credentials, picking up a sign-in from another process. */
+  reload?(): Promise<void>;
+}
+
+/** Thrown when a connector needs an interactive login before it can be used. */
+export class McpUnauthorizedError extends Error {
+  constructor(
+    message: string,
+    /** Verbatim WWW-Authenticate, so the login flow can read its metadata hint. */
+    public wwwAuthenticate: string | null,
+    public status: number,
+  ) {
+    super(message);
+    this.name = "McpUnauthorizedError";
+  }
+}
+
 export interface HttpTransportConfig {
   url: string;
   headers?: Record<string, string>;
   logger?: Logger;
+  /** OAuth 2.1 provider for this server (P4.2). Absent ⇒ static headers only. */
+  auth?: McpAuthProvider;
 }
 
 export class HttpTransport implements McpTransport {
@@ -242,18 +271,40 @@ export class HttpTransport implements McpTransport {
     this.closing = false;
   }
 
+  /** Headers for one request, including the OAuth bearer when we hold one. */
+  private async requestHeaders(): Promise<Record<string, string>> {
+    // The configured headers win: a user who hand-wrote an Authorization header
+    // in mcp.json means it, and their explicit choice outranks our token.
+    const bearer = this.config.auth ? await this.config.auth.authorizationHeader() : null;
+    return {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      ...(bearer ? { authorization: bearer } : {}),
+      ...(this.sessionId ? { "mcp-session-id": this.sessionId } : {}),
+      ...(this.protocolVersion ? { "mcp-protocol-version": this.protocolVersion } : {}),
+      ...(this.config.headers ?? {}),
+    };
+  }
+
   async send(message: object): Promise<void> {
-    const res = await fetch(this.config.url, {
+    let res = await fetch(this.config.url, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-        ...(this.sessionId ? { "mcp-session-id": this.sessionId } : {}),
-        ...(this.protocolVersion ? { "mcp-protocol-version": this.protocolVersion } : {}),
-        ...(this.config.headers ?? {}),
-      },
+      headers: await this.requestHeaders(),
       body: JSON.stringify(message),
     });
+
+    // One refresh-and-retry on 401. A token that expired mid-session is the
+    // common case and must not surface to the user at all.
+    if (res.status === 401 && this.config.auth) {
+      const refreshed = await this.config.auth.refresh().catch(() => false);
+      if (refreshed) {
+        res = await fetch(this.config.url, {
+          method: "POST",
+          headers: await this.requestHeaders(),
+          body: JSON.stringify(message),
+        });
+      }
+    }
 
     const sid = res.headers.get("mcp-session-id");
     if (sid) this.sessionId = sid;
@@ -263,8 +314,12 @@ export class HttpTransport implements McpTransport {
     if (res.status === 401 || res.status === 403) {
       const text = await res.text().catch(() => "");
       const wic = res.headers.get("www-authenticate");
-      throw new Error(
+      // A typed error, not a string: the client turns this into
+      // `server-needs-auth` and keeps the session alive.
+      throw new McpUnauthorizedError(
         `MCP HTTP ${res.status} unauthorized${wic ? ` (${wic})` : ""}${text ? `: ${text.slice(0, 200)}` : ""}`,
+        wic,
+        res.status,
       );
     }
 
@@ -293,10 +348,12 @@ export class HttpTransport implements McpTransport {
     this.closing = true;
     if (!this.sessionId) return;
     try {
+      const bearer = this.config.auth ? await this.config.auth.authorizationHeader() : null;
       await fetch(this.config.url, {
         method: "DELETE",
         headers: {
           "mcp-session-id": this.sessionId,
+          ...(bearer ? { authorization: bearer } : {}),
           ...(this.protocolVersion ? { "mcp-protocol-version": this.protocolVersion } : {}),
           ...(this.config.headers ?? {}),
         },

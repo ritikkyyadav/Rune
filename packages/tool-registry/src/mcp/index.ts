@@ -15,3 +15,22 @@ export type {
   McpServerInfo,
   McpServerCapabilities,
 } from "./types";
+export { McpUnauthorizedError } from "./transport";
+export type { McpAuthProvider } from "./transport";
+export {
+  McpOAuth,
+  McpAuthRequiredError,
+  mcpCredentialAccount,
+  parseWwwAuthenticate,
+  protectedResourceUrls,
+  authorizationServerUrls,
+  discoverProtectedResource,
+  discoverAuthorizationServer,
+  registerClient,
+} from "./oauth";
+export type {
+  McpOAuthTokens,
+  McpOAuthOptions,
+  ProtectedResourceMetadata,
+  AuthorizationServerMetadata,
+} from "./oauth";
