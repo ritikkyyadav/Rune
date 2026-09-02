@@ -34,6 +34,21 @@ export interface EngineStatus {
   autoMode?: unknown;
 }
 
+/** One model call's prompt assembly, as the desktop inspector shows it. */
+export interface TurnContext {
+  sessionId: string;
+  capturedAt: string;
+  provider: string;
+  model: string;
+  /** The exact system prompt that was sent. Not a reconstruction. */
+  systemPrompt: string;
+  /** The named pieces it was built from. */
+  parts: Array<{ name: string; chars: number }>;
+  repoMap: { included: boolean; chars: number };
+  /** Characters, not tokens — the provider reports tokens exactly in `usage`. */
+  systemPromptChars: number;
+}
+
 export interface SessionSummary {
   id: string;
   title: string;
@@ -137,6 +152,34 @@ export interface HostCommands {
     result: { dismissed: number };
   };
 
+  // ── evidence (P3.4) ──
+  /**
+   * The prompt assembly for a session's most recent turn.
+   *
+   * The trace rail could always show a model call's timing and tokens. What no
+   * surface could answer is "which prompts produced this" — the assembly
+   * happens inside a local in `Engine.chat()` and nothing outside ever saw it.
+   * `null` when the session has not run a turn: an empty assembly rendered as
+   * if it were real is worse than saying there is nothing.
+   */
+  get_turn_context: { args: { sessionId?: string }; result: TurnContext | null };
+  /**
+   * The session's transcript, tool calls, diffs and audit chain, optionally
+   * Ed25519-signed. The same `session-export.ts` that `gear export` uses, so a
+   * trace exported from the desktop and one exported from the terminal are the
+   * same artifact and verify with the same key.
+   */
+  export_trace: {
+    args: { sessionId?: string; format?: "md" | "json"; sign?: boolean };
+    result: {
+      content: string;
+      format: "md" | "json";
+      signature?: string;
+      publicKey?: string;
+      chainOk: boolean;
+    };
+  };
+
   // ── model and providers ──
   switch_model: { args: { model: string; provider?: string }; result: EngineStatus };
   list_providers: {
@@ -199,6 +242,8 @@ export const HOST_COMMANDS = [
   "list_held_steps",
   "run_held_step",
   "dismiss_held_steps",
+  "get_turn_context",
+  "export_trace",
   "switch_model",
   "list_providers",
   "save_settings",

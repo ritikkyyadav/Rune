@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
+  AutoApprovalNotice,
   Brief,
   BriefDecision,
   EngineEvent,
@@ -32,6 +33,7 @@ interface UseEngineOptions {
   onQuestion?: (requestId: string, question: UserQuestion) => void;
   onBrief?: (requestId: string, brief: Brief) => void;
   onHeldSteps?: (steps: HeldStep[]) => void;
+  onAutoNotice?: (notice: AutoApprovalNotice) => void;
   onRoundTripResolved?: (requestId: string, reason: string, applied: string) => void;
   onStatus?: (status: EngineStatus) => void;
   onError?: (error: string) => void;
@@ -120,6 +122,11 @@ export function useEngine(options: UseEngineOptions) {
         case "ready":
         case "engine_status":
           applyStatus(payload as Partial<EngineStatus>);
+          return;
+        case "auto_notice":
+          // What Auto did without asking. A push, not a question.
+          if (payload.notice)
+            optionsRef.current.onAutoNotice?.(payload.notice as AutoApprovalNotice);
           return;
         case "held_steps":
           optionsRef.current.onHeldSteps?.(
@@ -386,8 +393,29 @@ export function useEngine(options: UseEngineOptions) {
 
   /** Prompt assembly for a model span — the inspector's evidence (P3.4). */
   const getTurnContext = useCallback(
-    async (turn?: number) => {
-      const r = await command<unknown>("get_turn_context", { turn }, "turn context");
+    async (sessionId?: string) => {
+      const r = await command<unknown>("get_turn_context", { sessionId }, "turn context");
+      return r.ok ? r.value : null;
+    },
+    [command],
+  );
+
+  /**
+   * The session, exported through the engine's own exporter and signed.
+   *
+   * Deliberately NOT a client-side dump of the rail: an export that cannot be
+   * verified by someone who was not watching the screen is a picture, not
+   * evidence. This is the same artifact `gear export --sign` produces.
+   */
+  const exportTrace = useCallback(
+    async (sessionId?: string, sign = true) => {
+      const r = await command<{
+        content: string;
+        format: string;
+        signature?: string;
+        publicKey?: string;
+        chainOk: boolean;
+      }>("export_trace", { sessionId, format: "md", sign }, "export");
       return r.ok ? r.value : null;
     },
     [command],
@@ -409,6 +437,7 @@ export function useEngine(options: UseEngineOptions) {
     runHeldStep,
     dismissHeldSteps,
     getTurnContext,
+    exportTrace,
     isProcessing,
     setIsProcessing,
     connectionState,

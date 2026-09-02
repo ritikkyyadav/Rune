@@ -282,3 +282,67 @@ lockup construction: bold tight-tracked sans terminated by the block cursor, a
 true rectangle sized in `em` so the proportion cannot drift. The nine-tooth cog
 survives only as the working indicator — a spinning gear is a state, and the
 brand does not spin.
+
+---
+
+## 9. M2–M4 (Phase 3 · P3.4)
+
+Everything added here obeys one rule from §3: the agent stops for you INSIDE the
+stream, never over it. A modal takes the transcript away at the moment you most
+need to read it, and the browser smoke asserts that no `[role=dialog]` is on
+screen while a permission card is up.
+
+**The round-trips, all of them.** The permission card was already inline. The
+`ask_user` card and the read-back card are new to this surface, and until Phase
+2 they could not exist — the host wired one of five, so `ask_user` answered "No
+interactive user is available" for every desktop run. Both say what happens if
+nobody answers, because the host's unattended policy is stated in
+`docs/protocol.md` and a card that hides it is inviting a surprise.
+
+**Held steps, with exact-grant semantics.** The panel is the desktop half of
+Auto's contract: an outward step it declined to take unattended is recorded, and
+approving one runs EXACTLY that call — the host holds the arguments and the
+client sends an id, so nothing broader is granted and raw arguments never cross
+the wire. Keys are the terminal's: `Enter` runs the selection, a digit picks and
+runs, `s` leaves one, `Esc` closes and leaves the rest in the ledger. The state
+machine is ported from `bin/ui/held.ts` and tested in the same shape, so the two
+surfaces cannot drift on what a key means.
+
+**Auto chips carry their authority.** Each chip names the tool, the containment
+kind, and the classifier's risk and tier. "Approved automatically" with nothing
+after it is not a statement anyone can audit.
+
+**The fleet reads events, not prose.** One row per sub-agent in DISPATCH order —
+arrival order is whichever worker happened to speak first, which makes the panel
+reorder itself while you read it. The reducer consumes `tool_progress.child`,
+the typed child event P2.6 added, so a worker's retries, checks and handoffs are
+events here rather than a parsed heartbeat. A silent child event keeps the row's
+last real line rather than overwriting it with a shrug.
+
+**The inspector answers the actual question.** `get_turn_context` is a new host
+command backed by `Engine.getTurnContext()`: the EXACT system prompt that was
+sent, with its pieces named — doctrine, environment, project memory, system
+memory, notebook, skills — and whether a repo map was admitted. Characters, not
+tokens, and it says so: the provider reports tokens exactly in `usage`, and a
+tokenizer here would be a second estimate of a known number. `null` before the
+session has run a turn, rendered as "no turn yet" rather than as an empty
+assembly pretending to be real.
+
+**Export is signed, and is the same artifact.** `export_trace` calls
+`session-export.ts` — the exporter `gear export --sign` uses — so a trace
+exported from the desktop verifies with the same key as one exported from the
+terminal. What it replaces was a client-side JSON dump of the rail: a picture of
+the screen, verifiable by nobody who was not watching it.
+
+**Settings own the keys.** The provider list shows auth status and where each
+credential came from, and a key can be pasted and is written to
+`~/.gear/secrets.json` at 0600 and applied live. The OAuth half is honest rather
+than complete: the flow is `gear login`, which opens a browser and catches a
+loopback redirect, and the panel prints that exact command for the providers
+that need it instead of offering a button that does nothing. Moving it in-app is
+one host command away and is logged in `docs/program/backlog.md`.
+
+**First run.** Three steps, no tour: connect a model, confirm the folder, give
+it a task — with "replay a recorded turn" for someone who has not connected
+anything yet. Copy in the Savoir voice: declarative, specific, and it names what
+Gear declines (no cloud, no account) because a boundary reads as confidence.

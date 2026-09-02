@@ -5,15 +5,47 @@ import { Transcript } from "./components/Transcript";
 import { Composer, type CommandItem } from "./components/Composer";
 import { TraceRail } from "./components/TraceRail";
 import { GearPicker, ModelPicker, ThemePicker, Toast } from "./components/Overlays";
+import {
+  AskCard,
+  AutoChip,
+  BriefCard,
+  FleetPanel,
+  HeldStepsPanel,
+  type HeldOutcome,
+} from "./components/Cards";
+import { FirstRun, SettingsPanel, firstRunDone } from "./components/Settings";
+import { INITIAL_FLEET, fleetReducer, fleetRows, type Fleet } from "./lib/fleet";
 import { isTauriRuntime, useEngine, type ProviderListing } from "./hooks/useEngine";
 import { useSession } from "./hooks/useSession";
 import { useTurns } from "./hooks/useTurns";
 import { applyTheme, loadTheme, type ThemeChoice } from "./lib/theme";
 import { gearInfo, nextGear, normalizeGear, type GearId } from "./lib/gears";
 import { DEMO_TASK, demoSteps, type DemoStep } from "./lib/demo";
-import type { ChatMessage, EngineStatus, PermissionDecision } from "./lib/types";
+import type {
+  AutoApprovalNotice,
+  Brief,
+  BriefDecision,
+  ChatMessage,
+  EngineStatus,
+  HeldStep,
+  PermissionDecision,
+  UserQuestion,
+} from "./lib/types";
+import type { TurnContext } from "@gear/protocol";
 
-type Overlay = null | "model" | "theme" | "gear";
+type Overlay = null | "model" | "theme" | "gear" | "settings";
+
+/** A round-trip the person still owes an answer to. */
+interface PendingAsk {
+  requestId: string;
+  question: UserQuestion;
+  answered?: string;
+}
+interface PendingBrief {
+  requestId: string;
+  brief: Brief;
+  decided?: BriefDecision;
+}
 
 const VERSION = __APP_VERSION__;
 
@@ -69,6 +101,18 @@ export default function App() {
   const [selectedTurn, setSelectedTurn] = useState<number | null>(null);
   const [queued, setQueued] = useState<string[]>([]);
   const [listing, setListing] = useState<ProviderListing | null>(null);
+  // ── the round-trips this surface holds, and what Auto did without asking ──
+  const [asks, setAsks] = useState<PendingAsk[]>([]);
+  const [briefs, setBriefs] = useState<PendingBrief[]>([]);
+  const [autoNotices, setAutoNotices] = useState<AutoApprovalNotice[]>([]);
+  const [held, setHeld] = useState<HeldStep[]>([]);
+  const [heldOutcomes, setHeldOutcomes] = useState<Array<HeldOutcome | null>>([]);
+  const [heldSelected, setHeldSelected] = useState(0);
+  const [heldRunning, setHeldRunning] = useState(false);
+  const [heldOpen, setHeldOpen] = useState(false);
+  const [fleet, setFleet] = useState<Fleet>(INITIAL_FLEET);
+  const [showFirstRun, setShowFirstRun] = useState(() => !firstRunDone());
+  const [turnContext, setTurnContext] = useState<TurnContext | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const searchRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -79,8 +123,30 @@ export default function App() {
   turnsRef.current = turns;
   const session = useSession();
   const engine = useEngine({
-    onEvent: (ev) => turnsRef.current.event(ev),
+    onEvent: (ev) => {
+      turnsRef.current.event(ev);
+      // The fleet reads the SAME union the transcript reads (P2.6): a
+      // sub-agent's retries, checks and handoffs are events here, not prose.
+      setFleet((f) => fleetReducer(f, ev));
+    },
     onPermissionRequest: (id, prompt) => turnsRef.current.permissionRequest(id, prompt),
+    onQuestion: (requestId, question) => setAsks((q) => [...q, { requestId, question }]),
+    onBrief: (requestId, brief) => setBriefs((b) => [...b, { requestId, brief }]),
+    onAutoNotice: (notice) => setAutoNotices((n) => [...n.slice(-11), notice]),
+    onHeldSteps: (steps) => {
+      setHeld(steps);
+      setHeldOutcomes(steps.map(() => null));
+      setHeldSelected(0);
+      setHeldOpen(steps.length > 0);
+    },
+    onRoundTripResolved: (requestId, reason, applied) => {
+      // The host answered for us — timed out, or every client left. Drop the
+      // card rather than leaving a decision on screen that has been made.
+      setAsks((q) => q.filter((a) => a.requestId !== requestId));
+      setBriefs((b) => b.filter((x) => x.requestId !== requestId));
+      showToast(`a pending question resolved without an answer (${reason}) — applied ${applied}`);
+    },
+    onNote: (note) => showToast(escapeHtml(note)),
     onStatus: (s) =>
       turnsRef.current.setPosture(
         sandboxOf(s) === false ? "host" : "sandboxed",
@@ -310,6 +376,10 @@ export default function App() {
     setOverlay("model");
     setListing(await engine.listProviders());
   }, [engine]);
+  const openSettings = useCallback(async () => {
+    setOverlay("settings");
+    setListing(await engine.listProviders());
+  }, [engine]);
   const pickModel = useCallback(
     async (provider: string, model: string) => {
       setOverlay(null);
@@ -498,31 +568,121 @@ export default function App() {
     },
     [turns.trace.turns],
   );
-  const exportTrace = useCallback(() => {
+  const exportTrace = useCallback(async () => {
     const t = currentTraceTurn;
     if (!t) return;
-    const payload = {
-      gear: VERSION,
-      exportedAt: new Date().toISOString(),
-      session: session.activeSessionId,
-      model: `${status.provider}/${status.model}`,
-      gearMode: gear.id,
-      sandbox: sandboxOn,
-      turn: t,
-    };
-    void navigator.clipboard?.writeText(JSON.stringify(payload, null, 2));
+    // The SAME exporter `gear export --sign` uses, through the host: the
+    // transcript, the tool calls, the diffs and the audit chain, signed with
+    // the Ed25519 key in ~/.gear/keys. The client-side JSON dump this replaced
+    // was a picture of the rail, not evidence — nothing in it could be verified
+    // by anyone who had not been watching the screen.
+    const signed = (await engine.exportTrace(session.activeSessionId ?? undefined, true)) as {
+      content: string;
+      signature?: string;
+      chainOk: boolean;
+    } | null;
+    if (!signed) {
+      // No engine (the browser preview): the rail's own record is all there is,
+      // and it is offered as exactly that.
+      const payload = {
+        gear: VERSION,
+        exportedAt: new Date().toISOString(),
+        signed: false,
+        note: "browser preview — no engine, so this is the rail's own record and is not signed",
+        turn: t,
+      };
+      void navigator.clipboard?.writeText(JSON.stringify(payload, null, 2));
+      showToast(`turn ${t.turn} copied — <b>unsigned</b>, no engine attached`);
+      return;
+    }
+    const doc = signed.signature
+      ? `${signed.content}\n\n<!-- ed25519: ${signed.signature} -->\n`
+      : signed.content;
+    void navigator.clipboard?.writeText(doc);
     showToast(
-      `trace for turn ${t.turn} copied as JSON — <b>${t.spans.length} spans</b> (signed export lands with the audit-log exporter)`,
+      signed.signature
+        ? `session exported and <b>signed</b> · audit chain ${signed.chainOk ? "verified" : "BROKEN"} · on the clipboard`
+        : "session exported — the signing key was unavailable, so this copy is unsigned",
     );
-  }, [
-    currentTraceTurn,
-    gear.id,
-    sandboxOn,
-    session.activeSessionId,
-    showToast,
-    status.model,
-    status.provider,
-  ]);
+  }, [currentTraceTurn, engine, session.activeSessionId, showToast]);
+
+  // ── the inspector's evidence: what was actually in the prompt ──
+  // Depend on the CALLBACK, never on `engine`: the hook returns a fresh object
+  // every render, so `[engine]` is `[every render]` — and an effect that
+  // setStates on every render is an infinite loop that presents as the whole
+  // window hanging. (It did. That is why this comment exists.)
+  const getTurnContext = engine.getTurnContext;
+  const activeSessionId = session.activeSessionId;
+  useEffect(() => {
+    if (!railOpen) return;
+    let cancelled = false;
+    void getTurnContext(activeSessionId ?? undefined).then((ctx) => {
+      if (!cancelled) setTurnContext((ctx as TurnContext | null) ?? null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSessionId, getTurnContext, railOpen, turns.trace.turns.length]);
+
+  // ── held steps ──
+  const runHeld = useCallback(
+    async (index: number) => {
+      const step = held[index];
+      if (!step || heldRunning) return;
+      setHeldRunning(true);
+      const result = (await engine.runHeldStep(step.id)) as {
+        ran?: boolean;
+        refusal?: string;
+      } | null;
+      setHeldRunning(false);
+      setHeldOutcomes((prev) => {
+        const next = [...prev];
+        next[index] = result?.ran ? "ran" : result?.refusal ? "refused" : "failed";
+        return next;
+      });
+      if (result?.refusal) showToast(`refused — ${escapeHtml(result.refusal)}`);
+    },
+    [engine, held, heldRunning, showToast],
+  );
+  const skipHeld = useCallback((index: number) => {
+    setHeldOutcomes((prev) => {
+      const next = [...prev];
+      next[index] = "skipped";
+      return next;
+    });
+  }, []);
+  const closeHeld = useCallback(() => {
+    setHeldOpen(false);
+    // Undecided steps stay in the ledger. Dismissing is a decision the next
+    // turn is told about, not a silence it re-litigates.
+    void engine.dismissHeldSteps();
+  }, [engine]);
+
+  // ── the round-trips ──
+  const answerAsk = useCallback(
+    (requestId: string, answer: string) => {
+      engine.respondQuestion(requestId, answer);
+      setAsks((q) => q.map((a) => (a.requestId === requestId ? { ...a, answered: answer } : a)));
+    },
+    [engine],
+  );
+  const decideBrief = useCallback(
+    (requestId: string, decision: BriefDecision) => {
+      engine.respondBrief(requestId, decision);
+      setBriefs((b) => b.map((x) => (x.requestId === requestId ? { ...x, decided: decision } : x)));
+    },
+    [engine],
+  );
+
+  const saveProviderKey = useCallback(
+    async (provider: string, key: string) => {
+      const ok = await engine.saveKeys({ [provider]: key });
+      if (ok)
+        showToast(`<b>${escapeHtml(provider)}</b> connected · key written to ~/.gear/secrets.json`);
+      return ok;
+    },
+    [engine, showToast],
+  );
 
   return (
     <div className={`app ${sideOpen ? "" : "side-closed"} ${railOpen ? "" : "rail-closed"}`}>
@@ -538,7 +698,7 @@ export default function App() {
         reviewCount={reviewCount}
         onToggleRail={() => setRailOpen((v) => !v)}
         onToggleSide={() => setSideOpen((v) => !v)}
-        onOpenSettings={() => setOverlay("theme")}
+        onOpenSettings={() => void openSettings()}
         onOpenReview={() =>
           showToast(
             reviewCount
@@ -560,7 +720,7 @@ export default function App() {
           showToast("Review workspace lands in M2 — diffs are in the transcript and the trace")
         }
         env={{ gear, model: status.model, ctxPercent, workspace: status.workspace ?? "~" }}
-        onOpenSettings={() => setOverlay("theme")}
+        onOpenSettings={() => void openSettings()}
         searchRef={searchRef}
       />
       <section className="main">
@@ -576,6 +736,80 @@ export default function App() {
           demo={!isTauriRuntime() ? { available: true, onRun: runDemo } : undefined}
           workspace={status.workspace}
         />
+
+        {/* ── What stops the run, in the run ──
+            Every one of these sits in the flow rather than over it. A modal
+            takes the transcript away at the moment you most need to read it. */}
+        {showFirstRun && turns.stream.turns.length === 0 ? (
+          <FirstRun
+            connected={engine.connectionState === "connected"}
+            providerCount={listing?.providers.filter((p) => p.hasKey).length ?? 0}
+            workspace={status.workspace}
+            onOpenSettings={() => void openSettings()}
+            onRunDemo={() => {
+              setShowFirstRun(false);
+              runDemo();
+            }}
+            onStart={(prompt) => {
+              setShowFirstRun(false);
+              void send(prompt);
+            }}
+            onDismiss={() => setShowFirstRun(false)}
+          />
+        ) : null}
+
+        {autoNotices.length > 0 ? (
+          <div className="auto-chips" aria-label="Automatic approvals">
+            {autoNotices.map((n, i) => (
+              <AutoChip key={`${n.toolName}-${i}`} notice={n} />
+            ))}
+          </div>
+        ) : null}
+
+        {briefs.map((b) => (
+          <BriefCard
+            key={b.requestId}
+            requestId={b.requestId}
+            brief={b.brief}
+            decided={b.decided}
+            onDecide={decideBrief}
+          />
+        ))}
+        {asks.map((a) => (
+          <AskCard
+            key={a.requestId}
+            requestId={a.requestId}
+            question={a.question}
+            answered={a.answered}
+            onAnswer={answerAsk}
+          />
+        ))}
+
+        <FleetPanel rows={fleetRows(fleet)} now={now} />
+
+        {heldOpen ? (
+          <HeldStepsPanel
+            steps={held}
+            outcomes={heldOutcomes}
+            selected={heldSelected}
+            running={heldRunning}
+            onSelect={setHeldSelected}
+            onRun={(i) => void runHeld(i)}
+            onSkip={skipHeld}
+            onClose={closeHeld}
+          />
+        ) : null}
+
+        {overlay === "settings" ? (
+          <SettingsPanel
+            listing={listing}
+            transport={engine.transportLabel || engine.transportKind}
+            onSaveKey={saveProviderKey}
+            onPickModel={(p, m) => void pickModel(p, m)}
+            onRefresh={() => void openSettings()}
+            onClose={() => setOverlay(null)}
+          />
+        ) : null}
         {overlay === "model" ? (
           <ModelPicker
             listing={listing}
@@ -614,6 +848,7 @@ export default function App() {
         onSelectTurn={setSelectedTurn}
         selectedSpanId={selectedSpan}
         onSelectSpan={setSelectedSpan}
+        turnContext={turnContext}
         onExport={exportTrace}
         onShowInTranscript={(callId) =>
           showToast(`highlighted in the transcript: ${escapeHtml(callId)}`)

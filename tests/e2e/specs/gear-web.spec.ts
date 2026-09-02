@@ -35,6 +35,7 @@ test("a browser drives a whole turn: prompt → permission card → answer → t
 }) => {
   const consoleErrors: string[] = [];
   page.on("console", (m) => {
+    if (process.env.E2E_DEBUG) console.log(`[${m.type()}]`, m.text());
     if (m.type() === "error") consoleErrors.push(m.text());
   });
 
@@ -54,6 +55,23 @@ test("a browser drives a whole turn: prompt → permission card → answer → t
   // opening.
   await expect(page.locator(".app")).toBeVisible();
   await expect(page.locator(".app")).toContainText("fake-model", { timeout: 60_000 });
+
+  // ── first run ──
+  // A fresh browser profile has never seen this app, so the three-step opener
+  // is on screen. It is the two minutes the product is judged on.
+  const firstRun = page.getByRole("region", { name: "First run" });
+  await expect(firstRun).toBeVisible();
+  await expect(firstRun).toContainText("Connect a model");
+
+  // ── the provider panel: which models this machine can actually reach ──
+  await firstRun.getByRole("button", { name: "Open providers" }).click();
+  const settings = page.getByRole("dialog", { name: "Settings" });
+  await expect(settings).toBeVisible();
+  // The mock provider is `lmstudio` — local, key-less, and pointed at the fake
+  // model by `secrets.endpoints`. It reads as connected without a key.
+  await expect(settings).toContainText(/lm ?studio/i);
+  await settings.getByRole("button", { name: /Close/ }).click();
+  await expect(settings).toBeHidden();
 
   // ── the prompt ──
   const composer = page.getByLabel("Give Gear a coding task");
@@ -97,25 +115,32 @@ test("a browser drives a whole turn: prompt → permission card → answer → t
   await expect(rail.locator(".inspector .insp-head")).toBeVisible();
 
   // ── export ──
-  const exported = page.evaluate(
-    () =>
-      new Promise<string>((resolve) => {
-        const original = navigator.clipboard?.writeText?.bind(navigator.clipboard);
-        Object.defineProperty(navigator, "clipboard", {
-          configurable: true,
-          value: {
-            writeText: (t: string) => {
-              resolve(t);
-              return original?.(t) ?? Promise.resolve();
-            },
-          },
-        });
-      }),
-  );
+  // Signed, and through the engine's own exporter — the same artifact
+  // `gear export --sign` produces. A client-side dump of the rail would be a
+  // picture of the screen, verifiable by nobody who was not watching it.
+  await page.evaluate(() => {
+    const w = window as unknown as { __copied?: string };
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: (t: string) => {
+          w.__copied = t;
+          return Promise.resolve();
+        },
+      },
+    });
+  });
   await rail.getByRole("button", { name: "Export" }).click();
-  const payload = JSON.parse(await exported) as { turn?: { spans?: unknown[] } };
-  expect(Array.isArray(payload.turn?.spans)).toBe(true);
-  expect((payload.turn?.spans ?? []).length).toBeGreaterThan(2);
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { __copied?: string }).__copied ?? ""), {
+      timeout: 60_000,
+    })
+    .toContain("Session Export");
+  const exported = await page.evaluate(
+    () => (window as unknown as { __copied?: string }).__copied ?? "",
+  );
+  expect(exported, "the turn's own prompt is in the export").toContain("run the echo command");
+  expect(exported, "and it is signed").toContain("ed25519:");
 
   // A page that throws on the way through is not a passing smoke.
   expect(consoleErrors.filter((e) => !/favicon|ResizeObserver/i.test(e))).toEqual([]);

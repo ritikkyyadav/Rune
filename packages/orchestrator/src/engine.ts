@@ -234,6 +234,25 @@ export type PermissionHandler = (prompt: PermissionPrompt) => Promise<UserPermis
 
 // ─── Transcript replay ───
 
+/**
+ * What the desktop inspector shows for a model call (P3.4).
+ *
+ * The pieces are NAMED rather than concatenated into one blob, because the
+ * question a person actually has in front of a wrong answer is "which of these
+ * was in the prompt", not "how long was it".
+ */
+export interface TurnContextRecord {
+  sessionId: string;
+  capturedAt: string;
+  provider: string;
+  model: string;
+  /** The exact system prompt that was sent. Not a reconstruction. */
+  systemPrompt: string;
+  parts: Array<{ name: string; chars: number }>;
+  repoMap: { included: boolean; chars: number };
+  systemPromptChars: number;
+}
+
 /** One display line of a session's history, returned by `getTranscript` for UI replay. */
 export interface TranscriptLine {
   role: "user" | "assistant" | "tool" | "note";
@@ -1006,6 +1025,8 @@ export class Engine {
   // Cached so the system prompt stays byte-stable across turns — a churning
   // prompt would invalidate the provider's prefix cache on every call.
   private envBlocks: Map<string, string> = new Map();
+  /** The last turn's prompt assembly per session — see getTurnContext (P3.4). */
+  private lastTurnContext: Map<string, TurnContextRecord> = new Map();
   private lastAutoCommitSha: string | null = null;
   // Interactive dashboards: loopback SSE server (started lazily on first
   // create) + the autonomy toggle that shapes the injected doctrine.
@@ -2563,6 +2584,25 @@ export class Engine {
   }
 
   /**
+   * The prompt assembly for a session's most recent turn (P3.4).
+   *
+   * Fuel for the desktop inspector's "why is the answer what it is": the exact
+   * system prompt that was sent, which pieces it was built from, and whether a
+   * repo map was admitted. Null before the session has run a turn — never a
+   * fabricated shape, because an inspector that shows an empty prompt assembly
+   * as if it were the real one is worse than one that says it has nothing.
+   */
+  getTurnContext(sessionId?: string): TurnContextRecord | null {
+    if (sessionId) return this.lastTurnContext.get(sessionId) ?? null;
+    // No session named: the most recently captured one.
+    let latest: TurnContextRecord | null = null;
+    for (const record of this.lastTurnContext.values()) {
+      if (!latest || record.capturedAt > latest.capturedAt) latest = record;
+    }
+    return latest;
+  }
+
+  /**
    * Resume a session for continued chat. Restores it to active if it was
    * archived/deleted and reconciles the active model+provider to the ones the
    * session ran on — so a qwen/Ollama session isn't accidentally sent to Google
@@ -3508,6 +3548,36 @@ export class Engine {
     ]
       .filter((s) => s && s.trim())
       .join("\n\n");
+
+    // ─── What the inspector reads (P3.4) ───
+    // The desktop's trace rail can show a model call's timing and tokens, but
+    // "which prompts produced this answer" was unanswerable off-terminal: the
+    // assembly happens here, in a local, and nothing outside this function ever
+    // saw it. Recording it per session is the smallest honest seam — it is the
+    // EXACT string sent, not a reconstruction, and it carries the pieces named
+    // rather than one opaque blob.
+    this.lastTurnContext.set(sessionId, {
+      sessionId,
+      capturedAt: new Date().toISOString(),
+      provider: this.config.provider,
+      model: session.model,
+      systemPrompt,
+      parts: [
+        { name: "doctrine", chars: renderDoctrine(promptDoctrineCtx).length },
+        { name: "environment", chars: envBlock.length },
+        { name: "project memory", chars: projectMemory.block.length },
+        { name: "system memory", chars: this.buildSystemMemoryBlock().length },
+        { name: "notebook", chars: (notebookBlock?.text ?? "").length },
+        { name: "skills catalog", chars: this.skillCatalog.length },
+      ].filter((part) => part.chars > 0),
+      repoMap: {
+        included: repoMapChunks.length > 0,
+        chars: repoMapChunks.reduce((n, chunk) => n + JSON.stringify(chunk).length, 0),
+      },
+      // Characters, not tokens, and it says so. A tokenizer here would be a
+      // second estimate of a number the provider reports exactly in `usage`.
+      systemPromptChars: systemPrompt.length,
+    });
 
     // Injection = usage. Wins are attributed at run end if the run recovered.
     if (notebookBlock && notebookBlock.injectedIds.length > 0) {
