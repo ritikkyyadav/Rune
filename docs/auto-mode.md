@@ -36,13 +36,14 @@ order:
    There is no one-token fast stage in the approval path any more. It could not settle a high-risk
    action — the careful pass ran regardless — and it cost a measured 2–4 seconds on every risky
    write and outbound call. It survives only as the supervisor's screen, in step 9.
+
 8. A `deny`, or a reviewer `ask` that names a missing authorization, does not become a modal prompt.
    It becomes a containment route, or an actionable block the agent raises with `ask_user`. See
    "Containment, not questions".
 9. **The out-of-band supervisor.** Every supervised-tier action is also read by a two-stage
    background review on the same bounded transcript: the trigger-happy one-token screen first, then —
    only when that screen says block — the reasoned reviewer to confirm. It latches a halt only on a
-   confirmed `deny` rated high or critical. Its only power is to stop the *next* action; it can never
+   confirmed `deny` rated high or critical. Its only power is to stop the _next_ action; it can never
    delay the one it is looking at. An unconfirmed flag costs nothing, and a supervisor that cannot
    answer is an outage, not a finding: it stays silent, because the mechanical breakers are what
    actually guard against destruction and they never call a model.
@@ -51,6 +52,7 @@ order:
    longer be the user's — the likeliest cause is text the agent read, not something the user typed —
    and the one thing you must not do in that state is hand the compromised run a dialog it can
    answer.
+
 10. After execution, every real tool result is scanned before either the UI or any agent context sees
     it. Suspicious instructions receive a high-salience untrusted-data warning, and every later
     reviewer-tier action in that session is forced onto the careful reasoned pass with an explicit
@@ -73,13 +75,13 @@ appeared, and the reason is the only part that mattered.
 So the broker (`auto-containment.ts`) returns one of five routes, and every one of them keeps the run
 moving:
 
-| Route | When | What happens |
-| --- | --- | --- |
-| `extend` | Ordinary work that needs more room than the sandbox gives — network for an install, a scratch path. | The sandbox is widened for this call and the grant is logged. Nobody is asked. |
-| `contain` | The action reaches outside containment for no reason the work requires. | The same action is handed back with its escapes stripped. |
-| `redirect` | It cannot be contained, but an equivalent produces the same knowledge with none of the blast radius. | The equivalent is handed back: `terraform plan` for `terraform apply`, `npm pack` for `npm publish`. |
-| `defer` | Irreversible and outward, with no local equivalent. | It does not run. It is recorded, the agent finishes everything else, and the user sees one consolidated list when the turn ends — a decision made once, with the work already done. |
-| `halt` | The attack case: exfiltration, persistence, host destruction. | Nothing is routed and nothing is asked. The turn stops. |
+| Route      | When                                                                                                 | What happens                                                                                                                                                                        |
+| ---------- | ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `extend`   | Ordinary work that needs more room than the sandbox gives — network for an install, a scratch path.  | The sandbox is widened for this call and the grant is logged. Nobody is asked.                                                                                                      |
+| `contain`  | The action reaches outside containment for no reason the work requires.                              | The same action is handed back with its escapes stripped.                                                                                                                           |
+| `redirect` | It cannot be contained, but an equivalent produces the same knowledge with none of the blast radius. | The equivalent is handed back: `terraform plan` for `terraform apply`, `npm pack` for `npm publish`.                                                                                |
+| `defer`    | Irreversible and outward, with no local equivalent.                                                  | It does not run. It is recorded, the agent finishes everything else, and the user sees one consolidated list when the turn ends — a decision made once, with the work already done. |
+| `halt`     | The attack case: exfiltration, persistence, host destruction.                                        | Nothing is routed and nothing is asked. The turn stops.                                                                                                                             |
 
 Every route is mechanical — pure regex over the effective payload. That is deliberate: this module is
 what stands when the reviewer model is withdrawn, rate-limited, or 404ing. `contain` degrades to
