@@ -7,6 +7,7 @@ import {
 import { AutoEvalSidecar } from "./auto-eval-sidecar";
 import { validateSubagentResult } from "./subagent-result";
 import { resolveMaxParallel } from "./subagent-budget";
+import { createWorkflowTool } from "./workflow-tool";
 import { formatCostSummary } from "./cost-report";
 import type { ReasoningEffort, Message, ProviderName, ResolvedCredential } from "@gear/llm-gateway";
 import {
@@ -4406,6 +4407,16 @@ export class Engine {
           claim: (paths, label) => this.teamWorkerClaim(paths, label),
           release: (label) => this.teamWorkerRelease(label),
         },
+      }),
+    );
+    // The workflow tool drives the two above through the live registry rather
+    // than owning a second delegation path — same ownership, same budgets, same
+    // schema, same worktrees. A parallel path would drift within a month.
+    this.registry.register(
+      createWorkflowTool({
+        registry: this.registry,
+        workspaceRoot: this.config.workspaceRoot,
+        maxParallel: resolveMaxParallel(this.config.subagents?.maxParallel),
       }),
     );
   }
