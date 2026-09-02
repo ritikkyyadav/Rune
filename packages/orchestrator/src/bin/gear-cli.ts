@@ -109,8 +109,18 @@ import {
 
 // ─── CLI Argument Parsing ───
 
+// `--status` is declared as a STRING (sessions filter by status), so a bare
+// `gear serve --status` would swallow the next argument as its value. Rewrite
+// it to a positional before parsing, so `gear serve --status` and
+// `gear serve status` mean the same thing and neither eats a following flag.
+const rawArgv = Bun.argv.slice(2);
+if (rawArgv[0] === "serve") {
+  const at = rawArgv.indexOf("--status");
+  if (at !== -1) rawArgv.splice(at, 1, ...(rawArgv.includes("status") ? [] : ["status"]));
+}
+
 const { values, positionals } = parseArgs({
-  args: Bun.argv.slice(2),
+  args: rawArgv,
   options: {
     model: { type: "string", short: "m" },
     provider: { type: "string", short: "p" },
@@ -133,6 +143,8 @@ const { values, positionals } = parseArgs({
     // --provider's short flag, so this takes -P.
     print: { type: "string", short: "P" },
     json: { type: "boolean", default: false },
+    // NDJSON: every event as it happens, the envelope last. See docs/protocol.md.
+    "stream-json": { type: "boolean", default: false },
     "auto-approve": { type: "boolean", default: false },
     tui: { type: "boolean", default: false },
     classic: { type: "boolean", default: false },
@@ -157,6 +169,11 @@ const { values, positionals } = parseArgs({
     header: { type: "string", multiple: true },
     env: { type: "string", multiple: true },
     catalog: { type: "boolean", default: false },
+    // `gear serve`: the websocket transport (see docs/protocol.md).
+    port: { type: "string" },
+    host: { type: "string" },
+    origin: { type: "string" },
+    "allow-remote-settings": { type: "boolean", default: false },
   },
   allowPositionals: true,
   strict: false,
@@ -298,6 +315,12 @@ if (command === "attach") {
   const { runAttach } = await import("./detach-cli");
   await runAttach(positionals as string[]);
   process.exit(0);
+}
+if (command === "serve") {
+  // Long-lived: `serve` returns only on shutdown, so no process.exit here.
+  const { runServe } = await import("./serve-cli");
+  await runServe(positionals as string[], values as Record<string, unknown>);
+  if (values.status === true || positionals[1] === "status") process.exit(0);
 }
 
 // ─── BYOP: provider authentication surfaces (no Engine boot) ───
@@ -1250,12 +1273,23 @@ async function main() {
   // captures the answer alone.
   if (typeof values.print === "string") {
     const { runHeadless, headlessExitCode, headlessEnvelope } = await import("../headless");
+    // `--stream-json`: NDJSON on stdout, one typed event per line, the final
+    // envelope LAST. A headless run used to report one envelope after minutes
+    // of silence, so "still working" and "wedged" looked identical to CI, to a
+    // benchmark harness, and to a person watching. Implies --json for the tail,
+    // and leaves exit codes exactly as they were.
+    const streamJson = values["stream-json"] === true;
     const result = await runHeadless(engine, sessionId, values.print as string, {
       autoApprove: values["auto-approve"] === true,
       onProgress: (line) => process.stderr.write(`${line}\n`),
+      onEvent: streamJson
+        ? (event) => process.stdout.write(`${JSON.stringify(event)}\n`)
+        : undefined,
     });
     process.stdout.write(
-      values.json === true ? `${headlessEnvelope(result)}\n` : `${result.text}\n`,
+      values.json === true || streamJson
+        ? `${headlessEnvelope(result, { compact: streamJson })}\n`
+        : `${result.text}\n`,
     );
     if (!result.ok && result.error) process.stderr.write(`${result.error}\n`);
     // Say WHY, once, when the run was blocked rather than incapable. Without

@@ -11,8 +11,9 @@
     "test": "bun test ../../tests/unit/tool-registry ../../tests/unit/tools"
   },
   "dependencies": {
-    "@gear/shared": "workspace:*",
     "@gear/llm-gateway": "workspace:*",
+    "@gear/protocol": "workspace:*",
+    "@gear/shared": "workspace:*",
     "@mozilla/readability": "^0.6.0",
     "linkedom": "^0.18.5",
     "turndown": "^7.2.0"

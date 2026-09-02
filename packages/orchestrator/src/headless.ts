@@ -11,8 +11,9 @@
 // CI step, git hook and shell pipeline needs first: one prompt in, an answer
 // and an exit code out, no cursor addressing, no prompts to answer.
 
-import type { Engine, PermissionPrompt, UserPermissionDecision } from "./engine";
-import type { AgentTurnEvent } from "./agent-loop";
+import type { Engine } from "./engine";
+import type { AgentTurnEvent, PermissionPrompt, UserPermissionDecision } from "@gear/protocol";
+import { assertNeverSoft } from "@gear/protocol";
 
 export interface HeadlessOptions {
   /** Emit a JSON envelope instead of plain text — for machine consumers. */
@@ -28,6 +29,16 @@ export interface HeadlessOptions {
   autoApprove?: boolean;
   /** Sink for progress; defaults to nothing. Never stdout — that is the answer. */
   onProgress?: (line: string) => void;
+  /**
+   * Emit every event as it happens, for `--stream-json`.
+   *
+   * A headless run reported one envelope after several minutes of silence: for
+   * CI, a benchmark harness or a watching human, "still working" and "wedged"
+   * looked identical. This is the same typed union every other surface reads,
+   * one JSON object per line, so a consumer can render progress with the
+   * protocol package and nothing else.
+   */
+  onEvent?: (event: AgentTurnEvent) => void;
 }
 
 export interface HeadlessResult {
@@ -111,6 +122,9 @@ export async function runHeadless(
 
   try {
     for await (const event of engine.chat(sessionId, prompt) as AsyncIterable<AgentTurnEvent>) {
+      // Before the reducer, so a consumer sees the raw event whatever this
+      // function chooses to count.
+      opts.onEvent?.(event);
       switch (event.type) {
         case "text_delta":
           text += event.text;
@@ -144,9 +158,35 @@ export async function runHeadless(
           cacheReadTokens += event.cacheReadTokens ?? 0;
           break;
         case "notice":
+        case "context_warning":
           opts.onProgress?.(event.message);
           break;
+
+        // ── Named and deliberately not counted ──
+        // A headless run reports what the turn DID: text, tools, files, usage.
+        // These carry no counter of their own here, but they are named rather
+        // than defaulted so a member added upstream is a compile error until
+        // this reducer has decided what it means for a machine consumer.
+        case "thinking_delta":
+        case "tool_call_args_delta":
+        case "turn_complete":
+        case "error":
+        case "verification_started":
+        case "verification_completed":
+        case "todo_updated":
+        case "step_check":
+        case "fallback":
+        case "retry":
+        case "compaction":
+        case "checkpoint_saved":
+        case "handoff":
+        case "replanning":
+        case "tool_progress":
+          break;
+
         default:
+          // Compile-time exhaustiveness (see @gear/protocol assertNever).
+          assertNeverSoft(event, undefined);
           break;
       }
     }
@@ -195,8 +235,15 @@ export function headlessExitCode(r: HeadlessResult): number {
   return HEADLESS_EXIT.failed;
 }
 
-/** What a machine consumer reads off stdout. */
-export function headlessEnvelope(r: HeadlessResult): string {
+/**
+ * What a machine consumer reads off stdout.
+ *
+ * `compact` matters for `--stream-json`: every line of that output must be one
+ * JSON object, and a pretty-printed envelope spread over eighteen lines is not
+ * NDJSON — a consumer reading line by line would choke on the last record.
+ * `--json` on its own keeps the indented form, which is what a person reads.
+ */
+export function headlessEnvelope(r: HeadlessResult, opts: { compact?: boolean } = {}): string {
   return JSON.stringify(
     {
       ok: r.ok,
@@ -214,6 +261,6 @@ export function headlessEnvelope(r: HeadlessResult): string {
       durationMs: r.durationMs,
     },
     null,
-    2,
+    opts.compact ? undefined : 2,
   );
 }

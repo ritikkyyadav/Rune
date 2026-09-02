@@ -34,130 +34,15 @@ import { TASK_STATE_BLOCK_BUDGET_AFTER_COMPACTION } from "./task-state";
 import { isVerificationCommand } from "./brief";
 
 // ─── Agent Turn Events (yielded to caller) ───
+//
+// The union itself now lives in `@gear/protocol` — it is the wire contract
+// every surface reads, and a second copy of it in the orchestrator is exactly
+// the drift Phase 2 removed. Re-exported here so the ~90 existing import sites
+// (and anything downstream that imports it from the agent loop) keep working.
 
-export type AgentTurnEvent =
-  | { type: "text_delta"; text: string }
-  | { type: "thinking_delta"; text: string }
-  | { type: "tool_call_start"; callId: string; toolName: string }
-  | { type: "tool_call_args_delta"; callId: string; partialJson: string }
-  | {
-      type: "tool_call_end";
-      callId: string;
-      args: Record<string, unknown>;
-      output: ToolCallOutput;
-    }
-  | { type: "turn_complete"; stopReason: string; totalTurns: number }
-  | { type: "error"; error: string; recoverable: boolean }
-  | { type: "context_warning"; message: string }
-  | { type: "notice"; message: string }
-  | { type: "verification_started"; attempt: number }
-  | {
-      type: "verification_completed";
-      attempt: number;
-      ran: boolean;
-      passed: boolean;
-      report: string;
-    }
-  // The provider stream was abandoned mid-response and is being re-streamed:
-  // UIs must drop any partially-rendered text/thinking for the current turn.
-  | { type: "stream_reset" }
-  // The plan as the spine holds it: each item carries the evidence the harness
-  // measured while it was open, and an `unproven` mark when the model closed
-  // it with nothing behind it. Emitted only when the list was ACCEPTED — a
-  // refused completion surfaces as a failed todo_write instead.
-  | { type: "todo_updated"; items: TodoItem[] }
-  // The harness ran the project's compile-class check at a step boundary
-  // (a step that wrote files was being closed with no check of its own).
-  | { type: "step_check"; step: string; ran: boolean; passed: boolean; report: string }
-  // ─── v2 surface events (structured, replacing prose-only signals) ───
-  // The gateway abandoned one provider/model and is streaming from another.
-  // The turn continues; nothing already accepted is lost.
-  | {
-      type: "fallback";
-      from: { provider: string; model: string };
-      to: { provider: string; model: string };
-      status?: number;
-      reason?: string;
-      chain?: string[];
-    }
-  // The same provider is about to be re-tried after a transient failure. The
-  // turn continues; the surface shows `↻ 1 of 3` for the length of the backoff
-  // instead of looking wedged with nothing to explain it.
-  | {
-      type: "retry";
-      provider: string;
-      model: string;
-      attempt: number;
-      of: number;
-      status?: number;
-      waitMs: number;
-      reason?: string;
-    }
-  // Authoritative provider token usage for the request just completed, plus a
-  // context-budget snapshot so UIs can keep a live meter without polling.
-  | {
-      type: "usage";
-      /** Fresh input only — cached input is reported separately below. */
-      inputTokens: number;
-      outputTokens: number;
-      /**
-       * Input served from a warm prompt cache, and input written into it.
-       * Carried so the ledger can price them at their discounted rates and
-       * report what caching is actually worth; without these the cheapest
-       * part of every turn is billed as if it were the most expensive.
-       */
-      cacheReadTokens?: number;
-      cacheCreationTokens?: number;
-      /**
-       * The model this usage was actually billed against. Carried because a
-       * run can switch models mid-flight (provider fallback, /model), and
-       * pricing the tokens against the session's nominal model would quietly
-       * misreport spend. Consumers that don't care may ignore it.
-       */
-      model?: string;
-      /** Context window occupancy after this report, when an engine tracks it. */
-      context?: { used: number; limit: number; percent: number };
-    }
-  // The working set was summarized in place. Estimates come from the same
-  // heuristic counter the budget uses — render them as approximate.
-  | {
-      type: "compaction";
-      beforeTokens: number;
-      afterTokens: number;
-      /** Context limit the percentages should be computed against. */
-      limitTokens: number;
-      summarizedCount?: number;
-      /** True when a provider over-limit rejection forced this compaction. */
-      forced?: boolean;
-    }
-  // A durable run-state checkpoint was written (see @gear/shared state.ts).
-  | { type: "checkpoint_saved"; runId: string; version: number; turnCount: number }
-  // ─── Task-spine events ───
-  // The run ended BEFORE finishing (turn ceiling, exhausted context, abort,
-  // error) with open todos: `state` is the zero-token "state of work" handoff
-  // (done / remaining / files / next step). Resume picks it up automatically.
-  | { type: "handoff"; reason: HandoffReason; state: string }
-  // The loop told the model to stop patching and genuinely change approach —
-  // after verification kept failing, or a struggle signal (edit churn) fired.
-  | { type: "replanning"; reason: string; trigger: "verification" | "struggle" }
-  // Live progress from a LONG tool call (sub-agent / worker): one short note
-  // per meaningful step, rendered on the status rung — never in the transcript.
-  //
-  // `state` is the call's own lifecycle, which the tool cannot report because
-  // it does not know when the loop chose to start it: `started` fires the
-  // instant execution begins (a fan-out wider than maxParallelTools leaves the
-  // rest QUEUED, and a queued scout must not be drawn as a running one), and
-  // `settled` fires the instant it resolves. Both matter because every
-  // `tool_call_end` in a batch is emitted together, after the LAST call
-  // finishes: without `settled`, a scout that came back in twenty seconds was
-  // still reported as running four minutes later.
-  | {
-      type: "tool_progress";
-      callId: string;
-      note: string;
-      state?: "started" | "settled";
-      ok?: boolean;
-    };
+import type { AgentTurnEvent, ChildAgentEvent } from "@gear/protocol";
+import { projectChildEvent } from "./subagent-events";
+export type { AgentTurnEvent, ChildAgentEvent } from "@gear/protocol";
 
 // ─── Permission Gate ───
 // The agent loop invokes this before executing every tool call.
@@ -2078,6 +1963,8 @@ export class AgentLoop {
         note: string;
         state?: "started" | "settled";
         ok?: boolean;
+        /** The sub-agent event this note was projected from (P2.6). */
+        child?: ChildAgentEvent;
       };
       const progressQueue: ProgressItem[] = [];
       let progressSignal: (() => void) | null = null;
@@ -2089,6 +1976,16 @@ export class AgentLoop {
         const t = String(note ?? "").trim();
         if (!t) return;
         pushProgress({ callId, note: t.slice(0, 160) });
+      };
+      // The typed channel. `note` is projected from the child event so a
+      // surface that wants only a heartbeat is unaffected, and the event
+      // itself rides along for the ones that want the truth. A child event
+      // with nothing worth a rung line (a token delta) is dropped rather
+      // than queued as an empty note.
+      const eventFor = (callId: string) => (child: ChildAgentEvent) => {
+        const note = projectChildEvent(child.agentId, child.event);
+        if (!note) return;
+        pushProgress({ callId, note, child });
       };
 
       const planned: PlannedCall[] = [];
@@ -2104,6 +2001,7 @@ export class AgentLoop {
           workspaceRoot,
           signal,
           onProgress: progressFor(tc.callId),
+          onEvent: eventFor(tc.callId),
         };
 
         let allowed = true;
@@ -2275,6 +2173,7 @@ export class AgentLoop {
           note: item.note,
           state: item.state,
           ok: item.ok,
+          child: item.child,
         };
       }
       await execution; // surface any execution error truthfully
