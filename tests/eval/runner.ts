@@ -12,8 +12,17 @@ import {
   compareToBaseline,
   printComparison,
   baselinePathFor,
+  compareArms,
+  printArmComparison,
 } from "./report";
-import type { ModelSweepResult } from "./report";
+import type { ArmComparison, ModelSweepResult } from "./report";
+import {
+  VARIANT_IDS,
+  isVariantId,
+  variant as variantOf,
+  variantConfig,
+} from "../../packages/orchestrator/src/evolve/variants";
+import { currentYardstick } from "../../packages/orchestrator/src/evolve/yardstick";
 
 // ─── Real-mode defaults & key wiring ───
 //
@@ -62,6 +71,10 @@ interface CliArgs {
   compare?: string;
   /** Noise band for --compare (fraction of pass-rate). Default 0 mock / 0.05 real. */
   noise?: number;
+  /** Paired A/B: run control, then this variant, on the same tasks in the same order. */
+  ab?: string;
+  /** Write the paired report as JSON here (the ledger reads it). */
+  abOut?: string;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -95,6 +108,14 @@ function parseArgs(argv: string[]): CliArgs {
       args.noise = Number(argv[++i]);
     } else if (a.startsWith("--noise=")) {
       args.noise = Number(a.slice("--noise=".length));
+    } else if (a === "--ab") {
+      args.ab = argv[++i];
+    } else if (a.startsWith("--ab=")) {
+      args.ab = a.slice("--ab=".length);
+    } else if (a === "--ab-out") {
+      args.abOut = argv[++i];
+    } else if (a.startsWith("--ab-out=")) {
+      args.abOut = a.slice("--ab-out=".length);
     }
   }
   return args;
@@ -204,6 +225,83 @@ async function main() {
   const modeLabel = real ? `real (${provider}/${model})` : "mock LLM provider";
   console.log("\n  \x1b[1mGear eval suite\x1b[0m");
   console.log(`  \x1b[2m${tasks.length} tasks · ${modeLabel}\x1b[0m\n`);
+
+  // ── Paired A/B (P7.4) ──
+  //
+  // Control then treatment, same task set, same order, same seeds, same
+  // process. Everything about the two runs is identical except the variant's
+  // configuration delta, which is what makes the difference attributable.
+  // The control arm runs FIRST and unconditionally: without a control group
+  // measured in the same process on the same day, a treatment number is a
+  // number about the machine, not about the change.
+  if (args.ab) {
+    if (!isVariantId(args.ab)) {
+      console.error(
+        `\n  \x1b[31mUnknown variant "${args.ab}".\x1b[0m Declared variants: ${VARIANT_IDS.join(", ")}\n` +
+          `  The registry is closed on purpose (packages/orchestrator/src/evolve/variants.ts).\n`,
+      );
+      process.exit(1);
+    }
+    const v = variantOf(args.ab);
+    console.log(`  \x1b[1mA/B\x1b[0m ${v.id} \x1b[2m— ${v.summary}\x1b[0m`);
+    console.log(`  \x1b[2m${v.hypothesis}\x1b[0m\n`);
+
+    const armOpts = real ? { real: true as const, provider, model } : {};
+
+    console.log("  \x1b[1mcontrol\x1b[0m");
+    const controlResults = await runSuite(tasks, { ...armOpts, arm: "control" });
+    const controlReport = buildReport(
+      controlResults,
+      real ? "real" : "mock",
+      real ? model : undefined,
+      real ? provider : undefined,
+    );
+
+    console.log(`\n  \x1b[1mtreatment\x1b[0m \x1b[2m(${v.id})\x1b[0m`);
+    const treatmentResults = await runSuite(tasks, {
+      ...armOpts,
+      arm: v.id,
+      configOverrides: variantConfig(v.id),
+    });
+    const treatmentReport = buildReport(
+      treatmentResults,
+      real ? "real" : "mock",
+      real ? model : undefined,
+      real ? provider : undefined,
+    );
+
+    const cmp: ArmComparison = compareArms(v.id, controlReport, treatmentReport, {
+      noiseBand: args.noise != null && Number.isFinite(args.noise) ? args.noise : undefined,
+    });
+    printArmComparison(cmp);
+
+    if (args.abOut) {
+      // The ledger reads this file; `gear evolve promote` refuses without a
+      // passing entry for the exact hash pair it names.
+      await Bun.write(
+        args.abOut,
+        JSON.stringify(
+          {
+            comparison: cmp,
+            control: controlReport,
+            treatment: treatmentReport,
+            // The yardstick this measurement ran against. A promotion is
+            // refused when the suite has moved since a human blessed it, so an
+            // old report can never be replayed against a changed ruler.
+            yardstick: currentYardstick(__dirname).hash,
+            at: new Date().toISOString(),
+          },
+          null,
+          2,
+        ),
+      );
+      console.log(`  \x1b[2mreport written to ${args.abOut}\x1b[0m\n`);
+    }
+    // A/B is a measurement, not a gate on the suite: exit 0 when the run
+    // completed, whatever the verdict. A non-zero exit here would make "the
+    // variant lost" indistinguishable from "the suite is broken".
+    process.exit(cmp.compared > 0 ? 0 : 1);
+  }
 
   const sweepConfig = real ? parseModelSweep() : null;
 
