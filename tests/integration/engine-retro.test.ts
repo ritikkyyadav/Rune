@@ -126,7 +126,11 @@ describe("Engine retro (end-to-end, fake provider)", () => {
     const retro = payload.retro;
     expect(retro.v).toBe(1);
     expect(retro.outcome).toBe("open_steps");
-    expect(retro.goal).toBe("build me a config parser");
+    // The engine writes one retro per TURN. A turn is not the session, so it
+    // carries neither the session's goal nor the session's cumulative steps —
+    // `steps` is this turn's delta, and the plan's shape as the turn left it.
+    expect(retro.scope).toBe("turn");
+    expect(retro.goal).toBeUndefined();
     expect(retro.steps).toEqual({ total: 2, done: 0, unproven: 0, open: 2 });
     expect(retro.tools.byName.todo_write).toBe(1);
     expect(retro.tools.failed).toBe(0);

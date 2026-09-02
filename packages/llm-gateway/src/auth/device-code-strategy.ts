@@ -2,9 +2,11 @@
 // The headless / SSH-friendly OAuth fallback: no local browser or loopback. The
 // user is shown a short code + URL to open on ANY device; meanwhile we poll the
 // token endpoint until they approve. Generic engine here; a provider supplies the
-// device-authorization + polling specifics via `DeviceFlow`. Kept ready for any
-// provider that officially supports device authorization (none is wired by
-// default — see auth/oauth-registry.ts).
+// device-authorization + polling specifics via `DeviceFlow`. GitHub Copilot is
+// wired to it today (GitHub's device flow yields a durable token the provider
+// exchanges for short-lived Copilot API tokens); any other provider that
+// officially supports device authorization plugs in the same way — see
+// auth/oauth-registry.ts, makeDeviceStrategy().
 
 import { oauthAccount } from "@gear/shared";
 import type { AuthContext, AuthenticationStrategy, ResolvedCredential, AuthMethod } from "./types";

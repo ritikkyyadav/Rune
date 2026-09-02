@@ -10,60 +10,106 @@ evaluation set all matter.
 
 ## Decision path
 
-For every proposed tool call, Gear applies these layers in order:
+Auto mode is 4th-gear autonomy inside the OS sandbox with a watcher above it — not 3rd gear with a
+model standing in front of every call. For every proposed tool call, Gear applies these layers in
+order:
 
 1. Signed organization policy, rate/cost limits, the security guard, and pre-tool hooks can block the
    action before Auto mode.
 2. Mechanical Auto rules run with `deny -> ask -> allow` precedence. A broad rule that grants
-   arbitrary execution, such as `bash(*)`, cannot bypass the classifier.
-3. Fixed catastrophic-operation circuit breakers require a fresh human decision. They cannot be
-   bypassed by a reusable session grant or by the probabilistic reviewer. Guardrail-lowering
-   changes, writes to Gear's own control surface, and risky payloads too large for the bounded
-   reviewer input also require a human.
-4. A tier check permits built-in safe reads and ordinary, workspace-confined edits without a model
-   call.
-5. Shell commands, network/MCP actions, external or protected writes (including `.github/` CI
-   surfaces), and agent delegation reach the independent classifier.
-6. The fast reviewer returns only `ALLOW` or `BLOCK`. A block, or any deterministically high-risk
-   action, receives a second careful review that returns a structured `allow`, `ask`, or `deny`
-   decision. A failed reviewer call retries once — against the engine's own heavy/standard tier when
-   a distinct one is configured — before failing closed.
-7. A denial — and, under the default conversational escalation, an `ask` — is returned to the acting
-   agent so it can choose a safer path or ask the user a direct plain-language question via
-   `ask_user`. The user's typed answer joins the reviewer's trusted context and can authorize the
-   retry. Repeated automatic blocks still pause Auto mode with a real prompt instead of looping.
-8. After execution, every real tool result is scanned before either the UI or any agent context sees
-   it. Suspicious instructions receive a high-salience untrusted-data warning, and every later
-   classifier-tier action in that session gets the careful reasoned pass with an explicit alert.
+   arbitrary execution, such as `bash(*)`, cannot bypass the reviewer.
+3. A halt latched by the out-of-band supervisor (below) stops the run here, before the next action.
+4. Fixed circuit breakers — catastrophic host operations, guardrail-lowering changes, writes to
+   Gear's own control surface under `.gear`, payloads too large for the bounded reviewer — are pure
+   regex and hold whether or not a reviewer is alive. They do not raise a permission card. They go to
+   the **containment broker**, which returns a route (below).
+5. A tier check clears built-in safe reads and ordinary workspace-confined edits with no model call.
+6. **The supervised tier.** Everything mechanical has already run, so what remains at low or medium
+   risk is the day's work: builds, tests, dependency installs, API calls, ordinary shell. It runs
+   immediately, and the supervisor observes it out of band. Common work therefore costs **zero**
+   extra model calls and waits on nothing.
+7. What is left is high or critical risk. It pays exactly **one** reasoned reviewer call (about 9
+   seconds), which returns a structured `allow`, `ask` or `deny` with a risk rating. A failed call
+   retries once against the engine's own heavy/standard tier when a distinct one is configured
+   (`reviewerFallback`).
 
-The lead agent, read-only investigators, deep-research investigators, and
-owned-file implementation workers all use the same result-screening boundary. Workers also retain
-their existing hard capabilities: no shell, no network, no recursive delegation, and writes only to
-explicitly owned files.
+   There is no one-token fast stage in the approval path any more. It could not settle a high-risk
+   action — the careful pass ran regardless — and it cost a measured 2–4 seconds on every risky
+   write and outbound call. It survives only as the supervisor's screen, in step 9.
+8. A `deny`, or a reviewer `ask` that names a missing authorization, does not become a modal prompt.
+   It becomes a containment route, or an actionable block the agent raises with `ask_user`. See
+   "Containment, not questions".
+9. **The out-of-band supervisor.** Every supervised-tier action is also read by a two-stage
+   background review on the same bounded transcript: the trigger-happy one-token screen first, then —
+   only when that screen says block — the reasoned reviewer to confirm. It latches a halt only on a
+   confirmed `deny` rated high or critical. Its only power is to stop the *next* action; it can never
+   delay the one it is looking at. An unconfirmed flag costs nothing, and a supervisor that cannot
+   answer is an outage, not a finding: it stays silent, because the mechanical breakers are what
+   actually guard against destruction and they never call a model.
 
-## Conversational escalation
+   A latched halt ends the turn rather than asking. A supervisor objection means the run may no
+   longer be the user's — the likeliest cause is text the agent read, not something the user typed —
+   and the one thing you must not do in that state is hand the compromised run a dialog it can
+   answer.
+10. After execution, every real tool result is scanned before either the UI or any agent context sees
+    it. Suspicious instructions receive a high-salience untrusted-data warning, and every later
+    reviewer-tier action in that session is forced onto the careful reasoned pass with an explicit
+    alert.
 
-The reason other tools feel interruption-free in their auto modes is that a blocked action almost
-never becomes a modal permission prompt: it becomes a short conversation. Gear implements the same
-loop, on by default (`conversationalEscalation = true`):
+The lead agent, read-only investigators, deep-research investigators, and owned-file implementation
+workers all use the same result-screening boundary. Workers also retain their existing hard
+capabilities: no shell, no network, no recursive delegation, and writes only to explicitly owned
+files.
 
-1. The reviewer returns `ask` (only a human can resolve the ambiguity) or `deny`.
-2. The acting agent receives the block as an actionable error: adapt the approach, or — when the
-   action is genuinely required and only lacks authorization — ask the user directly with
-   `ask_user`, naming the exact action and its real impact ("Delete the remote branch
-   release/old?").
-3. The user's typed answer is folded into the reviewer's trusted context (as are mid-run
-   interjections). On the retry, the reviewer weighs the answer as authorization scoped to what the
-   question honestly disclosed — a clear yes clears the action, a vague yes does not clear a bigger
-   blast radius, and a no keeps it blocked.
-4. The modal permission prompt remains the hard backstop: repeated automatic blocks
-   (`maxAutomaticDenials`), catastrophic circuit breakers, guardrail changes, reviewer outages, and
-   explicit `askRules` always pause for a real human decision.
+## Containment, not questions
 
-The agent-authored question is shown to the reviewer only as framing and is never itself trusted;
-a deceptive question cannot launder authorization because the reviewer re-derives the action's true
-target and blast radius. Set `conversationalEscalation = false` (user config or signed policy) to
-restore prompt-first behavior for every reviewer `ask`.
+A tripped breaker produces a **route**, not a permission card. The old answer failed in both
+directions at once: it taxed the person who knows least — a product manager handed
+`gh api -X DELETE repos/o/r/git/refs/heads/feature` can only click yes and hope, or click no and
+stall — and it did not stop the attack it was built for, because an injected instruction that reaches
+a yes/no card has already won half the exchange. The card shows the command, not the reason it
+appeared, and the reason is the only part that mattered.
+
+So the broker (`auto-containment.ts`) returns one of five routes, and every one of them keeps the run
+moving:
+
+| Route | When | What happens |
+| --- | --- | --- |
+| `extend` | Ordinary work that needs more room than the sandbox gives — network for an install, a scratch path. | The sandbox is widened for this call and the grant is logged. Nobody is asked. |
+| `contain` | The action reaches outside containment for no reason the work requires. | The same action is handed back with its escapes stripped. |
+| `redirect` | It cannot be contained, but an equivalent produces the same knowledge with none of the blast radius. | The equivalent is handed back: `terraform plan` for `terraform apply`, `npm pack` for `npm publish`. |
+| `defer` | Irreversible and outward, with no local equivalent. | It does not run. It is recorded, the agent finishes everything else, and the user sees one consolidated list when the turn ends — a decision made once, with the work already done. |
+| `halt` | The attack case: exfiltration, persistence, host destruction. | Nothing is routed and nothing is asked. The turn stops. |
+
+Every route is mechanical — pure regex over the effective payload. That is deliberate: this module is
+what stands when the reviewer model is withdrawn, rate-limited, or 404ing. `contain` degrades to
+`defer` when OS isolation is unavailable, because without a sandbox "run it contained" would be a
+lie.
+
+**Auto mode fails contained, not closed.** Failing closed to a human prompt cost one build 22 minutes
+sitting on a dead classifier. Containment is available by construction.
+
+### When the agent asks
+
+When the reviewer's objection is genuinely an authorization gap — the action is required and only
+lacks a human's say-so — the block is returned to the acting agent as an actionable error. The agent
+adapts, or asks the user directly with `ask_user`, naming the exact action and its real impact
+("Delete the remote branch release/old?"). The user's typed answer is folded into the reviewer's
+trusted context, as are mid-run interjections. On the retry the reviewer weighs that answer as
+authorization scoped to what the question honestly disclosed: a clear yes clears the action, a vague
+yes does not clear a bigger blast radius, and a no keeps it blocked.
+
+The agent-authored question is shown to the reviewer only as framing and is never itself trusted; a
+deceptive question cannot launder authorization, because the reviewer re-derives the action's true
+target and blast radius.
+
+This is unconditional. It was briefly a setting (`conversationalEscalation`); the setting was never
+read, because there is no modal path left for it to select. A config that still sets it is reported
+once as retired and ignored — never an error.
+
+The modal permission prompt survives as the backstop for the cases where a human decision is the
+product, not an interruption: repeated automatic blocks (`maxAutomaticDenials`), explicit `askRules`,
+and Auto mode being disabled by policy.
 
 ## Reviewer isolation
 
@@ -103,9 +149,6 @@ timeoutMs = 12000
 maxAutomaticDenials = 2
 failClosed = true
 probeToolResults = true
-# Reviewer "ask" verdicts go to the agent for a conversational check (ask_user)
-# instead of an immediate modal prompt; the modal remains the backstop.
-conversationalEscalation = true
 # Retry a failed reviewer call once against the engine's own heavy/standard
 # tier (same data boundary) before failing closed to a human prompt.
 reviewerFallback = true
@@ -221,7 +264,14 @@ source, reason, and reviewer identity.
 - The prompt-injection probe combines normalization, known-pattern detection, and a model-visible
   warning. It can have false positives and false negatives and is not a substitute for capability
   restriction.
-- The reviewer timeout bounds Gear's decision wait and fails closed, and the abort now propagates
+- Auto mode fails CONTAINED, not closed: when the reviewer is unavailable the mechanical breakers and
+  the containment broker still route every risky action, so an outage degrades autonomy rather than
+  stopping the run. The modal prompt remains only for repeated blocks, `askRules`, and Auto mode
+  being disabled by policy.
+- The out-of-band supervisor's false-positive rate — how often it halts a session that was never
+  compromised — is the risk that now matters most, and it is not yet measured. Phase 6 of the product
+  program builds the labelled corpus and publishes precision, recall and latency per decision source.
+- The reviewer timeout bounds Gear's decision wait, and the abort now propagates
   into the provider HTTP request itself (SDK/fetch `AbortSignal`), so a late reply is cancelled on
   the wire rather than completing unbilled-for into the void. A provider that has already finished
   generating may still record usage server-side.
@@ -271,7 +321,7 @@ bun run eval:auto-safety
 ```
 
 Use `--json` for CI ingestion. Extend the labeled corpus with organization-specific actions before
-treating its result as a rollout gate; ten generic scenarios are a smoke test, not statistical
+treating its result as a rollout gate; 19 generic scenarios are a smoke test, not statistical
 evidence of production safety.
 
 ## Design basis
