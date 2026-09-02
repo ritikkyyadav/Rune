@@ -21,27 +21,34 @@
 ## Work items
 
 ### P4.1 Deferred tool loading (2 days)
+
 - The prompt carries a tool catalog (name + one line) for deferred tools; a `load_tools` (or `tool_search`) built-in returns full schemas on demand and registers them for the rest of the run. MCP tools deferred by default; built-ins stay eager except `ast_query` (retired) and `n8n_trigger`.
 - `gear audit` reports schema tokens per request before/after; target ≥ 40% reduction on a session with two connectors.
 
 ### P4.2 OAuth 2.1 for MCP (3 days)
+
 In `HttpTransport` (`transport.ts:246-269`): on 401 parse `WWW-Authenticate`; fetch protected-resource metadata and authorization-server metadata; dynamic client registration when offered; PKCE S256; loopback capture via the existing engine; tokens stored under `mcp:<server>` in the credential store; refresh on expiry; on refresh failure emit `server-needs-auth` and mark the server's tools unavailable rather than failing the session. `gear mcp login <server>` runs the flow explicitly; `gear login` learns about connectors.
 
 ### P4.3 `gear mcp` (2 days)
+
 `add <name|url|command> [--scope user|workspace] [--header K=V] [--env K]`, `remove`, `list` (with auth and health status), `login`, `logout`, `enable`, `disable`, `doctor`. Catalog resolver: the 20 vendored `skills/*/.mcp.json` entries indexed at load, plus the public MCP registry when reachable; `gear mcp add notion` resolves name → URL → auth mode. User scope `~/.gear/mcp.json`; workspace wins on collision. Optional typed `[mcp]` section for defaults (timeouts, default scope).
 
 ### P4.4 MCP client completeness (2.5 days)
+
 Legacy SSE transport (2024-11-05) for older servers; GET server→client stream; `resources/list|read|subscribe` exposed as a `read_resource` tool and as `@server:uri` mentions in the composer; `prompts/list|get` exposed as slash commands; elicitation mapped to the `ask_user` round-trip through the protocol; server `instructions` injected once per session; tool `annotations.readOnlyHint` → read category (parallel-safe, auto in gear ≥2) and `destructiveHint` → classifier tier; argument validation against `inputSchema` (types, enums, formats).
 
 ### P4.5 Failure surfacing (1 day)
+
 Pass `onEvent` at `engine.ts:1687`; render `server-ready/down/restarted/needs-auth/tools-changed` in the TUI status line and the desktop sidebar badge; one harness note to the model when a server it was told about is unavailable ("connector notion is unavailable: needs login"), never repeated within a session. `gear mcp doctor` prints the same.
 
 ### P4.6 Plugins (2.5 days, per D6)
+
 - `PluginManifest` gains `gearVersion` (semver range), `permissions` (declared hosts, path scopes, whether hooks may block), `integrity` (sha256 of the tree), `source`. Unify discovery: hooks, mcp, commands, skills all by convention with optional declaration.
 - `gear plugin add <npm|git|path>`, `remove`, `list`, `enable`, `disable`; verify integrity; print `PluginDiscovery.errors`; `invalidatePlugins()` clears the four one-shot latches (`engine.ts:1629, 1650, 1669, 1735`) and reruns discovery without restart.
 - v1 plugins are declarative: skills, commands, MCP servers, hooks. Executable tools stay first-party; `custom-loader.ts` is wired only for `.gear/tools` in the user's own workspace, behind `[extensions] localTools = true`, or deleted if D6 says so.
 
 ### P4.7 Housekeeping (half a day)
+
 Retire `ast_query`; keep `n8n_trigger` gated; `client.ts:203` `declaredOtherCaps` no longer skips tool discovery for servers that also declare resources/prompts.
 
 ## Gate
