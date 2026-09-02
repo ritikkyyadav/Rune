@@ -68,6 +68,16 @@
         "typescript": "^5.8",
       },
     },
+    "packages/sdk": {
+      "name": "@gear/sdk",
+      "version": "0.3.0",
+      "dependencies": {
+        "@gear/protocol": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "^5.8",
+      },
+    },
     "packages/shared": {
       "name": "@gear/shared",
       "version": "0.3.0",
@@ -224,6 +234,8 @@
     "@gear/orchestrator": ["@gear/orchestrator@workspace:packages/orchestrator"],
 
     "@gear/protocol": ["@gear/protocol@workspace:packages/protocol"],
+
+    "@gear/sdk": ["@gear/sdk@workspace:packages/sdk"],
 
     "@gear/shared": ["@gear/shared@workspace:packages/shared"],
 

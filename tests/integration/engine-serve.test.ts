@@ -28,6 +28,7 @@ import {
   toResult,
   toStream,
 } from "../../packages/protocol/src/index";
+import { GearClient } from "../../packages/sdk/src/index";
 
 const CLI = join(import.meta.dir, "../../packages/orchestrator/src/bin/gear-cli.ts");
 const RUST_RELEASE = join(import.meta.dir, "../../target/release/gear-tools");
@@ -452,6 +453,49 @@ describe("gear serve (websocket transport, real engine, fake model)", () => {
       expect(good.status).toBe(200);
     },
     120_000,
+  );
+
+  test.skipIf(!HAS_RUST_BIN)(
+    "@gear/sdk drives the same server — the README example, executed",
+    async () => {
+      // The SDK seed is only worth shipping if the example in its README runs.
+      // This IS that example: connect, create a session, run a prompt, answer a
+      // permission from a handler, watch the events go by.
+      const { url, token } = await start([
+        sseToolCall("call_bash", "bash", { command: "echo from-the-sdk" }),
+        sseText("done"),
+      ]);
+
+      const events: string[] = [];
+      const asked: string[] = [];
+      const gear = await GearClient.connect(
+        { url, token },
+        {
+          onEvent: (event) => events.push(event.type),
+          onPermission: async (prompt) => {
+            asked.push(prompt.toolName);
+            return { kind: "allow_once" };
+          },
+        },
+      );
+
+      const sessionId = await gear.createSession();
+      await gear.run(sessionId, "say something with a shell");
+
+      // The handler answered the gate, so the turn ran to completion without
+      // anyone touching a frame by hand.
+      expect(asked).toContain("bash");
+      expect(events).toContain("tool_call_end");
+      expect(events).toContain("turn_complete");
+
+      // …and the typed command surface reaches the same host.
+      const sessions = await gear.call("list_sessions");
+      expect(sessions.some((s) => s.id === sessionId)).toBe(true);
+
+      gear.close();
+      expect(gear.isClosed).toBe(true);
+    },
+    180_000,
   );
 
   test.skipIf(!HAS_RUST_BIN)(
