@@ -189,6 +189,8 @@ if (values.help) {
         `    gear doctor                   Health: incidents, crash sentinel, gear-tools, build freshness\n` +
         `    gear tools-smoke              Verify the native tool executor end to end (write/read/edit/bash)\n` +
         `    gear incidents [sub]          Browse recorded failures — list | show <id> | top [--by-version] | export\n` +
+        `    gear audit [session|last]     One page on a session: plan with evidence, log, safety decisions, held steps, cost\n` +
+        `    gear evolve [sub]             Self-evolution — status | scorecard [--by model|workspace] [--days N] | lessons | tune | gardener [--run]\n` +
         `    gear notebook [sub]           Learned tactics notebook — list | show <id> | rm <id> | export\n` +
         `    gear telemetry [sub]          Opt-in diagnostics — status | on | off | preview | reset (off by default)\n\n` +
         `  Export options:\n` +
@@ -243,6 +245,16 @@ if (command === "incidents") {
   const { runIncidents } = await import("./blackbox-cli");
   runIncidents(positionals as string[], values as Record<string, unknown>);
   process.exit(0);
+}
+if (command === "audit") {
+  const { runAudit } = await import("./audit-cli");
+  process.exit(await runAudit(positionals.slice(1) as string[], values as Record<string, unknown>));
+}
+if (command === "evolve") {
+  const { runEvolve } = await import("./evolve-cli");
+  process.exit(
+    await runEvolve(positionals.slice(1) as string[], values as Record<string, unknown>),
+  );
 }
 if (command === "notebook") {
   const { runNotebook } = await import("./notebook-cli");
@@ -839,6 +851,7 @@ async function main() {
     // [verify] — previously EngineConfig-only, unreachable from any config.
     enableVerification: config.verify?.enabled,
     verifyCommand: config.verify?.commands,
+    verifyPerStep: config.verify?.perStep,
     verifyTimeoutMs:
       typeof config.verify?.timeoutSecs === "number" && config.verify.timeoutSecs > 0
         ? Math.floor(config.verify.timeoutSecs * 1000)
@@ -896,6 +909,9 @@ async function main() {
     notebook: {
       enabled: !(values.pristine as boolean) && config.notebook?.enabled !== false,
     },
+    // Self-evolution: the retro is always written; the playbook follows
+    // config ([evolve] playbook = false turns the file off).
+    evolve: config.evolve,
   });
 
   // ─── DB-only commands — run before provider validation ───
