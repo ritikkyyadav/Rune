@@ -41,7 +41,7 @@ import {
   toResult,
   toStream,
 } from "@gear/protocol";
-import { adoptLegacyEnv, getGearHome, migrateLegacyHome } from "@gear/shared";
+import { adoptLegacyEnv, getGearHome, loadConfig, migrateLegacyHome } from "@gear/shared";
 
 import { HostClient } from "../host-client";
 
@@ -189,29 +189,106 @@ export function isLoopbackAddress(address: string | undefined): boolean {
 const RUN_DIR = (): string => join(getGearHome(), "run");
 const SERVE_REGISTRY = (): string => join(RUN_DIR(), "serve-hosts.json");
 
-interface PooledHost {
+/**
+ * What the pool needs from a host connection.
+ *
+ * `HostClient` satisfies it structurally. It exists so the reaper can be unit
+ * tested against a fake clock and fake hosts without spawning ten processes to
+ * prove that a timer subtracts correctly.
+ */
+export interface PooledClient {
+  readonly isClosed: boolean;
+  close(): void;
+  request(cmd: string, args?: Record<string, unknown>, timeoutMs?: number): Promise<unknown>;
+  onStream(handler: (frame: { stream: string; payload: unknown }) => void): void;
+}
+
+export interface PooledHost {
   key: string;
   socket: string;
   pid: number;
-  client: HostClient;
+  client: PooledClient;
+  /** Last time a request, an answer, or a stream frame touched this host. */
   lastUsedAt: number;
+  /**
+   * Requests currently awaiting an answer.
+   *
+   * A turn is one `chat_start` that can run for a quarter of an hour without
+   * anything else being routed to the host, so idleness measured by requests
+   * alone would reap a session in the middle of editing files.
+   */
+  inFlight: number;
 }
 
-/** Reaped after this long with nothing routed to it. */
-const IDLE_REAP_MS = 30 * 60_000;
+/**
+ * Reaped after this long with no client and no running turn (`[serve]
+ * idleHostSecs`). Ten minutes: long enough that closing a laptop lid over
+ * lunch does not cost you the session, short enough that a day of test runs
+ * does not leave a hundred idle engines holding memory. Before P10.0 this was
+ * thirty minutes AND the shutdown path deliberately let every host live, so in
+ * practice nothing was ever reaped: 183 idle hosts were counted on the
+ * developer's machine in one day.
+ */
+export const DEFAULT_IDLE_HOST_SECS = 600;
+
+/**
+ * Which hosts may be stopped — the whole reaper policy, as a pure function so
+ * the fake-clock tests exercise the real rule rather than a copy of it.
+ *
+ * Three ways to be spared: a client is watching you, a request is in flight, or
+ * you were touched inside the window.
+ */
+export function reapableKeys(
+  hosts: Iterable<PooledHost>,
+  opts: { now: number; maxIdleMs: number; hasClient?: (key: string) => boolean },
+): string[] {
+  const out: string[] = [];
+  for (const host of hosts) {
+    if (host.inFlight > 0) continue;
+    if (opts.hasClient?.(host.key)) continue;
+    if (opts.now - host.lastUsedAt < opts.maxIdleMs) continue;
+    out.push(host.key);
+  }
+  return out;
+}
 
 export class HostPool {
   private readonly hosts = new Map<string, PooledHost>();
   private readonly starting = new Map<string, Promise<PooledHost>>();
   private readonly onStream: (key: string, stream: string, payload: unknown) => void;
   private readonly workspace: string;
+  private readonly hasClient: (key: string) => boolean;
+  private readonly idleMs: number;
+  private readonly now: () => number;
+  private readonly parentPid: number | null;
+  /** Test seam: build a host without spawning a process. */
+  private readonly spawnHost:
+    ((key: string, socket: string) => Promise<{ pid: number; client: PooledClient }>) | null;
 
   constructor(opts: {
     workspace: string;
     onStream: (key: string, stream: string, payload: unknown) => void;
+    /** Whether any connected client is still watching this routing key. */
+    hasClient?: (key: string) => boolean;
+    /** Idle window before a host with no client and no turn is stopped. */
+    idleMs?: number;
+    /**
+     * The pid hosts should watch as their parent, or `null` to spawn hosts
+     * that outlive this process. Only `--keep-hosts` passes `null`: a host
+     * that is meant to be adopted must not have a dead-man's switch pointed at
+     * the process that is about to let go of it.
+     */
+    parentPid?: number | null;
+    now?: () => number;
+    spawnHost?: (key: string, socket: string) => Promise<{ pid: number; client: PooledClient }>;
   }) {
     this.workspace = opts.workspace;
     this.onStream = opts.onStream;
+    this.hasClient = opts.hasClient ?? (() => false);
+    this.idleMs = opts.idleMs ?? DEFAULT_IDLE_HOST_SECS * 1000;
+    this.parentPid = opts.parentPid === undefined ? process.pid : opts.parentPid;
+    this.now = opts.now ?? Date.now;
+    this.spawnHost = opts.spawnHost ?? null;
   }
 
   get size(): number {
@@ -220,6 +297,11 @@ export class HostPool {
 
   keys(): string[] {
     return [...this.hosts.keys()];
+  }
+
+  /** Visible for tests and for `--status`: what the pool is holding. */
+  snapshot(): PooledHost[] {
+    return [...this.hosts.values()];
   }
 
   /**
@@ -233,7 +315,7 @@ export class HostPool {
   async acquire(key: string): Promise<PooledHost> {
     const live = this.hosts.get(key);
     if (live && !live.client.isClosed) {
-      live.lastUsedAt = Date.now();
+      live.lastUsedAt = this.now();
       return live;
     }
     const pending = this.starting.get(key);
@@ -244,49 +326,138 @@ export class HostPool {
     return promise;
   }
 
+  /**
+   * Run one command on a host, counting it in flight for as long as it runs.
+   *
+   * Every caller should route through this rather than `acquire().client`: the
+   * count is what tells the reaper the difference between a session nobody has
+   * touched for an hour and a session that has been compiling for one.
+   */
+  async request(
+    key: string,
+    method: string,
+    params: Record<string, unknown>,
+    timeoutMs?: number,
+  ): Promise<unknown> {
+    const host = await this.acquire(key);
+    host.inFlight++;
+    try {
+      return await host.client.request(method, params, timeoutMs);
+    } finally {
+      host.inFlight--;
+      host.lastUsedAt = this.now();
+    }
+  }
+
+  /** Note activity on a host — a stream frame means the turn is alive. */
+  touch(key: string): void {
+    const host = this.hosts.get(key);
+    if (host) host.lastUsedAt = this.now();
+  }
+
   private async spawn(key: string): Promise<PooledHost> {
     mkdirSync(RUN_DIR(), { recursive: true });
     const safe = key.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 48);
     const id = `serve-${safe}-${Date.now().toString(36)}`;
     const socket = join(RUN_DIR(), `${id}.sock`);
-    const logFd = openSync(join(RUN_DIR(), `${id}.log`), "a");
 
-    const hostScript = join(import.meta.dir, "engine-host.ts");
-    const child = Bun.spawn(["bun", hostScript, "--socket", socket], {
-      env: { ...process.env, GEAR_WORKSPACE: this.workspace },
-      stdin: "ignore",
-      stdout: logFd,
-      stderr: logFd,
+    let pid: number;
+    let client: PooledClient;
+    if (this.spawnHost) {
+      ({ pid, client } = await this.spawnHost(key, socket));
+    } else {
+      const logFd = openSync(join(RUN_DIR(), `${id}.log`), "a");
+      const hostScript = join(import.meta.dir, "engine-host.ts");
+      // `--parent-pid` is the host's own dead-man's switch: if this supervisor
+      // is SIGKILLed (no handler runs, nothing gets to stop anything), the host
+      // notices its parent is gone and exits by itself. Without it a `kill -9`
+      // on `gear serve` orphaned every session engine, forever.
+      const argv = ["bun", hostScript, "--socket", socket];
+      if (this.parentPid !== null) argv.push("--parent-pid", String(this.parentPid));
+      const child = Bun.spawn(argv, {
+        env: { ...process.env, GEAR_WORKSPACE: this.workspace },
+        stdin: "ignore",
+        stdout: logFd,
+        stderr: logFd,
+      });
+      // The server's exit must not take a running session down mid-write — the
+      // shutdown path asks politely and the host drains before it goes.
+      child.unref();
+      pid = child.pid;
+      client = await connectWithRetry(socket, 20_000);
+    }
+
+    client.onStream((frame) => {
+      this.touch(key);
+      this.onStream(key, frame.stream, frame.payload);
     });
-    // The server's exit must not take a running session down — the same
-    // promise `gear detach` makes, and the reason shutdown is graceful.
-    child.unref();
 
-    const client = await connectWithRetry(socket, 20_000);
-    client.onStream((frame) => this.onStream(key, frame.stream, frame.payload));
-
-    const host: PooledHost = { key, socket, pid: child.pid, client, lastUsedAt: Date.now() };
+    const host: PooledHost = {
+      key,
+      socket,
+      pid,
+      client,
+      lastUsedAt: this.now(),
+      inFlight: 0,
+    };
     this.hosts.set(key, host);
     this.persist();
     return host;
   }
 
   /** Close idle hosts. Their processes exit on SIGTERM and free their socket. */
-  reapIdle(maxIdleMs = IDLE_REAP_MS, now = Date.now()): number {
-    let reaped = 0;
-    for (const [key, host] of [...this.hosts]) {
-      if (now - host.lastUsedAt < maxIdleMs) continue;
-      host.client.close();
+  reapIdle(maxIdleMs = this.idleMs, now = this.now()): number {
+    const doomed = reapableKeys(this.hosts.values(), {
+      now,
+      maxIdleMs,
+      hasClient: this.hasClient,
+    });
+    for (const key of doomed) this.stopHost(key);
+    if (doomed.length > 0) this.persist();
+    return doomed.length;
+  }
+
+  /**
+   * Stop every host and wait for the processes to go.
+   *
+   * The counterpart to `detachAll`, and now the default on `gear serve` exit:
+   * a foreground server that spawned four engines and left them running is not
+   * "graceful", it is a leak with a rationale. `--keep-hosts` (and `gear
+   * detach`, which never goes through here) keep the old behaviour explicitly.
+   */
+  async shutdownAll(graceMs = 3_000): Promise<number> {
+    const stopped = [...this.hosts.keys()];
+    const pids = [...this.hosts.values()].map((h) => h.pid);
+    for (const key of stopped) this.stopHost(key);
+    this.persist();
+
+    // SIGTERM asked; if a host is wedged past the grace period, insist. An
+    // engine that ignores its own drain is exactly the process this exists to
+    // stop leaving behind.
+    const deadline = Date.now() + graceMs;
+    while (Date.now() < deadline && pids.some(processAlive)) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    for (const pid of pids.filter(processAlive)) {
       try {
-        process.kill(host.pid, "SIGTERM");
+        process.kill(pid, "SIGKILL");
       } catch {
         /* already gone */
       }
-      this.hosts.delete(key);
-      reaped++;
     }
-    if (reaped > 0) this.persist();
-    return reaped;
+    return stopped.length;
+  }
+
+  private stopHost(key: string): void {
+    const host = this.hosts.get(key);
+    if (!host) return;
+    host.client.close();
+    try {
+      process.kill(host.pid, "SIGTERM");
+    } catch {
+      /* already gone */
+    }
+    this.hosts.delete(key);
   }
 
   /**
@@ -426,6 +597,17 @@ export interface ServeOptions {
    * things stop protecting anything.
    */
   web?: { dist: string };
+  /**
+   * Leave the per-session engine hosts running when the server stops.
+   *
+   * The pre-P10.0 behaviour, now opt-in (`gear serve --keep-hosts`). It is the
+   * right answer for a detached, long-lived server on a workstation and the
+   * wrong one for everything else, which is why it stopped being the default:
+   * every foreground run and every test run was leaving its engines behind.
+   */
+  keepHosts?: boolean;
+  /** Idle window before a host with no client and no running turn is stopped. */
+  idleHostSecs?: number;
   /** Injected by tests so they do not have to parse stdout. */
   onListening?: (info: { port: number; host: string; token: string }) => void;
 }
@@ -576,16 +758,31 @@ export async function runServe(
     else console.error("  the web client is not built — run `bun run --cwd apps/desktop build`");
   }
 
-  const running = await serve({ port, host, workspace, allowRemoteSettings, origins, web });
+  // `--keep-hosts` is the escape for a detached, long-lived server: the engines
+  // outlive the door, as they did before P10.0. Everything else — a foreground
+  // run, a test, an editor that spawned this and then exited — takes its hosts
+  // with it.
+  const keepHosts = values["keep-hosts"] === true;
+  const idleHostSecs = loadConfig(workspace).serve?.idleHostSecs;
+
+  const running = await serve({
+    port,
+    host,
+    workspace,
+    allowRemoteSettings,
+    origins,
+    web,
+    keepHosts,
+    idleHostSecs,
+  });
 
   // `serve()` returns as soon as it is listening, so the CLI must park here or
   // the process falls straight through and exits with a token file on disk and
   // nothing behind it. Resolved only by the signal handlers, which stop the
-  // front door and deliberately leave the session hosts running.
+  // front door and then the hosts behind it.
   await new Promise<void>((resolve) => {
     const finish = (): void => {
-      running.stop();
-      resolve();
+      void Promise.resolve(running.stop()).then(() => resolve());
     };
     process.once("SIGINT", finish);
     process.once("SIGTERM", finish);
@@ -610,6 +807,16 @@ export async function serve(opts: ServeOptions = {}): Promise<{ stop: () => void
 
   const pool = new HostPool({
     workspace,
+    idleMs: Math.max(1, opts.idleHostSecs ?? DEFAULT_IDLE_HOST_SECS) * 1000,
+    // `--keep-hosts` means the hosts are meant to be adopted, so they get no
+    // dead-man's switch pointed at a supervisor that is about to let go.
+    parentPid: opts.keepHosts ? null : process.pid,
+    // A host with a live websocket watching it is never idle, however long it
+    // has been quiet: the client is the reason it is up.
+    hasClient: (key) => {
+      for (const state of sockets.values()) if (state.keys.has(key)) return true;
+      return false;
+    },
     onStream: (key, stream, payload) => {
       noteRequestOwner(requestOwners, key, stream, payload);
       if (stream === "roundtrip_resolved") {
@@ -746,8 +953,7 @@ export async function serve(opts: ServeOptions = {}): Promise<{ stop: () => void
           if (typeof id === "string") requestOwners.delete(id);
         }
         try {
-          const pooled = await pool.acquire(key);
-          const result = await pooled.client.request(req.method, req.params, 15 * 60_000);
+          const result = await pool.request(key, req.method, req.params, 15 * 60_000);
           ws.send(encodeFrame({ jsonrpc: "2.0", id: req.id, result }));
         } catch (err) {
           ws.send(
@@ -778,7 +984,10 @@ export async function serve(opts: ServeOptions = {}): Promise<{ stop: () => void
     web: Boolean(opts.web),
   });
 
-  const reaper = setInterval(() => pool.reapIdle(), 5 * 60_000);
+  // Sweep often enough that the idle window means something. A minute's
+  // granularity on a ten-minute window is the difference between "reaped" and
+  // "reaped eventually", and the sweep costs one map walk.
+  const reaper = setInterval(() => pool.reapIdle(), 60_000);
   (reaper as unknown as { unref?: () => void }).unref?.();
 
   // `0.0.0.0` is a bind, not an address: nothing can dial it. Print what a
@@ -819,15 +1028,25 @@ export async function serve(opts: ServeOptions = {}): Promise<{ stop: () => void
   }
   opts.onListening?.({ port: boundPort, host, token });
 
-  const stop = (): void => {
+  const stop = (): Promise<void> | void => {
     clearInterval(reaper);
-    // Let go of the hosts; do NOT stop them. A turn halfway through editing
-    // files must not die because the front door closed.
-    const left = pool.detachAll();
     server.stop(true);
-    if (left.length > 0) {
-      console.log(`\n${left.length} session host(s) left running; reattach with gear serve`);
+    if (opts.keepHosts) {
+      // The old default, now explicit. A turn halfway through editing files
+      // survives the front door closing; the registry records where the hosts
+      // are and the next `gear serve` reattaches.
+      const left = pool.detachAll();
+      if (left.length > 0) {
+        console.log(`\n${left.length} session host(s) left running; reattach with gear serve`);
+      }
+      return;
     }
+    // Otherwise the server owns what it spawned. Hosts drain their round-trips
+    // on SIGTERM and exit; anything still alive after the grace period is
+    // killed rather than orphaned.
+    return pool.shutdownAll().then((n) => {
+      if (n > 0) console.log(`\n${n} session host(s) stopped`);
+    });
   };
 
   return { stop, port: boundPort };

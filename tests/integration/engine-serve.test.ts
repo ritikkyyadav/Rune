@@ -170,6 +170,35 @@ async function freePort(): Promise<number> {
   return port;
 }
 
+/**
+ * Stop a `gear serve` and everything it started.
+ *
+ * The supervisor stops its session hosts in its SIGTERM handler, so it needs
+ * the signal AND the time to run the handler. SIGKILL is the backstop for a
+ * wedged server, not the first move — killing it is precisely how the suite
+ * used to strand its engines.
+ */
+export async function stopServe(
+  proc: ReturnType<typeof Bun.spawn> | null,
+  graceMs = 10_000,
+): Promise<void> {
+  if (!proc) return;
+  try {
+    proc.kill("SIGTERM");
+  } catch {
+    /* already gone */
+  }
+  const timer = setTimeout(() => {
+    try {
+      proc.kill("SIGKILL");
+    } catch {
+      /* already gone */
+    }
+  }, graceMs);
+  await proc.exited.catch(() => {});
+  clearTimeout(timer);
+}
+
 describe("gear serve (websocket transport, real engine, fake model)", () => {
   let dir: string;
   let gearHome: string;
@@ -183,8 +212,11 @@ describe("gear serve (websocket transport, real engine, fake model)", () => {
   });
 
   afterEach(async () => {
-    server?.kill();
-    await server?.exited.catch(() => {});
+    // SIGTERM, not kill(9): the supervisor's handler is what stops the
+    // per-session engine hosts (P10.0), and a killed supervisor leaves them
+    // behind for the whole rest of the suite. `zz-no-leaked-hosts.test.ts` is
+    // the assertion that this teardown actually works.
+    await stopServe(server);
     server = null;
     model?.stop(true);
     model = null;

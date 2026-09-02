@@ -215,9 +215,20 @@ export async function startServer(opts: {
   // a source checkout runs this file through Bun. `process.execPath` is the
   // right answer in both cases — it is `gear` in one and `bun` in the other.
   const compiled = !cli.endsWith(".ts") || !(await Bun.file(cli).exists());
-  const argv = compiled
-    ? ["serve", "--web", "--port", String(opts.port), "--workspace", opts.workspace]
-    : [cli, "serve", "--web", "--port", String(opts.port), "--workspace", opts.workspace];
+  // `--keep-hosts`: this server is detached on purpose and a person's session
+  // must survive it being restarted. P10.0 made stopping the hosts the default
+  // for every foreground `gear serve`; this is the one caller that meant the
+  // old behaviour, so it says so.
+  const serveArgs = [
+    "serve",
+    "--web",
+    "--keep-hosts",
+    "--port",
+    String(opts.port),
+    "--workspace",
+    opts.workspace,
+  ];
+  const argv = compiled ? serveArgs : [cli, ...serveArgs];
 
   mkdirSync(getGearHome(), { recursive: true });
   const log = openSync(serveLogPath(), "a");
