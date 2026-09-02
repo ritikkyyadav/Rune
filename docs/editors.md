@@ -132,22 +132,34 @@ with Zed installed should confirm it and say so here.
 See [`apps/vscode/README.md`](../apps/vscode/README.md). In short:
 
 ```
-Gear: Open Panel              the web client in a webview
-Gear: Send Selection to Gear  the selection, with its file and line range
-Gear: Open Trace for This File   the trace rail, filtered to this file
+Gear: Open Panel                the web client in a webview
+Gear: Send Selection to Gear    the selection, with its file and line range
+Gear: Open Trace for This File  what this session did to the file you are on
+Gear: Set Server Token          a token for a configured server, in SecretStorage
 ```
 
-The extension starts `gear serve --web` on demand, or attaches to one you are
-already running (`gear.serverUrl` in settings). The status bar shows the gear
-and the session cost.
+The extension starts `gear serve --web` on demand, attaches to a `gear serve`
+already running on this machine, or uses the one at `gear.serverUrl`. The status
+bar shows the gear and the session cost — and shows nothing where there is no
+cost data, rather than `$0.00`.
+
+The token is never a setting: settings sync between machines and get committed
+in `.vscode/settings.json`, and this one is remote code execution with your
+provider credentials attached. It reaches the page in the URL fragment, and the
+webview's CSP narrows `frame-src` to the single origin being framed.
 
 It is **not published to the marketplace** — that is a founder action under D1.
 Build the `.vsix` and install it by hand:
 
 ```bash
+bun install
 bun run --cwd apps/vscode package      # produces gear-<version>.vsix
 code --install-extension apps/vscode/gear-0.3.0.vsix
 ```
+
+**Not verified inside VS Code on this machine** either: the extension
+typechecks, bundles, packages and its logic is unit-tested, but nobody has
+loaded the .vsix in a running editor here.
 
 ## JetBrains
 

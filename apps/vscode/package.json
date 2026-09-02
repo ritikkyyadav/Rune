@@ -1,0 +1,94 @@
+{
+  "name": "gear",
+  "displayName": "Gear",
+  "description": "The agent that proves its work, on any model — in VS Code.",
+  "version": "0.3.0",
+  "publisher": "savoir",
+  "license": "Apache-2.0",
+  "private": true,
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "AI",
+    "Programming Languages",
+    "Other"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ritikkyyadav/Alan.git",
+    "directory": "apps/vscode"
+  },
+  "main": "./out/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "gear.openPanel",
+        "title": "Gear: Open Panel"
+      },
+      {
+        "command": "gear.sendSelection",
+        "title": "Gear: Send Selection to Gear"
+      },
+      {
+        "command": "gear.openTrace",
+        "title": "Gear: Open Trace for This File"
+      },
+      {
+        "command": "gear.setToken",
+        "title": "Gear: Set Server Token"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "gear.sendSelection",
+          "when": "editorHasSelection",
+          "group": "gear@1"
+        },
+        {
+          "command": "gear.openTrace",
+          "group": "gear@2"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "gear.sendSelection",
+        "key": "ctrl+alt+g",
+        "mac": "cmd+alt+g",
+        "when": "editorHasSelection"
+      }
+    ],
+    "configuration": {
+      "title": "Gear",
+      "properties": {
+        "gear.path": {
+          "type": "string",
+          "default": "gear",
+          "description": "The gear executable. Set this if gear is not on your PATH."
+        },
+        "gear.serverUrl": {
+          "type": "string",
+          "default": "",
+          "description": "A gear serve to attach to, e.g. http://127.0.0.1:7788. Empty starts one on demand. The token is NOT stored here — run 'Gear: Set Server Token'."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "package": "node esbuild.mjs && bunx --bun @vscode/vsce package --no-dependencies --allow-missing-repository",
+    "typecheck": "tsc --noEmit",
+    "lint": "prettier --check src/",
+    "test": "bun test ../../tests/unit/vscode"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.90.0",
+    "esbuild": "^0.25.0",
+    "prettier": "^3",
+    "typescript": "^5.8"
+  }
+}
