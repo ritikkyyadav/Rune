@@ -1,18 +1,22 @@
 // ─── Theme: light | dark | system ───
 //
-// There used to be five accents × two bases here, ported from the customizer,
-// and three visual identities in the repository at once. Phase 3 collapsed all
-// of it to the Savoir DNA: one accent, two grounds. Choosing a colour was never
-// a thing anyone needed from a coding agent, and offering it made the product
-// look like a theme gallery rather than an instrument.
+// Three states, and the browser's own vocabulary for them:
 //
-// The attribute API is unchanged, because the stylesheet speaks it:
-// `<html data-theme-base="light|dark" data-accent="datum">`.
+//   <html>                     nothing stamped — follow the OS
+//   <html data-theme="dark">   an explicit choice, which wins
+//   <html data-theme="light">  the same, in the other direction
+//
+// `system` is the default and stamps NOTHING, so `prefers-color-scheme` decides
+// and the page follows a machine that switches at sunset without anyone
+// touching a setting. An explicit choice writes the attribute, and tokens.css
+// defines every colour in all three states — a colour whose only definition
+// lives inside a media query is a colour that is missing in one of them, and
+// the missing one is always the one nobody tested.
 
 export type ThemeBase = "light" | "dark" | "system";
 
 /** The one accent. Kept as a type so the seam is visible, not so it is used. */
-export type GearAccent = "datum";
+export type GearAccent = "gear";
 
 const KEY = "gear.theme";
 
@@ -20,9 +24,8 @@ const KEY = "gear.theme";
  * The undocumented override.
  *
  * `[ui] accent` in config, or `gear.accent` in browser storage, still swaps the
- * accent — the customizer needs somewhere to go, and a hidden escape hatch
- * costs nothing. It is not in the picker, not in the docs the user reads, and
- * not supported.
+ * accent. It is not in Settings, not in the docs a user reads, and not
+ * supported; it exists so a custom build has somewhere to go.
  */
 const ACCENT_OVERRIDE_KEY = "gear.accent";
 
@@ -31,16 +34,16 @@ export interface ThemeChoice {
 }
 
 export const THEME_BASES: Array<{ id: ThemeBase; label: string; desc: string }> = [
-  { id: "light", label: "Light", desc: "Drafting paper — the default ground" },
-  { id: "dark", label: "Dark", desc: "Ink — the same system, inverted" },
-  { id: "system", label: "Auto", desc: "Follow the operating system" },
+  { id: "system", label: "System", desc: "Follow this machine" },
+  { id: "light", label: "Light", desc: "Near-white ground" },
+  { id: "dark", label: "Dark", desc: "The same system, inverted" },
 ];
 
 export function loadTheme(): ThemeChoice {
   try {
     const raw = localStorage.getItem(KEY);
     if (raw) {
-      const parsed = JSON.parse(raw) as Partial<ThemeChoice> & { accent?: string };
+      const parsed = JSON.parse(raw) as Partial<ThemeChoice>;
       const base =
         parsed.base === "light" || parsed.base === "dark" || parsed.base === "system"
           ? parsed.base
@@ -53,6 +56,7 @@ export function loadTheme(): ThemeChoice {
   return { base: "system" };
 }
 
+/** What the choice resolves to right now — for anything that needs the answer. */
 export function resolveBase(base: ThemeBase): "light" | "dark" {
   if (base !== "system") return base;
   return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
@@ -60,15 +64,19 @@ export function resolveBase(base: ThemeBase): "light" | "dark" {
 
 function accentOverride(): string {
   try {
-    return localStorage.getItem(ACCENT_OVERRIDE_KEY) || "datum";
+    return localStorage.getItem(ACCENT_OVERRIDE_KEY) || "gear";
   } catch {
-    return "datum";
+    return "gear";
   }
 }
 
 export function applyTheme(choice: ThemeChoice): void {
   const root = document.documentElement;
-  root.setAttribute("data-theme-base", resolveBase(choice.base));
+  // `system` removes the attribute rather than stamping a resolved value: the
+  // page then tracks the OS live, without a listener and without a repaint that
+  // arrives one frame after the rest of the desktop has already changed.
+  if (choice.base === "system") root.removeAttribute("data-theme");
+  else root.setAttribute("data-theme", choice.base);
   root.setAttribute("data-accent", accentOverride());
   try {
     localStorage.setItem(KEY, JSON.stringify(choice));
@@ -77,7 +85,7 @@ export function applyTheme(choice: ThemeChoice): void {
   }
 }
 
-/** The CLI's persisted theme id for this choice — the two surfaces stay in step. */
+/** The console's persisted theme id for this choice — the two surfaces stay in step. */
 export function themeId(choice: ThemeChoice): string {
   return resolveBase(choice.base) === "dark" ? "gear-dark" : "gear";
 }

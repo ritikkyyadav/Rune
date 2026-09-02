@@ -232,7 +232,7 @@ function StatusRow({ turn, now }: { turn: TurnState; now: number }) {
   return (
     <div className="status-row" aria-live="polite">
       {live ? (
-        <GearMark size={14} spinning className={s === "waiting" ? "waiting" : ""} />
+        <span className={`working-dot ${s === "waiting" ? "waiting" : ""}`.trim()} aria-hidden />
       ) : (
         <span className={`status-check-done ${s}`}>
           {s === "complete" ? "✓" : s === "notes" ? "!" : s === "failed" ? "✕" : "■"}

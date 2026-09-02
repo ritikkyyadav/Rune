@@ -55,21 +55,27 @@ Every value below lives in `packages/shared/src/design-tokens.ts` and reaches CS
 | `--ink-3`         | `#8B909C` | `#6C717D` | Tertiary: timestamps, ids, counts.               |
 | `--hairline`      | `#E6E6E2` | `#232730` | Every border in the product. One weight: 1px.    |
 | `--accent`        | `#1B3FE4` | `#5B79FF` | The mark, the primary button, focus, live, rail. |
-| `--accent-hover`  | derived   | derived   | One step toward ink (light) / toward text (dark).|
+| `--accent-hover`  | `#1735C0` | `#758EFF` | Derived: 16% toward black (light) / white (dark).|
 | `--accent-quiet`  | derived   | derived   | 8% / 14% accent over the ground. Fills only.     |
-| `--ok`            | `#1F9D55` | `#57B27F` | Success. State only.                             |
-| `--caution`       | `#C98A1A` | `#D2A555` | Caution. State only.                             |
-| `--danger`        | `#D2453B` | `#D8736D` | Failure, refusal, removal. State only.           |
+| `--raised`        | `#F1F1F1` | `#222529` | Derived: the surface, 6% toward the ink. Hover.  |
+| `--ok`            | `#1D874B` | `#1F9D55` | Success. State only.                             |
+| `--caution`       | `#9D6D1A` | `#C98A1A` | Caution. State only.                             |
+| `--danger`        | `#D2453B` | `#D55950` | Failure, refusal, removal. State only.           |
 
-The dark status trio is **derived** from the light trio by mixing 28% toward `--ink`, not
-hand-picked: the brand publishes three status colours, and a second hand-tuned set is a
-second system waiting to drift. `--accent-hover` and `--accent-quiet` are derived the same
-way. Six literal hexes, everything else a function of them.
+Nineteen literal hexes; every other value is a function of them.
+
+The status trio is **published** as `#1F9D55` / `#C98A1A` / `#D2453B`, and each ground gets
+the readable variant by one rule rather than a second hand-picked set: step the published
+colour toward that ground's ink in 2% increments until it clears 4.5:1 as text on that
+ground's surface (`readableOn`). On paper that darkens — `#C98A1A` on white is 2.9:1, a
+swatch and not a sentence — and on ink it lightens. The hue does not move, and changing a
+published status colour moves both grounds by construction. `--accent-hover`,
+`--accent-quiet`, `--raised`, `--ink-faint` and `--hairline-strong` are derived the same way.
 
 Measured contrast on the surface each is used on: ink 18.7 / 14.8, secondary 6.0 / 7.5,
-tertiary 3.1 / 3.7 (meta only, never prose), accent 7.0 / 5.1, white on the accent button
-7.3. Body and secondary clear WCAG AA; tertiary clears AA-large and is used for nothing a
-person has to read.
+tertiary 3.1 / 3.7 (meta only, never prose), accent 7.0 / 5.1, text on the accent button 7.3
+/ 5.2. Body, secondary, the accent and all three status colours clear WCAG AA; tertiary
+clears AA-large and is used for nothing a person has to read.
 
 ### Type
 
@@ -221,10 +227,13 @@ rather than adjectives.
 
 `tests/unit/brand-checklist.test.ts` reads the **built** stylesheet (`apps/web/dist/assets/*.css`)
 and fails on: a second chromatic hue outside the three status colours; a `box-shadow` on any
-selector that is not an overlay; a `border-radius` outside {6px, 8px, 10px, 50%, 0}; a
-missing Geist or Geist Mono declaration or a stack without its generic fallback; and any
-occurrence of `0E5E63`, `E7E8E3`, `IBM Plex` or `Savoir`. Always rebuild before running it —
-a stale gitignored `dist/` makes it audit bytes nobody shipped.
+selector that is not something that floats; a `border-radius` outside {6px, 8px, 10px, 50%,
+0}; a near-white the token system does not define; a missing Geist or Geist Mono declaration
+or a stack without its generic fallback; a token defined only inside a media query; and any
+occurrence of `0E5E63`, `E7E8E3`, `IBM Plex`, `Savoir`, `graticule` or `datum`. It refuses a
+**stale** build as well as a missing one — `dist/` is gitignored, so a directory built before
+the rebrand survives every checkout, and a checklist that audits those bytes is green on a
+broken tree and red on a correct one.
 
 `tests/unit/shared/design-tokens-parity.test.ts` pins the twelve literal values above, the
 derivations, the radius set, the font stacks and the measured contrast floors.

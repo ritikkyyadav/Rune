@@ -1,4 +1,4 @@
-import { Wordmark } from "./Wordmark";
+import { GearMark } from "./GearMark";
 import type { ConnectionState } from "../lib/types";
 import type { GearInfo } from "../lib/gears";
 
@@ -38,7 +38,8 @@ export function Titlebar(props: {
         </button>
       ) : null}
       <div className="tb-brand">
-        <Wordmark size={15} />
+        <GearMark size={16} />
+        <span>Gear</span>
         <span className="version">v{props.version}</span>
       </div>
       <div className="tb-task">
