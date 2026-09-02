@@ -10,6 +10,7 @@ import {
   foldTerminalData,
 } from "../../../packages/orchestrator/src/bin/ui/glyphs";
 import { visLen } from "../../../packages/orchestrator/src/bin/ui/render";
+import { PRODUCT_LABEL } from "../../../packages/orchestrator/src/bin/ui/brand";
 
 const ROOT = join(import.meta.dir, "../../..");
 const UI = join(ROOT, "packages/orchestrator/src/bin/ui");
@@ -133,7 +134,12 @@ describe("ASCII rung", () => {
     expect(run.exitCode, run.stderr.toString()).toBe(0);
     expect(stdout).not.toContain("\x1b");
     expect(stdout).not.toMatch(/[^\x00-\x7f]/);
-    expect(stdout).toContain("Gear v0.3.0 -- AI coding agent");
+    // The label, not a literal version: pinning "v0.3.0" here would make this
+    // test a fifth hand-maintained copy of the version, which is the drift
+    // scripts/version.sh exists to end. What matters is that the banner
+    // carries the product label the build was stamped with.
+    expect(stdout).toContain(`${PRODUCT_LABEL} -- AI coding agent`);
+    expect(stdout).toMatch(/Gear v\d+\.\d+\.\d+/);
     expect(stdout).toContain("Usage:");
     expect(stdout).toContain("Shift+Tab shifts up: 1st -> 2nd -> 3rd -> 4th -> auto");
   });

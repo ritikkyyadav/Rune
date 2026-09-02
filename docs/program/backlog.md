@@ -10,5 +10,4 @@ Seeded 2026-09-02 from the audits:
 - `packages/orchestrator/src/bin/engine-host.ts:321-335` — pending permission promises have no timeout and no rejection on disconnect — 2.2
 - `packages/shared/src/session.ts:55` — `system_prompt_hash` never written (NULL for 601 sessions) — 7.1
 - `tests/eval/tasks-from-incidents.ts:12-15` — flywheel input empty — 7.8
-- `dist/` — stale partial artifacts from 2026-08-25 — 1.3
 - `apps/desktop/src-tauri/src/lib.rs` — six `*_system_memory` commands never called — 3.1
