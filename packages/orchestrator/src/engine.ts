@@ -195,7 +195,7 @@ import {
   snapshotEnvironment,
 } from "./prompts";
 import { buildRepoMap } from "./repo-map";
-import { CommandVerifier } from "./verifier";
+import { CommandVerifier, detectVerifyCommands, fastCheckCommands } from "./verifier";
 import type { Verifier } from "./verifier";
 import { autoCommitPaths, undoLastGearCommit, type UndoResult } from "./git-undo";
 import { planResearch, runResearch as executeResearch } from "./research";
@@ -4381,6 +4381,18 @@ export class Engine {
     this.registry.register(
       createWorkerTool({
         binaryPath: this.config.toolsBinaryPath,
+        // A worktree per worker, and the project's own checks run inside it
+        // before anything merges back. `fastCheckCommands` is the compile-class
+        // subset: a worker verifying its slice needs the check that catches a
+        // broken build, not the full suite, which is the lead's job after
+        // integration and would otherwise run once per worker.
+        worktrees: true,
+        checkCommands: fastCheckCommands(
+          this.config.verifyCommand?.length
+            ? this.config.verifyCommand
+            : detectVerifyCommands(this.config.workspaceRoot),
+        ),
+        checkTimeoutMs: this.config.verifyTimeoutMs ?? 120_000,
         budgetDefaults: {
           costCapUsd: this.config.subagents?.costCapUsd,
           deadlineMs: this.config.subagents?.deadlineMs,
