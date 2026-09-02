@@ -338,6 +338,9 @@ function buildEngine(): Engine {
       mode: normalizeSubagentMode(config.subagents?.mode),
       model: config.subagents?.model,
       effort: normalizeSubagentEffort(config.subagents?.effort),
+      maxParallel: config.subagents?.maxParallel,
+      costCapUsd: config.subagents?.costCapUsd,
+      deadlineMs: config.subagents?.deadlineMs,
     },
     // Same mid-task fallback policy as the CLI. Unknown ids are dropped here
     // silently — this host has no console to warn into; the CLI reports them.

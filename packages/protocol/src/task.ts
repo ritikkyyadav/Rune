@@ -52,6 +52,18 @@ export interface TodoItem {
    * once — the mark is what the user sees instead of a clean tick.
    */
   unproven?: "no_evidence" | "check_failed";
+  /**
+   * Who is doing this step. Absent means the lead, which is every item written
+   * before the ledger became multi-writer.
+   *
+   * The ledger belonged to the lead alone: `taskState` was passed to the lead's
+   * loop and to nothing else, so a fleet of four workers building four slices
+   * of one feature appeared in the plan as one in-progress item with no way to
+   * say which worker held it. An owner is what turns a plan into a queue.
+   */
+  owner?: string;
+  /** When the owner claimed it. Used to reclaim a step whose owner died. */
+  claimedAt?: string;
 }
 
 /** Why a run ended before its plan was finished. */

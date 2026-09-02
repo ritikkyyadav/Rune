@@ -22,6 +22,22 @@ export interface ScriptedResponse {
 export type Script = ScriptedResponse[];
 
 /**
+ * A content-addressed responder, for scripts a sequential index cannot express.
+ *
+ * The index script assumes one loop consuming responses in order. That holds
+ * for a lead agent and breaks the moment work is PARALLEL: four workers running
+ * concurrently interleave their inference calls nondeterministically, so entry
+ * N belongs to whichever worker happened to get there first. A responder keys
+ * on the request instead — the worker system prompt names the files that worker
+ * owns — which makes a four-worker eval deterministic without pretending the
+ * concurrency is not real.
+ *
+ * Returning null falls through to the index script, so a task can use both: a
+ * responder for the parallel part and a script for the lead's own turns.
+ */
+export type Responder = (request: InferenceRequest) => ScriptedResponse | null;
+
+/**
  * A pure-TypeScript LlmProvider that returns scripted responses in order.
  * Used by the eval harness to drive the agent loop deterministically
  * without burning API tokens.
@@ -34,8 +50,14 @@ export class MockProvider implements LlmProvider {
   /** Snapshot of the messages array passed in on each inference call. */
   readonly requestHistory: Message[][] = [];
 
+  private responder: Responder | null = null;
+
   constructor(script: Script) {
     this.script = script;
+  }
+
+  setResponder(responder: Responder | null): void {
+    this.responder = responder;
   }
 
   reset(script?: Script): void {
@@ -75,13 +97,14 @@ export class MockProvider implements LlmProvider {
     // the agent loop actually presented to the model.
     this.requestHistory.push(request.messages.map((m) => ({ ...m })));
 
-    if (this.callIndex >= this.script.length) {
+    const addressed = this.responder?.(request) ?? null;
+    if (!addressed && this.callIndex >= this.script.length) {
       yield { type: "error", error: "MockProvider script exhausted" };
       return;
     }
 
-    const r = this.script[this.callIndex++];
-    const messageId = `mock_msg_${this.callIndex}`;
+    const r = addressed ?? this.script[this.callIndex++];
+    const messageId = `mock_msg_${addressed ? "addr" : this.callIndex}_${++this.callIdCounter}`;
 
     yield { type: "message_start", messageId };
 

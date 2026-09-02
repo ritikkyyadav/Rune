@@ -10,6 +10,19 @@ import type {
 import { AgentLoop } from "./agent-loop";
 import type { PermissionCheck, ToolResultProcessor } from "./agent-loop";
 import { ContextEngine } from "./context-engine";
+import {
+  SUBAGENT_RESULT_SCHEMA,
+  buildSubagentResult,
+  renderTaskResult,
+  repairToSchema,
+} from "./subagent-result";
+import {
+  checkBudget,
+  describeBreach,
+  resolveSubagentBudget,
+  type BudgetBreach,
+} from "./subagent-budget";
+import { CostTracker } from "@gear/llm-gateway";
 
 /**
  * Dependencies the orchestrator must supply when constructing the `task` tool.
@@ -46,6 +59,12 @@ export interface SubagentDeps {
      *  ceiling. Absent keeps the historical hard-coded "high". */
     thinkingEffort?: ReasoningEffort;
   };
+  /**
+   * Default per-call cost and wall-clock ceilings, overriding the per-effort
+   * defaults in subagent-budget.ts. A call's own `costCapUsd` / `deadlineMs`
+   * arguments override these in turn.
+   */
+  budgetDefaults?: { costCapUsd?: number; deadlineMs?: number };
   /** Same prompt-injection probe used by the parent agent. */
   toolResultProcessor?: ToolResultProcessor;
   /**
@@ -118,59 +137,9 @@ function describeCall(args: Record<string, unknown> | undefined): string {
   return "";
 }
 
-/**
- * What to hand back when a scout investigated but never wrote its summary.
- *
- * Two jobs. First, return the ground it covered so the work is not lost — the
- * parent can read those files itself or re-dispatch knowing what is already
- * ruled out. Second, NAME THE CAUSE: running out of turns and choosing to say
- * nothing are different failures with different fixes, and the old code
- * reported them identically, which is why all 33 recorded incidents were
- * undiagnosable.
- */
-function partialReport(o: {
-  stopReason: string;
-  loopError?: string;
-  toolCallCount: number;
-  trail: string[];
-  maxTurns: number;
-  effort?: string;
-}): string {
-  const outOfTurns = o.stopReason === "max_turns";
-  // Both branches quote the REAL budget: the literal "32" was the thorough
-  // preset's value copied into prose, so any edit to EFFORT_PRESETS would have
-  // left this confidently telling the model a number that no longer existed.
-  const topBudget = EFFORT_PRESETS.thorough.maxTurns;
-  const nextStep = outOfTurns
-    ? o.effort === "thorough"
-      ? `Re-dispatch a NARROWER question — this one did not fit ${o.maxTurns} turns.`
-      : `Re-dispatch with effort: "thorough" (${topBudget} turns) or split it into narrower questions.`
-    : "Re-dispatch with a more specific question, or read the files above yourself.";
-
-  const cause = o.loopError
-    ? `hit an error and stopped (${o.loopError})`
-    : outOfTurns
-      ? `ran out of turns (${o.maxTurns}) before writing its summary`
-      : o.stopReason === "aborted"
-        ? "was aborted before writing its summary"
-        : `ended without writing a summary (stopped: ${o.stopReason || "unknown"})`;
-
-  const shown = o.trail.slice(0, MAX_TRAIL_ENTRIES);
-  // The trail is deduplicated, so this counts DISTINCT targets not reached by
-  // the cap — never "8 calls, 8 listed, and 0 more" for one file read twice.
-  const elided = Math.max(0, o.trail.length - shown.length);
-
-  return [
-    `INCOMPLETE — the sub-agent ${cause}. No findings were written, so what follows`,
-    `is only the ground it covered. Treat nothing here as an answer.`,
-    "",
-    `It ran ${o.toolCallCount} tool call${o.toolCallCount === 1 ? "" : "s"}, covering:`,
-    ...shown.map((t) => `  · ${t}`),
-    ...(elided > 0 ? [`  · … and ${elided} more`] : []),
-    "",
-    nextStep,
-  ].join("\n");
-}
+// `partialReport` lived here. It is now `renderTaskResult` in subagent-result.ts,
+// driven off the result object instead of reconstructed from loop variables —
+// which is what stops the prose and the object from disagreeing.
 
 export const TASK_TOOL_SCHEMA: ToolSchema = {
   name: "task",
@@ -217,8 +186,26 @@ export const TASK_TOOL_SCHEMA: ToolSchema = {
           "'thorough' for wide surveys that must visit many files.",
       },
     },
+    costCapUsd: {
+      type: "number",
+      description:
+        "Optional list-price ceiling in USD for this sub-agent's own inference. It STOPS " +
+        "and returns what it has when exceeded — a budget never destroys work. Defaults " +
+        "come from `effort`.",
+    },
+    deadlineMs: {
+      type: "number",
+      description:
+        "Optional wall-clock ceiling in milliseconds from dispatch. Same stop-and-return " +
+        "behaviour as costCapUsd. Defaults come from `effort`.",
+    },
     required: ["prompt"],
   },
+  // Declared since the first version of ToolSchema and never populated. The
+  // parent now knows the SHAPE of what comes back, not just that a string
+  // arrives, and the doctrine paragraph that used to describe the shape in
+  // prose shrinks to this.
+  outputSchema: SUBAGENT_RESULT_SCHEMA,
   permissionLevel: "auto",
   category: "read",
 };
@@ -370,6 +357,15 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
         // of turns and genuinely returning nothing were reported identically —
         // all 33 recorded failures carried no cause at all.
         let stopReason = "";
+        // Cost and wall clock, checked between turns. Never mid-call: aborting
+        // a request already in flight pays for it and loses the reply.
+        const budgetCaps = resolveSubagentBudget(effort, {
+          costCapUsd: input.args.costCapUsd ?? deps.budgetDefaults?.costCapUsd,
+          deadlineMs: input.args.deadlineMs ?? deps.budgetDefaults?.deadlineMs,
+        });
+        const costTracker = new CostTracker();
+        const budgetState = { spentUsd: 0, startedAt: Date.now() };
+        let breach: BudgetBreach | null = null;
         // What the scout actually did, kept so an empty summary still returns
         // the ground it covered instead of nothing. Bounded: this rides back
         // into the parent's context.
@@ -435,6 +431,17 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
               }
               break;
             }
+            case "usage":
+              // List price, from the provider's own numbers. An unpriced model
+              // contributes 0, which means its budget is effectively the
+              // deadline — correct, since a price nobody knows cannot be capped.
+              budgetState.spentUsd += costTracker.estimate(event.model ?? live.model, {
+                inputTokens: event.inputTokens,
+                outputTokens: event.outputTokens,
+                cacheReadTokens: event.cacheReadTokens,
+                cacheCreationTokens: event.cacheCreationTokens,
+              });
+              break;
             case "error":
               // Keep the last error; only fatal (non-recoverable) errors end the run.
               loopError = event.error;
@@ -447,6 +454,15 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
               break;
           }
           if (event.type === "turn_complete") break;
+          // A budget is a stop, not a failure: the loop ends here and whatever
+          // the scout has found so far comes back, exactly as it does on
+          // max_turns. The parent is told which budget and by how much, so
+          // "re-dispatch with more" is actionable rather than a guess.
+          breach = checkBudget(budgetCaps, budgetState);
+          if (breach) {
+            stopReason = breach.kind === "cost" ? "cost_budget" : "time_budget";
+            break;
+          }
         }
 
         const trimmed = finalText.trim();
@@ -500,43 +516,90 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
             };
           }
 
+          // Partial, but real: the parent can act on this. Failing here is
+          // what threw the work away.
+          const partial = buildSubagentResult({
+            finalText: "",
+            toolCallCount,
+            stopReason,
+            loopError,
+            trail,
+            servedBy: servedBy ?? undefined,
+          });
           return {
             callId: input.callId,
             toolName: input.toolName,
-            // Partial, but real: the parent can act on this. Failing here is
-            // what threw the work away.
             success: true,
-            result:
-              provenance +
-              partialReport({
-                stopReason,
-                loopError,
-                toolCallCount,
-                trail,
-                maxTurns: budget.maxTurns,
-                effort,
-              }),
+            result: renderTaskResult(partial, {
+              maxTurns: budget.maxTurns,
+              topBudget: EFFORT_PRESETS.thorough.maxTurns,
+              effort,
+              dispatched: { provider: live.provider, model: live.model },
+              fallbackReason,
+            }),
+            structured: partial as unknown as Record<string, unknown>,
             durationMs: Math.round(performance.now() - start),
           };
         }
 
+        // The schema, forced — but only when the prose did not already carry
+        // it, so a sub-agent that answers in shape costs nothing extra. The
+        // repair call is tool-less by construction: a JSON schema on a turn
+        // that still offers tools makes providers choose between structured
+        // output and tool calling, and they choose differently.
+        let result = buildSubagentResult({
+          finalText: trimmed,
+          toolCallCount,
+          stopReason,
+          loopError,
+          trail,
+          servedBy: servedBy ?? undefined,
+        });
+        if (result.findings.length === 0 && result.unresolved.length === 0) {
+          const repaired = await repairToSchema({
+            gateway: live.gateway,
+            provider: live.provider as ProviderName,
+            model: live.model,
+            text: trimmed,
+            signal: input.signal,
+          });
+          if (repaired) {
+            result = {
+              ...repaired,
+              // Harness facts still win over anything the repair call says.
+              toolCallCount,
+              stopReason,
+              servedBy: servedBy ?? undefined,
+              filesExamined: repaired.filesExamined.length ? repaired.filesExamined : trail,
+            };
+          }
+        }
         // A summary written on the way out of a turn budget is a summary of an
         // investigation that did not finish. Unmarked, it reads to the parent
-        // exactly like a complete answer — the same silent-truncation problem
-        // as the empty case, just harder to notice.
-        const truncated =
-          stopReason === "max_turns"
-            ? ` — INCOMPLETE: hit the ${budget.maxTurns}-turn limit, so this covers only what it reached`
-            : stopReason === "aborted"
-              ? " — INCOMPLETE: aborted before finishing"
-              : "";
-        const suffix = `\n\n(sub-agent made ${toolCallCount} tool call${toolCallCount === 1 ? "" : "s"}${truncated})`;
+        // exactly like a complete answer.
+        if (stopReason === "max_turns") {
+          result.unresolved = [
+            `Hit the ${budget.maxTurns}-turn limit, so this covers only what it reached.`,
+            ...result.unresolved,
+          ];
+        } else if (stopReason === "aborted") {
+          result.unresolved = ["Aborted before finishing.", ...result.unresolved];
+        } else if (breach) {
+          result.unresolved = [`The sub-agent ${describeBreach(breach)}.`, ...result.unresolved];
+        }
 
         return {
           callId: input.callId,
           toolName: input.toolName,
           success: true,
-          result: provenance + trimmed + suffix,
+          result: renderTaskResult(result, {
+            maxTurns: budget.maxTurns,
+            topBudget: EFFORT_PRESETS.thorough.maxTurns,
+            effort,
+            dispatched: { provider: live.provider, model: live.model },
+            fallbackReason,
+          }),
+          structured: result as unknown as Record<string, unknown>,
           durationMs: Math.round(performance.now() - start),
         };
       } catch (err) {

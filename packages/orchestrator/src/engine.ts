@@ -4,6 +4,10 @@ import {
   CostTracker,
   BudgetExceededError,
 } from "@gear/llm-gateway";
+import { AutoEvalSidecar } from "./auto-eval-sidecar";
+import { validateSubagentResult } from "./subagent-result";
+import { resolveMaxParallel } from "./subagent-budget";
+import { createWorkflowTool } from "./workflow-tool";
 import { formatCostSummary } from "./cost-report";
 import type { ReasoningEffort, Message, ProviderName, ResolvedCredential } from "@gear/llm-gateway";
 import {
@@ -135,6 +139,7 @@ import {
   resolveAutoModeConfig,
   ruleMatches,
   shouldRecordAutoModeDecision,
+  type AutoModeAction,
   type AutoModePolicyConfig,
   type AutoModeReview,
   type AutoModeDeferral,
@@ -198,7 +203,7 @@ import {
   snapshotEnvironment,
 } from "./prompts";
 import { buildRepoMap } from "./repo-map";
-import { CommandVerifier } from "./verifier";
+import { CommandVerifier, detectVerifyCommands, fastCheckCommands } from "./verifier";
 import type { Verifier } from "./verifier";
 import { autoCommitPaths, undoLastGearCommit, type UndoResult } from "./git-undo";
 import { planResearch, runResearch as executeResearch } from "./research";
@@ -794,7 +799,16 @@ export interface EngineConfig {
    * "mirror" pins every sub-agent to the session's exact model, provider,
    * and reasoning effort.
    */
-  subagents?: { mode: SubagentMode; model?: string; effort?: ReasoningEffort };
+  subagents?: {
+    mode: SubagentMode;
+    model?: string;
+    effort?: ReasoningEffort;
+    /** Concurrent sub-agents. Default 8, clamped 1–16. */
+    maxParallel?: number;
+    /** Default per-call budgets, overriding the per-effort defaults. */
+    costCapUsd?: number;
+    deadlineMs?: number;
+  };
   /**
    * Black box (flight recorder): incident capture to ~/.gear/blackbox.db.
    * OFF unless enabled — unit tests and embedders stay hermetic; the CLI and
@@ -1014,6 +1028,14 @@ export class Engine {
    * action resolve in conversation instead of a modal prompt.
    */
   private activeAutoRun: AutoModeRun | null = null;
+  /** The session the in-flight run belongs to; supervisor rows land late and need it. */
+  private activeAutoSessionId: string | null = null;
+  /** Opt-in raw-argument store for eval labelling. Null unless collectForEval is on. */
+  private autoEvalSidecar: AutoEvalSidecar | null = null;
+  /** Monotonic per-engine turn number stamped onto each decision row. */
+  private turnIndex = 0;
+  /** The trusted user messages of the in-flight run, for the eval sidecar only. */
+  private activeAutoUserMessages: string[] = [];
   /**
    * Set when Auto mode's watcher concluded the run is no longer the user's —
    * an exfiltration shape, a supervisor objection, a reviewer calling an action
@@ -1457,6 +1479,12 @@ export class Engine {
       }
       return { gateway: this.gateway, provider, model };
     };
+    // Opt-in, off by default, and constructed before the controller so the
+    // observer installed below can use it. See auto-eval-sidecar.ts for why
+    // the raw arguments live in a separate encrypted file, not the audit row.
+    if (this.config.autoMode?.collectForEval === true) {
+      this.autoEvalSidecar = new AutoEvalSidecar();
+    }
     this.autoModeSafety = new AutoModeSafetyController(
       autoConfig,
       new GatewayActionClassifier(),
@@ -1496,6 +1524,13 @@ export class Engine {
           ? { gateway: this.gateway, provider: pick.provider as ProviderName, model: pick.model }
           : null;
       },
+    );
+
+    // One sink for the decisions that gate nothing. Installed here rather than
+    // passed to the constructor because the constructor is positional and
+    // already five arguments deep; a sixth would be a puzzle at every call site.
+    this.autoModeSafety.setDecisionObserver((review: AutoModeReview, action: AutoModeAction) =>
+      this.recordSupervisorDecision(review, action),
     );
 
     // Initialize Context Engine — always on, manages token budgets. The seed
@@ -1634,14 +1669,22 @@ export class Engine {
     if (this.currentAbort && !this.currentAbort.signal.aborted) {
       return { ran: false, refusal: "a run is in flight — held steps run between turns" };
     }
+    // Every exit below is an outcome, and each one means something different
+    // for the label: `refused` is the system standing by its decision, `ran` is
+    // the user overturning it, `failed` is the action being wrong on its own
+    // terms rather than unsafe.
+    const refuse = (reason: string): HeldStepRunResult => {
+      this.recordHeldStepOutcome(sessionId, step, "refused", reason);
+      return { ran: false, refusal: reason };
+    };
     const handler = this.registry.get(step.toolName);
     if (!handler) {
-      return { ran: false, refusal: `unknown tool: ${step.toolName}` };
+      return refuse(`unknown tool: ${step.toolName}`);
     }
     // Signed policy outranks the approval, exactly as it outranks a mid-run yes.
     const decision = this.permissions.check(handler.schema, step.args);
     if (decision.type === "denied") {
-      return { ran: false, refusal: decision.reason };
+      return refuse(decision.reason);
     }
     // The user's own hard lines hold too: a deny rule is configuration they
     // wrote deliberately, and an end-of-turn keystroke is not where it gets
@@ -1657,12 +1700,12 @@ export class Engine {
       .getConfig()
       .denyRules.find((rule) => ruleMatches(rule, action));
     if (denyRule) {
-      return { ran: false, refusal: `denied by configured rule: ${denyRule}` };
+      return refuse(`denied by configured rule: ${denyRule}`);
     }
     if (this.hookRunner) {
       const hookDecision = await this.hookRunner.runPreToolUse(step.toolName, step.args);
       if (!hookDecision.allow) {
-        return { ran: false, refusal: hookDecision.reason ?? "blocked by preToolUse hook" };
+        return refuse(hookDecision.reason ?? "blocked by preToolUse hook");
       }
     }
 
@@ -1682,6 +1725,8 @@ export class Engine {
       reason: `User approved this exact held step at the end of the turn (route: ${step.route}).`,
       stage: 0,
       durationMs: 0,
+      callId: "held-step",
+      timings: { mechanicalMs: 0, classifierMs: 0, retryMs: 0 },
     });
 
     let output = await this.registry.execute({
@@ -1705,6 +1750,16 @@ export class Engine {
     } catch {
       // The probe is a screen, not a gate — the output stands as produced.
     }
+    // The label. `ran` says the user overturned a containment on an action
+    // they judged fine — which is precisely a false positive, and the single
+    // most valuable row the corpus can have. `failed` says the action broke on
+    // its own terms, which is not a safety signal and must not be read as one.
+    this.recordHeldStepOutcome(
+      sessionId,
+      step,
+      output.success ? "ran" : "failed",
+      output.success ? undefined : (output.error ?? undefined),
+    );
     const bounded = (s: string) => s.replace(/\s+/g, " ").trim().slice(0, 400);
     this.pendingTurnNotes.push(
       output.success
@@ -1719,8 +1774,14 @@ export class Engine {
    * next run opens knowing the decision, so it neither re-attempts the step
    * nor waits for an answer that was already given.
    */
-  dismissHeldSteps(steps: readonly AutoModeDeferral[]): void {
+  dismissHeldSteps(steps: readonly AutoModeDeferral[], sessionId?: string): void {
     if (steps.length === 0) return;
+    // A step the user looked at and chose not to run is the containment being
+    // RIGHT, and it is the other half of the false-positive ratio.
+    const target = sessionId ?? this.activeAutoSessionId;
+    if (target) {
+      for (const step of steps) this.recordHeldStepOutcome(target, step, "skipped");
+    }
     const list = steps.map((s) => `\`${s.summary}\``).join(", ");
     this.pendingTurnNotes.push(
       `At the end of the last turn the user reviewed Auto mode's held steps and chose NOT to run: ${list}. ` +
@@ -2277,6 +2338,9 @@ export class Engine {
     // Live handle: interjections and ask_user answers reach THIS run's
     // reviewer context while the run is in flight (engine runs are serial).
     this.activeAutoRun = autoRun;
+    this.activeAutoSessionId = context.sessionId;
+    this.activeAutoUserMessages = context.userMessages;
+    this.turnIndex++;
 
     return async ({ callId, toolName, args }) => {
       // Rate limiter check
@@ -2498,22 +2562,93 @@ export class Engine {
     };
   }
 
+  /**
+   * The supervisor's verdicts, written down.
+   *
+   * These decided nothing — the action they describe already ran — so they must
+   * not go through the permission path's recorder, which counts decisions and
+   * writes audit-chain entries for actions that were gated. They go to the same
+   * event table under their own sources, because the number the product
+   * scorecard asks for ("supervisor false-positive kills per 100 runs") is a
+   * ratio over exactly these rows, and until now the numerator latched into a
+   * process-local counter and the denominator was never recorded at all.
+   */
+  private recordSupervisorDecision(review: AutoModeReview, action: AutoModeAction): void {
+    const sessionId = this.activeAutoSessionId;
+    if (!sessionId) return;
+    this.recordAutoModeDecision(sessionId, action.toolName, action.args, review, {
+      auditChain: false,
+    });
+  }
+
+  /**
+   * What became of a step Auto declined to take unattended.
+   *
+   * This is the ground-truth signal the corpus is built on, and it is the only
+   * one a user produces for free: a held step they then run unchanged says the
+   * containment was a FALSE POSITIVE — the action was fine and the machine got
+   * in the way. One they leave unrun says it was a true positive. Nothing
+   * recorded this; `runHeldStep` wrote a synthetic `human_escalation` allow and
+   * `dismissHeldSteps` wrote nothing whatsoever, so the strongest label in the
+   * system evaporated at the end of every turn.
+   */
+  private recordHeldStepOutcome(
+    sessionId: string,
+    step: AutoModeDeferral,
+    outcome: "ran" | "skipped" | "refused" | "failed",
+    detail?: string,
+  ): void {
+    try {
+      this.sessions.appendEvent(sessionId, {
+        type: "held_step_outcome",
+        payload: {
+          toolName: step.toolName,
+          argsHash: hashArgs(step.args),
+          route: step.route,
+          kind: step.kind,
+          summary: step.summary,
+          outcome,
+          detail: detail ? detail.slice(0, 400) : undefined,
+          heldAt: step.at.toISOString(),
+          at: new Date().toISOString(),
+        },
+      });
+      // A held step the user ran unchanged is the containment being wrong in
+      // the direction that costs trust. The black box is where "wrong in a way
+      // a person had to work around" belongs.
+      if (outcome === "ran") {
+        this.recorder?.record({
+          class: "auto.supervisor_false_positive",
+          severity: "warn",
+          component: "autoMode",
+          where: "engine#runHeldStep",
+          message: `A held ${step.toolName} step was approved and run unchanged: ${step.summary}`,
+          context: { route: step.route, kind: step.kind },
+        });
+      }
+    } catch {
+      // The step already ran or already did not; the record is secondary.
+    }
+  }
+
   /** Persist a queryable event plus a tamper-evident hash-chain entry. */
   private recordAutoModeDecision(
     sessionId: string,
     toolName: string,
     args: Record<string, unknown>,
     review: AutoModeReview,
+    opts: { auditChain?: boolean } = {},
   ): void {
     const reason = this.securityGuard
       ? this.securityGuard.postExecution(review.reason)
       : review.reason;
     try {
+      const argsHash = hashArgs(args);
       this.sessions.appendEvent(sessionId, {
         type: "safety_decision",
         payload: {
           toolName,
-          argsHash: hashArgs(args),
+          argsHash,
           verdict: review.verdict,
           tier: review.tier,
           risk: review.risk,
@@ -2523,8 +2658,23 @@ export class Engine {
           reviewer: review.reviewer,
           matchedRule: review.matchedRule,
           durationMs: review.durationMs,
+          // The three fields that make a row labellable: which call it gated,
+          // which turn it belongs to, and where the wall clock actually went.
+          callId: review.callId,
+          turn: this.turnIndex,
+          timings: review.timings,
         },
       });
+      // Off unless the user asked for it. Encrypted, local, and never read by
+      // any export path — see auto-eval-sidecar.ts.
+      this.autoEvalSidecar?.record(argsHash, toolName, args, {
+        userMessages: this.activeAutoUserMessages,
+        sessionId,
+        callId: review.callId,
+      });
+      // Supervisor rows describe actions that already ran; they are not
+      // approvals, so they do not enter the tamper-evident chain of approvals.
+      if (opts.auditChain === false) return;
       this.sessions.appendAuditEntry({
         sessionId,
         toolName: `safety:${toolName}`,
@@ -2558,6 +2708,28 @@ export class Engine {
 
   /** Shared by the lead loop, read-only tasks and workers. */
   private processToolResult: ToolResultProcessor = async (ctx: ToolResultProcessArgs) => {
+    // A tool that declares an outputSchema has to honour it. Today that is the
+    // two delegation tools; the check is generic so the next one is free.
+    //
+    // This never fails the call. A delegation that produced real work must not
+    // be thrown away over the shape of its report — that was the exact defect
+    // that discarded 33 of 68 `task` results. What it does is tell the parent
+    // the object is unreliable, so it reads the prose instead of trusting a
+    // field, and file an incident so a provider that quietly stops honouring
+    // structured output is visible rather than merely disappointing.
+    if (ctx.output.structured !== undefined) {
+      const check = validateSubagentResult(ctx.output.structured);
+      if (!check.valid) {
+        this.recorder?.record({
+          class: "loop.schema_violation",
+          severity: "warn",
+          component: "subagent",
+          where: `engine#processToolResult:${ctx.toolName}`,
+          message: `structured result failed its outputSchema: ${check.problems.join(", ")}`,
+        });
+        delete ctx.output.structured;
+      }
+    }
     const screened = this.autoModeSafety.screenToolResult(ctx.toolName, ctx.output, {
       args: ctx.args,
       workspaceRoot: ctx.workspaceRoot,
@@ -3927,6 +4099,9 @@ export class Engine {
         provider: this.config.provider,
         maxTokens: MAX_TOKENS,
         maxTurns: turnBudget.maxTurns,
+        // Was a hard 8 with no key. Eight concurrent heavy workers is a lot of
+        // money at once, and eight worktrees is a lot of disk on a small machine.
+        maxParallelTools: resolveMaxParallel(this.config.subagents?.maxParallel),
         maxSecondWinds: turnBudget.conversational ? 0 : 2,
         systemPrompt,
         priorMessages,
@@ -4641,6 +4816,8 @@ export class Engine {
                   stage: 2,
                   reason: late,
                   durationMs: 0,
+                  turn: this.turnIndex,
+                  timings: { mechanicalMs: 0, classifierMs: 0, retryMs: 0 },
                 },
               });
             } catch {
@@ -4659,6 +4836,7 @@ export class Engine {
       // The Auto review context dies with its run — late answers must not
       // leak trusted input into a different run's reviewer.
       this.activeAutoRun = null;
+      this.activeAutoUserMessages = [];
       // A halt is lifted only by the user speaking again, which the next run
       // does by existing. Injection findings stay sticky across runs: the
       // poisoned text is still in the transcript.
@@ -4759,12 +4937,22 @@ export class Engine {
   private registerDelegationTools(): void {
     const subRegistry = new ToolRegistry();
     registerBuiltinTools(subRegistry, this.config.toolsBinaryPath);
+    // `todo_write` has category "read", so it was reachable from a `task`
+    // sub-agent — which then wrote its plan into a throwaway store that nobody
+    // ever read, and left the lead's real ledger untouched. A scout that
+    // believes it is keeping a plan is worse than one that knows it is not.
+    // (docs/program/backlog.md, seeded from the audits.)
+    subRegistry.unregister("todo_write");
     this.registry.register(
       createSubagentTool({
         gateway: this.gateway,
         registry: subRegistry,
         model: this.config.model,
         provider: this.config.provider,
+        budgetDefaults: {
+          costCapUsd: this.config.subagents?.costCapUsd,
+          deadlineMs: this.config.subagents?.deadlineMs,
+        },
         resolve: (tier) => this.resolveSubagentModel(tier, "light"),
         toolResultProcessor: (ctx) => this.processToolResult(ctx),
         onIncident: this.recorder ? (i: IncidentInput) => this.recorder?.record(i) : undefined,
@@ -4773,6 +4961,22 @@ export class Engine {
     this.registry.register(
       createWorkerTool({
         binaryPath: this.config.toolsBinaryPath,
+        // A worktree per worker, and the project's own checks run inside it
+        // before anything merges back. `fastCheckCommands` is the compile-class
+        // subset: a worker verifying its slice needs the check that catches a
+        // broken build, not the full suite, which is the lead's job after
+        // integration and would otherwise run once per worker.
+        worktrees: true,
+        checkCommands: fastCheckCommands(
+          this.config.verifyCommand?.length
+            ? this.config.verifyCommand
+            : detectVerifyCommands(this.config.workspaceRoot),
+        ),
+        checkTimeoutMs: this.config.verifyTimeoutMs ?? 120_000,
+        budgetDefaults: {
+          costCapUsd: this.config.subagents?.costCapUsd,
+          deadlineMs: this.config.subagents?.deadlineMs,
+        },
         resolve: (tier) => this.resolveSubagentModel(tier, "standard"),
         toolResultProcessor: (ctx) => this.processToolResult(ctx),
         onIncident: this.recorder ? (i: IncidentInput) => this.recorder?.record(i) : undefined,
@@ -4782,6 +4986,16 @@ export class Engine {
           claim: (paths, label) => this.teamWorkerClaim(paths, label),
           release: (label) => this.teamWorkerRelease(label),
         },
+      }),
+    );
+    // The workflow tool drives the two above through the live registry rather
+    // than owning a second delegation path — same ownership, same budgets, same
+    // schema, same worktrees. A parallel path would drift within a month.
+    this.registry.register(
+      createWorkflowTool({
+        registry: this.registry,
+        workspaceRoot: this.config.workspaceRoot,
+        maxParallel: resolveMaxParallel(this.config.subagents?.maxParallel),
       }),
     );
   }

@@ -155,6 +155,14 @@ const { values, positionals } = parseArgs({
     "no-sandbox": { type: "boolean" },
     browser: { type: "boolean" },
     "no-browser": { type: "boolean" },
+    // `gear workflow <file>`: run a deterministic multi-agent DAG.
+    // parseArgs runs strict:false, so an option that is NOT declared here has
+    // its value silently swallowed — the flag appears to work and does nothing.
+    "dry-run": { type: "boolean", default: false },
+    fresh: { type: "boolean", default: false },
+    state: { type: "string" },
+    "max-parallel": { type: "string" },
+    mock: { type: "boolean", default: false },
     // `gear login`: pick an auth method / migrate legacy keys.
     method: { type: "string" },
     migrate: { type: "boolean", default: false },
@@ -294,6 +302,12 @@ if (command === "incidents") {
   const { runIncidents } = await import("./blackbox-cli");
   runIncidents(positionals as string[], values as Record<string, unknown>);
   process.exit(0);
+}
+if (command === "workflow") {
+  const { runWorkflowCommand } = await import("./workflow-cli");
+  process.exit(
+    await runWorkflowCommand(positionals.slice(1) as string[], values as Record<string, unknown>),
+  );
 }
 if (command === "audit") {
   const { runAudit } = await import("./audit-cli");
@@ -1010,6 +1024,9 @@ async function main() {
       mode: normalizeSubagentMode(config.subagents?.mode),
       model: config.subagents?.model,
       effort: normalizeSubagentEffort(config.subagents?.effort),
+      maxParallel: config.subagents?.maxParallel,
+      costCapUsd: config.subagents?.costCapUsd,
+      deadlineMs: config.subagents?.deadlineMs,
     },
     git: config.git,
     context: config.context,

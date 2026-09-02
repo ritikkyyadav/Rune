@@ -79,6 +79,14 @@ export interface AutoModePolicyConfig {
    * for strict separation can disable this in signed policy.
    */
   reviewerFallback?: boolean;
+  /**
+   * Default FALSE. Keep an encrypted local sidecar of the raw arguments behind
+   * each recorded decision so history can be replayed as labelled eval
+   * scenarios. Read by the engine, never by the reviewer — it changes nothing
+   * about how an action is judged, only about what can be measured afterwards.
+   * See auto-eval-sidecar.ts.
+   */
+  collectForEval?: boolean;
 }
 
 export interface ResolvedAutoModeConfig extends Required<
@@ -276,31 +284,70 @@ export interface AutoModeAction {
   exactGrant?: boolean;
 }
 
+/**
+ * Where a decision came from. Thirteen in-path sources, plus the three the
+ * supervisor produces out of band. A supervisor row never gated the action it
+ * describes — that is the whole point of moving it off the approval path — but
+ * it is the row that makes the supervisor's false-positive rate measurable, so
+ * it carries the same shape and lands in the same table.
+ */
+export type AutoModeDecisionSource =
+  | "safe_tier"
+  | "workspace_tier"
+  /** Allowed without waiting for a reviewer; the supervisor watches out of band. */
+  | "supervised_tier"
+  /** The supervisor flagged an EARLIER action; the run pauses before this one. */
+  | "supervisor_halt"
+  | "permission_rule"
+  | "critical_circuit_breaker"
+  | "guardrail_circuit_breaker"
+  | "reviewer_input_limit"
+  | "exact_user_grant"
+  | "classifier_fast"
+  | "classifier_reasoned"
+  | "classifier_unavailable"
+  /** A mechanical breaker tripped and Auto routed around it instead of asking. */
+  | "containment"
+  | "human_escalation"
+  /** The out-of-band fast screen's own verdict on an action that already ran. */
+  | "supervisor_screen"
+  /** The reasoned confirmation of a screen flag — what decides whether a halt latches. */
+  | "supervisor_reasoned"
+  /** A confirmed halt that landed after the run ended (engine teardown). */
+  | "supervisor_late";
+
+/**
+ * Where the wall clock went. `durationMs` stays the total so every existing
+ * reader keeps working; the split is what makes a latency report honest —
+ * mechanical routing costs microseconds and a reviewer call costs seconds, and
+ * one average over both hides both.
+ */
+export interface AutoModeTimings {
+  /** Rules, breakers, tier classification — everything that never calls a model. */
+  mechanicalMs: number;
+  /** The first reviewer call, when one was made. */
+  classifierMs: number;
+  /** The retry against the fallback identity, when the first call failed. */
+  retryMs: number;
+}
+
 export interface AutoModeReview {
   verdict: AutoModeVerdict;
   tier: AutoModeTier;
   risk: AutoModeRisk;
-  source:
-    | "safe_tier"
-    | "workspace_tier"
-    /** Allowed without waiting for a reviewer; the supervisor watches out of band. */
-    | "supervised_tier"
-    /** The supervisor flagged an EARLIER action; the run pauses before this one. */
-    | "supervisor_halt"
-    | "permission_rule"
-    | "critical_circuit_breaker"
-    | "guardrail_circuit_breaker"
-    | "reviewer_input_limit"
-    | "exact_user_grant"
-    | "classifier_fast"
-    | "classifier_reasoned"
-    | "classifier_unavailable"
-    /** A mechanical breaker tripped and Auto routed around it instead of asking. */
-    | "containment"
-    | "human_escalation";
+  source: AutoModeDecisionSource;
   reason: string;
   stage: 0 | 1 | 2;
   durationMs: number;
+  /**
+   * The tool call this decision gated. Typed since the first version of this
+   * file and never persisted, which is why a recorded decision could not be
+   * joined to the tool_result that followed it — and so could not be labelled
+   * from history.
+   */
+  callId?: string;
+  /** Per-phase latency. Absent on decisions recorded before the split existed. */
+  timings?: AutoModeTimings;
   reviewer?: { provider: string; model: string };
   matchedRule?: string;
   /**
@@ -481,6 +528,8 @@ const EMITTED_WARNINGS = new Set<string>();
 
 export class AutoModeSafetyController {
   private readonly stats = EMPTY_STATS();
+  /** Where supervisor verdicts go. Installed by the engine; absent in unit tests. */
+  private decisionObserver?: (review: AutoModeReview, action: AutoModeAction) => void;
 
   constructor(
     private readonly config: ResolvedAutoModeConfig,
@@ -637,6 +686,34 @@ export class AutoModeSafetyController {
     else this.stats.denied++;
     this.stats.lastDecisionAt = new Date().toISOString();
     return review;
+  }
+
+  /**
+   * Persist a decision that never gated anything.
+   *
+   * The supervisor's two verdicts are the ones that matter for calibration and
+   * the only ones that were never written down: a screen that fires and a
+   * reasoned pass that refuses to confirm it IS a caught false positive, and
+   * until now that fact lived in a process-local counter that reset on restart.
+   * These rows do not touch `stats.decisions` — they decided nothing — they go
+   * straight to the observer the engine installs.
+   */
+  observeOutOfBand(review: AutoModeReview, action: AutoModeAction): void {
+    if (!this.decisionObserver) return;
+    try {
+      this.decisionObserver(review, action);
+    } catch {
+      // Observability is never allowed to disturb a run.
+    }
+  }
+
+  /**
+   * Install the sink for out-of-band decisions. One observer, set once by the
+   * engine; a second call replaces it rather than fanning out, because two
+   * writers would double every row in the table the report reads.
+   */
+  setDecisionObserver(observer: (review: AutoModeReview, action: AutoModeAction) => void): void {
+    this.decisionObserver = observer;
   }
 
   /**
@@ -804,6 +881,11 @@ export class AutoModeRun {
   private consecutiveClassifierDenials = 0;
   /** Sticky for the rest of the run once any tool result is flagged. */
   private injectionFindings = 0;
+  /** The call under review, stamped onto the row so it can be joined to its result. */
+  private currentCallId: string | undefined;
+  /** Reviewer time inside the current review(), split first call vs retry. */
+  private currentClassifierMs = 0;
+  private currentRetryMs = 0;
   /**
    * Set when the out-of-band supervisor objected to an action that had ALREADY
    * been allowed. Consumed at the top of the next review(), which pauses for a
@@ -886,6 +968,9 @@ export class AutoModeRun {
 
   async review(action: AutoModeAction): Promise<AutoModeReview> {
     const started = performance.now();
+    this.currentCallId = action.callId;
+    this.currentClassifierMs = 0;
+    this.currentRetryMs = 0;
     const tier = classifyAutoModeTier(action);
     let risk = assessActionRisk(action, tier);
     // Injection alert: once any tool result in this session was flagged, no
@@ -1143,15 +1228,27 @@ export class AutoModeRun {
       const fallbackAvailable = this.controller.hasFallbackReviewer();
       let reasoned: { text: string; reviewer: { provider: string; model: string } };
       let parsed: ReturnType<typeof parseReasonedDecision>;
+      const firstCallAt = performance.now();
       try {
         reasoned = await this.controller.classifierCall("reasoned", prompt);
         parsed = parseReasonedDecision(reasoned.text);
+        this.currentClassifierMs = elapsed(firstCallAt);
       } catch {
+        // The failed attempt is still reviewer latency the user waited through,
+        // so it is charged to classifierMs whether or not the retry succeeds.
+        this.currentClassifierMs = elapsed(firstCallAt);
         this.controller.noteReviewerRetry();
-        reasoned = await this.controller.classifierCall("reasoned", prompt, {
-          useFallback: fallbackAvailable,
-        });
-        parsed = parseReasonedDecision(reasoned.text);
+        const retryAt = performance.now();
+        try {
+          reasoned = await this.controller.classifierCall("reasoned", prompt, {
+            useFallback: fallbackAvailable,
+          });
+          parsed = parseReasonedDecision(reasoned.text);
+        } finally {
+          // Recorded in the finally so a decision that ends in containment
+          // still reports what the doomed retry cost.
+          this.currentRetryMs = elapsed(retryAt);
+        }
       }
       if (parsed.verdict === "allow") {
         this.consecutiveClassifierDenials = 0;
@@ -1350,6 +1447,15 @@ export class AutoModeRun {
       const last = this.actions.at(-1);
       if (last) last.blocked = true;
     }
+    review.callId = this.currentCallId;
+    // Mechanical time is what is left over. Deriving it rather than measuring
+    // it keeps the three parts summing to the total the audit row already
+    // reports, so the split can never contradict the number beside it.
+    review.timings = {
+      mechanicalMs: Math.max(0, review.durationMs - this.currentClassifierMs - this.currentRetryMs),
+      classifierMs: this.currentClassifierMs,
+      retryMs: this.currentRetryMs,
+    };
     return this.controller.record(review);
   }
 
@@ -1377,8 +1483,34 @@ export class AutoModeRun {
 
     const task = (async () => {
       try {
-        const { text } = await this.controller.classifierCall("fast", prompt);
-        if (parseFastDecision(text) !== "block") return;
+        const screenAt = performance.now();
+        const { text, reviewer: screenReviewer } = await this.controller.classifierCall(
+          "fast",
+          prompt,
+        );
+        const screenMs = elapsed(screenAt);
+        const flagged = parseFastDecision(text) === "block";
+        // Every screen verdict is written down, not just the ones that fire.
+        // A false-positive RATE needs the denominator, and the denominator is
+        // the screens that passed — which nothing has ever recorded.
+        this.controller.observeOutOfBand(
+          {
+            verdict: flagged ? "deny" : "allow",
+            tier: "classifier",
+            risk,
+            source: "supervisor_screen",
+            reason: flagged
+              ? `Supervisor fast screen flagged ${action.toolName} after it ran.`
+              : `Supervisor fast screen cleared ${action.toolName}.`,
+            stage: 1,
+            durationMs: screenMs,
+            callId: action.callId,
+            reviewer: screenReviewer,
+            timings: { mechanicalMs: 0, classifierMs: screenMs, retryMs: 0 },
+          },
+          action,
+        );
+        if (!flagged) return;
 
         // The fast screen is deliberately trigger-happy — its instruction is
         // literally "err on the side of blocking". That bias is correct where
@@ -1394,16 +1526,41 @@ export class AutoModeRun {
         // — not the run, and not the scrutiny floor, because a suspected false
         // positive must not quietly degrade every later review either.
         let parsed: ReturnType<typeof parseReasonedDecision>;
+        let confirmReviewer: { provider: string; model: string } | undefined;
+        const confirmAt = performance.now();
         try {
           const confirm = await this.controller.classifierCall("reasoned", prompt);
           parsed = parseReasonedDecision(confirm.text);
+          confirmReviewer = confirm.reviewer;
         } catch {
           // A confirmer that cannot answer is an outage, not a finding. Same
           // rule as the catch below: the mechanical breakers are the guard.
           this.controller.noteSupervisorUnconfirmed();
           return;
         }
-        if (parsed.verdict !== "deny" || (parsed.risk !== "high" && parsed.risk !== "critical")) {
+        const confirmMs = elapsed(confirmAt);
+        const confirmed =
+          parsed.verdict === "deny" && (parsed.risk === "high" || parsed.risk === "critical");
+        // The row that makes a caught false positive countable from the DB
+        // instead of from a counter that dies with the process.
+        this.controller.observeOutOfBand(
+          {
+            verdict: confirmed ? "deny" : "allow",
+            tier: "classifier",
+            risk: parsed.risk ?? risk,
+            source: "supervisor_reasoned",
+            reason: confirmed
+              ? parsed.reason
+              : `Supervisor screen NOT confirmed on review (${parsed.verdict}, ${parsed.risk ?? "unrated"}): ${parsed.reason}`,
+            stage: 2,
+            durationMs: confirmMs,
+            callId: action.callId,
+            reviewer: confirmReviewer,
+            timings: { mechanicalMs: 0, classifierMs: confirmMs, retryMs: 0 },
+          },
+          action,
+        );
+        if (!confirmed) {
           this.controller.noteSupervisorUnconfirmed();
           return;
         }

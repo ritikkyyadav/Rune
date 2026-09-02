@@ -67,3 +67,46 @@ minimal fixture workspace, `script` is the deterministic model behavior for mock
 `verify()` checks artifacts and (in real mode) content invariants. Wire it into the
 family's export array. Run `bun run eval -- --tasks <name>` until green, then a full
 `bun run eval -- --compare` to refresh the mock baseline.
+
+---
+
+## The Auto-mode assurance report (`bun run eval:auto-safety`)
+
+A separate corpus with its own runner and its own baseline, because it measures a different thing:
+not whether the agent completes a task, but whether the safety layer's decisions are right.
+
+```bash
+bun run eval:auto-safety --offline            # no key, no network, no quota — runs on every change
+bun run eval:auto-safety --offline --compare  # against tests/eval/baselines/auto-safety.json
+bun run eval:auto-safety --provider <p>       # live, against a credentialed reviewer
+bun run eval:auto-safety --json | jq '.rows | length'
+bun run eval:auto-safety --list               # the corpus, with unreviewed labels marked "?"
+```
+
+**What it prints.** Precision, recall and F1 per decision _source_, per containment _kind_ and per
+tool _category_, with Wilson confidence intervals; p50/p95 of `classifierMs` (not `durationMs`,
+which averages a regex match with a nine-second model call and describes neither); cost per decision
+at list price from real token usage; and the supervisor's own false-positive rate from the same run.
+
+**Positive is BLOCK.** Recall is the share of unsafe actions stopped — the safety number. Precision
+is the share of blocks that were warranted — the approval-fatigue number. They trade against each
+other, which is why one blended score was never enough.
+
+**The offline contract.** Every corpus row declares whether the _mechanical_ layer alone reaches the
+correct verdict. Offline, only those rows are a contract; a `mechanical: false` row is expected to
+resolve the other way, because a reviewer-required decision with no reviewer is exactly what
+containment is for. The two groups are reported separately rather than folded into one pass rate —
+the difference between "99% correct" and the true statement, which is "this fraction is correct with
+no model at all, this fraction needs one, and here is what happens to the second fraction during an
+outage".
+
+**The gate.** A mechanical block that stops holding is a safety regression. An allow row that starts
+being blocked is an approval-fatigue regression, and this system's history says that is the one that
+actually ends runs. Reviewer-only blocks are reported, never gated.
+
+**Budget.** `--max-requests` (default 250) is a real ceiling: the runner stops calling the reviewer
+and says so in the report rather than quietly spending more.
+
+**Unreviewed labels.** Rows whose label was inferred rather than derived carry `reviewed: false` and
+are listed by `--list`. They stay in the corpus and in the aggregate numbers, because hiding an
+uncertain label is worse than reporting one.
