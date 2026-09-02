@@ -77,6 +77,41 @@ subtree). Two mechanisms enforce it:
 The lead remains the integrator: it designs the seams, dispatches workers, then reads their
 reports, wires the pieces together, and **runs the checks itself** — workers have no shell.
 
+### What a sub-agent returns
+
+Both delegation tools declare an `outputSchema` and return a typed object beside the text:
+
+| Field | Who fills it |
+|---|---|
+| `summary` | the model — one paragraph the parent can act on |
+| `findings[]` | the model — discrete, independently checkable conclusions |
+| `filesExamined[]` | the model, falling back to the observed tool trail |
+| `filesChanged[]` | **the harness** — what was actually written, never what was claimed |
+| `checks` | **the harness** — `passed` / `failed` / `not_run` from the worker's own run |
+| `confidence` | the model |
+| `unresolved[]` | the model — what it could not settle |
+| `stopReason`, `toolCallCount` | **the harness** |
+| `servedBy` | **the harness** — the model that actually answered, if it changed mid-run |
+
+The split is the design. A model has an incentive to be wrong about what it changed and whether
+checks passed, so those fields come from observation; the model contributes prose and judgement.
+
+`result` remains the rendered text the model reads, so nothing downstream had to change. The
+rendered form is now produced *from* the object — the old `partialReport` and `buildManifest`
+became renderers — which is what stops the prose and the object from disagreeing.
+
+If the sub-agent answers in prose rather than in the schema, exactly one extra tool-less call
+converts its own text into the object, constrained by `responseFormat`. That call is deliberately
+outside the agent loop: a JSON schema on a turn that still offers tools makes providers choose
+between structured output and tool calling, and they choose differently. A sub-agent that already
+answers in shape costs nothing extra, and a failed conversion falls back to observation rather
+than failing the delegation — throwing away real work over the shape of its report was the
+original defect, and it discarded 33 of 68 recorded `task` results.
+
+A structured result that fails its schema is dropped (the parent reads the prose) and filed as a
+`loop.schema_violation` incident, so a provider that quietly stops honouring structured output is
+visible rather than merely disappointing.
+
 ### What you see while a fleet runs
 
 Each sub-agent's nested tool calls are reported to the parent as progress notes. The status
