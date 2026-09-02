@@ -1554,7 +1554,7 @@ async function main() {
   // ─── Slash Command Definitions ───
 
   const SLASH_CMDS: [string, string][] = [
-    ["/theme", "Switch accent colors and light/dark mode"],
+    ["/theme", "Appearance — light | dark | auto"],
     ["/model", "Choose model/provider"],
     ["/sessions", "Browse, resume, rename, archive, or delete sessions"],
     ["/mode", "Shift gears — 1st · 2nd · 3rd · 4th · auto"],
@@ -2148,8 +2148,9 @@ async function main() {
         const themes = listThemes();
         const arg = input.slice("/theme".length).trim().toLowerCase();
         if (arg) {
-          // Legacy palette names still migrate onto Flow; the active choices
-          // are the six foreground roles or terminal-native mode.
+          // Every retired accent name still resolves (findTheme migrates it to
+          // the ground it was saved on); the active choices are light, dark and
+          // terminal-native.
           const labelMatch = themes.find((t) => t.label.toLowerCase() === arg);
           const applied = setTheme(arg) || (labelMatch ? setTheme(labelMatch.name) : false);
           if (applied) {
@@ -2165,11 +2166,16 @@ async function main() {
           return;
         }
         const current = getTheme().name;
-        process.stdout.write(`  ${bold(text("Color modes"))}\n\n`);
+        process.stdout.write(`  ${bold(text("Appearance"))}\n\n`);
         themes.forEach((t, i) => {
           const isCurrent = t.name === current;
           const marker = isCurrent ? ` ${info(`${glyph("selection")} current`)}` : "";
-          const description = t.name === "auto" ? "host terminal" : "six ANSI16 foreground roles";
+          const description =
+            t.name === "auto"
+              ? "follow the host terminal"
+              : t.name === "gear"
+                ? "drafting paper"
+                : "ink";
           process.stdout.write(
             `    ${warn(`[${String(i + 1).padStart(2)}]`)} ${(isCurrent ? text : muted)(t.label.padEnd(18))} ${swatch(t.name)}  ${faint(description)}${marker}\n`,
           );

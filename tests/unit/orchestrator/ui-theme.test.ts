@@ -96,7 +96,7 @@ describe("Flow six-role palette", () => {
       expect(stripAnsi(paint("payload"))).toBe("payload");
     }
     expect(text("plain body")).toBe("plain body");
-    expect(stripAnsi(paintWith("flow", "danger", "failed"))).toBe("failed");
+    expect(stripAnsi(paintWith("gear-dark", "danger", "failed"))).toBe("failed");
   });
 });
 
@@ -109,7 +109,7 @@ describe("no background ownership", () => {
     // mark drawn on our row, inside our own input field, and inheriting it puts
     // a foreign accent in the middle of a themed frame. It is claimed, and
     // handed straight back on exit; see the cursor describe below.
-    for (const name of ["flow", "gear-dark", "gear-orange-dark", "auto"]) {
+    for (const name of ["gear", "gear-dark", "auto"]) {
       setTheme(name);
       expect(terminalThemeSeq(), name).not.toContain("]10;");
       expect(terminalThemeSeq(), name).not.toContain("]11;");
@@ -146,23 +146,13 @@ describe("no background ownership", () => {
 // collapses to a single mode — which is the shape of the deletion, not of the
 // design.
 describe("theme palettes", () => {
-  it("offers every accent in both polarities, plus the host escape hatch", () => {
+  it("offers two grounds and the host escape hatch, and nothing else", () => {
+    // Phase 3 collapsed three visual identities into one. Five cosmetic
+    // accents were the largest part of what made the product look like a theme
+    // gallery rather than an instrument; the picker is light, dark, auto.
     const names = listThemes().map((theme) => theme.name);
-    expect(names[0]).toBe("flow");
-    expect(names.at(-1)).toBe("auto");
-    // Cobalt is the base accent, so its ids are bare `gear` / `gear-dark`.
-    for (const [light, dark] of [
-      ["gear", "gear-dark"],
-      ["gear-orange", "gear-orange-dark"],
-      ["gear-violet", "gear-violet-dark"],
-      ["gear-emerald", "gear-emerald-dark"],
-      ["gear-mono", "gear-mono-dark"],
-    ]) {
-      expect(names, light).toContain(light);
-      expect(names, dark).toContain(dark);
-    }
-    expect(names.length).toBeGreaterThanOrEqual(12);
-    expect(DEFAULT_THEME).toBe("flow");
+    expect(names).toEqual(["gear-dark", "gear", "auto"]);
+    expect(DEFAULT_THEME).toBe("gear-dark");
     expect(AUTO_THEME.preserveTerminal).toBe(true);
   });
 
@@ -180,27 +170,34 @@ describe("theme palettes", () => {
     }
   });
 
-  it("distinct accents are actually distinct pigments", () => {
-    const accentOf = (name: string) => findTheme(name)!.slots.info.rgb.join(",");
-    const seen = new Set(
-      ["gear-dark", "gear-orange-dark", "gear-violet-dark", "gear-emerald-dark"].map(accentOf),
-    );
-    expect(seen.size).toBe(4);
+  it("the accent is the datum on paper and the signal on ink", () => {
+    // One hue, two values of it. `info` is the slot the `accent` ROLE resolves
+    // through — see ROLE_SLOT, where the names read from the other direction.
+    expect(findTheme("gear")!.slots.info.rgb).toEqual([14, 94, 99]);
+    expect(findTheme("gear-dark")!.slots.info.rgb).toEqual([23, 160, 168]);
   });
 
-  it("resolves a saved name to its own palette, and still rejects typos", () => {
+  it("every retired accent name still resolves, to the ground it was saved on", () => {
+    // Someone with `gear-violet-dark` in ~/.gear/theme.json gets the dark mode,
+    // not an "unknown theme" error and a surprise repaint. `flow` was the
+    // previous dark default and migrates the same way.
     for (const [saved, resolved] of [
       ["gear-dark", "gear-dark"],
-      ["orange", "gear-orange"],
-      ["mono-light", "gear-mono"],
+      ["flow", "gear-dark"],
+      ["orange", "gear"],
+      ["gear-violet-dark", "gear-dark"],
+      ["mono-light", "gear"],
+      ["light", "gear"],
+      ["dark", "gear-dark"],
+      ["system", "auto"],
     ] as const) {
       expect(findTheme(saved)?.name, saved).toBe(resolved);
-      expect(setTheme(saved)).toBe(true);
-      expect(getTheme().name).toBe(resolved);
+      expect(setTheme(saved), saved).toBe(true);
+      expect(getTheme().name, saved).toBe(resolved);
     }
-    setTheme("flow");
+    setTheme("gear-dark");
     expect(setTheme("not-a-theme")).toBe(false);
-    expect(getTheme().name).toBe("flow");
+    expect(getTheme().name).toBe("gear-dark");
   });
 
   it("keeps terminal-native mode inert and labels detected polarity", () => {
@@ -215,17 +212,20 @@ describe("theme palettes", () => {
 
   it("renders a compact semantic swatch without changing the active mode", () => {
     setTheme("auto");
-    expect(stripAnsi(swatch("flow"))).toBe(glyph("live").repeat(4));
+    expect(stripAnsi(swatch("gear-dark"))).toBe(glyph("live").repeat(4));
     expect(getTheme().name).toBe("auto");
   });
 
-  it("two themes carry different pigments for the same role", () => {
+  it("the two grounds are inversions, not two shades of one", () => {
     // Asserted on the pigments rather than on rendered output: a test process
     // has no tty, so nothing emits colour and every swatch strips to the same
     // four marks. The palette is the thing that has to differ.
-    const cobalt = findTheme("gear-dark")!.slots.info.rgb;
-    const orange = findTheme("gear-orange-dark")!.slots.info.rgb;
-    expect(cobalt).not.toEqual(orange);
+    const light = findTheme("gear")!;
+    const dark = findTheme("gear-dark")!;
+    expect(light.appearance).toBe("light");
+    expect(dark.appearance).toBe("dark");
+    expect(light.slots.text.rgb).not.toEqual(dark.slots.text.rgb);
+    expect(light.bg.rgb).not.toEqual(dark.bg.rgb);
   });
 });
 
@@ -236,14 +236,14 @@ describe("theme-store migration", () => {
       expect(loadSavedTheme(dir)).toBeNull();
       saveTheme("auto", dir);
       expect(loadSavedTheme(dir)).toBe("auto");
-      // A saved palette resolves to itself now; it used to be flattened to
-      // the single remaining mode, which is what made every theme a no-op.
-      expect(resolveInitialTheme({ env: "gear-orange-dark", saved: "auto" })).toBe(
-        "gear-orange-dark",
-      );
+      // A retired accent id in the environment is honoured as a CHOICE and
+      // resolved onto the ground it was saved on — not rejected, and not
+      // silently kept as a name nothing can paint.
+      expect(resolveInitialTheme({ env: "gear-orange-dark", saved: "auto" })).toBe("gear-dark");
+      expect(resolveInitialTheme({ env: "gear", saved: "auto" })).toBe("gear");
       expect(resolveInitialTheme({ env: "bogus", saved: "auto" })).toBe("auto");
-      expect(resolveInitialTheme({ configured: "dracula" })).toBe("flow");
-      expect(resolveInitialTheme({})).toBe("flow");
+      expect(resolveInitialTheme({ configured: "dracula" })).toBe("gear-dark");
+      expect(resolveInitialTheme({})).toBe("gear-dark");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -288,7 +288,7 @@ describe("the caret is painted, not requested", () => {
     // simply refuse — Warp does, which is how a foreign accent ended up sitting
     // on the first character of the input on every frame while the sequence
     // went out correctly. A request that can be ignored is not ownership.
-    for (const name of ["flow", "gear-orange-dark", "auto"]) {
+    for (const name of ["gear", "gear-dark", "auto"]) {
       setTheme(name);
       expect(terminalThemeSeq(), name).toBe("");
     }
@@ -320,7 +320,7 @@ describe("the caret is painted, not requested", () => {
   });
 
   it("still carries the character, never blanks it", () => {
-    setTheme("gear-violet-dark");
+    setTheme("gear-dark");
     expect(stripAnsi(cursorCell("d"))).toBe("d");
     expect(stripAnsi(cursorCell(""))).toBe(" "); // end of line still gets a block
   });
