@@ -44,6 +44,16 @@ export {
 export { modelUsesApplyPatch } from "./registry";
 export { CustomToolsLoader } from "./tools/custom-loader";
 export {
+  createLoadToolsTool,
+  catalogSummary,
+  deferredByDefault,
+  renderCatalog,
+  DEFERRED_BUILTINS,
+  LOAD_TOOLS_TOOL,
+  LOAD_TOOLS_SCHEMA,
+  type DeferredEntry,
+} from "./tools/load-tools";
+export {
   McpClient,
   McpDiscovery,
   McpRpcError,

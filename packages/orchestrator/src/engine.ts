@@ -758,6 +758,8 @@ export class Engine {
   private orgPolicy: LoadedOrgPolicy | null = null;
   /** Plugin bundles, discovered lazily once (null = not yet scanned). */
   private pluginDiscovery: { plugins: LoadedPlugin[]; errors: string[] } | null = null;
+  /** Sessions whose per-request tool-surface cost has been recorded (once each). */
+  private toolSurfaceLogged = new Set<string>();
   private config: EngineConfig;
   private permissionHandler?: PermissionHandler;
   private autoApprovalNotifier?: (notice: AutoApprovalNotice) => void;
@@ -1713,6 +1715,27 @@ export class Engine {
       }
     }
     for (const handler of current) this.registry.register(handler);
+  }
+
+  /**
+   * Record what the advertised tool surface costs on one request.
+   *
+   * Written once per session, after the extension loaders have run, so the
+   * number reflects the real surface (built-ins + connectors + plugins) rather
+   * than the built-ins alone. `gear audit` reads it back. Deferred loading
+   * (P4.1) is measured against itself here: `eagerTokens` is what the same set
+   * would have cost with every schema shipped in full, which is what makes the
+   * reduction a measurement rather than a claim.
+   */
+  private recordToolSurface(sessionId: string, model: string): void {
+    if (this.toolSurfaceLogged.has(sessionId)) return;
+    this.toolSurfaceLogged.add(sessionId);
+    try {
+      const report = this.registry.schemaTokenReport(model);
+      this.sessions.appendEvent(sessionId, { type: "tool_surface", payload: { ...report } });
+    } catch {
+      // Observability is never allowed to fail a turn.
+    }
   }
 
   /** Ensure MCP servers are discovered, then return their status (backs `/mcp`). */
@@ -3300,6 +3323,9 @@ export class Engine {
           }).then((map) => (map ? [map] : []));
 
     await Promise.all([this.ensureHookRunner(), this.ensureMcpServers(), this.ensureSkills()]);
+    // What the tool surface costs per request, once the extensions are in.
+    // Recorded once per session so `gear audit` can report it (P4.1).
+    this.recordToolSurface(sessionId, session.model);
 
     // Assemble the system prompt: doctrine + environment snapshot + project
     // memory (ALAN.md/CLAUDE.md/AGENTS.md) + the evergreen System Memory

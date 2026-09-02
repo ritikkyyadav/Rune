@@ -20,6 +20,7 @@ import { createMultiEditHandler } from "./multi-edit";
 import { createApplyPatchHandler } from "./apply-patch";
 import { withLspFeedback } from "./lsp/feedback";
 import { createN8nTriggerHandler } from "./n8n";
+import { createLoadToolsTool } from "./load-tools";
 import { createLspHandler } from "./lsp/tool";
 import { LspServerManager } from "./lsp/manager";
 import { withSyntaxCheck } from "./diagnostics";
@@ -338,4 +339,8 @@ export function registerBuiltinTools(registry: ToolRegistry, binaryPath: string)
   // (withSyntaxCheck is single-path; a patch touches many).
   registry.register(createApplyPatchHandler());
   registry.register(createN8nTriggerHandler());
+  // Turns a catalog line into a usable schema. Advertised only while something
+  // is still deferred (ToolRegistry.toLlmTools), so a connector-less session
+  // never sees it.
+  registry.register(createLoadToolsTool(registry));
 }

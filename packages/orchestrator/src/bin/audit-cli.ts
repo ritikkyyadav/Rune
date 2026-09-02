@@ -196,6 +196,30 @@ export async function runAudit(args: string[], values: Record<string, unknown>):
       );
     }
 
+    // ── What the tool surface costs, per request ──
+    // Every advertised schema is paid on EVERY request for the life of the
+    // session. Deferred loading (P4.1) turns most connector tools into one
+    // catalog line each; this is the line that says whether it worked.
+    const surface = [...rows].reverse().find((r) => r.event.type === "tool_surface");
+    if (surface) {
+      const p = payloadOf(surface) as {
+        advertised?: number;
+        deferred?: number;
+        tokens?: number;
+        eagerTokens?: number;
+        savedPct?: number;
+      };
+      const saved = typeof p.savedPct === "number" ? p.savedPct : null;
+      say(
+        `  ${text("Schema tokens")}  ${num(p.tokens ?? 0)} per request` +
+          ` ${dim("·")} ${num(p.advertised ?? 0)} advertised` +
+          (p.deferred ? ` ${dim("·")} ${num(p.deferred)} deferred` : "") +
+          (saved !== null && (p.deferred ?? 0) > 0
+            ? ` ${dim("·")} ${saved >= 40 ? ok(`${saved}% below`) : warn(`${saved}% below`)} ${dim(`${num(p.eagerTokens ?? 0)} eager`)}`
+            : ""),
+      );
+    }
+
     // ── Safety decisions ──
     const decisions = rows.filter((r) => r.event.type === "safety_decision");
     if (decisions.length > 0) {
