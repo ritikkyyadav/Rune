@@ -44,7 +44,7 @@ import type {
   SkillSearchHit,
   ToolCallOutput,
 } from "@gear/tool-registry";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   setConfigValue,
@@ -114,6 +114,7 @@ import { loadOrgPolicy, policyAllowsModel, type LoadedOrgPolicy } from "./org-po
 import { discoverPlugins, GEAR_VERSION, type LoadedPlugin } from "./plugins";
 import { StruggleDetector } from "./struggle-detector";
 import { TaskStateStore } from "./task-state";
+import type { EvidenceRef, PendingDecisionKind } from "@gear/protocol";
 import { policyForModel, type ReliabilityPolicy } from "./reliability-policy";
 import {
   NotebookStore,
@@ -177,6 +178,7 @@ import {
   type Brief,
   type BriefHandler,
 } from "./brief";
+import { interpretIntent } from "./intent";
 import { runOnParentCommit } from "./parent-check";
 import { isGitRepo } from "./worktree";
 import type { QuestionHandler } from "./ask-user";
@@ -1146,6 +1148,16 @@ export class Engine {
   // Task spines per session: the run's goal/todos/ledger/handoff, kept outside
   // the transcript and persisted as `task_state` session events (latest wins).
   private taskStates = new Map<string, TaskStateStore>();
+  /**
+   * The spine of the run in flight. The four round-trip handlers live outside
+   * `chat()` (they are called from tool execution, which has no session in
+   * scope), and the pending-decision list they write is per-task — so the run
+   * publishes its own spine here for the length of the run, the same shape
+   * `activeAutoRun` already uses, and it is null between runs.
+   */
+  private liveSpine: TaskStateStore | null = null;
+  /** Narrative events raised by the round-trip handlers, drained by the loop. */
+  private pendingNarrative: AgentTurnEvent[] = [];
   // Struggle nudges remaining for the CURRENT run (reset each chat()).
   private struggleNudgesLeft = 0;
   // Session-scoped /loop schedulers. Definitions are persisted as ordinary
@@ -1299,7 +1311,13 @@ export class Engine {
         const handler = this.questionHandler;
         if (!handler) return undefined;
         return async (q) => {
+          // The inbox holds it for as long as it is genuinely open. A question
+          // that is asked and answered in one breath still leaves both rows,
+          // which is what lets the record say the answer was the user's.
+          const id = `q${++this.pendingDecisionSeq}`;
+          this.openPendingDecision(id, "question", q.question);
           const answer = await handler(q);
+          this.closePendingDecision(id, answer.slice(0, 200));
           try {
             this.activeAutoRun?.addUserAnswer(q.question, answer);
           } catch {
@@ -1317,11 +1335,37 @@ export class Engine {
     // objects the close checks off, and only evidence can move them.
     this.registry.register(
       createReadBackTool(
-        () => this.briefHandler,
+        () => {
+          const handler = this.briefHandler;
+          if (!handler) return undefined;
+          return async (brief) => {
+            const id = `r${++this.pendingDecisionSeq}`;
+            this.openPendingDecision(id, "review", `read-back: ${brief.reading}`);
+            const decision = await handler(brief);
+            this.closePendingDecision(
+              id,
+              decision.accepted
+                ? decision.edited
+                  ? "accepted with edits"
+                  : "accepted"
+                : "rejected",
+            );
+            return decision;
+          };
+        },
         () => this.currentGoal(),
         (brief) => {
           this.brief = brief;
           this.ledger = new BriefLedger(brief);
+        },
+        // The model's one revision of the task kind: the read-back is where it
+        // says what it understood the work to BE, so it is the honest place
+        // for it. The store enforces the "once" — a second attempt is ignored.
+        (kind) => {
+          const spine = this.liveSpine;
+          if (spine?.setKind(kind, "model")) {
+            this.pendingNarrative.push({ type: "task_kind", kind, source: "model" });
+          }
         },
       ),
     );
@@ -1954,6 +1998,96 @@ export class Engine {
 
   /** The verbatim request the current task started from, for the read-back to
    *  be checked against. Empty when no task has begun. */
+  // ─── The narrative: task kind, and the pending-decision inbox ───
+
+  /**
+   * Read what shape of work this task is, once, at task start.
+   *
+   * Deterministic first and a single small model call only behind the
+   * ambiguity gate (see intent.ts): most asks name their own verb, and a
+   * classifier in front of every task start would be a tax on every task.
+   * Returns the event to emit, or null when the kind was already set — a
+   * second turn of the same task re-reads nothing.
+   */
+  private async ensureTaskKind(
+    spine: TaskStateStore,
+    userMessage: string,
+  ): Promise<AgentTurnEvent | null> {
+    if (spine.kind) return null;
+    const reading = await interpretIntent({
+      message: userMessage,
+      signals: { greenfield: this.isGreenfieldWorkspace() },
+      ask: async (system, question) => {
+        const resp = await this.gateway.infer({
+          messages: [{ role: "user", content: [{ type: "text", text: question }] }],
+          system,
+          model: this.config.model,
+          provider: this.config.provider,
+          maxTokens: 8,
+          stream: false,
+        });
+        const block = resp.content.find((b) => b.type === "text");
+        return block && block.type === "text" ? block.text : "";
+      },
+    });
+    if (!spine.setKind(reading.kind, "harness")) return null;
+    return { type: "task_kind", kind: reading.kind, source: "harness" };
+  }
+
+  /** Best-effort: does the workspace already hold a project? */
+  private isGreenfieldWorkspace(): boolean {
+    try {
+      return readdirSync(this.config.workspaceRoot).filter((n) => !n.startsWith(".")).length <= 2;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Record a decision that is waiting on a person, from any of the four
+   * round-trips, and hand the loop the event to emit.
+   *
+   * Kept here rather than in each handler because the four resolve in four
+   * different places and the inbox is one list: a permission prompt answered
+   * in the terminal and a held step approved from the web have to leave the
+   * same trace, or "Needs you" is four lists pretending to be one.
+   */
+  private openPendingDecision(
+    id: string,
+    kind: PendingDecisionKind,
+    summary: string,
+    deadline?: string,
+  ): void {
+    const spine = this.liveSpine;
+    if (!spine) return;
+    const decision = spine.addPendingDecision({
+      id,
+      kind,
+      summary,
+      ...(deadline ? { deadline } : {}),
+    });
+    this.pendingNarrative.push({ type: "pending_decision", decision });
+  }
+
+  private closePendingDecision(id: string, outcome: string): void {
+    const spine = this.liveSpine;
+    if (!spine) return;
+    if (spine.resolvePendingDecision(id, outcome)) {
+      this.pendingNarrative.push({ type: "decision_resolved", id, outcome });
+    }
+  }
+
+  /** Ids for the pending-decision inbox; unique within the engine process. */
+  private pendingDecisionSeq = 0;
+
+  /** Narrative events raised outside the loop, taken once by the run. */
+  private takeNarrativeEvents(): AgentTurnEvent[] {
+    if (this.pendingNarrative.length === 0) return [];
+    const out = this.pendingNarrative;
+    this.pendingNarrative = [];
+    return out;
+  }
+
   private currentGoal(): string {
     for (const store of this.taskStates.values()) {
       // The latest substantive ask — a follow-up waiting for its plan counts,
@@ -2653,6 +2787,8 @@ export class Engine {
       const suggestedScope =
         decision.type === "needs_confirmation" ? decision.suggestedScope : "once";
 
+      const pendingId = `p${++this.pendingDecisionSeq}`;
+      this.openPendingDecision(pendingId, "approval", `${toolName}: ${argsSummary}`);
       const userDecision = await this.permissionHandler({
         toolName,
         argsSummary,
@@ -2674,6 +2810,7 @@ export class Engine {
           autoReview?.source === "guardrail_circuit_breaker",
       });
 
+      this.closePendingDecision(pendingId, userDecision.kind);
       if (userDecision.kind === "deny") {
         autoRun.noteHumanDecision();
         return { allowed: false, userDecision: true, reason: "User denied" };
@@ -4021,6 +4158,10 @@ export class Engine {
       TaskStateStore.fromEvents(priorEvents) ??
       new TaskStateStore();
     this.taskStates.set(sessionId, taskState);
+    // Publish this run's spine for the round-trip handlers, which are called
+    // from tool execution and have no session in scope. Cleared in the finally.
+    this.liveSpine = taskState;
+    this.pendingNarrative = [];
     // The spine as it stands BEFORE this run touches it. The run's retro
     // reports steps as a delta against this, so one turn's record is that
     // turn's work and not every step the session ever closed.
@@ -4381,6 +4522,21 @@ export class Engine {
         // first todo_write.
         if (!spinePersistedThisRun) {
           spinePersistedThisRun = true;
+          // …and read what shape of work this is, once per task. The loop has
+          // applied the boundary rule by now, so a follow-up that started a
+          // new task gets its own reading and a mid-task message gets none.
+          try {
+            const kindEvent = await this.ensureTaskKind(taskState, userMessage);
+            if (kindEvent) yield kindEvent;
+          } catch {
+            // A reading that cannot be taken is not a failed run.
+          }
+          persistTaskState();
+        }
+        // Anything the round-trip handlers recorded while the last tool ran:
+        // a question asked, a permission answered, a read-back accepted.
+        for (const narrative of this.takeNarrativeEvents()) {
+          yield narrative;
           persistTaskState();
         }
         if (event.type === "error" && !event.recoverable) {
@@ -4914,6 +5070,8 @@ export class Engine {
       if (this.currentAbort === abortController) {
         this.currentAbort = null;
       }
+      // The round-trip handlers have no run to write into any more.
+      if (this.liveSpine === taskState) this.liveSpine = null;
       // A spend ceiling that stops the run without saying so is indistinguishable
       // from a crash. Report it once, in the user's terms — what the limit was,
       // what it reached, and how to lift it — then clear it so the next turn
@@ -4955,6 +5113,21 @@ export class Engine {
         } catch {
           // The record is best-effort; the run itself is done.
         }
+        // …and into the one inbox, where a deferral sits beside the questions
+        // and approvals instead of in a panel only the terminal draws. A held
+        // step is the one pending decision that is still pending when the run
+        // ends: that is what "held" means.
+        for (const d of deferrals) {
+          const id = `h${++this.pendingDecisionSeq}`;
+          taskState.addPendingDecision({
+            id,
+            kind: "held_step",
+            summary: `${d.toolName}: ${d.summary}`,
+          });
+          const decision = taskState.pendingDecisions.find((p) => p.id === id);
+          if (decision) yield { type: "pending_decision", decision } as AgentTurnEvent;
+        }
+        persistTaskState();
         if (this.autoDeferralNotifier) {
           try {
             this.autoDeferralNotifier(deferrals);

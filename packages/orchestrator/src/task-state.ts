@@ -34,8 +34,38 @@ import { countTokens } from "./tokenizer";
 // The plan-ledger wire shapes live in `@gear/protocol`: `todo_updated` and
 // `handoff` carry them to every surface, so the union and its evidence counts
 // are defined once and re-exported here for the ~40 in-repo import sites.
-export type { TodoStatus, StepEvidence, TodoItem, HandoffReason } from "@gear/protocol";
-import type { StepEvidence, TodoItem, TodoStatus, HandoffReason } from "@gear/protocol";
+export type {
+  TodoStatus,
+  StepEvidence,
+  TodoItem,
+  HandoffReason,
+  CheckRecord,
+  TaskKind,
+  EvidenceRef,
+  Hypothesis,
+  HypothesisStatus,
+  TaskDecision,
+  TaskArtifact,
+  ArtifactKind,
+  PendingDecision,
+  PendingDecisionKind,
+} from "@gear/protocol";
+import type {
+  ArtifactKind,
+  CheckRecord,
+  EvidenceRef,
+  HandoffReason,
+  Hypothesis,
+  HypothesisStatus,
+  PendingDecision,
+  PendingDecisionKind,
+  StepEvidence,
+  TaskArtifact,
+  TaskDecision,
+  TaskKind,
+  TodoItem,
+  TodoStatus,
+} from "@gear/protocol";
 
 export type EffectKind =
   "read" | "write" | "run" | "check_pass" | "check_fail" | "answer" | "delegate" | "look";
@@ -111,19 +141,37 @@ export interface TaskState {
    * absent means no data, never zero.
    */
   checks?: CheckRecord[];
+  // ─── The narrative (P11.1) ───
+  //
+  // Everything above says what the task IS and what was done. This says how
+  // the run got there: what it suspected, what settled each suspicion, what it
+  // committed to, what it produced, and what is waiting on a person. A run
+  // that tried three things and reports only the one that worked has hidden
+  // the part a reader needs in order to trust the answer.
+  /**
+   * What shape of work this is. Set once per task by the Intent Interpreter
+   * and revisable once by the model; cleared when the goal rolls, because the
+   * next task is a different task.
+   */
+  kind?: TaskKind;
+  /** True once the model has used its single revision of `kind`. */
+  kindRevised?: boolean;
+  /** Hypotheses in the order they were raised, and the decisions they led to. */
+  narrative?: {
+    hypotheses: Hypothesis[];
+    decisions: TaskDecision[];
+  };
+  /** What the run produced: files, diffs, reports, previews. */
+  artifacts?: TaskArtifact[];
+  /** Held steps, questions, approvals and reviews, as one list. */
+  pendingDecisions?: PendingDecision[];
+  /**
+   * Steps closed on evidence over steps. DERIVED on every touch, never
+   * written by a caller and never guessed — absent when there is no plan,
+   * because a task with no steps has no progress, and 0% would be a claim.
+   */
+  progress?: number;
   updatedAt: string;
-}
-
-/** One verification-shaped command, as the runtime observed it. */
-export interface CheckRecord {
-  at: string;
-  command: string;
-  passed: boolean;
-  /** Who ran it: the harness's own verifier, or the model through `bash`. */
-  source: "harness" | "model";
-  exitCode?: number;
-  durationMs?: number;
-  summary?: string;
 }
 
 const FILES_READ_CAP = 30;
@@ -136,6 +184,14 @@ const LOG_CAP = 80;
 const CHECKS_CAP = 60;
 /** Files remembered for the step check's project scoping. */
 const PENDING_WRITES_CAP = 100;
+// The narrative is a record, not a stream: every list on it is bounded, and
+// the oldest entries fall off first — except hypotheses, where a refuted
+// branch is exactly what the reader wants and the cap is set where a real
+// investigation fits.
+const HYPOTHESES_CAP = 40;
+const TASK_DECISIONS_CAP = 20;
+const ARTIFACTS_CAP = 200;
+const PENDING_DECISIONS_CAP = 50;
 // The goal is the SPEC. It used to be capped at 2,000 chars, which turned a
 // 10k-word product brief into a stub the moment it left the transcript — the
 // durable record of a 4-hour build held 2,000 chars of requirements. The cap
@@ -390,6 +446,14 @@ export class TaskStateStore {
   private pendingWrites: string[] = [];
   /** Completion keys refused once; the second submission is accepted as unproven. */
   private refusedOnce = new Set<string>();
+  /**
+   * Id counters for the narrative. Restored from the snapshot rather than kept
+   * only in memory: a resumed session that started again at `h1` would give
+   * two different hypotheses the same id, and every later update would land on
+   * the wrong one.
+   */
+  private hypothesisSeq = 0;
+  private decisionSeq = 0;
 
   setMissionPath(path: string | null): void {
     this.missionPath = path;
@@ -750,8 +814,253 @@ export class TaskStateStore {
         : {}),
     };
     delete this.state.handoff;
+    // The narrative belongs to the MISSION, not to the workspace: a new goal
+    // is a new investigation, and carrying the old one's refuted branches into
+    // it would put someone else's dead ends in this task's record. The file
+    // and check ledgers stay, because they are true of the tree.
+    delete this.state.kind;
+    delete this.state.kindRevised;
+    delete this.state.narrative;
+    delete this.state.progress;
+    this.hypothesisSeq = 0;
+    this.decisionSeq = 0;
     this.refusedOnce.clear();
     this.logEvent("boundary", `new goal: ${nextGoal.slice(0, 120)}`);
+  }
+
+  // ─── The narrative ───
+
+  /**
+   * What shape of work this task is.
+   *
+   * `harness` is the Intent Interpreter's reading at task start and may be
+   * written only once per task; `model` is the single revision the model gets,
+   * which is why the flag is on the snapshot rather than in memory — a resumed
+   * session must not hand out a second one. Returns true when the kind moved,
+   * so the caller knows whether to emit the event.
+   */
+  setKind(kind: TaskKind, source: "harness" | "model" = "harness"): boolean {
+    if (source === "harness") {
+      if (this.state.kind) return false;
+      this.state.kind = kind;
+      this.touch();
+      return true;
+    }
+    if (this.state.kindRevised) return false;
+    this.state.kindRevised = true;
+    if (this.state.kind === kind) {
+      this.touch();
+      return false;
+    }
+    this.state.kind = kind;
+    this.logEvent("plan", `task kind: ${kind}`);
+    this.touch();
+    return true;
+  }
+
+  get kind(): TaskKind | undefined {
+    return this.state.kind;
+  }
+
+  private narrative(): { hypotheses: Hypothesis[]; decisions: TaskDecision[] } {
+    this.state.narrative ??= { hypotheses: [], decisions: [] };
+    return this.state.narrative;
+  }
+
+  /**
+   * Raise a hypothesis: the suspicion, named BEFORE it is tested.
+   *
+   * The order matters more than it looks. A hypothesis recorded after its own
+   * refutation is a story told backwards, and one recorded only when it turns
+   * out to be right is not a record of an investigation at all — it is a
+   * record of the answer. So this is a `proposed`/`testing` write, and only
+   * the harness's reading of a check moves it to a verdict.
+   */
+  noteHypothesis(
+    text: string,
+    opts: { status?: HypothesisStatus; step?: string } = {},
+  ): Hypothesis {
+    const n = this.narrative();
+    const hypothesis: Hypothesis = {
+      id: `h${++this.hypothesisSeq}`,
+      text: text.trim().slice(0, 400),
+      status: opts.status ?? "testing",
+      evidence: [],
+      at: new Date().toISOString(),
+      ...(opts.step ? { step: opts.step.slice(0, 200) } : {}),
+    };
+    n.hypotheses.push(hypothesis);
+    if (n.hypotheses.length > HYPOTHESES_CAP) {
+      n.hypotheses = n.hypotheses.slice(-HYPOTHESES_CAP);
+    }
+    this.touch();
+    return hypothesis;
+  }
+
+  /**
+   * Move a hypothesis to a verdict. Returns the updated hypothesis, or null
+   * when the id is unknown — a caller reports that rather than inventing one.
+   */
+  updateHypothesis(
+    id: string,
+    status: HypothesisStatus,
+    opts: { reason?: string; evidence?: EvidenceRef[] } = {},
+  ): Hypothesis | null {
+    const hypothesis = this.narrative().hypotheses.find((h) => h.id === id);
+    if (!hypothesis) return null;
+    hypothesis.status = status;
+    hypothesis.at = new Date().toISOString();
+    if (opts.reason) hypothesis.reason = opts.reason.slice(0, 300);
+    if (opts.evidence && opts.evidence.length > 0) {
+      hypothesis.evidence = [...hypothesis.evidence, ...opts.evidence].slice(-8);
+    }
+    if (status === "refuted" || status === "confirmed") {
+      this.logEvent(
+        "check",
+        `hypothesis ${id} ${status}: ${hypothesis.text.slice(0, 80)}${hypothesis.reason ? ` — ${hypothesis.reason.slice(0, 80)}` : ""}`,
+      );
+    }
+    this.touch();
+    return hypothesis;
+  }
+
+  /** The hypothesis a verdict should land on: the one still being tested. */
+  openHypothesis(): Hypothesis | null {
+    const open = this.narrative().hypotheses.filter(
+      (h) => h.status === "testing" || h.status === "proposed",
+    );
+    return open.length > 0 ? open[open.length - 1] : null;
+  }
+
+  get hypotheses(): Hypothesis[] {
+    return this.state.narrative?.hypotheses ?? [];
+  }
+
+  /**
+   * Record what the run committed to, and what justified it.
+   *
+   * This is the recorder the `decisions` field never had. The field existed
+   * from the first version of the spine and nothing in production wrote it:
+   * `addDecision` had exactly one caller, a test. So a decision now lands in
+   * two places at once — the structured list the record reads, and the one-line
+   * list the injected block and the mission file already render — because a
+   * decision the model cannot see after compaction is a decision it will make
+   * again differently.
+   */
+  recordDecision(text: string, basedOn: EvidenceRef[] = []): TaskDecision {
+    const n = this.narrative();
+    const decision: TaskDecision = {
+      id: `d${++this.decisionSeq}`,
+      text: text.trim().slice(0, 400),
+      basedOn: basedOn.slice(0, 8),
+      at: new Date().toISOString(),
+    };
+    n.decisions.push(decision);
+    if (n.decisions.length > TASK_DECISIONS_CAP) {
+      n.decisions = n.decisions.slice(-TASK_DECISIONS_CAP);
+    }
+    this.addDecision(decision.text);
+    this.touch();
+    return decision;
+  }
+
+  get decisionsRecorded(): TaskDecision[] {
+    return this.state.narrative?.decisions ?? [];
+  }
+
+  /**
+   * Record something the run produced. Deduplicated on (kind, ref): a file
+   * edited nine times is one artifact, not nine.
+   */
+  recordArtifact(kind: ArtifactKind, ref: string): TaskArtifact | null {
+    const trimmed = ref.trim();
+    if (!trimmed) return null;
+    this.state.artifacts ??= [];
+    const existing = this.state.artifacts.find((a) => a.kind === kind && a.ref === trimmed);
+    if (existing) return null;
+    const artifact: TaskArtifact = {
+      id: `a${this.state.artifacts.length + 1}`,
+      kind,
+      ref: trimmed.slice(0, 400),
+      at: new Date().toISOString(),
+    };
+    this.state.artifacts.push(artifact);
+    if (this.state.artifacts.length > ARTIFACTS_CAP) {
+      this.state.artifacts = this.state.artifacts.slice(-ARTIFACTS_CAP);
+    }
+    this.touch();
+    return artifact;
+  }
+
+  get artifacts(): TaskArtifact[] {
+    return this.state.artifacts ?? [];
+  }
+
+  /**
+   * Record a decision waiting on a person — one list for all four round-trips,
+   * because the inbox that reads it is one list. Re-recording the same id
+   * updates it rather than duplicating it, so a retried round-trip does not
+   * appear twice in the inbox.
+   */
+  addPendingDecision(entry: {
+    id: string;
+    kind: PendingDecisionKind;
+    summary: string;
+    deadline?: string;
+  }): PendingDecision {
+    this.state.pendingDecisions ??= [];
+    const decision: PendingDecision = {
+      id: entry.id,
+      kind: entry.kind,
+      summary: entry.summary.slice(0, 300),
+      createdAt: new Date().toISOString(),
+      ...(entry.deadline ? { deadline: entry.deadline } : {}),
+    };
+    const at = this.state.pendingDecisions.findIndex((p) => p.id === entry.id);
+    if (at >= 0) this.state.pendingDecisions[at] = decision;
+    else this.state.pendingDecisions.push(decision);
+    if (this.state.pendingDecisions.length > PENDING_DECISIONS_CAP) {
+      this.state.pendingDecisions = this.state.pendingDecisions.slice(-PENDING_DECISIONS_CAP);
+    }
+    this.touch();
+    return decision;
+  }
+
+  /** Close one. Returns false for an id nobody is holding. */
+  resolvePendingDecision(id: string, outcome: string): boolean {
+    const entry = this.state.pendingDecisions?.find((p) => p.id === id);
+    if (!entry || entry.resolution) return false;
+    entry.resolution = { at: new Date().toISOString(), outcome: outcome.slice(0, 200) };
+    this.touch();
+    return true;
+  }
+
+  /** Everything recorded, resolved or not. */
+  get pendingDecisions(): PendingDecision[] {
+    return this.state.pendingDecisions ?? [];
+  }
+
+  /** What is still waiting on a person — what the inbox shows. */
+  openDecisions(): PendingDecision[] {
+    return this.pendingDecisions.filter((p) => !p.resolution);
+  }
+
+  /**
+   * Steps closed on evidence over steps.
+   *
+   * Derived, never asserted: the numerator counts completed steps that carry
+   * measured evidence and are not marked unproven, which is the same bar the
+   * plan ledger already holds a completion to. A step the model closed with
+   * nothing behind it does not move this number, so a run cannot report
+   * progress by claiming it.
+   */
+  progress(): number | undefined {
+    const todos = this.state.todos;
+    if (todos.length === 0) return undefined;
+    const proven = todos.filter(
+      (t) => t.status === "completed" && !t.unproven && evidenceWeight(t.evidence) > 0,
+    ).length;
+    return proven / todos.length;
   }
 
   addClarification(question: string, answer: string): void {
@@ -772,6 +1081,9 @@ export class TaskStateStore {
 
   noteFileWritten(path: string): void {
     if (!path) return;
+    // A written file is an artifact of the task, not only an entry in a
+    // ledger: "what changed" in the record reads this list.
+    this.recordArtifact("file", path);
     if (!this.state.filesWritten.includes(path)) this.state.filesWritten.push(path);
     if (!this.pendingWrites.includes(path)) this.pendingWrites.push(path);
     if (this.pendingWrites.length > PENDING_WRITES_CAP) {
@@ -981,7 +1293,8 @@ export class TaskStateStore {
       s.decisions.length > 0 ||
       s.verification.status !== "none" ||
       !!s.handoff ||
-      !!s.pendingGoal;
+      !!s.pendingGoal ||
+      (s.narrative?.hypotheses.length ?? 0) > 0;
     if (!hasSubstance) return null;
 
     // The goal excerpt scales with the budget: the post-compaction boost
@@ -1053,8 +1366,28 @@ export class TaskStateStore {
         const read = detail >= 3 && s.filesRead.length > 0 ? `${s.filesRead.length} read` : "";
         lines.push(`Files: ${[written, read].filter(Boolean).join(" · ")}`);
       }
+      // The narrative, as briefly as it can be said. This is the model's own
+      // memory of what it has already ruled out: without it, a run that
+      // compacts mid-investigation re-tests a branch it refuted an hour ago,
+      // which is the specific waste the record exists to make visible.
+      if (detail >= 2 && (s.narrative?.hypotheses.length ?? 0) > 0) {
+        const shown = s.narrative!.hypotheses.slice(-6);
+        lines.push("Hypotheses:");
+        for (const h of shown) {
+          lines.push(
+            `  ${h.id} [${h.status}] ${h.text.slice(0, 100)}${h.reason ? ` — ${h.reason.slice(0, 60)}` : ""}`,
+          );
+        }
+      }
       if (detail >= 2 && s.decisions.length > 0) {
         lines.push(`Decisions: ${s.decisions.join(" | ")}`);
+      }
+      if (detail >= 3 && this.openDecisions().length > 0) {
+        lines.push(
+          `Waiting on the user: ${this.openDecisions()
+            .map((p) => `${p.kind} — ${p.summary.slice(0, 60)}`)
+            .join(" | ")}`,
+        );
       }
       if (s.verification.status !== "none") {
         // "failed" shows its first error line at high detail; "unavailable"
@@ -1140,6 +1473,7 @@ export class TaskStateStore {
       "",
       s.goal || "(none yet)",
     ];
+    if (s.kind) lines.push("", `_Task kind: ${s.kind}_`);
     if (s.pendingGoal) {
       lines.push("", "## Latest request (pending a plan)", "", s.pendingGoal);
     } else if (s.directive) {
@@ -1153,9 +1487,12 @@ export class TaskStateStore {
     }
     if (s.todos.length > 0) {
       const c = this.todoCounts();
+      const pct = this.progress();
       lines.push(
         "",
-        `## Plan (${c.done}/${c.total} done${c.unproven > 0 ? `, ${c.unproven} unproven` : ""})`,
+        `## Plan (${c.done}/${c.total} done${c.unproven > 0 ? `, ${c.unproven} unproven` : ""}` +
+          (pct != null ? `, ${Math.round(pct * 100)}% closed on evidence` : "") +
+          ")",
       );
       for (const t of s.todos.slice(0, MISSION_TODOS_CAP)) {
         const mark = t.status === "completed" ? "[x]" : t.status === "in_progress" ? "[>]" : "[ ]";
@@ -1166,9 +1503,42 @@ export class TaskStateStore {
         lines.push(`- …+${s.todos.length - MISSION_TODOS_CAP} more`);
       }
     }
-    if (s.decisions.length > 0) {
+    // ── The narrative ──
+    // Refuted branches are kept, and kept in order. A dossier that listed only
+    // the hypothesis that turned out to be right would read as though the run
+    // knew the answer from the start, which is both false and useless to the
+    // next person (or the next run) trying to understand the problem.
+    const hypotheses = s.narrative?.hypotheses ?? [];
+    if (hypotheses.length > 0) {
+      lines.push("", "## How we got here");
+      hypotheses.forEach((h, i) => {
+        lines.push(
+          `${i + 1}. **${h.text}** — ${h.status}${h.reason ? `: ${h.reason}` : ""}` +
+            (h.evidence.length > 0
+              ? ` (${h.evidence.map((e) => `${e.kind}: ${e.ref}`).join("; ")})`
+              : ""),
+        );
+      });
+    }
+    const recorded = s.narrative?.decisions ?? [];
+    if (recorded.length > 0) {
+      lines.push("", "## Decisions (with evidence)");
+      for (const d of recorded) {
+        lines.push(
+          `- ${d.text}` +
+            (d.basedOn.length > 0
+              ? ` — based on ${d.basedOn.map((e) => `${e.kind}: ${e.ref}`).join("; ")}`
+              : " — no evidence cited"),
+        );
+      }
+    } else if (s.decisions.length > 0) {
       lines.push("", "## Decisions");
       for (const d of s.decisions) lines.push(`- ${d}`);
+    }
+    const open = this.openDecisions();
+    if (open.length > 0) {
+      lines.push("", "## Waiting on the user");
+      for (const p of open) lines.push(`- [${p.kind}] ${p.summary}`);
     }
     if (s.clarifications.length > 0) {
       lines.push("", "## Clarified with the user");
@@ -1221,6 +1591,10 @@ export class TaskStateStore {
     // Merge over an empty state so snapshots from older versions never leave
     // a field undefined.
     store.state = { ...emptyState(), ...structuredClone(state) };
+    // Resume the narrative's id counters past the highest id on the snapshot,
+    // so a resumed run cannot mint an `h1` that already exists.
+    store.hypothesisSeq = highestSeq(store.state.narrative?.hypotheses);
+    store.decisionSeq = highestSeq(store.state.narrative?.decisions);
     return store;
   }
 
@@ -1241,5 +1615,20 @@ export class TaskStateStore {
 
   private touch(): void {
     this.state.updatedAt = new Date().toISOString();
+    // Progress is derived here and nowhere else, so no caller can set it and
+    // every snapshot carries the number the ledger actually supports.
+    const progress = this.progress();
+    if (progress == null) delete this.state.progress;
+    else this.state.progress = progress;
   }
+}
+
+/** The numeric tail of the highest `h7` / `d3` id on a list, or 0. */
+function highestSeq(entries: Array<{ id: string }> | undefined): number {
+  let max = 0;
+  for (const entry of entries ?? []) {
+    const n = Number.parseInt(entry.id.replace(/^[a-z]+/, ""), 10);
+    if (Number.isFinite(n) && n > max) max = n;
+  }
+  return max;
 }
