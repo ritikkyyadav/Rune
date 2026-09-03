@@ -130,12 +130,19 @@ So the spine carries a narrative beside the plan:
 | `progress`         | steps closed on evidence over steps — derived, never guessed                  |
 
 **The kind is read once.** At task start, from the first message and the
-workspace: deterministically when the ask names its own verb ("why is X slow"
-is an investigation, "build me X" is a build), and with one small model call
-only when nothing in the ask decides it. A classifier in front of every task
-start is a tax on every task; behind an ambiguity gate it is paid only by the
-asks that are genuinely ambiguous. The model may revise it once, through
-`read_back`'s `kind` field. A wrong reading costs a layout, never a capability.
+workspace: deterministically, from the ask's own verb — "why is X slow" is an
+investigation, "build me X" is a build. That reading is free and always on.
+
+A second reading, one small model call, exists for the asks the first could not
+place, and is **off by default** (`[intent] interpreter = "model"`). What it
+buys is a layout, and a wrong layout costs nothing a person cannot fix; what it
+costs is a provider round-trip in the chat path before the first token. It is
+also a call that changes what the NEXT call receives, which is not a thing to
+turn on for everybody by default. When it is on it is gated three times: the
+setting, the deterministic reader having found nothing, and the message being
+work rather than a greeting.
+
+The model may revise the kind once, through `read_back`'s `kind` field.
 
 **A hypothesis is named before it is tested.** `note_hypothesis` records the
 suspicion while it is still a suspicion. That ordering is the whole feature: a
