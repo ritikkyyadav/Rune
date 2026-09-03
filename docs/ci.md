@@ -145,13 +145,48 @@ bun action/review.ts --dry-run \
 model, so the action is exercised on every test run rather than first executed
 on somebody's pull request.
 
+### Running it with no provider key at all
+
+```bash
+bun action/review.ts --dry-run --mock \
+  --workspace . --base main --gear 2 \
+  --gear-cmd "bun packages/orchestrator/src/bin/gear-cli.ts"
+```
+
+`--mock` (or `GEAR_REVIEW_PROVIDER=mock`) makes `review.ts` start its own
+provider: Ollama reads its base URL from `OLLAMA_HOST` and authenticates
+nothing, so a thirty-line server is a complete provider as far as Gear is
+concerned. Everything else is real — the diff, the session, the turn, the audit,
+the comment.
+
+The comment says what it is in three places: **the heading**, a blockquote
+before anything else, and the footer. A comment that looks like a review and was
+produced by a mock is worse than no comment at all.
+
 ### This repository's own workflow
 
-`.github/workflows/gear-review.yml` runs the action on pull requests here,
-**gated on `GEAR_REVIEW_API_KEY` being present**. Without the secret it skips
-with a notice instead of failing. A workflow that needs a key and does not
-check for one fails red on every fork and every pull request opened before the
-key exists, and a red check nobody can fix teaches people to ignore red checks.
+`.github/workflows/gear-review.yml` runs the action on pull requests here, in
+one of three modes:
+
+| `GEAR_REVIEW_API_KEY` | Pull request from | What runs                                                                              |
+| --------------------- | ----------------- | -------------------------------------------------------------------------------------- |
+| set                   | anywhere          | a real review from a real model                                                        |
+| not set               | this repository   | the same action against the **mock provider**, posting a comment labelled as a dry run |
+| not set               | a fork            | skipped with a notice                                                                  |
+
+The mock path exists because the previous gate was a claim that had never been
+tested: the workflow was gated on a secret that does not exist, so it skipped on
+every pull request ever opened here and the action's comment path — post once,
+then edit that same comment forever — had never run outside a test. Now it runs
+on every PR and the real-model path stays behind the secret.
+
+The fork case stays skipped: a fork's `GITHUB_TOKEN` is read-only, so posting
+would fail with a 403 — a red check a contributor cannot fix, which is the thing
+the gate existed to avoid in the first place.
+
+Both modes write the **same** comment, found by the same HTML marker, so the
+first real review replaces the dry run in place rather than starting a second
+thread under it.
 
 ## `gear pr <n>`
 
