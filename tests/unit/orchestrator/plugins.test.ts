@@ -161,3 +161,75 @@ describe("loader merges", () => {
     expect(deploy?.source).toBe("deployer");
   });
 });
+
+// P10.7 (D6 v2): a manifest may declare executable tool servers. Discovery
+// validates them and refuses the WHOLE bundle on a malformed one — half a tool
+// manifest is where a capability the author meant to declare is not the one
+// enforced.
+describe("executable tool declarations", () => {
+  function withTools(name: string, tools: unknown): void {
+    const root = installPlugin(name, { manifest: { tools } });
+    mkdirSync(join(root, "tools"), { recursive: true });
+    writeFileSync(join(root, "tools", "run.py"), "print('hi')\n");
+  }
+
+  test("a valid declaration is loaded and its program resolved inside the plugin", () => {
+    withTools("acme-exec", [
+      { id: "files", command: ["python3", "-u", "tools/run.py"], capability: "workspace-write" },
+    ]);
+    const { plugins, errors } = discoverPlugins(workspace);
+    expect(errors).toEqual([]);
+    const decls = plugins[0]!.toolDeclarations;
+    expect(decls).toHaveLength(1);
+    expect(decls[0]!.capability).toBe("workspace-write");
+    // A bare interpreter name stays a PATH lookup; a plugin cannot ship a runtime.
+    expect(decls[0]!.command[0]).toBe("python3");
+    expect(decls[0]!.command).toContain("tools/run.py");
+  });
+
+  test("a program path inside the plugin is resolved to an absolute path", () => {
+    withTools("acme-script", [
+      { id: "files", command: ["tools/run.py"], capability: "workspace-read" },
+    ]);
+    const { plugins, errors } = discoverPlugins(workspace);
+    expect(errors).toEqual([]);
+    expect(plugins[0]!.toolDeclarations[0]!.command[0]).toBe(
+      join(workspace, ".gear", "plugins", "acme-script", "tools", "run.py"),
+    );
+  });
+
+  test("an absolute or escaping program refuses the bundle", () => {
+    withTools("acme-escape", [{ id: "evil", command: ["/bin/sh"], capability: "none" }]);
+    const { plugins, errors } = discoverPlugins(workspace);
+    expect(plugins).toHaveLength(0);
+    expect(errors.join(" ")).toContain("escapes the plugin directory");
+
+    rmSync(join(workspace, ".gear", "plugins", "acme-escape"), { recursive: true, force: true });
+    withTools("acme-updir", [{ id: "evil", command: ["../../../etc/passwd"], capability: "none" }]);
+    expect(discoverPlugins(workspace).plugins).toHaveLength(0);
+  });
+
+  test("a malformed declaration refuses the whole bundle, with the reason", () => {
+    withTools("acme-bad", [
+      { id: "files", command: ["python3", "tools/run.py"], capability: "workspace-write" },
+      { id: "net", command: ["python3", "tools/run.py"], capability: "network" },
+    ]);
+    const { plugins, errors } = discoverPlugins(workspace);
+    expect(plugins).toHaveLength(0);
+    expect(errors.join(" ")).toContain("lists no hosts");
+  });
+
+  test("a non-array `tools` is refused rather than ignored", () => {
+    installPlugin("acme-nonarray", { manifest: { tools: { id: "x" } } });
+    const { plugins, errors } = discoverPlugins(workspace);
+    expect(plugins).toHaveLength(0);
+    expect(errors.join(" ")).toContain('"tools" must be an array');
+  });
+
+  test("a plugin with no `tools` key declares none, and still loads", () => {
+    installPlugin("acme-plain", {});
+    const { plugins, errors } = discoverPlugins(workspace);
+    expect(errors).toEqual([]);
+    expect(plugins[0]!.toolDeclarations).toEqual([]);
+  });
+});
