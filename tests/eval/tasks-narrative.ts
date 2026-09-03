@@ -111,8 +111,13 @@ const narrativeBugHunt: EvalTask = {
   setup: async ({ workspace }) => {
     await mkdir(join(workspace, "src"), { recursive: true });
     await mkdir(join(workspace, "findings"), { recursive: true });
-    await writeFile(join(workspace, "cache-ttl.test.ts"), CACHE_PROBE);
-    await writeFile(join(workspace, "pool.test.ts"), POOL_PROBE);
+    await mkdir(join(workspace, "probes"), { recursive: true });
+    // `.probe.ts`, not `.test.ts`: a one-off diagnostic is not part of the
+    // project's suite, and `bun test` with no arguments deliberately does not
+    // pick these up. Two permanently-failing files in the suite would make the
+    // end-of-run verifier report a red project for a run that went perfectly.
+    await writeFile(join(workspace, "probes", "cache-ttl.probe.ts"), CACHE_PROBE);
+    await writeFile(join(workspace, "probes", "pool.probe.ts"), POOL_PROBE);
     await writeFile(join(workspace, "orders.test.ts"), ORDERS_TEST);
     // The regression as shipped: the rewrite that lost the index.
     await writeFile(
@@ -148,7 +153,7 @@ export function ordersQueryPlan(): string {
       toolCalls: [{ name: "note_hypothesis", args: { text: "cache eviction on deploy" } }],
     },
     {
-      toolCalls: [{ name: "bash", args: { command: "bun test cache-ttl.test.ts" } }],
+      toolCalls: [{ name: "bash", args: { command: "bun test ./probes/cache-ttl.probe.ts" } }],
     },
     {
       text: "Not the cache — the TTL is identical either side of the deploy. Writing that down.",
@@ -185,7 +190,7 @@ export function ordersQueryPlan(): string {
       ],
     },
     {
-      toolCalls: [{ name: "bash", args: { command: "bun test pool.test.ts" } }],
+      toolCalls: [{ name: "bash", args: { command: "bun test ./probes/pool.probe.ts" } }],
     },
     {
       text: "Also not it: 40 of 200 in use. Two theories down.",
