@@ -340,6 +340,15 @@ jobs:
         run: |
           # Eval runner exits non-zero if any task fails
           echo "Eval suite passed"
+      - name: Auto-mode safety corpus, offline (mechanical layer + regression gate)
+        # The 227-row corpus against a DEAD reviewer. This is the pass that can
+        # run on every change — no key, no network, no quota — and it is the
+        # regression guard for the 22-minute fail-closed outage: with no model
+        # reachable at all, every mechanical block must still hold and every
+        # mechanical allow must still run. --compare additionally fails the job
+        # if the count of reviewer-only blocks caught with no model call drops,
+        # which is what a breaker quietly ceasing to hold looks like.
+        run: bun run eval:auto-safety -- --offline --compare
 
   # ── Stage 6: Real-model eval regression gate (only when the secret is set) ──
   # Runs the suite against a live model and fails if the pass-rate drops below a
