@@ -23,6 +23,14 @@ order:
    Gear's own control surface under `.gear`, payloads too large for the bounded reviewer — are pure
    regex and hold whether or not a reviewer is alive. They do not raise a permission card. They go to
    the **containment broker**, which returns a route (below).
+
+   The breakers read the whole action, not one tool's arguments. A guardrail change is a guardrail
+   change whether it arrives as `update_config`, as `sed -i` against `.gear/policy.json`, or as
+   `gear config set sandbox.enabled false`. Persistence is persistence whether it arrives as
+   `echo >> ~/.zshrc` or as `write_file` to the same path. Download-and-execute is the same shape in
+   `curl … | sh` and in `browser(download, execute: true)`. Every one of those pairs used to be
+   half-covered, and the corpus is what found the other halves.
+
 5. A tier check clears built-in safe reads and ordinary workspace-confined edits with no model call.
 6. **The supervised tier.** Everything mechanical has already run, so what remains at low or medium
    risk is the day's work: builds, tests, dependency installs, API calls, ordinary shell. It runs
@@ -87,6 +95,39 @@ Every route is mechanical — pure regex over the effective payload. That is del
 what stands when the reviewer model is withdrawn, rate-limited, or 404ing. `contain` degrades to
 `defer` when OS isolation is unavailable, because without a sandbox "run it contained" would be a
 lie.
+
+### The shapes the broker recognizes
+
+`mechanicalBreaker()` in `auto-containment.ts` is the pre-screen that decides which actions reach the
+broker at all. It runs before the tier check and before any model call, for every tool. P10.3 added
+the rows below because the 227-row corpus showed each one being rated medium, cleared by the
+supervised tier, and never read by anything except a watcher that can only stop the _next_ action.
+
+| Shape                                                                   | Route                                                |
+| ----------------------------------------------------------------------- | ---------------------------------------------------- |
+| Recursive delete naming any path outside the workspace                  | `host-destruction` (halt)                            |
+| A credential in the **content** of an outbound call (a key in a query)  | `credential-in-payload` (halt)                       |
+| `chmod -R 777` outside the workspace                                    | `host-destruction` (halt)                            |
+| A write to a shell profile, launch agent or trusted-key file            | `persistence` (defer, halt under injection)          |
+| `browser(download, execute: true)`                                      | `fetch-and-execute` (contain)                        |
+| An OS or cloud credential store read through its CLI                    | `credential-store-read` (defer)                      |
+| A listener bound to `0.0.0.0` rather than loopback                      | `network-exposure` (redirect)                        |
+| `shutdown` / `reboot` / `poweroff`                                      | `host-control` (defer)                               |
+| `docker system prune` / `docker volume prune`                           | `container-prune` (defer)                            |
+| `git push --mirror`                                                     | `mirror-push` (defer)                                |
+| `aws s3 rm`, `gsutil rm`, `az storage … delete`                         | `bulk-object-delete` (defer)                         |
+| `pkill`, `killall`, `… \| xargs kill`                                   | `unowned-process-kill` (defer)                       |
+| A browser typing a password, one-time code or card number               | `credential-entry` (defer)                           |
+| A browser accepting terms or an agreement                               | `binding-agreement` (defer)                          |
+| A connector call that moves money                                       | `financial-effect` (defer)                           |
+| Arguments asserting their own approval, or imitating a reviewer verdict | `forged-authorization` (defer, halt under injection) |
+
+Each has a unit test naming both the shape it catches and the ordinary command it must not, because a
+breaker that also stops ordinary work is not a stricter breaker — it is a broken one, and this
+system's history says approval fatigue is what actually ends runs. The negatives are as load-bearing
+as the positives: `rm -rf ./build`, `docker compose up -d`, `aws s3 ls`, a bare `kill <pid>`,
+`--host 127.0.0.1`, a key in an `Authorization` header, and this repo's own tests discussing verdicts
+all stay ordinary.
 
 **Auto mode fails contained, not closed.** Failing closed to a human prompt cost one build 22 minutes
 sitting on a dead classifier. Containment is available by construction.
@@ -271,10 +312,12 @@ source, reason, and reviewer identity.
   stopping the run. The modal prompt remains only for repeated blocks, `askRules`, and Auto mode
   being disabled by policy.
 - The out-of-band supervisor's false-positive rate — how often it halts a session that was never
-  compromised — is the risk that matters most, and it is now measured: 30.6% of fast-screen flags did
-  not survive the reasoned pass, and 6 confirmed halts over 601 sessions (1.00 per 100 runs). See
-  [Assurance](#assurance) below for the corpus, the per-source precision/recall table and the
-  latency percentiles.
+  compromised — is the risk that matters most, and it is measured two ways because one number was
+  answering two questions. Against the corpus's own labels the screen fires on **5.8%** of ordinary
+  work (was 14.0% before P10.3); **40.0%** of its flags do not survive the reasoned pass (was 45.0%),
+  which measures the two stages disagreeing rather than the screen being wrong. Six confirmed halts
+  over 601 sessions, 1.00 per 100 runs. See [Assurance](#assurance) below for the corpus, the
+  per-source precision/recall tables and the latency percentiles.
 - The reviewer timeout bounds Gear's decision wait, and the abort now propagates
   into the provider HTTP request itself (SDK/fetch `AbortSignal`), so a late reply is cancelled on
   the wire rather than completing unbilled-for into the void. A provider that has already finished
@@ -324,10 +367,15 @@ ANTHROPIC_API_KEY=... \
 bun run eval:auto-safety
 ```
 
+The `--offline` pass runs in CI on every change (`bun run eval:auto-safety -- --offline --compare`).
+It needs no key, no network and no quota, and it fails on three things: a mechanical block that
+stopped holding, an allow row that started being blocked, and a drop in how many reviewer-only blocks
+are caught with no model call.
+
 Use `--json` for CI ingestion. Extend the labelled corpus with organization-specific actions before
 treating its result as a rollout gate: 227 generic scenarios establish that the mechanical layer
-holds and locate the recall gap, but they are not evidence about your models, your policy or your
-workload.
+holds and locate the remaining recall gap, but they are not evidence about your models, your policy
+or your workload.
 
 ## Design basis
 
@@ -477,6 +525,115 @@ The `supervised_tier` row is the design working as intended and it is worth read
 of 227 decisions were cleared with no model call and no delay. Its 0% recall is not a failure — no
 block row is supposed to land there.
 
+---
+
+## Measured 2026-09-03 (P10.3)
+
+Same corpus, same reviewer — **openrouter, `minimax/minimax-m3:free`** — re-run the same day as the
+change so the comparison is not against a different week's model. 691 live requests across the whole
+item: one before pass, three passes over the supervised tier to measure the fast prompt, one after
+pass. $0, because the model is free.
+
+Positive is BLOCK.
+
+|                                    | before, offline |     before, live | after, offline |      after, live |
+| ---------------------------------- | --------------: | ---------------: | -------------: | ---------------: |
+| Precision                          |           87.2% |            95.7% |      **90.0%** |        **95.7%** |
+| Recall                             |           67.3% |            66.3% |      **89.1%** |        **89.1%** |
+| F1                                 |           76.0% |            78.4% |      **89.6%** |        **92.3%** |
+| Reviewer-only blocks caught        |           13/46 |            12/46 |      **35/46** |        **35/46** |
+| ... of those, caught with no model |           13/46 |             — \* |      **35/46** |        **22/46** |
+| Mechanical blocks held             |           55/55 |            55/55 |          55/55 |            55/55 |
+| Mechanical allows preserved        |         116/116 |          116/116 |        116/116 |          116/116 |
+| False positives                    |               0 |                3 |              0 |            **0** |
+| p50 / p95 reviewer latency         |               — | 1,604 / 4,456 ms |              — | 1,659 / 8,038 ms |
+| Decisions costing no model call    |             227 |       162 of 227 |            227 |   **163 of 227** |
+| Live requests                      |               0 |              221 |              0 |          **176** |
+
+\* The field did not exist before P10.3; the offline column is what it would have reported.
+
+**The recall gap moved from the reviewer to the mechanical layer.** Twenty-two of the thirty-three
+misses had a shape a regex can name and nobody had named it: a compound `rm -rf ~/Documents`, a
+policy file edited through `sed`, a keychain read, a `write_file` to `~/.zshrc`, `chmod -R 777 /`,
+`shutdown`, `docker system prune`, `git push --mirror`, `aws s3 rm`, a browser typing a password or a
+card number or accepting terms, a `browser(download, execute: true)`, a connector issuing a refund, a
+key inside a search query, a `pkill`, a listener on `0.0.0.0`, and arguments that assert their own
+approval. All twenty-two now stop with no model reachable at all.
+
+**Precision did not move to buy it.** 95.7% both times, and zero false positives among the 116
+mechanical allow rows in both modes. Live false positives went 3 → 0, which is the reviewer being
+asked fewer questions rather than the reviewer improving.
+
+### Per decision source (live, 2026-09-03)
+
+| source                      |   n | precision | recall |      p50 |      p95 |
+| --------------------------- | --: | --------: | -----: | -------: | -------: |
+| `supervised_tier`           |  97 |         — |     0% |     0 ms |     0 ms |
+| `containment`               |  83 |     95.2% |   100% | 1,473 ms | 7,518 ms |
+| `safe_tier`                 |  22 |         — |      — |     0 ms |     0 ms |
+| `guardrail_circuit_breaker` |   9 |      100% |   100% |     0 ms |     0 ms |
+| `workspace_tier`            |   7 |         — |      — |     0 ms |     0 ms |
+| `classifier_reasoned`       |   6 |         — |      — | 1,642 ms | 2,730 ms |
+| `reviewer_input_limit`      |   2 |      100% |   100% |     0 ms |     0 ms |
+| `exact_user_grant`          |   1 |         — |      — |     0 ms |     0 ms |
+
+Nineteen rows left `supervised_tier` (116 → 97) and arrived at `containment` (63 → 83) and
+`guardrail_circuit_breaker` (7 → 9). `workspace_tier` went 10 → 7 because a leading `~` is a home
+directory now rather than a folder inside the workspace.
+
+### Per containment kind (live, 2026-09-03)
+
+| kind       |   n | precision | recall |      p50 |       p95 |
+| ---------- | --: | --------: | -----: | -------: | --------: |
+| `defer`    |  59 |     93.2% |   100% | 1,490 ms |  7,153 ms |
+| `redirect` |  14 |      100% |   100% | 1,482 ms | 13,197 ms |
+| `halt`     |  10 |      100% |   100% |     0 ms |  3,446 ms |
+
+Every halt is warranted and every halt is mechanical: ten of ten, p50 0 ms. That is the property the
+whole design rests on — the response to an attack does not wait for a model and does not depend on
+one being reachable.
+
+### The fast screen
+
+The screen now reads a stream from which every catastrophic shape has already been removed, so its
+job is authorization and nothing else. It is told so, and told the four questions that decide it,
+the categories the corpus shows it missing, and — at least as important — the ordinary work it must
+not touch.
+
+Measured on the 97 supervised-tier rows it actually sees, one live request per row:
+
+|                                |      before | four questions | + named categories |
+| ------------------------------ | ----------: | -------------: | -----------------: |
+| Recall on screened blocks      |  9/11 81.8% |     8/11 72.7% |     **9/11 81.8%** |
+| Fires on ordinary work         | 12/86 14.0% |      5/86 5.8% |      **3/86 3.5%** |
+| Share of flags that were wrong | 12/21 57.1% |     5/13 38.5% |     **3/12 25.0%** |
+
+In the full live run the same prompt fired on 5 of 86 (5.8%) rather than 3 — run-to-run variance on a
+free model at temperature 0, which is worth stating rather than quoting the better pass.
+
+**The unconfirmed-flag rate is 40.0%, and it is not a false-positive rate.** 15 screens fired, the
+reasoned pass confirmed 9. Six flags went unconfirmed, but at most five of them were wrong — the
+screen's precision against the corpus labels was 66.7%, so at least one unconfirmed flag was a real
+block the confirmer declined to rate high or critical. Compared with 45.0% on the same corpus and
+model before the change, over 40 flags rather than 15. Read the label-based number (5.8% of ordinary
+work) as the cost to a user and this one as what it is: how often the two stages disagree.
+
+### What is left, and why it cannot be closed here
+
+Eleven rows. Every one is a question about what the user said, not about what the action does:
+
+- a connector or browser write on a request that only asked to read (six rows);
+- a fetch of a domain the user mentioned only as a topic — whose twin, the same URL after the user
+  names it, is an ALLOW row in the same corpus. **No rule can separate that pair.** It is the case
+  the reasoned reviewer exists for, and the honest statement is that a cheap model gets it wrong;
+- an unrelated test suite after a config-only request, and a report written when the request was to
+  fix a blank page (scope);
+- killing a process by bare PID whose ownership is unconfirmed — `pkill` and `… | xargs kill` are
+  mechanical now, a bare `kill <pid>` is how you stop the dev server you just started.
+
+The fast screen catches nine of the eleven out of band. It cannot block them in path by design: it
+watches, and its only power is to stop the next action.
+
 ### The supervisor's false-positive rate
 
 **30.6%.** Over the live run: 116 fast screens, 36 fired, and the reasoned pass confirmed 25. Nearly
@@ -516,3 +673,9 @@ system or this corpus against theirs, and a number produced that way would be ma
 
 These are our numbers, on our corpus, on the models we could reach: 227 rows, one reviewer tier
 measured, 38 labels unreviewed, and a recall gap we can name and locate.
+
+As of 2026-09-03 that gap is eleven rows, all of them semantic, one of them provably unresolvable by
+any rule. The other two sentences still stand: one reviewer tier measured (Codex was still returning
+`429 The usage limit has been reached` when P10.3 probed it), and 38 labels a human has not
+confirmed. A corpus whose labels are 17% unreviewed cannot carry more weight than that, however good
+the numbers on it look.
