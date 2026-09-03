@@ -1,0 +1,8 @@
+#!/bin/sh
+# Placeholder wrapper. Detection only reads that a `gradlew` file is HERE — the
+# real wrapper is a 60KB script plus a jar, and committing one would put a
+# distribution download inside a unit-test fixture. Nothing in the suite
+# executes this file; the JVM commands are asserted by detection, and the
+# runnable JVM proof is the bare-`javac` fixture next door.
+echo "gear fixture: placeholder gradle wrapper, not a real Gradle install" >&2
+exit 1

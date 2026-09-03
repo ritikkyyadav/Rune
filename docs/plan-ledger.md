@@ -48,11 +48,25 @@ Other rules applied on every list:
 ## The step check
 
 When a list closes a step that wrote files no check ever covered, the harness
-runs the project's compile-class check (typecheck, `cargo check`, `go build`)
-before accepting the list — on a one-minute clock, never the test suite. A
-failure refuses the completion with the output; a pass becomes the step's
-receipt (`2 writes · check ok`). The model can pre-empt it by running the
-check itself during the step. `[verify] perStep = false` turns it off.
+runs the project's compile-class check before accepting the list — on a
+one-minute clock, never the test suite. A failure refuses the completion with
+the output; a pass becomes the step's receipt (`2 writes · check ok`). The model
+can pre-empt it by running the check itself during the step.
+`[verify] perStep = false` turns it off.
+
+The compile-class check is whatever the project's stack provides: a `typecheck`
+script or `tsc --noEmit`, `go build`, `cargo check`, `./gradlew classes`,
+`./mvnw compile`, `pyright` or `mypy` — and, where an ecosystem has no cheap
+project-wide check, one built from the files the step wrote
+(`python -m py_compile`, `javac` into a throwaway directory). In a workspace
+holding several projects, the check runs the one whose files the step touched.
+A toolchain that is not installed is recorded as skipped, not as a failure. See
+[`docs/verification.md`](verification.md).
+
+The receipt names the command, its exit code and its duration, and `gear audit`
+prints them under **Checks**. The counter used to be all there was, so a page
+whose purpose is evidence could say a step had been checked without being able
+to say by what.
 
 ## The boundary follows the plan
 

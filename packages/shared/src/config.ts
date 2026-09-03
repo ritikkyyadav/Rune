@@ -306,6 +306,24 @@ export interface GearConfig {
      * Default true.
      */
     perStep?: boolean;
+    /**
+     * Per-ecosystem control (`[verify.ecosystems]`). Detection covers js, go,
+     * python, rust and jvm (Java + Kotlin, which share gradle and maven, and
+     * which `java` and `kotlin` both name). Each entry is either a bare
+     * boolean or a table:
+     *
+     *   [verify.ecosystems]
+     *   python = false                       # never run Python checks here
+     *
+     *   [verify.ecosystems.go]
+     *   commands = ["go build -race ./..."]  # replace the detected Go set
+     *
+     * Unlisted ecosystems stay enabled. This is narrower than the top-level
+     * `commands` override, which switches detection off entirely — useful when
+     * one stack in a polyglot repo needs different treatment and the rest do
+     * not.
+     */
+    ecosystems?: Record<string, boolean | { enabled?: boolean; commands?: string[] }>;
   };
   /**
    * Opt-in, transparent telemetry — the ONLY path by which anything leaves the

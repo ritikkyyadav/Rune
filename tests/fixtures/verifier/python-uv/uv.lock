@@ -1,0 +1,5 @@
+version = 1
+requires-python = ">=3.11"
+
+# A placeholder lock: its presence is the signal detection reads (`uv run …`
+# instead of a bare interpreter). Nothing runs this fixture.

@@ -1026,6 +1026,7 @@ async function main() {
     enableVerification: config.verify?.enabled,
     verifyCommand: config.verify?.commands,
     verifyPerStep: config.verify?.perStep,
+    verifyEcosystems: config.verify?.ecosystems,
     verifyTimeoutMs:
       typeof config.verify?.timeoutSecs === "number" && config.verify.timeoutSecs > 0
         ? Math.floor(config.verify.timeoutSecs * 1000)

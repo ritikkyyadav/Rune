@@ -180,7 +180,7 @@ export interface AgentLoopConfig {
    * a step that wrote files no check ever covered. Wired by the engine from
    * the verifier's fast tier; absent for loops without one.
    */
-  stepCheck?: (signal?: AbortSignal) => Promise<VerifyResult>;
+  stepCheck?: (signal?: AbortSignal, touched?: string[]) => Promise<VerifyResult>;
   /**
    * Turns in which every tool result was one already seen this run (and
    * nothing was written) before the progress breaker nudges; twice that
@@ -1451,7 +1451,15 @@ export class AgentLoop {
               report: result.report,
             };
             editsSinceVerify = false;
-            this.config.taskState?.noteVerification(result.ran, result.passed, result.report);
+            this.config.taskState?.noteVerification(
+              result.ran,
+              result.passed,
+              result.report,
+              // Which commands ran, their exit codes and durations — the same
+              // record the step check writes, so `gear audit` reports the
+              // end-of-run checks as specifically as the per-step ones.
+              result.runs,
+            );
             if (result.ran && result.passed) {
               projectChecksPassed = true;
               verifyStillFailing = false;
@@ -2265,27 +2273,46 @@ export class AgentLoop {
               const step = unchecked[0].item.content;
               let check: VerifyResult | null = null;
               try {
-                check = await this.config.stepCheck(signal);
+                // The files this step wrote scope the check to ONE project in
+                // a workspace that holds several (P10.4).
+                check = await this.config.stepCheck(signal, ts.touchedFiles);
               } catch {
                 check = null; // a broken checker must never block the plan
               }
               if (check?.ran) {
-                const cmd = (check.report.split("\n").find((l) => l.startsWith("$ ")) ?? "")
-                  .replace(/^\$ /, "")
-                  .replace(/\s+\((ok|exit \d+)\)$/, "");
+                // What ran, and what it exited with, from the verifier's own
+                // record. This used to be a regex over `$ ` lines in the
+                // report, which could name a command but never its exit code
+                // or its duration — so `gear audit` could say a step was
+                // checked without being able to say by what.
+                const ran = (check.runs ?? []).filter((r) => !r.skipped);
+                const decisive = ran.find((r) => !r.passed) ?? ran[ran.length - 1];
+                const cmd =
+                  decisive?.command ??
+                  (check.report.split("\n").find((l) => l.startsWith("$ ")) ?? "")
+                    .replace(/^\$ /, "")
+                    .replace(/\s+\((ok|exit \d+)\)$/, "");
                 ts.noteEffect(check.passed ? "check_pass" : "check_fail", {
                   command: cmd || "project check",
                   summary: check.passed ? "ok" : lastNonEmptyLine(check.report),
+                  exitCode: decisive?.exitCode ?? undefined,
+                  durationMs: decisive?.durationMs,
+                  source: "harness",
                 });
+                const timing = decisive?.durationMs != null ? ` in ${decisive.durationMs}ms` : "";
+                const code =
+                  decisive?.exitCode != null && decisive.exitCode !== 0
+                    ? ` (exit ${decisive.exitCode})`
+                    : "";
                 ts.logEvent(
                   "check",
-                  `step check ${check.passed ? "passed" : "FAILED"} closing "${step.slice(0, 80)}"`,
+                  `${cmd || "project check"} ${check.passed ? "passed" : "FAILED"}${code}${timing} closing "${step.slice(0, 80)}"`,
                 );
                 this.report(
                   check.passed ? "loop.step_check_passed" : "loop.step_check_failed",
                   check.passed ? "debug" : "warn",
                   "stepCheck",
-                  `${cmd || "project check"} ${check.passed ? "passed" : "failed"} at the close of "${step.slice(0, 80)}"`,
+                  `${cmd || "project check"} ${check.passed ? "passed" : "failed"}${code}${timing} at the close of "${step.slice(0, 80)}"`,
                 );
                 yield {
                   type: "step_check",

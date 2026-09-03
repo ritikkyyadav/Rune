@@ -1,8 +1,9 @@
 // ─── Verification ───
 //
 // Turns "the agent stopped" into "the agent's work actually checks out" by
-// running the project's own checks (typecheck / tests / cargo check) after the
-// agent claims it's done, and feeding any failure back so it can self-correct.
+// running the project's own checks (typecheck / tests / cargo check / go build)
+// after the agent claims it's done, and feeding any failure back so it can
+// self-correct.
 //
 // Design notes:
 //  - If we cannot detect any check for a workspace, verification PASSES
@@ -10,9 +11,98 @@
 //    figure out how to verify it.
 //  - Commands run scoped to the workspace, with a hard timeout, capturing both
 //    stdout and stderr so the report is useful to the model.
+//  - Detection reads REAL signals — go.mod, Cargo.toml, pyproject.toml,
+//    build.gradle, pom.xml, package.json workspaces, turbo/nx config — and
+//    never emits a command that would install anything.
+//  - A missing toolchain is "cannot check", not "check failed". `go build` on
+//    a machine without Go exits 127; treating that as a verification failure
+//    would fail every Go task on every machine that has no Go, which is the
+//    opposite of what a verifier is for. Such a command is recorded as SKIPPED
+//    with its reason; a real non-zero exit still fails.
+//
+// P10.4 — before this, detection covered JS/TS with a Rust and Go afterthought
+// and scanned one directory. A Go, Python, Rust or Java repository, and any
+// monorepo whose real project sits one level down, verified as `ran: false` —
+// so the plan ledger could never close a step on a real check.
 
 import { existsSync, readFileSync, readdirSync } from "fs";
 import { join } from "path";
+
+/** The stacks detection knows how to verify. `jvm` covers Java and Kotlin. */
+export type Ecosystem = "js" | "go" | "python" | "rust" | "jvm";
+
+export const ECOSYSTEMS: readonly Ecosystem[] = ["js", "go", "python", "rust", "jvm"];
+
+/**
+ * Config aliases. `[verify.ecosystems.java]` and `.kotlin` both address the JVM
+ * ecosystem — they share gradle and maven, so they share one detector, but
+ * nobody writing config should have to know that.
+ */
+const ECOSYSTEM_ALIASES: Record<string, Ecosystem> = {
+  js: "js",
+  javascript: "js",
+  ts: "js",
+  typescript: "js",
+  node: "js",
+  go: "go",
+  golang: "go",
+  python: "python",
+  py: "python",
+  rust: "rust",
+  cargo: "rust",
+  jvm: "jvm",
+  java: "jvm",
+  kotlin: "jvm",
+  gradle: "jvm",
+  maven: "jvm",
+};
+
+export function resolveEcosystem(name: string): Ecosystem | null {
+  return ECOSYSTEM_ALIASES[name.trim().toLowerCase()] ?? null;
+}
+
+/**
+ * What a check is for. The order below is the order checks run in: the
+ * cheapest failing signal first, functional failures before style.
+ */
+export type CheckKind = "typecheck" | "build" | "test" | "lint";
+
+const KIND_ORDER: Record<CheckKind, number> = { typecheck: 0, build: 1, test: 2, lint: 3 };
+
+/** Compile-class kinds: fast, deterministic, and enough to know it still builds. */
+const FAST_KINDS = new Set<CheckKind>(["typecheck", "build"]);
+
+export interface DetectedCheck {
+  ecosystem: Ecosystem;
+  kind: CheckKind;
+  /** Project directory relative to the workspace root; "" for the root. */
+  project: string;
+  /** The command as run FROM the workspace root (cd-prefixed when nested). */
+  command: string;
+}
+
+export interface DetectedProject {
+  ecosystem: Ecosystem;
+  /** Relative directory; "" for the workspace root. */
+  dir: string;
+  /** The file that identified it — go.mod, Cargo.toml, pom.xml, … */
+  marker: string;
+  checks: DetectedCheck[];
+}
+
+/** One command the verifier actually attempted, and what came of it. */
+export interface CheckRunRecord {
+  command: string;
+  ecosystem?: Ecosystem;
+  kind?: CheckKind;
+  /** null when the command never ran (toolchain absent). */
+  exitCode: number | null;
+  durationMs: number;
+  passed: boolean;
+  /** Set when the command was not run at all; the value is why. */
+  skipped?: string;
+  timedOut?: boolean;
+}
 
 export interface VerifyResult {
   /** true when checks pass OR no checks are applicable. */
@@ -21,6 +111,12 @@ export interface VerifyResult {
   ran: boolean;
   /** Human-readable report (command + trimmed output) to feed back to the agent. */
   report: string;
+  /**
+   * Per-command record: what ran, its exit code, how long it took. The evidence
+   * ledger reads this instead of scraping the report, which it used to do with
+   * a regex over `$ ` lines.
+   */
+  runs?: CheckRunRecord[];
 }
 
 export interface Verifier {
@@ -31,16 +127,55 @@ export interface Verifier {
    * end of the run, so a step that broke the build is caught while it is
    * still the step being worked on. Optional: verifiers without a cheap tier
    * simply have no step check.
+   *
+   * `touched` is the files the step wrote. In a workspace with several
+   * projects it selects the one to check — a step that edited `api/main.go`
+   * gets `go build`, not every project in the tree.
    */
-  verifyFast?(signal?: AbortSignal): Promise<VerifyResult>;
+  verifyFast?(signal?: AbortSignal, touched?: string[]): Promise<VerifyResult>;
 }
 
-/** Compile-class commands: fast, deterministic, and enough to know the tree still builds. */
-const FAST_CHECK_RE = /\b(typecheck|tsc|cargo\s+check|go\s+build)\b/;
+/**
+ * Compile-class commands: fast, deterministic, and enough to know the tree
+ * still builds. Kept as a string predicate because callers (the worker tool)
+ * hold plain command lists with no provenance.
+ */
+const FAST_CHECK_RE =
+  /\b(typecheck|tsc|cargo\s+check|go\s+build|javac|py_compile|compileall|pyright|mypy|gradlew?\s+(--\S+\s+)*classes|mvnw?\s+(-\S+\s+)*compile)\b/;
 
 /** The step-check subset of a command list: compile-class checks only. */
 export function fastCheckCommands(commands: string[]): string[] {
   return commands.filter((c) => FAST_CHECK_RE.test(c));
+}
+
+// ─── Config ───
+
+/** `[verify.ecosystems.<name>]` — a bare boolean, or a table with an override. */
+export type EcosystemSetting = boolean | { enabled?: boolean; commands?: string[] };
+
+export interface DetectOptions {
+  /** Per-ecosystem enable/disable and command overrides. */
+  ecosystems?: Record<string, EcosystemSetting>;
+  /** How far below the workspace root to look for projects. Default 3. */
+  maxDepth?: number;
+}
+
+function settingFor(
+  opts: DetectOptions | undefined,
+  eco: Ecosystem,
+): { enabled: boolean; commands?: string[] } {
+  const raw = opts?.ecosystems;
+  if (!raw) return { enabled: true };
+  let hit: EcosystemSetting | undefined;
+  for (const [key, value] of Object.entries(raw)) {
+    if (resolveEcosystem(key) === eco) hit = value;
+  }
+  if (hit === undefined) return { enabled: true };
+  if (typeof hit === "boolean") return { enabled: hit };
+  return {
+    enabled: hit.enabled !== false,
+    commands: hit.commands && hit.commands.length > 0 ? hit.commands : undefined,
+  };
 }
 
 export interface CommandVerifierConfig {
@@ -49,6 +184,8 @@ export interface CommandVerifierConfig {
   commands?: string[];
   /** Per-command timeout in ms. Default 120_000. */
   timeoutMs?: number;
+  /** Per-ecosystem enable/disable and command overrides (`[verify.ecosystems]`). */
+  ecosystems?: Record<string, EcosystemSetting>;
   /**
    * Called once per command the verifier actually ran, with the exit code IT
    * read. Wired by the Engine to the same CheckLog the `bash` tool feeds.
@@ -60,34 +197,16 @@ export interface CommandVerifierConfig {
    * its behalf. Both now write to one log, so a rung can be derived from
    * either source.
    */
-  onCheck?: (run: { command: string; passed: boolean; summary?: string }) => void;
+  onCheck?: (run: {
+    command: string;
+    passed: boolean;
+    summary?: string;
+    exitCode?: number;
+    durationMs?: number;
+  }) => void;
 }
 
-// ─── Package-manager / runner detection ───
-
-type Pm = "bun" | "pnpm" | "yarn" | "npm";
-
-function detectPm(workspaceRoot: string): Pm {
-  const has = (f: string) => existsSync(join(workspaceRoot, f));
-  if (has("bun.lock") || has("bun.lockb")) return "bun";
-  if (has("pnpm-lock.yaml")) return "pnpm";
-  if (has("yarn.lock")) return "yarn";
-  return "npm";
-}
-
-/** The "run a package binary" form for each package manager (for tsc, etc.). */
-function pmx(pm: Pm): string {
-  switch (pm) {
-    case "bun":
-      return "bunx";
-    case "pnpm":
-      return "pnpm dlx";
-    case "yarn":
-      return "yarn dlx";
-    default:
-      return "npx";
-  }
-}
+// ─── Shared filesystem helpers ───
 
 // Directories a detection walk must never descend into.
 const WALK_SKIP = new Set([
@@ -103,7 +222,23 @@ const WALK_SKIP = new Set([
   ".turbo",
   ".cache",
   "__pycache__",
+  ".venv",
+  "venv",
+  ".gradle",
+  ".mvn",
+  ".tox",
+  "Pods",
 ]);
+
+function dirs(root: string): string[] {
+  try {
+    return readdirSync(root, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !WALK_SKIP.has(e.name) && !e.name.startsWith("."))
+      .map((e) => e.name);
+  } catch {
+    return [];
+  }
+}
 
 /**
  * Bounded recursive scan for files matching `pattern`. The old detection was a
@@ -131,6 +266,40 @@ function walkHas(root: string, pattern: RegExp, maxDepth = 4, budget = { n: 2000
   return false;
 }
 
+function readText(path: string): string {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+// ─── JS / TypeScript ───
+
+type Pm = "bun" | "pnpm" | "yarn" | "npm";
+
+function detectPm(workspaceRoot: string): Pm {
+  const has = (f: string) => existsSync(join(workspaceRoot, f));
+  if (has("bun.lock") || has("bun.lockb")) return "bun";
+  if (has("pnpm-lock.yaml")) return "pnpm";
+  if (has("yarn.lock")) return "yarn";
+  return "npm";
+}
+
+/** The "run a package binary" form for each package manager (for tsc, etc.). */
+function pmx(pm: Pm): string {
+  switch (pm) {
+    case "bun":
+      return "bunx";
+    case "pnpm":
+      return "pnpm dlx";
+    case "yarn":
+      return "yarn dlx";
+    default:
+      return "npx";
+  }
+}
+
 const JS_TEST_FILE = /\.(test|spec)\.(ts|tsx|js|jsx|mjs|cjs)$/;
 
 function readScripts(dir: string): Record<string, string> {
@@ -144,125 +313,370 @@ function readScripts(dir: string): Record<string, string> {
   }
 }
 
-/** Commands for one JS/TS project directory (root or a nested app). */
-function jsCommands(dir: string, isMonorepoRoot: boolean): string[] {
-  const cmds: string[] = [];
+function isJsMonorepoRoot(dir: string): boolean {
+  if (existsSync(join(dir, "turbo.json")) || existsSync(join(dir, "nx.json"))) return true;
+  if (existsSync(join(dir, "pnpm-workspace.yaml"))) return true;
+  try {
+    const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as {
+      workspaces?: unknown;
+    };
+    return pkg.workspaces != null;
+  } catch {
+    return false;
+  }
+}
+
+/** Checks for one JS/TS project directory (root or a nested app). */
+function jsChecks(dir: string, isMonorepoRoot: boolean): Array<[CheckKind, string]> {
+  const out: Array<[CheckKind, string]> = [];
   const has = (f: string) => existsSync(join(dir, f));
   const pm = detectPm(dir);
   const scripts = readScripts(dir);
 
   // 1. Typecheck (fast, deterministic).
-  if (scripts.typecheck) cmds.push(`${pm} run typecheck`);
-  else if (has("tsconfig.json")) cmds.push(`${pmx(pm)} tsc --noEmit`);
+  if (scripts.typecheck) out.push(["typecheck", `${pm} run typecheck`]);
+  else if (has("tsconfig.json")) out.push(["typecheck", `${pmx(pm)} tsc --noEmit`]);
 
   // 2. Tests. In a monorepo, ONLY trust root scripts (they fan out properly);
   // running `bun test` over the whole tree would double-run packages.
   if (scripts.test && !/no test specified/i.test(scripts.test)) {
-    cmds.push(`${pm === "npm" ? "npm test" : `${pm} test`}`);
+    out.push(["test", pm === "npm" ? "npm test" : `${pm} test`]);
   } else if (!scripts.test && !isMonorepoRoot && walkHas(dir, JS_TEST_FILE)) {
     // Scriptless project with raw test files — Gear runs on Bun, which can
     // execute bun:test files directly.
-    cmds.push("bun test");
+    out.push(["test", "bun test"]);
   }
 
   // 3. Lint, when the project declares it (last: functional failures first).
-  if (scripts.lint) cmds.push(`${pm} run lint`);
+  if (scripts.lint) out.push(["lint", `${pm} run lint`]);
 
   // 4. Build as a compile-at-least fallback when nothing else was detected.
-  if (cmds.length === 0 && scripts.build) cmds.push(`${pm} run build`);
+  if (out.length === 0 && scripts.build) out.push(["build", `${pm} run build`]);
 
-  return cmds;
+  return out;
+}
+
+// ─── Go ───
+
+function goChecks(dir: string): Array<[CheckKind, string]> {
+  const out: Array<[CheckKind, string]> = [
+    ["build", "go build ./..."],
+    // `go vet` reports suspicious constructs — Go's lint-shaped tool, so it
+    // runs after the functional checks, like every other lint here.
+    ["lint", "go vet ./..."],
+  ];
+  if (walkHas(dir, /_test\.go$/)) out.push(["test", "go test ./..."]);
+  return out;
+}
+
+// ─── Rust ───
+
+function rustChecks(dir: string): Array<[CheckKind, string]> {
+  const out: Array<[CheckKind, string]> = [
+    ["typecheck", "cargo check --quiet"],
+    ["test", "cargo test --quiet"],
+  ];
+  const manifest = readText(join(dir, "Cargo.toml"));
+  const clippyConfigured =
+    existsSync(join(dir, "clippy.toml")) ||
+    existsSync(join(dir, ".clippy.toml")) ||
+    /\[(workspace\.)?lints\.clippy\]/.test(manifest);
+  if (clippyConfigured) out.push(["lint", "cargo clippy --quiet"]);
+  return out;
+}
+
+// ─── Python ───
+
+const PY_MARKERS = [
+  "pyproject.toml",
+  "setup.py",
+  "setup.cfg",
+  "requirements.txt",
+  "Pipfile",
+  "tox.ini",
+];
+
+/**
+ * How to reach the project's own interpreter. A virtualenv or `uv` is the
+ * difference between running the project's pytest and running whatever happens
+ * to be on PATH — and installing nothing either way.
+ */
+function pythonRunner(dir: string): { uv: boolean; python: string; binDir: string | null } {
+  const pyproject = readText(join(dir, "pyproject.toml"));
+  if (existsSync(join(dir, "uv.lock")) || /\[tool\.uv\]/.test(pyproject)) {
+    return { uv: true, python: "uv run python", binDir: null };
+  }
+  for (const venv of [".venv", "venv"]) {
+    const bin = join(dir, venv, "bin");
+    if (existsSync(join(bin, "python"))) {
+      return { uv: false, python: `${venv}/bin/python`, binDir: bin };
+    }
+  }
+  return { uv: false, python: "python3", binDir: null };
+}
+
+function pythonChecks(dir: string): Array<[CheckKind, string]> {
+  const out: Array<[CheckKind, string]> = [];
+  const run = pythonRunner(dir);
+  const pyproject = readText(join(dir, "pyproject.toml"));
+  const setupCfg = readText(join(dir, "setup.cfg"));
+  const toxIni = readText(join(dir, "tox.ini"));
+  const requirements = readText(join(dir, "requirements.txt"));
+  const has = (f: string) => existsSync(join(dir, f));
+
+  /** The project's own entry point for a tool, without installing it. */
+  const tool = (name: string, args: string): string => {
+    if (run.binDir && existsSync(join(run.binDir, name))) {
+      const venv = run.python.startsWith(".venv") ? ".venv" : "venv";
+      return `${venv}/bin/${name} ${args}`.trim();
+    }
+    if (run.uv) return `uv run ${name} ${args}`.trim();
+    return `${run.python} -m ${name} ${args}`.trim();
+  };
+
+  // Typecheck — pyright first (it is the one Gear's own LSP layer speaks),
+  // mypy when that is what the project configured. Never both.
+  const pyrightConfigured = has("pyrightconfig.json") || /\[tool\.pyright\]/.test(pyproject);
+  const mypyConfigured =
+    has("mypy.ini") ||
+    has(".mypy.ini") ||
+    /\[tool\.mypy\]/.test(pyproject) ||
+    /\[mypy\]/.test(setupCfg);
+  if (pyrightConfigured) {
+    out.push(["typecheck", run.uv ? "uv run pyright" : tool("pyright", "").trim()]);
+  } else if (mypyConfigured) {
+    out.push(["typecheck", tool("mypy", ".")]);
+  }
+
+  // Tests — pytest when the project configured it, stdlib unittest otherwise.
+  // `python -m unittest` is always available; pytest is not, and guessing it
+  // would be guessing an install.
+  const pytestConfigured =
+    has("pytest.ini") ||
+    has("conftest.py") ||
+    /\[tool\.pytest\.ini_options\]/.test(pyproject) ||
+    /\[tool:pytest\]/.test(setupCfg) ||
+    /\[pytest\]/.test(toxIni) ||
+    /(^|\n)\s*pytest\b/i.test(requirements) ||
+    /["']pytest[<>=~!\s"']/.test(pyproject);
+  const hasTests = walkHas(dir, /^(test_.*|.*_test)\.py$/, 3);
+  if (pytestConfigured) out.push(["test", tool("pytest", "-q")]);
+  else if (hasTests) out.push(["test", `${run.python} -m unittest discover -q`]);
+
+  // Lint — ruff, when configured.
+  const ruffConfigured =
+    has("ruff.toml") ||
+    has(".ruff.toml") ||
+    /\[tool\.ruff/.test(pyproject) ||
+    /(^|\n)\s*ruff\b/i.test(requirements);
+  if (ruffConfigured) out.push(["lint", tool("ruff", "check .")]);
+
+  return out;
+}
+
+// ─── JVM (Java + Kotlin) ───
+
+const JVM_MARKERS = [
+  "build.gradle",
+  "build.gradle.kts",
+  "settings.gradle",
+  "settings.gradle.kts",
+  "pom.xml",
+];
+
+function jvmChecks(dir: string): Array<[CheckKind, string]> {
+  const out: Array<[CheckKind, string]> = [];
+  const has = (f: string) => existsSync(join(dir, f));
+  const gradleBuild =
+    has("build.gradle") ||
+    has("build.gradle.kts") ||
+    has("settings.gradle") ||
+    has("settings.gradle.kts");
+
+  if (has("gradlew") && gradleBuild) {
+    // `classes` compiles the main source sets for both the java and the
+    // kotlin-jvm plugins, so one task covers both languages.
+    out.push(["build", "./gradlew --quiet classes"]);
+    out.push(["test", "./gradlew --quiet test"]);
+  } else if (has("mvnw") && has("pom.xml")) {
+    out.push(["build", "./mvnw -q -B compile"]);
+    out.push(["test", "./mvnw -q -B test"]);
+  } else if (gradleBuild) {
+    out.push(["build", "gradle --quiet classes"]);
+    out.push(["test", "gradle --quiet test"]);
+  } else if (has("pom.xml")) {
+    out.push(["build", "mvn -q -B compile"]);
+    out.push(["test", "mvn -q -B test"]);
+  } else {
+    // Java sources with no build tool at all: javac into a throwaway
+    // directory is the whole check. Nothing is installed and nothing is kept.
+    out.push([
+      "build",
+      `javac -d "$(mktemp -d)" $(find . -name '*.java' -not -path '*/build/*' -not -path '*/out/*')`,
+    ]);
+  }
+  return out;
+}
+
+// ─── Project discovery ───
+
+interface Marker {
+  ecosystem: Ecosystem;
+  /** The file that identifies a project of this ecosystem, if present in `dir`. */
+  find: (dir: string) => string | null;
+  checks: (dir: string, isRoot: boolean) => Array<[CheckKind, string]>;
+}
+
+const first = (dir: string, names: string[]): string | null =>
+  names.find((n) => existsSync(join(dir, n))) ?? null;
+
+/** Files directly in `dir` (no recursion) matching `pattern`. */
+function hasDirectFile(dir: string, pattern: RegExp): boolean {
+  try {
+    return readdirSync(dir, { withFileTypes: true }).some(
+      (e) => e.isFile() && pattern.test(e.name),
+    );
+  } catch {
+    return false;
+  }
+}
+
+const ALL_MARKER_FILES = [
+  "package.json",
+  "tsconfig.json",
+  "go.mod",
+  "Cargo.toml",
+  ...PY_MARKERS,
+  ...JVM_MARKERS,
+];
+
+const JVM_SOURCE = /\.(java|kt)$/;
+
+/**
+ * A bare Java/Kotlin tree — sources and no build file — is still a project. The
+ * claim is deliberately narrow: sources directly in the directory or under a
+ * conventional `src/`, and no other ecosystem's marker in the same directory.
+ * Without that guard a JS repo carrying one `.kt` fixture would be "a Java
+ * project" and every step check would shell out to javac.
+ */
+function bareJvmTree(dir: string): boolean {
+  if (first(dir, ALL_MARKER_FILES)) return false;
+  if (hasDirectFile(dir, JVM_SOURCE)) return true;
+  const src = join(dir, "src");
+  return existsSync(src) && walkHas(src, JVM_SOURCE, 3);
+}
+
+const MARKERS: Marker[] = [
+  {
+    ecosystem: "js",
+    find: (d) =>
+      first(d, ["package.json", "tsconfig.json"]) ??
+      // No manifest, raw `*.test.ts` files: Gear runs on Bun and can execute
+      // them directly. This is the greenfield "wrote tests, never wrote a
+      // package.json" shape.
+      (walkHas(d, JS_TEST_FILE, 3) ? "*.test.ts" : null),
+    checks: (d) => jsChecks(d, isJsMonorepoRoot(d)),
+  },
+  { ecosystem: "go", find: (d) => first(d, ["go.mod"]), checks: (d) => goChecks(d) },
+  { ecosystem: "rust", find: (d) => first(d, ["Cargo.toml"]), checks: (d) => rustChecks(d) },
+  { ecosystem: "python", find: (d) => first(d, PY_MARKERS), checks: (d) => pythonChecks(d) },
+  {
+    ecosystem: "jvm",
+    find: (d) => first(d, JVM_MARKERS) ?? (bareJvmTree(d) ? "*.java" : null),
+    checks: (d) => jvmChecks(d),
+  },
+];
+
+const DEFAULT_MAX_DEPTH = 3;
+
+/**
+ * Every project under `workspaceRoot`, with the check set for each.
+ *
+ * The walk is bounded (depth 3 by default) and skips node_modules, target,
+ * vendor, .git and friends. A marker claims its subtree: a `go.mod` at the root
+ * means `go build ./...` covers the module, so nested Go directories are not
+ * separate projects; the same for a cargo workspace, a gradle root project and
+ * a JS monorepo root.
+ */
+export function detectProjects(workspaceRoot: string, opts?: DetectOptions): DetectedProject[] {
+  const maxDepth = opts?.maxDepth ?? DEFAULT_MAX_DEPTH;
+  const found: DetectedProject[] = [];
+  /** Ecosystems whose subtree has already been claimed at or above this dir. */
+  const walk = (dir: string, rel: string, depth: number, claimed: Set<Ecosystem>): void => {
+    const claimedHere = new Set(claimed);
+    for (const marker of MARKERS) {
+      if (claimedHere.has(marker.ecosystem)) continue;
+      const setting = settingFor(opts, marker.ecosystem);
+      if (!setting.enabled) {
+        claimedHere.add(marker.ecosystem); // disabled: never look again
+        continue;
+      }
+      const hit = marker.find(dir);
+      if (!hit) continue;
+      const raw: Array<[CheckKind, string]> = setting.commands
+        ? setting.commands.map((c) => [classifyCommand(c), c] as [CheckKind, string])
+        : marker.checks(dir, rel === "");
+      claimedHere.add(marker.ecosystem);
+      // A project with NO project-wide check is still a project. A Python
+      // package that configured neither pyright nor mypy has nothing to run
+      // over the whole tree, and dropping it here is what made the file-scoped
+      // `py_compile` step check unreachable — the code existed and had no
+      // project to attach to.
+      found.push({
+        ecosystem: marker.ecosystem,
+        dir: rel,
+        marker: hit,
+        checks: raw.map(([kind, command]) => ({
+          ecosystem: marker.ecosystem,
+          kind,
+          project: rel,
+          command: rel === "" ? command : `cd ${rel} && ${command}`,
+        })),
+      });
+    }
+    if (depth >= maxDepth) return;
+    // Nothing left to look for — stop descending.
+    if (ECOSYSTEMS.every((e) => claimedHere.has(e))) return;
+    for (const name of dirs(dir)) {
+      walk(join(dir, name), rel === "" ? name : `${rel}/${name}`, depth + 1, claimedHere);
+    }
+  };
+  walk(workspaceRoot, "", 0, new Set());
+  return found;
+}
+
+/** Guess a kind for a hand-written override command, for ordering only. */
+export function classifyCommand(command: string): CheckKind {
+  if (/\b(lint|clippy|vet|ruff|eslint|fmt)\b/.test(command)) return "lint";
+  if (/\b(test|pytest|unittest)\b/.test(command)) return "test";
+  if (FAST_CHECK_RE.test(command))
+    return /\b(build|javac|classes|compile)\b/.test(command) ? "build" : "typecheck";
+  return "build";
+}
+
+/** Every detected check, ordered cheapest-signal-first. */
+export function detectChecks(workspaceRoot: string, opts?: DetectOptions): DetectedCheck[] {
+  const projects = detectProjects(workspaceRoot, opts);
+  const checks = projects.flatMap((p) => p.checks);
+  return checks
+    .map((c, i) => ({ c, i }))
+    .sort((a, b) => KIND_ORDER[a.c.kind] - KIND_ORDER[b.c.kind] || a.i - b.i)
+    .map((x) => x.c);
 }
 
 /**
- * Detect sensible verification commands for a workspace by inspecting common
- * project manifests. Order matters: a fast typecheck before the (slower) test
- * run, so the agent gets the cheapest failing signal first.
+ * Detect sensible verification commands for a workspace.
  *
- * Detection rules (each anchored to a real observed miss):
- *  - Monorepo (root `workspaces` / turbo.json): trust root scripts only.
- *  - No root manifest but exactly ONE nested package.json at depth ≤2 (the
- *    "built a self-contained app in a subdirectory" case): detect there and
- *    prefix the commands with `cd <dir> &&`.
- *  - Test files are found by a bounded recursive walk, not a root readdir.
- *  - Rust / Go get their standard compile checks.
- *
+ * Kept as the string-list entry point for callers that only want commands
+ * (the worker tool's per-worktree checks, `[verify] commands` comparison).
  * Returns [] when nothing is detected.
  */
-export function detectVerifyCommands(workspaceRoot: string): string[] {
-  const has = (f: string) => existsSync(join(workspaceRoot, f));
-  const cmds: string[] = [];
-
-  const rootHasPkg = has("package.json");
-  const isMonorepoRoot =
-    has("turbo.json") ||
-    (rootHasPkg &&
-      (() => {
-        try {
-          const pkg = JSON.parse(readFileSync(join(workspaceRoot, "package.json"), "utf8")) as {
-            workspaces?: unknown;
-          };
-          return pkg.workspaces != null;
-        } catch {
-          return false;
-        }
-      })());
-
-  if (rootHasPkg || has("tsconfig.json")) {
-    cmds.push(...jsCommands(workspaceRoot, isMonorepoRoot));
-  } else {
-    // No root manifest: a single self-contained app in a subdirectory is the
-    // common greenfield shape ("build me X" into <workspace>/x/).
-    const nested = findSingleNestedPackage(workspaceRoot);
-    if (nested) {
-      cmds.push(...jsCommands(nested.dir, false).map((c) => `cd ${nested.rel} && ${c}`));
-    } else if (walkHas(workspaceRoot, JS_TEST_FILE)) {
-      cmds.push("bun test");
-    }
+export function detectVerifyCommands(workspaceRoot: string, opts?: DetectOptions): string[] {
+  const out: string[] = [];
+  for (const c of detectChecks(workspaceRoot, opts)) {
+    if (!out.includes(c.command)) out.push(c.command);
   }
-
-  // Rust.
-  if (has("Cargo.toml")) cmds.push("cargo check --quiet");
-
-  // Go: the compiler is the cheapest honest check; tests only when they exist.
-  if (has("go.mod")) {
-    cmds.push("go build ./...");
-    if (walkHas(workspaceRoot, /_test\.go$/)) cmds.push("go test ./...");
-  }
-
-  return cmds;
-}
-
-/** Exactly one package.json in an immediate or second-level subdirectory. */
-function findSingleNestedPackage(root: string): { dir: string; rel: string } | null {
-  const found: Array<{ dir: string; rel: string }> = [];
-  let level1: import("fs").Dirent[];
-  try {
-    level1 = readdirSync(root, { withFileTypes: true });
-  } catch {
-    return null;
-  }
-  for (const a of level1) {
-    if (!a.isDirectory() || WALK_SKIP.has(a.name) || a.name.startsWith(".")) continue;
-    const d1 = join(root, a.name);
-    if (existsSync(join(d1, "package.json"))) {
-      found.push({ dir: d1, rel: a.name });
-      continue;
-    }
-    let level2: import("fs").Dirent[];
-    try {
-      level2 = readdirSync(d1, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const b of level2) {
-      if (!b.isDirectory() || WALK_SKIP.has(b.name) || b.name.startsWith(".")) continue;
-      const d2 = join(d1, b.name);
-      if (existsSync(join(d2, "package.json"))) found.push({ dir: d2, rel: `${a.name}/${b.name}` });
-    }
-    if (found.length > 1) return null;
-  }
-  return found.length === 1 ? found[0] : null;
+  return out;
 }
 
 // ─── Command execution ───
@@ -271,12 +685,32 @@ function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + `\n…[${s.length - max} more chars]` : s;
 }
 
+/**
+ * "The toolchain isn't here" as told by a shell. `bash -c` exits 127 and says
+ * which name it could not find; we only accept that as a skip when the missing
+ * name is the command's own leading binary, so a project script that exits 127
+ * for its own reasons still fails.
+ */
+function missingToolchain(command: string, exitCode: number, output: string): string | null {
+  if (exitCode !== 127) return null;
+  const m = output.match(/(?:^|\n).*?([\w.\-/]+):?\s*(?:command not found|not found)/i);
+  const missing = m?.[1];
+  if (!missing) return null;
+  const head = command.replace(/^cd\s+\S+\s*&&\s*/, "").trim();
+  const bin = head.split(/\s+/)[0]?.replace(/^\.\//, "") ?? "";
+  const missingBin = missing.replace(/^\.\//, "").split("/").pop() ?? missing;
+  const wantBin = bin.split("/").pop() ?? bin;
+  if (missingBin !== wantBin) return null;
+  return `${wantBin} is not installed on this machine`;
+}
+
 async function runCommand(
   command: string,
   cwd: string,
   timeoutMs: number,
   signal?: AbortSignal,
-): Promise<{ exitCode: number; output: string; timedOut: boolean }> {
+): Promise<{ exitCode: number; output: string; timedOut: boolean; durationMs: number }> {
+  const started = Date.now();
   const proc = Bun.spawn(["bash", "-c", command], {
     cwd,
     stdout: "pipe",
@@ -309,11 +743,83 @@ async function runCommand(
       new Response(proc.stderr).text(),
       proc.exited,
     ]);
-    return { exitCode, output: `${stdout}${stderr}`.trim(), timedOut };
+    return {
+      exitCode,
+      output: `${stdout}${stderr}`.trim(),
+      timedOut,
+      durationMs: Date.now() - started,
+    };
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener("abort", onAbort);
   }
+}
+
+// ─── Per-step compile checks ───
+
+/** Which project a step's files belong to: the deepest project dir containing one. */
+export function projectForFiles(projects: DetectedProject[], touched: string[]): DetectedProject[] {
+  if (touched.length === 0) return [];
+  const norm = touched.map((t) => t.replace(/^\.\//, "").replace(/\\/g, "/"));
+  const hits: DetectedProject[] = [];
+  for (const p of projects) {
+    const prefix = p.dir === "" ? "" : `${p.dir}/`;
+    if (norm.some((f) => f.startsWith(prefix))) hits.push(p);
+  }
+  if (hits.length === 0) return [];
+  // Deepest first: a file under `api/` belongs to the `api` project, not to
+  // the root one that also contains it.
+  const deepest = Math.max(...hits.map((p) => p.dir.split("/").filter(Boolean).length));
+  return hits.filter((p) => p.dir.split("/").filter(Boolean).length === deepest);
+}
+
+/** Files a per-file compile check applies to, by extension. */
+const PY_FILE = /\.py$/;
+const JAVA_FILE = /\.java$/;
+
+/**
+ * A file-scoped compile check for a project whose ecosystem has no cheap
+ * project-wide one. Python without pyright/mypy configured compiles the touched
+ * files; a bare Java tree compiles the touched file into a throwaway directory.
+ * Returns null when the project already has a compile-class check of its own.
+ */
+function fileScopedCheck(
+  workspaceRoot: string,
+  project: DetectedProject,
+  touched: string[],
+): DetectedCheck | null {
+  if (project.checks.some((c) => FAST_KINDS.has(c.kind))) return null;
+  const prefix = project.dir === "" ? "" : `${project.dir}/`;
+  const inProject = touched
+    .map((t) => t.replace(/^\.\//, "").replace(/\\/g, "/"))
+    .filter((f) => f.startsWith(prefix))
+    .map((f) => f.slice(prefix.length))
+    .filter(Boolean);
+  const quote = (f: string) => `'${f.replace(/'/g, "'\\''")}'`;
+  const wrap = (cmd: string) => (project.dir === "" ? cmd : `cd ${project.dir} && ${cmd}`);
+
+  if (project.ecosystem === "python") {
+    const files = inProject.filter((f) => PY_FILE.test(f)).slice(0, 20);
+    if (files.length === 0) return null;
+    const python = pythonRunner(join(workspaceRoot, project.dir)).python;
+    return {
+      ecosystem: "python",
+      kind: "build",
+      project: project.dir,
+      command: wrap(`${python} -m py_compile ${files.map(quote).join(" ")}`),
+    };
+  }
+  if (project.ecosystem === "jvm") {
+    const files = inProject.filter((f) => JAVA_FILE.test(f)).slice(0, 20);
+    if (files.length === 0) return null;
+    return {
+      ecosystem: "jvm",
+      kind: "build",
+      project: project.dir,
+      command: wrap(`javac -d "$(mktemp -d)" ${files.map(quote).join(" ")}`),
+    };
+  }
+  return null;
 }
 
 // ─── CommandVerifier ───
@@ -321,39 +827,85 @@ async function runCommand(
 export class CommandVerifier implements Verifier {
   constructor(private readonly config: CommandVerifierConfig) {}
 
+  private overridden(): string[] | null {
+    return this.config.commands && this.config.commands.length > 0 ? this.config.commands : null;
+  }
+
+  private detectOptions(): DetectOptions {
+    return { ecosystems: this.config.ecosystems };
+  }
+
+  /** Every check for this workspace, as the structured records the ledger wants. */
+  private checks(): DetectedCheck[] {
+    const override = this.overridden();
+    if (override) {
+      return override.map((command) => ({
+        ecosystem: "js" as Ecosystem,
+        kind: classifyCommand(command),
+        project: "",
+        command,
+      }));
+    }
+    return detectChecks(this.config.workspaceRoot, this.detectOptions());
+  }
+
   private commands(): string[] {
-    return this.config.commands && this.config.commands.length > 0
-      ? this.config.commands
-      : detectVerifyCommands(this.config.workspaceRoot);
+    return (
+      this.overridden() ?? detectVerifyCommands(this.config.workspaceRoot, this.detectOptions())
+    );
   }
 
   async verify(signal?: AbortSignal): Promise<VerifyResult> {
-    return this.run(this.commands(), this.config.timeoutMs ?? 120_000, signal);
+    return this.run(this.checks(), this.config.timeoutMs ?? 120_000, signal);
   }
 
   /**
    * Step check: the compile-class subset, on a tighter clock (a minute — a
    * typecheck that takes longer than that is not a step-boundary tool). When
    * the project has no such check, `ran: false` and the caller moves on.
+   *
+   * `touched` narrows a multi-project workspace to the project the step
+   * actually edited: four services in one repo should not all rebuild because
+   * one of them changed.
    */
-  async verifyFast(signal?: AbortSignal): Promise<VerifyResult> {
-    const fast = fastCheckCommands(this.commands());
-    if (fast.length === 0) {
-      return {
-        passed: true,
-        ran: false,
-        report: "No compile-class check detected for a step check.",
-      };
+  async verifyFast(signal?: AbortSignal, touched?: string[]): Promise<VerifyResult> {
+    const timeout = Math.min(this.config.timeoutMs ?? 120_000, 60_000);
+    const override = this.overridden();
+    if (override) {
+      const fast = fastCheckCommands(override).map((command) => ({
+        ecosystem: "js" as Ecosystem,
+        kind: classifyCommand(command),
+        project: "",
+        command,
+      }));
+      return fast.length === 0 ? noFastCheck() : this.run(fast, timeout, signal);
     }
-    return this.run(fast, Math.min(this.config.timeoutMs ?? 120_000, 60_000), signal);
+
+    const projects = detectProjects(this.config.workspaceRoot, this.detectOptions());
+    const scoped = projectForFiles(projects, touched ?? []);
+    const chosen = scoped.length > 0 ? scoped : projects;
+
+    const fast: DetectedCheck[] = [];
+    for (const p of chosen) {
+      const own = p.checks.filter((c) => FAST_KINDS.has(c.kind));
+      if (own.length > 0) {
+        fast.push(...own);
+      } else if (touched && touched.length > 0) {
+        const scopedCheck = fileScopedCheck(this.config.workspaceRoot, p, touched);
+        if (scopedCheck) fast.push(scopedCheck);
+      }
+    }
+    if (fast.length === 0) return noFastCheck();
+    fast.sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind]);
+    return this.run(fast, timeout, signal);
   }
 
   private async run(
-    commands: string[],
+    checks: DetectedCheck[],
     timeoutMs: number,
     signal?: AbortSignal,
   ): Promise<VerifyResult> {
-    if (commands.length === 0) {
+    if (checks.length === 0) {
       // Word this as the finding it is: after a session that WROTE files,
       // "nothing runnable" usually means the work produced static files, not a
       // project — the exact signature of a mock delivered as an app. The report
@@ -361,42 +913,90 @@ export class CommandVerifier implements Verifier {
       return {
         passed: true,
         ran: false,
+        runs: [],
         report:
           "Nothing runnable detected — no manifest, test, or build configuration found, so no command was executed.",
       };
     }
 
     const reports: string[] = [];
+    const runs: CheckRunRecord[] = [];
     /** Report every command we ran to the check log — pass or fail, always. */
-    const note = (command: string, passed: boolean, summary?: string): void => {
+    const note = (record: CheckRunRecord): void => {
+      runs.push(record);
+      if (record.skipped) return; // a command that never ran is not evidence
       try {
-        this.config.onCheck?.({ command, passed, summary });
+        this.config.onCheck?.({
+          command: record.command,
+          passed: record.passed,
+          summary: record.timedOut
+            ? `timed out after ${timeoutMs}ms`
+            : record.passed
+              ? "ok"
+              : `exit ${record.exitCode}`,
+          exitCode: record.exitCode ?? undefined,
+          durationMs: record.durationMs,
+        });
       } catch {
         // Evidence bookkeeping must never break verification itself.
       }
     };
-    for (const cmd of commands) {
+
+    for (const check of checks) {
       if (signal?.aborted) break;
-      const { exitCode, output, timedOut } = await runCommand(
+      const cmd = check.command;
+      const { exitCode, output, timedOut, durationMs } = await runCommand(
         cmd,
         this.config.workspaceRoot,
         timeoutMs,
         signal,
       );
+      const base = { command: cmd, ecosystem: check.ecosystem, kind: check.kind, durationMs };
       if (timedOut) {
-        note(cmd, false, `timed out after ${timeoutMs}ms`);
+        note({ ...base, exitCode, passed: false, timedOut: true });
         reports.push(`$ ${cmd}\n[timed out after ${timeoutMs}ms]`);
-        return { passed: false, ran: true, report: reports.join("\n\n") };
+        return { passed: false, ran: true, runs, report: reports.join("\n\n") };
       }
       if (exitCode !== 0) {
-        note(cmd, false, `exit ${exitCode}`);
+        const absent = missingToolchain(cmd, exitCode, output);
+        if (absent) {
+          // Cannot check ≠ check failed. Recorded, reported, and stepped over.
+          note({ ...base, exitCode: null, passed: true, skipped: absent });
+          reports.push(`$ ${cmd}  (skipped — ${absent})`);
+          continue;
+        }
+        note({ ...base, exitCode, passed: false });
         reports.push(`$ ${cmd}  (exit ${exitCode})\n${truncate(output, 2000)}`);
-        return { passed: false, ran: true, report: reports.join("\n\n") };
+        return { passed: false, ran: true, runs, report: reports.join("\n\n") };
       }
-      note(cmd, true, "ok");
+      note({ ...base, exitCode, passed: true });
       reports.push(`$ ${cmd}  (ok)`);
     }
 
-    return { passed: true, ran: true, report: reports.join("\n\n") };
+    const actuallyRan = runs.some((r) => !r.skipped);
+    if (!actuallyRan) {
+      return {
+        passed: true,
+        ran: false,
+        runs,
+        report:
+          runs.length > 0
+            ? `No check could run — ${runs
+                .map((r) => r.skipped)
+                .filter(Boolean)
+                .join("; ")}.`
+            : "Nothing runnable detected — no command was executed.",
+      };
+    }
+    return { passed: true, ran: true, runs, report: reports.join("\n\n") };
   }
+}
+
+function noFastCheck(): VerifyResult {
+  return {
+    passed: true,
+    ran: false,
+    runs: [],
+    report: "No compile-class check detected for a step check.",
+  };
 }
