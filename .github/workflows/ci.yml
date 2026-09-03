@@ -135,9 +135,24 @@ jobs:
           else
             echo "No crate-level integration tests (crates/*/tests/*.rs) yet — skipping."
           fi
+      - name: Verifier toolchain inventory (P10.4)
+        # tests/integration/verifier-ecosystems.test.ts runs the commands the
+        # verifier detects for Go, Python, Rust and the JVM. On a laptop a
+        # missing toolchain is a clean skip; here it would be a hole in the gate,
+        # so GEAR_VERIFIER_REQUIRE_TOOLCHAINS below turns a skip into a failure.
+        # This step prints what the runner actually has, so a change to the
+        # image is visible in the log rather than only in a red test.
+        run: |
+          go version || echo "go: MISSING"
+          python3 --version || echo "python3: MISSING"
+          javac -version || echo "javac: MISSING"
+          cargo --version || echo "cargo: MISSING"
       - name: TypeScript integration tests (real engine + real gear-tools)
         env:
           GEAR_TOOLS_BIN: ${{ github.workspace }}/target/release/gear-tools
+          # ubuntu ships Go, Python and Java; Rust comes from the toolchain step
+          # above. macOS runners have no Go, so the requirement is linux-only.
+          GEAR_VERIFIER_REQUIRE_TOOLCHAINS: ${{ matrix.os == 'ubuntu-latest' && 'go,python,rust,java' || '' }}
         run: bun test tests/integration/
 
   # ── Stage 4b: Windows unit suite + the Windows installer's only compiler ──

@@ -1,0 +1,4 @@
+[project]
+name = "gear-fixture-python-fail"
+version = "0.0.0"
+description = "Detection fixture: the same shape as python-pass, with a file that does not compile."

@@ -34,8 +34,20 @@ export interface StepEvidence {
    * fix in progress, not a failed step — the step check runs again instead.
    */
   writesSinceCheck: number;
-  /** The most recent verification-shaped command during this step. */
-  lastCheck?: { passed: boolean; command?: string; summary?: string };
+  /**
+   * The most recent verification-shaped command during this step. `exitCode`
+   * and `durationMs` are present for checks the HARNESS ran (it reads both
+   * directly) and absent for checks the model ran through `bash`, where the
+   * tool result carries a success flag and no code. Absent means "no data",
+   * never zero.
+   */
+  lastCheck?: {
+    passed: boolean;
+    command?: string;
+    summary?: string;
+    exitCode?: number;
+    durationMs?: number;
+  };
   startedAt?: string;
   completedAt?: string;
 }

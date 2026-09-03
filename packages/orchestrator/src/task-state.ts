@@ -100,7 +100,30 @@ export interface TaskState {
   handoff?: { reason: HandoffReason; state: string; at: string };
   /** The run's own audit trail, newest last, capped. */
   log?: StepLogEntry[];
+  /**
+   * Every verification-shaped command this task ran, newest last, capped.
+   *
+   * The log line said "step check passed" and the receipt said "check ok";
+   * neither said WHICH command, what it exited with, or how long it took, so
+   * `gear audit` could report that a step was checked without being able to
+   * say what checked it. `exitCode` and `durationMs` are present for checks
+   * the harness ran and absent for checks the model ran through `bash` —
+   * absent means no data, never zero.
+   */
+  checks?: CheckRecord[];
   updatedAt: string;
+}
+
+/** One verification-shaped command, as the runtime observed it. */
+export interface CheckRecord {
+  at: string;
+  command: string;
+  passed: boolean;
+  /** Who ran it: the harness's own verifier, or the model through `bash`. */
+  source: "harness" | "model";
+  exitCode?: number;
+  durationMs?: number;
+  summary?: string;
 }
 
 const FILES_READ_CAP = 30;
@@ -109,6 +132,10 @@ const TODOS_RENDER_CAP = 20;
 const REPORT_CAP = 500;
 const PRIOR_GOALS_CAP = 3;
 const LOG_CAP = 80;
+/** Checks kept on the spine. Bounded like the log — this is a record, not a stream. */
+const CHECKS_CAP = 60;
+/** Files remembered for the step check's project scoping. */
+const PENDING_WRITES_CAP = 100;
 // The goal is the SPEC. It used to be capped at 2,000 chars, which turned a
 // 10k-word product brief into a stub the moment it left the transcript — the
 // durable record of a 4-hour build held 2,000 chars of requirements. The cap
@@ -354,6 +381,13 @@ export class TaskStateStore {
    * restart the worst case is one extra refusal, never a wrong acceptance.
    */
   private pending: StepEvidence = emptyEvidence();
+  /**
+   * Files written since the last accepted todo_write — the step's own edits.
+   * The step check reads them to pick WHICH project to compile in a workspace
+   * that holds several; checking all four services because one changed is a
+   * minute the step did not have. Same lifetime as `pending`, same reason.
+   */
+  private pendingWrites: string[] = [];
   /** Completion keys refused once; the second submission is accepted as unproven. */
   private refusedOnce = new Set<string>();
 
@@ -435,7 +469,25 @@ export class TaskStateStore {
    * the step in progress (the first, if the model left several) and to the
    * pending pool that the next completion draws from.
    */
-  noteEffect(kind: EffectKind, detail?: { command?: string; summary?: string }): void {
+  noteEffect(
+    kind: EffectKind,
+    detail?: {
+      command?: string;
+      summary?: string;
+      /** The exit code the runtime read — harness-run checks only. */
+      exitCode?: number;
+      durationMs?: number;
+      /** Who ran it. Defaults to the model (the `bash` chokepoint). */
+      source?: "harness" | "model";
+    },
+  ): void {
+    const check = (passed: boolean): StepEvidence["lastCheck"] => ({
+      passed,
+      command: detail?.command,
+      summary: detail?.summary,
+      ...(detail?.exitCode != null ? { exitCode: detail.exitCode } : {}),
+      ...(detail?.durationMs != null ? { durationMs: detail.durationMs } : {}),
+    });
     const apply = (ev: StepEvidence): void => {
       switch (kind) {
         case "read":
@@ -451,12 +503,12 @@ export class TaskStateStore {
         case "check_pass":
           ev.checksPassed++;
           ev.writesSinceCheck = 0;
-          ev.lastCheck = { passed: true, command: detail?.command, summary: detail?.summary };
+          ev.lastCheck = check(true);
           break;
         case "check_fail":
           ev.checksFailed++;
           ev.writesSinceCheck = 0;
-          ev.lastCheck = { passed: false, command: detail?.command, summary: detail?.summary };
+          ev.lastCheck = check(false);
           break;
         case "answer":
           ev.answers++;
@@ -475,7 +527,29 @@ export class TaskStateStore {
       active.evidence ??= { ...emptyEvidence(), startedAt: new Date().toISOString() };
       apply(active.evidence);
     }
+    // The check ledger: WHICH command, its exit code, how long. Kept beside the
+    // counters because a count of checks cannot answer "checked with what?".
+    if (kind === "check_pass" || kind === "check_fail") {
+      this.state.checks ??= [];
+      this.state.checks.push({
+        at: new Date().toISOString(),
+        command: (detail?.command ?? "project check").slice(0, 200),
+        passed: kind === "check_pass",
+        source: detail?.source ?? "model",
+        ...(detail?.exitCode != null ? { exitCode: detail.exitCode } : {}),
+        ...(detail?.durationMs != null ? { durationMs: detail.durationMs } : {}),
+        ...(detail?.summary ? { summary: detail.summary.slice(0, 200) } : {}),
+      });
+      if (this.state.checks.length > CHECKS_CAP) {
+        this.state.checks = this.state.checks.slice(-CHECKS_CAP);
+      }
+    }
     this.touch();
+  }
+
+  /** Every check this task ran, oldest first. Read by `gear audit`. */
+  get checks(): CheckRecord[] {
+    return this.state.checks ?? [];
   }
 
   /**
@@ -635,6 +709,7 @@ export class TaskStateStore {
     const before = this.state.todos.length;
     this.state.todos = next;
     this.pending = emptyEvidence();
+    this.pendingWrites = [];
 
     for (const item of completed) {
       if (item.unproven) {
@@ -698,7 +773,19 @@ export class TaskStateStore {
   noteFileWritten(path: string): void {
     if (!path) return;
     if (!this.state.filesWritten.includes(path)) this.state.filesWritten.push(path);
+    if (!this.pendingWrites.includes(path)) this.pendingWrites.push(path);
+    if (this.pendingWrites.length > PENDING_WRITES_CAP) {
+      this.pendingWrites = this.pendingWrites.slice(-PENDING_WRITES_CAP);
+    }
     this.touch();
+  }
+
+  /**
+   * Files written since the last accepted plan — what the step being closed
+   * actually touched. Used to scope the step check to one project.
+   */
+  get touchedFiles(): string[] {
+    return [...this.pendingWrites];
   }
 
   addDecision(line: string): void {
@@ -711,14 +798,48 @@ export class TaskStateStore {
     this.touch();
   }
 
-  noteVerification(ran: boolean, passed: boolean, report?: string): void {
+  noteVerification(
+    ran: boolean,
+    passed: boolean,
+    report?: string,
+    /** Per-command records from the verifier, when it produced them. */
+    runs?: Array<{
+      command: string;
+      passed: boolean;
+      exitCode: number | null;
+      durationMs: number;
+      skipped?: string;
+    }>,
+  ): void {
     this.state.verification = {
       status: !ran ? "unavailable" : passed ? "passed" : "failed",
       attempts: this.state.verification.attempts + (ran ? 1 : 0),
       lastReport: report?.slice(0, REPORT_CAP),
     };
     if (ran) {
-      this.logEvent("check", `${passed ? "project checks passed" : "project checks FAILED"}`);
+      for (const r of runs ?? []) {
+        if (r.skipped) continue; // a command that never ran is not evidence
+        this.state.checks ??= [];
+        this.state.checks.push({
+          at: new Date().toISOString(),
+          command: r.command.slice(0, 200),
+          passed: r.passed,
+          source: "harness",
+          ...(r.exitCode != null ? { exitCode: r.exitCode } : {}),
+          durationMs: r.durationMs,
+        });
+      }
+      if (this.state.checks && this.state.checks.length > CHECKS_CAP) {
+        this.state.checks = this.state.checks.slice(-CHECKS_CAP);
+      }
+      const named = (runs ?? []).filter((r) => !r.skipped).map((r) => r.command);
+      const skipped = (runs ?? []).filter((r) => r.skipped).length;
+      this.logEvent(
+        "check",
+        `${passed ? "project checks passed" : "project checks FAILED"}` +
+          (named.length > 0 ? ` — ${named.join(", ")}` : "") +
+          (skipped > 0 ? ` (${skipped} skipped, toolchain absent)` : ""),
+      );
     }
     this.touch();
   }

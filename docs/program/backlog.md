@@ -180,3 +180,26 @@ Found 2026-09-03 by P10.2 (Windows parity):
   because what they would assert depends on which shell the machine happens to have — found in
   P10.2
 - `tests/integration/engine-serve.test.ts` "a deferral reaches the client as a held step" — takes 20 s alone against a 60 s timeout and timed out twice under load on the merge gate (with zero leaked hosts the second time); either shorten the round-trip waits it depends on or give it its own timeout, so the gate stops depending on an idle machine — found while merging #15
+
+Found 2026-09-03 by P10.4 (verifier ecosystems):
+
+- `packages/orchestrator/src/bin/engine-host.ts:819` `run_checks` — the "run the
+  checks" command builds its own `CommandVerifier` with `commands: undefined` and
+  no `ecosystems`, so it ignores both `[verify] commands` and the new
+  `[verify.ecosystems]` config. The button and the run therefore disagree with
+  each other on any project that configured either, which is the exact drift the
+  comment above it says it exists to prevent. The host needs the resolved verify
+  config threaded through — found in P10.4
+- `packages/orchestrator/src/verifier.ts` — a Python project that configures
+  neither pyright nor mypy and has no tests has no project-wide check at all, so
+  the END of a run reports "Nothing runnable detected" even though the step check
+  compiled every file it wrote. The step-level and run-level answers disagree
+  about the same tree. Either the run-level verify should fall back to compiling
+  the files the run touched, or the report should say "compiled per step, no
+  project-wide check configured" — found in P10.4
+- `tests/fixtures/verifier/gradle-app` and `maven-app` are detection-only: the
+  wrappers are placeholders, because a real `gradlew` downloads a Gradle
+  distribution on first use and that does not belong inside a unit fixture. So
+  `./gradlew classes` and `./mvnw compile` are asserted as strings and never
+  executed anywhere. A gated CI job with a warm Gradle/Maven cache would close
+  it — found in P10.4

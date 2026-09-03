@@ -1,0 +1,6 @@
+[project]
+name = "gear-fixture-python-pytest"
+version = "0.0.0"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

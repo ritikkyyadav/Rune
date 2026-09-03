@@ -348,6 +348,14 @@ export interface CheckRun {
   passed: boolean;
   at: number;
   summary?: string;
+  /**
+   * The exit code the runtime read, and how long the command took. Present for
+   * checks the HARNESS ran (the verifier reads both directly); absent for
+   * checks the model ran through `bash`, where the tool result carries a
+   * success flag rather than a code. "No data" is null, never zero.
+   */
+  exitCode?: number;
+  durationMs?: number;
 }
 
 /**

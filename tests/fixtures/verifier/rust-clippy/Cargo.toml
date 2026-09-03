@@ -1,0 +1,13 @@
+[workspace]
+
+[package]
+name = "gear-fixture-rust-clippy"
+version = "0.0.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+# The signal that makes `cargo clippy` a detected check rather than a guess.
+[lints.clippy]
+all = "warn"

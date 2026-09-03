@@ -242,6 +242,30 @@ export async function runAudit(args: string[], values: Record<string, unknown>):
           `  ${text("Verification")}  ${v.status === "passed" ? ok(v.status) : v.status === "failed" ? danger(v.status) : warn(v.status)}${v.attempts ? dim(` (attempt ${v.attempts})`) : ""}${v.lastReport ? dim(` — ${v.lastReport.split("\n")[0].slice(0, 100)}`) : ""}`,
         );
       }
+      // ── Checks: WHICH command, its exit code, how long (P10.4) ──
+      //
+      // "Verification: passed" and a receipt reading "check ok" were the whole
+      // record. Neither said what had actually been run, so a page whose
+      // purpose is evidence could not name the evidence. This can.
+      if (state.checks && state.checks.length > 0) {
+        const cs = state.checks;
+        const failed = cs.filter((c) => !c.passed).length;
+        say();
+        say(
+          `  ${text("Checks")}  ${num(cs.length)} run${cs.length === 1 ? "" : "s"}` +
+            ` ${dim("·")} ${ok(`${cs.length - failed} passed`)}` +
+            (failed > 0 ? ` ${dim("·")} ${danger(`${failed} failed`)}` : ""),
+        );
+        for (const c of cs.slice(-12)) {
+          const code = c.exitCode != null ? `exit ${c.exitCode}` : c.passed ? "ok" : "failed";
+          const took = c.durationMs != null ? `${(c.durationMs / 1000).toFixed(1)}s` : "—";
+          say(
+            `    ${dim(c.at.slice(11, 16))} ${c.passed ? ok("✓") : danger("✗")} ${c.command.slice(0, 72).padEnd(72)}` +
+              ` ${dim(code.padEnd(9))} ${dim(took.padStart(6))} ${dim(c.source)}`,
+          );
+        }
+        if (cs.length > 12) say(dim(`    …+${cs.length - 12} earlier`));
+      }
       // The later of the spine's handoff and a termination note wins, unless
       // the dying run recorded the handoff itself (provider_lost, error).
       const ending = runEnding(rows, state.handoff?.at);
