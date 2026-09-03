@@ -106,6 +106,12 @@ export interface GearConfig {
        */
       inferenceProfile?: "us" | "eu" | "apac" | "none";
     };
+    vertex?: {
+      /** GCP project id. Falls back to GOOGLE_CLOUD_PROJECT, then the credential's. */
+      project?: string;
+      /** Vertex location, e.g. "us-east5" or "global". Falls back to GOOGLE_CLOUD_LOCATION. */
+      location?: string;
+    };
   };
   permissions: {
     defaultLevel: "auto" | "confirm" | "sandbox";

@@ -8,6 +8,7 @@ import {
   LlmGateway,
   AnthropicProvider,
   BedrockProvider,
+  VertexProvider,
   OpenAIProvider,
   OpenRouterProvider,
   GoogleProvider,
@@ -84,6 +85,7 @@ export interface BuildGatewayOpts {
 /** `[providers.*]` in config.toml — coordinates, never credentials. */
 export interface EnterpriseRouteConfig {
   bedrock?: { region?: string; inferenceProfile?: "us" | "eu" | "apac" | "none" };
+  vertex?: { project?: string; location?: string };
 }
 
 /**
@@ -164,6 +166,19 @@ export function buildGateway(opts: BuildGatewayOpts): LlmGateway {
           ...(opts.routes?.bedrock?.inferenceProfile
             ? { inferenceProfile: opts.routes.bedrock.inferenceProfile }
             : {}),
+        }),
+      );
+      continue;
+    }
+
+    if (preset.kind === "vertex") {
+      const resolved = !!opts.credentials?.[preset.id];
+      if (!resolved && opts.provider !== preset.id) continue;
+      gw.registerProvider(
+        new VertexProvider({
+          env,
+          ...(opts.routes?.vertex?.project ? { project: opts.routes.vertex.project } : {}),
+          ...(opts.routes?.vertex?.location ? { location: opts.routes.vertex.location } : {}),
         }),
       );
       continue;

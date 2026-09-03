@@ -5,6 +5,7 @@ import type {
   LlmProvider,
   Message,
   ModelInfo,
+  ProviderName,
   ReasoningEffort,
   StreamEvent,
   StopReason,
@@ -65,14 +66,73 @@ interface GeminiResponse {
   };
 }
 
+export interface GoogleAuthOpts {
+  /**
+   * Register under a DIFFERENT provider id while sharing this whole
+   * translation layer — `vertex` serves the same Gemini models over Google
+   * Cloud's own endpoint. Mirrors `OpenAIProvider`'s `name` parameter.
+   */
+  name?: ProviderName;
+  /**
+   * Supply an Authorization header per request INSTEAD of the `?key=` query
+   * parameter. Vertex authenticates with a short-lived OAuth token from
+   * Application Default Credentials, which is a header, not a key — and a
+   * token in a query string would end up in every access log between here and
+   * Google. Async because the token refreshes on its own schedule.
+   */
+  authHeaders?: () => Promise<Record<string, string>>;
+}
+
 export class GoogleProvider implements LlmProvider {
-  readonly name = "google" as const;
+  readonly name: ProviderName;
   private apiKey: string;
   private baseUrl: string;
+  /** Vertex mode: a bearer token per request instead of `?key=`. */
+  protected readonly authHeaders?: () => Promise<Record<string, string>>;
 
-  constructor(apiKey?: string, baseUrl = "https://generativelanguage.googleapis.com/v1beta") {
+  constructor(
+    apiKey?: string,
+    baseUrl = "https://generativelanguage.googleapis.com/v1beta",
+    auth?: GoogleAuthOpts,
+  ) {
     this.apiKey = apiKey ?? process.env.GOOGLE_API_KEY ?? "";
     this.baseUrl = baseUrl.replace(/\/$/, "");
+    this.name = auth?.name ?? "google";
+    this.authHeaders = auth?.authHeaders;
+  }
+
+  /**
+   * The URL for one model + method. The `?key=` credential is appended ONLY in
+   * API-key mode; in bearer mode the credential rides in a header and must not
+   * reach the query string.
+   */
+  protected modelUrl(model: string, method: string, query: Record<string, string> = {}): string {
+    const url = new URL(`${this.baseUrl}/models/${encodeURIComponent(model)}:${method}`);
+    for (const [k, v] of Object.entries(query)) url.searchParams.set(k, v);
+    if (!this.authHeaders) url.searchParams.set("key", this.apiKey);
+    // Gemini's method segment must keep its colon; URL() leaves it alone, but
+    // the model id is encoded above so a `/`-containing id cannot split the path.
+    return url.href;
+  }
+
+  /** Request headers, including the bearer token when one applies. */
+  protected async requestHeaders(): Promise<Record<string, string>> {
+    const base: Record<string, string> = { "content-type": "application/json" };
+    if (!this.authHeaders) return base;
+    return { ...base, ...(await this.authHeaders()) };
+  }
+
+  /** The model the health probe pings. Vertex renames nothing here, but a
+   * subclass may narrow it to something its project actually has. */
+  protected readonly healthModel: string = "gemini-2.5-flash";
+
+  /** Whether a credential exists at all — a key, or a resolvable token. */
+  protected async hasCredential(): Promise<boolean> {
+    if (this.authHeaders) {
+      const headers = await this.authHeaders();
+      return Object.keys(headers).length > 0;
+    }
+    return !!this.apiKey;
   }
 
   async infer(request: InferenceRequest): Promise<InferenceResponse> {
@@ -108,10 +168,10 @@ export class GoogleProvider implements LlmProvider {
     // can run minutes of silence.
     const guard = new IdleWatchdog(this.name, opts?.signal, 240_000, 120_000);
     const response = await fetch(
-      `${this.baseUrl}/models/${encodeURIComponent(request.model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(this.apiKey)}`,
+      this.modelUrl(request.model, "streamGenerateContent", { alt: "sse" }),
       {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: await this.requestHeaders(),
         body: JSON.stringify(this.toGeminiRequest(request)),
         signal: guard.signal,
       },
@@ -119,7 +179,7 @@ export class GoogleProvider implements LlmProvider {
 
     if (!response.ok || !response.body) {
       const body = await response.text();
-      throw parseApiErrorBody(body, response.status, "google");
+      throw parseApiErrorBody(body, response.status, this.name);
     }
 
     const messageId = `google_${Date.now()}`;
@@ -236,7 +296,7 @@ export class GoogleProvider implements LlmProvider {
   async healthCheck(): Promise<boolean> {
     if (!this.apiKey) return false;
     try {
-      await this.post("gemini-2.5-flash", "generateContent", {
+      await this.post(this.healthModel, "generateContent", {
         contents: [{ role: "user", parts: [{ text: "ping" }] }],
         generationConfig: { maxOutputTokens: 1 },
       });
@@ -248,10 +308,13 @@ export class GoogleProvider implements LlmProvider {
 
   /** Live model discovery via Gemini's models.list (generateContent-capable only). */
   async listModels(): Promise<ModelInfo[]> {
-    if (!this.apiKey) throw new Error("GOOGLE_API_KEY is required to list models");
-    const res = await fetch(
-      `${this.baseUrl}/models?pageSize=200&key=${encodeURIComponent(this.apiKey)}`,
-    );
+    if (!(await this.hasCredential())) {
+      throw new Error(`a credential is required to list ${this.name} models`);
+    }
+    const listUrl = new URL(`${this.baseUrl}/models`);
+    listUrl.searchParams.set("pageSize", "200");
+    if (!this.authHeaders) listUrl.searchParams.set("key", this.apiKey);
+    const res = await fetch(listUrl.href, { headers: await this.requestHeaders() });
     if (!res.ok) throw new Error(`Google models.list failed (${res.status})`);
     const json = (await res.json()) as {
       models?: { name?: string; displayName?: string; supportedGenerationMethods?: string[] }[];
@@ -274,23 +337,25 @@ export class GoogleProvider implements LlmProvider {
     body: unknown,
     signal?: AbortSignal,
   ): Promise<T> {
-    if (!this.apiKey) {
-      throw new Error("GOOGLE_API_KEY is required for the Google provider");
+    if (!(await this.hasCredential())) {
+      throw new Error(
+        this.authHeaders
+          ? "no Google Cloud credentials found — run `gcloud auth application-default login` " +
+              "or set GOOGLE_APPLICATION_CREDENTIALS"
+          : "GOOGLE_API_KEY is required for the Google provider",
+      );
     }
 
-    const response = await fetch(
-      `${this.baseUrl}/models/${encodeURIComponent(model)}:${method}?key=${encodeURIComponent(this.apiKey)}`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-        signal,
-      },
-    );
+    const response = await fetch(this.modelUrl(model, method), {
+      method: "POST",
+      headers: await this.requestHeaders(),
+      body: JSON.stringify(body),
+      signal,
+    });
 
     if (!response.ok) {
       const body = await response.text();
-      throw parseApiErrorBody(body, response.status, "google");
+      throw parseApiErrorBody(body, response.status, this.name);
     }
     return (await response.json()) as T;
   }

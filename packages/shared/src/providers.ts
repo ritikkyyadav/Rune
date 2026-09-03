@@ -20,7 +20,8 @@ export type ProviderKind =
   // separate adapters because the construction site is the only thing that
   // differs — the wire format, the streaming grammar and the cache semantics
   // are the vendor's, unchanged.
-  | "bedrock"; // Anthropic models on AWS, SigV4 over the default chain
+  | "bedrock" // Anthropic models on AWS, SigV4 over the default chain
+  | "vertex"; // Anthropic + Gemini on GCP, Application Default Credentials
 
 // ─── Authentication methods ───
 // How a provider proves who you are. This is the ONE canonical definition of the
@@ -99,6 +100,7 @@ export const PROVIDER_CAPACITY: Record<string, ProviderCapacity> = {
   // `billingModeFor` agrees — every token is metered to that cloud bill — and
   // the agreement test holds the two together.
   bedrock: "funded",
+  vertex: "funded",
   // A user-supplied OpenAI-compatible endpoint: they chose and pay for it, so
   // it is treated as funded capacity rather than guessed at.
   custom: "funded",
@@ -516,6 +518,40 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     fallbackModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
   },
   {
+    // ─── Google Vertex AI ───
+    // The one route that serves TWO families: Anthropic through the Vertex
+    // Anthropic endpoint and Gemini through the Vertex Gemini endpoint, both
+    // authenticated with Application Default Credentials. The adapter picks the
+    // endpoint from the model id, so `/model vertex/claude-…` and
+    // `/model vertex/gemini-…` are the same provider on one GCP project.
+    //
+    // Anthropic on Vertex names a model `<family>@<version>`; Gemini keeps its
+    // AI Studio id.
+    id: "vertex",
+    label: "Google Vertex AI",
+    kind: "vertex",
+    defaultModel: "claude-sonnet-4-5@20250929",
+    docsUrl: "https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/use-claude",
+    keyHint: "GOOGLE_APPLICATION_CREDENTIALS / gcloud ADC (no key stored)",
+    auth: ["chain"],
+    models: [
+      { id: "claude-opus-4-1@20250805", label: "Claude Opus 4.1" },
+      { id: "claude-sonnet-4-5@20250929", label: "Claude Sonnet 4.5" },
+      { id: "claude-haiku-4-5@20251001", label: "Claude Haiku 4.5" },
+      { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+      { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+    ],
+    // One family for the tiers, deliberately: mixing Gemini into the light tier
+    // would make a sub-agent answer in a different model's voice than the run
+    // it belongs to. Gemini stays one `/model` away for anyone who wants it.
+    tiers: {
+      heavy: "claude-opus-4-1@20250805",
+      standard: "claude-sonnet-4-5@20250929",
+      light: "claude-haiku-4-5@20251001",
+    },
+    fallbackModel: "claude-sonnet-4-5@20250929",
+  },
+  {
     // Local Ollama (no key). Reached over /api/chat on the user's machine via
     // OllamaProvider. The base URL is editable in /keys and config.toml; any
     // pulled model works via `/model ollama/<name>` — the listed ones are just
@@ -581,7 +617,13 @@ export function effectiveAuthMethods(
 // they wrap, so a capability that is true of `anthropic` is true of `bedrock`.
 // Deriving these per family rather than per id is what stops a cloud route from
 // looking less capable than the console route to the same model.
-const VISION_PROVIDERS: ReadonlySet<string> = new Set(["anthropic", "openai", "google", "bedrock"]);
+const VISION_PROVIDERS: ReadonlySet<string> = new Set([
+  "anthropic",
+  "openai",
+  "google",
+  "bedrock",
+  "vertex",
+]);
 const REASONING_PROVIDERS: ReadonlySet<string> = new Set([
   "anthropic",
   "openai",
@@ -590,6 +632,7 @@ const REASONING_PROVIDERS: ReadonlySet<string> = new Set([
   "xai",
   "openrouter",
   "bedrock",
+  "vertex",
 ]);
 
 function deriveCapabilities(preset: ProviderPreset): ProviderCapabilities {
