@@ -72,3 +72,7 @@ apps/vscode/out/
 .vscode-test/
 # terminal captures from TUI debugging (raw ANSI dumps)
 *.cv.txt
+
+# Run byproducts written into the workspace by the engine (audits, the drafted playbook)
+.gear/audits/
+.gear/skills/playbook/
