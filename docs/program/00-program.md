@@ -2,6 +2,8 @@
 
 **Rev 01 · 2026-09-02 · written at `b1901e9` +53 dirty · for execution by a frontier model (Opus 5) with one developer**
 
+> **Revision 2026-09-03.** After the first live preview the founder corrected the product again: not a chat app but an intent layer — a static control deck, an intent strip, and a task surface the agent composes from trusted primitives, ending every task in one readable decision record. See [11-intent-layer.md](11-intent-layer.md). Phase 10 is complete; see [status.md](status.md).
+
 > **Revision 2026-09-02 (evening).** Phase 3's native desktop shell and the Savoir visual system were a misunderstanding: the product surface is one URL-based web app in the current blue-gear identity, identical on every OS. See [09-web-product.md](09-web-product.md). Phases 1–8 landed as draft PRs #4–#12 the same day; see [status.md](status.md).
 
 > Gear is a better agent than OpenCode and a far worse product. Capability index 110, maturity 44, blended 84 against OpenCode at 100 (`docs/history` scorecard, 2026-09-02). This program turns the harness into a product without touching the parts that already win.
