@@ -50,6 +50,25 @@ export {
 export { modelUsesApplyPatch } from "./registry";
 export { CustomToolsLoader } from "./tools/custom-loader";
 export {
+  PLUGIN_TOOL_CAPABILITIES,
+  PLUGIN_TOOL_PROTOCOL,
+  PluginToolServer,
+  createPluginToolHandler,
+  makeGearToolsPlanner,
+  pluginPolicyId,
+  pluginToolName,
+  pluginToolPermissions,
+  startPluginTools,
+  unsandboxedToolsAllowed,
+  validateToolDeclaration,
+  type AdvertisedTool,
+  type PluginToolCapability,
+  type PluginToolDeclaration,
+  type PluginToolSpawnPlan,
+  type SpawnPlanner,
+  type StartedPluginTools,
+} from "./tools/plugin-tools";
+export {
   createLoadToolsTool,
   catalogSummary,
   deferredByDefault,

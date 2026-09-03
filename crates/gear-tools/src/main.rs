@@ -39,6 +39,8 @@ enum Commands {
     RepoMap,
     /// Report which sandbox backend is available on this machine
     SandboxCheck,
+    /// Plan the argv that launches a plugin tool under this machine's sandbox
+    SandboxPlan,
 }
 
 fn read_stdin() -> String {
@@ -178,6 +180,18 @@ async fn main() {
         }
         Commands::SandboxCheck => {
             output_result::<gear_sandbox::SandboxProbe>(Ok(gear_sandbox::probe_capability()));
+        }
+        Commands::SandboxPlan => {
+            // The Seatbelt/bwrap policy for a long-lived plugin tool stays in
+            // Rust beside the bash one; the caller only owns the pipes.
+            let input: gear_sandbox::SpawnRequest = serde_json::from_str(&input_json)
+                .unwrap_or_else(|e| {
+                    eprintln!("Invalid input JSON: {e}");
+                    std::process::exit(2);
+                });
+            output_result::<gear_sandbox::SpawnPlan>(Ok(gear_sandbox::plan_spawn(
+                &workspace, &input,
+            )));
         }
     }
 }

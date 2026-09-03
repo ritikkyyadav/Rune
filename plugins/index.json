@@ -23,6 +23,17 @@
       "integrity": "sha256-3706a8e1f350bb37a4d137dc3a3be76b97518b4c473a17a4380bc288b7c58430",
       "maintainer": "Savoir <gear@savoir.dev>",
       "homepage": "https://github.com/ritikkyyadav/Alan/tree/main/examples/plugins/gear-example-connector"
+    },
+    {
+      "name": "gear-example-tools",
+      "description": "Executable tools under the OS sandbox: a workspace-write file tool and a host-scoped HTTP tool.",
+      "source": "../examples/plugins/gear-example-tools",
+      "version": "0.1.0",
+      "gearVersion": ">=0.2.0",
+      "capabilities": ["tools:workspace-write", "tools:network"],
+      "integrity": "sha256-5e3d5a4487572bca7411254e0b3a61add679961c916fa50ce2ef997dce1ad059",
+      "maintainer": "Savoir <gear@savoir.dev>",
+      "homepage": "https://github.com/ritikkyyadav/Alan/tree/main/examples/plugins/gear-example-tools"
     }
   ]
 }

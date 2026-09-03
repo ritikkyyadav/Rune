@@ -390,12 +390,32 @@ async function cmdAdd(args: string[], values: Record<string, unknown>): Promise<
   );
   say(`    ${faint(dest)}`);
 
+  const tools = Array.isArray(manifest.tools) ? manifest.tools : [];
   const contributes: string[] = [];
   if (existsSync(join(dest, "skills"))) contributes.push("skills");
   if (manifest.mcp) contributes.push("MCP servers");
   if (manifest.commands) contributes.push("commands");
   if (manifest.hooks) contributes.push("hooks");
+  if (tools.length > 0) {
+    contributes.push(`${tools.length} executable tool${tools.length === 1 ? "" : "s"}`);
+  }
   if (contributes.length > 0) say(`    ${dim("contributes")} ${contributes.join(", ")}`);
+
+  // Executable tools: the capability IS enforced, by the OS sandbox, so this
+  // block reads differently from the declarative one below it on purpose.
+  if (tools.length > 0) {
+    say();
+    say(`    ${warn("runs programs")} ${dim("under the OS sandbox, at these capabilities")}`);
+    for (const tool of tools) {
+      const hosts =
+        Array.isArray(tool.hosts) && tool.hosts.length ? ` → ${tool.hosts.join(", ")}` : "";
+      say(
+        `      ${accent(String(tool.id).padEnd(14))} ${dim(String(tool.capability))}${dim(hosts)}`,
+      );
+      say(`        ${faint((tool.command ?? []).join(" "))}`);
+    }
+    say(`      ${faint("refused outright on a machine with no sandbox — see docs/plugins.md")}`);
+  }
 
   // Disclosure, not enforcement — and said plainly, because that is the whole
   // value of a declaration a sandbox does not back.
@@ -406,7 +426,9 @@ async function cmdAdd(args: string[], values: Record<string, unknown>): Promise<
     if (perms.hosts?.length) say(`      ${dim("network")}  ${perms.hosts.join(", ")}`);
     if (perms.paths?.length) say(`      ${dim("paths")}    ${perms.paths.join(", ")}`);
     if (perms.blockingHooks) say(`      ${dim("hooks")}    may block a tool call`);
-    say(`      ${faint("declared by the plugin, not enforced — read them before you trust it")}`);
+    say(
+      `      ${faint("hooks and connectors are declared, not contained — read them before you trust it")}`,
+    );
   }
 
   // Prove it loads, rather than asserting it will.
@@ -496,6 +518,9 @@ function cmdList(values: Record<string, unknown>): number {
           : "",
         p.commandDirs.length > 0 ? "commands" : "",
         p.hookFiles.length > 0 ? "hooks" : "",
+        p.toolDeclarations.length > 0
+          ? `${p.toolDeclarations.length} tool${p.toolDeclarations.length === 1 ? "" : "s"}`
+          : "",
       ].filter(Boolean);
       say(
         `    ${accent(p.name.padEnd(18))} ${dim(p.version ? `v${p.version}` : "")} ${contributes.join(dim(" · "))}`,
@@ -506,6 +531,12 @@ function cmdList(values: Record<string, unknown>): number {
       else if (p.integrity === "unset") marks.push(dim("no integrity hash"));
       if (p.source) marks.push(faint(p.source));
       if (marks.length > 0) say(`      ${marks.join(dim("  ·  "))}`);
+      for (const tool of p.toolDeclarations) {
+        const hosts = tool.hosts?.length ? ` → ${tool.hosts.join(", ")}` : "";
+        say(
+          `      ${warn("runs")} ${accent(tool.id)} ${dim(`sandboxed · ${tool.capability}${hosts}`)}`,
+        );
+      }
       const perms = p.permissions;
       if (perms?.hosts?.length) say(`      ${dim("declares network")} ${perms.hosts.join(", ")}`);
       if (perms?.blockingHooks) say(`      ${dim("declares blocking hooks")}`);
