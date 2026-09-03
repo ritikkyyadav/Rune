@@ -11,6 +11,29 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-03
+
+### Added
+
+- **Post-edit diagnostics in the same turn.** Every `edit_file`, `multi_edit`, `write_file` and
+  `apply_patch` result carries the language server's errors and warnings for the touched file
+  (TypeScript, Python, Rust, Go), capped at 2 s and 20 lines, so type errors are fixed before the
+  verifier ever runs. One language-server manager per process, stopped on engine close.
+- **`gear serve` reaps its session hosts.** Idle hosts exit after a configurable window, every host
+  stops on server exit unless `--keep-hosts`, and a host orphaned by a dead supervisor exits on its
+  own.
+
+### Fixed
+
+- **Windows.** The compiled binary's first real run on Windows exposed a path-key mismatch (verbatim
+  `\\?\` paths from the native executor against 8.3 short temp names) that refused every edit after a
+  read; a containment test that never matched on Windows and refused every sub-agent finish; shell
+  unescaping that ate pasted Windows paths; no shell but `/bin/sh`; and empty worktree listings. The
+  unit suite now runs on Windows in CI. Still open on Windows: hooks, the verifier and worker checks
+  spawn `/bin/sh`; no OS sandbox.
+
+## [0.3.0] - 2026-09-03
+
 Everything since `v0.2.0` (2026-07-14). This is a large release: the harness was rebuilt around
 evidence, the terminal was rewritten, and the cost and safety subsystems were made honest.
 
