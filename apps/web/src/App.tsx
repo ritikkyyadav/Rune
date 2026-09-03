@@ -20,6 +20,7 @@ import {
 import { FirstRun, SettingsTab, firstRunDone } from "./components/Settings";
 import { ReviewPanel, type CheckResult, type ReviewDiff } from "./components/Review";
 import { INITIAL_FLEET, fleetReducer, fleetRows, type Fleet } from "./lib/fleet";
+import { loadRailOpen, saveRailOpen } from "./lib/chrome";
 import { useEngine, type ProviderListing } from "./hooks/useEngine";
 import { useSession } from "./hooks/useSession";
 import { useTurns } from "./hooks/useTurns";
@@ -93,7 +94,12 @@ export default function App() {
 
   // ── chrome state ──
   const [sideOpen, setSideOpen] = useState(true);
-  const [railOpen, setRailOpen] = useState(true);
+  // Closed by default (docs/program/09-web-product.md), and remembered per
+  // browser after that: someone who opens the rail usually wants it on the next
+  // page too, and re-opening a panel every reload is the small tax that makes a
+  // tool feel like it is not listening.
+  const [railOpen, setRailOpen] = useState(loadRailOpen);
+  useEffect(() => saveRailOpen(railOpen), [railOpen]);
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [toast, setToastState] = useState<string | null>(null);
   const toastTimer = useRef<number | null>(null);
