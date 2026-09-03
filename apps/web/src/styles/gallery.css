@@ -1,0 +1,289 @@
+/* ─── /gallery ────────────────────────────────────────────────────
+ *
+ * The chrome around the vocabulary, and deliberately plainer than anything it
+ * frames: a review page with opinions competes with the thing being reviewed.
+ * Same tokens, same hairlines, no shadows, one accent.
+ *
+ * The grid is four columns of paired grounds — light, dark, light, dark — so
+ * every state is on the page at once and each is judged against its own ground
+ * without a toggle. A `wide` cell takes two columns, which puts a diff, a table
+ * or a chart at about the width the shell will render it at.
+ * ────────────────────────────────────────────────────────────────── */
+
+.gal {
+  max-width: 1560px;
+  margin: 0 auto;
+  padding: 32px 24px 96px;
+}
+
+.gal-top {
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--hairline);
+}
+.gal-top h1 {
+  margin: 0;
+  font-size: var(--fs-display);
+  line-height: var(--lh-display);
+  font-weight: 500;
+  letter-spacing: var(--display-tracking);
+}
+.gal-top p {
+  max-width: 78ch;
+  margin: 8px 0 0;
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+}
+.gal-top code {
+  color: var(--ink);
+  font-size: var(--fs-micro);
+}
+
+.gal-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 10px;
+  margin-top: 14px;
+}
+.gal-nav a {
+  color: var(--ink-3);
+  text-decoration: none;
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+}
+.gal-nav a:hover {
+  color: var(--accent);
+}
+
+.gal-section {
+  padding: 20px 0 18px;
+  border-bottom: 1px solid var(--hairline);
+  scroll-margin-top: 12px;
+}
+
+.gal-head {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  margin-bottom: 10px;
+}
+.gal-num {
+  flex: none;
+  color: var(--ink-faint);
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+}
+.gal-head h2 {
+  flex: none;
+  margin: 0;
+  font-size: var(--fs-title);
+  line-height: var(--lh-title);
+  font-weight: 500;
+  letter-spacing: var(--title-tracking);
+}
+.gal-head p {
+  min-width: 0;
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--fs-small);
+}
+
+/* ── The grid of states ── */
+
+.gal-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  align-items: start;
+}
+
+.gal-cell {
+  min-width: 0;
+  padding: 8px 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r);
+  background: var(--ground);
+  color: var(--ink);
+}
+.gal-cell.wide {
+  grid-column: span 2;
+}
+.gal-cell.surface-cell {
+  grid-column: span 2;
+  padding: 14px 16px 18px;
+}
+
+.gal-tag {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--hairline);
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+}
+.gal-state {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gal-ground {
+  flex: none;
+  color: var(--ink-faint);
+}
+
+.gal-render {
+  min-width: 0;
+}
+
+/* ── The contract, on one wrapped line ── */
+
+.gal-schema {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  margin-top: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r);
+  background: var(--sunk);
+}
+.gal-schema-key {
+  display: flex;
+  flex: none;
+  gap: 8px;
+  align-items: baseline;
+}
+.gal-schema-key code {
+  color: var(--ink);
+  font-size: var(--fs-micro);
+}
+.gal-bind,
+.gal-flag {
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+}
+.gal-flag {
+  color: var(--accent);
+}
+
+.gal-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.gal-fields li {
+  display: flex;
+  gap: 5px;
+  align-items: baseline;
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+}
+.gal-fields li code {
+  color: var(--ink);
+  font-size: var(--fs-micro);
+}
+.gal-fields li.opt code {
+  color: var(--ink-2);
+}
+.gal-type {
+  max-width: 26ch;
+  overflow: hidden;
+  color: var(--ink-faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── The composed surfaces ── */
+
+.gal-personas {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.gal-persona {
+  padding: 4px 11px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-chip);
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+}
+.gal-persona:hover {
+  background: var(--raised);
+}
+.gal-persona.is-on {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+/* The surface's own regions.
+ *
+ * A minimal shell on purpose: P11.3 owns the real one, and a gallery that
+ * invented a second layout would be the thing that has to be un-invented. */
+
+.surface {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  /* The side column's breakpoint is about THIS box, not the window. A viewport
+     media query put a 240px rail beside a 250px reading column inside a gallery
+     cell, which is how a diff ends up unreadable on a 1600px screen. */
+  container-type: inline-size;
+  container-name: surface;
+}
+
+/* The header is one row of facts: the title and the progress take a full line
+   each, the metrics sit beside one another the way the wireframe draws them. */
+.surface-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 28px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--hairline);
+}
+.surface-header > .p-heading,
+.surface-header > .p-progress {
+  flex: 1 0 100%;
+}
+.surface-header > .p-metric {
+  flex: 0 1 auto;
+}
+
+.surface-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+.surface-primary,
+.surface-side,
+.surface-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+.surface-side,
+.surface-actions {
+  padding-top: 12px;
+  border-top: 1px solid var(--hairline);
+}
+
+@container surface (min-width: 900px) {
+  .surface.with-side .surface-body {
+    grid-template-columns: minmax(0, 1fr) 240px;
+  }
+  .surface.with-side .surface-side {
+    padding-top: 0;
+    border-top: 0;
+  }
+}
