@@ -9,6 +9,11 @@ node_modules/
 dist/
 bun.lockb
 
+# The web bundle's embed manifest: generated from apps/web/dist by
+# scripts/gen-web-embed.ts before every compile, so the binary carries the
+# client inside it (P10.9a). The generator is committed; its output is not.
+packages/orchestrator/src/web-embed/generated.js
+
 # IDE
 .vscode/
 .idea/
