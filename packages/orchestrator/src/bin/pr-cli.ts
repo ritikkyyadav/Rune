@@ -80,6 +80,19 @@ export function repoSlug(remoteUrl: string): string | null {
   return m ? `${m[1]}/${m[2]}` : null;
 }
 
+/**
+ * The GitHub REST root.
+ *
+ * `GITHUB_API_URL` is set by every Actions runner and points at the Enterprise
+ * Server API root on a self-hosted one. Reading it is what makes `gear pr` work
+ * on GHES at all; `api.github.com` is the default nobody has to set.
+ */
+export function apiRoot(env: Record<string, string | undefined> = process.env): string {
+  const raw = env.GITHUB_API_URL?.trim();
+  if (!raw) return "https://api.github.com";
+  return raw.replace(/\/+$/, "");
+}
+
 /** Title and body, from `gh` if it is authenticated, else the REST API. */
 export async function fetchPr(
   repoRoot: string,
@@ -115,11 +128,14 @@ export async function fetchPr(
   );
   const token = env.GH_TOKEN ?? env.GITHUB_TOKEN;
   if (!slug) throw new Error("could not work out the GitHub repository from `origin`");
-  const res = await fetch(`https://api.github.com/repos/${slug}/pulls/${number}`, {
+  const res = await fetch(`${apiRoot(env)}/repos/${slug}/pulls/${number}`, {
     headers: {
       accept: "application/vnd.github+json",
       ...(token ? { authorization: `Bearer ${token}` } : {}),
     },
+    // The same 30 s the `gh` call above gets. Without it a GitHub that accepts
+    // the connection and never answers hangs `gear pr` with nothing on screen.
+    signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) {
     throw new Error(
@@ -151,6 +167,20 @@ export async function fetchPr(
  * `--force` on `worktree add` is deliberate: re-running `gear pr 12` after the
  * author pushed should land on the new head, and the alternative is telling a
  * person to delete a directory before a command will work.
+ *
+ * The head lands on a STAGING ref outside `refs/heads/` first. Fetching
+ * straight onto `refs/heads/gear/pr-<n>` worked exactly once: git refuses to
+ * update a branch that is checked out in any worktree, so the second
+ * `gear pr 12` — the one a person runs precisely because the author pushed —
+ * failed at the fetch with "refusing to fetch into branch", before any of the
+ * "move it to the new head" logic below could run. A ref that is not a branch
+ * is never checked out anywhere, so it always updates; the branch is then moved
+ * from inside the worktree that owns it. Found by
+ * `tests/integration/gear-pr.test.ts` in P10.6.
+ *
+ * `refs/gear/pull/<n>` rather than `refs/gear/pr-<n>`: the latter shortens to
+ * the same string as `refs/heads/gear/pr-<n>`, so every `git log gear/pr-12` in
+ * the worktree would warn about an ambiguous refname.
  */
 export function checkoutPrWorktree(
   repoRoot: string,
@@ -158,9 +188,10 @@ export function checkoutPrWorktree(
   remote = "origin",
 ): { path: string; branch: string } {
   const branch = `gear/pr-${number}`;
+  const staging = `refs/gear/pull/${number}`;
   const dir = join(repoRoot, ".gear", "worktrees", `pr-${number}`);
 
-  const fetched = git(repoRoot, ["fetch", remote, `+refs/pull/${number}/head:${branch}`]);
+  const fetched = git(repoRoot, ["fetch", remote, `+refs/pull/${number}/head:${staging}`]);
   if (!fetched.ok) {
     throw new Error(`could not fetch pull/${number}/head from ${remote}: ${fetched.err}`);
   }
@@ -168,11 +199,15 @@ export function checkoutPrWorktree(
   mkdirSync(join(repoRoot, ".gear", "worktrees"), { recursive: true });
   if (existsSync(dir)) {
     // Already there from a previous run: move it to the new head rather than
-    // refusing, and rather than silently reviewing a stale diff.
-    const moved = git(dir, ["checkout", "--force", branch]);
+    // refusing, and rather than silently reviewing a stale diff. `-B` from
+    // inside the worktree is the only way to move a branch that worktree has
+    // checked out.
+    const moved = git(dir, ["checkout", "--force", "-B", branch, staging]);
     if (!moved.ok) throw new Error(`could not update ${dir}: ${moved.err}`);
     return { path: dir, branch };
   }
+  const pointed = git(repoRoot, ["branch", "--force", branch, staging]);
+  if (!pointed.ok) throw new Error(`could not point ${branch} at the head: ${pointed.err}`);
   const added = git(repoRoot, ["worktree", "add", "--force", dir, branch]);
   if (!added.ok) throw new Error(`git worktree add failed: ${added.err || added.out}`);
   return { path: dir, branch };
