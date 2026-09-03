@@ -207,6 +207,9 @@ const { values, positionals } = parseArgs({
     check: { type: "boolean", default: false },
     open: { type: "boolean", default: false },
     web: { type: "boolean", default: false },
+    // `gear audit <session> --record`: the Decision Record as Markdown, and
+    // nothing else, so it can be piped into a review or a ticket.
+    record: { type: "boolean", default: false },
   },
   allowPositionals: true,
   strict: false,
@@ -266,6 +269,7 @@ if (values.help) {
         `    gear tools-smoke              Verify the native tool executor end to end (write/read/edit/bash)\n` +
         `    gear incidents [sub]          Browse recorded failures — list | show <id> | top [--by-version] | export\n` +
         `    gear audit [session|last]     One page on a session: plan with evidence, log, safety decisions, held steps, cost\n` +
+        `                                  --record prints the Decision Record instead: objective, decision, how we got here\n` +
         `    gear evolve [sub]             Self-evolution — status | scorecard [--by model|workspace] [--days N] | lessons | tune | gardener [--run]\n` +
         `    gear notebook [sub]           Learned tactics notebook — list | show <id> | rm <id> | export\n` +
         `    gear telemetry [sub]          Opt-in diagnostics — status | on | off | preview | reset (off by default)\n\n` +

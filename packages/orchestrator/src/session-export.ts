@@ -2,9 +2,10 @@
  * session-export.ts — Contract C4
  *
  * Produces a tamper-evident, optionally Ed25519-signed session export.
- * Sections: metadata, audit-chain verification, full transcript,
- * tool-call audit table (argsHash/resultHash/durationMs/exitCode),
- * and file diffs parsed from tool_result payloads.
+ * Sections: metadata, audit-chain verification, the Decision Record (how the
+ * run reached its answer), full transcript, tool-call audit table
+ * (argsHash/resultHash/durationMs/exitCode), and file diffs parsed from
+ * tool_result payloads.
  *
  * CLI agent usage:
  *   import { exportSession, verifyExport } from "./session-export";
@@ -18,6 +19,9 @@ import { SessionManager, getGearHome } from "@gear/shared";
 import type { SessionInfoInternal } from "@gear/shared";
 import { eventsToMessages } from "./session-replay";
 import { loadOrGenerateKeyPair, signBytes, verifySignature } from "./signing";
+import { TaskStateStore } from "./task-state";
+import { buildDecisionRecord, hasRecord, renderDecisionRecordMarkdown } from "./decision-record";
+import type { DecisionRecord } from "@gear/protocol";
 
 // ─── Public API types ──────────────────────────────────────────────────────
 
@@ -144,6 +148,16 @@ export async function exportSession(
     // confident $0.00 — an audit artifact must not round absence down to zero.
     const totalCostUsd: number | "unknown" = sumCostEvents(rawEvents);
 
+    // 9. The Decision Record — how the run reached its answer.
+    //
+    // An export is what someone forwards, signs, or attaches to a review, and
+    // until now the only account of the reasoning in it was the transcript:
+    // the whole conversation, in the order it happened, with the two refuted
+    // branches buried somewhere in the middle. The record is the same facts as
+    // a document — and it is built from the run's own persisted state, so it
+    // is covered by the signature like everything else here.
+    const decisionRecord = decisionRecordFor(sessionId, rawEvents);
+
     // ── Render ──────────────────────────────────────────────────────────
     const content =
       opts.format === "md"
@@ -155,6 +169,7 @@ export async function exportSession(
             chainResult,
             chainHead,
             totalCostUsd,
+            decisionRecord,
           })
         : renderJson({
             session,
@@ -164,6 +179,7 @@ export async function exportSession(
             chainResult,
             chainHead,
             totalCostUsd,
+            decisionRecord,
           });
 
     // ── Sign ────────────────────────────────────────────────────────────
@@ -329,6 +345,31 @@ interface ReportData {
   chainResult: { ok: true } | { ok: false; firstBadId: number };
   chainHead: string | undefined;
   totalCostUsd: number | "unknown";
+  /** Null when the run recorded no narrative, artifacts or checks. */
+  decisionRecord: DecisionRecord | null;
+}
+
+/**
+ * The record the run persisted, or one generated from its final spine.
+ *
+ * The persisted row wins: it is what the run itself produced at task end, and
+ * regenerating over it would let an export drift from the document a person
+ * already read. Falling back to a fresh build is for sessions that ended
+ * before the record existed, and for a run that died before writing one.
+ */
+function decisionRecordFor(
+  sessionId: string,
+  rawEvents: Array<{ seq: number; event: { type: string; payload?: Record<string, unknown> } }>,
+): DecisionRecord | null {
+  for (let i = rawEvents.length - 1; i >= 0; i--) {
+    if (rawEvents[i].event.type !== "decision_record") continue;
+    const record = (rawEvents[i].event.payload as { record?: DecisionRecord } | undefined)?.record;
+    if (record && typeof record.objective === "string") return record;
+  }
+  const store = TaskStateStore.fromEvents(rawEvents as never);
+  if (!store) return null;
+  const built = buildDecisionRecord(sessionId, store.snapshot());
+  return hasRecord(built) ? built : null;
 }
 
 function renderMarkdown(d: ReportData): string {
@@ -364,6 +405,15 @@ function renderMarkdown(d: ReportData): string {
     lines.push(`**Chain Head:** \`${d.chainHead}\``);
   }
   lines.push("");
+
+  // ── The Decision Record ────────────────────────────────────────────────
+  // Before the transcript on purpose: the reader wants the account of the
+  // reasoning, and the transcript is the material it was drawn from.
+  if (d.decisionRecord) {
+    // The generator writes its own `# Decision record` heading; demote it one
+    // level so it nests under this export rather than competing with its title.
+    lines.push(renderDecisionRecordMarkdown(d.decisionRecord).replace(/^# /, "## "), "");
+  }
 
   // ── Transcript ────────────────────────────────────────────────────────
   lines.push("## Transcript", "");
@@ -429,6 +479,7 @@ function renderJson(d: ReportData): string {
       typeof d.totalCostUsd === "number"
         ? { usd: d.totalCostUsd }
         : { usd: null, note: "unknown — cost is tracked by Engine at runtime" },
+    decisionRecord: d.decisionRecord,
     transcript: d.transcript,
     toolCalls: d.toolCalls,
     fileDiffs: d.fileDiffs,
