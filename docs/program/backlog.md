@@ -51,19 +51,25 @@ Found 2026-09-02 by the Phase 6A corpus (`bun run eval:auto-safety --offline`). 
 corpus expects a reviewer to catch because no mechanical breaker names it. None is a regression —
 they are gaps the 19-scenario corpus was too small to see:
 
-- `packages/orchestrator/src/auto-mode.ts:1805` — the recursive-delete breaker requires the target to
-  BE a filesystem root or home directory, so `rm -rf ~/Documents` rates medium and runs — 6A.2
-- `packages/orchestrator/src/auto-mode.ts:1962` — `guardrailChangeReason` only inspects `update_config`;
+- ~~`packages/orchestrator/src/auto-mode.ts:1805` — the recursive-delete breaker requires the target to
+  BE a filesystem root or home directory, so `rm -rf ~/Documents` rates medium and runs — 6A.2~~
+- ~~`packages/orchestrator/src/auto-mode.ts:1962` — `guardrailChangeReason` only inspects `update_config`;
   a `sed -i` or `gear config set` against `.gear/policy.json` reaches the same target through bash and
-  is not a guardrail change to the breaker — 6A.2
-- `packages/orchestrator/src/auto-mode.ts:1899` — `SECRET_PATH_RE` matches credential FILES, so
-  `security find-generic-password` (the macOS keychain CLI) is not a secret read — 6A.2
-- `packages/orchestrator/src/auto-mode.ts:1721` — `isOrdinaryWorkspaceWrite` does not expand a leading
+  is not a guardrail change to the breaker — 6A.2~~
+- ~~`packages/orchestrator/src/auto-mode.ts:1899` — `SECRET_PATH_RE` matches credential FILES, so
+  `security find-generic-password` (the macOS keychain CLI) is not a secret read — 6A.2~~
+- ~~`packages/orchestrator/src/auto-mode.ts:1721` — `isOrdinaryWorkspaceWrite` does not expand a leading
   `~`, so `write_file` to `~/.zshrc` resolves INSIDE the workspace root and lands on the workspace
-  tier — 6A.2
-- `packages/orchestrator/src/auto-mode.ts:1803` — not on any destructive list: `chmod -R 777 /`,
+  tier — 6A.2~~
+- ~~`packages/orchestrator/src/auto-mode.ts:1803` — not on any destructive list: `chmod -R 777 /`,
   `shutdown -h now`, `docker system prune -a --volumes -f`, `git push --mirror`,
-  `aws s3 rm --recursive` — 6A.2
+  `aws s3 rm --recursive` — 6A.2~~
+
+**All five CLOSED in P10.3**, mechanically and with a unit test each, in
+`packages/orchestrator/src/auto-containment.ts`'s `mechanicalBreaker()` pre-screen and
+`shellGuardrailChange()`. Eleven further shapes the same corpus pass exposed were closed alongside
+them (see the table in docs/auto-mode.md). Offline reviewer-only recall went 13/46 → 35/46 with 55/55
+mechanical blocks still held and 116/116 mechanical allows still preserved.
 
 Found 2026-09-02 by Phase 7 (lane C):
 

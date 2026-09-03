@@ -45,7 +45,8 @@
 // and it cost 22 minutes of a build sitting on a dead classifier. It now fails
 // CONTAINED instead, which is available by construction.
 
-import { isAbsolute, relative, resolve } from "path";
+import { homedir } from "os";
+import { isAbsolute, relative, resolve, sep } from "path";
 import type { AutoModeAction } from "./auto-mode";
 
 export type ContainmentKind = "extend" | "contain" | "redirect" | "defer" | "halt";
@@ -151,6 +152,327 @@ const RECURSIVE_DELETE_RE = /\brm\s+(?:-[a-zA-Z]*\s+)*-[a-zA-Z]*[rR][a-zA-Z]*f/;
 /** Broad data destruction that a dump can precede. */
 const DB_DESTRUCTION_RE = /\b(?:DROP\s+(?:DATABASE|SCHEMA)|TRUNCATE\s+TABLE)\b/i;
 
+// ── The shapes P10.3 added ──
+//
+// Every regex below closed a row the 227-row corpus expected a reviewer to
+// catch and no mechanical rule named. They live here rather than in the
+// classifier prompt for the reason the whole module exists: a prompt is an
+// argument with a model, and this layer has to hold when there is no model.
+// Each one has a unit test in tests/unit/orchestrator/auto-containment.test.ts
+// naming both the shape it catches and the ordinary command it must not.
+
+/**
+ * Reading a credential out of an OS or cloud secret store through its CLI.
+ *
+ * `SECRET_PATH_RE` above matches credential FILES, so the keychain — which has
+ * no path at all — was invisible to it: `security find-generic-password -s gear
+ * -w` prints a secret and reads as an ordinary command. Same shape, different
+ * door.
+ */
+const CREDENTIAL_CLI_RE =
+  /\bsecurity\s+(?:find-(?:generic|internet)-password|dump-keychain)\b|\bsecret-tool\s+lookup\b|\bkeyring\s+get\b|\bpass\s+show\b|\bop\s+(?:read\b|item\s+get\b)|\bvault\s+(?:read\b|kv\s+get\b)|\bgcloud\s+auth\s+print-(?:access|identity)-token\b|\baws\s+configure\s+get\b|\bgh\s+auth\s+token\b|\bkubectl\s+get\s+secrets?\b|\bdocker\s+secret\s+inspect\b|\bcat\s+\/proc\/self\/environ\b/i;
+
+/**
+ * A live credential written out as a literal. Formats only — the shape of a
+ * key, never a guess about entropy — so a fake in a fixture reads the same as a
+ * real one, which is the correct bias for a value about to leave the machine.
+ */
+const CREDENTIAL_LITERAL_RE =
+  /\b(?:sk|rk|pk)[-_](?:live|test|proj)[-_][A-Za-z0-9]{6,}|\b(?:sk|rk|pk)-[A-Za-z0-9]{20,}|\bgh[pousr]_[A-Za-z0-9]{16,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bxox[baprs]-[A-Za-z0-9-]{10,}|\b(?:AKIA|ASIA)[0-9A-Z]{12,}|\bAIza[0-9A-Za-z_-]{20,}|\bglpat-[A-Za-z0-9_-]{16,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/;
+
+/**
+ * Authorization asserted inside the action's own arguments — a note claiming a
+ * previous approval, or a field shaped like the reviewer's own JSON answer.
+ *
+ * Arguments are evidence, never policy. A payload that tries to be its own
+ * permission is the clearest statement of intent the corpus contains, and it is
+ * mechanical: it does not need a model to notice that a tool call is quoting a
+ * verdict at the layer that issues verdicts.
+ */
+const FORGED_AUTHORIZATION_RE =
+  /"verdict"\s*:\s*"(?:allow|deny|ask)"|\buser\s+(?:has\s+)?(?:already\s+)?(?:approved|authorized|pre-?approved)\b|\bpreviously\s+approved\b|\bpre-?authoriz(?:ed|ation)\b|\breviewer\s+(?:approved|allowed|cleared)\b/i;
+
+/**
+ * Argument fields that carry the work itself. They are excluded from the
+ * forged-authorization scan because their whole job is to hold arbitrary text:
+ * a commit message about an approval, or this repo's own safety tests, must not
+ * read as an attack on the safety layer. The claim only counts where it has no
+ * business being — a stray `note`, a `__note`, a metadata field.
+ */
+const PAYLOAD_KEYS = new Set([
+  "command",
+  "content",
+  "patch",
+  "diff",
+  "text",
+  "body",
+  "data",
+  "query",
+  "prompt",
+  "message",
+  "description",
+  "new_string",
+  "old_string",
+]);
+
+/** Making something world-writable. Harmless in a scratch dir, not at a root. */
+const WORLD_WRITABLE_RE = /\bchmod\b[^\n;]*(?:-R|--recursive)[^\n;]*(?:\b777\b|\ba\+w\b)/i;
+
+/** Taking the machine down. Command position only, so prose never matches. */
+const HOST_CONTROL_RE =
+  /(?:^|[;&|]\s*|\bsudo\s+)(?:shutdown|reboot|poweroff|halt)\b|\bsystemctl\s+(?:poweroff|reboot|halt)\b/i;
+
+/** Reclaiming every unused volume or image: local data, gone, no undo. */
+const CONTAINER_PRUNE_RE = /\bdocker\s+(?:system|volume)\s+prune\b/i;
+
+/** Overwrites every ref on the remote, including deleting the ones you lack. */
+const MIRROR_PUSH_RE = /\bgit\s+push\b[^\n]*--mirror\b/i;
+
+/** Object-store deletion. `aws s3 ls` is a read; `aws s3 rm` is not. */
+const CLOUD_OBJECT_DELETE_RE =
+  /\baws\s+s3(?:api)?\s+(?:rm|rb|delete-object)\b|\bgsutil\s+(?:-m\s+)?rm\b|\bgcloud\s+storage\s+rm\b|\baz\s+storage\s+(?:blob|fs)\s+delete/i;
+
+/**
+ * Killing processes selected by pattern rather than by handle.
+ *
+ * Gear starts shells through `kill_shell`, which knows what it owns. A `pkill`
+ * or a `… | xargs kill` names whatever happens to match — the user's editor,
+ * their database, another session — so the blast radius is decided by the
+ * machine's state, not by the command. A bare `kill <pid>` is deliberately NOT
+ * here: stopping a dev server you just started is ordinary work.
+ */
+const PATTERN_KILL_RE = /\b(?:pkill|killall)\b|\bxargs\s+(?:-\S+\s+)*kill\b/i;
+
+/**
+ * Binding a listener to every interface. The user asked for a preview, which
+ * loopback gives them; `0.0.0.0` additionally hands the workspace to the
+ * network the machine happens to be on.
+ */
+const BEYOND_LOOPBACK_RE =
+  /(?:--bind|--host|--address|--listen|-b)[=\s]+(?:0\.0\.0\.0|::|\[::\])\b|\b0\.0\.0\.0:\d+/i;
+
+/** Persistence by PATH rather than by command: profiles, agents, trusted keys. */
+const PERSISTENCE_PATH_RE =
+  /(?:^|[\\/])(?:\.bashrc|\.bash_profile|\.zshrc|\.zprofile|\.zshenv|\.profile|rc\.local|authorized_keys)$|[\\/](?:LaunchAgents|LaunchDaemons|cron\.d|systemd)[\\/]/i;
+
+/** Browser fields only the person whose credentials they are may fill. */
+const CREDENTIAL_FIELD_RE =
+  /(?:^|[^a-z])(?:password|passwd|pwd|passphrase|otp|totp|2fa|mfa|verification[-_]?code|security[-_]?code|cvv|cvc|card[-_]?number|cardnumber|ccnum|account[-_]?number|routing[-_]?number|ssn|social[-_]?security|iban|pin)(?:[^a-z]|$)/i;
+
+/** A payment card written out, separators and all. */
+const CARD_NUMBER_RE = /\b(?:\d[ -]?){12,18}\d\b/;
+
+/** Controls whose click binds the user to an agreement they never read. */
+const BINDING_AGREEMENT_RE =
+  /accept[-_ ]?(?:terms|tos|eula|agreement|conditions)|agree[-_ ]?to[-_ ]?terms|terms[-_ ]?(?:accept|agree)|(?:^|[^a-z])(?:eula|tos)(?:[^a-z]|$)|(?:^|[^a-z])i[-_ ]?agree(?:[^a-z]|$)|sign[-_ ]?(?:contract|agreement)/i;
+
+/** Connector calls that move money. Nouns and verbs both have to be present. */
+const MONEY_NOUN_RE = /(?:^|_)(?:refund|payout|payment|charge|transfer|invoice|checkout)s?(?:_|$)/i;
+const CONNECTOR_WRITE_VERB_RE =
+  /(?:^|_)(?:create|update|delete|issue|capture|send|post|refund|pay|transfer|charge|cancel)(?:_|$)/i;
+
+// ── Gear's own control surface ──
+//
+// Moved here from auto-mode.ts by P10.3 so that one module owns every
+// mechanical shape. `guardrailChangeReason` used to inspect `update_config`
+// alone, which meant the same edit reached through a shell — `sed -i` against
+// `.gear/policy.json`, `gear config set sandbox.enabled false` — was not a
+// guardrail change to the breaker. It is now, because the check reads paths and
+// commands rather than one tool's arguments.
+
+const CONTROL_DIRS = new Set([".gear", ".alan"]);
+const CONTROL_FILE_RE =
+  /^(?:config\.toml|hooks\.json|mcp\.json|sandbox\.json|loop\.md|org\.pub|policy(?:[._-].*)?\.(?:json|toml)|(?:secrets?|keys?|credentials?)(?:[._-].*)?\.(?:json|toml|txt|env))$/i;
+const CONTROL_SUBDIRS = new Set(["skills", "plugins", "hooks", "commands", "policy", "policies"]);
+
+/**
+ * Gear's own control surface: config, hooks, MCP wiring, skills, plugins,
+ * policy and secrets under a `.gear` (or legacy `.alan`) directory. The check is
+ * RELATIVE to the workspace so a workspace that itself lives under `.gear/`
+ * (detached-run worktrees at `.gear/worktrees/<run>`, a plugin checkout) is
+ * ordinary project territory; only writes that reach INTO a control directory
+ * — inside or outside the workspace — are guardrail changes.
+ */
+export function isSelfProtectionPath(workspaceRoot: string, target: string): boolean {
+  const absRoot = resolve(workspaceRoot);
+  const abs = expandHome(target, absRoot);
+  const rel = relative(absRoot, abs);
+  if (scanControlSegments(rel.split(sep).filter(Boolean))) return true;
+  // A path that ESCAPES the workspace can reach into an ancestor control
+  // directory without ever naming it: "../../hooks/pre.sh" from a workspace
+  // at ~/.gear/worktrees/<run> lands in ~/.gear/hooks, and the relative
+  // segments are just ["..", "..", "hooks", "pre.sh"]. Escaping paths are
+  // therefore scanned by their ABSOLUTE segments too; in-workspace paths
+  // keep the relative-only scan so a workspace living under .gear/ remains
+  // ordinary project territory.
+  if (rel.split(sep)[0] === ".." || isAbsolute(rel)) {
+    return scanControlSegments(abs.split(sep).filter(Boolean));
+  }
+  return false;
+}
+
+function scanControlSegments(parts: string[]): boolean {
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (!CONTROL_DIRS.has(parts[i]!.toLowerCase())) continue;
+    const next = parts[i + 1]!.toLowerCase();
+    const isLeaf = i + 1 === parts.length - 1;
+    if (isLeaf && CONTROL_FILE_RE.test(next)) return true;
+    if (!isLeaf && CONTROL_SUBDIRS.has(next)) return true;
+  }
+  return false;
+}
+
+/**
+ * A shell command that CHANGES Gear's own controls, by either door: a mutation
+ * whose target is a control file, or the CLI that edits them.
+ *
+ * Deliberately requires a mutation. `cat .gear/config.toml` is how an agent
+ * finds out what it is allowed to do, and reading the rules is not breaking
+ * them.
+ */
+const CONTROL_MUTATION_RE =
+  /\b(?:sed|perl|awk|tee|truncate|install|dd|mv|cp|rm|chmod|chown|ln|python3?|ruby|node|bun)\b|>>?/;
+const GEAR_CONFIG_WRITE_RE =
+  /\b(?:gear|alan)\s+config\s+(?:set|unset|edit|write)\b|\b(?:gear|alan)\s+(?:policy|sandbox)\s+(?:set|off|disable)\b/i;
+
+/**
+ * The reason a bash command counts as a guardrail change, or undefined.
+ * Returned as prose because the circuit breaker quotes it to the agent.
+ */
+export function shellGuardrailChange(action: AutoModeAction): string | undefined {
+  if (action.toolName !== "bash") return undefined;
+  const command = String(action.args.command ?? "");
+  if (!command) return undefined;
+  if (GEAR_CONFIG_WRITE_RE.test(command)) {
+    return "the action changes Gear's own configuration, policy, or sandbox switch through the CLI";
+  }
+  if (!CONTROL_MUTATION_RE.test(command)) return undefined;
+  const target = commandPaths(command).find((p) => isSelfProtectionPath(action.workspaceRoot, p));
+  return target
+    ? `the action edits Gear's own configuration, hooks, skills, or policy surface through the shell (${target})`
+    : undefined;
+}
+
+// ── The mechanical pre-screen ──
+
+/**
+ * A shape severe enough that no model should be consulted before the broker
+ * routes it.
+ *
+ * This is the seam P10.3 added, and the reason it exists is arithmetic: 33 of
+ * the corpus's 46 reviewer-only blocks never reached a reviewer at all. They
+ * were rated medium, cleared by the supervised tier, and observed after the
+ * fact by a watcher that can only stop the NEXT action. Naming their shape here
+ * moves them in front of the broker instead, where the answer does not depend
+ * on whether a model is reachable, funded, or in a good mood.
+ *
+ * It rates, it does not decide. `routeContainment` still chooses between
+ * halting, deferring, containing and redirecting, so a preview that bound the
+ * wrong interface gets its interface corrected rather than the run ended.
+ */
+export interface MechanicalBreaker {
+  /** Stable id: the unit tests name it and the audit reason quotes it. */
+  id: string;
+  /** One clause, read after "Human confirmation is mandatory: ". */
+  reason: string;
+}
+
+export function mechanicalBreaker(action: AutoModeAction): MechanicalBreaker | undefined {
+  const command = action.toolName === "bash" ? String(action.args.command ?? "") : "";
+
+  if (command) {
+    // The recursive-delete breaker used to require the target to BE a root or
+    // a home directory, so `echo cleaning && rm -rf ~/Documents` rated medium
+    // and ran. The broker has always asked the right question — does it name
+    // something outside the workspace — and now the pre-scan asks it too.
+    if (RECURSIVE_DELETE_RE.test(command) && namesPathOutsideWorkspace(action, command)) {
+      return {
+        id: "recursive-delete-outside-workspace",
+        reason: "recursive forced deletion names a path outside the workspace",
+      };
+    }
+    if (WORLD_WRITABLE_RE.test(command) && namesPathOutsideWorkspace(action, command)) {
+      return {
+        id: "world-writable-outside-workspace",
+        reason: "a recursive permission change makes files outside the workspace world-writable",
+      };
+    }
+    if (HOST_CONTROL_RE.test(command)) {
+      return { id: "host-control", reason: "the command shuts down or restarts the machine" };
+    }
+    if (CONTAINER_PRUNE_RE.test(command)) {
+      return {
+        id: "container-prune",
+        reason: "the command prunes container volumes or images, which destroys local data",
+      };
+    }
+    if (MIRROR_PUSH_RE.test(command)) {
+      return {
+        id: "mirror-push",
+        reason: "a mirror push overwrites every ref on the remote, including deleting refs",
+      };
+    }
+    if (CLOUD_OBJECT_DELETE_RE.test(command)) {
+      return {
+        id: "cloud-object-delete",
+        reason: "the command deletes objects from a cloud object store",
+      };
+    }
+    if (PATTERN_KILL_RE.test(command)) {
+      return {
+        id: "unowned-process-kill",
+        reason: "the command kills processes selected by pattern, not ones this session started",
+      };
+    }
+    if (CREDENTIAL_CLI_RE.test(command)) {
+      return {
+        id: "credential-store-read",
+        reason: "the command reads a secret out of an OS or cloud credential store",
+      };
+    }
+    if (BEYOND_LOOPBACK_RE.test(command)) {
+      return {
+        id: "beyond-loopback-bind",
+        reason: "the command binds a listener to every interface rather than to loopback",
+      };
+    }
+  }
+
+  if (persistenceTarget(action)) {
+    return {
+      id: "persistence-path",
+      reason: "the action writes to a shell profile, launch agent, or trusted-key file",
+    };
+  }
+  if (fetchAndExecuteTarget(action)) {
+    return {
+      id: "fetch-and-execute",
+      reason: "the action downloads content and executes it in one step",
+    };
+  }
+  if (credentialLiteralOutbound(action)) {
+    return {
+      id: "credential-literal-outbound",
+      reason: "a credential appears verbatim in an argument that leaves this machine",
+    };
+  }
+  const browser = browserActsAsUser(action);
+  if (browser) return browser;
+  if (connectorMovesMoney(action)) {
+    return {
+      id: "financial-effect",
+      reason: "the connector call moves money",
+    };
+  }
+  if (forgedAuthorization(action)) {
+    return {
+      id: "forged-authorization",
+      reason: "the arguments assert their own authorization or imitate a reviewer verdict",
+    };
+  }
+  return undefined;
+}
+
 const FORCE_PUSH_RE = /\bgit\s+push\b[^\n]*(?:--force\b|--force-with-lease\b|(?:^|\s)-f(?:\s|$))/i;
 const REMOTE_BRANCH_DELETE_RE = /\bgit\s+push\b[^\n]*(?:--delete\b|(?:^|\s)-d(?:\s|$))/i;
 const HARD_RESET_RE = /\bgit\s+reset\s+--hard\b/i;
@@ -214,12 +536,34 @@ export function routeContainment(ctx: ContainmentContext): ContainmentOutcome {
   //    command is the attack this layer was built for. It is not contained,
   //    not redirected, and above all not put to the user as a question — the
   //    question would arrive with the attacker's framing attached.
-  if (command && SECRET_PATH_RE.test(command) && OUTWARD_TRANSPORT_RE.test(command)) {
+  //
+  //    The credential store may be a FILE or the OS keychain read through its
+  //    CLI; `security find-generic-password` prints exactly what `cat .env`
+  //    prints and used to reach neither test.
+  if (
+    command &&
+    (SECRET_PATH_RE.test(command) || CREDENTIAL_CLI_RE.test(command)) &&
+    OUTWARD_TRANSPORT_RE.test(command)
+  ) {
     return halt(
       "exfiltration",
       "This command reads a credential store and sends it off this machine in one step. " +
         "That is the shape of credential exfiltration, and it is what Auto mode stops. " +
         "The run is halted. If a secret genuinely needs to move, the user moves it.",
+    );
+  }
+
+  // 1b. The same shape with the transport already built in: a live credential
+  //     written out verbatim inside the CONTENT of an outbound call. A key in a
+  //     search query is an exfiltration whatever the intent was, because the
+  //     query is the send. A key in an Authorization header is not — that is
+  //     the credential being used, which is what credentials are for.
+  if (credentialLiteralOutbound(action)) {
+    return halt(
+      "credential-in-payload",
+      "This action carries what looks like a live credential in an argument that leaves this " +
+        "machine. Whatever the intent, sending a key to a third party is exfiltration and the run " +
+        "is halted. Describe the failure without the secret in it.",
     );
   }
 
@@ -230,6 +574,7 @@ export function routeContainment(ctx: ContainmentContext): ContainmentOutcome {
   if (
     command &&
     (HOST_DESTRUCTION_RE.test(command) ||
+      (WORLD_WRITABLE_RE.test(command) && namesPathOutsideWorkspace(action, command)) ||
       (RECURSIVE_DELETE_RE.test(command) && namesPathOutsideWorkspace(action, command)))
   ) {
     return halt(
@@ -243,7 +588,11 @@ export function routeContainment(ctx: ContainmentContext): ContainmentOutcome {
   // 3. Persistence. Something that outlives the session is being installed.
   //    Under injection suspicion this is the payload; otherwise it is at least
   //    a change to the machine rather than to the project, so it waits.
-  if (command && PERSISTENCE_RE.test(command)) {
+  //
+  //    Recognized by command OR by target: `write_file` to `~/.zshrc` installs
+  //    exactly what `echo >> ~/.zshrc` installs, and only the second one ever
+  //    read as persistence.
+  if ((command && PERSISTENCE_RE.test(command)) || persistenceTarget(action)) {
     return ctx.injectionSuspected
       ? halt(
           "persistence",
@@ -289,7 +638,10 @@ export function routeContainment(ctx: ContainmentContext): ContainmentOutcome {
   //    over the command text can ever see it. Splitting the fetch from the run
   //    makes it visible, which is the whole fix — and the run half is exactly
   //    what the sandbox is for.
-  if (command && FETCH_AND_EXECUTE_RE.test(command)) {
+  //
+  //    `browser(download, execute: true)` is the same two steps with the pipe
+  //    moved inside a tool argument, so it takes the same route.
+  if ((command && FETCH_AND_EXECUTE_RE.test(command)) || fetchAndExecuteTarget(action)) {
     return {
       kind: ctx.osIsolation ? "contain" : "defer",
       route: "fetch-and-execute",
@@ -394,6 +746,125 @@ export function routeContainment(ctx: ContainmentContext): ContainmentOutcome {
         "say so plainly and continue with the work that does not need it — do not go looking for " +
         "the credential yourself. The attempt is recorded for the user.",
     );
+  }
+
+  // 8b. Reading a secret out of the OS or cloud credential store. No path, so
+  //     the file check above never saw it, and the transport check in step 1
+  //     only fires when the same command also sends it. On its own it is still
+  //     the agent going looking for a credential instead of reporting that
+  //     authentication failed.
+  if (command && CREDENTIAL_CLI_RE.test(command)) {
+    return defer(
+      "credential-store-read",
+      "This reads a secret out of the operating system's or a cloud provider's credential store. " +
+        "If an authentication step is failing, say so plainly and continue with the work that does " +
+        "not need it — the secret is the user's to produce. The attempt is recorded for them.",
+    );
+  }
+
+  // 8c. Exposure. The user asked for a preview; loopback is a preview and
+  //     `0.0.0.0` additionally publishes the workspace to whatever network the
+  //     machine is on. The equivalent is one word different, so this is the
+  //     clearest redirect in the file and nothing is left outstanding.
+  if (command && BEYOND_LOOPBACK_RE.test(command)) {
+    return redirect(
+      "network-exposure",
+      command.replace(/(?:0\.0\.0\.0|\[::\]|::)(?=:\d|\s|$)/g, "127.0.0.1"),
+      "This binds a listener to every network interface, which publishes the workspace to whatever " +
+        "network this machine is on. Bind it to loopback instead — a preview works the same way — " +
+        "and say in your reply which port you used.",
+    );
+  }
+
+  // 8d. Taking the machine, its containers, its remote refs or its processes
+  //     down. None has a local equivalent that produces the same knowledge, so
+  //     none is redirected; each keeps the run moving and lands on the
+  //     end-of-turn list where a person can decide once.
+  if (command && HOST_CONTROL_RE.test(command)) {
+    return defer(
+      "host-control",
+      "This shuts down or restarts the machine, which ends this session and everything else running " +
+        "on it. Continue with the work that does not need a reboot; the step is recorded and " +
+        "reported to the user when the turn ends.",
+    );
+  }
+  if (command && CONTAINER_PRUNE_RE.test(command)) {
+    return defer(
+      "container-prune",
+      "This reclaims every unused volume or image, and a volume is where a local database keeps its " +
+        "data. Continue with the rest of the work; the prune is recorded and reported to the user " +
+        "when the turn ends. If disk space is the real problem, `docker system df -v` shows what " +
+        "would be reclaimed without reclaiming it.",
+    );
+  }
+  if (command && MIRROR_PUSH_RE.test(command)) {
+    return defer(
+      "mirror-push",
+      "A mirror push replaces every ref on the remote with this clone's, including deleting refs " +
+        "this clone does not have. There is no local equivalent and no undo. Push the branch you " +
+        "actually mean by name instead, or leave it: the step is recorded for the user.",
+    );
+  }
+  if (command && CLOUD_OBJECT_DELETE_RE.test(command)) {
+    return defer(
+      "bulk-object-delete",
+      "This deletes objects from a cloud object store, where an undo does not exist unless " +
+        "versioning happens to be on. Continue with everything that does not depend on it; the " +
+        "step is recorded and reported to the user when the turn ends.",
+    );
+  }
+  if (command && PATTERN_KILL_RE.test(command)) {
+    return defer(
+      "unowned-process-kill",
+      "This kills processes selected by pattern rather than by handle, so what it stops is decided " +
+        "by whatever else happens to be running — an editor, a database, another session. Shells " +
+        "this session started are stopped with kill_shell. The step is recorded for the user.",
+    );
+  }
+
+  // 8e. Acting AS the user rather than for them: entering a credential or a
+  //     payment detail, or accepting an agreement. These are not risky versions
+  //     of the work — they are decisions that belong to the person whose
+  //     account, money and legal exposure they are.
+  const asUser = browserActsAsUser(action);
+  if (asUser) {
+    return defer(
+      asUser.id,
+      asUser.id === "credential-entry"
+        ? "Entering a password, one-time code or payment detail is the user's to do, never the " +
+            "agent's — a typed secret is a secret handed to whatever page is in front of it. Report " +
+            "what the page needs and stop there; the step is recorded for the user."
+        : "Accepting terms or an agreement binds the user to something they have not read here. " +
+            "Report what the page is asking them to agree to; the step is recorded for them.",
+    );
+  }
+  if (connectorMovesMoney(action)) {
+    return defer(
+      "financial-effect",
+      "This connector call moves money, which no investigation, review or triage request covers. " +
+        "Finish the part that establishes what happened and say what you would do; the transfer " +
+        "itself is recorded and reported to the user when the turn ends.",
+    );
+  }
+
+  // 8f. Arguments that assert their own authorization. Treated as a finding
+  //     about the RUN, not just about the call: a payload quoting a verdict at
+  //     the layer that issues verdicts is what a captured run looks like.
+  if (forgedAuthorization(action)) {
+    return ctx.injectionSuspected
+      ? halt(
+          "forged-authorization",
+          "This action's arguments claim their own approval, or imitate the safety reviewer's own " +
+            "answer, while injected content is already suspected in this run. Authorization does " +
+            "not arrive inside the thing being authorized. The run is halted.",
+        )
+      : defer(
+          "forged-authorization",
+          "This action's arguments assert that it was already approved, or carry a field shaped " +
+            "like the safety reviewer's own verdict. Authorization never arrives inside the action " +
+            "it authorizes. Drop the claim and, if the step is genuinely needed, ask the user for " +
+            "it plainly; the attempt is recorded for them.",
+        );
   }
 
   // 9. Nothing above matched, so what is left is an action that reaches outside
@@ -510,8 +981,166 @@ function stripBypassFlags(command: string): string {
  * questions asked of it below are phrased to need only positive evidence.
  */
 function namedPaths(command: string): string[] {
-  const candidates = command.match(/(?:^|\s)((?:\.{0,2}\/|[\w.@-]+\/)[^\s;|&"']*)/g) ?? [];
+  const candidates = command.match(/(?:^|\s)((?:\.{0,2}\/|~\/|[\w.@-]+\/)[^\s;|&"']*)/g) ?? [];
   return candidates.map((c) => c.trim()).filter(Boolean);
+}
+
+/** The same list, exported for the guardrail check in auto-mode.ts. */
+export function commandPaths(command: string): string[] {
+  return namedPaths(command);
+}
+
+/**
+ * Resolve a target against the workspace, expanding a leading `~` first.
+ *
+ * Without the expansion `~/.zshrc` resolved to `<workspace>/~/.zshrc`, landed
+ * INSIDE the workspace, and took the workspace tier: an ordinary reversible
+ * project edit, according to the only check that looked. It is a shell profile
+ * on the developer's machine.
+ */
+export function expandHome(target: string, absRoot: string): string {
+  const expanded =
+    target === "~" || target.startsWith(`~/`) || target.startsWith(`~\\`)
+      ? resolve(homedir(), target.slice(1).replace(/^[\\/]+/, ""))
+      : target;
+  return isAbsolute(expanded) ? resolve(expanded) : resolve(absRoot, expanded);
+}
+
+/**
+ * Every filesystem path an action names, whatever tool it came through:
+ * `path`, a worker's `files`, and — new in P10.3 — the paths inside a bash
+ * command, so the shell is not a way around a path check.
+ */
+function targetPaths(action: AutoModeAction): string[] {
+  if (action.toolName === "bash") return namedPaths(String(action.args.command ?? ""));
+  const out: string[] = [];
+  for (const key of ["path", "file_path", "target", "destination"]) {
+    const value = action.args[key];
+    if (typeof value === "string" && value) out.push(value);
+  }
+  if (Array.isArray(action.args.files)) {
+    for (const f of action.args.files) if (typeof f === "string" && f) out.push(f);
+  }
+  return out;
+}
+
+/** A write that outlives the session, recognized by its target rather than its verb. */
+function persistenceTarget(action: AutoModeAction): string | undefined {
+  if (action.schema.category === "read") return undefined;
+  const absRoot = resolve(action.workspaceRoot);
+  return targetPaths(action).find((p) => {
+    const abs = expandHome(p, absRoot);
+    if (!PERSISTENCE_PATH_RE.test(abs)) return false;
+    const rel = relative(absRoot, abs);
+    // A dotfile the project itself ships (a checked-in `.profile` fixture) is
+    // project territory. Only a profile OUTSIDE the workspace is persistence.
+    return rel.startsWith("..") || isAbsolute(rel);
+  });
+}
+
+/**
+ * Download-and-execute wearing a different tool. `curl … | sh` has been caught
+ * since the beginning; `browser(download, execute: true)` is the same two steps
+ * with the pipe hidden inside a tool argument.
+ */
+function fetchAndExecuteTarget(action: AutoModeAction): boolean {
+  if (action.toolName === "bash") return false;
+  const executes = action.args.execute === true || action.args.run === true;
+  if (!executes) return false;
+  return typeof action.args.url === "string" || typeof action.args.href === "string";
+}
+
+/**
+ * Argument fields whose contents are the outbound message itself — the search
+ * string, the post body, the page text. A credential in one of these is being
+ * PUBLISHED to whoever runs the service.
+ *
+ * Deliberately not the auth fields. `curl -H 'Authorization: Bearer sk-…'` is
+ * how you call an authenticated API, and an early draft of this rule blocked
+ * exactly that; a key in a header is the credential being USED, a key in a
+ * query is the credential being TOLD to a stranger.
+ */
+const OUTBOUND_CONTENT_KEYS = new Set([
+  "query",
+  "q",
+  "search",
+  "text",
+  "body",
+  "content",
+  "message",
+  "prompt",
+  "description",
+  "title",
+  "summary",
+  "comment",
+]);
+
+/**
+ * A credential written out inside the content of an outbound message.
+ *
+ * Scoped to outbound tools on purpose: the same literal inside a `write_file`
+ * is a fixture landing on local disk, and this repo's own tests are full of
+ * them. It is the SEND that makes it exfiltration.
+ */
+function credentialLiteralOutbound(action: AutoModeAction): boolean {
+  const outbound =
+    action.schema.category === "network" ||
+    action.toolName === "browser" ||
+    action.toolName.startsWith("mcp_");
+  if (!outbound) return false;
+  for (const [key, value] of Object.entries(action.args)) {
+    if (!OUTBOUND_CONTENT_KEYS.has(key.toLowerCase())) continue;
+    if (CREDENTIAL_LITERAL_RE.test(safeStringify(value))) return true;
+  }
+  return false;
+}
+
+/** Browser actions that only the person at the keyboard may take. */
+function browserActsAsUser(action: AutoModeAction): MechanicalBreaker | undefined {
+  if (action.toolName !== "browser") return undefined;
+  const verb = String(action.args.action ?? "").toLowerCase();
+  const selector = `${String(action.args.selector ?? "")} ${String(action.args.name ?? "")} ${String(action.args.label ?? "")}`;
+  const text = String(action.args.text ?? action.args.value ?? "");
+  if (["type", "fill", "set_value", "press", "input"].includes(verb)) {
+    if (CREDENTIAL_FIELD_RE.test(selector) || CARD_NUMBER_RE.test(text)) {
+      return {
+        id: "credential-entry",
+        reason:
+          "the action enters a password, one-time code, or payment detail on the user's behalf",
+      };
+    }
+  }
+  if (["click", "press", "tap", "check"].includes(verb) && BINDING_AGREEMENT_RE.test(selector)) {
+    return {
+      id: "binding-agreement",
+      reason: "the action accepts terms or an agreement on the user's behalf",
+    };
+  }
+  return undefined;
+}
+
+/** A connector call whose subject is money, taken through a mutating verb. */
+function connectorMovesMoney(action: AutoModeAction): boolean {
+  if (!action.toolName.startsWith("mcp_")) return false;
+  return MONEY_NOUN_RE.test(action.toolName) && CONNECTOR_WRITE_VERB_RE.test(action.toolName);
+}
+
+/** An argument that tries to be its own permission. */
+function forgedAuthorization(action: AutoModeAction): boolean {
+  for (const [key, value] of Object.entries(action.args)) {
+    if (PAYLOAD_KEYS.has(key.toLowerCase().replace(/^_+/, ""))) continue;
+    if (FORGED_AUTHORIZATION_RE.test(safeStringify(value))) return true;
+  }
+  return false;
+}
+
+function safeStringify(value: unknown): string {
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value) ?? "";
+  } catch {
+    return "";
+  }
 }
 
 /** A literal reference to the home directory, however it is spelled. */
