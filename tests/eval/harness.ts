@@ -15,7 +15,7 @@ import { resolveProviderCredentials } from "../../packages/orchestrator/src/prov
 
 import { configHash, type AbConfig } from "../../packages/orchestrator/src/evolve/config-hash";
 
-import { MockProvider, type Responder, type Script } from "./mock-provider";
+import { MockProvider, type Responder, type Script, type Summarizer } from "./mock-provider";
 
 export interface EvalTask {
   name: string;
@@ -26,6 +26,7 @@ export interface EvalTask {
     | "multi-file-refactor"
     | "new-feature"
     | "tool-discipline"
+    | "context"
     | "core";
   /** Required in mock mode; optional in real mode. */
   script?: Script;
@@ -37,9 +38,22 @@ export interface EvalTask {
    * the lead's own turns. Mock mode only.
    */
   responder?: Responder;
+  /**
+   * Drive the compaction SUMMARIZER instead of taking the mock's canned reply.
+   * A faithful summarizer (one that carries forward everything it is handed and
+   * invents nothing) turns compaction quality into a harness measurement: what
+   * is missing afterwards is what the harness dropped. Mock mode only.
+   */
+  summarizer?: Summarizer;
   prompts: string[];
   /** Pre-populate the workspace before the agent runs. */
   setup?: (ctx: { workspace: string }) => Promise<void>;
+  /**
+   * Undo anything `setup` changed OUTSIDE the workspace — a process-scoped
+   * registration such as a model's context window. Runs after verify(), and
+   * after a failed run too, so one task can never leak its rig into the next.
+   */
+  teardown?: () => Promise<void> | void;
   /** Customize permission handler responses for this task. Defaults to allow-once. */
   permissionResponses?: UserPermissionDecision[];
   /**
@@ -358,6 +372,7 @@ async function attemptTask(task: EvalTask, opts: RunOptions, real: boolean): Pro
       // since the engine doesn't expose this (eval-only override).
       mock = new MockProvider(task.script ?? []);
       if (task.responder) mock.setResponder(task.responder);
+      if (task.summarizer) mock.setSummarizer(task.summarizer);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const gw: any = (engine as any).gateway;
       gw.providers.clear();
@@ -509,6 +524,14 @@ async function attemptTask(task: EvalTask, opts: RunOptions, real: boolean): Pro
       configHash: armConfigHash,
     };
   } finally {
+    // Before the workspace goes: a task that registered something
+    // process-scoped must be able to take it back, or the next task in the
+    // suite inherits its rig (a 30k context window, say) and measures nothing.
+    try {
+      await task.teardown?.();
+    } catch {
+      // A teardown failure must never rewrite the task's result.
+    }
     await rm(tmpRoot, { recursive: true, force: true });
   }
 }
