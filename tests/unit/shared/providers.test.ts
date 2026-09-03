@@ -32,7 +32,16 @@ describe("provider presets", () => {
       expect(p.label).toBeTruthy();
       expect(p.defaultModel).toBeTruthy();
       expect(p.docsUrl).toMatch(/^https:\/\//);
-      expect(["anthropic", "openai-compat", "google", "ollama", "codex"]).toContain(p.kind);
+      expect([
+        "anthropic",
+        "openai-compat",
+        "google",
+        "ollama",
+        "codex",
+        // The enterprise routes (P10.5): the adapter above them with a
+        // different endpoint and a different door.
+        "bedrock",
+      ]).toContain(p.kind);
     }
   });
 

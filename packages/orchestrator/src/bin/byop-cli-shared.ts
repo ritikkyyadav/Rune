@@ -39,7 +39,7 @@ export function buildSavedKeys(
 export function readAuthOverrides(config: GearConfig): Record<string, AuthMethod> {
   const out: Record<string, AuthMethod> = {};
   const llm = config.llm as unknown as Record<string, { authentication?: string } | undefined>;
-  const valid: ReadonlySet<string> = new Set(["api_key", "oauth", "device", "local"]);
+  const valid: ReadonlySet<string> = new Set(["api_key", "oauth", "device", "local", "chain"]);
   for (const id of ["anthropic", "openai", "openrouter", "google", "ollama"]) {
     const m = llm[id]?.authentication;
     if (m && valid.has(m)) out[id] = m as AuthMethod;

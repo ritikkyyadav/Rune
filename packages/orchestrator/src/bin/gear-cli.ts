@@ -2268,7 +2268,11 @@ async function main() {
           const keyState =
             r.source === "none"
               ? faint("no key".padEnd(10))
-              : muted((r.source === "saved" ? "key" : r.source).padEnd(10));
+              : muted(
+                  (r.source === "saved" ? "key" : r.source === "chain" ? "cloud" : r.source).padEnd(
+                    10,
+                  ),
+                );
           const state = r.disabled
             ? warn("off")
             : r.active

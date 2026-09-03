@@ -71,6 +71,12 @@ export type ProviderName =
   // Subscription-backed transport (its own endpoint, not the vendor's public
   // API): the ChatGPT-backend Codex "responses" API.
   | "codex"
+  // ─── Enterprise routes (P10.5) ───
+  // The same three model families, reached through a cloud account instead of
+  // the vendor's own console: an AWS/GCP/Azure bill, an existing data-residency
+  // and compliance posture, and the credentials a team already has. Each is an
+  // auth-and-endpoint variant over the adapter above it, not a new transport.
+  | "bedrock" // Anthropic models via the AWS Bedrock Messages API (SigV4)
   | "custom";
 
 /**
@@ -492,6 +498,20 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   "claude-opus-4-20250514": { inputPerMillion: 15, outputPerMillion: 75 },
   "claude-sonnet-4-20250514": { inputPerMillion: 3, outputPerMillion: 15 },
   "claude-haiku-4-5-20251001": { inputPerMillion: 0.8, outputPerMillion: 4 },
+
+  // ─── Anthropic on AWS Bedrock ───
+  // Bedrock resells Anthropic at Anthropic's list rates, so these are the same
+  // numbers under the ids AWS uses. They need their OWN rows because pricing
+  // lookup is exact-match (plus a `vendor/model` suffix fallback that a dotted
+  // Bedrock id does not match), and an unpriced model reports $0 — which is
+  // indistinguishable from free and is the exact hole the coverage guard exists
+  // to close. The geo-prefixed inference-profile ids are what the catalogue
+  // offers, so those are the ids priced.
+  "us.anthropic.claude-opus-4-1-20250805-v1:0": { inputPerMillion: 15, outputPerMillion: 75 },
+  "us.anthropic.claude-sonnet-4-5-20250929-v1:0": { inputPerMillion: 3, outputPerMillion: 15 },
+  "us.anthropic.claude-haiku-4-5-20251001-v1:0": { inputPerMillion: 1, outputPerMillion: 5 },
+  "anthropic.claude-3-5-sonnet-20241022-v2:0": { inputPerMillion: 3, outputPerMillion: 15 },
+  "anthropic.claude-3-5-haiku-20241022-v1:0": { inputPerMillion: 0.8, outputPerMillion: 4 },
 
   // ─── OpenAI ───
   // The GPT-5 line discounts cached input to 10%; GPT-4o only to 50%, which

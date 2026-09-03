@@ -1,6 +1,6 @@
 # Bring Your Own Provider (BYOP) — authentication
 
-Gear can authenticate a provider by any of four methods. The rest of Gear never
+Gear can authenticate a provider by any of five methods. The rest of Gear never
 learns _how_ a provider signed in — it asks for an authenticated provider and
 streams. This is an **authentication-layer** feature: no new LLM providers are
 added, and existing API-key users see zero behavior change.
@@ -12,7 +12,8 @@ added, and existing API-key users see zero behavior change.
 | **api_key** | A bearer secret you paste or supply via env var (today's path).   | all cloud providers                    |
 | **oauth**   | Browser authorization-code + PKCE (loopback redirect).            | OpenRouter, Anthropic, ChatGPT (Codex) |
 | **device**  | OAuth device-code (headless / SSH-friendly).                      | GitHub Copilot                         |
-| **local**   | A localhost runtime reached by URL — connectivity, no credential. | Ollama, LM Studio                      |
+| **local**   | A localhost runtime reached by URL — connectivity, no credential. | Ollama                                 |
+| **chain**   | The cloud's own ambient credential chain. Gear stores nothing.    | AWS Bedrock                            |
 
 A provider declares its supported methods; when you don't choose one, Gear
 auto-selects: the first method that has stored credentials, else the provider's
@@ -22,7 +23,7 @@ default (`api_key` for cloud, `local` for runtimes).
 
 ```
 gear login [provider]        Sign in. Picks a provider + method, runs the flow, stores the result.
-                              Flags: --method api_key|oauth|device|local, --no-browser, --migrate
+                              Flags: --method api_key|oauth|device|local|chain, --no-browser, --migrate
 gear providers               List every provider, its auth method, and credential status.
 gear use <provider> [model]  Set the active provider (+ model) for new sessions.
 gear models [provider]       List a provider's models — live discovery, static fallback.
@@ -38,6 +39,36 @@ gear providers                   # see who's signed in and how
 gear use openrouter              # make OpenRouter the active provider
 gear models openrouter           # live model catalog
 ```
+
+## The cloud chain (`chain`)
+
+The enterprise routes do not have a key. AWS Bedrock signs each request with
+SigV4 from whatever the AWS credential chain resolves — environment variables,
+`~/.aws/credentials` and `~/.aws/config` under `AWS_PROFILE`, a web-identity
+token file, or a container role. The machine's cloud login _is_ the credential.
+
+So `gear login bedrock` **reports** rather than prompts:
+
+```
+$ gear login bedrock
+  Signing in to AWS Bedrock via chain
+  Found AWS Bedrock credentials: profile work
+  Nothing was stored — Gear reads your cloud credentials at request time.
+```
+
+and when nothing resolves it names the fix instead of asking for a secret:
+
+```
+  No AWS credentials found. Run `aws configure`, export
+  AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, or select a profile with AWS_PROFILE …
+```
+
+Storing nothing is the feature, not a gap. A team whose reason for routing
+through their own cloud is that model traffic must stay inside their account
+does not want a second copy of that credential in a coding tool's keychain —
+so `storeCredentials` and `logout` are both deliberate no-ops for this method,
+and `gear providers` shows _where_ the credential was found (`profile work`)
+rather than a mask of a secret Gear never held.
 
 ## Where credentials live
 

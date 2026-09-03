@@ -27,19 +27,20 @@ the base URL.
 
 ### Declared policy per provider
 
-| Provider         | Adapter              | Policy                                       | Basis                                                                                                               |
-| ---------------- | -------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `anthropic`      | `AnthropicProvider`  | native `cache_control`                       | reference implementation; reads `cache_creation_input_tokens` / `cache_read_input_tokens`                           |
-| `openai`         | `OpenAIProvider`     | `prompt-cache-key`                           | documented automatic prefix caching over 1024 tokens, plus the documented routing field                             |
-| `openrouter`     | `OpenRouterProvider` | `anthropic-style` (Anthropic upstreams only) | measured 2026-08-26, see below                                                                                      |
-| `google`         | `GoogleProvider`     | `implicit`                                   | **measured 2026-09-02**: 99.7% hit rate with no cache handle                                                        |
-| `deepseek`       | `OpenAIProvider`     | `implicit`                                   | host documents automatic prefix caching                                                                             |
-| `groq`           | `OpenAIProvider`     | `implicit`                                   | host documents automatic prefix caching                                                                             |
-| `xai`            | `OpenAIProvider`     | `implicit`                                   | host documents automatic prefix caching                                                                             |
-| `ollama-turbo`   | `OpenAIProvider`     | `none`                                       | **measured 2026-09-02**: no cached tokens on an identical prefix                                                    |
-| `codex`          | `CodexProvider`      | server-side                                  | the Responses backend manages its own prefix reuse                                                                  |
-| `ollama` (local) | `OllamaProvider`     | KV cache, held by `keep_alive`               | local runtime; nothing is billed, but a dropped KV cache costs a full re-prefill                                    |
-| `custom`         | `OpenAIProvider`     | `none`                                       | a user-supplied endpoint could be anything; claiming a cache it may not have would put an invented number on screen |
+| Provider         | Adapter              | Policy                                       | Basis                                                                                                                             |
+| ---------------- | -------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `anthropic`      | `AnthropicProvider`  | native `cache_control`                       | reference implementation; reads `cache_creation_input_tokens` / `cache_read_input_tokens`                                         |
+| `openai`         | `OpenAIProvider`     | `prompt-cache-key`                           | documented automatic prefix caching over 1024 tokens, plus the documented routing field                                           |
+| `openrouter`     | `OpenRouterProvider` | `anthropic-style` (Anthropic upstreams only) | measured 2026-08-26, see below                                                                                                    |
+| `google`         | `GoogleProvider`     | `implicit`                                   | **measured 2026-09-02**: 99.7% hit rate with no cache handle                                                                      |
+| `deepseek`       | `OpenAIProvider`     | `implicit`                                   | host documents automatic prefix caching                                                                                           |
+| `groq`           | `OpenAIProvider`     | `implicit`                                   | host documents automatic prefix caching                                                                                           |
+| `xai`            | `OpenAIProvider`     | `implicit`                                   | host documents automatic prefix caching                                                                                           |
+| `ollama-turbo`   | `OpenAIProvider`     | `none`                                       | **measured 2026-09-02**: no cached tokens on an identical prefix                                                                  |
+| `codex`          | `CodexProvider`      | server-side                                  | the Responses backend manages its own prefix reuse                                                                                |
+| `ollama` (local) | `OllamaProvider`     | KV cache, held by `keep_alive`               | local runtime; nothing is billed, but a dropped KV cache costs a full re-prefill                                                  |
+| `bedrock`        | `BedrockProvider`    | `anthropic-style`                            | documented `cache_control` support; the shared Anthropic adapter emits the breakpoints. **Not measured** — no AWS credential here |
+| `custom`         | `OpenAIProvider`     | `none`                                       | a user-supplied endpoint could be anything; claiming a cache it may not have would put an invented number on screen               |
 
 An id with no entry falls to `none`. That is deliberate: a provider added
 without a measurement should report "no data", never a hit rate it never earned.
@@ -108,6 +109,7 @@ Measured **2026-09-02**.
 | `anthropic`                 | `claude-haiku-4-5`        | native `cache_control`     | —                      | —                     | not measured | no credential                                    |
 | `openai`                    | `gpt-4o-mini`             | `prompt-cache-key`         | —                      | —                     | not measured | no credential                                    |
 | `deepseek` / `groq` / `xai` | —                         | implicit (documented)      | —                      | —                     | not measured | no credential                                    |
+| `bedrock`                   | —                         | `anthropic-style`          | —                      | —                     | not measured | no AWS credential on this machine                |
 
 Live requests spent producing this table: **openrouter 5** (one refused 402,
 four served), **google 2**, **ollama-turbo 2**, **codex 1** (refused 429),
@@ -159,6 +161,106 @@ bill to buy 0.3%.
 
 Not built. Revisit only if a model in use is found whose implicit hit rate is
 poor and whose prefix is large and long-lived enough to amortise storage.
+
+---
+
+## Enterprise routes
+
+Three of the providers above are also reachable through a cloud account rather
+than the vendor's own console: **AWS Bedrock**, **Google Vertex AI** and **Azure
+OpenAI**. For a team, that is often the only way the models are reachable at
+all — the traffic has to stay inside an account with a signed agreement, a data
+residency commitment and an existing bill.
+
+Each route is an **auth-and-endpoint variant over the adapter it wraps**, not a
+new transport. The Messages body, the streaming grammar, the thinking
+parameters, the tool translation, the `cache_control` breakpoints and the usage
+accounting are the vendor's, unchanged, in one file. What each route owns is a
+URL shape and a way of proving who you are.
+
+That is a deliberate constraint, and it is why these landed as a few hundred
+lines each rather than three more adapters to keep in sync. Every future fix to
+Anthropic streaming reaches Bedrock and Vertex for free; a second copy of that
+parser would have drifted by the next model release.
+
+**None of them stores a credential.** They authenticate with the machine's own
+cloud chain — the same one `aws`, `gcloud` and `az` read — under a new auth
+method, `chain`. `gear login bedrock` therefore reports rather than prompts: it
+says whether the chain resolves and, when it does not, exactly which command
+fixes it. A tool asking someone to paste a long-lived cloud credential into its
+keychain would defeat the reason the route exists.
+
+```
+$ gear providers
+  ●  AWS Bedrock            chain    signed in · profile default
+```
+
+### AWS Bedrock (`bedrock`)
+
+Anthropic models through the Bedrock Messages API.
+
+```bash
+export AWS_PROFILE=work            # or AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+export AWS_REGION=us-east-1
+gear login bedrock                 # reports what the chain resolved; stores nothing
+gear use bedrock
+```
+
+```toml
+[providers.bedrock]
+region = "eu-central-1"
+inferenceProfile = "eu"   # "us" | "eu" | "apac" | "none"; defaults to the region's family
+```
+
+| Piece             | What Gear does                                                                                                                                                      |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Endpoint**      | `POST /model/{modelId}/invoke-with-response-stream` on `bedrock-runtime.<region>.amazonaws.com` (`/invoke` when not streaming)                                      |
+| **Body**          | the Anthropic Messages body with `model` and `stream` removed (the path says both) and `anthropic_version: "bedrock-2023-05-31"` added                              |
+| **Betas**         | an `anthropic-beta` header is translated into the body's `anthropic_beta` array, which is where Bedrock wants it — so interleaved thinking still works here         |
+| **Auth**          | SigV4 over the standard chain: env vars → `~/.aws/credentials` + `~/.aws/config` with `AWS_PROFILE` → web identity (`AWS_WEB_IDENTITY_TOKEN_FILE`) → container role |
+| **Streaming**     | the `vnd.amazon.eventstream` framing is decoded and re-emitted as SSE, so the shared Anthropic parser reads it unchanged                                            |
+| **Errors**        | AWS answers `{"message": …}` with the class in `x-amzn-errortype`; both are re-shaped into Anthropic's error envelope so a 403 does not surface as an empty string  |
+| **`countTokens`** | estimated locally — Bedrock has no count-tokens endpoint, and a 404 per measurement is worse than an estimate                                                       |
+| **`healthCheck`** | "do credentials resolve", never a real completion. A probe that spends money is a bill, not a probe                                                                 |
+| **Discovery**     | `gear models bedrock` calls ListFoundationModels on the control plane                                                                                               |
+
+**IMDS is deliberately not in the chain.** The instance metadata service is the
+SDKs' last rung, and off EC2 it is a request to a link-local address that never
+answers — a timeout plus retries on every cold start. Gear resolves credentials
+on the _no-credential_ path too (`gear providers` has to print an honest row),
+so the probe is omitted. Anything running on EC2 with an instance role can
+export the standard variables or name a profile; containers are covered by the
+container-credentials rung, which is the case that matters in CI.
+
+**Model ids are cross-region inference profiles.** Current Anthropic models on
+Bedrock are not invokable by their bare foundation-model id; they need a
+geography prefix (`us.anthropic.claude-sonnet-4-5-20250929-v1:0`) and a `us.`
+id is rejected outside US regions. Gear ships one catalogue of `us.` ids and
+rewrites the prefix to match the configured region, so an account in Frankfurt
+reaches `eu.` models without a second copy of every row in the picker. Ids that
+genuinely _are_ on-demand (the 3.5 line) carry no prefix and never gain one —
+adding one would turn a working call into "model not found". Set
+`inferenceProfile = "none"` to send ids untouched.
+
+**What is proven, and what is not.** There is no AWS credential on this machine,
+so nothing here has made a live Bedrock call. What _is_ proven, by
+`tests/unit/gateway/`:
+
+- the SigV4 signer against AWS's own published vectors — the documented
+  signing-key derivation plus the `get-vanilla`, `post-vanilla` and
+  `get-vanilla-query-order-key-case` cases, asserted at the canonical request,
+  the string to sign, and the signature;
+- the event-stream decoder against recorded frames, including a frame split
+  across reads and a corrupted checksum, with CRC-32 checked against the
+  universal `crc32("123456789") == 0xCBF43926`;
+- the request Gear builds — path, body, signed headers, no `x-api-key` — and a
+  recorded response streaming back through the Anthropic parser with its usage
+  and cache counters intact;
+- the credential chain, rung by rung, against injected files and fetch.
+
+What is **not** proven is that AWS accepts it. `GEAR_LIVE_BEDROCK=1 bun test
+tests/integration/enterprise-providers.test.ts` runs that check on a machine
+that has a credential, and skips with a printed reason on one that does not.
 
 ---
 

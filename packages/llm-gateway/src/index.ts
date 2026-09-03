@@ -31,6 +31,14 @@ export {
 } from "./types";
 export { LlmGateway, isModelGoneError } from "./gateway";
 export { AnthropicProvider } from "./providers/anthropic";
+export {
+  BedrockProvider,
+  bedrockCredentialSource,
+  applyInferenceProfile,
+  inferenceProfileFamily,
+  BEDROCK_ANTHROPIC_VERSION,
+} from "./providers/bedrock";
+export type { BedrockOpts, InferenceProfileFamily } from "./providers/bedrock";
 export { OpenAIProvider } from "./providers/openai";
 export {
   cacheBreakpointPolicyFor,
@@ -54,6 +62,9 @@ export {
   AuthError,
   ApiKeyStrategy,
   LocalEndpointStrategy,
+  CloudChainStrategy,
+  probeCloudChain,
+  chainSetupHint,
   OAuthStrategy,
   DeviceCodeStrategy,
   getStrategy,

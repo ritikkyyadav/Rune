@@ -11,13 +11,15 @@
 Gear is an agentic coding assistant built around a reusable **engine** (TypeScript) that runs the
 agent loop, manages context, enforces permissions and sandboxing, and executes tools. The engine is
 the product — the web app is one client, the terminal console is another, and an MCP-server wrapper
-is planned. It is multi-provider (including a fully local path via Ollama) and built to be auditable for
-compliance-sensitive teams.
+is planned. It is multi-provider (including a fully local path via Ollama, and enterprise routes through AWS
+Bedrock) and built to be auditable for compliance-sensitive teams.
 
 ## Features
 
-- **Multi-provider gateway** — Anthropic, OpenAI, OpenRouter, Google, and local **Ollama**, with
-  automatic provider fallback, retry, and backoff.
+- **Multi-provider gateway** — Anthropic, OpenAI, OpenRouter, Google, **AWS Bedrock**, and local
+  **Ollama**, with automatic provider fallback, retry, and backoff. The enterprise route
+  authenticates from your cloud's own credential chain and stores nothing (see
+  [docs/providers.md](docs/providers.md)).
 - **Tool suite** — `read_file`, `write_file`, `edit_file`, `multi_edit`, `glob`, `grep`, `list_dir`,
   `bash`, `symbol_search`, `ast_query`, `web_fetch`, `web_search`, `todo_write`, `n8n_trigger`, a
   `task` sub-agent for parallel **read-only** investigations, and a `worker` sub-agent for
@@ -357,6 +359,14 @@ gear -p openrouter -m minimax/minimax-m3:free
 
 export OLLAMA_HOST=http://localhost:11434                       # fully local / offline
 gear -p ollama -m llama3
+```
+
+Through a **cloud account** you already have (no key is stored — Gear reads the cloud's own
+credential chain):
+
+```bash
+export AWS_PROFILE=work AWS_REGION=us-east-1                    # Anthropic models on AWS Bedrock
+gear -p bedrock
 ```
 
 Paid top-tier (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`) is optional for trying
