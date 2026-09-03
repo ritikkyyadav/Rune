@@ -2960,6 +2960,14 @@ export class AgentLoop {
         });
         if (r.compacted) {
           this.messages = r.messages;
+          // The boosted task-state budget exists for exactly the request that
+          // follows a compaction — the moment the verbatim brief left the
+          // transcript. This is the COMMON compaction path (high-water mark,
+          // mid-turn), and it was the one path that did not raise the flag: the
+          // boost fired only on the finish and provider-overflow paths, so in
+          // ordinary use the model was shown LESS of its brief right after
+          // losing the transcript that carried it.
+          justCompacted = true;
           yield this.compactionEvent(r);
         } else if (r.failed) {
           this.report(

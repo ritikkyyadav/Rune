@@ -440,6 +440,28 @@ const BURST_SESSION = [
   ...PRESSURE_TAIL,
 ];
 
+/**
+ * A brief long enough to be excerpted.
+ *
+ * The spine renders 600 characters of the goal on an ordinary turn and 2,400 on
+ * the request that follows a compaction — the boost exists for exactly the
+ * moment the verbatim brief left the transcript. A 150-character prompt can
+ * never show the difference, so this one runs past the short excerpt and
+ * `BRIEF_TAIL` sits beyond it.
+ */
+const BRIEF_TAIL = "and the query path must never widen a transaction";
+const LONG_BRIEF =
+  "build the ledger service described in spec.md. DECISION-3: no external dependencies, " +
+  "standard library only. Read notes.md and wire.md before you start. " +
+  "The service owns eight modules under src/ledger: the append path, the schema and its " +
+  "migrations, the wire codec, the clock, the query layer, the compactor, the barrel and the " +
+  "error taxonomy. Every one of them is written before anything is wired together, and every " +
+  "one of them is checked before its step is closed. Rows are append-only; a correction is a " +
+  "new row that supersedes an old one, never an update in place, and nothing outside the " +
+  "append path is permitted to write. Receipts carry the server's clock rather than the " +
+  "client's, because a client clock is an input and inputs are not trusted. " +
+  `Finally: the compactor runs on a size trigger rather than a timer, ${BRIEF_TAIL}.`;
+
 const PRESSURE_PROMPT =
   "survey every bulk-*.txt file and build the ledger service described in spec.md. " +
   "DECISION-3: no external dependencies, standard library only. Read notes.md and wire.md first.";
@@ -487,9 +509,7 @@ const planAndLedgerSurvive: EvalTask = {
   teardown: restoreWindow,
   summarizer: faithfulSummarizer,
   script: LONG_SESSION,
-  prompts: [
-    "build the ledger service described in spec.md. DECISION-3: no external dependencies, standard library only. Read notes.md and wire.md before you start.",
-  ],
+  prompts: [LONG_BRIEF],
   verify: async ({ mock, dbPath, sessionId }) => {
     if (!mock) return { pass: true };
     const final = requestText(mock.requestHistory.at(-1) as never);
@@ -502,6 +522,23 @@ const planAndLedgerSurvive: EvalTask = {
     // The goal, verbatim enough to act on.
     if (!final.includes("build the ledger service described in spec.md")) {
       return { pass: false, reason: "the goal is no longer in the prompt" };
+    }
+    // …and MORE of it on the request that FOLLOWS a compaction, which is the
+    // one the spine's raised budget exists for: the moment the verbatim brief
+    // left the transcript. The clause below sits past the ordinary
+    // 600-character goal excerpt, so it can only appear if the boost fired —
+    // and the boost is consumed by that one request, so the check has to look
+    // at the first request carrying a summary rather than at the last one.
+    const everySent = (mock.requestHistory as never as Array<{ content: unknown[] }>[]).map(
+      requestText,
+    );
+    const afterCompaction = everySent.find((t) => t.includes(SUMMARY_MARKER));
+    if (afterCompaction && !afterCompaction.includes(BRIEF_TAIL)) {
+      return {
+        pass: false,
+        reason:
+          "the first post-compaction request carried the SHORT goal excerpt — the spine's after-compaction budget did not fire",
+      };
     }
     // Every planned step, open and closed alike. A plan that forgets its
     // finished half re-does the work; one that forgets its open half stops.
