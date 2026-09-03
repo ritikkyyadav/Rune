@@ -180,6 +180,24 @@ echo "  $(dim "    $BUN build --compile --define GEAR_BUILD_VERSION=$BUILD_VERSI
 # Install bun dependencies first so the build can resolve imports
 (cd "$GEAR_ROOT" && "$BUN" install --frozen-lockfile 2>&1 | tail -2)
 
+# ─── 3a. The web client, BEFORE the compile ───
+# The product is a browser page, and the binary has to carry it: there is no
+# `apps/web/dist` beside an installed executable, so a binary compiled without
+# this step starts, serves nothing, and answers `401 unauthorized` to the first
+# page request (P10.9a). It is a hard failure, not a warning.
+echo ""
+echo "  $(dim '...') Building the web client (apps/web)"
+(cd "$GEAR_ROOT" && "$BUN" run --filter @gear/web build 2>&1 | tail -3)
+if [ ! -f "$GEAR_ROOT/apps/web/dist/index.html" ]; then
+  echo "  $(red '✗') apps/web/dist/index.html is missing after the build."
+  echo "    A binary without the client cannot serve the product; refusing to compile one."
+  exit 1
+fi
+# One `import … with { type: "file" }` per asset, which is what tells
+# `bun build --compile` to copy the bytes into the executable.
+(cd "$GEAR_ROOT" && "$BUN" scripts/gen-web-embed.ts)
+echo "  $(green '✓') Web client built and staged for embedding"
+
 # Compile to a self-contained executable.
 # The compiled binary reads GEAR_TOOLS_BIN from the environment at runtime
 # (set by the wrapper script written in step 5).
@@ -221,6 +239,25 @@ cat >> "$STAGE_DIR/gear-compiled.meta" <<META
 GEAR_CLI_SHA256=$CLI_SHA256
 GEAR_TOOLS_SHA256=$TOOLS_SHA256
 META
+
+# ─── 4a. Prove the STAGED pair before promoting it ───
+# The defect this closes was found by installing and then opening the product,
+# because every gate before it ran Gear from source with `bun` — where the web
+# bundle is a directory on disk and `engine-host.ts` is a file that exists.
+# `gear serve --check` runs the whole product path against the artifact: the
+# page with its token, one session over the websocket, and no host left behind.
+# Build → verify → promote, so a binary that cannot serve never lands on PATH.
+if [ "${GEAR_SKIP_SERVE_CHECK:-0}" != "1" ]; then
+  echo ""
+  echo "  $(dim '...') Proving the staged binary serves the product (gear serve --check)"
+  if GEAR_TOOLS_BIN="$TOOLS_DST" "$CLI_OUT" serve --check; then
+    echo "  $(green '✓') The staged binary serves the product"
+  else
+    echo "  $(red '✗') The staged binary cannot serve the product — refusing to install it."
+    echo "    Re-run with $(bold 'GEAR_SKIP_SERVE_CHECK=1 ./scripts/install.sh') to install anyway."
+    exit 1
+  fi
+fi
 
 # ─── 5. Write a thin `gear` launcher that sets GEAR_TOOLS_BIN ───
 # The compiled binary needs to know where gear-tools lives; the wrapper sets the

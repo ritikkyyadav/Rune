@@ -155,6 +155,15 @@ sitting at. The remote link carries its token in the URL **fragment**, which the
 to the server — see [`docs/threat-model.md`](docs/threat-model.md), because a served engine is
 remote code execution with your credentials attached and the document says so in those words.
 
+The page **travels inside the binary**. A downloaded `gear` has no source tree beside it, so the
+built bundle is embedded into the executable at compile time (`scripts/gen-web-embed.ts`, via Bun's
+`with { type: "file" }` imports) and served from there; a source checkout serves its own
+`apps/web/dist` instead, so `bun run --cwd apps/web build` is live without a reinstall. The session
+engines behind the page start the same way: `bun engine-host.ts` from a checkout, `gear engine-host`
+from the binary. **`gear serve --check`** proves all of it against whichever `gear` you run it with
+— the page answers 200 with its token, one session completes a turn over the WebSocket against a
+mock provider, and no engine host is left behind. Every install and release path runs it.
+
 **`gear attach ws://host:port`** is the terminal as a client of a remote engine: the same
 `GearClient` the page uses, so a run that stops for a permission on another machine stops in your
 terminal and answering here unblocks it.
@@ -199,7 +208,8 @@ chmod +x ~/.gear/bin/gear ~/.gear/bin/gear-tools
 
 The one-liner script is [`scripts/web-install.sh`](scripts/web-install.sh); release
 binaries are compiled per-platform by [`scripts/build-release.sh`](scripts/build-release.sh)
-via `bun build --compile`.
+via `bun build --compile`. There is **one** download per platform (plus `gear-tools`): the web app
+is embedded in the binary, never shipped alongside it. Verify any binary with `gear serve --check`.
 
 **From source** — recommended on any machine with the toolchain (needs [Bun](https://bun.sh)
 and [Rust](https://rustup.rs)); compiles a standalone CLI **plus** the native Rust tools
@@ -209,6 +219,10 @@ binary into `~/.gear/bin` and exposes them as the **`gear`** command:
 gh repo clone ritikkyyadav/Alan && cd Alan     # or: git clone https://github.com/ritikkyyadav/Alan.git
 ./scripts/install.sh
 ```
+
+`install.sh` builds the web client, embeds it, compiles the CLI, and then runs `gear serve --check`
+against the staged binary **before** promoting it onto your PATH — so an install that cannot serve
+the product fails instead of landing. (`GEAR_SKIP_SERVE_CHECK=1` skips that last gate.)
 
 Then add `~/.gear/bin` to your PATH and just type `gear`:
 

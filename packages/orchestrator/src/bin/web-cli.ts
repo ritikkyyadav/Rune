@@ -20,35 +20,66 @@ import { dirname, join, resolve } from "node:path";
 
 import { adoptLegacyEnv, migrateLegacyHome } from "@gear/shared";
 
+import { type WebBundle, resolveWebBundle } from "../web-embed";
+import { isBunfsPath } from "./host-spawn";
 import { lanAddresses, serve } from "./serve-cli";
 
-/** The repo root, from this file: bin → src → orchestrator → packages → root. */
+/**
+ * The repo root, from this file: bin → src → orchestrator → packages → root.
+ *
+ * Meaningful ONLY in a source checkout. Inside a `bun build --compile` binary
+ * this file lives in a virtual filesystem, so the resolve lands somewhere that
+ * does not exist (`/$bunfs/…`) or, if Bun recorded the build machine's paths,
+ * on a directory belonging to whoever compiled it. Callers must go through
+ * `sourceDistDir()`, which returns null in that case, instead of joining onto
+ * this and hoping.
+ */
 export function engineRoot(): string {
   return resolve(dirname(new URL(import.meta.url).pathname), "../../../..");
 }
 
-/** Where the built client is, and whether it is there. */
+/** Where the built client is in a source checkout. */
 export function webDistDir(root = engineRoot()): string {
   return join(root, "apps", "web", "dist");
 }
 
+/**
+ * The on-disk `apps/web/dist` to prefer, or null when there is no source tree.
+ *
+ * The null is the whole point: a compiled binary must not compute a path from
+ * a virtual root, fail to find it, and then report "the web client is not
+ * built" about a bundle it is carrying inside itself.
+ */
+export function sourceDistDir(root = engineRoot()): string | null {
+  if (isBunfsPath(root)) return null;
+  const dist = webDistDir(root);
+  return existsSync(join(dist, "index.html")) ? dist : null;
+}
+
 export function webBundleBuilt(root = engineRoot()): boolean {
-  return existsSync(join(webDistDir(root), "index.html"));
+  return sourceDistDir(root) !== null;
 }
 
 /**
- * Build the client if it has never been built.
+ * The bundle to serve: the checkout's `dist/` if it has one, the embedded copy
+ * otherwise, and — only in a checkout — a build if neither exists yet.
  *
- * A checkout that has just been cloned has no `dist/`, and telling a person to
- * run a second command before the first one works is a worse answer than
- * spending twelve seconds. It is announced, not silent.
+ * A freshly cloned repo has no `dist/`, and telling a person to run a second
+ * command before the first one works is a worse answer than spending twelve
+ * seconds. It is announced, not silent. A compiled binary never takes that
+ * branch: it has no `apps/web` to build and no need of one.
  */
-async function ensureBundle(root: string): Promise<boolean> {
-  if (webBundleBuilt(root)) return true;
+async function ensureBundle(root: string): Promise<WebBundle | null> {
+  const found = await resolveWebBundle(sourceDistDir(root));
+  if (found) return found;
+
   const app = join(root, "apps", "web");
-  if (!existsSync(join(app, "package.json"))) {
-    console.error(`  no web client at ${app}`);
-    return false;
+  if (isBunfsPath(root) || !existsSync(join(app, "package.json"))) {
+    console.error(`  no web client: this build embeds none and there is no source at ${app}`);
+    console.error(
+      `  reinstall from a checkout that ran \`bun run --filter @gear/web build\` first`,
+    );
+    return null;
   }
   console.log("  building the web client (first run)…");
   const build = Bun.spawn(["bun", "run", "build"], {
@@ -58,11 +89,9 @@ async function ensureBundle(root: string): Promise<boolean> {
     env: { ...process.env },
   });
   const code = await build.exited;
-  if (code !== 0 || !webBundleBuilt(root)) {
-    console.error(`  the web client failed to build (exit ${code})`);
-    return false;
-  }
-  return true;
+  const built = code === 0 ? await resolveWebBundle(sourceDistDir(root)) : null;
+  if (!built) console.error(`  the web client failed to build (exit ${code})`);
+  return built;
 }
 
 export async function runWeb(
@@ -74,7 +103,8 @@ export async function runWeb(
 
   const root = engineRoot();
   console.log("gear web");
-  if (!(await ensureBundle(root))) return 1;
+  const bundle = await ensureBundle(root);
+  if (!bundle) return 1;
 
   const port = Number(values.port ?? 0) || 7788;
   const bindAll = values.host === "0.0.0.0" || values.host === true || values.host === "all";
@@ -102,7 +132,7 @@ export async function runWeb(
     workspace,
     allowRemoteSettings: values["allow-remote-settings"] === true,
     origins,
-    web: { dist: webDistDir(root) },
+    web: bundle,
   });
 
   if (values.open === true) {
