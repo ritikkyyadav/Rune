@@ -338,7 +338,12 @@ export class PermissionBroker {
     // terminal — 4th gear, workspace autonomy, and session grants cannot
     // override it, or the policy would be advisory. ──
     if (this.orgPolicy) {
-      const denial = policyDenial(this.orgPolicy, schema.name, args);
+      // `policyId` is the second name a tool answers to — a plugin tool's
+      // `plugin:<plugin>:<tool>`, so `plugin:<plugin>:*` covers the bundle.
+      const denial = policyDenial(this.orgPolicy, schema.name, args, {
+        identities: schema.policyId ? [schema.policyId] : [],
+        category: schema.category,
+      });
       if (denial) return { type: "denied", reason: denial };
     }
 

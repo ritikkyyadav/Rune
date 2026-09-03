@@ -15,6 +15,16 @@ export interface ToolSchema {
    * own machinery makes parallel runs safe (e.g. `worker` ownership claims).
    */
   parallelSafe?: boolean;
+  /**
+   * A second, structured identity for signed org policy — e.g. a plugin tool's
+   * `plugin:<plugin>:<tool>`, which `plugin:<plugin>:*` matches.
+   *
+   * The model-facing `name` has to survive every provider's tool-name rules
+   * (`[A-Za-z0-9_-]`), so it cannot itself carry a namespaced form. Without
+   * this an admin could only deny a third-party bundle by listing each of its
+   * tools by hand, and would silently miss the ones added by an update.
+   */
+  policyId?: string;
 }
 
 import type { ChildAgentEvent } from "@gear/protocol";

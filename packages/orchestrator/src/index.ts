@@ -143,6 +143,22 @@ export { breakerSignature, batchSignature } from "./call-signature";
 
 // ─── Plugin bundles (.gear/plugins) ───
 export { discoverPlugins, type PluginManifest, type LoadedPlugin } from "./plugins";
+export {
+  DEFAULT_PLUGIN_INDEX_URL,
+  PLUGIN_CAPABILITIES,
+  entryFitsThisGear,
+  entrySourceSpec,
+  findBundledIndexPath,
+  loadPluginIndex,
+  resolvePluginIndexEntry,
+  searchPluginIndex,
+  validatePluginIndex,
+  verifyIndexIntegrity,
+  type PluginCapability,
+  type PluginIndex,
+  type PluginIndexEntry,
+  type PluginIndexLoad,
+} from "./plugin-index";
 
 // ─── Detach/attach: host client + per-run worktrees ───
 export { HostClient, type HostStreamFrame } from "./host-client";

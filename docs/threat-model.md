@@ -23,6 +23,7 @@ control surface.
 | Model → tools (Auto) | Two-stage isolated action classifier reviews shell/network/protected writes/delegation; failures close to a human prompt (`GEAR_AUTO_FAIL_CLOSED`) | `packages/orchestrator/src/auto-mode.ts`, `docs/auto-mode.md` |
 | Tool results → model | Prompt-injection probe scans results before they enter model context; hits are flagged into the audit trail                                        | auto-mode pipeline                                            |
 | Shell → OS           | OS sandbox per platform (see matrix) + PathGuard command screening + egress redaction + per-tool rate limits                                       | `crates/gear-sandbox`                                         |
+| Plugin tool → OS     | Per-tool OS sandbox profile built from the manifest's declared capability; refused where no backend exists                                         | `crates/gear-sandbox/src/spawn.rs`, `docs/plugins.md`         |
 | Actions → evidence   | Hash-chained audit log; exports optionally signed (Ed25519)                                                                                        | `packages/orchestrator/src/session-export.ts`                 |
 
 ## OS sandbox matrix
@@ -38,6 +39,47 @@ The engine surfaces this honestly: when the sandbox is enabled but OS isolation 
 status reports `sandboxDegraded` and the UI shows it. `[sandbox] requireOs = true` refuses to run
 shell tools without real OS isolation. **Treat Windows as a lower-assurance platform** until a
 Job-Object/AppContainer executor lands.
+
+## Plugins
+
+A plugin is a directory someone else wrote, dropped into `.gear/plugins/`. Its parts do not carry
+the same assurance, and the difference is the whole design:
+
+| Part                              | Contained by                            | Assurance                                                                                      |
+| --------------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Skills, commands                  | nothing to contain — they are text      | The model reads them. Treat a skill as untrusted instructions, not as policy                   |
+| Hooks                             | **nothing**                             | A hook is a shell command the plugin asked Gear to run, with the user's access                 |
+| MCP servers                       | **nothing**                             | A stdio server is a process the plugin asked Gear to start, with the user's access             |
+| Executable tools (`tools`, D6 v2) | the OS sandbox, per declared capability | Workspace reads/writes and outbound network are enforced by Seatbelt/bwrap, not by the program |
+
+So `permissions` in a manifest (`hosts`, `paths`, `blockingHooks`) is **disclosure**: it exists so
+a user can read what a bundle intends before enabling it, and both the installer and `gear plugin
+list` say it is not enforced. `tools` is the one block that _is_ enforced.
+
+**Integrity.** `gear plugin add <name>` verifies the index's published sha256 against the staged
+tree before installing; discovery re-verifies the installed tree's digest on every scan and refuses
+a bundle whose files changed since installation. Neither is a signature: the index and the bundle
+share a trust root (the repository), so integrity here proves _unchanged since published_, not
+_written by whom it claims_. Plugin signing is not implemented.
+
+**Executable tools.** Each declared tool is a subprocess under a profile built from its capability
+(`none` / `workspace-read` / `workspace-write` / `network`), never code loaded into the Gear
+process. The capability becomes the tool's permission category, so a write-capable plugin tool is
+not auto-approved in 1st gear and a network one reaches the Auto classifier like `web_fetch`; every
+plugin tool's output crosses the prompt-injection probe. Org policy denies a bundle with
+`plugin:<name>:*`. Two limits stated plainly:
+
+- **Host filtering is port-level on macOS and absent on Linux.** Seatbelt's `remote ip` filter
+  takes a port and `*`/`localhost` only, so a declared `api.example.com:443` is enforced as "port
+  443, nothing else"; bubblewrap's network isolation is all-or-nothing, so on Linux the host list
+  is disclosure. The launch plan reports which of the two is in force.
+- **A machine with no backend refuses to run plugin tools at all** — including when the sandbox
+  state could not be determined. `[extensions] allowUnsandboxedTools` lifts that per plugin and
+  means a stranger's program runs with the user's full access; it is warned in the log, at startup,
+  and in the tool description the model reads.
+
+`[extensions] localTools` is a different thing and stays one: in-process TypeScript from the
+**user's own** `.gear/tools`, off by default, never reachable from a plugin.
 
 ## The served engine (`gear serve`, `gear web`, `gear attach ws://…`)
 
@@ -109,7 +151,10 @@ export keys per-session instead.
 6. **A served engine has one credential, not identities**: the token is the whole access model.
    There is no per-user attribution in the audit trail for a remote connection, and revoking
    access means restarting the server.
-7. No independent third-party security review has been performed yet.
+7. **Plugins are not signed**, and their declarative parts (hooks, MCP servers) are not contained
+   — see Plugins above. A plugin tool's declared hosts are enforced by port on macOS and not at
+   all on Linux.
+8. No independent third-party security review has been performed yet.
 
 ## Out of scope
 

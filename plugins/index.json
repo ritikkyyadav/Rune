@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "updated": "2026-09-03",
+  "plugins": [
+    {
+      "name": "gear-example-skills",
+      "description": "A skills-only plugin: one release-notes playbook, no code and no connectors.",
+      "source": "../examples/plugins/gear-example-skills",
+      "version": "0.1.0",
+      "gearVersion": ">=0.2.0",
+      "capabilities": ["skills"],
+      "integrity": "sha256-dbe7a944f6a367688188be1646a23edd64d9fe18b6e1e0621d94f7529e475fbd",
+      "maintainer": "Savoir <gear@savoir.dev>",
+      "homepage": "https://github.com/ritikkyyadav/Alan/tree/main/examples/plugins/gear-example-skills"
+    },
+    {
+      "name": "gear-example-connector",
+      "description": "An MCP-server plugin: one stdio connector plus the slash command that drives it.",
+      "source": "../examples/plugins/gear-example-connector",
+      "version": "0.1.0",
+      "gearVersion": ">=0.2.0",
+      "capabilities": ["mcp", "commands"],
+      "integrity": "sha256-3706a8e1f350bb37a4d137dc3a3be76b97518b4c473a17a4380bc288b7c58430",
+      "maintainer": "Savoir <gear@savoir.dev>",
+      "homepage": "https://github.com/ritikkyyadav/Alan/tree/main/examples/plugins/gear-example-connector"
+    },
+    {
+      "name": "gear-example-tools",
+      "description": "Executable tools under the OS sandbox: a workspace-write file tool and a host-scoped HTTP tool.",
+      "source": "../examples/plugins/gear-example-tools",
+      "version": "0.1.0",
+      "gearVersion": ">=0.2.0",
+      "capabilities": ["tools:workspace-write", "tools:network"],
+      "integrity": "sha256-5e3d5a4487572bca7411254e0b3a61add679961c916fa50ce2ef997dce1ad059",
+      "maintainer": "Savoir <gear@savoir.dev>",
+      "homepage": "https://github.com/ritikkyyadav/Alan/tree/main/examples/plugins/gear-example-tools"
+    }
+  ]
+}

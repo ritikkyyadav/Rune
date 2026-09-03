@@ -52,6 +52,18 @@ teams.
   changes it.
 - **Hooks** — run shell commands automatically around tool use and session lifecycle via
   `.gear/hooks.json` (e.g. format/lint after edits, block protected paths).
+- **Plugins** — one installable directory bundling skills, slash commands, MCP connectors, hooks
+  and **executable tools**. `gear plugin search <text>` reads a versioned, schema-validated index;
+  `gear plugin add <name>` resolves through it and verifies the published sha256 against the bundle
+  before installing; `gear plugin list` prints what loaded **and what was refused**. Point
+  `[extensions] index` at your own list, and the last fetched copy keeps `search` working offline.
+  An executable tool is a subprocess in any language speaking line-delimited JSON, run under
+  Seatbelt/bubblewrap with exactly the capability its manifest declares (workspace read, workspace
+  write, network hosts, or none) — **refused outright on a machine with no sandbox** unless you opt
+  that plugin in. The declared capability becomes the permission category, so a write-capable
+  plugin tool is never auto-approved in 1st gear and a network one reaches the Auto classifier like
+  `web_fetch`; org policy turns off a whole bundle with `plugin:<name>:*`. Worked examples live in
+  `examples/plugins/`. See [`docs/plugins.md`](docs/plugins.md).
 - **Connectors (MCP)** — `gear mcp add notion && gear mcp login notion` connects a service in two
   commands: a 58-entry bundled catalog resolves the name, OAuth 2.1 with PKCE runs in your browser,
   and the token goes to the OS keychain under `mcp:<server>`. `gear mcp list` shows scope, auth and
@@ -424,6 +436,7 @@ overrides: `GEAR_RESEARCH_DEPTH`, `GEAR_RESEARCH_MAX_PARALLEL`, `GEAR_RESEARCH_M
 - `commands/*.md` — custom slash commands. The filename is the command name; the body is the prompt
   template, with `$ARGUMENTS` (or `{{args}}`) replaced by whatever you type after the command.
   Optional `--- description: ... ---` frontmatter.
+- `plugins/<name>/` — installed plugin bundles. Managed by `gear plugin`; uninstall is `rm -r`.
 - `loop.md` — optional default prompt for a bare `/loop`. Project-level instructions override
   `~/.gear/loop.md`.
 

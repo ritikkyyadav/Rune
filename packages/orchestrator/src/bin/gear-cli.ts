@@ -178,6 +178,8 @@ const { values, positionals } = parseArgs({
     // positional, silently discarding the value.
     scope: { type: "string" },
     name: { type: "string" },
+    // `gear plugin search|add`: read a different plugin index (a URL or a path).
+    index: { type: "string" },
     header: { type: "string", multiple: true },
     env: { type: "string", multiple: true },
     catalog: { type: "boolean", default: false },

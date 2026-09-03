@@ -12,6 +12,9 @@ import { formatCostSummary } from "./cost-report";
 import type { ReasoningEffort, Message, ProviderName, ResolvedCredential } from "@gear/llm-gateway";
 import {
   CustomToolsLoader,
+  PluginToolServer,
+  makeGearToolsPlanner,
+  startPluginTools,
   ToolRegistry,
   registerBuiltinTools,
   ToolRateLimiter,
@@ -108,7 +111,7 @@ import {
   permissionModeToConfig,
 } from "./permissions";
 import { loadOrgPolicy, policyAllowsModel, type LoadedOrgPolicy } from "./org-policy";
-import { discoverPlugins, type LoadedPlugin } from "./plugins";
+import { discoverPlugins, GEAR_VERSION, type LoadedPlugin } from "./plugins";
 import { StruggleDetector } from "./struggle-detector";
 import { TaskStateStore } from "./task-state";
 import { policyForModel, type ReliabilityPolicy } from "./reliability-policy";
@@ -798,7 +801,11 @@ export interface EngineConfig {
     deferTools?: boolean;
   };
   /** Third-party extensions (config.toml [extensions]). */
-  extensions?: { localTools?: boolean };
+  extensions?: {
+    localTools?: boolean;
+    index?: string;
+    allowUnsandboxedTools?: boolean | string[];
+  };
   /** System Memory ("dreaming") — evergreen profile config (enabled/schedule/model/maxTokens). */
   memory?: {
     enabled?: boolean;
@@ -2005,6 +2012,10 @@ export class Engine {
     this.localToolsLoaded = false;
     await this.mcpDiscovery?.stopAll().catch(() => {});
     this.mcpDiscovery = null;
+    // Plugin tool subprocesses belong to the old plugin set for the same
+    // reason MCP servers do: they were spawned from bundles that may no
+    // longer be installed, under capabilities that may have changed.
+    await this.stopPluginTools();
     for (const schema of this.registry.list()) {
       if (schema.name.startsWith("mcp_")) this.registry.unregister(schema.name);
     }
@@ -2013,6 +2024,7 @@ export class Engine {
       this.ensureMcpServers(),
       this.ensureSkills(),
       this.ensureLocalTools(),
+      this.ensurePluginTools(),
     ]);
     return this.listPlugins();
   }
@@ -2301,6 +2313,68 @@ export class Engine {
     }
   }
   private localToolsLoaded = false;
+
+  /**
+   * Executable plugin tools (D6 v2): one subprocess per declared tool server,
+   * spawned under the OS sandbox with the capability its manifest declared,
+   * never loaded into this process.
+   *
+   * Started here rather than lazily per call because the protocol advertises
+   * schemas ON START — the model cannot be offered a tool whose shape nobody
+   * has asked for yet. A machine with no sandbox contributes refusals and no
+   * tools; both land in `mcpNotices`, which is the one channel that survives
+   * the TUI's stderr suppression.
+   */
+  private async ensurePluginTools(): Promise<void> {
+    if (this.pluginToolsLoaded) return;
+    this.pluginToolsLoaded = true;
+    const plugins = this.getPlugins().filter((p) => p.toolDeclarations.length > 0);
+    if (plugins.length === 0) return;
+    const planner = makeGearToolsPlanner(this.config.toolsBinaryPath ?? "gear-tools");
+    for (const plugin of plugins) {
+      try {
+        const started = await startPluginTools({
+          plugin: plugin.name,
+          pluginRoot: plugin.root,
+          version: plugin.version,
+          workspaceRoot: this.config.workspaceRoot,
+          declarations: plugin.toolDeclarations,
+          planner,
+          allowUnsandboxed: this.config.extensions?.allowUnsandboxedTools,
+          gearVersion: GEAR_VERSION,
+        });
+        for (const handler of started.handlers) this.registry.register(handler);
+        this.pluginToolServers.push(...started.servers);
+        for (const notice of started.notices) {
+          loaderLog.warn(`[plugin-tools] ${notice}`);
+          this.mcpNotices.push(`plugin tool — ${notice}`);
+        }
+        if (started.handlers.length > 0) {
+          const names = started.handlers.map((h) => h.schema.name).join(", ");
+          loaderLog.info(
+            `[plugin-tools] ${plugin.name}: ${started.handlers.length} tool(s) — ${names}`,
+          );
+        }
+      } catch (err) {
+        loaderLog.warn(
+          `[plugin-tools] ${plugin.name} failed to start: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+  }
+  private pluginToolsLoaded = false;
+  private pluginToolServers: PluginToolServer[] = [];
+
+  /** Stop every plugin tool subprocess and forget its handlers. */
+  private async stopPluginTools(): Promise<void> {
+    const servers = this.pluginToolServers;
+    this.pluginToolServers = [];
+    this.pluginToolsLoaded = false;
+    for (const schema of this.registry.list()) {
+      if (schema.name.startsWith("plugin_")) this.registry.unregister(schema.name);
+    }
+    await Promise.all(servers.map((s) => s.stop().catch(() => {})));
+  }
 
   /**
    * Lazily load skills once per engine: discover SKILL.md files from the bundled
@@ -4047,6 +4121,7 @@ export class Engine {
       this.ensureMcpServers(),
       this.ensureSkills(),
       this.ensureLocalTools(),
+      this.ensurePluginTools(),
     ]);
     // What the tool surface costs per request, once the extensions are in.
     // Recorded once per session so `gear audit` can report it (P4.1).
@@ -5735,6 +5810,9 @@ export class Engine {
   close(): void {
     // Best-effort: stop MCP subprocesses / sessions on exit.
     this.mcpDiscovery?.stopAll().catch(() => {});
+    // Plugin tool subprocesses are the same kind of debt: a sandboxed program
+    // left running after its engine closed is a leak with a capability.
+    this.stopPluginTools().catch(() => {});
     // Language servers outlived close() before: they were only reaped by the
     // manager's process-exit hook, which is fine for a session that ends with
     // the process and wrong for anything that closes an engine and keeps
