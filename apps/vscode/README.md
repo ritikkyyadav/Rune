@@ -67,6 +67,33 @@ decision. `extension.ts` is the only file that imports `vscode`, and it is
 wiring: an extension whose logic lives inside editor callbacks can only be
 tested by launching VS Code.
 
+## Testing it in a real VS Code
+
+```bash
+cargo build --release -p gear-tools
+bun run --filter @gear/web build     # the bundle the webview frames
+bun run --cwd apps/vscode test:vscode
+```
+
+`test/runTest.ts` downloads a pinned VS Code (1.135.0), starts a real
+`gear serve --web` against a fake model, and launches the editor with this
+extension in development mode. `test/suite/index.ts` runs inside the extension
+host: it activates the extension, checks every contributed command is really
+registered, selects two lines of a file and runs **Send Selection to Gear**.
+
+The assertion happens **outside** the editor. A webview's iframe is cross-origin
+to the extension host, so its DOM is opaque from in there; the launcher watches
+the same server through `@gear/sdk` and waits for a session whose transcript
+carries the selection and the model's reply. The two halves meet at a marker
+file, so whichever one fails is the one that says why.
+
+Until this existed, the extension typechecked, bundled, packaged, and could not
+possibly have worked: the page it frames had no listener for the messages it
+posts, so **Send Selection to Gear** posted into a window that ignored it. Both
+halves were tested apart and never together. It runs on every pull request
+(`vscode` job, under `xvfb-run`); locally it skips with a printed reason if the
+download or the bundle is missing.
+
 ## Not published
 
 The marketplace listing is a **founder action** under decision D1

@@ -145,13 +145,48 @@ bun action/review.ts --dry-run \
 model, so the action is exercised on every test run rather than first executed
 on somebody's pull request.
 
+### Running it with no provider key at all
+
+```bash
+bun action/review.ts --dry-run --mock \
+  --workspace . --base main --gear 2 \
+  --gear-cmd "bun packages/orchestrator/src/bin/gear-cli.ts"
+```
+
+`--mock` (or `GEAR_REVIEW_PROVIDER=mock`) makes `review.ts` start its own
+provider: Ollama reads its base URL from `OLLAMA_HOST` and authenticates
+nothing, so a thirty-line server is a complete provider as far as Gear is
+concerned. Everything else is real — the diff, the session, the turn, the audit,
+the comment.
+
+The comment says what it is in three places: **the heading**, a blockquote
+before anything else, and the footer. A comment that looks like a review and was
+produced by a mock is worse than no comment at all.
+
 ### This repository's own workflow
 
-`.github/workflows/gear-review.yml` runs the action on pull requests here,
-**gated on `GEAR_REVIEW_API_KEY` being present**. Without the secret it skips
-with a notice instead of failing. A workflow that needs a key and does not
-check for one fails red on every fork and every pull request opened before the
-key exists, and a red check nobody can fix teaches people to ignore red checks.
+`.github/workflows/gear-review.yml` runs the action on pull requests here, in
+one of three modes:
+
+| `GEAR_REVIEW_API_KEY` | Pull request from | What runs                                                                              |
+| --------------------- | ----------------- | -------------------------------------------------------------------------------------- |
+| set                   | anywhere          | a real review from a real model                                                        |
+| not set               | this repository   | the same action against the **mock provider**, posting a comment labelled as a dry run |
+| not set               | a fork            | skipped with a notice                                                                  |
+
+The mock path exists because the previous gate was a claim that had never been
+tested: the workflow was gated on a secret that does not exist, so it skipped on
+every pull request ever opened here and the action's comment path — post once,
+then edit that same comment forever — had never run outside a test. Now it runs
+on every PR and the real-model path stays behind the secret.
+
+The fork case stays skipped: a fork's `GITHUB_TOKEN` is read-only, so posting
+would fail with a 403 — a red check a contributor cannot fix, which is the thing
+the gate existed to avoid in the first place.
+
+Both modes write the **same** comment, found by the same HTML marker, so the
+first real review replaces the dry run in place rather than starting a second
+thread under it.
 
 ## `gear pr <n>`
 
@@ -169,3 +204,26 @@ publishes, so it works on a runner where `gh` is not authenticated — puts it i
 session the author's description **verbatim** as its brief. The author's own
 account of the change is the thing a review is checked against; a summary of it
 written by the reviewer is already a reading.
+
+The title and body come from `gh pr view` when the CLI is authenticated, and
+from the REST API otherwise. That fallback reads **`GITHUB_API_URL`**, the
+variable every Actions runner sets and which names the Enterprise Server API
+root on a self-hosted one, so `gear pr` works on GHES with nothing to configure.
+Both calls time out at 30 s: a GitHub that accepts a connection and never
+answers used to hang the command with nothing on screen.
+
+`tests/integration/gear-pr.test.ts` runs all of it against a **local bare
+repository with a `refs/pull/<n>/head` ref in it** — the same shape GitHub
+publishes, and the only thing the command needs from a remote, which is the
+whole reason it uses plain git. It drives both metadata paths (a stub `gh` on
+PATH, and the REST fallback against a fake API at `GITHUB_API_URL`) and asserts
+the worktree, the branch, the brief, and that the working tree it was run from
+is untouched.
+
+It found one defect: **re-running `gear pr <n>` after the author pushed used to
+fail outright.** Git refuses to update a branch that is checked out in a
+worktree, so the fetch died with "refusing to fetch into branch" before the code
+that exists to move the worktree to the new head could run — the second run, the
+one a person makes _because_ the author pushed, was the broken one. The head now
+lands on `refs/gear/pull/<n>` first, which is not a branch and so is never
+checked out anywhere.

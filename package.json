@@ -25,10 +25,11 @@
     "test:packages": "turbo test"
   },
   "devDependencies": {
-    "turbo": "^2.10.11",
-    "typescript": "^5.9.3",
+    "@agentclientprotocol/sdk": "1.4.0",
+    "@types/bun": "latest",
     "prettier": "^3.9.6",
-    "@types/bun": "latest"
+    "turbo": "^2.10.11",
+    "typescript": "^5.9.3"
   },
   "overrides": {
     "@babel/core": "^7.29.7",

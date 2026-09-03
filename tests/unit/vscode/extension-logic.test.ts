@@ -132,6 +132,25 @@ describe("the webview", () => {
     expect(html).not.toContain('"><script>x');
   });
 
+  test("holds a posted selection until the page says its socket is up", () => {
+    // The defect P10.6's live test found. "Send selection to Gear" with no
+    // panel open opens one and posts at once, into a frame that is still
+    // loading — and a message posted into a loading frame is simply gone.
+    const html = panelHtml({
+      pageUrl: "http://127.0.0.1:7788",
+      token: "t",
+      nonce: "n",
+      theme: "dark",
+    });
+    expect(html).toContain("const queued = []");
+    expect(html).toContain('event.data.type === "gear.ready"');
+    // The page's own messages are a handshake, not a source of commands: they
+    // must never be forwarded back into the frame as if the editor sent them.
+    expect(html).toContain("if (event.origin === origin)");
+    // …and a bundle too old to send `gear.ready` still gets it eventually.
+    expect(html).toContain('frame.addEventListener("load"');
+  });
+
   test("says why when there is no engine, instead of showing a blank panel", () => {
     const html = unavailableHtml("gear serve exited with code 127", "n");
     expect(html).toContain("gear serve exited with code 127");

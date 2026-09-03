@@ -225,3 +225,32 @@ ollama`), so `[llm.<id>] authentication = "…"` is silently ignored for every
   machine that HAS the credential. The cache-policy rows for all three are
   therefore documented-but-unmeasured with no way to promote them without
   editing the script first — found in P10.5
+
+Found 2026-09-03 by P10.6 (integration proofs):
+
+- `packages/orchestrator/src/bin/acp-cli.ts` `toUpdate` drops `usage`, but ACP
+  v1 grew from five update kinds to fifteen since that mapping was written and
+  one of them is a **stable** `usage_update` (`used`, `size`, optional `cost`)
+  that Gear's `usage.context` could fill exactly. It is still dropped because an
+  update kind an older client does not know fails the whole notification in a
+  schema-validating client, and there is no Zed on this machine to try it
+  against. Send it once someone can run a real editor against the change —
+  found in P10.6
+- `packages/orchestrator/src/bin/acp-cli.ts` — `stream_reset` means "retract the
+  partial text you have drawn". ACP's `agent_message_chunk` is append-only and
+  the protocol has no retraction, so an editor showing a run whose provider
+  stream was abandoned mid-response will show the abandoned prose followed by
+  the re-streamed prose. Nothing in ACP v1 fixes this; it needs either a
+  protocol change or an agent that buffers text until a turn is settled —
+  found in P10.6
+- `action/review.ts:251` `postComment` hardcodes `https://api.github.com`, so
+  the action cannot post on GitHub Enterprise Server. `pr-cli.ts` now honours
+  `GITHUB_API_URL` (the variable every Actions runner already sets, and the one
+  that names the GHES API root); `review.ts` should read the same one — found in
+  P10.6
+- `packages/orchestrator/src/bin/pr-cli.ts` `checkoutPrWorktree` writes
+  `.gear/worktrees/pr-<n>` inside the user's repository, so `gear pr 12` leaves
+  `?? .gear/` in `git status` for any project that has not ignored `.gear/`.
+  Gear's own `.gitignore` covers it, which is why nobody noticed. Either write
+  the worktree outside the repo, or add `.gear/` to the repo's
+  `.git/info/exclude` (local, uncommitted) on first use — found in P10.6

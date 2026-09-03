@@ -80,13 +80,15 @@
   "scripts": {
     "build": "node esbuild.mjs",
     "package": "node esbuild.mjs && bunx --bun @vscode/vsce package --no-dependencies --allow-missing-repository",
-    "typecheck": "tsc --noEmit",
-    "lint": "prettier --check src/",
-    "test": "bun test ../../tests/unit/vscode"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p test/tsconfig.json",
+    "lint": "prettier --check src/ test/",
+    "test": "bun test ../../tests/unit/vscode",
+    "test:vscode": "node esbuild.mjs && bun test/runTest.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.90.0",
+    "@vscode/test-electron": "2.5.2",
     "esbuild": "^0.25.0",
     "prettier": "^3",
     "typescript": "^5.8"

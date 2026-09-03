@@ -26,6 +26,7 @@ import { useTurns } from "./hooks/useTurns";
 import { applyTheme, loadTheme, type ThemeChoice } from "./lib/theme";
 import { gearInfo, nextGear, normalizeGear, type GearId } from "./lib/gears";
 import { DEMO_TASK, demoSteps, type DemoStep } from "./lib/demo";
+import { announceReady, hostPrompt } from "./lib/host";
 import type {
   AutoApprovalNotice,
   Brief,
@@ -530,6 +531,31 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [cycleGear, decide, interrupt, newTask, overlay, pendingPermission, processing]);
+
+  // ── the editor that framed us ──
+  //
+  // "Send selection to Gear" and "Open trace for this file" are VS Code
+  // commands that post a composed prompt into this frame. `hostPrompt` decides
+  // whether a `message` is one of them — it refuses anything that is not from
+  // an editor webview origin — and `send` is the same path the composer uses,
+  // so a selection arrives as an ordinary turn with an ordinary transcript.
+  useEffect(() => {
+    const onMessage = (event: MessageEvent): void => {
+      const prompt = hostPrompt(event);
+      if (prompt) void send(prompt.text);
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [send]);
+
+  // "Ready" means the socket is up, NOT that the handler is attached. A page
+  // that says ready while its transport is still opening gets the selection,
+  // calls `create_session` against no transport, and reports "still connecting"
+  // to a person who is looking at their editor — the message is gone. The host
+  // holds the selection until it hears this, so the wait costs nothing.
+  useEffect(() => {
+    if (engine.connectionState === "connected") announceReady();
+  }, [engine.connectionState]);
 
   // ── derived ──
   const activeSession = session.sessions.find((s) => s.id === session.activeSessionId) ?? null;
