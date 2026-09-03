@@ -47,6 +47,14 @@ export {
   VERTEX_ANTHROPIC_VERSION,
 } from "./providers/vertex";
 export type { VertexOpts } from "./providers/vertex";
+export {
+  AzureOpenAIProvider,
+  azureDeploymentFor,
+  azureUrl,
+  normalizeAzureEndpoint,
+  DEFAULT_AZURE_API_VERSION,
+} from "./providers/azure-openai";
+export type { AzureOpenAIOpts } from "./providers/azure-openai";
 export { OpenAIProvider } from "./providers/openai";
 export {
   cacheBreakpointPolicyFor,

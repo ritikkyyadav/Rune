@@ -13,7 +13,7 @@ added, and existing API-key users see zero behavior change.
 | **oauth**   | Browser authorization-code + PKCE (loopback redirect).            | OpenRouter, Anthropic, ChatGPT (Codex) |
 | **device**  | OAuth device-code (headless / SSH-friendly).                      | GitHub Copilot                         |
 | **local**   | A localhost runtime reached by URL — connectivity, no credential. | Ollama                                 |
-| **chain**   | The cloud's own ambient credential chain. Gear stores nothing.    | AWS Bedrock, Google Vertex AI          |
+| **chain**   | The cloud's own ambient credential chain. Gear stores nothing.    | Bedrock, Vertex AI, Azure (Entra)      |
 
 A provider declares its supported methods; when you don't choose one, Gear
 auto-selects: the first method that has stored credentials, else the provider's
@@ -48,7 +48,14 @@ SigV4 from whatever the AWS credential chain resolves — environment variables,
 token file, or a container role. Google Vertex exchanges Application Default
 Credentials for a one-hour access token — a service-account JSON at
 `GOOGLE_APPLICATION_CREDENTIALS` (signed RS256 assertion), the gcloud ADC file,
-or the GCE metadata server. The machine's cloud login _is_ the credential.
+or the GCE metadata server. Azure OpenAI takes an Entra ID access token from
+`AZURE_OPENAI_AD_TOKEN` — the one ambient credential of the three that Gear can
+actually carry, since the other two re-authenticate per request inside their
+adapters. The machine's cloud login _is_ the credential.
+
+Azure also has a plain **resource key** (`AZURE_OPENAI_API_KEY`), which goes
+through the credential store like any other API key — so `azure-openai` declares
+both `api_key` and `chain` and picks whichever is present.
 
 So `gear login bedrock` **reports** rather than prompts:
 

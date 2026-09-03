@@ -42,6 +42,7 @@ describe("provider presets", () => {
         // different endpoint and a different door.
         "bedrock",
         "vertex",
+        "azure-openai",
       ]).toContain(p.kind);
     }
   });

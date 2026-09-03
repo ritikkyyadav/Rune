@@ -28,6 +28,12 @@ import { AuthError } from "./types";
 /** What a cloud chain resolved to — a source description, never the secret. */
 export interface ChainProbe {
   detail: string;
+  /**
+   * A bearer token, for the one chain whose ambient credential Gear can
+   * actually carry (Azure's Entra token). AWS and GCP re-authenticate per
+   * request inside their adapters and have nothing to hand over here.
+   */
+  secret?: string;
 }
 
 /**
@@ -53,6 +59,14 @@ export async function probeCloudChain(
       const token = await resolveGoogleAdc({ env });
       return token ? { detail: describeAdcSource(token) } : null;
     }
+    // Azure's ambient credential is an Entra ID access token in the
+    // environment — `az account get-access-token` or a workload-identity
+    // sidecar puts it there. Unlike AWS and GCP it IS a bearer Gear can carry,
+    // so it comes back as one; the resource-key path stays `api_key`.
+    case "azure-openai": {
+      const token = env.AZURE_OPENAI_AD_TOKEN;
+      return token ? { detail: "Entra ID token", secret: token } : null;
+    }
     default:
       return null;
   }
@@ -67,6 +81,12 @@ export function chainSetupHint(providerId: string): string {
         "AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, or select a profile with " +
         "AWS_PROFILE — then set the region with AWS_REGION or " +
         "`[llm.bedrock] region` and request model access in the Bedrock console."
+      );
+    case "azure-openai":
+      return (
+        "No Azure OpenAI credential found. Set AZURE_OPENAI_API_KEY (or " +
+        "AZURE_OPENAI_AD_TOKEN for Entra ID) alongside AZURE_OPENAI_ENDPOINT, " +
+        "and name your deployments under `[providers.azure-openai.deployments]`."
       );
     case "vertex":
       return (
@@ -87,7 +107,9 @@ export class CloudChainStrategy implements AuthenticationStrategy {
     const probe = await probeCloudChain(ctx.providerId, ctx.env);
     if (!probe) return null;
     return {
-      kind: "none",
+      ...(probe.secret
+        ? { kind: "bearer" as const, secret: probe.secret }
+        : { kind: "none" as const }),
       meta: { method: "chain", source: "chain", detail: probe.detail },
     };
   }

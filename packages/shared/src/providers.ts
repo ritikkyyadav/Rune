@@ -21,7 +21,8 @@ export type ProviderKind =
   // differs — the wire format, the streaming grammar and the cache semantics
   // are the vendor's, unchanged.
   | "bedrock" // Anthropic models on AWS, SigV4 over the default chain
-  | "vertex"; // Anthropic + Gemini on GCP, Application Default Credentials
+  | "vertex" // Anthropic + Gemini on GCP, Application Default Credentials
+  | "azure-openai"; // OpenAI models on Azure, deployment-name routing
 
 // ─── Authentication methods ───
 // How a provider proves who you are. This is the ONE canonical definition of the
@@ -101,6 +102,7 @@ export const PROVIDER_CAPACITY: Record<string, ProviderCapacity> = {
   // the agreement test holds the two together.
   bedrock: "funded",
   vertex: "funded",
+  "azure-openai": "funded",
   // A user-supplied OpenAI-compatible endpoint: they chose and pay for it, so
   // it is treated as funded capacity rather than guessed at.
   custom: "funded",
@@ -552,6 +554,42 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     fallbackModel: "claude-sonnet-4-5@20250929",
   },
   {
+    // ─── Azure OpenAI ───
+    // The same OpenAI models over the same Chat Completions wire, addressed by
+    // DEPLOYMENT NAME rather than model id: `/openai/deployments/<name>/…`.
+    // The ids below are model ids, which is what a person picks; the mapping to
+    // the deployment your resource actually has lives in
+    // `[providers.azure-openai.deployments]` and defaults to the id itself —
+    // the common case, since Azure's portal names a deployment after its model.
+    //
+    // Auth is a resource key (`AZURE_OPENAI_API_KEY`) or an Entra bearer token
+    // (`AZURE_OPENAI_AD_TOKEN`), which is why both methods are declared: the
+    // key goes through the credential store like any other, and the Entra token
+    // is ambient like the other clouds'.
+    id: "azure-openai",
+    label: "Azure OpenAI",
+    kind: "azure-openai",
+    envVar: "AZURE_OPENAI_API_KEY",
+    defaultModel: "gpt-4o",
+    docsUrl:
+      "https://learn.microsoft.com/azure/ai-services/openai/how-to/create-resource?pivots=web-portal",
+    keyHint: "resource key, with AZURE_OPENAI_ENDPOINT",
+    auth: ["api_key", "chain"],
+    models: [
+      { id: "gpt-5", label: "GPT-5" },
+      { id: "gpt-5-mini", label: "GPT-5 mini" },
+      { id: "gpt-4.1", label: "GPT-4.1" },
+      { id: "gpt-4o", label: "GPT-4o" },
+      { id: "gpt-4o-mini", label: "GPT-4o mini" },
+      { id: "o3", label: "o3" },
+    ],
+    // gpt-4o rather than gpt-5 as the standard tier and the fallback: it is the
+    // deployment an existing Azure resource is most likely to already have, and
+    // a tier that resolves to a model nobody deployed is a 404 mid-task.
+    tiers: { heavy: "gpt-5", standard: "gpt-4o", light: "gpt-4o-mini" },
+    fallbackModel: "gpt-4o",
+  },
+  {
     // Local Ollama (no key). Reached over /api/chat on the user's machine via
     // OllamaProvider. The base URL is editable in /keys and config.toml; any
     // pulled model works via `/model ollama/<name>` — the listed ones are just
@@ -623,6 +661,7 @@ const VISION_PROVIDERS: ReadonlySet<string> = new Set([
   "google",
   "bedrock",
   "vertex",
+  "azure-openai",
 ]);
 const REASONING_PROVIDERS: ReadonlySet<string> = new Set([
   "anthropic",
@@ -633,6 +672,7 @@ const REASONING_PROVIDERS: ReadonlySet<string> = new Set([
   "openrouter",
   "bedrock",
   "vertex",
+  "azure-openai",
 ]);
 
 function deriveCapabilities(preset: ProviderPreset): ProviderCapabilities {
