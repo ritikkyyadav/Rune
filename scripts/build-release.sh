@@ -47,6 +47,20 @@ echo ""
 mkdir -p "$OUT"
 ( cd "$ROOT" && "$BUN" install --frozen-lockfile >/dev/null 2>&1 || true )
 
+# ─── The web client, before any compile ───
+# The product is a browser page and every one of these binaries has to carry
+# it: there is no `apps/web/dist` beside a downloaded executable, so a binary
+# compiled without this step serves nothing and answers `401 unauthorized` to
+# the first page request (P10.9a). A missing bundle stops the build; it does
+# not ship as a separate download.
+echo "  building the web client (apps/web)"
+( cd "$ROOT" && "$BUN" run --filter @gear/web build >/dev/null ) \
+  || { echo "  ✗ the web client failed to build"; exit 1; }
+[ -f "$ROOT/apps/web/dist/index.html" ] \
+  || { echo "  ✗ apps/web/dist/index.html is missing — refusing to build binaries that cannot serve the product"; exit 1; }
+( cd "$ROOT" && "$BUN" scripts/gen-web-embed.ts )
+echo ""
+
 for pair in "${GEAR_TARGETS[@]}"; do
   target="${pair%%:*}"
   suffix="${pair##*:}"

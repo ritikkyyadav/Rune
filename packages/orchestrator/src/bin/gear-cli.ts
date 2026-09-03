@@ -252,6 +252,7 @@ if (values.help) {
         `    gear attach ws://host:port    Attach to a remote \`gear serve\` (--token or GEAR_SERVE_TOKEN, --prompt runs a turn)\n` +
         `    gear web [--port N] [--open]  Serve the app and park in the foreground (--host exposes it on the LAN)\n` +
         `    gear serve [--web] [--status] The engine as a server; --status prints the URL of a running one (--keep-hosts leaves session engines up)\n` +
+        `    gear serve --check            Prove THIS binary serves the product: the page, one session over the socket, no host left behind\n` +
         `    gear pr <n> [--review]        Check a pull request out into its own worktree and start on it (--brief prints the brief)\n` +
         `    gear acp                      Agent Client Protocol server on stdio — for Zed and other ACP editors (docs/editors.md)\n` +
         `    gear login [provider]         Authenticate a provider — API key, or OAuth where supported (--method, --no-browser, --migrate)\n` +

@@ -767,6 +767,14 @@ export async function runServe(
     return;
   }
 
+  // `gear serve --check`: the packaged proof (P10.9a). It must run from the
+  // artifact, not from source, which is why it lives on the command every
+  // distribution path ships rather than in the test suite.
+  if (values.check === true) {
+    const { runServeCheck } = await import("./serve-check");
+    process.exit(await runServeCheck(values));
+  }
+
   const port = Number(values.port ?? 0) || 4762;
   const bindAll = values.host === "0.0.0.0" || values.host === true || values.host === "all";
   const host = bindAll ? "0.0.0.0" : typeof values.host === "string" ? values.host : "127.0.0.1";
