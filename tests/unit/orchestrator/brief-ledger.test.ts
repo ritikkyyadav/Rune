@@ -41,7 +41,10 @@ describe("the brief", () => {
 
   test("the schema does not offer the model any way to set a rung", () => {
     const props = (READ_BACK_SCHEMA.inputSchema as any).properties;
-    expect(Object.keys(props).sort()).toEqual(["done_when", "leave", "reading", "touch"]);
+    // `kind` (P11.1) is the model's one revision of the task kind — it picks a
+    // layout and touches no criterion. Everything else here is the read-back.
+    expect(Object.keys(props).sort()).toEqual(["done_when", "kind", "leave", "reading", "touch"]);
+    expect(props.kind.enum).toContain("investigate");
     // done_when is a list of plain strings — no object with a status field.
     expect(props.done_when.items).toEqual({ type: "string" });
   });

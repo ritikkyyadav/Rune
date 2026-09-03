@@ -31,6 +31,8 @@
 // `parentCommit`, which is what that gap looked like from the outside.
 
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "@gear/tool-registry";
+import type { TaskKind } from "@gear/protocol";
+import { TASK_KINDS } from "@gear/protocol";
 
 /**
  * Commands whose result is evidence, rather than merely another action:
@@ -227,6 +229,11 @@ export const READ_BACK_SCHEMA: ToolSchema = {
         minItems: 1,
         maxItems: 6,
       },
+      kind: {
+        type: "string",
+        description: "What shape of work this is, if the harness read it wrong. Set once per task.",
+        enum: ["investigate", "build", "analyze", "research", "operate", "write"],
+      },
     },
     required: ["reading", "done_when"],
   },
@@ -245,6 +252,16 @@ export function createReadBackTool(
   getHandler: () => BriefHandler | undefined,
   getRequest: () => string,
   onBrief: (brief: Brief) => void,
+  /**
+   * The model's ONE revision of the task kind (P11.1).
+   *
+   * It rides on the read-back because that is where the model already says
+   * what it understood the work to be, and a third tool for one enum would
+   * cost a schema on every request for a field used once per task. The value
+   * never enters the Brief: the kind belongs to the task spine, and the brief
+   * is a contract with the person. The store enforces "once".
+   */
+  onKind?: (kind: TaskKind) => void,
 ): ToolHandler {
   return {
     schema: READ_BACK_SCHEMA,
@@ -275,11 +292,12 @@ export function createReadBackTool(
         durationMs: Math.round(performance.now() - start),
       });
 
-      const brief = briefFromArgs(
-        (input.args ?? {}) as Record<string, unknown>,
-        getRequest(),
-        new Date().toISOString(),
-      );
+      const args = (input.args ?? {}) as Record<string, unknown>;
+      const brief = briefFromArgs(args, getRequest(), new Date().toISOString());
+      const kind = typeof args.kind === "string" ? args.kind.trim().toLowerCase() : "";
+      if (onKind && (TASK_KINDS as readonly string[]).includes(kind)) {
+        onKind(kind as TaskKind);
+      }
       const handler = getHandler();
 
       if (!handler) {
