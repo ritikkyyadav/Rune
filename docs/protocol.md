@@ -284,6 +284,18 @@ machine. The token is taken from `--token`, then `GEAR_SERVE_TOKEN`, then
 `~/.gear/serve.json` — and the last only for a loopback URL, because a token
 minted for this machine's server is not a credential for someone else's.
 
+`tests/integration/serve-remote-attach.test.ts` is the gate, and it is two
+processes: `gear serve --host 127.0.0.1` on one side, the real `gear attach`
+CLI on the other with a `GEAR_HOME` of its own so it cannot find a token lying
+about on this machine. It asserts the turn's events reach the second process,
+that the token source is named while the token itself never appears in output a
+person would paste into a bug report, and that a permission with nobody at the
+terminal **denies** rather than reading silence as consent. The door is driven
+from there too: a well-formed wrong token exits 1 with the knob to turn, no
+token at all never opens a socket, and a browser Origin off the allowlist is
+refused before the upgrade even holding the right token. Phase 5 checked all of
+this by hand once.
+
 The client is the desktop bundle (`apps/desktop`), unchanged: the only
 difference is which transport `apps/desktop/src/lib/transport.ts` picks. That is
 what makes the web client free rather than a second application to maintain.
