@@ -149,10 +149,69 @@ against the real one and skips cleanly when it is absent.
 as well as the scripted responder does. That needs `--real` capacity this
 machine does not have (see Results above).
 
+## P10.4 — verifier ecosystems
+
+Also the in-repo mock suite, and also measured rather than argued.
+
+**The before number is zero, and it is zero by construction.** Detection knew
+JS/TS, with Rust and Go bolted on as two `existsSync` calls at the workspace
+root. On a Go, Python, Rust or Java project the step check found nothing to run,
+reported `ran: false`, and the completion was accepted — so a step that broke the
+build closed as done. There was no eval task in any ecosystem but JS/TS to record
+a number for, which is the same fact from the other side.
+
+Five tasks were added (`tests/eval/tasks-verifier-ecosystems.ts`), one per
+ecosystem, all the same shape: plan a step, write a file that does not compile,
+mark the step done, and require the harness's compile check to **refuse** the
+completion; then fix the file and require the second attempt to be accepted on a
+passing check. The compile error is real and the compiler is real.
+
+| date       | ecosystem | step check before | step check after                               | toolchain here  |
+| ---------- | --------- | ----------------- | ---------------------------------------------- | --------------- |
+| 2026-09-03 | JS/TS     | ran               | ran — `bun run typecheck` exit 1 → refused     | yes             |
+| 2026-09-03 | Python    | **never ran**     | ran — `python3 -m py_compile` exit 1 → refused | yes             |
+| 2026-09-03 | Rust      | **never ran**     | ran — `cargo check --quiet` exit 101 → refused | yes             |
+| 2026-09-03 | Go        | **never ran**     | `go build ./...` (proven in CI)                | no              |
+| 2026-09-03 | Java      | **never ran**     | `javac -d <tmp>` (proven in CI)                | no (macOS stub) |
+
+Three of the five measure on this machine. Go is not installed here, and macOS
+ships a `/usr/bin/javac` stub that exits 1 with "Unable to locate a Java Runtime"
+— which is itself a defect this work found and fixed, since the verifier had been
+reporting that as "Java checks FAILED". On a machine missing a toolchain the task
+asserts the other half of the same invariant instead: that a compiler which
+cannot run never produces a green check. CI's ubuntu runner has all four and
+`GEAR_VERIFIER_REQUIRE_TOOLCHAINS` makes a skip there a failure.
+
+The receipts, read back out of the session log (`tests/eval` mock run,
+2026-09-03):
+
+```
+python3 -m py_compile 'calc.py'   FAILED (exit 1)   in 27ms   → completion refused
+python3 -m py_compile 'calc.py'   passed            in 26ms   → step closed "2 writes · check ok"
+cargo check --quiet               FAILED (exit 101) in 52ms   → completion refused
+cargo check --quiet               passed            in 29ms   → step closed "2 writes · check ok"
+```
+
+Before this, none of those lines existed: the exit code and the duration were
+not recorded anywhere, and the command name was recovered by a regex over `$ `
+lines in the report.
+
+**Whole-suite effect.**
+
+| date       | suite              | before     | after      | note                              |
+| ---------- | ------------------ | ---------- | ---------- | --------------------------------- |
+| 2026-09-03 | mock (`--compare`) | 50/50 100% | 55/55 100% | +5 tasks; no regression on the 50 |
+
+**What this does not measure.** Whether a live model, handed the refusal, fixes
+the build rather than re-submitting to mark the step unproven. That needs
+`--real` capacity this machine does not have.
+
 ## Changes to the yardstick
 
 Any edit to a pinned subset breaks the series. Record it here.
 
-| date       | anchor | change  | why                                                    |
-| ---------- | ------ | ------- | ------------------------------------------------------ |
-| 2026-09-02 | both   | created | P7.9 — the first external anchors this project has had |
+| date       | anchor        | change                 | why                                                                                                                                                 |
+| ---------- | ------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-09-02 | both          | created                | P7.9 — the first external anchors this project has had                                                                                              |
+| 2026-09-03 | mock baseline | 50 → 55 tasks          | P10.4 — one step-check task per ecosystem; re-anchored deliberately                                                                                 |
+| 2026-09-03 | mock baseline | no longer self-writing | P10.4a — a passing `--compare` used to overwrite the yardstick it had just compared against; `--write-baseline` is now the only thing that moves it |

@@ -1,23 +1,23 @@
 {
-  "timestamp": "2026-09-02T22:36:17.863Z",
+  "timestamp": "2026-09-03T01:31:30.267Z",
   "mode": "mock",
   "passRate": 1,
   "cleanPassRate": 1,
-  "passed": 50,
-  "measured": 50,
+  "passed": 55,
+  "measured": 55,
   "throttled": 0,
-  "total": 50,
+  "total": 55,
   "totalCost": 0,
   "avgCostPerTask": 0,
   "totalListCost": 0,
   "avgListCostPerTask": 0,
-  "avgDurationMs": 220.34,
-  "avgTurns": 0.66,
+  "avgDurationMs": 234.12727272727273,
+  "avgTurns": 0.6909090909090909,
   "categories": [
     {
       "category": "core",
-      "passed": 20,
-      "total": 20,
+      "passed": 25,
+      "total": 25,
       "throttled": 0,
       "passRate": 1,
       "cleanPassRate": 1,
@@ -138,6 +138,36 @@
     },
     {
       "name": "spine_handoff_on_error",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "verify_step_check_js",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "verify_step_check_go",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "verify_step_check_python",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "verify_step_check_rust",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "verify_step_check_java",
       "category": "core",
       "pass": true,
       "throttled": false

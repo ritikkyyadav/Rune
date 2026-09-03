@@ -1,0 +1,11 @@
+# `[workspace]` detaches the fixture from the repo's own cargo workspace, which
+# would otherwise refuse to build a manifest it does not list as a member.
+[workspace]
+
+[package]
+name = "gear-fixture-rust-pass"
+version = "0.0.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"

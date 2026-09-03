@@ -379,10 +379,14 @@ trust boundary under `[permissions.autoMode]`. Deployment overrides are
 [`docs/auto-mode.md`](docs/auto-mode.md). A labeled live reviewer smoke gate is available through
 `bun run eval:auto-safety` (`--list` makes no model calls).
 
-**Verification:** post-edit checks are auto-detected (typecheck/tests/lint across JS/TS, Rust,
-Go — including monorepo roots and single nested apps); point them at your real commands with
-`[verify] commands = ["bun run lint", "bun test tests/unit/"]`, tune `timeoutSecs`, or disable
-with `enabled = false`.
+**Verification:** post-edit checks are auto-detected across JS/TS, Go, Python, Rust and the JVM
+(Java + Kotlin), including monorepos — a workspace with several projects gets one check set per
+project, and the step check runs the one whose files the step touched. Detection reads real
+signals (`go.mod`, `pyproject.toml`, `Cargo.toml`, `build.gradle`, `pom.xml`, workspaces,
+turbo/nx) and never emits a command that would install anything. Point it at your real commands
+with `[verify] commands = [...]`, switch one stack off or override it under
+`[verify.ecosystems]`, tune `timeoutSecs`, or disable with `enabled = false`. See
+[`docs/verification.md`](docs/verification.md).
 
 **Teamwork:** `[team]` controls the multi-instance bus — `enabled` (default true),
 `claimEnforcement` (`warn` | `block` | `off`, default `warn`), and `heartbeatSecs`. Env

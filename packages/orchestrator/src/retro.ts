@@ -285,6 +285,23 @@ export function deriveRunRetro(rows: EventRow[], opts: DeriveOptions = {}): RunR
     }
   }
 
+  // Checks the HARNESS ran are on the spine, not in the tool observations: the
+  // loop above only sees `bash` commands the MODEL chose to run. The retro
+  // therefore reported "checks 0/0" beside a run whose step check had failed on
+  // a broken build and then passed on the fix — three real checks, none of them
+  // the model's. Model-run checks are already counted above, so only the
+  // harness's own are folded in here.
+  for (const c of state?.checks ?? []) {
+    if (opts.sinceAt && c.at < opts.sinceAt) continue;
+    if (c.source !== "harness") continue;
+    if (c.passed) {
+      checksPassed++;
+      lastPassed = c.command;
+    } else {
+      checksFailed++;
+    }
+  }
+
   const gates: Partial<Record<StepLogKind, number>> = {};
   for (const entry of state?.log ?? []) {
     if (opts.sinceAt && entry.at < opts.sinceAt) continue;

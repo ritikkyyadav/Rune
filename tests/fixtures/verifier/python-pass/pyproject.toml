@@ -1,0 +1,4 @@
+[project]
+name = "gear-fixture-python-pass"
+version = "0.0.0"
+description = "Detection fixture: a Python project with stdlib unittest tests and no third-party tooling configured."

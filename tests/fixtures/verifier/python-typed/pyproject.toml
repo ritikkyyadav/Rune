@@ -1,0 +1,9 @@
+[project]
+name = "gear-fixture-python-typed"
+version = "0.0.0"
+
+[tool.mypy]
+strict = true
+
+[tool.ruff]
+line-length = 100

@@ -211,6 +211,7 @@ import {
 } from "./prompts";
 import { buildRepoMap } from "./repo-map";
 import { CommandVerifier, detectVerifyCommands, fastCheckCommands } from "./verifier";
+import type { EcosystemSetting } from "./verifier";
 import type { Verifier } from "./verifier";
 import { autoCommitPaths, undoLastGearCommit, type UndoResult } from "./git-undo";
 import { planResearch, runResearch as executeResearch } from "./research";
@@ -712,6 +713,11 @@ export interface EngineConfig {
    * `[verify] perStep = false` turns it off.
    */
   verifyPerStep?: boolean;
+  /**
+   * Per-ecosystem enable/disable and command overrides (`[verify.ecosystems]`).
+   * Narrower than `verifyCommand`, which replaces detection wholesale.
+   */
+  verifyEcosystems?: Record<string, EcosystemSetting>;
   checkpointPolicy?: Partial<CheckpointPolicy>;
   egressAllowlist?: string[];
   redactOutputs?: boolean;
@@ -1569,6 +1575,7 @@ export class Engine {
         workspaceRoot: this.config.workspaceRoot,
         commands: this.config.verifyCommand,
         timeoutMs: this.config.verifyTimeoutMs,
+        ecosystems: this.config.verifyEcosystems,
         // One log, two sources: checks the model ran through `bash` and checks
         // the harness ran on its behalf both settle criteria now.
         onCheck: (run) =>
@@ -1577,6 +1584,8 @@ export class Engine {
             passed: run.passed,
             at: Date.now(),
             summary: run.summary,
+            exitCode: run.exitCode,
+            durationMs: run.durationMs,
           }),
       });
     }
@@ -4179,7 +4188,7 @@ export class Engine {
           this.verifier &&
           this.config.verifyPerStep !== false &&
           typeof this.verifier.verifyFast === "function"
-            ? (sig?: AbortSignal) => this.verifier!.verifyFast!(sig)
+            ? (sig?: AbortSignal, touched?: string[]) => this.verifier!.verifyFast!(sig, touched)
             : undefined,
         taskState,
         maxPlanNudges: reliability.maxPlanNudges,

@@ -53,6 +53,10 @@ tests/eval/results/run-*.json
 
 # Test artifacts
 tests/fixtures/tmp/
+# Byproducts of running the verifier fixtures' real toolchains
+tests/fixtures/verifier/**/__pycache__/
+tests/fixtures/verifier/**/*.class
+tests/fixtures/verifier/**/Cargo.lock
 
 # Playwright MCP session snapshots (browser tool scratch)
 .playwright-mcp/
