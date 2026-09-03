@@ -133,9 +133,25 @@ have no `tool_call_start` of their own — the node context is what opens their 
 complete before a node runs, which is what lets a node queued three waves out be drawn as queued
 rather than as an absence.
 
-## What is not here yet
+## The first consumer
 
-`research.ts` has not been refactored onto this executor. The primitives it would need are now
-exported and the shape matches, but moving a working, load-bearing feature onto a new executor is a
-change that deserves its own commit and its own live validation rather than riding along with the
-executor that enables it.
+`research.ts` runs on this executor. Its investigator fan-out — the DAG this file was extracted
+from — is a workflow whose nodes are the round's sub-questions, run through `runWorkflow` with the
+same bounded concurrency, the same per-node failure isolation and the same events every other
+workflow gets. Its surface is unchanged: `gear research`, `/research` and the research event stream
+are what they were, and the research tests are untouched.
+
+A round is one wave of independent nodes. The dependency between _rounds_ is the reflect step, and
+that is not a node: its follow-ups are what decide whether there is a next round at all, so it
+cannot be an edge in a graph that has to exist before the graph runs. Nothing is persisted —
+research has never been resumable, and giving it a state file here would be a new feature wearing a
+refactor's clothes.
+
+The one behaviour that changed: an aborted run now stops **dispatching**, instead of starting
+investigators it is about to kill. That is the executor's signal check, and it is the better
+behaviour.
+
+This is what a second, parallel execution path would have cost. There is one path, so a fix to its
+concurrency, its resume or its reporting reaches research and every written-down workflow at the
+same time, instead of the two drifting apart the way two implementations of the same thing always
+do.
