@@ -410,6 +410,14 @@ export function replayEvents(
             limitTokens: num(p.limitTokens),
             summarizedCount: typeof p.summarizedCount === "number" ? p.summarizedCount : undefined,
             forced: p.forced === true ? true : undefined,
+            tier:
+              p.tier === "tool_results" || p.tier === "summarized"
+                ? (p.tier as "tool_results" | "summarized")
+                : undefined,
+            trigger:
+              p.trigger === "auto" || p.trigger === "requested" || p.trigger === "overflow"
+                ? (p.trigger as "auto" | "requested" | "overflow")
+                : undefined,
           },
         });
         break;
@@ -4433,8 +4441,13 @@ export class Engine {
             payload: {
               beforeTokens: event.beforeTokens,
               afterTokens: event.afterTokens,
+              limitTokens: event.limitTokens,
               summarizedCount: event.summarizedCount ?? 0,
               forced: event.forced === true,
+              // What was dropped, and what asked for it. Without these the
+              // audit can only say a number got smaller.
+              tier: event.tier ?? null,
+              trigger: event.trigger ?? null,
             },
           });
         }

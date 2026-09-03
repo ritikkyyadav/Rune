@@ -37,8 +37,19 @@ function engineWith(gateway: any): ContextEngine {
   return new ContextEngine({ summarizeTurnsThreshold: 10 }, gateway);
 }
 
+/**
+ * Turns with a body, not `"turn 3"`.
+ *
+ * A six-token conversation is smaller than the summary that would replace it,
+ * and compaction now declines to apply a "compaction" that makes the working
+ * set larger (P10.8: an explicit compact_context measured at 16,929 → 16,931).
+ * These fixtures exist to test the force contract, not that arithmetic, so
+ * they carry enough text for the trade to be real.
+ */
 const conversation = (n: number): Message[] =>
-  Array.from({ length: n }, (_, i) => msg(i % 2 === 0 ? "user" : "assistant", `turn ${i}`));
+  Array.from({ length: n }, (_, i) =>
+    msg(i % 2 === 0 ? "user" : "assistant", `turn ${i}: ${"context ".repeat(60)}`),
+  );
 
 describe("ContextEngine.compactWorkingSet", () => {
   test("below threshold without force: unchanged", async () => {
