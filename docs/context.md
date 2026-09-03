@@ -34,7 +34,9 @@ Compaction escalates. It never jumps straight to "summarize almost everything".
 2. **Keep a token-budgeted verbatim tail.** 30% of the model's real window, in
    tokens. A message count is the wrong unit: six messages of a tool-heavy run
    is a rounding error against a 200k window, and six _huge_ messages are larger
-   than the whole budget.
+   than the whole budget. A count floor of six messages survives as a floor —
+   but it yields at 1.25× the budget, and the pair-safe snap walks _forward_
+   when walking backward would keep more than the budget allows.
 3. **Summarize the head into the merged state.** One round trip, on the light
    tier where one is configured, bounded by a wall clock and the turn's abort.
 
@@ -42,6 +44,20 @@ The trigger is 70% of the model's real context window, measured from
 provider-reported usage where the provider reports it. Compaction aims to land
 at 50%, comfortably under the trigger, so the next turn does not immediately
 re-compact.
+
+Three rules keep a compaction worth its round trip:
+
+- **A head that is a sliver is not folded.** Under 15% of the working set, the
+  summarizer is not called at all; eviction gets a turn instead, and otherwise
+  the answer is an honest "nothing to compact".
+- **A compaction that would not shrink the working set is discarded.** A merged
+  state can be larger than the few small messages it replaces; applying it pays
+  a round trip to make the prompt bigger and loses the verbatim text as well.
+- **An explicit compaction cuts harder than an automatic one.** The 30% tail is
+  the automatic policy, conservative because nobody asked. `compact_context`
+  and an over-limit rejection were asked to free room now, so they keep the
+  recent exchange and fold the rest. `gear audit` labels which policy produced
+  a given tail, because the two are not comparable.
 
 ## The merged state, not a summary of a summary
 

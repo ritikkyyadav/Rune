@@ -199,6 +199,8 @@ export interface CompactionRow {
   afterTokens: number;
   summarizedCount: number;
   forced: boolean;
+  tier: string | null;
+  trigger: string | null;
 }
 
 /** Every auto-compaction the session log recorded, in order. */
@@ -217,6 +219,8 @@ function compactions(dbPath: string, sessionId: string): CompactionRow[] {
         afterTokens: Number(p.afterTokens ?? 0),
         summarizedCount: Number(p.summarizedCount ?? 0),
         forced: p.forced === true,
+        tier: typeof p.tier === "string" ? p.tier : null,
+        trigger: typeof p.trigger === "string" ? p.trigger : null,
       };
     });
   } finally {
@@ -328,13 +332,16 @@ const LONG_SESSION = [
   { toolCalls: [read("notes.md")] },
   { toolCalls: [read("wire.md")] },
   { text: "Spec absorbed. Building.", toolCalls: [todos(1)] },
-  { toolCalls: [write(MODULES[0], 0), write(MODULES[1], 1)] },
+  // One bulk read before each compaction, so every fold has real material.
+  // Without it the head is a handful of small messages and the merged state
+  // is bigger than what it replaces — which compaction now declines to do.
+  { toolCalls: [read("bulk-0.txt"), write(MODULES[0], 0), write(MODULES[1], 1)] },
   { toolCalls: [compact()] }, // ── compaction 1
-  { toolCalls: [write(MODULES[2], 2), write(MODULES[3], 3)] },
+  { toolCalls: [read("bulk-1.txt"), write(MODULES[2], 2), write(MODULES[3], 3)] },
   { toolCalls: [compact()] }, // ── compaction 2
-  { toolCalls: [write(MODULES[4], 4), write(MODULES[5], 5)] },
+  { toolCalls: [read("bulk-2.txt"), write(MODULES[4], 4), write(MODULES[5], 5)] },
   { toolCalls: [compact()] }, // ── compaction 3
-  { toolCalls: [write(MODULES[6], 6), write(MODULES[7], 7)] },
+  { toolCalls: [read("bulk-3.txt"), write(MODULES[6], 6), write(MODULES[7], 7)] },
   { text: "All eight written.", toolCalls: [todos(2)] },
   { toolCalls: [compact()] }, // ── compaction 4
   {
@@ -390,9 +397,13 @@ const PRESSURE_HEAD = [
 ];
 
 const PRESSURE_TAIL = [
-  { toolCalls: [write(MODULES[0], 0), write(MODULES[1], 1)] },
+  // A bulk read rides along with each build turn, so the forced compactions
+  // that follow have real material to fold. Without it the head is a handful
+  // of small messages and the merged state is bigger than what it would
+  // replace — which compaction now declines to do, correctly.
+  { toolCalls: [read("bulk-0.txt"), write(MODULES[0], 0), write(MODULES[1], 1)] },
   { toolCalls: [compact()] },
-  { toolCalls: [write(MODULES[2], 2), write(MODULES[3], 3)] },
+  { toolCalls: [read("bulk-1.txt"), write(MODULES[2], 2), write(MODULES[3], 3)] },
   { toolCalls: [compact()] },
   { text: "Four modules written.", toolCalls: [todos(2)] },
   {
@@ -472,7 +483,7 @@ const planAndLedgerSurvive: EvalTask = {
   category: "context",
   description:
     "After four compactions the prompt still carries the goal, every todo with its state, and every file the run wrote.",
-  setup: setupWorkspace,
+  setup: setupPressure,
   teardown: restoreWindow,
   summarizer: faithfulSummarizer,
   script: LONG_SESSION,
@@ -522,16 +533,16 @@ const hashLedgerSurvives: EvalTask = {
   name: "compaction_hash_ledger_survives",
   category: "context",
   description: "An edit issued after compaction still applies with no hash and no re-read.",
-  setup: setupWorkspace,
+  setup: setupPressure,
   teardown: restoreWindow,
   summarizer: faithfulSummarizer,
   script: [
     { text: "Planning.", toolCalls: [todos(0)] },
-    { toolCalls: [read("spec.md")] },
+    { toolCalls: [read("spec.md"), read("bulk-0.txt")] },
     { toolCalls: [write(MODULES[0], 0), write(MODULES[1], 1)] },
     { text: "Spec read, first modules written.", toolCalls: [todos(1)] },
     { toolCalls: [compact()] },
-    { toolCalls: [write(MODULES[2], 2)] },
+    { toolCalls: [read("bulk-1.txt"), write(MODULES[2], 2)] },
     { toolCalls: [compact()] },
     // No expected_hash and no re-read: the harness must supply it from the
     // ledger it kept while the transcript was being squashed.
@@ -571,7 +582,7 @@ const recentResultsVerbatim: EvalTask = {
   name: "compaction_recent_results_verbatim",
   category: "context",
   description: "The tool results the next step needs survive compaction verbatim, not as a stub.",
-  setup: setupWorkspace,
+  setup: setupPressure,
   teardown: restoreWindow,
   summarizer: faithfulSummarizer,
   script: LONG_SESSION,
@@ -609,7 +620,7 @@ const noSummaryOfSummary: EvalTask = {
   category: "context",
   description:
     "Each compaction merges the prior state; it never feeds its own summary back as transcript, and its request stays inside the summarizer's window.",
-  setup: setupWorkspace,
+  setup: setupPressure,
   teardown: restoreWindow,
   summarizer: faithfulSummarizer,
   script: LONG_SESSION,
@@ -821,8 +832,10 @@ const compactionIsWorthIt: EvalTask = {
         };
       }
       // …and one that cuts to the bone has thrown away context it was
-      // budgeted to keep. The floor is half the tail budget, or the whole
-      // working set when there was less than that to begin with.
+      // budgeted to keep. Only the AUTOMATIC tier is budgeted to keep 30%:
+      // an explicit compact_context, or an over-limit rejection, was asked to
+      // free room now and legitimately cuts to the recent exchange.
+      if (r.trigger !== "auto") continue;
       const floor = Math.floor(Math.min(r.beforeTokens, tailBudget) * 0.5);
       if (r.afterTokens < floor) {
         return {

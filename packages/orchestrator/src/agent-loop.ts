@@ -1823,6 +1823,11 @@ export class AgentLoop {
               type: "notice",
               message: `Context compaction failed (${r.failureReason}) — continuing uncompacted.`,
             };
+          } else if (r.noop) {
+            yield {
+              type: "notice",
+              message: `Nothing to compact — ${r.noopReason}.`,
+            };
           }
         }
         // A steering message may have arrived while verification / the
@@ -2967,6 +2972,11 @@ export class AgentLoop {
             type: "notice",
             message: `Context compaction failed (${r.failureReason}) — continuing uncompacted.`,
           };
+        } else if (r.noop) {
+          yield {
+            type: "notice",
+            message: `Nothing to compact — ${r.noopReason}.`,
+          };
         }
       }
 
@@ -3003,7 +3013,13 @@ export class AgentLoop {
 
   /** One compaction → one structured UI event, computed from the engine's estimates. */
   private compactionEvent(
-    r: { beforeTokens?: number; afterTokens?: number; summarizedCount?: number },
+    r: {
+      beforeTokens?: number;
+      afterTokens?: number;
+      summarizedCount?: number;
+      tier?: "tool_results" | "summarized";
+      trigger?: "auto" | "requested" | "overflow";
+    },
     forced = false,
   ): AgentTurnEvent {
     const limit = this.contextSnapshot()?.limit ?? 0;
@@ -3014,6 +3030,8 @@ export class AgentLoop {
       limitTokens: limit,
       summarizedCount: r.summarizedCount,
       forced: forced || undefined,
+      tier: r.tier,
+      trigger: r.trigger,
     };
   }
 
