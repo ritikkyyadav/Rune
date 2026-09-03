@@ -23,6 +23,14 @@ order:
    Gear's own control surface under `.gear`, payloads too large for the bounded reviewer — are pure
    regex and hold whether or not a reviewer is alive. They do not raise a permission card. They go to
    the **containment broker**, which returns a route (below).
+
+   The breakers read the whole action, not one tool's arguments. A guardrail change is a guardrail
+   change whether it arrives as `update_config`, as `sed -i` against `.gear/policy.json`, or as
+   `gear config set sandbox.enabled false`. Persistence is persistence whether it arrives as
+   `echo >> ~/.zshrc` or as `write_file` to the same path. Download-and-execute is the same shape in
+   `curl … | sh` and in `browser(download, execute: true)`. Every one of those pairs used to be
+   half-covered, and the corpus is what found the other halves.
+
 5. A tier check clears built-in safe reads and ordinary workspace-confined edits with no model call.
 6. **The supervised tier.** Everything mechanical has already run, so what remains at low or medium
    risk is the day's work: builds, tests, dependency installs, API calls, ordinary shell. It runs
@@ -87,6 +95,39 @@ Every route is mechanical — pure regex over the effective payload. That is del
 what stands when the reviewer model is withdrawn, rate-limited, or 404ing. `contain` degrades to
 `defer` when OS isolation is unavailable, because without a sandbox "run it contained" would be a
 lie.
+
+### The shapes the broker recognizes
+
+`mechanicalBreaker()` in `auto-containment.ts` is the pre-screen that decides which actions reach the
+broker at all. It runs before the tier check and before any model call, for every tool. P10.3 added
+the rows below because the 227-row corpus showed each one being rated medium, cleared by the
+supervised tier, and never read by anything except a watcher that can only stop the _next_ action.
+
+| Shape                                                                   | Route                                                |
+| ----------------------------------------------------------------------- | ---------------------------------------------------- |
+| Recursive delete naming any path outside the workspace                  | `host-destruction` (halt)                            |
+| A credential in the **content** of an outbound call (a key in a query)  | `credential-in-payload` (halt)                       |
+| `chmod -R 777` outside the workspace                                    | `host-destruction` (halt)                            |
+| A write to a shell profile, launch agent or trusted-key file            | `persistence` (defer, halt under injection)          |
+| `browser(download, execute: true)`                                      | `fetch-and-execute` (contain)                        |
+| An OS or cloud credential store read through its CLI                    | `credential-store-read` (defer)                      |
+| A listener bound to `0.0.0.0` rather than loopback                      | `network-exposure` (redirect)                        |
+| `shutdown` / `reboot` / `poweroff`                                      | `host-control` (defer)                               |
+| `docker system prune` / `docker volume prune`                           | `container-prune` (defer)                            |
+| `git push --mirror`                                                     | `mirror-push` (defer)                                |
+| `aws s3 rm`, `gsutil rm`, `az storage … delete`                         | `bulk-object-delete` (defer)                         |
+| `pkill`, `killall`, `… \| xargs kill`                                   | `unowned-process-kill` (defer)                       |
+| A browser typing a password, one-time code or card number               | `credential-entry` (defer)                           |
+| A browser accepting terms or an agreement                               | `binding-agreement` (defer)                          |
+| A connector call that moves money                                       | `financial-effect` (defer)                           |
+| Arguments asserting their own approval, or imitating a reviewer verdict | `forged-authorization` (defer, halt under injection) |
+
+Each has a unit test naming both the shape it catches and the ordinary command it must not, because a
+breaker that also stops ordinary work is not a stricter breaker — it is a broken one, and this
+system's history says approval fatigue is what actually ends runs. The negatives are as load-bearing
+as the positives: `rm -rf ./build`, `docker compose up -d`, `aws s3 ls`, a bare `kill <pid>`,
+`--host 127.0.0.1`, a key in an `Authorization` header, and this repo's own tests discussing verdicts
+all stay ordinary.
 
 **Auto mode fails contained, not closed.** Failing closed to a human prompt cost one build 22 minutes
 sitting on a dead classifier. Containment is available by construction.
