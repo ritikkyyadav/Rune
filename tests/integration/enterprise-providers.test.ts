@@ -18,6 +18,7 @@ import { describe, test, expect } from "bun:test";
 import { BedrockProvider } from "../../packages/llm-gateway/src/providers/bedrock";
 import { resolveAwsCredentials } from "../../packages/llm-gateway/src/providers/aws/credentials";
 import { VertexProvider } from "../../packages/llm-gateway/src/providers/vertex";
+import { AzureOpenAIProvider } from "../../packages/llm-gateway/src/providers/azure-openai";
 import {
   resolveGoogleAdc,
   resolveGoogleProject,
@@ -143,5 +144,50 @@ describe("Google Vertex AI (live)", () => {
     const models = await new VertexProvider().listModels();
     expect(models.some((m) => m.id.startsWith("claude"))).toBe(true);
     expect(models.some((m) => m.id.startsWith("gemini"))).toBe(true);
+  }, 60_000);
+});
+
+describe("Azure OpenAI (live)", () => {
+  const enabled = process.env.GEAR_LIVE_AZURE_OPENAI === "1";
+
+  /** Azure needs BOTH an endpoint and a credential; say which is missing. */
+  function preflight(): string | null {
+    if (!enabled) return "not enabled";
+    if (!process.env.AZURE_OPENAI_ENDPOINT) return "AZURE_OPENAI_ENDPOINT is not set";
+    if (!process.env.AZURE_OPENAI_API_KEY && !process.env.AZURE_OPENAI_AD_TOKEN) {
+      return "neither AZURE_OPENAI_API_KEY nor AZURE_OPENAI_AD_TOKEN is set";
+    }
+    return null;
+  }
+
+  test("streams a completion from a deployment", async () => {
+    const blocked = preflight();
+    if (blocked) {
+      skipReason("Azure OpenAI", "GEAR_LIVE_AZURE_OPENAI", blocked);
+      return;
+    }
+    // GEAR_LIVE_AZURE_DEPLOYMENT names the deployment on the tester's resource;
+    // without it the model id is used, which is Azure's own default naming.
+    const model = process.env.GEAR_LIVE_AZURE_DEPLOYMENT || "gpt-4o-mini";
+    const text = await collectText(
+      new AzureOpenAIProvider().inferStream({
+        messages: [{ role: "user", content: [{ type: "text", text: "Reply with the word OK." }] }],
+        model,
+        provider: "azure-openai",
+        maxTokens: 16,
+        stream: true,
+      }),
+    );
+    expect(text.trim().length).toBeGreaterThan(0);
+  }, 60_000);
+
+  test("lists the deployments this resource has", async () => {
+    const blocked = preflight();
+    if (blocked) {
+      skipReason("Azure OpenAI", "GEAR_LIVE_AZURE_OPENAI", blocked);
+      return;
+    }
+    const models = await new AzureOpenAIProvider().listModels();
+    expect(models.length).toBeGreaterThan(0);
   }, 60_000);
 });

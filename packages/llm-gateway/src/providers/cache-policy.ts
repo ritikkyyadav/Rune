@@ -75,6 +75,11 @@ const POLICY: Record<string, CacheBreakpointPolicy> = {
   // halves: the Anthropic half writes breakpoints, the Gemini half ignores them.
   bedrock: "anthropic-style",
   vertex: "anthropic-style",
+  // Azure serves the same OpenAI models with the same automatic prefix caching
+  // over 1024 tokens, and accepts the same `prompt_cache_key` routing hint —
+  // the shared OpenAI adapter sends it unchanged. Documented, not measured: no
+  // Azure resource on this machine.
+  "azure-openai": "prompt-cache-key",
   // A user-supplied endpoint could be anything; claiming a cache it may not
   // have would put an invented number on screen.
   custom: "none",

@@ -9,6 +9,7 @@ import {
   AnthropicProvider,
   BedrockProvider,
   VertexProvider,
+  AzureOpenAIProvider,
   OpenAIProvider,
   OpenRouterProvider,
   GoogleProvider,
@@ -86,6 +87,11 @@ export interface BuildGatewayOpts {
 export interface EnterpriseRouteConfig {
   bedrock?: { region?: string; inferenceProfile?: "us" | "eu" | "apac" | "none" };
   vertex?: { project?: string; location?: string };
+  "azure-openai"?: {
+    endpoint?: string;
+    apiVersion?: string;
+    deployments?: Record<string, string>;
+  };
 }
 
 /**
@@ -179,6 +185,28 @@ export function buildGateway(opts: BuildGatewayOpts): LlmGateway {
           env,
           ...(opts.routes?.vertex?.project ? { project: opts.routes.vertex.project } : {}),
           ...(opts.routes?.vertex?.location ? { location: opts.routes.vertex.location } : {}),
+        }),
+      );
+      continue;
+    }
+
+    // Azure is the one cloud route with a real static credential, so it
+    // registers on the SAME rule as every keyed provider: a resolved key (from
+    // the credential store, config, or AZURE_OPENAI_API_KEY), an ambient Entra
+    // token, or being the active provider so the error is actionable.
+    if (preset.kind === "azure-openai") {
+      const azure = opts.routes?.["azure-openai"];
+      const cred = opts.credentials?.[preset.id];
+      const key = cred?.secret ?? resolveKey(preset.id, preset.envVar, opts.keys, env);
+      if (!key && !env.AZURE_OPENAI_AD_TOKEN && opts.provider !== preset.id) continue;
+      gw.registerProvider(
+        new AzureOpenAIProvider({
+          env,
+          ...(key && cred?.kind !== "bearer" ? { apiKey: key } : {}),
+          ...(cred?.kind === "bearer" && cred.secret ? { entraToken: cred.secret } : {}),
+          ...(azure?.endpoint ? { endpoint: azure.endpoint } : {}),
+          ...(azure?.apiVersion ? { apiVersion: azure.apiVersion } : {}),
+          ...(azure?.deployments ? { deployments: azure.deployments } : {}),
         }),
       );
       continue;

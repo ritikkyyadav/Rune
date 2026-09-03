@@ -78,6 +78,7 @@ export type ProviderName =
   // auth-and-endpoint variant over the adapter above it, not a new transport.
   | "bedrock" // Anthropic models via the AWS Bedrock Messages API (SigV4)
   | "vertex" // Anthropic + Gemini via Google Vertex AI (ADC)
+  | "azure-openai" // OpenAI models via Azure deployments (api-key / Entra)
   | "custom";
 
 /**
@@ -137,7 +138,11 @@ export function reasoningEffortsFor(provider: string, model: string): ReasoningE
     if (/^gpt-5\.6/.test(m)) return ["low", "medium", "high", "xhigh", "max"];
     return ["low", "medium", "high"];
   }
-  if (provider === "openai" && /^(gpt-5|o[134])(-|:|$)/.test(m)) {
+  // Azure serves the same OpenAI models over the same Chat Completions wire, so
+  // it carries the same dial. The model here is Gear's model id, which maps to
+  // a deployment NAME on the way out — the dial follows the model, not the
+  // deployment, which is why this tests the id and not the deployment string.
+  if ((provider === "openai" || provider === "azure-openai") && /^(gpt-5|o[134])(-|:|$)/.test(m)) {
     return ["low", "medium", "high"];
   }
   // Gemini through Vertex is the same model with the same thinking budget; the

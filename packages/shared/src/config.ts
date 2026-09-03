@@ -112,6 +112,18 @@ export interface GearConfig {
       /** Vertex location, e.g. "us-east5" or "global". Falls back to GOOGLE_CLOUD_LOCATION. */
       location?: string;
     };
+    "azure-openai"?: {
+      /** Resource endpoint, e.g. https://my-resource.openai.azure.com. */
+      endpoint?: string;
+      /** `api-version` query parameter. Defaults to a GA version, never a preview. */
+      apiVersion?: string;
+      /**
+       * `[providers.azure-openai.deployments]` — model id → the deployment name
+       * your resource actually has. Defaults to the model id itself, which is
+       * what Azure's portal names a deployment by default.
+       */
+      deployments?: Record<string, string>;
+    };
   };
   permissions: {
     defaultLevel: "auto" | "confirm" | "sandbox";

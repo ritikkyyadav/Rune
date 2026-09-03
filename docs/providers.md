@@ -27,21 +27,22 @@ the base URL.
 
 ### Declared policy per provider
 
-| Provider         | Adapter              | Policy                                       | Basis                                                                                                                             |
-| ---------------- | -------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `anthropic`      | `AnthropicProvider`  | native `cache_control`                       | reference implementation; reads `cache_creation_input_tokens` / `cache_read_input_tokens`                                         |
-| `openai`         | `OpenAIProvider`     | `prompt-cache-key`                           | documented automatic prefix caching over 1024 tokens, plus the documented routing field                                           |
-| `openrouter`     | `OpenRouterProvider` | `anthropic-style` (Anthropic upstreams only) | measured 2026-08-26, see below                                                                                                    |
-| `google`         | `GoogleProvider`     | `implicit`                                   | **measured 2026-09-02**: 99.7% hit rate with no cache handle                                                                      |
-| `deepseek`       | `OpenAIProvider`     | `implicit`                                   | host documents automatic prefix caching                                                                                           |
-| `groq`           | `OpenAIProvider`     | `implicit`                                   | host documents automatic prefix caching                                                                                           |
-| `xai`            | `OpenAIProvider`     | `implicit`                                   | host documents automatic prefix caching                                                                                           |
-| `ollama-turbo`   | `OpenAIProvider`     | `none`                                       | **measured 2026-09-02**: no cached tokens on an identical prefix                                                                  |
-| `codex`          | `CodexProvider`      | server-side                                  | the Responses backend manages its own prefix reuse                                                                                |
-| `ollama` (local) | `OllamaProvider`     | KV cache, held by `keep_alive`               | local runtime; nothing is billed, but a dropped KV cache costs a full re-prefill                                                  |
-| `bedrock`        | `BedrockProvider`    | `anthropic-style`                            | documented `cache_control` support; the shared Anthropic adapter emits the breakpoints. **Not measured** — no AWS credential here |
-| `vertex`         | `VertexProvider`     | `anthropic-style`                            | same, for the Anthropic half; the Gemini half caches implicitly. **Not measured** — no GCP credential here                        |
-| `custom`         | `OpenAIProvider`     | `none`                                       | a user-supplied endpoint could be anything; claiming a cache it may not have would put an invented number on screen               |
+| Provider         | Adapter               | Policy                                       | Basis                                                                                                                             |
+| ---------------- | --------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `anthropic`      | `AnthropicProvider`   | native `cache_control`                       | reference implementation; reads `cache_creation_input_tokens` / `cache_read_input_tokens`                                         |
+| `openai`         | `OpenAIProvider`      | `prompt-cache-key`                           | documented automatic prefix caching over 1024 tokens, plus the documented routing field                                           |
+| `openrouter`     | `OpenRouterProvider`  | `anthropic-style` (Anthropic upstreams only) | measured 2026-08-26, see below                                                                                                    |
+| `google`         | `GoogleProvider`      | `implicit`                                   | **measured 2026-09-02**: 99.7% hit rate with no cache handle                                                                      |
+| `deepseek`       | `OpenAIProvider`      | `implicit`                                   | host documents automatic prefix caching                                                                                           |
+| `groq`           | `OpenAIProvider`      | `implicit`                                   | host documents automatic prefix caching                                                                                           |
+| `xai`            | `OpenAIProvider`      | `implicit`                                   | host documents automatic prefix caching                                                                                           |
+| `ollama-turbo`   | `OpenAIProvider`      | `none`                                       | **measured 2026-09-02**: no cached tokens on an identical prefix                                                                  |
+| `codex`          | `CodexProvider`       | server-side                                  | the Responses backend manages its own prefix reuse                                                                                |
+| `ollama` (local) | `OllamaProvider`      | KV cache, held by `keep_alive`               | local runtime; nothing is billed, but a dropped KV cache costs a full re-prefill                                                  |
+| `bedrock`        | `BedrockProvider`     | `anthropic-style`                            | documented `cache_control` support; the shared Anthropic adapter emits the breakpoints. **Not measured** — no AWS credential here |
+| `vertex`         | `VertexProvider`      | `anthropic-style`                            | same, for the Anthropic half; the Gemini half caches implicitly. **Not measured** — no GCP credential here                        |
+| `azure-openai`   | `AzureOpenAIProvider` | `prompt-cache-key`                           | the same automatic prefix caching and the same routing hint as first-party OpenAI. **Not measured** — no Azure resource here      |
+| `custom`         | `OpenAIProvider`      | `none`                                       | a user-supplied endpoint could be anything; claiming a cache it may not have would put an invented number on screen               |
 
 An id with no entry falls to `none`. That is deliberate: a provider added
 without a measurement should report "no data", never a hit rate it never earned.
@@ -112,6 +113,7 @@ Measured **2026-09-02**.
 | `deepseek` / `groq` / `xai` | —                         | implicit (documented)      | —                      | —                     | not measured | no credential                                    |
 | `bedrock`                   | —                         | `anthropic-style`          | —                      | —                     | not measured | no AWS credential on this machine                |
 | `vertex`                    | —                         | `anthropic-style`          | —                      | —                     | not measured | no GCP credential on this machine                |
+| `azure-openai`              | —                         | `prompt-cache-key`         | —                      | —                     | not measured | no Azure resource on this machine                |
 
 Live requests spent producing this table: **openrouter 5** (one refused 402,
 four served), **google 2**, **ollama-turbo 2**, **codex 1** (refused 429),
@@ -315,6 +317,55 @@ pair, plus a tampered-claims negative; the full ADC chain against injected files
 and fetch; the URL, body, headers and streamed events of both halves against
 recorded responses; and both failure messages. Not proven: that Google accepts
 it. `GEAR_LIVE_VERTEX=1` runs that.
+
+### Azure OpenAI (`azure-openai`)
+
+The same OpenAI models on an Azure resource, addressed by **deployment name**.
+
+```bash
+export AZURE_OPENAI_ENDPOINT=https://my-resource.openai.azure.com
+export AZURE_OPENAI_API_KEY=...       # or AZURE_OPENAI_AD_TOKEN for Entra ID
+gear login azure-openai
+gear use azure-openai
+```
+
+```toml
+[providers.azure-openai]
+endpoint = "https://my-resource.openai.azure.com"
+apiVersion = "2024-10-21"
+
+[providers.azure-openai.deployments]
+# model id → the deployment name YOUR resource has. Omit any that match.
+"gpt-4o" = "prod-chat"
+"gpt-4o-mini" = "cheap-chat"
+```
+
+| Piece               | What Gear does                                                                                                                                        |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Endpoint**        | `POST {endpoint}/openai/deployments/{deployment}/chat/completions?api-version=…`                                                                      |
+| **Deployments**     | the catalogue lists MODEL ids (what a person picks); `[providers.azure-openai.deployments]` maps each to a deployment, defaulting to the id itself    |
+| **`api-version`**   | a **GA** version by default, never a preview — previews are withdrawn on a schedule, and a withdrawn default breaks every user at once                |
+| **Auth**            | `api-key: <resource key>`, or `Authorization: Bearer` from `AZURE_OPENAI_AD_TOKEN`. The SDK's own placeholder header is stripped, so only one is sent |
+| **Everything else** | inherited from `OpenAIProvider`: tool calls, vision, the gpt-5/o-series parameter swap, `prompt_cache_key`, the usage trailer, the reasoning dial     |
+| **Discovery**       | `gear models azure-openai` lists the deployments the RESOURCE has — a different question from "what does Azure offer", and the useful one             |
+
+**The endpoint is normalized.** Pasting the full chat-completions URL out of the
+portal gives you the origin rather than a doubled `/openai` path and a 404 on a
+path nobody typed.
+
+**The reasoning dial follows the MODEL, not the deployment.** A deployment named
+`prod-chat` serving `gpt-5` still gets `reasoning_effort`, because
+`reasoningEffortsFor` is asked about the model id — the deployment name is a
+routing detail that never reaches the parameter decision.
+
+**What is proven, and what is not.** No Azure resource exists on this machine.
+Proven by `tests/unit/gateway/azure-openai.test.ts`: the deployment path and
+api-version, the mapping and its default, both credential headers and the
+stripping of the placeholder, endpoint normalization, the inherited
+`prompt_cache_key`, a recorded stream parsed back into events with the cached
+tokens subtracted from the prompt count, both failure messages, and deployment
+discovery with failed deployments filtered out. Not proven: that Azure accepts
+it. `GEAR_LIVE_AZURE_OPENAI=1` runs that.
 
 ---
 
