@@ -32,7 +32,7 @@ import type { Verifier, VerifyResult } from "./verifier";
 import type { HandoffReason, TaskStateStore, TodoItem } from "./task-state";
 import { evidenceWeight, TASK_STATE_BLOCK_BUDGET_AFTER_COMPACTION } from "./task-state";
 import type { ArtifactKind } from "@gear/protocol";
-import { isVerificationCommand } from "./brief";
+import { isVerificationCommand, summarizeCheck } from "./brief";
 
 // ─── Agent Turn Events (yielded to caller) ───
 //
@@ -413,8 +413,13 @@ export function bashCheckVerdict(output: { success: boolean; result?: string; er
   }
   const passed = !timedOut && (exitCode == null || exitCode === 0);
   if (passed) return { passed: true, summary: "ok", ...(exitCode != null ? { exitCode } : {}) };
+  // BOTH streams, through the shared ladder. Runners disagree about where the
+  // verdict goes -- `bun test` writes the failure to stderr and leaves stdout
+  // holding nothing but its own version banner, which is exactly the line a
+  // stdout-only reading would quote back as the reason a theory was ruled out.
   const summary =
-    lastNonEmptyLine(stdout) || lastNonEmptyLine(stderr) || (timedOut ? "timed out" : "failed");
+    summarizeCheck([stdout, stderr].filter(Boolean).join("\n")) ??
+    (timedOut ? "timed out" : "failed");
   return {
     passed: false,
     summary: summary.slice(0, 160),

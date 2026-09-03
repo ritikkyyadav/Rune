@@ -229,9 +229,23 @@ describe("a check's verdict is its exit code, not the tool's success flag", () =
     );
     expect(verdict.passed).toBe(false);
     expect(verdict.exitCode).toBe(1);
-    // Stdout, because that is where a test runner writes its verdict — stderr
-    // is usually empty on an ordinary test failure.
     expect(verdict.summary).toContain("expect(300)");
+  });
+
+  test("the summary reads BOTH streams — bun test puts its verdict on stderr", () => {
+    // Measured, not assumed: `bun test` leaves stdout holding its version
+    // banner and writes the failure to stderr. A stdout-only reading quoted
+    // "bun test v1.3.14" back as the reason a theory was ruled out.
+    const verdict = bashCheckVerdict(
+      shell({
+        exit_code: 1,
+        stdout: "bun test v1.3.14 (0d9b296a)",
+        stderr: "error: expect(received).not.toBe(expected)\n(fail) the cache TTL changed [0.1ms]",
+      }),
+    );
+    expect(verdict.passed).toBe(false);
+    expect(verdict.summary).toContain("the cache TTL changed");
+    expect(verdict.summary).not.toContain("bun test v1.3.14");
   });
 
   test("a timeout is a failure even at exit 0", () => {

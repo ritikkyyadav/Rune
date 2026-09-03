@@ -630,16 +630,33 @@ export function createRecordEvidenceTool(
   };
 }
 
-/** The one quotable line from a check's output — the tail, where failures live. */
+/**
+ * The one quotable line from a check's output.
+ *
+ * The ladder is ordered by how much a READER learns from the line, because
+ * this string is what a hypothesis's reason and a criterion's evidence detail
+ * are made of:
+ *
+ *   1. the named failure  -- `(fail) the cache TTL changed across the deploy`
+ *   2. the error itself   -- `error: expect(received).not.toBe(expected)`
+ *   3. the counts         -- `1 fail`
+ *   4. the tail, where runners put their verdict
+ *
+ * "1 fail" was the top of the ladder until P11.1 put this string in front of a
+ * person: a record whose folded branch reads "refuted: 1 fail" has told them
+ * the shape of the evidence and none of it.
+ */
 export function summarizeCheck(raw: string): string | undefined {
   const lines = raw
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean);
   if (lines.length === 0) return undefined;
-  // Prefer a line that carries counts; otherwise the last line, because that is
-  // where test runners put their verdict.
-  const counted = [...lines].reverse().find((l) => /\d+\s*(\/|of|pass|fail|error)/i.test(l));
+  const reversed = [...lines].reverse();
+  const named = reversed.find((l) => /^\((?:fail|failed)\)\s+\S/i.test(l));
+  const errored =
+    named ?? reversed.find((l) => /^(?:error|assertionerror|panic|fatal|exception)\b/i.test(l));
+  const counted = errored ?? reversed.find((l) => /\d+\s*(\/|of|pass|fail|error)/i.test(l));
   const chosen = counted ?? lines[lines.length - 1]!;
   return chosen.length > 90 ? chosen.slice(0, 87) + "..." : chosen;
 }
