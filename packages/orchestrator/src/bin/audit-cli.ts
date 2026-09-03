@@ -19,6 +19,8 @@ import { accent, danger, dim, faint, info, ok, text, warn } from "./ui/theme";
 import { formatCacheRate } from "../cost-report";
 import { getContextLimit, UNKNOWN_MODEL_CONTEXT_LIMIT } from "../tokenizer";
 import { MODEL_PRICING } from "@gear/llm-gateway";
+import type { DecisionRecord } from "@gear/protocol";
+import { buildDecisionRecord, hasRecord, renderDecisionRecordMarkdown } from "../decision-record";
 
 type Row = { seq: number; event: SessionEvent };
 
@@ -46,6 +48,16 @@ function resolveSession(sm: SessionManager, arg: string | undefined): string | n
 
 function payloadOf(row: Row): Record<string, unknown> {
   return row.event.payload ?? {};
+}
+
+/** The record the run itself wrote, latest wins. Null for a session with none. */
+export function latestDecisionRecord(rows: Row[]): DecisionRecord | null {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (rows[i].event.type !== "decision_record") continue;
+    const record = (payloadOf(rows[i]) as { record?: DecisionRecord }).record;
+    if (record && typeof record.objective === "string") return record;
+  }
+  return null;
 }
 
 // ─── Post-edit diagnostics (P10.1) ───
@@ -325,6 +337,37 @@ export async function runAudit(args: string[], values: Record<string, unknown>):
     }
     const session = sm.getSession(id)!;
     const rows = sm.getEvents(id, 1) as Row[];
+
+    // ── `--record`: the Decision Record, and nothing else ──
+    //
+    // The audit page is the harness's account of a session. The record is the
+    // TASK's account of itself, in six sections a person reads top to bottom,
+    // and it is the whole output of this flag: piping an audit page into a
+    // review or a ticket means piping the record, not the record wrapped in
+    // context-utilization tables. The persisted row wins over a fresh
+    // generation, so what prints is the document the run itself produced.
+    if (values.record === true) {
+      const persisted = latestDecisionRecord(rows);
+      const record =
+        persisted ??
+        (() => {
+          const store = TaskStateStore.fromEvents(rows);
+          return store ? buildDecisionRecord(id, store.snapshot()) : null;
+        })();
+      if (!record || !hasRecord(record)) {
+        say();
+        say(
+          dim(
+            "  No decision record for this session: nothing recorded a hypothesis, a decision, " +
+              "an artifact or a check.",
+          ),
+        );
+        say();
+        return 1;
+      }
+      say(renderDecisionRecordMarkdown(record));
+      return 0;
+    }
 
     // ── Header ──
     say();

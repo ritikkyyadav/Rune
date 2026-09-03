@@ -1587,6 +1587,39 @@ export class TurnRenderer {
         return;
       }
 
+      // ─── The narrative ───
+      // Three rows the transcript has never had: what the run suspects, what
+      // settled it, and what it committed to. They go through the shared
+      // formatter, so the terminal and every other surface say the same thing.
+      case "hypothesis":
+      case "hypothesis_updated":
+      case "decision": {
+        this.flushRoutine();
+        const row = formatEvent(event, { cost: this.opts.getCost?.() });
+        if (row) {
+          this.addLog(row);
+          this.commitTimeline(row);
+        }
+        if (event.type === "hypothesis") {
+          this.setPhase("plan", `Testing: ${event.hypothesis.text.slice(0, 60)}`);
+        }
+        this.updateLive();
+        return;
+      }
+
+      // ─── Named, and deliberately not drawn in the transcript ───
+      // The task's shape and the artifact ledger are state a composed surface
+      // reads, not scrollback. Pending decisions are the held-step panel's
+      // material and it already draws them. The record is a document `gear
+      // audit --record` and the export render; printing it into a turn would
+      // repeat the whole run back at the reader.
+      case "task_kind":
+      case "artifact":
+      case "pending_decision":
+      case "decision_resolved":
+      case "decision_record":
+        return;
+
       case "replanning": {
         this.flushRoutine();
         const block = formatEvent(event, { cost: this.opts.getCost?.() });

@@ -30,8 +30,9 @@ import type { RetrievedChunk } from "./context-engine";
 import { getMaxOutputTokens } from "./tokenizer";
 import type { Verifier, VerifyResult } from "./verifier";
 import type { HandoffReason, TaskStateStore, TodoItem } from "./task-state";
-import { TASK_STATE_BLOCK_BUDGET_AFTER_COMPACTION } from "./task-state";
-import { isVerificationCommand } from "./brief";
+import { evidenceWeight, TASK_STATE_BLOCK_BUDGET_AFTER_COMPACTION } from "./task-state";
+import type { ArtifactKind } from "@gear/protocol";
+import { isVerificationCommand, summarizeCheck } from "./brief";
 
 // ─── Agent Turn Events (yielded to caller) ───
 //
@@ -328,6 +329,103 @@ const READ_EVIDENCE_TOOLS = new Set([
 
 /** Tools whose `path`/`dir` argument scopes what the model read. */
 const SCOPED_READ_TOOLS = new Set(["grep", "glob", "search_code", "symbol_search", "list_dir"]);
+
+/**
+ * The check's own words out of a ledger refusal, for a hypothesis's `reason`.
+ *
+ * The refusal is written for the MODEL ("Fix it and re-run the check, or
+ * re-submit to mark the step unproven"), and a record that quoted that back at
+ * a reader would be telling them what the agent was told rather than what the
+ * check found. So the instruction tail is dropped and what the command said is
+ * kept.
+ */
+export function checkReasonFrom(refusal: string): string {
+  const head = refusal.split(/\.\s+(?=Fix it|Do the step)/)[0] ?? refusal;
+  return head
+    .replace(/^the last check during this step FAILED\s*/i, "check failed")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 200);
+}
+
+/**
+ * Artifacts a tool result announces: a research report's path, a dashboard's
+ * URL. File writes are recorded by the file ledger already; these are the
+ * outputs that never pass through it, and a run whose whole deliverable was a
+ * report would otherwise show "what changed: nothing".
+ */
+export function artifactsFromResult(
+  toolName: string,
+  result: string,
+): Array<{ kind: ArtifactKind; ref: string }> {
+  if (!result) return [];
+  if (toolName === "research") {
+    const at = /Full report saved to:\s*(\S+)/.exec(result.slice(0, 2_000));
+    return at ? [{ kind: "report", ref: at[1] }] : [];
+  }
+  if (toolName === "interactive_dashboard") {
+    try {
+      const parsed = JSON.parse(result) as { url?: unknown };
+      if (typeof parsed.url === "string" && parsed.url) {
+        return [{ kind: "preview", ref: parsed.url }];
+      }
+    } catch {
+      // Not the JSON shape (an error string, or a listing) — nothing to record.
+    }
+  }
+  return [];
+}
+
+/**
+ * What a `bash` result says about a verification-shaped command.
+ *
+ * The tool's `success` flag means "the command ran", not "the command passed":
+ * a failing test suite is a successful call carrying `exit_code: 1`. Everything
+ * that judges a check has to read the code, and the summary is taken from
+ * STDOUT, which is where a test runner writes its verdict — stderr is usually
+ * empty on an ordinary test failure.
+ */
+export function bashCheckVerdict(output: { success: boolean; result?: string; error?: string }): {
+  passed: boolean;
+  summary: string;
+  exitCode?: number;
+} {
+  if (!output.success) {
+    return {
+      passed: false,
+      summary: lastNonEmptyLine(output.error ?? output.result ?? "").slice(0, 160) || "failed",
+    };
+  }
+  let exitCode: number | undefined;
+  let timedOut = false;
+  let stdout = "";
+  let stderr = "";
+  try {
+    const parsed = JSON.parse(output.result ?? "") as Record<string, unknown>;
+    if (typeof parsed.exit_code === "number") exitCode = parsed.exit_code;
+    timedOut = parsed.timed_out === true;
+    if (typeof parsed.stdout === "string") stdout = parsed.stdout;
+    if (typeof parsed.stderr === "string") stderr = parsed.stderr;
+  } catch {
+    // Not the shell's JSON shape (a stubbed tool, an embedder's own runner).
+    // Fall back to the flag, which is what this did before it read the code.
+    return { passed: true, summary: "ok" };
+  }
+  const passed = !timedOut && (exitCode == null || exitCode === 0);
+  if (passed) return { passed: true, summary: "ok", ...(exitCode != null ? { exitCode } : {}) };
+  // BOTH streams, through the shared ladder. Runners disagree about where the
+  // verdict goes -- `bun test` writes the failure to stderr and leaves stdout
+  // holding nothing but its own version banner, which is exactly the line a
+  // stdout-only reading would quote back as the reason a theory was ruled out.
+  const summary =
+    summarizeCheck([stdout, stderr].filter(Boolean).join("\n")) ??
+    (timedOut ? "timed out" : "failed");
+  return {
+    passed: false,
+    summary: summary.slice(0, 160),
+    ...(exitCode != null ? { exitCode } : {}),
+  };
+}
 
 /** The last non-empty line of a report — the line a failure is usually named on. */
 function lastNonEmptyLine(text: string): string {
@@ -2336,7 +2434,79 @@ export class AgentLoop {
                 };
               }
             }
+            // ── The refutation inference (P11.1) ──
+            //
+            // A hypothesis's verdict must not come from the model's
+            // confidence, for the same reason a criterion's rung does not: an
+            // argument the model can restate more confidently is one it
+            // eventually wins. So the harness settles the hypothesis the
+            // CLOSING STEP was testing, from that step's own verdict:
+            //
+            //   the step's last check FAILED -> refuted, with the check's summary
+            //   the step closed on evidence  -> confirmed, with the step as evidence
+            //
+            // Both halves of the first rule count, because a failing check is
+            // a negative result either way: the ledger REFUSING the completion
+            // (nothing was done after the failure), and the ledger ACCEPTING it
+            // because the run wrote the finding up and moved on -- which is
+            // exactly what ruling a theory out looks like.
+            //
+            // Scoped to the plan boundary on purpose. A failing test in the
+            // middle of a build is a fix in progress, not a refuted theory;
+            // only a step that tried to CLOSE is a verdict. And the model can
+            // always report a different verdict through note_hypothesis, in
+            // which case the record carries its reason instead.
+            const openHypothesis = ts.openHypothesis();
             const verdict = ts.setTodos(items);
+            if (openHypothesis) {
+              const settle = (
+                status: "refuted" | "confirmed",
+                reason: string,
+                ref: string,
+              ): AgentTurnEvent | null => {
+                const updated = ts.updateHypothesis(openHypothesis.id, status, {
+                  reason,
+                  evidence: [{ kind: "step", ref, at: new Date().toISOString() }],
+                });
+                if (!updated) return null;
+                return {
+                  type: "hypothesis_updated",
+                  id: updated.id,
+                  status,
+                  ...(updated.reason ? { reason: updated.reason } : {}),
+                  source: "harness",
+                };
+              };
+              let settled: AgentTurnEvent | null = null;
+              if (!verdict.accepted) {
+                const failed = verdict.refused.find((r) => /check/i.test(r.reason));
+                if (failed) {
+                  settled = settle("refuted", checkReasonFrom(failed.reason), failed.content);
+                }
+              } else {
+                const closed = verdict.completed.find(
+                  (t) => !t.unproven && evidenceWeight(t.evidence) > 0,
+                );
+                const check = closed?.evidence?.lastCheck;
+                if (closed && check && !check.passed) {
+                  settled = settle(
+                    "refuted",
+                    `${check.command ?? "the step's check"} failed` +
+                      (check.summary ? `: ${check.summary}` : ""),
+                    closed.content,
+                  );
+                } else if (closed) {
+                  settled = settle(
+                    "confirmed",
+                    check?.passed
+                      ? `closed by ${check.command ?? "a passing check"}`
+                      : `closed on evidence by "${closed.content.slice(0, 80)}"`,
+                    closed.content,
+                  );
+                }
+              }
+              if (settled) yield settled;
+            }
             if (verdict.accepted) {
               acceptedPlan = structuredClone(ts.todos);
               if (verdict.notes.length > 0) {
@@ -2395,11 +2565,22 @@ export class AgentLoop {
           if (name === "bash") {
             const cmd = String(p.parsedArgs.command ?? "");
             if (isVerificationCommand(cmd)) {
-              ts.noteEffect(output.success ? "check_pass" : "check_fail", {
+              // The EXIT CODE decides, not the tool's success flag.
+              //
+              // `bash` reports success for any command that RAN — a failing
+              // test suite is a successful tool call whose exit code is 1, and
+              // the code lives inside the result JSON. Reading the flag made
+              // every model-run check a pass: `docs/plan-ledger.md` has said
+              // since b150dd2 that "a completion right after a failing check
+              // is refused", and for checks the model ran itself that rule
+              // could not fire, because the spine never saw a failure. The web
+              // transcript reducer already read the code (`checkFromBash`);
+              // the spine, which is what the rule is enforced from, did not.
+              const verdict = bashCheckVerdict(output);
+              ts.noteEffect(verdict.passed ? "check_pass" : "check_fail", {
                 command: cmd.slice(0, 120),
-                summary: output.success
-                  ? "ok"
-                  : lastNonEmptyLine(output.error ?? output.result ?? "").slice(0, 160),
+                summary: verdict.summary,
+                ...(verdict.exitCode != null ? { exitCode: verdict.exitCode } : {}),
               });
             } else if (!TRIVIAL_EVIDENCE_RE.test(cmd)) {
               ts.noteEffect("run");
@@ -2441,6 +2622,14 @@ export class AgentLoop {
             for (const f of p.parsedArgs.files) {
               if (typeof f === "string") ts.noteFileWritten(f);
             }
+          }
+          // Artifacts the run produced that are not file writes: a research
+          // report on disk, a dashboard someone can open. "What changed" in
+          // the Decision Record is only as good as this list, and a run whose
+          // whole output was a report would otherwise show an empty one.
+          for (const artifact of artifactsFromResult(p.tc.toolName, output.result)) {
+            const recorded = ts.recordArtifact(artifact.kind, artifact.ref);
+            if (recorded) yield { type: "artifact", artifact: recorded };
           }
         }
 

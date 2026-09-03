@@ -63,6 +63,16 @@ export function projectChildEvent(agentId: string, event: AgentTurnEvent): strin
     case "context_warning":
       return clip(`${tag}${event.message}`);
 
+    // A scout's hypothesis is the most informative thing a one-line heartbeat
+    // can carry: it says what the worker is chasing, not merely that it is
+    // busy. The verdict is shorter still and is the half a reader waits for.
+    case "hypothesis":
+      return clip(`${tag}testing: ${event.hypothesis.text}`);
+    case "hypothesis_updated":
+      return clip(`${tag}${event.id} ${event.status}${event.reason ? ` — ${event.reason}` : ""}`);
+    case "decision":
+      return clip(`${tag}decided: ${event.decision.text}`);
+
     // ── Named and deliberately silent on the rung ──
     // Token-level deltas would strobe a one-line heartbeat; a nested
     // tool_progress is already a projection and must not be re-projected;
@@ -77,6 +87,13 @@ export function projectChildEvent(agentId: string, event: AgentTurnEvent): strin
     case "checkpoint_saved":
     case "turn_complete":
     case "tool_progress":
+    // Task state a fleet row has no column for: the lead composes the surface,
+    // holds the pending-decision inbox, and generates the record.
+    case "task_kind":
+    case "artifact":
+    case "pending_decision":
+    case "decision_resolved":
+    case "decision_record":
       return null;
 
     default:

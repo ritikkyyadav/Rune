@@ -178,13 +178,40 @@ export function toUpdate(event: { type: string } & Record<string, unknown>): Acp
       // an editor shows "handoff" and the person has no idea what was left.
       return thought(`handoff — ${String(event.reason ?? "")}${clause(event.state)}`);
 
+    // ── The narrative, as thoughts ──
+    //
+    // A hypothesis and its verdict are the one part of the narrative an editor
+    // can use in place: they are the reasoning, in the reasoning stream, while
+    // it happens. The reader of an editor's thought panel is watching the work,
+    // and "cache eviction — refuted, TTL unchanged" is exactly what they want
+    // there. The rest of the model (kinds, artifacts, the record) is state for
+    // a surface that can lay it out, and an editor has nowhere to put it.
+    case "hypothesis": {
+      const h = (event.hypothesis ?? {}) as { text?: string; id?: string };
+      return thought(`hypothesis ${String(h.id ?? "")}: ${String(h.text ?? "")}`);
+    }
+    case "hypothesis_updated":
+      return thought(
+        `hypothesis ${String(event.id ?? "")} ${String(event.status ?? "")}` +
+          clause(typeof event.reason === "string" ? event.reason : undefined),
+      );
+    case "decision": {
+      const d = (event.decision ?? {}) as { text?: string; basedOn?: unknown[] };
+      const n = Array.isArray(d.basedOn) ? d.basedOn.length : 0;
+      return thought(
+        `decision: ${String(d.text ?? "")} (on ${n} piece${n === 1 ? "" : "s"} of evidence)`,
+      );
+    }
+
     default:
       // tool_call_args_delta · turn_complete · stream_reset · fallback ·
-      // retry · usage · compaction · checkpoint_saved · tool_progress.
-      // Bookkeeping, a duplicate of something already sent, or the signal that
-      // ends the prompt rather than an update within it. The reason for each
-      // one is in docs/editors.md, and `acp-mapping.test.ts` asserts this list
-      // and that table say the same thing.
+      // retry · usage · compaction · checkpoint_saved · tool_progress ·
+      // task_kind · artifact · pending_decision · decision_resolved ·
+      // decision_record. Bookkeeping, a duplicate of something already sent,
+      // the signal that ends the prompt rather than an update within it, or
+      // task state an editor has no surface for. The reason for each one is in
+      // docs/editors.md, and `acp-mapping.test.ts` asserts this list and that
+      // table say the same thing.
       return null;
   }
 }
