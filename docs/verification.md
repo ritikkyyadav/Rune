@@ -90,6 +90,12 @@ The skip is narrow on purpose: exit 127 alone is not enough, the shell's
 "command not found" has to name the command's own leading binary. A project
 script that exits 127 for its own reasons still fails.
 
+Operating-system stubs are the other half of this. macOS ships `/usr/bin/javac`
+on every machine, and with no JDK installed it exits **1** — not 127 — with
+"Unable to locate a Java Runtime". Reporting that as "Java checks FAILED" would
+be lying about the code, so the two known macOS stub messages (that one and the
+Xcode command-line-tools one) are recognised as absence too.
+
 ## What gets recorded
 
 Every check the runtime runs — the harness's own, and the ones the model runs
@@ -138,4 +144,7 @@ name the JS one. Unlisted ecosystems stay enabled.
 - `tests/unit/orchestrator/verifier-step-check.test.ts` — project scoping and
   the evidence record.
 - `tests/integration/verifier-ecosystems.test.ts` — runs the real commands, and
-  skips with a printed reason when the toolchain is absent on the machine.
+  skips with a printed reason when the toolchain is absent on the machine. On a
+  laptop a skip is fine; in CI it would be a hole in the gate, so
+  `GEAR_VERIFIER_REQUIRE_TOOLCHAINS=go,python,rust,java` (set by `ci.yml` on the
+  ubuntu runner) turns a skip there into a failure that names what is missing.
