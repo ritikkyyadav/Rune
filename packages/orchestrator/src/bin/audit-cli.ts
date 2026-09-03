@@ -17,6 +17,7 @@ import { TaskStateStore, stepReceipt } from "../task-state";
 import { runEnding, type RunRetro } from "../retro";
 import { accent, danger, dim, faint, info, ok, text, warn } from "./ui/theme";
 import { formatCacheRate } from "../cost-report";
+import { getContextLimit, UNKNOWN_MODEL_CONTEXT_LIMIT } from "../tokenizer";
 import { MODEL_PRICING } from "@gear/llm-gateway";
 
 type Row = { seq: number; event: SessionEvent };
@@ -150,6 +151,139 @@ export function diagnosticsLedger(rows: Row[]): DiagnosticsLedger {
     outstanding: [...dirty.values()].filter(Boolean).length,
     verifierSeq,
   };
+}
+
+// ─── Context utilization (P10.8) ───
+
+/** One model round trip's occupancy of its own context window. */
+export interface ContextTurn {
+  seq: number;
+  model: string;
+  /** Fresh + cache-read + cache-creation input, or null when none was reported. */
+  used: number | null;
+  /** The model's window. */
+  limit: number;
+  /** True when no table rule recognized the model and the default stood in. */
+  assumed: boolean;
+  /** Share of the input served warm, or null when nothing was reported. */
+  cacheShare: number | null;
+}
+
+/** One compaction, as the session log recorded it. */
+export interface ContextCompaction {
+  seq: number;
+  before: number | null;
+  after: number | null;
+  summarized: number;
+  /** What was dropped: `summarized` (folded into the merged state) or
+   *  `tool_results` (old bodies stripped). Null on pre-P10.8 rows. */
+  tier: string | null;
+  /** What asked: `auto`, `requested`, `overflow`. Null on pre-P10.8 rows. */
+  trigger: string | null;
+}
+
+export interface ContextLedger {
+  turns: ContextTurn[];
+  compactions: ContextCompaction[];
+  /** The fullest the window ever got, among turns that reported anything. */
+  peak: ContextTurn | null;
+  /** Where it stood at the end. */
+  last: ContextTurn | null;
+}
+
+/**
+ * How full the context window ran, turn by turn, and what compaction did about
+ * it — read back out of the persisted usage rows rather than from a live
+ * counter. The distinction matters for the same reason it does for the
+ * supervisor's metrics: the process holding a counter is frequently the one
+ * that died.
+ *
+ * A turn whose provider reported no usage carries `used: null`, and renders as
+ * "no data" rather than as a zero it did not earn. Pure over the rows, so it is
+ * tested without a database.
+ */
+export function contextLedger(rows: Row[]): ContextLedger {
+  const turns: ContextTurn[] = [];
+  const compactions: ContextCompaction[] = [];
+
+  for (const r of rows) {
+    if (r.event.type === "cost") {
+      const p = payloadOf(r);
+      const model = String(p.model ?? "");
+      const fresh = Number(p.inputTokens ?? 0) || 0;
+      const read = Number(p.cacheReadTokens ?? 0) || 0;
+      const written = Number(p.cacheCreationTokens ?? 0) || 0;
+      const total = fresh + read + written;
+      const limit = model ? getContextLimit(model) : UNKNOWN_MODEL_CONTEXT_LIMIT;
+      turns.push({
+        seq: r.seq,
+        model,
+        used: total > 0 ? total : null,
+        limit,
+        assumed: !model || limit === UNKNOWN_MODEL_CONTEXT_LIMIT,
+        cacheShare: total > 0 ? read / total : null,
+      });
+      continue;
+    }
+    if (r.event.type === "auto_compaction" || r.event.type === "compaction") {
+      const p = payloadOf(r);
+      const before = Number(p.beforeTokens ?? p.sourceTokens ?? 0) || 0;
+      const after = Number(p.afterTokens ?? p.summaryTokens ?? 0) || 0;
+      compactions.push({
+        seq: r.seq,
+        before: before > 0 ? before : null,
+        after: after > 0 ? after : null,
+        summarized: Number(p.summarizedCount ?? p.originalMessages ?? 0) || 0,
+        tier: typeof p.tier === "string" ? p.tier : null,
+        // The /compress path records `trigger: "manual"`; auto-compaction rows
+        // carry the engine's own auto/requested/overflow.
+        trigger: typeof p.trigger === "string" ? p.trigger : null,
+      });
+    }
+  }
+
+  const measured = turns.filter((t) => t.used !== null);
+  const peak = measured.reduce<ContextTurn | null>(
+    (best, t) => (best === null || t.used! / t.limit > best.used! / best.limit ? t : best),
+    null,
+  );
+  return { turns, compactions, peak, last: measured.at(-1) ?? null };
+}
+
+/** `68%` of a window, or "no data" when the provider reported none. */
+function occupancy(t: ContextTurn | null): string {
+  if (!t || t.used === null) return "no data";
+  return `${Math.round((t.used / t.limit) * 100)}%`;
+}
+
+/** What a compaction dropped, in words a reader can act on. */
+function droppedBy(c: ContextCompaction): string {
+  if (c.tier === "tool_results") {
+    return "old tool-result bodies, kept as excerpts";
+  }
+  if (c.tier === "summarized") {
+    return `${num(c.summarized)} message${c.summarized === 1 ? "" : "s"} folded into the merged state`;
+  }
+  // Pre-P10.8 rows, and the /compress path, recorded neither tier nor trigger.
+  return c.summarized > 0
+    ? `${num(c.summarized)} message${c.summarized === 1 ? "" : "s"} folded`
+    : "unrecorded";
+}
+
+/** Which policy sized the tail — the reason two rows are not comparable. */
+function triggeredBy(c: ContextCompaction): string {
+  switch (c.trigger) {
+    case "auto":
+      return "auto (high-water mark, 30% tail)";
+    case "requested":
+      return "requested (compact_context, cuts to the recent exchange)";
+    case "overflow":
+      return "overflow (provider rejected the prompt)";
+    case "manual":
+      return "manual (/compress)";
+    default:
+      return "trigger not recorded";
+  }
 }
 
 /** Which files an edit result is about: its own path, or a patch's file list. */
@@ -486,6 +620,62 @@ export async function runAudit(args: string[], values: Record<string, unknown>):
       }
     } catch {
       // No black box, no harness section.
+    }
+
+    // ── Context utilization (P10.8) ──
+    //
+    // How full the window ran, and what compaction took out of it. Sourced from
+    // the persisted usage rows: a live counter dies with the process, and the
+    // turns worth reading are usually the ones just before it did.
+    {
+      const ctx = contextLedger(rows);
+      const measured = ctx.turns.filter((t) => t.used !== null);
+      if (ctx.turns.length > 0 || ctx.compactions.length > 0) {
+        say();
+        if (measured.length === 0) {
+          say(
+            `  ${text("Context")}  ${dim(`${num(ctx.turns.length)} turns`)} ${dim("·")} ${dim("no data")} ${faint("— no provider on this run reported input usage")}`,
+          );
+        } else {
+          const warm = measured.reduce((sum, t) => sum + (t.cacheShare ?? 0) * t.used!, 0);
+          const totalUsed = measured.reduce((sum, t) => sum + t.used!, 0);
+          const rate = totalUsed > 0 ? warm / totalUsed : null;
+          const anyAssumed = measured.some((t) => t.assumed);
+          say(
+            `  ${text("Context")}  ${num(measured.length)} turn${measured.length === 1 ? "" : "s"} measured` +
+              ` ${dim("·")} peak ${occupancy(ctx.peak)} of ${num(ctx.peak?.limit ?? 0)}` +
+              ` ${dim(`(${num(ctx.peak?.used ?? 0)})`)}` +
+              ` ${dim("·")} last ${occupancy(ctx.last)}` +
+              ` ${dim("·")} cache ${formatCacheRate(rate)}` +
+              (anyAssumed ? ` ${dim("·")} ${warn("window assumed for some turns")}` : ""),
+          );
+          // The tail of the run, where the interesting turns are.
+          for (const t of measured.slice(-8)) {
+            const pct = Math.round((t.used! / t.limit) * 100);
+            // Clamped: an assumed window can be smaller than what the provider
+            // actually served, and a 300% bar would run off the line while
+            // saying nothing the number beside it does not.
+            const filled = Math.min(10, Math.max(1, Math.round(pct / 10)));
+            const bar = "█".repeat(filled).padEnd(10, "·");
+            say(
+              `    ${dim(`#${t.seq}`.padEnd(6))} ${(pct >= 70 ? warn : dim)(bar)} ${String(pct).padStart(3)}%` +
+                ` ${dim(`${num(t.used!)} / ${num(t.limit)}`)}` +
+                ` ${dim("·")} ${dim(`cache ${formatCacheRate(t.cacheShare)}`)}` +
+                (t.assumed ? ` ${dim("(window assumed)")}` : ""),
+            );
+          }
+        }
+        for (const c of ctx.compactions.slice(-6)) {
+          const delta =
+            c.before !== null && c.after !== null && c.before > 0
+              ? `${num(c.before)} → ${num(c.after)} ${dim(`(-${Math.round((1 - c.after / c.before) * 100)}%)`)}`
+              : "sizes not recorded";
+          say(
+            `    ${dim(`#${c.seq}`.padEnd(6))} ${info("compacted")} ${delta}` +
+              ` ${dim("·")} ${dim(droppedBy(c))} ${dim("·")} ${faint(triggeredBy(c))}`,
+          );
+        }
+      }
     }
 
     // ── Cost ──

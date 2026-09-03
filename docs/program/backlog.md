@@ -254,3 +254,15 @@ Found 2026-09-03 by P10.6 (integration proofs):
   Gear's own `.gitignore` covers it, which is why nobody noticed. Either write
   the worktree outside the repo, or add `.gear/` to the repo's
   `.git/info/exclude` (local, uncommitted) on first use — found in P10.6
+- `packages/orchestrator/src/task-state.ts:791` `TaskStateStore.addDecision` is
+  dead in production: nothing outside `tests/unit/orchestrator/task-state.test.ts`
+  ever calls it, so `state.decisions` is always empty, the spine block's
+  `Decisions: …` line never renders, and the `Decisions` section of
+  `.gear/mission.md` is always absent. The consequence is a context one: a
+  decision the user states in an early turn has exactly one carrier across a
+  compaction — the summarizer's prose — which is the single carrier Gap 6 of the
+  competitive assessment says not to rely on. Either wire a recorder (the
+  `ask_user` path already lands answers as `clarifications`; user directives and
+  a model-declared decision do not) or delete the field, the render branches and
+  the tests that exercise it. Deciding which is a product call, not a fix —
+  found in P10.8

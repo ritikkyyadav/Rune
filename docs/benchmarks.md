@@ -206,12 +206,123 @@ lines in the report.
 the build rather than re-submitting to mark the step unproven. That needs
 `--real` capacity this machine does not have.
 
+## P10.8 — compaction quality
+
+Not an external anchor: the in-repo mock suite again, in a new `context`
+category (`tests/eval/tasks-compaction.ts`, `bun run eval -- --tasks context`).
+
+Compaction had exactly one eval before this — `spine_todos_survive_compaction`,
+which asserts that a summary marker and a todo string appear afterwards. A
+compaction can satisfy that and still have lost every decision the user stated,
+every fact a tool result taught, and 99% of the window it was supposed to free.
+
+**The instrument.** Compaction quality has two halves and only one of them
+belongs to the harness: what the harness FEEDS the summarizer and what it does
+with the answer, versus what the model makes of it. Measuring against the mock's
+canned reply measured neither. These tasks drive a **faithful summarizer** — it
+carries forward every sentinel it is handed and invents nothing — so any fact
+missing from the post-compaction prompt is a fact the harness dropped before a
+model ever saw it. Facts are planted as `DECISION-n` / `FACT-n` sentinels in
+user prompts and tool results, and survival is a substring test on the request
+the provider actually received.
+
+`mock-model` is registered at a **60,000-token window** for the family (given
+back in `teardown`), which puts the ~19.5k floor of system prompt + 29 tool
+schemas, the 30% verbatim tail and the 50% target into a realistic relationship
+instead of rounding errors against the 100k default.
+
+**Before (2026-09-03, at `8f9a0e1`), first run of the family:**
+
+```
+  ✗ compaction_facts_survive
+     reason: 5 of 7 pinned facts did not survive compaction: DECISION-1, DECISION-2, FACT-2, FACT-3, FACT-4
+  ✓ compaction_plan_and_ledger_survive
+  ✓ compaction_hash_ledger_survives
+  ✓ compaction_recent_results_verbatim
+  ✓ compaction_no_summary_of_summary
+  ✗ compaction_evicted_results_identifiable
+     reason: 8 results were evicted and only 5 of 8 stayed identifiable — the rest are anonymous holes
+  ✗ compaction_reclaims_and_keeps_a_tail
+     reason: compaction #1 folded 11 messages and freed only 1.2% (33046 → 32649)
+
+  context                       4/7 (57%)
+  Total (whole mock suite)      59/62 (95%)
+```
+
+**What the three failures are.**
+
+1. **The cheap tier destroys what no summary ever captured.** Tier 1 replaces
+   old tool-result bodies with `[tool result evicted…] N chars reclaimed` and
+   returns without calling a summarizer. Everything those results were carrying
+   is then gone from the only record that existed — including three 400-byte
+   spec reads whose eviction reclaimed a rounding error and cost the run its
+   decisions.
+2. **An evicted result becomes an anonymous hole.** The stub says how many
+   characters were dropped and nothing about what they were, so the run cannot
+   tell the read that found the bug from the one that listed a directory, nor
+   know which is worth re-running.
+3. **A compaction can cost a round trip and free 1.2%.** The verbatim tail is
+   sized in tokens but floored by a MESSAGE COUNT (`recentK`, 6), and six
+   tool-heavy messages exceed the whole tail budget on their own. The
+   summarizer folds eleven messages, frees 397 of 33,046 tokens, and the
+   trigger is still hot — so it fires again next turn. The same floor
+   over-cuts from the other side: a later compaction in the same run left
+   **918 tokens** standing in a 60,000-token window, which is the
+   "212 messages folded to 834 tokens" pathology tiered compaction was built
+   to end, reached from the opposite direction.
+
+The three that pass are also results: the structured-state merge from the Gap 6
+fix holds (no compaction was ever handed its own summary as transcript, exactly
+one summary marker survives in the working set, and the merged state does not
+run away), the harness-side freshness ledger survives a squash so a
+post-compaction edit still applies with no hash and no re-read, and the tail
+does come through verbatim.
+
+**After (2026-09-03, three fixes later):**
+
+```
+  ✓ compaction_facts_survive
+  ✓ compaction_plan_and_ledger_survive
+  ✓ compaction_hash_ledger_survives
+  ✓ compaction_recent_results_verbatim
+  ✓ compaction_no_summary_of_summary
+  ✓ compaction_evicted_results_identifiable
+  ✓ compaction_reclaims_and_keeps_a_tail
+
+  context                       7/7 (100%)
+  Total (whole mock suite)      62/62 (100%)
+```
+
+| date       | family                | before    | after      | note                                       |
+| ---------- | --------------------- | --------- | ---------- | ------------------------------------------ |
+| 2026-09-03 | `context`             | 4/7 (57%) | 7/7 (100%) | new family; three real defects, all closed |
+| 2026-09-03 | whole mock suite      | 59/62     | 62/62      | the 55 pre-existing tasks never regressed  |
+| 2026-09-03 | `bun test tests/unit` | 3531      | 3541       | +10; 0 fail                                |
+
+**What each fix bought, in the numbers the run reported.**
+
+| fix                                                | measured before                                      | after                                                                   |
+| -------------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------- |
+| the tail's count floor yields to its token budget  | compaction #1 folded 11 messages and freed **1.2%**  | the same compaction frees **50%**, by eviction, with no summarizer call |
+| the pair-safe snap may walk forward                | the backward snap kept both bulk batches verbatim    | the cut lands between them                                              |
+| a head under 15% of the working set is not folded  | 13 messages / 387 tokens folded for a round trip     | declined, with a reason on screen                                       |
+| a compaction that would not shrink is discarded    | 16,929 → 16,931 reported as a success                | declined, with a reason on screen                                       |
+| explicit compaction cuts to the recent exchange    | `compact_context` freed 141 of 5,027 tokens          | folds everything but the recent turns                                   |
+| eviction floor 200 → 2,000 chars                   | a 430-byte spec read destroyed to reclaim ~230 bytes | left alone; its decisions reach the summarizer                          |
+| an evicted body keeps a 600-char head+tail excerpt | 5 of 8 evicted results unidentifiable afterwards     | 8 of 8, at ~4% of a 15KB body                                           |
+
+**What this does not measure.** Whether a live model, handed the merged state,
+uses it well. The faithful summarizer measures the harness's half of the problem
+by construction and says nothing about the model's half; that needs `--real`
+capacity this machine does not have.
+
 ## Changes to the yardstick
 
 Any edit to a pinned subset breaks the series. Record it here.
 
-| date       | anchor        | change                 | why                                                                                                                                                 |
-| ---------- | ------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-09-02 | both          | created                | P7.9 — the first external anchors this project has had                                                                                              |
-| 2026-09-03 | mock baseline | 50 → 55 tasks          | P10.4 — one step-check task per ecosystem; re-anchored deliberately                                                                                 |
-| 2026-09-03 | mock baseline | no longer self-writing | P10.4a — a passing `--compare` used to overwrite the yardstick it had just compared against; `--write-baseline` is now the only thing that moves it |
+| date       | anchor        | change                 | why                                                                                                                                                                         |
+| ---------- | ------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-09-02 | both          | created                | P7.9 — the first external anchors this project has had                                                                                                                      |
+| 2026-09-03 | mock baseline | 50 → 55 tasks          | P10.4 — one step-check task per ecosystem; re-anchored deliberately                                                                                                         |
+| 2026-09-03 | mock baseline | no longer self-writing | P10.4a — a passing `--compare` used to overwrite the yardstick it had just compared against; `--write-baseline` is now the only thing that moves it                         |
+| 2026-09-03 | mock baseline | 55 → 62 tasks          | P10.8 — the seven-task `context` family; anchored by hand from the run archived at `tests/eval/results/run-2026-09-03T05-45-55-128Z-mock.json`, never by `--write-baseline` |

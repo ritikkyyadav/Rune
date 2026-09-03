@@ -102,6 +102,21 @@ describe("context-window discovery", () => {
   });
 });
 
+/**
+ * Windows these fixtures run against, pinned rather than borrowed from the
+ * family table.
+ *
+ * They used to ride on `anthropic/claude-sonnet-4-6`, whose window moved from
+ * 200,000 to 1,000,000 when the 1M lineup landed. The fixtures did not move
+ * with it: 40,000 tokens of transcript against a 300,000-token tail budget
+ * fits entirely, so the budget never bound and the tiers under test were
+ * reached by the minimum-head fallback rather than by the arithmetic they
+ * exist to exercise. Pinning the window keeps each fixture in the regime its
+ * own comment describes.
+ */
+const SMALL_WINDOW = "test/window-60k";
+const MID_WINDOW = "test/window-200k";
+
 describe("compactWorkingSet — tiered", () => {
   let gateway: ReturnType<typeof createMockGateway>;
   let engine: ContextEngine;
@@ -109,10 +124,12 @@ describe("compactWorkingSet — tiered", () => {
   beforeEach(() => {
     gateway = createMockGateway();
     engine = new ContextEngine({ summarizeTurnsThreshold: 10 }, gateway);
+    registerContextLimit(SMALL_WINDOW, 60_000);
+    registerContextLimit(MID_WINDOW, 200_000);
   });
 
   /** Report authoritative usage so the engine sizes its tail against a window. */
-  const noteUsage = (used: number, model = "anthropic/claude-sonnet-4-6") => {
+  const noteUsage = (used: number, model = SMALL_WINDOW) => {
     engine.noteRealUsage({ inputTokens: used }, model);
   };
 
@@ -133,6 +150,53 @@ describe("compactWorkingSet — tiered", () => {
     const bodies = bodiesOf(r.messages);
     expect(bodies[0]).toStartWith(EVICTED);
     expect(bodies.at(-1)).not.toStartWith(EVICTED);
+  });
+
+  // ─── P10.8: an evicted result must still say what it was ───
+
+  test("an evicted result keeps a head-and-tail excerpt, not just a byte count", async () => {
+    const messages: Message[] = [userMsg("Build the thing.")];
+    for (let i = 0; i < 20; i++) {
+      messages.push(
+        toolUseMsg(`c${i}`),
+        toolResultMsg(
+          `c${i}`,
+          `HEADLINE-${i} src/thing-${i}.ts\n${"filler ".repeat(2_000)}FAIL-${i}`,
+        ),
+      );
+    }
+    noteUsage(45_000);
+
+    const r = await engine.compactWorkingSet(messages);
+
+    expect(r.tier).toBe("tool_results");
+    const evicted = bodiesOf(r.messages).filter((b) => b.startsWith(EVICTED));
+    expect(evicted.length).toBeGreaterThan(0);
+    for (const body of evicted) {
+      // The two places a real tool puts what matters: the path or headline at
+      // the top, the error at the bottom.
+      expect(body).toMatch(/HEADLINE-\d+ src\/thing-\d+\.ts/);
+      expect(body).toMatch(/FAIL-\d+/);
+      // …and it is still an eviction, not a copy.
+      expect(body.length).toBeLessThan(2_000);
+    }
+  });
+
+  test("a result too small to be worth reclaiming is left alone", async () => {
+    // A 430-byte spec read was destroyed to reclaim ~230 bytes, and its
+    // contents were the decisions the whole task turned on.
+    const spec = "DECISION-1: SQLite, not Postgres.\n" + "detail ".repeat(50);
+    const messages: Message[] = [userMsg("Build the thing.")];
+    messages.push(toolUseMsg("spec"), toolResultMsg("spec", spec));
+    for (let i = 0; i < 20; i++) {
+      messages.push(toolUseMsg(`c${i}`), toolResultMsg(`c${i}`, "x".repeat(15_000)));
+    }
+    noteUsage(45_000);
+
+    const r = await engine.compactWorkingSet(messages);
+
+    expect(r.tier).toBe("tool_results");
+    expect(bodiesOf(r.messages)[0]).toBe(spec);
   });
 
   test("tier 1 never orphans a tool_use, because the block survives", async () => {
@@ -184,7 +248,7 @@ describe("compactWorkingSet — tiered", () => {
     // Large enough that the tail budget actually binds (~160k tokens of text
     // against a 200k window); otherwise everything fits and nothing is proven.
     const messages = Array.from({ length: 400 }, (_, i) => userMsg("z".repeat(1_600) + i));
-    noteUsage(180_000, "anthropic/claude-sonnet-4-6"); // 200k window
+    noteUsage(180_000, MID_WINDOW); // 200k window
 
     const r = await engine.compactWorkingSet(messages);
 
@@ -207,11 +271,112 @@ describe("compactWorkingSet — tiered", () => {
   });
 
   test("recentK remains a hard floor on the tail", async () => {
-    const messages = Array.from({ length: 400 }, (_, i) => userMsg("z".repeat(400) + i));
-    noteUsage(180_000);
+    const messages = Array.from({ length: 400 }, (_, i) => userMsg("z".repeat(1_600) + i));
+    noteUsage(180_000, MID_WINDOW);
     const r = await engine.compactWorkingSet(messages, 6);
     const tail = r.messages.slice(-6);
     expect(tail).toEqual(messages.slice(-6));
+  });
+
+  // ─── P10.8: the count floor defeated the budget from both sides ───
+
+  test("six tool-heavy messages do not defeat the token budget", async () => {
+    // Two parallel batches of four big reads: four messages, each far larger
+    // than the whole tail budget. Honouring recentK here kept 32,649 of 33,046
+    // tokens and freed 1.2% — a summarizer round trip that bought nothing.
+    const batchUse = (ids: string[]): Message => ({
+      role: "assistant",
+      content: ids.map((id) => ({
+        type: "tool_use" as const,
+        toolCallId: id,
+        toolName: "read_file",
+        toolInput: { path: id },
+      })),
+    });
+    const batchResult = (ids: string[], chars: number): Message => ({
+      role: "tool",
+      content: ids.map((id) => ({
+        type: "tool_result" as const,
+        toolCallId: id,
+        toolResultContent: "x".repeat(chars),
+      })),
+    });
+    const messages: Message[] = [userMsg("Build the thing.")];
+    for (let i = 0; i < 5; i++) {
+      messages.push(batchUse([`s${i}`]), batchResult([`s${i}`], 400));
+    }
+    messages.push(
+      batchUse(["b0", "b1", "b2", "b3"]),
+      batchResult(["b0", "b1", "b2", "b3"], 15_000),
+    );
+    messages.push(
+      batchUse(["b4", "b5", "b6", "b7"]),
+      batchResult(["b4", "b5", "b6", "b7"], 15_000),
+    );
+
+    noteUsage(45_000); // 60k window → an 18k tail budget
+
+    const r = await engine.compactWorkingSet(messages);
+
+    expect(r.compacted).toBe(true);
+    const freed = (r.beforeTokens! - r.afterTokens!) / r.beforeTokens!;
+    expect(freed).toBeGreaterThan(0.15);
+  });
+
+  test("a compaction that would grow the working set is not applied", async () => {
+    // The summary is longer than the handful of short messages it replaces:
+    // applying it pays a round trip to make the prompt bigger and loses the
+    // verbatim text as well. Measured on a real compact_context: 16,929 →
+    // 16,931.
+    const long = "S".repeat(4_000);
+    const wordy = new ContextEngine({ summarizeTurnsThreshold: 4 }, createMockGateway(long));
+    const messages = Array.from({ length: 12 }, (_, i) => userMsg(`t${i}`));
+
+    const r = await wordy.compactWorkingSet(messages, 6, { force: true });
+
+    expect(r.compacted).toBe(false);
+    expect(r.noop).toBe(true);
+    expect(r.noopReason).toMatch(/no smaller/);
+  });
+
+  test("a head that is a sliver of the working set is not worth a round trip", async () => {
+    // 13 small messages in front of a large verbatim tail: 387 tokens of a
+    // 20,938-token set, folded for the price of a summarizer call.
+    const messages: Message[] = Array.from({ length: 13 }, (_, i) => userMsg(`note ${i}`));
+    messages.push(userMsg("z".repeat(100_000)));
+    noteUsage(45_000);
+
+    const r = await engine.compactWorkingSet(messages);
+
+    expect(r.compacted).toBe(false);
+    expect(r.noop).toBe(true);
+    expect(gateway.infer).not.toHaveBeenCalled();
+  });
+
+  test("an explicit compaction cuts to the recent exchange, not to 30%", async () => {
+    // `compact_context` against a tail budget larger than the whole
+    // conversation could only nibble the oldest few messages — 141 tokens of a
+    // 5,027-token set. Force keeps the recent exchange and folds the rest.
+    const messages = Array.from({ length: 20 }, (_, i) => userMsg("w".repeat(400) + i));
+    noteUsage(45_000); // 18k tail budget, far larger than this transcript
+
+    const r = await engine.compactWorkingSet(messages, 6, { force: true });
+
+    expect(r.compacted).toBe(true);
+    expect(r.tier).toBe("summarized");
+    expect(r.trigger).toBe("overflow");
+    expect(r.messages).toHaveLength(7); // summary + recentK
+  });
+
+  test("the trigger says which policy produced the tail", async () => {
+    const messages = Array.from({ length: 40 }, (_, i) => userMsg("y".repeat(4_000) + i));
+    noteUsage(150_000);
+    const auto = await engine.compactWorkingSet(messages);
+    expect(auto.trigger).toBe("auto");
+
+    engine.requestCompaction();
+    const asked = await engine.compactWorkingSet(messages);
+    expect(asked.trigger).toBe("requested");
   });
 });
 
@@ -222,7 +387,7 @@ describe("replay: the run that motivated this", () => {
 
     // Shape and volume of the observed compaction: 212 messages, ~155k tokens,
     // dominated by tool results — a build loop running tests and reading files.
-    const messages = toolHeavyRun(106, 2_400);
+    const messages = toolHeavyRun(106, 6_000);
     registerContextLimit("stealth/ox-alpha", 262_144);
     engine.noteRealUsage({ inputTokens: 155_130 }, "stealth/ox-alpha");
 
