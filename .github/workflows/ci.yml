@@ -222,6 +222,20 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: bun install --frozen-lockfile
       - run: cargo build --release -p gear-tools
+      # The product is a browser page and the binary has to carry it: there is
+      # no `apps/web/dist` beside an installed executable. A binary compiled
+      # without this step answers `401 unauthorized` to the first page request,
+      # which is exactly how P10.9a was found — by a founder, not by CI.
+      - name: Build the web client and generate the embed manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun run --filter @gear/web build
+          test -f apps/web/dist/index.html || {
+            echo "::error::apps/web/dist/index.html is missing; the binary would serve nothing"
+            exit 1
+          }
+          bun scripts/gen-web-embed.ts
       - name: Compile standalone CLI (same command as release builds)
         shell: bash
         run: |
@@ -264,6 +278,29 @@ jobs:
           # And the path a user actually takes: a prompt in, an answer out,
           # against a mock provider that needs no credential.
           bun scripts/smoke-print.ts "$out"
+      # ── The product, from the artifact (P10.9a) ──
+      # `--version` proves it starts, `tools-smoke` proves the executor works,
+      # `smoke-print` proves the CLI turn. None of them opens the thing a
+      # person actually installed Gear to use. This does: the page with its
+      # token, the assets it references, one session over the websocket
+      # completing a turn, and no host left behind. Both defects it covers were
+      # invisible to every source-run gate, on all three operating systems.
+      - name: Packaged smoke - the binary serves the web product
+        shell: bash
+        env:
+          GEAR_TOOLS_BIN_POSIX: ${{ github.workspace }}/target/release/gear-tools
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            out="./gear-packaged.exe"
+            export GEAR_TOOLS_BIN="$GITHUB_WORKSPACE/target/release/gear-tools.exe"
+          else
+            out="./gear-packaged"
+            export GEAR_TOOLS_BIN="$GEAR_TOOLS_BIN_POSIX"
+          fi
+          export GEAR_HOME="$RUNNER_TEMP/gear-home-web"
+          mkdir -p "$GEAR_HOME"
+          "$out" serve --check
 
   # ── Stage 4d: The web product ──
   # One bundle, one transport, three operating systems. Runs on Linux (1x

@@ -81,6 +81,20 @@ jobs:
         with:
           bun-version: latest
       - run: bun install --frozen-lockfile
+      # Every binary below carries the web client inside it: a downloaded
+      # executable has no `apps/web/dist` beside it, and one compiled without
+      # this step serves nothing and answers `401 unauthorized` to the first
+      # page request (P10.9a). The bundle is never a separate download.
+      - name: Build the web client and generate the embed manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun run --filter @gear/web build
+          test -f apps/web/dist/index.html || {
+            echo "::error::apps/web/dist/index.html is missing; refusing to release binaries that cannot serve the product"
+            exit 1
+          }
+          bun scripts/gen-web-embed.ts
       - name: Compile standalone CLIs
         shell: bash
         env:
@@ -409,6 +423,11 @@ jobs:
           GEAR_TOOLS_BIN=dist/gear-tools-linux-x64 dist/gear-linux-x64 --version | grep -E "Gear v"
           # Not just "it starts": the pair must execute real tools together.
           GEAR_TOOLS_BIN="$PWD/dist/gear-tools-linux-x64" dist/gear-linux-x64 tools-smoke
+          # And not just "it runs tools": it must serve the product. The page
+          # with its token, one session over the websocket, no host left behind
+          # (P10.9a). A release cannot ship a binary that cannot do this.
+          GEAR_HOME="$RUNNER_TEMP/gear-home-web" \
+            GEAR_TOOLS_BIN="$PWD/dist/gear-tools-linux-x64" dist/gear-linux-x64 serve --check
       - name: The binary must agree with the tag
         shell: bash
         env:
@@ -617,6 +636,11 @@ jobs:
           # The path a user actually takes: a prompt in, an answer out, through
           # the real binary and a mock provider that needs no credential.
           bun scripts/smoke-print.ts "$BIN/gear"
+          # And the path the FOUNDER actually took: open the product. The page
+          # with its token, one session over the websocket, no host left behind
+          # (P10.9a). This is the first gate in the repo that runs the web
+          # product from a downloaded binary rather than from source.
+          "$BIN/gear" serve --check
 
       - name: Smoke - version, doctor, tools, and a real prompt (Windows)
         if: runner.os == 'Windows'
@@ -638,3 +662,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "gear tools-smoke exited $LASTEXITCODE" }
           bun scripts/smoke-print.ts $gear
           if ($LASTEXITCODE -ne 0) { throw "print smoke exited $LASTEXITCODE" }
+          # The web product, from the downloaded binary (P10.9a).
+          & $gear serve --check
+          if ($LASTEXITCODE -ne 0) { throw "gear serve --check exited $LASTEXITCODE" }
