@@ -16,6 +16,7 @@ import { join } from "node:path";
 
 import { HostClient } from "../host-client";
 import { createRunWorktree } from "../worktree";
+import { currentContext, hostSpawnArgv } from "./host-spawn";
 import { adoptLegacyEnv, getGearHome, migrateLegacyHome } from "@gear/shared";
 
 adoptLegacyEnv();
@@ -86,8 +87,13 @@ export async function runDetach(
 
   // The host inherits this process's env (keys etc.) but gets its own
   // workspace; stdio goes to a log file so the child never holds a tty.
-  const hostScript = join(import.meta.dir, "engine-host.ts");
-  const child = Bun.spawn(["bun", hostScript, "--socket", socket], {
+  //
+  // `bun engine-host.ts` from a checkout, `<gear> engine-host` from the
+  // compiled binary, where that script path is inside the binary's virtual
+  // filesystem and cannot be spawned. See host-spawn.ts (P10.9a). No
+  // `--parent-pid`: outliving this process is the whole point of detach.
+  const argv = hostSpawnArgv(currentContext(import.meta.dir), ["--socket", socket]);
+  const child = Bun.spawn(argv, {
     env: { ...process.env, GEAR_WORKSPACE: workspace },
     stdin: "ignore",
     stdout: logFd,
