@@ -493,7 +493,7 @@ const planAndLedgerSurvive: EvalTask = {
   verify: async ({ mock, dbPath, sessionId }) => {
     if (!mock) return { pass: true };
     const final = requestText(mock.requestHistory.at(-1) as never);
-    const guard = compactionHappened(final, dbPath, sessionId, 4);
+    const guard = compactionHappened(final, dbPath, sessionId, 3);
     if (guard) return { pass: false, reason: guard };
 
     if (!final.includes(SPINE_MARKER)) {
@@ -561,7 +561,7 @@ const hashLedgerSurvives: EvalTask = {
   verify: async ({ workspace, mock, dbPath, sessionId }) => {
     if (!mock) return { pass: true };
     const final = requestText(mock.requestHistory.at(-1) as never);
-    const guard = compactionHappened(final, dbPath, sessionId, 2);
+    const guard = compactionHappened(final, dbPath, sessionId, 1);
     if (guard) return { pass: false, reason: guard };
     const body = await Bun.file(join(workspace, MODULES[0])).text();
     if (!body.includes("return 42;")) {
@@ -592,7 +592,7 @@ const recentResultsVerbatim: EvalTask = {
   verify: async ({ mock, dbPath, sessionId }) => {
     if (!mock) return { pass: true };
     const final = requestText(mock.requestHistory.at(-1) as never);
-    const guard = compactionHappened(final, dbPath, sessionId, 4);
+    const guard = compactionHappened(final, dbPath, sessionId, 3);
     if (guard) return { pass: false, reason: guard };
     // The last script step before the final answer re-read append.ts; its
     // body must be in the prompt as itself.
@@ -630,7 +630,7 @@ const noSummaryOfSummary: EvalTask = {
   verify: async ({ mock, dbPath, sessionId }) => {
     if (!mock) return { pass: true };
     const final = requestText(mock.requestHistory.at(-1) as never);
-    const guard = compactionHappened(final, dbPath, sessionId, 4);
+    const guard = compactionHappened(final, dbPath, sessionId, 3);
     if (guard) return { pass: false, reason: guard };
 
     // (a) Exactly one summary in the working set — never a summary nested
@@ -760,13 +760,15 @@ const evictedResultsIdentifiable: EvalTask = {
 
     // (b) …and the tier must still do its job. Keeping an excerpt is only
     //     defensible while the excerpt is a small fraction of the body, so
-    //     this guards the fix against becoming "stop evicting".
-    const kept = worst.length;
-    const uncompacted = requestText(mock.requestHistory[6] as never); // after the bulk reads
-    if (uncompacted.length > 0 && kept > uncompacted.length * 0.75) {
+    //     this guards the fix against becoming "stop evicting". Measured
+    //     against the run's own peak request: the first one carrying an
+    //     eviction must be materially smaller than the largest one sent.
+    const firstEvicted = withEvictions[0];
+    const peak = Math.max(...everySent.map((t) => t.length));
+    if (firstEvicted.length > peak * 0.75) {
       return {
         pass: false,
-        reason: `eviction reclaimed too little: ${kept} chars against ${uncompacted.length} before compaction`,
+        reason: `eviction reclaimed too little: ${firstEvicted.length} chars against a peak of ${peak}`,
       };
     }
 

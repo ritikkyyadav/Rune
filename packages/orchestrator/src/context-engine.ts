@@ -54,10 +54,29 @@ const MIN_SUMMARIZABLE_HEAD = 4;
  * of it is still worth compacting, which an absolute floor would refuse.
  */
 const MIN_SUMMARIZABLE_HEAD_SHARE = 0.15;
-/** Tool results at or under this size aren't worth replacing with a stub. */
-const EVICT_MIN_RESULT_CHARS = 200;
+/**
+ * Tool results at or under this size aren't worth replacing with a stub.
+ *
+ * This was 200 characters, which meant a 430-byte file read — a spec, a config,
+ * the thing the whole task turns on — was destroyed to reclaim about 230
+ * characters. The stub itself costs ~150, so the trade was a rounding error
+ * against the loss of the result. Eviction is for the results that actually
+ * cost something: multi-kilobyte command output and file dumps.
+ */
+const EVICT_MIN_RESULT_CHARS = 2_000;
 /** Marker so an evicted result is recognizable and never re-evicted. */
 const EVICTED_RESULT_PREFIX = "[tool result evicted to reclaim context]";
+/**
+ * How much of an evicted result survives as an excerpt, head and tail.
+ *
+ * A stub that says only "15,000 chars reclaimed" turns every old result into
+ * the same anonymous hole: the run cannot tell the read that found the bug from
+ * the one that listed a directory, and cannot judge which is worth re-running.
+ * A head-and-tail excerpt keeps the two places a tool puts what matters — the
+ * path or headline at the top, the error or exit status at the bottom — for
+ * about 4% of a 15KB result.
+ */
+const EVICT_EXCERPT_CHARS = 600;
 
 // Cheap summarizer fallback per provider = that provider's LIGHT tier default
 // (shared/tiers.ts). One source of truth: when a free model is retired
@@ -1162,14 +1181,20 @@ function tailCutPoint(
 }
 
 /**
- * Replace the BODY of tool results in messages[0, headEnd) with a short stub,
- * leaving the blocks themselves in place.
+ * Replace the BODY of tool results in messages[0, headEnd) with a short
+ * excerpt, leaving the blocks themselves in place.
  *
  * This is the cheapest useful thing compaction can do: tool results are the
  * bulk of an agentic transcript and the least re-readable part of it, and
  * because the block survives, no tool_use/tool_result pair is ever orphaned —
  * strictly safer than dropping messages. Same idea as Anthropic's own
  * `clear_tool_uses` context editing.
+ *
+ * It runs BEFORE any summarizer, which is what makes the excerpt matter: for
+ * everything this tier touches, there is no other record. A bare
+ * "N chars reclaimed" leaves the run unable to say what it already looked at
+ * (P10.8 measured 8 evictions, 5 of them unidentifiable afterwards), so the
+ * head and tail of the body survive at `EVICT_EXCERPT_CHARS`.
  */
 function evictOldToolResults(
   messages: Message[],
@@ -1188,13 +1213,17 @@ function evictOldToolResults(
       if (body.length <= EVICT_MIN_RESULT_CHARS || body.startsWith(EVICTED_RESULT_PREFIX)) {
         return block;
       }
+      const excerpt = clipText(body, EVICT_EXCERPT_CHARS);
+      const stub =
+        `${EVICTED_RESULT_PREFIX} ${body.length} chars reclaimed; excerpt kept. ` +
+        `Re-run the tool if you need the rest.\n${excerpt}`;
+      // A body whose excerpt costs as much as the body did is not worth
+      // rewriting — the stub's own preamble would make it grow.
+      if (stub.length >= body.length) return block;
       touched = true;
       evictedCount++;
-      reclaimedChars += body.length;
-      return {
-        ...block,
-        toolResultContent: `${EVICTED_RESULT_PREFIX} ${body.length} chars reclaimed. Re-run the tool if you still need this output.`,
-      };
+      reclaimedChars += body.length - stub.length;
+      return { ...block, toolResultContent: stub };
     });
     return touched ? { ...msg, content } : msg;
   });
