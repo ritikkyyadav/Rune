@@ -152,6 +152,53 @@ describe("compactWorkingSet — tiered", () => {
     expect(bodies.at(-1)).not.toStartWith(EVICTED);
   });
 
+  // ─── P10.8: an evicted result must still say what it was ───
+
+  test("an evicted result keeps a head-and-tail excerpt, not just a byte count", async () => {
+    const messages: Message[] = [userMsg("Build the thing.")];
+    for (let i = 0; i < 20; i++) {
+      messages.push(
+        toolUseMsg(`c${i}`),
+        toolResultMsg(
+          `c${i}`,
+          `HEADLINE-${i} src/thing-${i}.ts\n${"filler ".repeat(2_000)}FAIL-${i}`,
+        ),
+      );
+    }
+    noteUsage(45_000);
+
+    const r = await engine.compactWorkingSet(messages);
+
+    expect(r.tier).toBe("tool_results");
+    const evicted = bodiesOf(r.messages).filter((b) => b.startsWith(EVICTED));
+    expect(evicted.length).toBeGreaterThan(0);
+    for (const body of evicted) {
+      // The two places a real tool puts what matters: the path or headline at
+      // the top, the error at the bottom.
+      expect(body).toMatch(/HEADLINE-\d+ src\/thing-\d+\.ts/);
+      expect(body).toMatch(/FAIL-\d+/);
+      // …and it is still an eviction, not a copy.
+      expect(body.length).toBeLessThan(2_000);
+    }
+  });
+
+  test("a result too small to be worth reclaiming is left alone", async () => {
+    // A 430-byte spec read was destroyed to reclaim ~230 bytes, and its
+    // contents were the decisions the whole task turned on.
+    const spec = "DECISION-1: SQLite, not Postgres.\n" + "detail ".repeat(50);
+    const messages: Message[] = [userMsg("Build the thing.")];
+    messages.push(toolUseMsg("spec"), toolResultMsg("spec", spec));
+    for (let i = 0; i < 20; i++) {
+      messages.push(toolUseMsg(`c${i}`), toolResultMsg(`c${i}`, "x".repeat(15_000)));
+    }
+    noteUsage(45_000);
+
+    const r = await engine.compactWorkingSet(messages);
+
+    expect(r.tier).toBe("tool_results");
+    expect(bodiesOf(r.messages)[0]).toBe(spec);
+  });
+
   test("tier 1 never orphans a tool_use, because the block survives", async () => {
     const messages = toolHeavyRun(40, 4_000);
     noteUsage(150_000);

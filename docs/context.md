@@ -28,9 +28,14 @@ Compaction escalates. It never jumps straight to "summarize almost everything".
 1. **Evict old tool-result bodies.** The cheapest useful thing: tool results are
    the bulk of an agentic transcript and the least re-readable part of it. The
    block stays in place, so no `tool_use`/`tool_result` pair is ever orphaned.
-   Only results large enough to be worth reclaiming are touched, and what is
-   left behind is a head-and-tail **excerpt**, not an anonymous hole — a result
-   the run can no longer identify is a result it cannot decide to re-run.
+   This tier runs **before any summarizer**, so for everything it touches there
+   is no other record — which is why two rules govern it. Only results over
+   2,000 characters are touched (destroying a 430-byte spec read to reclaim
+   ~230 bytes is all cost), and what is left behind is a 600-character
+   head-and-tail **excerpt**, not an anonymous hole: the path or headline at the
+   top and the error or exit status at the bottom, for about 4% of a 15KB
+   result. A result the run can no longer identify is a result it cannot decide
+   to re-run.
 2. **Keep a token-budgeted verbatim tail.** 30% of the model's real window, in
    tokens. A message count is the wrong unit: six messages of a tool-heavy run
    is a rounding error against a 200k window, and six _huge_ messages are larger
