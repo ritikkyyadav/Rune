@@ -376,6 +376,52 @@ export function artifactsFromResult(
   return [];
 }
 
+/**
+ * What a `bash` result says about a verification-shaped command.
+ *
+ * The tool's `success` flag means "the command ran", not "the command passed":
+ * a failing test suite is a successful call carrying `exit_code: 1`. Everything
+ * that judges a check has to read the code, and the summary is taken from
+ * STDOUT, which is where a test runner writes its verdict — stderr is usually
+ * empty on an ordinary test failure.
+ */
+export function bashCheckVerdict(output: { success: boolean; result?: string; error?: string }): {
+  passed: boolean;
+  summary: string;
+  exitCode?: number;
+} {
+  if (!output.success) {
+    return {
+      passed: false,
+      summary: lastNonEmptyLine(output.error ?? output.result ?? "").slice(0, 160) || "failed",
+    };
+  }
+  let exitCode: number | undefined;
+  let timedOut = false;
+  let stdout = "";
+  let stderr = "";
+  try {
+    const parsed = JSON.parse(output.result ?? "") as Record<string, unknown>;
+    if (typeof parsed.exit_code === "number") exitCode = parsed.exit_code;
+    timedOut = parsed.timed_out === true;
+    if (typeof parsed.stdout === "string") stdout = parsed.stdout;
+    if (typeof parsed.stderr === "string") stderr = parsed.stderr;
+  } catch {
+    // Not the shell's JSON shape (a stubbed tool, an embedder's own runner).
+    // Fall back to the flag, which is what this did before it read the code.
+    return { passed: true, summary: "ok" };
+  }
+  const passed = !timedOut && (exitCode == null || exitCode === 0);
+  if (passed) return { passed: true, summary: "ok", ...(exitCode != null ? { exitCode } : {}) };
+  const summary =
+    lastNonEmptyLine(stdout) || lastNonEmptyLine(stderr) || (timedOut ? "timed out" : "failed");
+  return {
+    passed: false,
+    summary: summary.slice(0, 160),
+    ...(exitCode != null ? { exitCode } : {}),
+  };
+}
+
 /** The last non-empty line of a report — the line a failure is usually named on. */
 function lastNonEmptyLine(text: string): string {
   const lines = text.split("\n").filter((l) => l.trim().length > 0);
@@ -2389,56 +2435,72 @@ export class AgentLoop {
             // confidence, for the same reason a criterion's rung does not: an
             // argument the model can restate more confidently is one it
             // eventually wins. So the harness settles the hypothesis the
-            // CLOSING STEP was testing, from the step's own verdict:
+            // CLOSING STEP was testing, from that step's own verdict:
             //
-            //   the step's check failed  -> refuted, reason = the check's summary
-            //   the step closed on evidence -> confirmed, evidence = the step
+            //   the step's last check FAILED -> refuted, with the check's summary
+            //   the step closed on evidence  -> confirmed, with the step as evidence
+            //
+            // Both halves of the first rule count, because a failing check is
+            // a negative result either way: the ledger REFUSING the completion
+            // (nothing was done after the failure), and the ledger ACCEPTING it
+            // because the run wrote the finding up and moved on -- which is
+            // exactly what ruling a theory out looks like.
             //
             // Scoped to the plan boundary on purpose. A failing test in the
             // middle of a build is a fix in progress, not a refuted theory;
-            // only a step that tried to CLOSE on it is a verdict.
+            // only a step that tried to CLOSE is a verdict. And the model can
+            // always report a different verdict through note_hypothesis, in
+            // which case the record carries its reason instead.
             const openHypothesis = ts.openHypothesis();
             const verdict = ts.setTodos(items);
             if (openHypothesis) {
+              const settle = (
+                status: "refuted" | "confirmed",
+                reason: string,
+                ref: string,
+              ): AgentTurnEvent | null => {
+                const updated = ts.updateHypothesis(openHypothesis.id, status, {
+                  reason,
+                  evidence: [{ kind: "step", ref, at: new Date().toISOString() }],
+                });
+                if (!updated) return null;
+                return {
+                  type: "hypothesis_updated",
+                  id: updated.id,
+                  status,
+                  ...(updated.reason ? { reason: updated.reason } : {}),
+                  source: "harness",
+                };
+              };
+              let settled: AgentTurnEvent | null = null;
               if (!verdict.accepted) {
                 const failed = verdict.refused.find((r) => /check/i.test(r.reason));
                 if (failed) {
-                  const updated = ts.updateHypothesis(openHypothesis.id, "refuted", {
-                    reason: checkReasonFrom(failed.reason),
-                    evidence: [{ kind: "step", ref: failed.content, at: new Date().toISOString() }],
-                  });
-                  if (updated) {
-                    yield {
-                      type: "hypothesis_updated",
-                      id: updated.id,
-                      status: "refuted",
-                      ...(updated.reason ? { reason: updated.reason } : {}),
-                      source: "harness",
-                    };
-                  }
+                  settled = settle("refuted", checkReasonFrom(failed.reason), failed.content);
                 }
               } else {
-                const proven = verdict.completed.find(
+                const closed = verdict.completed.find(
                   (t) => !t.unproven && evidenceWeight(t.evidence) > 0,
                 );
-                if (proven) {
-                  const updated = ts.updateHypothesis(openHypothesis.id, "confirmed", {
-                    reason: proven.evidence?.lastCheck?.passed
-                      ? `closed by ${proven.evidence.lastCheck.command ?? "a passing check"}`
-                      : `closed on evidence by "${proven.content.slice(0, 80)}"`,
-                    evidence: [{ kind: "step", ref: proven.content, at: new Date().toISOString() }],
-                  });
-                  if (updated) {
-                    yield {
-                      type: "hypothesis_updated",
-                      id: updated.id,
-                      status: "confirmed",
-                      ...(updated.reason ? { reason: updated.reason } : {}),
-                      source: "harness",
-                    };
-                  }
+                const check = closed?.evidence?.lastCheck;
+                if (closed && check && !check.passed) {
+                  settled = settle(
+                    "refuted",
+                    `${check.command ?? "the step's check"} failed` +
+                      (check.summary ? `: ${check.summary}` : ""),
+                    closed.content,
+                  );
+                } else if (closed) {
+                  settled = settle(
+                    "confirmed",
+                    check?.passed
+                      ? `closed by ${check.command ?? "a passing check"}`
+                      : `closed on evidence by "${closed.content.slice(0, 80)}"`,
+                    closed.content,
+                  );
                 }
               }
+              if (settled) yield settled;
             }
             if (verdict.accepted) {
               acceptedPlan = structuredClone(ts.todos);
@@ -2498,11 +2560,22 @@ export class AgentLoop {
           if (name === "bash") {
             const cmd = String(p.parsedArgs.command ?? "");
             if (isVerificationCommand(cmd)) {
-              ts.noteEffect(output.success ? "check_pass" : "check_fail", {
+              // The EXIT CODE decides, not the tool's success flag.
+              //
+              // `bash` reports success for any command that RAN — a failing
+              // test suite is a successful tool call whose exit code is 1, and
+              // the code lives inside the result JSON. Reading the flag made
+              // every model-run check a pass: `docs/plan-ledger.md` has said
+              // since b150dd2 that "a completion right after a failing check
+              // is refused", and for checks the model ran itself that rule
+              // could not fire, because the spine never saw a failure. The web
+              // transcript reducer already read the code (`checkFromBash`);
+              // the spine, which is what the rule is enforced from, did not.
+              const verdict = bashCheckVerdict(output);
+              ts.noteEffect(verdict.passed ? "check_pass" : "check_fail", {
                 command: cmd.slice(0, 120),
-                summary: output.success
-                  ? "ok"
-                  : lastNonEmptyLine(output.error ?? output.result ?? "").slice(0, 160),
+                summary: verdict.summary,
+                ...(verdict.exitCode != null ? { exitCode: verdict.exitCode } : {}),
               });
             } else if (!TRIVIAL_EVIDENCE_RE.test(cmd)) {
               ts.noteEffect("run");
