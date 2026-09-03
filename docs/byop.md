@@ -26,7 +26,8 @@ gear login [provider]        Sign in. Picks a provider + method, runs the flow, 
                               Flags: --method api_key|oauth|device|local|chain, --no-browser, --migrate
 gear providers               List every provider, its auth method, and credential status.
 gear use <provider> [model]  Set the active provider (+ model) for new sessions.
-gear models [provider]       List a provider's models — live discovery, static fallback.
+gear models [provider]       List a provider's models — live discovery, cached an hour,
+                              curated preset as the fallback. `--refresh` forces a call.
 ```
 
 Examples:

@@ -369,6 +369,54 @@ it. `GEAR_LIVE_AZURE_OPENAI=1` runs that.
 
 ---
 
+## Live model discovery
+
+`gear models <provider>` asks the provider's own list endpoint what it serves,
+because a hand-maintained catalogue rots and this repo has lost runs to exactly
+that: `qwen3-coder:480b` and its announced successor both 410'd on the same day,
+and two OpenRouter `:free` ids were withdrawn to paid without notice. Live
+discovery is the answer the presets structurally cannot give.
+
+Every provider with a list endpoint now has one wired:
+
+| Provider         | Endpoint                                | Notes                                                                              |
+| ---------------- | --------------------------------------- | ---------------------------------------------------------------------------------- |
+| `anthropic`      | `/v1/models`                            | display names included                                                             |
+| `openai`         | `/v1/models`                            | shared by every OpenAI-compatible host (groq, xai, deepseek, ollama-turbo, custom) |
+| `openrouter`     | `/api/v1/models`                        | its own adapter, its own health check                                              |
+| `google`         | `models.list`                           | filtered to `generateContent`-capable models                                       |
+| `ollama` (local) | `/api/tags`, then `/api/show` per model | reports each model's REAL context window                                           |
+| `codex`          | the plan's allowlist                    |                                                                                    |
+| `bedrock`        | `ListFoundationModels`                  | Anthropic + streaming only; profile-only ids come back geo-prefixed                |
+| `vertex`         | `publishers/{anthropic,google}/models`  | both publishers, with the `@version` suffix Anthropic ids need                     |
+| `azure-openai`   | `/openai/deployments`                   | what the RESOURCE has, not what Azure offers; failed deployments filtered out      |
+
+The result is **cached for an hour** in `~/.gear/model-cache.json`. An hour is
+chosen against the failure it protects against: model catalogues change on the
+order of weeks, so a stale row costs one confusing `/model` pick that the next
+refresh fixes, while an uncached list costs a network round trip every time
+someone opens a picker. `gear models <provider> --refresh` forces a call.
+
+The cache holds **model ids and labels only** — no credential, no endpoint,
+nothing account-specific beyond which models that account can see — and a
+corrupt or unwritable cache is an empty cache, never a failed command.
+
+Every listing says where it came from, because the three answers are different
+facts:
+
+```
+  AWS Bedrock models  (live)
+  AWS Bedrock models  (cached · 12 minutes ago)
+  AWS Bedrock models  (curated — sign in for live discovery)
+  live discovery unavailable: No AWS credentials found. Run `aws configure` …
+```
+
+The last line matters: a silent fallback to the curated list is how someone
+spends ten minutes wondering why a deployment they just created is missing from
+a list that quietly stopped asking.
+
+---
+
 ## Providers that were removed
 
 ### `copilot` — removed 2026-09-02 (P8.5, decision D5)
