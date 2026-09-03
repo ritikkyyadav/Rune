@@ -4,7 +4,7 @@
 
 **Phase 10 is complete.** Gates at the last merge: typecheck, lint and format clean; 3,587 unit tests; 108 integration tests (5 skips are live cloud-provider tests without credentials); 62 of 62 mock evals; the safety corpus at 35 of 46 reviewer-only blocks with no model call; zero leaked hosts. Bench re-score (judgment, same weights as 2026-09-02): capability about 128, maturity about 51, blended about 97. The remaining points are the founder's: a public install link, an external user, GitHub Actions unblocked, provider credits for the live gates. Phase 9 (the web product, PR #13) merged at `b7d6a59`; the base is `70da8c7`; **v0.3.0 is tagged** and the release workflow is building. `gear` starts the engine and opens the app in the browser; the installed binary reports `v0.3.0-dev+70da8c7` because it was compiled before the tag (a rebuild after the tag reports `0.3.0`). Gates at the merge: typecheck 16/16, lint 9/9, format clean, unit 3,112/0, web + brand 86/0, integration 60/60 (one test needs the machine free of leaked hosts; see backlog), mock evals 48/48.
 
-Next: Phase 10 capability closers, one agent at a time, starting with P10.1 (post-edit diagnostics).
+Next: P11.3, the shell (the deck, the intent strip, Active work / Needs you, the task surface), held until the founder answers the four questions at the end of [11-intent-layer.md](11-intent-layer.md).
 
 **Earlier: the merges.** All nine pull requests are merged into `gear/phase-0-stabilize` at `aedca56`; every gate was green after the last merge (typecheck, lint, format, 3,069 unit tests, 60 integration tests, 48 of 48 mock evals, desktop typecheck). The binary is installed from that commit (`v0.3.0-dev+aedca56`); `gear doctor`, `gear tools-smoke` and a headless prompt pass. No tag yet: the founder corrected the product surface the same evening, and the tag waits for [Phase 9](09-web-product.md), the web product in the current identity, so the release does not carry the dropped theme.
 
@@ -89,6 +89,17 @@ Two defects found by the phase's own gate and fixed in it:
 - **The session list was never fetched after the transport opened**, so a page
   reload came back to an empty sidebar. Invisible until a reload had to restore
   something, which is the case the whole URL product rests on.
+
+## Phase 11, 2026-09-03
+
+The founder's second correction: after using the Phase 9 app he called it a chat interface, and the product is an intent layer ([11-intent-layer.md](11-intent-layer.md)): a static left deck, an intent strip, a task surface the agent composes from a closed catalogue of primitives, experimentation shown live with refuted branches folded, and every task ending in one Decision Record. Two of five items are merged; the shell waits on four founder answers.
+
+- **P11.2 (#24) merged at `b00e56b`.** Thirty primitives, each with ready, empty, loading and error states on both grounds; the projection schema; six persona composers (investigate, build, analyze, research, operate, write); the `applyModelChoice` fallback that keeps a bad model choice from breaking the surface; and `/gallery`, the whole vocabulary on one screen. Its claim that the mock suite scored 23/62 on the base was not reproducible in a clean export of `02eee64` (62/62 with and without `GEAR_TOOLS_BINARY`) and is withdrawn in `760cf12`.
+- **P11.1 (#25) merged at `82f7504`.** Eight narrative events (protocol 22 → 30) reduced in all six reducers and the ACP table; the task state's `kind`, `narrative`, `artifacts`, `pendingDecisions` and `progress`; the `note_hypothesis` and `record_decision` tools with refutation inferred from a failing check; the Decision Record generator, `gear audit --record` and its export; a narrative eval family with its baseline row. Two engine defects found by that eval and fixed in the PR: the spine judged a check by the tool's success flag rather than its exit code, so "no completion right after a failing check" (documented since `b150dd2`) never fired for a model-run check; and a refuted branch's reason was the runner's version banner, because `bun test` writes its verdict to stderr. The Intent Interpreter's model call is off by default (`[intent] interpreter`): scripted providers hand out responses in order, so a hidden call at task start consumed one, and in production it is a round trip before the first token to decide a layout; the deterministic reader is always on.
+
+Gate at `82f7504`: typecheck 16/16, lint 9/9, format clean, unit 3,861 / 0, integration 108 pass / 5 skip (live cloud providers without credentials), mock suite 63/63 with no regression and the baseline unchanged, the safety corpus offline unchanged, zero leaked hosts.
+
+Held: P11.3 (the shell), P11.4 (narrative in motion and the Decision Record surface) and P11.5 (proof) wait on the founder's answers: the wireframe, the name for connected applications ("Apps" is the placeholder; not "plugins", not "connectors"), what "teams" means in Settings, and the mark (the shipped gear is provisional; the founder called it terrible).
 
 ## Founder actions the agents could not take
 
