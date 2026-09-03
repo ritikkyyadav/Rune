@@ -38,6 +38,15 @@ A completion right after a **failing check** is refused the same way. A fix
 after the failure (any further write) reopens the question rather than
 carrying the failure forward.
 
+A check fails when its **exit code** says so. That is worth stating because it
+was not true for two weeks: `bash` reports success for any command that _ran_,
+so a failing test suite arrived as a successful tool call carrying
+`exit_code: 1`, and the spine recorded it as a pass. The rule above therefore
+could not fire at all for checks the model ran itself — only for the ones the
+harness ran, where the verifier reads the code directly. The exit code (and a
+timeout, which is also a failure) now decides, and the receipt quotes stdout,
+where a test runner writes its verdict.
+
 Other rules applied on every list:
 
 - Exactly one step is in progress. Extras are set back to pending, and the

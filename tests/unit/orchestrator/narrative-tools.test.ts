@@ -21,6 +21,7 @@ import {
 } from "../../../packages/orchestrator/src/narrative-tools";
 import {
   artifactsFromResult,
+  bashCheckVerdict,
   checkReasonFrom,
 } from "../../../packages/orchestrator/src/agent-loop";
 
@@ -198,6 +199,66 @@ describe("the refusal reason a reader sees", () => {
   test("a refusal with no instruction tail survives whole, bounded", () => {
     expect(checkReasonFrom("nothing ran while it was open")).toBe("nothing ran while it was open");
     expect(checkReasonFrom("x".repeat(500)).length).toBeLessThanOrEqual(200);
+  });
+});
+
+describe("a check's verdict is its exit code, not the tool's success flag", () => {
+  // The defect this closes: `bash` reports success for any command that RAN,
+  // so a failing test suite was a successful call with `exit_code: 1` — and the
+  // spine recorded it as a PASS. `docs/plan-ledger.md` has said since b150dd2
+  // that a completion right after a failing check is refused; for checks the
+  // model ran itself that rule could never fire, because the spine never saw a
+  // failure. The web transcript reducer already read the code; the spine, which
+  // is where the rule is enforced, did not.
+  const shell = (fields: Record<string, unknown>) => ({
+    success: true,
+    result: JSON.stringify({ stdout: "", stderr: "", exit_code: 0, ...fields }),
+  });
+
+  test("exit 0 is a pass", () => {
+    expect(bashCheckVerdict(shell({ stdout: "12 pass" }))).toEqual({
+      passed: true,
+      summary: "ok",
+      exitCode: 0,
+    });
+  });
+
+  test("a non-zero exit is a FAILURE, however successfully the tool ran it", () => {
+    const verdict = bashCheckVerdict(
+      shell({ exit_code: 1, stdout: "1 pass\n1 fail\nerror: expect(300).not.toBe(300)" }),
+    );
+    expect(verdict.passed).toBe(false);
+    expect(verdict.exitCode).toBe(1);
+    // Stdout, because that is where a test runner writes its verdict — stderr
+    // is usually empty on an ordinary test failure.
+    expect(verdict.summary).toContain("expect(300)");
+  });
+
+  test("a timeout is a failure even at exit 0", () => {
+    const verdict = bashCheckVerdict(shell({ timed_out: true, stdout: "" }));
+    expect(verdict.passed).toBe(false);
+    expect(verdict.summary).toBe("timed out");
+  });
+
+  test("stderr answers when stdout is silent", () => {
+    const verdict = bashCheckVerdict(shell({ exit_code: 2, stderr: "tsc: cannot find module" }));
+    expect(verdict.summary).toContain("cannot find module");
+  });
+
+  test("a failed tool call is a failed check", () => {
+    const verdict = bashCheckVerdict({ success: false, error: "spawn ENOENT" });
+    expect(verdict.passed).toBe(false);
+    expect(verdict.summary).toContain("ENOENT");
+  });
+
+  test("a result that is not the shell's JSON falls back to the flag", () => {
+    // Embedders and stubbed registries return plain strings; the old behaviour
+    // is the right one there, and it must not throw.
+    expect(bashCheckVerdict({ success: true, result: "ok" })).toEqual({
+      passed: true,
+      summary: "ok",
+    });
+    expect(bashCheckVerdict({ success: true }).passed).toBe(true);
   });
 });
 

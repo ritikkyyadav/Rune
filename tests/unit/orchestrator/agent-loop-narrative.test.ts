@@ -154,6 +154,40 @@ describe("a step whose check failed refutes the hypothesis it was testing", () =
   });
 });
 
+describe("a step that closes AFTER a failing check still refutes", () => {
+  test("ruling a theory out is writing the finding up and moving on", async () => {
+    // The other half of the same rule. The ledger accepts this completion —
+    // the run did something after the failure, so it is not an empty claim —
+    // and the check that failed is still the verdict on the theory.
+    const ts = new TaskStateStore();
+    const gw = makeGateway([
+      {
+        tool: "todo_write",
+        args: { items: [{ content: "rule out the cache", status: "in_progress" }] },
+      },
+      { tool: "note_hypothesis", args: { text: "cache eviction on deploy" } },
+      { tool: "bash", args: { command: "bun test cache.test.ts FAIL" } },
+      { tool: "write_file", args: { path: "findings/cache.md" } },
+      {
+        tool: "todo_write",
+        args: { items: [{ content: "rule out the cache", status: "completed" }] },
+      },
+      { text: "not the cache" },
+    ]);
+
+    const events = await collect(makeLoop(gw, ts).run("why is the api slow?", "s1", "/tmp"));
+
+    const update = events.find((e) => e.type === "hypothesis_updated") as
+      Extract<AgentTurnEvent, { type: "hypothesis_updated" }> | undefined;
+    expect(update?.status).toBe("refuted");
+    expect(update?.source).toBe("harness");
+    expect(update?.reason).toContain("pool at 20%");
+    // The step itself closed clean: ruling a theory out is real work.
+    expect(ts.snapshot().todos[0].unproven).toBeUndefined();
+    expect(ts.progress()).toBe(1);
+  });
+});
+
 describe("a step that closes on evidence confirms it", () => {
   test("with the step itself as the evidence", async () => {
     const ts = new TaskStateStore();
