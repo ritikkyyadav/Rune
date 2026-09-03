@@ -21,6 +21,11 @@ restating it, and the summarizer is told so in its own system prompt. The
 harness also keeps a fourth, invisible carrier: the freshness ledger of file
 hashes, so an edit after a compaction still applies without a re-read.
 
+The spine block is **larger on the request that follows a compaction** — 1,400
+tokens against the usual 600, and 2,400 characters of the goal against 600. That
+is the one moment the verbatim brief has just left the transcript, so it is the
+one moment worth spending more of the prompt on restating it.
+
 ## Compaction, in tiers
 
 Compaction escalates. It never jumps straight to "summarize almost everything".
