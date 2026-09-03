@@ -44,6 +44,7 @@ import {
 import { adoptLegacyEnv, getGearHome, loadConfig, migrateLegacyHome } from "@gear/shared";
 
 import { HostClient } from "../host-client";
+import { type WebBundle, resolveWebBundle } from "../web-embed";
 import { currentContext, hostSpawnArgv, hostSpawnLabel } from "./host-spawn";
 
 // ─── Where the door key lives ───
@@ -593,14 +594,17 @@ export interface ServeOptions {
   allowRemoteSettings?: boolean;
   origins?: string[];
   /**
-   * Serve the built web client from this directory on the same port (P3.2).
+   * Serve the built web client on the same port (P3.2).
    *
    * Same port because the alternative — a page on one port opening a socket on
    * another — is a cross-origin request the allowlist would have to be widened
    * for, and widening an allowlist to accommodate your own layout is how these
    * things stop protecting anything.
+   *
+   * Since P10.9a this is a resolved bundle rather than a directory: a compiled
+   * binary has no `apps/web/dist` beside it and serves the copy it carries.
    */
-  web?: { dist: string };
+  web?: WebBundle;
   /**
    * Leave the per-session engine hosts running when the server stops.
    *
@@ -694,25 +698,49 @@ export function lanAddresses(): string[] {
   return out;
 }
 
-/** Serve one file out of `dist`, refusing anything that climbs out of it. */
+/**
+ * Resolve one URL path to a readable file, or null.
+ *
+ * Two bundles answer to the same rules: a directory on disk (a checkout) and
+ * the map the compiled binary carries inside itself, whose values are
+ * `/$bunfs/root/…` paths `Bun.file()` opens like any other. Path traversal is
+ * refused in both — the map lookup cannot escape because a key that is not in
+ * it simply is not there, and the on-disk join is still guarded.
+ */
+function resolveAsset(bundle: WebBundle, rel: string): string | null {
+  if (bundle.files) return bundle.files[rel] ?? null;
+  if (!bundle.dist) return null;
+  const resolved = join(bundle.dist, rel);
+  // `..` in a URL path is the oldest static-server bug there is.
+  return resolved.startsWith(bundle.dist) ? resolved : null;
+}
+
+/** Serve one file out of the bundle, refusing anything that climbs out of it. */
 async function serveStatic(
-  dist: string,
+  bundle: WebBundle,
   pathname: string,
   embed: { url: string; token: string } | null,
 ): Promise<Response> {
   const rel = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
-  const resolved = join(dist, rel);
-  // `..` in a URL path is the oldest static-server bug there is.
-  if (!resolved.startsWith(dist)) return new Response("not found", { status: 404 });
+  const resolved = resolveAsset(bundle, rel);
+  if (!resolved) {
+    // A single-page client: unknown paths are routes, not missing files.
+    if (rel.includes(".") || rel === "index.html")
+      return new Response("not found", { status: 404 });
+    return serveStatic(bundle, "/", embed);
+  }
 
   const file = Bun.file(resolved);
   if (!(await file.exists())) {
-    // A single-page client: unknown paths are routes, not missing files.
-    if (rel.includes(".")) return new Response("not found", { status: 404 });
-    return serveStatic(dist, "/", embed);
+    if (rel.includes(".") || rel === "index.html")
+      return new Response("not found", { status: 404 });
+    return serveStatic(bundle, "/", embed);
   }
 
-  const ext = resolved.slice(resolved.lastIndexOf("."));
+  // The embedded copy is named `/$bunfs/root/index-<hash>.html`, so the
+  // content type has to come from the URL the browser asked for, not from
+  // whatever Bun called the file it copied in.
+  const ext = rel.includes(".") ? rel.slice(rel.lastIndexOf(".")) : "";
   const type = CONTENT_TYPES[ext] ?? "application/octet-stream";
   if (ext !== ".html") {
     return new Response(file, { headers: { "content-type": type } });
@@ -755,11 +783,21 @@ export async function runServe(
   //
   // Imported lazily because `web-cli` imports `serve` from here, and a static
   // cycle between them is a class of bug nobody should have to debug twice.
-  let web: { dist: string } | undefined;
+  let web: WebBundle | undefined;
   if (values.web === true) {
-    const { webBundleBuilt, webDistDir } = await import("./web-cli");
-    if (webBundleBuilt()) web = { dist: webDistDir() };
-    else console.error("  the web client is not built — run `bun run --cwd apps/desktop build`");
+    const { sourceDistDir } = await import("./web-cli");
+    web = (await resolveWebBundle(sourceDistDir())) ?? undefined;
+    if (!web) {
+      // Loud, and on the way OUT. Before P10.9a this was a `console.error` the
+      // caller never saw, `web` stayed undefined, and the browser that asked
+      // for the page fell through to the API path and was told `401
+      // unauthorized`. Refusing to start is the honest answer: a `gear serve
+      // --web` that serves no web is a bug report in twenty minutes.
+      console.error("  the web client is not built and this build embeds none.");
+      console.error("  from a checkout:  bun run --filter @gear/web build");
+      console.error("  from a binary:    reinstall — the bundle ships inside it (P10.9a)");
+      throw new Error("gear serve --web: no web client to serve");
+    }
   }
 
   // `--keep-hosts` is the escape for a detached, long-lived server: the engines
@@ -866,7 +904,7 @@ export async function serve(opts: ServeOptions = {}): Promise<{ stop: () => void
         const embed = mayReceiveEmbeddedToken(fromHere, extractToken(req), token)
           ? { url: `ws://${url.host}`, token }
           : null;
-        return serveStatic(opts.web.dist, url.pathname, embed);
+        return serveStatic(opts.web, url.pathname, embed);
       }
 
       const origin = req.headers.get("origin");
@@ -1015,7 +1053,7 @@ export async function serve(opts: ServeOptions = {}): Promise<{ stop: () => void
       const page = `http://${h}:${boundPort}`;
       console.log(`  open       ${loopbackOnly ? page : `${page}/#token=${token}`}`);
     }
-    console.log(`  bundle     ${opts.web.dist}`);
+    console.log(`  bundle     ${opts.web.label}`);
   }
   console.log(`  workspace  ${workspace}`);
   console.log(`  hosts      ${hostSpawnLabel(currentContext(import.meta.dir))}`);

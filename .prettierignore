@@ -11,6 +11,8 @@ bun.lock
 Cargo.lock
 apps/web/dist/
 apps/web/branding/*.png
+# Generated from apps/web/dist before every compile (P10.9a).
+packages/orchestrator/src/web-embed/generated.js
 .gear/
 .claude/
 .codex/
