@@ -20,6 +20,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { isPathInside, workspaceConfigPath } from "@gear/shared";
+import { validateToolDeclaration, type PluginToolDeclaration } from "@gear/tool-registry";
 
 /**
  * This build's version, for `gearVersion` range checks.
@@ -48,12 +49,15 @@ export const GEAR_VERSION: string = (() => {
 /**
  * What a plugin may do (P4.6).
  *
- * Declared, not enforced by a sandbox — v1 plugins are DECLARATIVE (skills,
- * commands, MCP servers, hooks), so there is no plugin code to contain. The
+ * Declared, not enforced — the declarative kinds (skills, commands, MCP
+ * servers, hooks) have no containment: a hook is a shell command the plugin
+ * asked Gear to run, an MCP server is a process it asked Gear to start. The
  * value is disclosure: a user installing a plugin can see it wants to reach
  * three hosts and run blocking hooks BEFORE they enable it, and `gear plugin
- * list` can show it afterwards. Executable third-party tools stay out of v1
- * precisely because a declaration is not a sandbox.
+ * list` shows it afterwards.
+ *
+ * `tools` (P10.7 / D6 v2) is the one part that IS enforced, because its
+ * programs run under the OS sandbox with the capability they declared.
  */
 export interface PluginPermissions {
   /** Hosts the plugin's MCP servers are expected to reach. */
@@ -74,6 +78,12 @@ export interface PluginManifest {
   mcp?: string;
   /** Command dir(s) of *.md slash commands, relative to the plugin root. */
   commands?: string | string[];
+  /**
+   * Executable tool servers (D6 v2). Each entry is a PROGRAM, spawned as a
+   * subprocess under the OS sandbox with exactly the capability it declares,
+   * speaking line-delimited JSON on stdio. Never loaded into this process.
+   */
+  tools?: PluginToolDeclaration[];
   /**
    * Semver range of Gear this plugin supports, e.g. ">=0.3.0" or "0.3.x".
    * A plugin that does not fit is refused with a reason rather than loaded and
@@ -107,6 +117,8 @@ export interface LoadedPlugin {
   commandDirs: string[];
   /** True when the plugin ships a skills/ tree (auto-discovered). */
   hasSkills: boolean;
+  /** Validated executable tool declarations; the engine starts these. */
+  toolDeclarations: PluginToolDeclaration[];
 }
 
 export interface PluginDiscovery {
@@ -124,6 +136,24 @@ function resolveInsidePlugin(root: string, rel: string): string | null {
   // backslash-separated, so the old shape refused every path in every plugin
   // and `gear plugin add` loaded nothing at all there (P10.2).
   return isPathInside(root, abs) ? abs : null;
+}
+
+/**
+ * The first element of a tool's `command`.
+ *
+ * A bare name (`python3`, `node`, `deno`) is an interpreter resolved on PATH —
+ * a plugin cannot ship a runtime and should not have to. Anything containing a
+ * separator is the plugin's own program, and must stay inside the plugin: an
+ * absolute path there would let a manifest point Gear at any binary on the
+ * machine and call the result a plugin tool. Containment is the sandbox's job,
+ * but provenance is this one's.
+ *
+ * Remaining argv entries are passed through verbatim; the child's working
+ * directory is the plugin root, so a relative script path means one thing.
+ */
+function resolveToolProgram(root: string, program: string): string | null {
+  if (!program.includes("/") && !program.includes("\\")) return program;
+  return resolveInsidePlugin(root, program);
 }
 
 // ─── Integrity ───
@@ -345,8 +375,42 @@ export function discoverPlugins(workspaceRoot: string): PluginDiscovery {
       mcpServers: {},
       commandDirs: [],
       hasSkills: existsSync(join(root, "skills")),
+      toolDeclarations: [],
     };
     let refused = false;
+
+    // Executable tools (D6 v2). A malformed declaration refuses the WHOLE
+    // bundle rather than loading the parts that parsed: half a tool manifest
+    // is exactly the state where a capability the author meant to declare
+    // silently is not the one enforced.
+    if (manifest.tools !== undefined) {
+      if (!Array.isArray(manifest.tools)) {
+        out.errors.push(`plugin "${dirName}": "tools" must be an array — not loaded`);
+        refused = true;
+      } else {
+        for (const [i, raw] of manifest.tools.entries()) {
+          const problem = validateToolDeclaration(raw, i);
+          if (problem) {
+            out.errors.push(`plugin "${dirName}": ${problem} — not loaded`);
+            refused = true;
+            break;
+          }
+          const decl = raw as PluginToolDeclaration;
+          const [program, ...rest] = decl.command;
+          const resolvedProgram = resolveToolProgram(root, program!);
+          if (!resolvedProgram) {
+            out.errors.push(
+              `plugin "${dirName}": tool "${decl.id}" command "${program}" is an absolute path or ` +
+                `escapes the plugin directory — name an interpreter (\`python3\`) or a path inside ` +
+                `the plugin — not loaded`,
+            );
+            refused = true;
+            break;
+          }
+          plugin.toolDeclarations.push({ ...decl, command: [resolvedProgram, ...rest] });
+        }
+      }
+    }
 
     if (manifest.hooks) {
       const abs = resolveInsidePlugin(root, manifest.hooks);

@@ -496,6 +496,9 @@ export function isUntrustedSourceTool(toolName: string): boolean {
   return (
     UNTRUSTED_SOURCE_TOOLS.has(toolName) ||
     toolName.startsWith("mcp_") ||
+    // A plugin tool is a third party's program, whatever its capability: its
+    // output is no more the user's own content than a connector's is.
+    toolName.startsWith("plugin_") ||
     toolName.startsWith("browser_")
   );
 }

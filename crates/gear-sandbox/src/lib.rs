@@ -20,6 +20,7 @@ pub mod macos;
 pub mod noop;
 pub mod path_guard;
 pub mod shell;
+pub mod spawn;
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -32,6 +33,38 @@ pub use crate::error::SandboxError;
 pub use crate::factory::{SandboxProbe, create_sandbox, probe_capability};
 pub use crate::path_guard::PathGuard;
 pub use crate::shell::{Shell, command_shell};
+pub use crate::spawn::{SpawnPlan, SpawnRequest, ToolCapability, plan_spawn};
+
+/// Escape a path for embedding inside a Seatbelt string literal.
+///
+/// SBPL string literals are double-quoted; backslashes and double-quotes must
+/// be escaped so a workspace path containing them cannot break out of the
+/// literal (or silently corrupt the profile).
+pub(crate) fn escape_sbpl(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Credential and secret stores that stay unreadable under every profile, even
+/// where reads are otherwise broad. One list, because two lists become one
+/// list plus an omission.
+pub(crate) fn credential_deny_paths() -> Vec<PathBuf> {
+    let home = dirs::home_dir().unwrap_or_default();
+    vec![
+        home.join(".ssh"),
+        home.join(".aws"),
+        home.join(".gnupg"),
+        home.join(".config").join("gh"),
+        home.join(".config").join("gcloud"),
+        home.join(".kube"),
+        home.join(".docker"),
+        home.join(".npmrc"),
+        home.join(".netrc"),
+        home.join(".bash_history"),
+        home.join(".zsh_history"),
+        home.join(".gear").join("secrets.json"),
+        home.join(".alan").join("secrets.json"),
+    ]
+}
 
 /// Describes the level of sandboxing available on the current platform.
 #[derive(Debug, Clone, PartialEq)]

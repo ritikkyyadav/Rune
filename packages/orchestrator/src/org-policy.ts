@@ -33,9 +33,13 @@ export interface OrgPolicy {
   version: 1;
   /** Display name shown in /status. */
   org?: string;
-  /** Tools that may never run. Checked before every mode/grant/trust path. */
+  /**
+   * Tools that may never run. Checked before every mode/grant/trust path.
+   * Entries may contain `*` (e.g. `plugin:acme:*` for a whole plugin bundle,
+   * `mcp_*` for every connector tool).
+   */
   toolsDeny?: string[];
-  /** When present, ONLY these tools may run (allowlist mode). */
+  /** When present, ONLY these tools may run (allowlist mode). Same wildcards. */
   toolsAllow?: string[];
   /** Gears the user may not enter. Legacy signed values (turing, hands-free, autonomy-iii…) remain valid. */
   forbidPermissionModes?: Array<PermissionMode | LegacyPermissionMode>;
@@ -168,22 +172,60 @@ export function loadOrgPolicy(): OrgPolicyLoadResult {
 const NETWORK_TOOLS = new Set(["web_fetch", "web_search", "n8n_trigger"]);
 
 /**
+ * Whether a policy entry names this tool. `*` matches any run of characters,
+ * so `plugin:acme:*` names every tool in one plugin bundle and `mcp_*` every
+ * connector tool. Everything else is exact — a policy is read by an admin who
+ * must be able to predict what it covers.
+ */
+export function toolPatternMatches(pattern: string, name: string): boolean {
+  if (!pattern.includes("*")) return pattern === name;
+  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+  try {
+    return new RegExp(`^${escaped}$`).test(name);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The single policy evaluation the broker calls before any mode shortcut.
  * Returns a denial reason, or null when the policy has no objection.
+ *
+ * `opts.identities` is every other name this call answers to — for a plugin
+ * tool, its `plugin:<plugin>:<tool>` policy id. A DENY hits if ANY identity
+ * matches: an admin who wrote `plugin:acme:*` meant it, and a bundle that
+ * renamed its model-facing tool must not escape. An ALLOWLIST needs only one
+ * identity to match, since both names describe the same call.
+ *
+ * `opts.category` lets `networkDefaultDeny` cover tools that did not exist
+ * when the hard-coded list was written — a plugin's network-capability tool
+ * reaches the network exactly as `web_fetch` does.
  */
 export function policyDenial(
   policy: OrgPolicy,
   toolName: string,
   args: Record<string, unknown>,
+  opts: { identities?: readonly string[]; category?: string } = {},
 ): string | null {
-  if (policy.toolsAllow && !policy.toolsAllow.includes(toolName)) {
+  const names = [toolName, ...(opts.identities ?? [])].filter(
+    (n, i, all) => typeof n === "string" && n.length > 0 && all.indexOf(n) === i,
+  );
+  if (
+    policy.toolsAllow &&
+    !policy.toolsAllow.some((pattern) => names.some((n) => toolPatternMatches(pattern, n)))
+  ) {
     return `org policy: tool "${toolName}" is not on the allowlist`;
   }
-  if (policy.toolsDeny?.includes(toolName)) {
-    return `org policy: tool "${toolName}" is denied`;
+  const denied = policy.toolsDeny?.find((pattern) =>
+    names.some((n) => toolPatternMatches(pattern, n)),
+  );
+  if (denied) {
+    return denied === toolName
+      ? `org policy: tool "${toolName}" is denied`
+      : `org policy: tool "${toolName}" is denied by "${denied}"`;
   }
   if (policy.networkDefaultDeny) {
-    if (NETWORK_TOOLS.has(toolName)) {
+    if (NETWORK_TOOLS.has(toolName) || opts.category === "network") {
       return `org policy: network access is default-deny (tool "${toolName}")`;
     }
     if (toolName === "bash" && args.network === true) {

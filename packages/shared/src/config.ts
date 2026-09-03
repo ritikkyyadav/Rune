@@ -593,9 +593,9 @@ export interface GearConfig {
     deferTools?: boolean;
   };
   /**
-   * Third-party extensions (config.toml `[extensions]`). Plugins are
-   * declarative in v1 (skills, commands, MCP servers, hooks); executable tools
-   * stay first-party until they run under the sandbox as subprocesses.
+   * Third-party extensions (config.toml `[extensions]`). Plugins ship skills,
+   * commands, MCP servers, hooks — and, since D6 v2, executable tools that run
+   * as subprocesses under the OS sandbox with a declared capability.
    */
   extensions?: {
     /**
@@ -603,6 +603,23 @@ export interface GearConfig {
      * This is the user's OWN workspace only — never a path a plugin supplies.
      */
     localTools?: boolean;
+    /**
+     * Where `gear plugin search` / `gear plugin add <name>` resolve names.
+     * A URL or a path; empty means the public index. `GEAR_PLUGIN_INDEX`
+     * overrides it.
+     */
+    index?: string;
+    /**
+     * Run a plugin's executable tools even where this machine has no OS
+     * sandbox (Windows, a mac without Seatbelt). `true` for every plugin, or a
+     * list of plugin names. Default absent — a tool that cannot be contained
+     * does not run, and the refusal names this setting.
+     *
+     * Turning it on means a third party's program runs with this user's full
+     * access and its declared capability is not enforced. Gear says so at
+     * startup, in the tool's own description, and in `[SECURITY]` logs.
+     */
+    allowUnsandboxedTools?: boolean | string[];
   };
 }
 
@@ -823,6 +840,7 @@ function applyEnvOverrides(config: Record<string, unknown>): void {
     GEAR_TEAM: (c) => setNested(c, "team.enabled", process.env.GEAR_TEAM !== "false"),
     GEAR_TEAM_ENFORCEMENT: (c) =>
       setNested(c, "team.claimEnforcement", process.env.GEAR_TEAM_ENFORCEMENT!),
+    GEAR_PLUGIN_INDEX: (c) => setNested(c, "extensions.index", process.env.GEAR_PLUGIN_INDEX!),
     ANTHROPIC_API_KEY: (c) => setNested(c, "llm.anthropic.apiKey", process.env.ANTHROPIC_API_KEY!),
     OPENAI_API_KEY: (c) => setNested(c, "llm.openai.apiKey", process.env.OPENAI_API_KEY!),
     OPENROUTER_API_KEY: (c) =>
