@@ -9,14 +9,7 @@ use crate::error::SandboxError;
 use crate::path_guard::PathGuard;
 use crate::{Sandbox, SandboxConfig, SandboxFuture, SandboxResult};
 
-/// Escape a path for embedding inside a Seatbelt string literal.
-///
-/// SBPL string literals are double-quoted; backslashes and double-quotes must
-/// be escaped so a workspace path containing them cannot break out of the
-/// literal (or silently corrupt the profile).
-fn escape_sb(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
-}
+use crate::{credential_deny_paths, escape_sbpl as escape_sb};
 
 /// macOS sandbox-exec (Seatbelt) implementation.
 ///
@@ -77,26 +70,13 @@ impl MacOsSandbox {
 
         // Credential / secret stores that stay unreadable even under broad reads.
         // Mirrors PathGuard's blocked set, plus tool-specific token locations and
-        // Gear's own BYOK secrets file (current and legacy homes).
-        let deny_reads: String = [
-            home.join(".ssh"),
-            home.join(".aws"),
-            home.join(".gnupg"),
-            home.join(".config").join("gh"),
-            home.join(".config").join("gcloud"),
-            home.join(".kube"),
-            home.join(".docker"),
-            home.join(".npmrc"),
-            home.join(".netrc"),
-            home.join(".bash_history"),
-            home.join(".zsh_history"),
-            home.join(".gear").join("secrets.json"),
-            home.join(".alan").join("secrets.json"),
-        ]
-        .iter()
-        .map(|p| format!("    (subpath \"{}\")", escape_sb(&p.display().to_string())))
-        .collect::<Vec<_>>()
-        .join("\n");
+        // Gear's own BYOK secrets file (current and legacy homes). The list lives
+        // in lib.rs so the plugin-tool profiles cannot drift from this one.
+        let deny_reads: String = credential_deny_paths()
+            .iter()
+            .map(|p| format!("    (subpath \"{}\")", escape_sb(&p.display().to_string())))
+            .collect::<Vec<_>>()
+            .join("\n");
 
         let mut extra_read = String::new();
         for p in &self.config.extra_read_paths {

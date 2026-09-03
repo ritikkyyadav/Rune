@@ -297,29 +297,33 @@ Plugins existed as this convention with no way to get a directory there, and
 installed-but-refused plugin looked exactly like one nobody had installed.
 `gear plugin list` prints the refusals, and so does the status line.
 
-**v1 plugins are declarative** (D6): skills, commands, MCP servers, hooks.
-Nothing here installs executable tools. `npm` bundles are fetched with `npm
-pack` and untarred, so no install script runs.
+**Plugins ship five kinds** (D6 v2): skills, commands, MCP servers, hooks — all
+declarative — and **executable tools**, which are subprocesses under the OS
+sandbox with the capability their manifest declares, refused outright where no
+sandbox exists. `npm` bundles are fetched with `npm pack` and untarred, so no
+install script runs. The protocol and the capability manifest are in
+[plugins.md](plugins.md).
 
-**The manifest gained four fields.**
+**The manifest's five extra fields.**
 
-| Field         | What it does                                                                                                                                                                                                                                                  |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `gearVersion` | semver range; a plugin that does not fit is refused with a reason, rather than loaded and left to fail somewhere less legible. An unparseable range is treated as satisfied — our limitation should not become the author's problem                           |
-| `permissions` | `hosts`, `paths`, `blockingHooks`. **Disclosure, not enforcement** — printed at install and in `list`, and said to be unenforced. Executable third-party tools stay out of v1 precisely because a declaration is not a sandbox                                |
-| `integrity`   | `sha256` over the tree. A digest that no longer matches means the files changed since installation, and the plugin is refused: a plugin contributes hooks that run shell commands, and "probably fine" is not a standard to run someone else's commands under |
-| `source`      | where it came from                                                                                                                                                                                                                                            |
+| Field         | What it does                                                                                                                                                                                                                                                      |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gearVersion` | semver range; a plugin that does not fit is refused with a reason, rather than loaded and left to fail somewhere less legible. An unparseable range is treated as satisfied — our limitation should not become the author's problem                               |
+| `permissions` | `hosts`, `paths`, `blockingHooks`. **Disclosure, not enforcement** — printed at install and in `list`, and said to be unenforced. A hook is a shell command the plugin asked Gear to run and an MCP server a process it asked Gear to start; neither is contained |
+| `tools`       | executable tool servers (D6 v2). The one block that **is** enforced: each is a subprocess under the OS sandbox with the capability it declares, refused where no sandbox exists. See [plugins.md](plugins.md)                                                     |
+| `integrity`   | `sha256` over the tree. A digest that no longer matches means the files changed since installation, and the plugin is refused: a plugin contributes hooks that run shell commands, and "probably fine" is not a standard to run someone else's commands under     |
+| `source`      | where it came from                                                                                                                                                                                                                                                |
 
 `disable` keeps the bundle and stops its contributions. Because the manifest is
 part of the hashed tree, toggling recomputes the digest.
 
-**`invalidatePlugins()`** re-scans and re-runs all four loaders without a
-restart — installing a plugin mid-session used to do nothing until the next
-process, and nothing said so. All four latches clear together on purpose: a
-plugin contributes across them, and a partial refresh leaves a bundle
-half-installed, which is worse than not refreshing at all. MCP servers are
-stopped rather than merely re-scanned, because their subprocesses and HTTP
-sessions belong to the old plugin set.
+**`invalidatePlugins()`** re-scans and re-runs every loader without a restart —
+installing a plugin mid-session used to do nothing until the next process, and
+nothing said so. The latches clear together on purpose: a plugin contributes
+across them, and a partial refresh leaves a bundle half-installed, which is
+worse than not refreshing at all. MCP servers and plugin tool subprocesses are
+stopped rather than merely re-scanned, because they belong to the old plugin
+set — and a plugin tool was spawned under a capability that may have changed.
 
 ## Local executable tools
 
@@ -331,8 +335,10 @@ It is wired now for exactly one case — **the user's own workspace**:
 localTools = true   # load executable tools from <workspace>/.gear/tools
 ```
 
-Off by default. A plugin can never point at it: a declaration is not a sandbox,
-and running a stranger's code needs one.
+Off by default, in-process, and a plugin can never point at it. That separation
+survived D6 v2 deliberately: this loader runs code the user wrote, the plugin
+path runs a stranger's, and only the second one gets a sandbox because only the
+second one has to earn its trust.
 
 ---
 

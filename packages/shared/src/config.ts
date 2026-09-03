@@ -609,6 +609,17 @@ export interface GearConfig {
      * overrides it.
      */
     index?: string;
+    /**
+     * Run a plugin's executable tools even where this machine has no OS
+     * sandbox (Windows, a mac without Seatbelt). `true` for every plugin, or a
+     * list of plugin names. Default absent — a tool that cannot be contained
+     * does not run, and the refusal names this setting.
+     *
+     * Turning it on means a third party's program runs with this user's full
+     * access and its declared capability is not enforced. Gear says so at
+     * startup, in the tool's own description, and in `[SECURITY]` logs.
+     */
+    allowUnsandboxedTools?: boolean | string[];
   };
 }
 
