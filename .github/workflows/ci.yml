@@ -307,6 +307,46 @@ jobs:
           path: tests/e2e/test-results
           retention-days: 7
 
+  # ── Stage 4d-bis: The VS Code extension, loaded in a real VS Code ──
+  #
+  # Before P10.6 this extension typechecked, bundled, packaged and had unit
+  # tests for its pure functions, and nobody had ever seen it load. It could not
+  # have worked: the page it frames had no listener for the messages it posts.
+  #
+  # `@vscode/test-electron` downloads a pinned VS Code, launches it with the
+  # extension in development mode, and drives "Send selection to Gear" for real.
+  # The assertion is made from OUTSIDE the editor, through the SDK against the
+  # same `gear serve --web`, because a webview's iframe is cross-origin and its
+  # DOM is opaque from inside the extension host.
+  #
+  # Linux needs a display: an Electron with no X server exits before the
+  # extension host starts. `xvfb-run` is the whole of that story.
+  vscode:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: cargo build --release -p gear-tools
+      # The extension frames the built client. Without it the launcher skips,
+      # and a proof that skips in CI is not a proof.
+      - name: Build the web bundle the webview frames
+        run: bun run --filter @gear/web build
+      # 300 MB per run otherwise. Keyed on the pinned version in
+      # apps/vscode/test/runTest.ts, so bumping it re-downloads once.
+      - name: Cache the pinned VS Code build
+        uses: actions/cache@v4
+        with:
+          path: .vscode-test
+          key: vscode-test-${{ runner.os }}-${{ hashFiles('apps/vscode/test/runTest.ts') }}
+          restore-keys: vscode-test-${{ runner.os }}-
+      - name: Live extension load (webview → gear serve → a real turn)
+        env:
+          GEAR_TOOLS_BIN: ${{ github.workspace }}/target/release/gear-tools
+        run: xvfb-run -a bun run --filter gear test:vscode
+
   # ── Stage 4e: Script + Rust supply-chain hygiene ──
   shellcheck:
     runs-on: ubuntu-latest
