@@ -30,7 +30,8 @@ import type { RetrievedChunk } from "./context-engine";
 import { getMaxOutputTokens } from "./tokenizer";
 import type { Verifier, VerifyResult } from "./verifier";
 import type { HandoffReason, TaskStateStore, TodoItem } from "./task-state";
-import { TASK_STATE_BLOCK_BUDGET_AFTER_COMPACTION } from "./task-state";
+import { evidenceWeight, TASK_STATE_BLOCK_BUDGET_AFTER_COMPACTION } from "./task-state";
+import type { ArtifactKind } from "@gear/protocol";
 import { isVerificationCommand } from "./brief";
 
 // ─── Agent Turn Events (yielded to caller) ───
@@ -328,6 +329,52 @@ const READ_EVIDENCE_TOOLS = new Set([
 
 /** Tools whose `path`/`dir` argument scopes what the model read. */
 const SCOPED_READ_TOOLS = new Set(["grep", "glob", "search_code", "symbol_search", "list_dir"]);
+
+/**
+ * The check's own words out of a ledger refusal, for a hypothesis's `reason`.
+ *
+ * The refusal is written for the MODEL ("Fix it and re-run the check, or
+ * re-submit to mark the step unproven"), and a record that quoted that back at
+ * a reader would be telling them what the agent was told rather than what the
+ * check found. So the instruction tail is dropped and what the command said is
+ * kept.
+ */
+export function checkReasonFrom(refusal: string): string {
+  const head = refusal.split(/\.\s+(?=Fix it|Do the step)/)[0] ?? refusal;
+  return head
+    .replace(/^the last check during this step FAILED\s*/i, "check failed")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 200);
+}
+
+/**
+ * Artifacts a tool result announces: a research report's path, a dashboard's
+ * URL. File writes are recorded by the file ledger already; these are the
+ * outputs that never pass through it, and a run whose whole deliverable was a
+ * report would otherwise show "what changed: nothing".
+ */
+export function artifactsFromResult(
+  toolName: string,
+  result: string,
+): Array<{ kind: ArtifactKind; ref: string }> {
+  if (!result) return [];
+  if (toolName === "research") {
+    const at = /Full report saved to:\s*(\S+)/.exec(result.slice(0, 2_000));
+    return at ? [{ kind: "report", ref: at[1] }] : [];
+  }
+  if (toolName === "interactive_dashboard") {
+    try {
+      const parsed = JSON.parse(result) as { url?: unknown };
+      if (typeof parsed.url === "string" && parsed.url) {
+        return [{ kind: "preview", ref: parsed.url }];
+      }
+    } catch {
+      // Not the JSON shape (an error string, or a listing) — nothing to record.
+    }
+  }
+  return [];
+}
 
 /** The last non-empty line of a report — the line a failure is usually named on. */
 function lastNonEmptyLine(text: string): string {
@@ -2336,7 +2383,63 @@ export class AgentLoop {
                 };
               }
             }
+            // ── The refutation inference (P11.1) ──
+            //
+            // A hypothesis's verdict must not come from the model's
+            // confidence, for the same reason a criterion's rung does not: an
+            // argument the model can restate more confidently is one it
+            // eventually wins. So the harness settles the hypothesis the
+            // CLOSING STEP was testing, from the step's own verdict:
+            //
+            //   the step's check failed  -> refuted, reason = the check's summary
+            //   the step closed on evidence -> confirmed, evidence = the step
+            //
+            // Scoped to the plan boundary on purpose. A failing test in the
+            // middle of a build is a fix in progress, not a refuted theory;
+            // only a step that tried to CLOSE on it is a verdict.
+            const openHypothesis = ts.openHypothesis();
             const verdict = ts.setTodos(items);
+            if (openHypothesis) {
+              if (!verdict.accepted) {
+                const failed = verdict.refused.find((r) => /check/i.test(r.reason));
+                if (failed) {
+                  const updated = ts.updateHypothesis(openHypothesis.id, "refuted", {
+                    reason: checkReasonFrom(failed.reason),
+                    evidence: [{ kind: "step", ref: failed.content, at: new Date().toISOString() }],
+                  });
+                  if (updated) {
+                    yield {
+                      type: "hypothesis_updated",
+                      id: updated.id,
+                      status: "refuted",
+                      ...(updated.reason ? { reason: updated.reason } : {}),
+                      source: "harness",
+                    };
+                  }
+                }
+              } else {
+                const proven = verdict.completed.find(
+                  (t) => !t.unproven && evidenceWeight(t.evidence) > 0,
+                );
+                if (proven) {
+                  const updated = ts.updateHypothesis(openHypothesis.id, "confirmed", {
+                    reason: proven.evidence?.lastCheck?.passed
+                      ? `closed by ${proven.evidence.lastCheck.command ?? "a passing check"}`
+                      : `closed on evidence by "${proven.content.slice(0, 80)}"`,
+                    evidence: [{ kind: "step", ref: proven.content, at: new Date().toISOString() }],
+                  });
+                  if (updated) {
+                    yield {
+                      type: "hypothesis_updated",
+                      id: updated.id,
+                      status: "confirmed",
+                      ...(updated.reason ? { reason: updated.reason } : {}),
+                      source: "harness",
+                    };
+                  }
+                }
+              }
+            }
             if (verdict.accepted) {
               acceptedPlan = structuredClone(ts.todos);
               if (verdict.notes.length > 0) {
@@ -2441,6 +2544,14 @@ export class AgentLoop {
             for (const f of p.parsedArgs.files) {
               if (typeof f === "string") ts.noteFileWritten(f);
             }
+          }
+          // Artifacts the run produced that are not file writes: a research
+          // report on disk, a dashboard someone can open. "What changed" in
+          // the Decision Record is only as good as this list, and a run whose
+          // whole output was a report would otherwise show an empty one.
+          for (const artifact of artifactsFromResult(p.tc.toolName, output.result)) {
+            const recorded = ts.recordArtifact(artifact.kind, artifact.ref);
+            if (recorded) yield { type: "artifact", artifact: recorded };
           }
         }
 

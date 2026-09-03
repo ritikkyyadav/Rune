@@ -53,8 +53,18 @@ beforeAll(() => {
  * it costs: without it the model treats the block as advisory and the type
  * error travels to the verifier, which is a full re-read/re-edit/re-run cycle
  * — thousands of tokens, against 43 that are cached after the first request.
+ *
+ * Raised 7,700 -> 7,790 on 2026-09-03 for the narrative line (P11.1,
+ * "Investigate before you act"). Measured 7,695 -> 7,771: 76 tokens, and there
+ * were 5 of headroom, so it could not be absorbed; three compression passes
+ * took it from 117 to 76 and the remainder is the instruction itself — name
+ * the suspicion before testing it, record the commitment with its evidence,
+ * and why refuted branches are kept. It is the one line that makes the
+ * Decision Record possible: a run that never names a hypothesis produces a
+ * record with no "how we got here", which is the section a person reads to
+ * decide whether to believe the answer. Cached after the first request.
  */
-const FULL_DOCTRINE_CEILING = 7_700;
+const FULL_DOCTRINE_CEILING = 7_790;
 
 /** Ceiling for a session that can use none of the gated capabilities. */
 const MINIMAL_DOCTRINE_CEILING = 6_000;
