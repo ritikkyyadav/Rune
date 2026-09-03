@@ -37,11 +37,16 @@ Real-mode env: `GEAR_EVAL_PROVIDER` / `GEAR_EVAL_MODEL` (default google/gemini-2
 - **Caps are verdicts.** Real runs get per-task tool-call (default 40,
   `GEAR_EVAL_TASK_MAX_TOOL_CALLS`) and optional cost caps (`GEAR_EVAL_TASK_MAX_COST`);
   blowing the cap fails the task even if the artifact eventually appeared.
-- **Baselines are per-mode and protected.** Mock runs anchor `baseline-mock.json`
-  (deterministic — any task flip is a regression); real runs anchor `baseline.json`
-  (rate-gated within `--noise`). Subset runs (`--tasks`/`--max`) and runs that failed
-  the gate never auto-promote; `--write-baseline` is the explicit override. `--compare`
-  across different modes or models skips instead of guessing.
+- **Baselines are per-mode and immutable.** Mock runs are judged against
+  `baseline-mock.json` (deterministic — any task flip is a regression); real runs against
+  `baseline.json` (rate-gated within `--noise`). **No run promotes itself.** A passing
+  `--compare` prints `baseline unchanged` and leaves the file byte-identical;
+  `--write-baseline` is the only thing that moves the anchor, and it says so loudly when
+  the run was filtered or failed the gate. Until P10.4a the gate re-anchored on every
+  passing run — comparing against the baseline and then overwriting it with the run it
+  had just judged, which is a ruler that redraws itself to match the last thing it
+  measured, and a dirty `baseline-mock.json` in every lane. `--compare` across different
+  modes or models skips instead of guessing.
 - Every run is archived to `results/` regardless.
 
 ## Incident → eval pipeline (the flywheel)
@@ -66,7 +71,10 @@ Pick the family file (`tasks-<category>.ts`), follow the local idiom: `setup()` 
 minimal fixture workspace, `script` is the deterministic model behavior for mock mode,
 `verify()` checks artifacts and (in real mode) content invariants. Wire it into the
 family's export array. Run `bun run eval -- --tasks <name>` until green, then a full
-`bun run eval -- --compare` to refresh the mock baseline.
+`bun run eval -- --compare` to see the new task against the anchor. Adding a task
+legitimately moves the anchor, so finish with one deliberate
+`bun run eval -- --write-baseline` and commit the new `baseline-mock.json` alongside the
+task — that diff is the record of what changed the yardstick.
 
 ---
 

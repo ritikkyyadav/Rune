@@ -65,7 +65,7 @@ interface CliArgs {
   max?: number;
   /** Regression gate: exit 0 if cleanPassRate >= this (0–1); else require all pass. */
   minPassRate?: number;
-  /** Force-promote the run to baseline.json even if some tasks were throttled. */
+  /** Re-anchor the mode's baseline on this run. The ONLY way the baseline moves. */
   writeBaseline?: boolean;
   /** Compare against a recorded baseline and fail on regression beyond --noise. */
   compare?: string;
@@ -320,7 +320,7 @@ async function main() {
 
     printModelSweep(sweepResults);
     if (sweepResults.length > 0) {
-      await writeBaseline(sweepResults[0].report, args.writeBaseline);
+      await writeBaseline(sweepResults[0].report, args.writeBaseline === true);
     }
 
     const floor =
@@ -360,22 +360,28 @@ async function main() {
     compareOk = cmp.ok;
   }
 
-  // Baseline hygiene: a run that failed the regression gate must never become
-  // the new baseline (the regression would vanish on the next run), and a
-  // FILTERED run (--tasks/--max) is a subset, not the suite — promoting it
-  // shrinks the anchor. --write-baseline stays the explicit override.
-  const isSubsetRun = args.tasksFilter != null || args.max != null;
-  if ((compareOk && !isSubsetRun) || args.writeBaseline) {
-    await writeBaseline(report, args.writeBaseline);
-  } else if (isSubsetRun) {
-    console.log(
-      "  \x1b[2mBaseline NOT updated (filtered/subset run; pass --write-baseline to force)\x1b[0m",
-    );
-  } else {
-    console.log(
-      "  \x1b[2mBaseline NOT updated (regression gate failed; pass --write-baseline to re-anchor intentionally)\x1b[0m",
-    );
+  // Baseline hygiene (P10.4a): the baseline is IMMUTABLE unless --write-baseline
+  // says otherwise. The run is always archived to results/; the yardstick only
+  // moves when someone means to move it.
+  //
+  // It used to re-anchor on every passing `--compare` run, so the gate rewrote
+  // the very file it had just compared against — a ruler that redraws itself to
+  // match the last thing it measured. A filtered run is still a subset and a
+  // failed-gate run is still a regression, so both are called out when the flag
+  // is passed anyway.
+  if (args.writeBaseline) {
+    if (args.tasksFilter != null || args.max != null) {
+      console.log(
+        "  \x1b[33m⚠ re-anchoring the baseline on a FILTERED run — the anchor now covers a subset of the suite\x1b[0m",
+      );
+    }
+    if (!compareOk) {
+      console.log(
+        "  \x1b[33m⚠ re-anchoring the baseline on a run that FAILED the regression gate\x1b[0m",
+      );
+    }
   }
+  await writeBaseline(report, args.writeBaseline === true);
 
   // Gate on the CLEAN rate (throttled tasks excluded). With no explicit floor,
   // require every MEASURED task to pass — throttled tasks neither pass nor fail

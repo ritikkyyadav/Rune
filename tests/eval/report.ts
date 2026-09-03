@@ -58,10 +58,20 @@ export interface ModelSweepResult {
  * detector, real runs are the capability anchor. One shared file meant a local
  * mock run silently clobbered the real-model baseline (and vice versa).
  */
-export function baselinePathFor(mode: "mock" | "real"): string {
-  return join(__dirname, mode === "mock" ? "baseline-mock.json" : "baseline.json");
+export function baselinePathFor(mode: "mock" | "real", dir: string = __dirname): string {
+  return join(dir, mode === "mock" ? "baseline-mock.json" : "baseline.json");
 }
 const RESULTS_DIR = join(__dirname, "results");
+
+/** What `writeBaseline` did, so a caller (and a test) can assert on it. */
+export interface BaselineWrite {
+  /** The timestamped archive under results/ — written on every run. */
+  archivePath: string;
+  /** Whether the mode's baseline file was re-anchored. */
+  promoted: boolean;
+  /** The baseline file, when it was promoted. */
+  baselinePath?: string;
+}
 
 export function buildReport(
   results: TaskResult[],
@@ -431,31 +441,52 @@ export function printComparison(cmp: BaselineComparison): void {
 
 /**
  * Always archive a run to results/ (timestamped, never overwritten) so no run
- * is lost. Only promote it to baseline.json when it's a clean snapshot — i.e.
- * zero throttled tasks — unless `force` is set. This is what stops a broken or
- * rate-limited run (like the no-credits "16% ceiling") from clobbering a good
- * baseline.
+ * is lost. Promote it to the mode's baseline ONLY when `promote` is set — which
+ * only `--write-baseline` sets.
+ *
+ * The baseline is the yardstick. It used to re-anchor itself on every passing
+ * `--compare` run: the gate compared the run against the baseline, declared no
+ * regression, and then overwrote the baseline with that same run. A yardstick
+ * that redraws itself to match whatever it just measured cannot detect drift —
+ * a slow slide of one task per run reads as "no regression" forever — and the
+ * visible symptom was a dirty `tests/eval/baseline-mock.json` in every lane,
+ * reverted by hand by every agent that ran the gate. Moving the anchor is now
+ * an explicit act with a flag on it.
  */
-export async function writeBaseline(report: SuiteReport, force = false): Promise<void> {
+export async function writeBaseline(
+  report: SuiteReport,
+  promote = false,
+  opts: { baselineDir?: string; resultsDir?: string; quiet?: boolean } = {},
+): Promise<BaselineWrite> {
   const shape = baselineShape(report);
   const stamp = report.timestamp.replace(/[:.]/g, "-");
   const tag =
     report.mode === "real" ? `${report.provider}-${report.model}`.replace(/[^\w.-]/g, "_") : "mock";
-  const archivePath = join(RESULTS_DIR, `run-${stamp}-${tag}.json`);
-  await mkdir(RESULTS_DIR, { recursive: true });
+  const resultsDir = opts.resultsDir ?? RESULTS_DIR;
+  const archivePath = join(resultsDir, `run-${stamp}-${tag}.json`);
+  await mkdir(resultsDir, { recursive: true });
   await writeFile(archivePath, JSON.stringify(shape, null, 2) + "\n");
+  const log = (s: string) => {
+    if (!opts.quiet) console.log(s);
+  };
 
-  if (report.throttled > 0 && !force) {
-    console.log(
-      `  \x1b[2mRun archived to tests/eval/results/ (baseline NOT updated — ${report.throttled} throttled task(s); pass --write-baseline to force)\x1b[0m`,
+  const file = report.mode === "mock" ? "baseline-mock.json" : "baseline.json";
+  if (!promote) {
+    log(
+      `  \x1b[2mbaseline unchanged\x1b[0m \x1b[2m(tests/eval/${file} is the yardstick; run archived to tests/eval/results/. ` +
+        `Pass --write-baseline to re-anchor it.)\x1b[0m`,
     );
-    return;
+    return { archivePath, promoted: false };
   }
-  const baselinePath = baselinePathFor(report.mode);
+  const baselinePath = baselinePathFor(report.mode, opts.baselineDir);
   await writeFile(baselinePath, JSON.stringify(shape, null, 2) + "\n");
-  console.log(
-    `  \x1b[2mBaseline written to tests/eval/${report.mode === "mock" ? "baseline-mock.json" : "baseline.json"} (archived in results/)\x1b[0m`,
+  log(
+    `  \x1b[2mBaseline RE-ANCHORED to tests/eval/${file} (archived in results/)\x1b[0m` +
+      (report.throttled > 0
+        ? `\n  \x1b[33m⚠ ${report.throttled} throttled task(s) are baked into this baseline\x1b[0m`
+        : ""),
   );
+  return { archivePath, promoted: true, baselinePath };
 }
 
 export async function loadBaseline(mode: "mock" | "real" = "real"): Promise<SuiteReport | null> {
