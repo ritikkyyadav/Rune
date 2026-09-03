@@ -18,7 +18,14 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { auditSummary, collectDiff, composeComment, parseInputs } from "../../action/review";
+import {
+  auditSummary,
+  changedFiles,
+  collectDiff,
+  composeComment,
+  mockReviewText,
+  parseInputs,
+} from "../../action/review";
 
 const repoRoot = join(import.meta.dir, "../..");
 const ACTION = join(repoRoot, "action", "review.ts");
@@ -127,6 +134,57 @@ describe("the action's pieces", () => {
     const painted = "  [36mGear audit[0m [2m01a0[0m  fix the thing";
     expect(auditSummary(painted)).toBe("Gear audit 01a0  fix the thing");
   });
+
+  test("a mock run says it is one, before it says anything else", () => {
+    // The ethics of the mode. A comment that looks like a review and was
+    // produced by a mock is worse than no comment at all.
+    const outcome = {
+      ok: true,
+      text: "anything at all",
+      exitCode: 0,
+      sessionId: "s1",
+      audit: null,
+      stderrTail: "",
+    };
+    const comment = composeComment(outcome, {
+      ...parseInputs([], { GITHUB_WORKSPACE: repo }),
+      mock: true,
+    });
+    expect(comment).toContain("### Gear review — dry run (mock provider)");
+    expect(comment).toContain("**mock provider**");
+    expect(comment).toContain("nothing whatever about the change");
+    expect(comment).toContain("mock provider, no model consulted");
+    // …and the marker still keys the same one comment, so a real review
+    // REPLACES the dry run rather than starting a second thread under it.
+    expect(comment).toContain("<!-- gear-review -->");
+
+    const real = composeComment(outcome, parseInputs([], { GITHUB_WORKSPACE: repo }));
+    expect(real).toContain("### Gear review\n");
+    expect(real).not.toContain("mock provider");
+  });
+
+  test("reads the mock switch from the workflow's environment, and only that word", () => {
+    expect(parseInputs([], { GEAR_REVIEW_PROVIDER: "mock", GITHUB_WORKSPACE: repo }).mock).toBe(
+      true,
+    );
+    // A typo must fail loudly on a missing key, not quietly post a fake review.
+    expect(parseInputs([], { GEAR_REVIEW_PROVIDER: "Mock", GITHUB_WORKSPACE: repo }).mock).toBe(
+      false,
+    );
+    expect(parseInputs([], { GITHUB_WORKSPACE: repo }).mock).toBe(false);
+    expect(parseInputs(["--mock"], { GITHUB_WORKSPACE: repo }).mock).toBe(true);
+  });
+
+  test("the mock's answer names the files the diff touched, and nothing it did not read", () => {
+    const diff = collectDiff(repo, "main", 200_000);
+    expect(changedFiles(diff)).toEqual(["app.ts"]);
+    const text = mockReviewText(diff);
+    expect(text).toContain("No model was consulted");
+    expect(text).toContain("`app.ts`");
+    // A deletion has no post-image path and must not become a file called
+    // "/dev/null" in the comment.
+    expect(changedFiles("--- a/gone.ts\n+++ /dev/null\n")).toEqual([]);
+  });
 });
 
 describe("the action end to end, against a fake model", () => {
@@ -206,6 +264,66 @@ describe("the action end to end, against a fake model", () => {
       expect(out).toContain("Gear audit");
       // The diff is handed over as a file, not pasted into the prompt.
       expect(existsSync(join(repo, "DIFF.patch"))).toBe(true);
+    },
+    180_000,
+  );
+
+  test.skipIf(!HAS_RUST_BIN)(
+    "the mock provider runs the whole path with no credential anywhere",
+    async () => {
+      // The mode `.github/workflows/gear-review.yml` uses when
+      // `GEAR_REVIEW_API_KEY` is absent, which on this repository is always.
+      // Nothing here configures a model: `review.ts` starts its own provider,
+      // which is the point — the workflow needs no secret and no setup step.
+      const p = Bun.spawn(
+        [
+          "bun",
+          ACTION,
+          "--dry-run",
+          "--mock",
+          "--workspace",
+          repo,
+          "--base",
+          "main",
+          "--gear",
+          "2",
+          "--gear-cmd",
+          `bun ${CLI}`,
+        ],
+        {
+          env: {
+            ...process.env,
+            GEAR_HOME: gearHome,
+            GEAR_WORKSPACE: repo,
+            GEAR_DB_PATH: join(dir, "gear.db"),
+            GEAR_TOOLS_BIN: RUST_BIN,
+            NO_COLOR: "1",
+            // Deliberately blank: a run that quietly fell back to a real
+            // provider would be a run that needs a key after all.
+            ANTHROPIC_API_KEY: "",
+            OPENAI_API_KEY: "",
+            OPENROUTER_API_KEY: "",
+            GOOGLE_API_KEY: "",
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+      const out = await new Response(p.stdout).text();
+      const err = await new Response(p.stderr).text();
+      const code = await p.exited;
+
+      expect(code, `stderr:\n${err}`).toBe(0);
+      expect(err).toContain("MOCK provider");
+      // Labelled, in the heading and in the footer, so neither a reader nor a
+      // notification can mistake it for a review.
+      expect(out).toContain("### Gear review — dry run (mock provider)");
+      expect(out).toContain("mock provider, no model consulted");
+      // …and it is still a real run: a session, a turn, and the audit of it.
+      expect(out).toContain("No model was consulted");
+      expect(out).toContain("`app.ts`");
+      expect(out).toContain("What the run actually did");
+      expect(out).toContain("Gear audit");
     },
     180_000,
   );
