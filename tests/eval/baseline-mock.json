@@ -3,21 +3,21 @@
   "mode": "mock",
   "passRate": 1,
   "cleanPassRate": 1,
-  "passed": 62,
-  "measured": 62,
+  "passed": 63,
+  "measured": 63,
   "throttled": 0,
-  "total": 62,
+  "total": 63,
   "totalCost": 0,
   "avgCostPerTask": 0,
   "totalListCost": 0,
   "avgListCostPerTask": 0,
-  "avgDurationMs": 261.11290322580646,
-  "avgTurns": 0.7258064516129032,
+  "avgDurationMs": 260.0,
+  "avgTurns": 0.7301587301587301,
   "categories": [
     {
       "category": "core",
-      "passed": 25,
-      "total": 25,
+      "passed": 26,
+      "total": 26,
       "throttled": 0,
       "passRate": 1,
       "cleanPassRate": 1,
@@ -147,6 +147,12 @@
     },
     {
       "name": "spine_handoff_on_error",
+      "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "narrative_three_hypothesis_bug_hunt",
       "category": "core",
       "pass": true,
       "throttled": false
