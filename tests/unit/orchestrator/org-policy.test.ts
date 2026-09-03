@@ -8,6 +8,7 @@ import {
   policyDenial,
   policyAllowsModel,
   canonicalPolicyBytes,
+  toolPatternMatches,
   type OrgPolicy,
 } from "../../../packages/orchestrator/src/org-policy";
 import { generateEd25519KeyPair, signBytes } from "../../../packages/orchestrator/src/signing";
@@ -177,5 +178,72 @@ describe("policyDenial unit surface", () => {
     expect(policyDenial(p, "bash", { network: true })).toMatch(/default-deny/);
     expect(policyDenial(p, "bash", {})).toBeNull();
     expect(policyDenial(p, "read_file", {})).toBeNull();
+  });
+
+  // P10.7: a plugin's network-capability tool reaches the network exactly as
+  // web_fetch does; a hard-coded name list could never have known about it.
+  test("network default-deny covers a network-category tool by category", () => {
+    const p: OrgPolicy = { version: 1, networkDefaultDeny: true };
+    expect(policyDenial(p, "plugin_acme_http_get", {}, { category: "network" })).toMatch(
+      /default-deny/,
+    );
+    expect(policyDenial(p, "plugin_acme_write", {}, { category: "write" })).toBeNull();
+  });
+});
+
+// P10.7: an admin must be able to turn off a whole third-party bundle without
+// listing its tools by hand — and without missing the ones its next version adds.
+describe("tool patterns", () => {
+  test("a pattern with no star is exact", () => {
+    expect(toolPatternMatches("bash", "bash")).toBe(true);
+    expect(toolPatternMatches("bash", "bash_extra")).toBe(false);
+  });
+
+  test("a star matches any run of characters, anywhere in the pattern", () => {
+    expect(toolPatternMatches("plugin:acme:*", "plugin:acme:fmt")).toBe(true);
+    expect(toolPatternMatches("plugin:acme:*", "plugin:other:fmt")).toBe(false);
+    expect(toolPatternMatches("mcp_*", "mcp_notion_search")).toBe(true);
+    expect(toolPatternMatches("*", "anything")).toBe(true);
+    expect(toolPatternMatches("plugin_*_write_text", "plugin_acme_write_text")).toBe(true);
+  });
+
+  test("regex metacharacters in a pattern are literal, not a second language", () => {
+    expect(toolPatternMatches("a.b", "aXb")).toBe(false);
+    expect(toolPatternMatches("a.b", "a.b")).toBe(true);
+  });
+});
+
+describe("wildcards and policy identities", () => {
+  const plugin = { identities: ["plugin:acme:fmt"] };
+
+  test("a deny wildcard covers a plugin bundle through its policy id", () => {
+    const p: OrgPolicy = { version: 1, toolsDeny: ["plugin:acme:*"] };
+    expect(policyDenial(p, "plugin_acme_fmt", {}, plugin)).toMatch(/plugin:acme:\*/);
+    // A different bundle is untouched.
+    expect(
+      policyDenial(p, "plugin_other_fmt", {}, { identities: ["plugin:other:fmt"] }),
+    ).toBeNull();
+  });
+
+  test("an exact deny on the model-facing name still reads plainly", () => {
+    const p: OrgPolicy = { version: 1, toolsDeny: ["bash"] };
+    expect(policyDenial(p, "bash", {})).toBe('org policy: tool "bash" is denied');
+  });
+
+  test("an allowlist accepts either identity, since both name the same call", () => {
+    const byPolicyId: OrgPolicy = { version: 1, toolsAllow: ["plugin:acme:fmt"] };
+    expect(policyDenial(byPolicyId, "plugin_acme_fmt", {}, plugin)).toBeNull();
+    const byName: OrgPolicy = { version: 1, toolsAllow: ["plugin_acme_fmt"] };
+    expect(policyDenial(byName, "plugin_acme_fmt", {}, plugin)).toBeNull();
+    // And still refuses everything it did not name.
+    expect(policyDenial(byName, "bash", {})).toMatch(/not on the allowlist/);
+  });
+
+  test("an allowlist wildcard admits a family", () => {
+    const p: OrgPolicy = { version: 1, toolsAllow: ["read_file", "plugin:acme:*"] };
+    expect(policyDenial(p, "plugin_acme_fmt", {}, plugin)).toBeNull();
+    expect(policyDenial(p, "plugin_evil_fmt", {}, { identities: ["plugin:evil:fmt"] })).toMatch(
+      /not on the allowlist/,
+    );
   });
 });
