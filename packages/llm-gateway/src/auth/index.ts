@@ -4,6 +4,8 @@ export type { AuthMethod, ResolvedCredential, AuthContext, AuthenticationStrateg
 export { AuthError } from "./types";
 export { ApiKeyStrategy } from "./api-key-strategy";
 export { LocalEndpointStrategy } from "./local-endpoint-strategy";
+export { CloudChainStrategy, probeCloudChain, chainSetupHint } from "./chain-strategy";
+export type { ChainProbe } from "./chain-strategy";
 export {
   OAuthStrategy,
   base64url,

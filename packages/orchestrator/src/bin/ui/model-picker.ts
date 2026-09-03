@@ -77,6 +77,9 @@ export function providerChoices(
       );
     } else if (r.source === "env") {
       bits.push(muted(`key env ${presetFor(r.id)?.envVar ?? ""}`.trim()));
+    } else if (r.source === "chain") {
+      // No mask: the enterprise routes hold no secret Gear could show.
+      bits.push(muted(`cloud | ${r.credentialDetail ?? "credentials found"}`));
     }
     return bits.join(faint(" | "));
   };
@@ -137,6 +140,20 @@ export function accountChoices(
   }
 
   const out: AccountChoice[] = [];
+
+  // An enterprise cloud route: the machine's own AWS/GCP/Azure credentials.
+  // There is nothing to pick between and nothing to remove, so it is one
+  // informational row rather than a manageable account.
+  if (row.source === "chain") {
+    return [
+      {
+        kind: "endpoint",
+        label: "Cloud credentials",
+        detail: row.credentialDetail ?? "resolved from the cloud credential chain",
+        active: true,
+      },
+    ];
+  }
 
   // The BYOP secure-store credential the gateway resolved (OAuth login or a
   // keychain-held key) -- always the one on the wire when present.

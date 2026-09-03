@@ -76,7 +76,13 @@ export async function runProviders(): Promise<void> {
       const endpoint = mergeLocalBaseUrls(config, secrets)[preset.id] ?? preset.baseUrl ?? "";
       status = faint(`local · ${endpoint}`);
     } else if (cred) {
-      const src = cred.meta?.source ?? (method === "oauth" ? "oauth" : "saved");
+      // A cloud-chain credential has no secret and no keychain entry — what is
+      // worth printing is WHERE the cloud chain found it ("profile default"),
+      // which `meta.detail` carries and which is never the credential itself.
+      const src =
+        cred.meta?.method === "chain"
+          ? (cred.meta.detail ?? "cloud credentials")
+          : (cred.meta?.source ?? (method === "oauth" ? "oauth" : "saved"));
       status = ok(`signed in · ${src}`);
     } else {
       status = dim("—");

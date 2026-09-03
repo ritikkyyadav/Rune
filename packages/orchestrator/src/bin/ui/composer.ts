@@ -963,8 +963,16 @@ export interface KeyRow {
   label: string;
   /** Masked key for display (never the raw secret); "" when unset. */
   masked: string;
-  /** Where the credential in use comes from (BYOP-aware: keychain/oauth too). */
-  source: "keychain" | "oauth" | "saved" | "env" | "none";
+  /**
+   * Where the credential in use comes from (BYOP-aware: keychain/oauth too).
+   * `chain` is an enterprise cloud route (Bedrock / Vertex / Azure with Entra):
+   * the machine's own AWS/GCP/Azure credentials, which Gear reads and never
+   * stores — so there is no key to mask and `credentialDetail` carries the
+   * secret-free description instead.
+   */
+  source: "keychain" | "oauth" | "saved" | "env" | "chain" | "none";
+  /** For sources with no maskable secret: where the credential was found. */
+  credentialDetail?: string;
   /** Usable now (has a key, or a configured/active local runtime). */
   hasKey?: boolean;
   /** How many keys are stored (0/1, or >1 for a multi-account pool). */
