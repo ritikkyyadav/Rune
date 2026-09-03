@@ -87,6 +87,44 @@ export interface GearConfig {
       model: string;
     };
   };
+  /**
+   * `[providers.<id>]` — per-route settings for the enterprise clouds.
+   *
+   * Deliberately a SEPARATE section from `[llm.<id>]`, which holds api keys.
+   * Nothing here is a secret: a region, a GCP project, an Azure endpoint and a
+   * deployment-name map are the coordinates of an account, so they belong in a
+   * `config.toml` a team checks in and shares — while the credential stays in
+   * the cloud's own chain and never enters a file Gear writes.
+   */
+  providers?: {
+    bedrock?: {
+      /** AWS region. Falls back to AWS_REGION, then the profile's region. */
+      region?: string;
+      /**
+       * Which cross-region inference profile family to prefix model ids with,
+       * or "none" to send them untouched. Defaults to the region's family.
+       */
+      inferenceProfile?: "us" | "eu" | "apac" | "none";
+    };
+    vertex?: {
+      /** GCP project id. Falls back to GOOGLE_CLOUD_PROJECT, then the credential's. */
+      project?: string;
+      /** Vertex location, e.g. "us-east5" or "global". Falls back to GOOGLE_CLOUD_LOCATION. */
+      location?: string;
+    };
+    "azure-openai"?: {
+      /** Resource endpoint, e.g. https://my-resource.openai.azure.com. */
+      endpoint?: string;
+      /** `api-version` query parameter. Defaults to a GA version, never a preview. */
+      apiVersion?: string;
+      /**
+       * `[providers.azure-openai.deployments]` — model id → the deployment name
+       * your resource actually has. Defaults to the model id itself, which is
+       * what Azure's portal names a deployment by default.
+       */
+      deployments?: Record<string, string>;
+    };
+  };
   permissions: {
     defaultLevel: "auto" | "confirm" | "sandbox";
     rules: PermissionRule[];

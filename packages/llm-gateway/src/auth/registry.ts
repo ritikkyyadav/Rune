@@ -8,10 +8,12 @@ import type { AuthMethod } from "@gear/shared";
 import type { AuthenticationStrategy } from "./types";
 import { ApiKeyStrategy } from "./api-key-strategy";
 import { LocalEndpointStrategy } from "./local-endpoint-strategy";
+import { CloudChainStrategy } from "./chain-strategy";
 import { makeOAuthStrategy, makeDeviceStrategy } from "./oauth-registry";
 
 const API_KEY = new ApiKeyStrategy();
 const LOCAL = new LocalEndpointStrategy();
+const CHAIN = new CloudChainStrategy();
 
 /**
  * Resolve the strategy for a (method, provider). Returns undefined when a
@@ -27,6 +29,11 @@ export function getStrategy(
       return API_KEY;
     case "local":
       return LOCAL;
+    // The cloud routes (bedrock / vertex / azure-openai) authenticate from the
+    // machine's own AWS/GCP/Azure credentials. One strategy covers all three
+    // because the shape is identical — probe, report, store nothing.
+    case "chain":
+      return CHAIN;
     case "oauth":
       return makeOAuthStrategy(providerId);
     case "device":

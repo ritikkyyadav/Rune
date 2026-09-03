@@ -27,6 +27,7 @@ import {
 import { PROVIDER_TIER_DEFAULTS } from "../../../packages/shared/src/tiers";
 import { defaultModelForProvider } from "../../../packages/llm-gateway/src/gateway";
 import { billingModeFor } from "../../../packages/llm-gateway/src/types";
+import { declaredCachePolicies } from "../../../packages/llm-gateway/src/providers/cache-policy";
 
 /** The ids a preset offers in the picker. */
 function catalogue(id: string): string[] {
@@ -132,5 +133,71 @@ describe("the dropped providers are gone from every table", () => {
 
   test.each(["lmstudio", "copilot"])("%s has no fallback model", (id) => {
     expect(defaultModelForProvider(id)).toBeUndefined();
+  });
+});
+
+describe("P10.5 — the tables are ONE generated source", () => {
+  // P8.6 folded `ollama-turbo` and left nine providers with a second copy of
+  // their ids in `PROVIDER_TIER_DEFAULTS` and the gateway's fallback table.
+  // P10.5 finished the fold: both tables are now projections of the presets, so
+  // these assertions are structural — a hand-maintained entry cannot come back
+  // without failing here.
+  test("every tier entry is projected from a preset that declares `tiers`", () => {
+    const declared = PROVIDER_PRESETS.filter((p) => p.tiers).map((p) => p.id);
+    expect(Object.keys(PROVIDER_TIER_DEFAULTS).sort()).toEqual(declared.sort());
+    for (const id of declared) {
+      expect(PROVIDER_TIER_DEFAULTS[id]).toEqual(getPreset(id)!.tiers!);
+    }
+  });
+
+  test("every fallback model is projected from a preset that declares one", () => {
+    for (const preset of PROVIDER_PRESETS) {
+      expect(defaultModelForProvider(preset.id)).toBe(preset.fallbackModel);
+    }
+  });
+
+  test("a provider with no tier entry has no preset tiers either", () => {
+    // The two ways of saying "fall through to the session model" must agree.
+    for (const preset of PROVIDER_PRESETS) {
+      if (!preset.tiers) expect(PROVIDER_TIER_DEFAULTS[preset.id]).toBeUndefined();
+    }
+  });
+});
+
+describe("P10.5 — the enterprise routes", () => {
+  /** Presets whose kind is a cloud route rather than a vendor's own API. */
+  const ENTERPRISE_KINDS = new Set(["bedrock", "vertex", "azure-openai"]);
+  const routes = PROVIDER_PRESETS.filter((p) => ENTERPRISE_KINDS.has(p.kind));
+
+  test("the enterprise routes are registered", () => {
+    expect(routes.length).toBeGreaterThan(0);
+  });
+
+  test.each(routes.map((p) => p.id))("%s declares its own tiers and fallback", (id) => {
+    // A cloud route's model ids are the cloud's, not the vendor's, so it cannot
+    // inherit anything — it must own every id it names.
+    const preset = getPreset(id)!;
+    expect(preset.tiers, `${id} has no tiers`).toBeDefined();
+    expect(preset.fallbackModel, `${id} has no fallback model`).toBeDefined();
+  });
+
+  test.each(routes.map((p) => p.id))("%s is funded capacity and metered billing", (id) => {
+    // The two questions must not contradict each other about the same account:
+    // a cloud account with committed spend has headroom AND a real bill.
+    expect(PROVIDER_CAPACITY[id]).toBe("funded");
+    expect(billingModeFor(id, getPreset(id)!.defaultModel)).toBe("metered");
+  });
+
+  test.each(routes.map((p) => p.id))("%s has a declared cache policy", (id) => {
+    // Absence falls to "none" silently, which would claim no cache for a route
+    // whose upstream definitely has one. The declaration has to be explicit.
+    expect(Object.keys(declaredCachePolicies())).toContain(id);
+  });
+
+  test.each(routes.map((p) => p.id))("%s authenticates without a stored secret", (id) => {
+    // The point of these routes: the machine's cloud login is the credential.
+    // A route that offered only `api_key` would be asking someone to paste a
+    // long-lived cloud credential into a coding tool.
+    expect(getPreset(id)!.auth).toContain("chain");
   });
 });

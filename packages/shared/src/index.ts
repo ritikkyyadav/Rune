@@ -97,6 +97,16 @@ export {
 } from "./secrets.js";
 export { type LastModel, getModelStatePath, loadLastModel, saveLastModel } from "./model-store.js";
 export {
+  type CachedModel,
+  MODEL_CACHE_TTL_MS,
+  getModelCachePath,
+  loadCachedModels,
+  saveCachedModels,
+  clearCachedModels,
+  cachedModelsAge,
+  describeAge,
+} from "./model-catalog.js";
+export {
   type SessionPrefs,
   getPrefsPath,
   loadPrefs,

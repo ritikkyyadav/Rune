@@ -27,19 +27,22 @@ the base URL.
 
 ### Declared policy per provider
 
-| Provider         | Adapter              | Policy                                       | Basis                                                                                                               |
-| ---------------- | -------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `anthropic`      | `AnthropicProvider`  | native `cache_control`                       | reference implementation; reads `cache_creation_input_tokens` / `cache_read_input_tokens`                           |
-| `openai`         | `OpenAIProvider`     | `prompt-cache-key`                           | documented automatic prefix caching over 1024 tokens, plus the documented routing field                             |
-| `openrouter`     | `OpenRouterProvider` | `anthropic-style` (Anthropic upstreams only) | measured 2026-08-26, see below                                                                                      |
-| `google`         | `GoogleProvider`     | `implicit`                                   | **measured 2026-09-02**: 99.7% hit rate with no cache handle                                                        |
-| `deepseek`       | `OpenAIProvider`     | `implicit`                                   | host documents automatic prefix caching                                                                             |
-| `groq`           | `OpenAIProvider`     | `implicit`                                   | host documents automatic prefix caching                                                                             |
-| `xai`            | `OpenAIProvider`     | `implicit`                                   | host documents automatic prefix caching                                                                             |
-| `ollama-turbo`   | `OpenAIProvider`     | `none`                                       | **measured 2026-09-02**: no cached tokens on an identical prefix                                                    |
-| `codex`          | `CodexProvider`      | server-side                                  | the Responses backend manages its own prefix reuse                                                                  |
-| `ollama` (local) | `OllamaProvider`     | KV cache, held by `keep_alive`               | local runtime; nothing is billed, but a dropped KV cache costs a full re-prefill                                    |
-| `custom`         | `OpenAIProvider`     | `none`                                       | a user-supplied endpoint could be anything; claiming a cache it may not have would put an invented number on screen |
+| Provider         | Adapter               | Policy                                       | Basis                                                                                                                             |
+| ---------------- | --------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `anthropic`      | `AnthropicProvider`   | native `cache_control`                       | reference implementation; reads `cache_creation_input_tokens` / `cache_read_input_tokens`                                         |
+| `openai`         | `OpenAIProvider`      | `prompt-cache-key`                           | documented automatic prefix caching over 1024 tokens, plus the documented routing field                                           |
+| `openrouter`     | `OpenRouterProvider`  | `anthropic-style` (Anthropic upstreams only) | measured 2026-08-26, see below                                                                                                    |
+| `google`         | `GoogleProvider`      | `implicit`                                   | **measured 2026-09-02**: 99.7% hit rate with no cache handle                                                                      |
+| `deepseek`       | `OpenAIProvider`      | `implicit`                                   | host documents automatic prefix caching                                                                                           |
+| `groq`           | `OpenAIProvider`      | `implicit`                                   | host documents automatic prefix caching                                                                                           |
+| `xai`            | `OpenAIProvider`      | `implicit`                                   | host documents automatic prefix caching                                                                                           |
+| `ollama-turbo`   | `OpenAIProvider`      | `none`                                       | **measured 2026-09-02**: no cached tokens on an identical prefix                                                                  |
+| `codex`          | `CodexProvider`       | server-side                                  | the Responses backend manages its own prefix reuse                                                                                |
+| `ollama` (local) | `OllamaProvider`      | KV cache, held by `keep_alive`               | local runtime; nothing is billed, but a dropped KV cache costs a full re-prefill                                                  |
+| `bedrock`        | `BedrockProvider`     | `anthropic-style`                            | documented `cache_control` support; the shared Anthropic adapter emits the breakpoints. **Not measured** — no AWS credential here |
+| `vertex`         | `VertexProvider`      | `anthropic-style`                            | same, for the Anthropic half; the Gemini half caches implicitly. **Not measured** — no GCP credential here                        |
+| `azure-openai`   | `AzureOpenAIProvider` | `prompt-cache-key`                           | the same automatic prefix caching and the same routing hint as first-party OpenAI. **Not measured** — no Azure resource here      |
+| `custom`         | `OpenAIProvider`      | `none`                                       | a user-supplied endpoint could be anything; claiming a cache it may not have would put an invented number on screen               |
 
 An id with no entry falls to `none`. That is deliberate: a provider added
 without a measurement should report "no data", never a hit rate it never earned.
@@ -108,6 +111,9 @@ Measured **2026-09-02**.
 | `anthropic`                 | `claude-haiku-4-5`        | native `cache_control`     | —                      | —                     | not measured | no credential                                    |
 | `openai`                    | `gpt-4o-mini`             | `prompt-cache-key`         | —                      | —                     | not measured | no credential                                    |
 | `deepseek` / `groq` / `xai` | —                         | implicit (documented)      | —                      | —                     | not measured | no credential                                    |
+| `bedrock`                   | —                         | `anthropic-style`          | —                      | —                     | not measured | no AWS credential on this machine                |
+| `vertex`                    | —                         | `anthropic-style`          | —                      | —                     | not measured | no GCP credential on this machine                |
+| `azure-openai`              | —                         | `prompt-cache-key`         | —                      | —                     | not measured | no Azure resource on this machine                |
 
 Live requests spent producing this table: **openrouter 5** (one refused 402,
 four served), **google 2**, **ollama-turbo 2**, **codex 1** (refused 429),
@@ -159,6 +165,255 @@ bill to buy 0.3%.
 
 Not built. Revisit only if a model in use is found whose implicit hit rate is
 poor and whose prefix is large and long-lived enough to amortise storage.
+
+---
+
+## Enterprise routes
+
+Three of the providers above are also reachable through a cloud account rather
+than the vendor's own console: **AWS Bedrock**, **Google Vertex AI** and **Azure
+OpenAI**. For a team, that is often the only way the models are reachable at
+all — the traffic has to stay inside an account with a signed agreement, a data
+residency commitment and an existing bill.
+
+Each route is an **auth-and-endpoint variant over the adapter it wraps**, not a
+new transport. The Messages body, the streaming grammar, the thinking
+parameters, the tool translation, the `cache_control` breakpoints and the usage
+accounting are the vendor's, unchanged, in one file. What each route owns is a
+URL shape and a way of proving who you are.
+
+That is a deliberate constraint, and it is why these landed as a few hundred
+lines each rather than three more adapters to keep in sync. Every future fix to
+Anthropic streaming reaches Bedrock and Vertex for free; a second copy of that
+parser would have drifted by the next model release.
+
+**None of them stores a credential.** They authenticate with the machine's own
+cloud chain — the same one `aws`, `gcloud` and `az` read — under a new auth
+method, `chain`. `gear login bedrock` therefore reports rather than prompts: it
+says whether the chain resolves and, when it does not, exactly which command
+fixes it. A tool asking someone to paste a long-lived cloud credential into its
+keychain would defeat the reason the route exists.
+
+```
+$ gear providers
+  ●  AWS Bedrock            chain    signed in · profile default
+```
+
+### AWS Bedrock (`bedrock`)
+
+Anthropic models through the Bedrock Messages API.
+
+```bash
+export AWS_PROFILE=work            # or AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+export AWS_REGION=us-east-1
+gear login bedrock                 # reports what the chain resolved; stores nothing
+gear use bedrock
+```
+
+```toml
+[providers.bedrock]
+region = "eu-central-1"
+inferenceProfile = "eu"   # "us" | "eu" | "apac" | "none"; defaults to the region's family
+```
+
+| Piece             | What Gear does                                                                                                                                                      |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Endpoint**      | `POST /model/{modelId}/invoke-with-response-stream` on `bedrock-runtime.<region>.amazonaws.com` (`/invoke` when not streaming)                                      |
+| **Body**          | the Anthropic Messages body with `model` and `stream` removed (the path says both) and `anthropic_version: "bedrock-2023-05-31"` added                              |
+| **Betas**         | an `anthropic-beta` header is translated into the body's `anthropic_beta` array, which is where Bedrock wants it — so interleaved thinking still works here         |
+| **Auth**          | SigV4 over the standard chain: env vars → `~/.aws/credentials` + `~/.aws/config` with `AWS_PROFILE` → web identity (`AWS_WEB_IDENTITY_TOKEN_FILE`) → container role |
+| **Streaming**     | the `vnd.amazon.eventstream` framing is decoded and re-emitted as SSE, so the shared Anthropic parser reads it unchanged                                            |
+| **Errors**        | AWS answers `{"message": …}` with the class in `x-amzn-errortype`; both are re-shaped into Anthropic's error envelope so a 403 does not surface as an empty string  |
+| **`countTokens`** | estimated locally — Bedrock has no count-tokens endpoint, and a 404 per measurement is worse than an estimate                                                       |
+| **`healthCheck`** | "do credentials resolve", never a real completion. A probe that spends money is a bill, not a probe                                                                 |
+| **Discovery**     | `gear models bedrock` calls ListFoundationModels on the control plane                                                                                               |
+
+**IMDS is deliberately not in the chain.** The instance metadata service is the
+SDKs' last rung, and off EC2 it is a request to a link-local address that never
+answers — a timeout plus retries on every cold start. Gear resolves credentials
+on the _no-credential_ path too (`gear providers` has to print an honest row),
+so the probe is omitted. Anything running on EC2 with an instance role can
+export the standard variables or name a profile; containers are covered by the
+container-credentials rung, which is the case that matters in CI.
+
+**Model ids are cross-region inference profiles.** Current Anthropic models on
+Bedrock are not invokable by their bare foundation-model id; they need a
+geography prefix (`us.anthropic.claude-sonnet-4-5-20250929-v1:0`) and a `us.`
+id is rejected outside US regions. Gear ships one catalogue of `us.` ids and
+rewrites the prefix to match the configured region, so an account in Frankfurt
+reaches `eu.` models without a second copy of every row in the picker. Ids that
+genuinely _are_ on-demand (the 3.5 line) carry no prefix and never gain one —
+adding one would turn a working call into "model not found". Set
+`inferenceProfile = "none"` to send ids untouched.
+
+**What is proven, and what is not.** There is no AWS credential on this machine,
+so nothing here has made a live Bedrock call. What _is_ proven, by
+`tests/unit/gateway/`:
+
+- the SigV4 signer against AWS's own published vectors — the documented
+  signing-key derivation plus the `get-vanilla`, `post-vanilla` and
+  `get-vanilla-query-order-key-case` cases, asserted at the canonical request,
+  the string to sign, and the signature;
+- the event-stream decoder against recorded frames, including a frame split
+  across reads and a corrupted checksum, with CRC-32 checked against the
+  universal `crc32("123456789") == 0xCBF43926`;
+- the request Gear builds — path, body, signed headers, no `x-api-key` — and a
+  recorded response streaming back through the Anthropic parser with its usage
+  and cache counters intact;
+- the credential chain, rung by rung, against injected files and fetch.
+
+What is **not** proven is that AWS accepts it. `GEAR_LIVE_BEDROCK=1 bun test
+tests/integration/enterprise-providers.test.ts` runs that check on a machine
+that has a credential, and skips with a printed reason on one that does not.
+
+### Google Vertex AI (`vertex`)
+
+Anthropic **and** Gemini on one GCP project — the only route that serves two
+families, because Vertex does.
+
+```bash
+gcloud auth application-default login   # or GOOGLE_APPLICATION_CREDENTIALS=key.json
+export GOOGLE_CLOUD_PROJECT=my-project
+gear login vertex
+gear use vertex
+```
+
+```toml
+[providers.vertex]
+project = "my-project"
+location = "us-east5"     # or "global"
+```
+
+| Piece             | What Gear does                                                                                                                                                |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Routing**       | by model id: `claude…` → the Anthropic publisher, `gemini…` → Google's. Anything else is a 404 that says so rather than a guess that 404s somewhere confusing |
+| **Anthropic**     | `POST …/publishers/anthropic/models/{model}:streamRawPredict`, body carrying `anthropic_version: "vertex-2023-10-16"` and no `model`                          |
+| **Gemini**        | `POST …/publishers/google/models/{model}:streamGenerateContent?alt=sse`, body identical to AI Studio's                                                        |
+| **Auth**          | `Authorization: Bearer` from ADC — a service-account JSON exchanged via a signed RS256 JWT, the gcloud ADC file's refresh token, or the metadata server       |
+| **Streaming**     | already SSE. Nothing to decode; this route is simpler than Bedrock by exactly one decoder                                                                     |
+| **Model ids**     | Anthropic on Vertex is `claude-sonnet-4-5@20250929`; Gemini keeps its plain id                                                                                |
+| **Discovery**     | `gear models vertex` lists BOTH publishers, adding the `@version` suffix Anthropic ids need to be invokable                                                   |
+| **`healthCheck`** | "is there a project and does ADC resolve" — both things a user can act on, neither costing a token                                                            |
+
+**The token is a header, never a query parameter.** AI Studio takes `?key=`;
+Vertex takes a bearer. Gear's Google adapter now decides between the two from
+its auth mode rather than always appending the key — a short-lived OAuth token
+in a query string would be written into every access log between here and
+Google.
+
+**The metadata rung is bounded to one second** and honours Google's own
+`NO_GCE_CHECK` opt-out. Off GCE that address does not answer, and
+`gear providers` asks this question on the no-credential path.
+
+**Two failures are turned into messages you can act on.** No credential is a 401
+naming `gcloud auth application-default login`; no project is a 400 naming
+`GOOGLE_CLOUD_PROJECT`. Vertex's own answer to a projectless URL is a 404 about
+a malformed resource name, which sends people looking in the wrong place.
+
+**What is proven, and what is not.** No GCP credential exists on this machine.
+Proven by `tests/unit/gateway/`: the assertion JWT — header, claims and a
+signature verified by `node:crypto` against the public half of a generated key
+pair, plus a tampered-claims negative; the full ADC chain against injected files
+and fetch; the URL, body, headers and streamed events of both halves against
+recorded responses; and both failure messages. Not proven: that Google accepts
+it. `GEAR_LIVE_VERTEX=1` runs that.
+
+### Azure OpenAI (`azure-openai`)
+
+The same OpenAI models on an Azure resource, addressed by **deployment name**.
+
+```bash
+export AZURE_OPENAI_ENDPOINT=https://my-resource.openai.azure.com
+export AZURE_OPENAI_API_KEY=...       # or AZURE_OPENAI_AD_TOKEN for Entra ID
+gear login azure-openai
+gear use azure-openai
+```
+
+```toml
+[providers.azure-openai]
+endpoint = "https://my-resource.openai.azure.com"
+apiVersion = "2024-10-21"
+
+[providers.azure-openai.deployments]
+# model id → the deployment name YOUR resource has. Omit any that match.
+"gpt-4o" = "prod-chat"
+"gpt-4o-mini" = "cheap-chat"
+```
+
+| Piece               | What Gear does                                                                                                                                        |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Endpoint**        | `POST {endpoint}/openai/deployments/{deployment}/chat/completions?api-version=…`                                                                      |
+| **Deployments**     | the catalogue lists MODEL ids (what a person picks); `[providers.azure-openai.deployments]` maps each to a deployment, defaulting to the id itself    |
+| **`api-version`**   | a **GA** version by default, never a preview — previews are withdrawn on a schedule, and a withdrawn default breaks every user at once                |
+| **Auth**            | `api-key: <resource key>`, or `Authorization: Bearer` from `AZURE_OPENAI_AD_TOKEN`. The SDK's own placeholder header is stripped, so only one is sent |
+| **Everything else** | inherited from `OpenAIProvider`: tool calls, vision, the gpt-5/o-series parameter swap, `prompt_cache_key`, the usage trailer, the reasoning dial     |
+| **Discovery**       | `gear models azure-openai` lists the deployments the RESOURCE has — a different question from "what does Azure offer", and the useful one             |
+
+**The endpoint is normalized.** Pasting the full chat-completions URL out of the
+portal gives you the origin rather than a doubled `/openai` path and a 404 on a
+path nobody typed.
+
+**The reasoning dial follows the MODEL, not the deployment.** A deployment named
+`prod-chat` serving `gpt-5` still gets `reasoning_effort`, because
+`reasoningEffortsFor` is asked about the model id — the deployment name is a
+routing detail that never reaches the parameter decision.
+
+**What is proven, and what is not.** No Azure resource exists on this machine.
+Proven by `tests/unit/gateway/azure-openai.test.ts`: the deployment path and
+api-version, the mapping and its default, both credential headers and the
+stripping of the placeholder, endpoint normalization, the inherited
+`prompt_cache_key`, a recorded stream parsed back into events with the cached
+tokens subtracted from the prompt count, both failure messages, and deployment
+discovery with failed deployments filtered out. Not proven: that Azure accepts
+it. `GEAR_LIVE_AZURE_OPENAI=1` runs that.
+
+---
+
+## Live model discovery
+
+`gear models <provider>` asks the provider's own list endpoint what it serves,
+because a hand-maintained catalogue rots and this repo has lost runs to exactly
+that: `qwen3-coder:480b` and its announced successor both 410'd on the same day,
+and two OpenRouter `:free` ids were withdrawn to paid without notice. Live
+discovery is the answer the presets structurally cannot give.
+
+Every provider with a list endpoint now has one wired:
+
+| Provider         | Endpoint                                | Notes                                                                              |
+| ---------------- | --------------------------------------- | ---------------------------------------------------------------------------------- |
+| `anthropic`      | `/v1/models`                            | display names included                                                             |
+| `openai`         | `/v1/models`                            | shared by every OpenAI-compatible host (groq, xai, deepseek, ollama-turbo, custom) |
+| `openrouter`     | `/api/v1/models`                        | its own adapter, its own health check                                              |
+| `google`         | `models.list`                           | filtered to `generateContent`-capable models                                       |
+| `ollama` (local) | `/api/tags`, then `/api/show` per model | reports each model's REAL context window                                           |
+| `codex`          | the plan's allowlist                    |                                                                                    |
+| `bedrock`        | `ListFoundationModels`                  | Anthropic + streaming only; profile-only ids come back geo-prefixed                |
+| `vertex`         | `publishers/{anthropic,google}/models`  | both publishers, with the `@version` suffix Anthropic ids need                     |
+| `azure-openai`   | `/openai/deployments`                   | what the RESOURCE has, not what Azure offers; failed deployments filtered out      |
+
+The result is **cached for an hour** in `~/.gear/model-cache.json`. An hour is
+chosen against the failure it protects against: model catalogues change on the
+order of weeks, so a stale row costs one confusing `/model` pick that the next
+refresh fixes, while an uncached list costs a network round trip every time
+someone opens a picker. `gear models <provider> --refresh` forces a call.
+
+The cache holds **model ids and labels only** — no credential, no endpoint,
+nothing account-specific beyond which models that account can see — and a
+corrupt or unwritable cache is an empty cache, never a failed command.
+
+Every listing says where it came from, because the three answers are different
+facts:
+
+```
+  AWS Bedrock models  (live)
+  AWS Bedrock models  (cached · 12 minutes ago)
+  AWS Bedrock models  (curated — sign in for live discovery)
+  live discovery unavailable: No AWS credentials found. Run `aws configure` …
+```
+
+The last line matters: a silent fallback to the curated list is how someone
+spends ten minutes wondering why a deployment they just created is missing from
+a list that quietly stopped asking.
 
 ---
 

@@ -7,6 +7,9 @@
 import {
   LlmGateway,
   AnthropicProvider,
+  BedrockProvider,
+  VertexProvider,
+  AzureOpenAIProvider,
   OpenAIProvider,
   OpenRouterProvider,
   GoogleProvider,
@@ -71,6 +74,24 @@ export interface BuildGatewayOpts {
    * without this map is byte-identical to before BYOP.
    */
   credentials?: Record<string, ResolvedCredential>;
+  /**
+   * `[providers.<id>]` — per-route settings for the enterprise clouds (region,
+   * project, endpoint, deployment names). Separate from `keys` because none of
+   * these is a secret: they are the coordinates of an account, and they belong
+   * in a checked-in `config.toml` where a team can share them.
+   */
+  routes?: EnterpriseRouteConfig;
+}
+
+/** `[providers.*]` in config.toml — coordinates, never credentials. */
+export interface EnterpriseRouteConfig {
+  bedrock?: { region?: string; inferenceProfile?: "us" | "eu" | "apac" | "none" };
+  vertex?: { project?: string; location?: string };
+  "azure-openai"?: {
+    endpoint?: string;
+    apiVersion?: string;
+    deployments?: Record<string, string>;
+  };
 }
 
 /**
@@ -129,6 +150,65 @@ export function buildGateway(opts: BuildGatewayOpts): LlmGateway {
             cacheBreakpoints: cacheBreakpointPolicyFor(preset.id),
           }),
         );
+      continue;
+    }
+
+    // ─── Enterprise cloud routes ───
+    // There is no key to resolve: AWS signs each request from the machine's own
+    // credential chain, so what decides registration is whether that chain
+    // resolved (`resolveProviderCredentials` probed it) — plus one deliberate
+    // exception. A route that IS the active provider registers even when the
+    // chain came back empty, so the first request fails with the adapter's
+    // actionable message ("No AWS credentials found. Run `aws configure`…")
+    // rather than the gateway's "provider not registered", which tells a user
+    // nothing about what to do next.
+    if (preset.kind === "bedrock") {
+      const resolved = !!opts.credentials?.[preset.id];
+      if (!resolved && opts.provider !== preset.id) continue;
+      gw.registerProvider(
+        new BedrockProvider({
+          env,
+          ...(opts.routes?.bedrock?.region ? { region: opts.routes.bedrock.region } : {}),
+          ...(opts.routes?.bedrock?.inferenceProfile
+            ? { inferenceProfile: opts.routes.bedrock.inferenceProfile }
+            : {}),
+        }),
+      );
+      continue;
+    }
+
+    if (preset.kind === "vertex") {
+      const resolved = !!opts.credentials?.[preset.id];
+      if (!resolved && opts.provider !== preset.id) continue;
+      gw.registerProvider(
+        new VertexProvider({
+          env,
+          ...(opts.routes?.vertex?.project ? { project: opts.routes.vertex.project } : {}),
+          ...(opts.routes?.vertex?.location ? { location: opts.routes.vertex.location } : {}),
+        }),
+      );
+      continue;
+    }
+
+    // Azure is the one cloud route with a real static credential, so it
+    // registers on the SAME rule as every keyed provider: a resolved key (from
+    // the credential store, config, or AZURE_OPENAI_API_KEY), an ambient Entra
+    // token, or being the active provider so the error is actionable.
+    if (preset.kind === "azure-openai") {
+      const azure = opts.routes?.["azure-openai"];
+      const cred = opts.credentials?.[preset.id];
+      const key = cred?.secret ?? resolveKey(preset.id, preset.envVar, opts.keys, env);
+      if (!key && !env.AZURE_OPENAI_AD_TOKEN && opts.provider !== preset.id) continue;
+      gw.registerProvider(
+        new AzureOpenAIProvider({
+          env,
+          ...(key && cred?.kind !== "bearer" ? { apiKey: key } : {}),
+          ...(cred?.kind === "bearer" && cred.secret ? { entraToken: cred.secret } : {}),
+          ...(azure?.endpoint ? { endpoint: azure.endpoint } : {}),
+          ...(azure?.apiVersion ? { apiVersion: azure.apiVersion } : {}),
+          ...(azure?.deployments ? { deployments: azure.deployments } : {}),
+        }),
+      );
       continue;
     }
 
@@ -298,9 +378,16 @@ export interface ProviderStatusRow {
    * "none" = no credential. Reflects what the gateway will really use, not just
    * the legacy key sources.
    */
-  source: "keychain" | "oauth" | "saved" | "env" | "none";
-  /** The auth method in effect (api_key / oauth / device / local), when known. */
+  source: "keychain" | "oauth" | "saved" | "env" | "chain" | "none";
+  /** The auth method in effect (api_key / oauth / device / local / chain), when known. */
   authMethod?: AuthMethod;
+  /**
+   * A secret-free description of the credential in use, for the sources where
+   * a mask says nothing. `chain` credentials have no secret to mask — the
+   * useful fact is WHERE the cloud chain found it ("profile default", "service
+   * account", "Entra token"), which is what this carries.
+   */
+  credentialDetail?: string;
   /** Masked key for display (never the raw secret). */
   masked: string;
   disabled: boolean;
@@ -380,6 +467,27 @@ export function providerStatus(opts: ProviderStatusOpts): ProviderStatusRow[] {
     // A BYOP-resolved credential (keychain / OAuth) is what the gateway actually
     // uses — it wins the display over the raw env/secrets view.
     const cred = opts.credentials?.[p.id];
+
+    // A cloud-chain credential has no secret at all: AWS/GCP re-authenticate
+    // per request. `hasKey` is still true — the question that field answers is
+    // "can this provider be used?", and it can. Reporting it as keyless-and-
+    // unusable is what would put a wrong row on screen.
+    if (cred && cred.meta?.method === "chain") {
+      return {
+        id: p.id,
+        label: p.label,
+        hasKey: true,
+        keyCount: 0,
+        savedKeys: [],
+        source: "chain" as const,
+        authMethod: "chain" as AuthMethod,
+        ...(cred.meta.detail ? { credentialDetail: cred.meta.detail } : {}),
+        masked: "",
+        disabled: disabled.has(p.id),
+        active: p.id === opts.active,
+      };
+    }
+
     if (cred?.secret) {
       const method = (cred.meta?.method as AuthMethod | undefined) ?? "api_key";
       const credSource: ProviderStatusRow["source"] =

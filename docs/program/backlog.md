@@ -203,3 +203,25 @@ Found 2026-09-03 by P10.4 (verifier ecosystems):
   `./gradlew classes` and `./mvnw compile` are asserted as strings and never
   executed anywhere. A gated CI job with a warm Gradle/Maven cache would close
   it — found in P10.4
+- `packages/orchestrator/src/bin/byop-cli-shared.ts:42` `readAuthOverrides` walks
+  a HARDCODED list of five provider ids (`anthropic, openai, openrouter, google,
+ollama`), so `[llm.<id>] authentication = "…"` is silently ignored for every
+  other provider — codex, ollama-turbo, groq, xai, deepseek, and the three new
+  enterprise routes. The valid-method set beside it was widened for `chain`, but
+  the id list was not; it should iterate `PROVIDER_PRESETS` instead. A config key
+  that parses and does nothing is the failure mode `normalizeFallbackOrder` was
+  written to avoid — found in P10.5
+- `packages/shared/src/config.ts:18` `GearConfig.llm.defaultProvider` is a
+  hand-written union of provider ids that has now drifted three times: it was
+  missing groq/xai/deepseek/custom before P8, still omits `codex`, and now omits
+  `bedrock`, `vertex` and `azure-openai`. So `[llm] defaultProvider = "bedrock"`
+  in config.toml is a type error even though the provider exists and works. It
+  should be `ProviderName`, or derived from `PROVIDER_PRESETS` the way the tier
+  and fallback tables now are. (`gear use bedrock` works — it writes the model
+  sidecar, not this key — which is why the gap is easy to miss.) Distrust
+  hand-written provider unions; this is the third one — found in P10.5
+- `scripts/verify-cache.ts` has no construction site for the three enterprise
+  routes, so `--provider bedrock|vertex|azure-openai` cannot run even on a
+  machine that HAS the credential. The cache-policy rows for all three are
+  therefore documented-but-unmeasured with no way to promote them without
+  editing the script first — found in P10.5

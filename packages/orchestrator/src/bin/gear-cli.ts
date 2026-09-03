@@ -1051,6 +1051,12 @@ async function main() {
     // Local runtime base URLs (ollama): config.toml defaults + /keys edits.
     localBaseUrls: resolveLocalBaseUrls(config, secrets),
     ollamaKeepAlive: config.llm.ollama?.keepAlive,
+    // `[providers.*]` — the enterprise routes' coordinates (AWS region, GCP
+    // project, Azure endpoint + deployment names). Threaded here as well as in
+    // `gear models`, because a session that boots on `bedrock` needs the same
+    // region the discovery command used; the two disagreeing about the same
+    // account is exactly the drift this program keeps finding.
+    providerRoutes: config.providers,
     search: config.search,
     research: config.research,
     memory: config.memory,
@@ -2268,7 +2274,11 @@ async function main() {
           const keyState =
             r.source === "none"
               ? faint("no key".padEnd(10))
-              : muted((r.source === "saved" ? "key" : r.source).padEnd(10));
+              : muted(
+                  (r.source === "saved" ? "key" : r.source === "chain" ? "cloud" : r.source).padEnd(
+                    10,
+                  ),
+                );
           const state = r.disabled
             ? warn("off")
             : r.active
