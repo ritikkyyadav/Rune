@@ -1,0 +1,70 @@
+{
+  "name": "greenfield",
+  "description": "Build a new feature in four owned slices — backend, frontend, docs, tests — each in its own git worktree, then integrate and check the seams nobody owned.",
+  "maxParallel": 4,
+  "nodes": [
+    {
+      "id": "shape",
+      "kind": "task",
+      "label": "shape the work",
+      "tier": "heavy",
+      "effort": "thorough",
+      "prompt": "Read the repository and decide the SHAPE of the feature described in the session. Produce four things, each in its own section, and nothing else:\n\n1. THE SEAM — the exact module boundary between backend and frontend: the function or endpoint signatures, the request and response types, and the error cases. Every later step depends on this being decided ONCE, here, rather than negotiated four ways in parallel.\n2. FILES — which paths each slice owns. A path belongs to exactly one slice; if two slices need the same file, that is a sign the seam is in the wrong place, so move the seam rather than sharing the file.\n3. EXISTING PATTERNS — the files a new module in this repository should be modelled on, with paths.\n4. WHAT IS OUT OF SCOPE — what a reasonable person might build here that this feature does NOT include.\n\nDo not write any code."
+    },
+    {
+      "id": "backend",
+      "kind": "worker",
+      "label": "backend slice",
+      "dependsOn": ["shape"],
+      "files": ["src/server/**", "src/api/**"],
+      "tier": "heavy",
+      "effort": "thorough",
+      "prompt": "Build the BACKEND slice of the feature, and only that slice. Implement the seam below exactly as specified — its signatures, its types and its error cases are a contract three other workers are building against right now, so changing it is not a local decision. Run the project's own checks in your worktree before you finish. Report what you built and, precisely, any place where you could not honour the seam.\n\n{{shape}}"
+    },
+    {
+      "id": "frontend",
+      "kind": "worker",
+      "label": "frontend slice",
+      "dependsOn": ["shape"],
+      "files": ["src/client/**", "src/components/**"],
+      "tier": "heavy",
+      "effort": "thorough",
+      "prompt": "Build the FRONTEND slice of the feature, and only that slice. Call the seam below as specified; do NOT read the backend's implementation and do not adapt to what you imagine it does — if the seam is underspecified, implement against what it says and report the ambiguity. Run the project's own checks in your worktree before you finish.\n\n{{shape}}"
+    },
+    {
+      "id": "tests",
+      "kind": "worker",
+      "label": "tests slice",
+      "dependsOn": ["shape"],
+      "files": ["tests/**"],
+      "prompt": "Write the tests for the feature, from the SEAM below rather than from anyone's implementation — a test written against an implementation asserts what the code does, which is the one thing a test must never be used to prove. Cover the error cases the seam names, not only the happy path. These tests may fail until the slices merge; that is expected and is not a reason to weaken them.\n\n{{shape}}"
+    },
+    {
+      "id": "docs",
+      "kind": "worker",
+      "label": "docs slice",
+      "dependsOn": ["shape"],
+      "files": ["docs/**", "README.md"],
+      "prompt": "Document the feature from the seam below: what it is for, how it is used, and what it deliberately does not do (the out-of-scope section is part of the documentation, not a note to yourself). Update any existing prose this feature makes wrong — a stale doc is a defect.\n\n{{shape}}"
+    },
+    {
+      "id": "integrate",
+      "kind": "worker",
+      "label": "integrate the slices",
+      "dependsOn": ["backend", "frontend", "tests", "docs"],
+      "files": ["src/**", "tests/**"],
+      "tier": "heavy",
+      "effort": "thorough",
+      "retry": 2,
+      "prompt": "Four workers built four slices in four separate worktrees, against one seam. Make them one working feature: reconcile the places where any of them reports it could not honour the seam, wire the slices together, and get the project's own checks passing on the combined tree. Report every place where a slice's own claim turned out not to hold once it met the others — that list is the real output of this step, and the reason it is a step at all.\n\n{{backend}}\n\n{{frontend}}\n\n{{tests}}\n\n{{docs}}"
+    },
+    {
+      "id": "seams",
+      "kind": "task",
+      "label": "check the seams",
+      "dependsOn": ["integrate"],
+      "tier": "heavy",
+      "prompt": "The feature is integrated. Read the combined result and check the one thing parallel workers structurally cannot check: what falls BETWEEN the owned slices. Duplicated logic that should be shared, a type the two sides now define twice and differently, an error case handled on one side of the seam and swallowed on the other, a documented behaviour no test covers. Cite file:line. Confirm which of the project's checks actually ran and passed — 'checks pass' with nothing behind it is not evidence."
+    }
+  ]
+}

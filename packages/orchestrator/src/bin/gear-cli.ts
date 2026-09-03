@@ -167,6 +167,7 @@ const { values, positionals } = parseArgs({
     state: { type: "string" },
     "max-parallel": { type: "string" },
     mock: { type: "boolean", default: false },
+    "stop-after": { type: "string" },
     // `gear login`: pick an auth method / migrate legacy keys.
     method: { type: "string" },
     migrate: { type: "boolean", default: false },
