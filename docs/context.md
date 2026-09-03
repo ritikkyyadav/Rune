@@ -108,10 +108,33 @@ Numbers, before and after, live in [`benchmarks.md`](benchmarks.md) under
 
 `gear audit` prints a **Context** section for a session: per-turn occupancy
 against the model's window, the share served from cache, and every compaction
-with its before/after sizes and what it dropped. It is read from the persisted
-usage rows, not from a live counter — the process holding a counter is often the
-one that died. A turn whose provider reported no usage renders as `no data`,
-never as zero.
+with its before/after sizes, what it dropped and what asked for it. It is read
+from the persisted usage rows, not from a live counter — the process holding a
+counter is often the one that died.
+
+```
+  Context  23 turns measured · peak 82% of 100,000 (81,600) · last 82% · cache 75% · window assumed for some turns
+    #97    ███████···  72% 71,700 / 100,000 · cache 75% (window assumed)
+    #103   ████████··  75% 75,000 / 100,000 · cache 75% (window assumed)
+    #113   ████████··  82% 81,600 / 100,000 · cache 75% (window assumed)
+    #52    compacted 25,591 → 17,735 (-31%) · old tool-result bodies, kept as excerpts · auto (high-water mark, 30% tail)
+    #74    compacted 17,635 → 10,772 (-39%) · 25 messages folded into the merged state · requested (compact_context, cuts to the recent exchange)
+```
+
+A turn whose provider reported no usage renders as `no data`, never as zero, and
+the whole section says so when no turn reported anything:
+
+```
+  Context  23 turns · no data — no provider on this run reported input usage
+```
+
+Two honesty notes are carried rather than smoothed over. **"window assumed"**
+marks turns whose model matched no rule in the window table, so the denominator
+is the conservative default rather than a known number. And a compaction's tail
+is only comparable to another's when the same policy sized it, which is why the
+trigger is on the line: `auto` keeps 30%, `requested` and `overflow` cut to the
+recent exchange. Rows written before this landed say "trigger not recorded"
+instead of being assigned one.
 
 ## Provider-side context editing
 

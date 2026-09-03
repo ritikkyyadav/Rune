@@ -116,5 +116,7 @@ gear audit last
 
 prints one page for a session: goal, plan with receipts and unproven marks,
 the log, runs and early terminations, tools and failures, safety decisions
-with their reasons, held steps, harness gates that fired, and cost. It opens
-`~/.gear/gear.db` read-only — no engine, no provider, instant.
+with their reasons, held steps, harness gates that fired, context utilization
+per turn with every compaction, and cost. It opens `~/.gear/gear.db` read-only
+— no engine, no provider, instant. See [`context.md`](context.md) for what the
+**Context** section means.
