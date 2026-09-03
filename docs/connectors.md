@@ -278,11 +278,19 @@ A plugin is one installable bundle of the four extension kinds:
 ```
 
 ```
+gear plugin search fmt                    what exists, per the index
+gear plugin add gear-example-skills       a name, resolved through the index
 gear plugin add ./my-plugin              a local path
 gear plugin add https://github.com/…      a git repository
 gear plugin add @scope/gear-plugin-x      an npm package
 gear plugin list / remove / enable / disable
 ```
+
+The index (`plugins/index.json`, or `[extensions] index` / `GEAR_PLUGIN_INDEX`
+pointing elsewhere) is versioned, schema-validated, and carries an sha256 per
+entry that is verified against the staged bundle before installation. It caches
+to `~/.gear/plugin-index.json` and falls back to the copy shipped with the
+build when the network is unreachable. Full reference: [plugins.md](plugins.md).
 
 Plugins existed as this convention with no way to get a directory there, and
 `PluginDiscovery.errors` were computed on every scan and shown nowhere — so an

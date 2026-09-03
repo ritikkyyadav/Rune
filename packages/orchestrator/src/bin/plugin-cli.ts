@@ -1,17 +1,20 @@
-// ─── `gear plugin`: install a bundle from a path, a git URL, or npm ───
+// ─── `gear plugin`: search the index, install from it, or from a path/URL ───
 //
 // Plugins existed as a directory convention with no way to get a directory
 // there: `PluginDiscovery.errors` were computed and never shown, so a refused
 // plugin was indistinguishable from one nobody had installed.
 //
+//   gear plugin search fmt               what exists, per the index
+//   gear plugin add gear-example-skills   a name, resolved through the index
 //   gear plugin add ./my-plugin          a local path
 //   gear plugin add https://github.com/…  a git repository
 //   gear plugin add @scope/gear-plugin-x  an npm package
 //   gear plugin list                      what is installed, and what was refused
 //
-// Per D6, v1 plugins are DECLARATIVE: skills, commands, MCP servers, hooks.
-// Nothing here installs executable tools — a manifest's `permissions` block is
-// disclosure, not a sandbox, and running a stranger's code needs the latter.
+// A name resolved through the index is verified against the digest the index
+// published, BEFORE installation rewrites the manifest — installation stamps
+// `name` and `source` into plugin.json and recomputes the digest, so there is
+// exactly one honest moment to compare the published hash against the bytes.
 
 import {
   cpSync,
@@ -24,7 +27,7 @@ import {
 } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { workspaceConfigPath } from "@gear/shared";
+import { loadConfig, workspaceConfigPath } from "@gear/shared";
 import {
   discoverPlugins,
   computeIntegrity,
@@ -32,6 +35,16 @@ import {
   GEAR_VERSION,
   type PluginManifest,
 } from "../plugins";
+import {
+  entryFitsThisGear,
+  entrySourceSpec,
+  loadPluginIndex,
+  resolvePluginIndexEntry,
+  searchPluginIndex,
+  verifyIndexIntegrity,
+  type PluginIndexEntry,
+  type PluginIndexLoad,
+} from "../plugin-index";
 import { accent, danger, dim, faint, ok, text, warn } from "./ui/theme";
 import { glyph } from "./ui/glyphs";
 
@@ -43,22 +56,60 @@ const say = (line = ""): void => {
 function usage(): void {
   say();
   say(
-    `${accent("gear plugin")} ${dim("— install a bundle of skills, commands, connectors and hooks")}`,
+    `${accent("gear plugin")} ${dim("— install a bundle of skills, commands, connectors, hooks and tools")}`,
   );
   say();
   say(`${text("Commands")}`);
-  say(`  ${accent("add")} <path|git-url|npm-package> ${dim("[--name N]")}`);
+  say(`  ${accent("search")} ${dim("[text]")}`);
+  say(`  ${accent("add")} <name|path|git-url|npm-package> ${dim("[--name N] [--index REF]")}`);
   say(`  ${accent("remove")} <name>`);
   say(`  ${accent("list")}`);
   say(`  ${accent("enable")} <name> ${dim(" / ")} ${accent("disable")} <name>`);
   say();
-  say(`  ${faint("v1 plugins are declarative: skills, commands, MCP servers, hooks. Executable")}`);
-  say(`  ${faint("tools stay first-party until they run under the sandbox as subprocesses.")}`);
+  say(`  ${faint("A bare name resolves through the plugin index and is verified against the")}`);
+  say(`  ${faint("digest it publishes. Point elsewhere with --index, [extensions] index, or")}`);
+  say(`  ${faint("GEAR_PLUGIN_INDEX.")}`);
   say();
 }
 
 function workspaceOf(values: Record<string, unknown>): string {
   return typeof values.workspace === "string" ? values.workspace : process.cwd();
+}
+
+/**
+ * Which index to read: an explicit `--index`, then the environment, then
+ * `[extensions] index`, then nothing (the module's public default).
+ */
+function indexRefOf(values: Record<string, unknown>): string | undefined {
+  if (typeof values.index === "string" && values.index.trim()) return values.index.trim();
+  const fromEnv = process.env.GEAR_PLUGIN_INDEX;
+  if (fromEnv && fromEnv.trim()) return fromEnv.trim();
+  try {
+    const configured = loadConfig(workspaceOf(values)).extensions?.index;
+    if (typeof configured === "string" && configured.trim()) return configured.trim();
+  } catch {
+    // A broken config must not make `plugin search` unusable.
+  }
+  return undefined;
+}
+
+/**
+ * Where the list came from, and whether it is current. Named precisely: a
+ * cached copy and the copy that shipped with this build are both "not fresh",
+ * and telling them apart is the difference between "your network is down" and
+ * "this build has never reached the index".
+ */
+function indexStaleness(load: PluginIndexLoad): string {
+  if (!load.stale) return "";
+  if (load.originKind === "cache") return warn(" · offline, last fetched copy");
+  if (load.originKind === "bundled") return warn(" · offline, the copy shipped with Gear");
+  return warn(" · not current");
+}
+
+function sayIndexProvenance(load: PluginIndexLoad): void {
+  if (!load.origin) return;
+  const age = load.fetchedAt ? ` · ${load.fetchedAt.slice(0, 16).replace("T", " ")}` : "";
+  say(`  ${faint(load.origin)}${dim(age)}${indexStaleness(load)}`);
 }
 
 function pluginsRoot(workspaceRoot: string): string {
@@ -158,19 +209,109 @@ async function stage(source: Source): Promise<{ dir: string } | { error: string 
   return { dir: existsSync(inner) ? inner : extracted };
 }
 
+// ─── search ───
+
+/** The capability list, shortest-first, so the executable ones stand out. */
+function capabilityLine(entry: PluginIndexEntry): string {
+  return entry.capabilities
+    .map((cap) => (cap.startsWith("tools:") ? warn(cap) : dim(cap)))
+    .join(dim(" · "));
+}
+
+async function cmdSearch(args: string[], values: Record<string, unknown>): Promise<number> {
+  const query = args.join(" ").trim();
+  const load = await loadPluginIndex({ ref: indexRefOf(values) });
+  say();
+  if (!load.index) {
+    say(`  ${danger(glyph("failure"))} no plugin index available`);
+    for (const err of load.errors) say(`    ${faint(err)}`);
+    say();
+    return 1;
+  }
+
+  const hits = searchPluginIndex(load.index, query);
+  say(
+    `  ${text("Plugins")}  ${dim(`${hits.length} of ${load.index.plugins.length}${query ? ` matching "${query}"` : ""}`)}`,
+  );
+  sayIndexProvenance(load);
+  say();
+  if (hits.length === 0) {
+    say(`  ${dim("Nothing matched.")}`);
+    say();
+    return 0;
+  }
+  for (const entry of hits) {
+    const fits = entryFitsThisGear(entry);
+    say(
+      `    ${accent(entry.name.padEnd(24))} ${dim(`v${entry.version}`)} ${fits ? "" : danger(`needs Gear ${entry.gearVersion}`)}`,
+    );
+    say(`      ${faint(entry.description)}`);
+    say(`      ${capabilityLine(entry)}`);
+    say(`      ${faint(entry.maintainer)}`);
+  }
+  say();
+  say(`  ${text("Install")}  ${accent(`gear plugin add ${hits[0]!.name}`)}`);
+  say();
+  return 0;
+}
+
 // ─── add ───
+
+/**
+ * A bare name is a question for the index. A path, a URL or an npm spec is
+ * not — those already say where they come from, and re-resolving them through
+ * a list would let the list redirect an install the user had fully specified.
+ */
+async function resolveThroughIndex(
+  spec: string,
+  values: Record<string, unknown>,
+): Promise<{ entry: PluginIndexEntry; spec: string } | { error: string } | null> {
+  if (!/^[A-Za-z0-9_-]+$/.test(spec)) return null;
+  const load = await loadPluginIndex({ ref: indexRefOf(values) });
+  if (!load.index) return null;
+  const entry = resolvePluginIndexEntry(load.index, spec);
+  if (!entry) return null;
+  const resolved = entrySourceSpec(entry, { indexDir: load.indexDir ?? undefined });
+  if ("error" in resolved) return { error: resolved.error };
+  say();
+  say(`  ${dim("index")} ${faint(load.origin ?? "")}${indexStaleness(load)}`);
+  say(`  ${accent(entry.name)} ${dim(`v${entry.version}`)} ${faint(entry.maintainer)}`);
+  say(`    ${capabilityLine(entry)}`);
+  return { entry, spec: resolved.spec };
+}
 
 async function cmdAdd(args: string[], values: Record<string, unknown>): Promise<number> {
   const spec = args[0];
   if (!spec) {
-    say(`  ${danger(glyph("failure"))} usage: gear plugin add <path|git-url|npm-package>`);
+    say(`  ${danger(glyph("failure"))} usage: gear plugin add <name|path|git-url|npm-package>`);
     return 1;
   }
   const workspaceRoot = workspaceOf(values);
-  const source = classifySource(spec);
+  let source = classifySource(spec);
+  let indexEntry: PluginIndexEntry | null = null;
+
+  if (source.kind === "npm") {
+    const resolved = await resolveThroughIndex(spec, values);
+    if (resolved && "error" in resolved) {
+      say(`  ${danger(glyph("failure"))} ${resolved.error}`);
+      say();
+      return 1;
+    }
+    if (resolved) {
+      if (!entryFitsThisGear(resolved.entry)) {
+        say(
+          `  ${danger(glyph("failure"))} ${accent(resolved.entry.name)} needs Gear ${resolved.entry.gearVersion}, this is ${GEAR_VERSION}`,
+        );
+        say();
+        return 1;
+      }
+      indexEntry = resolved.entry;
+      source = classifySource(resolved.spec);
+    }
+  }
 
   say();
-  say(`  ${dim(`fetching (${source.kind})`)} ${spec}`);
+  say(`  ${dim(`fetching (${source.kind})`)} ${source.spec}`);
   const staged = await stage(source);
   if ("error" in staged) {
     say(`  ${danger(glyph("failure"))} ${staged.error}`);
@@ -183,6 +324,28 @@ async function cmdAdd(args: string[], values: Record<string, unknown>): Promise<
       rmSync(staged.dir, { recursive: true, force: true });
     }
   };
+
+  // Integrity, against the digest the index published — on the STAGED tree,
+  // which is the only moment the two are comparable: installation stamps
+  // `name` and `source` into plugin.json and recomputes the hash, so the
+  // installed tree legitimately differs from the published one.
+  if (indexEntry) {
+    const verdict = verifyIndexIntegrity(indexEntry, staged.dir);
+    if (!verdict.ok) {
+      say(`  ${danger(glyph("failure"))} integrity check failed against the index`);
+      say(`    ${dim("index")}     ${verdict.expected}`);
+      say(`    ${dim("this tree")} ${verdict.actual}`);
+      say(`    ${faint("the bundle is not the one the index describes — refusing to install it")}`);
+      cleanup();
+      say();
+      return 1;
+    }
+    say(
+      verdict.checked
+        ? `  ${ok(glyph("verified"))} ${dim("integrity matches the index")}`
+        : `  ${warn(glyph("retry"))} ${dim("the index publishes no digest for this entry")}`,
+    );
+  }
 
   const manifest = readManifest(staged.dir);
   if (!manifest) {
@@ -367,6 +530,9 @@ export async function runPlugin(args: string[], values: Record<string, unknown>)
   const sub = args[0];
   const rest = args.slice(1);
   switch (sub) {
+    case "search":
+    case "find":
+      return cmdSearch(rest, values);
     case "add":
     case "install":
       return cmdAdd(rest, values);
