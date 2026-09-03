@@ -215,6 +215,54 @@ in `.vscode/settings.json`, and this one is remote code execution with your
 provider credentials attached. It reaches the page in the URL fragment, and the
 webview's CSP narrows `frame-src` to the single origin being framed.
 
+### How a selection reaches the agent
+
+Three hops, and every one of them was broken until P10.6 loaded the thing:
+
+1. The command builds the prompt (`file:line-range`, then the excerpt) and
+   `postMessage`s it to the **webview**.
+2. The webview's inline script forwards it into the **iframe** — but only once
+   the page inside has said `gear.ready`. It queues until then. "Send selection
+   to Gear" with no panel open opens one and posts immediately, and a message
+   posted into a frame that is still loading is gone with no error anywhere.
+3. The page accepts it only from an **editor webview origin**
+   (`vscode-webview:` / `vscode-file:`) and runs it as an ordinary turn. Any
+   page you have open can frame `http://127.0.0.1:7788` and post into it; it
+   cannot read anything back, but a blind write would be enough to make a local
+   agent run a prompt somebody else wrote.
+
+`gear.ready` means **the page's socket is up**, not that its handler is
+attached. A page that says ready while its transport is still opening answers a
+selection with "still connecting to the engine" and drops it — which is a
+message that vanished, reported to a person who is looking at their editor.
+
+### Verified inside a real VS Code
+
+```bash
+cargo build --release -p gear-tools
+bun run --filter @gear/web build
+bun run --filter gear test:vscode
+```
+
+`apps/vscode/test/runTest.ts` downloads a **pinned** VS Code (1.135.0) with
+`@vscode/test-electron`, starts a real `gear serve --web` against a fake model,
+opens a real workspace, and launches the editor with the extension in
+development mode. Inside it, `apps/vscode/test/suite/index.ts` activates the
+extension, checks every contributed command is actually registered, selects two
+lines of a file and runs **Gear: Send Selection to Gear**.
+
+The assertion is made from outside the editor. A webview's iframe is
+cross-origin to the extension host, so its DOM is opaque from in there and the
+most an in-editor test could assert is that a `postMessage` was issued. The
+launcher instead watches the same server through `@gear/sdk` and waits for a
+session whose transcript carries the selection **and** the model's reply. The
+two halves meet at a marker file, so whichever one fails says why.
+
+It runs on every pull request (`vscode` job, ubuntu, under `xvfb-run`, with the
+download cached). Locally it runs if the VS Code download succeeds and **skips
+with a printed reason** if the network refuses it or the web bundle has not been
+built — a proof that cannot be run on a laptop stops being run.
+
 It is **not published to the marketplace** — that is a founder action under D1.
 Build the `.vsix` and install it by hand:
 
@@ -224,9 +272,10 @@ bun run --cwd apps/vscode package      # produces gear-<version>.vsix
 code --install-extension apps/vscode/gear-0.3.0.vsix
 ```
 
-**Not verified inside VS Code on this machine** either: the extension
-typechecks, bundles, packages and its logic is unit-tested, but nobody has
-loaded the .vsix in a running editor here.
+**Still not verified as a `.vsix`.** The live test loads the extension from
+source in development mode, which is how VS Code loads it during development and
+is not how a person installs it. Packaging is exercised (`bun run --cwd
+apps/vscode package`), installing the packaged artifact is not.
 
 ## JetBrains
 

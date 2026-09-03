@@ -62,10 +62,36 @@ export function panelHtml(input: PanelInput): string {
       // The editor's own messages, forwarded into the page: a selection sent
       // from a file, a trace opened for one. The frame is same-origin with
       // nothing here, so this is postMessage and not DOM access.
+      //
+      // They are QUEUED until the page says it is listening. "Send selection to
+      // Gear" with no panel open opens one and posts immediately, and a message
+      // posted into a frame that is still loading is simply lost — which is
+      // exactly what the command did before P10.6's live test caught it. The
+      // page announces itself with \`gear.ready\` once its SOCKET is up — not
+      // merely when its handler is attached, because a page whose transport is
+      // still opening answers a selection with "still connecting" and drops it.
+      //
+      // The timer is the fallback for a \`gear.serverUrl\` pointing at an older
+      // build whose bundle never sends \`gear.ready\`. Ten seconds, not two: it
+      // must lose the race against any bundle that does send it.
       const frame = document.getElementById("gear");
+      const origin = ${JSON.stringify(origin)};
+      const queued = [];
+      let ready = false;
+      const flush = () => {
+        if (ready) return;
+        ready = true;
+        for (const message of queued.splice(0)) frame.contentWindow?.postMessage(message, origin);
+      };
+      frame.addEventListener("load", () => setTimeout(flush, 10000));
       window.addEventListener("message", (event) => {
         if (!event.data || typeof event.data !== "object") return;
-        frame.contentWindow?.postMessage(event.data, ${JSON.stringify(origin)});
+        if (event.origin === origin) {
+          if (event.data.type === "gear.ready") flush();
+          return; // the page talks to us; it is not a source of commands
+        }
+        if (ready) frame.contentWindow?.postMessage(event.data, origin);
+        else queued.push(event.data);
       });
     </script>
   </body>

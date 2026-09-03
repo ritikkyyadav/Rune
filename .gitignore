@@ -68,5 +68,7 @@ _to_delete/
 # Packaged VS Code extension + its esbuild output (built, never committed)
 *.vsix
 apps/vscode/out/
+# The VS Code build @vscode/test-electron downloads for the live extension proof
+.vscode-test/
 # terminal captures from TUI debugging (raw ANSI dumps)
 *.cv.txt
