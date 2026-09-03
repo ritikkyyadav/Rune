@@ -9,10 +9,12 @@
 // ACP is the mapping in this file, and there are only three interesting pieces
 // of it.
 //
-// 1. Events → `session/update`. Gear's 22-member turn union is richer than
-//    ACP's five update kinds, so members that have no ACP shape are either
+// 1. Events → `session/update`. Gear's 22-member turn union does not line up
+//    with ACP's update kinds, so members that have no ACP shape are either
 //    projected into a thought chunk or deliberately dropped. Dropped is a
-//    decision on the record here, not an accident — see `toUpdate`.
+//    decision on the record here, not an accident — see `toUpdate`. The full
+//    table, with the reason per event, is in docs/editors.md, and
+//    tests/unit/orchestrator/acp-mapping.test.ts fails if the two disagree.
 //
 // 2. Permission → `session/request_permission`. This is the whole reason an
 //    editor integration is worth having: the agent stops, the editor shows the
@@ -78,10 +80,13 @@ export function toolKind(toolName: string): string {
   if (n === "bash" || n.includes("shell") || n.includes("exec")) return "execute";
   if (n.includes("search") || n.includes("grep") || n.includes("glob")) return "search";
   if (n.startsWith("read") || n.includes("read_file") || n === "ls") return "read";
+  // Thinking BEFORE editing, because `todo_write` contains "write" and is not
+  // an edit: with the two the other way round an editor drew every plan update
+  // as a file modification. P10.6's conformance test is what caught it.
+  if (n.includes("think") || n.includes("plan") || n.includes("todo")) return "think";
   if (n.includes("write") || n.includes("edit") || n.includes("patch")) return "edit";
   if (n.includes("delete") || n.includes("rm")) return "delete";
   if (n.includes("fetch") || n.includes("web") || n.includes("browser")) return "fetch";
-  if (n.includes("think") || n.includes("plan") || n.includes("todo")) return "think";
   return "other";
 }
 
@@ -141,22 +146,64 @@ export function toUpdate(event: { type: string } & Record<string, unknown>): Acp
     case "notice":
     case "context_warning":
       return { sessionUpdate: "agent_thought_chunk", content: textBlock(String(event.message)) };
+
+    // ── the harness's own progress, as thoughts ──
+    //
+    // These used to be sent as the event NAME and nothing else: an editor was
+    // told "verification completed" without being told whether it passed. A
+    // status line that cannot distinguish success from failure is worse than
+    // no status line, because it reads as reassurance. Each carries the one
+    // fact a person acts on, clipped, and `gear audit` keeps the full record.
     case "verification_started":
+      return thought(`verification started (attempt ${String(event.attempt ?? "?")})`);
     case "verification_completed":
+      return thought(
+        event.ran === false
+          ? "verification: nothing runnable detected"
+          : `verification: ${event.passed === true ? "passed" : "FAILED"}` + clause(event.report),
+      );
     case "step_check":
+      return thought(
+        event.ran === false
+          ? `step check skipped — ${String(event.step ?? "")}`
+          : `step check ${event.passed === true ? "passed" : "FAILED"} — ` +
+              `${String(event.step ?? "")}${clause(event.report)}`,
+      );
     case "replanning":
+      return thought(
+        `re-planning (${String(event.trigger ?? "?")}) — ${String(event.reason ?? "")}`,
+      );
     case "handoff":
-      return {
-        sessionUpdate: "agent_thought_chunk",
-        content: textBlock(`${event.type.replace(/_/g, " ")}`),
-      };
+      // The state-of-work handoff is the whole content of the event: without it
+      // an editor shows "handoff" and the person has no idea what was left.
+      return thought(`handoff — ${String(event.reason ?? "")}${clause(event.state)}`);
+
     default:
-      // usage · retry · fallback · compaction · checkpoint_saved ·
-      // stream_reset · tool_call_args_delta · tool_progress · turn_complete.
+      // tool_call_args_delta · turn_complete · stream_reset · fallback ·
+      // retry · usage · compaction · checkpoint_saved · tool_progress.
       // Bookkeeping, a duplicate of something already sent, or the signal that
-      // ends the prompt rather than an update within it.
+      // ends the prompt rather than an update within it. The reason for each
+      // one is in docs/editors.md, and `acp-mapping.test.ts` asserts this list
+      // and that table say the same thing.
       return null;
   }
+}
+
+/** A thought chunk, which is where every harness-progress event lands. */
+function thought(text: string): AcpUpdate {
+  return { sessionUpdate: "agent_thought_chunk", content: textBlock(text) };
+}
+
+/**
+ * A report, appended as one clipped clause, or nothing at all.
+ *
+ * A verifier report is a whole build log. An editor's thought stream is one
+ * line; the full text is in `gear audit`.
+ */
+function clause(value: unknown, max = 160): string {
+  const text = typeof value === "string" ? value.trim().split("\n")[0]?.trim() : "";
+  if (!text) return "";
+  return `: ${text.length > max ? `${text.slice(0, max - 1)}…` : text}`;
 }
 
 /** The permission options an ACP client renders as buttons. */
