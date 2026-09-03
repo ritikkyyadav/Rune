@@ -83,32 +83,106 @@ A kill lands between two nodes far more often than between two waves, and the en
 is not paying twice for the expensive node that already succeeded.
 
 ```
-gear workflow examples/review.workflow.json --dry-run   # print the waves
-gear workflow examples/review.workflow.json --mock      # run the graph with no model
-gear workflow examples/review.workflow.json --fresh     # ignore saved state
+gear workflow examples/workflows/review.workflow.json --dry-run   # print the waves
+gear workflow examples/workflows/review.workflow.json --mock      # run the graph with no model
+gear workflow examples/workflows/review.workflow.json --fresh     # ignore saved state
+gear workflow examples/workflows/greenfield.workflow.json --mock --max-parallel 1 \
+  --stop-after backend                                            # a kill you can aim
 ```
 
 `--mock` runs every node through a deterministic stub. It is the honest way to validate a graph, its
 resume behaviour and its caching: real delegation needs an engine, a provider and money, none of
 which exercises the part the executor is responsible for.
 
+`--stop-after <id>` aborts a mock run the instant that node completes and leaves the state on disk.
+Resume is the property a workflow is worth having, and the only way to check it is to stop a run in
+the middle and start it again — timing a signal at a run whose nodes return instantly is a race, and
+naming the node is not.
+
 Inside a session the same thing is the `workflow` tool:
 
 ```
-workflow(file: "examples/review.workflow.json")
+workflow(file: "examples/workflows/review.workflow.json")
 ```
 
 A workflow with a failed node still **succeeds as a tool call**: it ran the graph and reported what
 happened. Failing the call would throw away every completed node's output on the way back to the
 model.
 
-## What is not here yet
+## Watching one run
 
-The fleet view does not yet group live nodes by wave. Node progress is already keyed by node id on
-the existing progress channel, but the typed child events that would let the panel group by it are
-Phase 2 work (P2.6). Until then a running workflow reports as a series of ordinary sub-agent lines.
+The fleet view groups a workflow's live nodes **by wave**, in the console and in the web app:
 
-`research.ts` has not been refactored onto this executor. The primitives it would need are now
-exported and the shape matches, but moving a working, load-bearing feature onto a new executor is a
-change that deserves its own commit and its own live validation rather than riding along with the
-executor that enables it.
+```
+  review · wave 2 of 3 · after scope
+  > scout  security   grep src/auth.ts · 22s
+  . scout  perf       done · 3 steps · 8s
+  . scout  style      cached
+```
+
+The level is usually the whole explanation for why a node has not started, and the edges into a
+level (`after scope`) are the half that makes the level mean something — "wave 2 of 3" says there
+is an order without saying what it was waiting for. An ad-hoc `task`/`worker` fan-out keeps its
+flat rows: every member of one was dispatched at once and none waits on another, so grouping it
+would name a structure it does not have.
+
+Two node states are visible that nothing else could report. A **cache hit** runs no agent at all,
+so it shows `cached` and no clock — a duration beside it would claim the work happened this time.
+A **skipped** node never started, and is drawn as skipped rather than as a failure: reading a skip
+as a failure sends you looking for a defect in the one part of the graph that behaved correctly. A
+node on its second attempt says `attempt 2 of 3` while it is retrying, rather than only in the
+receipt afterwards.
+
+None of this is parsed from a heartbeat. The executor already knows the topology, so it is carried:
+every node's wave, its edges, its attempt, and whether it was cached ride on the typed child event
+as `tool_progress.child.node` (`WorkflowNodeContext`). A workflow is **one** tool call, so its nodes
+have no `tool_call_start` of their own — the node context is what opens their rows, and it is
+complete before a node runs, which is what lets a node queued three waves out be drawn as queued
+rather than as an absence.
+
+## The first consumer
+
+`research.ts` runs on this executor. Its investigator fan-out — the DAG this file was extracted
+from — is a workflow whose nodes are the round's sub-questions, run through `runWorkflow` with the
+same bounded concurrency, the same per-node failure isolation and the same events every other
+workflow gets. Its surface is unchanged: `gear research`, `/research` and the research event stream
+are what they were, and the research tests are untouched.
+
+A round is one wave of independent nodes. The dependency between _rounds_ is the reflect step, and
+that is not a node: its follow-ups are what decide whether there is a next round at all, so it
+cannot be an edge in a graph that has to exist before the graph runs. Nothing is persisted —
+research has never been resumable, and giving it a state file here would be a new feature wearing a
+refactor's clothes.
+
+The one behaviour that changed: an aborted run now stops **dispatching**, instead of starting
+investigators it is about to kill. That is the executor's signal check, and it is the better
+behaviour.
+
+This is what a second, parallel execution path would have cost. There is one path, so a fix to its
+concurrency, its resume or its reporting reaches research and every written-down workflow at the
+same time, instead of the two drifting apart the way two implementations of the same thing always
+do.
+
+## The two that ship
+
+`examples/workflows/` holds the shapes the feature exists for. Both run against the mock provider,
+and `tests/integration/workflow-examples.test.ts` drives them through the real command — an example
+that has never run is a JSON file with opinions in it.
+
+**`review.workflow.json`** — scope the change, four **scoped reviewers** in parallel who cannot see
+each other's findings, then two **verifiers**, then the report. The verifiers are two different
+jobs: `verify` opens every cited `file:line` and decides whether the finding is real (a reviewer's
+confidence is not evidence), while `gaps` reads the diff itself rather than the reports, looking for
+what falls _between_ four dimension-scoped reviewers — the change that is individually correct,
+individually secure and individually tested, and still wrong as a whole.
+
+**`greenfield.workflow.json`** — one heavy pass that decides **the seam** (the exact signatures and
+error cases between backend and frontend) and assigns each slice the paths it owns; then backend,
+frontend, tests and docs as four `worker` nodes, each in its own git worktree; then `integrate`,
+whose real output is the list of places where a slice's own claim stopped holding once it met the
+others; then `seams`, which checks the one thing parallel workers structurally cannot — what falls
+between the slices nobody owned.
+
+The seam is decided once, in wave 1, precisely because the alternative is four workers negotiating
+it four ways in parallel and three of them being wrong. Every worker declares `files`: ownership is
+what makes a worker safe, and four workers sharing a tree is the failure the requirement exists for.

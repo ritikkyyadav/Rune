@@ -1,6 +1,6 @@
 {
   "name": "review",
-  "description": "Multi-dimension code review: four reviewers in parallel, then a verifier, then a synthesis.",
+  "description": "Multi-dimension code review: four reviewers in parallel, then two verifiers, then a synthesis.",
   "maxParallel": 4,
   "nodes": [
     {
@@ -51,11 +51,19 @@
       "prompt": "Four reviewers reported below. For EACH finding, open the cited file:line and decide whether it is real. Report three lists: CONFIRMED (with the evidence you read), REJECTED (with why the reviewer was wrong), and UNVERIFIABLE (the citation did not resolve). A reviewer's confidence is not evidence."
     },
     {
+      "id": "gaps",
+      "kind": "task",
+      "label": "what nobody reviewed",
+      "dependsOn": ["correctness", "security", "tests", "docs"],
+      "tier": "heavy",
+      "prompt": "Four dimension-scoped reviewers have reported. Read the DIFF ITSELF, not their reports, and find what falls BETWEEN their dimensions — the change that is individually correct, individually secure and individually tested, and still wrong as a whole. Interface mismatches, an invariant two files now disagree about, a migration with no rollback, a behaviour change nobody named. Cite file:line. Say plainly if you find nothing: a scoped reviewer set misses things, and pretending otherwise is the failure this node exists to catch."
+    },
+    {
       "id": "report",
       "kind": "task",
       "label": "synthesize",
-      "dependsOn": ["verify"],
-      "prompt": "Write the review. Lead with the findings that would block a merge, then the ones worth fixing, then the ones worth knowing. Use ONLY confirmed findings from the verification below; say plainly how many findings were rejected and why that matters for how much of this review to trust.\n\n{{verify}}"
+      "dependsOn": ["verify", "gaps"],
+      "prompt": "Write the review. Lead with the findings that would block a merge, then the ones worth fixing, then the ones worth knowing. Use ONLY confirmed findings from the verification below, plus whatever the gap pass found. Say plainly how many findings were rejected and why that matters for how much of this review to trust.\n\n{{verify}}\n\n{{gaps}}"
     }
   ]
 }

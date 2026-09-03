@@ -23,7 +23,12 @@ import {
   type ToolActivityView,
   type TranscriptLineView,
 } from "./activity";
-import type { AgentTurnEvent, ChildAgentEvent, ResearchEvent } from "@gear/protocol";
+import type {
+  AgentTurnEvent,
+  ChildAgentEvent,
+  ResearchEvent,
+  WorkflowNodeContext,
+} from "@gear/protocol";
 import { assertNeverSoft } from "@gear/protocol";
 import { formatError, formatEvent, fmtTokens } from "./events";
 import { Pulse, PULSE_WEIGHT, pulseGlyph, quietLabel } from "./pulse";
@@ -110,8 +115,11 @@ interface FleetAgent {
   /** What this one was sent to do: its `label`, else the head of its prompt. */
   brief: string;
   /** `queued` until the loop actually starts it -- a fan-out wider than the
-   *  parallel ceiling waits, and a waiting scout is not a running one. */
-  state: "queued" | "running" | "done" | "failed";
+   *  parallel ceiling waits, and a waiting scout is not a running one.
+   *  `skipped` is workflow-only: a node whose upstream did not complete never
+   *  ran, and reporting that as a failure sends the reader hunting a defect in
+   *  the one part of the graph that behaved correctly. */
+  state: "queued" | "running" | "done" | "failed" | "skipped";
   /** When execution began / ended. Absent while queued: an unknown clock is
    *  left blank rather than started at a convenient moment. */
   startedAt?: number;
@@ -136,6 +144,16 @@ interface FleetAgent {
   /** Checks this member ran, and how many passed. Also previously invisible. */
   checks: number;
   checksPassed: number;
+  /**
+   * Where this member sits in a workflow graph, when it is a workflow node
+   * rather than an ad-hoc `task`/`worker` (P10.9).
+   *
+   * An ad-hoc fan-out is genuinely a flat list — every member was dispatched at
+   * once and none of them waits on another — and grouping one would invent a
+   * structure it does not have. A workflow is levels, and the level is usually
+   * the whole explanation for why a member has not started.
+   */
+  node?: WorkflowNodeContext;
 }
 
 /** How many fleet rows the panel draws before it collapses the remainder into
@@ -632,10 +650,68 @@ export class TurnRenderer {
     if (this.fleet.size === 0) return [];
     const now = Date.now();
     const agents = [...this.fleet.values()];
-    const rows = agents.slice(0, FLEET_ROWS).map((agent) => this.fleetRow(agent, now));
-    const hidden = agents.length - Math.min(agents.length, FLEET_ROWS);
-    if (hidden > 0) rows.push(F.railRow(faint(`+${hidden} more`)));
-    return rows;
+    // Ad-hoc members first, flat: they were all dispatched at once and none of
+    // them waits on another, so a heading over them would name a structure the
+    // fan-out does not have. Workflow members follow, grouped by wave.
+    const plain = agents.filter((a) => !a.node);
+    const lines = [
+      ...plain.map((agent) => this.fleetRow(agent, now)),
+      ...this.waveLines(agents, now),
+    ];
+    // The budget counts HEADINGS as well as rows. It exists because the footer
+    // must not become the screen, and a heading takes exactly as much of the
+    // screen as the row under it does.
+    if (lines.length <= FLEET_ROWS) return lines;
+    const kept = lines.slice(0, FLEET_ROWS);
+    kept.push(F.railRow(faint(`+${lines.length - FLEET_ROWS} more`)));
+    return kept;
+  }
+
+  /**
+   * Workflow members, grouped by the level they sit on, with the level's
+   * incoming edges named.
+   *
+   *     |   review · wave 2 of 3 · after scope
+   *     | > scout  security   grep auth · 22s
+   *     | . scout  perf       done · 3 steps · 8s
+   *     | . scout  style      cached
+   *
+   * A workflow is not a fan-out. Its members run in levels, and the level a
+   * member sits on is usually the entire explanation for why it has not
+   * started -- which a flat list of rows cannot express, and which a reader
+   * otherwise reconstructs by opening the workflow file. Naming the edges
+   * ("after scope") is the other half: a wave heading without them says there
+   * is an order without saying what it was waiting for.
+   */
+  private waveLines(agents: FleetAgent[], now: number): string[] {
+    const nodes = agents.filter((a): a is FleetAgent & { node: WorkflowNodeContext } =>
+      Boolean(a.node),
+    );
+    if (nodes.length === 0) return [];
+    const lines: string[] = [];
+    // Grouped in wave order, and within a wave in dispatch order -- the same
+    // rule the flat panel keeps, for the same reason.
+    const waves = [...new Set(nodes.map((a) => a.node.wave))].sort((a, b) => a - b);
+    for (const wave of waves) {
+      const members = nodes.filter((a) => a.node.wave === wave);
+      const first = members[0]!.node;
+      // The edges INTO this wave, deduped, in the order the graph names them.
+      // The entry wave has none and says so by saying nothing: there is
+      // nothing it is after.
+      const after = [...new Set(members.flatMap((a) => a.node.dependsOn))];
+      lines.push(
+        F.railRow(
+          faint(
+            F.receiptOf([
+              `${first.workflow} wave ${wave + 1} of ${first.waves}`,
+              after.length > 0 ? `after ${after.join(", ")}` : "",
+            ]),
+          ),
+        ),
+      );
+      for (const agent of members) lines.push(this.fleetRow(agent, now));
+    }
+    return lines;
   }
 
   /**
@@ -658,9 +734,36 @@ export class TurnRenderer {
     ok: boolean,
     child?: ChildAgentEvent,
   ): void {
-    const agent = this.fleet.get(callId);
+    // A workflow's nodes arrive on the WORKFLOW call's channel -- the whole
+    // graph is one tool call -- so they have no `tool_call_start` of their own
+    // to open a row with. The node context is that opening: it is complete
+    // before the node runs, which is what lets a node queued three waves out
+    // be drawn as queued rather than as an absence.
+    const agent = child?.node ? this.fleetNode(callId, child.node) : this.fleet.get(callId);
     if (!agent) return;
     const now = Date.now();
+    if (child?.node) {
+      agent.node = child.node;
+      // A workflow node has a name its author chose. An ad-hoc fan-out member
+      // has none until its arguments finish streaming, which is why `brief` is
+      // recovered from partial JSON there and simply read here.
+      if (child.label) agent.brief = oneLine(child.label, 44);
+      // The node's own status outranks the heartbeat: a cache hit and a skip
+      // never produce a sub-agent event, so nothing else would ever end them.
+      if (child.node.cached || child.node.status === "completed") {
+        agent.state = "done";
+        agent.endedAt ??= now;
+      } else if (child.node.status === "failed") {
+        agent.state = "failed";
+        agent.endedAt ??= now;
+      } else if (child.node.status === "skipped") {
+        // Skipped is not failed. A skipped node did not run because something
+        // upstream did not complete, and reading it as a failure sends the
+        // reader looking for a defect in the node that behaved correctly.
+        agent.state = "skipped";
+        agent.endedAt ??= now;
+      }
+    }
     if (state === "started") {
       agent.state = "running";
       agent.startedAt = now;
@@ -744,9 +847,28 @@ export class TurnRenderer {
       agent.startedAt == null || until - agent.startedAt < ELAPSED_AFTER_MS
         ? ""
         : span(agent.startedAt, until);
+    // A node that is re-running says so while it is happening. `attempts` on
+    // the finished result says so afterwards, which is when it has stopped
+    // being the thing you wanted to know.
+    const retrying =
+      agent.node && agent.node.attempt > 1
+        ? `attempt ${agent.node.attempt} of ${agent.node.attempts}`
+        : "";
     switch (agent.state) {
       case "queued":
         return F.toolRow({ name: verb, arg: agent.brief, metric: "queued", status: "none" });
+      case "skipped":
+        return F.toolRow({
+          name: verb,
+          arg: agent.brief,
+          // Why, not just that: the reason a skipped node did not run is the
+          // upstream that did not complete, and it is already on this screen.
+          metric: F.receiptOf([
+            "skipped",
+            agent.node?.dependsOn.length ? `after ${agent.node.dependsOn.join(", ")}` : "",
+          ]),
+          status: "none",
+        });
       case "done":
       case "failed": {
         const outcome = agent.state === "done" ? "done" : "failed";
@@ -755,10 +877,16 @@ export class TurnRenderer {
         // says nothing about checks -- absent is not zero.
         const checks = agent.checks > 0 ? `${agent.checksPassed}/${agent.checks} checks` : "";
         const reroutes = agent.reroutes > 0 ? plural(agent.reroutes, "reroute") : "";
+        // A cache hit is not a fast run: it is not a run. Saying `done · 0s`
+        // would claim the work happened this time, which is the one thing the
+        // reader would use the number for.
+        if (agent.node?.cached) {
+          return F.toolRow({ name: verb, arg: agent.brief, metric: "cached", status: "ok" });
+        }
         return F.toolRow({
           name: verb,
           arg: agent.brief,
-          metric: F.receiptOf([outcome, steps, checks, reroutes, elapsed]),
+          metric: F.receiptOf([outcome, retrying, steps, checks, reroutes, elapsed]),
           status: agent.state === "done" ? "ok" : "fail",
         });
       }
@@ -766,10 +894,43 @@ export class TurnRenderer {
         return F.toolRow({
           name: verb,
           arg: agent.brief,
-          metric: F.receiptOf([this.fittedNote(agent, elapsed), elapsed]),
+          metric: F.receiptOf([retrying, this.fittedNote(agent, elapsed), elapsed]),
           status: "active",
         });
     }
+  }
+
+  /**
+   * The row a workflow node owns, created on first sight of its context.
+   *
+   * Keyed by call AND node: a node id is unique inside its graph and nowhere
+   * else, so two workflows in one turn would otherwise share the row named
+   * `report`. The brief is the node's label, else its id -- a workflow node has
+   * a name its author chose, which is the one thing an ad-hoc fan-out never has
+   * until its arguments finish streaming.
+   */
+  private fleetNode(callId: string, node: WorkflowNodeContext): FleetAgent {
+    const key = `${callId}:${node.node}`;
+    const existing = this.fleet.get(key);
+    if (existing) return existing;
+    const agent: FleetAgent = {
+      callId: key,
+      kind: node.kind,
+      argsJson: "",
+      brief: node.node,
+      state: "running",
+      startedAt: Date.now(),
+      note: "",
+      noteAt: 0,
+      wantNote: "",
+      steps: 0,
+      reroutes: 0,
+      checks: 0,
+      checksPassed: 0,
+      node,
+    };
+    this.fleet.set(key, agent);
+    return agent;
   }
 
   /**
@@ -888,10 +1049,23 @@ export class TurnRenderer {
     // line no longer borrows one member's heartbeat to speak for all of them.
     const fleet = [...this.fleet.values()];
     if (fleet.length >= 2 || (fleet.length === 1 && !this.currentTool)) {
+      // A workflow says which LEVEL it is on, because that is the sentence a
+      // graph has and a fan-out does not: "review · wave 2 of 3" answers how
+      // much is left, which "4 sub-agents running" cannot.
+      const graph = fleet.find((a) => a.node)?.node;
       const noun = fleet.every((a) => a.kind === "worker") ? "worker" : "sub-agent";
-      const settled = fleet.filter((a) => a.state === "done" || a.state === "failed").length;
+      const settled = fleet.filter(
+        (a) => a.state === "done" || a.state === "failed" || a.state === "skipped",
+      ).length;
       const queued = fleet.filter((a) => a.state === "queued").length;
-      const head = fleet.length === 1 ? noun : `${fleet.length} ${noun}s`;
+      const head = graph
+        ? F.receiptOf([
+            graph.workflow,
+            `wave ${Math.max(...fleet.map((a) => (a.node?.wave ?? 0) + 1))} of ${graph.waves}`,
+          ])
+        : fleet.length === 1
+          ? noun
+          : `${fleet.length} ${noun}s`;
       if (settled > 0 && settled === fleet.length) return F.receiptOf([head, "all back"]);
       if (settled > 0) return F.receiptOf([head, `${settled} back`]);
       if (queued === fleet.length) return `${head} dispatched`;
@@ -1340,7 +1514,14 @@ export class TurnRenderer {
         const failedCheck = this.checks.at(-1)?.status === "failed" && phase === "verify";
         // The member's row has just been set down in the transcript in full, so
         // the panel gives up its slot rather than reporting the same call twice.
-        this.fleet.delete(String(event.callId ?? ""));
+        // A workflow ends ONE call and retires every node row it opened: those
+        // rows are keyed `<callId>:<node>` because a node id is unique only
+        // inside its own graph.
+        const endedCall = String(event.callId ?? "");
+        this.fleet.delete(endedCall);
+        for (const key of [...this.fleet.keys()]) {
+          if (key.startsWith(`${endedCall}:`)) this.fleet.delete(key);
+        }
         this.currentTool = null;
         this.lastToolEndAt = Date.now();
         this.activity = null;

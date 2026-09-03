@@ -17,7 +17,7 @@
 import type { InferenceRequest, ProviderName } from "@gear/llm-gateway";
 import { LlmGateway } from "@gear/llm-gateway";
 import { ToolRegistry, registerBuiltinTools } from "@gear/tool-registry";
-import { AgentLoop, mapWithConcurrency } from "./agent-loop";
+import { AgentLoop } from "./agent-loop";
 import type { PermissionCheck, ToolResultProcessor } from "./agent-loop";
 import type {
   ResearchClarification,
@@ -30,6 +30,7 @@ import type {
   SourceScope,
   SubQuestionResult,
 } from "./research-types";
+import { runWorkflow, type WorkflowDefinition } from "./workflow";
 
 // ─── Dependencies ───
 
@@ -407,41 +408,92 @@ export async function* runResearch(
   const subResults: SubQuestionResult[] = [];
   const asked = new Set(plan.subQuestions.map((q) => q.question.toLowerCase()));
 
-  // Investigate one batch of sub-questions with bounded concurrency, streaming
-  // progress. Each investigator pushes events to the queue and mutates the shared
-  // (single-threaded) source map; failures are isolated per task. Shared closures
-  // (sources/subResults) accumulate across rounds.
-  async function* runBatch(batch: ResearchSubQuestion[]): AsyncGenerator<ResearchEvent> {
+  // ── One round, on the workflow executor ──
+  //
+  // This fan-out is the DAG `workflow.ts` was extracted FROM: plan → approve →
+  // investigate in parallel → reflect → iterate → synthesize, written as
+  // control flow around `mapWithConcurrency`. Running it on the executor is the
+  // point of having extracted it — there is one execution path, so a fix to its
+  // bounded concurrency, its failure isolation or its reporting reaches
+  // research and every written-down workflow at once, instead of drifting apart
+  // the way two parallel implementations of the same thing always do.
+  //
+  // A round is one wave of independent nodes: the sub-questions of a round do
+  // not depend on each other, and the dependency between ROUNDS is the reflect
+  // step, which is not a node because its follow-ups are what decide whether
+  // there is a next round at all. Nothing is persisted — research has never
+  // been resumable, and giving it a state file here would be a new feature
+  // wearing a refactor's clothes.
+  //
+  // Each investigator pushes events to the queue and mutates the shared
+  // (single-threaded) source map; failures are isolated per node. Shared
+  // closures (sources/subResults) accumulate across rounds.
+  async function* runBatch(
+    batch: ResearchSubQuestion[],
+    round: number,
+  ): AsyncGenerator<ResearchEvent> {
+    const byId = new Map(batch.map((sq) => [`sq${sq.index}`, sq]));
+    const definition: WorkflowDefinition = {
+      name: `research round ${round}`,
+      maxParallel: s.maxParallel,
+      nodes: batch.map((sq) => ({
+        id: `sq${sq.index}`,
+        kind: "task" as const,
+        // The executor renders this prompt and hands it back; the investigator
+        // builds its own from the sub-question, so this is the node's identity
+        // for the reader, not an instruction anything obeys.
+        prompt: sq.question,
+        dependsOn: [],
+        retry: 1,
+        label: sq.question,
+      })),
+    };
+
     const queue = new AsyncEventQueue<ResearchEvent>();
     const fanout = (async () => {
       try {
-        await mapWithConcurrency(batch, s.maxParallel, async (sq) => {
-          queue.push({
-            type: "research_step_start",
-            index: sq.index,
-            question: sq.question,
-            sourceScope: sq.sourceScope,
-          });
-          let result: SubQuestionResult;
-          try {
-            result = await investigate(deps, sq, s, sources, queue, signal);
-          } catch (err) {
-            result = {
+        await runWorkflow(definition, {
+          maxParallel: s.maxParallel,
+          ...(signal ? { signal } : {}),
+          runNode: async (node) => {
+            const sq = byId.get(node.id)!;
+            queue.push({
+              type: "research_step_start",
               index: sq.index,
               question: sq.question,
-              status: "failed",
-              findings: "",
-              sourceCount: 0,
-              error: err instanceof Error ? err.message : String(err),
+              sourceScope: sq.sourceScope,
+            });
+            let result: SubQuestionResult;
+            try {
+              result = await investigate(deps, sq, s, sources, queue, signal);
+            } catch (err) {
+              result = {
+                index: sq.index,
+                question: sq.question,
+                status: "failed",
+                findings: "",
+                sourceCount: 0,
+                error: err instanceof Error ? err.message : String(err),
+              };
+            }
+            subResults.push(result);
+            queue.push({
+              type: "research_step_done",
+              index: sq.index,
+              status: result.status,
+              sourceCount: result.sourceCount,
+            });
+            // The node's status mirrors the sub-question's: a failed
+            // investigator is a failed node, which is what the executor's
+            // per-node isolation is for. Nothing downstream depends on it, so
+            // nothing is skipped — one dead sub-question must not stop a round.
+            return {
+              output: result.findings,
+              ...(result.status === "failed"
+                ? { error: result.error ?? "investigator failed" }
+                : {}),
             };
-          }
-          subResults.push(result);
-          queue.push({
-            type: "research_step_done",
-            index: sq.index,
-            status: result.status,
-            sourceCount: result.sourceCount,
-          });
+          },
         });
       } finally {
         queue.close();
@@ -463,7 +515,7 @@ export async function* runResearch(
         message: `Round ${round}/${s.maxRounds} — digging into ${batch.length} follow-up question${batch.length === 1 ? "" : "s"} to close gaps…`,
       };
     }
-    yield* runBatch(batch);
+    yield* runBatch(batch, round);
 
     if (signal?.aborted) {
       yield { type: "error", error: "Research aborted.", recoverable: false };

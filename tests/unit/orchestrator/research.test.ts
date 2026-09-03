@@ -922,3 +922,144 @@ describe("analyze (the analyst stage)", () => {
     expect(String(p.requests[0].system ?? "")).toContain("adversarial");
   });
 });
+
+// ─── P10.9 — research runs on the workflow executor ───
+
+/**
+ * A provider that fails for one named sub-question and answers for the rest.
+ *
+ * The point of running the round on the executor is its per-node isolation, and
+ * the only way to prove isolation is to break one node.
+ */
+class PartlyFailingProvider implements LlmProvider {
+  readonly name = "anthropic" as const;
+  constructor(
+    private readonly failOn: string,
+    private readonly body: string,
+  ) {}
+  async infer(): Promise<InferenceResponse> {
+    throw new Error("not used");
+  }
+  async *inferStream(req: InferenceRequest): AsyncGenerator<StreamEvent> {
+    const asked = JSON.stringify(req.messages ?? []);
+    if (asked.includes(this.failOn)) throw new Error("provider refused this investigator");
+    yield {
+      type: "content_delta",
+      contentIndex: 0,
+      delta: { type: "text_delta", text: this.body },
+    };
+    yield {
+      type: "message_stop",
+      stopReason: "end_turn",
+      usage: { inputTokens: 1, outputTokens: 1 },
+    };
+  }
+  async countTokens(): Promise<number> {
+    return 1;
+  }
+  async healthCheck(): Promise<boolean> {
+    return true;
+  }
+}
+
+describe("P10.9 — the research fan-out is the executor's", () => {
+  const plan: ResearchPlan = {
+    id: "p",
+    question: "q",
+    subQuestions: [
+      { index: 0, question: "the one that breaks", rationale: "", sourceScope: "web" },
+      { index: 1, question: "the one that answers", rationale: "", sourceScope: "web" },
+    ],
+    createdAt: "",
+  };
+
+  function deps(provider: LlmProvider) {
+    const gw = new LlmGateway({
+      providers: {},
+      defaultProvider: "anthropic",
+      maxRetries: 0,
+      retryBaseMs: 1,
+    });
+    gw.registerProvider(provider);
+    return {
+      gateway: gw,
+      binaryPath: "gear-tools",
+      model: "m",
+      provider: "anthropic" as const,
+      workspaceRoot: "/tmp",
+      sessionId: "s",
+    };
+  }
+
+  test("one dead investigator does not stop the round", async () => {
+    // Per-node isolation is what the executor is for, and it is what a
+    // hand-rolled fan-out has to remember to do. One sub-question that cannot
+    // be answered must cost exactly that sub-question.
+    const events: ResearchEvent[] = [];
+    for await (const ev of runResearch(
+      deps(new PartlyFailingProvider("the one that breaks", "nothing to cite")),
+      plan,
+      { maxParallel: 2 },
+    )) {
+      events.push(ev);
+    }
+    const done = events.filter((e) => e.type === "research_step_done");
+    expect(done).toHaveLength(2);
+    const statuses = done.map((e) => (e as { status: string }).status).sort();
+    // The other investigator finished; `empty` is its honest outcome here,
+    // since this provider streams prose and cites nothing.
+    expect(statuses).toEqual(["empty", "failed"]);
+    // Both steps were announced before either finished — the round is a wave,
+    // not a queue of one.
+    expect(events.filter((e) => e.type === "research_step_start")).toHaveLength(2);
+  });
+
+  test("the executor's concurrency ceiling is the round's", async () => {
+    let live = 0;
+    let peak = 0;
+    class CountingProvider implements LlmProvider {
+      readonly name = "anthropic" as const;
+      async infer(): Promise<InferenceResponse> {
+        throw new Error("not used");
+      }
+      async *inferStream(): AsyncGenerator<StreamEvent> {
+        live++;
+        peak = Math.max(peak, live);
+        await new Promise((r) => setTimeout(r, 5));
+        live--;
+        yield {
+          type: "content_delta",
+          contentIndex: 0,
+          delta: { type: "text_delta", text: "nothing to cite" },
+        };
+        yield {
+          type: "message_stop",
+          stopReason: "end_turn",
+          usage: { inputTokens: 1, outputTokens: 1 },
+        };
+      }
+      async countTokens(): Promise<number> {
+        return 1;
+      }
+      async healthCheck(): Promise<boolean> {
+        return true;
+      }
+    }
+    const wide: ResearchPlan = {
+      ...plan,
+      subQuestions: [0, 1, 2, 3].map((index) => ({
+        index,
+        question: `q${index}`,
+        rationale: "",
+        sourceScope: "web" as const,
+      })),
+    };
+    for await (const _ of runResearch(deps(new CountingProvider()), wide, { maxParallel: 2 })) {
+      void _;
+    }
+    // Bounded fan-out, not thousands: the ceiling that used to live in
+    // `mapWithConcurrency` here is now the executor's, and it still binds.
+    expect(peak).toBeLessThanOrEqual(2);
+    expect(peak).toBeGreaterThan(1);
+  });
+});

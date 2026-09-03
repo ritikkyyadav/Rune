@@ -100,8 +100,10 @@ export function renderTokensCss(): string {
     `  --display-tracking: ${GEAR_SCALE.displayTracking};`,
     "",
     `  --sidebar-w: ${GEAR_SCALE.sidebarWidth};`,
+    `  --sidebar-icons-w: ${GEAR_SCALE.sidebarIconsWidth};`,
     `  --rail-w: ${GEAR_SCALE.railWidth};`,
     `  --column-max: ${GEAR_SCALE.columnMax};`,
+    `  --column-min: ${GEAR_SCALE.columnMin};`,
     "",
     "  /* The type scale, so a component asks for a step rather than a number. */",
     ...(Object.keys(GEAR_TYPE) as Array<keyof typeof GEAR_TYPE>).flatMap((step) => [
