@@ -39,6 +39,17 @@ export interface ReviewInputs {
   token?: string;
   /** Cap on the diff sent to the model, in characters. */
   maxDiffChars: number;
+  /**
+   * Run against a mock provider instead of a real model.
+   *
+   * The whole point of this mode: the action's comment path — collect the diff,
+   * run a turn, read the audit back, post ONE comment and edit it in place on
+   * every push — was gated behind a provider key that does not exist on this
+   * repository, so it had never run on a pull request. A mock provider needs no
+   * credential, so the plumbing can be exercised on every PR while the real
+   * review stays behind the secret. The comment says loudly which it is.
+   */
+  mock: boolean;
 }
 
 export const DEFAULT_PROMPT = `You are reviewing a pull request in this workspace. The diff under review is in
@@ -78,6 +89,26 @@ function run(
   return { code: p.exitCode, out: p.stdout.toString(), err: p.stderr.toString() };
 }
 
+/** The same, without blocking this process's event loop. See `runReview`. */
+async function runAsync(
+  cmd: string[],
+  opts: { cwd?: string; env?: Record<string, string> } = {},
+): Promise<{ code: number; out: string; err: string }> {
+  const p = Bun.spawn(cmd, {
+    cwd: opts.cwd,
+    env: opts.env ? { ...process.env, ...opts.env } : process.env,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, code] = await Promise.all([
+    new Response(p.stdout).text(),
+    new Response(p.stderr).text(),
+    p.exited,
+  ]);
+  return { code, out, err };
+}
+
 /**
  * The diff under review.
  *
@@ -95,6 +126,84 @@ export function collectDiff(workspace: string, baseRef: string, maxChars: number
   // Truncating in the middle of a hunk produces a patch that reads as complete
   // and is not. Say where it stopped.
   return `${text.slice(0, maxChars)}\n\n[diff truncated at ${maxChars} characters — ${text.length} total]\n`;
+}
+
+// ─── The mock provider ───
+
+/** The model id the mock answers to. It appears in the audit page, so name it. */
+export const MOCK_MODEL = "gear-review-mock";
+
+/**
+ * The files a unified diff touches.
+ *
+ * Used only by the mock, so its dry-run comment says something true about the
+ * change instead of a paragraph of filler. `+++ b/<path>` is the post-image
+ * name; `/dev/null` is a deletion and has no post-image path.
+ */
+export function changedFiles(diff: string): string[] {
+  const files: string[] = [];
+  for (const line of diff.split("\n")) {
+    if (!line.startsWith("+++ ")) continue;
+    const path = line.slice(4).trim().replace(/^b\//, "");
+    if (path && path !== "/dev/null" && !files.includes(path)) files.push(path);
+  }
+  return files;
+}
+
+/** What the mock provider answers with. Never dressed up as an opinion. */
+export function mockReviewText(diff: string): string {
+  const files = changedFiles(diff);
+  const head = files.slice(0, 20).map((f) => `- \`${f}\``);
+  return [
+    "**No model was consulted.** This run used a mock provider, so there is no",
+    "review here — only proof that the action ran: the diff was collected, a",
+    "session was created, a turn completed, and the audit below is that run's.",
+    "",
+    files.length > 0
+      ? `The diff the action collected covers ${files.length} file(s):`
+      : "The action collected an empty diff against the base branch.",
+    ...head,
+    ...(files.length > head.length ? [`- …and ${files.length - head.length} more`] : []),
+  ].join("\n");
+}
+
+/**
+ * A provider that needs no credential.
+ *
+ * Ollama reads its base URL from `OLLAMA_HOST` and authenticates nothing, so a
+ * thirty-line server that speaks `/api/chat` and `/api/tags` is a complete
+ * provider as far as Gear is concerned — the same trick `scripts/smoke-print.ts`
+ * uses to prove a packaged binary can answer a prompt without a paid key.
+ */
+export function startMockProvider(reply: string): { host: string; stop: () => void } {
+  const server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    async fetch(req) {
+      const { pathname } = new URL(req.url);
+      if (pathname === "/api/tags") {
+        return Response.json({ models: [{ name: MOCK_MODEL, model: MOCK_MODEL, size: 1 }] });
+      }
+      if (pathname === "/api/show") return Response.json({ capabilities: ["completion"] });
+      if (pathname === "/api/chat") {
+        await req.text();
+        return new Response(
+          `${JSON.stringify({ model: MOCK_MODEL, message: { role: "assistant", content: reply }, done: false })}\n` +
+            `${JSON.stringify({
+              model: MOCK_MODEL,
+              message: { role: "assistant", content: "" },
+              done: true,
+              done_reason: "stop",
+              prompt_eval_count: 0,
+              eval_count: 0,
+            })}\n`,
+          { headers: { "content-type": "application/x-ndjson" } },
+        );
+      }
+      return new Response("not found", { status: 404 });
+    },
+  });
+  return { host: `http://127.0.0.1:${server.port}`, stop: () => server.stop(true) };
 }
 
 export interface RunOutcome {
@@ -123,8 +232,15 @@ function sessionIdFrom(envelope: string): string | null {
  * minutes looks identical to a wedged one in a CI log, and the person watching
  * has no other window into it.
  */
-export function runReview(inputs: ReviewInputs, prompt: string): RunOutcome {
-  const res = run(
+export async function runReview(
+  inputs: ReviewInputs,
+  prompt: string,
+  extra: { argv?: string[]; env?: Record<string, string> } = {},
+): Promise<RunOutcome> {
+  // ASYNC, and `Bun.spawn` rather than `spawnSync`: in mock mode the provider
+  // is a server in THIS process, and a synchronous spawn deadlocks — the child
+  // waits on a server whose host is blocked waiting on the child.
+  const res = await runAsync(
     [
       ...inputs.gearCmd,
       "-P",
@@ -135,8 +251,9 @@ export function runReview(inputs: ReviewInputs, prompt: string): RunOutcome {
       "--workspace",
       inputs.workspace,
       "--new",
+      ...(extra.argv ?? []),
     ],
-    { cwd: inputs.workspace },
+    { cwd: inputs.workspace, ...(extra.env ? { env: extra.env } : {}) },
   );
 
   const lines = res.out.split("\n").filter((l) => l.trim().startsWith("{"));
@@ -152,7 +269,10 @@ export function runReview(inputs: ReviewInputs, prompt: string): RunOutcome {
   }
 
   const sessionId = sessionIdFrom(envelope);
-  const audit = run([...inputs.gearCmd, "audit", sessionId ?? "last"], { cwd: inputs.workspace });
+  const audit = await runAsync([...inputs.gearCmd, "audit", sessionId ?? "last"], {
+    cwd: inputs.workspace,
+    ...(extra.env ? { env: extra.env } : {}),
+  });
 
   return {
     ok,
@@ -193,8 +313,22 @@ export function composeComment(outcome: RunOutcome, inputs: ReviewInputs): strin
   // the <details> block into the previous paragraph.
   const lines: Array<string | null> = [
     MARKER,
-    `### Gear review`,
+    inputs.mock ? `### Gear review — dry run (mock provider)` : `### Gear review`,
     "",
+    // The label is the whole ethics of this mode. A comment that looks like a
+    // review and was produced by a mock is worse than no comment at all, so it
+    // says what it is before it says anything else, and the heading says it too
+    // for anyone reading the notification.
+    inputs.mock
+      ? [
+          "> `GEAR_REVIEW_API_KEY` is not set on this repository, so the action ran",
+          "> against a **mock provider**. What this proves is that the workflow, the",
+          "> action body, the audit read-back and this comment path all work. It says",
+          "> nothing whatever about the change. A real review replaces this once the",
+          "> secret exists.",
+          "",
+        ].join("\n")
+      : null,
     failed
       ? [
           `The run did not complete (exit ${outcome.exitCode}). Nothing here is a review.`,
@@ -217,7 +351,8 @@ export function composeComment(outcome: RunOutcome, inputs: ReviewInputs): strin
     "",
     "</details>",
     "",
-    `<sub>Gear · gear ${inputs.gear} · exit ${outcome.exitCode}</sub>`,
+    `<sub>Gear · gear ${inputs.gear} · exit ${outcome.exitCode}` +
+      `${inputs.mock ? " · mock provider, no model consulted" : ""}</sub>`,
   ];
   return lines.filter((line): line is string => line !== null).join("\n");
 }
@@ -289,6 +424,10 @@ export function parseInputs(argv: string[], env: Record<string, string | undefin
     gearCmd: (flag("gear-cmd") ?? env.INPUT_GEAR_CMD ?? "gear").split(" ").filter(Boolean),
     token: env.GITHUB_TOKEN ?? env.GH_TOKEN,
     maxDiffChars: Number(flag("max-diff") ?? env.INPUT_MAX_DIFF ?? 200_000),
+    // The workflow sets the environment variable; `--mock` is for running it by
+    // hand. Anything other than the exact word is a real provider, so a typo
+    // fails loudly on a missing key rather than quietly posting a fake review.
+    mock: argv.includes("--mock") || env.GEAR_REVIEW_PROVIDER === "mock",
   };
 }
 
@@ -323,10 +462,28 @@ export async function main(argv: string[]): Promise<number> {
   const prompt = inputs.prompt.trim() || DEFAULT_PROMPT;
   console.error(
     `gear-action: reviewing ${inputs.repo}#${inputs.prNumber} against ${inputs.baseRef} ` +
-      `(${diff.length} chars of diff, gear ${inputs.gear})`,
+      `(${diff.length} chars of diff, gear ${inputs.gear}` +
+      `${inputs.mock ? ", MOCK provider" : ""})`,
   );
 
-  const outcome = runReview(inputs, prompt);
+  const mock = inputs.mock ? startMockProvider(mockReviewText(diff)) : null;
+  let outcome: RunOutcome;
+  try {
+    outcome = await runReview(
+      inputs,
+      prompt,
+      mock
+        ? {
+            argv: ["-p", "ollama", "-m", MOCK_MODEL],
+            // Ollama authenticates nothing and reads its base URL from the
+            // environment, so pointing it here is the whole of "use the mock".
+            env: { OLLAMA_HOST: mock.host },
+          }
+        : {},
+    );
+  } finally {
+    mock?.stop();
+  }
   const comment = composeComment(outcome, inputs);
 
   // Always on stdout, posted or not: the CI log should hold what was said even
