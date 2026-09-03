@@ -182,9 +182,15 @@ describe.skipIf(!BUILT)("the built stylesheet is the product's own", () => {
     const offenders: string[] = [];
     for (const m of (css ?? "").matchAll(/border-radius\s*:\s*([^;}]+)/g)) {
       const value = m[1]!.trim();
-      // A var() resolves in tokens.css, which the parity test already pins.
-      if (value.startsWith("var(")) continue;
-      for (const part of value.split(/\s+/)) if (!allowed.has(part)) offenders.push(value);
+      for (const part of value.split(/\s+/)) {
+        // A `var(--r…)` part resolves in tokens.css, which the parity test
+        // already pins. Judged PER PART rather than by the whole value: the
+        // shorthand that squares one edge against a header — `0 0 var(--r)
+        // var(--r)` — is legal and common, and a `value.startsWith("var(")`
+        // bail would also have waved through `var(--r) 14px`, which is not.
+        if (/^var\(--r/.test(part)) continue;
+        if (!allowed.has(part)) offenders.push(value);
+      }
     }
     expect([...new Set(offenders)]).toEqual([]);
   });
@@ -251,6 +257,66 @@ describe("the identity this replaced leaves no trace", () => {
         false,
       );
     }
+  });
+});
+
+// ─── The primitives, in the same built bytes ───
+//
+// P11.2 added thirty components and a stylesheet of their own. The six rules
+// above already run over `dist/assets/*.css`, which now includes them — but
+// "already covered" is a claim about a glob, and a glob that quietly stopped
+// matching would leave the checklist green while inspecting the shell alone.
+//
+// So this block asserts the primitives are IN the bytes the six rules read, and
+// then re-states the two rules that a component stylesheet is most likely to
+// break, scoped to the primitives' own selectors, so a failure names them
+// instead of naming the bundle.
+
+const PRIMITIVE_SELECTORS = [
+  ".pf-error",
+  ".pf-skel",
+  ".p-hypothesis",
+  ".p-decision",
+  ".p-appr-grant",
+  ".p-diff-line",
+  ".p-chart-grid",
+  ".p-check-mark",
+  ".p-agent-row",
+  ".p-preview-frame",
+];
+
+describe.skipIf(!BUILT)("the primitives are in what shipped", () => {
+  test("every primitive family has rules in the built stylesheet", () => {
+    const missing = PRIMITIVE_SELECTORS.filter((s) => !(css ?? "").includes(s));
+    expect(
+      missing,
+      `the primitives' CSS is not in the build — ${BUILD_HINT}; the six rules above were inspecting the shell only`,
+    ).toEqual([]);
+  });
+
+  test("no primitive rule carries a shadow", () => {
+    const offenders = rules(css ?? "")
+      .filter((r) => /(^|[\s,])\.p[-f]/.test(r.selector))
+      .filter((r) => /box-shadow\s*:/.test(r.body) && !/box-shadow\s*:\s*(none|0)/.test(r.body))
+      .map((r) => r.selector);
+    expect(offenders, `primitives with a shadow: ${offenders.join(" | ")}`).toEqual([]);
+  });
+
+  test("no primitive rule hard-codes a colour", () => {
+    // Every pigment in a primitive is a `var(--…)`. A literal here is a colour
+    // that will be right on one ground and wrong on the other.
+    const offenders = rules(css ?? "")
+      .filter((r) => /(^|[\s,])\.p[-f]/.test(r.selector))
+      .filter((r) => /#[0-9a-fA-F]{3,8}\b|\brgba?\(/.test(r.body))
+      .map((r) => `${r.selector} { ${r.body.trim().slice(0, 60)} }`);
+    expect(offenders).toEqual([]);
+  });
+
+  test("the theme is defined on a container, not only on :root", () => {
+    // /gallery renders both grounds in one document, which only works because
+    // the generated tokens define the palette for any `[data-theme]` element.
+    expect(css).toMatch(/(^|})\s*\[data-theme=("|')?dark("|')?\]\s*\{/);
+    expect(css).toMatch(/(^|})\s*\[data-theme=("|')?light("|')?\]\s*\{/);
   });
 });
 
