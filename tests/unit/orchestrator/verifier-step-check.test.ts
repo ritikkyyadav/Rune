@@ -171,6 +171,27 @@ describe.skipIf(!POSIX_SHELL)("what the verifier records about each command", ()
     }
   });
 
+  test("an OS stub binary counts as absent, whatever it exits with", async () => {
+    // macOS ships /usr/bin/javac on every machine. With no JDK installed it
+    // exits 1 — not 127 — with this message, and reporting "Java checks FAILED"
+    // on a machine that never had a compiler would be lying about the code.
+    const dir = workspace();
+    try {
+      const v = new CommandVerifier({
+        workspaceRoot: dir,
+        commands: [
+          "echo 'The operation could not be completed. Unable to locate a Java Runtime.' >&2; exit 1",
+        ],
+      });
+      const r = await v.verify();
+      expect(r.passed).toBe(true);
+      expect(r.ran).toBe(false);
+      expect(r.runs![0]!.skipped).toContain("no JDK");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("a project script that exits 127 for its OWN reasons still fails", async () => {
     const dir = workspace();
     try {

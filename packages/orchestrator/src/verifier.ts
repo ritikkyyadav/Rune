@@ -686,12 +686,30 @@ function truncate(s: string, max: number): string {
 }
 
 /**
+ * Operating-system stubs: a binary that exists on PATH purely to tell you the
+ * toolchain is not installed. macOS ships `/usr/bin/javac` on every machine and
+ * it exits 1 with the message below when no JDK is present, so exit 127 alone
+ * does not catch it — and a verifier that reported "Java checks FAILED" on a Mac
+ * with no JDK would be lying about the code.
+ */
+const OS_STUB_MESSAGES: Array<{ re: RegExp; reason: string }> = [
+  { re: /Unable to locate a Java Runtime/i, reason: "no JDK is installed on this machine" },
+  {
+    re: /xcrun: error: invalid active developer path|no developer tools were found/i,
+    reason: "the Xcode command line tools are not installed on this machine",
+  },
+];
+
+/**
  * "The toolchain isn't here" as told by a shell. `bash -c` exits 127 and says
  * which name it could not find; we only accept that as a skip when the missing
  * name is the command's own leading binary, so a project script that exits 127
  * for its own reasons still fails.
  */
 function missingToolchain(command: string, exitCode: number, output: string): string | null {
+  for (const stub of OS_STUB_MESSAGES) {
+    if (stub.re.test(output)) return stub.reason;
+  }
   if (exitCode !== 127) return null;
   const m = output.match(/(?:^|\n).*?([\w.\-/]+):?\s*(?:command not found|not found)/i);
   const missing = m?.[1];
