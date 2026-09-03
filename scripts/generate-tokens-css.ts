@@ -8,6 +8,9 @@
 //   :root                                  the light system, always defined
 //   @media (prefers-color-scheme: dark)     what "system" resolves to
 //   :root[data-theme="dark"|"light"]        an explicit choice, which wins
+//   [data-theme="dark"|"light"]             the same choice on any container,
+//                                           which is how /gallery shows both
+//                                           grounds in one document
 //
 // Every token has a value on bare `:root`. A colour whose only definition is
 // inside a media query or an attribute block is a colour that is missing in one
@@ -133,6 +136,23 @@ export function renderTokensCss(): string {
     "",
     "/* An explicit choice, which wins in both directions. */",
     ':root[data-theme="dark"] {',
+    ...groundRows("dark"),
+    "}",
+    "",
+    "/* The same choice, scoped to a CONTAINER rather than the page.",
+    "",
+    "   Added for /gallery, which shows every primitive on both grounds side by",
+    "   side and therefore needs two palettes alive in one document. It is a",
+    "   generalisation rather than a special case: the three-state theme above is",
+    "   the page's, and these two selectors say the same thing about any element",
+    "   that declares a theme. Root matches both; the `:root`-qualified rules are",
+    "   more specific and carry identical values, so nothing changes for a page",
+    "   that never nests a theme. */",
+    '[data-theme="light"] {',
+    ...groundRows("light"),
+    "}",
+    "",
+    '[data-theme="dark"] {',
     ...groundRows("dark"),
     "}",
     "",

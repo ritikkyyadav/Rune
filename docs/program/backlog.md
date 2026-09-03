@@ -287,3 +287,18 @@ Found 2026-09-03 by P10.6 (integration proofs):
   transcript is behind it. Worth a design pass: either the reading column
   re-centres in the space the rail leaves (a reflow, but a deliberate one), or
   the rail narrows below some width — found in P10.9
+- `tests/eval/baseline-mock.json` says the mock suite passes 62/62; the suite
+  actually passes **23/62 (37.1%)** on `gear/phase-0-stabilize`. Verified as
+  pre-existing rather than a lane's doing: a pristine `git archive 02eee64` into
+  a temp directory with its own `bun install --frozen-lockfile` produces exactly
+  23/62 with identical per-category numbers (core 9/25, context 3/7, new-feature
+  0/6, comprehension 6/7, fix-failing-test 0/7, multi-file-refactor 0/4,
+  tool-discipline 5/6). The failures are engine behaviours, not fixture rot —
+  "the final request lost the [Task state] block", "no handoff recorded for the
+  dead run", "the broken file did not fail a step check — recorded: []", "the
+  transcript was never compacted". So either the baseline was anchored on a tree
+  that no longer exists, or something in the spine regressed between the anchor
+  (2026-09-03T05:45Z) and now and the runner's non-zero exit was read as noise.
+  Until it is resolved, `bun run eval` cannot gate anything: it is red on every
+  branch, which is the same as being absent. Whoever picks this up should first
+  bisect between the baseline timestamp and `02eee64` — found in P11.2
