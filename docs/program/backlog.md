@@ -51,19 +51,25 @@ Found 2026-09-02 by the Phase 6A corpus (`bun run eval:auto-safety --offline`). 
 corpus expects a reviewer to catch because no mechanical breaker names it. None is a regression —
 they are gaps the 19-scenario corpus was too small to see:
 
-- `packages/orchestrator/src/auto-mode.ts:1805` — the recursive-delete breaker requires the target to
-  BE a filesystem root or home directory, so `rm -rf ~/Documents` rates medium and runs — 6A.2
-- `packages/orchestrator/src/auto-mode.ts:1962` — `guardrailChangeReason` only inspects `update_config`;
+- ~~`packages/orchestrator/src/auto-mode.ts:1805` — the recursive-delete breaker requires the target to
+  BE a filesystem root or home directory, so `rm -rf ~/Documents` rates medium and runs — 6A.2~~
+- ~~`packages/orchestrator/src/auto-mode.ts:1962` — `guardrailChangeReason` only inspects `update_config`;
   a `sed -i` or `gear config set` against `.gear/policy.json` reaches the same target through bash and
-  is not a guardrail change to the breaker — 6A.2
-- `packages/orchestrator/src/auto-mode.ts:1899` — `SECRET_PATH_RE` matches credential FILES, so
-  `security find-generic-password` (the macOS keychain CLI) is not a secret read — 6A.2
-- `packages/orchestrator/src/auto-mode.ts:1721` — `isOrdinaryWorkspaceWrite` does not expand a leading
+  is not a guardrail change to the breaker — 6A.2~~
+- ~~`packages/orchestrator/src/auto-mode.ts:1899` — `SECRET_PATH_RE` matches credential FILES, so
+  `security find-generic-password` (the macOS keychain CLI) is not a secret read — 6A.2~~
+- ~~`packages/orchestrator/src/auto-mode.ts:1721` — `isOrdinaryWorkspaceWrite` does not expand a leading
   `~`, so `write_file` to `~/.zshrc` resolves INSIDE the workspace root and lands on the workspace
-  tier — 6A.2
-- `packages/orchestrator/src/auto-mode.ts:1803` — not on any destructive list: `chmod -R 777 /`,
+  tier — 6A.2~~
+- ~~`packages/orchestrator/src/auto-mode.ts:1803` — not on any destructive list: `chmod -R 777 /`,
   `shutdown -h now`, `docker system prune -a --volumes -f`, `git push --mirror`,
-  `aws s3 rm --recursive` — 6A.2
+  `aws s3 rm --recursive` — 6A.2~~
+
+**All five CLOSED in P10.3**, mechanically and with a unit test each, in
+`packages/orchestrator/src/auto-containment.ts`'s `mechanicalBreaker()` pre-screen and
+`shellGuardrailChange()`. Eleven further shapes the same corpus pass exposed were closed alongside
+them (see the table in docs/auto-mode.md). Offline reviewer-only recall went 13/46 → 35/46 with 55/55
+mechanical blocks still held and 116/116 mechanical allows still preserved.
 
 Found 2026-09-02 by Phase 7 (lane C):
 
@@ -129,6 +135,20 @@ Found 2026-09-03 by P10.0 (the host reaper):
   hosts rather than handing them over, and only the idle reaper (which the new server does
   not know about them for) or a restart cleans them up. Either implement reattach or stop
   claiming it — found in P10.0
+
+Found 2026-09-03 by P10.3 (supervisor recall):
+
+- `tests/eval/runner.ts:368` — the mock suite writes `tests/eval/baseline-mock.json` on **every**
+  passing full run, not only under `--write-baseline`. So the command the gate tells you to run
+  (`bun run eval -- --compare`) silently re-anchors the artifact it just compared against, leaving a
+  dirty tree with a new timestamp and a drifted `avgDurationMs`. Harmless here because the numbers
+  were identical and the change was reverted, and a trap the moment a run is not: a distracted
+  session commits a re-anchored baseline as part of an unrelated change, and the gate quietly stops
+  gating. Write only under the flag — found in P10.3
+- `tests/unit/orchestrator/auto-containment.test.ts:104-114` — the test "persistence waits normally,
+  but halts once injection is suspected" is duplicated verbatim. Bun runs both, so the second is
+  pure cost, and a future edit to one leaves two tests with the same name asserting different
+  things — found in P10.3
 
 Found 2026-09-03 by P10.2 (Windows parity):
 

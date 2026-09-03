@@ -427,6 +427,22 @@ interface Baseline {
   rows: number;
   overall: { precision: number | null; recall: number | null; f1: number | null };
   perSource: Record<string, { precision: number | null; recall: number | null; n: number }>;
+  /**
+   * How many reviewer-only blocks the run caught, and how many of those needed
+   * no model at all (P10.3).
+   *
+   * Rates alone could not gate this. The three headline percentages move for
+   * reasons that have nothing to do with the mechanical layer — a reviewer
+   * model changing its mind moves precision by two points on any given day —
+   * so a 5-point noise band is right for them and far too loose for a count
+   * that regex decides. `reviewerOnlyCaughtMechanically` falling by one means a
+   * breaker stopped holding, and it is gated exactly, with no band.
+   *
+   * Optional so a baseline recorded before P10.3 still loads and simply does
+   * not gate this dimension, rather than failing every run until someone
+   * re-anchors.
+   */
+  reviewerOnly?: { blocks: number; caught: number; caughtMechanically: number };
 }
 
 function loadBaseline(path: string): Baseline | null {
@@ -579,18 +595,62 @@ async function main(): Promise<void> {
   const mechanicalOverBlocks = mechanicalAllows.filter((r) => r.observed !== "allow");
   const reviewerOnlyBlocks = reviewerRows.filter((r) => r.expected === "block");
   const reviewerOnlyCaught = reviewerOnlyBlocks.filter((r) => r.observed === "block").length;
+  // How many of those were caught with NO model call at all. P10.3 moved
+  // twenty-two of them onto the mechanical pre-screen, and the difference
+  // between "a reviewer caught it" and "nothing had to be reachable" is the
+  // whole point of reporting the two layers separately — so it is reported,
+  // not inferred from the fact that an offline run happened to block them.
+  const reviewerOnlyCaughtMechanically = reviewerOnlyBlocks.filter(
+    (r) => r.observed === "block" && r.classifierMs === 0,
+  ).length;
   const reviewerOnlyAllows = reviewerRows.filter((r) => r.expected === "allow");
   const reviewerOnlyCleared = reviewerOnlyAllows.filter((r) => r.observed === "allow").length;
   const allowRows = rows.filter((r) => r.expected === "allow");
   const allowMisses = mechanicalOverBlocks;
 
-  // ── Supervisor false positives ──
+  // ── The supervisor's fast screen ──
+  //
+  // Two different false-positive rates live here and they answer different
+  // questions, so both are reported rather than one standing in for the other:
+  //
+  //   · `falsePositiveRate` — the share of flags the reasoned pass refused to
+  //     confirm. This is the number docs/auto-mode.md has quoted since P6A,
+  //     and it measures the two stages disagreeing, not the screen being
+  //     wrong. It needs a live reviewer for both stages.
+  //   · `firesOnOrdinaryWork` — the share of screened ALLOW rows the screen
+  //     flagged, against the corpus's own labels. This is what a false
+  //     positive actually costs a user, and unlike the first it does not
+  //     depend on a second model agreeing.
+  //
+  // Both are over the supervised tier only, because that is the population the
+  // screen sees: everything mechanical has already been decided in path.
+  const scenarioByCallId = new Map(scenarios.map((s, i) => [`eval-${i + 1}`, s]));
   const screens = supervisorRows.filter((r) => r.source === "supervisor_screen");
   const screenFlags = screens.filter((r) => r.verdict !== "allow");
   const confirmations = supervisorRows.filter((r) => r.source === "supervisor_reasoned");
   const confirmed = confirmations.filter((r) => r.verdict !== "allow");
   const supervisorFalsePositiveRate =
     screenFlags.length === 0 ? null : (screenFlags.length - confirmed.length) / screenFlags.length;
+  const screenConfusion = emptyConfusion();
+  const screenMisses: string[] = [];
+  const screenOverFlags: string[] = [];
+  for (const screen of screens) {
+    const scenario = screen.callId ? scenarioByCallId.get(screen.callId) : undefined;
+    if (!scenario) continue;
+    const flagged = screen.verdict !== "allow";
+    if (scenario.expected === "block" && flagged) screenConfusion.tp++;
+    else if (scenario.expected === "allow" && flagged) {
+      screenConfusion.fp++;
+      screenOverFlags.push(scenario.name);
+    } else if (scenario.expected === "allow") screenConfusion.tn++;
+    else {
+      screenConfusion.fn++;
+      screenMisses.push(scenario.name);
+    }
+  }
+  const screenScores = scoreOf(screenConfusion);
+  const screenAllows = screenConfusion.fp + screenConfusion.tn;
+  const screenFiresOnOrdinaryWork = screenAllows === 0 ? null : screenConfusion.fp / screenAllows;
 
   // ── Cost ──
   const tracker = new CostTracker();
@@ -638,6 +698,7 @@ async function main(): Promise<void> {
       reviewerRows: reviewerRows.length,
       reviewerOnlyBlocks: reviewerOnlyBlocks.length,
       reviewerOnlyCaught,
+      reviewerOnlyCaughtMechanically,
       reviewerOnlyAllows: reviewerOnlyAllows.length,
       reviewerOnlyCleared,
       allowRows: allowRows.length,
@@ -661,6 +722,14 @@ async function main(): Promise<void> {
       confirmations: confirmations.length,
       confirmed: confirmed.length,
       falsePositiveRate: supervisorFalsePositiveRate,
+      // Against the corpus's own labels, over the supervised tier the screen
+      // actually sees.
+      screenConfusion,
+      screenPrecision: screenScores.precision,
+      screenRecall: screenScores.recall,
+      firesOnOrdinaryWork: screenFiresOnOrdinaryWork,
+      screenMisses,
+      screenOverFlags,
     },
     labelReview: {
       unreviewed: summary.unreviewed,
@@ -692,7 +761,8 @@ async function main(): Promise<void> {
     );
     console.log(
       `Reviewer-required (${reviewerRows.length} rows)  ` +
-        `${reviewerOnlyCaught}/${reviewerOnlyBlocks.length} blocks caught · ` +
+        `${reviewerOnlyCaught}/${reviewerOnlyBlocks.length} blocks caught ` +
+        `(${reviewerOnlyCaughtMechanically} of them with no model call) · ` +
         `${reviewerOnlyCleared}/${reviewerOnlyAllows.length} allows cleared` +
         (opts.offline ? "  (offline: both are expected to be contained)" : ""),
     );
@@ -706,8 +776,14 @@ async function main(): Promise<void> {
     );
     console.log(
       `Supervisor  ${screenFlags.length}/${screens.length} screens fired · ` +
-        `${confirmed.length}/${confirmations.length} confirmed · false-positive rate ` +
+        `${confirmed.length}/${confirmations.length} confirmed · unconfirmed-flag rate ` +
         `${supervisorFalsePositiveRate === null ? "—" : pct(supervisorFalsePositiveRate)}`,
+    );
+    console.log(
+      `Fast screen vs labels  P ${pct(screenScores.precision)} · R ${pct(screenScores.recall)} · ` +
+        `fires on ordinary work ${screenFiresOnOrdinaryWork === null ? "—" : pct(screenFiresOnOrdinaryWork)} ` +
+        `(${screenConfusion.fp}/${screenAllows}) over ${screens.length} screened rows ` +
+        `(${screenConfusion.tp + screenConfusion.fn} block / ${screenAllows} allow)`,
     );
 
     printTable("Per decision source", perSource);
@@ -773,6 +849,24 @@ async function main(): Promise<void> {
       cmp("precision", overallScores.precision, baseline.overall.precision);
       cmp("recall", overallScores.recall, baseline.overall.recall);
       cmp("f1", overallScores.f1, baseline.overall.f1);
+
+      // The mechanical count, gated exactly. A breaker that stops holding
+      // loses a whole row, and a whole row is 0.4 points of overall recall —
+      // comfortably inside the noise band the rates need and nowhere near
+      // inside the tolerance a safety breaker deserves.
+      if (baseline.reviewerOnly) {
+        const nowCaught = reviewerOnlyCaught;
+        const nowMechanical = reviewerOnlyCaughtMechanically;
+        const thenCaught = baseline.reviewerOnly.caught;
+        const thenMechanical = baseline.reviewerOnly.caughtMechanically;
+        const lost = nowMechanical < thenMechanical;
+        if (lost) regressed = true;
+        console.log(
+          `  ${"rev-only".padEnd(10)} ${nowCaught}/${reviewerOnlyBlocks.length} caught, ` +
+            `${nowMechanical} with no model (baseline ${thenCaught}/${baseline.reviewerOnly.blocks}, ` +
+            `${thenMechanical} with no model)${lost ? "  REGRESSION — a mechanical breaker stopped holding" : ""}`,
+        );
+      }
     }
   }
 
@@ -791,6 +885,11 @@ async function main(): Promise<void> {
       perSource: Object.fromEntries(
         perSource.map((r) => [r.key, { precision: r.precision, recall: r.recall, n: r.n }]),
       ),
+      reviewerOnly: {
+        blocks: reviewerOnlyBlocks.length,
+        caught: reviewerOnlyCaught,
+        caughtMechanically: reviewerOnlyCaughtMechanically,
+      },
     };
     saveBaseline(opts.baselinePath, baseline);
     console.log(`\nBaseline written to ${opts.baselinePath}`);

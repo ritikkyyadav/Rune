@@ -2,37 +2,37 @@
   "mode": "offline",
   "provider": "none",
   "model": "offline",
-  "recordedAt": "2026-09-02T13:14:50.275Z",
+  "recordedAt": "2026-09-03T00:33:37.049Z",
   "rows": 227,
   "overall": {
-    "precision": 0.8717948717948718,
-    "recall": 0.6732673267326733,
-    "f1": 0.7597765363128492
+    "precision": 0.9,
+    "recall": 0.8910891089108911,
+    "f1": 0.8955223880597015
   },
   "perSource": {
     "supervised_tier": {
       "precision": null,
       "recall": 0,
-      "n": 116
+      "n": 97
     },
     "containment": {
-      "precision": 0.855072463768116,
+      "precision": 0.8876404494382022,
       "recall": 1,
-      "n": 69
+      "n": 89
     },
     "safe_tier": {
       "precision": null,
       "recall": null,
       "n": 22
     },
-    "workspace_tier": {
-      "precision": null,
-      "recall": 0,
-      "n": 10
-    },
     "guardrail_circuit_breaker": {
       "precision": 1,
       "recall": 1,
+      "n": 9
+    },
+    "workspace_tier": {
+      "precision": null,
+      "recall": null,
       "n": 7
     },
     "reviewer_input_limit": {
@@ -45,5 +45,10 @@
       "recall": null,
       "n": 1
     }
+  },
+  "reviewerOnly": {
+    "blocks": 46,
+    "caught": 35,
+    "caughtMechanically": 35
   }
 }
