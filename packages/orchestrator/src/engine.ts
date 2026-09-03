@@ -778,6 +778,24 @@ export interface EngineConfig {
     blockedOrigins?: string[];
   };
   /**
+   * The Intent Interpreter (P11.1): what shape of work a task is, read once at
+   * task start so a surface can compose for it.
+   *
+   * `deterministic` (the default) reads the ask's own verb and costs nothing.
+   * `model` adds ONE small provider call, and only for an ask the deterministic
+   * reader could not place — see intent.ts for why that gate is the design.
+   *
+   * The default is deterministic because the call is not free in a way a
+   * person would notice: it is a round-trip on the session's own model, in the
+   * chat path, before the first token, to decide a LAYOUT. A wrong reading
+   * costs a projection and never a capability, so paying for one on every
+   * ambiguous first message is the wrong trade until a surface exists that
+   * demonstrably suffers from the deterministic read.
+   */
+  intent?: {
+    interpreter?: "deterministic" | "model";
+  };
+  /**
    * Interactive dashboards (config.toml `[interactive]`): auto lets the model
    * decide on its own when an answer deserves a live dashboard; off (default)
    * restricts building to explicit requests (/interactive). Runtime-togglable
@@ -2069,23 +2087,28 @@ export class Engine {
   private async ensureTaskKind(
     spine: TaskStateStore,
     userMessage: string,
+    opts: { allowModelCall: boolean },
   ): Promise<AgentTurnEvent | null> {
     if (spine.kind) return null;
+    const ask =
+      opts.allowModelCall && this.config.intent?.interpreter === "model"
+        ? async (system: string, question: string): Promise<string> => {
+            const resp = await this.gateway.infer({
+              messages: [{ role: "user", content: [{ type: "text", text: question }] }],
+              system,
+              model: this.config.model,
+              provider: this.config.provider,
+              maxTokens: 8,
+              stream: false,
+            });
+            const block = resp.content.find((b) => b.type === "text");
+            return block && block.type === "text" ? block.text : "";
+          }
+        : undefined;
     const reading = await interpretIntent({
       message: userMessage,
       signals: { greenfield: this.isGreenfieldWorkspace() },
-      ask: async (system, question) => {
-        const resp = await this.gateway.infer({
-          messages: [{ role: "user", content: [{ type: "text", text: question }] }],
-          system,
-          model: this.config.model,
-          provider: this.config.provider,
-          maxTokens: 8,
-          stream: false,
-        });
-        const block = resp.content.find((b) => b.type === "text");
-        return block && block.type === "text" ? block.text : "";
-      },
+      ...(ask ? { ask } : {}),
     });
     if (!spine.setKind(reading.kind, "harness")) return null;
     return { type: "task_kind", kind: reading.kind, source: "harness" };
@@ -4583,7 +4606,15 @@ export class Engine {
           // applied the boundary rule by now, so a follow-up that started a
           // new task gets its own reading and a mid-task message gets none.
           try {
-            const kindEvent = await this.ensureTaskKind(taskState, userMessage);
+            // The model call is gated three times: it must be turned on
+            // (`[intent] interpreter = "model"`, off by default), the
+            // deterministic reading must have found nothing (intent.ts), and
+            // the message must be work. A greeting has no task shape worth
+            // classifying, and paying a provider round-trip to discover that
+            // "hello" is unclassifiable is the exact tax this design avoids.
+            const kindEvent = await this.ensureTaskKind(taskState, userMessage, {
+              allowModelCall: !turnBudget.conversational,
+            });
             if (kindEvent) yield kindEvent;
           } catch {
             // A reading that cannot be taken is not a failed run.

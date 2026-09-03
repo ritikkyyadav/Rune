@@ -22,6 +22,22 @@
 // tax on every task; a classifier behind an ambiguity gate is paid only by the
 // asks that are genuinely ambiguous. The same asymmetry the task-boundary rule
 // uses: make the common case free and the rare case cheap.
+//
+// The engine leaves the second reading OFF by default (`[intent] interpreter`,
+// EngineConfig.intent). Two reasons, and the second is the one that decided it:
+//
+//  - What it buys is a LAYOUT. A wrong reading costs a projection and never a
+//    capability, which is a poor return on a round-trip taken in the chat path
+//    before the first token.
+//  - It is a real provider call in the middle of a turn. Every scripted
+//    provider in this repository — the eval mock, the ACP conformance client,
+//    the browser-doctrine fixture — hands out responses in order, so a hidden
+//    call at task start silently consumes one and the run downstream is a
+//    different run. A capability that changes what the NEXT call receives is
+//    not something to switch on for everybody by default.
+//
+// So `interpretIntent` takes `ask` as an argument rather than reaching for a
+// gateway: with it, the second reading happens; without it, the first stands.
 
 import type { TaskKind } from "@gear/protocol";
 import { TASK_KINDS } from "@gear/protocol";
