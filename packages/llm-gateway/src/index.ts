@@ -39,6 +39,14 @@ export {
   BEDROCK_ANTHROPIC_VERSION,
 } from "./providers/bedrock";
 export type { BedrockOpts, InferenceProfileFamily } from "./providers/bedrock";
+export {
+  VertexProvider,
+  vertexCredentialSource,
+  vertexPublisher,
+  vertexHost,
+  VERTEX_ANTHROPIC_VERSION,
+} from "./providers/vertex";
+export type { VertexOpts } from "./providers/vertex";
 export { OpenAIProvider } from "./providers/openai";
 export {
   cacheBreakpointPolicyFor,

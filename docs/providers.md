@@ -40,6 +40,7 @@ the base URL.
 | `codex`          | `CodexProvider`      | server-side                                  | the Responses backend manages its own prefix reuse                                                                                |
 | `ollama` (local) | `OllamaProvider`     | KV cache, held by `keep_alive`               | local runtime; nothing is billed, but a dropped KV cache costs a full re-prefill                                                  |
 | `bedrock`        | `BedrockProvider`    | `anthropic-style`                            | documented `cache_control` support; the shared Anthropic adapter emits the breakpoints. **Not measured** — no AWS credential here |
+| `vertex`         | `VertexProvider`     | `anthropic-style`                            | same, for the Anthropic half; the Gemini half caches implicitly. **Not measured** — no GCP credential here                        |
 | `custom`         | `OpenAIProvider`     | `none`                                       | a user-supplied endpoint could be anything; claiming a cache it may not have would put an invented number on screen               |
 
 An id with no entry falls to `none`. That is deliberate: a provider added
@@ -110,6 +111,7 @@ Measured **2026-09-02**.
 | `openai`                    | `gpt-4o-mini`             | `prompt-cache-key`         | —                      | —                     | not measured | no credential                                    |
 | `deepseek` / `groq` / `xai` | —                         | implicit (documented)      | —                      | —                     | not measured | no credential                                    |
 | `bedrock`                   | —                         | `anthropic-style`          | —                      | —                     | not measured | no AWS credential on this machine                |
+| `vertex`                    | —                         | `anthropic-style`          | —                      | —                     | not measured | no GCP credential on this machine                |
 
 Live requests spent producing this table: **openrouter 5** (one refused 402,
 four served), **google 2**, **ollama-turbo 2**, **codex 1** (refused 429),
@@ -261,6 +263,58 @@ so nothing here has made a live Bedrock call. What _is_ proven, by
 What is **not** proven is that AWS accepts it. `GEAR_LIVE_BEDROCK=1 bun test
 tests/integration/enterprise-providers.test.ts` runs that check on a machine
 that has a credential, and skips with a printed reason on one that does not.
+
+### Google Vertex AI (`vertex`)
+
+Anthropic **and** Gemini on one GCP project — the only route that serves two
+families, because Vertex does.
+
+```bash
+gcloud auth application-default login   # or GOOGLE_APPLICATION_CREDENTIALS=key.json
+export GOOGLE_CLOUD_PROJECT=my-project
+gear login vertex
+gear use vertex
+```
+
+```toml
+[providers.vertex]
+project = "my-project"
+location = "us-east5"     # or "global"
+```
+
+| Piece             | What Gear does                                                                                                                                                |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Routing**       | by model id: `claude…` → the Anthropic publisher, `gemini…` → Google's. Anything else is a 404 that says so rather than a guess that 404s somewhere confusing |
+| **Anthropic**     | `POST …/publishers/anthropic/models/{model}:streamRawPredict`, body carrying `anthropic_version: "vertex-2023-10-16"` and no `model`                          |
+| **Gemini**        | `POST …/publishers/google/models/{model}:streamGenerateContent?alt=sse`, body identical to AI Studio's                                                        |
+| **Auth**          | `Authorization: Bearer` from ADC — a service-account JSON exchanged via a signed RS256 JWT, the gcloud ADC file's refresh token, or the metadata server       |
+| **Streaming**     | already SSE. Nothing to decode; this route is simpler than Bedrock by exactly one decoder                                                                     |
+| **Model ids**     | Anthropic on Vertex is `claude-sonnet-4-5@20250929`; Gemini keeps its plain id                                                                                |
+| **Discovery**     | `gear models vertex` lists BOTH publishers, adding the `@version` suffix Anthropic ids need to be invokable                                                   |
+| **`healthCheck`** | "is there a project and does ADC resolve" — both things a user can act on, neither costing a token                                                            |
+
+**The token is a header, never a query parameter.** AI Studio takes `?key=`;
+Vertex takes a bearer. Gear's Google adapter now decides between the two from
+its auth mode rather than always appending the key — a short-lived OAuth token
+in a query string would be written into every access log between here and
+Google.
+
+**The metadata rung is bounded to one second** and honours Google's own
+`NO_GCE_CHECK` opt-out. Off GCE that address does not answer, and
+`gear providers` asks this question on the no-credential path.
+
+**Two failures are turned into messages you can act on.** No credential is a 401
+naming `gcloud auth application-default login`; no project is a 400 naming
+`GOOGLE_CLOUD_PROJECT`. Vertex's own answer to a projectless URL is a 404 about
+a malformed resource name, which sends people looking in the wrong place.
+
+**What is proven, and what is not.** No GCP credential exists on this machine.
+Proven by `tests/unit/gateway/`: the assertion JWT — header, claims and a
+signature verified by `node:crypto` against the public half of a generated key
+pair, plus a tampered-claims negative; the full ADC chain against injected files
+and fetch; the URL, body, headers and streamed events of both halves against
+recorded responses; and both failure messages. Not proven: that Google accepts
+it. `GEAR_LIVE_VERTEX=1` runs that.
 
 ---
 

@@ -77,6 +77,7 @@ export type ProviderName =
   // and compliance posture, and the credentials a team already has. Each is an
   // auth-and-endpoint variant over the adapter above it, not a new transport.
   | "bedrock" // Anthropic models via the AWS Bedrock Messages API (SigV4)
+  | "vertex" // Anthropic + Gemini via Google Vertex AI (ADC)
   | "custom";
 
 /**
@@ -139,6 +140,12 @@ export function reasoningEffortsFor(provider: string, model: string): ReasoningE
   if (provider === "openai" && /^(gpt-5|o[134])(-|:|$)/.test(m)) {
     return ["low", "medium", "high"];
   }
+  // Gemini through Vertex is the same model with the same thinking budget; the
+  // Anthropic models on Vertex have no effort field at all, exactly as on the
+  // first-party API. Answering per FAMILY rather than per provider is what
+  // stops an enterprise route from silently losing the dial.
+  if (provider === "vertex" && /^gemini-2\.5-/.test(m)) return ["low", "medium", "high"];
+  if (provider === "vertex" && /^gemini-3/.test(m)) return ["low", "high"];
   // Gemini has no `reasoning_effort` field — depth is a thinking BUDGET — but
   // the dial is real and is now translated on the wire (geminiThinkingConfig).
   // It returned [] here while the effort was silently dropped in the adapter,
@@ -512,6 +519,15 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   "us.anthropic.claude-haiku-4-5-20251001-v1:0": { inputPerMillion: 1, outputPerMillion: 5 },
   "anthropic.claude-3-5-sonnet-20241022-v2:0": { inputPerMillion: 3, outputPerMillion: 15 },
   "anthropic.claude-3-5-haiku-20241022-v1:0": { inputPerMillion: 0.8, outputPerMillion: 4 },
+
+  // ─── Anthropic on Google Vertex AI ───
+  // Vertex names an Anthropic model `<family>@<version>` and bills at the same
+  // list rate. These need their OWN rows because pricing lookup is exact-match,
+  // and an unpriced model reports $0 — indistinguishable from free. Vertex's
+  // Gemini ids are the plain AI Studio ones, already priced below.
+  "claude-opus-4-1@20250805": { inputPerMillion: 15, outputPerMillion: 75 },
+  "claude-sonnet-4-5@20250929": { inputPerMillion: 3, outputPerMillion: 15 },
+  "claude-haiku-4-5@20251001": { inputPerMillion: 1, outputPerMillion: 5 },
 
   // ─── OpenAI ───
   // The GPT-5 line discounts cached input to 10%; GPT-4o only to 50%, which

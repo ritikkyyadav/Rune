@@ -48,6 +48,11 @@ export async function probeCloudChain(
       const cred = await resolveAwsCredentials({ env });
       return cred ? { detail: describeAwsSource(cred) } : null;
     }
+    case "vertex": {
+      const { resolveGoogleAdc, describeAdcSource } = await import("../providers/google/adc");
+      const token = await resolveGoogleAdc({ env });
+      return token ? { detail: describeAdcSource(token) } : null;
+    }
     default:
       return null;
   }
@@ -62,6 +67,13 @@ export function chainSetupHint(providerId: string): string {
         "AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, or select a profile with " +
         "AWS_PROFILE — then set the region with AWS_REGION or " +
         "`[llm.bedrock] region` and request model access in the Bedrock console."
+      );
+    case "vertex":
+      return (
+        "No Google Cloud credentials found. Run `gcloud auth application-default " +
+        "login`, or set GOOGLE_APPLICATION_CREDENTIALS to a service-account key — " +
+        "then name the project with GOOGLE_CLOUD_PROJECT or `[providers.vertex] " +
+        "project`, and enable the Vertex AI API."
       );
     default:
       return `${providerId} has no cloud credential chain.`;

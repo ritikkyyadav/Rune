@@ -13,7 +13,7 @@ added, and existing API-key users see zero behavior change.
 | **oauth**   | Browser authorization-code + PKCE (loopback redirect).            | OpenRouter, Anthropic, ChatGPT (Codex) |
 | **device**  | OAuth device-code (headless / SSH-friendly).                      | GitHub Copilot                         |
 | **local**   | A localhost runtime reached by URL — connectivity, no credential. | Ollama                                 |
-| **chain**   | The cloud's own ambient credential chain. Gear stores nothing.    | AWS Bedrock                            |
+| **chain**   | The cloud's own ambient credential chain. Gear stores nothing.    | AWS Bedrock, Google Vertex AI          |
 
 A provider declares its supported methods; when you don't choose one, Gear
 auto-selects: the first method that has stored credentials, else the provider's
@@ -45,7 +45,10 @@ gear models openrouter           # live model catalog
 The enterprise routes do not have a key. AWS Bedrock signs each request with
 SigV4 from whatever the AWS credential chain resolves — environment variables,
 `~/.aws/credentials` and `~/.aws/config` under `AWS_PROFILE`, a web-identity
-token file, or a container role. The machine's cloud login _is_ the credential.
+token file, or a container role. Google Vertex exchanges Application Default
+Credentials for a one-hour access token — a service-account JSON at
+`GOOGLE_APPLICATION_CREDENTIALS` (signed RS256 assertion), the gcloud ADC file,
+or the GCE metadata server. The machine's cloud login _is_ the credential.
 
 So `gear login bedrock` **reports** rather than prompts:
 

@@ -59,17 +59,22 @@ const POLICY: Record<string, CacheBreakpointPolicy> = {
   // "no data" rather than a number nobody earned.
   "ollama-turbo": "none",
   // ─── Enterprise routes (P10.5) ───
-  // Bedrock serves ANTHROPIC models and documents support for `cache_control`
-  // breakpoints, which the shared Anthropic adapter already emits — the
-  // breakpoints ride the same system block and stable turn they do on the
-  // first-party API, because it is the same code composing the body.
-  // NOT MEASURED: there is no AWS credential on this machine, so this row is
-  // the host's documented behaviour, and `scripts/verify-cache.ts --provider
-  // bedrock` is the command that will replace it with a number. The
-  // declaration is the request SHAPE, not a claimed hit rate; the hit rate
-  // still comes from real usage counters and reads "no data" until one
+  // Bedrock and Vertex serve ANTHROPIC models and both document support for
+  // `cache_control` breakpoints, which the shared Anthropic adapter already
+  // emits — the breakpoints ride the same system block and stable turn they do
+  // on the first-party API, because it is the same code composing the body.
+  // NOT MEASURED: neither cloud has a credential on this machine, so these rows
+  // are the hosts' documented behaviour, and `scripts/verify-cache.ts
+  // --provider bedrock|vertex` is the command that will replace them with a
+  // number. The declaration is the request SHAPE, not a claimed hit rate; the
+  // hit rate still comes from real usage counters and reads "no data" until one
   // arrives.
+  //
+  // Vertex's Gemini half caches implicitly and reports the same counter AI
+  // Studio does (measured there at 99.7%), so the one policy id covers both
+  // halves: the Anthropic half writes breakpoints, the Gemini half ignores them.
   bedrock: "anthropic-style",
+  vertex: "anthropic-style",
   // A user-supplied endpoint could be anything; claiming a cache it may not
   // have would put an invented number on screen.
   custom: "none",

@@ -41,6 +41,7 @@ describe("provider presets", () => {
         // The enterprise routes (P10.5): the adapter above them with a
         // different endpoint and a different door.
         "bedrock",
+        "vertex",
       ]).toContain(p.kind);
     }
   });

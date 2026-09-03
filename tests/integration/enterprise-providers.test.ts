@@ -17,6 +17,11 @@
 import { describe, test, expect } from "bun:test";
 import { BedrockProvider } from "../../packages/llm-gateway/src/providers/bedrock";
 import { resolveAwsCredentials } from "../../packages/llm-gateway/src/providers/aws/credentials";
+import { VertexProvider } from "../../packages/llm-gateway/src/providers/vertex";
+import {
+  resolveGoogleAdc,
+  resolveGoogleProject,
+} from "../../packages/llm-gateway/src/providers/google/adc";
 import type { StreamEvent } from "../../packages/llm-gateway/src/types";
 
 /** Print once why a live suite is not running, then skip it. */
@@ -77,5 +82,66 @@ describe("AWS Bedrock (live)", () => {
     const models = await new BedrockProvider().listModels();
     expect(models.length).toBeGreaterThan(0);
     expect(models.every((m) => m.id.includes("anthropic"))).toBe(true);
+  }, 60_000);
+});
+
+describe("Google Vertex AI (live)", () => {
+  const enabled = process.env.GEAR_LIVE_VERTEX === "1";
+
+  /** Both halves of "can this machine reach Vertex": a token AND a project. */
+  async function preflight(): Promise<string | null> {
+    if (!enabled) return "not enabled";
+    if (!(await resolveGoogleAdc())) return "Application Default Credentials resolved nothing";
+    if (!(await resolveGoogleProject())) return "no GOOGLE_CLOUD_PROJECT is configured";
+    return null;
+  }
+
+  test("streams a Claude completion through the Vertex Anthropic endpoint", async () => {
+    const blocked = await preflight();
+    if (blocked) {
+      skipReason("Vertex", "GEAR_LIVE_VERTEX", blocked);
+      return;
+    }
+    const text = await collectText(
+      new VertexProvider().inferStream({
+        messages: [{ role: "user", content: [{ type: "text", text: "Reply with the word OK." }] }],
+        model: "claude-haiku-4-5@20251001",
+        provider: "vertex",
+        maxTokens: 16,
+        stream: true,
+      }),
+    );
+    expect(text.trim().length).toBeGreaterThan(0);
+  }, 60_000);
+
+  test("streams a Gemini completion through the Vertex Gemini endpoint", async () => {
+    const blocked = await preflight();
+    if (blocked) {
+      skipReason("Vertex", "GEAR_LIVE_VERTEX", blocked);
+      return;
+    }
+    // The same provider, the same project, a different publisher — the claim
+    // the routing exists to make.
+    const text = await collectText(
+      new VertexProvider().inferStream({
+        messages: [{ role: "user", content: [{ type: "text", text: "Reply with the word OK." }] }],
+        model: "gemini-2.5-flash",
+        provider: "vertex",
+        maxTokens: 16,
+        stream: true,
+      }),
+    );
+    expect(text.trim().length).toBeGreaterThan(0);
+  }, 60_000);
+
+  test("lists models from both publishers", async () => {
+    const blocked = await preflight();
+    if (blocked) {
+      skipReason("Vertex", "GEAR_LIVE_VERTEX", blocked);
+      return;
+    }
+    const models = await new VertexProvider().listModels();
+    expect(models.some((m) => m.id.startsWith("claude"))).toBe(true);
+    expect(models.some((m) => m.id.startsWith("gemini"))).toBe(true);
   }, 60_000);
 });

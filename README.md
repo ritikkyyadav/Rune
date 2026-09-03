@@ -12,13 +12,13 @@ Gear is an agentic coding assistant built around a reusable **engine** (TypeScri
 agent loop, manages context, enforces permissions and sandboxing, and executes tools. The engine is
 the product — the web app is one client, the terminal console is another, and an MCP-server wrapper
 is planned. It is multi-provider (including a fully local path via Ollama, and enterprise routes through AWS
-Bedrock) and built to be auditable for compliance-sensitive teams.
+Bedrock and Google Vertex AI) and built to be auditable for compliance-sensitive teams.
 
 ## Features
 
-- **Multi-provider gateway** — Anthropic, OpenAI, OpenRouter, Google, **AWS Bedrock**, and local
-  **Ollama**, with automatic provider fallback, retry, and backoff. The enterprise route
-  authenticates from your cloud's own credential chain and stores nothing (see
+- **Multi-provider gateway** — Anthropic, OpenAI, OpenRouter, Google, **AWS Bedrock**, **Google
+  Vertex AI**, and local **Ollama**, with automatic provider fallback, retry, and backoff. The
+  enterprise routes authenticate from your cloud's own credential chain and store nothing (see
   [docs/providers.md](docs/providers.md)).
 - **Tool suite** — `read_file`, `write_file`, `edit_file`, `multi_edit`, `glob`, `grep`, `list_dir`,
   `bash`, `symbol_search`, `ast_query`, `web_fetch`, `web_search`, `todo_write`, `n8n_trigger`, a
@@ -367,6 +367,9 @@ credential chain):
 ```bash
 export AWS_PROFILE=work AWS_REGION=us-east-1                    # Anthropic models on AWS Bedrock
 gear -p bedrock
+
+export GOOGLE_CLOUD_PROJECT=my-project                          # Anthropic + Gemini on Vertex AI
+gear -p vertex
 ```
 
 Paid top-tier (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`) is optional for trying
