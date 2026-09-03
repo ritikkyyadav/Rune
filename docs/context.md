@@ -141,5 +141,14 @@ instead of being assigned one.
 Some providers offer to do part of this server-side. Where the API the gateway
 targets exposes it, it belongs behind the cache-policy table in
 [`providers.md`](providers.md) as an opt-in, alongside the measured evidence for
-every other provider claim. What is and is not available today is recorded
-there.
+every other provider claim.
+
+**Today it does not.** The gateway is pinned to `@anthropic-ai/sdk@0.39.0`,
+which sends `anthropic-version: 2023-06-01`, calls the stable
+`client.messages.create`, declares no `context_management` field, and whose
+`AnthropicBeta` union ends at `output-128k-2025-02-19`. There is nothing to
+opt into without inventing a wire shape. The full check, and what would have to
+change first, is in
+[`providers.md` § Provider-side context editing](providers.md#provider-side-context-editing-not-offered-by-the-api-this-gateway-targets-p108).
+
+Tier 1 above is the same idea run client-side, and it ships.
