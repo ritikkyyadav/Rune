@@ -278,14 +278,51 @@ run away), the harness-side freshness ledger survives a squash so a
 post-compaction edit still applies with no hash and no re-read, and the tail
 does come through verbatim.
 
-**After.** See the table added with the fixes.
+**After (2026-09-03, three fixes later):**
+
+```
+  ✓ compaction_facts_survive
+  ✓ compaction_plan_and_ledger_survive
+  ✓ compaction_hash_ledger_survives
+  ✓ compaction_recent_results_verbatim
+  ✓ compaction_no_summary_of_summary
+  ✓ compaction_evicted_results_identifiable
+  ✓ compaction_reclaims_and_keeps_a_tail
+
+  context                       7/7 (100%)
+  Total (whole mock suite)      62/62 (100%)
+```
+
+| date       | family                | before    | after      | note                                       |
+| ---------- | --------------------- | --------- | ---------- | ------------------------------------------ |
+| 2026-09-03 | `context`             | 4/7 (57%) | 7/7 (100%) | new family; three real defects, all closed |
+| 2026-09-03 | whole mock suite      | 59/62     | 62/62      | the 55 pre-existing tasks never regressed  |
+| 2026-09-03 | `bun test tests/unit` | 3531      | 3541       | +10; 0 fail                                |
+
+**What each fix bought, in the numbers the run reported.**
+
+| fix                                                | measured before                                      | after                                                                   |
+| -------------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------- |
+| the tail's count floor yields to its token budget  | compaction #1 folded 11 messages and freed **1.2%**  | the same compaction frees **50%**, by eviction, with no summarizer call |
+| the pair-safe snap may walk forward                | the backward snap kept both bulk batches verbatim    | the cut lands between them                                              |
+| a head under 15% of the working set is not folded  | 13 messages / 387 tokens folded for a round trip     | declined, with a reason on screen                                       |
+| a compaction that would not shrink is discarded    | 16,929 → 16,931 reported as a success                | declined, with a reason on screen                                       |
+| explicit compaction cuts to the recent exchange    | `compact_context` freed 141 of 5,027 tokens          | folds everything but the recent turns                                   |
+| eviction floor 200 → 2,000 chars                   | a 430-byte spec read destroyed to reclaim ~230 bytes | left alone; its decisions reach the summarizer                          |
+| an evicted body keeps a 600-char head+tail excerpt | 5 of 8 evicted results unidentifiable afterwards     | 8 of 8, at ~4% of a 15KB body                                           |
+
+**What this does not measure.** Whether a live model, handed the merged state,
+uses it well. The faithful summarizer measures the harness's half of the problem
+by construction and says nothing about the model's half; that needs `--real`
+capacity this machine does not have.
 
 ## Changes to the yardstick
 
 Any edit to a pinned subset breaks the series. Record it here.
 
-| date       | anchor        | change                 | why                                                                                                                                                 |
-| ---------- | ------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-09-02 | both          | created                | P7.9 — the first external anchors this project has had                                                                                              |
-| 2026-09-03 | mock baseline | 50 → 55 tasks          | P10.4 — one step-check task per ecosystem; re-anchored deliberately                                                                                 |
-| 2026-09-03 | mock baseline | no longer self-writing | P10.4a — a passing `--compare` used to overwrite the yardstick it had just compared against; `--write-baseline` is now the only thing that moves it |
+| date       | anchor        | change                 | why                                                                                                                                                                         |
+| ---------- | ------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-09-02 | both          | created                | P7.9 — the first external anchors this project has had                                                                                                                      |
+| 2026-09-03 | mock baseline | 50 → 55 tasks          | P10.4 — one step-check task per ecosystem; re-anchored deliberately                                                                                                         |
+| 2026-09-03 | mock baseline | no longer self-writing | P10.4a — a passing `--compare` used to overwrite the yardstick it had just compared against; `--write-baseline` is now the only thing that moves it                         |
+| 2026-09-03 | mock baseline | 55 → 62 tasks          | P10.8 — the seven-task `context` family; anchored by hand from the run archived at `tests/eval/results/run-2026-09-03T05-45-55-128Z-mock.json`, never by `--write-baseline` |
