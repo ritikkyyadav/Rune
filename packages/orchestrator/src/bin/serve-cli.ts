@@ -44,6 +44,7 @@ import {
 import { adoptLegacyEnv, getGearHome, loadConfig, migrateLegacyHome } from "@gear/shared";
 
 import { HostClient } from "../host-client";
+import { currentContext, hostSpawnArgv, hostSpawnLabel } from "./host-spawn";
 
 // ─── Where the door key lives ───
 
@@ -367,13 +368,16 @@ export class HostPool {
       ({ pid, client } = await this.spawnHost(key, socket));
     } else {
       const logFd = openSync(join(RUN_DIR(), `${id}.log`), "a");
-      const hostScript = join(import.meta.dir, "engine-host.ts");
       // `--parent-pid` is the host's own dead-man's switch: if this supervisor
       // is SIGKILLed (no handler runs, nothing gets to stop anything), the host
       // notices its parent is gone and exits by itself. Without it a `kill -9`
       // on `gear serve` orphaned every session engine, forever.
-      const argv = ["bun", hostScript, "--socket", socket];
-      if (this.parentPid !== null) argv.push("--parent-pid", String(this.parentPid));
+      const hostArgs = ["--socket", socket];
+      if (this.parentPid !== null) hostArgs.push("--parent-pid", String(this.parentPid));
+      // `bun engine-host.ts` from a checkout, `<gear> engine-host` from the
+      // compiled binary — where the source is virtual and the script path this
+      // used to build does not exist. See host-spawn.ts (P10.9a).
+      const argv = hostSpawnArgv(currentContext(import.meta.dir), hostArgs);
       const child = Bun.spawn(argv, {
         env: { ...process.env, GEAR_WORKSPACE: this.workspace },
         stdin: "ignore",
@@ -1014,6 +1018,7 @@ export async function serve(opts: ServeOptions = {}): Promise<{ stop: () => void
     console.log(`  bundle     ${opts.web.dist}`);
   }
   console.log(`  workspace  ${workspace}`);
+  console.log(`  hosts      ${hostSpawnLabel(currentContext(import.meta.dir))}`);
   console.log(`  token      ${serveConfigPath()} (0600)`);
   if (!loopbackOnly) {
     // Never quiet about this. The banner names what is now reachable, because
