@@ -196,6 +196,36 @@ line aggregates a fleet into one steady sentence — `4 workers running · w2 ed
 — rather than a line per agent or (as before) collapsing to "thinking" the moment the first of
 five finished.
 
+An **ad-hoc fan-out stays flat**, in the console and in the web app, and that is not an omission:
+every member of a `task`/`worker` fan-out was dispatched at once and none of them waits on
+another, so a heading over them would name an order the fan-out does not have.
+
+A **workflow is grouped by wave**, because a workflow does have one. Each level carries the edges
+into it, and each node carries the state that no sub-agent event can report:
+
+```
+  review · wave 2 of 3 · after scope
+  > scout  security   grep src/auth.ts · 22s
+  . scout  perf       done · 3 steps · 8s
+  . scout  style      cached
+```
+
+The level is usually the whole explanation for why a node has not started, and `after scope` is
+the half that makes a level mean something — "wave 2 of 3" says there is an order without saying
+what it was waiting for. `cached` is a node that was answered from the state file and never ran,
+so it shows no clock: a duration beside it would claim work happened this time. `skipped` is a
+node whose upstream did not complete, drawn as its own state rather than as a failure — reading a
+skip as a failure sends you looking for a defect in the one part of the graph that behaved
+correctly. A node on `attempt 2 of 3` says so while it is retrying, not only in the receipt
+afterwards.
+
+All of it is fed by the typed child event (`tool_progress.child`, P2.6) and its
+`node` context (`WorkflowNodeContext`, P10.9) — the executor already knows the topology, so it is
+carried rather than recovered by parsing a heartbeat. A workflow is **one** tool call, so its
+nodes have no `tool_call_start` of their own; the node context is what opens their rows, and it is
+complete before a node runs, which is what lets a node queued three waves out be drawn as queued
+rather than as an absence.
+
 ---
 
 ## Part 2 — Teamwork (multiple Gear instances)

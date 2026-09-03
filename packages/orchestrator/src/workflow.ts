@@ -84,11 +84,39 @@ export interface WorkflowState {
   results: Record<string, NodeResult>;
 }
 
+/**
+ * Where a node sits in the graph, handed to the runner and to every event.
+ *
+ * The executor knows all of this before a node runs, and a surface that has to
+ * recover it afterwards — by parsing a heartbeat, or by re-deriving the waves
+ * from the file — is a surface that will disagree with the executor the first
+ * time either one changes. So it is passed, not inferred.
+ */
+export interface NodeRunContext {
+  /** Topological level, 0-based, and how many levels the graph has. */
+  wave: number;
+  waves: number;
+  /** The ids this node waited for: the wave's incoming edges, named. */
+  dependsOn: string[];
+  /** Attempt in progress (1-based) and the ceiling `retry` allows. */
+  attempt: number;
+  attempts: number;
+}
+
 export interface WorkflowRunOptions {
-  /** Runs a node and returns its output. The executor never talks to a model itself. */
+  /**
+   * Runs a node and returns its output. The executor never talks to a model
+   * itself.
+   *
+   * `ctx` is the node's place in the graph. A runner that only needs the
+   * prompt ignores it; a runner that reports upward (the `workflow` tool)
+   * carries it into the child event so a fleet view can group by wave without
+   * re-deriving the topology it was already given.
+   */
   runNode: (
     node: WorkflowNode,
     prompt: string,
+    ctx: NodeRunContext,
   ) => Promise<{
     output: string;
     structured?: Record<string, unknown>;
@@ -102,10 +130,17 @@ export interface WorkflowRunOptions {
 }
 
 export type WorkflowEvent =
-  | { type: "wave_start"; wave: number; nodes: string[] }
-  | { type: "node_start"; id: string; wave: number }
-  | { type: "node_done"; id: string; result: NodeResult }
-  | { type: "node_cached"; id: string }
+  | { type: "wave_start"; wave: number; waves: number; nodes: string[] }
+  | ({ type: "node_start"; id: string } & NodeRunContext)
+  // A retry, announced as it happens. The final `NodeResult` counts attempts,
+  // but only afterwards — and a node on its third attempt looks exactly like a
+  // slow node until something says so.
+  | ({ type: "node_attempt"; id: string } & NodeRunContext)
+  | ({ type: "node_done"; id: string; result: NodeResult } & Omit<
+      NodeRunContext,
+      "attempt" | "attempts"
+    >)
+  | ({ type: "node_cached"; id: string } & Omit<NodeRunContext, "attempt" | "attempts">)
   | { type: "workflow_done"; completed: number; failed: number; skipped: number };
 
 // ─── Validation ───
@@ -292,19 +327,26 @@ export async function runWorkflow(
 
   for (const [waveIndex, wave] of waves.entries()) {
     if (opts.signal?.aborted) break;
-    opts.onEvent?.({ type: "wave_start", wave: waveIndex, nodes: wave.map((n) => n.id) });
+    opts.onEvent?.({
+      type: "wave_start",
+      wave: waveIndex,
+      waves: waves.length,
+      nodes: wave.map((n) => n.id),
+    });
 
     await mapWithConcurrency(wave, limit, async (node) => {
       if (opts.signal?.aborted) return;
 
-      const upstream = (node.dependsOn ?? [])
+      const dependsOn = node.dependsOn ?? [];
+      const place = { wave: waveIndex, waves: waves.length, dependsOn };
+      const upstream = dependsOn
         .map((id) => state.results[id])
         .filter((r): r is NodeResult => Boolean(r));
 
       // A node whose dependency failed does not run. Running it anyway would
       // hand a model a prompt with a hole where its input should be, and get
       // back a confident answer to a question nobody asked.
-      const blocked = (node.dependsOn ?? []).filter(
+      const blocked = dependsOn.filter(
         (id) => !state.results[id] || state.results[id]!.status !== "completed",
       );
       if (blocked.length > 0) {
@@ -318,7 +360,12 @@ export async function runWorkflow(
           cached: false,
           hash: "",
         };
-        opts.onEvent?.({ type: "node_done", id: node.id, result: state.results[node.id]! });
+        opts.onEvent?.({
+          type: "node_done",
+          id: node.id,
+          result: state.results[node.id]!,
+          ...place,
+        });
         return;
       }
 
@@ -328,11 +375,18 @@ export async function runWorkflow(
         // Same node, same inputs, already answered. This is what makes a resume
         // after a kill cheap rather than a full re-run.
         state.results[node.id] = { ...cached, cached: true };
-        opts.onEvent?.({ type: "node_cached", id: node.id });
+        opts.onEvent?.({ type: "node_cached", id: node.id, ...place });
         return;
       }
 
-      opts.onEvent?.({ type: "node_start", id: node.id, wave: waveIndex });
+      const attemptCeiling = node.retry ?? 1;
+      opts.onEvent?.({
+        type: "node_start",
+        id: node.id,
+        ...place,
+        attempt: 1,
+        attempts: attemptCeiling,
+      });
       const prompt = renderPrompt(node, upstream);
       const started = Date.now();
       let attempts = 0;
@@ -340,11 +394,15 @@ export async function runWorkflow(
         output: "",
         error: "not run",
       };
-      while (attempts < (node.retry ?? 1)) {
+      while (attempts < attemptCeiling) {
         attempts++;
         if (opts.signal?.aborted) break;
+        const ctx: NodeRunContext = { ...place, attempt: attempts, attempts: attemptCeiling };
+        // The first attempt is announced by node_start; only a RE-attempt is
+        // news, and it is news the moment it starts rather than at the end.
+        if (attempts > 1) opts.onEvent?.({ type: "node_attempt", id: node.id, ...ctx });
         try {
-          last = await opts.runNode(node, prompt);
+          last = await opts.runNode(node, prompt, ctx);
           if (!last.error) break;
         } catch (err) {
           last = { output: "", error: err instanceof Error ? err.message : String(err) };
@@ -363,7 +421,7 @@ export async function runWorkflow(
         hash,
       };
       state.results[node.id] = result;
-      opts.onEvent?.({ type: "node_done", id: node.id, result });
+      opts.onEvent?.({ type: "node_done", id: node.id, result, ...place });
 
       // Persisted per node, not per wave. A kill lands between two nodes far
       // more often than between two waves, and the whole value of resume is

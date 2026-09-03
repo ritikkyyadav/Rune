@@ -14,7 +14,7 @@ import type {
   HeldStep,
   UserQuestion,
 } from "../lib/types";
-import type { FleetRow } from "../lib/fleet";
+import { fleetWaves, type FleetRow } from "../lib/fleet";
 
 // ─── ask_user ───
 
@@ -397,8 +397,39 @@ export function HeldStepsPanel(props: {
  * Dispatch order and not arrival order: arrival is whichever worker happened to
  * speak first, which makes the panel reorder itself while you read it.
  */
+function FleetLine({ row, now }: { row: FleetRow; now: number }) {
+  // A cache hit is not a fast run — it is not a run. A clock beside it would
+  // claim the work happened this time, which is the one thing a reader would
+  // use the number for. Same for a skip: it never started, so it has no span.
+  const cached = row.node?.cached === true;
+  const retrying = row.node && row.node.attempt > 1;
+  const timed = !cached && row.state !== "skipped";
+  return (
+    <div className={`fleet-row ${row.state}`}>
+      <span className={`fleet-state ${row.state}`}>{row.state}</span>
+      <span className="fleet-label">{row.label}</span>
+      <span className="fleet-note">{row.note}</span>
+      <span className="fleet-time">
+        {cached ? "cached" : null}
+        {retrying ? (
+          <span className="fleet-retry">
+            attempt {row.node!.attempt} of {row.node!.attempts}
+          </span>
+        ) : null}
+        {timed ? `${Math.round(((row.endedAt ?? now) - row.startedAt) / 100) / 10}s` : null}
+        {timed && row.tools > 0 ? ` · ${row.tools} tools` : ""}
+      </span>
+    </div>
+  );
+}
+
 export function FleetPanel({ rows, now }: { rows: FleetRow[]; now: number }) {
   if (rows.length === 0) return null;
+  const flat = rows.filter((r) => !r.node);
+  // Grouped by level, because a workflow is levels. An ad-hoc fan-out stays
+  // flat above them: every one of its members was dispatched at once and none
+  // waits on another, so a heading would name an order it does not have.
+  const waves = fleetWaves({ rows, nextOrder: rows.length });
   return (
     <section className="fleet" aria-label="Sub-agents">
       <div className="fleet-head">
@@ -407,15 +438,25 @@ export function FleetPanel({ rows, now }: { rows: FleetRow[]; now: number }) {
           {rows.filter((r) => r.state === "running").length} running of {rows.length}
         </span>
       </div>
-      {rows.map((row) => (
-        <div key={row.agentId} className={`fleet-row ${row.state}`}>
-          <span className={`fleet-state ${row.state}`}>{row.state}</span>
-          <span className="fleet-label">{row.label}</span>
-          <span className="fleet-note">{row.note}</span>
-          <span className="fleet-time">
-            {Math.round(((row.endedAt ?? now) - row.startedAt) / 100) / 10}s
-            {row.tools > 0 ? ` · ${row.tools} tools` : ""}
-          </span>
+      {flat.map((row) => (
+        <FleetLine key={row.agentId} row={row} now={now} />
+      ))}
+      {waves.map((wave) => (
+        <div className="fleet-wave" key={`${wave.workflow}:${wave.wave}`}>
+          <div className="fleet-wave-head">
+            <span className="fleet-wave-name">{wave.workflow}</span>
+            <span className="fleet-wave-level">
+              wave {wave.wave + 1} of {wave.waves}
+            </span>
+            {/* The edges, named. "wave 2 of 3" says there is an order; this
+                says what the order was waiting for. */}
+            {wave.after.length > 0 ? (
+              <span className="fleet-wave-after">after {wave.after.join(", ")}</span>
+            ) : null}
+          </div>
+          {wave.rows.map((row) => (
+            <FleetLine key={row.agentId} row={row} now={now} />
+          ))}
         </div>
       ))}
     </section>

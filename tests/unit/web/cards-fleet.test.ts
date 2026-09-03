@@ -16,11 +16,13 @@ import {
 } from "../../../apps/web/src/components/Cards";
 import {
   INITIAL_FLEET,
+  adHocRows,
   fleetReducer,
   fleetRows,
+  fleetWaves,
   projectChild,
 } from "../../../apps/web/src/lib/fleet";
-import type { AgentTurnEvent } from "../../../packages/protocol/src/index";
+import type { AgentTurnEvent, WorkflowNodeContext } from "../../../packages/protocol/src/index";
 
 const view = (outcomes: Array<HeldOutcome | null>, selected = 0) => ({
   steps: outcomes.map((_, i) => ({ id: `s${i}` })),
@@ -149,5 +151,130 @@ describe("the fleet reads child events, not prose", () => {
     expect(projectChild({ type: "thinking_delta", text: "x" })).toBeNull();
     expect(projectChild({ type: "tool_progress", callId: "c", note: "n" })).toBeNull();
     expect(projectChild({ type: "tool_call_start", callId: "c", toolName: "bash" })).toBe("bash");
+  });
+});
+
+// ─── Workflow waves (P10.9) ───
+
+const nodeCtx = (id: string, over: Partial<WorkflowNodeContext> = {}): WorkflowNodeContext => ({
+  workflow: "review",
+  node: id,
+  kind: "task",
+  wave: 0,
+  waves: 2,
+  dependsOn: [],
+  attempt: 1,
+  attempts: 1,
+  cached: false,
+  ...over,
+});
+
+const nodeEvent = (
+  agentId: string,
+  event: AgentTurnEvent,
+  node: WorkflowNodeContext,
+): AgentTurnEvent => ({
+  type: "tool_progress",
+  callId: "c1",
+  note: "…",
+  child: { agentId, label: node.node, event, node },
+});
+
+describe("a workflow's members are grouped by wave, a fan-out is not", () => {
+  test("an ad-hoc fan-out stays flat and produces no waves", () => {
+    // Grouping a fan-out would invent a structure it does not have: every
+    // member was dispatched at once and none of them waits on another.
+    let f = INITIAL_FLEET;
+    f = fleetReducer(f, child("a", { type: "tool_call_start", callId: "x", toolName: "bash" }));
+    f = fleetReducer(f, child("b", { type: "tool_call_start", callId: "y", toolName: "grep" }));
+    expect(fleetWaves(f)).toEqual([]);
+    expect(adHocRows(f).map((r) => r.agentId)).toEqual(["a", "b"]);
+  });
+
+  test("nodes group by level, in wave order, with the level's edges named", () => {
+    let f = INITIAL_FLEET;
+    // Deliberately out of order: the panel must group by the graph, not by
+    // whichever node happened to speak first.
+    f = fleetReducer(
+      f,
+      nodeEvent(
+        "c1:report",
+        { type: "notice", message: "wave 2" },
+        nodeCtx("report", { wave: 1, dependsOn: ["security", "perf"], status: "running" }),
+      ),
+    );
+    f = fleetReducer(
+      f,
+      nodeEvent(
+        "c1:security",
+        { type: "tool_call_start", callId: "t", toolName: "grep" },
+        nodeCtx("security", { status: "running" }),
+      ),
+    );
+    f = fleetReducer(
+      f,
+      nodeEvent(
+        "c1:perf",
+        { type: "tool_call_start", callId: "t2", toolName: "read_file" },
+        nodeCtx("perf", { status: "running" }),
+      ),
+    );
+
+    const waves = fleetWaves(f);
+    expect(waves.map((w) => w.wave)).toEqual([0, 1]);
+    expect(waves[0]!.rows.map((r) => r.label)).toEqual(["security", "perf"]);
+    expect(waves[0]!.after).toEqual([]);
+    expect(waves[1]!.after).toEqual(["security", "perf"]);
+    expect(waves[1]!.workflow).toBe("review");
+    expect(waves[1]!.waves).toBe(2);
+    // The flat list is now empty: every member belongs to a level.
+    expect(adHocRows(f)).toEqual([]);
+  });
+
+  test("a cache hit and a skip are states no agent event could report", () => {
+    // A cache hit runs no agent at all and a skip never starts one, so without
+    // the node context these are the two outcomes a panel cannot draw — and
+    // they are two of the three a workflow is watched for.
+    let f = INITIAL_FLEET;
+    f = fleetReducer(
+      f,
+      nodeEvent(
+        "c1:scope",
+        { type: "turn_complete", stopReason: "cached", totalTurns: 0 },
+        nodeCtx("scope", { cached: true, status: "completed" }),
+      ),
+    );
+    f = fleetReducer(
+      f,
+      nodeEvent(
+        "c1:report",
+        { type: "notice", message: "upstream did not complete: security" },
+        nodeCtx("report", { wave: 1, dependsOn: ["security"], status: "skipped" }),
+      ),
+    );
+    const rows = fleetRows(f);
+    expect(rows[0]!.state).toBe("done");
+    expect(rows[0]!.node?.cached).toBe(true);
+    // Skipped is NOT failed: a skipped node did not run because something
+    // upstream did not complete, and reading it as a failure sends the reader
+    // hunting a defect in the part of the graph that behaved correctly.
+    expect(rows[1]!.state).toBe("skipped");
+    expect(rows[1]!.endedAt).toBeDefined();
+  });
+
+  test("a retry is visible while it is happening, not only in the receipt", () => {
+    let f = INITIAL_FLEET;
+    f = fleetReducer(
+      f,
+      nodeEvent(
+        "c1:flaky",
+        { type: "notice", message: "attempt 2 of 3" },
+        nodeCtx("flaky", { attempt: 2, attempts: 3, status: "running" }),
+      ),
+    );
+    const row = fleetRows(f)[0]!;
+    expect(row.node?.attempt).toBe(2);
+    expect(row.node?.attempts).toBe(3);
+    expect(row.state).toBe("running");
   });
 });

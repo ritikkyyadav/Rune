@@ -102,11 +102,38 @@ A workflow with a failed node still **succeeds as a tool call**: it ran the grap
 happened. Failing the call would throw away every completed node's output on the way back to the
 model.
 
-## What is not here yet
+## Watching one run
 
-The fleet view does not yet group live nodes by wave. Node progress is already keyed by node id on
-the existing progress channel, but the typed child events that would let the panel group by it are
-Phase 2 work (P2.6). Until then a running workflow reports as a series of ordinary sub-agent lines.
+The fleet view groups a workflow's live nodes **by wave**, in the console and in the web app:
+
+```
+  review · wave 2 of 3 · after scope
+  > scout  security   grep src/auth.ts · 22s
+  . scout  perf       done · 3 steps · 8s
+  . scout  style      cached
+```
+
+The level is usually the whole explanation for why a node has not started, and the edges into a
+level (`after scope`) are the half that makes the level mean something — "wave 2 of 3" says there
+is an order without saying what it was waiting for. An ad-hoc `task`/`worker` fan-out keeps its
+flat rows: every member of one was dispatched at once and none waits on another, so grouping it
+would name a structure it does not have.
+
+Two node states are visible that nothing else could report. A **cache hit** runs no agent at all,
+so it shows `cached` and no clock — a duration beside it would claim the work happened this time.
+A **skipped** node never started, and is drawn as skipped rather than as a failure: reading a skip
+as a failure sends you looking for a defect in the one part of the graph that behaved correctly. A
+node on its second attempt says `attempt 2 of 3` while it is retrying, rather than only in the
+receipt afterwards.
+
+None of this is parsed from a heartbeat. The executor already knows the topology, so it is carried:
+every node's wave, its edges, its attempt, and whether it was cached ride on the typed child event
+as `tool_progress.child.node` (`WorkflowNodeContext`). A workflow is **one** tool call, so its nodes
+have no `tool_call_start` of their own — the node context is what opens their rows, and it is
+complete before a node runs, which is what lets a node queued three waves out be drawn as queued
+rather than as an absence.
+
+## What is not here yet
 
 `research.ts` has not been refactored onto this executor. The primitives it would need are now
 exported and the shape matches, but moving a working, load-bearing feature onto a new executor is a

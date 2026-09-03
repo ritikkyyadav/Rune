@@ -13,7 +13,7 @@
 // second union, and a surface that wants the truth (the fleet panel, the
 // desktop fleet view) has it.
 
-import type { AgentTurnEvent, ChildAgentEvent } from "@gear/protocol";
+import type { AgentTurnEvent, ChildAgentEvent, WorkflowNodeContext } from "@gear/protocol";
 
 /** How a sub-agent event is announced upward. */
 export type ChildEventSink = (child: ChildAgentEvent) => void;
@@ -89,4 +89,32 @@ export function projectChildEvent(agentId: string, event: AgentTurnEvent): strin
 function exhaustive(event: never): null {
   void event;
   return null;
+}
+
+/**
+ * The line a WORKFLOW NODE deserves when its own event says nothing (P10.9).
+ *
+ * Two node outcomes carry no sub-agent event at all: a cache hit runs nothing,
+ * and a skip never starts. A node that finished successfully ends on a
+ * `turn_complete`, which the projection above is deliberately silent about
+ * because an ordinary sub-agent's completion is reported by the call's own
+ * `settled` marker — and a workflow node has no such marker, because the whole
+ * workflow is one call.
+ *
+ * So: terminal node states speak, and a running node stays as quiet here as it
+ * is above. Anything else would put a second heartbeat on the same row.
+ */
+export function projectWorkflowNode(node: WorkflowNodeContext | undefined): string | null {
+  if (!node) return null;
+  if (node.cached) return clip(`${node.node} cached`);
+  switch (node.status) {
+    case "completed":
+      return clip(`${node.node} done`);
+    case "failed":
+      return clip(`${node.node} failed`);
+    case "skipped":
+      return clip(`${node.node} skipped`);
+    default:
+      return null;
+  }
 }

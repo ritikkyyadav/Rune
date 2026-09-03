@@ -16,7 +16,12 @@ export { assertNever, assertNeverSoft } from "./assert";
 export type { ToolAttachment, ToolCallOutput } from "./tool";
 export type { TodoItem, TodoStatus, StepEvidence, HandoffReason } from "./task";
 
-export type { AgentTurnEvent, AgentTurnEventType, ChildAgentEvent } from "./events";
+export type {
+  AgentTurnEvent,
+  AgentTurnEventType,
+  ChildAgentEvent,
+  WorkflowNodeContext,
+} from "./events";
 export { AGENT_TURN_EVENT_TYPES, isAgentTurnEvent, isAgentTurnEventType } from "./events";
 
 export type {
