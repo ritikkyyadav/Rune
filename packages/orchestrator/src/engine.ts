@@ -179,6 +179,7 @@ import {
   type BriefHandler,
 } from "./brief";
 import { interpretIntent } from "./intent";
+import { createNoteHypothesisTool, createRecordDecisionTool } from "./narrative-tools";
 import { runOnParentCommit } from "./parent-check";
 import { isGitRepo } from "./worktree";
 import type { QuestionHandler } from "./ask-user";
@@ -1398,6 +1399,61 @@ export class Engine {
           };
         },
       ),
+    );
+
+    // `note_hypothesis` / `record_decision`: the same seam as `record_evidence`
+    // — the model reports what it is doing and the runtime decides what that is
+    // worth. A hypothesis is written as `testing`; the verdict comes from a
+    // check (see the loop's inference), and a decision carries the evidence it
+    // stood on or is recorded as unbacked. Both write through the live spine,
+    // so a run with no spine (utility loops) simply has nowhere to put them and
+    // says so instead of failing.
+    this.registry.register(
+      createNoteHypothesisTool(() => {
+        const spine = this.liveSpine;
+        if (!spine) return undefined;
+        return {
+          noteHypothesis: (text, opts) => {
+            const hypothesis = spine.noteHypothesis(text, opts);
+            this.pendingNarrative.push({ type: "hypothesis", hypothesis });
+            return hypothesis;
+          },
+          updateHypothesis: (id, status, opts) => {
+            const updated = spine.updateHypothesis(id, status, opts);
+            if (updated) {
+              this.pendingNarrative.push({
+                type: "hypothesis_updated",
+                id,
+                status,
+                ...(updated.reason ? { reason: updated.reason } : {}),
+                ...(opts?.evidence?.length ? { evidence: opts.evidence } : {}),
+                source: "model",
+              });
+            }
+            return updated;
+          },
+          recordDecision: (text, basedOn) => {
+            const decision = spine.recordDecision(text, basedOn);
+            this.pendingNarrative.push({ type: "decision", decision });
+            return decision;
+          },
+        };
+      }),
+    );
+    this.registry.register(
+      createRecordDecisionTool(() => {
+        const spine = this.liveSpine;
+        if (!spine) return undefined;
+        return {
+          noteHypothesis: (text, opts) => spine.noteHypothesis(text, opts),
+          updateHypothesis: (id, status, opts) => spine.updateHypothesis(id, status, opts),
+          recordDecision: (text, basedOn) => {
+            const decision = spine.recordDecision(text, basedOn);
+            this.pendingNarrative.push({ type: "decision", decision });
+            return decision;
+          },
+        };
+      }),
     );
 
     // (The `worker` tool is registered alongside `task` in
