@@ -41,7 +41,10 @@ describe("the brief", () => {
 
   test("the schema does not offer the model any way to set a rung", () => {
     const props = (READ_BACK_SCHEMA.inputSchema as any).properties;
-    expect(Object.keys(props).sort()).toEqual(["done_when", "leave", "reading", "touch"]);
+    // `kind` (P11.1) is the model's one revision of the task kind — it picks a
+    // layout and touches no criterion. Everything else here is the read-back.
+    expect(Object.keys(props).sort()).toEqual(["done_when", "kind", "leave", "reading", "touch"]);
+    expect(props.kind.enum).toContain("investigate");
     // done_when is a list of plain strings — no object with a status field.
     expect(props.done_when.items).toEqual({ type: "string" });
   });
@@ -536,6 +539,27 @@ describe("summarizeCheck", () => {
 
   test("falls back to the tail, where runners put their verdict", () => {
     expect(summarizeCheck("noise\nnoise\nDone.")).toBe("Done.");
+  });
+
+  // P11.1 put this string in front of a person: it is the reason a folded
+  // branch carries in the Decision Record. "refuted: 1 fail" tells a reader the
+  // SHAPE of the evidence and none of it, so a line that names what failed
+  // outranks a line that counts how many did.
+  test("a named failure outranks the counts", () => {
+    const bun = [
+      "bun test v1.3.14",
+      "error: expect(received).not.toBe(expected)",
+      "(fail) the cache TTL changed across the deploy [0.18ms]",
+      " 0 pass",
+      " 1 fail",
+      "Ran 1 test across 1 file. [21.00ms]",
+    ].join("\n");
+    expect(summarizeCheck(bun)).toBe("(fail) the cache TTL changed across the deploy [0.18ms]");
+  });
+
+  test("the error line outranks the counts when nothing is named", () => {
+    const tsc = ["compiling", "error TS2345: Argument of type X", "3 errors"].join("\n");
+    expect(summarizeCheck(tsc)).toBe("error TS2345: Argument of type X");
   });
 
   test("empty output summarises to nothing rather than to a lie", () => {

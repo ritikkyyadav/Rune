@@ -182,6 +182,19 @@ export async function runHeadless(
         case "handoff":
         case "replanning":
         case "tool_progress":
+        // The narrative is state, and a headless consumer reads it from the
+        // session log (`gear audit --record`, the signed export) rather than
+        // from a stream it may have joined halfway through. `--stream-json`
+        // still carries every one of these on the wire; this is the runner's
+        // own summary, and a hypothesis is not one of its counters.
+        case "task_kind":
+        case "hypothesis":
+        case "hypothesis_updated":
+        case "decision":
+        case "artifact":
+        case "pending_decision":
+        case "decision_resolved":
+        case "decision_record":
           break;
 
         default:

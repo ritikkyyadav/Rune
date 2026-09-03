@@ -13,6 +13,7 @@ import { NEW_FEATURE_TASKS } from "./tasks-new-feature";
 import { TOOL_DISCIPLINE_TASKS } from "./tasks-tool-discipline";
 import { FROM_INCIDENTS_TASKS } from "./tasks-from-incidents";
 import { TASK_SPINE_TASKS } from "./tasks-task-spine";
+import { NARRATIVE_TASKS } from "./tasks-narrative";
 import { LONG_HORIZON_TASKS } from "./tasks-long-horizon";
 import { GREENFIELD_TASKS } from "./tasks-greenfield";
 import { PARALLEL_TASKS } from "./tasks-parallel";
@@ -353,6 +354,7 @@ const CORE_TASKS: EvalTask[] = [
 export const ALL_TASKS: EvalTask[] = [
   ...CORE_TASKS,
   ...TASK_SPINE_TASKS,
+  ...NARRATIVE_TASKS,
   ...VERIFIER_ECOSYSTEM_TASKS,
   ...COMPACTION_TASKS,
   ...LONG_HORIZON_TASKS,

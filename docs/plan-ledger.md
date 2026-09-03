@@ -38,6 +38,15 @@ A completion right after a **failing check** is refused the same way. A fix
 after the failure (any further write) reopens the question rather than
 carrying the failure forward.
 
+A check fails when its **exit code** says so. That is worth stating because it
+was not true for two weeks: `bash` reports success for any command that _ran_,
+so a failing test suite arrived as a successful tool call carrying
+`exit_code: 1`, and the spine recorded it as a pass. The rule above therefore
+could not fire at all for checks the model ran itself — only for the ones the
+harness ran, where the verifier reads the code directly. The exit code (and a
+timeout, which is also a failure) now decides, and the receipt quotes stdout,
+where a test runner writes its verdict.
+
 Other rules applied on every list:
 
 - Exactly one step is in progress. Extras are set back to pending, and the
@@ -102,6 +111,73 @@ nothing. The results-side breaker can: a turn whose every tool result was
 already seen this run, with nothing written and no plan change, is stale. Six
 stale turns earn one nudge; twelve end the run with a resumable handoff that
 says why. Lead loop only — sub-agents run on small turn budgets already.
+
+## The narrative: how the decision was reached
+
+The ledger above says what was done and on what evidence. It cannot say why one
+approach was taken and two abandoned — and that is the half a person reads when
+they want to trust the answer. A run that tried three things and reports only
+the one that worked has hidden the part that makes the answer checkable.
+
+So the spine carries a narrative beside the plan:
+
+| field              | what it holds                                                                 |
+| ------------------ | ----------------------------------------------------------------------------- |
+| `kind`             | `investigate · build · analyze · research · operate · write`                  |
+| `narrative`        | hypotheses (`proposed/testing/refuted/confirmed`, with reasons) and decisions |
+| `artifacts`        | files, diffs, reports, charts, tables, previews the run produced              |
+| `pendingDecisions` | held steps, `ask_user` questions, approvals and reviews, as ONE list          |
+| `progress`         | steps closed on evidence over steps — derived, never guessed                  |
+
+**The kind is read once.** At task start, from the first message and the
+workspace: deterministically, from the ask's own verb — "why is X slow" is an
+investigation, "build me X" is a build. That reading is free and always on.
+
+A second reading, one small model call, exists for the asks the first could not
+place, and is **off by default** (`[intent] interpreter = "model"`). What it
+buys is a layout, and a wrong layout costs nothing a person cannot fix; what it
+costs is a provider round-trip in the chat path before the first token. It is
+also a call that changes what the NEXT call receives, which is not a thing to
+turn on for everybody by default. When it is on it is gated three times: the
+setting, the deterministic reader having found nothing, and the message being
+work rather than a greeting.
+
+The model may revise the kind once, through `read_back`'s `kind` field.
+
+**A hypothesis is named before it is tested.** `note_hypothesis` records the
+suspicion while it is still a suspicion. That ordering is the whole feature: a
+hypothesis recorded after its own refutation is a story told backwards, and one
+recorded only when it turns out to be right is a record of the answer rather
+than of the investigation.
+
+**The verdict comes from a check, not from confidence.** The harness infers it:
+a plan step whose verification FAILS marks the hypothesis it was testing
+`refuted`, with the check's own summary as the reason; a step that closes on
+evidence marks it `confirmed` and attaches that evidence. The model can report a
+verdict too, and the reason is recorded either way — but it never has to be
+believed for the record to say what happened.
+
+**A decision is bound to its evidence.** `record_decision` writes the
+commitment and the `EvidenceRef`s behind it. It also revives the spine's
+`decisions` list, which existed from the first version and had exactly one
+writer in the repository — a test — so the injected block's "Decisions" line was
+permanently empty and every commitment was forgotten at the first compaction.
+A decision with nothing behind it is recorded as unbacked rather than refused:
+the harness cannot know whether a commitment needed a citation, so it makes the
+absence visible instead of arguing about it.
+
+**Progress is derived.** Completed steps that carry measured evidence and are
+not marked unproven, over total steps. A step the model closed with nothing
+behind it does not move it. No plan means no progress — absent, not zero.
+
+**The narrative belongs to the mission.** When the goal rolls, the hypotheses,
+decisions and kind go with it. The file and check ledgers stay, because they are
+true of the workspace and a new goal does not un-write a file.
+
+All of it persists in the `task_state` snapshot, renders into `mission.md`
+under **How we got here**, and reconstructs on replay — ids included, so a
+resumed run cannot mint an `h1` that already exists. See
+[`decision-record.md`](decision-record.md) for the artifact it all ends in.
 
 ## The log and `gear audit`
 

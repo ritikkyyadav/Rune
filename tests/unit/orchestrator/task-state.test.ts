@@ -464,7 +464,9 @@ describe("renderMissionFile", () => {
     const doc = s.renderMissionFile();
     expect(doc).toContain("# Mission");
     expect(doc).toContain(spec); // VERBATIM — the whole point
-    expect(doc).toContain("## Plan (1/2 done)");
+    // P11.1 added the derived progress to the header: steps closed on
+    // evidence over steps, which is exactly what the receipts below say.
+    expect(doc).toContain("## Plan (1/2 done, 50% closed on evidence)");
     expect(doc).toContain("[x] scaffold — 1 write");
     expect(doc).toContain("[>] core loop");
     expect(doc).toContain("src/app.ts");
