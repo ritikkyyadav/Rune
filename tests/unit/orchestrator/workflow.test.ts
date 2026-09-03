@@ -11,6 +11,7 @@ import {
   runWorkflow,
   topologicalWaves,
   type NodeResult,
+  type WorkflowEvent,
   type WorkflowNode,
 } from "../../../packages/orchestrator/src/workflow";
 
@@ -314,5 +315,101 @@ describe("P6B.6 — execution, resume and caching", () => {
       { statePath, runNode: async () => ({ output: "ok" }) },
     );
     expect(state.results.a!.status).toBe("completed");
+  });
+});
+
+describe("P10.9 — every event names the node's place in the graph", () => {
+  test("the runner is told which wave it is on and which edges it waited for", async () => {
+    // The executor knows the topology before anything runs. A surface that has
+    // to recover it afterwards — by parsing a heartbeat, or by re-deriving the
+    // waves from the file — is a surface that disagrees with the executor the
+    // first time either one changes.
+    const seen: Array<{ id: string; wave: number; waves: number; dependsOn: string[] }> = [];
+    await runWorkflow(
+      { name: "w", nodes: DIAMOND },
+      {
+        runNode: async (n, _prompt, ctx) => {
+          seen.push({ id: n.id, wave: ctx.wave, waves: ctx.waves, dependsOn: ctx.dependsOn });
+          return { output: n.id };
+        },
+      },
+    );
+    expect(seen.find((s) => s.id === "a")).toEqual({
+      id: "a",
+      wave: 0,
+      waves: 3,
+      dependsOn: [],
+    });
+    expect(seen.find((s) => s.id === "d")).toEqual({
+      id: "d",
+      wave: 2,
+      waves: 3,
+      dependsOn: ["b", "c"],
+    });
+  });
+
+  test("wave_start, node_start, node_done and node_cached all carry the level", async () => {
+    const events: WorkflowEvent[] = [];
+    const dir = tmp();
+    const statePath = join(dir, "state.json");
+    const nodes = [node("a"), node("b", ["a"])];
+    await runWorkflow(
+      { name: "w", nodes },
+      { statePath, runNode: async (n) => ({ output: n.id }) },
+    );
+
+    // Second run: `a` is a cache hit, and the cached event must still say where
+    // `a` lives — a cache hit runs nothing, so nothing else ever will.
+    await runWorkflow(
+      { name: "w", nodes },
+      {
+        statePath,
+        runNode: async (n) => ({ output: n.id }),
+        onEvent: (e) => events.push(e),
+      },
+    );
+    const waveStart = events.find((e) => e.type === "wave_start");
+    expect(waveStart).toMatchObject({ wave: 0, waves: 2, nodes: ["a"] });
+    const cached = events.find((e) => e.type === "node_cached");
+    expect(cached).toMatchObject({ id: "a", wave: 0, waves: 2, dependsOn: [] });
+  });
+
+  test("a retry is announced while it happens, not only counted afterwards", async () => {
+    // `NodeResult.attempts` reports the retry when the node is over, which is
+    // exactly when it has stopped being the thing anyone wanted to know.
+    const events: WorkflowEvent[] = [];
+    let attempts = 0;
+    await runWorkflow(
+      { name: "w", nodes: [node("a", [], { retry: 3 })] },
+      {
+        runNode: async () => {
+          attempts++;
+          return attempts < 3 ? { output: "", error: "flaky" } : { output: "ok" };
+        },
+        onEvent: (e) => events.push(e),
+      },
+    );
+    const retries = events.filter((e) => e.type === "node_attempt");
+    expect(retries.map((e) => (e as { attempt: number }).attempt)).toEqual([2, 3]);
+    expect(retries.every((e) => (e as { attempts: number }).attempts === 3)).toBe(true);
+    // The first attempt is node_start's, not a re-attempt.
+    expect(events.filter((e) => e.type === "node_start")).toHaveLength(1);
+  });
+
+  test("a skipped node's event names the level it never ran on", async () => {
+    const events: WorkflowEvent[] = [];
+    await runWorkflow(
+      { name: "w", nodes: DIAMOND },
+      {
+        runNode: async (n) => (n.id === "b" ? { output: "", error: "boom" } : { output: n.id }),
+        onEvent: (e) => events.push(e),
+      },
+    );
+    const skipped = events.find(
+      (e) => e.type === "node_done" && e.result.status === "skipped",
+    ) as Extract<WorkflowEvent, { type: "node_done" }>;
+    expect(skipped.id).toBe("d");
+    expect(skipped.wave).toBe(2);
+    expect(skipped.dependsOn).toEqual(["b", "c"]);
   });
 });

@@ -41,7 +41,7 @@ import { isVerificationCommand } from "./brief";
 // (and anything downstream that imports it from the agent loop) keep working.
 
 import type { AgentTurnEvent, ChildAgentEvent } from "@gear/protocol";
-import { projectChildEvent } from "./subagent-events";
+import { projectChildEvent, projectWorkflowNode } from "./subagent-events";
 export type { AgentTurnEvent, ChildAgentEvent } from "@gear/protocol";
 
 // ─── Permission Gate ───
@@ -1999,7 +1999,15 @@ export class AgentLoop {
       // with nothing worth a rung line (a token delta) is dropped rather
       // than queued as an empty note.
       const eventFor = (callId: string) => (child: ChildAgentEvent) => {
-        const note = projectChildEvent(child.agentId, child.event);
+        // A workflow node is known by its node id everywhere else — the graph,
+        // the cache key, the state file — so the rung calls it that too. Its
+        // raw agentId is a call-scoped compound nobody has ever seen.
+        const note =
+          projectChildEvent(child.node?.node ?? child.agentId, child.event) ??
+          // A workflow node whose own event is silent still has news when it
+          // is a cache hit, a skip, or a completion: the whole workflow is ONE
+          // tool call, so there is no per-node `settled` marker to say so.
+          projectWorkflowNode(child.node);
         if (!note) return;
         pushProgress({ callId, note, child });
       };

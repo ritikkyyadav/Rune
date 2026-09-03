@@ -288,3 +288,128 @@ describe("what a sub-agent leaves behind in the transcript", () => {
     setTermWidthOverride(undefined as unknown as number);
   });
 });
+
+// ─── Workflow waves (P10.9) ───
+
+/**
+ * A workflow node's progress, as the loop delivers it.
+ *
+ * A workflow is ONE tool call, so its nodes have no `tool_call_start` of their
+ * own: the node context on the child event is what opens their rows.
+ */
+const nodeBeat = (
+  callId: string,
+  id: string,
+  note: string,
+  node: Partial<{
+    wave: number;
+    waves: number;
+    dependsOn: string[];
+    attempt: number;
+    attempts: number;
+    cached: boolean;
+    status: "running" | "completed" | "failed" | "skipped";
+    kind: "task" | "worker";
+  }> = {},
+) => ({
+  type: "tool_progress" as const,
+  callId,
+  note,
+  child: {
+    agentId: `${callId}:${id}`,
+    label: id,
+    event: { type: "notice" as const, message: note },
+    node: {
+      workflow: "review",
+      node: id,
+      kind: node.kind ?? ("task" as const),
+      wave: node.wave ?? 0,
+      waves: node.waves ?? 2,
+      dependsOn: node.dependsOn ?? [],
+      attempt: node.attempt ?? 1,
+      attempts: node.attempts ?? 1,
+      cached: node.cached ?? false,
+      status: node.status ?? ("running" as const),
+    },
+  },
+});
+
+describe("the fleet panel — a workflow is levels, not a list", () => {
+  it("groups nodes by wave and names the edges into each one", () => {
+    setTermWidthOverride(120);
+    const h = harness();
+    h.turn.onEvent({ type: "tool_call_start", callId: "wf", toolName: "workflow" });
+    h.turn.onEvent(nodeBeat("wf", "security", "grep auth"));
+    h.turn.onEvent(nodeBeat("wf", "perf", "read src/api.ts"));
+    h.turn.onEvent(
+      nodeBeat("wf", "report", "waiting", { wave: 1, dependsOn: ["security", "perf"] }),
+    );
+
+    const rung = h.rung();
+    // The level, and -- the half that makes a level mean anything -- what the
+    // level was waiting for.
+    expect(rung).toContain("review");
+    expect(rung).toContain("wave 1 of 2");
+    expect(rung).toContain("wave 2 of 2");
+    expect(rung).toContain("after security, perf");
+    // Every node is on screen by its own name.
+    for (const id of ["security", "perf", "report"]) expect(rung).toContain(id);
+    setTermWidthOverride(undefined as unknown as number);
+  });
+
+  it("says cached rather than showing a clock a cache hit never earned", () => {
+    setTermWidthOverride(120);
+    const h = harness();
+    h.turn.onEvent({ type: "tool_call_start", callId: "wf", toolName: "workflow" });
+    h.turn.onEvent(nodeBeat("wf", "scope", "scope cached", { cached: true, status: "completed" }));
+    expect(h.rung()).toContain("cached");
+    setTermWidthOverride(undefined as unknown as number);
+  });
+
+  it("reports a skipped node as skipped, with the upstream that stopped it", () => {
+    setTermWidthOverride(120);
+    const h = harness();
+    h.turn.onEvent({ type: "tool_call_start", callId: "wf", toolName: "workflow" });
+    h.turn.onEvent(
+      nodeBeat("wf", "report", "upstream did not complete: security", {
+        wave: 1,
+        dependsOn: ["security"],
+        status: "skipped",
+      }),
+    );
+    const rung = h.rung();
+    // Skipped is not failed. A node that never ran because its upstream did not
+    // complete is not a defect in that node.
+    expect(rung).toContain("skipped");
+    expect(rung).toContain("after security");
+    setTermWidthOverride(undefined as unknown as number);
+  });
+
+  it("shows a retry while it is happening", () => {
+    setTermWidthOverride(120);
+    const h = harness();
+    h.turn.onEvent({ type: "tool_call_start", callId: "wf", toolName: "workflow" });
+    h.turn.onEvent(nodeBeat("wf", "flaky", "attempt 2 of 3", { attempt: 2, attempts: 3 }));
+    expect(h.rung()).toContain("attempt 2 of 3");
+    setTermWidthOverride(undefined as unknown as number);
+  });
+
+  it("retires every node row when the workflow call ends", () => {
+    // The nodes are keyed `<callId>:<node>`; deleting only the call would leave
+    // the whole graph on the rung after its result was already committed.
+    setTermWidthOverride(120);
+    const h = harness();
+    h.turn.onEvent({ type: "tool_call_start", callId: "wf", toolName: "workflow" });
+    h.turn.onEvent(nodeBeat("wf", "security", "grep auth"));
+    h.turn.onEvent(nodeBeat("wf", "perf", "read src/api.ts"));
+    expect(h.rung()).toContain("security");
+    h.turn.onEvent({
+      type: "tool_call_end",
+      callId: "wf",
+      args: { file: "review.workflow.json" },
+      output: { toolName: "workflow", success: true, result: "done", durationMs: 10 },
+    });
+    expect(h.rung()).not.toContain("security");
+    setTermWidthOverride(undefined as unknown as number);
+  });
+});

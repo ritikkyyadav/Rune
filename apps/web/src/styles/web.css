@@ -1299,6 +1299,43 @@ kbd {
 .fleet-state.failed {
   color: var(--danger);
 }
+/* Skipped is not failed. A node whose upstream did not complete never ran, and
+   colouring it as a failure sends the reader looking for a defect in the one
+   part of the graph that behaved correctly. */
+.fleet-state.skipped {
+  color: var(--ink-3);
+}
+
+/* ── A workflow wave ──
+   A fan-out is a flat list and reads correctly as one. A workflow is levels,
+   and the level a node sits on is usually the whole explanation for why it has
+   not started — so the levels are drawn, and the edges into each are named. */
+.fleet-wave + .fleet-wave {
+  border-top: 1px solid var(--hairline);
+}
+.fleet-wave-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 14px 2px;
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  color: var(--ink-3);
+  min-width: 0;
+}
+.fleet-wave-name {
+  color: var(--ink-2);
+}
+.fleet-wave-after {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fleet-retry {
+  margin-right: 8px;
+  color: var(--caution);
+}
 .rf-status {
   font-family: var(--mono);
   font-size: var(--fs-micro);

@@ -168,6 +168,44 @@ export interface ChildAgentEvent {
   /** What the sub-agent was dispatched to do, for the row's left half. */
   label?: string;
   event: AgentTurnEvent;
+  /**
+   * Set when this sub-agent is a NODE of a running workflow (P10.9).
+   *
+   * A fan-out from `task`/`worker` is a flat list and reads correctly as one:
+   * every member was dispatched at once and none of them waits on another. A
+   * workflow is not that shape — it is levels, and the level a node sits on is
+   * the only thing that explains why it has not started yet. Carrying that
+   * here, rather than letting a panel recover it by parsing the note, is the
+   * difference between a fleet view and a guess about one.
+   */
+  node?: WorkflowNodeContext;
+}
+
+/**
+ * Where a workflow node sits in its graph, for the surfaces that draw it.
+ *
+ * Everything here is known to the executor before the node runs, so a queued
+ * node in wave 3 can be drawn as queued in wave 3 rather than as an absence.
+ */
+export interface WorkflowNodeContext {
+  /** The workflow's name — the group heading. */
+  workflow: string;
+  /** The node's id: its cache key, its group member, and its edge endpoint. */
+  node: string;
+  /** `task` (read-only investigation) or `worker` (write-capable). */
+  kind: "task" | "worker";
+  /** Topological level, 0-based, and how many levels there are in total. */
+  wave: number;
+  waves: number;
+  /** The ids this node waited for — the wave's edges, named rather than drawn. */
+  dependsOn: string[];
+  /** Attempt in progress (1-based) and the ceiling this node's `retry` allows. */
+  attempt: number;
+  attempts: number;
+  /** True when the node was answered from cache and never ran at all. */
+  cached: boolean;
+  /** The node's own outcome, once the executor has one for it. */
+  status?: "running" | "completed" | "failed" | "skipped";
 }
 
 /** Every member's discriminant, as a type. */
