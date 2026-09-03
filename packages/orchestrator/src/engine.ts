@@ -180,6 +180,7 @@ import {
 } from "./brief";
 import { interpretIntent } from "./intent";
 import { createNoteHypothesisTool, createRecordDecisionTool } from "./narrative-tools";
+import { buildDecisionRecord, hasRecord } from "./decision-record";
 import { runOnParentCommit } from "./parent-check";
 import { isGitRepo } from "./worktree";
 import type { QuestionHandler } from "./ask-user";
@@ -4984,6 +4985,26 @@ export class Engine {
         taskState.setHandoff(signal.aborted ? "aborted" : "error");
       }
       persistTaskState();
+
+      // ── The Decision Record ──
+      // Generated from the state that is now final, persisted so `gear audit
+      // --record` and the export read the same bytes a live surface saw, and
+      // emitted so a client can show the closing artifact without asking for
+      // it. Deterministic and free: no model call, nothing paraphrased. A run
+      // with no narrative and no artifacts produces none, because a record
+      // with nothing in it is a heading, not a document.
+      try {
+        const record = buildDecisionRecord(sessionId, taskState.snapshot());
+        if (hasRecord(record)) {
+          this.sessions.appendEvent(sessionId, {
+            type: "decision_record",
+            payload: { record },
+          });
+          yield { type: "decision_record", record } as AgentTurnEvent;
+        }
+      } catch {
+        // The record is a reading of the run; it must never break the run.
+      }
 
       // Mark session as cleanly ended
       this.sessions.appendEvent(sessionId, {
