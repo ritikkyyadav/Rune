@@ -169,3 +169,26 @@ publishes, so it works on a runner where `gh` is not authenticated — puts it i
 session the author's description **verbatim** as its brief. The author's own
 account of the change is the thing a review is checked against; a summary of it
 written by the reviewer is already a reading.
+
+The title and body come from `gh pr view` when the CLI is authenticated, and
+from the REST API otherwise. That fallback reads **`GITHUB_API_URL`**, the
+variable every Actions runner sets and which names the Enterprise Server API
+root on a self-hosted one, so `gear pr` works on GHES with nothing to configure.
+Both calls time out at 30 s: a GitHub that accepts a connection and never
+answers used to hang the command with nothing on screen.
+
+`tests/integration/gear-pr.test.ts` runs all of it against a **local bare
+repository with a `refs/pull/<n>/head` ref in it** — the same shape GitHub
+publishes, and the only thing the command needs from a remote, which is the
+whole reason it uses plain git. It drives both metadata paths (a stub `gh` on
+PATH, and the REST fallback against a fake API at `GITHUB_API_URL`) and asserts
+the worktree, the branch, the brief, and that the working tree it was run from
+is untouched.
+
+It found one defect: **re-running `gear pr <n>` after the author pushed used to
+fail outright.** Git refuses to update a branch that is checked out in a
+worktree, so the fetch died with "refusing to fetch into branch" before the code
+that exists to move the worktree to the new head could run — the second run, the
+one a person makes _because_ the author pushed, was the broken one. The head now
+lands on `refs/gear/pull/<n>` first, which is not a branch and so is never
+checked out anywhere.
