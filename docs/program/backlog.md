@@ -266,3 +266,24 @@ Found 2026-09-03 by P10.6 (integration proofs):
   a model-declared decision do not) or delete the field, the render branches and
   the tests that exercise it. Deciding which is a product call, not a fix —
   found in P10.8
+- `packages/orchestrator/src/auto-mode.ts:740` `classifierCall` treats a reviewer
+  with no reachable endpoint the same as a slow one: both attempts (primary, then
+  the `reviewerFallback` retry) run to the full `timeoutMs` before mechanical
+  containment takes over, so a misconfigured or unreachable reviewer costs
+  `2 × timeoutMs` — 24 s at the shipped 12 s default — on EVERY contained action,
+  and the run has no way to learn that the reviewer is not coming. This is what
+  made `tests/integration/engine-serve.test.ts`'s held-step test a 16.7 s test
+  (P10.9 bounded the fixture's ceiling; the product behaviour is unchanged). A
+  transport error or a resolver that cannot name a credentialed reviewer should
+  fail fast rather than wait out the latency budget, and a reviewer that has
+  failed to answer N times in a row should be treated as absent for the rest of
+  the run instead of being asked again on every action. Both are safe: the
+  mechanical breakers are what actually guard destruction and they never call a
+  model — found in P10.9
+- `apps/web/src/App.tsx` the trace rail overlays the reading column below 1100px
+  (P10.9), which keeps the column's width but puts the panel over the right half
+  of the text it is explaining. It reads acceptably as a transient drawer and it
+  is what Phase 9 specified, but at 1024 with the rail open roughly half the
+  transcript is behind it. Worth a design pass: either the reading column
+  re-centres in the space the rail leaves (a reflow, but a deliberate one), or
+  the rail narrows below some width — found in P10.9
