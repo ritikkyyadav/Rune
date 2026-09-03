@@ -206,6 +206,80 @@ lines in the report.
 the build rather than re-submitting to mark the step unproven. That needs
 `--real` capacity this machine does not have.
 
+## P10.8 — compaction quality
+
+Not an external anchor: the in-repo mock suite again, in a new `context`
+category (`tests/eval/tasks-compaction.ts`, `bun run eval -- --tasks context`).
+
+Compaction had exactly one eval before this — `spine_todos_survive_compaction`,
+which asserts that a summary marker and a todo string appear afterwards. A
+compaction can satisfy that and still have lost every decision the user stated,
+every fact a tool result taught, and 99% of the window it was supposed to free.
+
+**The instrument.** Compaction quality has two halves and only one of them
+belongs to the harness: what the harness FEEDS the summarizer and what it does
+with the answer, versus what the model makes of it. Measuring against the mock's
+canned reply measured neither. These tasks drive a **faithful summarizer** — it
+carries forward every sentinel it is handed and invents nothing — so any fact
+missing from the post-compaction prompt is a fact the harness dropped before a
+model ever saw it. Facts are planted as `DECISION-n` / `FACT-n` sentinels in
+user prompts and tool results, and survival is a substring test on the request
+the provider actually received.
+
+`mock-model` is registered at a **60,000-token window** for the family (given
+back in `teardown`), which puts the ~19.5k floor of system prompt + 29 tool
+schemas, the 30% verbatim tail and the 50% target into a realistic relationship
+instead of rounding errors against the 100k default.
+
+**Before (2026-09-03, at `8f9a0e1`), first run of the family:**
+
+```
+  ✗ compaction_facts_survive
+     reason: 5 of 7 pinned facts did not survive compaction: DECISION-1, DECISION-2, FACT-2, FACT-3, FACT-4
+  ✓ compaction_plan_and_ledger_survive
+  ✓ compaction_hash_ledger_survives
+  ✓ compaction_recent_results_verbatim
+  ✓ compaction_no_summary_of_summary
+  ✗ compaction_evicted_results_identifiable
+     reason: 8 results were evicted and only 5 of 8 stayed identifiable — the rest are anonymous holes
+  ✗ compaction_reclaims_and_keeps_a_tail
+     reason: compaction #1 folded 11 messages and freed only 1.2% (33046 → 32649)
+
+  context                       4/7 (57%)
+  Total (whole mock suite)      59/62 (95%)
+```
+
+**What the three failures are.**
+
+1. **The cheap tier destroys what no summary ever captured.** Tier 1 replaces
+   old tool-result bodies with `[tool result evicted…] N chars reclaimed` and
+   returns without calling a summarizer. Everything those results were carrying
+   is then gone from the only record that existed — including three 400-byte
+   spec reads whose eviction reclaimed a rounding error and cost the run its
+   decisions.
+2. **An evicted result becomes an anonymous hole.** The stub says how many
+   characters were dropped and nothing about what they were, so the run cannot
+   tell the read that found the bug from the one that listed a directory, nor
+   know which is worth re-running.
+3. **A compaction can cost a round trip and free 1.2%.** The verbatim tail is
+   sized in tokens but floored by a MESSAGE COUNT (`recentK`, 6), and six
+   tool-heavy messages exceed the whole tail budget on their own. The
+   summarizer folds eleven messages, frees 397 of 33,046 tokens, and the
+   trigger is still hot — so it fires again next turn. The same floor
+   over-cuts from the other side: a later compaction in the same run left
+   **918 tokens** standing in a 60,000-token window, which is the
+   "212 messages folded to 834 tokens" pathology tiered compaction was built
+   to end, reached from the opposite direction.
+
+The three that pass are also results: the structured-state merge from the Gap 6
+fix holds (no compaction was ever handed its own summary as transcript, exactly
+one summary marker survives in the working set, and the merged state does not
+run away), the harness-side freshness ledger survives a squash so a
+post-compaction edit still applies with no hash and no re-read, and the tail
+does come through verbatim.
+
+**After.** See the table added with the fixes.
+
 ## Changes to the yardstick
 
 Any edit to a pinned subset breaks the series. Record it here.

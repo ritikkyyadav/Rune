@@ -59,6 +59,33 @@ export type Script = ScriptedResponse[];
 export type Responder = (request: InferenceRequest) => ScriptedResponse | null;
 
 /**
+ * What the SUMMARIZER is asked, and what it answers.
+ *
+ * Compaction quality has two halves and only one of them belongs to the
+ * harness: what the harness FEEDS the summarizer, and what the model makes of
+ * it. A canned answer measures neither. A scripted summarizer that faithfully
+ * carries forward everything it was given measures the first half exactly —
+ * anything missing afterwards was dropped by the harness, because a summarizer
+ * that invents nothing also loses nothing (tests/eval/tasks-compaction.ts).
+ */
+export interface SummaryRequest {
+  /** The summarizer system prompt the context engine composed. */
+  system: string;
+  /** The single user message: instructions + prior state + the segment. */
+  text: string;
+  model: string;
+  maxTokens: number;
+}
+
+export type Summarizer = (req: SummaryRequest) => string;
+
+/** The pre-P10.8 canned reply: right shape, no content. */
+const CANNED_SUMMARY =
+  "## Goals & requirements\n(mock summary)\n## Key facts & codebase knowledge\n-\n" +
+  "## Actions taken & outcomes (files touched, commands run)\n-\n" +
+  "## Decisions & open questions\n-\n## Current state & next step\ncontinue";
+
+/**
  * A pure-TypeScript LlmProvider that returns scripted responses in order.
  * Used by the eval harness to drive the agent loop deterministically
  * without burning API tokens.
@@ -70,8 +97,13 @@ export class MockProvider implements LlmProvider {
   private callIdCounter = 0;
   /** Snapshot of the messages array passed in on each inference call. */
   readonly requestHistory: Message[][] = [];
+  /** Every summarizer round trip, in order — what compaction actually asked. */
+  readonly summaryRequests: SummaryRequest[] = [];
+  /** What this mock answered each of them. */
+  readonly summaryReplies: string[] = [];
 
   private responder: Responder | null = null;
+  private summarizer: Summarizer | null = null;
 
   constructor(script: Script) {
     this.script = script;
@@ -81,32 +113,44 @@ export class MockProvider implements LlmProvider {
     this.responder = responder;
   }
 
+  /** Drive the summarizer instead of returning the canned reply. */
+  setSummarizer(summarizer: Summarizer | null): void {
+    this.summarizer = summarizer;
+  }
+
   reset(script?: Script): void {
     if (script) this.script = script;
     this.callIndex = 0;
     this.callIdCounter = 0;
     this.requestHistory.length = 0;
+    this.summaryRequests.length = 0;
+    this.summaryReplies.length = 0;
   }
 
   get callsConsumed(): number {
     return this.callIndex;
   }
 
-  async infer(_request: InferenceRequest): Promise<InferenceResponse> {
+  async infer(request: InferenceRequest): Promise<InferenceResponse> {
     // Non-streaming inference backs the context engine's SUMMARIZER. A canned
     // summary keeps compaction functional in mock mode (it used to throw,
-    // which made every compaction path untestable in evals).
+    // which made every compaction path untestable in evals); a task that wants
+    // to MEASURE compaction supplies its own via setSummarizer.
+    const req: SummaryRequest = {
+      system: request.system ?? "",
+      text: request.messages
+        .flatMap((m) => m.content)
+        .map((b) => (b.type === "text" ? b.text : ""))
+        .join("\n"),
+      model: request.model ?? "mock-model",
+      maxTokens: request.maxTokens ?? 0,
+    };
+    this.summaryRequests.push(req);
+    const text = this.summarizer ? this.summarizer(req) : CANNED_SUMMARY;
+    this.summaryReplies.push(text);
     return {
       id: "mock_infer",
-      content: [
-        {
-          type: "text",
-          text:
-            "## Goals & requirements\n(mock summary)\n## Key facts & codebase knowledge\n-\n" +
-            "## Actions taken & outcomes (files touched, commands run)\n-\n" +
-            "## Decisions & open questions\n-\n## Current state & next step\ncontinue",
-        },
-      ],
+      content: [{ type: "text", text }],
       stopReason: "end_turn",
       usage: { inputTokens: 10, outputTokens: 20 },
       model: "mock-model",
