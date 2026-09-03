@@ -360,6 +360,12 @@ function buildEngine(): Engine {
     // server on a non-default port worked in the terminal and failed in the
     // desktop with nothing to explain the difference.
     localBaseUrls: secrets.endpoints,
+    // `[providers.*]` — the enterprise routes' coordinates. Read here for the
+    // same reason localBaseUrls is: a session opened by `gear serve` or the
+    // desktop must reach the same AWS region / GCP project / Azure resource the
+    // terminal does, and a host that quietly ignored the config would work in
+    // one surface and fail in the other with nothing to explain the difference.
+    providerRoutes: config.providers,
     disabledProviders: secrets.disabled,
     search: config.search,
     research: config.research,
