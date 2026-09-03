@@ -58,6 +58,28 @@ const POLICY: Record<string, CacheBreakpointPolicy> = {
   // measurement says otherwise, so it says "none" and the hit rate reads as
   // "no data" rather than a number nobody earned.
   "ollama-turbo": "none",
+  // ─── Enterprise routes (P10.5) ───
+  // Bedrock and Vertex serve ANTHROPIC models and both document support for
+  // `cache_control` breakpoints, which the shared Anthropic adapter already
+  // emits — the breakpoints ride the same system block and stable turn they do
+  // on the first-party API, because it is the same code composing the body.
+  // NOT MEASURED: neither cloud has a credential on this machine, so these rows
+  // are the hosts' documented behaviour, and `scripts/verify-cache.ts
+  // --provider bedrock|vertex` is the command that will replace them with a
+  // number. The declaration is the request SHAPE, not a claimed hit rate; the
+  // hit rate still comes from real usage counters and reads "no data" until one
+  // arrives.
+  //
+  // Vertex's Gemini half caches implicitly and reports the same counter AI
+  // Studio does (measured there at 99.7%), so the one policy id covers both
+  // halves: the Anthropic half writes breakpoints, the Gemini half ignores them.
+  bedrock: "anthropic-style",
+  vertex: "anthropic-style",
+  // Azure serves the same OpenAI models with the same automatic prefix caching
+  // over 1024 tokens, and accepts the same `prompt_cache_key` routing hint —
+  // the shared OpenAI adapter sends it unchanged. Documented, not measured: no
+  // Azure resource on this machine.
+  "azure-openai": "prompt-cache-key",
   // A user-supplied endpoint could be anything; claiming a cache it may not
   // have would put an invented number on screen.
   custom: "none",

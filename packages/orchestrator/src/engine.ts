@@ -87,6 +87,7 @@ import type {
   SystemMemoryMeta,
 } from "@gear/shared";
 import { buildGateway, providerStatus } from "./provider-registry";
+import type { EnterpriseRouteConfig } from "./provider-registry";
 import type { ProviderStatusRow, BuildGatewayOpts } from "./provider-registry";
 import { AgentLoop, parseInterjection } from "./agent-loop";
 import type {
@@ -684,6 +685,12 @@ export interface EngineConfig {
   ollamaKeepAlive?: string;
   /** Base URL for a local Ollama server (default http://localhost:11434). */
   ollamaBaseUrl?: string;
+  /**
+   * `[providers.<id>]` — coordinates for the enterprise cloud routes (an AWS
+   * region, a GCP project, an Azure endpoint). Not secrets: the credential for
+   * these routes stays in the cloud's own chain and never reaches Gear's config.
+   */
+  providerRoutes?: EnterpriseRouteConfig;
   /**
    * BYOP: credentials pre-resolved by the auth layer at boot (keychain keys,
    * OAuth bearer tokens). Threaded into every gateway (re)build. Absent ⇒ the
@@ -5269,6 +5276,7 @@ export class Engine {
       localBaseUrls: this.localBaseUrls,
       ollamaKeepAlive: this.config.ollamaKeepAlive,
       ollamaBaseUrl: this.config.ollamaBaseUrl,
+      routes: this.config.providerRoutes,
       credentials: this.resolvedCredentials,
       fallbackOrder: this.config.fallbackOrder,
       quotaPolicy: this.config.quotaPolicy,

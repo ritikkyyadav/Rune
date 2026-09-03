@@ -2296,7 +2296,16 @@ class Tui {
                 : faint("no key");
           // Show the real credential source so the panel never lies about what
           // the gateway uses: oauth / keychain / env, or "key" for a saved key.
-          const srcLabel = r.source === "none" ? "" : r.source === "saved" ? "key" : r.source; // env | oauth | keychain
+          // "chain" is an enterprise cloud route with no Gear-held secret; it
+          // reads as "cloud" because that is what a user recognises.
+          const srcLabel =
+            r.source === "none"
+              ? ""
+              : r.source === "saved"
+                ? "key"
+                : r.source === "chain"
+                  ? "cloud"
+                  : r.source; // env | oauth | keychain
           const src = srcLabel ? faint(`  ${srcLabel}`) : "";
           return `    ${dot} ${c(r.id.padEnd(13))} ${st}${src}`;
         });

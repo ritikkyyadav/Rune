@@ -2,7 +2,8 @@
 // Non-interactive provider surfaces, dispatched standalone like telemetry/doctor.
 //   providers — list every provider, its auth method, and credential status
 //   use        — set the active provider (+ optional model) in ~/.gear/model.json
-//   models     — live model discovery for a provider, with static fallback
+//   models     — live model discovery for a provider, cached for an hour, with
+//                the curated preset as the fallback (`--refresh` forces a call)
 
 import {
   loadConfig,
@@ -15,6 +16,10 @@ import {
   loadLastModel,
   saveLastModel,
   describeCredentialBackend,
+  loadCachedModels,
+  saveCachedModels,
+  cachedModelsAge,
+  describeAge,
   type GearConfig,
   type SecretsFile,
 } from "@gear/shared";
@@ -76,7 +81,13 @@ export async function runProviders(): Promise<void> {
       const endpoint = mergeLocalBaseUrls(config, secrets)[preset.id] ?? preset.baseUrl ?? "";
       status = faint(`local · ${endpoint}`);
     } else if (cred) {
-      const src = cred.meta?.source ?? (method === "oauth" ? "oauth" : "saved");
+      // A cloud-chain credential has no secret and no keychain entry — what is
+      // worth printing is WHERE the cloud chain found it ("profile default"),
+      // which `meta.detail` carries and which is never the credential itself.
+      const src =
+        cred.meta?.method === "chain"
+          ? (cred.meta.detail ?? "cloud credentials")
+          : (cred.meta?.source ?? (method === "oauth" ? "oauth" : "saved"));
       status = ok(`signed in · ${src}`);
     } else {
       status = dim("—");
@@ -122,11 +133,24 @@ export async function runUse(args: string[]): Promise<void> {
 
 // ─── gear models ───
 
+/**
+ * Where a catalogue came from — the one thing this command must not blur.
+ *
+ * "live" is what the provider says it serves right now; "cached" is what it
+ * said within the last hour; "curated" is the preset, which is a
+ * hand-maintained list and therefore the one that can be wrong. Printing which
+ * of the three you are looking at is the whole difference between a list you
+ * can act on and a list you have to verify.
+ */
+type CatalogueSource = "live" | "cached" | "curated";
+
 export async function runModels(args: string[]): Promise<void> {
+  const refresh = args.includes("--refresh");
+  const positional = args.filter((a) => !a.startsWith("-"));
   const config = loadConfig(process.cwd());
   const secrets = loadSecrets();
   const active = activeProvider(config);
-  const providerId = args[0] ?? active;
+  const providerId = positional[0] ?? active;
 
   const preset = getPreset(providerId);
   if (!preset) {
@@ -136,40 +160,61 @@ export async function runModels(args: string[]): Promise<void> {
     return;
   }
 
-  const { savedKeys, credentials } = await resolveAll(config, secrets, providerId);
-  const gw = buildGateway({
-    provider: providerId as ProviderName,
-    keys: savedKeys,
-    credentials,
-    customEndpoint: secrets.custom,
-    disabled: new Set(secrets.disabled ?? []),
-    localBaseUrls: mergeLocalBaseUrls(config, secrets),
-  });
-
-  const provider = gw.getProvider(providerId as ProviderName);
   const staticModels: ModelInfo[] = (preset.models ?? []).map((m) => ({
     id: m.id,
     label: m.label,
   }));
 
   let models = staticModels;
-  let live = false;
-  if (provider?.listModels) {
-    try {
-      const discovered = await provider.listModels();
-      if (discovered.length) {
-        models = discovered;
-        live = true;
+  let source: CatalogueSource = "curated";
+  let age: number | null = null;
+  let failure: string | null = null;
+
+  // An hour-old catalogue is served without a round trip. Model lineups change
+  // on the order of weeks; a command people run to LOOK at a list should not
+  // pay a network call every time.
+  const cached = refresh ? null : loadCachedModels(providerId);
+  if (cached?.length) {
+    models = cached.map((m) => ({ id: m.id, ...(m.label ? { label: m.label } : {}) }));
+    source = "cached";
+    age = cachedModelsAge(providerId);
+  } else {
+    const { savedKeys, credentials } = await resolveAll(config, secrets, providerId);
+    const gw = buildGateway({
+      provider: providerId as ProviderName,
+      keys: savedKeys,
+      credentials,
+      customEndpoint: secrets.custom,
+      disabled: new Set(secrets.disabled ?? []),
+      localBaseUrls: mergeLocalBaseUrls(config, secrets),
+      routes: config.providers,
+    });
+    const provider = gw.getProvider(providerId as ProviderName);
+    if (provider?.listModels) {
+      try {
+        const discovered = await provider.listModels();
+        if (discovered.length) {
+          models = discovered;
+          source = "live";
+          saveCachedModels(providerId, discovered);
+        }
+      } catch (err) {
+        // Fall back to the curated list, and SAY WHY. A silent fallback is how
+        // someone spends ten minutes wondering why their new deployment is
+        // missing from a list that quietly stopped asking.
+        failure = err instanceof Error ? err.message : String(err);
       }
-    } catch {
-      // fall back to the curated preset list
     }
   }
 
-  out(
-    bold(text(`${preset.label} models`)) +
-      faint(live ? "  (live)" : "  (curated — sign in for live discovery)"),
-  );
+  const suffix =
+    source === "live"
+      ? "  (live)"
+      : source === "cached"
+        ? `  (cached${age !== null ? ` · ${describeAge(age)}` : ""})`
+        : "  (curated — sign in for live discovery)";
+  out(bold(text(`${preset.label} models`)) + faint(suffix));
+  if (failure) out(dim(`live discovery unavailable: ${firstLine(failure)}`));
   out();
   if (models.length === 0) {
     out(dim("No models to show. Pull/load one, or check credentials."));
@@ -186,4 +231,11 @@ export async function runModels(args: string[]): Promise<void> {
       faint(" or ") +
       info(`gear -m ${providerId}/<model>`),
   );
+  if (source === "cached")
+    out(faint("Refresh with ") + info(`gear models ${providerId} --refresh`));
+}
+
+/** One line of an error, bounded — a stack trace is not a status line. */
+function firstLine(message: string): string {
+  return (message.split("\n")[0] ?? message).slice(0, 160);
 }

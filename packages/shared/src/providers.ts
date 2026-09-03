@@ -13,7 +13,16 @@ export type ProviderKind =
   | "google"
   | "ollama"
   // Subscription transports with their own auth + endpoints:
-  | "codex"; // ChatGPT Plus/Pro via the Codex "responses" backend
+  | "codex" // ChatGPT Plus/Pro via the Codex "responses" backend
+  // ─── Enterprise routes (P10.5) ───
+  // Each is the adapter above it with a different door: a cloud's endpoint
+  // shape and a cloud's credentials. They are separate KINDS rather than
+  // separate adapters because the construction site is the only thing that
+  // differs — the wire format, the streaming grammar and the cache semantics
+  // are the vendor's, unchanged.
+  | "bedrock" // Anthropic models on AWS, SigV4 over the default chain
+  | "vertex" // Anthropic + Gemini on GCP, Application Default Credentials
+  | "azure-openai"; // OpenAI models on Azure, deployment-name routing
 
 // ─── Authentication methods ───
 // How a provider proves who you are. This is the ONE canonical definition of the
@@ -26,7 +35,14 @@ export type ProviderKind =
 //   oauth    — browser authorization-code + PKCE (loopback redirect).
 //   device   — OAuth device-code (headless / SSH-friendly, no local browser).
 //   local    — a localhost runtime reached by URL; connectivity, no credential.
-export type AuthMethod = "api_key" | "oauth" | "device" | "local";
+//   chain    — the CLOUD's own ambient credential chain (AWS SigV4 credentials,
+//              Google Application Default Credentials, an Entra token). Gear
+//              holds nothing: it asks the same chain `aws`, `gcloud` and `az`
+//              ask, so a machine already logged into its cloud is already
+//              logged into the enterprise routes. There is no secret to store,
+//              which is the point — a compliance-sensitive team does not want a
+//              second copy of its cloud credential in a coding tool's keychain.
+export type AuthMethod = "api_key" | "oauth" | "device" | "local" | "chain";
 
 /**
  * Automatic startup order when several cloud credentials are available.
@@ -80,6 +96,13 @@ export const PROVIDER_CAPACITY: Record<string, ProviderCapacity> = {
   groq: "funded",
   xai: "funded",
   deepseek: "funded",
+  // The enterprise routes are the most funded capacity Gear can reach: a cloud
+  // account with committed spend and provisioned throughput, not a hobby key.
+  // `billingModeFor` agrees — every token is metered to that cloud bill — and
+  // the agreement test holds the two together.
+  bedrock: "funded",
+  vertex: "funded",
+  "azure-openai": "funded",
   // A user-supplied OpenAI-compatible endpoint: they chose and pay for it, so
   // it is treated as funded capacity rather than guessed at.
   custom: "funded",
@@ -266,6 +289,11 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
       { id: "claude-sonnet-4-5", label: "Claude Sonnet 4.5" },
       { id: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
     ],
+    tiers: { heavy: "claude-opus-5", standard: "claude-sonnet-5", light: "claude-haiku-4-5" },
+    // Deliberately NOT the default model: a fallback INTO Anthropic is a rescue
+    // route, and the cheapest current-generation model that can carry a full
+    // agentic transcript is the right thing to land on.
+    fallbackModel: "claude-sonnet-4-6",
   },
   {
     id: "openai",
@@ -282,6 +310,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
       { id: "gpt-4o-mini", label: "GPT-4o mini" },
       { id: "o3", label: "o3" },
     ],
+    tiers: { heavy: "gpt-5", standard: "gpt-5", light: "gpt-5-mini" },
+    fallbackModel: "gpt-4o",
   },
   {
     id: "openrouter",
@@ -304,6 +334,16 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
       { id: "nvidia/nemotron-3-ultra-550b-a55b:free", label: "Nemotron 3 Ultra (free)" },
       { id: "stealth/ox-alpha", label: "Ox Alpha (free)" },
     ],
+    // The :free tier churns constantly (qwen3-coder:free retired 2026-07-15,
+    // then deepseek-v4-flash:free and deepseek-r1:free were withdrawn to paid).
+    // The compaction summarizer no longer trusts these first — it runs on the
+    // active session model (engine.syncSummarizerTier) and only falls back here.
+    tiers: {
+      heavy: "nvidia/nemotron-3-ultra-550b-a55b:free",
+      standard: "minimax/minimax-m3:free",
+      light: "minimax/minimax-m3:free",
+    },
+    fallbackModel: "minimax/minimax-m3:free",
   },
   {
     id: "google",
@@ -318,6 +358,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
       { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
       { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
     ],
+    tiers: { heavy: "gemini-2.5-pro", standard: "gemini-2.5-pro", light: "gemini-2.5-flash" },
+    fallbackModel: "gemini-2.5-flash",
   },
   {
     id: "groq",
@@ -336,6 +378,11 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
       // not contain a model their session would actually run.
       { id: "llama-3.1-8b-instant", label: "Llama 3.1 8B Instant" },
     ],
+    tiers: {
+      heavy: "llama-3.3-70b-versatile",
+      standard: "llama-3.3-70b-versatile",
+      light: "llama-3.1-8b-instant",
+    },
   },
   {
     id: "xai",
@@ -351,6 +398,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
       { id: "grok-4-fast", label: "Grok 4 Fast" },
       { id: "grok-code-fast-1", label: "Grok Code Fast" },
     ],
+    tiers: { heavy: "grok-4", standard: "grok-4", light: "grok-4-fast" },
   },
   {
     id: "deepseek",
@@ -365,6 +413,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
       { id: "deepseek-chat", label: "DeepSeek Chat" },
       { id: "deepseek-reasoner", label: "DeepSeek Reasoner" },
     ],
+    tiers: { heavy: "deepseek-reasoner", standard: "deepseek-chat", light: "deepseek-chat" },
   },
   {
     // ChatGPT Plus/Pro subscription via the Codex backend. Signs in with the
@@ -394,6 +443,13 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
       { id: "gpt-5.6-terra", label: "GPT-5.6 Terra (balanced)" },
       { id: "gpt-5.6-luna", label: "GPT-5.6 Luna (fast)" },
     ],
+    // The gpt-5.6 line encodes reasoning weight in the model NAME (sol > terra
+    // > luna) rather than a reasoning.effort param, so the tier split is just
+    // the right variant per weight. Codex had NO tier entry until 2026-08-28,
+    // which meant every "cheap scout" ran a 32-turn gpt-5.6-sol against the
+    // plan quota; one audited session hit the usage limit nine minutes in.
+    tiers: { heavy: "gpt-5.6-sol", standard: "gpt-5.6-terra", light: "gpt-5.6-luna" },
+    fallbackModel: "gpt-5.6-terra",
   },
   {
     // Ollama's hosted cloud ("Turbo"). Distinct id from local "ollama" so the
@@ -431,6 +487,109 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     fallbackModel: "gpt-oss:120b",
   },
   {
+    // ─── AWS Bedrock ───
+    // Anthropic models billed to an AWS account. No key is stored: SigV4 signs
+    // each request from the same credential chain the `aws` CLI reads, so a
+    // machine with a profile or a task role is already authenticated.
+    //
+    // The ids are CROSS-REGION INFERENCE PROFILE ids (`us.` prefix). Current
+    // Anthropic models on Bedrock are not on-demand invokable by their bare
+    // foundation-model id, and the profile prefix is rewritten to match the
+    // configured region (`applyInferenceProfile`), so a Frankfurt account
+    // reaches `eu.` models from this one catalogue rather than a second copy of
+    // every row. The 3.5 ids are bare because those genuinely are on-demand.
+    id: "bedrock",
+    label: "AWS Bedrock",
+    kind: "bedrock",
+    defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    docsUrl: "https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html",
+    keyHint: "AWS_PROFILE / AWS_ACCESS_KEY_ID (no key stored)",
+    auth: ["chain"],
+    models: [
+      { id: "us.anthropic.claude-opus-4-1-20250805-v1:0", label: "Claude Opus 4.1" },
+      { id: "us.anthropic.claude-sonnet-4-5-20250929-v1:0", label: "Claude Sonnet 4.5" },
+      { id: "us.anthropic.claude-haiku-4-5-20251001-v1:0", label: "Claude Haiku 4.5" },
+      { id: "anthropic.claude-3-5-sonnet-20241022-v2:0", label: "Claude 3.5 Sonnet v2" },
+      { id: "anthropic.claude-3-5-haiku-20241022-v1:0", label: "Claude 3.5 Haiku" },
+    ],
+    tiers: {
+      heavy: "us.anthropic.claude-opus-4-1-20250805-v1:0",
+      standard: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+      light: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    },
+    fallbackModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+  },
+  {
+    // ─── Google Vertex AI ───
+    // The one route that serves TWO families: Anthropic through the Vertex
+    // Anthropic endpoint and Gemini through the Vertex Gemini endpoint, both
+    // authenticated with Application Default Credentials. The adapter picks the
+    // endpoint from the model id, so `/model vertex/claude-…` and
+    // `/model vertex/gemini-…` are the same provider on one GCP project.
+    //
+    // Anthropic on Vertex names a model `<family>@<version>`; Gemini keeps its
+    // AI Studio id.
+    id: "vertex",
+    label: "Google Vertex AI",
+    kind: "vertex",
+    defaultModel: "claude-sonnet-4-5@20250929",
+    docsUrl: "https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/use-claude",
+    keyHint: "GOOGLE_APPLICATION_CREDENTIALS / gcloud ADC (no key stored)",
+    auth: ["chain"],
+    models: [
+      { id: "claude-opus-4-1@20250805", label: "Claude Opus 4.1" },
+      { id: "claude-sonnet-4-5@20250929", label: "Claude Sonnet 4.5" },
+      { id: "claude-haiku-4-5@20251001", label: "Claude Haiku 4.5" },
+      { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+      { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+    ],
+    // One family for the tiers, deliberately: mixing Gemini into the light tier
+    // would make a sub-agent answer in a different model's voice than the run
+    // it belongs to. Gemini stays one `/model` away for anyone who wants it.
+    tiers: {
+      heavy: "claude-opus-4-1@20250805",
+      standard: "claude-sonnet-4-5@20250929",
+      light: "claude-haiku-4-5@20251001",
+    },
+    fallbackModel: "claude-sonnet-4-5@20250929",
+  },
+  {
+    // ─── Azure OpenAI ───
+    // The same OpenAI models over the same Chat Completions wire, addressed by
+    // DEPLOYMENT NAME rather than model id: `/openai/deployments/<name>/…`.
+    // The ids below are model ids, which is what a person picks; the mapping to
+    // the deployment your resource actually has lives in
+    // `[providers.azure-openai.deployments]` and defaults to the id itself —
+    // the common case, since Azure's portal names a deployment after its model.
+    //
+    // Auth is a resource key (`AZURE_OPENAI_API_KEY`) or an Entra bearer token
+    // (`AZURE_OPENAI_AD_TOKEN`), which is why both methods are declared: the
+    // key goes through the credential store like any other, and the Entra token
+    // is ambient like the other clouds'.
+    id: "azure-openai",
+    label: "Azure OpenAI",
+    kind: "azure-openai",
+    envVar: "AZURE_OPENAI_API_KEY",
+    defaultModel: "gpt-4o",
+    docsUrl:
+      "https://learn.microsoft.com/azure/ai-services/openai/how-to/create-resource?pivots=web-portal",
+    keyHint: "resource key, with AZURE_OPENAI_ENDPOINT",
+    auth: ["api_key", "chain"],
+    models: [
+      { id: "gpt-5", label: "GPT-5" },
+      { id: "gpt-5-mini", label: "GPT-5 mini" },
+      { id: "gpt-4.1", label: "GPT-4.1" },
+      { id: "gpt-4o", label: "GPT-4o" },
+      { id: "gpt-4o-mini", label: "GPT-4o mini" },
+      { id: "o3", label: "o3" },
+    ],
+    // gpt-4o rather than gpt-5 as the standard tier and the fallback: it is the
+    // deployment an existing Azure resource is most likely to already have, and
+    // a tier that resolves to a model nobody deployed is a 404 mid-task.
+    tiers: { heavy: "gpt-5", standard: "gpt-4o", light: "gpt-4o-mini" },
+    fallbackModel: "gpt-4o",
+  },
+  {
     // Local Ollama (no key). Reached over /api/chat on the user's machine via
     // OllamaProvider. The base URL is editable in /keys and config.toml; any
     // pulled model works via `/model ollama/<name>` — the listed ones are just
@@ -448,6 +607,10 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
       { id: "deepseek-coder-v2", label: "DeepSeek Coder V2" },
       { id: "qwen2.5-coder:32b", label: "Qwen2.5 Coder 32B" },
     ],
+    // The gateway's own table said "llama3" while this list said "llama3.1", so
+    // a fallback into Ollama asked for a tag most machines have not pulled and
+    // the rescue route 404'd. One id, one place.
+    fallbackModel: "llama3.1",
   },
   // NOTE: `lmstudio` was removed 2026-09-02 (P8.6, program decision D5). It
   // shipped `models: []` and a placeholder `local-model` default, so the picker
@@ -488,7 +651,18 @@ export function effectiveAuthMethods(
  * Gear talks to streams and calls tools; vision/reasoning come from a small
  * known set. A preset may override via `capabilities`.
  */
-const VISION_PROVIDERS: ReadonlySet<string> = new Set(["anthropic", "openai", "google"]);
+// The enterprise routes serve the SAME models as the first-party providers
+// they wrap, so a capability that is true of `anthropic` is true of `bedrock`.
+// Deriving these per family rather than per id is what stops a cloud route from
+// looking less capable than the console route to the same model.
+const VISION_PROVIDERS: ReadonlySet<string> = new Set([
+  "anthropic",
+  "openai",
+  "google",
+  "bedrock",
+  "vertex",
+  "azure-openai",
+]);
 const REASONING_PROVIDERS: ReadonlySet<string> = new Set([
   "anthropic",
   "openai",
@@ -496,6 +670,9 @@ const REASONING_PROVIDERS: ReadonlySet<string> = new Set([
   "deepseek",
   "xai",
   "openrouter",
+  "bedrock",
+  "vertex",
+  "azure-openai",
 ]);
 
 function deriveCapabilities(preset: ProviderPreset): ProviderCapabilities {
@@ -538,6 +715,8 @@ export function authMethodLabel(method: AuthMethod, providerId?: string): string
       return "Sign in with an API key";
     case "local":
       return "Connect to a local endpoint";
+    case "chain":
+      return "Use your cloud credentials";
   }
 }
 

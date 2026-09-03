@@ -14,35 +14,18 @@ import { CostTracker } from "./cost-tracker";
 import { ProviderHealthStore } from "./provider-health";
 import { providerFallbackRank, PROVIDER_PRESETS } from "@gear/shared";
 
-// Default model for each provider, used during fallback.
+// The model a fallback into each provider asks for — DERIVED from the presets,
+// where `ProviderPreset.fallbackModel` is the one place that id is written.
 //
 // ROT WARNING: hosted free-tier models get retired without notice (qwen/
 // qwen3-coder:free and qwen3-coder:480b both died 2026-07-15 and took every
-// fallback chain down with them — 13 consecutive 410s per run). Keep these
-// current when providers announce retirements; the model-gone pruning below is
-// the safety net that keeps a stale entry from killing runs in the meantime.
-const HAND_MAINTAINED_DEFAULT_MODELS: Record<string, string> = {
-  google: "gemini-2.5-flash",
-  anthropic: "claude-sonnet-4-6",
-  openai: "gpt-4o",
-  // deepseek-v4-flash:free was withdrawn from OpenRouter's free tier
-  // ("paid version available now" 404, observed 2026-08-26).
-  openrouter: "minimax/minimax-m3:free",
-  // The preset's own default. This said "llama3" while the preset said
-  // "llama3.1" - a fallback into Ollama asked for a tag most machines have not
-  // pulled, so the rescue route 404'd.
-  ollama: "llama3.1",
-  codex: "gpt-5.6-terra",
-};
-
-// Presets that declare `fallbackModel` own their id here, so a provider whose
-// catalogue rots is fixed in one place instead of three (see ProviderPreset.tiers).
-const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
-  ...HAND_MAINTAINED_DEFAULT_MODELS,
-  ...Object.fromEntries(
-    PROVIDER_PRESETS.filter((p) => p.fallbackModel).map((p) => [p.id, p.fallbackModel!]),
-  ),
-};
+// fallback chain down with them — 13 consecutive 410s per run). The fix is a
+// one-line preset edit now; it used to be three, and the third was the one that
+// got missed. The model-gone pruning below is the safety net that keeps a stale
+// entry from killing runs in the meantime.
+const PROVIDER_DEFAULT_MODELS: Record<string, string> = Object.fromEntries(
+  PROVIDER_PRESETS.filter((p) => p.fallbackModel).map((p) => [p.id, p.fallbackModel!]),
+);
 
 /**
  * The model a fallback into this provider asks for, or undefined when the

@@ -6,6 +6,7 @@ import type {
   LlmProvider,
   Message,
   ModelInfo,
+  ProviderName,
   StreamEvent,
   StopReason,
   StreamOpts,
@@ -28,16 +29,42 @@ const INTERLEAVED_BETA = "interleaved-thinking-2025-05-14";
 export interface AnthropicAuthOpts {
   /** The credential is a subscription OAuth bearer token, not an x-api-key. */
   oauth?: boolean;
+  /**
+   * Register under a DIFFERENT provider id while sharing this whole translation
+   * layer. The enterprise routes (`bedrock`, `vertex`) serve Anthropic models
+   * over a cloud's own endpoint and auth: same wire format, same events, same
+   * cache semantics — a different door. Mirrors `OpenAIProvider`'s `name`
+   * parameter, which has carried Groq/xAI/DeepSeek/OpenRouter for a year.
+   */
+  name?: ProviderName;
+  /**
+   * A custom transport. The enterprise routes pass one that rewrites the URL
+   * and signs the request (SigV4 for Bedrock, a bearer token for Vertex), so
+   * the SDK keeps composing and parsing Anthropic messages while the bytes
+   * travel a cloud path. Undefined here means the SDK's own fetch — the default
+   * for every existing caller.
+   */
+  fetch?: (url: string | URL | Request, init?: RequestInit) => Promise<Response>;
+  /**
+   * Model id for `/v1/messages/count_tokens` and the health probe. The cloud
+   * routes rename every model (`anthropic.claude-…-v1:0` on Bedrock), so the
+   * first-party ids hardcoded below would 404 there. Undefined keeps today's.
+   */
+  utilityModel?: string;
 }
 
 export class AnthropicProvider implements LlmProvider {
-  readonly name = "anthropic" as const;
+  readonly name: ProviderName;
   private client: Anthropic;
   /** Subscription-OAuth mode: authenticate with Bearer + Claude-Code identity. */
   private readonly oauth: boolean;
+  /** Model used by countTokens/healthCheck; see AnthropicAuthOpts.utilityModel. */
+  protected readonly utilityModel: string;
 
   constructor(apiKey?: string, baseUrl?: string, auth?: AnthropicAuthOpts) {
     this.oauth = auth?.oauth ?? false;
+    this.name = auth?.name ?? "anthropic";
+    this.utilityModel = auth?.utilityModel ?? "claude-sonnet-4-6";
     this.client = new Anthropic({
       // OAuth: send Authorization: Bearer (authToken) and suppress x-api-key by
       // nulling apiKey — with both set, the SDK prefers x-api-key. API-key mode
@@ -46,6 +73,8 @@ export class AnthropicProvider implements LlmProvider {
         ? { authToken: apiKey ?? null, apiKey: null }
         : { apiKey: apiKey ?? process.env.ANTHROPIC_API_KEY }),
       ...(baseUrl && { baseURL: baseUrl }),
+      // Cast: the SDK's Fetch type isn't exported; the shapes are compatible.
+      ...(auth?.fetch && { fetch: auth.fetch as never }),
     });
   }
 
@@ -243,7 +272,7 @@ export class AnthropicProvider implements LlmProvider {
   async countTokens(messages: Message[], tools?: ToolDefinition[]): Promise<number> {
     const result = await this.client.messages.countTokens(
       {
-        model: "claude-sonnet-4-6",
+        model: this.utilityModel,
         messages: this.toAnthropicMessages(messages),
         tools: tools ? this.toAnthropicTools(tools) : undefined,
       },
