@@ -83,19 +83,26 @@ A kill lands between two nodes far more often than between two waves, and the en
 is not paying twice for the expensive node that already succeeded.
 
 ```
-gear workflow examples/review.workflow.json --dry-run   # print the waves
-gear workflow examples/review.workflow.json --mock      # run the graph with no model
-gear workflow examples/review.workflow.json --fresh     # ignore saved state
+gear workflow examples/workflows/review.workflow.json --dry-run   # print the waves
+gear workflow examples/workflows/review.workflow.json --mock      # run the graph with no model
+gear workflow examples/workflows/review.workflow.json --fresh     # ignore saved state
+gear workflow examples/workflows/greenfield.workflow.json --mock --max-parallel 1 \
+  --stop-after backend                                            # a kill you can aim
 ```
 
 `--mock` runs every node through a deterministic stub. It is the honest way to validate a graph, its
 resume behaviour and its caching: real delegation needs an engine, a provider and money, none of
 which exercises the part the executor is responsible for.
 
+`--stop-after <id>` aborts a mock run the instant that node completes and leaves the state on disk.
+Resume is the property a workflow is worth having, and the only way to check it is to stop a run in
+the middle and start it again — timing a signal at a run whose nodes return instantly is a race, and
+naming the node is not.
+
 Inside a session the same thing is the `workflow` tool:
 
 ```
-workflow(file: "examples/review.workflow.json")
+workflow(file: "examples/workflows/review.workflow.json")
 ```
 
 A workflow with a failed node still **succeeds as a tool call**: it ran the graph and reported what
@@ -155,3 +162,27 @@ This is what a second, parallel execution path would have cost. There is one pat
 concurrency, its resume or its reporting reaches research and every written-down workflow at the
 same time, instead of the two drifting apart the way two implementations of the same thing always
 do.
+
+## The two that ship
+
+`examples/workflows/` holds the shapes the feature exists for. Both run against the mock provider,
+and `tests/integration/workflow-examples.test.ts` drives them through the real command — an example
+that has never run is a JSON file with opinions in it.
+
+**`review.workflow.json`** — scope the change, four **scoped reviewers** in parallel who cannot see
+each other's findings, then two **verifiers**, then the report. The verifiers are two different
+jobs: `verify` opens every cited `file:line` and decides whether the finding is real (a reviewer's
+confidence is not evidence), while `gaps` reads the diff itself rather than the reports, looking for
+what falls _between_ four dimension-scoped reviewers — the change that is individually correct,
+individually secure and individually tested, and still wrong as a whole.
+
+**`greenfield.workflow.json`** — one heavy pass that decides **the seam** (the exact signatures and
+error cases between backend and frontend) and assigns each slice the paths it owns; then backend,
+frontend, tests and docs as four `worker` nodes, each in its own git worktree; then `integrate`,
+whose real output is the list of places where a slice's own claim stopped holding once it met the
+others; then `seams`, which checks the one thing parallel workers structurally cannot — what falls
+between the slices nobody owned.
+
+The seam is decided once, in wave 1, precisely because the alternative is four workers negotiating
+it four ways in parallel and three of them being wrong. Every worker declares `files`: ownership is
+what makes a worker safe, and four workers sharing a tree is the failure the requirement exists for.

@@ -38,6 +38,8 @@ function usage(): void {
   ${dim("--max-parallel")} concurrency within a wave
   ${dim("--json")}         machine-readable result
   ${dim("--mock")}         run without a model: every node returns a deterministic stub
+  ${dim("--stop-after <id>")} stop the mock run once that node completes, and leave the
+                    state on disk — a kill you can aim, for proving resume
 `);
 }
 
@@ -126,13 +128,35 @@ export async function runWorkflowCommand(
 
   const effectiveStatePath = values.fresh ? undefined : statePath;
   const results: NodeResult[] = [];
+  const maxParallel = Math.max(0, Math.floor(Number(values["max-parallel"] ?? 0)) || 0);
+
+  // A kill you can aim.
+  //
+  // Resume is the property a workflow is worth having, and the only honest way
+  // to check it is to stop a run in the middle and start it again. Timing a
+  // signal at a mock run whose nodes return instantly is a race; naming the
+  // node is not. The state file is written after every node either way, so
+  // this exercises exactly the path an abrupt death does.
+  const stopAfter = typeof values["stop-after"] === "string" ? values["stop-after"] : "";
+  const stopper = new AbortController();
+  if (stopAfter && !definition.nodes.some((n) => n.id === stopAfter)) {
+    say(`  ${danger("!")} --stop-after: no node "${stopAfter}" in this workflow`);
+    return 1;
+  }
+
   const state = await runWorkflow(definition, {
     runNode: mockRunner,
     ...(effectiveStatePath ? { statePath: effectiveStatePath } : {}),
-    ...(Number.isFinite(values["max-parallel"])
-      ? { maxParallel: Number(values["max-parallel"]) }
-      : {}),
+    ...(stopAfter ? { signal: stopper.signal } : {}),
+    // parseArgs hands this back as a STRING, and `Number.isFinite("2")` is
+    // false — so the flag parsed, printed in the usage text, and did nothing.
+    ...(maxParallel > 0 ? { maxParallel } : {}),
     onEvent: (event) => {
+      if (event.type === "node_done" && event.id === stopAfter) {
+        // Aborted the instant the named node lands, so the state file holds
+        // exactly the prefix that completed and nothing after it.
+        stopper.abort();
+      }
       if (values.json) return;
       if (event.type === "wave_start") {
         say(`\n  ${dim(`wave ${event.wave + 1}`)}  ${event.nodes.map(accent).join(dim(" · "))}`);
@@ -162,6 +186,17 @@ export async function runWorkflowCommand(
   });
 
   if (values.json) say(JSON.stringify(state, null, 2));
+  if (stopAfter) {
+    // An aimed stop is not a failure, and reporting it as one would make the
+    // resume it exists to demonstrate look like a recovery from a bug.
+    const done = Object.values(state.results).filter((r) => r.status === "completed").length;
+    say(
+      `  ${warn("!")} stopped after ${text(stopAfter)} ${dim(
+        `— ${done}/${definition.nodes.length} completed, state kept at ${statePath}`,
+      )}\n`,
+    );
+    return 0;
+  }
   const failed = Object.values(state.results).filter((r) => r.status !== "completed").length;
   return failed === 0 ? 0 : 1;
 }
