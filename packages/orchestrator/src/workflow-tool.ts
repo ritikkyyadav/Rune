@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 
+import type { AgentTurnEvent, ChildAgentEvent, WorkflowNodeContext } from "@gear/protocol";
 import type {
   ToolCallInput,
   ToolCallOutput,
@@ -14,6 +15,7 @@ import {
   parseWorkflow,
   runWorkflow,
   topologicalWaves,
+  type NodeRunContext,
   type WorkflowDefinition,
   type WorkflowNode,
 } from "./workflow";
@@ -95,13 +97,123 @@ export function createWorkflowTool(deps: WorkflowToolDeps): ToolHandler {
         return fail(err instanceof Error ? err.message : String(err));
       }
 
+      // ── The wave, announced ──
+      //
+      // A workflow's members are levels, not a list: the reason a node has not
+      // started is almost always that its wave has not, and a panel that draws
+      // a flat fan-out cannot say so. The executor already knows the topology,
+      // so it is carried on the child event rather than recovered by parsing a
+      // heartbeat — which is what a surface had to do before P10.9.
+      const byId = new Map(definition.nodes.map((n) => [n.id, n]));
+      const placeOf = new Map<string, NodeRunContext>();
+      for (const [wave, level] of topologicalWaves(definition.nodes).entries()) {
+        for (const n of level) {
+          placeOf.set(n.id, {
+            wave,
+            waves: 0, // filled below, once the count is known
+            dependsOn: n.dependsOn ?? [],
+            attempt: 1,
+            attempts: n.retry ?? 1,
+          });
+        }
+      }
+      const waveCount = Math.max(0, ...[...placeOf.values()].map((p) => p.wave + 1));
+      for (const p of placeOf.values()) p.waves = waveCount;
+
+      const contextFor = (
+        id: string,
+        over: Partial<WorkflowNodeContext> = {},
+      ): WorkflowNodeContext => {
+        const place = placeOf.get(id);
+        return {
+          workflow: definition.name,
+          node: id,
+          kind: byId.get(id)?.kind ?? "task",
+          wave: place?.wave ?? 0,
+          waves: waveCount,
+          dependsOn: place?.dependsOn ?? [],
+          attempt: place?.attempt ?? 1,
+          attempts: place?.attempts ?? 1,
+          cached: false,
+          ...over,
+        };
+      };
+      /** Announce something about a node that no sub-agent event can carry. */
+      const announce = (id: string, event: AgentTurnEvent, over: Partial<WorkflowNodeContext>) => {
+        input.onEvent?.({
+          agentId: `${input.callId}:${id}`,
+          label: byId.get(id)?.label ?? id,
+          event,
+          node: contextFor(id, over),
+        } satisfies ChildAgentEvent);
+      };
+
       const state = await runWorkflow(definition, {
         ...(input.args.fresh === true
           ? {}
           : { statePath: defaultStatePath(input.workspaceRoot, definition.name) }),
         ...(deps.maxParallel ? { maxParallel: deps.maxParallel } : {}),
         ...(input.signal ? { signal: input.signal } : {}),
-        runNode: async (node: WorkflowNode, prompt: string) => {
+        onEvent: (event) => {
+          switch (event.type) {
+            case "node_start":
+              announce(
+                event.id,
+                { type: "notice", message: `wave ${event.wave + 1}` },
+                {
+                  status: "running",
+                  attempt: event.attempt,
+                  attempts: event.attempts,
+                },
+              );
+              return;
+            case "node_attempt":
+              // A retry is news while it is happening. `NodeResult.attempts`
+              // says so afterwards, which is exactly when it stops mattering.
+              announce(
+                event.id,
+                { type: "notice", message: `attempt ${event.attempt} of ${event.attempts}` },
+                { status: "running", attempt: event.attempt, attempts: event.attempts },
+              );
+              return;
+            case "node_cached":
+              // A cache hit runs no agent at all, so nothing else would ever
+              // mention this node. Drawing it as absent would read as pending.
+              announce(
+                event.id,
+                { type: "turn_complete", stopReason: "cached", totalTurns: 0 },
+                { status: "completed", cached: true },
+              );
+              return;
+            case "node_done":
+              if (event.result.status === "failed") {
+                announce(
+                  event.id,
+                  { type: "error", error: event.result.error ?? "node failed", recoverable: false },
+                  { status: "failed", attempt: event.result.attempts },
+                );
+              } else if (event.result.status === "skipped") {
+                announce(
+                  event.id,
+                  {
+                    type: "notice",
+                    message: event.result.error ?? "upstream did not complete",
+                  },
+                  { status: "skipped" },
+                );
+              } else {
+                announce(
+                  event.id,
+                  { type: "turn_complete", stopReason: "end_turn", totalTurns: 0 },
+                  { status: "completed", attempt: event.result.attempts },
+                );
+              }
+              return;
+            default:
+              return;
+          }
+        },
+        runNode: async (node: WorkflowNode, prompt: string, ctx: NodeRunContext) => {
           const handler = deps.registry.get(node.kind);
           if (!handler) {
             return { output: "", error: `the ${node.kind} tool is not available in this session` };
@@ -124,6 +236,25 @@ export function createWorkflowTool(deps: WorkflowToolDeps): ToolHandler {
             // node id so a fleet view can group by it.
             ...(input.onProgress
               ? { onProgress: (note: string) => input.onProgress?.(`${node.id} ${note}`) }
+              : {}),
+            // The typed channel, re-keyed to the NODE. A worker names itself
+            // `w1` inside its own fan-out, which is a name that means nothing
+            // one level up and collides with the next workflow's `w1`; the
+            // node id is what the graph, the cache and the reader all call it.
+            ...(input.onEvent
+              ? {
+                  onEvent: (child: ChildAgentEvent) =>
+                    input.onEvent?.({
+                      ...child,
+                      agentId: `${input.callId}:${node.id}`,
+                      label: node.label ?? node.id,
+                      node: contextFor(node.id, {
+                        status: "running",
+                        attempt: ctx.attempt,
+                        attempts: ctx.attempts,
+                      }),
+                    }),
+                }
               : {}),
           });
           return {

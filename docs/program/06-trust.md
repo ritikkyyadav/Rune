@@ -83,7 +83,7 @@ bun test tests/unit/orchestrator/worker* tests/unit/orchestrator/subagent* tests
 # greenfield eval task: 4 workers build backend/frontend/docs/tests in worktrees, each runs its checks, all merge clean, lead's verifier passes
 bun run eval -- --tasks greenfield_parallel --real
 gear audit last | grep -c "no summary"   # 0 over a 50-run soak
-gear workflow examples/review.workflow.json   # runs, resumes after a kill at node 3
+gear workflow examples/workflows/review.workflow.json   # runs, resumes after a kill at node 3
 ```
 
 Done means: parallel work is isolated by the filesystem, typed at the boundary, bounded in cost and time, and expressible without prose.

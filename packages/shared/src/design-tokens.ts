@@ -319,9 +319,22 @@ export const GEAR_SCALE = {
   displayTracking: "-0.02em",
   /** Layout constants the shell and the reading column agree on. */
   sidebarWidth: "264px",
+  /** The sidebar with its labels clipped: one 16px icon and the 8px grid. */
+  sidebarIconsWidth: "56px",
   railWidth: "380px",
   /** 760px of 15.5px Geist is 72–78 characters. */
   columnMax: "760px",
+  /**
+   * The floor the reading column is never allowed under.
+   *
+   * 560px of 15.5px Geist is about 52 characters — narrower than that and
+   * prose starts wrapping mid-thought, code blocks scroll for every line, and
+   * a diff stops being readable at all. The shell gives the sidebar and the
+   * rail up before it gives this up, which is what the breakpoints below
+   * 1100px and 900px are FOR: they are not a phone layout, they are the order
+   * in which chrome is sacrificed to keep the column.
+   */
+  columnMin: "560px",
 } as const;
 
 /** The radii the brand checklist permits, as a set the test reads. */

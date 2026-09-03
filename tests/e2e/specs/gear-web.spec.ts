@@ -118,9 +118,27 @@ for (const theme of ["light", "dark"] as const) {
     // on, so wait for the turn to actually be over rather than for its output.
     await expect(page.locator(".status-row")).toContainText(/Complete/i, { timeout: 120_000 });
 
-    // ── the trace rail: the surface no rival has ──
+    // ── the trace rail: the surface no rival has, and it is CLOSED ──
+    //
+    // Off by default is a design decision, not a default nobody set: the first
+    // thing anyone sees is the reading column at its full width, and the rail
+    // is a thing you ask for. It shipped open, which put a 380px panel of
+    // spans between the reader and the transcript on every first run.
     const rail = page.getByRole("complementary", { name: "Trace" });
+    await expect(rail).toBeHidden();
+    const railToggle = page.getByRole("button", { name: "Trace rail (⌘T)" });
+    await expect(railToggle).toHaveAttribute("aria-pressed", "false");
+
+    // ⌘T opens it, and the button is the same switch — a keyboard-first
+    // interface is not a keyboard-only one.
+    await page.keyboard.press("Meta+t");
     await expect(rail).toBeVisible();
+    await expect(railToggle).toHaveAttribute("aria-pressed", "true");
+    await railToggle.click();
+    await expect(rail).toBeHidden();
+    await page.keyboard.press("Meta+t");
+    await expect(rail).toBeVisible();
+
     await expect
       .poll(async () => rail.locator(".span").count(), { timeout: 60_000 })
       .toBeGreaterThan(2);
@@ -167,6 +185,71 @@ for (const theme of ["light", "dark"] as const) {
       .click();
     await expect(files).toContainText("A repository with one file in it", { timeout: 30_000 });
 
+    // ── the shell holds its shape when the window is not a 1440px laptop ──
+    //
+    // The reading column is the product; everything else is chrome around it.
+    // So a narrow window costs the chrome, in a fixed order, and never the
+    // column. The founder found the opposite in the live preview: at 1024 the
+    // rail squeezed a 760px column down to whatever was left.
+    const widthOf = async (selector: string) =>
+      (await page
+        .locator(selector)
+        .boundingBox()
+        .then((b) => b?.width)) ?? 0;
+    // The columns animate (220ms), so every measurement below polls until the
+    // layout has settled rather than sampling it mid-transition.
+    const settledWidth = async (selector: string) => {
+      let last = -1;
+      await expect
+        .poll(async () => {
+          const w = await widthOf(selector);
+          const stable = w === last;
+          last = w;
+          return stable;
+        })
+        .toBe(true);
+      return last;
+    };
+
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await expect(rail).toBeVisible();
+    // The rail is over the column, not beside it: the column keeps the width
+    // it would have had with the rail closed.
+    const withRail = await settledWidth(".main");
+    expect(withRail, "the column stays above its floor").toBeGreaterThanOrEqual(560);
+    await page.keyboard.press("Meta+t");
+    await expect(rail).toBeHidden();
+    expect(
+      Math.abs((await settledWidth(".main")) - withRail),
+      "the rail overlays, it does not squeeze",
+    ).toBeLessThan(2);
+
+    // Below ~900 the sidebar keeps its icons and clips its labels — and the two
+    // things a window is for stay reachable. Clipped, not removed: the label is
+    // still the button's accessible name, because an icon rail a screen reader
+    // hears as three unnamed buttons is a broken sidebar, not a collapsed one.
+    await page.setViewportSize({ width: 860, height: 768 });
+    const sidebar = page.getByRole("complementary", { name: "Sessions and navigation" });
+    await expect(sidebar).toBeVisible();
+    expect(await settledWidth(".sidebar"), "the sidebar is an icon rail").toBeLessThan(80);
+    await expect(page.getByRole("button", { name: /New session/ })).toBeVisible();
+    await expect(sidebar.locator(".side-head .gear-mark")).toBeVisible();
+    expect(
+      await settledWidth(".main"),
+      "the column never drops under its floor",
+    ).toBeGreaterThanOrEqual(560);
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expect(sidebar).toBeVisible();
+    expect(await settledWidth(".sidebar"), "and it comes back").toBeGreaterThan(200);
+
+    // Open it again, so the reload below can prove the OTHER half of the
+    // decision: closed by default, but the choice is remembered. Re-opening a
+    // panel on every reload is the small tax that makes a tool feel like it is
+    // not listening.
+    await page.keyboard.press("Meta+t");
+    await expect(rail).toBeVisible();
+
     // ── reload: the session is still there ──
     //
     // The one thing a page can lose that a window cannot. The engine holds the
@@ -178,6 +261,9 @@ for (const theme of ["light", "dark"] as const) {
     // written, and asserting otherwise would be asserting a race.
     await page.reload();
     await expect(page.locator(".app")).toContainText("fake-model", { timeout: 60_000 });
+    // The rail choice is per browser and it survived: closed by DEFAULT is not
+    // the same as closed every time.
+    await expect(rail).toBeVisible();
     await page
       .getByRole("button", { name: /run the echo command/ })
       .first()

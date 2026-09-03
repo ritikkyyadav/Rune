@@ -143,7 +143,14 @@ class WsClient {
     });
   }
 
-  /** Wait for the first stream frame matching a predicate. */
+  /**
+   * Wait for the first stream frame matching a predicate.
+   *
+   * The interval is the resolution of every wait in this file, so it is the
+   * one number that is added to each of them whether or not anything is slow.
+   * 20ms is below the point where it shows up next to a real round-trip and
+   * still far above the cost of a `find` over a handful of frames.
+   */
   async waitFor(match: (f: Frame) => boolean, timeoutMs = 60_000): Promise<Frame> {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
@@ -154,7 +161,7 @@ class WsClient {
           `timed out waiting for a stream frame; saw: ${this.streams.map((f) => f.stream).join(", ") || "(none)"}`,
         );
       }
-      await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 20));
     }
   }
 
@@ -287,9 +294,12 @@ describe("gear serve (websocket transport, real engine, fake model)", () => {
     });
 
     const tokenPath = join(gearHome, "serve.json");
+    // The server writes this about 150ms after it is spawned, so a 100ms
+    // interval was rounding every start-up in the file up by a tenth of a
+    // second for nothing.
     const deadline = Date.now() + 20_000;
     while (Date.now() < deadline && !existsSync(tokenPath)) {
-      await new Promise((r) => setTimeout(r, 100));
+      await new Promise((r) => setTimeout(r, 20));
     }
     if (!existsSync(tokenPath)) throw new Error("gear serve never wrote its token file");
     const cfg = JSON.parse(readFileSync(tokenPath, "utf8")) as { token: string; port: number };
@@ -401,14 +411,29 @@ describe("gear serve (websocket transport, real engine, fake model)", () => {
       // the work is finished. Off the terminal that ledger was invisible — the
       // step simply did not happen with nothing on screen to say so.
       //
-      // `npm publish` is a mechanical defer (a regex in auto-containment), so
-      // this needs no classifier call and cannot flake on a model's judgment.
+      // `npm publish` reaches the ledger MECHANICALLY: the containment broker
+      // matches it and substitutes the dry run, so the held step's shape does
+      // not depend on a model's judgment and cannot flake on one.
+      //
+      // The reviewer ceiling is set explicitly, and that is what makes this
+      // test take four seconds instead of twenty. There is no reachable
+      // reviewer in this fixture — the fake model plays the acting agent, not
+      // the safety reviewer — so both reviewer attempts burn their whole
+      // budget before the broker takes over. At the shipped 12 s default that
+      // is fifteen seconds of a test waiting for something it has arranged
+      // never to arrive, which is the entire runtime AND the reason this test
+      // timed out four times on a loaded merge gate. Bounding it changes
+      // nothing that is asserted below: the containment is the broker's, the
+      // route is `dry-run-substitute` either way, and the assertion that the
+      // reviewer was unavailable is made explicitly rather than by waiting.
       const { url, token } = await start(
         [
           sseToolCall("call_pub", "bash", { command: "npm publish --access public" }),
           sseText("published everything I could; the publish itself is on the ledger"),
         ],
-        { configToml: '[permissions]\ngear = "auto"\n' },
+        {
+          configToml: '[permissions]\ngear = "auto"\n\n[permissions.autoMode]\ntimeoutMs = 1500\n',
+        },
       );
 
       const client = await WsClient.open(url, token);
@@ -433,6 +458,12 @@ describe("gear serve (websocket transport, real engine, fake model)", () => {
       // only the real effect is outstanding. `substitute` names the stand-in.
       expect(["defer", "redirect"]).toContain(step.kind);
       if (step.kind === "redirect") expect(String(step.substitute ?? "")).not.toBe("");
+      // Mechanical, and it says so. This is the assertion the shortened
+      // reviewer ceiling is answerable to: the containment came from the
+      // broker BECAUSE no independent reviewer answered, and the reason on the
+      // ledger names that rather than leaving the reader to infer it.
+      expect(String(step.route)).toBe("dry-run-substitute");
+      expect(String(step.reason)).toMatch(/reviewer unavailable/i);
       // The raw arguments stay in-process: the wire carries a bounded,
       // secret-scrubbed summary and an id, never the payload itself.
       expect(step).not.toHaveProperty("args");
@@ -453,7 +484,10 @@ describe("gear serve (websocket transport, real engine, fake model)", () => {
 
       client.close();
     },
-    180_000,
+    // Measured at 4.2 s on this machine (was 16.7 s). 30 s is about 7× that —
+    // room for a loaded gate without the 180 s ceiling that let a genuinely
+    // wedged run hold the suite open for three minutes before saying so.
+    30_000,
   );
 
   test.skipIf(!HAS_RUST_BIN)(

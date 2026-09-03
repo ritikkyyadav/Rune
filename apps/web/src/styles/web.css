@@ -151,6 +151,125 @@ kbd {
   }
 }
 
+/* ── Responsive: what gets given up, and in what order ──
+   The reading column is the product. Everything else is chrome around it, so
+   the chrome is what a narrow window costs — never the column. Three columns
+   at 1440px is comfortable; three columns at 1024px is a 760px column squeezed
+   to 380 by a panel of spans nobody asked for, which is the shape the founder
+   found in the live preview.
+
+   Below 1100px the rail stops taking a column and OVERLAYS instead. It is
+   still not a modal — it slides in beside the transcript and takes nothing
+   away — and it is set apart by the surface tint and hairline the system
+   already uses for depth, not by a shadow.
+
+   Below 900px the sidebar keeps its icons and clips its labels. The labels
+   stay in the DOM, clipped rather than removed, so every one of those buttons
+   keeps its accessible name: an icon rail that a screen reader hears as three
+   unnamed buttons is not a collapsed sidebar, it is a broken one. */
+
+@media (max-width: 1100px) {
+  .app,
+  .app.rail-closed {
+    grid-template-columns: var(--sidebar-w) minmax(var(--column-min), 1fr) 0;
+  }
+  .app.side-closed,
+  .app.side-closed.rail-closed {
+    grid-template-columns: 0 minmax(var(--column-min), 1fr) 0;
+  }
+  .rail {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    width: min(var(--rail-w), 88vw);
+    transform: translateX(100%);
+    transition: transform var(--t-panel) var(--ease);
+  }
+  .app:not(.rail-closed) .rail {
+    transform: none;
+  }
+  /* Closed means gone, not merely off-screen: a panel sitting invisibly over
+     the transcript still swallows the clicks meant for it. */
+  .app.rail-closed .rail {
+    pointer-events: none;
+    visibility: hidden;
+  }
+}
+
+@media (max-width: 900px) {
+  .app,
+  .app.rail-closed {
+    grid-template-columns: var(--sidebar-icons-w) minmax(var(--column-min), 1fr) 0;
+  }
+  .sidebar {
+    align-items: stretch;
+  }
+  /* The workspace switcher stays: the mark is the affordance, and the folder
+     name it drops is on the element's title. New session stays for the same
+     reason — it is the one thing a new window is for. */
+  .app:not(.side-closed) .side-head b,
+  .app:not(.side-closed) .side-head .side-chev,
+  .app:not(.side-closed) .side-path,
+  .app:not(.side-closed) .side-foot,
+  .app:not(.side-closed) .side-sessions,
+  .app:not(.side-closed) .new-task kbd,
+  .app:not(.side-closed) .side-item kbd {
+    display: none;
+  }
+  .app:not(.side-closed) .side-head {
+    justify-content: center;
+    padding: 14px 0 8px;
+  }
+  .app:not(.side-closed) .side-top,
+  .app:not(.side-closed) .side-nav {
+    padding-left: 0;
+    padding-right: 0;
+    align-items: center;
+  }
+  .app:not(.side-closed) .new-task,
+  .app:not(.side-closed) .side-item {
+    justify-content: center;
+    padding: 0;
+    width: var(--sidebar-icons-w);
+  }
+  /* Clipped, not removed. The text is still the button's accessible name. */
+  .app:not(.side-closed) .new-task > :not(svg),
+  .app:not(.side-closed) .side-item > :not(svg) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .app:not(.side-closed) .new-task,
+  .app:not(.side-closed) .side-item {
+    position: relative;
+  }
+}
+
+/* The last thing to go. Under about 620px the icon rail itself is what stands
+   between the column and its floor, so the column takes the window and the
+   sidebar is reached with ⌘B. */
+@media (max-width: 620px) {
+  .app,
+  .app.rail-closed {
+    grid-template-columns: 0 minmax(0, 1fr) 0;
+  }
+  .app:not(.side-closed) .sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 30;
+    width: var(--sidebar-icons-w);
+  }
+}
+
 /* ── Sidebar ── */
 
 .sidebar {
@@ -163,7 +282,7 @@ kbd {
   border-right: 1px solid var(--hairline);
 }
 .app.side-closed .sidebar {
-  border-right-color: transparent;
+  border-right-width: 0;
 }
 
 .side-top {
@@ -1299,6 +1418,43 @@ kbd {
 .fleet-state.failed {
   color: var(--danger);
 }
+/* Skipped is not failed. A node whose upstream did not complete never ran, and
+   colouring it as a failure sends the reader looking for a defect in the one
+   part of the graph that behaved correctly. */
+.fleet-state.skipped {
+  color: var(--ink-3);
+}
+
+/* ── A workflow wave ──
+   A fan-out is a flat list and reads correctly as one. A workflow is levels,
+   and the level a node sits on is usually the whole explanation for why it has
+   not started — so the levels are drawn, and the edges into each are named. */
+.fleet-wave + .fleet-wave {
+  border-top: 1px solid var(--hairline);
+}
+.fleet-wave-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 14px 2px;
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  color: var(--ink-3);
+  min-width: 0;
+}
+.fleet-wave-name {
+  color: var(--ink-2);
+}
+.fleet-wave-after {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fleet-retry {
+  margin-right: 8px;
+  color: var(--caution);
+}
 .rf-status {
   font-family: var(--mono);
   font-size: var(--fs-micro);
@@ -1701,8 +1857,11 @@ kbd {
   background: var(--sunk);
   border-left: 1px solid var(--hairline);
 }
+/* Width, not colour. A transparent hairline is still a hairline: it left the
+   closed rail one pixel wide, which is a panel the layout still pays for and
+   which anything measuring the page still finds. Closed means zero. */
 .app.rail-closed .rail {
-  border-left-color: transparent;
+  border-left-width: 0;
 }
 .rail-head {
   display: flex;
