@@ -1,0 +1,9 @@
+{
+  "name": "gear-fixture-web",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  }
+}

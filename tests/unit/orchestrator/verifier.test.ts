@@ -34,9 +34,9 @@ describe("detectVerifyCommands", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  test("Cargo.toml → cargo check", async () => {
+  test("Cargo.toml → cargo check, then cargo test (P10.4)", async () => {
     const dir = await tmpWorkspace({ "Cargo.toml": "[package]" });
-    expect(detectVerifyCommands(dir)).toEqual(["cargo check --quiet"]);
+    expect(detectVerifyCommands(dir)).toEqual(["cargo check --quiet", "cargo test --quiet"]);
     await rm(dir, { recursive: true, force: true });
   });
 

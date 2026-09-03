@@ -65,19 +65,23 @@ describe("detectVerifyCommands", () => {
     expect(cmds.some((c) => c.startsWith("cd shop && "))).toBe(true);
   });
 
-  test("two nested apps → ambiguous → no nested detection", () => {
+  test("two nested apps → one check set each (P10.4)", () => {
+    // This used to be "ambiguous → detect nothing", which meant a workspace
+    // holding two apps verified as `ran: false`. A workspace with several
+    // projects now reports one check set per project; the step check picks the
+    // one whose files the step touched.
     mkdirSync(join(dir, "a"), { recursive: true });
     mkdirSync(join(dir, "b"), { recursive: true });
     writeFileSync(join(dir, "a", "package.json"), pkg({ test: "bun test" }));
     writeFileSync(join(dir, "b", "package.json"), pkg({ test: "bun test" }));
-    expect(detectVerifyCommands(dir).some((c) => c.startsWith("cd "))).toBe(false);
+    expect(detectVerifyCommands(dir).sort()).toEqual(["cd a && npm test", "cd b && npm test"]);
   });
 
-  test("go module gets a build check; go tests only when test files exist", () => {
+  test("go module gets build + vet; go tests only when test files exist", () => {
     writeFileSync(join(dir, "go.mod"), "module x\n");
-    expect(detectVerifyCommands(dir)).toEqual(["go build ./..."]);
+    expect(detectVerifyCommands(dir)).toEqual(["go build ./...", "go vet ./..."]);
     writeFileSync(join(dir, "main_test.go"), "package main");
-    expect(detectVerifyCommands(dir)).toEqual(["go build ./...", "go test ./..."]);
+    expect(detectVerifyCommands(dir)).toEqual(["go build ./...", "go test ./...", "go vet ./..."]);
   });
 
   test("build script is the compile-at-least fallback when nothing else exists", () => {

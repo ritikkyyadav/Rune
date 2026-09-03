@@ -1,0 +1,5 @@
+#!/bin/sh
+# Placeholder wrapper — see gradle-app/gradlew. Detection only reads that an
+# `mvnw` file is here; nothing in the suite executes it.
+echo "gear fixture: placeholder maven wrapper, not a real Maven install" >&2
+exit 1
