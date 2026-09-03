@@ -618,6 +618,18 @@ export function traceReducer(state: TraceState, action: TraceAction): TraceState
         case "handoff":
         case "replanning":
         case "tool_progress":
+        // The narrative (P11.1) is task STATE, and the rail is a causal record
+        // of calls. A hypothesis has no span: nothing was invoked, nothing
+        // took time, nothing can fail. It belongs to the composed task surface
+        // and the Decision Record, which read the state model directly.
+        case "task_kind":
+        case "hypothesis":
+        case "hypothesis_updated":
+        case "decision":
+        case "artifact":
+        case "pending_decision":
+        case "decision_resolved":
+        case "decision_record":
           return state;
 
         default:

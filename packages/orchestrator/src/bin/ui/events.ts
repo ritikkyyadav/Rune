@@ -192,6 +192,57 @@ export function formatEvent(
       ].join("\n");
     }
 
+    // ── The narrative ──
+    // A hypothesis is named before it is tested and folded to one line with
+    // its reason once it is settled. That fold is the point: a run that tried
+    // three things and reports only the one that worked has hidden the part a
+    // reader needs to trust the answer.
+    case "hypothesis":
+      return F.railRow(
+        F.flowRow(
+          `${faint(glyph("observed"))} ${text(ev.hypothesis.text.slice(0, 100))}`,
+          faint(ev.hypothesis.status),
+        ),
+      );
+
+    case "hypothesis_updated": {
+      const mark =
+        ev.status === "confirmed"
+          ? info(glyph("verified"))
+          : ev.status === "refuted"
+            ? muted(glyph("failure"))
+            : faint(glyph("observed"));
+      return F.railRow(
+        F.flowRow(
+          `${mark} ${muted(`hypothesis ${ev.id}`)} ${text(ev.status)}`,
+          ev.reason ? faint(ev.reason.slice(0, 70)) : "",
+        ),
+      );
+    }
+
+    case "decision":
+      return F.railRow(
+        F.flowRow(
+          `${info(glyph("phase"))} ${text(ev.decision.text.slice(0, 100))}`,
+          faint(
+            ev.decision.basedOn.length > 0
+              ? `on ${ev.decision.basedOn.length} piece${ev.decision.basedOn.length === 1 ? "" : "s"} of evidence`
+              : "no evidence cited",
+          ),
+        ),
+      );
+
+    case "task_kind":
+    case "artifact":
+    case "pending_decision":
+    case "decision_resolved":
+    case "decision_record":
+      // The task's shape and the artifact ledger drive the composed surface
+      // and `gear audit`, not a transcript line; the pending-decision list is
+      // the held-step panel's material, which already draws it; and the record
+      // is a document the close offers rather than a row in the scrollback.
+      return null;
+
     case "turn_complete":
       return `${F.BODY}${faint(`${ev.totalTurns} turns | $${(ctx.cost ?? 0).toFixed(4)}`)}`;
 

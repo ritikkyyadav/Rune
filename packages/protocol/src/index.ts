@@ -14,7 +14,24 @@ export { PROTOCOL_VERSION, PROTOCOL_MAJOR, isCompatibleVersion } from "./version
 export { assertNever, assertNeverSoft } from "./assert";
 
 export type { ToolAttachment, ToolCallOutput } from "./tool";
-export type { TodoItem, TodoStatus, StepEvidence, HandoffReason } from "./task";
+export type {
+  ArtifactKind,
+  CheckRecord,
+  DecisionRecord,
+  EvidenceRef,
+  HandoffReason,
+  Hypothesis,
+  HypothesisStatus,
+  PendingDecision,
+  PendingDecisionKind,
+  StepEvidence,
+  TaskArtifact,
+  TaskDecision,
+  TaskKind,
+  TodoItem,
+  TodoStatus,
+} from "./task";
+export { TASK_KINDS } from "./task";
 
 export type {
   AgentTurnEvent,

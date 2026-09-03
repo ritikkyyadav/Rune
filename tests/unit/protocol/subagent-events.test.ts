@@ -1,7 +1,7 @@
 /**
  * P2.6 — the sub-agent channel is typed, and the string is a projection of it.
  *
- * A sub-agent runs the same loop the lead does and produces the same 22-member
+ * A sub-agent runs the same loop the lead does and produces the same 30-member
  * union. All of it was flattened to a string at the tool boundary
  * (`onProgress: (note: string)`), so the fleet panel rendered parsed prose: a
  * worker's `tool_call_end` arrived as `"w2 edit_file src/x.ts"`, and anything
@@ -17,6 +17,8 @@ import { describe, expect, test } from "bun:test";
 
 import { AGENT_TURN_EVENT_TYPES, type AgentTurnEvent } from "../../../packages/protocol/src/index";
 import { projectChildEvent } from "../../../packages/orchestrator/src/subagent-events";
+
+const NOW = "2026-09-03T00:00:00.000Z";
 
 /** One synthetic event per union member, for the sweep below. */
 function sample(type: string): AgentTurnEvent {
@@ -78,6 +80,48 @@ function sample(type: string): AgentTurnEvent {
       return { type, reason: "verification kept failing", trigger: "verification" };
     case "tool_progress":
       return { type, callId: "c1", note: "n" };
+    // ─── The narrative (P11.1) ───
+    case "task_kind":
+      return { type, kind: "investigate", source: "harness" };
+    case "hypothesis":
+      return {
+        type,
+        hypothesis: {
+          id: "h1",
+          text: "the pool is exhausted",
+          status: "testing",
+          evidence: [],
+          at: NOW,
+        },
+      };
+    case "hypothesis_updated":
+      return { type, id: "h1", status: "refuted", reason: "pool at 20%", source: "harness" };
+    case "decision":
+      return { type, decision: { id: "d1", text: "restore the index", basedOn: [], at: NOW } };
+    case "artifact":
+      return { type, artifact: { id: "a1", kind: "file", ref: "src/x.ts", at: NOW } };
+    case "pending_decision":
+      return {
+        type,
+        decision: { id: "p1", kind: "held_step", summary: "deploy", createdAt: NOW },
+      };
+    case "decision_resolved":
+      return { type, id: "p1", outcome: "approved" };
+    case "decision_record":
+      return {
+        type,
+        record: {
+          taskId: "s1",
+          objective: "why is it slow",
+          decision: null,
+          decisions: [],
+          hypotheses: [],
+          artifacts: [],
+          checks: [],
+          remains: { openSteps: [], pending: [] },
+          generatedAt: NOW,
+        },
+      };
     default:
       throw new Error(`no sample for ${type} — add one when you add the member`);
   }
