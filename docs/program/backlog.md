@@ -136,6 +136,20 @@ Found 2026-09-03 by P10.0 (the host reaper):
   not know about them for) or a restart cleans them up. Either implement reattach or stop
   claiming it — found in P10.0
 
+Found 2026-09-03 by P10.3 (supervisor recall):
+
+- `tests/eval/runner.ts:368` — the mock suite writes `tests/eval/baseline-mock.json` on **every**
+  passing full run, not only under `--write-baseline`. So the command the gate tells you to run
+  (`bun run eval -- --compare`) silently re-anchors the artifact it just compared against, leaving a
+  dirty tree with a new timestamp and a drifted `avgDurationMs`. Harmless here because the numbers
+  were identical and the change was reverted, and a trap the moment a run is not: a distracted
+  session commits a re-anchored baseline as part of an unrelated change, and the gate quietly stops
+  gating. Write only under the flag — found in P10.3
+- `tests/unit/orchestrator/auto-containment.test.ts:104-114` — the test "persistence waits normally,
+  but halts once injection is suspected" is duplicated verbatim. Bun runs both, so the second is
+  pure cost, and a future edit to one leaves two tests with the same name asserting different
+  things — found in P10.3
+
 Found 2026-09-03 by P10.2 (Windows parity):
 
 - `packages/tool-registry/src/tools/format-on-write.ts` — the project-formatter
