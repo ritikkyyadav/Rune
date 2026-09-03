@@ -7,6 +7,14 @@
 // engine-host's event stream into that structure; components only render it.
 
 import type { EngineEvent, PermissionDecision, PermissionPrompt } from "./types";
+import type {
+  DecisionRecord,
+  Hypothesis,
+  PendingDecision,
+  TaskArtifact,
+  TaskDecision,
+  TaskKind,
+} from "@gear/protocol";
 import { assertNeverSoft } from "@gear/protocol";
 
 export interface DiffLine {
@@ -115,6 +123,23 @@ export interface TurnState {
   pendingPermission?: string;
   lastThinkingAt: number;
   nextId: number;
+  // ─── The narrative (P11.1) ───
+  // Reduced into turn state rather than pushed as transcript items: the
+  // composed task surface binds to these paths (a hypothesis card folds when
+  // its status turns `refuted`), and a transcript row would say the same thing
+  // twice. The Decision Record arrives whole at task end.
+  /** What shape of work this is — the composer picks a projection from it. */
+  taskKind?: TaskKind;
+  /** Every hypothesis raised this turn, in order; refuted ones are kept. */
+  hypotheses: Hypothesis[];
+  /** What the run committed to, with the evidence it stood on. */
+  decisions: TaskDecision[];
+  /** What the run produced. */
+  artifacts: TaskArtifact[];
+  /** Decisions waiting on a person — the inbox's material. */
+  pending: PendingDecision[];
+  /** The record generated at task end. */
+  record?: DecisionRecord;
 }
 
 export interface StreamState {
@@ -539,6 +564,10 @@ export function streamReducer(
         burstIndex: null,
         lastThinkingAt: 0,
         nextId: 1,
+        hypotheses: [],
+        decisions: [],
+        artifacts: [],
+        pending: [],
       };
       return { turns: [...state.turns, t], current: state.turns.length };
     }
@@ -914,6 +943,60 @@ export function streamReducer(
             // A sub-agent heartbeat belongs on the live rung, never in the
             // transcript — the same rule the TUI holds.
             return ev.note ? { ...t, statusDetail: ev.note } : t;
+
+          // ─── The narrative (P11.1) ───
+          // State, not scrollback. A surface binds to these paths and updates
+          // live; nothing here is pushed into `items`, so the transcript does
+          // not say the same thing twice.
+          case "task_kind":
+            return { ...t, taskKind: ev.kind };
+
+          case "hypothesis":
+            return t.hypotheses.some((h) => h.id === ev.hypothesis.id)
+              ? t
+              : { ...t, hypotheses: [...t.hypotheses, ev.hypothesis] };
+
+          case "hypothesis_updated":
+            return {
+              ...t,
+              hypotheses: t.hypotheses.map((h) =>
+                h.id === ev.id
+                  ? {
+                      ...h,
+                      status: ev.status,
+                      ...(ev.reason ? { reason: ev.reason } : {}),
+                      evidence: ev.evidence ?? h.evidence,
+                    }
+                  : h,
+              ),
+            };
+
+          case "decision":
+            return { ...t, decisions: [...t.decisions, ev.decision] };
+
+          case "artifact":
+            return t.artifacts.some((a) => a.id === ev.artifact.id)
+              ? t
+              : { ...t, artifacts: [...t.artifacts, ev.artifact] };
+
+          case "pending_decision":
+            return {
+              ...t,
+              pending: [...t.pending.filter((p) => p.id !== ev.decision.id), ev.decision],
+            };
+
+          case "decision_resolved":
+            return {
+              ...t,
+              pending: t.pending.map((p) =>
+                p.id === ev.id
+                  ? { ...p, resolution: { at: new Date(now).toISOString(), outcome: ev.outcome } }
+                  : p,
+              ),
+            };
+
+          case "decision_record":
+            return { ...t, record: ev.record };
 
           // ─── Named, and deliberately not reduced here ───
           case "tool_call_args_delta":

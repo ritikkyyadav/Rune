@@ -11,7 +11,18 @@
 // and every member it chooses to ignore is named in a case of its own.
 
 import type { ToolCallOutput } from "./tool";
-import type { HandoffReason, TodoItem } from "./task";
+import type {
+  DecisionRecord,
+  EvidenceRef,
+  HandoffReason,
+  Hypothesis,
+  HypothesisStatus,
+  PendingDecision,
+  TaskArtifact,
+  TaskDecision,
+  TaskKind,
+  TodoItem,
+} from "./task";
 
 export type AgentTurnEvent =
   | { type: "text_delta"; text: string }
@@ -153,7 +164,42 @@ export type AgentTurnEvent =
       ok?: boolean;
       /** The sub-agent event this note was projected from, when there was one. */
       child?: ChildAgentEvent;
-    };
+    }
+  // ─── The narrative (P11.1) ───
+  //
+  // What the run SUSPECTED, what it settled, and what it committed to. The
+  // plan ledger already carries what was done and on what evidence; without
+  // these a surface can show a green tick and still be unable to say why one
+  // approach was taken and two were abandoned.
+  //
+  // The task's shape, from the Intent Interpreter at task start (`source:
+  // "harness"` for the deterministic reading, `"model"` for the one revision
+  // the model is allowed). A surface composes for this.
+  | { type: "task_kind"; kind: TaskKind; source: "harness" | "model" }
+  // A hypothesis was raised: named BEFORE it is tested, which is what makes
+  // the refutation legible later instead of invisible.
+  | { type: "hypothesis"; hypothesis: Hypothesis }
+  // …and settled. `refuted` and `confirmed` come from a check's verdict, not
+  // from the model's confidence; `reason` is the check's own summary.
+  | {
+      type: "hypothesis_updated";
+      id: string;
+      status: HypothesisStatus;
+      reason?: string;
+      evidence?: EvidenceRef[];
+      /** Who moved it: the model reporting, or the harness reading a check. */
+      source: "harness" | "model";
+    }
+  // The run committed to something, with what justified it.
+  | { type: "decision"; decision: TaskDecision }
+  // The run produced something that outlives it.
+  | { type: "artifact"; artifact: TaskArtifact }
+  // A decision is waiting on a person — a held step, a question, a permission
+  // prompt, a read-back. One shape for all four, because the inbox is one list.
+  | { type: "pending_decision"; decision: PendingDecision }
+  | { type: "decision_resolved"; id: string; outcome: string }
+  // The task ended: the whole record, generated from state, nothing invented.
+  | { type: "decision_record"; record: DecisionRecord };
 
 /**
  * A sub-agent's own event, carried inside `tool_progress.child`.
@@ -243,6 +289,14 @@ export const AGENT_TURN_EVENT_TYPES = [
   "handoff",
   "replanning",
   "tool_progress",
+  "task_kind",
+  "hypothesis",
+  "hypothesis_updated",
+  "decision",
+  "artifact",
+  "pending_decision",
+  "decision_resolved",
+  "decision_record",
 ] as const satisfies readonly AgentTurnEventType[];
 
 /** Compile-time completeness: `never` unless every member is listed above. */

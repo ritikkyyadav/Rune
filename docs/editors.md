@@ -71,7 +71,7 @@ the optional ones:
 Client-side, it calls exactly one: **`session/request_permission`** — for a
 permission, and for an `ask_user` that has options (see below).
 
-**Events.** All 22 members of `AgentTurnEvent`, and what an editor receives for
+**Events.** All 30 members of `AgentTurnEvent`, and what an editor receives for
 each. `tests/unit/orchestrator/acp-mapping.test.ts` asserts this table row by
 row and fails if a member is added without a decision.
 
@@ -99,6 +99,14 @@ row and fails if a member is added without a decision.
 | `compaction`             | **dropped**                 | ACP's `compaction_update` is marked UNSTABLE and may only be sent to a client that advertised `session.compaction`; Gear does not negotiate it |
 | `checkpoint_saved`       | **dropped**                 | harness bookkeeping                                                                                                                            |
 | `tool_progress`          | **dropped**                 | a sub-agent heartbeat; ACP has no shape for a nested agent, and the terminal draws it on a status rung, not the transcript                     |
+| `hypothesis`             | `agent_thought_chunk`       | the suspicion, named before it is tested — reasoning, in the reasoning stream                                                                  |
+| `hypothesis_updated`     | `agent_thought_chunk`       | the verdict and its reason (`cache eviction — refuted, TTL unchanged`)                                                                         |
+| `decision`               | `agent_thought_chunk`       | what the run committed to, and how many pieces of evidence it stood on                                                                         |
+| `task_kind`              | **dropped**                 | it picks a projection for a composed surface; an editor has one surface and it is the editor's                                                 |
+| `artifact`               | **dropped**                 | the editor already sees the file writes as tool calls; the ledger is for the Decision Record                                                   |
+| `pending_decision`       | **dropped**                 | ACP's own `session/request_permission` is how an editor is asked; a second list would be a second inbox                                        |
+| `decision_resolved`      | **dropped**                 | the other half of the same list                                                                                                                |
+| `decision_record`        | **dropped**                 | a whole document at task end; `gear audit --record` and the signed export render it, and an editor would print the run back at the reader      |
 
 Also arriving from the engine and **not** in that union: `held_steps` becomes a
 message (below), `auto_notice` and `roundtrip_resolved` become thought chunks,

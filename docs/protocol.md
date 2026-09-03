@@ -119,7 +119,7 @@ that exists in one and not the other does not build.
 | ----------------------- | --------------------------------------------- | ----------------------------------- |
 | `ready`                 | status + `protocolVersion`                    | one per connection                  |
 | `engine_status`         | model, provider, context, cost, posture       |                                     |
-| `chat_event`            | `{ sessionId?, event: AgentTurnEvent }`       | 22 members                          |
+| `chat_event`            | `{ sessionId?, event: AgentTurnEvent }`       | 30 members                          |
 | `research_event`        | `{ sessionId?, runId, event: ResearchEvent }` | 9 members                           |
 | `permission_request`    | `{ requestId, prompt }`                       | answer with `respond_permission`    |
 | `question_request`      | `{ requestId, question }`                     | answer with `respond_question`      |
@@ -171,6 +171,34 @@ only half-received. Run-level events that have no row of their own (`usage`,
 The host also keeps a bounded per-session ring buffer of recent live frames, so
 a client reconnecting mid-turn sees the tool call that is running right now and
 not only the last thing written to the database.
+
+---
+
+## The narrative
+
+Eight members carry the story of a task — what it suspected, what settled it,
+what it committed to, and what it produced. They are engine-owned: a hypothesis
+carries the model's own sentence, but its STATUS comes from a check the runtime
+ran, the same rule that keeps `verified` out of reach of a confident claim.
+
+| Event                | Payload                                      | Written by                                                      |
+| -------------------- | -------------------------------------------- | --------------------------------------------------------------- |
+| `task_kind`          | `{ kind, source }`                           | the Intent Interpreter at task start; the model may revise once |
+| `hypothesis`         | `{ hypothesis: Hypothesis }`                 | `note_hypothesis`                                               |
+| `hypothesis_updated` | `{ id, status, reason?, evidence?, source }` | `note_hypothesis`, or the harness from a check                  |
+| `decision`           | `{ decision: TaskDecision }`                 | `record_decision`                                               |
+| `artifact`           | `{ artifact: TaskArtifact }`                 | the harness, from writes, reports and previews                  |
+| `pending_decision`   | `{ decision: PendingDecision }`              | the four round-trips, as one list                               |
+| `decision_resolved`  | `{ id, outcome }`                            | whichever round-trip answered                                   |
+| `decision_record`    | `{ record: DecisionRecord }`                 | the harness, at task end                                        |
+
+`TaskKind` is one of `investigate · build · analyze · research · operate ·
+write`. `PendingDecision.kind` unifies the four round-trips — `held_step ·
+question · approval · review` — so an inbox is one list rather than four.
+
+The whole model is persisted in the `task_state` snapshot and reconstructed on
+replay, so a client that joins late gets the narrative as state rather than
+having to have watched it happen. See [`decision-record.md`](decision-record.md).
 
 ---
 
@@ -377,7 +405,7 @@ bun run examples/sdk/policy-bot.ts   # answers permission requests from an allow
 
 ## Exhaustiveness — the drift law
 
-`AgentTurnEvent` has 22 members and is consumed by five reducers: the TUI
+`AgentTurnEvent` has 30 members and is consumed by five reducers: the TUI
 transcript, the TUI formatter, the headless runner, the desktop transcript and
 the desktop trace rail.
 
