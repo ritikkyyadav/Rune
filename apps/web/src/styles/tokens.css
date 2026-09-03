@@ -21,8 +21,10 @@
   --display-tracking: -0.02em;
 
   --sidebar-w: 264px;
+  --sidebar-icons-w: 56px;
   --rail-w: 380px;
   --column-max: 760px;
+  --column-min: 560px;
 
   /* The type scale, so a component asks for a step rather than a number. */
   --fs-display: 22px;

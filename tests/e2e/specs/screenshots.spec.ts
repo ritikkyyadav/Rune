@@ -1,15 +1,20 @@
-// ─── The eight screenshots the founder judges ───
+// ─── The ten screenshots the founder judges ───
 //
 // Not mockups. Every image below is the shipping bundle driving a real engine —
 // the real permission broker, the real session store, the real protocol, the
 // real server — with a fake model in front so the turn happens on cue.
 //
-// Four states × two themes, at the two sizes a laptop actually is:
+// Five states × two themes, at the sizes a laptop actually is:
 //
 //   empty      1440×900 · the first thing anyone sees
 //   session    1280×800 · a run mid-flight, with the plan ledger and a diff
 //   held       1440×900 · a decision the run is stopped on, inline
 //   palette    1280×800 · ⌘K over sessions, files and commands
+//   narrow     1024×768 · the rail OPEN over a full-width reading column
+//
+// The last one is the size the founder opened it at, and the one that showed
+// the shape was wrong: three columns at 1024 squeezed a 760px reading column
+// down to whatever a 380px panel of spans left behind (P10.9).
 //
 // They are committed under docs/design/web/ and kept under 400 KB each, which
 // is what a full-page PNG of a mostly-flat interface costs at scale 1. A
@@ -121,6 +126,26 @@ for (const theme of ["light", "dark"] as const) {
     await palette.getByRole("textbox").fill("re");
     await page.waitForTimeout(300);
     await shot("04-palette");
+    await page.keyboard.press("Escape");
+
+    // ── 5. the narrow window, 1024×768 ──
+    //
+    // The size the founder actually opened it at, and the one that showed the
+    // shape was wrong: three columns at 1024 is a 760px reading column squeezed
+    // to whatever a 380px panel of spans leaves behind. With the rail open and
+    // overlaying, the column is the same width it is with the rail closed —
+    // which is the whole correction, and the reason this image exists.
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await page
+      .getByRole("button", { name: /run the echo command|read this repository/ })
+      .first()
+      .click()
+      .catch(() => {});
+    await page.waitForTimeout(400);
+    await page.keyboard.press("Meta+t");
+    await expect(page.getByRole("complementary", { name: "Trace" })).toBeVisible();
+    await page.waitForTimeout(500);
+    await shot("05-narrow-1024");
 
     await context.close();
   });

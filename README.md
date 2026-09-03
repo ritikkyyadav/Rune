@@ -150,6 +150,15 @@ to maintain. `gear open` reopens the tab, `gear serve --status` prints the URL, 
 (alias `gear tui`) starts the terminal console instead, which is what SSH and CI want. When stdout
 is not a terminal, or `GEAR_NO_BROWSER=1` is set, the URL is printed and nothing is opened.
 
+The page is a **264px sidebar, a centered reading column capped at 760px, and a trace rail**. The
+rail is **off by default** and opens on `⌘T` or the rail button; the choice is remembered in that
+browser, so closed-by-default is not the same as closed-every-time. The shell gives up chrome before
+it gives up the column: under about 1100px the rail slides in **over** the column instead of
+squeezing it, under about 900px the sidebar keeps its icons and clips its labels (the workspace
+switcher and New session stay), and the reading column never drops under 560px — about 52 characters
+of Geist, below which prose starts wrapping mid-thought and a diff stops being readable. Screenshots
+of every state, in both themes, are in [`docs/design/web/`](docs/design/web/).
+
 `gear web --host 0.0.0.0` exposes the same page to a phone on the LAN or a machine you are not
 sitting at. The remote link carries its token in the URL **fragment**, which the browser never sends
 to the server — see [`docs/threat-model.md`](docs/threat-model.md), because a served engine is
