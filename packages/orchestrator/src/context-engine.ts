@@ -31,6 +31,13 @@ const DEFAULT_BUDGET: ContextBudget = {
 
 /** Share of the real context window kept VERBATIM as the recent tail. */
 const COMPACT_TAIL_RATIO = 0.3;
+/**
+ * How far past the tail budget the `recentK` message-count floor may push
+ * before the budget wins. Some overrun is right — a tail of one message is not
+ * a conversation — but six tool results can be several times the budget on
+ * their own, and honouring the count there frees nothing at all.
+ */
+const TAIL_OVERRUN = 1.25;
 /** Wall-clock ceiling on one compaction's summarizer walk. */
 const DEFAULT_SUMMARY_BUDGET_MS = 120_000;
 /** Share of the window compaction aims to land at. Comfortably under the
@@ -38,10 +45,38 @@ const DEFAULT_SUMMARY_BUDGET_MS = 120_000;
 const COMPACT_TARGET_RATIO = 0.5;
 /** Head messages below this count aren't worth a summarizer round-trip. */
 const MIN_SUMMARIZABLE_HEAD = 4;
-/** Tool results at or under this size aren't worth replacing with a stub. */
-const EVICT_MIN_RESULT_CHARS = 200;
+/**
+ * …and neither is a head that is a rounding error against the working set it
+ * sits in front of, whatever its message count. A count says nothing about
+ * size: a 13-message head of 387 tokens was folded into a merged state,
+ * freeing 1.8% of the working set for the price of a round trip (P10.8). The
+ * test is a SHARE, not an absolute — a small conversation whose head is most
+ * of it is still worth compacting, which an absolute floor would refuse.
+ */
+const MIN_SUMMARIZABLE_HEAD_SHARE = 0.15;
+/**
+ * Tool results at or under this size aren't worth replacing with a stub.
+ *
+ * This was 200 characters, which meant a 430-byte file read — a spec, a config,
+ * the thing the whole task turns on — was destroyed to reclaim about 230
+ * characters. The stub itself costs ~150, so the trade was a rounding error
+ * against the loss of the result. Eviction is for the results that actually
+ * cost something: multi-kilobyte command output and file dumps.
+ */
+const EVICT_MIN_RESULT_CHARS = 2_000;
 /** Marker so an evicted result is recognizable and never re-evicted. */
 const EVICTED_RESULT_PREFIX = "[tool result evicted to reclaim context]";
+/**
+ * How much of an evicted result survives as an excerpt, head and tail.
+ *
+ * A stub that says only "15,000 chars reclaimed" turns every old result into
+ * the same anonymous hole: the run cannot tell the read that found the bug from
+ * the one that listed a directory, and cannot judge which is worth re-running.
+ * A head-and-tail excerpt keeps the two places a tool puts what matters — the
+ * path or headline at the top, the error or exit status at the bottom — for
+ * about 4% of a 15KB result.
+ */
+const EVICT_EXCERPT_CHARS = 600;
 
 // Cheap summarizer fallback per provider = that provider's LIGHT tier default
 // (shared/tiers.ts). One source of truth: when a free model is retired
@@ -476,15 +511,38 @@ export class ContextEngine {
     failed?: boolean;
     failureReason?: string;
     /**
+     * The compaction ran and was DISCARDED because it would not have shrunk
+     * the working set. Distinct from `failed` (the summarizer broke) and from
+     * the quiet no-ops (nothing to fold): a round trip was spent and the
+     * transcript is unchanged on purpose. Callers say so — an explicit
+     * `compact_context` that silently does nothing is the worst of both.
+     */
+    noop?: boolean;
+    noopReason?: string;
+    /**
      * Which tier actually did the work. "tool_results" means the summarizer
      * was never called — the bulky old results alone were enough.
      */
     tier?: "tool_results" | "summarized";
+    /**
+     * What asked for this compaction. `auto` is the high-water mark and keeps
+     * a 30% verbatim tail; `requested` is the `compact_context` tool and
+     * `overflow` is a provider rejection, and both of those cut to the recent
+     * exchange because they were asked to free room now. A reader that cannot
+     * tell them apart cannot judge the tail size it is looking at.
+     */
+    trigger?: "auto" | "requested" | "overflow";
   }> {
     // An explicit request (compact_context tool) forces this attempt, and is
     // consumed either way so a fruitless compaction can't retrigger forever.
-    const force = opts?.force === true || this.compactRequested;
+    const requested = this.compactRequested;
+    const force = opts?.force === true || requested;
     this.compactRequested = false;
+    const trigger: "auto" | "requested" | "overflow" = opts?.force
+      ? "overflow"
+      : requested
+        ? "requested"
+        : "auto";
 
     // ── 1. Below-threshold guard ──
     if (!force && messages.length < this.summarizeTurnsThreshold) {
@@ -499,23 +557,32 @@ export class ContextEngine {
     // provider has told us what that window is. Without authoritative usage
     // there is no budget to size against, so the historical count-based cut
     // stands — that is also what keeps synthetic callers deterministic.
+    //
+    // …except when the caller is FORCING. The 30% tail is the automatic
+    // policy: conservative, because nobody asked. An explicit `compact_context`
+    // (or an over-limit rejection) is a request to free room now, and against
+    // a tail budget larger than the whole conversation it could only nibble the
+    // oldest few messages — 141 tokens of a 5,027-token set, measured. Force
+    // keeps the recent exchange and folds the rest, which is what was asked.
     const usage = this.lastTokenUsage;
     let safeCutPoint: number;
-    if (usage && usage.limit > 0) {
+    if (usage && usage.limit > 0 && !force) {
       const tailBudget = Math.floor(usage.limit * COMPACT_TAIL_RATIO);
-      safeCutPoint = safeCutAtOrBefore(
+      const countOne = (m: Message): number => this.tokenCounter.countTokens(messageTokenText(m));
+      safeCutPoint = safeCutForTail(
         messages,
-        tailCutPoint(messages, tailBudget, recentK, (m) =>
-          this.tokenCounter.countTokens(messageTokenText(m)),
-        ),
+        tailCutPoint(messages, tailBudget, recentK, countOne, force),
+        tailBudget,
+        countOne,
       );
 
       // ── Tier 1: can evicting old tool-result bodies alone get us under? ──
       // Preferred outcome by a distance: the head keeps its structure, the
       // reasoning survives verbatim, and no summarizer call is made at all.
-      // Skipped under `force`, where the provider has already rejected the
-      // request and only a hard shrink is guaranteed to help.
-      if (!force && safeCutPoint > 0) {
+      // (Unreachable under `force` — that branch is above — where the provider
+      // has already rejected the request and only a hard shrink is sure to
+      // help.)
+      if (safeCutPoint > 0) {
         const evicted = evictOldToolResults(messages, safeCutPoint);
         if (
           evicted.evictedCount > 0 &&
@@ -528,6 +595,7 @@ export class ContextEngine {
             afterTokens: countSet(evicted.messages),
             summarizedCount: 0,
             tier: "tool_results",
+            trigger,
           };
         }
       }
@@ -542,6 +610,50 @@ export class ContextEngine {
 
     const toSummarize = messages.slice(0, safeCutPoint);
     const toKeep = messages.slice(safeCutPoint);
+
+    /**
+     * The deterministic stand-in whenever the summarizer will not or cannot
+     * run: strip the old tool-result bodies. Needs no model, cannot fail the
+     * way a summarizer fails, and is never worse than handing back the same
+     * history untouched.
+     */
+    const evictInstead = (
+      why: string,
+    ): Awaited<ReturnType<ContextEngine["compactWorkingSet"]>> | null => {
+      if (safeCutPoint <= 0) return null;
+      const evicted = evictOldToolResults(messages, safeCutPoint);
+      if (evicted.evictedCount === 0) return null;
+      const after = countSet(evicted.messages);
+      const before = countSet(messages);
+      if (after >= before) return null;
+      void why;
+      return {
+        messages: evicted.messages,
+        compacted: true,
+        beforeTokens: before,
+        afterTokens: after,
+        summarizedCount: 0,
+        tier: "tool_results",
+        trigger,
+      };
+    };
+
+    // A head that is a sliver of the working set is not worth a summarizer
+    // round trip, no matter how many messages it holds. Eviction still gets a
+    // turn — it is free — and otherwise this is an honest no-op rather than a
+    // paid one.
+    const headTokens = countSet(toSummarize);
+    const setTokens = countSet(messages);
+    if (setTokens > 0 && headTokens < setTokens * MIN_SUMMARIZABLE_HEAD_SHARE) {
+      return (
+        evictInstead("head too small") ?? {
+          messages,
+          compacted: false,
+          noop: true,
+          noopReason: `only ~${headTokens} of ~${setTokens} tokens sit before the verbatim tail — not worth a summarizer round trip`,
+        }
+      );
+    }
 
     // ── 3. Summarise the old portion ──
     // Comprehensive (resume-grade) summary: after compaction this text is the
@@ -570,29 +682,17 @@ export class ContextEngine {
     });
     if (!summaryText) {
       // The summarizer failed, timed out, or was aborted. Before giving up,
-      // take the deterministic tier: evict the old tool-result bodies. Under
-      // `force` it may not satisfy the provider on its own, but it is never
-      // worse than handing back the same over-limit history untouched — and
-      // it needs no model, so it cannot fail the way the summarizer just did.
-      if (safeCutPoint > 0) {
-        const evicted = evictOldToolResults(messages, safeCutPoint);
-        if (evicted.evictedCount > 0) {
-          return {
-            messages: evicted.messages,
-            compacted: true,
-            beforeTokens: countSet(messages),
-            afterTokens: countSet(evicted.messages),
-            summarizedCount: 0,
-            tier: "tool_results",
-          };
+      // take the deterministic tier. Under `force` it may not satisfy the
+      // provider on its own, but it beats handing back the same over-limit
+      // history untouched.
+      return (
+        evictInstead("summarizer failed") ?? {
+          messages,
+          compacted: false,
+          failed: true,
+          failureReason: this.lastSummaryFailure ?? "summary generation failed",
         }
-      }
-      return {
-        messages,
-        compacted: false,
-        failed: true,
-        failureReason: this.lastSummaryFailure ?? "summary generation failed",
-      };
+      );
     }
 
     // ── 4. Build the summary message (role "user" — safe across providers) ──
@@ -623,12 +723,30 @@ export class ContextEngine {
     // same heuristic counter buildPrompt uses (hoisted above); the next
     // provider report re-calibrates it, so these are labeled approximate at
     // the render layer ("~").
+    const compactedSet = [summaryMessage, ...toKeep];
+    const beforeTokens = countSet(messages);
+    const afterTokens = countSet(compactedSet);
+
+    // A merged state can be LARGER than the few small messages it replaces —
+    // measured at 16,929 → 16,931 on an explicit compact_context over a short
+    // head. Applying that pays a round trip to make the prompt bigger and
+    // loses the verbatim text as well. Keep the transcript and say so.
+    if (afterTokens >= beforeTokens) {
+      return {
+        messages,
+        compacted: false,
+        noop: true,
+        noopReason: `the summary (~${afterTokens} tokens) is no smaller than the ${transcriptMessages.length} messages it would replace (~${beforeTokens})`,
+      };
+    }
+
     return {
-      messages: [summaryMessage, ...toKeep],
+      messages: compactedSet,
       compacted: true,
       tier: "summarized",
-      beforeTokens: countSet(messages),
-      afterTokens: countSet([summaryMessage, ...toKeep]),
+      trigger,
+      beforeTokens,
+      afterTokens,
       summarizedCount: transcriptMessages.length,
     };
   }
@@ -1000,38 +1118,83 @@ ${sections}${focus}`
  * 0.54% of the budget, six times in one build. This keeps the newest messages
  * until `tailTokens` is spent, never fewer than `recentK` of them, and never so
  * many that the head is too small to be worth summarizing.
+ *
+ * The count is still a FLOOR, and a floor expressed in the wrong unit defeats
+ * the budget from both sides. P10.8 measured both, in one scripted run:
+ *
+ *   · six tool-heavy messages can be larger than the entire tail budget, so
+ *     honouring `recentK` kept 32,649 of 33,046 tokens verbatim. Compaction
+ *     "succeeded", summarized eleven messages, freed 1.2%, and left the trigger
+ *     hot — a paid summarizer round trip that bought nothing.
+ *   · a working set that already fits the tail budget was cut anyway, because
+ *     MIN_SUMMARIZABLE_HEAD forces a fold. The four messages it happened to
+ *     take were the big ones, and the tail collapsed to 918 tokens of a 60,000
+ *     token window: the same amnesia event, reached from the opposite side.
+ *
+ * So the floor yields at TAIL_OVERRUN × the budget, and the minimum head only
+ * applies when the budget actually bound the walk (`budgetBound`) — or when the
+ * caller is forcing, where the provider has already rejected the request and
+ * something must give regardless.
  */
 function tailCutPoint(
   messages: Message[],
   tailTokens: number,
   recentK: number,
   count: (m: Message) => number,
+  force = false,
 ): number {
   let used = 0;
   let cut = messages.length;
+  let budgetBound = false;
+  let overran = false;
   while (cut > 0) {
     const next = count(messages[cut - 1]);
-    if (used + next > tailTokens && messages.length - cut >= recentK) break;
+    const tail = messages.length - cut;
+    if (used + next > tailTokens && tail >= recentK) {
+      // Budget spent, count floor already satisfied: the ordinary stop.
+      budgetBound = true;
+      break;
+    }
+    if (used + next > tailTokens * TAIL_OVERRUN && tail >= 1) {
+      // Honouring the count floor from here would blow the budget wide open,
+      // so the count yields. One message is always kept — there is no cutting
+      // inside a message.
+      budgetBound = true;
+      overran = true;
+      break;
+    }
     used += next;
     cut--;
   }
-  // Tail never shorter than recentK (contract C1); head never shorter than
-  // MIN_SUMMARIZABLE_HEAD, or a long history that happens to fit the tail
-  // budget would make compaction a no-op at the moment it is needed.
+  // The count floor has already yielded above; re-imposing it here as a
+  // ceiling on the cut is what made the escape a no-op — `maxCut` clamped the
+  // budget's answer (12) straight back to `length - recentK` (9), and the two
+  // enormous batches stayed verbatim after all.
+  if (overran) return cut;
   const maxCut = Math.max(0, messages.length - recentK);
+  // Everything fits the verbatim tail and nobody is forcing: there is nothing
+  // compaction can usefully take here, and taking a minimum head anyway is how
+  // a tail collapses. The caller reports "not compacted", which is the truth.
+  if (!budgetBound && !force) return Math.min(cut, maxCut);
   const minCut = Math.min(MIN_SUMMARIZABLE_HEAD, maxCut);
   return Math.max(minCut, Math.min(cut, maxCut));
 }
 
 /**
- * Replace the BODY of tool results in messages[0, headEnd) with a short stub,
- * leaving the blocks themselves in place.
+ * Replace the BODY of tool results in messages[0, headEnd) with a short
+ * excerpt, leaving the blocks themselves in place.
  *
  * This is the cheapest useful thing compaction can do: tool results are the
  * bulk of an agentic transcript and the least re-readable part of it, and
  * because the block survives, no tool_use/tool_result pair is ever orphaned —
  * strictly safer than dropping messages. Same idea as Anthropic's own
  * `clear_tool_uses` context editing.
+ *
+ * It runs BEFORE any summarizer, which is what makes the excerpt matter: for
+ * everything this tier touches, there is no other record. A bare
+ * "N chars reclaimed" leaves the run unable to say what it already looked at
+ * (P10.8 measured 8 evictions, 5 of them unidentifiable afterwards), so the
+ * head and tail of the body survive at `EVICT_EXCERPT_CHARS`.
  */
 function evictOldToolResults(
   messages: Message[],
@@ -1050,13 +1213,17 @@ function evictOldToolResults(
       if (body.length <= EVICT_MIN_RESULT_CHARS || body.startsWith(EVICTED_RESULT_PREFIX)) {
         return block;
       }
+      const excerpt = clipText(body, EVICT_EXCERPT_CHARS);
+      const stub =
+        `${EVICTED_RESULT_PREFIX} ${body.length} chars reclaimed; excerpt kept. ` +
+        `Re-run the tool if you need the rest.\n${excerpt}`;
+      // A body whose excerpt costs as much as the body did is not worth
+      // rewriting — the stub's own preamble would make it grow.
+      if (stub.length >= body.length) return block;
       touched = true;
       evictedCount++;
-      reclaimedChars += body.length;
-      return {
-        ...block,
-        toolResultContent: `${EVICTED_RESULT_PREFIX} ${body.length} chars reclaimed. Re-run the tool if you still need this output.`,
-      };
+      reclaimedChars += body.length - stub.length;
+      return { ...block, toolResultContent: stub };
     });
     return touched ? { ...msg, content } : msg;
   });
@@ -1077,6 +1244,41 @@ function safeCutAtOrBefore(messages: Message[], startCut: number): number {
     if (isSafeCut(messages, cut)) return cut;
   }
   return 0;
+}
+
+/** The smallest pair-safe cut at or after `startCut`; length if none exists. */
+function safeCutAtOrAfter(messages: Message[], startCut: number): number {
+  for (let cut = Math.max(0, startCut); cut <= messages.length; cut++) {
+    if (isSafeCut(messages, cut)) return cut;
+  }
+  return messages.length;
+}
+
+/**
+ * Snap a budget-chosen cut to a pair-safe boundary WITHOUT losing the budget.
+ *
+ * Backward is the preferred direction — it keeps more verbatim — but "keeps
+ * more" is exactly the failure when the messages either side of the cut are
+ * enormous. A parallel batch of eight file reads arrives as one assistant
+ * message and one tool message; the budget lands between the two batches, the
+ * backward snap walks past both, and compaction keeps 32,649 of 33,046 tokens
+ * and frees 1.2%. When the backward snap overshoots the budget's ceiling, the
+ * forward one is right: fewer messages kept, pairs still intact.
+ */
+function safeCutForTail(
+  messages: Message[],
+  startCut: number,
+  tailTokens: number,
+  count: (m: Message) => number,
+): number {
+  const back = safeCutAtOrBefore(messages, startCut);
+  const tailCost = (cut: number): number =>
+    messages.slice(cut).reduce((sum, m) => sum + count(m), 0);
+  if (tailCost(back) <= tailTokens * TAIL_OVERRUN) return back;
+  const forward = safeCutAtOrAfter(messages, startCut);
+  // Never cut away everything: a forward snap that leaves no tail at all is
+  // worse than an over-budget one.
+  return forward < messages.length ? forward : back;
 }
 
 /**

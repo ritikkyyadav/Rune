@@ -107,6 +107,18 @@ export type AgentTurnEvent =
       summarizedCount?: number;
       /** True when a provider over-limit rejection forced this compaction. */
       forced?: boolean;
+      /**
+       * What was actually dropped. `tool_results` means old tool-result bodies
+       * were stripped and no summarizer ran; `summarized` means the head was
+       * folded into the merged state.
+       */
+      tier?: "tool_results" | "summarized";
+      /**
+       * What asked for it. `auto` keeps a 30% verbatim tail; `requested`
+       * (`compact_context`) and `overflow` (a provider rejection) cut to the
+       * recent exchange, so their tails are legitimately much smaller.
+       */
+      trigger?: "auto" | "requested" | "overflow";
     }
   // A durable run-state checkpoint was written (see @gear/shared state.ts).
   | { type: "checkpoint_saved"; runId: string; version: number; turnCount: number }

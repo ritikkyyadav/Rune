@@ -1,23 +1,32 @@
 {
-  "timestamp": "2026-09-03T01:31:30.267Z",
+  "timestamp": "2026-09-03T05:45:55.128Z",
   "mode": "mock",
   "passRate": 1,
   "cleanPassRate": 1,
-  "passed": 55,
-  "measured": 55,
+  "passed": 62,
+  "measured": 62,
   "throttled": 0,
-  "total": 55,
+  "total": 62,
   "totalCost": 0,
   "avgCostPerTask": 0,
   "totalListCost": 0,
   "avgListCostPerTask": 0,
-  "avgDurationMs": 234.12727272727273,
-  "avgTurns": 0.6909090909090909,
+  "avgDurationMs": 261.11290322580646,
+  "avgTurns": 0.7258064516129032,
   "categories": [
     {
       "category": "core",
       "passed": 25,
       "total": 25,
+      "throttled": 0,
+      "passRate": 1,
+      "cleanPassRate": 1,
+      "avgCost": 0
+    },
+    {
+      "category": "context",
+      "passed": 7,
+      "total": 7,
       "throttled": 0,
       "passRate": 1,
       "cleanPassRate": 1,
@@ -169,6 +178,48 @@
     {
       "name": "verify_step_check_java",
       "category": "core",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "compaction_facts_survive",
+      "category": "context",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "compaction_plan_and_ledger_survive",
+      "category": "context",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "compaction_hash_ledger_survives",
+      "category": "context",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "compaction_recent_results_verbatim",
+      "category": "context",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "compaction_no_summary_of_summary",
+      "category": "context",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "compaction_evicted_results_identifiable",
+      "category": "context",
+      "pass": true,
+      "throttled": false
+    },
+    {
+      "name": "compaction_reclaims_and_keeps_a_tail",
+      "category": "context",
       "pass": true,
       "throttled": false
     },

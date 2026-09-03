@@ -17,6 +17,7 @@ import { LONG_HORIZON_TASKS } from "./tasks-long-horizon";
 import { GREENFIELD_TASKS } from "./tasks-greenfield";
 import { PARALLEL_TASKS } from "./tasks-parallel";
 import { VERIFIER_ECOSYSTEM_TASKS } from "./tasks-verifier-ecosystems";
+import { COMPACTION_TASKS } from "./tasks-compaction";
 
 // Each task scripts the LLM behavior deterministically and verifies a
 // concrete invariant after execution. No real model calls.
@@ -353,6 +354,7 @@ export const ALL_TASKS: EvalTask[] = [
   ...CORE_TASKS,
   ...TASK_SPINE_TASKS,
   ...VERIFIER_ECOSYSTEM_TASKS,
+  ...COMPACTION_TASKS,
   ...LONG_HORIZON_TASKS,
   ...GREENFIELD_TASKS,
   ...PARALLEL_TASKS,

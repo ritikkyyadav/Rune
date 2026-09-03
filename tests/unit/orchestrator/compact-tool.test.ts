@@ -18,8 +18,16 @@ import type { Message } from "../../../packages/llm-gateway/src/types";
 function msg(role: "user" | "assistant", text: string): Message {
   return { role, content: [{ type: "text", text }] };
 }
+/**
+ * Turns with a body: compaction now declines to apply a "compaction" that
+ * would leave the working set no smaller than it found it (P10.8), and a
+ * six-token transcript is smaller than any summary of it. The contract under
+ * test here is the request flag, not that arithmetic.
+ */
 const conversation = (n: number): Message[] =>
-  Array.from({ length: n }, (_, i) => msg(i % 2 === 0 ? "user" : "assistant", `turn ${i}`));
+  Array.from({ length: n }, (_, i) =>
+    msg(i % 2 === 0 ? "user" : "assistant", `turn ${i}: ${"context ".repeat(60)}`),
+  );
 
 function summarizerGateway() {
   return {

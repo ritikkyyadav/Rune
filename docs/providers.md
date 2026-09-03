@@ -166,6 +166,44 @@ bill to buy 0.3%.
 Not built. Revisit only if a model in use is found whose implicit hit rate is
 poor and whose prefix is large and long-lived enough to amortise storage.
 
+### Provider-side context editing: not offered by the API this gateway targets (P10.8)
+
+P10.8 was to wire Anthropic context editing behind the policy table above, as an
+opt-in `[context] providerEditing = true` — **if** the API version the gateway
+targets exposes it. It does not, and the instruction was not to guess an API.
+
+What the gateway actually targets, verified in the installed dependency rather
+than from memory:
+
+| what                                                             | value                                                                                                                                                                                                                         |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SDK (`packages/llm-gateway/package.json`)                        | `@anthropic-ai/sdk@^0.39` → 0.39.0 installed                                                                                                                                                                                  |
+| wire version it sends                                            | `anthropic-version: 2023-06-01`                                                                                                                                                                                               |
+| namespace `AnthropicProvider` calls                              | `client.messages.create` — the stable one, not `client.beta.messages`                                                                                                                                                         |
+| every beta the SDK's `AnthropicBeta` union knows                 | `message-batches-2024-09-24`, `prompt-caching-2024-07-31`, `computer-use-2024-10-22`, `computer-use-2025-01-24`, `pdfs-2024-09-25`, `token-counting-2024-11-01`, `token-efficient-tools-2025-02-19`, `output-128k-2025-02-19` |
+| newest tool types it declares                                    | the 2025-01-24 `bash` / `computer` / `text_editor` set                                                                                                                                                                        |
+| occurrences of `context_management`, `clear_tool_uses`, `memory` | none anywhere in the package                                                                                                                                                                                                  |
+
+There is no request field to populate and no beta identifier to send. The
+`anthropic-beta` header this provider already composes (for subscription OAuth
+and interleaved thinking) could carry an arbitrary string, but the _body_ field
+would have to be invented, and a guessed wire shape is exactly what "do not
+guess an API" forbids — it would fail as a 400 at best and silently do nothing
+at worst.
+
+**So it is skipped, and the deterministic equivalent already ships.** Gear's own
+first compaction tier is the same idea, run client-side: old tool-result bodies
+are replaced in place, the blocks survive so no `tool_use`/`tool_result` pair is
+ever orphaned, and (since P10.8) a head-and-tail excerpt is kept so a stripped
+result stays identifiable. See [`context.md`](context.md).
+
+Revisit when the gateway's SDK dependency is raised to a version whose
+`AnthropicBeta` union carries a context-management identifier and whose
+`MessageCreateParams` carries the matching field. That is a dependency upgrade
+with its own blast radius across the streaming, tool-call and thinking paths,
+not a line of config — it belongs in its own item, with a request-shape unit
+test written against the types the new SDK actually declares.
+
 ---
 
 ## Enterprise routes
