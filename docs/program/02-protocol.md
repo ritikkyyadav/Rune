@@ -23,7 +23,7 @@ The engine is a server. One typed, versioned protocol package is consumed by the
 
 ### P2.1 `packages/protocol` (2 days)
 
-- New workspace package `@gear/protocol`: move `AgentTurnEvent`, `ResearchEvent`, the command/result types for all 25 host commands, and the five round-trip shapes (`PermissionPrompt`/`UserPermissionDecision`, `UserQuestion`/answer, brief, auto-approval notice, `AutoModeDeferral` list + `runHeldStep`/`dismissHeldSteps`). `PROTOCOL_VERSION` constant; JSON-RPC 2.0 envelope helpers; zod (or hand-written) validators for inbound frames; `assertNever` exhaustiveness helper.
+- New workspace package `@rune/protocol`: move `AgentTurnEvent`, `ResearchEvent`, the command/result types for all 25 host commands, and the five round-trip shapes (`PermissionPrompt`/`UserPermissionDecision`, `UserQuestion`/answer, brief, auto-approval notice, `AutoModeDeferral` list + `runHeldStep`/`dismissHeldSteps`). `PROTOCOL_VERSION` constant; JSON-RPC 2.0 envelope helpers; zod (or hand-written) validators for inbound frames; `assertNever` exhaustiveness helper.
 - `agent-loop.ts`, `research-types.ts`, `engine-host.ts`, `host-client.ts`, `bin/ui/turn.ts`, `bin/ui/events.ts`, `headless.ts`, `apps/desktop/src/lib/*` import from it. Delete `apps/desktop/src/lib/types.ts:80` `EngineEvent`.
 - Retype `onEvent(event: any)` → `AgentTurnEvent` at `turn.ts:1175` and `formatEvent` at `events.ts:130`; add an exhaustiveness test that fails when a member is unhandled by the TUI reducer, the desktop reducer, or the headless reducer.
 
@@ -33,12 +33,12 @@ In `engine-host.ts`, mirror the `pendingPerms` pattern (`:319-335`) for question
 
 ### P2.3 Sessions and concurrency (2–3 days)
 
-- Replace `activeChat` with a per-session run map. Decision: **process-per-session supervisor** (reuse `detach-cli.ts`'s spawn + `~/.gear/run/registry.json` pattern) rather than refactoring `Engine` for in-process multiplexing. `gear serve` becomes a supervisor that spawns one host per session on demand, proxies frames, and reaps idle hosts.
+- Replace `activeChat` with a per-session run map. Decision: **process-per-session supervisor** (reuse `detach-cli.ts`'s spawn + `~/.rune/run/registry.json` pattern) rather than refactoring `Engine` for in-process multiplexing. `rune serve` becomes a supervisor that spawns one host per session on demand, proxies frames, and reaps idle hosts.
 - `abort(sessionId)`; `interject(sessionId, text)`.
 
-### P2.4 `gear serve` (2 days)
+### P2.4 `rune serve` (2 days)
 
-- WebSocket transport around `handleRequestLine`/`emitStream`. Loopback bind by default; bearer token minted to `~/.gear/serve.json` (0600) and required on every connection; `Origin` allowlist; `--host 0.0.0.0` opt-in with a printed warning; `--port`; `gear serve --status`; graceful shutdown that leaves running sessions' hosts alive (as detach does today).
+- WebSocket transport around `handleRequestLine`/`emitStream`. Loopback bind by default; bearer token minted to `~/.rune/serve.json` (0600) and required on every connection; `Origin` allowlist; `--host 0.0.0.0` opt-in with a printed warning; `--port`; `rune serve --status`; graceful shutdown that leaves running sessions' hosts alive (as detach does today).
 - `save_settings`, `login`, key writes: refuse over non-loopback unless the token was minted with `--allow-remote-settings`.
 
 ### P2.5 Replay and subscribe (2 days)
@@ -53,11 +53,11 @@ Replace `onProgress: (note: string)` with `onEvent: (ev: AgentTurnEvent, agentId
 
 `research_start` command streaming `ResearchEvent` through `emitStream`; plan approval as a round-trip like the brief handler.
 
-### P2.8 `gear -P --stream-json` (half a day)
+### P2.8 `rune -P --stream-json` (half a day)
 
 `headless.ts` emits every event as NDJSON on stdout when `--stream-json` is set; the final envelope is the last line. Exit codes unchanged.
 
-### P2.9 `@gear/sdk` seed (half a day)
+### P2.9 `@rune/sdk` seed (half a day)
 
 `HostClient` over WS with the typed protocol, exported from `packages/protocol` (or a new `packages/sdk`). One example in the README: connect, create session, run a prompt, answer a permission.
 
@@ -70,8 +70,8 @@ bun test tests/unit/protocol/ tests/integration/engine-serve.test.ts
 #   second client subscribes mid-turn and receives backfill + live events;
 #   unauthenticated connection refused; Origin mismatch refused.
 grep -rn "bin/ui" packages/orchestrator/src --include=*.ts | grep -v "^packages/orchestrator/src/bin" | wc -l   # 0
-bun run --cwd apps/desktop typecheck      # builds against @gear/protocol, types.ts duplicate gone
-gear -P --stream-json "say ok" | head -3  # NDJSON events
+bun run --cwd apps/desktop typecheck      # builds against @rune/protocol, types.ts duplicate gone
+rune -P --stream-json "say ok" | head -3  # NDJSON events
 ```
 
 Done means: a non-terminal client can do everything the TUI can, over a socket, with auth, and drift between clients is a type error.

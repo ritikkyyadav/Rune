@@ -1,6 +1,6 @@
 // ─── The evolution ledger: what was measured, what changed, and why ───
 //
-// One append-only JSONL file at `~/.gear/evolve-ledger.jsonl`. Every row is a
+// One append-only JSONL file at `~/.rune/evolve-ledger.jsonl`. Every row is a
 // fact with a timestamp: a measurement that happened, a promotion that acted on
 // one, a revert that undid it, a halt that stopped the loop.
 //
@@ -15,7 +15,7 @@
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { getGearHome } from "@gear/shared";
+import { getRuneHome } from "@rune/shared";
 
 export const LEDGER_FILE = "evolve-ledger.jsonl";
 
@@ -45,17 +45,17 @@ export interface LedgerEntry {
   regressions?: string[];
   /** Every gate that refused, verbatim. */
   refusals?: string[];
-  /** The `~/.gear/config.toml` lines a promotion wrote. */
+  /** The `~/.rune/config.toml` lines a promotion wrote. */
   configLines?: string[];
   /** Free text: the reason for a revert, the reason for a halt. */
   note?: string;
 }
 
-export function ledgerPath(home: string = getGearHome()): string {
+export function ledgerPath(home: string = getRuneHome()): string {
   return join(home, LEDGER_FILE);
 }
 
-export function appendLedger(entry: LedgerEntry, home: string = getGearHome()): void {
+export function appendLedger(entry: LedgerEntry, home: string = getRuneHome()): void {
   const path = ledgerPath(home);
   mkdirSync(dirname(path), { recursive: true });
   appendFileSync(path, `${JSON.stringify(entry)}\n`);
@@ -66,7 +66,7 @@ export function appendLedger(entry: LedgerEntry, home: string = getGearHome()): 
  * write at the end of the file must not make the history unreadable, which is
  * exactly when you need it.
  */
-export function readLedger(home: string = getGearHome()): LedgerEntry[] {
+export function readLedger(home: string = getRuneHome()): LedgerEntry[] {
   const path = ledgerPath(home);
   if (!existsSync(path)) return [];
   const out: LedgerEntry[] = [];
@@ -127,7 +127,7 @@ export function passingMeasurement(
  * The reasoning is not "two is a magic number" — it is that a loop which keeps
  * promoting changes a human keeps undoing has a broken fitness function, and
  * the correct response to a broken measurement is to stop measuring, not to
- * measure harder. Clearing it is a human act (`gear evolve resume`).
+ * measure harder. Clearing it is a human act (`rune evolve resume`).
  */
 export function haltState(entries: LedgerEntry[]): { halted: boolean; reason?: string } {
   // Which promotions are still standing — a promotion that was later reverted

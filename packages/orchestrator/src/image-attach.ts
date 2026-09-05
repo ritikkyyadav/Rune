@@ -15,7 +15,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { posix, win32 } from "node:path";
-import type { ContentBlock } from "@gear/llm-gateway";
+import type { ContentBlock } from "@rune/llm-gateway";
 
 /** Extension → media type. Only formats every vision provider accepts. */
 const IMAGE_MEDIA_TYPES: Record<string, string> = {

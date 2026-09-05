@@ -1,7 +1,7 @@
 /**
  * The supervisor's idle host reaper (P10.0).
  *
- * `gear serve`, `gear web` and `gear acp` all run one `engine-host` process per
+ * `rune serve`, `rune web` and `rune acp` all run one `engine-host` process per
  * session. Until this landed, nothing ever stopped one: the idle window was
  * thirty minutes and the shutdown path deliberately let every host live, so
  * hosts only ever accumulated. 183 idle engines were counted on the developer's
@@ -26,10 +26,10 @@ import {
   reapableKeys,
 } from "../../../packages/orchestrator/src/bin/serve-cli";
 
-// The pool writes its registry under GEAR_HOME even when the hosts are fake.
+// The pool writes its registry under RUNE_HOME even when the hosts are fake.
 // Point that somewhere disposable rather than at the developer's real one.
-const home = mkdtempSync(join(tmpdir(), "gear-reaper-home-"));
-const priorHome = process.env.GEAR_HOME;
+const home = mkdtempSync(join(tmpdir(), "rune-reaper-home-"));
+const priorHome = process.env.RUNE_HOME;
 const realKill = process.kill.bind(process);
 const signalled: Array<{ pid: number; signal: string | number }> = [];
 
@@ -39,7 +39,7 @@ const signalled: Array<{ pid: number; signal: string | number }> = [];
  * very exciting way to fail.
  */
 beforeAll(() => {
-  process.env.GEAR_HOME = home;
+  process.env.RUNE_HOME = home;
   process.kill = ((pid: number, signal?: string | number) => {
     if (pid >= 4200 && pid < 5000) {
       signalled.push({ pid, signal: signal ?? "SIGTERM" });
@@ -54,8 +54,8 @@ beforeAll(() => {
 
 afterAll(() => {
   process.kill = realKill;
-  if (priorHome === undefined) delete process.env.GEAR_HOME;
-  else process.env.GEAR_HOME = priorHome;
+  if (priorHome === undefined) delete process.env.RUNE_HOME;
+  else process.env.RUNE_HOME = priorHome;
   rmSync(home, { recursive: true, force: true });
 });
 

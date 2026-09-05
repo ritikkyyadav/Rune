@@ -1,8 +1,8 @@
-// ─── The playbook: a skill Gear writes for itself, in the repository ───
+// ─── The playbook: a skill Rune writes for itself, in the repository ───
 //
-// The notebook is the machine-facing memory: scoped rows in ~/.gear, injected
+// The notebook is the machine-facing memory: scoped rows in ~/.rune, injected
 // under a token budget, invisible to anyone but the model. The playbook is
-// the same knowledge made a file in the workspace — `.gear/skills/playbook/
+// the same knowledge made a file in the workspace — `.rune/skills/playbook/
 // SKILL.md` — where a person can read it, edit it, diff it, and commit it,
 // and where the skills loader lists it to the model like any other skill.
 //
@@ -25,16 +25,30 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { NotebookEntry } from "./notebook/store";
 
-export const PLAYBOOK_REL = join(".gear", "skills", "playbook", "SKILL.md");
+export const PLAYBOOK_REL = join(".rune", "skills", "playbook", "SKILL.md");
 /**
  * Where the block lands before the user has enabled learned skills. The loader
  * globs for `SKILL.md` and ignores every other file, so this is inert by
  * construction rather than by a flag something could misread.
  */
-export const PLAYBOOK_PENDING_REL = join(".gear", "skills", "playbook", "PENDING.md");
+export const PLAYBOOK_PENDING_REL = join(".rune", "skills", "playbook", "PENDING.md");
 
-const START = "<!-- gear:learned:start -->";
-const END = "<!-- gear:learned:end -->";
+const START = "<!-- rune:learned:start -->";
+const END = "<!-- rune:learned:end -->";
+/** The markers the previous name wrote; a playbook on disk may still carry them. */
+const LEGACY_MARKERS: ReadonlyArray<readonly [string, string]> = [
+  ["<!-- gear:learned:start -->", "<!-- gear:learned:end -->"],
+];
+
+/** Where the generated block sits in `text`, under the current or a legacy marker pair. */
+export function locatePlaybookBlock(text: string): { start: number; end: number } | null {
+  for (const [s, e] of [[START, END] as const, ...LEGACY_MARKERS]) {
+    const start = text.indexOf(s);
+    const stop = text.indexOf(e);
+    if (start !== -1 && stop !== -1 && stop > start) return { start, end: stop + e.length };
+  }
+  return null;
+}
 
 export interface PlaybookWrite {
   path: string;
@@ -98,7 +112,7 @@ export function renderPlaybookBlock(entries: NotebookEntry[]): string {
   const sessions = distinctSessions(entries);
   const lines: string[] = [
     START,
-    `Learned by Gear from ${sessions} session${sessions === 1 ? "" : "s"} in this repository. ` +
+    `Learned by Rune from ${sessions} session${sessions === 1 ? "" : "s"} in this repository. ` +
       "Rewritten when a lesson recurs; anything outside these markers is kept.",
   ];
   for (const section of SECTION_ORDER) {
@@ -118,7 +132,7 @@ function frontmatter(workspaceName: string, sessions: number): string {
   return [
     "---",
     "name: playbook",
-    `description: How to work in ${workspaceName} — verified commands, fixes and pitfalls Gear learned from ${sessions} session${sessions === 1 ? "" : "s"} here. Load before running builds, tests or shell commands in this repository.`,
+    `description: How to work in ${workspaceName} — verified commands, fixes and pitfalls Rune learned from ${sessions} session${sessions === 1 ? "" : "s"} here. Load before running builds, tests or shell commands in this repository.`,
     "---",
     "",
     "# Playbook",
@@ -150,20 +164,19 @@ export function writePlaybook(
   let next: string;
   if (exists) {
     const current = readFileSync(path, "utf8");
-    const s = current.indexOf(START);
-    const e = current.indexOf(END);
-    if (s !== -1 && e !== -1 && e > s) {
-      const existing = current.slice(s, e + END.length);
+    const found = locatePlaybookBlock(current);
+    if (found) {
+      const existing = current.slice(found.start, found.end);
       if (existing === block) {
         return { path, changed: false, lessons: rows.length, sessions, pending };
       }
-      next = current.slice(0, s) + block + current.slice(e + END.length);
+      next = current.slice(0, found.start) + block + current.slice(found.end);
     } else {
       // A hand-written playbook without markers: append ours, keep theirs.
       next = `${current.replace(/\s*$/, "")}\n\n${block}\n`;
     }
   } else {
-    next = `${frontmatter(basename(workspaceRoot) || "this repository", sessions)}${block}\n\n## Notes\n\nYour own notes — Gear keeps everything outside the markers.\n`;
+    next = `${frontmatter(basename(workspaceRoot) || "this repository", sessions)}${block}\n\n## Notes\n\nYour own notes — Rune keeps everything outside the markers.\n`;
   }
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, next);

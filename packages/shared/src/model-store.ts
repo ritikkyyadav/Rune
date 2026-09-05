@@ -1,9 +1,9 @@
 // ─── Last-used model store ───
 // Remembers the provider+model the user last selected, so a *new* session resumes that model
 // instead of resetting to the built-in default (e.g. google/gemini-2.5-flash). A tiny JSON sidecar
-// at ~/.gear/model.json — same pattern as the theme sidecar and the secrets store.
+// at ~/.rune/model.json — same pattern as the theme sidecar and the secrets store.
 //
-// Precedence at startup (see gear-cli): explicit --model/--provider  >  this sidecar  >  config
+// Precedence at startup (see rune-cli): explicit --model/--provider  >  this sidecar  >  config
 // default  >  auto-detect. The sidecar is only written when the user *explicitly* switches models
 // (the /model command), so it never silently shadows a freshly edited config default.
 //
@@ -11,7 +11,7 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { dirname, join } from "path";
-import { getGearHome } from "./paths.js";
+import { getRuneHome } from "./paths.js";
 
 export interface LastModel {
   provider: string;
@@ -19,13 +19,13 @@ export interface LastModel {
 }
 
 /**
- * Resolve the model sidecar path. Honors `GEAR_MODEL_PATH` (used by tests and advanced setups);
- * otherwise `~/.gear/model.json`. Computed per-call so the env override always takes effect.
+ * Resolve the model sidecar path. Honors `RUNE_MODEL_PATH` (used by tests and advanced setups);
+ * otherwise `~/.rune/model.json`. Computed per-call so the env override always takes effect.
  */
 export function getModelStatePath(): string {
-  const override = process.env.GEAR_MODEL_PATH;
+  const override = process.env.RUNE_MODEL_PATH;
   if (override) return override;
-  return join(getGearHome(), "model.json");
+  return join(getRuneHome(), "model.json");
 }
 
 /** Read the last-used {provider, model}, or null if unset/unreadable/malformed. Never throws. */

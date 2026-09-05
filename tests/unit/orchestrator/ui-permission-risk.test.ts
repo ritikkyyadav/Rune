@@ -7,7 +7,7 @@
 import { describe, test, expect } from "bun:test";
 import { buildPermissionPreview } from "../../../packages/orchestrator/src/bin/ui/permission-preview";
 
-const WS = "/tmp/gear-ws";
+const WS = "/tmp/rune-ws";
 
 function fact(
   preview: { risk?: { label: string; value: string; tone?: string }[] },

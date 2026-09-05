@@ -1,6 +1,6 @@
 # Providers
 
-What Gear can talk to, how each host handles prompt caching, and what has
+What Rune can talk to, how each host handles prompt caching, and what has
 actually been measured rather than assumed.
 
 The provider list itself lives in one place — `packages/shared/src/providers.ts`
@@ -82,7 +82,7 @@ Every request now carries `keep_alive`, default **30m**. Configure it:
 keepAlive = "1h"     # or "-1" to hold indefinitely, "0" to unload at once
 ```
 
-`GEAR_OLLAMA_KEEP_ALIVE` overrides it for one run.
+`RUNE_OLLAMA_KEEP_ALIVE` overrides it for one run.
 
 `listModels` also reports each model's **real context window** now (via
 per-model `/api/show`), instead of names only — every locally pulled model
@@ -91,7 +91,7 @@ below its actual window.
 
 ## Measured cache behaviour
 
-Every row below is a real pair of requests through Gear's own adapters
+Every row below is a real pair of requests through Rune's own adapters
 (`scripts/verify-cache.ts --provider <id>`): one turn to write the prefix, one
 to read it back, on a ~4.8k-token prefix unique to each run so a previous run's
 warm cache cannot flatter the result. **Rows that say "not measured" were not
@@ -191,7 +191,7 @@ would have to be invented, and a guessed wire shape is exactly what "do not
 guess an API" forbids — it would fail as a 400 at best and silently do nothing
 at worst.
 
-**So it is skipped, and the deterministic equivalent already ships.** Gear's own
+**So it is skipped, and the deterministic equivalent already ships.** Rune's own
 first compaction tier is the same idea, run client-side: old tool-result bodies
 are replaced in place, the blocks survive so no `tool_use`/`tool_result` pair is
 ever orphaned, and (since P10.8) a head-and-tail excerpt is kept so a stripped
@@ -227,13 +227,13 @@ parser would have drifted by the next model release.
 
 **None of them stores a credential.** They authenticate with the machine's own
 cloud chain — the same one `aws`, `gcloud` and `az` read — under a new auth
-method, `chain`. `gear login bedrock` therefore reports rather than prompts: it
+method, `chain`. `rune login bedrock` therefore reports rather than prompts: it
 says whether the chain resolves and, when it does not, exactly which command
 fixes it. A tool asking someone to paste a long-lived cloud credential into its
 keychain would defeat the reason the route exists.
 
 ```
-$ gear providers
+$ rune providers
   ●  AWS Bedrock            chain    signed in · profile default
 ```
 
@@ -244,8 +244,8 @@ Anthropic models through the Bedrock Messages API.
 ```bash
 export AWS_PROFILE=work            # or AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
 export AWS_REGION=us-east-1
-gear login bedrock                 # reports what the chain resolved; stores nothing
-gear use bedrock
+rune login bedrock                 # reports what the chain resolved; stores nothing
+rune use bedrock
 ```
 
 ```toml
@@ -254,7 +254,7 @@ region = "eu-central-1"
 inferenceProfile = "eu"   # "us" | "eu" | "apac" | "none"; defaults to the region's family
 ```
 
-| Piece             | What Gear does                                                                                                                                                      |
+| Piece             | What Rune does                                                                                                                                                      |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Endpoint**      | `POST /model/{modelId}/invoke-with-response-stream` on `bedrock-runtime.<region>.amazonaws.com` (`/invoke` when not streaming)                                      |
 | **Body**          | the Anthropic Messages body with `model` and `stream` removed (the path says both) and `anthropic_version: "bedrock-2023-05-31"` added                              |
@@ -264,12 +264,12 @@ inferenceProfile = "eu"   # "us" | "eu" | "apac" | "none"; defaults to the regio
 | **Errors**        | AWS answers `{"message": …}` with the class in `x-amzn-errortype`; both are re-shaped into Anthropic's error envelope so a 403 does not surface as an empty string  |
 | **`countTokens`** | estimated locally — Bedrock has no count-tokens endpoint, and a 404 per measurement is worse than an estimate                                                       |
 | **`healthCheck`** | "do credentials resolve", never a real completion. A probe that spends money is a bill, not a probe                                                                 |
-| **Discovery**     | `gear models bedrock` calls ListFoundationModels on the control plane                                                                                               |
+| **Discovery**     | `rune models bedrock` calls ListFoundationModels on the control plane                                                                                               |
 
 **IMDS is deliberately not in the chain.** The instance metadata service is the
 SDKs' last rung, and off EC2 it is a request to a link-local address that never
-answers — a timeout plus retries on every cold start. Gear resolves credentials
-on the _no-credential_ path too (`gear providers` has to print an honest row),
+answers — a timeout plus retries on every cold start. Rune resolves credentials
+on the _no-credential_ path too (`rune providers` has to print an honest row),
 so the probe is omitted. Anything running on EC2 with an instance role can
 export the standard variables or name a profile; containers are covered by the
 container-credentials rung, which is the case that matters in CI.
@@ -277,7 +277,7 @@ container-credentials rung, which is the case that matters in CI.
 **Model ids are cross-region inference profiles.** Current Anthropic models on
 Bedrock are not invokable by their bare foundation-model id; they need a
 geography prefix (`us.anthropic.claude-sonnet-4-5-20250929-v1:0`) and a `us.`
-id is rejected outside US regions. Gear ships one catalogue of `us.` ids and
+id is rejected outside US regions. Rune ships one catalogue of `us.` ids and
 rewrites the prefix to match the configured region, so an account in Frankfurt
 reaches `eu.` models without a second copy of every row in the picker. Ids that
 genuinely _are_ on-demand (the 3.5 line) carry no prefix and never gain one —
@@ -295,12 +295,12 @@ so nothing here has made a live Bedrock call. What _is_ proven, by
 - the event-stream decoder against recorded frames, including a frame split
   across reads and a corrupted checksum, with CRC-32 checked against the
   universal `crc32("123456789") == 0xCBF43926`;
-- the request Gear builds — path, body, signed headers, no `x-api-key` — and a
+- the request Rune builds — path, body, signed headers, no `x-api-key` — and a
   recorded response streaming back through the Anthropic parser with its usage
   and cache counters intact;
 - the credential chain, rung by rung, against injected files and fetch.
 
-What is **not** proven is that AWS accepts it. `GEAR_LIVE_BEDROCK=1 bun test
+What is **not** proven is that AWS accepts it. `RUNE_LIVE_BEDROCK=1 bun test
 tests/integration/enterprise-providers.test.ts` runs that check on a machine
 that has a credential, and skips with a printed reason on one that does not.
 
@@ -312,8 +312,8 @@ families, because Vertex does.
 ```bash
 gcloud auth application-default login   # or GOOGLE_APPLICATION_CREDENTIALS=key.json
 export GOOGLE_CLOUD_PROJECT=my-project
-gear login vertex
-gear use vertex
+rune login vertex
+rune use vertex
 ```
 
 ```toml
@@ -322,7 +322,7 @@ project = "my-project"
 location = "us-east5"     # or "global"
 ```
 
-| Piece             | What Gear does                                                                                                                                                |
+| Piece             | What Rune does                                                                                                                                                |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Routing**       | by model id: `claude…` → the Anthropic publisher, `gemini…` → Google's. Anything else is a 404 that says so rather than a guess that 404s somewhere confusing |
 | **Anthropic**     | `POST …/publishers/anthropic/models/{model}:streamRawPredict`, body carrying `anthropic_version: "vertex-2023-10-16"` and no `model`                          |
@@ -330,18 +330,18 @@ location = "us-east5"     # or "global"
 | **Auth**          | `Authorization: Bearer` from ADC — a service-account JSON exchanged via a signed RS256 JWT, the gcloud ADC file's refresh token, or the metadata server       |
 | **Streaming**     | already SSE. Nothing to decode; this route is simpler than Bedrock by exactly one decoder                                                                     |
 | **Model ids**     | Anthropic on Vertex is `claude-sonnet-4-5@20250929`; Gemini keeps its plain id                                                                                |
-| **Discovery**     | `gear models vertex` lists BOTH publishers, adding the `@version` suffix Anthropic ids need to be invokable                                                   |
+| **Discovery**     | `rune models vertex` lists BOTH publishers, adding the `@version` suffix Anthropic ids need to be invokable                                                   |
 | **`healthCheck`** | "is there a project and does ADC resolve" — both things a user can act on, neither costing a token                                                            |
 
 **The token is a header, never a query parameter.** AI Studio takes `?key=`;
-Vertex takes a bearer. Gear's Google adapter now decides between the two from
+Vertex takes a bearer. Rune's Google adapter now decides between the two from
 its auth mode rather than always appending the key — a short-lived OAuth token
 in a query string would be written into every access log between here and
 Google.
 
 **The metadata rung is bounded to one second** and honours Google's own
 `NO_GCE_CHECK` opt-out. Off GCE that address does not answer, and
-`gear providers` asks this question on the no-credential path.
+`rune providers` asks this question on the no-credential path.
 
 **Two failures are turned into messages you can act on.** No credential is a 401
 naming `gcloud auth application-default login`; no project is a 400 naming
@@ -354,7 +354,7 @@ signature verified by `node:crypto` against the public half of a generated key
 pair, plus a tampered-claims negative; the full ADC chain against injected files
 and fetch; the URL, body, headers and streamed events of both halves against
 recorded responses; and both failure messages. Not proven: that Google accepts
-it. `GEAR_LIVE_VERTEX=1` runs that.
+it. `RUNE_LIVE_VERTEX=1` runs that.
 
 ### Azure OpenAI (`azure-openai`)
 
@@ -363,8 +363,8 @@ The same OpenAI models on an Azure resource, addressed by **deployment name**.
 ```bash
 export AZURE_OPENAI_ENDPOINT=https://my-resource.openai.azure.com
 export AZURE_OPENAI_API_KEY=...       # or AZURE_OPENAI_AD_TOKEN for Entra ID
-gear login azure-openai
-gear use azure-openai
+rune login azure-openai
+rune use azure-openai
 ```
 
 ```toml
@@ -378,14 +378,14 @@ apiVersion = "2024-10-21"
 "gpt-4o-mini" = "cheap-chat"
 ```
 
-| Piece               | What Gear does                                                                                                                                        |
+| Piece               | What Rune does                                                                                                                                        |
 | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Endpoint**        | `POST {endpoint}/openai/deployments/{deployment}/chat/completions?api-version=…`                                                                      |
 | **Deployments**     | the catalogue lists MODEL ids (what a person picks); `[providers.azure-openai.deployments]` maps each to a deployment, defaulting to the id itself    |
 | **`api-version`**   | a **GA** version by default, never a preview — previews are withdrawn on a schedule, and a withdrawn default breaks every user at once                |
 | **Auth**            | `api-key: <resource key>`, or `Authorization: Bearer` from `AZURE_OPENAI_AD_TOKEN`. The SDK's own placeholder header is stripped, so only one is sent |
 | **Everything else** | inherited from `OpenAIProvider`: tool calls, vision, the gpt-5/o-series parameter swap, `prompt_cache_key`, the usage trailer, the reasoning dial     |
-| **Discovery**       | `gear models azure-openai` lists the deployments the RESOURCE has — a different question from "what does Azure offer", and the useful one             |
+| **Discovery**       | `rune models azure-openai` lists the deployments the RESOURCE has — a different question from "what does Azure offer", and the useful one             |
 
 **The endpoint is normalized.** Pasting the full chat-completions URL out of the
 portal gives you the origin rather than a doubled `/openai` path and a 404 on a
@@ -403,13 +403,13 @@ stripping of the placeholder, endpoint normalization, the inherited
 `prompt_cache_key`, a recorded stream parsed back into events with the cached
 tokens subtracted from the prompt count, both failure messages, and deployment
 discovery with failed deployments filtered out. Not proven: that Azure accepts
-it. `GEAR_LIVE_AZURE_OPENAI=1` runs that.
+it. `RUNE_LIVE_AZURE_OPENAI=1` runs that.
 
 ---
 
 ## Live model discovery
 
-`gear models <provider>` asks the provider's own list endpoint what it serves,
+`rune models <provider>` asks the provider's own list endpoint what it serves,
 because a hand-maintained catalogue rots and this repo has lost runs to exactly
 that: `qwen3-coder:480b` and its announced successor both 410'd on the same day,
 and two OpenRouter `:free` ids were withdrawn to paid without notice. Live
@@ -429,11 +429,11 @@ Every provider with a list endpoint now has one wired:
 | `vertex`         | `publishers/{anthropic,google}/models`  | both publishers, with the `@version` suffix Anthropic ids need                     |
 | `azure-openai`   | `/openai/deployments`                   | what the RESOURCE has, not what Azure offers; failed deployments filtered out      |
 
-The result is **cached for an hour** in `~/.gear/model-cache.json`. An hour is
+The result is **cached for an hour** in `~/.rune/model-cache.json`. An hour is
 chosen against the failure it protects against: model catalogues change on the
 order of weeks, so a stale row costs one confusing `/model` pick that the next
 refresh fixes, while an uncached list costs a network round trip every time
-someone opens a picker. `gear models <provider> --refresh` forces a call.
+someone opens a picker. `rune models <provider> --refresh` forces a call.
 
 The cache holds **model ids and labels only** — no credential, no endpoint,
 nothing account-specific beyond which models that account can see — and a
@@ -460,10 +460,10 @@ a list that quietly stopped asking.
 ### `copilot` — removed 2026-09-02 (P8.5, decision D5)
 
 **Decided from evidence, not preference.** D5 said to drop GitHub Copilot
-_unless the founder uses it_. The answer was in `~/.gear/gear.db`:
+_unless the founder uses it_. The answer was in `~/.rune/rune.db`:
 
 ```
-$ sqlite3 -readonly ~/.gear/gear.db \
+$ sqlite3 -readonly ~/.rune/rune.db \
     "select provider, count(*) from sessions group by provider order by 2 desc"
 (null)|193
 ollama-turbo|132
@@ -471,7 +471,7 @@ codex|115
 google|111
 openrouter|50
 
-$ sqlite3 -readonly ~/.gear/gear.db "select count(*) from sessions where provider='copilot'"
+$ sqlite3 -readonly ~/.rune/rune.db "select count(*) from sessions where provider='copilot'"
 0
 ```
 
@@ -509,7 +509,7 @@ other: `custom` has no preset — it is the escape hatch for a provider this
 catalogue does not know — so the startup gate treats "is it usable?" as "is a
 base URL and a key configured?" rather than looking it up. Both entry points
 (the terminal and the engine host) ask the same question, so a session opened
-by `gear serve` or the desktop resumes on the same endpoint the terminal does.
+by `rune serve` or the desktop resumes on the same endpoint the terminal does.
 
 ---
 
@@ -539,7 +539,7 @@ id any table names must be a model that provider's preset actually offers.**
 Two different questions — how much rate-limit headroom a provider has (for
 fallback ordering) and who pays for a token (for the meter) — that must not
 contradict each other about the same account. `ollama-turbo` was ranked `free`
-capacity and billed as `subscription` at the same time. The ids Gear ships for
+capacity and billed as `subscription` at the same time. The ids Rune ships for
 Ollama Cloud are the ones verified on the **default, no-subscription plan**
 (subscription-gated models are deliberately omitted because they 403), so both
 now say free.
@@ -548,7 +548,7 @@ now say free.
 
 ## The reasoning-depth dial, per provider
 
-Gear has shipped a depth dial that went nowhere **twice**: Codex ran at the
+Rune has shipped a depth dial that went nowhere **twice**: Codex ran at the
 server default because `reasoning.effort` was never sent while "max" sat in the
 picker looking selectable, and Gemini dropped `thinking.effort` inside its
 adapter, so `/effort high` on a Gemini session changed nothing. Both were
@@ -593,7 +593,7 @@ unrecognized model gets the plain text.
 
 ## Reading a cache number in the product
 
-Every cost surface — `/cost`, the status line, and `gear audit` — renders a
+Every cost surface — `/cost`, the status line, and `rune audit` — renders a
 hit rate through **one** function, `formatCacheRate` in
 `packages/orchestrator/src/cost-report.ts`. Its whole job is the rule:
 
@@ -608,7 +608,7 @@ because that is the axis the answer varies on: a run that fell back from a
 caching provider to one with none reports a blended rate describing neither,
 and the blend is always the flattering number.
 
-`gear audit` on a real session:
+`rune audit` on a real session:
 
 ```
   Cost  $10.0320 list · $0.0000 paid (subscription) · 3,980,405 in · 114,441 out

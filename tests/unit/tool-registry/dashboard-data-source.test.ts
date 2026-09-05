@@ -61,7 +61,7 @@ describe("verifyDataSource — the half the runtime can settle itself", () => {
   let ws: string;
 
   beforeEach(() => {
-    ws = mkdtempSync(join(tmpdir(), "gear-dash-source-"));
+    ws = mkdtempSync(join(tmpdir(), "rune-dash-source-"));
     writeFileSync(join(ws, "results.json"), '{"ok":true}');
   });
 

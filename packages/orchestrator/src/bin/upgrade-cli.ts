@@ -1,6 +1,6 @@
-// ─── `gear upgrade` — staying current without ever being surprised ───
+// ─── `rune upgrade` — staying current without ever being surprised ───
 //
-// Gear had no update story at all. A user who installed once stayed on that
+// Rune had no update story at all. A user who installed once stayed on that
 // build forever unless they happened to re-run the installer, and the only
 // staleness nag that existed compared a compiled binary against a source tree
 // — useless to anyone who installed from a release, which is everyone the
@@ -12,18 +12,18 @@
 //      is a supply-chain event waiting to happen, and the one thing a user
 //      must be able to say about the gear on their machine is "I put it
 //      there". The daily check produces one line of text. Replacing anything
-//      requires the user to type `gear upgrade`.
+//      requires the user to type `rune upgrade`.
 //   2. Verify before promoting. The download is checked against the release's
 //      own SHA256SUMS before it is allowed anywhere near the install
 //      directory, and promotion is the same stage-then-move dance
 //      scripts/install.sh does — write the new bytes beside the old ones, back
 //      the old ones up, then `rename` (atomic within a filesystem), so a
-//      crash mid-upgrade leaves a working gear rather than half of one.
+//      crash mid-upgrade leaves a working rune rather than half of one.
 //
-// The install directory is the launcher's own: `~/.gear/bin`, holding `gear`
+// The install directory is the launcher's own: `~/.rune/bin`, holding `rune`
 // (a shell wrapper, from a source install) or the binary itself (from a
-// release install), plus `gear-tools`. Upgrade replaces `gear-compiled` when a
-// wrapper is present and `gear` otherwise, so a source install keeps its
+// release install), plus `rune-tools`. Upgrade replaces `rune-compiled` when a
+// wrapper is present and `rune` otherwise, so a source install keeps its
 // wrapper and a release install keeps its shape.
 
 import { createHash } from "node:crypto";
@@ -39,7 +39,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { gearHomePath, loadConfig } from "@gear/shared";
+import { runeHomePath, loadConfig } from "@rune/shared";
 import { PRODUCT_VERSION } from "./ui/brand";
 
 // ─── The release surface ───
@@ -65,9 +65,9 @@ export type Fetcher = (url: string, init?: RequestInit) => Promise<Response>;
 
 export interface UpgradeEnv {
   fetch: Fetcher;
-  /** Where `gear` and `gear-tools` live. Default `~/.gear/bin`. */
+  /** Where `rune` and `rune-tools` live. Default `~/.rune/bin`. */
   installDir: string;
-  /** Where the daily check stamps itself. Default `~/.gear/update-check.json`. */
+  /** Where the daily check stamps itself. Default `~/.rune/update-check.json`. */
   statePath: string;
   version: string;
   repo: string;
@@ -77,7 +77,7 @@ export interface UpgradeEnv {
   log: (line: string) => void;
   /**
    * The `[update] check = false` kill switch, resolved. It governs ONLY the
-   * background look at GitHub and the nag it feeds — `gear upgrade`, typed by
+   * background look at GitHub and the nag it feeds — `rune upgrade`, typed by
    * a person, always works.
    */
   checkEnabled: boolean;
@@ -87,8 +87,8 @@ export function defaultEnv(overrides: Partial<UpgradeEnv> = {}): UpgradeEnv {
   const cfg = safeConfig();
   return {
     fetch: (url, init) => fetch(url, init),
-    installDir: gearHomePath("bin"),
-    statePath: gearHomePath("update-check.json"),
+    installDir: runeHomePath("bin"),
+    statePath: runeHomePath("update-check.json"),
     version: PRODUCT_VERSION,
     repo: cfg.repo,
     platform: process.platform,
@@ -180,7 +180,7 @@ function writeState(path: string, state: CheckState): void {
 export async function fetchLatest(env: UpgradeEnv): Promise<LatestRelease | null> {
   const url = `https://api.github.com/repos/${env.repo}/releases/latest`;
   const res = await env.fetch(url, {
-    headers: { Accept: "application/vnd.github+json", "User-Agent": `gear/${env.version}` },
+    headers: { Accept: "application/vnd.github+json", "User-Agent": `rune/${env.version}` },
   });
   if (!res.ok) return null;
   const body = (await res.json()) as LatestRelease;
@@ -242,7 +242,7 @@ export async function checkForUpdateLine(env: UpgradeEnv = defaultEnv()): Promis
 }
 
 function nagLine(version: string, current: string): string {
-  return `Gear v${version} is available (you have v${current}) — run \`gear upgrade\` to install it.`;
+  return `Rune v${version} is available (you have v${current}) — run \`rune upgrade\` to install it.`;
 }
 
 // ─── Download, verify, promote ───
@@ -266,7 +266,7 @@ export function parseChecksums(body: string): Record<string, string> {
 
 async function download(env: UpgradeEnv, url: string): Promise<Uint8Array> {
   const res = await env.fetch(url, {
-    headers: { Accept: "application/octet-stream", "User-Agent": `gear/${env.version}` },
+    headers: { Accept: "application/octet-stream", "User-Agent": `rune/${env.version}` },
   });
   if (!res.ok) throw new Error(`download failed (${res.status}) for ${url}`);
   return new Uint8Array(await res.arrayBuffer());
@@ -277,8 +277,8 @@ async function download(env: UpgradeEnv, url: string): Promise<Uint8Array> {
  *
  * Every replacement byte is written to `<target>.new` first and only then
  * moved into place, after the previous file is copied to `<target>.backup`.
- * `renameSync` within one directory is atomic on every filesystem Gear
- * targets, so there is no instant at which `gear` is a partial file.
+ * `renameSync` within one directory is atomic on every filesystem Rune
+ * targets, so there is no instant at which `rune` is a partial file.
  */
 function promote(target: string, bytes: Uint8Array, keepBackup: boolean): void {
   const staged = `${target}.new`;
@@ -305,14 +305,14 @@ export interface UpgradeResult {
 /**
  * Which file the new CLI replaces.
  *
- * A source install writes a shell wrapper at `gear` that execs
- * `gear-compiled`; a release install puts the binary at `gear` directly.
+ * A source install writes a shell wrapper at `rune` that execs
+ * `rune-compiled`; a release install puts the binary at `rune` directly.
  * Replacing the wrapper would strip the env loading it does, so when a
- * `gear-compiled` exists that is what gets replaced.
+ * `rune-compiled` exists that is what gets replaced.
  */
 export function cliTarget(installDir: string): string {
-  const compiled = join(installDir, "gear-compiled");
-  return existsSync(compiled) ? compiled : join(installDir, "gear");
+  const compiled = join(installDir, "rune-compiled");
+  return existsSync(compiled) ? compiled : join(installDir, "rune");
 }
 
 export async function runUpgrade(
@@ -325,7 +325,7 @@ export async function runUpgrade(
 
   const suffix = assetSuffix(env.platform, env.arch);
   if (!suffix) {
-    log(`  gear upgrade does not have a release build for ${env.platform}/${env.arch}.`);
+    log(`  rune upgrade does not have a release build for ${env.platform}/${env.arch}.`);
     log(`  Install from source: https://github.com/${env.repo}`);
     return 1;
   }
@@ -345,19 +345,19 @@ export async function runUpgrade(
   const version = latest.tag_name.replace(/^v/, "");
   const cmp = compareVersions(version, env.version);
   if (cmp <= 0) {
-    log(`  up to date — Gear v${env.version} (latest release: v${version})`);
+    log(`  up to date — Rune v${env.version} (latest release: v${version})`);
     return 0;
   }
 
-  log(`  Gear v${version} is available. You have v${env.version}.`);
+  log(`  Rune v${version} is available. You have v${env.version}.`);
   if (checkOnly) {
-    log(`  Run \`gear upgrade\` to install it.`);
+    log(`  Run \`rune upgrade\` to install it.`);
     return 0;
   }
 
   // ── The three assets an upgrade needs ──
-  const cliName = `gear-${suffix}`;
-  const toolsName = `gear-tools-${suffix}`;
+  const cliName = `rune-${suffix}`;
+  const toolsName = `rune-tools-${suffix}`;
   const byName = new Map(latest.assets?.map((a) => [a.name, a.browser_download_url]) ?? []);
   const sumsUrl = byName.get("SHA256SUMS");
   if (!sumsUrl) {
@@ -415,7 +415,7 @@ export async function runUpgrade(
   try {
     mkdirSync(env.installDir, { recursive: true });
     promote(cliTarget(env.installDir), cliBytes, true);
-    if (toolsBytes) promote(join(env.installDir, "gear-tools"), toolsBytes, true);
+    if (toolsBytes) promote(join(env.installDir, "rune-tools"), toolsBytes, true);
   } catch (err) {
     log(`  Install failed: ${err instanceof Error ? err.message : String(err)}`);
     log(`  The previous binary is untouched (or restorable from its .backup).`);
@@ -425,12 +425,12 @@ export async function runUpgrade(
   // The daily check should not immediately re-nag about what we just installed.
   writeState(env.statePath, { lastCheckedAt: env.now(), latest: version });
 
-  log(`  Installed Gear v${version} → ${env.installDir}`);
+  log(`  Installed Rune v${version} → ${env.installDir}`);
   log(`  The previous build is kept beside it as .backup.`);
   return 0;
 }
 
-/** For `gear doctor`: is there a backup to roll back to, and how old is it? */
+/** For `rune doctor`: is there a backup to roll back to, and how old is it? */
 export function backupInfo(installDir: string): { path: string; mtimeMs: number } | null {
   const path = `${cliTarget(installDir)}.backup`;
   try {

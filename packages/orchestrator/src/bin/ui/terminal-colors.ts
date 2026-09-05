@@ -43,8 +43,8 @@ export function ansi256ToRgb(index: number): Rgb | undefined {
 }
 
 function environmentColors(env: NodeJS.ProcessEnv): TerminalColors {
-  const explicitForeground = parseHexColor(env.GEAR_TERMINAL_FOREGROUND);
-  const explicitBackground = parseHexColor(env.GEAR_TERMINAL_BACKGROUND);
+  const explicitForeground = parseHexColor(env.RUNE_TERMINAL_FOREGROUND);
+  const explicitBackground = parseHexColor(env.RUNE_TERMINAL_BACKGROUND);
   if (explicitForeground || explicitBackground) {
     return { foreground: explicitForeground, background: explicitBackground };
   }

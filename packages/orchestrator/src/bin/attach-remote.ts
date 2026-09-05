@@ -1,25 +1,25 @@
-// ─── gear attach ws://host:port — the terminal as a remote client ───
+// ─── rune attach ws://host:port — the terminal as a remote client ───
 //
-// `gear attach <session>` already reattaches to a detached run over a unix
+// `rune attach <session>` already reattaches to a detached run over a unix
 // socket. A unix socket is a file on one machine, so everything that made
 // detach useful — start a long run, close the laptop, come back to it — stopped
 // at the machine boundary. This is the same command over the websocket
 // transport: the engine can be a server in another room, and the terminal is
 // just another client of it.
 //
-// It is deliberately the SAME `GearClient` the desktop and the web page use,
+// It is deliberately the SAME `RuneClient` the desktop and the web page use,
 // not a second implementation of the protocol in the CLI. The five round-trips
 // come free with it: a remote turn that stops for a permission stops HERE, and
 // answering from this terminal unblocks a run happening somewhere else. That
 // is the whole difference between a remote console and a log tail.
 //
-// Auth: `--token`, then `GEAR_SERVE_TOKEN`, then `~/.gear/serve.json` when the
+// Auth: `--token`, then `RUNE_SERVE_TOKEN`, then `~/.rune/serve.json` when the
 // server happens to be this machine's own. A token on the command line lands in
 // shell history, which is why the environment variable is offered first in the
 // docs and why nothing here ever prints it back.
 
-import type { AgentTurnEvent } from "@gear/protocol";
-import { GearClient, readServeToken } from "@gear/sdk";
+import type { AgentTurnEvent } from "@rune/protocol";
+import { RuneClient, readServeToken } from "@rune/sdk";
 
 import { accent, danger, dim, info, muted, ok, text, warn } from "./ui/theme";
 
@@ -30,7 +30,7 @@ const say = (s = ""): void => {
 /**
  * The token, from the least secret-leaking source available.
  *
- * `~/.gear/serve.json` is consulted last and only for a loopback URL: a token
+ * `~/.rune/serve.json` is consulted last and only for a loopback URL: a token
  * minted for the server on THIS machine is not a credential for someone else's,
  * and silently trying it against a remote host would be both useless and a
  * disclosure.
@@ -42,9 +42,9 @@ export function resolveToken(
   local: { token: string; url: string } | null,
 ): { token: string; from: string } | null {
   if (typeof flag === "string" && flag.length > 0) return { token: flag, from: "--token" };
-  const fromEnv = env.GEAR_SERVE_TOKEN;
-  if (fromEnv && fromEnv.length > 0) return { token: fromEnv, from: "GEAR_SERVE_TOKEN" };
-  if (local && isLoopbackUrl(url)) return { token: local.token, from: "~/.gear/serve.json" };
+  const fromEnv = env.RUNE_SERVE_TOKEN;
+  if (fromEnv && fromEnv.length > 0) return { token: fromEnv, from: "RUNE_SERVE_TOKEN" };
+  if (local && isLoopbackUrl(url)) return { token: local.token, from: "~/.rune/serve.json" };
   return null;
 }
 
@@ -83,7 +83,7 @@ function render(event: AgentTurnEvent, out: (s: string) => void): void {
       return;
     default:
       // Every other member is real and rendered elsewhere; a remote console is
-      // a status line, not the full transcript. `gear audit` is the record.
+      // a status line, not the full transcript. `rune audit` is the record.
       return;
   }
 }
@@ -96,16 +96,16 @@ export async function runAttachRemote(
   const found = resolveToken(url, values.token, process.env, local);
   if (!found) {
     say(`  ${danger("!")} no token for ${url}`);
-    say(`    pass ${info("--token <token>")}, or export ${info("GEAR_SERVE_TOKEN")}.`);
-    say(`    The server prints its token path on start: ${muted("~/.gear/serve.json (0600)")}`);
+    say(`    pass ${info("--token <token>")}, or export ${info("RUNE_SERVE_TOKEN")}.`);
+    say(`    The server prints its token path on start: ${muted("~/.rune/serve.json (0600)")}`);
     return 1;
   }
 
   const prompt = typeof values.prompt === "string" ? values.prompt : undefined;
 
-  let client: GearClient;
+  let client: RuneClient;
   try {
-    client = await GearClient.connect(
+    client = await RuneClient.connect(
       { url, token: found.token },
       {
         onEvent: (event) => render(event, say),
@@ -173,7 +173,7 @@ export async function runAttachRemote(
       await client.run(sessionId, prompt);
     } else {
       // No prompt: stay attached and stream whatever the server is doing, the
-      // way `gear attach <session>` does over a socket. Ctrl+C detaches; the
+      // way `rune attach <session>` does over a socket. Ctrl+C detaches; the
       // run keeps going, because it was never this process's run.
       say(`  ${muted("streaming — Ctrl+C detaches, the run continues")}\n`);
       await new Promise<void>((resolve) => {

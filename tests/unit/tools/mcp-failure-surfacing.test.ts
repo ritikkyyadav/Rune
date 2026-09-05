@@ -27,26 +27,26 @@ let prevHome: string | undefined;
 let home: string;
 
 function writeMcpJson(servers: Record<string, unknown>): void {
-  mkdirSync(join(workspace, ".gear"), { recursive: true });
-  writeFileSync(join(workspace, ".gear", "mcp.json"), JSON.stringify({ mcpServers: servers }));
+  mkdirSync(join(workspace, ".rune"), { recursive: true });
+  writeFileSync(join(workspace, ".rune", "mcp.json"), JSON.stringify({ mcpServers: servers }));
 }
 
 beforeEach(async () => {
-  workspace = mkdtempSync(join(tmpdir(), "gear-mcp-surface-ws-"));
-  home = mkdtempSync(join(tmpdir(), "gear-mcp-surface-home-"));
-  prevBackend = process.env.GEAR_CREDENTIAL_BACKEND;
-  prevHome = process.env.GEAR_HOME;
-  process.env.GEAR_CREDENTIAL_BACKEND = "file";
-  process.env.GEAR_HOME = home;
+  workspace = mkdtempSync(join(tmpdir(), "rune-mcp-surface-ws-"));
+  home = mkdtempSync(join(tmpdir(), "rune-mcp-surface-home-"));
+  prevBackend = process.env.RUNE_CREDENTIAL_BACKEND;
+  prevHome = process.env.RUNE_HOME;
+  process.env.RUNE_CREDENTIAL_BACKEND = "file";
+  process.env.RUNE_HOME = home;
   mock = await startMockOAuthMcpServer();
 });
 
 afterEach(async () => {
   await mock.close();
-  if (prevBackend === undefined) delete process.env.GEAR_CREDENTIAL_BACKEND;
-  else process.env.GEAR_CREDENTIAL_BACKEND = prevBackend;
-  if (prevHome === undefined) delete process.env.GEAR_HOME;
-  else process.env.GEAR_HOME = prevHome;
+  if (prevBackend === undefined) delete process.env.RUNE_CREDENTIAL_BACKEND;
+  else process.env.RUNE_CREDENTIAL_BACKEND = prevBackend;
+  if (prevHome === undefined) delete process.env.RUNE_HOME;
+  else process.env.RUNE_HOME = prevHome;
   rmSync(workspace, { recursive: true, force: true });
   rmSync(home, { recursive: true, force: true });
 });

@@ -256,7 +256,7 @@ describe("what a sub-agent leaves behind in the transcript", () => {
         toolName: "task",
         success: true,
         result:
-          "Tokens are stored in ~/.gear/credentials.json, written by credential-store.ts:88.\n\n(sub-agent made 12 tool calls)",
+          "Tokens are stored in ~/.rune/credentials.json, written by credential-store.ts:88.\n\n(sub-agent made 12 tool calls)",
         durationMs: 178_000,
       },
     });

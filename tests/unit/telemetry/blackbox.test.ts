@@ -16,7 +16,7 @@ import { rmTemp } from "../../helpers/tmp";
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "gear-blackbox-"));
+  dir = mkdtempSync(join(tmpdir(), "rune-blackbox-"));
 });
 
 afterEach(() => {

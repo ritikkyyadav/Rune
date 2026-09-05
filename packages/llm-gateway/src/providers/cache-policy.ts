@@ -123,5 +123,5 @@ export function promptCacheKey(system: string | undefined, toolNames: string[]):
     hash ^= source.charCodeAt(i);
     hash = Math.imul(hash, 0x01000193) >>> 0;
   }
-  return `gear-${hash.toString(16).padStart(8, "0")}`;
+  return `rune-${hash.toString(16).padStart(8, "0")}`;
 }

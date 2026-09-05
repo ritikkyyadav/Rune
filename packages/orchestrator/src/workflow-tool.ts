@@ -1,14 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 
-import type { AgentTurnEvent, ChildAgentEvent, WorkflowNodeContext } from "@gear/protocol";
+import type { AgentTurnEvent, ChildAgentEvent, WorkflowNodeContext } from "@rune/protocol";
 import type {
   ToolCallInput,
   ToolCallOutput,
   ToolHandler,
   ToolRegistry,
   ToolSchema,
-} from "@gear/tool-registry";
+} from "@rune/tool-registry";
 
 import {
   defaultStatePath,

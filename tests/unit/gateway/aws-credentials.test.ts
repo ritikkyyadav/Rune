@@ -164,7 +164,7 @@ describe("rung 3: web identity", () => {
     const cred = await resolveAwsCredentials({
       env: {
         AWS_WEB_IDENTITY_TOKEN_FILE: "/var/run/token",
-        AWS_ROLE_ARN: "arn:aws:iam::1:role/gear",
+        AWS_ROLE_ARN: "arn:aws:iam::1:role/rune",
         AWS_REGION: "us-east-2",
       },
       readFileImpl: files({ "/var/run/token": "oidc-token-value" }),
@@ -234,7 +234,7 @@ describe("rung 4: container credentials", () => {
 
 describe("no rung resolves", () => {
   test("an empty machine reports null, and the caller prints 'no credential'", async () => {
-    // The honest answer. `gear providers` renders this as an em dash rather
+    // The honest answer. `rune providers` renders this as an em dash rather
     // than a row that claims a credential nobody has.
     const cred = await resolveAwsCredentials({
       env: {},
@@ -248,7 +248,7 @@ describe("no rung resolves", () => {
 
   test("IMDS is deliberately not probed, so nothing hangs on a laptop", async () => {
     // The SDKs' last rung is a link-local metadata request that does not answer
-    // off EC2 and costs a timeout on every cold start. `gear providers` runs
+    // off EC2 and costs a timeout on every cold start. `rune providers` runs
     // this resolver on the no-credential path, so the probe is omitted.
     let touched = false;
     await resolveAwsCredentials({

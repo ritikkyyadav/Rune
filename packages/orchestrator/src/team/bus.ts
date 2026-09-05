@@ -1,10 +1,10 @@
 // ─── Team bus: cross-instance coordination ───
 //
-// Two Gear processes in one repository used to be completely blind to each
+// Two Rune processes in one repository used to be completely blind to each
 // other: worker ownership claims lived in-process, so parallel instances could
 // write the same files, and there was no way for one session to tell another
 // anything. The bus is the fix — a small shared SQLite ledger (same WAL +
-// busy-timeout pattern as gear.db / notebook.db / blackbox.db) holding, per
+// busy-timeout pattern as rune.db / notebook.db / blackbox.db) holding, per
 // repository:
 //
 //   presence  — who is here (pid-liveness checked, heartbeat-staled)
@@ -20,13 +20,13 @@
 // Design rules, in order: coordination must NEVER break a session (every
 // public method degrades to a safe default instead of throwing); liveness is
 // mechanical (pid + heartbeat, no cooperation needed from a crashed peer);
-// and everything is local — the bus never leaves ~/.gear.
+// and everything is local — the bus never leaves ~/.rune.
 
 import { Database } from "bun:sqlite";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
 export interface TeamBusOptions {
-  /** Absolute path of the shared bus DB (default: <gearHome>/team.db). */
+  /** Absolute path of the shared bus DB (default: <runeHome>/team.db). */
   dbPath: string;
   /** Repository identity — realpath of the git common dir, or the workspace. */
   repoKey: string;
@@ -184,7 +184,7 @@ const SCHEMA = `
   -- The cross-instance work queue.
   --
   -- docs/teamwork.md said plainly that the bus "is not a task queue", and that
-  -- was correct: it carried presence, path claims and messages, so two Gear
+  -- was correct: it carried presence, path claims and messages, so two Rune
   -- instances in one repository could avoid each other but could not divide
   -- work. A task here is claimed the same way a path is — atomically, with a
   -- TTL, swept by the same liveness pass — so an instance that dies releases

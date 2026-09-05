@@ -79,7 +79,7 @@ export function warpNotice(notice: WarpNotice, version: string, env = process.en
   if (!isWarp(env)) return "";
   const body: Record<string, unknown> = {
     v: 1,
-    agent: "gear",
+    agent: "rune",
     event: notice.event,
     session_id: notice.sessionId,
     cwd: notice.cwd,

@@ -1,0 +1,93 @@
+# ─── Rune reviews this repository's own pull requests ───
+#
+# The action is in `action/`, and this is the proof it works: the repo that
+# builds Rune is reviewed by the Rune in the pull request, not by the last one
+# that shipped. If a change breaks the review path, it breaks here first.
+#
+# Until P10.6 that was a claim rather than a fact. The whole workflow was gated
+# on `RUNE_REVIEW_API_KEY`, which does not exist on this repository, so it had
+# skipped on every pull request ever opened and the action's comment path — post
+# once, then edit that same comment forever — had never run outside a test.
+#
+# So there are now two paths, and they are gated differently:
+#
+#   - WITH the secret: a real review from a real model.
+#   - WITHOUT it: the same action against a MOCK provider, posting a comment
+#     that says so in its heading, its first paragraph and its footer. That
+#     exercises the workflow, the action body, the audit read-back and the
+#     comment path on every pull request, and claims nothing about the change.
+#
+# The mock path runs only for pull requests opened from THIS repository. A fork
+# gets a read-only `GITHUB_TOKEN`, so posting would fail with a 403 — a red
+# check a contributor cannot fix, which is the thing the original gate existed
+# to avoid.
+
+name: rune review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  # One review per pull request. A push mid-review cancels the stale one rather
+  # than racing it to the same comment.
+  group: rune-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.check.outputs.mode }}
+    steps:
+      - id: check
+        env:
+          # A secret cannot be read in an `if:` expression, so it is turned into
+          # an output here and branched on below.
+          KEY: ${{ secrets.RUNE_REVIEW_API_KEY }}
+          SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          if [ -n "${KEY}" ]; then
+            echo "mode=real" >> "$GITHUB_OUTPUT"
+          elif [ "${SAME_REPO}" = "true" ]; then
+            echo "mode=mock" >> "$GITHUB_OUTPUT"
+            echo "::notice::RUNE_REVIEW_API_KEY is not set — running the review action against a mock provider. The comment is a dry run and says so."
+          else
+            echo "mode=skip" >> "$GITHUB_OUTPUT"
+            echo "::notice::No RUNE_REVIEW_API_KEY, and a fork's token cannot post a comment — skipping."
+          fi
+
+  review:
+    needs: gate
+    if: needs.gate.outputs.mode != 'skip'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The review diffs against the base branch, so it needs the history
+          # that `merge-base` walks. A shallow clone makes every commit look new.
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: ./action
+        with:
+          gear: "3"
+          # Empty `version` builds from this checkout — see the note above.
+          version: ""
+          source-path: "."
+          workspace: "."
+        env:
+          # `mock` makes `action/review.ts` start its own credential-free
+          # provider and label the comment. Anything else is a real run.
+          RUNE_REVIEW_PROVIDER: ${{ needs.gate.outputs.mode }}
+          # One key, whichever provider it belongs to. `rune` reads the
+          # provider-specific variables directly; set the one you use.
+          ANTHROPIC_API_KEY: ${{ secrets.RUNE_REVIEW_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.RUNE_REVIEW_OPENAI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.RUNE_REVIEW_OPENROUTER_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.RUNE_REVIEW_GOOGLE_API_KEY }}

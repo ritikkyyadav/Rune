@@ -29,7 +29,7 @@ import { isGitRepo } from "./worktree";
  * checkout at HEAD, then apply the lead's uncommitted diff into it. This is
  * done with `git diff` piped to `git apply`, deliberately NOT with `git stash`
  * — a stash is repository-global state shared with every other worktree and
- * every other Gear session on the machine, so a stash/pop pair here would be a
+ * every other Rune session on the machine, so a stash/pop pair here would be a
  * race with anything else running, and a crash between the two would strand the
  * user's work in a stash entry they never made.
  */
@@ -52,7 +52,7 @@ export interface MergeOutcome {
   reason?: string;
 }
 
-const WORKTREE_DIR = join(".gear", "worktrees");
+const WORKTREE_DIR = join(".rune", "worktrees");
 
 function git(
   cwd: string,
@@ -97,7 +97,7 @@ export function createWorkerWorktree(repoRoot: string, workerId: string): Worker
   }
   const path = join(base, id);
   if (existsSync(path)) return null;
-  const branch = `gear/worker-${id}`;
+  const branch = `rune/worker-${id}`;
 
   // A stale branch from a crashed run would fail `worktree add`; remove it
   // first. It is ours by name and it has already been merged or abandoned.
@@ -171,7 +171,7 @@ export function mergeWorkerWorktree(
       };
     }
   }
-  const message = `gear(worker): ${summary.replace(/\s+/g, " ").trim().slice(0, 64) || "changes"}`;
+  const message = `rune(worker): ${summary.replace(/\s+/g, " ").trim().slice(0, 64) || "changes"}`;
   const commit = git(wt.path, ["commit", "--no-verify", "-m", message]);
   if (!commit.ok) {
     return {
@@ -217,7 +217,7 @@ export function mergeWorkerWorktree(
 
 /**
  * Remove the checkout. The BRANCH survives on purpose: it is the only copy of
- * a failed worker's work, and `gear/worker-<id>` is where a person looks when
+ * a failed worker's work, and `rune/worker-<id>` is where a person looks when
  * checks failed or a merge conflicted.
  */
 export function removeWorkerWorktree(
@@ -250,7 +250,7 @@ export function runWorktreeChecks(
       encoding: "utf8",
       timeout: timeoutMs,
       maxBuffer: 8 * 1024 * 1024,
-      env: { ...process.env, GEAR_WORKER_CHECK: "1" },
+      env: { ...process.env, RUNE_WORKER_CHECK: "1" },
     });
     if (res.status !== 0) {
       const detail = ((res.stderr || res.stdout) ?? "").replace(/\s+/g, " ").trim().slice(0, 300);

@@ -3,8 +3,8 @@
  * registered.
  *
  * The failure mode this guards is the one a user meets first: a machine with no
- * AWS/GCP/Azure credentials. `gear providers` must print an honest "—" row for
- * every cloud route, `gear models` must fall back to the curated catalogue, and
+ * AWS/GCP/Azure credentials. `rune providers` must print an honest "—" row for
+ * every cloud route, `rune models` must fall back to the curated catalogue, and
  * nothing may crash or claim a credential nobody has.
  */
 import { describe, test, expect } from "bun:test";
@@ -24,7 +24,7 @@ import { join } from "node:path";
 /** A credential store rooted in a throwaway dir — never the real machine's. */
 function isolatedStore(): FileCredentialStore {
   return new FileCredentialStore(
-    join(mkdtempSync(join(tmpdir(), "gear-p105-")), "credentials.json"),
+    join(mkdtempSync(join(tmpdir(), "rune-p105-")), "credentials.json"),
   );
 }
 
@@ -43,7 +43,7 @@ describe("the chain strategy", () => {
     }
   });
 
-  test("stores nothing — there is no Gear-held secret for these routes", async () => {
+  test("stores nothing — there is no Rune-held secret for these routes", async () => {
     const strategy = getStrategy("chain", "bedrock")!;
     const store = isolatedStore();
     await strategy.storeCredentials(
@@ -51,7 +51,7 @@ describe("the chain strategy", () => {
       { kind: "none" },
     );
     // The whole reason a team routes through their own cloud is that the
-    // credential stays theirs. A second copy in Gear's keychain would defeat it.
+    // credential stays theirs. A second copy in Rune's keychain would defeat it.
     expect(await store.get("apikey:bedrock")).toBeNull();
   });
 
@@ -77,7 +77,7 @@ describe("with no cloud credentials", () => {
     for (const id of ROUTES) expect(credentials[id]).toBeUndefined();
   });
 
-  test("`gear providers` shows an honest no-credential row, and does not crash", () => {
+  test("`rune providers` shows an honest no-credential row, and does not crash", () => {
     const rows = providerStatus({ keys: {}, active: "google", env: NO_ENV });
     for (const id of ROUTES) {
       const row = rows.find((r) => r.id === id);
@@ -99,7 +99,7 @@ describe("with no cloud credentials", () => {
   });
 
   test("but it DOES register the route the session asked for, so the error is actionable", () => {
-    // Otherwise `gear -p bedrock` fails with "provider not registered", which
+    // Otherwise `rune -p bedrock` fails with "provider not registered", which
     // says nothing about the missing credential or how to supply one.
     const gw = buildGateway({ provider: "bedrock", keys: {}, env: NO_ENV });
     expect(gw.getProvider("bedrock")).toBeDefined();

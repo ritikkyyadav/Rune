@@ -1,5 +1,5 @@
 /**
- * `gear pr <n>` — the parts that do not need GitHub.
+ * `rune pr <n>` — the parts that do not need GitHub.
  *
  * The brief is the interesting one. A session that starts from a summary of a
  * pull request has already lost the thing a review is checked against: the
@@ -66,16 +66,16 @@ describe("finding the repository", () => {
 describe("re-invoking this CLI", () => {
   test("from a source checkout it is bun plus the script", () => {
     const dir = join(import.meta.dir, "../../../packages/orchestrator/src/bin");
-    expect(existsSync(join(dir, "gear-cli.ts"))).toBe(true);
+    expect(existsSync(join(dir, "rune-cli.ts"))).toBe(true);
     expect(selfCommand(dir, "/usr/local/bin/bun")).toEqual([
       "/usr/local/bin/bun",
-      join(dir, "gear-cli.ts"),
+      join(dir, "rune-cli.ts"),
     ]);
   });
 
   test("from the compiled binary it is the binary", () => {
     // A compiled build's script path is virtual and not on disk; passing it as
     // an argument is a spawn failure that only happens on the installed build.
-    expect(selfCommand("/nowhere", "/usr/local/bin/gear")).toEqual(["/usr/local/bin/gear"]);
+    expect(selfCommand("/nowhere", "/usr/local/bin/rune")).toEqual(["/usr/local/bin/rune"]);
   });
 });

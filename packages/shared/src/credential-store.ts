@@ -7,7 +7,7 @@
 //   1. macOS  → `security`   (Keychain)                    secure
 //   2. Linux  → `secret-tool` (libsecret / Secret Service)  secure
 //   3. Windows→ PowerShell    (DPAPI, per-user)             secure
-//   4. anywhere→ FileCredentialStore (~/.gear/credentials.json, 0600)  INSECURE
+//   4. anywhere→ FileCredentialStore (~/.rune/credentials.json, 0600)  INSECURE
 //
 // The secure backends shell out to first-party OS tools rather than a native
 // N-API module: that keeps `bun build --compile` single-file releases working on
@@ -16,7 +16,7 @@
 // store with `secure=false`, and every caller is expected to surface the notice.
 //
 // Everything is testable: the shell-out backends take an injectable command
-// runner, and backend selection honors GEAR_CREDENTIAL_BACKEND so tests never
+// runner, and backend selection honors RUNE_CREDENTIAL_BACKEND so tests never
 // touch the real keychain.
 
 import { existsSync, readFileSync, writeFileSync, chmodSync, mkdirSync } from "fs";
@@ -24,7 +24,7 @@ import { dirname, join } from "path";
 import { spawn } from "child_process";
 import { loadSecrets } from "./secrets.js";
 import { PROVIDER_PRESETS } from "./providers.js";
-import { getGearHome } from "./paths.js";
+import { getRuneHome } from "./paths.js";
 
 export type CredentialBackend = "keychain" | "secret-service" | "wincred" | "file";
 
@@ -44,9 +44,9 @@ export interface CredentialStore {
 }
 
 /** Current keychain service namespace; every account is scoped under it. */
-export const CREDENTIAL_SERVICE = "gear";
-/** Keychain service name used before the rename; read-through only, never written. */
-const LEGACY_CREDENTIAL_SERVICES = ["alan"] as const;
+export const CREDENTIAL_SERVICE = "rune";
+/** Keychain service names used before the renames, newest first; read-through only, never written. */
+const LEGACY_CREDENTIAL_SERVICES = ["gear", "alan"] as const;
 
 // ─── Injectable command runner (so shell-out backends are unit-testable) ───
 
@@ -89,12 +89,12 @@ const defaultRunner: CredentialCommandRunner = (cmd, args, opts) =>
 
 // ─── File paths (env-overridable for tests) ───
 
-function gearDir(env: NodeJS.ProcessEnv): string {
-  return getGearHome(env);
+function runeDir(env: NodeJS.ProcessEnv): string {
+  return getRuneHome(env);
 }
 
 function credentialsFilePath(env: NodeJS.ProcessEnv): string {
-  return env.GEAR_CREDENTIALS_PATH ?? join(gearDir(env), "credentials.json");
+  return env.RUNE_CREDENTIALS_PATH ?? join(runeDir(env), "credentials.json");
 }
 
 /**
@@ -103,7 +103,7 @@ function credentialsFilePath(env: NodeJS.ProcessEnv): string {
  * account names only (e.g. "provider:openrouter:oauth"), never secrets.
  */
 function indexFilePath(env: NodeJS.ProcessEnv): string {
-  return env.GEAR_CREDENTIAL_INDEX_PATH ?? join(gearDir(env), "credentials.index.json");
+  return env.RUNE_CREDENTIAL_INDEX_PATH ?? join(runeDir(env), "credentials.index.json");
 }
 
 function readJsonMap(path: string): Record<string, string> {
@@ -335,8 +335,8 @@ class WinCredStore implements CredentialStore {
     // DPAPI encrypts to a per-user blob; we store the ciphertext (never plaintext)
     // in a file. Distinct from the plaintext FileCredentialStore path.
     this.path =
-      env.GEAR_CREDENTIALS_PATH?.replace(/\.json$/, ".win.json") ??
-      join(gearDir(env), "credentials.win.json");
+      env.RUNE_CREDENTIALS_PATH?.replace(/\.json$/, ".win.json") ??
+      join(runeDir(env), "credentials.win.json");
   }
 
   private async ps(script: string, stdin?: string): Promise<CredentialCommandResult> {
@@ -404,7 +404,7 @@ async function toolAvailable(
 }
 
 export interface OpenCredentialStoreOpts {
-  /** Keychain service namespace (default "gear"). */
+  /** Keychain service namespace (default "rune"). */
   service?: string;
   /** Injected env for path + selection overrides (default process.env). */
   env?: NodeJS.ProcessEnv;
@@ -418,7 +418,7 @@ export interface OpenCredentialStoreOpts {
  * Open the best available credential store for this machine. Never throws —
  * on any failure it returns the plaintext FileCredentialStore with `secure=false`
  * so the caller can warn the user rather than crash. Honors
- * `GEAR_CREDENTIAL_BACKEND` (e.g. "file") for forcing a backend in tests.
+ * `RUNE_CREDENTIAL_BACKEND` (e.g. "file") for forcing a backend in tests.
  */
 export async function openCredentialStore(
   opts: OpenCredentialStoreOpts = {},
@@ -428,7 +428,7 @@ export async function openCredentialStore(
   const service = opts.service ?? CREDENTIAL_SERVICE;
   const legacyServices = opts.service ? [] : LEGACY_CREDENTIAL_SERVICES;
   const forced =
-    opts.forceBackend ?? (env.GEAR_CREDENTIAL_BACKEND as CredentialBackend | undefined);
+    opts.forceBackend ?? (env.RUNE_CREDENTIAL_BACKEND as CredentialBackend | undefined);
 
   if (forced === "file") return new FileCredentialStore(env);
   if (forced === "keychain") return new KeychainStore(service, run, env, legacyServices);
@@ -468,7 +468,7 @@ export function describeCredentialBackend(store: CredentialStore): string {
     case "wincred":
       return "Windows DPAPI";
     case "file":
-      return "plaintext file (~/.gear/credentials.json)";
+      return "plaintext file (~/.rune/credentials.json)";
   }
 }
 
@@ -522,7 +522,7 @@ export interface MigrationResult {
 }
 
 /**
- * Opportunistically copy API keys from the legacy `~/.alan/secrets.json` into a
+ * Opportunistically copy API keys from the home's legacy `secrets.json` into a
  * (secure) credential store. Non-destructive by contract: it only writes
  * accounts that are not already present and NEVER deletes secrets.json, so the
  * old path keeps working and rollback stays trivial. Web-search keys

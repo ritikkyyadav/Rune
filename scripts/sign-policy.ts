@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Org-admin tool: sign a Gear org policy for distribution to managed machines.
+ * Org-admin tool: sign a Rune org policy for distribution to managed machines.
  *
  *   bun run scripts/sign-policy.ts <policy.json> <out-dir> [--key <ed25519.key>]
  *
@@ -9,12 +9,12 @@
  * Ed25519 key (generated into <out-dir> on first run unless --key is given),
  * and writes:
  *
- *   <out-dir>/policy.json   — { policy, signature }  → install at /etc/gear/policy.json
- *   <out-dir>/org.pub       — public key (PEM)       → install at /etc/gear/org.pub
+ *   <out-dir>/policy.json   — { policy, signature }  → install at /etc/rune/policy.json
+ *   <out-dir>/org.pub       — public key (PEM)       → install at /etc/rune/org.pub
  *   <out-dir>/ed25519.key   — PRIVATE key. Keep offline. Never distribute.
  *
  * Install both files root-owned (0644) on managed machines; macOS may use
- * /Library/Application Support/Gear/ instead. Gear refuses to start if the
+ * /Library/Application Support/Rune/ instead. Rune refuses to start if the
  * policy file is present but fails verification against org.pub.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -70,7 +70,7 @@ function main(): void {
 
   console.log(`signed policy written: ${join(outDir, "policy.json")}`);
   console.log(`org public key:        ${join(outDir, "org.pub")}`);
-  console.log("install both at /etc/gear/ (root-owned) on managed machines.");
+  console.log("install both at /etc/rune/ (root-owned) on managed machines.");
 }
 
 main();

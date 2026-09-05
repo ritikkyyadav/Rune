@@ -259,7 +259,7 @@ export interface FlowHeader {
 // only typographic instruments in the box are TRACKING, CASE, WEIGHT and
 // COLOUR. So the wordmark is built from all four -- letterspaced, capitalised,
 // bold, in the identity pigment -- which is what separates a logotype from the
-// first word of a sentence. `gear · evolab4` read as a breadcrumb because it
+// first word of a sentence. `rune · evolab4` read as a breadcrumb because it
 // used exactly one of the four; `G E A R` cannot be mistaken for running text.
 //
 // This is still not artwork. The old rule here -- no mark, no avatar, no
@@ -420,7 +420,7 @@ export function pathTail(p: string, max: number): string {
     tail = next;
   }
   // Not even one whole segment fits. Keep its end, which is still the half that
-  // identifies it -- `…-stabilize` over `…gear/phase`.
+  // identifies it -- `…-stabilize` over `…rune/phase`.
   return `${mark}${tail || p.slice(-room)}`;
 }
 

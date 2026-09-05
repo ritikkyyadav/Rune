@@ -1,5 +1,5 @@
 {
-  "name": "@gear/llm-gateway",
+  "name": "@rune/llm-gateway",
   "version": "0.3.0",
   "private": true,
   "main": "src/index.ts",
@@ -11,8 +11,8 @@
     "test": "bun test ../../tests/unit/gateway"
   },
   "dependencies": {
-    "@gear/shared": "workspace:*",
-    "@gear/telemetry": "workspace:*",
+    "@rune/shared": "workspace:*",
+    "@rune/telemetry": "workspace:*",
     "@anthropic-ai/sdk": "^0.39",
     "openai": "^4"
   },

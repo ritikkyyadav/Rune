@@ -29,7 +29,7 @@ function result(over: Partial<AnchorResult>): AnchorResult {
     resolved: 10,
     unscored: 0,
     listUsd: null,
-    gearSha: "abc1234",
+    runeSha: "abc1234",
     ...over,
   };
 }

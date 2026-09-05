@@ -14,7 +14,7 @@
 // its own sake would multiply the surface that has to stay true, and a wrong
 // tool description is worse than a generic one.
 
-/** The model lineages Gear phrases tools for. */
+/** The model lineages Rune phrases tools for. */
 export type ModelFamily = "claude" | "gpt" | "gemini" | "generic";
 
 /**

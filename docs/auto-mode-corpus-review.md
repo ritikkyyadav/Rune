@@ -26,7 +26,7 @@ Two different reasons, and they read differently:
   real; the command text is inferred. What you are confirming is that the reconstruction is a fair
   representation of what the reviewer actually saw.
 - **`designed` and `redteam` rows (24 of the 38).** Written to cover a boundary — connectors,
-  browser, n8n, worker path claims — for which Gear has no recorded decisions at all, because those
+  browser, n8n, worker path claims — for which Rune has no recorded decisions at all, because those
   tools have never run in a session on this machine. The label is a judgement about what Auto
   _should_ do, with no observation behind it. What you are confirming is the judgement.
 

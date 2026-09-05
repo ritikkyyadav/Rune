@@ -9,8 +9,8 @@ import {
   type ProviderName,
   type ResolvedCredential,
   type TokenUsage,
-} from "@gear/llm-gateway";
-import { PROVIDER_PRESETS, openCredentialStore } from "@gear/shared";
+} from "@rune/llm-gateway";
+import { PROVIDER_PRESETS, openCredentialStore } from "@rune/shared";
 
 import {
   AutoModeSafetyController,
@@ -101,8 +101,8 @@ function parseOptions(argv: string[]): Options {
     // says so in the report rather than quietly spending more.
     maxRequests: num("max-requests", 250),
     limit: value("limit") ? Number(value("limit")) : undefined,
-    provider: value("provider") ?? process.env.GEAR_AUTO_EVAL_PROVIDER,
-    model: value("model") ?? process.env.GEAR_AUTO_EVAL_MODEL,
+    provider: value("provider") ?? process.env.RUNE_AUTO_EVAL_PROVIDER,
+    model: value("model") ?? process.env.RUNE_AUTO_EVAL_MODEL,
     baselinePath: value("baseline") ?? join(import.meta.dir, "baselines", "auto-safety.json"),
     noise: num("noise", 0.05),
   };
@@ -503,7 +503,7 @@ async function main(): Promise<void> {
     const wanted = (opts.provider ?? "anthropic") as ProviderName;
     // Keychain and OAuth credentials, resolved for the gateway and for nothing
     // else. The previous runner passed `keys: {}` with no credential map, so a
-    // machine signed in through `gear login` reported every provider
+    // machine signed in through `rune login` reported every provider
     // unconfigured. Nothing here is logged, returned or written down.
     let credentials: Record<string, ResolvedCredential> = {};
     try {
@@ -525,7 +525,7 @@ async function main(): Promise<void> {
       console.error(
         `Provider "${wanted}" has no usable credential on this machine` +
           (registered.length ? ` (available: ${registered.join(", ")})` : "") +
-          `. Set ${preset?.envVar ?? "its credential variable"}, sign in through Gear, or run --offline.`,
+          `. Set ${preset?.envVar ?? "its credential variable"}, sign in through Rune, or run --offline.`,
       );
       process.exitCode = 1;
       return;
@@ -744,7 +744,7 @@ async function main(): Promise<void> {
   if (opts.json) {
     console.log(JSON.stringify(payload, null, 2));
   } else {
-    console.log(`\nGear Auto-mode assurance report — ${credentialNote}`);
+    console.log(`\nRune Auto-mode assurance report — ${credentialNote}`);
     console.log(
       `${rows.length} scenarios · ${summary.byExpected.allow ?? 0} allow / ${summary.byExpected.block ?? 0} block · ` +
         `${summary.unreviewed} awaiting label review · ${Math.round(wallMs / 1000)}s wall`,

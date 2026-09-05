@@ -2,8 +2,8 @@
  * ChatGPT Codex subscription login + transport.
  *   • codexOAuthFlow — fixed-loopback authorize URL, token exchange, id_token →
  *     accountId, refresh.
- *   • toResponsesInput / toResponsesBody — Gear request → Responses API shape.
- *   • parseResponsesStream — Responses SSE → Gear StreamEvents.
+ *   • toResponsesInput / toResponsesBody — Rune request → Responses API shape.
+ *   • parseResponsesStream — Responses SSE → Rune StreamEvents.
  * All pure or network-mocked; no real ChatGPT calls.
  */
 
@@ -231,14 +231,14 @@ describe("toResponsesInput / toResponsesBody", () => {
   it("puts the system prompt in instructions and sets reasoning for a codex model", () => {
     const req: InferenceRequest = {
       messages: convo,
-      system: "You are Gear.",
+      system: "You are Rune.",
       model: "gpt-5.6-sol", // current ChatGPT-account Codex default
       provider: "codex",
       maxTokens: 1000,
       tools: [{ name: "read_file", description: "read", inputSchema: { type: "object" } }],
     };
     const body = toResponsesBody(req, true, "sess-1");
-    expect(body.instructions).toBe("You are Gear.");
+    expect(body.instructions).toBe("You are Rune.");
     expect(body.store).toBe(false);
     expect(body.stream).toBe(true);
     // TRUE, deliberately diverging from the Codex CLI: with it false the
@@ -301,7 +301,7 @@ describe("codexErrorMessage", () => {
 });
 
 describe("parseResponsesStream", () => {
-  it("translates a text + tool-call + completion stream into Gear events", async () => {
+  it("translates a text + tool-call + completion stream into Rune events", async () => {
     const events = [
       `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_1" } })}\n\n`,
       `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "Hello" })}\n\n`,

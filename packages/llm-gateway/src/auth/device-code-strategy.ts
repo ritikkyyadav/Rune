@@ -8,7 +8,7 @@
 // officially supports device authorization plugs in the same way — see
 // auth/oauth-registry.ts, makeDeviceStrategy().
 
-import { oauthAccount } from "@gear/shared";
+import { oauthAccount } from "@rune/shared";
 import type { AuthContext, AuthenticationStrategy, ResolvedCredential, AuthMethod } from "./types";
 import { AuthError } from "./types";
 import type { ExchangeResult } from "./oauth-strategy";
@@ -202,7 +202,7 @@ export class DeviceCodeStrategy implements AuthenticationStrategy {
       providerId: ctx.providerId,
       method: this.method,
       message: `Device login failed: ${message}`,
-      recovery: `run: gear login ${ctx.providerId}`,
+      recovery: `run: rune login ${ctx.providerId}`,
     });
   }
 }

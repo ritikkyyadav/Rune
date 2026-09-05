@@ -56,7 +56,7 @@ function makeEngine(enforcement: "warn" | "block", tag: string): Engine {
     provider: "custom" as ProviderName,
     workspaceRoot: dir,
     dbPath: join(dir, `${tag}.db`),
-    toolsBinaryPath: "gear-tools",
+    toolsBinaryPath: "rune-tools",
     yoloMode: true, // skip the confirm ladder; the team gate is what's under test
     enableCheckpoints: false,
     enableSecurity: false,
@@ -77,7 +77,7 @@ const okOutput = (): ToolCallOutput => ({
 });
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "gear-team-e2e-"));
+  dir = mkdtempSync(join(tmpdir(), "rune-team-e2e-"));
   busPath = join(dir, "team.db");
   mkdirSync(join(dir, "src", "auth"), { recursive: true });
   writeFileSync(join(dir, "src", "auth", "session.ts"), "export const a = 1;\n");
@@ -89,7 +89,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe("two Gear instances in one repository", () => {
+describe("two Rune instances in one repository", () => {
   test("the team tool is registered, and only when a bus exists", () => {
     const withBus = makeEngine("warn", "a");
     expect(
@@ -103,7 +103,7 @@ describe("two Gear instances in one repository", () => {
       provider: "custom" as ProviderName,
       workspaceRoot: dir,
       dbPath: join(dir, "solo.db"),
-      toolsBinaryPath: "gear-tools",
+      toolsBinaryPath: "rune-tools",
       yoloMode: true,
       enableCheckpoints: false,
       enableSecurity: false,

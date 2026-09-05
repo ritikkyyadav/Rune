@@ -12,7 +12,7 @@ import type {
 } from "./types";
 import { CostTracker } from "./cost-tracker";
 import { ProviderHealthStore } from "./provider-health";
-import { providerFallbackRank, PROVIDER_PRESETS } from "@gear/shared";
+import { providerFallbackRank, PROVIDER_PRESETS } from "@rune/shared";
 
 // The model a fallback into each provider asks for — DERIVED from the presets,
 // where `ProviderPreset.fallbackModel` is the one place that id is written.
@@ -110,7 +110,7 @@ export class LlmGateway {
 
   constructor(config: GatewayConfig, health?: ProviderHealthStore) {
     this.config = config;
-    // Persistence is OPT-IN. Defaulting to a store rooted in the real gear
+    // Persistence is OPT-IN. Defaulting to a store rooted in the real rune
     // home made every gateway built without one — every test, every embedded
     // use — read and write a machine-global file, so a live run in one process
     // silently changed fallback behaviour in another. That is the same

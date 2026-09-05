@@ -1,7 +1,7 @@
 /**
  * Format on write, and the density tripwire behind it.
  *
- * The defect: Gear writes hand-minified code. Measured on EvoLab-3's frontend,
+ * The defect: Rune writes hand-minified code. Measured on EvoLab-3's frontend,
  * 8% of lines ran over 200 characters and the longest was 1,307 — whole React
  * components collapsed onto one line, several statements per line, 0.6% comment
  * density. The same product built by another harness: 0.3% long lines, 417 max,
@@ -89,7 +89,7 @@ const run = (root: string, path: string, content: string) =>
 
 let root: string;
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "gear-fmt-"));
+  root = mkdtempSync(join(tmpdir(), "rune-fmt-"));
   resetFormatterCache();
 });
 

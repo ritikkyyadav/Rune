@@ -52,7 +52,7 @@ export interface ToolDefinition {
  *   "Supported values are: 'none', 'minimal', 'low', 'medium', 'high',
  *    'xhigh', and 'max'."
  * Per-model subsets exist (gpt-5.6-sol rejects 'minimal'), so providers clamp;
- * see `codexEffortFor`. Gear previously topped out at "high" and never sent the
+ * see `codexEffortFor`. Rune previously topped out at "high" and never sent the
  * field to Codex at all, which pinned every ChatGPT-subscription session to the
  * server default while `max` sat unreachable.
  */
@@ -139,7 +139,7 @@ export function reasoningEffortsFor(provider: string, model: string): ReasoningE
     return ["low", "medium", "high"];
   }
   // Azure serves the same OpenAI models over the same Chat Completions wire, so
-  // it carries the same dial. The model here is Gear's model id, which maps to
+  // it carries the same dial. The model here is Rune's model id, which maps to
   // a deployment NAME on the way out — the dial follows the model, not the
   // deployment, which is why this tests the id and not the deployment string.
   if ((provider === "openai" || provider === "azure-openai") && /^(gpt-5|o[134])(-|:|$)/.test(m)) {
@@ -450,7 +450,7 @@ export type BillingMode = "metered" | "subscription" | "free";
  * how it was bought, never of what it is.
  */
 export function billingModeFor(provider: string, model: string): BillingMode {
-  // Deliberately NOT derived from PROVIDER_CAPACITY in @gear/shared, which
+  // Deliberately NOT derived from PROVIDER_CAPACITY in @rune/shared, which
   // looks like the same table and is not. That map ranks rate-limit headroom
   // for fallback ordering, and marks openrouter "free" — true of its free
   // pool, false of the paid models on the same account. Billing has to be
@@ -462,7 +462,7 @@ export function billingModeFor(provider: string, model: string): BillingMode {
   // Subscription transports: a plan the user already pays for monthly. The
   // tokens are real; the marginal dollar is zero.
   if (provider === "codex") return "subscription";
-  // Ollama Cloud is NOT one of them. The ids Gear ships for `ollama-turbo` are
+  // Ollama Cloud is NOT one of them. The ids Rune ships for `ollama-turbo` are
   // the ones verified on the DEFAULT, no-subscription plan; the
   // subscription-gated models are deliberately omitted from the preset because
   // they 403. This said "subscription" while PROVIDER_CAPACITY said "free" -

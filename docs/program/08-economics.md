@@ -33,7 +33,7 @@ Every metered provider reports a cache hit rate; the cost per eval task drops me
 
 **P8.7 Model-family adapters (1 day).** Extend the family gate: per-family tool-description variants (edit tool phrasing for Codex vs Claude vs Gemini), Anthropic context-editing where available, the effort dial exposed per provider in the model tree (Codex `low..max`, Gemini thinking budget, OpenAI `reasoning_effort`). `reasoning.effort` was once never sent (memory: probe providers, don't assume); every dial gets a unit test that asserts the wire field.
 
-**P8.8 Cost in the product (half a day).** `gear audit` shows cache hit rate and savings per provider; the desktop footer shows live cost; `cacheHitRate: null` renders as "no data", never 0%.
+**P8.8 Cost in the product (half a day).** `rune audit` shows cache hit rate and savings per provider; the desktop footer shows live cost; `cacheHitRate: null` renders as "no data", never 0%.
 
 ## Gate
 
@@ -41,7 +41,7 @@ Every metered provider reports a cache hit rate; the cost per eval task drops me
 bun test tests/unit/gateway/
 for p in anthropic openai google openrouter codex; do bun run scripts/verify-cache.ts --provider $p; done   # hit rate non-null on all five
 bun run eval -- --real --compare   # totalListCost down ≥20% vs the pre-P8 baseline on the same task set
-gear providers                    # no lmstudio; copilot per D5; ollama-turbo tables agree
+rune providers                    # no lmstudio; copilot per D5; ollama-turbo tables agree
 ```
 
 Done means: caching is a fact per provider, not a belief, and the bill per task went down on the same work.

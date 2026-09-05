@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import type { LlmGateway } from "@gear/llm-gateway";
-import type { ToolSchema } from "@gear/tool-registry";
+import type { LlmGateway } from "@rune/llm-gateway";
+import type { ToolSchema } from "@rune/tool-registry";
 import {
   AutoModeSafetyController,
   resolveAutoModeConfig,

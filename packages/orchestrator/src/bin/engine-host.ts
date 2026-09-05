@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
 // ──────────────────────────────────────────────────────────────────────────
-//  Gear — Engine Host (desktop sidecar)
+//  Rune — Engine Host (desktop sidecar)
 //
 //  A headless bridge that runs the SAME orchestrator Engine the CLI runs and
 //  exposes it over line-delimited JSON on stdio. The Tauri desktop app spawns
 //  this process and pumps its stdin/stdout, so the GUI gets the exact same
 //  models, providers, BYOK keys, web search (Brave/Tavily), MCP servers and
-//  skills as `gear` on the terminal — for free,
+//  skills as `rune` on the terminal — for free,
 //  because it is literally the same engine reading the same key files.
 //
 //  Protocol (one JSON object per line, UTF-8):
@@ -26,7 +26,7 @@ import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { Engine } from "../engine";
-import type { AgentTurnEvent, HostCommandName, RpcError } from "@gear/protocol";
+import type { AgentTurnEvent, HostCommandName, RpcError } from "@rune/protocol";
 import {
   HOST_COMMANDS,
   PROTOCOL_VERSION,
@@ -46,19 +46,19 @@ import {
   streamNotification,
   toRequest,
   toResponse,
-} from "@gear/protocol";
+} from "@rune/protocol";
 import { FrameWriter, type FramedSocket } from "./host-framing";
 import { RoundTripRegistry } from "./host-roundtrips";
 import { HeldStepLedger } from "./host-held-steps";
 import type { ResearchEvent, ResearchOptions } from "../research-types";
 import { isClarification } from "../research-types";
-import type { ProviderName } from "@gear/llm-gateway";
+import type { ProviderName } from "@rune/llm-gateway";
 import {
   hasStoredCredential,
   getPreset,
   CUSTOM_PROVIDER_ID,
   adoptLegacyEnv,
-  ensureGearHome,
+  ensureRuneHome,
   migrateLegacyHome,
   loadConfig,
   loadSecrets,
@@ -78,7 +78,7 @@ import {
   loadSavedSandboxState,
   resolveInitialSandbox,
   setConfigValue,
-} from "@gear/shared";
+} from "@rune/shared";
 import {
   configModeToPermissionMode,
   resolveStartupPermissionFlags,
@@ -120,7 +120,7 @@ const SOCKET_PATH = socketArgIdx !== -1 ? process.argv[socketArgIdx + 1] : null;
 /**
  * The supervisor that spawned this host, if it wants to be its parent.
  *
- * `gear serve` and `gear acp` pass their own pid; `gear detach` deliberately
+ * `rune serve` and `rune acp` pass their own pid; `rune detach` deliberately
  * does not, because a detached run's whole purpose is outliving the terminal
  * that started it. When it is set, the host polls the pid and exits once it is
  * gone — the case no shutdown handler can cover, because a `kill -9` on the
@@ -149,7 +149,7 @@ const frames = new FrameWriter();
 /**
  * Extra sinks a wrapper transport registers to receive every stream frame.
  *
- * `gear serve` (P2.4) wraps this host rather than reimplementing it: it adds
+ * `rune serve` (P2.4) wraps this host rather than reimplementing it: it adds
  * itself here and fans frames out to its websocket clients, so the websocket,
  * the unix socket and stdio are provably the same stream and not three
  * hand-kept copies of one.
@@ -192,7 +192,7 @@ function emitStream(stream: string, payload: unknown): void {
   send({ stream, payload });
 }
 
-// ─── Engine construction (mirrors gear-cli.ts main()) ───
+// ─── Engine construction (mirrors rune-cli.ts main()) ───
 // Same provider/model resolution, same key sources, so the desktop behaves
 // identically to the terminal.
 
@@ -220,13 +220,13 @@ function isCliProvider(p: string): p is CliProvider {
 }
 
 function ensureDataDir(): string {
-  return ensureGearHome();
+  return ensureRuneHome();
 }
 
 /**
  * Where the session database is, captured when the engine is built.
  *
- * `export_trace` must open the SAME file `gear export` opens, and the
+ * `export_trace` must open the SAME file `rune export` opens, and the
  * resolution lives inside `buildEngine`'s locals — so it is recorded here
  * rather than re-derived, which is how the two would end up reading different
  * databases and producing two "exports" of one session.
@@ -239,7 +239,7 @@ function dbPath(): string {
 /** The directory this host is working in — the review workspace's root. */
 let engineWorkspaceRoot = "";
 function workspaceRootOf(): string {
-  return engineWorkspaceRoot || process.env.GEAR_WORKSPACE || process.cwd();
+  return engineWorkspaceRoot || process.env.RUNE_WORKSPACE || process.cwd();
 }
 
 function buildEngine(): Engine {
@@ -247,7 +247,7 @@ function buildEngine(): Engine {
   migrateLegacyHome();
   ensureDataDir();
   const workspaceRoot =
-    process.env.GEAR_WORKSPACE || process.env.GEAR_WORKSPACE || process.env.HOME || process.cwd();
+    process.env.RUNE_WORKSPACE || process.env.RUNE_WORKSPACE || process.env.HOME || process.cwd();
   const config = loadConfig(workspaceRoot);
   const secrets = loadSecrets();
 
@@ -266,7 +266,7 @@ function buildEngine(): Engine {
     return "openrouter";
   }
 
-  // The model you last used IS the model you get. Same fix as gear-cli's: the
+  // The model you last used IS the model you get. Same fix as rune-cli's: the
   // gate used to be a five-id hand-written list plus a credential check that
   // only understood env vars and API keys, so a subscription provider (codex,
   // failed both halves and the session opened on an auto-detected
@@ -305,10 +305,10 @@ function buildEngine(): Engine {
   if (
     config.search?.provider &&
     config.search.provider !== "auto" &&
-    !process.env.GEAR_SEARCH_BACKEND &&
-    !process.env.GEAR_SEARCH_BACKEND
+    !process.env.RUNE_SEARCH_BACKEND &&
+    !process.env.RUNE_SEARCH_BACKEND
   ) {
-    process.env.GEAR_SEARCH_BACKEND = config.search.provider;
+    process.env.RUNE_SEARCH_BACKEND = config.search.provider;
   }
   applySearchKeysToEnv();
 
@@ -325,7 +325,7 @@ function buildEngine(): Engine {
     provider: provider as ProviderName,
     workspaceRoot,
     dbPath: config.engine.dbPath,
-    toolsBinaryPath: process.env.GEAR_TOOLS_BIN || process.env.GEAR_TOOLS_BIN || "gear-tools",
+    toolsBinaryPath: process.env.RUNE_TOOLS_BIN || process.env.RUNE_TOOLS_BIN || "rune-tools",
     yoloMode: permissionFlags.yoloMode,
     trustWorkspace: permissionFlags.trustWorkspace,
     permissionMode: permissionFlags.permissionMode,
@@ -337,7 +337,7 @@ function buildEngine(): Engine {
     autoMode: config.permissions?.autoMode,
     // Same posture resolution as the CLI, minus CLI flags (desktop has none).
     sandboxEnabled: resolveInitialSandbox({
-      env: process.env.GEAR_SANDBOX_ENABLED ?? null,
+      env: process.env.RUNE_SANDBOX_ENABLED ?? null,
       saved: loadSavedSandboxState(),
       configured: config.sandbox?.enabled ?? null,
     }),
@@ -346,7 +346,7 @@ function buildEngine(): Engine {
     openaiApiKey: process.env.OPENAI_API_KEY ? undefined : config.llm.openai?.apiKey,
     openrouterApiKey: process.env.OPENROUTER_API_KEY ? undefined : config.llm.openrouter?.apiKey,
     googleApiKey: process.env.GOOGLE_API_KEY ? undefined : config.llm.google?.apiKey,
-    // BYOK keys + custom endpoint + toggles from ~/.gear/secrets.json (win over config.toml).
+    // BYOK keys + custom endpoint + toggles from ~/.rune/secrets.json (win over config.toml).
     providerKeys: secrets.keys,
     providerKeyEntries: Object.fromEntries(
       PROVIDER_PRESETS.map((p) => [p.id, providerKeyEntries(secrets, p.id)]).filter(
@@ -361,7 +361,7 @@ function buildEngine(): Engine {
     // desktop with nothing to explain the difference.
     localBaseUrls: secrets.endpoints,
     // `[providers.*]` — the enterprise routes' coordinates. Read here for the
-    // same reason localBaseUrls is: a session opened by `gear serve` or the
+    // same reason localBaseUrls is: a session opened by `rune serve` or the
     // desktop must reach the same AWS region / GCP project / Azure resource the
     // terminal does, and a host that quietly ignored the config would work in
     // one surface and fail in the other with nothing to explain the difference.
@@ -472,7 +472,7 @@ engine.setAutoDeferralNotifier((deferrals) => {
 //
 // This host still runs ONE session at a time, because `Engine` holds a single
 // `currentAbort`/`liveLoop` and refactoring it for in-process multiplexing was
-// explicitly declined. True concurrency is `gear serve`'s job: one host process
+// explicitly declined. True concurrency is `rune serve`'s job: one host process
 // per session, which is the supervisor half of P2.3. What changes here is that
 // the host is HONEST about it — a chat_start for a second session is refused
 // naming the one that holds the engine, instead of a bare "already in progress".
@@ -604,7 +604,7 @@ async function dispatch(cmd: HostCommandName, args: Record<string, unknown>): Pr
       // frames later.
       return {
         protocolVersion: PROTOCOL_VERSION,
-        server: "gear-engine-host",
+        server: "rune-engine-host",
         commands: [...HOST_COMMANDS],
       };
 
@@ -781,7 +781,7 @@ async function dispatch(cmd: HostCommandName, args: Record<string, unknown>): Pr
       return engine.getTurnContext(optionalString(args, "sessionId"));
 
     case "export_trace": {
-      // The SAME exporter `gear export` uses, so a trace exported from the
+      // The SAME exporter `rune export` uses, so a trace exported from the
       // desktop and one exported from the terminal are one artifact and verify
       // with one key. Reimplementing it here for the GUI is exactly how the two
       // would drift into "the desktop's export" and "the real one".
@@ -845,7 +845,7 @@ async function dispatch(cmd: HostCommandName, args: Record<string, unknown>): Pr
       }
       const full = `${workspaceRootOf()}/${rel}`;
       // $EDITOR wins because it is the person's own answer to this question.
-      const editor = process.env.GEAR_EDITOR || process.env.VISUAL || process.env.EDITOR;
+      const editor = process.env.RUNE_EDITOR || process.env.VISUAL || process.env.EDITOR;
       const opener = editor
         ? [editor, full]
         : process.platform === "darwin"
@@ -930,13 +930,13 @@ async function dispatch(cmd: HostCommandName, args: Record<string, unknown>): Pr
     }
 
     case "list_connectors": {
-      // The same merge and the same discovery `gear mcp list` runs, so the app
+      // The same merge and the same discovery `rune mcp list` runs, so the app
       // and the console cannot disagree about what is connected. Discovery
       // costs about a second and is worth it: a configured connector and a
       // working one are different claims.
       const { mergedServers, McpDiscovery, mcpCredentialAccount } =
-        await import("@gear/tool-registry");
-      const { openCredentialStore } = await import("@gear/shared");
+        await import("@rune/tool-registry");
+      const { openCredentialStore } = await import("@rune/shared");
       const root = workspaceRootOf();
       const { servers, errors } = mergedServers(root);
       const statuses = new Map<
@@ -991,7 +991,7 @@ async function dispatch(cmd: HostCommandName, args: Record<string, unknown>): Pr
         if (typeof value !== "string") continue;
         const key = value.trim();
         if (key) {
-          persistProviderKey(pid, key); // → ~/.gear/secrets.json (0600)
+          persistProviderKey(pid, key); // → ~/.rune/secrets.json (0600)
           engine.setProviderKey(pid, key); // live, rebuilds the gateway
         } else {
           // Empty string = clear that key.
@@ -1016,7 +1016,7 @@ async function dispatch(cmd: HostCommandName, args: Record<string, unknown>): Pr
               : configModeToPermissionMode(permissionLevel);
         if (mode) {
           const changed = engine.setPermissionMode(mode);
-          if (!changed.ok) throw new Error(changed.reason ?? `gear ${mode} is unavailable`);
+          if (!changed.ok) throw new Error(changed.reason ?? `rune ${mode} is unavailable`);
           if (args.persist === true) {
             setConfigValue("permissions.gear", permissionModeToConfig(mode), {
               scope: "global",
@@ -1114,7 +1114,7 @@ async function dispatch(cmd: HostCommandName, args: Record<string, unknown>): Pr
 // ─── Request handling (shared by stdio, socket and websocket) ───
 //
 // One entry point, three transports. The envelope is normalised in
-// `@gear/protocol`: a legacy `{id,cmd,args}` frame and a JSON-RPC 2.0 frame
+// `@rune/protocol`: a legacy `{id,cmd,args}` frame and a JSON-RPC 2.0 frame
 // both arrive here as the same thing, and the response goes back in the
 // dialect the request came in — a desktop binary already on someone's machine
 // must keep working against a host it did not ship with.
@@ -1122,7 +1122,7 @@ async function dispatch(cmd: HostCommandName, args: Record<string, unknown>): Pr
 export type HostReply = (frame: unknown) => void;
 
 /**
- * Per-connection policy. `gear serve` supplies one that refuses credential
+ * Per-connection policy. `rune serve` supplies one that refuses credential
  * writes over a non-loopback link; stdio and unix-socket connections are
  * already as local as a process gets and supply none.
  */

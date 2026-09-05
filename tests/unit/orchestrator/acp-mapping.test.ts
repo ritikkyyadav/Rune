@@ -1,5 +1,5 @@
 /**
- * The Gear → ACP event mapping, one case per member of the turn union.
+ * The Rune → ACP event mapping, one case per member of the turn union.
  *
  * `docs/editors.md` publishes a table saying what an editor receives for each
  * of the 22 events and why the rest are dropped. A table in prose beside a
@@ -15,7 +15,7 @@
 
 import { describe, expect, test } from "bun:test";
 
-import type { AgentTurnEvent } from "@gear/protocol";
+import type { AgentTurnEvent } from "@rune/protocol";
 
 import { toUpdate, toolKind } from "../../../packages/orchestrator/src/bin/acp-cli";
 

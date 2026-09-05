@@ -1,21 +1,21 @@
-// ─── `gear evolve`: the self-evolution loop, read back ───
+// ─── `rune evolve`: the self-evolution loop, read back ───
 //
 // Five surfaces, no Engine, no provider — everything reads the local record:
 //   status     where the loop stands: what is learned, what is measured,
 //              what is applied by itself and what still needs a person
 //   scorecard  outcomes per model or per workspace from run retros (runs that
 //              predate the retro are derived after the fact, marked so)
-//   lessons    what Gear knows about THIS repository, and its playbook
+//   lessons    what Rune knows about THIS repository, and its playbook
 //   tune       rule-based proposals from the scorecard — printed, never applied
 //   gardener   harness defects the black box has evidence for, as a brief a
-//              detached run on Gear's own repository can take (--run)
+//              detached run on Rune's own repository can take (--run)
 
 import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getGearHome, SessionManager } from "@gear/shared";
-import type { SessionEvent } from "@gear/shared";
-import { BlackboxStore } from "@gear/telemetry";
+import { getRuneHome, SessionManager } from "@rune/shared";
+import type { SessionEvent } from "@rune/shared";
+import { BlackboxStore } from "@rune/telemetry";
 import { NotebookStore } from "../notebook/store";
 import { repoKey as repoKeyOf } from "../notebook/fingerprint";
 import { PLAYBOOK_PENDING_REL, PLAYBOOK_REL, playbookEntries } from "../playbook";
@@ -66,7 +66,7 @@ function pct(n: number): string {
 }
 
 /**
- * The CLI's own flags. gear-cli parses with strict:false, which turns an
+ * The CLI's own flags. rune-cli parses with strict:false, which turns an
  * unknown `--days 30` into a boolean plus a stray positional — so the
  * sub-command reads its flags from argv directly.
  */
@@ -269,7 +269,7 @@ function cmdTune(sm: SessionManager, opts: Record<string, string | true>): numbe
   const proposals = tuneProposals(rows, { minRuns: num(opts["min-runs"], 5) });
   say();
   say(
-    `  ${accent("Tuning proposals")} ${dim("·")} from ${c.samples.length} runs over ${days} days ${dim("·")} ${dim("never applied by themselves — each one that names a variant is measurable with gear evolve ab")}`,
+    `  ${accent("Tuning proposals")} ${dim("·")} from ${c.samples.length} runs over ${days} days ${dim("·")} ${dim("never applied by themselves — each one that names a variant is measurable with rune evolve ab")}`,
   );
   say();
   if (proposals.length === 0) {
@@ -293,7 +293,7 @@ function cmdTune(sm: SessionManager, opts: Record<string, string | true>): numbe
       // A proposal that names a variant is one command from evidence. That is
       // the whole change: before, `config` was a TOML line to retype by hand,
       // which is why 128 measured runs produced no change at all.
-      say(`    ${dim("measure")}   ${info(`gear evolve ab ${p.variant}`)} ${dim(`→ ${p.config}`)}`);
+      say(`    ${dim("measure")}   ${info(`rune evolve ab ${p.variant}`)} ${dim(`→ ${p.config}`)}`);
     } else {
       say(
         `    ${dim("config")}    ${info(p.config)} ${dim("· no variant: outside the allowlist")}`,
@@ -307,9 +307,9 @@ function cmdTune(sm: SessionManager, opts: Record<string, string | true>): numbe
 function cmdLessons(workspaceRoot: string, opts: Record<string, string | true>): number {
   let store: NotebookStore;
   try {
-    store = new NotebookStore(join(getGearHome(), "notebook.db"));
+    store = new NotebookStore(join(getRuneHome(), "notebook.db"));
   } catch {
-    say(dim("  Could not open ~/.gear/notebook.db"));
+    say(dim("  Could not open ~/.rune/notebook.db"));
     return 1;
   }
   try {
@@ -324,7 +324,7 @@ function cmdLessons(workspaceRoot: string, opts: Record<string, string | true>):
     if (entries.length === 0) {
       say(
         dim(
-          "  Nothing learned here yet. Gear writes a lesson when a run verifies a command, hits the same failure twice, or fixes a command by changing its arguments.",
+          "  Nothing learned here yet. Rune writes a lesson when a run verifies a command, hits the same failure twice, or fixes a command by changing its arguments.",
         ),
       );
     }
@@ -359,14 +359,14 @@ function cmdLessons(workspaceRoot: string, opts: Record<string, string | true>):
       say(
         `  ${text("Playbook")}  ${
           draft
-            ? `${warn(PLAYBOOK_PENDING_REL)} ${dim("· drafted and inert — gear evolve playbook --enable")}`
+            ? `${warn(PLAYBOOK_PENDING_REL)} ${dim("· drafted and inert — rune evolve playbook --enable")}`
             : dim(
                 `not written yet — appears once a lesson reaches ${"active"} and learned skills are enabled`,
               )
         }`,
       );
     }
-    say(dim("  manage: gear notebook show <id> · gear notebook rm <id>"));
+    say(dim("  manage: rune notebook show <id> · rune notebook rm <id>"));
     say();
     return 0;
   } finally {
@@ -374,7 +374,7 @@ function cmdLessons(workspaceRoot: string, opts: Record<string, string | true>):
   }
 }
 
-function isGearRepo(dir: string): boolean {
+function isRuneRepo(dir: string): boolean {
   try {
     const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { name?: string };
     return existsSync(join(dir, "packages", "orchestrator", "src", "engine.ts")) && !!pkg.name;
@@ -389,9 +389,9 @@ async function cmdGardener(
 ): Promise<number> {
   let bb: BlackboxStore;
   try {
-    bb = new BlackboxStore(join(getGearHome(), "blackbox.db"));
+    bb = new BlackboxStore(join(getRuneHome(), "blackbox.db"));
   } catch {
-    say(dim("  Could not open ~/.gear/blackbox.db"));
+    say(dim("  Could not open ~/.rune/blackbox.db"));
     return 1;
   }
   try {
@@ -441,15 +441,15 @@ async function cmdGardener(
     if (opts.run !== true) {
       say(
         dim(
-          `  dry run. \`gear evolve gardener --run\` starts a detached run on this brief in an isolated worktree of Gear's own repository — it commits on its branch and never pushes; you review the branch.`,
+          `  dry run. \`rune evolve gardener --run\` starts a detached run on this brief in an isolated worktree of Rune's own repository — it commits on its branch and never pushes; you review the branch.`,
         ),
       );
       say();
       return 0;
     }
-    if (!isGearRepo(workspaceRoot)) {
+    if (!isRuneRepo(workspaceRoot)) {
       say(
-        `  ${danger("!")} --run needs Gear's own repository as the workspace (run it there, or pass -w <path>).`,
+        `  ${danger("!")} --run needs Rune's own repository as the workspace (run it there, or pass -w <path>).`,
       );
       say();
       return 2;
@@ -500,7 +500,7 @@ function cmdStatus(
   );
 
   try {
-    const nb = new NotebookStore(join(getGearHome(), "notebook.db"));
+    const nb = new NotebookStore(join(getRuneHome(), "notebook.db"));
     try {
       const all = nb.list({ includeRetired: true, limit: 5000 });
       const stages = stageCounts(all);
@@ -518,7 +518,7 @@ function cmdStatus(
       const live = existsSync(join(workspaceRoot, PLAYBOOK_REL));
       const draft = existsSync(join(workspaceRoot, PLAYBOOK_PENDING_REL));
       say(
-        `  ${text("Here")}      ${here.length} entr${here.length === 1 ? "y" : "ies"} ${dim(`(${hereStages.active} active)`)} ${dim("·")} playbook ${live ? ok(PLAYBOOK_REL) : draft ? warn(`${PLAYBOOK_PENDING_REL} — inert, gear evolve playbook --enable`) : dim("not yet written")}`,
+        `  ${text("Here")}      ${here.length} entr${here.length === 1 ? "y" : "ies"} ${dim(`(${hereStages.active} active)`)} ${dim("·")} playbook ${live ? ok(PLAYBOOK_REL) : draft ? warn(`${PLAYBOOK_PENDING_REL} — inert, rune evolve playbook --enable`) : dim("not yet written")}`,
       );
     } finally {
       nb.close();
@@ -528,11 +528,11 @@ function cmdStatus(
   }
 
   try {
-    const bb = new BlackboxStore(join(getGearHome(), "blackbox.db"));
+    const bb = new BlackboxStore(join(getRuneHome(), "blackbox.db"));
     try {
       const cands = gardenerCandidates(bb.top({ limit: 400, sinceDays: 60 }));
       say(
-        `  ${text("Gardener")}  ${cands.length} harness defect${cands.length === 1 ? "" : "s"} with evidence ${dim("·")} ${cands.length > 0 ? `${warn(cands[0].class)} ${dim(`${cands[0].count}×`)}` : ok("none")} ${dim("· gear evolve gardener")}`,
+        `  ${text("Gardener")}  ${cands.length} harness defect${cands.length === 1 ? "" : "s"} with evidence ${dim("·")} ${cands.length > 0 ? `${warn(cands[0].class)} ${dim(`${cands[0].count}×`)}` : ok("none")} ${dim("· rune evolve gardener")}`,
       );
     } finally {
       bb.close();
@@ -543,11 +543,11 @@ function cmdStatus(
 
   const proposals = tuneProposals(scorecard(c.samples, "model"));
   say(
-    `  ${text("Tuning")}    ${proposals.length} proposal${proposals.length === 1 ? "" : "s"} ${dim("· printed by gear evolve tune, measurable with gear evolve ab")}`,
+    `  ${text("Tuning")}    ${proposals.length} proposal${proposals.length === 1 ? "" : "s"} ${dim("· printed by rune evolve tune, measurable with rune evolve ab")}`,
   );
 
   // ── The A/B ledger: the last measured lift, with its date ──
-  const ledger = readLedger(gearHome(opts));
+  const ledger = readLedger(runeHome(opts));
   const measurements = ledger.filter((e) => e.kind === "measurement");
   const last = measurements[measurements.length - 1];
   const standing = activePromotions(ledger);
@@ -559,7 +559,7 @@ function cmdStatus(
     );
   } else {
     say(
-      `  ${text("Last A/B")}  ${dim("none run — gear evolve ab <variant>; bare `gear evolve ab` lists them")}`,
+      `  ${text("Last A/B")}  ${dim("none run — rune evolve ab <variant>; bare `rune evolve ab` lists them")}`,
     );
   }
   say(
@@ -571,7 +571,7 @@ function cmdStatus(
       "  applied by itself: retro → notebook (candidates) · measured then promoted: variants, lessons, the playbook · a person on the merge: gardener",
     ),
   );
-  say(dim("  gear evolve scorecard · lessons · tune · ab · promote · revert · why · playbook"));
+  say(dim("  rune evolve scorecard · lessons · tune · ab · promote · revert · why · playbook"));
   say();
   return 0;
 }
@@ -583,8 +583,8 @@ function cmdStatus(
 // block is rendered FROM the ledger rather than edited alongside it. One source
 // of truth means a revert cannot leave the file and the history disagreeing.
 
-function gearHome(opts: Record<string, string | true>): string {
-  return typeof opts.home === "string" ? opts.home : getGearHome();
+function runeHome(opts: Record<string, string | true>): string {
+  return typeof opts.home === "string" ? opts.home : getRuneHome();
 }
 
 function printRefusals(refusals: string[]): void {
@@ -592,10 +592,10 @@ function printRefusals(refusals: string[]): void {
 }
 
 /**
- * `gear evolve ab <variant>` — run the paired A/B and record the result.
+ * `rune evolve ab <variant>` — run the paired A/B and record the result.
  *
  * The suite lives in the repository, not in the installed binary, so this
- * shells out to `bun run tests/eval/runner.ts --ab <id>` in a Gear checkout and
+ * shells out to `bun run tests/eval/runner.ts --ab <id>` in a Rune checkout and
  * reads the report it writes. Outside a checkout it says so rather than
  * pretending: there is no eval suite to run, and inventing a number would be
  * the exact failure this phase exists to prevent.
@@ -614,7 +614,7 @@ async function cmdAb(
       say(`  ${text(v.padEnd(16))} ${dim(variantOf(v).summary)}`);
     }
     say();
-    say(dim(`  Usage: gear evolve ab <variant>   ${id ? `("${id}" is not one of them)` : ""}`));
+    say(dim(`  Usage: rune evolve ab <variant>   ${id ? `("${id}" is not one of them)` : ""}`));
     say();
     return id ? 2 : 0;
   }
@@ -622,9 +622,9 @@ async function cmdAb(
   const repoRoot = findRepoRoot(workspaceRoot) ?? findRepoRoot(process.cwd());
   if (!repoRoot) {
     say(
-      `  ${danger("!")} no eval suite here. \`gear evolve ab\` runs tests/eval against two configurations,`,
+      `  ${danger("!")} no eval suite here. \`rune evolve ab\` runs tests/eval against two configurations,`,
     );
-    say(`    so it needs a Gear checkout as the workspace (run it there, or pass -w <path>).`);
+    say(`    so it needs a Rune checkout as the workspace (run it there, or pass -w <path>).`);
     say();
     return 2;
   }
@@ -635,7 +635,7 @@ async function cmdAb(
   say(`  ${faint(v.hypothesis)}`);
   say();
 
-  const out = join(tmpdir(), `gear-ab-${id}-${Date.now()}.json`);
+  const out = join(tmpdir(), `rune-ab-${id}-${Date.now()}.json`);
   const args = ["run", join(repoRoot, "tests", "eval", "runner.ts"), "--ab", id, "--ab-out", out];
   if (mode === "real") args.push("--real");
   const proc = Bun.spawn(["bun", ...args], {
@@ -694,12 +694,12 @@ async function cmdAb(
       regressions: c.regressions,
       refusals: c.refusals,
     },
-    gearHome(opts),
+    runeHome(opts),
   );
   say(
-    `  ${c.win ? ok("recorded: WIN") : warn("recorded: no change")} ${dim("· ledger")} ${info(ledgerPath(gearHome(opts)))}`,
+    `  ${c.win ? ok("recorded: WIN") : warn("recorded: no change")} ${dim("· ledger")} ${info(ledgerPath(runeHome(opts)))}`,
   );
-  if (c.win) say(`  ${dim("next")}      ${info(`gear evolve promote ${id}`)}`);
+  if (c.win) say(`  ${dim("next")}      ${info(`rune evolve promote ${id}`)}`);
   say();
   return 0;
 }
@@ -709,11 +709,11 @@ function cmdPromote(
   rest: string[],
   opts: Record<string, string | true>,
 ): number {
-  const home = gearHome(opts);
+  const home = runeHome(opts);
   const id = rest[1];
   say();
   if (!id) {
-    say(dim("  Usage: gear evolve promote <variant>"));
+    say(dim("  Usage: rune evolve promote <variant>"));
     say();
     return 2;
   }
@@ -737,13 +737,13 @@ function cmdPromote(
   say();
   say(`  ${dim("config")}   ${result.configPath}`);
   say(`  ${dim("ledger")}   ${ledgerPath(home)}`);
-  say(`  ${dim("undo")}     ${info("gear evolve revert")}`);
+  say(`  ${dim("undo")}     ${info("rune evolve revert")}`);
   say();
   return 0;
 }
 
 function cmdRevert(rest: string[], opts: Record<string, string | true>): number {
-  const home = gearHome(opts);
+  const home = runeHome(opts);
   const n = num(rest[1], 1);
   say();
   const result = revert(n, { home });
@@ -762,14 +762,14 @@ function cmdRevert(rest: string[], opts: Record<string, string | true>): number 
   if (result.halted) {
     say();
     say(`  ${danger("HALTED")}  ${text(result.haltReason ?? "two consecutive reverts")}`);
-    say(`  ${dim("resume")}   ${info("gear evolve resume")}`);
+    say(`  ${dim("resume")}   ${info("rune evolve resume")}`);
   }
   say();
   return 0;
 }
 
 function cmdResume(opts: Record<string, string | true>): number {
-  const home = gearHome(opts);
+  const home = runeHome(opts);
   say();
   if (!resume({ home })) {
     say(dim("  The loop is not halted; nothing to resume."));
@@ -784,14 +784,14 @@ function cmdResume(opts: Record<string, string | true>): number {
 }
 
 function cmdYardstick(workspaceRoot: string, opts: Record<string, string | true>): number {
-  const home = gearHome(opts);
+  const home = runeHome(opts);
   const { repoRoot, hash } = currentYardstick(findRepoRoot(workspaceRoot) ?? process.cwd());
   const blessed = readBlessed(home);
   say();
   say(`  ${accent("Yardstick")} ${dim("· the eval suite promotions are measured against")}`);
   say();
   if (!hash) {
-    say(dim("  No tests/eval here — run this from a Gear checkout."));
+    say(dim("  No tests/eval here — run this from a Rune checkout."));
     say();
     return 2;
   }
@@ -819,13 +819,13 @@ function cmdYardstick(workspaceRoot: string, opts: Record<string, string | true>
   } else {
     say(ok("  Unchanged since it was blessed."));
   }
-  say(dim("  bless it: gear evolve yardstick --bless"));
+  say(dim("  bless it: rune evolve yardstick --bless"));
   say();
   return 0;
 }
 
 /**
- * `gear evolve why <variant|lesson>` — the lineage.
+ * `rune evolve why <variant|lesson>` — the lineage.
  *
  * The question a promotion has to be able to answer is "why does it believe
  * this", and the answer is not a confidence score: it is the hypothesis someone
@@ -838,11 +838,11 @@ function cmdWhy(
   rest: string[],
   opts: Record<string, string | true>,
 ): number {
-  const home = gearHome(opts);
+  const home = runeHome(opts);
   const subject = rest[1];
   say();
   if (!subject) {
-    say(dim("  Usage: gear evolve why <variant|lesson-id>"));
+    say(dim("  Usage: rune evolve why <variant|lesson-id>"));
     say();
     return 2;
   }
@@ -862,7 +862,7 @@ function cmdWhy(
     if (!printed && entries.length === 0) {
       say(`  ${danger("!")} nothing known about "${subject}".`);
       say(dim(`     variants: ${VARIANT_IDS.join(", ")}`));
-      say(dim("     lessons:  gear evolve lessons"));
+      say(dim("     lessons:  rune evolve lessons"));
       say();
       return 2;
     }
@@ -903,7 +903,7 @@ function cmdWhy(
 function whyLesson(workspaceRoot: string, shortId: string): boolean {
   let store: NotebookStore;
   try {
-    store = new NotebookStore(join(getGearHome(), "notebook.db"));
+    store = new NotebookStore(join(getRuneHome(), "notebook.db"));
   } catch {
     return false;
   }
@@ -943,10 +943,10 @@ function whyLesson(workspaceRoot: string, shortId: string): boolean {
 }
 
 /**
- * `gear evolve backfill` — read history back into the notebook, as candidates.
+ * `rune evolve backfill` — read history back into the notebook, as candidates.
  *
  * `recordLessons` had exactly one call site (the engine's per-run retro) and the
- * backfill never called it, which is why `gear evolve` could derive 128 retros
+ * backfill never called it, which is why `rune evolve` could derive 128 retros
  * carrying lessons and the notebook still held zero pitfalls: the organ read
  * history and wrote nothing back.
  *
@@ -1004,7 +1004,7 @@ function cmdBackfill(
 
   let store: NotebookStore;
   try {
-    store = new NotebookStore(join(getGearHome(), "notebook.db"));
+    store = new NotebookStore(join(getRuneHome(), "notebook.db"));
   } catch {
     say(dim("  Could not open notebook.db"));
     return 1;
@@ -1032,7 +1032,7 @@ function cmdBackfill(
         "  None of them is injected yet. A candidate becomes a trial by being learned again, in a second session, from a real run.",
       ),
     );
-    say(dim(`  see: gear evolve lessons --all   ·   workspace ${workspaceRoot}`));
+    say(dim(`  see: rune evolve lessons --all   ·   workspace ${workspaceRoot}`));
     say();
     return 0;
   } finally {
@@ -1041,7 +1041,7 @@ function cmdBackfill(
 }
 
 /**
- * `gear evolve playbook [--enable|--disable]` — the consent gate for learned
+ * `rune evolve playbook [--enable|--disable]` — the consent gate for learned
  * skills.
  *
  * The playbook is a file the skills loader reads and the model can follow, so
@@ -1049,7 +1049,7 @@ function cmdBackfill(
  * otherwise, once, here. Nothing else in the codebase writes this file.
  */
 function cmdPlaybook(workspaceRoot: string, opts: Record<string, string | true>): number {
-  const home = gearHome(opts);
+  const home = runeHome(opts);
   say();
   if (opts.enable === true || opts.disable === true) {
     const on = opts.enable === true;
@@ -1066,7 +1066,7 @@ function cmdPlaybook(workspaceRoot: string, opts: Record<string, string | true>)
       );
       say(
         dim(
-          "  Undo with `gear evolve playbook --disable`; the file stays for you to read or delete.",
+          "  Undo with `rune evolve playbook --disable`; the file stays for you to read or delete.",
         ),
       );
     } else {
@@ -1098,7 +1098,7 @@ function cmdPlaybook(workspaceRoot: string, opts: Record<string, string | true>)
       "  Only ACTIVE lessons reach it: ≥5 injections with a win rate above the ambient baseline.",
     ),
   );
-  say(dim(`  enable: gear evolve playbook --enable`));
+  say(dim(`  enable: rune evolve playbook --enable`));
   say();
   return 0;
 }
@@ -1123,8 +1123,8 @@ export async function runEvolve(args: string[], values: Record<string, unknown>)
 
   const dbPath =
     (typeof values.db === "string" && values.db) ||
-    process.env.GEAR_DB_PATH ||
-    join(getGearHome(), "gear.db");
+    process.env.RUNE_DB_PATH ||
+    join(getRuneHome(), "rune.db");
   let sm: SessionManager;
   try {
     sm = new SessionManager(dbPath);
@@ -1139,7 +1139,7 @@ export async function runEvolve(args: string[], values: Record<string, unknown>)
     if (sub === "backfill") return cmdBackfill(sm, workspaceRoot, opts);
     say(
       dim(
-        "  Usage: gear evolve [status|scorecard|lessons|tune|ab|promote|revert|why|yardstick|playbook|backfill|resume|gardener]",
+        "  Usage: rune evolve [status|scorecard|lessons|tune|ab|promote|revert|why|yardstick|playbook|backfill|resume|gardener]",
       ),
     );
     say(

@@ -9,7 +9,7 @@
 // A meter that cannot distinguish "free" from "unmeasured", or show what the
 // same work costs metered, answers no question anyone actually asks.
 
-import type { CostBreakdown } from "@gear/llm-gateway";
+import type { CostBreakdown } from "@rune/llm-gateway";
 
 export type CostTone = "normal" | "muted" | "warn" | "good";
 
@@ -49,7 +49,7 @@ function formatPercent(rate: number): string {
  * rendering them the same is how an invented number reaches a screen.
  *
  * Every surface that shows a hit rate calls this: the `/cost` readout, the
- * status line, and `gear audit`.
+ * status line, and `rune audit`.
  */
 export function formatCacheRate(rate: number | null): string {
   return rate === null ? "no data" : formatPercent(rate);

@@ -7,7 +7,7 @@
 //
 // Both shapes are accepted on the wire and `toRequest` / `toResponse`
 // normalise them, so a v0 desktop build and a v1 SDK client can talk to the
-// same host. New transports (`gear serve`) speak JSON-RPC 2.0 only.
+// same host. New transports (`rune serve`) speak JSON-RPC 2.0 only.
 
 import type { HostCommandName } from "./commands";
 

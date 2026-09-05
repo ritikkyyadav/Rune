@@ -34,7 +34,7 @@ describe("Engine mid-turn steering (end-to-end, fake provider)", () => {
   let server: ReturnType<typeof Bun.serve> | null = null;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "gear-interject-"));
+    dir = mkdtempSync(join(tmpdir(), "rune-interject-"));
   });
 
   afterEach(() => {
@@ -64,8 +64,8 @@ describe("Engine mid-turn steering (end-to-end, fake provider)", () => {
       model: "fake-model",
       provider: "custom" as ProviderName,
       workspaceRoot: dir,
-      dbPath: join(dir, "gear.db"),
-      toolsBinaryPath: "gear-tools",
+      dbPath: join(dir, "rune.db"),
+      toolsBinaryPath: "rune-tools",
       yoloMode: false,
       customEndpoint: {
         baseUrl: `http://127.0.0.1:${server.port}/v1`,

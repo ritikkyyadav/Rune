@@ -1,7 +1,7 @@
 // --- /interactive command support ---
 //
 // Shared by the classic CLI and the TUI:
-//   - the sidecar that persists the autonomy toggle (~/.gear/interactive.json,
+//   - the sidecar that persists the autonomy toggle (~/.rune/interactive.json,
 //     same pattern as theme.json -- config.ts only ships a TOML *reader*),
 //   - the directive a bare /interactive sends through the normal turn loop,
 //   - the post-turn heuristic that offers "/interactive" after data-heavy
@@ -9,14 +9,14 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
-import { getGearHome } from "@gear/shared";
+import { getRuneHome } from "@rune/shared";
 
 function sidecarFile(dir: string): string {
   return join(dir, "interactive.json");
 }
 
 /** Persist the autonomy toggle. Never throws -- persistence loss must not crash the UI. */
-export function saveInteractiveAuto(auto: boolean, dir: string = getGearHome()): void {
+export function saveInteractiveAuto(auto: boolean, dir: string = getRuneHome()): void {
   try {
     mkdirSync(dir, { recursive: true });
     writeFileSync(sidecarFile(dir), JSON.stringify({ auto }, null, 2) + "\n");
@@ -26,7 +26,7 @@ export function saveInteractiveAuto(auto: boolean, dir: string = getGearHome()):
 }
 
 /** Read the saved toggle; null when absent/corrupt (fall through to config). */
-export function loadInteractiveAuto(dir: string = getGearHome()): boolean | null {
+export function loadInteractiveAuto(dir: string = getRuneHome()): boolean | null {
   try {
     const path = sidecarFile(dir);
     if (!existsSync(path)) return null;

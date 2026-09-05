@@ -13,11 +13,11 @@
 // DENIED. A policy whose default is "allow" only documents the requests you
 // happened to think of.
 //
-// With no `gear serve` running this stands up its own against a fake model.
+// With no `rune serve` running this stands up its own against a fake model.
 
-import { GearClient, type PermissionPrompt, type UserPermissionDecision } from "@gear/sdk";
+import { RuneClient, type PermissionPrompt, type UserPermissionDecision } from "@rune/sdk";
 
-import { calls, says, startMockGear, runningServer, type MockGear } from "./mock-engine";
+import { calls, says, startMockRune, runningServer, type MockRune } from "./mock-engine";
 
 // ─── The policy ───
 
@@ -72,17 +72,17 @@ export function decide(prompt: Pick<PermissionPrompt, "toolName" | "argsSummary"
 
 async function main(): Promise<number> {
   const live = await runningServer();
-  let mock: MockGear | null = null;
+  let mock: MockRune | null = null;
   let endpoint: { url: string; token: string };
 
   if (live) {
-    console.log(`· driving the gear serve already running at ${live.url}\n`);
+    console.log(`· driving the rune serve already running at ${live.url}\n`);
     endpoint = live;
   } else {
-    console.log("· no gear serve running — standing one up against a fake model\n");
+    console.log("· no rune serve running — standing one up against a fake model\n");
     // One request the policy allows, one it refuses. The refusal is the half
     // that matters: the agent is told no and has to carry on without it.
-    mock = await startMockGear([
+    mock = await startMockRune([
       calls("call_1", "bash", { command: "echo checking-the-tree" }),
       calls("call_2", "bash", { command: "rm -rf /tmp/anything" }),
       says("The second command was refused by policy; stopping there."),
@@ -92,7 +92,7 @@ async function main(): Promise<number> {
 
   const log: string[] = [];
 
-  const gear = await GearClient.connect(endpoint, {
+  const rune = await RuneClient.connect(endpoint, {
     onEvent(event) {
       if (event.type === "text_delta") process.stdout.write(event.text);
     },
@@ -109,9 +109,9 @@ async function main(): Promise<number> {
     // Leaving a handler unset is a real choice, not an oversight.
   });
 
-  const sessionId = await gear.createSession();
-  await gear.run(sessionId, "tidy the tree up");
-  gear.close();
+  const sessionId = await rune.createSession();
+  await rune.run(sessionId, "tidy the tree up");
+  rune.close();
 
   console.log("\n\n─── the policy's decisions ───\n");
   for (const line of log) console.log(`  ${line}`);

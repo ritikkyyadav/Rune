@@ -105,7 +105,7 @@ describe("clip — noise is stripped at any length", () => {
   });
 
   it("leaves a short, clean output completely untouched", () => {
-    const clean = ["$ cargo check", "   Compiling gear v0.3.0", "    Finished in 1.2s"];
+    const clean = ["$ cargo check", "   Compiling rune v0.3.0", "    Finished in 1.2s"];
     expect(clip(clean)).toEqual(clean);
   });
 

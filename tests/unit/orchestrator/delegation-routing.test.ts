@@ -130,7 +130,7 @@ describe("task tool — tier & effort", () => {
 describe("worker tool — tier, effort & team lease", () => {
   const deps = (over: Partial<Parameters<typeof createWorkerTool>[0]> = {}) =>
     createWorkerTool({
-      binaryPath: "/nonexistent/gear-tools",
+      binaryPath: "/nonexistent/rune-tools",
       resolve: () => ({
         gateway: gatewayWith(new TextProvider("Report: built the module.")),
         model: "m",

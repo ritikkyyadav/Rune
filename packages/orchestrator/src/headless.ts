@@ -1,6 +1,6 @@
 // ─── Headless runs ───
 //
-// Until this existed, nothing could drive Gear without a terminal. Every path
+// Until this existed, nothing could drive Rune without a terminal. Every path
 // through the CLI ended in the TUI, which is why the eval suite has to import
 // Engine and drive it in-process, and why the external anchors its README
 // scopes as P1 — Terminal-Bench, SWE-bench — were never built: the benchmark
@@ -12,8 +12,8 @@
 // and an exit code out, no cursor addressing, no prompts to answer.
 
 import type { Engine } from "./engine";
-import type { AgentTurnEvent, PermissionPrompt, UserPermissionDecision } from "@gear/protocol";
-import { assertNeverSoft } from "@gear/protocol";
+import type { AgentTurnEvent, PermissionPrompt, UserPermissionDecision } from "@rune/protocol";
+import { assertNeverSoft } from "@rune/protocol";
 
 export interface HeadlessOptions {
   /** Emit a JSON envelope instead of plain text — for machine consumers. */
@@ -112,6 +112,9 @@ export async function runHeadless(
   let inputTokens = 0;
   let outputTokens = 0;
   let cacheReadTokens = 0;
+  // The FIRST non-recoverable error, which is the root cause; the ones after
+  // it are usually consequences of the same failure.
+  let fatalError: string | undefined;
 
   engine.setPermissionHandler(
     headlessPermissionHandler(opts.autoApprove === true, (p) => {
@@ -167,10 +170,24 @@ export async function runHeadless(
         // These carry no counter of their own here, but they are named rather
         // than defaulted so a member added upstream is a compile error until
         // this reducer has decided what it means for a machine consumer.
+        // ── A terminal error fails the run ──
+        // This case used to sit in the ignored group below, so a provider
+        // failure (no credits, a retired model, a bad key) was swallowed: the
+        // loop completed, `ok` came back true and the process exited 0 with an
+        // empty answer. A benchmark harness shelling out to `rune -P` scored
+        // every one of those as a pass. Only NON-recoverable errors count —
+        // the engine retries and falls back on its own, and treating a
+        // recovered error as a failure would fail runs that in fact succeeded.
+        case "error":
+          if (!event.recoverable && fatalError === undefined) {
+            fatalError = event.error;
+            opts.onProgress?.(`error: ${event.error}`);
+          }
+          break;
+
         case "thinking_delta":
         case "tool_call_args_delta":
         case "turn_complete":
-        case "error":
         case "verification_started":
         case "verification_completed":
         case "todo_updated":
@@ -183,7 +200,7 @@ export async function runHeadless(
         case "replanning":
         case "tool_progress":
         // The narrative is state, and a headless consumer reads it from the
-        // session log (`gear audit --record`, the signed export) rather than
+        // session log (`rune audit --record`, the signed export) rather than
         // from a stream it may have joined halfway through. `--stream-json`
         // still carries every one of these on the wire; this is the runner's
         // own summary, and a hypothesis is not one of its counters.
@@ -198,7 +215,7 @@ export async function runHeadless(
           break;
 
         default:
-          // Compile-time exhaustiveness (see @gear/protocol assertNever).
+          // Compile-time exhaustiveness (see @rune/protocol assertNever).
           assertNeverSoft(event, undefined);
           break;
       }
@@ -221,7 +238,8 @@ export async function runHeadless(
 
   return {
     text,
-    ok: true,
+    ok: fatalError === undefined,
+    ...(fatalError === undefined ? {} : { error: fatalError }),
     toolCalls,
     toolErrors,
     filesChanged: [...filesChanged],
@@ -264,7 +282,7 @@ export function headlessEnvelope(
     {
       ok: r.ok,
       // The session this run wrote, so a caller can read it back with
-      // `gear audit <id>`. CI otherwise has to guess with `gear audit last`,
+      // `rune audit <id>`. CI otherwise has to guess with `rune audit last`,
       // which on a shared runner is a different session's page.
       ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
       text: r.text,

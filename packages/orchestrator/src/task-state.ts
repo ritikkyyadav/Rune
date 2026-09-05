@@ -28,10 +28,10 @@
 //    spec is not a spec — and the file now carries the run's own log, so the
 //    dossier doubles as the audit trail of what moved each step.
 
-import type { SessionEvent } from "@gear/shared";
+import type { SessionEvent } from "@rune/shared";
 import { countTokens } from "./tokenizer";
 
-// The plan-ledger wire shapes live in `@gear/protocol`: `todo_updated` and
+// The plan-ledger wire shapes live in `@rune/protocol`: `todo_updated` and
 // `handoff` carry them to every surface, so the union and its evidence counts
 // are defined once and re-exported here for the ~40 in-repo import sites.
 export type {
@@ -49,7 +49,7 @@ export type {
   ArtifactKind,
   PendingDecision,
   PendingDecisionKind,
-} from "@gear/protocol";
+} from "@rune/protocol";
 import type {
   ArtifactKind,
   CheckRecord,
@@ -65,7 +65,7 @@ import type {
   TaskKind,
   TodoItem,
   TodoStatus,
-} from "@gear/protocol";
+} from "@rune/protocol";
 
 export type EffectKind =
   "read" | "write" | "run" | "check_pass" | "check_fail" | "answer" | "delegate" | "look";
@@ -135,7 +135,7 @@ export interface TaskState {
    *
    * The log line said "step check passed" and the receipt said "check ok";
    * neither said WHICH command, what it exited with, or how long it took, so
-   * `gear audit` could report that a step was checked without being able to
+   * `rune audit` could report that a step was checked without being able to
    * say what checked it. `exitCode` and `durationMs` are present for checks
    * the harness ran and absent for checks the model ran through `bash` —
    * absent means no data, never zero.
@@ -371,9 +371,54 @@ function mergeEvidence(a: StepEvidence | undefined, b: StepEvidence | undefined)
  * `3 reads`, `unproven`. Shared by the block, the mission file, and the UI so
  * a step reads the same everywhere.
  */
+/**
+ * What may follow "the user" for the phrase to be communication rather than
+ * the start of a noun phrase: the end of the step, punctuation, or a
+ * connective. "the user table", "the user's orders" and "the user interface"
+ * are objects of ordinary work, and a first version of this rule let all
+ * three close without evidence — which is precisely the freedom a weak model
+ * must not have.
+ */
+const USER_TAIL =
+  "(?=\\s*(?:$|[,.;:!?)\\]]|\\s+(?:that|what|which|how|where|why|when|whether|about|of|to|on|with|in|the|a|an|this|these|those|their|its|it|them|there|here|before|after|so|and|but|if|once|exactly|plainly|clearly|from|through|via|for|now|then|again|directly|first|last|only)\\b))";
+
+/** Nouns that turn "final report" into a thing to build rather than to give. */
+const BUILT_THING =
+  "(?!\\s+(?:generator|module|builder|template|page|component|endpoint|table|function|class|file|view|screen|schema|type|model|pipeline|job|task|step|script|service|feature|section|format|export|renderer|writer|parser|api)\\b)";
+
+/** A hand-off addressed to another worker is delegation, not the handoff to the user. */
+const NOT_TO_A_PEER =
+  "(?![^.\\n]*\\bto\\s+(?:the\\s+|a\\s+|an\\s+)?(?:teams?|workers?|sub-?agents?|agents?|backend|frontend|reviewers?|lead|builder|designer|engineer)\\b)";
+
+/**
+ * A step whose content is the communication itself: handing back, reporting,
+ * telling the user something. Deliberately narrow — the verb must address the
+ * user as a whole phrase, or the step must be the final report — so "write
+ * the report generator", "show the user's orders" and "update the user table"
+ * stay ordinary work that needs evidence. The one shape that must match is the
+ * one that was refused five times in a single run: "Hand the user the one
+ * command…".
+ */
+export const REPORT_STEP_RE = new RegExp(
+  "\\b(?:" +
+    `(?:hand(?:\\s|-)?(?:back|off|over)|handoff)\\b${NOT_TO_A_PEER}` +
+    `|hand\\s+the\\s+user${USER_TAIL}` +
+    `|(?:tell|show|inform|update|brief|walk|remind|notify)\\s+the\\s+user${USER_TAIL}` +
+    `|(?:report|reply|respond|explain|summari[sz]e|present|describe)\\s+(?:[\\w'’-]+\\s+){0,4}(?:back\\s+)?to\\s+the\\s+user${USER_TAIL}` +
+    `|final\\s+(?:report|summary|message|write-?up|handoff|answer)\\b${BUILT_THING}` +
+    `|write-?up\\s+(?:for|to)\\s+the\\s+user${USER_TAIL}` +
+    ")",
+  "i",
+);
+
+export function isReportStep(content: string): boolean {
+  return REPORT_STEP_RE.test(content);
+}
+
 export function stepReceipt(item: TodoItem): string {
   if (item.unproven === "check_failed") return "unproven — last check failed";
   if (item.unproven === "no_evidence") return "unproven — nothing ran";
+  if (item.closedBy === "report") return "closed by report";
   const ev = item.evidence;
   if (!ev || evidenceWeight(ev) === 0) return "";
   const parts: string[] = [];
@@ -418,7 +463,18 @@ export type SetTodosVerdict =
   | {
       accepted: false;
       /** Which completions were refused and why — the tool result verbatim. */
-      refused: Array<{ index: number; content: string; reason: string }>;
+      refused: Array<{
+        index: number;
+        content: string;
+        reason: string;
+        /**
+         * Which rule refused it. Callers must branch on THIS, never on the
+         * wording of `reason`: the no-evidence sentence lists "no check" among
+         * the things that did not happen, so a `/check/` test over the prose
+         * reads a no-evidence refusal as a failed check.
+         */
+        kind: "no_evidence" | "check_failed";
+      }>;
       notes: string[];
     };
 
@@ -426,7 +482,7 @@ export class TaskStateStore {
   private state: TaskState = emptyState();
   /**
    * Workspace-relative path of the mission file, when the engine maintains one
-   * (e.g. ".gear/mission.md"). Render-time only — never part of the snapshot,
+   * (e.g. ".rune/mission.md"). Render-time only — never part of the snapshot,
    * so a session restored on another machine simply omits the pointer until
    * its engine sets it again.
    */
@@ -611,7 +667,7 @@ export class TaskStateStore {
     this.touch();
   }
 
-  /** Every check this task ran, oldest first. Read by `gear audit`. */
+  /** Every check this task ran, oldest first. Read by `rune audit`. */
   get checks(): CheckRecord[] {
     return this.state.checks ?? [];
   }
@@ -695,7 +751,12 @@ export class TaskStateStore {
     const oldOpen = this.state.todos.filter((t) => t.status !== "completed");
 
     // Carry evidence across, decide each completion.
-    const refused: Array<{ index: number; content: string; reason: string }> = [];
+    const refused: Array<{
+      index: number;
+      content: string;
+      reason: string;
+      kind: "no_evidence" | "check_failed";
+    }> = [];
     const completed: TodoItem[] = [];
     const next: TodoItem[] = cleaned.map((t, index) => {
       const key = todoKey(t.content);
@@ -704,6 +765,11 @@ export class TaskStateStore {
       if (prev?.evidence) item.evidence = structuredClone(prev.evidence);
       if (prev?.unproven && t.status === "completed" && prev.status === "completed") {
         item.unproven = prev.unproven;
+      }
+      // The report mark rides the same way, or the very next plan write would
+      // turn "closed by report" back into a bare tick with no receipt.
+      if (prev?.closedBy && t.status === "completed" && prev.status === "completed") {
+        item.closedBy = prev.closedBy;
       }
       if (t.status === "in_progress" && prev?.status !== "in_progress") {
         item.evidence = { ...(item.evidence ?? emptyEvidence()), startedAt: now };
@@ -720,7 +786,15 @@ export class TaskStateStore {
           const weight = evidenceWeight(ev);
           const failedCheck =
             !!ev.lastCheck && !ev.lastCheck.passed && (ev.writesSinceCheck ?? 0) === 0;
-          if (weight === 0 || failedCheck) {
+          if (weight === 0 && !failedCheck && isReportStep(t.content)) {
+            // Communication is the step. No tool can attest "told the user";
+            // the model's report does, and refusing it made runs spend a
+            // completion inventing a command to back the handoff.
+            item.closedBy = "report";
+            notes.push(
+              `Step ${index + 1} closes with your report to the user — it needs no tool evidence.`,
+            );
+          } else if (weight === 0 || failedCheck) {
             if (this.refusedOnce.has(key)) {
               item.unproven = failedCheck ? "check_failed" : "no_evidence";
             } else {
@@ -728,6 +802,7 @@ export class TaskStateStore {
               refused.push({
                 index,
                 content: t.content,
+                kind: failedCheck ? "check_failed" : "no_evidence",
                 reason: failedCheck
                   ? `the last check during this step FAILED${ev.lastCheck?.command ? ` (${ev.lastCheck.command})` : ""}${ev.lastCheck?.summary ? `: ${ev.lastCheck.summary}` : ""}. Fix it and re-run the check, or re-submit to mark the step unproven.`
                   : "nothing ran while it was open — no file written, no command run, no check, no read. Do the step, or re-submit the same list to mark it unproven (the user will see it as unproven, not done).",
@@ -1100,6 +1175,18 @@ export class TaskStateStore {
     return [...this.pendingWrites];
   }
 
+  /**
+   * Every file this task has written, cumulative.
+   *
+   * `touchedFiles` is drained on each accepted plan, which makes it right for a
+   * STEP check and wrong for the end-of-turn one: by the time a turn finishes,
+   * the step accumulator is usually empty and the verifier would fall back to
+   * grading the entire workspace. This list is what the run actually built.
+   */
+  get writtenFiles(): string[] {
+    return [...this.state.filesWritten];
+  }
+
   addDecision(line: string): void {
     const t = line.trim();
     if (!t) return;
@@ -1407,7 +1494,8 @@ export class TaskStateStore {
         );
       }
       lines.push(
-        "Keep this list accurate with todo_write. If the plan changed, rewrite it. A step is completed only by evidence — something must have run while it was open.",
+        "Keep this list accurate with todo_write. If the plan changed, rewrite it. A step is completed only by evidence — something must have run while it was open; a step that is itself the report to the user closes with that report.",
+        "This block is harness state, not a message to answer: do not acknowledge, restate or summarize it. Act on the next open step.",
       );
       const block = lines.join("\n");
       if (countTokens(block) <= maxTokens || detail === 0) return block;
@@ -1465,7 +1553,7 @@ export class TaskStateStore {
     const lines: string[] = [
       "# Mission",
       "",
-      "> Maintained by Gear. This is the durable record of the current task —",
+      "> Maintained by Rune. This is the durable record of the current task —",
       "> read it when unsure what the mission is. Do not edit by hand:",
       "> todo_write and the run itself keep it current.",
       "",

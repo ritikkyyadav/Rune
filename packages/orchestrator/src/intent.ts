@@ -39,8 +39,8 @@
 // So `interpretIntent` takes `ask` as an argument rather than reaching for a
 // gateway: with it, the second reading happens; without it, the first stands.
 
-import type { TaskKind } from "@gear/protocol";
-import { TASK_KINDS } from "@gear/protocol";
+import type { TaskKind } from "@rune/protocol";
+import { TASK_KINDS } from "@rune/protocol";
 
 export type { TaskKind };
 

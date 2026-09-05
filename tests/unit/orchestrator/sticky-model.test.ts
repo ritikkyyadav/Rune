@@ -2,7 +2,7 @@
  * The model you last used IS the model you get.
  *
  * The bug: pick GPT-5.6 on a ChatGPT/Codex account, quit, reopen — and the
- * session comes up on google/gemini-2.5-flash. `~/.gear/model.json` was written
+ * session comes up on google/gemini-2.5-flash. `~/.rune/model.json` was written
  * correctly the whole time; the STARTUP GATE threw it away, in two places, for
  * two separate reasons:
  *
@@ -33,9 +33,9 @@ let dir: string;
 let env: NodeJS.ProcessEnv;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "gear-sticky-"));
-  mkdirSync(join(dir, ".gear"), { recursive: true });
-  env = { GEAR_CREDENTIAL_INDEX_PATH: join(dir, "index.json") } as NodeJS.ProcessEnv;
+  dir = mkdtempSync(join(tmpdir(), "rune-sticky-"));
+  mkdirSync(join(dir, ".rune"), { recursive: true });
+  env = { RUNE_CREDENTIAL_INDEX_PATH: join(dir, "index.json") } as NodeJS.ProcessEnv;
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -44,7 +44,7 @@ const writeIndex = (accounts: string[]) =>
 
 describe("credentials a subscription provider actually uses", () => {
   test("an OAuth session counts as having credentials", () => {
-    // This is the exact shape in a real ~/.gear/credentials.index.json after
+    // This is the exact shape in a real ~/.rune/credentials.index.json after
     // signing in to ChatGPT.
     writeIndex(["provider:codex:oauth", "provider:openrouter"]);
     expect(hasStoredCredential("codex", env)).toBe(true);
@@ -62,7 +62,7 @@ describe("credentials a subscription provider actually uses", () => {
 
   test("a missing index is a clean no, never a throw", () => {
     expect(
-      hasStoredCredential("codex", { GEAR_CREDENTIAL_INDEX_PATH: "/nope/x.json" } as any),
+      hasStoredCredential("codex", { RUNE_CREDENTIAL_INDEX_PATH: "/nope/x.json" } as any),
     ).toBe(false);
   });
 

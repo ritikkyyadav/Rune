@@ -1,6 +1,6 @@
 # Skills
 
-Bundled **skills** — reusable expert playbooks Alan can load on demand. Each skill
+Bundled **skills** — reusable expert playbooks Rune can load on demand. Each skill
 is a `SKILL.md` file with YAML frontmatter (`name`, `description`, optional
 `argument-hint`) and a Markdown body of step-by-step instructions, optionally with
 bundled `references/`, `examples/`, and `RUNBOOK.md` files.
@@ -14,11 +14,11 @@ each skill's relative links resolve — e.g. a skill at
 `engineering/CONNECTORS.md`, and `references/*.md` resolve inside the skill folder.
 
 The only files dropped during vendoring were the marketplace `manifest.json`
-(Alan builds its own index) and `.DS_Store` noise.
+(Rune builds its own index) and `.DS_Store` noise.
 
-## How Alan uses them (progressive disclosure)
+## How Rune uses them (progressive disclosure)
 
-1. **Catalog (always in context).** At session start Alan injects a compact,
+1. **Catalog (always in context).** At session start Rune injects a compact,
    plugin-grouped index — *plugin → skill names* — into the system prompt. This is
    bounded (names, not full descriptions), so the standing token cost stays flat as
    the catalog grows.
@@ -40,7 +40,7 @@ in `packages/orchestrator/src/engine.ts`.
 
 Drop a folder containing a `SKILL.md` into either:
 
-- `skills/<plugin>/skills/<name>/SKILL.md` — bundled, shipped with Alan, or
+- `skills/<plugin>/skills/<name>/SKILL.md` — bundled, shipped with Rune, or
 - `<workspace>/.alan/skills/<name>/SKILL.md` — per-project (attributed to the
   `user` plugin).
 
@@ -53,6 +53,6 @@ pass `skillRoots` in the engine config to scan an explicit set of directories.
 Many skills are "supercharged" when connected to external tools. The per-plugin
 `.mcp.json` files list the relevant MCP servers (Slack, Linear, GitHub, …) as
 public endpoint **templates** — they contain no credentials. To enable one, copy the
-server entry into your `<workspace>/.alan/mcp.json` (Alan's MCP config) and supply
+server entry into your `<workspace>/.alan/mcp.json` (Rune's MCP config) and supply
 auth via `${ENV_VAR}` headers. See each plugin's `CONNECTORS.md`. Skills still work
 standalone without any connector.

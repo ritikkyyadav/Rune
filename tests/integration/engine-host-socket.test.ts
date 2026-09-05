@@ -7,13 +7,13 @@ import { HostClient } from "../../packages/orchestrator/src/host-client";
 import { HOST_COMMANDS, PROTOCOL_VERSION } from "../../packages/protocol/src/index";
 
 const HOST_SCRIPT = join(import.meta.dir, "../../packages/orchestrator/src/bin/engine-host.ts");
-const RUST_RELEASE = join(import.meta.dir, "../../target/release/gear-tools");
-const RUST_DEBUG = join(import.meta.dir, "../../target/debug/gear-tools");
+const RUST_RELEASE = join(import.meta.dir, "../../target/release/rune-tools");
+const RUST_DEBUG = join(import.meta.dir, "../../target/debug/rune-tools");
 // An installed binary counts. Without this the whole file skipped on any
 // machine that had run the installer but not `cargo build`, which is every
 // machine that only ever consumed a release.
-const RUST_BIN = process.env.GEAR_TOOLS_BIN
-  ? process.env.GEAR_TOOLS_BIN
+const RUST_BIN = process.env.RUNE_TOOLS_BIN
+  ? process.env.RUNE_TOOLS_BIN
   : existsSync(RUST_RELEASE)
     ? RUST_RELEASE
     : RUST_DEBUG;
@@ -37,7 +37,7 @@ describe("engine-host --socket (detach/attach transport)", () => {
   let host: ReturnType<typeof Bun.spawn> | null = null;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "gear-host-"));
+    dir = mkdtempSync(join(tmpdir(), "rune-host-"));
   });
 
   afterEach(async () => {
@@ -51,9 +51,9 @@ describe("engine-host --socket (detach/attach transport)", () => {
     return Bun.spawn(["bun", HOST_SCRIPT, "--socket", socketPath], {
       env: {
         ...process.env,
-        GEAR_WORKSPACE: dir,
-        GEAR_DB_PATH: join(dir, "gear.db"),
-        GEAR_TOOLS_BIN: RUST_BIN,
+        RUNE_WORKSPACE: dir,
+        RUNE_DB_PATH: join(dir, "rune.db"),
+        RUNE_TOOLS_BIN: RUST_BIN,
       },
       stdout: "ignore",
       stderr: "pipe",

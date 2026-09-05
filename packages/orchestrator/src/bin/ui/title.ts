@@ -2,7 +2,7 @@
 //
 // Warp gives a branded icon and a live status badge to the CLI agents it knows,
 // and it knows them by the launched command — claude, codex, gemini and the
-// rest — from a list compiled into the app. `gear` is not on that list, so Warp
+// rest — from a list compiled into the app. `rune` is not on that list, so Warp
 // opens no agent session for this pane, and the OSC 777 events in ./warp.ts,
 // correct as they are, arrive with nothing to attach to. Getting on the list is
 // a request to Warp, not a sequence this process can emit.
@@ -53,17 +53,17 @@ export type TitleState =
  * character that has to survive the ellipsis is the one that moves.
  */
 export function titleText(state: TitleState, project: string): string {
-  const name = project ? `Gear - ${project}` : "Gear";
+  const name = project ? `Rune - ${project}` : "Rune";
   switch (state.kind) {
     case "idle":
       return name;
     case "waiting":
-      return "? Gear - waiting for you";
+      return "? Rune - waiting for you";
     case "working": {
       // Past the threshold the mark stops and the wait is stated. Below it, the
       // ragged gaps between token bursts are not worth reporting.
       if (state.quietMs >= TITLE_QUIET_AFTER_MS) {
-        return `${STALLED} Gear - quiet ${Math.floor(state.quietMs / 1000)}s`;
+        return `${STALLED} Rune - quiet ${Math.floor(state.quietMs / 1000)}s`;
       }
       const i = ((state.frame % FRAMES.length) + FRAMES.length) % FRAMES.length;
       return `${FRAMES[i]!} ${name}`;

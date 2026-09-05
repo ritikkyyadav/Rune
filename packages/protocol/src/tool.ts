@@ -1,6 +1,6 @@
 // ─── Tool call wire shapes ───
 //
-// Canonical here, re-exported by `@gear/tool-registry`. They live in the
+// Canonical here, re-exported by `@rune/tool-registry`. They live in the
 // protocol package because they cross the wire inside `tool_call_end`: a
 // client that renders a tool result is reading these fields, and a second
 // hand-maintained copy on the client side is exactly the drift Phase 2 exists

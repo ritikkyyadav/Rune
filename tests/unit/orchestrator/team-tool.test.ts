@@ -21,7 +21,7 @@ const open = (workspace = "/repo/main"): TeamBus => {
 };
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "gear-team-tool-"));
+  dir = mkdtempSync(join(tmpdir(), "rune-team-tool-"));
   dbPath = join(dir, "team.db");
 });
 
@@ -74,7 +74,7 @@ describe("team tool — actions against a live bus", () => {
     const tool = createTeamTool({ getBus: () => mine });
     let out = await tool.execute(input({ action: "status" }));
     expect(out.success).toBe(true);
-    expect(out.result).toContain("No other Gear instances");
+    expect(out.result).toContain("No other Rune instances");
 
     const peer = open();
     peer.setIntent("migrating the DB layer");

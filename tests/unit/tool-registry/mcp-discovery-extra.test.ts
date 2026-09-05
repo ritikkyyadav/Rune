@@ -10,8 +10,8 @@ describe("McpDiscovery extraServers (built-in servers)", () => {
   let dir: string;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), "gear-mcp-extra-"));
-    await mkdir(join(dir, ".gear"), { recursive: true });
+    dir = await mkdtemp(join(tmpdir(), "rune-mcp-extra-"));
+    await mkdir(join(dir, ".rune"), { recursive: true });
   });
 
   afterEach(async () => {
@@ -36,11 +36,11 @@ describe("McpDiscovery extraServers (built-in servers)", () => {
     // The built-in points at a nonexistent binary; the user's entry must win,
     // so discovery starts the echo fixture instead of failing.
     await writeFile(
-      join(dir, ".gear", "mcp.json"),
+      join(dir, ".rune", "mcp.json"),
       JSON.stringify({ mcpServers: { browser: { command: "bun", args: [FIXTURE] } } }),
     );
     const discovery = new McpDiscovery(dir, {
-      extraServers: { browser: { command: "gear-no-such-binary-xyz", args: [] } },
+      extraServers: { browser: { command: "rune-no-such-binary-xyz", args: [] } },
     });
     const handlers = await discovery.discover();
     expect(handlers.map((h) => h.schema.name)).toEqual(["mcp_browser_echo"]);
@@ -50,11 +50,11 @@ describe("McpDiscovery extraServers (built-in servers)", () => {
 
   test("a broken built-in is recorded as down and breaks nothing else", async () => {
     await writeFile(
-      join(dir, ".gear", "mcp.json"),
+      join(dir, ".rune", "mcp.json"),
       JSON.stringify({ mcpServers: { echo: { command: "bun", args: [FIXTURE] } } }),
     );
     const discovery = new McpDiscovery(dir, {
-      extraServers: { browser: { command: "gear-no-such-binary-xyz", args: [] } },
+      extraServers: { browser: { command: "rune-no-such-binary-xyz", args: [] } },
     });
     const handlers = await discovery.discover();
     expect(handlers.map((h) => h.schema.name)).toEqual(["mcp_echo_echo"]);

@@ -9,21 +9,21 @@
     "skipLibCheck": true,
     "outDir": "dist",
     // No `rootDir`: this package is bundled by `bun build`, never emitted by
-    // tsc, and pinning one makes `@gear/sdk` resolving to workspace source (see
+    // tsc, and pinning one makes `@rune/sdk` resolving to workspace source (see
     // `paths` below) a TS6059 about an emit that does not happen.
     "declaration": true,
     "sourceMap": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
     "baseUrl": ".",
-    // `@gear/sdk` is a PUBLISHED package now (P5.4): its `exports` point at the
+    // `@rune/sdk` is a PUBLISHED package now (P5.4): its `exports` point at the
     // compiled `dist/` a consumer installs, not at source. In this repo the
     // source is what we want — otherwise running the CLI from a fresh checkout
     // would need a build first. Bun and tsc both read these paths, so the
     // workspace resolves source while an installed consumer resolves dist.
     "paths": {
-      "@gear/sdk": ["../sdk/src/index.ts"],
-      "@gear/sdk/client": ["../sdk/src/client.ts"]
+      "@rune/sdk": ["../sdk/src/index.ts"],
+      "@rune/sdk/client": ["../sdk/src/client.ts"]
     }
   },
   "include": ["src/**/*.ts"],

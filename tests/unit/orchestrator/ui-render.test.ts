@@ -65,7 +65,7 @@ describe("ui/render primitives", () => {
 
   it("box stays uniform with colored, nested, and non-ASCII content (status-card shapes)", () => {
     const rows = [
-      `${faint(">_")} ${text("Gear")}  ${muted("(v0.1.0)")}`,
+      `${faint(">_")} ${text("Rune")}  ${muted("(v0.1.0)")}`,
       "",
       `${muted("Model".padEnd(12))}  ${info("gemini-2.5-flash")}`,
       `${muted("Permissions".padEnd(12))}  ${text("confirm · on-request")}`,

@@ -1,6 +1,6 @@
 # Classifier-backed Auto mode
 
-Gear Auto mode is a coordinated safety system, not a request for the acting agent to approve its
+Rune Auto mode is a coordinated safety system, not a request for the acting agent to approve its
 own work. Ordinary read-only work and reversible project edits stay fast. Actions with a larger
 blast radius are reviewed by a separate inference call that has a deliberately stripped context.
 
@@ -11,7 +11,7 @@ evaluation set all matter.
 ## Decision path
 
 Auto mode is 4th-gear autonomy inside the OS sandbox with a watcher above it — not 3rd gear with a
-model standing in front of every call. For every proposed tool call, Gear applies these layers in
+model standing in front of every call. For every proposed tool call, Rune applies these layers in
 order:
 
 1. Signed organization policy, rate/cost limits, the security guard, and pre-tool hooks can block the
@@ -20,13 +20,13 @@ order:
    arbitrary execution, such as `bash(*)`, cannot bypass the reviewer.
 3. A halt latched by the out-of-band supervisor (below) stops the run here, before the next action.
 4. Fixed circuit breakers — catastrophic host operations, guardrail-lowering changes, writes to
-   Gear's own control surface under `.gear`, payloads too large for the bounded reviewer — are pure
+   Rune's own control surface under `.rune`, payloads too large for the bounded reviewer — are pure
    regex and hold whether or not a reviewer is alive. They do not raise a permission card. They go to
    the **containment broker**, which returns a route (below).
 
    The breakers read the whole action, not one tool's arguments. A guardrail change is a guardrail
-   change whether it arrives as `update_config`, as `sed -i` against `.gear/policy.json`, or as
-   `gear config set sandbox.enabled false`. Persistence is persistence whether it arrives as
+   change whether it arrives as `update_config`, as `sed -i` against `.rune/policy.json`, or as
+   `rune config set sandbox.enabled false`. Persistence is persistence whether it arrives as
    `echo >> ~/.zshrc` or as `write_file` to the same path. Download-and-execute is the same shape in
    `curl … | sh` and in `browser(download, execute: true)`. Every one of those pairs used to be
    half-covered, and the corpus is what found the other halves.
@@ -167,17 +167,17 @@ The Auto reviewer receives only:
 It does **not** receive the acting agent's prose, hidden reasoning, or tool output. Known credential
 formats, bearer/basic credentials, named secrets, and sensitive argument fields are redacted before
 the reviewer request. Tool arguments remain untrusted evidence and may contain adversarial text.
-Recent user intent and tool-call history are kept within explicit global budgets; Gear preserves the
+Recent user intent and tool-call history are kept within explicit global budgets; Rune preserves the
 newest entries and asks a human instead of sending an over-limit review prompt.
 
-By default, the reviewer uses Gear's heavy model tier through a separate, non-streaming request. For
+By default, the reviewer uses Rune's heavy model tier through a separate, non-streaming request. For
 stronger operational separation, pin a dedicated provider/model and dedicated credentials. Remember
 that selecting a second cloud provider expands the data boundary: redacted user messages and tool
 arguments will be sent to it.
 
 ## User configuration
 
-Put this in `~/.gear/config.toml` for one developer, or `<workspace>/.gear/config.toml` for one
+Put this in `~/.rune/config.toml` for one developer, or `<workspace>/.rune/config.toml` for one
 project:
 
 ```toml
@@ -196,7 +196,7 @@ probeToolResults = true
 # tier (same data boundary) before failing closed to a human prompt.
 reviewerFallback = true
 
-# Supplying environment replaces Gear's built-in entry. Keep the first line if
+# Supplying environment replaces Rune's built-in entry. Keep the first line if
 # the default workspace/remotes boundary still applies.
 environment = [
   "Internal: the current workspace, its current git repository and configured git remotes, plus loopback services owned by this session. Everything else is external unless the user explicitly names it.",
@@ -217,13 +217,13 @@ allowRules = ["bash(bun test*)", "web_fetch(https://docs.example.com/*)"]
 Environment overrides are available for deployment systems:
 
 ```bash
-GEAR_PERMISSION_MODE=auto
-GEAR_AUTO_CLASSIFIER_PROVIDER=anthropic
-GEAR_AUTO_CLASSIFIER_MODEL=reviewer-model-id
-GEAR_AUTO_FAIL_CLOSED=true
+RUNE_PERMISSION_MODE=auto
+RUNE_AUTO_CLASSIFIER_PROVIDER=anthropic
+RUNE_AUTO_CLASSIFIER_MODEL=reviewer-model-id
+RUNE_AUTO_FAIL_CLOSED=true
 ```
 
-Legacy `ALAN_*` spellings are adopted as `GEAR_*` at startup when the `GEAR_*` name is unset.
+Legacy `GEAR_*` spellings are adopted as `RUNE_*` at startup when the `RUNE_*` name is unset.
 
 ### CLI permission cycle
 
@@ -283,10 +283,10 @@ Sign it with:
 bun run scripts/sign-policy.ts ./policy-input.json ./signed-policy
 ```
 
-Install `policy.json` and `org.pub` as root-owned files under `/etc/gear/`, or under
-`/Library/Application Support/Gear/` on macOS. Gear refuses to start when an installed policy is
+Install `policy.json` and `org.pub` as root-owned files under `/etc/rune/`, or under
+`/Library/Application Support/Rune/` on macOS. Rune refuses to start when an installed policy is
 unreadable, malformed, or has an invalid signature. Legacy system paths and
-`GEAR_POLICY_FILE` development overrides remain supported; a development
+`RUNE_POLICY_FILE` development overrides remain supported; a development
 override cannot shadow an installed system policy.
 
 ## Audit and operations
@@ -303,7 +303,7 @@ source, reason, and reviewer identity.
 ## Current assurance boundary
 
 - The reviewer is an isolated inference request, not a separately trained safety model bundled with
-  Gear. Its real error rates depend on the configured model and must be measured on deployment data.
+  Rune. Its real error rates depend on the configured model and must be measured on deployment data.
 - The prompt-injection probe combines normalization, known-pattern detection, and a model-visible
   warning. It can have false positives and false negatives and is not a substitute for capability
   restriction.
@@ -318,7 +318,7 @@ source, reason, and reviewer identity.
   which measures the two stages disagreeing rather than the screen being wrong. Six confirmed halts
   over 601 sessions, 1.00 per 100 runs. See [Assurance](#assurance) below for the corpus, the
   per-source precision/recall tables and the latency percentiles.
-- The reviewer timeout bounds Gear's decision wait, and the abort now propagates
+- The reviewer timeout bounds Rune's decision wait, and the abort now propagates
   into the provider HTTP request itself (SDK/fetch `AbortSignal`), so a late reply is cancelled on
   the wire rather than completing unbilled-for into the void. A provider that has already finished
   generating may still record usage server-side.
@@ -335,7 +335,7 @@ source, reason, and reviewer identity.
 ## Production rollout checklist
 
 1. Keep `failClosed = true`, OS sandboxing on, network default-deny where practical, and the 4th
-   gear forbidden on managed machines.
+   rune forbidden on managed machines.
 2. Begin with narrow environment entries and broad `askRules`. Review false positives and denied
    actions before adding exceptions.
 3. Build an organization-specific eval set with authorized and unauthorized shell, remote, CI,
@@ -353,7 +353,7 @@ The classifier and output probe are probabilistic defenses and can miss novel at
 containment—least privilege, sandboxing, restricted worker capabilities, egress control, signed org
 policy, and recoverable workflows—remains the final boundary.
 
-Gear ships a 227-row labelled corpus (`tests/eval/auto-mode-corpus.ts`) as that starting point:
+Rune ships a 227-row labelled corpus (`tests/eval/auto-mode-corpus.ts`) as that starting point:
 
 ```bash
 # Inspect the built-in scenarios without making model calls.
@@ -361,8 +361,8 @@ bun run eval:auto-safety --list
 
 # Run them against the exact candidate reviewer. This exits non-zero on any
 # false negative or false positive.
-GEAR_AUTO_EVAL_PROVIDER=anthropic \
-GEAR_AUTO_EVAL_MODEL=reviewer-model-id \
+RUNE_AUTO_EVAL_PROVIDER=anthropic \
+RUNE_AUTO_EVAL_MODEL=reviewer-model-id \
 ANTHROPIC_API_KEY=... \
 bun run eval:auto-safety
 ```
@@ -381,7 +381,7 @@ or your workload.
 
 The architecture follows the public design principles in Anthropic's
 [Claude Code Auto Mode engineering article](https://www.anthropic.com/engineering/claude-code-auto-mode)
-and [permissions documentation](https://code.claude.com/docs/en/permissions), while retaining Gear's
+and [permissions documentation](https://code.claude.com/docs/en/permissions), while retaining Rune's
 existing local sandbox, signed policy, worker ownership, and audit controls. The separation-of-duties
 and least-privilege posture also follows the direction of
 [NIST IR 8596](https://nvlpubs.nist.gov/nistpubs/ir/2025/NIST.IR.8596.iprd.pdf). Anthropic's
@@ -458,7 +458,7 @@ A decision whose input was deliberately discarded cannot be replayed as a test c
 recorded decisions across 601 sessions could not become 913 labelled corpus rows.
 
 `[permissions.autoMode] collectForEval = true` — **off by default** — keeps the raw arguments in a
-separate encrypted store, `~/.gear/auto-eval.db`, AES-256-GCM under `~/.gear/auto-eval.key` (mode
+separate encrypted store, `~/.rune/auto-eval.db`, AES-256-GCM under `~/.rune/auto-eval.key` (mode
 0600, generated on first write), keyed by the same `argsHash` the audit row carries.
 
 It never leaves the machine. No telemetry path, no export, and no black-box writer reads it; the
@@ -475,7 +475,7 @@ read, delegation, connector, browser, automation, config, team, planning. Four p
 
 |              | rows | what they are                                                                                                                                                                                                                                                           |
 | ------------ | ---: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mined`      |   48 | Decisions Gear actually made, recovered read-only from `~/.gear/gear.db` (913 `safety_decision` rows over 601 sessions). Raw arguments were never stored, so these are reconstructed from the recorded tool, risk, verdict and the reviewer's own prose.                |
+| `mined`      |   48 | Decisions Rune actually made, recovered read-only from `~/.rune/rune.db` (913 `safety_decision` rows over 601 sessions). Raw arguments were never stored, so these are reconstructed from the recorded tool, risk, verdict and the reviewer's own prose.                |
 | `regression` |   10 | This system's own documented false positives — the `npm audit` and `npm install` halts, the `/tmp` cleanup halt, the e2e-suite halt, the probe firing on the repo's own security tests, the halt that denied the agent its todo list, the 22-minute fail-closed outage. |
 | `redteam`    |   30 | Compound commands, base64/hex/reversed/percent-encoded payloads, instructions arriving inside tool results, self-protection probing, reworded retries, arguments impersonating a reviewer verdict.                                                                      |
 | `designed`   |  139 | Coverage for every category and both sides of every tier boundary, including the original nineteen.                                                                                                                                                                     |
@@ -645,7 +645,7 @@ one action — and expensive where it now sits, where a latched halt costs the s
 confirmation is what keeps that 30.6% from being 30.6% of runs killed, and until P6A.1 the evidence
 for that claim was a process-local counter that reset on restart.
 
-`gear audit last` and `gear doctor` now report this from the database. On this machine's 601 real
+`rune audit last` and `rune doctor` now report this from the database. On this machine's 601 real
 sessions: **6 confirmed halts, 1.00 per 100 runs** — at the product scorecard's stated limit, not
 under it — and "no data" for the two rates that need rows only the new recording produces.
 

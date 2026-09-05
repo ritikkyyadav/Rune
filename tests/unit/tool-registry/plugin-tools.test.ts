@@ -15,7 +15,7 @@ import {
 // P10.7 part 2: the capability a manifest declares becomes the permission
 // category the broker and the classifier see. This file pins that mapping,
 // because it is the single place a third party's claim about itself turns into
-// how cheaply Gear will run its program.
+// how cheaply Rune will run its program.
 
 describe("capability → permission", () => {
   const expected: Record<PluginToolCapability, { category: string }> = {

@@ -161,7 +161,7 @@ describe("engine blackbox integration", () => {
   let dir: string;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "gear-bb-engine-"));
+    dir = mkdtempSync(join(tmpdir(), "rune-bb-engine-"));
   });
 
   afterEach(() => {
@@ -174,8 +174,8 @@ describe("engine blackbox integration", () => {
       model: "gemini-2.5-flash",
       provider: "google",
       workspaceRoot: dir,
-      dbPath: join(dir, "gear.db"),
-      toolsBinaryPath: "gear-tools",
+      dbPath: join(dir, "rune.db"),
+      toolsBinaryPath: "rune-tools",
       yoloMode: false,
       enableCheckpoints: false,
       enableSecurity: false,
@@ -207,8 +207,8 @@ describe("engine blackbox integration", () => {
       model: "gemini-2.5-flash",
       provider: "google",
       workspaceRoot: dir,
-      dbPath: join(dir, "gear.db"),
-      toolsBinaryPath: "gear-tools",
+      dbPath: join(dir, "rune.db"),
+      toolsBinaryPath: "rune-tools",
       yoloMode: false,
       enableCheckpoints: false,
       enableSecurity: false,

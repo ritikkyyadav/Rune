@@ -3,33 +3,33 @@
 //   bun run examples/sdk/run-task.ts
 //
 // The point of this example is the second half. Running a prompt from a script
-// is table stakes; every agent SDK does it. What Gear gives a script that no
-// other one does is the receipt: `gear audit` reads the session back as one
+// is table stakes; every agent SDK does it. What Rune gives a script that no
+// other one does is the receipt: `rune audit` reads the session back as one
 // page — the plan with its evidence, every safety decision and why, the held
 // steps, the cost — from the same database the run wrote. A script that ran an
 // agent and cannot say what it did has not automated anything.
 //
-// With no `gear serve` running this stands up its own, against a fake model, so
+// With no `rune serve` running this stands up its own, against a fake model, so
 // the example works on a fresh clone with no API key. With one running it
 // drives that.
 
-import { GearClient } from "@gear/sdk";
+import { RuneClient } from "@rune/sdk";
 
-import { calls, says, startMockGear, runningServer, type MockGear } from "./mock-engine";
+import { calls, says, startMockRune, runningServer, type MockRune } from "./mock-engine";
 
 const PROMPT = "check the shell works, then tell me it is done";
 
 async function main(): Promise<number> {
   const live = await runningServer();
-  let mock: MockGear | null = null;
+  let mock: MockRune | null = null;
   let endpoint: { url: string; token: string };
 
   if (live) {
-    console.log(`· driving the gear serve already running at ${live.url}\n`);
+    console.log(`· driving the rune serve already running at ${live.url}\n`);
     endpoint = live;
   } else {
-    console.log("· no gear serve running — standing one up against a fake model\n");
-    mock = await startMockGear([
+    console.log("· no rune serve running — standing one up against a fake model\n");
+    mock = await startMockRune([
       calls("call_1", "bash", { command: "echo evidence-from-the-example" }),
       says("Done — the shell answered."),
     ]);
@@ -38,7 +38,7 @@ async function main(): Promise<number> {
 
   const decisions: string[] = [];
 
-  const gear = await GearClient.connect(endpoint, {
+  const rune = await RuneClient.connect(endpoint, {
     // The turn, event by event. The same 22-member union the terminal renders.
     onEvent(event) {
       if (event.type === "text_delta") process.stdout.write(event.text);
@@ -64,20 +64,20 @@ async function main(): Promise<number> {
     },
   });
 
-  const sessionId = await gear.createSession();
+  const sessionId = await rune.createSession();
   console.log(`  session ${sessionId}\n`);
-  await gear.run(sessionId, PROMPT);
-  gear.close();
+  await rune.run(sessionId, PROMPT);
+  rune.close();
 
   console.log("\n\n─── the audit ───\n");
   if (mock) {
-    // `gear audit` opens the session database read-only: no engine, no
+    // `rune audit` opens the session database read-only: no engine, no
     // provider, instant. Pointing it at this run's database is the only
     // difference between the example and what you would type yourself.
     const audit = await mock.gear(["audit", sessionId]);
     process.stdout.write(audit.stdout || audit.stderr);
   } else {
-    console.log(`  gear audit ${sessionId}`);
+    console.log(`  rune audit ${sessionId}`);
   }
 
   if (decisions.length > 0) {

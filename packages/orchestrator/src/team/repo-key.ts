@@ -1,7 +1,7 @@
 // ─── Repository identity for the team bus ───
 //
 // All worktrees of one repository share a git COMMON dir — deriving the bus
-// key from it means an instance working in `.gear/worktrees/run-x` and one in
+// key from it means an instance working in `.rune/worktrees/run-x` and one in
 // the main checkout still find each other. Outside git, the workspace path
 // itself is the identity (two instances "in the same repo" then share it by
 // definition).

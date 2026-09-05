@@ -14,7 +14,7 @@ import {
 } from "../../../packages/tool-registry/src/tools/dashboard";
 import type { ToolCallInput } from "../../../packages/tool-registry/src/types";
 
-process.env.GEAR_NO_OPEN = "1";
+process.env.RUNE_NO_OPEN = "1";
 
 const manager = new DashboardManager({ openInBrowser: false });
 const tool = createDashboardTool(manager);
@@ -166,10 +166,10 @@ describe("interactive_dashboard — spec mode", () => {
     expect(out.success).toBe(true);
     const { url, id } = JSON.parse(out.result) as { url: string; id: string };
     const page = await (await fetch(url)).text();
-    expect(page).toContain("__GEAR_SPEC__");
-    expect(page).toContain("gear-root");
+    expect(page).toContain("__RUNE_SPEC__");
+    expect(page).toContain("rune-root");
     expect(page).toContain("--accent"); // THEME_CSS present
-    expect(page).toContain("gearTheme"); // chart defaults plugin present
+    expect(page).toContain("runeTheme"); // chart defaults plugin present
     expect(page).toContain('"Deliveries"');
 
     // spec update re-renders live (data channel), no version bump / reload
@@ -191,7 +191,7 @@ describe("interactive_dashboard — spec mode", () => {
     expect(html.status).toBe(200);
     expect(html.headers.get("content-disposition")).toContain("export-me.html");
     const doc = await html.text();
-    expect(doc).toContain("__GEAR_STANDALONE__");
+    expect(doc).toContain("__RUNE_STANDALONE__");
     expect(doc).not.toContain("EventSource"); // no live channel in the artifact
     expect(doc.length).toBeGreaterThan(200_000); // Chart.js inlined
 
@@ -223,7 +223,7 @@ describe("interactive_dashboard — spec mode", () => {
     expect(fileOut.success).toBe(true);
     const written = JSON.parse(fileOut.result) as { exported: string };
     expect(written.exported).toBe(join(root, "reports/fleet.html"));
-    expect(readFileSync(written.exported, "utf8")).toContain("__GEAR_STANDALONE__");
+    expect(readFileSync(written.exported, "utf8")).toContain("__RUNE_STANDALONE__");
 
     const escape = await tool.execute(
       input({ action: "export", id, format: "json", path: "../outside.json" }),
@@ -288,8 +288,8 @@ describe("interactive_dashboard — spec mode", () => {
   });
 
   test("pdf export without a browser fails with guidance (not a hang)", async () => {
-    const prev = process.env.GEAR_BROWSER_BIN;
-    process.env.GEAR_BROWSER_BIN = "/nonexistent/browser";
+    const prev = process.env.RUNE_BROWSER_BIN;
+    process.env.RUNE_BROWSER_BIN = "/nonexistent/browser";
     try {
       const created = await tool.execute(
         input({ action: "create", title: "p", spec, open: false }),
@@ -299,8 +299,8 @@ describe("interactive_dashboard — spec mode", () => {
       expect(out.success).toBe(false);
       expect(out.error).toContain("Export menu");
     } finally {
-      if (prev === undefined) delete process.env.GEAR_BROWSER_BIN;
-      else process.env.GEAR_BROWSER_BIN = prev;
+      if (prev === undefined) delete process.env.RUNE_BROWSER_BIN;
+      else process.env.RUNE_BROWSER_BIN = prev;
     }
   });
 });

@@ -1,6 +1,6 @@
 // ─── The live model catalogue cache ───
 //
-// `gear models <provider>` asks the provider's own list endpoint what it
+// `rune models <provider>` asks the provider's own list endpoint what it
 // serves, because a hand-maintained catalogue rots: this repo has lost runs to
 // `qwen3-coder:480b` and its announced successor both 410'ing on the same day,
 // and to OpenRouter withdrawing two `:free` ids to paid. Live discovery is the
@@ -13,14 +13,14 @@
 // refresh fixes — while an uncached list costs a round trip every time someone
 // opens the picker.
 //
-// The cache is a plain JSON file under the gear home, keyed by provider id. It
+// The cache is a plain JSON file under the rune home, keyed by provider id. It
 // holds **model ids and labels only** — no credential, no endpoint, nothing
 // account-specific beyond which models that account can see. `--refresh` (or a
 // deleted file) forces a fresh call.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { getGearHome } from "./paths.js";
+import { getRuneHome } from "./paths.js";
 
 /** One discovered model, as the cache stores it. */
 export interface CachedModel {
@@ -36,9 +36,9 @@ interface CacheFile {
 /** How long a discovered catalogue stays fresh. */
 export const MODEL_CACHE_TTL_MS = 60 * 60_000;
 
-/** The cache file path. Honors GEAR_HOME like every other sidecar. */
+/** The cache file path. Honors RUNE_HOME like every other sidecar. */
 export function getModelCachePath(): string {
-  return join(getGearHome(), "model-cache.json");
+  return join(getRuneHome(), "model-cache.json");
 }
 
 function readCache(path: string): CacheFile {
@@ -122,7 +122,7 @@ export function cachedModelsAge(
   return (opts.now ?? Date.now()) - entry.fetchedAt;
 }
 
-/** A human "3 minutes ago" for the one line `gear models` prints. */
+/** A human "3 minutes ago" for the one line `rune models` prints. */
 export function describeAge(ms: number): string {
   const minutes = Math.floor(ms / 60_000);
   if (minutes < 1) return "just now";

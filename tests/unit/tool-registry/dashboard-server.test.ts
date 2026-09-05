@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DashboardManager } from "../../../packages/tool-registry/src/tools/dashboard";
 
-process.env.GEAR_NO_OPEN = "1";
+process.env.RUNE_NO_OPEN = "1";
 
 const managers: DashboardManager[] = [];
 
@@ -88,7 +88,7 @@ describe("DashboardManager — pages & token guard", () => {
     const page = await res.text();
     expect(page).toContain("<title>GPU Overview</title>");
     expect(page).toContain('<div id="root">');
-    expect(page).toContain('window.__GEAR_DATA__ = {"gpus":24}');
+    expect(page).toContain('window.__RUNE_DATA__ = {"gpus":24}');
     expect(page).toContain("EventSource");
     expect(page).toContain("/vendor/chart.umd.js");
   });

@@ -1,6 +1,6 @@
 // ─── TeamBus: the cross-instance coordination ledger ───
 //
-// Contract proved here: two Gear processes sharing one bus DB and one repo
+// Contract proved here: two Rune processes sharing one bus DB and one repo
 // key SEE each other (presence), cannot hold overlapping path leases in the
 // same working tree (claims), can mail each other with join-time cursor
 // semantics (messages), and get soft warnings when both edit one area
@@ -37,7 +37,7 @@ const track = (b: TeamBus | null): TeamBus => {
 };
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "gear-team-"));
+  dir = mkdtempSync(join(tmpdir(), "rune-team-"));
   dbPath = join(dir, "team.db");
 });
 
@@ -69,11 +69,11 @@ describe("path keys — normalization and overlap", () => {
 describe("presence", () => {
   test("two instances on one repo see each other; sameTree is honest", () => {
     const a = track(open({ model: "m-a" }));
-    const b = track(open({ workspace: TREE_B, branch: "gear/run-x" }));
+    const b = track(open({ workspace: TREE_B, branch: "rune/run-x" }));
     const fromA = a.peers();
     expect(fromA.map((p) => p.id)).toEqual([b.instanceId]);
     expect(fromA[0].sameTree).toBe(false);
-    expect(fromA[0].branch).toBe("gear/run-x");
+    expect(fromA[0].branch).toBe("rune/run-x");
     const c = track(open({}));
     expect(c.peers().find((p) => p.id === a.instanceId)?.sameTree).toBe(true);
   });

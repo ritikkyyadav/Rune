@@ -1,6 +1,6 @@
 // ─── Resources and prompts, made reachable ───
 //
-// A connector's tools were the only part of it Gear could see. Resources — the
+// A connector's tools were the only part of it Rune could see. Resources — the
 // documents, pages and records a server exposes read-only — and prompts, the
 // server's own canned instructions, were both answered with -32601.
 //

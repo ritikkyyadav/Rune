@@ -1,12 +1,12 @@
 # Verification
 
-Gear runs the project's own checks after the agent claims it is done, and again
+Rune runs the project's own checks after the agent claims it is done, and again
 at every plan step that wrote files, and feeds any failure back so the agent
 self-corrects. This page says what it detects, what it refuses to guess, and how
 to override it.
 
 The rule underneath all of it: **if no check can be detected, verification
-passes trivially with `ran: false`.** A task is never failed because Gear could
+passes trivially with `ran: false`.** A task is never failed because Rune could
 not work out how to verify it. The corollary matters just as much — `ran: false`
 is not a green tick, and the plan ledger cannot close a step on it.
 
@@ -64,7 +64,7 @@ nothing at all, which is how a repo with real projects in it verified as
 
 ## The step check
 
-At a `todo_write` that closes a step which wrote files no check covered, Gear
+At a `todo_write` that closes a step which wrote files no check covered, Rune
 runs the **compile-class tier only** — typecheck and build, never the test suite
 — on a one-minute clock. A failure refuses the completion with the output; a
 pass becomes the step's receipt. `[verify] perStep = false` turns it off.
@@ -105,7 +105,7 @@ and the clock because it read both directly; checks the model ran through `bash`
 carry neither, because a tool result has a success flag and no exit code, and a
 fabricated `exit 0` beside a failure would be worse than no number.
 
-`gear audit last` prints them:
+`rune audit last` prints them:
 
 ```
   Checks  3 runs · 2 passed · 1 failed
@@ -146,5 +146,5 @@ name the JS one. Unlisted ecosystems stay enabled.
 - `tests/integration/verifier-ecosystems.test.ts` — runs the real commands, and
   skips with a printed reason when the toolchain is absent on the machine. On a
   laptop a skip is fine; in CI it would be a hole in the gate, so
-  `GEAR_VERIFIER_REQUIRE_TOOLCHAINS=go,python,rust,java` (set by `ci.yml` on the
+  `RUNE_VERIFIER_REQUIRE_TOOLCHAINS=go,python,rust,java` (set by `ci.yml` on the
   ubuntu runner) turns a skip there into a failure that names what is missing.

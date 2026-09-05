@@ -145,7 +145,7 @@ describe("artifacts", () => {
 
   test("reports and previews are recorded beside the files", () => {
     const s = investigating();
-    s.recordArtifact("report", ".gear/research/latency.md");
+    s.recordArtifact("report", ".rune/research/latency.md");
     s.recordArtifact("preview", "http://localhost:7799/dash");
     expect(s.artifacts.map((a) => a.kind).sort()).toEqual(["preview", "report"]);
   });

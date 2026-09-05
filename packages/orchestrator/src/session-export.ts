@@ -9,19 +9,19 @@
  *
  * CLI agent usage:
  *   import { exportSession, verifyExport } from "./session-export";
- *   const result = await exportSession(dbPath, sessionId, { format: "md", sign: true, keyPath: "~/.gear/keys" });
+ *   const result = await exportSession(dbPath, sessionId, { format: "md", sign: true, keyPath: "~/.rune/keys" });
  *   const ok = verifyExport(result.content, result.signature!, result.publicKey!);
  */
 
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { SessionManager, getGearHome } from "@gear/shared";
-import type { SessionInfoInternal } from "@gear/shared";
+import { SessionManager, getRuneHome } from "@rune/shared";
+import type { SessionInfoInternal } from "@rune/shared";
 import { eventsToMessages } from "./session-replay";
 import { loadOrGenerateKeyPair, signBytes, verifySignature } from "./signing";
 import { TaskStateStore } from "./task-state";
 import { buildDecisionRecord, hasRecord, renderDecisionRecordMarkdown } from "./decision-record";
-import type { DecisionRecord } from "@gear/protocol";
+import type { DecisionRecord } from "@rune/protocol";
 
 // ─── Public API types ──────────────────────────────────────────────────────
 
@@ -31,7 +31,7 @@ export interface ExportOptions {
   /**
    * Path to a directory holding ed25519.key / ed25519.pub.
    * If the files do not exist they are generated automatically.
-   * Defaults to ~/.gear/keys.
+   * Defaults to ~/.rune/keys.
    */
   keyPath?: string;
 }
@@ -187,7 +187,7 @@ export async function exportSession(
       return { content };
     }
 
-    const keyDir = opts.keyPath ?? join(getGearHome(), "keys");
+    const keyDir = opts.keyPath ?? join(getRuneHome(), "keys");
     const { privateKeyPem, publicKeyPem } = loadOrGenerateKeyPair(keyDir);
     const contentBytes = Buffer.from(content, "utf8");
     const signature = signBytes(contentBytes, privateKeyPem);

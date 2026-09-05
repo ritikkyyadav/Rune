@@ -1,7 +1,7 @@
 /**
  * Pixels a TOOL produced reaching the model.
  *
- * Gear could always see an image the USER pasted; it could never see one it
+ * Rune could always see an image the USER pasted; it could never see one it
  * made itself. `image-attach.ts` says so in its own header — "tool results and
  * session replay still carry text only" — and `read_file` on a PNG returned
  * ~327 KB of lossy-decoded mojibake, so the one path that existed was actively

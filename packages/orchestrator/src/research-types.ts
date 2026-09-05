@@ -4,14 +4,14 @@
 // web (+optionally local) investigators, then synthesizes a cited report.
 //
 // The WIRE types (plan, sources, report, `ResearchEvent`) live in
-// `@gear/protocol` — research streams over the protocol like any other event
+// `@rune/protocol` — research streams over the protocol like any other event
 // (P2.7) — and are re-exported here so research.ts, the Engine methods and the
 // CLI/TUI renderers keep their existing import sites. `ResearchOptions` stays
 // local: it carries a `ProviderName` and is a call-site options bag, not a
 // wire shape.
 
-import type { ProviderName } from "@gear/llm-gateway";
-import type { ResearchDepth } from "@gear/protocol";
+import type { ProviderName } from "@rune/llm-gateway";
+import type { ResearchDepth } from "@rune/protocol";
 
 export type {
   ResearchDepth,
@@ -23,8 +23,8 @@ export type {
   SubQuestionResult,
   ResearchReport,
   ResearchEvent,
-} from "@gear/protocol";
-export { isClarification } from "@gear/protocol";
+} from "@rune/protocol";
+export { isClarification } from "@rune/protocol";
 
 export interface ResearchOptions {
   depth?: ResearchDepth;
@@ -47,6 +47,6 @@ export interface ResearchOptions {
   autoApprove?: boolean;
   /** Save the finished report to a markdown file. Default true. */
   save?: boolean;
-  /** Directory for saved reports. Default `<workspace>/.gear/research`. */
+  /** Directory for saved reports. Default `<workspace>/.rune/research`. */
   outputDir?: string;
 }

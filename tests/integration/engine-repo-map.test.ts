@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { Engine } from "../../packages/orchestrator/src/engine";
 import type { ProviderName } from "../../packages/llm-gateway/src/types";
 
-const RUST_RELEASE = join(import.meta.dir, "../../target/release/gear-tools");
-const RUST_DEBUG = join(import.meta.dir, "../../target/debug/gear-tools");
+const RUST_RELEASE = join(import.meta.dir, "../../target/release/rune-tools");
+const RUST_DEBUG = join(import.meta.dir, "../../target/debug/rune-tools");
 const RUST_BIN = existsSync(RUST_RELEASE) ? RUST_RELEASE : RUST_DEBUG;
 const HAS_RUST_BIN = existsSync(RUST_BIN);
 
@@ -27,7 +27,7 @@ describe("Engine repository-map injection", () => {
   let server: ReturnType<typeof Bun.serve> | null = null;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "gear-repo-map-engine-"));
+    dir = mkdtempSync(join(tmpdir(), "rune-repo-map-engine-"));
     writeFileSync(join(dir, "service.ts"), "export function startService() { return true; }\n");
   });
 
@@ -56,7 +56,7 @@ describe("Engine repository-map injection", () => {
         model: "fake-model",
         provider: "custom" as ProviderName,
         workspaceRoot: dir,
-        dbPath: join(dir, "gear.db"),
+        dbPath: join(dir, "rune.db"),
         toolsBinaryPath: RUST_BIN,
         yoloMode: false,
         customEndpoint: {

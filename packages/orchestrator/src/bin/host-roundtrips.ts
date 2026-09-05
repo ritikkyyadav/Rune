@@ -14,7 +14,7 @@
 // and no way out.
 //
 // And what happens when nobody answers must be STATED, not implied. Each kind
-// carries its unattended outcome (`@gear/protocol`'s UNATTENDED_POLICY) and the
+// carries its unattended outcome (`@rune/protocol`'s UNATTENDED_POLICY) and the
 // host tells every remaining client which one it applied, so a card is never
 // left on screen offering a decision that has already been made.
 
@@ -25,8 +25,8 @@ import type {
   UnattendedReason,
   UserPermissionDecision,
   UserQuestion,
-} from "@gear/protocol";
-import { NO_ANSWER_TEXT } from "@gear/protocol";
+} from "@rune/protocol";
+import { NO_ANSWER_TEXT } from "@rune/protocol";
 import type { ResearchPlan } from "../research-types";
 
 export type RoundTripKind = "permission" | "question" | "brief" | "research_plan";
@@ -39,7 +39,7 @@ export interface RoundTripDeps {
   emit: (stream: string, payload: unknown) => void;
   /** How many clients are attached right now. Zero means unattended. */
   clientCount: () => number;
-  /** Per-request ceiling. Override via `GEAR_ROUNDTRIP_TIMEOUT_MS`. */
+  /** Per-request ceiling. Override via `RUNE_ROUNDTRIP_TIMEOUT_MS`. */
   timeoutMs?: number;
   /** Injected in tests. */
   now?: () => number;
@@ -250,7 +250,7 @@ export class RoundTripRegistry {
 }
 
 function readTimeoutFromEnv(): number {
-  const raw = process.env.GEAR_ROUNDTRIP_TIMEOUT_MS;
+  const raw = process.env.RUNE_ROUNDTRIP_TIMEOUT_MS;
   if (!raw) return DEFAULT_ROUNDTRIP_TIMEOUT_MS;
   const n = Number.parseInt(raw, 10);
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_ROUNDTRIP_TIMEOUT_MS;

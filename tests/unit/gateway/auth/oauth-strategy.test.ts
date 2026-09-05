@@ -81,8 +81,8 @@ describe("loopback capture", () => {
       expect(loop.redirectUri).toMatch(/^http:\/\/localhost:\d+\/callback$/);
       const res = await fetch(`${loop.redirectUri}?code=abc&state=xyz`);
       expect(res.status).toBe(200);
-      // The page names what was connected and carries the Gear mark; it is the
-      // only surface of Gear a person sees outside their terminal.
+      // The page names what was connected and carries the Rune mark; it is the
+      // only surface of Rune a person sees outside their terminal.
       const body = await res.text();
       expect(body).toMatch(/connected to/i);
       expect(body).toContain("<svg");
@@ -156,7 +156,7 @@ describe("OAuthStrategy.authenticate (fake IdP, real loopback)", () => {
     );
     await expect(
       strat.authenticate(ctx({ openBrowser: browserThatApproves() })),
-    ).rejects.toMatchObject({ name: "AuthError", recovery: "run: gear login openrouter" });
+    ).rejects.toMatchObject({ name: "AuthError", recovery: "run: rune login openrouter" });
   });
 });
 
@@ -391,7 +391,7 @@ describe("Anthropic subscription flow (Claude Pro/Max)", () => {
     // what the first-party client sends and the only encoding this endpoint
     // accepts". The client's decompiled builder does
     // `new URL(...).searchParams.append("scope", L.join(" "))`, and
-    // URLSearchParams writes a space as `+`. The `%20` was Gear's invention.
+    // URLSearchParams writes a space as `+`. The `%20` was Rune's invention.
     const raw = anthropicOAuthFlow.authorizeUrl({
       redirectUri: "https://platform.claude.com/oauth/code/callback",
       codeChallenge: "CHAL",

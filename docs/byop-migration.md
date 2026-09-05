@@ -1,7 +1,7 @@
 # BYOP migration notes
 
 **No action is required for existing users.** The BYOP authentication layer is
-purely additive. If you never run `gear login`, Gear resolves provider keys
+purely additive. If you never run `rune login`, Rune resolves provider keys
 exactly as it did before.
 
 ## Backward-compatibility guarantees
@@ -15,7 +15,7 @@ These hold and are asserted by the test suite
    `ANTHROPIC_API_KEY` / etc. in the environment gets the same registered
    providers as before. The gateway falls back to the exact legacy key
    resolution whenever no stored credential is present.
-2. **`~/.gear/secrets.json` users are unchanged.** Keys in the legacy secrets
+2. **`~/.rune/secrets.json` users are unchanged.** Keys in the legacy secrets
    file continue to resolve. The old `/keys` panel still reads and writes that
    file. The credential store never rewrites it.
 3. **`config.toml` without `authentication` is unchanged.** The auth method is
@@ -31,7 +31,7 @@ These hold and are asserted by the test suite
 For a provider's API key, from highest to lowest priority:
 
 ```
-secure store (keychain / OAuth token)  →  ~/.gear/secrets.json  →  config.toml  →  env var
+secure store (keychain / OAuth token)  →  ~/.rune/secrets.json  →  config.toml  →  env var
 ```
 
 The secure store is simply **prepended** to the chain that already existed. If the
@@ -42,19 +42,19 @@ before — `secrets.json → config.toml → env`.
 
 If no OS keychain is available (`security` / `secret-tool` / PowerShell all
 missing or non-functional), the credential store falls back to
-`~/.gear/credentials.json` (mode `0600`, plaintext) and reports `secure = false`.
-In that state Gear:
+`~/.rune/credentials.json` (mode `0600`, plaintext) and reports `secure = false`.
+In that state Rune:
 
 - prints a one-line notice on every credential write, and
-- shows a persistent notice in `gear providers`:
-  `⚠ credentials stored unencrypted at ~/.gear/credentials.json (no OS keychain available)`
+- shows a persistent notice in `rune providers`:
+  `⚠ credentials stored unencrypted at ~/.rune/credentials.json (no OS keychain available)`
 
-Gear never silently writes a secret to plaintext when a secure store is
+Rune never silently writes a secret to plaintext when a secure store is
 available.
 
 ## Opt-in migration
 
-`gear login --migrate` copies API keys from `~/.gear/secrets.json` into the
+`rune login --migrate` copies API keys from `~/.rune/secrets.json` into the
 secure store:
 
 - It only writes accounts **not already present** in the store.
@@ -63,4 +63,4 @@ secure store:
   aren't provider keys, or carry a base URL + model the store can't hold).
 
 OAuth is strictly additive: it does not exist until you run
-`gear login <provider>` for a provider that supports it.
+`rune login <provider>` for a provider that supports it.

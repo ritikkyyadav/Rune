@@ -86,11 +86,11 @@ describe("auth methods + descriptor", () => {
   });
 
   it("offers Anthropic subscription OAuth (Claude Pro/Max) with api_key as fallback", () => {
-    // Ships enabled now (no GEAR_ANTHROPIC_OAUTH flag): oauth preferred, api_key
+    // Ships enabled now (no RUNE_ANTHROPIC_OAUTH flag): oauth preferred, api_key
     // fallback. Env-independent — existing key/env users still resolve to api_key
     // because no OAuth session is stored (see resolveProviderCredentials).
     expect(effectiveAuthMethods(getPreset("anthropic")!, noEnv)).toEqual(["oauth", "api_key"]);
-    const anyEnv = { GEAR_ANTHROPIC_OAUTH: "1" } as NodeJS.ProcessEnv;
+    const anyEnv = { RUNE_ANTHROPIC_OAUTH: "1" } as NodeJS.ProcessEnv;
     expect(effectiveAuthMethods(getPreset("anthropic")!, anyEnv)).toEqual(["oauth", "api_key"]);
   });
 

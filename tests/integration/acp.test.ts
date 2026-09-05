@@ -1,5 +1,5 @@
 /**
- * `gear acp`, driven by an ACP client.
+ * `rune acp`, driven by an ACP client.
  *
  * This is the gate for P5.1, and it has to be, because the real client is Zed
  * and Zed cannot be run here. So the harness IS the client: it spawns the
@@ -9,7 +9,7 @@
  *
  * The permission round-trip is the part worth testing. Streaming text to an
  * editor is easy; an editor that cannot answer a permission would have to run
- * Gear in 4th gear to get anything done, which is the opposite of what an
+ * Rune in 4th gear to get anything done, which is the opposite of what an
  * editor integration is for.
  *
  * Everything is real except the model: the supervisor, the spawned engine host,
@@ -22,13 +22,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const repoRoot = join(import.meta.dir, "../..");
-const CLI = join(repoRoot, "packages", "orchestrator", "src", "bin", "gear-cli.ts");
+const CLI = join(repoRoot, "packages", "orchestrator", "src", "bin", "rune-cli.ts");
 const RUST_BIN =
-  process.env.GEAR_TOOLS_BIN ??
+  process.env.RUNE_TOOLS_BIN ??
   [
-    join(repoRoot, "target", "release", "gear-tools"),
-    join(repoRoot, "target", "debug", "gear-tools"),
-    join(process.env.HOME ?? "", ".gear", "bin", "gear-tools"),
+    join(repoRoot, "target", "release", "rune-tools"),
+    join(repoRoot, "target", "debug", "rune-tools"),
+    join(process.env.HOME ?? "", ".rune", "bin", "rune-tools"),
   ].find((p) => existsSync(p)) ??
   "";
 const HAS_RUST_BIN = RUST_BIN !== "" && existsSync(RUST_BIN);
@@ -71,7 +71,7 @@ interface Frame {
 /**
  * The editor's half of the conversation.
  *
- * Deliberately hand-written against the ACP shapes rather than built on a Gear
+ * Deliberately hand-written against the ACP shapes rather than built on a Rune
  * type: a test that shares its types with the thing under test cannot catch the
  * mapping being wrong, only inconsistent.
  */
@@ -206,7 +206,7 @@ class AcpClient {
   /**
    * SIGTERM and WAIT.
    *
-   * `gear acp` runs one `engine-host` process per session and stops them in its
+   * `rune acp` runs one `engine-host` process per session and stops them in its
    * signal handler (P10.0). Killing it without waiting — what this used to do —
    * left one engine per ACP test running for the rest of the suite;
    * `zz-no-leaked-hosts.test.ts` is the assertion that it no longer does.
@@ -231,16 +231,16 @@ class AcpClient {
 
 // ─── The fixture ───
 
-describe("gear acp (an ACP client, a real engine, a fake model)", () => {
+describe("rune acp (an ACP client, a real engine, a fake model)", () => {
   let dir: string;
-  let gearHome: string;
+  let runeHome: string;
   let model: ReturnType<typeof Bun.serve> | null = null;
   let client: AcpClient | null = null;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "gear-acp-"));
-    gearHome = join(dir, "home");
-    mkdirSync(gearHome, { recursive: true });
+    dir = mkdtempSync(join(tmpdir(), "rune-acp-"));
+    runeHome = join(dir, "home");
+    mkdirSync(runeHome, { recursive: true });
   });
 
   afterEach(async () => {
@@ -267,11 +267,11 @@ describe("gear acp (an ACP client, a real engine, a fake model)", () => {
     });
 
     writeFileSync(
-      join(gearHome, "model.json"),
+      join(runeHome, "model.json"),
       JSON.stringify({ provider: "custom", model: "fake-model" }),
     );
     writeFileSync(
-      join(gearHome, "secrets.json"),
+      join(runeHome, "secrets.json"),
       JSON.stringify({
         custom: {
           baseUrl: `http://127.0.0.1:${model.port}/v1`,
@@ -284,11 +284,11 @@ describe("gear acp (an ACP client, a real engine, a fake model)", () => {
 
     client = AcpClient.start(
       {
-        GEAR_HOME: gearHome,
-        GEAR_WORKSPACE: dir,
-        GEAR_DB_PATH: join(dir, "gear.db"),
-        GEAR_TOOLS_BIN: RUST_BIN,
-        GEAR_ROUNDTRIP_TIMEOUT_MS: "120000",
+        RUNE_HOME: runeHome,
+        RUNE_WORKSPACE: dir,
+        RUNE_DB_PATH: join(dir, "rune.db"),
+        RUNE_TOOLS_BIN: RUST_BIN,
+        RUNE_ROUNDTRIP_TIMEOUT_MS: "120000",
       },
       dir,
     );

@@ -13,7 +13,7 @@
 // second union, and a surface that wants the truth (the fleet panel, the
 // desktop fleet view) has it.
 
-import type { AgentTurnEvent, ChildAgentEvent, WorkflowNodeContext } from "@gear/protocol";
+import type { AgentTurnEvent, ChildAgentEvent, WorkflowNodeContext } from "@rune/protocol";
 
 /** How a sub-agent event is announced upward. */
 export type ChildEventSink = (child: ChildAgentEvent) => void;

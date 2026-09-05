@@ -1,5 +1,5 @@
 // ─── BlackboxStore: durable incident storage ───
-// Separate DB from sessions (~/.gear/blackbox.db) so incidents outlive session
+// Separate DB from sessions (~/.rune/blackbox.db) so incidents outlive session
 // deletion and aggregate across every session. WAL mode; single-row synchronous
 // writes (bun:sqlite is sync — a row insert is microseconds, so there is no
 // async queue to lose in a crash). Raw incidents are prunable; fingerprint
@@ -13,7 +13,7 @@ import type {
   IncidentOutcome,
   IncidentRecord,
   IncidentSeverity,
-} from "@gear/shared";
+} from "@rune/shared";
 
 export interface FingerprintRow {
   fingerprint: string;
@@ -257,7 +257,7 @@ export class BlackboxStore {
     }));
   }
 
-  /** Fingerprints grouped per version — feeds `gear incidents top --by-version`. */
+  /** Fingerprints grouped per version — feeds `rune incidents top --by-version`. */
   byVersion(): Map<string, FingerprintRow[]> {
     const all = this.top({ limit: 10_000 });
     const out = new Map<string, FingerprintRow[]>();
@@ -271,7 +271,7 @@ export class BlackboxStore {
     return out;
   }
 
-  /** Counts by severity within a window — feeds `gear doctor`. */
+  /** Counts by severity within a window — feeds `rune doctor`. */
   counts(opts: { sinceDays?: number } = {}): Record<string, number> {
     const since = daysAgoIso(opts.sinceDays ?? 7);
     const rows = this.db

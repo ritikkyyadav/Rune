@@ -1,8 +1,8 @@
 # Changelog
 
-All notable changes to Gear are recorded here.
+All notable changes to Rune are recorded here.
 
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and Gear adheres to
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and Rune adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 The version a build reports comes from exactly one place — `scripts/version.sh`, injected at compile
@@ -10,6 +10,66 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 `<semver>-dev+<sha>`.
 
 ## [Unreleased]
+
+### Fixed
+
+- **End-of-turn verification grades what the run wrote, not the whole workspace.** Started in a
+  folder of unrelated projects, Rune used to run every sibling's checks after a build and then
+  chase their failures — a Python suite wanting pandas, a Gradle build with no JDK — in code it had
+  never opened. Each written file is now attributed to its innermost project (every ecosystem at
+  that directory), files that belong to no project report "nothing runnable detected", and the
+  step check's own scoping, which compared absolute paths to relative project directories and had
+  silently widened to the whole tree, matches again. An explicit `[verify] commands` override is
+  never narrowed.
+- **A tool call that arrives empty is answered by the loop, not reviewed by the safety
+  classifier.** A response cut at the output-token limit mid-call lands as `write_file {}`; that
+  shell went to reasoned review twice at ten seconds each and became held steps the model
+  re-narrated for the rest of the session. It is now told the true cause and to write a large file
+  in sections. Only the empty call is intercepted; partial and well-formed calls go through the
+  gate unchanged.
+- **A plan step that is the report closes with the report.** "Hand the user the one command…" was
+  refused five times in one run as "nothing ran". A step whose verb addresses the user, or that is
+  the final report, now closes as `closed by report`; and a refusal for missing evidence no longer
+  pins reasoning effort to its ceiling for the rest of the run.
+- **The task-state block says it is not a message.** Re-sent as a trailing user message on every
+  request, it was answered on every request by a weak model; it now states that it is harness
+  state and must not be acknowledged, restated or summarized, and the team block says the same.
+  Sending less of it between changes was tried and reverted: across a long run with compaction
+  the block is the only surviving copy of the mission, and a summary of it is not.
+- **Art direction is asked when the plan names a screen, before the first page is written**, not
+  after it (which threw the page away), and the note carries six directions of its own instead of
+  pointing at a `skill` tool that is not registered in every session.
+- **Loopback stays open inside the macOS sandbox.** A local dev server on 127.0.0.1, and a `curl`
+  against it, no longer fail with "operation not permitted", so a page the run just built can
+  actually be served and read back. Egress and DNS stay denied, and the sandboxed-bash preflight
+  lets a loopback URL through instead of claiming it would hang. Seatbelt's `localhost` filter also
+  admits a `0.0.0.0` bind, which `auto-containment` already refuses as a mechanical breaker; the
+  threat model states this rather than claiming "loopback only".
+
+### Changed
+
+- **The product is named Rune.** Every name moves with it: the `rune` command and the `rune-tools`
+  executor, `~/.rune` and `rune.db`, `RUNE_*` environment variables, `.rune/` in a workspace,
+  `@rune/*` packages and `rune-*` crates, `RUNE.md` instructions, `rune:` auto-commits and the
+  `rune` keychain service. An installed Gear keeps working through one generation of read-through:
+  the first start moves `~/.gear` to `~/.rune` (leaving a symlink), renames `gear.db` and `GEAR.md`,
+  adopts `GEAR_*` variables, reads the `gear` keychain service, undoes `gear:` commits, recognises
+  the playbook and `rune evolve` markers under either name, loads `gearVersion` plugin manifests and
+  binds `/etc/gear` org policies. The permission ladder keeps its vocabulary (`--gear 1..4`, `/gear`,
+  "4th gear"). Terminals that key behaviour on the process name (Warp's CLI-agent channel) see a
+  new name.
+- **The terminal is the only interface.** The web app, the bundle embedded in the binary,
+  `rune web`, `rune open`, the bare-command browser entry, the VS Code extension and the Playwright
+  suite are removed. `rune serve` keeps the WebSocket engine for `rune attach ws://` and the SDK and
+  no longer serves a page; `rune serve --check` proves the compiled binary can spawn its own session
+  hosts. A bare `rune` starts the console.
+- **The accent is violet.** `#A28CF3`, exact on the dark ground and derived to `#9682E1` on paper so
+  it clears a 3:1 floor; the electric blue and the web token pipeline are gone.
+
+### Removed
+
+- `apps/web`, `apps/vscode`, `tests/e2e`, `tests/unit/web`, the brand checklist, the token-CSS,
+  mark and primitives generators, and the web design documents.
 
 ## [0.3.1] - 2026-09-03
 

@@ -1,5 +1,5 @@
-name: "Gear"
-description: "Run Gear on a pull request and post one comment with the review and its audit."
+name: "Rune"
+description: "Run Rune on a pull request and post one comment with the review and its audit."
 author: "Savoir"
 branding:
   icon: "git-pull-request"
@@ -8,28 +8,28 @@ branding:
 inputs:
   prompt:
     description: >-
-      What to ask Gear. Empty runs the default review prompt: read the diff,
+      What to ask Rune. Empty runs the default review prompt: read the diff,
       keep a plan ledger, and separate what was verified from what was only
       inspected.
     required: false
     default: ""
   gear:
-    description: "Gear to run in — 1 guided, 2 workspace edits, 3 + sandboxed shell, 4 full autonomy."
+    description: "Rune to run in — 1 guided, 2 workspace edits, 3 + sandboxed shell, 4 full autonomy."
     required: false
     default: "3"
   version:
     description: >-
-      The Gear release to install (e.g. v0.3.0). Empty builds from the
+      The Rune release to install (e.g. v0.3.0). Empty builds from the
       repository checked out at `source-path`, which is what this repo does
       because it IS the source.
     required: false
     default: ""
   source-path:
-    description: "Path to a Gear checkout to build from when `version` is empty."
+    description: "Path to a Rune checkout to build from when `version` is empty."
     required: false
     default: "."
   workspace:
-    description: "The directory Gear works in."
+    description: "The directory Rune works in."
     required: false
     default: "."
   pr:
@@ -64,35 +64,35 @@ runs:
 
     # A pinned release when one is named, and the checkout otherwise. The second
     # path is not a fallback for this repo — it is the normal case here, because
-    # a repo reviewing its own pull requests should review them with the Gear in
+    # a repo reviewing its own pull requests should review them with the Rune in
     # the pull request, not with the last one that shipped.
-    - name: Install Gear
+    - name: Install Rune
       id: install
       shell: bash
       env:
-        GEAR_VERSION: ${{ inputs.version }}
-        GEAR_SOURCE: ${{ inputs.source-path }}
+        RUNE_VERSION: ${{ inputs.version }}
+        RUNE_SOURCE: ${{ inputs.source-path }}
         GH_TOKEN: ${{ inputs.github-token }}
       run: |
         set -euo pipefail
-        if [ -n "${GEAR_VERSION}" ]; then
-          echo "installing gear ${GEAR_VERSION}"
-          gh release download "${GEAR_VERSION}" \
+        if [ -n "${RUNE_VERSION}" ]; then
+          echo "installing rune ${RUNE_VERSION}"
+          gh release download "${RUNE_VERSION}" \
             --repo "${GITHUB_REPOSITORY}" \
-            --pattern "gear-*-$(uname -s | tr '[:upper:]' '[:lower:]')-*" \
-            --dir "${RUNNER_TEMP}/gear"
-          chmod +x "${RUNNER_TEMP}"/gear/gear-*
-          mv "${RUNNER_TEMP}"/gear/gear-* "${RUNNER_TEMP}/gear/gear"
-          echo "gear-cmd=${RUNNER_TEMP}/gear/gear" >> "$GITHUB_OUTPUT"
+            --pattern "rune-*-$(uname -s | tr '[:upper:]' '[:lower:]')-*" \
+            --dir "${RUNNER_TEMP}/rune"
+          chmod +x "${RUNNER_TEMP}"/rune/rune-*
+          mv "${RUNNER_TEMP}"/rune/rune-* "${RUNNER_TEMP}/rune/rune"
+          echo "rune-cmd=${RUNNER_TEMP}/rune/rune" >> "$GITHUB_OUTPUT"
         else
-          echo "building gear from ${GEAR_SOURCE}"
-          ( cd "${GEAR_SOURCE}" && bun install --frozen-lockfile )
+          echo "building rune from ${RUNE_SOURCE}"
+          ( cd "${RUNE_SOURCE}" && bun install --frozen-lockfile )
           # The native tool executor. Everything the agent does to a file or a
           # shell goes through it, so a review without it is a review that
           # cannot read the repository.
-          ( cd "${GEAR_SOURCE}" && cargo build --release -p gear-tools )
-          echo "GEAR_TOOLS_BIN=$(cd "${GEAR_SOURCE}" && pwd)/target/release/gear-tools" >> "$GITHUB_ENV"
-          echo "gear-cmd=bun $(cd "${GEAR_SOURCE}" && pwd)/packages/orchestrator/src/bin/gear-cli.ts" >> "$GITHUB_OUTPUT"
+          ( cd "${RUNE_SOURCE}" && cargo build --release -p rune-tools )
+          echo "RUNE_TOOLS_BIN=$(cd "${RUNE_SOURCE}" && pwd)/target/release/rune-tools" >> "$GITHUB_ENV"
+          echo "rune-cmd=bun $(cd "${RUNE_SOURCE}" && pwd)/packages/orchestrator/src/bin/rune-cli.ts" >> "$GITHUB_OUTPUT"
         fi
 
     - name: Review
@@ -103,15 +103,15 @@ runs:
         INPUT_GEAR: ${{ inputs.gear }}
         INPUT_PR: ${{ inputs.pr }}
         INPUT_MAX_DIFF: ${{ inputs.max-diff }}
-        INPUT_GEAR_CMD: ${{ steps.install.outputs.gear-cmd }}
+        INPUT_RUNE_CMD: ${{ steps.install.outputs.rune-cmd }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
       run: |
         set -euo pipefail
         args=(--workspace "${{ inputs.workspace }}")
         if [ "${{ inputs.dry-run }}" = "true" ]; then args+=(--dry-run); fi
-        bun "${GITHUB_ACTION_PATH}/review.ts" "${args[@]}" | tee "${RUNNER_TEMP}/gear-comment.md"
+        bun "${GITHUB_ACTION_PATH}/review.ts" "${args[@]}" | tee "${RUNNER_TEMP}/rune-comment.md"
         {
-          echo "comment<<GEAR_EOF"
-          cat "${RUNNER_TEMP}/gear-comment.md"
-          echo "GEAR_EOF"
+          echo "comment<<RUNE_EOF"
+          cat "${RUNNER_TEMP}/rune-comment.md"
+          echo "RUNE_EOF"
         } >> "$GITHUB_OUTPUT"

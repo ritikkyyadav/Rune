@@ -22,7 +22,7 @@
  *      thing the compiler cannot: a reducer that satisfies exhaustiveness by
  *      widening its parameter back to `any` or re-adding a bare `default`.
  *
- * The manifest itself is guarded inside `@gear/protocol`: `AGENT_TURN_EVENT_TYPES`
+ * The manifest itself is guarded inside `@rune/protocol`: `AGENT_TURN_EVENT_TYPES`
  * fails to compile if it drifts from the union in either direction.
  */
 
@@ -59,16 +59,6 @@ const REDUCERS = [
     name: "headless runner (headless.ts runHeadless)",
     file: "packages/orchestrator/src/headless.ts",
     from: "for await (const event of engine.chat(",
-  },
-  {
-    name: "desktop transcript (apps/web/src/lib/stream.ts)",
-    file: "apps/web/src/lib/stream.ts",
-    from: "switch (ev.type)",
-  },
-  {
-    name: "desktop trace rail (apps/web/src/lib/trace.ts)",
-    file: "apps/web/src/lib/trace.ts",
-    from: "switch (ev.type)",
   },
 ] as const;
 
@@ -151,17 +141,10 @@ describe("ResearchEvent is handled where research is rendered", () => {
 });
 
 describe("no client redeclares the event union", () => {
-  test("the desktop imports it instead of hand-writing it", () => {
-    const types = readFileSync(join(ROOT, "apps/web/src/lib/types.ts"), "utf8");
-    // The duplicate that had drifted both ways.
-    expect(types).not.toMatch(/export type EngineEvent\s*=/);
-    expect(types).toContain("@gear/protocol");
-  });
-
   test("the orchestrator re-exports rather than redefines", () => {
     const loop = readFileSync(join(ROOT, "packages/orchestrator/src/agent-loop.ts"), "utf8");
     expect(loop).not.toMatch(/export type AgentTurnEvent\s*=/);
-    expect(loop).toContain('from "@gear/protocol"');
+    expect(loop).toContain('from "@rune/protocol"');
   });
 });
 

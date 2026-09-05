@@ -63,9 +63,9 @@ describe("doctrine attribution", () => {
 
 describe("session records the prompt it ran under", () => {
   it("writes system_prompt_hash and reads it back", () => {
-    const dir = mkdtempSync(join(tmpdir(), "gear-attrib-"));
+    const dir = mkdtempSync(join(tmpdir(), "rune-attrib-"));
     try {
-      const sm = new SessionManager(join(dir, "gear.db"));
+      const sm = new SessionManager(join(dir, "rune.db"));
       const created = sm.createSession("/tmp/ws", "m", "anthropic", "abc123def456");
       expect(created.systemPromptHash).toBe("abc123def456");
       expect(sm.getSession(created.id)?.systemPromptHash).toBe("abc123def456");
@@ -77,9 +77,9 @@ describe("session records the prompt it ran under", () => {
   });
 
   it("leaves it null when the caller has none, rather than inventing one", () => {
-    const dir = mkdtempSync(join(tmpdir(), "gear-attrib-"));
+    const dir = mkdtempSync(join(tmpdir(), "rune-attrib-"));
     try {
-      const sm = new SessionManager(join(dir, "gear.db"));
+      const sm = new SessionManager(join(dir, "rune.db"));
       const created = sm.createSession("/tmp/ws", "m", "anthropic");
       expect(created.systemPromptHash).toBeNull();
       expect(sm.getSession(created.id)?.systemPromptHash).toBeNull();
@@ -116,7 +116,7 @@ describe("configHash", () => {
         workspaceRoot: "/somewhere/else",
         dbPath: "/tmp/other.db",
         model: "a-different-model",
-        toolsBinaryPath: "/opt/gear-tools",
+        toolsBinaryPath: "/opt/rune-tools",
       }),
     ).toBe(base);
   });

@@ -1,4 +1,4 @@
-// --- /status -- Gear session card ---
+// --- /status -- Rune session card ---
 
 import type { PermissionMode } from "../../permissions";
 import * as os from "os";

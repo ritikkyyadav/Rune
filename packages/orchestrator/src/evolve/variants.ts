@@ -4,7 +4,7 @@
 // system changes behaviour only inside a DECLARED, enumerable space; a system
 // that can reach any field it can name is mutating, whatever the measurement
 // says. So the space is a literal object here, the ids are a union derived
-// from it, and every consumer — the tuner, the A/B runner, `gear evolve
+// from it, and every consumer — the tuner, the A/B runner, `rune evolve
 // promote` — takes a `VariantId` rather than a config fragment.
 //
 // What is structurally absent, and why that is a stronger claim than a check:
@@ -42,7 +42,7 @@ void _abConfigIsEngineSubset;
 export interface Variant {
   /** Stable id: the string a ledger entry, a proposal and a CLI argument share. */
   id: string;
-  /** One line, for `gear evolve ab --list` and the proposal printout. */
+  /** One line, for `rune evolve ab --list` and the proposal printout. */
   summary: string;
   /**
    * What this variant is a bet ON — the thing it should improve if the belief
@@ -127,7 +127,7 @@ export function variantConfig(id: VariantId): Partial<AbConfig> {
 }
 
 /**
- * The `~/.gear/config.toml` lines a promotion writes. Kept beside the registry
+ * The `~/.rune/config.toml` lines a promotion writes. Kept beside the registry
  * so the config surface and the variant cannot drift apart: a variant with no
  * rendering here cannot be promoted, and `promote.ts` treats an empty result as
  * a refusal rather than as a no-op write.

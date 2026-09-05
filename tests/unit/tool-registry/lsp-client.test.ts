@@ -33,7 +33,7 @@ function fakeManager(opts: { slow?: boolean; requestTimeoutMs?: number } = {}): 
 }
 
 function workspaceWithFile(): { dir: string; file: string } {
-  const dir = mkdtempSync(join(tmpdir(), "gear-lsp-"));
+  const dir = mkdtempSync(join(tmpdir(), "rune-lsp-"));
   const file = join(dir, "sample.fake");
   writeFileSync(file, "line one\nline two\nline three\n".repeat(5));
   return { dir, file };

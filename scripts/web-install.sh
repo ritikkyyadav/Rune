@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────
-#  Gear — one-line web installer  (curl | bash)
+#  Rune — one-line web installer  (curl | bash)
 #  Downloads the prebuilt standalone CLI + native tools executor for this
 #  machine, VERIFIES them against the release's SHA256SUMS, and installs them
-#  to ~/.gear/bin. No Bun, no source, no build step.
+#  to ~/.rune/bin. No Bun, no source, no build step.
 #
 #  Paste this on your site:
 #    curl -fsSL https://YOUR-DOMAIN/install.sh | bash
@@ -14,16 +14,16 @@
 #    --no-path             never touch a shell profile
 #
 #  Optional env:
-#    GEAR_REPO=owner/repo            GitHub repo hosting the releases
-#    GEAR_VERSION=v0.3.0             release tag (default: latest)
-#    GEAR_INSTALL_DIR=/usr/local/bin where the binaries go (default ~/.gear/bin)
-#    GEAR_SKIP_TOOLS=1               install the CLI alone (source builds only)
-#    GEAR_TELEMETRY_ENDPOINT=url     if set, enables the opt-in channel by
-#                                    writing [telemetry] into ~/.gear/config.toml
-#    GEAR_TELEMETRY_TOKEN=secret     collector bearer token (with the above)
+#    RUNE_REPO=owner/repo            GitHub repo hosting the releases
+#    RUNE_VERSION=v0.3.0             release tag (default: latest)
+#    RUNE_INSTALL_DIR=/usr/local/bin where the binaries go (default ~/.rune/bin)
+#    RUNE_SKIP_TOOLS=1               install the CLI alone (source builds only)
+#    RUNE_TELEMETRY_ENDPOINT=url     if set, enables the opt-in channel by
+#                                    writing [telemetry] into ~/.rune/config.toml
+#    RUNE_TELEMETRY_TOKEN=secret     collector bearer token (with the above)
 #
-#  Releases ship a gear + gear-tools pair per platform, and the pair is
-#  REQUIRED — file and shell tools run through the native gear-tools executor.
+#  Releases ship a rune + rune-tools pair per platform, and the pair is
+#  REQUIRED — file and shell tools run through the native rune-tools executor.
 #
 #  On checksums: a `curl | bash` installer that does not verify what it
 #  downloaded is a pipe from a CDN straight to an executable bit. The release
@@ -32,11 +32,11 @@
 # ──────────────────────────────────────────────────────────
 set -euo pipefail
 
-REPO="${GEAR_REPO:-ritikkyyadav/Alan}"
-VERSION="${GEAR_VERSION:-latest}"
-INSTALL_DIR="${GEAR_INSTALL_DIR:-$HOME/.gear/bin}"
-TELEMETRY_ENDPOINT="${GEAR_TELEMETRY_ENDPOINT:-}"
-TELEMETRY_TOKEN="${GEAR_TELEMETRY_TOKEN:-}"
+REPO="${RUNE_REPO:-ritikkyyadav/Alan}"
+VERSION="${RUNE_VERSION:-latest}"
+INSTALL_DIR="${RUNE_INSTALL_DIR:-$HOME/.rune/bin}"
+TELEMETRY_ENDPOINT="${RUNE_TELEMETRY_ENDPOINT:-}"
+TELEMETRY_TOKEN="${RUNE_TELEMETRY_TOKEN:-}"
 
 MODE="install"
 PATH_MODE="ask"
@@ -53,14 +53,46 @@ done
 c()  { printf '\033[%sm%s\033[0m' "$1" "$2"; }
 say() { echo "  $*"; }
 
-# ─── Rename migration: ~/.alan → ~/.gear (once; symlink keeps old paths alive) ───
+# ─── Rename migration: ~/.gear (or an older ~/.alan) → ~/.rune (once; a symlink keeps old paths alive) ───
+# A ~/.rune that exists but holds no data (no database, secrets or config —
+# created by a test run, a --version, or a bare mkdir) must not block the move:
+# it is set aside, the old home moves in, and its entries are folded back where
+# nothing of the same name came across.
+home_has_data() {
+  local f
+  for f in rune.db gear.db alan.db secrets.json config.toml model.json credentials.index.json; do
+    [ ! -e "$1/$f" ] || return 0
+  done
+  return 1
+}
 migrate_home() {
-  if [ ! -e "$HOME/.gear" ] && [ -d "$HOME/.alan" ] && [ ! -L "$HOME/.alan" ]; then
-    if mv "$HOME/.alan" "$HOME/.gear" 2>/dev/null; then
-      ln -s "$HOME/.gear" "$HOME/.alan" 2>/dev/null || true
-      echo "  · moved ~/.alan → ~/.gear (a symlink ~/.alan → ~/.gear keeps old paths working)" >&2
-    fi
+  local old parked=""
+  if [ -e "$HOME/.rune" ]; then
+    { [ -d "$HOME/.rune" ] && [ ! -L "$HOME/.rune" ] && ! home_has_data "$HOME/.rune"; } || return 0
   fi
+  for old in .gear .alan; do
+    if [ -d "$HOME/$old" ] && [ ! -L "$HOME/$old" ]; then
+      if [ -e "$HOME/.rune" ]; then
+        parked="$HOME/.rune.fresh-$(date +%s)"
+        mv "$HOME/.rune" "$parked" 2>/dev/null || return 0
+      fi
+      if mv "$HOME/$old" "$HOME/.rune" 2>/dev/null; then
+        ln -s "$HOME/.rune" "$HOME/$old" 2>/dev/null || true
+        echo "  · moved ~/$old → ~/.rune (a symlink ~/$old → ~/.rune keeps old paths working)" >&2
+        if [ -n "$parked" ]; then
+          local entry
+          for entry in "$parked"/* "$parked"/.[!.]*; do
+            [ -e "$entry" ] || continue
+            [ -e "$HOME/.rune/$(basename "$entry")" ] || mv "$entry" "$HOME/.rune/" 2>/dev/null || true
+          done
+          rmdir "$parked" 2>/dev/null || echo "  · kept $parked (entries that collided with the moved home)" >&2
+        fi
+      elif [ -n "$parked" ]; then
+        mv "$parked" "$HOME/.rune" 2>/dev/null || true
+      fi
+      return 0
+    fi
+  done
 }
 
 # ─── The PATH line, and which profile carries it ───
@@ -102,7 +134,7 @@ write_path() {
   mkdir -p "$(dirname "$file")"
   {
     echo ""
-    echo "# Added by the Gear installer"
+    echo "# Added by the Rune installer"
     printf '%s\n' "$line"
   } >> "$file"
   say "$(c 32 ✓) Appended to $file — open a new shell, or: $(c 36 "source $file")"
@@ -110,10 +142,10 @@ write_path() {
 
 # ─── Uninstall ───
 if [ "$MODE" = "uninstall" ]; then
-  say "$(c 1 'Gear uninstaller')"
+  say "$(c 1 'Rune uninstaller')"
   removed=0
-  for name in gear gear-compiled gear-tools gear-compiled.meta \
-              gear.backup gear-tools.backup gear-compiled.backup; do
+  for name in rune rune-compiled rune-tools rune-compiled.meta \
+              rune.backup rune-tools.backup rune-compiled.backup; do
     if [ -e "$INSTALL_DIR/$name" ]; then
       # A guarded install marks its artifacts immutable on macOS.
       command -v chflags >/dev/null 2>&1 && chflags nouchg "$INSTALL_DIR/$name" 2>/dev/null || true
@@ -124,16 +156,16 @@ if [ "$MODE" = "uninstall" ]; then
   done
   [ "$removed" = "0" ] && say "$(c 90 "· nothing to remove in $INSTALL_DIR")"
   profile="$(profile_file)"
-  if [ -f "$profile" ] && grep -qF -- "Added by the Gear installer" "$profile" 2>/dev/null; then
+  if [ -f "$profile" ] && grep -qF -- "Added by the Rune installer" "$profile" 2>/dev/null; then
     tmp="$(mktemp)"
-    grep -vF -- "Added by the Gear installer" "$profile" \
+    grep -vF -- "Added by the Rune installer" "$profile" \
       | grep -vF -- "$INSTALL_DIR" > "$tmp" || true
     mv "$tmp" "$profile"
     say "$(c 32 ✓) removed the PATH line from $profile"
   fi
   echo ""
-  say "Your data is untouched: $(c 36 "$HOME/.gear") still holds sessions, config and credentials."
-  say "Remove it yourself if you mean to: $(c 36 "rm -rf ~/.gear")"
+  say "Your data is untouched: $(c 36 "$HOME/.rune") still holds sessions, config and credentials."
+  say "Remove it yourself if you mean to: $(c 36 "rm -rf ~/.rune")"
   echo ""
   exit 0
 fi
@@ -156,8 +188,8 @@ case "$uname_m" in
   x86_64|amd64)  arch="x64" ;;
   *) say "$(c 31 ✗) Unsupported arch: $uname_m"; exit 1 ;;
 esac
-asset="gear-${os}-${arch}"
-tools_asset="gear-tools-${os}-${arch}"
+asset="rune-${os}-${arch}"
+tools_asset="rune-tools-${os}-${arch}"
 
 if [ "$VERSION" = "latest" ]; then
   base="https://github.com/$REPO/releases/latest/download"
@@ -165,7 +197,7 @@ else
   base="https://github.com/$REPO/releases/download/$VERSION"
 fi
 
-say "$(c 1 'Gear installer')"
+say "$(c 1 'Rune installer')"
 say "$(c 90 "platform : $os-$arch")"
 say "$(c 90 "release  : $VERSION")"
 say "$(c 90 "install  : $INSTALL_DIR")"
@@ -227,11 +259,11 @@ fi
 verify "$STAGE/$asset" "$asset"
 
 want_tools=1
-[ "${GEAR_SKIP_TOOLS:-}" = "1" ] && want_tools=0
+[ "${RUNE_SKIP_TOOLS:-}" = "1" ] && want_tools=0
 if [ "$want_tools" = "1" ]; then
   if ! fetch "$base/$tools_asset" "$STAGE/$tools_asset"; then
     say "$(c 31 ✗) $tools_asset missing from this release — file, search, and shell tools would fail."
-    say "   Re-run with GEAR_SKIP_TOOLS=1 to install the CLI alone, or install from source."
+    say "   Re-run with RUNE_SKIP_TOOLS=1 to install the CLI alone, or install from source."
     exit 1
   fi
   verify "$STAGE/$tools_asset" "$tools_asset"
@@ -240,20 +272,21 @@ fi
 # ─── Promote (nothing before this point touched the install directory) ───
 mkdir -p "$INSTALL_DIR"
 chmod +x "$STAGE/$asset"
-mv "$STAGE/$asset" "$INSTALL_DIR/gear"
-say "$(c 32 ✓) Installed: $INSTALL_DIR/gear"
+mv "$STAGE/$asset" "$INSTALL_DIR/rune"
+say "$(c 32 ✓) Installed: $INSTALL_DIR/rune"
 if [ "$want_tools" = "1" ]; then
   chmod +x "$STAGE/$tools_asset"
-  mv "$STAGE/$tools_asset" "$INSTALL_DIR/gear-tools"
-  say "$(c 32 ✓) Installed: $INSTALL_DIR/gear-tools"
+  mv "$STAGE/$tools_asset" "$INSTALL_DIR/rune-tools"
+  say "$(c 32 ✓) Installed: $INSTALL_DIR/rune-tools"
 else
-  say "$(c 90 "· GEAR_SKIP_TOOLS=1 — build it with: cargo build --release -p gear-tools")"
+  say "$(c 90 "· RUNE_SKIP_TOOLS=1 — build it with: cargo build --release -p rune-tools")"
 fi
-for old in elio berne alan; do [ -L "$INSTALL_DIR/$old" ] && rm -f "$INSTALL_DIR/$old"; done
+for old in elio berne alan gear; do [ -L "$INSTALL_DIR/$old" ] && rm -f "$INSTALL_DIR/$old"; done
+for old in gear gear-compiled gear-tools gear-compiled.meta; do [ -f "$INSTALL_DIR/$old" ] && rm -f "$INSTALL_DIR/$old"; done
 
 # ─── Optional: enable the opt-in telemetry channel for this install ───
 if [ -n "$TELEMETRY_ENDPOINT" ]; then
-  cfg="$HOME/.gear/config.toml"
+  cfg="$HOME/.rune/config.toml"
   mkdir -p "$(dirname "$cfg")"
   if ! grep -q "^\[telemetry\]" "$cfg" 2>/dev/null; then
     {
@@ -274,7 +307,7 @@ elif [ "$PATH_MODE" = "yes" ]; then
   write_path
 elif [ "$PATH_MODE" = "no" ]; then
   echo ""
-  say "Add Gear to your PATH:"
+  say "Add Rune to your PATH:"
   say "  $(c 36 "export PATH=\"$INSTALL_DIR:\$PATH\"")   $(c 90 '# add to your shell profile')"
 elif [ -t 0 ]; then
   echo ""
@@ -285,7 +318,7 @@ else
   # Piped from curl: there is no one to ask, so say what to do rather than
   # editing a profile behind a user's back.
   echo ""
-  say "Add Gear to your PATH:"
+  say "Add Rune to your PATH:"
   say "  $(c 36 "export PATH=\"$INSTALL_DIR:\$PATH\"")   $(c 90 '# add to your shell profile')"
   say "$(c 90 "  or re-run with --path to have the installer append it for you")"
 fi
@@ -293,5 +326,5 @@ fi
 echo ""
 say "Then run: $(c 1 gear)"
 say "$(c 90 'Free to start: grab a Google AI Studio key and `export GOOGLE_API_KEY=...`')"
-say "$(c 90 'Later: `gear upgrade --check` tells you when a newer release exists.')"
+say "$(c 90 'Later: `rune upgrade --check` tells you when a newer release exists.')"
 echo ""

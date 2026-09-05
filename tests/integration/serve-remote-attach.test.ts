@@ -1,13 +1,13 @@
 /**
- * `gear serve --host` and `gear attach ws://…`, as two processes.
+ * `rune serve --host` and `rune attach ws://…`, as two processes.
  *
  * Phase 5 tested this by hand: start a server, attach a terminal from
  * somewhere else, watch a turn. A thing verified by hand once is a thing that
  * works on the day it was written.
  *
  * `engine-serve.test.ts` already drives the server through an in-process
- * client, so what is NEW here is the second process — the real `gear attach`
- * CLI, resolving its own token, opening its own socket through `@gear/sdk`,
+ * client, so what is NEW here is the second process — the real `rune attach`
+ * CLI, resolving its own token, opening its own socket through `@rune/sdk`,
  * rendering a turn to its own stdout. That is the path a person takes to reach
  * an engine in another room, and it has its own failure modes: the token
  * resolution order, the argv shape, and the fact that a remote console has to
@@ -29,13 +29,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const repoRoot = join(import.meta.dir, "../..");
-const CLI = join(repoRoot, "packages", "orchestrator", "src", "bin", "gear-cli.ts");
+const CLI = join(repoRoot, "packages", "orchestrator", "src", "bin", "rune-cli.ts");
 const RUST_BIN =
-  process.env.GEAR_TOOLS_BIN ??
+  process.env.RUNE_TOOLS_BIN ??
   [
-    join(repoRoot, "target", "release", "gear-tools"),
-    join(repoRoot, "target", "debug", "gear-tools"),
-    join(process.env.HOME ?? "", ".gear", "bin", "gear-tools"),
+    join(repoRoot, "target", "release", "rune-tools"),
+    join(repoRoot, "target", "debug", "rune-tools"),
+    join(process.env.HOME ?? "", ".rune", "bin", "rune-tools"),
   ].find((p) => existsSync(p)) ??
   "";
 const HAS_RUST_BIN = RUST_BIN !== "" && existsSync(RUST_BIN);
@@ -92,16 +92,16 @@ async function stop(proc: ReturnType<typeof Bun.spawn> | null, graceMs = 10_000)
   clearTimeout(hard);
 }
 
-describe("gear serve --host + gear attach ws:// (two processes, a real engine)", () => {
+describe("rune serve --host + rune attach ws:// (two processes, a real engine)", () => {
   let dir: string;
-  let gearHome: string;
+  let runeHome: string;
   let model: ReturnType<typeof Bun.serve> | null = null;
   let server: ReturnType<typeof Bun.spawn> | null = null;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "gear-attach-"));
-    gearHome = join(dir, "home");
-    mkdirSync(gearHome, { recursive: true });
+    dir = mkdtempSync(join(tmpdir(), "rune-attach-"));
+    runeHome = join(dir, "home");
+    mkdirSync(runeHome, { recursive: true });
   });
 
   afterEach(async () => {
@@ -136,11 +136,11 @@ describe("gear serve --host + gear attach ws:// (two processes, a real engine)",
     });
 
     writeFileSync(
-      join(gearHome, "model.json"),
+      join(runeHome, "model.json"),
       JSON.stringify({ provider: "custom", model: "fake-model" }),
     );
     writeFileSync(
-      join(gearHome, "secrets.json"),
+      join(runeHome, "secrets.json"),
       JSON.stringify({
         custom: {
           baseUrl: `http://127.0.0.1:${model.port}/v1`,
@@ -157,21 +157,21 @@ describe("gear serve --host + gear attach ws:// (two processes, a real engine)",
       {
         env: {
           ...process.env,
-          GEAR_HOME: gearHome,
-          GEAR_WORKSPACE: dir,
-          GEAR_DB_PATH: join(dir, "gear.db"),
-          GEAR_TOOLS_BIN: RUST_BIN,
-          GEAR_ROUNDTRIP_TIMEOUT_MS: "120000",
+          RUNE_HOME: runeHome,
+          RUNE_WORKSPACE: dir,
+          RUNE_DB_PATH: join(dir, "rune.db"),
+          RUNE_TOOLS_BIN: RUST_BIN,
+          RUNE_ROUNDTRIP_TIMEOUT_MS: "120000",
         },
         stdout: "pipe",
         stderr: "pipe",
       },
     );
 
-    const tokenPath = join(gearHome, "serve.json");
+    const tokenPath = join(runeHome, "serve.json");
     const deadline = Date.now() + 30_000;
     while (Date.now() < deadline && !existsSync(tokenPath)) await sleep(100);
-    if (!existsSync(tokenPath)) throw new Error("gear serve never wrote its token file");
+    if (!existsSync(tokenPath)) throw new Error("rune serve never wrote its token file");
     const cfg = JSON.parse(readFileSync(tokenPath, "utf8")) as {
       token: string;
       port: number;
@@ -184,9 +184,9 @@ describe("gear serve --host + gear attach ws:// (two processes, a real engine)",
   }
 
   /**
-   * `gear attach ws://…` in its own process, with its own HOME.
+   * `rune attach ws://…` in its own process, with its own HOME.
    *
-   * A separate `GEAR_HOME` is what makes this a remote attach rather than a
+   * A separate `RUNE_HOME` is what makes this a remote attach rather than a
    * local one: the CLI must take the token it was given, not find one lying
    * about on this machine.
    */
@@ -199,8 +199,8 @@ describe("gear serve --host + gear attach ws:// (two processes, a real engine)",
       cwd: dir,
       env: {
         ...process.env,
-        GEAR_HOME: join(dir, "elsewhere"),
-        GEAR_TOOLS_BIN: RUST_BIN,
+        RUNE_HOME: join(dir, "elsewhere"),
+        RUNE_TOOLS_BIN: RUST_BIN,
         NO_COLOR: "1",
         ...env,
       },
@@ -221,7 +221,7 @@ describe("gear serve --host + gear attach ws:// (two processes, a real engine)",
       // The token by ENVIRONMENT, which is the form the docs recommend: a token
       // on the command line lands in shell history.
       const client = attach(port, ["--prompt", "check the shell works"], {
-        GEAR_SERVE_TOKEN: token,
+        RUNE_SERVE_TOKEN: token,
       });
       const out = await new Response(client.stdout).text();
       const err = await new Response(client.stderr).text();
@@ -232,7 +232,7 @@ describe("gear serve --host + gear attach ws:// (two processes, a real engine)",
       // ── it attached, and said where the token came from ──
       expect(out).toContain("attached");
       expect(out).toContain(`ws://127.0.0.1:${port}`);
-      expect(out).toContain("GEAR_SERVE_TOKEN");
+      expect(out).toContain("RUNE_SERVE_TOKEN");
       // Never the token itself. This output is what a person pastes into a bug
       // report, and the token is remote code execution.
       expect(out).not.toContain(token);
@@ -262,7 +262,7 @@ describe("gear serve --host + gear attach ws:// (two processes, a real engine)",
       const client = attach(port, ["--prompt", "hello"], {
         // Well-formed and wrong. The server's comparison is constant-time, so
         // this cannot be walked one byte at a time either.
-        GEAR_SERVE_TOKEN: "x".repeat(43),
+        RUNE_SERVE_TOKEN: "x".repeat(43),
       });
       const out = await new Response(client.stdout).text();
       const code = await client.exited;
@@ -288,7 +288,7 @@ describe("gear serve --host + gear attach ws:// (two processes, a real engine)",
 
       expect(code).toBe(1);
       expect(out).toContain(`no token for ws://127.0.0.1:${port}`);
-      expect(out).toContain("GEAR_SERVE_TOKEN");
+      expect(out).toContain("RUNE_SERVE_TOKEN");
     },
     120_000,
   );

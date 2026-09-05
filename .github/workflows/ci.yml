@@ -58,13 +58,6 @@ jobs:
         run: bun run typecheck
       - name: Lint
         run: bun run lint
-      - name: Build the web bundle the brand checklist audits
-        # `apps/web/dist/` is gitignored and `tests/unit/brand-checklist.test.ts`
-        # refuses to audit a missing or stale one — correctly, since a green
-        # test that inspected nothing is worse than a red one. The gate has to
-        # PRODUCE the artifact it inspects, or it is red on every clean
-        # checkout, which is what it has been. 3 seconds.
-        run: bun run --cwd apps/web build
       - name: Unit tests
         run: bun test tests/unit/
       - name: Repo-wide format check
@@ -106,8 +99,8 @@ jobs:
       - name: Upload Rust binary
         uses: actions/upload-artifact@v4
         with:
-          name: gear-tools-${{ matrix.os }}
-          path: target/release/gear-tools*
+          name: rune-tools-${{ matrix.os }}
+          path: target/release/rune-tools*
           retention-days: 1
 
   # ── Stage 4: Integration Tests ──
@@ -139,7 +132,7 @@ jobs:
         # tests/integration/verifier-ecosystems.test.ts runs the commands the
         # verifier detects for Go, Python, Rust and the JVM. On a laptop a
         # missing toolchain is a clean skip; here it would be a hole in the gate,
-        # so GEAR_VERIFIER_REQUIRE_TOOLCHAINS below turns a skip into a failure.
+        # so RUNE_VERIFIER_REQUIRE_TOOLCHAINS below turns a skip into a failure.
         # This step prints what the runner actually has, so a change to the
         # image is visible in the log rather than only in a red test.
         run: |
@@ -147,12 +140,12 @@ jobs:
           python3 --version || echo "python3: MISSING"
           javac -version || echo "javac: MISSING"
           cargo --version || echo "cargo: MISSING"
-      - name: TypeScript integration tests (real engine + real gear-tools)
+      - name: TypeScript integration tests (real engine + real rune-tools)
         env:
-          GEAR_TOOLS_BIN: ${{ github.workspace }}/target/release/gear-tools
+          RUNE_TOOLS_BIN: ${{ github.workspace }}/target/release/rune-tools
           # ubuntu ships Go, Python and Java; Rust comes from the toolchain step
           # above. macOS runners have no Go, so the requirement is linux-only.
-          GEAR_VERIFIER_REQUIRE_TOOLCHAINS: ${{ matrix.os == 'ubuntu-latest' && 'go,python,rust,java' || '' }}
+          RUNE_VERIFIER_REQUIRE_TOOLCHAINS: ${{ matrix.os == 'ubuntu-latest' && 'go,python,rust,java' || '' }}
         run: bun test tests/integration/
 
   # ── Stage 4b: Windows unit suite + the Windows installer's only compiler ──
@@ -173,8 +166,6 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Typecheck
         run: bun run typecheck
-      - name: Build the web bundle the brand checklist audits
-        run: bun run --cwd apps/web build
       - name: Unit tests
         # The Windows runner takes 190s for a suite that takes 40s on a
         # developer's machine — five times slower on disk-bound work, which is
@@ -206,7 +197,7 @@ jobs:
         run: |
           # Exercises the parameter block, the PATH helpers and the uninstall
           # branch without needing a published release to exist.
-          ./scripts/install.ps1 -Uninstall -InstallDir "$env:RUNNER_TEMP/gear-bin"
+          ./scripts/install.ps1 -Uninstall -InstallDir "$env:RUNNER_TEMP/rune-bin"
 
   # ── Stage 4c: Packaged-binary E2E — the artifact users actually download ──
   packaged-e2e:
@@ -221,21 +212,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - uses: Swatinem/rust-cache@v2
       - run: bun install --frozen-lockfile
-      - run: cargo build --release -p gear-tools
-      # The product is a browser page and the binary has to carry it: there is
-      # no `apps/web/dist` beside an installed executable. A binary compiled
-      # without this step answers `401 unauthorized` to the first page request,
-      # which is exactly how P10.9a was found — by a founder, not by CI.
-      - name: Build the web client and generate the embed manifest
-        shell: bash
-        run: |
-          set -euo pipefail
-          bun run --filter @gear/web build
-          test -f apps/web/dist/index.html || {
-            echo "::error::apps/web/dist/index.html is missing; the binary would serve nothing"
-            exit 1
-          }
-          bun scripts/gen-web-embed.ts
+      - run: cargo build --release -p rune-tools
       - name: Compile standalone CLI (same command as release builds)
         shell: bash
         run: |
@@ -243,146 +220,62 @@ jobs:
           # The same version source release.yml and build-release.sh use, so
           # CI exercises the injection path rather than a second one.
           . scripts/version.sh
-          v="$(gear_version)"
+          v="$(rune_version)"
           echo "building as $v"
-          out="./gear-packaged"
-          [ "$RUNNER_OS" = "Windows" ] && out="./gear-packaged.exe"
-          bun build --compile --define=GEAR_BUILD_VERSION="\"$v\"" \
-            packages/orchestrator/src/bin/gear-cli.ts --outfile "$out"
+          out="./rune-packaged"
+          [ "$RUNNER_OS" = "Windows" ] && out="./rune-packaged.exe"
+          bun build --compile --define=RUNE_BUILD_VERSION="\"$v\"" \
+            packages/orchestrator/src/bin/rune-cli.ts --outfile "$out"
           # The injection must actually reach the binary: a define that stops
           # working would otherwise show up first in a shipped release.
-          "$out" --version | grep -F "Gear v$v"
+          "$out" --version | grep -F "Rune v$v"
       # Windows binaries have been built for months with nothing exercising
       # them at runtime — ci.yml typechecked and stopped there. The packaged
       # artifact now has to start, answer, and run real tools on Windows too.
       - name: Packaged smoke - version, help, REAL tool execution
         shell: bash
         env:
-          GEAR_TOOLS_BIN_POSIX: ${{ github.workspace }}/target/release/gear-tools
+          RUNE_TOOLS_BIN_POSIX: ${{ github.workspace }}/target/release/rune-tools
         run: |
           set -euo pipefail
           if [ "$RUNNER_OS" = "Windows" ]; then
-            out="./gear-packaged.exe"
-            export GEAR_TOOLS_BIN="$GITHUB_WORKSPACE/target/release/gear-tools.exe"
+            out="./rune-packaged.exe"
+            export RUNE_TOOLS_BIN="$GITHUB_WORKSPACE/target/release/rune-tools.exe"
           else
-            out="./gear-packaged"
-            export GEAR_TOOLS_BIN="$GEAR_TOOLS_BIN_POSIX"
+            out="./rune-packaged"
+            export RUNE_TOOLS_BIN="$RUNE_TOOLS_BIN_POSIX"
           fi
-          export GEAR_HOME="$RUNNER_TEMP/gear-home"
-          mkdir -p "$GEAR_HOME"
-          "$out" --version | grep -E "Gear v[0-9]"
+          export RUNE_HOME="$RUNNER_TEMP/rune-home"
+          mkdir -p "$RUNE_HOME"
+          "$out" --version | grep -E "Rune v[0-9]"
           "$out" --help > /dev/null
           # The artifact pair must actually work, not merely start: a
-          # write -> read -> edit -> bash round-trip through gear-tools.
+          # write -> read -> edit -> bash round-trip through rune-tools.
           "$out" tools-smoke
           # And the path a user actually takes: a prompt in, an answer out,
           # against a mock provider that needs no credential.
           bun scripts/smoke-print.ts "$out"
-      # ── The product, from the artifact (P10.9a) ──
+      # ── The served engine, from the artifact (P10.9a) ──
       # `--version` proves it starts, `tools-smoke` proves the executor works,
-      # `smoke-print` proves the CLI turn. None of them opens the thing a
-      # person actually installed Gear to use. This does: the page with its
-      # token, the assets it references, one session over the websocket
-      # completing a turn, and no host left behind. Both defects it covers were
-      # invisible to every source-run gate, on all three operating systems.
-      - name: Packaged smoke - the binary serves the web product
+      # `smoke-print` proves the CLI turn. This proves the binary can spawn its
+      # own session hosts: one session over the websocket completing a turn,
+      # and no host left behind — a defect invisible to every source-run gate.
+      - name: Packaged smoke - the binary hosts a session
         shell: bash
         env:
-          GEAR_TOOLS_BIN_POSIX: ${{ github.workspace }}/target/release/gear-tools
+          RUNE_TOOLS_BIN_POSIX: ${{ github.workspace }}/target/release/rune-tools
         run: |
           set -euo pipefail
           if [ "$RUNNER_OS" = "Windows" ]; then
-            out="./gear-packaged.exe"
-            export GEAR_TOOLS_BIN="$GITHUB_WORKSPACE/target/release/gear-tools.exe"
+            out="./rune-packaged.exe"
+            export RUNE_TOOLS_BIN="$GITHUB_WORKSPACE/target/release/rune-tools.exe"
           else
-            out="./gear-packaged"
-            export GEAR_TOOLS_BIN="$GEAR_TOOLS_BIN_POSIX"
+            out="./rune-packaged"
+            export RUNE_TOOLS_BIN="$RUNE_TOOLS_BIN_POSIX"
           fi
-          export GEAR_HOME="$RUNNER_TEMP/gear-home-web"
-          mkdir -p "$GEAR_HOME"
+          export RUNE_HOME="$RUNNER_TEMP/rune-home-serve"
+          mkdir -p "$RUNE_HOME"
           "$out" serve --check
-
-  # ── Stage 4d: The web product ──
-  # One bundle, one transport, three operating systems. Runs on Linux (1x
-  # billing) because the artifact is platform-independent: what shipped is a
-  # directory of static files and the browser that renders them.
-  web:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install --frozen-lockfile
-      - run: cargo build --release -p gear-tools
-      - name: Typecheck + build the bundle
-        run: bun run --filter @gear/web build
-      - name: Reducers, cards, entry, review workspace
-        env:
-          GEAR_TOOLS_BIN: ${{ github.workspace }}/target/release/gear-tools
-        run: bun test tests/unit/web tests/unit/brand-checklist.test.ts
-      - name: The brand checklist, on the built stylesheet
-        # Checked on the ARTIFACT rather than the source: a shadow or a stray
-        # hue that arrives through a dependency still counts. The unit test
-        # above does the reading; this line fails loudly if the build is stale.
-        run: test -n "$(ls apps/web/dist/assets/*.css)"
-      - name: Browser smoke and the founder screenshots, light and dark
-        env:
-          GEAR_TOOLS_BIN: ${{ github.workspace }}/target/release/gear-tools
-        run: |
-          bun x --bun playwright install --with-deps chromium
-          bun run test:e2e
-      # The screenshots the spec writes are NOT diffed against the committed
-      # set: every run has a fresh temp workspace path, session id and timing
-      # in it, so no two runs are byte-identical and a drift check would fail
-      # on a correct tree forever. They are regenerated deliberately when the
-      # UI changes, and reviewed as images.
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: playwright-trace
-          path: tests/e2e/test-results
-          retention-days: 7
-
-  # ── Stage 4d-bis: The VS Code extension, loaded in a real VS Code ──
-  #
-  # Before P10.6 this extension typechecked, bundled, packaged and had unit
-  # tests for its pure functions, and nobody had ever seen it load. It could not
-  # have worked: the page it frames had no listener for the messages it posts.
-  #
-  # `@vscode/test-electron` downloads a pinned VS Code, launches it with the
-  # extension in development mode, and drives "Send selection to Gear" for real.
-  # The assertion is made from OUTSIDE the editor, through the SDK against the
-  # same `gear serve --web`, because a webview's iframe is cross-origin and its
-  # DOM is opaque from inside the extension host.
-  #
-  # Linux needs a display: an Electron with no X server exits before the
-  # extension host starts. `xvfb-run` is the whole of that story.
-  vscode:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install --frozen-lockfile
-      - run: cargo build --release -p gear-tools
-      # The extension frames the built client. Without it the launcher skips,
-      # and a proof that skips in CI is not a proof.
-      - name: Build the web bundle the webview frames
-        run: bun run --filter @gear/web build
-      # 300 MB per run otherwise. Keyed on the pinned version in
-      # apps/vscode/test/runTest.ts, so bumping it re-downloads once.
-      - name: Cache the pinned VS Code build
-        uses: actions/cache@v4
-        with:
-          path: .vscode-test
-          key: vscode-test-${{ runner.os }}-${{ hashFiles('apps/vscode/test/runTest.ts') }}
-          restore-keys: vscode-test-${{ runner.os }}-
-      - name: Live extension load (webview → gear serve → a real turn)
-        env:
-          GEAR_TOOLS_BIN: ${{ github.workspace }}/target/release/gear-tools
-        run: xvfb-run -a bun run --filter gear test:vscode
 
   # ── Stage 4e: Script + Rust supply-chain hygiene ──
   shellcheck:
@@ -419,7 +312,7 @@ jobs:
       - run: bun run build
       - name: Incident coverage (every recurring failure class has a regression eval)
         # Reads the committed class snapshot, never a database: a CI runner has
-        # no ~/.gear/blackbox.db. Fails when an eval-able class that has fired
+        # no ~/.rune/blackbox.db. Fails when an eval-able class that has fired
         # ≥3 times has neither a task nor a dated waiver — a failure that keeps
         # happening and is not in the suite will keep happening.
         run: bun run tests/eval/from-incidents.ts --check
@@ -459,8 +352,8 @@ jobs:
       - name: Real-model eval gate (skipped if no ANTHROPIC_API_KEY secret)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          GEAR_EVAL_PROVIDER: anthropic
-          GEAR_EVAL_MODEL: claude-sonnet-4-20250514
+          RUNE_EVAL_PROVIDER: anthropic
+          RUNE_EVAL_MODEL: claude-sonnet-4-20250514
         run: |
           if [ -z "$ANTHROPIC_API_KEY" ]; then
             echo "No ANTHROPIC_API_KEY secret configured — skipping real-model eval gate."

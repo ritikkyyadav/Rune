@@ -1,6 +1,6 @@
 # External benchmarks
 
-Every other number Gear publishes is Gear measuring Gear. The variants registry,
+Every other number Rune publishes is Rune measuring Rune. The variants registry,
 the paired A/B, the lessons ladder — all of them compare this system against
 itself on a suite this repository owns, and a suite you own is a suite you can,
 over enough months, quietly shape to the thing you built. These two exist so
@@ -35,7 +35,7 @@ discipline actually live on.
 
 ## Two arms, always
 
-- **`pristine`** — `gear --pristine`: no notebook, no playbook, no promoted
+- **`pristine`** — `rune --pristine`: no notebook, no playbook, no promoted
   config. What the harness scores with nothing learned.
 - **`evolved`** — the machine as it stands, promotions and lessons included.
 
@@ -56,11 +56,11 @@ bun run tests/eval/anchors.ts --plan terminal-bench-20 --arm evolved
 
 **SWE-bench Verified.** Clone the official harness
 (`princeton-nlp/SWE-bench`), produce one patch per pinned instance with
-`gear -P` (add `--pristine` for the control arm), then score with
-`swebench.harness.run_evaluation`. Gear produces predictions; the official
+`rune -P` (add `--pristine` for the control arm), then score with
+`swebench.harness.run_evaluation`. Rune produces predictions; the official
 harness decides whether they resolve. This repository never scores.
 
-**Terminal-Bench.** Install `terminal-bench`, register Gear as a custom agent,
+**Terminal-Bench.** Install `terminal-bench`, register Rune as a custom agent,
 and run the pinned task ids under Docker. Each task is a container with a real
 shell, so this is the anchor that exercises the sandbox rather than the diff.
 
@@ -180,7 +180,7 @@ ships a `/usr/bin/javac` stub that exits 1 with "Unable to locate a Java Runtime
 reporting that as "Java checks FAILED". On a machine missing a toolchain the task
 asserts the other half of the same invariant instead: that a compiler which
 cannot run never produces a green check. CI's ubuntu runner has all four and
-`GEAR_VERIFIER_REQUIRE_TOOLCHAINS` makes a skip there a failure.
+`RUNE_VERIFIER_REQUIRE_TOOLCHAINS` makes a skip there a failure.
 
 The receipts, read back out of the session log (`tests/eval` mock run,
 2026-09-03):

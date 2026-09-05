@@ -229,7 +229,7 @@ const INJECTION_PATTERNS: InjectionPattern[] = [
   // sandbox." — never "rules cannot bypass the classifier" in a design doc.
   {
     pattern:
-      /(?:^|[.!?:]\s*|\n\s*|\b(?:please|now|then|and|first|immediately|you\s+(?:must|should|need\s+to|have\s+to|will|can\s+now|may\s+now))\s+)(?:bypass|disable|override|turn\s+off|switch\s+off|circumvent)\s+(?:the\s+|all\s+|any\s+|your\s+|its\s+|gear['’]s\s+)?(?:safety|security|permission|policy|classifier|guardrail|sandbox|content\s+filter|safeguard|restriction)s?\b/i,
+      /(?:^|[.!?:]\s*|\n\s*|\b(?:please|now|then|and|first|immediately|you\s+(?:must|should|need\s+to|have\s+to|will|can\s+now|may\s+now))\s+)(?:bypass|disable|override|turn\s+off|switch\s+off|circumvent)\s+(?:the\s+|all\s+|any\s+|your\s+|its\s+|rune['’]s\s+)?(?:safety|security|permission|policy|classifier|guardrail|sandbox|content\s+filter|safeguard|restriction)s?\b/i,
     name: "safety_bypass",
     confidence: "high",
     family: "override",
@@ -599,7 +599,7 @@ export function createToolExecutionGuard(config: {
       // executable, network and MCP payloads. The output-oriented patterns
       // (exfiltration, credential steering, concealment) collide with ordinary
       // shell/code vocabulary ("read -p 'Enter token: '", "open .env") and with
-      // Gear writing tests or docs ABOUT prompt injection, so they never veto a
+      // Rune writing tests or docs ABOUT prompt injection, so they never veto a
       // tool call — the tool-result probe is the indirect-injection layer.
       if (config.scanInputs !== false && isArgScanTool(toolName)) {
         // Scan every string leaf on its own rather than the JSON blob: JSON

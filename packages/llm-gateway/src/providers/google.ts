@@ -14,7 +14,7 @@ import type {
   TokenUsage,
 } from "../types";
 import { parseApiErrorBody } from "../types";
-import { tryParseJson } from "@gear/shared";
+import { tryParseJson } from "@rune/shared";
 import { IdleWatchdog } from "./stream-guard";
 
 interface GeminiPart {
@@ -434,7 +434,7 @@ export class GoogleProvider implements LlmProvider {
 
   private fromGeminiCandidate(candidate: GeminiCandidate | undefined): ContentBlock[] {
     // Thought summaries (`thought: true` parts) are reasoning, not the answer;
-    // they only appear when includeThoughts is requested, which Gear never does.
+    // they only appear when includeThoughts is requested, which Rune never does.
     const parts = (candidate?.content?.parts ?? []).filter((part) => !part.thought);
     return parts.map((part, index) => {
       if (part.functionCall) {

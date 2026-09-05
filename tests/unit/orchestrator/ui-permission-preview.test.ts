@@ -5,7 +5,7 @@ import { join } from "path";
 import { buildPermissionPreview } from "../../../packages/orchestrator/src/bin/ui/permission-preview";
 
 async function workspace(): Promise<string> {
-  return mkdtemp(join(tmpdir(), "gear-permission-preview-"));
+  return mkdtemp(join(tmpdir(), "rune-permission-preview-"));
 }
 
 describe("ui/permission-preview", () => {

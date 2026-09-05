@@ -155,7 +155,7 @@ describe("prompt-cache-key on the wire", () => {
 
   test("the key carries no prompt text", () => {
     const key = promptCacheKey("a very secret system prompt", ["bash"]);
-    expect(key).toMatch(/^gear-[0-9a-f]{8}$/);
+    expect(key).toMatch(/^rune-[0-9a-f]{8}$/);
     expect(key).not.toContain("secret");
   });
 });

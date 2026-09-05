@@ -1,6 +1,0 @@
-{
-  "name": "gear-example-skills",
-  "version": "0.1.0",
-  "description": "A skills-only plugin: one SKILL.md playbook, no code, no connectors.",
-  "gearVersion": ">=0.2.0"
-}

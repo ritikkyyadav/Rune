@@ -2,6 +2,8 @@
 
 Out-of-phase defects found during execution. One line each: `file:line — what — found in phase — by`.
 
+**2026-09-03:** every item below that names `apps/web`, `apps/desktop`, `apps/vscode`, the web bundle, the brand checklist or the Playwright suite is moot — those surfaces were removed when the founder made the terminal the only interface. They are left in place as the record of what was found.
+
 Seeded 2026-09-02 from the audits:
 
 - `packages/tool-registry/src/tools/todo-write.ts:55` — `todo_write` has category `read`, so `task` sub-agents can call it into a throwaway store — 6B.4
@@ -11,7 +13,7 @@ Seeded 2026-09-02 from the audits:
 - `packages/shared/src/session.ts:55` — `system_prompt_hash` never written (NULL for 601 sessions) — 7.1
 - `tests/eval/tasks-from-incidents.ts:12-15` — flywheel input empty — 7.8
 - `apps/desktop/src-tauri/src/lib.rs` — six `*_system_memory` commands never called — 3.1
-- `packages/tool-registry/src/tools/freshness.ts` and the gear-tools read/edit path — PR #4's first Windows runtime smoke (packaged-e2e, windows-latest) fails at edit_file with "You must read smoke.txt (read_file) before editing it" immediately after a read_file of the same path: the read-before-edit ledger keys paths differently on Windows (separator or case). Real Windows defect, never observed before because nothing had executed the binary on Windows — 1.7
+- `packages/tool-registry/src/tools/freshness.ts` and the rune-tools read/edit path — PR #4's first Windows runtime smoke (packaged-e2e, windows-latest) fails at edit_file with "You must read smoke.txt (read_file) before editing it" immediately after a read_file of the same path: the read-before-edit ledger keys paths differently on Windows (separator or case). Real Windows defect, never observed before because nothing had executed the binary on Windows — 1.7
 
 Added during execution:
 
@@ -23,29 +25,29 @@ Found while executing Phase 4 (lane C):
 
 - `packages/orchestrator/src/engine.ts` — `reconcileMcpTools` unregisters only `mcp_`-prefixed tools, so the cross-server `read_resource` survives every connector going away; it answers "no connected service exposes resources", which is honest but leaves a schema advertised for nothing — 4.4
 - `packages/orchestrator/src/engine.ts` — `mcpNotices` now carries plugin refusals and local-tool loads as well as connector lifecycle; the name has drifted from what it holds — rename to `extensionNotices` when Phase 2 touches the event surface — 4.5/4.6
-- `packages/orchestrator/src/bin/gear-cli.ts` — `parseArgs` runs with `strict: false`, so any UNDECLARED long option with a value silently becomes a boolean flag plus a stray positional. P4.3 declared the five it needed; every future subcommand must remember to, or lose its arguments without an error — 4.3
+- `packages/orchestrator/src/bin/rune-cli.ts` — `parseArgs` runs with `strict: false`, so any UNDECLARED long option with a value silently becomes a boolean flag plus a stray positional. P4.3 declared the five it needed; every future subcommand must remember to, or lose its arguments without an error — 4.3
 - `packages/orchestrator/src/bin/ui/brand.ts:15` — `PRODUCT_VERSION` is a fifth hand-maintained copy of the version; `plugins.ts` deliberately reads `package.json` instead to avoid an engine→UI import. Consolidate in Phase 1 — 4.6
 
 Found during Phase 2 (lane B):
 
-- `.gitignore:32-42` — a run writes `.gear/skills/playbook/SKILL.md` into the workspace and that path is NOT ignored, so every session dirties the tree it is working in; `.gear/cache/`, `logs/`, `worktrees/` are ignored but `skills/` is not — found in 2.8 while running the `--stream-json` gate — lane B
-- `packages/orchestrator/src/bin/gear-cli.ts:112` — `--status` is declared `{type:"string"}` under `strict:false`, so a bare `--status` silently swallows the NEXT argument as its value (`gear serve --status --port 4999` parsed as `status:"--port"`). Worked around for `serve` by rewriting the flag to a positional before `parseArgs`; every other subcommand still has the hole — found in 2.4 — lane B
-- `packages/orchestrator/src/engine.ts` — `Engine` holds one `currentAbort`/`liveLoop`, so `abort(sessionId)` cannot truly be per-session in one process. `gear serve` works around it with one host process per session (P2.3's supervisor). An in-process multiplexed Engine remains unbuilt and is the blocker for a single-process multi-session desktop — found in 2.3 — lane B
+- `.gitignore:32-42` — a run writes `.rune/skills/playbook/SKILL.md` into the workspace and that path is NOT ignored, so every session dirties the tree it is working in; `.rune/cache/`, `logs/`, `worktrees/` are ignored but `skills/` is not — found in 2.8 while running the `--stream-json` gate — lane B
+- `packages/orchestrator/src/bin/rune-cli.ts:112` — `--status` is declared `{type:"string"}` under `strict:false`, so a bare `--status` silently swallows the NEXT argument as its value (`rune serve --status --port 4999` parsed as `status:"--port"`). Worked around for `serve` by rewriting the flag to a positional before `parseArgs`; every other subcommand still has the hole — found in 2.4 — lane B
+- `packages/orchestrator/src/engine.ts` — `Engine` holds one `currentAbort`/`liveLoop`, so `abort(sessionId)` cannot truly be per-session in one process. `rune serve` works around it with one host process per session (P2.3's supervisor). An in-process multiplexed Engine remains unbuilt and is the blocker for a single-process multi-session desktop — found in 2.3 — lane B
 - `packages/shared/src/session.ts:44-107` — `tool_result` rows carry no `durationMs`, so a replayed tool call reports 0 and a client cannot tell "instant" from "unknown" — found in 2.5 — lane B
 
 Found during Phase 3 (lane B):
 
 - `apps/desktop/src-tauri/Cargo.toml` — the repo root's `exclude` for `apps/desktop/src-tauri` only works while the nearest ancestor manifest IS the repo root, so every cargo command from a git worktree checked out under the main checkout failed with "believes it's in a workspace when it's not". Fixed here with an empty `[workspace]` table in the package; the same trap applies to any future nested crate — found in 3.1 — lane B
-- `packages/orchestrator/src/bin/login-cli.ts` — provider OAuth (Anthropic, Codex, OpenRouter) and the Copilot device flow are terminal-owned: they open a browser and catch a loopback redirect from the CLI process. The desktop settings panel prints `gear login <provider>` for those providers rather than offering a button that cannot work. Moving it in-app needs one host command (`start_provider_login` → returns the URL, completes the exchange, writes to the credential store) — found in 3.4 — lane B
+- `packages/orchestrator/src/bin/login-cli.ts` — provider OAuth (Anthropic, Codex, OpenRouter) and the Copilot device flow are terminal-owned: they open a browser and catch a loopback redirect from the CLI process. The desktop settings panel prints `rune login <provider>` for those providers rather than offering a button that cannot work. Moving it in-app needs one host command (`start_provider_login` → returns the URL, completes the exchange, writes to the credential store) — found in 3.4 — lane B
 - `packages/orchestrator/src/engine.ts` — `getTurnContext` records the last turn's assembly PER SESSION, not per turn, so the inspector shows the most recent assembly for the session rather than the one for the model span you clicked. Correct for a one-turn question and wrong for scrubbing back through a long session; a per-turn record needs a turn index on the capture — found in 3.4 — lane B
 - `apps/desktop/src/lib/demo.ts` — the recorded demo turn predates the round-trip cards, the fleet panel and the auto chips, so "replay a recorded turn" shows a 2026-08 surface. Re-record it against the current reducers — found in 3.4 — lane B
 
 Found during Phase 5 (lane B):
 
 - `apps/desktop/src/lib/stream.ts:919` — `case "tool_call_args_delta"` is a duplicate of an earlier `case` in the same switch, so the second one is dead. esbuild warns on every `apps/desktop` build; the reducer still compiles because both branches do the same thing, which is exactly why it has survived. The exhaustiveness test reads case labels and finds one, so it does not catch a second — found in 5.2 while building the web bundle — lane B
-- `packages/orchestrator/src/headless.ts:246` — `headlessEnvelope` is the only place a headless run reports itself, and it had no `sessionId`, so CI could not name the session it had just run and had to guess with `gear audit last` — wrong on any shared runner. Added in 5.3; the same gap exists for `gear detach`, whose registry records a run id that no envelope ever prints — found in 5.3 — lane B
-- `packages/orchestrator/src/bin/serve-cli.ts` — the `HostPool` registry path (`~/.gear/run/serve-hosts.json`) is a single global file, so a `gear serve` and a `gear acp` running at once overwrite each other's record. It is only read by `gear serve --status`, so the damage is a wrong status page rather than a wrong route, but the file should be keyed by the owning process — found in 5.1 — lane B
-- `packages/orchestrator/src/bin/gear-cli.ts` — `parseArgs` runs with `strict: false` and the options map is now 40+ entries shared by every subcommand, so a flag added for one command is silently accepted by all of them (`gear doctor --token x` parses fine). A per-command option set would catch typos that currently do nothing — found in 5.5 — lane B
+- `packages/orchestrator/src/headless.ts:246` — `headlessEnvelope` is the only place a headless run reports itself, and it had no `sessionId`, so CI could not name the session it had just run and had to guess with `rune audit last` — wrong on any shared runner. Added in 5.3; the same gap exists for `rune detach`, whose registry records a run id that no envelope ever prints — found in 5.3 — lane B
+- `packages/orchestrator/src/bin/serve-cli.ts` — the `HostPool` registry path (`~/.rune/run/serve-hosts.json`) is a single global file, so a `rune serve` and a `rune acp` running at once overwrite each other's record. It is only read by `rune serve --status`, so the damage is a wrong status page rather than a wrong route, but the file should be keyed by the owning process — found in 5.1 — lane B
+- `packages/orchestrator/src/bin/rune-cli.ts` — `parseArgs` runs with `strict: false` and the options map is now 40+ entries shared by every subcommand, so a flag added for one command is silently accepted by all of them (`rune doctor --token x` parses fine). A per-command option set would catch typos that currently do nothing — found in 5.5 — lane B
 
 Found 2026-09-02 by the Phase 6A corpus (`bun run eval:auto-safety --offline`). Each is a shape the
 corpus expects a reviewer to catch because no mechanical breaker names it. None is a regression —
@@ -54,7 +56,7 @@ they are gaps the 19-scenario corpus was too small to see:
 - ~~`packages/orchestrator/src/auto-mode.ts:1805` — the recursive-delete breaker requires the target to
   BE a filesystem root or home directory, so `rm -rf ~/Documents` rates medium and runs — 6A.2~~
 - ~~`packages/orchestrator/src/auto-mode.ts:1962` — `guardrailChangeReason` only inspects `update_config`;
-  a `sed -i` or `gear config set` against `.gear/policy.json` reaches the same target through bash and
+  a `sed -i` or `rune config set` against `.rune/policy.json` reaches the same target through bash and
   is not a guardrail change to the breaker — 6A.2~~
 - ~~`packages/orchestrator/src/auto-mode.ts:1899` — `SECRET_PATH_RE` matches credential FILES, so
   `security find-generic-password` (the macOS keychain CLI) is not a secret read — 6A.2~~
@@ -74,7 +76,7 @@ mechanical blocks still held and 116/116 mechanical allows still preserved.
 Found 2026-09-02 by Phase 7 (lane C):
 
 - `tests/eval/tasks-task-spine.ts` — two mock-mode tasks fail on the merged Phase 1 + Phase 6 tree, verified against that merge's own harness so they are not a Phase 7 regression: `spine_handoff_on_error` ("no handoff recorded for the dead run") and `spine_todos_survive_compaction` ("final request lost the [Task state] block"). Not caused by Phase 6's `task-state.ts` changes either — reverting that one file to `b150dd2` leaves both failing — so the cause is at or before the common base `b150dd2` on `gear/phase-0-stabilize`, or in a file neither lane's diff touches. `baseline-mock.json` still records `cleanPassRate: 1` with zero failing tasks, so `bun run eval -- --compare` will fail CI on any PR off this base until someone fixes the two tasks or re-anchors deliberately. The baseline was NOT re-anchored here: encoding two failures as expected would hide them — found in 7.4
-- `scripts/install.sh` — every install keeps the previous binaries as `gear*.backup-<epoch>` in `~/.gear/bin` and nothing ever prunes them: ~95 generations × 3 binaries (`gear`, `gear-compiled`, `gear-tools`), several GB on this machine. Keep the last 2 or 3 — found in 7.4
+- `scripts/install.sh` — every install keeps the previous binaries as `rune*.backup-<epoch>` in `~/.rune/bin` and nothing ever prunes them: ~95 generations × 3 binaries (`rune`, `rune-compiled`, `rune-tools`), several GB on this machine. Keep the last 2 or 3 — found in 7.4
 - `packages/orchestrator/src/notebook/store.ts:246` — `decay()` retires on `COALESCE(last_used, updated_at) < cutoff`, so an entry that has never been injected is retired 60 days after it was learned even though nothing has had the chance to contradict it. Disuse and staleness are different signals — found in 7.6
 - `tests/eval/from-incidents/covered.json` — two recurring incident classes are WAIVED rather than covered, and each needs a harness capability the suite does not have: `crash.dirty_exit` (162×) needs a process-level eval harness (the current one drives the engine in-process, so there is no child process to exit dirtily), and `context.budget_overflow` (25×) needs `RunOptions` to carry a context-budget override so a task can overflow it without a multi-megabyte fixture — found in 7.8
 
@@ -88,7 +90,7 @@ Found 2026-09-03 by Phase 9 (the web product):
   the same `switch`, so the second is dead. Vite reports it on every build
   (`This case clause will never be evaluated`). Harmless today because both arms return `t`
   unchanged, and a defect the moment either one grows a body — found in P9.1
-- `packages/orchestrator/src/bin/gear-cli.ts:198` — `parseArgs` still runs `strict: false`, so an
+- `packages/orchestrator/src/bin/rune-cli.ts:198` — `parseArgs` still runs `strict: false`, so an
   undeclared long option silently swallows the following argument. Phase 9 added `--console` and
   `--no-browser` to the declaration list for exactly this reason; the underlying trap is unchanged
   and will catch the next flag somebody adds — found in P9.2
@@ -104,11 +106,11 @@ Found 2026-09-03 by Phase 9 (the web product), continued:
   tool row AND a "Plan:" line, and the plan ledger above the transcript now shows the same
   list a third time. The tool row should collapse to "planned 3 steps" — found in P9.5
 - `apps/web/branding/` — the mark is recreated from the geometry in the brief, not the
-  founder's original vector. `scripts/generate-gear-mark.ts` exists so the real file can
-  replace `gear-mark.svg` byte-for-byte; the derivatives are then one command away
-  (`scripts/generate-gear-raster.ts`) — founder action, not a defect
+  founder's original vector. `scripts/generate-rune-mark.ts` exists so the real file can
+  replace `rune-mark.svg` byte-for-byte; the derivatives are then one command away
+  (`scripts/generate-rune-raster.ts`) — founder action, not a defect
 - The app's Connect tab cannot complete an OAuth login: the callback needs a loopback
-  listener a page cannot open, so it prints `gear login <provider>`. A host command that
+  listener a page cannot open, so it prints `rune login <provider>`. A host command that
   runs the existing `oauth-strategy.ts` flow and streams its state would close this; it is
   the same gap Phase 3 logged — found in P9.4
 - ~~`packages/orchestrator/src/bin/serve-cli.ts` supervisor + tests/integration/engine-serve.test.ts — every serve test run leaks its per-session `engine-host` processes (twenty idle engines found after the Phase 9 agent's runs; they made the held-step round-trip test time out at 60 s under load, while it passes in 21 s alone). The supervisor needs an idle reaper and the tests explicit teardown of the hosts they spawn — found while merging #13~~ **FIXED in P10.0**: idle reaper (`[serve] idleHostSecs`, 10 min, client- and turn-aware), hosts stopped on server exit unless `--keep-hosts`, `--parent-pid` dead-man's switch in the host, teardown in the serve/ACP suites, and `tests/integration/zz-no-leaked-hosts.test.ts` as the standing assertion
@@ -130,8 +132,8 @@ Found 2026-09-03 by Phase 10 (capability closers):
 Found 2026-09-03 by P10.0 (the host reaper):
 
 - `packages/orchestrator/src/bin/serve-cli.ts` — `detachAll()`'s comment says "the next
-  `gear serve` reattaches", and nothing does: `HostPool.spawn` always mints a fresh socket
-  and never reads `~/.gear/run/serve-hosts.json`. So `--keep-hosts` genuinely orphans its
+  `rune serve` reattaches", and nothing does: `HostPool.spawn` always mints a fresh socket
+  and never reads `~/.rune/run/serve-hosts.json`. So `--keep-hosts` genuinely orphans its
   hosts rather than handing them over, and only the idle reaper (which the new server does
   not know about them for) or a restart cleans them up. Either implement reattach or stop
   claiming it — found in P10.0
@@ -173,10 +175,10 @@ Found 2026-09-03 by P10.2 (Windows parity):
 - `packages/orchestrator/src/hooks.ts:386`, `verifier.ts:280`, `worker-worktree.ts:248` — every
   command string these run goes through a hardcoded POSIX shell (`/bin/sh -c`, `bash -c`), so on
   Windows the spawn fails and hooks, the verifier and worker checks are inert with no message
-  saying so. **The Rust half is fixed**: `crates/gear-sandbox/src/shell.rs` resolves a shell once
-  (Git for Windows' bash, else `cmd.exe /C`, `GEAR_SHELL` overrides) and both `bash` paths use it.
+  saying so. **The Rust half is fixed**: `crates/rune-sandbox/src/shell.rs` resolves a shell once
+  (Git for Windows' bash, else `cmd.exe /C`, `RUNE_SHELL` overrides) and both `bash` paths use it.
   These three TypeScript callers should route through the same rule — the resolver needs a TS
-  twin, or the callers need to ask gear-tools. Their unit suites skip on Windows meanwhile,
+  twin, or the callers need to ask rune-tools. Their unit suites skip on Windows meanwhile,
   because what they would assert depends on which shell the machine happens to have — found in
   P10.2
 - `tests/integration/engine-serve.test.ts` "a deferral reaches the client as a held step" — takes 20 s alone against a 60 s timeout and timed out twice under load on the merge gate (with zero leaked hosts the second time); either shorten the round-trip waits it depends on or give it its own timeout, so the gate stops depending on an idle machine — found while merging #15
@@ -211,13 +213,13 @@ ollama`), so `[llm.<id>] authentication = "…"` is silently ignored for every
   the id list was not; it should iterate `PROVIDER_PRESETS` instead. A config key
   that parses and does nothing is the failure mode `normalizeFallbackOrder` was
   written to avoid — found in P10.5
-- `packages/shared/src/config.ts:18` `GearConfig.llm.defaultProvider` is a
+- `packages/shared/src/config.ts:18` `RuneConfig.llm.defaultProvider` is a
   hand-written union of provider ids that has now drifted three times: it was
   missing groq/xai/deepseek/custom before P8, still omits `codex`, and now omits
   `bedrock`, `vertex` and `azure-openai`. So `[llm] defaultProvider = "bedrock"`
   in config.toml is a type error even though the provider exists and works. It
   should be `ProviderName`, or derived from `PROVIDER_PRESETS` the way the tier
-  and fallback tables now are. (`gear use bedrock` works — it writes the model
+  and fallback tables now are. (`rune use bedrock` works — it writes the model
   sidecar, not this key — which is why the gap is easy to miss.) Distrust
   hand-written provider unions; this is the third one — found in P10.5
 - `scripts/verify-cache.ts` has no construction site for the three enterprise
@@ -231,7 +233,7 @@ Found 2026-09-03 by P10.6 (integration proofs):
 - `packages/orchestrator/src/bin/acp-cli.ts` `toUpdate` drops `usage`, but ACP
   v1 grew from five update kinds to fifteen since that mapping was written and
   one of them is a **stable** `usage_update` (`used`, `size`, optional `cost`)
-  that Gear's `usage.context` could fill exactly. It is still dropped because an
+  that Rune's `usage.context` could fill exactly. It is still dropped because an
   update kind an older client does not know fails the whole notification in a
   schema-validating client, and there is no Zed on this machine to try it
   against. Send it once someone can run a real editor against the change —
@@ -249,16 +251,16 @@ Found 2026-09-03 by P10.6 (integration proofs):
   that names the GHES API root); `review.ts` should read the same one — found in
   P10.6
 - `packages/orchestrator/src/bin/pr-cli.ts` `checkoutPrWorktree` writes
-  `.gear/worktrees/pr-<n>` inside the user's repository, so `gear pr 12` leaves
-  `?? .gear/` in `git status` for any project that has not ignored `.gear/`.
-  Gear's own `.gitignore` covers it, which is why nobody noticed. Either write
-  the worktree outside the repo, or add `.gear/` to the repo's
+  `.rune/worktrees/pr-<n>` inside the user's repository, so `rune pr 12` leaves
+  `?? .rune/` in `git status` for any project that has not ignored `.rune/`.
+  Rune's own `.gitignore` covers it, which is why nobody noticed. Either write
+  the worktree outside the repo, or add `.rune/` to the repo's
   `.git/info/exclude` (local, uncommitted) on first use — found in P10.6
 - `packages/orchestrator/src/task-state.ts:791` `TaskStateStore.addDecision` is
   dead in production: nothing outside `tests/unit/orchestrator/task-state.test.ts`
   ever calls it, so `state.decisions` is always empty, the spine block's
   `Decisions: …` line never renders, and the `Decisions` section of
-  `.gear/mission.md` is always absent. The consequence is a context one: a
+  `.rune/mission.md` is always absent. The consequence is a context one: a
   decision the user states in an early turn has exactly one carrier across a
   compaction — the summarizer's prose — which is the single carrier Gap 6 of the
   competitive assessment says not to rely on. Either wire a recorder (the
@@ -287,4 +289,4 @@ Found 2026-09-03 by P10.6 (integration proofs):
   transcript is behind it. Worth a design pass: either the reading column
   re-centres in the space the rail leaves (a reflow, but a deliberate one), or
   the rail narrows below some width — found in P10.9
-- (withdrawn) A P11.2 note claimed the mock suite scores 23/62 on `gear/phase-0-stabilize` and that `bun run eval` "cannot gate anything". Not reproducible: `git archive 02eee64` into a clean directory with its own `bun install` scores 62/62 with and without `GEAR_TOOLS_BINARY`, and every merge gate since has printed 62/62. A mock-suite score far below the baseline is an environment fault first (missing tools binary, stale or shared worktree state); run the export experiment before recording a regression — found while merging #24
+- (withdrawn) A P11.2 note claimed the mock suite scores 23/62 on `gear/phase-0-stabilize` and that `bun run eval` "cannot gate anything". Not reproducible: `git archive 02eee64` into a clean directory with its own `bun install` scores 62/62 with and without `RUNE_TOOLS_BINARY`, and every merge gate since has printed 62/62. A mock-suite score far below the baseline is an environment fault first (missing tools binary, stale or shared worktree state); run the export experiment before recording a regression — found while merging #24

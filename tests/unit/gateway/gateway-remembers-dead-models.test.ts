@@ -77,7 +77,7 @@ describe("gateway remembers dead models across sessions", () => {
   let path: string;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "gear-gw-health-"));
+    dir = mkdtempSync(join(tmpdir(), "rune-gw-health-"));
     path = join(dir, "h.json");
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
@@ -146,7 +146,7 @@ describe("gateway remembers dead models across sessions", () => {
   });
 
   test("a gateway given no store touches no file — persistence is opt-in", async () => {
-    // Regression: the default used to be a store rooted in the real gear home,
+    // Regression: the default used to be a store rooted in the real rune home,
     // so every gateway built without one read and wrote a machine-global file.
     // A live run in one process silently changed fallback behaviour in another,
     // and 17 tests started failing depending on what the machine had learned.

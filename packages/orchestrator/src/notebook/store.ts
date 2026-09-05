@@ -3,7 +3,7 @@
 // markdown. Entries are scoped: `repo` (this exact workspace), `stack`
 // (any workspace with a similar stack fingerprint — how a tactic learned on
 // one project transfers to a similar one), or `global`. Everything is
-// data: inspectable (`gear notebook`), deletable, decayable. Nothing here
+// data: inspectable (`rune notebook`), deletable, decayable. Nothing here
 // ever spends a model token — capture is rule-based and retrieval is
 // scope-keyed ranking.
 

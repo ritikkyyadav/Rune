@@ -27,8 +27,8 @@ function makeEngine(memory?: Record<string, unknown>): Engine {
     model: "gemini-2.5-flash",
     provider: "google",
     workspaceRoot: dir,
-    dbPath: join(dir, "gear.db"),
-    toolsBinaryPath: "gear-tools",
+    dbPath: join(dir, "rune.db"),
+    toolsBinaryPath: "rune-tools",
     yoloMode: false,
     enableCheckpoints: false,
     enableSecurity: false,
@@ -54,14 +54,14 @@ function seedSession(engine: Engine, text: string): string {
 }
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "gear-engine-mem-"));
-  prev = process.env.GEAR_SYSTEM_MEMORY_PATH;
-  process.env.GEAR_SYSTEM_MEMORY_PATH = join(dir, "system-memory.md");
+  dir = mkdtempSync(join(tmpdir(), "rune-engine-mem-"));
+  prev = process.env.RUNE_SYSTEM_MEMORY_PATH;
+  process.env.RUNE_SYSTEM_MEMORY_PATH = join(dir, "system-memory.md");
 });
 
 afterEach(() => {
-  if (prev === undefined) delete process.env.GEAR_SYSTEM_MEMORY_PATH;
-  else process.env.GEAR_SYSTEM_MEMORY_PATH = prev;
+  if (prev === undefined) delete process.env.RUNE_SYSTEM_MEMORY_PATH;
+  else process.env.RUNE_SYSTEM_MEMORY_PATH = prev;
   rmTemp(dir);
 });
 

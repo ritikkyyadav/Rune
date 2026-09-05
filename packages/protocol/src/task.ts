@@ -65,6 +65,15 @@ export interface TodoItem {
    */
   unproven?: "no_evidence" | "check_failed";
   /**
+   * Closed by the model's own report rather than by tool evidence. Set on a
+   * step whose content IS the communication — "hand the user the command",
+   * "report what was built" — which no tool can attest and which the final
+   * message fulfils. Shown as done, never as unproven. Measured need: one run
+   * had such a step refused five times, and each refusal cost a completion
+   * plus a command run purely to "back" the handoff.
+   */
+  closedBy?: "report";
+  /**
    * Who is doing this step. Absent means the lead, which is every item written
    * before the ledger became multi-writer.
    *

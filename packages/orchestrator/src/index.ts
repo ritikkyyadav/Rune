@@ -141,7 +141,7 @@ export { DEFAULT_RELIABILITY, policyForModel, type ReliabilityPolicy } from "./r
 // ─── Loop-guard call signatures ───
 export { breakerSignature, batchSignature } from "./call-signature";
 
-// ─── Plugin bundles (.gear/plugins) ───
+// ─── Plugin bundles (.rune/plugins) ───
 export { discoverPlugins, type PluginManifest, type LoadedPlugin } from "./plugins";
 export {
   DEFAULT_PLUGIN_INDEX_URL,

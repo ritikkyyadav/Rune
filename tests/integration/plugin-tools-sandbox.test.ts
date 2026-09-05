@@ -17,7 +17,7 @@ import { PermissionBroker } from "../../packages/orchestrator/src/permissions";
 import {
   PluginToolServer,
   startPluginTools,
-  makeGearToolsPlanner,
+  makeRuneToolsPlanner,
   type PluginToolSpawnPlan,
 } from "../../packages/tool-registry/src/tools/plugin-tools";
 
@@ -38,8 +38,8 @@ import {
 // loudly enough that a skipped run is never mistaken for a passing one.
 
 const repoRoot = resolve(import.meta.dir, "../..");
-const RUST_RELEASE = join(repoRoot, "target/release/gear-tools");
-const RUST_DEBUG = join(repoRoot, "target/debug/gear-tools");
+const RUST_RELEASE = join(repoRoot, "target/release/rune-tools");
+const RUST_DEBUG = join(repoRoot, "target/debug/rune-tools");
 const RUST_BIN = existsSync(RUST_RELEASE) ? RUST_RELEASE : RUST_DEBUG;
 const HAS_RUST_BIN = existsSync(RUST_BIN);
 
@@ -100,10 +100,10 @@ afterAll(() => {
 });
 
 beforeEach(() => {
-  workspace = mkdtempSync(join(tmpdir(), "gear-plugin-tools-"));
-  pluginRoot = join(workspace, ".gear", "plugins", "gear-example-tools");
-  mkdirSync(join(workspace, ".gear", "plugins"), { recursive: true });
-  cpSync(join(repoRoot, "examples/plugins/gear-example-tools"), pluginRoot, { recursive: true });
+  workspace = mkdtempSync(join(tmpdir(), "rune-plugin-tools-"));
+  pluginRoot = join(workspace, ".rune", "plugins", "rune-example-tools");
+  mkdirSync(join(workspace, ".rune", "plugins"), { recursive: true });
+  cpSync(join(repoRoot, "examples/plugins/rune-example-tools"), pluginRoot, { recursive: true });
   if (CAN_RUN) {
     // The example declares 127.0.0.1:8787; point it at the port this run
     // actually opened. Everything else about the bundle is untouched.
@@ -133,7 +133,7 @@ function makeEngine(extensions?: { allowUnsandboxedTools?: boolean | string[] })
     model: "mock-model",
     provider: "anthropic",
     workspaceRoot: workspace,
-    dbPath: join(workspace, "gear.db"),
+    dbPath: join(workspace, "rune.db"),
     toolsBinaryPath: RUST_BIN,
     skillRoots: [],
     ...(extensions ? { extensions } : {}),
@@ -152,19 +152,19 @@ describe("executable plugin tools under the real OS sandbox", () => {
           .filter((s) => s.name.startsWith("plugin_"));
         const names = schemas.map((s) => s.name).sort();
         expect(names).toEqual([
-          "plugin_gear-example-tools_http_get",
-          "plugin_gear-example-tools_read_text",
-          "plugin_gear-example-tools_write_text",
+          "plugin_rune-example-tools_http_get",
+          "plugin_rune-example-tools_read_text",
+          "plugin_rune-example-tools_write_text",
         ]);
 
         const write = schemas.find((s) => s.name.endsWith("_write_text"))!;
         expect(write.category).toBe("write");
         expect(write.permissionLevel).not.toBe("auto");
-        expect(write.policyId).toBe("plugin:gear-example-tools:write_text");
+        expect(write.policyId).toBe("plugin:rune-example-tools:write_text");
 
         const net = schemas.find((s) => s.name.endsWith("_http_get"))!;
         expect(net.category).toBe("network");
-        expect(net.policyId).toBe("plugin:gear-example-tools:http_get");
+        expect(net.policyId).toBe("plugin:rune-example-tools:http_get");
 
         // 1st gear: a write-capable plugin tool asks. It is not auto-approved,
         // and no manifest field can make it so.
@@ -175,12 +175,12 @@ describe("executable plugin tools under the real OS sandbox", () => {
         // Org policy names the whole bundle with one wildcard.
         const policed = new PermissionBroker(false, {
           workspaceRoot: workspace,
-          orgPolicy: { version: 1, toolsDeny: ["plugin:gear-example-tools:*"] },
+          orgPolicy: { version: 1, toolsDeny: ["plugin:rune-example-tools:*"] },
         });
         const denial = policed.check(write, { path: "a.txt", text: "x" });
         expect(denial.type).toBe("denied");
         if (denial.type === "denied")
-          expect(denial.reason).toContain("plugin:gear-example-tools:*");
+          expect(denial.reason).toContain("plugin:rune-example-tools:*");
       } finally {
         engine.close();
       }
@@ -195,7 +195,7 @@ describe("executable plugin tools under the real OS sandbox", () => {
       try {
         await engine.invalidatePlugins();
         const registry = registryOf(engine);
-        const tool = "plugin_gear-example-tools_write_text";
+        const tool = "plugin_rune-example-tools_write_text";
 
         const inside = await registry.execute({
           toolName: tool,
@@ -207,7 +207,7 @@ describe("executable plugin tools under the real OS sandbox", () => {
         expect(inside.success).toBe(true);
         expect(readFileSync(join(workspace, "inside.txt"), "utf8")).toContain("sandboxed plugin");
 
-        const escapePath = join(tmpdir(), `gear-plugin-escape-${Date.now()}.txt`);
+        const escapePath = join(tmpdir(), `rune-plugin-escape-${Date.now()}.txt`);
         const outside = await registry.execute({
           toolName: tool,
           callId: "2",
@@ -234,7 +234,7 @@ describe("executable plugin tools under the real OS sandbox", () => {
       try {
         await engine.invalidatePlugins();
         const registry = registryOf(engine);
-        const tool = "plugin_gear-example-tools_http_get";
+        const tool = "plugin_rune-example-tools_http_get";
 
         const declared = await registry.execute({
           toolName: tool,
@@ -280,7 +280,7 @@ describe("executable plugin tools under the real OS sandbox", () => {
         // The workspace-write tool reads it fine, which is what makes the
         // comparison meaningful rather than a broken path.
         const readable = await registry.execute({
-          toolName: "plugin_gear-example-tools_read_text",
+          toolName: "plugin_rune-example-tools_read_text",
           callId: "1",
           args: { path: "secret.txt" },
           sessionId: "s",
@@ -308,7 +308,7 @@ describe("a machine with no sandbox", () => {
 
   test.skipIf(!PYTHON)("refuses to run a plugin tool, and names the escape", async () => {
     const started = await startPluginTools({
-      plugin: "gear-example-tools",
+      plugin: "rune-example-tools",
       pluginRoot,
       workspaceRoot: workspace,
       declarations: [
@@ -330,7 +330,7 @@ describe("a machine with no sandbox", () => {
     "runs it only when the user opted that plugin in, and says the capability is unenforced",
     async () => {
       const started = await startPluginTools({
-        plugin: "gear-example-tools",
+        plugin: "rune-example-tools",
         pluginRoot,
         workspaceRoot: workspace,
         declarations: [
@@ -341,7 +341,7 @@ describe("a machine with no sandbox", () => {
           },
         ],
         planner: unsandboxedPlanner,
-        allowUnsandboxed: ["gear-example-tools"],
+        allowUnsandboxed: ["rune-example-tools"],
       });
       try {
         expect(started.handlers.length).toBeGreaterThan(0);
@@ -358,7 +358,7 @@ describe("a machine with no sandbox", () => {
 
   test.skipIf(!PYTHON)("another plugin's opt-in does not cover this one", async () => {
     const started = await startPluginTools({
-      plugin: "gear-example-tools",
+      plugin: "rune-example-tools",
       pluginRoot,
       workspaceRoot: workspace,
       declarations: [
@@ -376,9 +376,9 @@ describe("a machine with no sandbox", () => {
   });
 });
 
-describe("the launch plan gear-tools returns", () => {
+describe("the launch plan rune-tools returns", () => {
   test.skipIf(!HAS_RUST_BIN)("reports the mechanism this machine actually has", () => {
-    const planner = makeGearToolsPlanner(RUST_BIN);
+    const planner = makeRuneToolsPlanner(RUST_BIN);
     const plan = planner({
       workspaceRoot: workspace,
       capability: "workspace-write",
@@ -396,7 +396,7 @@ describe("the launch plan gear-tools returns", () => {
   });
 
   test.skipIf(!HAS_RUST_BIN)("a planner that cannot answer yields an UNSANDBOXED plan", () => {
-    const planner = makeGearToolsPlanner(join(workspace, "no-such-binary"));
+    const planner = makeRuneToolsPlanner(join(workspace, "no-such-binary"));
     const plan = planner({
       workspaceRoot: workspace,
       capability: "none",
@@ -419,11 +419,11 @@ describe("the launch plan gear-tools returns", () => {
       writeFileSync(silent, "import time\ntime.sleep(30)\n");
       cpSync(silent, join(pluginRoot, "silent.py"));
       const server = new PluginToolServer({
-        plugin: "gear-example-tools",
+        plugin: "rune-example-tools",
         pluginRoot,
         workspaceRoot: workspace,
         declaration: { id: "silent", command: ["python3", "silent.py"], capability: "none" },
-        planner: makeGearToolsPlanner(RUST_BIN),
+        planner: makeRuneToolsPlanner(RUST_BIN),
         startTimeoutMs: 1_500,
       });
       const started = await server.start();

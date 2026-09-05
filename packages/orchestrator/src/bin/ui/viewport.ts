@@ -16,7 +16,7 @@
 // Owning the frame means owning the viewport, so this takes the alternate
 // screen. That is a real trade and it is stated plainly in tui.ts's header: the
 // terminal's native scrollback, momentum scrolling and mouse selection stop
-// applying to the transcript, and Gear provides them itself (wheel, PgUp/PgDn,
+// applying to the transcript, and Rune provides them itself (wheel, PgUp/PgDn,
 // shift+arrows) against its own buffer. `--inline` keeps the old layout for
 // anyone who wants the terminal's scrollback back.
 //

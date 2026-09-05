@@ -30,9 +30,9 @@
 // commit was green the whole time. Nothing outside the test files ever set
 // `parentCommit`, which is what that gap looked like from the outside.
 
-import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "@gear/tool-registry";
-import type { TaskKind } from "@gear/protocol";
-import { TASK_KINDS } from "@gear/protocol";
+import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "@rune/tool-registry";
+import type { TaskKind } from "@rune/protocol";
+import { TASK_KINDS } from "@rune/protocol";
 
 /**
  * Commands whose result is evidence, rather than merely another action:
@@ -77,10 +77,10 @@ export const RUNG_MEANING: Record<ClaimRung, string> = {
 };
 
 // The brief and its criteria cross the wire: the read-back is a round-trip a
-// desktop or web client holds exactly as the terminal does, so @gear/protocol
+// desktop or web client holds exactly as the terminal does, so @rune/protocol
 // owns the shapes and they are re-exported here.
-export type { Criterion, Brief, ClaimRung, Evidence, BriefDecision } from "@gear/protocol";
-import type { Brief, ClaimRung, Criterion, Evidence } from "@gear/protocol";
+export type { Criterion, Brief, ClaimRung, Evidence, BriefDecision } from "@rune/protocol";
+import type { Brief, ClaimRung, Criterion, Evidence } from "@rune/protocol";
 
 /** Why a criterion refused to move. Returned rather than thrown — a rejected
  *  claim is information for the surface, not an exception. */

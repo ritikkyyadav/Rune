@@ -3,7 +3,7 @@
 // Every block below comes from the module that ships it — the header from
 // ui/banner, the transcript from ui/turn + ui/activity, the prompt from
 // ui/composer — driven by a scripted turn of engine events. Nothing here is a
-// mock, so if this looks right, `gear` looks right. It needs no API key, which
+// mock, so if this looks right, `rune` looks right. It needs no API key, which
 // makes it the fastest way to review a change to the terminal UI.
 //
 //   bun run scripts/flow-demo.ts
@@ -214,7 +214,7 @@ say("");
 const heading = (label: string) =>
   say(`\n\x1b[2m── ${label} ${"─".repeat(Math.max(3, 60 - label.length))}\x1b[0m`);
 
-heading("gear shifted (shift+tab)");
+heading("rune shifted (shift+tab)");
 say(permissionModeBanner("gear-4"));
 
 heading("sandbox toggled");

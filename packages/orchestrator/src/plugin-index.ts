@@ -1,14 +1,14 @@
-// ─── The plugin index: how `gear plugin add <name>` finds a name ───
+// ─── The plugin index: how `rune plugin add <name>` finds a name ───
 //
 // Before this, a plugin could only be installed from something the user
 // already knew: a path, a git URL, an npm spec. There was no way to ASK what
 // exists. The index is that answer — one versioned JSON document, served raw
 // from the repository, listing every plugin with the four facts a person needs
 // before running someone else's bundle: what it does, where it comes from,
-// which Gear it fits, and what it is allowed to do.
+// which gear it fits, and what it is allowed to do.
 //
-//   gear plugin search fmt          text search over the index
-//   gear plugin add gear-example-tools     resolves through the index
+//   rune plugin search fmt          text search over the index
+//   rune plugin add rune-example-tools     resolves through the index
 //
 // Three properties are load-bearing:
 //
@@ -16,25 +16,25 @@
 //     reasons rather than half-loaded. The index is fetched over the network;
 //     it is exactly the input that must not be trusted structurally.
 //  2. **Integrity-checked.** Each entry carries the sha256 of the plugin tree
-//     (`computeIntegrity`, the same digest `gear plugin add` writes). It is
+//     (`computeIntegrity`, the same digest `rune plugin add` writes). It is
 //     verified against the STAGED tree before installation — after install the
 //     manifest is rewritten with `name`/`source`, which changes the digest by
 //     construction, so the check has exactly one honest moment to happen in.
 //  3. **Offline-tolerant.** The last successfully fetched copy is cached in
-//     `~/.gear/plugin-index.json` and used when the network is unreachable,
+//     `~/.rune/plugin-index.json` and used when the network is unreachable,
 //     marked stale so the caller can say so. A source checkout also carries
 //     `plugins/index.json` beside the code; that is the last resort, and the
 //     one that makes the whole thing work with no network at all.
 //
-// `[extensions] index` (or `GEAR_PLUGIN_INDEX`) points at a different index:
+// `[extensions] index` (or `RUNE_PLUGIN_INDEX`) points at a different index:
 // a company's internal list, or a local file during development.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { gearHomePath } from "@gear/shared";
+import { runeHomePath } from "@rune/shared";
 
-import { computeIntegrity, satisfiesGearVersion, GEAR_VERSION } from "./plugins";
+import { computeIntegrity, satisfiesRuneVersion, RUNE_VERSION } from "./plugins";
 
 /** Where the public index lives when nothing overrides it. */
 export const DEFAULT_PLUGIN_INDEX_URL =
@@ -68,8 +68,8 @@ export interface PluginIndexEntry {
   /** A git URL, or a path relative to the index file (local indexes only). */
   source: string;
   version: string;
-  /** Semver range of Gear the plugin supports. */
-  gearVersion?: string;
+  /** Semver range of Rune the plugin supports. */
+  runeVersion?: string;
   capabilities: PluginCapability[];
   /** `sha256-…` over the pristine plugin tree, as `computeIntegrity` computes it. */
   integrity?: string;
@@ -139,8 +139,8 @@ export function validatePluginIndex(raw: unknown): PluginIndexValidation {
         errors.push(`${label}.${field} is required and must be a non-empty string`);
       }
     }
-    if (candidate.gearVersion !== undefined && typeof candidate.gearVersion !== "string") {
-      errors.push(`${label}.gearVersion must be a string when present`);
+    if (candidate.runeVersion !== undefined && typeof candidate.runeVersion !== "string") {
+      errors.push(`${label}.runeVersion must be a string when present`);
     }
     if (candidate.homepage !== undefined && typeof candidate.homepage !== "string") {
       errors.push(`${label}.homepage must be a string when present`);
@@ -184,7 +184,7 @@ export function validatePluginIndex(raw: unknown): PluginIndexValidation {
 /**
  * Rank matches: exact name, then name prefix, then name substring, then a hit
  * anywhere in the description or the capability list. An empty query lists
- * everything, which is what `gear plugin search` with no argument should do.
+ * everything, which is what `rune plugin search` with no argument should do.
  */
 export function searchPluginIndex(index: PluginIndex, query: string): PluginIndexEntry[] {
   const q = query.trim().toLowerCase();
@@ -209,13 +209,13 @@ export function resolvePluginIndexEntry(index: PluginIndex, name: string): Plugi
   return index.plugins.find((p) => p.name === name) ?? null;
 }
 
-/** Whether this build of Gear satisfies the entry's declared range. */
-export function entryFitsThisGear(entry: PluginIndexEntry, version = GEAR_VERSION): boolean {
-  return satisfiesGearVersion(version, entry.gearVersion);
+/** Whether this build of Rune satisfies the entry's declared range. */
+export function entryFitsThisGear(entry: PluginIndexEntry, version = RUNE_VERSION): boolean {
+  return satisfiesRuneVersion(version, entry.runeVersion);
 }
 
 /**
- * Turn an entry's `source` into something `gear plugin add` can stage.
+ * Turn an entry's `source` into something `rune plugin add` can stage.
  *
  * A relative path is meaningful only against a local index file — a remote
  * index that says `../examples/foo` is describing a directory on a machine
@@ -244,7 +244,7 @@ export function entrySourceSpec(
 /**
  * Verify a staged plugin tree against the digest the index published.
  *
- * Called BEFORE installation rewrites the manifest: `gear plugin add` stamps
+ * Called BEFORE installation rewrites the manifest: `rune plugin add` stamps
  * `name` and `source` into plugin.json and then recomputes the digest, so the
  * installed tree legitimately hashes differently from the published one.
  */
@@ -284,7 +284,7 @@ interface CachedIndex {
 }
 
 function cachePath(): string {
-  return gearHomePath("plugin-index.json");
+  return runeHomePath("plugin-index.json");
 }
 
 function readCache(): { load: CachedIndex; index: PluginIndex } | null {
@@ -359,7 +359,7 @@ function refToPath(ref: string): string {
 }
 
 export interface LoadPluginIndexOptions {
-  /** `[extensions] index` / `GEAR_PLUGIN_INDEX` / a flag. */
+  /** `[extensions] index` / `RUNE_PLUGIN_INDEX` / a flag. */
   ref?: string;
   /** Milliseconds before a network index is considered unreachable. */
   timeoutMs?: number;

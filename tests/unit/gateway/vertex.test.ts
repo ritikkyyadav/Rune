@@ -5,7 +5,7 @@
  * What is pinned is the routing decision (which publisher serves which model
  * id), the URL and body each half builds, and that a recorded response comes
  * back through the SHARED adapters unchanged. The live half is
- * `tests/integration/enterprise-providers.test.ts` behind GEAR_LIVE_VERTEX=1.
+ * `tests/integration/enterprise-providers.test.ts` behind RUNE_LIVE_VERTEX=1.
  */
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import {
@@ -20,7 +20,7 @@ const origFetch = globalThis.fetch;
 
 /** A service-account-free environment: the token comes from the metadata rung. */
 const ENV: NodeJS.ProcessEnv = {
-  GOOGLE_CLOUD_PROJECT: "gear-test-project",
+  GOOGLE_CLOUD_PROJECT: "rune-test-project",
   GOOGLE_CLOUD_LOCATION: "us-east5",
 };
 
@@ -149,7 +149,7 @@ describe("the Anthropic half", () => {
     mockFetch(() => anthropicSse());
     await collect(new VertexProvider({ env: ENV }).inferStream(request()));
     expect(apiCall().url).toBe(
-      "https://us-east5-aiplatform.googleapis.com/v1/projects/gear-test-project" +
+      "https://us-east5-aiplatform.googleapis.com/v1/projects/rune-test-project" +
         "/locations/us-east5/publishers/anthropic/models/" +
         "claude-sonnet-4-5%4020250929:streamRawPredict",
     );
@@ -204,7 +204,7 @@ describe("the Anthropic half", () => {
           JSON.stringify({
             error: {
               code: 403,
-              message: "Permission denied on resource project gear-test-project.",
+              message: "Permission denied on resource project rune-test-project.",
               status: "PERMISSION_DENIED",
             },
           }),
@@ -224,7 +224,7 @@ describe("the Gemini half", () => {
       new VertexProvider({ env: ENV }).inferStream(request({ model: "gemini-2.5-flash" })),
     );
     expect(apiCall().url).toContain(
-      "/v1/projects/gear-test-project/locations/us-east5/publishers/google/models/" +
+      "/v1/projects/rune-test-project/locations/us-east5/publishers/google/models/" +
         "gemini-2.5-flash:streamGenerateContent",
     );
     expect(apiCall().url).toContain("alt=sse");

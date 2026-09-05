@@ -1,7 +1,7 @@
 import { isAbsolute, resolve } from "node:path";
 import { readFileSync, statSync } from "node:fs";
 
-import type { LlmGateway, ProviderName, ResponseFormat } from "@gear/llm-gateway";
+import type { LlmGateway, ProviderName, ResponseFormat } from "@rune/llm-gateway";
 
 /**
  * The delegation result contract.

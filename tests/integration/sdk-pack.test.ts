@@ -3,7 +3,7 @@
  *
  * `npm pack` producing a file proves nothing: the interesting failures all
  * happen after install, on a machine with no workspace, where a leftover
- * `@gear/protocol` specifier or an `exports` entry pointing outside `files`
+ * `@rune/protocol` specifier or an `exports` entry pointing outside `files`
  * turns the package into a resolution error. So this packs it, unpacks it
  * somewhere with no workspace above it, and both IMPORTS it and TYPECHECKS
  * against it — the two things a consumer actually does.
@@ -36,8 +36,8 @@ function run(cmd: string[], cwd: string): { code: number; out: string } {
 }
 
 beforeAll(() => {
-  work = mkdtempSync(join(tmpdir(), "gear-sdk-pack-"));
-  installed = join(work, "node_modules", "@gear", "sdk");
+  work = mkdtempSync(join(tmpdir(), "rune-sdk-pack-"));
+  installed = join(work, "node_modules", "@rune", "sdk");
   mkdirSync(installed, { recursive: true });
 
   const version = (
@@ -47,7 +47,7 @@ beforeAll(() => {
   // `prepack` rebuilds dist, so this is the published artifact and not
   // whatever happened to be lying around.
   const pack = run(["npm", "pack", "--pack-destination", work], sdkRoot);
-  const tarball = join(work, `gear-sdk-${version}.tgz`);
+  const tarball = join(work, `rune-sdk-${version}.tgz`);
   if (pack.code !== 0 || !existsSync(tarball)) {
     packError = `npm pack failed (exit ${pack.code}):\n${pack.out}`;
     return;
@@ -72,7 +72,7 @@ afterAll(() => {
   if (work) rmSync(work, { recursive: true, force: true });
 });
 
-describe("the @gear/sdk tarball", () => {
+describe("the @rune/sdk tarball", () => {
   test("packs", () => {
     expect(packError, packError).toBe("");
     expect(packed).toBe(true);
@@ -89,23 +89,23 @@ describe("the @gear/sdk tarball", () => {
   });
 
   test("carries no unresolvable workspace specifier", () => {
-    // The failure this catches happens only after install: `@gear/protocol` is
+    // The failure this catches happens only after install: `@rune/protocol` is
     // private and unpublished, so any surviving reference is a 404 on someone
     // else's machine.
     const bad: string[] = [];
     for (const rel of contents.filter((f) => f.endsWith(".js") || f.endsWith(".d.ts"))) {
       const body = readFileSync(join(installed, rel), "utf8");
-      if (/from\s+["']@gear\//.test(body) || /import\(["']@gear\//.test(body)) bad.push(rel);
+      if (/from\s+["']@rune\//.test(body) || /import\(["']@rune\//.test(body)) bad.push(rel);
     }
     expect(bad).toEqual([]);
   });
 
   test("imports, with the protocol re-exported through it", async () => {
     const mod = (await import(join(installed, "dist", "index.js"))) as Record<string, unknown>;
-    expect(typeof mod.GearClient).toBe("function");
+    expect(typeof mod.RuneClient).toBe("function");
     expect(typeof mod.readServeToken).toBe("function");
     // One package, not two: the whole protocol comes through the SDK, which is
-    // the promise `export * from "@gear/protocol"` makes in the source.
+    // the promise `export * from "@rune/protocol"` makes in the source.
     expect(typeof mod.PROTOCOL_VERSION).toBe("string");
     expect(typeof mod.encodeFrame).toBe("function");
     expect(Array.isArray(mod.HOST_COMMANDS)).toBe(true);
@@ -115,12 +115,12 @@ describe("the @gear/sdk tarball", () => {
     writeFileSync(
       join(work, "consumer.ts"),
       [
-        `import { GearClient, PROTOCOL_VERSION } from "@gear/sdk";`,
-        `import type { AgentTurnEvent, PermissionPrompt } from "@gear/sdk";`,
+        `import { RuneClient, PROTOCOL_VERSION } from "@rune/sdk";`,
+        `import type { AgentTurnEvent, PermissionPrompt } from "@rune/sdk";`,
         ``,
         `export async function drive(url: string, token: string): Promise<string> {`,
         `  let said = "";`,
-        `  const gear = await GearClient.connect(`,
+        `  const rune = await RuneClient.connect(`,
         `    { url, token },`,
         `    {`,
         `      onEvent(event: AgentTurnEvent) {`,
@@ -131,9 +131,9 @@ describe("the @gear/sdk tarball", () => {
         `      },`,
         `    },`,
         `  );`,
-        `  const id = await gear.createSession();`,
-        `  await gear.run(id, "hello");`,
-        `  gear.close();`,
+        `  const id = await rune.createSession();`,
+        `  await rune.run(id, "hello");`,
+        `  rune.close();`,
         `  return said + PROTOCOL_VERSION;`,
         `}`,
       ].join("\n"),

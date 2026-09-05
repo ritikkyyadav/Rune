@@ -1,9 +1,9 @@
 /**
- * `gear acp`, driven by the Agent Client Protocol project's OWN client.
+ * `rune acp`, driven by the Agent Client Protocol project's OWN client.
  *
  * `acp.test.ts` beside this file speaks JSON-RPC by hand. That test is worth
- * keeping — it asserts Gear-specific policy (a cancelled dialog is a deny) that
- * no third-party client knows to check — but it can only prove Gear is
+ * keeping — it asserts Rune-specific policy (a cancelled dialog is a deny) that
+ * no third-party client knows to check — but it can only prove Rune is
  * consistent with the shapes the test author believed in. A mapping that is
  * wrong in the same way in both places passes it.
  *
@@ -11,8 +11,8 @@
  * reference TypeScript implementation published by the ACP project
  * (github.com/agentclientprotocol/typescript-sdk, Apache-2.0). Its client
  * parses every inbound frame through the schema generated from the protocol's
- * own JSON Schema: a `session/update` whose shape Gear invented is a zod
- * failure here, not a silently-rendered blob. Running it against `gear acp` is
+ * own JSON Schema: a `session/update` whose shape Rune invented is a zod
+ * failure here, not a silently-rendered blob. Running it against `rune acp` is
  * the difference between "our test agrees with our agent" and "the protocol's
  * client can drive it".
  *
@@ -34,13 +34,13 @@ import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 
 const repoRoot = join(import.meta.dir, "../..");
-const CLI = join(repoRoot, "packages", "orchestrator", "src", "bin", "gear-cli.ts");
+const CLI = join(repoRoot, "packages", "orchestrator", "src", "bin", "rune-cli.ts");
 const RUST_BIN =
-  process.env.GEAR_TOOLS_BIN ??
+  process.env.RUNE_TOOLS_BIN ??
   [
-    join(repoRoot, "target", "release", "gear-tools"),
-    join(repoRoot, "target", "debug", "gear-tools"),
-    join(process.env.HOME ?? "", ".gear", "bin", "gear-tools"),
+    join(repoRoot, "target", "release", "rune-tools"),
+    join(repoRoot, "target", "debug", "rune-tools"),
+    join(process.env.HOME ?? "", ".rune", "bin", "rune-tools"),
   ].find((p) => existsSync(p)) ??
   "";
 const HAS_RUST_BIN = RUST_BIN !== "" && existsSync(RUST_BIN);
@@ -77,20 +77,20 @@ interface Agent {
   stderr: () => string;
 }
 
-describe("gear acp — conformance against the ACP reference client", () => {
+describe("rune acp — conformance against the ACP reference client", () => {
   let dir: string;
-  let gearHome: string;
+  let runeHome: string;
   let model: ReturnType<typeof Bun.serve> | null = null;
   let agent: Agent | null = null;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "gear-acp-conf-"));
-    gearHome = join(dir, "home");
-    mkdirSync(gearHome, { recursive: true });
+    dir = mkdtempSync(join(tmpdir(), "rune-acp-conf-"));
+    runeHome = join(dir, "home");
+    mkdirSync(runeHome, { recursive: true });
   });
 
   afterEach(async () => {
-    // SIGTERM and wait: `gear acp` stops its per-session engine hosts in its
+    // SIGTERM and wait: `rune acp` stops its per-session engine hosts in its
     // signal handler, and killing it outright strands one host per test for the
     // rest of the suite. `zz-no-leaked-hosts.test.ts` is the assertion.
     const proc = agent?.proc;
@@ -123,11 +123,11 @@ describe("gear acp — conformance against the ACP reference client", () => {
     });
 
     writeFileSync(
-      join(gearHome, "model.json"),
+      join(runeHome, "model.json"),
       JSON.stringify({ provider: "custom", model: "fake-model" }),
     );
     writeFileSync(
-      join(gearHome, "secrets.json"),
+      join(runeHome, "secrets.json"),
       JSON.stringify({
         custom: {
           baseUrl: `http://127.0.0.1:${model.port}/v1`,
@@ -142,11 +142,11 @@ describe("gear acp — conformance against the ACP reference client", () => {
       cwd: dir,
       env: {
         ...process.env,
-        GEAR_HOME: gearHome,
-        GEAR_WORKSPACE: dir,
-        GEAR_DB_PATH: join(dir, "gear.db"),
-        GEAR_TOOLS_BIN: RUST_BIN,
-        GEAR_ROUNDTRIP_TIMEOUT_MS: "120000",
+        RUNE_HOME: runeHome,
+        RUNE_WORKSPACE: dir,
+        RUNE_DB_PATH: join(dir, "rune.db"),
+        RUNE_TOOLS_BIN: RUST_BIN,
+        RUNE_ROUNDTRIP_TIMEOUT_MS: "120000",
       },
       stdio: ["pipe", "pipe", "pipe"],
     }) as ChildProcessWithoutNullStreams;
@@ -161,7 +161,7 @@ describe("gear acp — conformance against the ACP reference client", () => {
       proc,
       // `ndJsonStream` is the reference client's own stdio framing. Using it
       // rather than splitting lines by hand means the newline discipline
-      // `gear acp` promises is checked by the protocol's implementation of it.
+      // `rune acp` promises is checked by the protocol's implementation of it.
       stream: acp.ndJsonStream(
         Writable.toWeb(proc.stdin) as WritableStream<Uint8Array>,
         Readable.toWeb(proc.stdout) as ReadableStream<Uint8Array>,
@@ -213,7 +213,7 @@ describe("gear acp — conformance against the ACP reference client", () => {
           // one it speaks, not merely that a number came back.
           expect(init.protocolVersion).toBe(acp.PROTOCOL_VERSION);
           expect(init.agentCapabilities?.loadSession).toBe(false);
-          // Gear holds its own provider credentials (`gear login`), so there is
+          // Rune holds its own provider credentials (`rune login`), so there is
           // nothing for an editor to authenticate and it says so.
           expect(init.authMethods).toEqual([]);
 
@@ -266,13 +266,13 @@ describe("gear acp — conformance against the ACP reference client", () => {
       // The reference client's schema drops array members it cannot parse
       // (`vecSkipError`) rather than failing the notification, so an empty
       // `content` here is how a WRONG tool-result shape would present. Asserting
-      // the block survived is asserting Gear's shape is the protocol's.
+      // the block survived is asserting Rune's shape is the protocol's.
       expect(completed.content?.length ?? 0).toBeGreaterThan(0);
       expect(completed.content?.[0]?.type).toBe("content");
       expect(completed.content?.[0]?.content?.text).toContain("hello-from-the-reference-client");
 
       // `todo_updated` → `plan`, with entries the protocol's schema accepts.
-      // A `status` or `priority` Gear invented would be dropped by the same
+      // A `status` or `priority` Rune invented would be dropped by the same
       // `vecSkipError` and leave this list empty.
       const plan = updates.find((u) => u.sessionUpdate === "plan") as {
         entries?: Array<{ content: string; status: string; priority: string }>;
@@ -337,7 +337,7 @@ describe("gear acp — conformance against the ACP reference client", () => {
   test.skipIf(!HAS_RUST_BIN)(
     "two sessions on one agent process stay separate",
     async () => {
-      // An editor with two tabs open is one `gear acp` process and two
+      // An editor with two tabs open is one `rune acp` process and two
       // sessions. Each gets its own engine host, and an update for one must
       // never be delivered against the other's id — which is exactly what the
       // reference client's per-session update routing would catch.

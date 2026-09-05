@@ -31,12 +31,12 @@ const PROVIDER_ENV = [
 const savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "gear-pcli-"));
-  process.env.GEAR_SECRETS_PATH = join(dir, "secrets.json");
-  process.env.GEAR_MODEL_PATH = join(dir, "model.json");
-  process.env.GEAR_CREDENTIAL_BACKEND = "file";
-  process.env.GEAR_CREDENTIALS_PATH = join(dir, "credentials.json");
-  process.env.GEAR_CREDENTIAL_INDEX_PATH = join(dir, "credentials.index.json");
+  dir = mkdtempSync(join(tmpdir(), "rune-pcli-"));
+  process.env.RUNE_SECRETS_PATH = join(dir, "secrets.json");
+  process.env.RUNE_MODEL_PATH = join(dir, "model.json");
+  process.env.RUNE_CREDENTIAL_BACKEND = "file";
+  process.env.RUNE_CREDENTIALS_PATH = join(dir, "credentials.json");
+  process.env.RUNE_CREDENTIAL_INDEX_PATH = join(dir, "credentials.index.json");
   // Clear provider env keys so provider listing/discovery is deterministic + offline.
   for (const k of PROVIDER_ENV) {
     savedEnv[k] = process.env[k];
@@ -50,11 +50,11 @@ afterEach(() => {
     else process.env[k] = savedEnv[k];
   }
   for (const k of [
-    "GEAR_SECRETS_PATH",
-    "GEAR_MODEL_PATH",
-    "GEAR_CREDENTIAL_BACKEND",
-    "GEAR_CREDENTIALS_PATH",
-    "GEAR_CREDENTIAL_INDEX_PATH",
+    "RUNE_SECRETS_PATH",
+    "RUNE_MODEL_PATH",
+    "RUNE_CREDENTIAL_BACKEND",
+    "RUNE_CREDENTIALS_PATH",
+    "RUNE_CREDENTIAL_INDEX_PATH",
   ]) {
     delete process.env[k];
   }
@@ -78,7 +78,7 @@ async function capture(fn: () => Promise<void> | void): Promise<string> {
   return buf;
 }
 
-describe("gear use", () => {
+describe("rune use", () => {
   it("writes the active provider + default model to model.json", async () => {
     await capture(() => runUse(["openrouter"]));
     // The catalog default tracks OpenRouter's live free tier (qwen3-coder:free
@@ -100,12 +100,12 @@ describe("gear use", () => {
 
   it("prints usage when no provider is given", async () => {
     const out = await capture(() => runUse([]));
-    expect(out).toMatch(/gear use <provider>/);
+    expect(out).toMatch(/rune use <provider>/);
     expect(process.exitCode).toBe(1);
   });
 });
 
-describe("gear providers", () => {
+describe("rune providers", () => {
   it("lists every provider with its auth method + credential backend", async () => {
     const out = await capture(() => runProviders());
     expect(out).toMatch(/Providers/);
@@ -144,7 +144,7 @@ describe("gear providers", () => {
   });
 });
 
-describe("gear models", () => {
+describe("rune models", () => {
   it("falls back to the curated preset list when there is no live endpoint", async () => {
     // No env key + file store → provider isn't registered → static fallback, offline.
     const out = await capture(() => runModels(["anthropic"]));
@@ -159,7 +159,7 @@ describe("gear models", () => {
   });
 });
 
-describe("gear login --migrate", () => {
+describe("rune login --migrate", () => {
   it("copies legacy secrets.json keys into the credential store", async () => {
     setProviderKey("openrouter", "sk-or-legacy-abcdef");
     const out = await capture(() => runLogin([], { migrate: true }));
@@ -170,12 +170,12 @@ describe("gear login --migrate", () => {
 
   it("prints usage for `login` with no provider on a non-TTY", async () => {
     const out = await capture(() => runLogin([], {}));
-    expect(out).toMatch(/gear login/);
+    expect(out).toMatch(/rune login/);
     expect(out).toMatch(/Providers:/);
   });
 });
 
-describe("gear logout", () => {
+describe("rune logout", () => {
   it("removes a stored key AND oauth session, leaving env/config to fall back", async () => {
     const store = await openCredentialStore({ forceBackend: "file", env: process.env });
     await store.set(apiKeyAccount("openrouter"), "sk-stored");

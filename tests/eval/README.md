@@ -1,4 +1,4 @@
-# Gear eval suite
+# Rune eval suite
 
 The measurement layer every reliability claim rests on. Three tiers, cheapest first:
 
@@ -23,8 +23,8 @@ bun run eval -- --real --compare --noise 0.05
 bun run tests/eval/from-incidents.ts  # mine the black box for uncovered failure classes
 ```
 
-Real-mode env: `GEAR_EVAL_PROVIDER` / `GEAR_EVAL_MODEL` (default google/gemini-2.5-flash),
-`GEAR_MODEL_SWEEP="prov:model,prov:model"` for side-by-side runs.
+Real-mode env: `RUNE_EVAL_PROVIDER` / `RUNE_EVAL_MODEL` (default google/gemini-2.5-flash),
+`RUNE_MODEL_SWEEP="prov:model,prov:model"` for side-by-side runs.
 
 ## The rules the numbers depend on
 
@@ -35,7 +35,7 @@ Real-mode env: `GEAR_EVAL_PROVIDER` / `GEAR_EVAL_MODEL` (default google/gemini-2
   completed turns is excluded from the clean rate (marked ⚠). This is what keeps a
   free-tier quota from masquerading as a 16% agent.
 - **Caps are verdicts.** Real runs get per-task tool-call (default 40,
-  `GEAR_EVAL_TASK_MAX_TOOL_CALLS`) and optional cost caps (`GEAR_EVAL_TASK_MAX_COST`);
+  `RUNE_EVAL_TASK_MAX_TOOL_CALLS`) and optional cost caps (`RUNE_EVAL_TASK_MAX_COST`);
   blowing the cap fails the task even if the artifact eventually appeared.
 - **Baselines are per-mode and immutable.** Mock runs are judged against
   `baseline-mock.json` (deterministic — any task flip is a regression); real runs against
@@ -51,7 +51,7 @@ Real-mode env: `GEAR_EVAL_PROVIDER` / `GEAR_EVAL_MODEL` (default google/gemini-2
 
 ## Incident → eval pipeline (the flywheel)
 
-The black box (`~/.gear/blackbox.db`) fingerprints every failure. The contract:
+The black box (`~/.rune/blackbox.db`) fingerprints every failure. The contract:
 **any class that fires ≥3 times gets a deterministic eval reproducing it.**
 
 ```bash

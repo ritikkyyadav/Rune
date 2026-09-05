@@ -1,7 +1,7 @@
 import { isAbsolute, relative, resolve } from "path";
-import { isOsIsolationAvailable, isSandboxEnabled, patchTargetPaths } from "@gear/tool-registry";
-import type { PermissionLevel, ToolSchema } from "@gear/tool-registry";
-import { createLogger, isPathInside as pathInside } from "@gear/shared";
+import { isOsIsolationAvailable, isSandboxEnabled, patchTargetPaths } from "@rune/tool-registry";
+import type { PermissionLevel, ToolSchema } from "@rune/tool-registry";
+import { createLogger, isPathInside as pathInside } from "@rune/shared";
 import { policyDenial, type OrgPolicy } from "./org-policy";
 
 const permLog = createLogger("permissions");
@@ -312,12 +312,12 @@ export class PermissionBroker {
   /**
    * Set the active permission mode — the single knob the Shift+Tab cycle drives.
    * Org policy can forbid gears outright (e.g. no 4th gear on managed
-   * machines) — a forbidden gear is refused, the current one stands, and the
+   * machines) — a forbidden rune is refused, the current one stands, and the
    * return value tells the caller why.
    */
   setMode(mode: PermissionModeInput): { ok: boolean; reason?: string } {
     const canonical = configModeToPermissionMode(mode);
-    if (!canonical) return { ok: false, reason: `unknown gear "${mode}"` };
+    if (!canonical) return { ok: false, reason: `unknown rune "${mode}"` };
     if (isPermissionModeForbidden(this.orgPolicy, canonical)) {
       return {
         ok: false,

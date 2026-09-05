@@ -1,4 +1,4 @@
-// --- TurnRenderer: the Gear customizer's visible activity stream ---
+// --- TurnRenderer: the Rune customizer's visible activity stream ---
 // The reference deliberately shows Plan -> Read/Search -> Command -> Edit/Diff ->
 // Complete -> Answer. Keep private reasoning private, but never hide the actual
 // actions or evidence that explain what the agent did.
@@ -28,8 +28,8 @@ import type {
   ChildAgentEvent,
   ResearchEvent,
   WorkflowNodeContext,
-} from "@gear/protocol";
-import { assertNeverSoft } from "@gear/protocol";
+} from "@rune/protocol";
+import { assertNeverSoft } from "@rune/protocol";
 import { formatError, formatEvent, fmtTokens } from "./events";
 import { Pulse, PULSE_WEIGHT, pulseGlyph, quietLabel } from "./pulse";
 import { renderMarkdown } from "./markdown";
@@ -1610,7 +1610,7 @@ export class TurnRenderer {
       // ─── Named, and deliberately not drawn in the transcript ───
       // The task's shape and the artifact ledger are state a composed surface
       // reads, not scrollback. Pending decisions are the held-step panel's
-      // material and it already draws them. The record is a document `gear
+      // material and it already draws them. The record is a document `rune
       // audit --record` and the export render; printing it into a turn would
       // repeat the whole run back at the reader.
       case "task_kind":

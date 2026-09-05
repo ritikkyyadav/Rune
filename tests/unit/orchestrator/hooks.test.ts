@@ -14,16 +14,16 @@ import {
 let workspace: string;
 
 beforeEach(async () => {
-  workspace = await mkdtemp(join(tmpdir(), "gear-hooks-"));
+  workspace = await mkdtemp(join(tmpdir(), "rune-hooks-"));
 });
 
 afterEach(async () => {
   await rm(workspace, { recursive: true, force: true });
 });
 
-/** Write `.gear/hooks.json` into the temp workspace. */
+/** Write `.rune/hooks.json` into the temp workspace. */
 async function writeConfig(config: HookConfig | string): Promise<void> {
-  const dir = join(workspace, ".gear");
+  const dir = join(workspace, ".rune");
   await mkdir(dir, { recursive: true });
   const body = typeof config === "string" ? config : JSON.stringify(config, null, 2);
   await writeFile(join(dir, "hooks.json"), body);
@@ -65,12 +65,12 @@ describe("matchesPattern", () => {
 // ─── loadHookConfig ───
 
 describe("loadHookConfig", () => {
-  test("missing .gear/hooks.json returns {}", async () => {
+  test("missing .rune/hooks.json returns {}", async () => {
     const config = await loadHookConfig(workspace);
     expect(config).toEqual({});
   });
 
-  test("missing .gear dir entirely returns {} (no throw)", async () => {
+  test("missing .rune dir entirely returns {} (no throw)", async () => {
     const config = await loadHookConfig(join(workspace, "does", "not", "exist"));
     expect(config).toEqual({});
   });
@@ -155,9 +155,9 @@ describe("HookRunner no-op behavior", () => {
 // ─── runPreToolUse: blocking semantics ───
 
 /**
- * POSIX-only. `HookRunner` runs every hook through `Bun.spawn(["/bin/sh", "-c", …])` (hooks.ts:386), and these fixtures are `sh` one-liners: `exit 0`, `echo done`, `[ "$GEAR_TOOL_NAME" = … ]`.
+ * POSIX-only. `HookRunner` runs every hook through `Bun.spawn(["/bin/sh", "-c", …])` (hooks.ts:386), and these fixtures are `sh` one-liners: `exit 0`, `echo done`, `[ "$RUNE_TOOL_NAME" = … ]`.
  *
- * Gear has no Windows shell contract yet — nothing decides whether a command
+ * Rune has no Windows shell contract yet — nothing decides whether a command
  * string means cmd.exe, PowerShell or Git Bash — so there is no Windows
  * behaviour to assert, only a decision to make. Logged in
  * docs/program/backlog.md.
@@ -219,11 +219,11 @@ describe.skipIf(!POSIX_SHELL)("runPreToolUse blocking", () => {
     expect(decision.reason).toContain("code 3");
   });
 
-  test("passes GEAR_TOOL_NAME via env to the command", async () => {
+  test("passes RUNE_TOOL_NAME via env to the command", async () => {
     // Hook fails only when the env var is wrong, so allow:true proves it was set.
     const runner = createHookRunner(
       {
-        preToolUse: [{ command: '[ "$GEAR_TOOL_NAME" = "edit_file" ] || exit 1', blocking: true }],
+        preToolUse: [{ command: '[ "$RUNE_TOOL_NAME" = "edit_file" ] || exit 1', blocking: true }],
       },
       workspace,
     );
@@ -323,11 +323,11 @@ describe.skipIf(!POSIX_SHELL)("runPostToolUse and lifecycle hooks", () => {
     expect(logs).toHaveLength(0);
   });
 
-  test("postToolUse passes GEAR_TOOL_OUTPUT and succeeds quietly on exit 0", async () => {
+  test("postToolUse passes RUNE_TOOL_OUTPUT and succeeds quietly on exit 0", async () => {
     const logs: string[] = [];
     const runner = createHookRunner(
       {
-        postToolUse: [{ command: '[ -n "$GEAR_TOOL_OUTPUT" ] && exit 0 || exit 1' }],
+        postToolUse: [{ command: '[ -n "$RUNE_TOOL_OUTPUT" ] && exit 0 || exit 1' }],
       },
       workspace,
       { logger: (m) => logs.push(m) },

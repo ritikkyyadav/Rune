@@ -118,9 +118,9 @@ describe("OllamaProvider", () => {
 
   test("sends system prompt and maps roles in the request body", async () => {
     mockFetch(() => ndjson([{ message: { role: "assistant", content: "ok" }, done: true }]));
-    await collect(new OllamaProvider().inferStream(baseReq({ system: "You are Gear." })));
+    await collect(new OllamaProvider().inferStream(baseReq({ system: "You are Rune." })));
     const body = JSON.parse(lastInit!.body as string);
-    expect(body.messages[0]).toEqual({ role: "system", content: "You are Gear." });
+    expect(body.messages[0]).toEqual({ role: "system", content: "You are Rune." });
     expect(body.messages[1].role).toBe("user");
   });
 

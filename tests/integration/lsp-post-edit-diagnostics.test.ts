@@ -59,7 +59,7 @@ describe.skipIf(!HAS_SERVER)(
     let manager: LspServerManager;
 
     beforeAll(() => {
-      workspace = mkdtempSync(join(tmpdir(), "gear-lsp-int-"));
+      workspace = mkdtempSync(join(tmpdir(), "rune-lsp-int-"));
       mkdirSync(join(workspace, "src"), { recursive: true });
       writeFileSync(
         join(workspace, "tsconfig.json"),

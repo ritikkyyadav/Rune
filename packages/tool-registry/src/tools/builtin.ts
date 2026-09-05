@@ -132,8 +132,8 @@ const BASH_DESC_COMMON =
 
 const BASH_DESC_SANDBOXED =
   BASH_DESC_COMMON +
-  " Commands run in an OS sandbox with NO network access by default. For commands that need the internet or touch files outside the workspace " +
-  "(npm/pip/cargo/brew install, git push/pull/fetch/clone, curl/wget, gh), set network: true — otherwise they fail with DNS/connection errors.";
+  " Commands run in an OS sandbox with NO network access by default; on macOS loopback is open, so a local server on 127.0.0.1 and a curl against it work without it. For commands that need the internet or touch files outside the workspace " +
+  "(npm/pip/cargo/brew install, git push/pull/fetch/clone, curl/wget to a remote host, gh), set network: true — otherwise they fail with DNS/connection errors.";
 
 const BASH_DESC_FULL_ACCESS =
   BASH_DESC_COMMON +
@@ -286,7 +286,7 @@ export async function stopLanguageServers(): Promise<void> {
 
 /**
  * Register all built-in tools with the registry.
- * @param binaryPath - Path to the compiled gear-tools binary
+ * @param binaryPath - Path to the compiled rune-tools binary
  */
 export function registerBuiltinTools(registry: ToolRegistry, binaryPath: string): void {
   // Harness-side file-state tracking: read_file/write_file/edit_file/multi_edit

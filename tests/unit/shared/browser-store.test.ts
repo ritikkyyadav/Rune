@@ -10,7 +10,7 @@ import {
 
 describe("browser-store", () => {
   test("save/load round-trips through the sidecar", () => {
-    const dir = mkdtempSync(join(tmpdir(), "gear-browser-store-"));
+    const dir = mkdtempSync(join(tmpdir(), "rune-browser-store-"));
     try {
       expect(loadSavedBrowserState(dir)).toBeNull();
       saveBrowserState(true, dir);
@@ -23,7 +23,7 @@ describe("browser-store", () => {
   });
 
   test("corrupt or wrong-shaped sidecar reads as null", () => {
-    const dir = mkdtempSync(join(tmpdir(), "gear-browser-store-"));
+    const dir = mkdtempSync(join(tmpdir(), "rune-browser-store-"));
     try {
       writeFileSync(join(dir, "browser.json"), "{not json");
       expect(loadSavedBrowserState(dir)).toBeNull();

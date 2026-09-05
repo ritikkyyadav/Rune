@@ -3,10 +3,10 @@
  *
  * There is no AWS credential on this machine, so nothing here talks to AWS.
  * What these tests pin is the part a live call could not tell you anyway: that
- * the request Gear BUILDS is the request Bedrock documents, and that a recorded
+ * the request Rune BUILDS is the request Bedrock documents, and that a recorded
  * Bedrock response comes back through the shared Anthropic parser as ordinary
  * stream events. The live half is `tests/integration/enterprise-providers.test.ts`,
- * which skips with a printed reason unless GEAR_LIVE_BEDROCK=1.
+ * which skips with a printed reason unless RUNE_LIVE_BEDROCK=1.
  */
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import {

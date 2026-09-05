@@ -22,7 +22,7 @@ function sh(args: string[]): void {
 }
 
 beforeEach(() => {
-  repo = mkdtempSync(join(tmpdir(), "gear-worktree-"));
+  repo = mkdtempSync(join(tmpdir(), "rune-worktree-"));
   sh(["init", "-q"]);
   sh(["config", "user.email", "t@example.com"]);
   sh(["config", "user.name", "t"]);
@@ -47,7 +47,7 @@ describe("per-run worktree isolation", () => {
     const runB = createRunWorktree(repo, "run-b");
 
     expect(runA.path).not.toBe(runB.path);
-    expect(runA.branch).toBe("gear/run-run-a");
+    expect(runA.branch).toBe("rune/run-run-a");
     // Both see the committed base…
     expect(readFileSync(join(runA.path, "shared.txt"), "utf8")).toBe("base content\n");
     expect(readFileSync(join(runB.path, "shared.txt"), "utf8")).toBe("base content\n");
@@ -58,7 +58,7 @@ describe("per-run worktree isolation", () => {
     expect(existsSync(join(repo, "only-a.txt"))).toBe(false);
 
     const listed = listRunWorktrees(repo);
-    expect(listed.map((w) => w.branch).sort()).toEqual(["gear/run-run-a", "gear/run-run-b"]);
+    expect(listed.map((w) => w.branch).sort()).toEqual(["rune/run-run-a", "rune/run-run-b"]);
   });
 
   test("commits in a run worktree land on the run branch, mergeable later", () => {
@@ -89,7 +89,7 @@ describe("per-run worktree isolation", () => {
     createRunWorktree(repo, "dup");
     expect(() => createRunWorktree(repo, "dup")).toThrow(/already exists/);
 
-    const notRepo = mkdtempSync(join(tmpdir(), "gear-notrepo-"));
+    const notRepo = mkdtempSync(join(tmpdir(), "rune-notrepo-"));
     try {
       expect(isGitRepo(notRepo)).toBe(false);
       expect(() => createRunWorktree(notRepo, "x")).toThrow(/git repository/);

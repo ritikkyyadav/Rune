@@ -31,10 +31,10 @@ const { privateKey, publicKey } = generateKeyPairSync("rsa", {
 
 const SERVICE_ACCOUNT = JSON.stringify({
   type: "service_account",
-  project_id: "gear-test-project",
+  project_id: "rune-test-project",
   private_key_id: "key-1",
   private_key: privateKey,
-  client_email: "gear@gear-test-project.iam.gserviceaccount.com",
+  client_email: "rune@rune-test-project.iam.gserviceaccount.com",
   token_uri: "https://oauth2.googleapis.com/token",
 });
 
@@ -43,7 +43,7 @@ const AUTHORIZED_USER = JSON.stringify({
   client_id: "client-abc.apps.googleusercontent.com",
   client_secret: "secret-abc",
   refresh_token: "refresh-abc",
-  quota_project_id: "gear-quota-project",
+  quota_project_id: "rune-quota-project",
 });
 
 function files(map: Record<string, string>) {
@@ -82,7 +82,7 @@ function decodeSegment(segment: string): Record<string, unknown> {
 describe("the service-account assertion JWT", () => {
   const jwt = buildServiceAccountJwt(
     {
-      client_email: "gear@gear-test-project.iam.gserviceaccount.com",
+      client_email: "rune@rune-test-project.iam.gserviceaccount.com",
       private_key: privateKey,
       private_key_id: "key-1",
     },
@@ -98,8 +98,8 @@ describe("the service-account assertion JWT", () => {
     // One hour is Google's documented maximum; a longer exp is rejected
     // outright, which would look like a credential problem rather than a bug.
     expect(decodeSegment(claims)).toEqual({
-      iss: "gear@gear-test-project.iam.gserviceaccount.com",
-      sub: "gear@gear-test-project.iam.gserviceaccount.com",
+      iss: "rune@rune-test-project.iam.gserviceaccount.com",
+      sub: "rune@rune-test-project.iam.gserviceaccount.com",
       scope: "https://www.googleapis.com/auth/cloud-platform",
       aud: "https://oauth2.googleapis.com/token",
       iat: 1_800_000_000,
@@ -144,8 +144,8 @@ describe("rung 1: GOOGLE_APPLICATION_CREDENTIALS", () => {
     expect(token).toMatchObject({
       token: "ya29.test-token",
       source: "service-account",
-      detail: "gear@gear-test-project.iam.gserviceaccount.com",
-      projectId: "gear-test-project",
+      detail: "rune@rune-test-project.iam.gserviceaccount.com",
+      projectId: "rune-test-project",
     });
     expect(token!.expiresAt).toBe(1_800_000_000_000 + 3599_000);
     expect(seen!.url).toBe("https://oauth2.googleapis.com/token");
@@ -166,7 +166,7 @@ describe("rung 1: GOOGLE_APPLICATION_CREDENTIALS", () => {
         body = b;
       }),
     });
-    expect(token).toMatchObject({ source: "gcloud", projectId: "gear-quota-project" });
+    expect(token).toMatchObject({ source: "gcloud", projectId: "rune-quota-project" });
     expect(body).toContain("grant_type=refresh_token");
     expect(body).toContain("refresh_token=refresh-abc");
   });
@@ -272,7 +272,7 @@ describe("project resolution", () => {
         readFileImpl: files({ "/keys/sa.json": SERVICE_ACCOUNT }),
         fetchImpl: tokenEndpoint(),
       }),
-    ).toBe("gear-test-project");
+    ).toBe("rune-test-project");
   });
 
   test("an empty machine has no project, and the caller must say so", async () => {
@@ -289,9 +289,9 @@ describe("describeAdcSource", () => {
         token: "ya29.SECRET",
         expiresAt: 0,
         source: "service-account",
-        detail: "gear@p.iam.gserviceaccount.com",
+        detail: "rune@p.iam.gserviceaccount.com",
       }),
-    ).toBe("service account gear@p.iam.gserviceaccount.com");
+    ).toBe("service account rune@p.iam.gserviceaccount.com");
     expect(
       describeAdcSource({ token: "ya29.SECRET", expiresAt: 0, source: "gcloud", detail: "x" }),
     ).toBe("gcloud ADC");

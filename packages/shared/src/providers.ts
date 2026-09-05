@@ -1,5 +1,5 @@
 // ─── Provider presets ───
-// The single source of truth for which LLM providers Gear can talk to and how to
+// The single source of truth for which LLM providers Rune can talk to and how to
 // reach each one. The `/keys` panel, the engine's gateway builder, and
 // `/providers` all read from this list, so adding a provider is a one-line edit.
 //
@@ -26,9 +26,9 @@ export type ProviderKind =
 
 // ─── Authentication methods ───
 // How a provider proves who you are. This is the ONE canonical definition of the
-// set; `@gear/llm-gateway`'s auth layer re-exports it so the strategy code and the
+// set; `@rune/llm-gateway`'s auth layer re-exports it so the strategy code and the
 // preset metadata never drift. Adding a method here is the first step to teaching
-// Gear a new way to sign in — the rest of the system asks for an *authenticated*
+// Rune a new way to sign in — the rest of the system asks for an *authenticated*
 // provider and never learns which of these produced it.
 //
 //   api_key  — a bearer secret pasted/env-supplied (today's only path).
@@ -36,7 +36,7 @@ export type ProviderKind =
 //   device   — OAuth device-code (headless / SSH-friendly, no local browser).
 //   local    — a localhost runtime reached by URL; connectivity, no credential.
 //   chain    — the CLOUD's own ambient credential chain (AWS SigV4 credentials,
-//              Google Application Default Credentials, an Entra token). Gear
+//              Google Application Default Credentials, an Entra token). Rune
 //              holds nothing: it asks the same chain `aws`, `gcloud` and `az`
 //              ask, so a machine already logged into its cloud is already
 //              logged into the enterprise routes. There is no secret to store,
@@ -59,7 +59,7 @@ export const AUTO_PROVIDER_PRIORITY = ["anthropic", "openai", "google", "openrou
  * This is deliberately NOT `AUTO_PROVIDER_PRIORITY`, which answers a different
  * question: "which keyed provider should this session boot into?" That list is
  * env-var-shaped (its element type keys a `Record<…, string>` of env var names
- * in gear-cli), so the OAuth-only transports — codex — can never appear in
+ * in rune-cli), so the OAuth-only transports — codex — can never appear in
  * it, and they are precisely the ones a fallback has to reason about.
  *
  * The classes carry the same principle its doc states, generalized:
@@ -96,7 +96,7 @@ export const PROVIDER_CAPACITY: Record<string, ProviderCapacity> = {
   groq: "funded",
   xai: "funded",
   deepseek: "funded",
-  // The enterprise routes are the most funded capacity Gear can reach: a cloud
+  // The enterprise routes are the most funded capacity Rune can reach: a cloud
   // account with committed spend and provisioned throughput, not a hobby key.
   // `billingModeFor` agrees — every token is metered to that cloud bill — and
   // the agreement test holds the two together.
@@ -108,7 +108,7 @@ export const PROVIDER_CAPACITY: Record<string, ProviderCapacity> = {
   custom: "funded",
   codex: "subscription",
   openrouter: "free",
-  // The ids Gear ships for Ollama Cloud are the ones verified on the DEFAULT,
+  // The ids Rune ships for Ollama Cloud are the ones verified on the DEFAULT,
   // no-subscription plan (the subscription-gated models are deliberately
   // omitted — they 403). So this is free capacity, and `billingModeFor` agrees:
   // the two used to disagree, one calling it free and the other a subscription.
@@ -278,7 +278,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     // env/console path is byte-identical to before for existing key users.
     auth: ["oauth", "api_key"],
     // Fable 5 is listed but is NOT the default: it is unavailable under zero
-    // data retention, and Gear's compliance-sensitive users are exactly the
+    // data retention, and Rune's compliance-sensitive users are exactly the
     // ones who run ZDR. Opting in is a choice they should make knowingly.
     models: [
       { id: "claude-opus-5", label: "Claude Opus 5" },
@@ -323,7 +323,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     docsUrl: "https://openrouter.ai/keys",
     keyHint: "sk-or-…",
     // OpenRouter documents a PKCE OAuth flow that mints a normal API key —
-    // Gear's fully-working OAuth reference. API key stays the fallback.
+    // Rune's fully-working OAuth reference. API key stays the fallback.
     auth: ["oauth", "api_key"],
     // Free-tier churn is brutal here (qwen3-coder:free retired, the deepseek
     // :free variants withdrawn to paid). Every id below completed a live call
@@ -648,7 +648,7 @@ export function effectiveAuthMethods(
 /**
  * Coarse capability derivation. Provider-level capabilities are fuzzy (real
  * truth is per-model), so this returns broad strokes for display: everything
- * Gear talks to streams and calls tools; vision/reasoning come from a small
+ * Rune talks to streams and calls tools; vision/reasoning come from a small
  * known set. A preset may override via `capabilities`.
  */
 // The enterprise routes serve the SAME models as the first-party providers
@@ -703,7 +703,7 @@ export function accountLoginLabel(providerId: string): string | undefined {
   }
 }
 
-/** Friendly, pi-style label for an auth method in the `gear login` picker. */
+/** Friendly, pi-style label for an auth method in the `rune login` picker. */
 export function authMethodLabel(method: AuthMethod, providerId?: string): string {
   switch (method) {
     case "oauth":

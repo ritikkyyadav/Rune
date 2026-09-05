@@ -11,16 +11,16 @@ import {
 let workspace: string;
 
 beforeEach(async () => {
-  workspace = await mkdtemp(join(tmpdir(), "gear-commands-"));
+  workspace = await mkdtemp(join(tmpdir(), "rune-commands-"));
 });
 
 afterEach(async () => {
   await rm(workspace, { recursive: true, force: true });
 });
 
-/** Write a `.md` file into `<workspace>/.gear/commands/`. */
+/** Write a `.md` file into `<workspace>/.rune/commands/`. */
 async function writeCommand(fileName: string, body: string): Promise<void> {
-  const dir = join(workspace, ".gear", "commands");
+  const dir = join(workspace, ".rune", "commands");
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, fileName), body);
 }
@@ -161,7 +161,7 @@ describe("SlashCommand.render", () => {
 // ─── missing directory ───
 
 describe("loadCommands · missing dir", () => {
-  test("missing .gear/commands directory returns []", async () => {
+  test("missing .rune/commands directory returns []", async () => {
     const commands = await loadCommands(workspace);
     expect(commands).toEqual([]);
   });

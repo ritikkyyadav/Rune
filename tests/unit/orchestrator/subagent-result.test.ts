@@ -168,7 +168,7 @@ describe("P6B.3 — the worker manifest is measured, not reported", () => {
   test("a claimed file that is not on disk is named", () => {
     const text = renderWorkerResult(
       { ...COMPLETE, filesChanged: ["definitely/not/here.ts"], summary: "Built it." },
-      "/tmp/gear-nonexistent-workspace",
+      "/tmp/rune-nonexistent-workspace",
     );
     expect(text).toContain("MISSING — claimed but not on disk");
   });
@@ -184,10 +184,10 @@ describe("P6B.3 — the worker manifest is measured, not reported", () => {
     const text = renderWorkerResult(
       { ...COMPLETE, filesChanged: ["a.ts"], summary: "Built it." },
       "/tmp/x",
-      { conflicts: ["src/parser.ts"], branch: "gear/worker-1" },
+      { conflicts: ["src/parser.ts"], branch: "rune/worker-1" },
     );
     expect(text).toContain("MERGE CONFLICTS");
-    expect(text).toContain("gear/worker-1");
+    expect(text).toContain("rune/worker-1");
   });
 });
 

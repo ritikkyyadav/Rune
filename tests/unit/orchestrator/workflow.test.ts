@@ -30,7 +30,7 @@ afterEach(() => {
 });
 
 function tmp(): string {
-  const d = mkdtempSync(join(tmpdir(), "gear-wf-"));
+  const d = mkdtempSync(join(tmpdir(), "rune-wf-"));
   dirs.push(d);
   return d;
 }

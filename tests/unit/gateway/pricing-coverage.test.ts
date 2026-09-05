@@ -173,7 +173,7 @@ describe("billing mode separates spend from worth", () => {
   test("the same model is metered or free depending on the account", () => {
     expect(billingModeFor("google", "gemini-2.5-flash")).toBe("metered");
     expect(billingModeFor("openrouter", "deepseek/deepseek-v4-flash:free")).toBe("free");
-    // Ollama Cloud: the ids Gear ships are on the default no-subscription
+    // Ollama Cloud: the ids Rune ships are on the default no-subscription
     // plan, so this is free - and PROVIDER_CAPACITY says free too. They
     // used to disagree.
     expect(billingModeFor("ollama-turbo", "gpt-oss:120b")).toBe("free");

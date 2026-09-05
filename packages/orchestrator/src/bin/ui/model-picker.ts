@@ -11,18 +11,18 @@
 //                           from local runtimes (/api/tags, /models), the
 //                           curated preset list otherwise. A plain number
 //                           switches this session; `d<n>` sets the startup
-//                           default (~/.gear/model.json).
+//                           default (~/.rune/model.json).
 //
 // Everything here is pure (no readline, no engine): the CLI feeds it status
 // rows and prints the lines it returns, so every level is unit-testable.
 
-import type { ProviderPreset, CustomEndpoint, LastModel } from "@gear/shared";
-import type { ReasoningEffort } from "@gear/llm-gateway";
-import { reasoningEffortsFor } from "@gear/llm-gateway";
+import type { ProviderPreset, CustomEndpoint, LastModel } from "@rune/shared";
+import type { ReasoningEffort } from "@rune/llm-gateway";
+import { reasoningEffortsFor } from "@rune/llm-gateway";
 
 /** Re-exported so the picker and its tests speak one vocabulary. */
 export const effortValuesFor = reasoningEffortsFor;
-import { CUSTOM_PROVIDER_ID, maskKey } from "@gear/shared";
+import { CUSTOM_PROVIDER_ID, maskKey } from "@rune/shared";
 import type { ProviderStatusRow } from "../../provider-registry";
 import { text, muted, faint, accent, info, warn, ok } from "./theme";
 import { glyph } from "./glyphs";
@@ -78,7 +78,7 @@ export function providerChoices(
     } else if (r.source === "env") {
       bits.push(muted(`key env ${presetFor(r.id)?.envVar ?? ""}`.trim()));
     } else if (r.source === "chain") {
-      // No mask: the enterprise routes hold no secret Gear could show.
+      // No mask: the enterprise routes hold no secret Rune could show.
       bits.push(muted(`cloud | ${r.credentialDetail ?? "credentials found"}`));
     }
     return bits.join(faint(" | "));

@@ -1,4 +1,4 @@
-// ─── @gear/protocol ───
+// ─── @rune/protocol ───
 //
 // One typed, versioned contract between the engine and every surface that
 // drives it: the terminal, the desktop, the web client, editors, CI and the

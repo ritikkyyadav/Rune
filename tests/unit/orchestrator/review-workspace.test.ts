@@ -15,7 +15,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { revertPaths, workspaceDiff } from "../../../packages/orchestrator/src/git-undo";
-import { patchForFile } from "../../../apps/web/src/components/Review";
 
 let root: string;
 
@@ -24,7 +23,7 @@ function git(...args: string[]): string {
 }
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "gear-review-"));
+  root = mkdtempSync(join(tmpdir(), "rune-review-"));
   git("init", "-q");
   git("config", "user.email", "test@example.com");
   git("config", "user.name", "test");
@@ -70,7 +69,7 @@ describe("what changed", () => {
   });
 
   test("a directory that is not a repository is reported, not thrown", () => {
-    const bare = mkdtempSync(join(tmpdir(), "gear-norepo-"));
+    const bare = mkdtempSync(join(tmpdir(), "rune-norepo-"));
     try {
       const d = workspaceDiff(bare);
       expect(d.repo).toBe(false);
@@ -126,28 +125,5 @@ describe("reverting exactly one file", () => {
     rmSync(join(root, "kept.ts"));
     expect(revertPaths(root, ["kept.ts"]).ok).toBe(true);
     expect(readFileSync(join(root, "kept.ts"), "utf8")).toBe("export const kept = 1;\n");
-  });
-});
-
-describe("cutting one file's hunks out of a whole-tree patch", () => {
-  test("returns only the named file's lines", () => {
-    writeFileSync(join(root, "edited.ts"), "export const value = 2;\n");
-    writeFileSync(join(root, "src", "deep.ts"), "export const deep = 2;\n");
-    const { patch } = workspaceDiff(root);
-
-    const one = patchForFile(patch, "edited.ts");
-    expect(one).toContain("-export const value = 1;");
-    expect(one).toContain("+export const value = 2;");
-    expect(one).not.toContain("deep");
-
-    const other = patchForFile(patch, "src/deep.ts");
-    expect(other).toContain("+export const deep = 2;");
-    expect(other).not.toContain("value");
-  });
-
-  test("a path with no hunks yields nothing rather than the whole patch", () => {
-    writeFileSync(join(root, "edited.ts"), "export const value = 2;\n");
-    const { patch } = workspaceDiff(root);
-    expect(patchForFile(patch, "not-a-file.ts").trim()).toBe("");
   });
 });

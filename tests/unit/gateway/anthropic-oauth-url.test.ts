@@ -15,7 +15,7 @@
  *                "user:sessions:claude_code", "user:mcp_servers",
  *                "user:file_upload"]
  *
- * Gear sent `org:create_api_key user:profile user:inference` to the CLAUDE.AI
+ * Rune sent `org:create_api_key user:profile user:inference` to the CLAUDE.AI
  * endpoint — an org-level API-key-minting scope spliced into a personal
  * subscription sign-in, missing three of that flow's own scopes. "Invalid
  * request format" reads like a malformed query and actually means "these are
@@ -46,7 +46,7 @@ describe("the Anthropic authorize URL", () => {
   test("uses the claude.ai endpoint, paired with a LOOPBACK redirect", () => {
     // The client keeps two flows and they cannot be mixed. Pro/Max is
     // claude.ai + loopback; console is platform.claude.com + the manual
-    // paste-the-code page. Gear pairing claude.ai with the manual redirect is
+    // paste-the-code page. Rune pairing claude.ai with the manual redirect is
     // what "Invalid request format" meant, and it survived three fixes aimed at
     // the query string because the query string was never wrong.
     const u = new URL(url());
@@ -96,10 +96,10 @@ describe("the page you land on after signing in", () => {
     expect(successPage("Claude Pro / Max")).toContain("connected to Claude Pro / Max");
   });
 
-  test("carries the Gear mark inline, so it needs no network", () => {
+  test("carries the Rune mark inline, so it needs no network", () => {
     const html = successPage("Anthropic");
     expect(html).toContain("<svg");
-    expect(html).toContain("Gear");
+    expect(html).toContain("Rune");
     // Served from localhost after an auth redirect: an external fetch here
     // would be both slow and a needless third party in the flow.
     expect(/https?:\/\//.test(html)).toBe(false);

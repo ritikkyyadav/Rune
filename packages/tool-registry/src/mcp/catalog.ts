@@ -1,6 +1,6 @@
 // ─── The connector catalog: name → URL → auth mode ───
 //
-// `gear mcp add notion` has to resolve a bare word into a server spec. Two
+// `rune mcp add notion` has to resolve a bare word into a server spec. Two
 // sources, in this order:
 //
 //   1. The 20 vendored `skills/*/.mcp.json` files already in the repo. They
@@ -21,7 +21,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 export interface CatalogEntry {
-  /** The name `gear mcp add <name>` matches. */
+  /** The name `rune mcp add <name>` matches. */
   name: string;
   url?: string;
   command?: string;
@@ -29,7 +29,7 @@ export interface CatalogEntry {
   headers?: Record<string, string>;
   type?: "stdio" | "http";
   oauth?: { clientId?: string; callbackPort?: number };
-  /** Where this entry came from, shown in `gear mcp add` output. */
+  /** Where this entry came from, shown in `rune mcp add` output. */
   source: "vendored" | "registry";
   /** Skills that reference this connector — useful context when listing. */
   usedBy?: string[];
@@ -39,7 +39,7 @@ export interface CatalogEntry {
 /** Candidate locations of the bundled skills catalog, most specific first. */
 export function skillCatalogRoots(env: NodeJS.ProcessEnv = process.env): string[] {
   return [
-    env.GEAR_SKILLS_DIR,
+    env.RUNE_SKILLS_DIR,
     // packages/tool-registry/src/mcp → repo root
     join(import.meta.dir, "../../../../skills"),
     join(process.cwd(), "skills"),
@@ -126,15 +126,15 @@ interface RegistryServer {
  * Ask the public registry, if it answers within the budget.
  *
  * Every failure path returns an empty list. A user who is offline, behind a
- * proxy, or on a plane must still get `gear mcp add notion` from the vendored
+ * proxy, or on a plane must still get `rune mcp add notion` from the vendored
  * catalog — this source is a bonus, never a dependency.
  */
 export async function fetchRegistryCatalog(
   opts: { url?: string; timeoutMs?: number; env?: NodeJS.ProcessEnv } = {},
 ): Promise<CatalogEntry[]> {
   const env = opts.env ?? process.env;
-  if (env.GEAR_MCP_REGISTRY === "off") return [];
-  const url = opts.url ?? env.GEAR_MCP_REGISTRY_URL ?? DEFAULT_REGISTRY_URL;
+  if (env.RUNE_MCP_REGISTRY === "off") return [];
+  const url = opts.url ?? env.RUNE_MCP_REGISTRY_URL ?? DEFAULT_REGISTRY_URL;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 2500);
   try {

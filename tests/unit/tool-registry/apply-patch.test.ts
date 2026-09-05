@@ -15,7 +15,7 @@ import { setLspAutoFeedback } from "../../../packages/tool-registry/src/tools/ls
 import { ToolRegistry, modelUsesApplyPatch } from "../../../packages/tool-registry/src/registry";
 import type { ToolHandler } from "../../../packages/tool-registry/src/types";
 
-// P3: apply_patch — the Codex-family edit envelope, applied through Gear's
+// P3: apply_patch — the Codex-family edit envelope, applied through Rune's
 // own matcher with validate-everything-then-write semantics. The acceptance
 // list from the prescription plan: multi-hunk, create/delete file, context
 // mismatch → clean error, NEVER partial application.
@@ -34,7 +34,7 @@ async function run(patch: string) {
 }
 
 beforeEach(async () => {
-  workspace = await mkdtemp(join(tmpdir(), "gear-apply-patch-"));
+  workspace = await mkdtemp(join(tmpdir(), "rune-apply-patch-"));
 });
 
 afterEach(async () => {

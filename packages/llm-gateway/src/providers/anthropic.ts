@@ -13,7 +13,7 @@ import type {
   ToolDefinition,
   TokenUsage,
 } from "../types";
-import { parseToolArguments } from "@gear/shared";
+import { parseToolArguments } from "@rune/shared";
 import { IdleWatchdog } from "./stream-guard";
 
 // ─── Subscription OAuth (Claude Pro/Max) ───

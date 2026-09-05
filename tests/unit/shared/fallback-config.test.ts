@@ -19,16 +19,16 @@ import {
 
 const dirs: string[] = [];
 function configWith(toml: string) {
-  const dir = mkdtempSync(join(tmpdir(), "gear-fallback-cfg-"));
+  const dir = mkdtempSync(join(tmpdir(), "rune-fallback-cfg-"));
   dirs.push(dir);
   const path = join(dir, "config.toml");
   writeFileSync(path, toml);
-  process.env.GEAR_CONFIG_PATH = path;
+  process.env.RUNE_CONFIG_PATH = path;
   return loadConfig();
 }
 
 afterEach(() => {
-  delete process.env.GEAR_CONFIG_PATH;
+  delete process.env.RUNE_CONFIG_PATH;
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 

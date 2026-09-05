@@ -27,8 +27,8 @@ function makeEngine(root: string, overrides: Partial<EngineConfig> = {}): Engine
     model: "llama3",
     provider: "ollama",
     workspaceRoot: root,
-    dbPath: join(root, "gear.db"),
-    toolsBinaryPath: "gear-tools",
+    dbPath: join(root, "rune.db"),
+    toolsBinaryPath: "rune-tools",
     permissionMode: "gear-1",
     enableCheckpoints: false,
     enableSecurity: false,
@@ -67,7 +67,7 @@ describe("Engine orchestration modes", () => {
   let engine: Engine | null = null;
 
   beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), "gear-subagent-modes-"));
+    root = mkdtempSync(join(tmpdir(), "rune-subagent-modes-"));
   });
 
   afterEach(() => {

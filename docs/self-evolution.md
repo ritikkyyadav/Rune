@@ -1,6 +1,6 @@
 # Self-evolution
 
-Gear was self-healing long before it was self-improving. Provider health,
+Rune was self-healing long before it was self-improving. Provider health,
 model-rot retirement, quota auto-resume, compaction self-heal, the loop
 breakers — all of it reacts inside a run. But the record those runs left
 behind (1,790 incidents under 292 fingerprints, a notebook of command facts,
@@ -30,7 +30,7 @@ reversible in one command.
 ## The retro
 
 Every run ends with a retro: a zero-model-call pass over the run's own
-session log — the same rows `gear audit` reads — that states what happened in
+session log — the same rows `rune audit` reads — that states what happened in
 numbers and extracts the lessons a rule can vouch for. It is written as a
 `retro` event in the session, so it survives with the record.
 
@@ -53,8 +53,8 @@ A/B arm, or null for an ordinary session). The session row's `system_prompt_hash
 doctrine digest. Before this, a measured difference between two runs could not be attributed to the
 configuration that caused it, which is the difference between a measurement and an anecdote.
 
-`gear audit` prints it as one line under **Retro**. Sessions that predate the
-organ are derived after the fact by `gear evolve`, and marked so.
+`rune audit` prints it as one line under **Retro**. Sessions that predate the
+organ are derived after the fact by `rune evolve`, and marked so.
 
 ## The lessons
 
@@ -89,7 +89,7 @@ are the evidence ladder, and each rung costs more than the last.
 | `active`    | ≥5 injections with a win rate above the ambient baseline | yes, and it reaches the playbook    |
 | `retired`   | decayed, disused, contradicted, or turned off            | no; kept and inspectable            |
 
-- **Candidates are stored and never injected.** `gear evolve backfill` — which
+- **Candidates are stored and never injected.** `rune evolve backfill` — which
   finally reads history back into the notebook, the thing `recordLessons`'s one
   call site never did — writes only candidates. Reconstructing a lesson from a
   log is not the same as having watched it hold.
@@ -127,12 +127,12 @@ nothing — is now the gate any model-assisted distillation must pass first.
 
 ## The playbook
 
-The notebook is machine-facing: rows in `~/.gear`, injected into the prompt,
+The notebook is machine-facing: rows in `~/.rune`, injected into the prompt,
 invisible to anyone but the model. The playbook is the same knowledge made a
 file in the workspace:
 
 ```
-.gear/skills/playbook/SKILL.md
+.rune/skills/playbook/SKILL.md
 ```
 
 Only **active** lessons get in. "Recurred twice" was the old bar, and it was the
@@ -143,14 +143,14 @@ means the lesson climbed the same ladder as every other.
 **And it is inert until you enable it once.**
 
 ```bash
-gear evolve playbook              # where it stands
-gear evolve playbook --enable     # turn learned skills on, once
+rune evolve playbook              # where it stands
+rune evolve playbook --enable     # turn learned skills on, once
 ```
 
 A skill can direct multi-step behaviour, so a machine writing one and having it
 load on the next run is a capability change nobody agreed to — however good the
 lessons in it are. Until consent is recorded the block is written to
-`.gear/skills/playbook/PENDING.md`, which the skills loader does not read: it
+`.rune/skills/playbook/PENDING.md`, which the skills loader does not read: it
 globs for `SKILL.md` and ignores every other file, so the draft is inert by
 construction rather than by a flag something could misread. The run says which
 happened.
@@ -166,15 +166,15 @@ always written.
 ## The scorecard
 
 ```bash
-gear evolve scorecard            # per model, last 30 days
-gear evolve scorecard --by workspace --days 90
+rune evolve scorecard            # per model, last 30 days
+rune evolve scorecard --by workspace --days 90
 ```
 
 Per model or per workspace, from retros: runs, finished rate, runs ended with
 steps open, runs stopped by the results-side breaker, completed steps that
 had no evidence, verification pass rate, tool failure rate, list price per
 run. This is the measure the rest of the loop is judged against. It reads
-`~/.gear/gear.db` read-only — no engine, no provider.
+`~/.rune/rune.db` read-only — no engine, no provider.
 
 ## The variants registry: everything the loop may change
 
@@ -203,7 +203,7 @@ review; that is the intended cost.
 ## Tuning: proposals that name a variant
 
 ```bash
-gear evolve tune
+rune evolve tune
 ```
 
 Rule-based proposals from the scorecard, each with its signal, its confidence,
@@ -218,7 +218,7 @@ and — where the allowlist can express it — the variant id to run:
 | ≥ 30% of completed steps unproven       | no variant — the step check is a `verify.*` gate                       |
 | verification failing more than passing  | no variant — which commands verify _this_ project is a human judgement |
 | ≥ 40% of runs ending with steps open    | no variant — `[subagents] mode` is outside the allowlist               |
-| ≥ 2 runs halted by the supervisor       | **no variant, by design** — read `gear audit`                          |
+| ≥ 2 runs halted by the supervisor       | **no variant, by design** — read `rune audit`                          |
 
 The first four rules are new, and they are the point of the rewrite: the
 original four keyed on `unproven`, `stalled` and `open_steps`, which have zero
@@ -233,13 +233,13 @@ supervisor-halt rule is null _permanently_: no variant may touch Auto mode, and
 a tuner that offered one would be proposing a mutation.
 
 Nothing is applied by itself. A proposal that names a variant is one command
-from evidence — `gear evolve ab <variant>` — and one more from being applied.
+from evidence — `rune evolve ab <variant>` — and one more from being applied.
 
 ## The paired A/B
 
 ```bash
-gear evolve ab doctrine_full          # control, then treatment, on the same tasks
-gear evolve ab doctrine_full --real   # the same against a live model
+rune evolve ab doctrine_full          # control, then treatment, on the same tasks
+rune evolve ab doctrine_full --real   # the same against a live model
 ```
 
 Control first and unconditionally, then treatment: same task set, same order,
@@ -272,14 +272,14 @@ cheaply and deterministically, on every change. Finding an improvement needs
 ## Promote, revert, and the four refusals
 
 ```bash
-gear evolve promote doctrine_full     # only on a passing A/B for this exact config
-gear evolve revert                    # undo the newest promotion
-gear evolve why doctrine_full         # hypothesis, every measurement, what happened
-gear evolve yardstick --bless         # anchor the eval suite (a human act)
-gear evolve resume                    # clear a halt (also a human act)
+rune evolve promote doctrine_full     # only on a passing A/B for this exact config
+rune evolve revert                    # undo the newest promotion
+rune evolve why doctrine_full         # hypothesis, every measurement, what happened
+rune evolve yardstick --bless         # anchor the eval suite (a human act)
+rune evolve resume                    # clear a halt (also a human act)
 ```
 
-A promotion writes the variant's lines into `~/.gear/config.toml` inside a
+A promotion writes the variant's lines into `~/.rune/config.toml` inside a
 generated fenced block — the same marker discipline the playbook uses, for the
 same reason: everything written outside the markers is kept, and the machine's
 contribution is visible, diffable and removable by hand. The block is always
@@ -294,14 +294,14 @@ It refuses on four grounds, each named after a failure:
 - **The yardstick moved.** `tests/eval/**` is digested and a promotion is
   refused when that digest differs from the one a human blessed. A loop that can
   edit the eval suite and then promote on the result is grading its own exam.
-  Blessing is `gear evolve yardstick --bless` and has no automatic caller.
+  Blessing is `rune evolve yardstick --bless` and has no automatic caller.
 - **A promotion already happened inside 24 hours.** Two changes at once cannot
   be attributed to either.
 - **Two consecutive reverts.** A loop that promotes changes a human keeps
   undoing has a broken fitness function, and the answer to a broken measurement
-  is to stop measuring, not to measure harder. `gear evolve resume` clears it.
+  is to stop measuring, not to measure harder. `rune evolve resume` clears it.
 
-Everything lands in `~/.gear/evolve-ledger.jsonl` — one JSON row per
+Everything lands in `~/.rune/evolve-ledger.jsonl` — one JSON row per
 measurement, promotion, revert and halt, append-only, readable with `tail`. A
 revert is a new row, never a deletion: a ledger you can rewrite is a ledger that
 can be made to say the change was justified, and "why does it believe this" has
@@ -312,16 +312,16 @@ the history disagreeing.
 ## The gardener
 
 ```bash
-gear evolve gardener            # candidates + the brief, dry run
-gear evolve gardener --run      # a detached run in a worktree of Gear's own repository
+rune evolve gardener            # candidates + the brief, dry run
+rune evolve gardener --run      # a detached run in a worktree of Rune's own repository
 ```
 
-The black box holds fingerprints that are defects in Gear itself — crashes,
+The black box holds fingerprints that are defects in Rune itself — crashes,
 unhandled rejections, dirty exits, a corrupted store, a malformed completion
 the salvage could not read. The gardener reads them (crash-class fingerprints
 seen three times or more), writes a brief for the top one — the evidence, the
 latest stack, the recent contexts — and, with `--run`, starts a detached run
-on that brief in an isolated `git worktree` of Gear's own repository.
+on that brief in an isolated `git worktree` of Rune's own repository.
 
 The brief's rules are the boundary:
 
@@ -329,7 +329,7 @@ The brief's rules are the boundary:
 2. All five gates pass before finishing.
 3. The doctrine, the safety layer, the permission broker, org policy and the secret stores are off limits. They need a person.
 4. Commit on the run's branch. Never push, merge, or open a pull request — a person reviews the branch.
-5. If it cannot be reproduced, write why into `.gear/gardener-report.md` and stop.
+5. If it cannot be reproduced, write why into `.rune/gardener-report.md` and stop.
 
 Rule 3 used to be enforced only as that sentence. A rule a model is asked to
 follow is a request, not a boundary — and the one thing a run editing its own
@@ -349,8 +349,8 @@ the dry run and the brief are what ship verified.
 ## Where the loop stands
 
 ```bash
-gear evolve            # status: measured runs, what is learned, playbook, gardener candidates, proposals
-gear evolve lessons    # what Gear knows about this repository
+rune evolve            # status: measured runs, what is learned, playbook, gardener candidates, proposals
+rune evolve lessons    # what Rune knows about this repository
 ```
 
 Applied by itself: retro → notebook → playbook. Proposals only: tune. A

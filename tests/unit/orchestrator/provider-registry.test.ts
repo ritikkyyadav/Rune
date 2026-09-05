@@ -258,11 +258,11 @@ describe("resolveProviderCredentials + credential-map firewall", () => {
   let storeEnv: NodeJS.ProcessEnv;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "gear-reg-cred-"));
+    dir = mkdtempSync(join(tmpdir(), "rune-reg-cred-"));
     storeEnv = {
       HOME: dir,
-      GEAR_CREDENTIALS_PATH: join(dir, "credentials.json"),
-      GEAR_CREDENTIAL_INDEX_PATH: join(dir, "credentials.index.json"),
+      RUNE_CREDENTIALS_PATH: join(dir, "credentials.json"),
+      RUNE_CREDENTIAL_INDEX_PATH: join(dir, "credentials.index.json"),
     } as NodeJS.ProcessEnv;
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));

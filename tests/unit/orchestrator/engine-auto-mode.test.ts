@@ -3,8 +3,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { LlmGateway } from "@gear/llm-gateway";
-import type { SessionManager } from "@gear/shared";
+import type { LlmGateway } from "@rune/llm-gateway";
+import type { SessionManager } from "@rune/shared";
 import {
   AutoModeSafetyController,
   resolveAutoModeConfig,
@@ -51,13 +51,13 @@ describe("Engine Auto-mode wiring", () => {
   let classifier: QueueClassifier;
 
   beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), "gear-engine-auto-"));
+    root = mkdtempSync(join(tmpdir(), "rune-engine-auto-"));
     engine = new Engine({
       model: "llama3",
       provider: "ollama",
       workspaceRoot: root,
-      dbPath: join(root, "gear.db"),
-      toolsBinaryPath: "gear-tools",
+      dbPath: join(root, "rune.db"),
+      toolsBinaryPath: "rune-tools",
       // "auto" is the classifier gear; trustWorkspace alone is 3rd gear.
       permissionMode: "auto",
       enableCheckpoints: false,
@@ -147,7 +147,7 @@ describe("Engine Auto-mode wiring", () => {
       },
     });
 
-    expect(output.result).toStartWith("[GEAR SECURITY WARNING");
+    expect(output.result).toStartWith("[RUNE SECURITY WARNING");
     const probe = internals.sessions
       .getEvents(sessionId, 1)
       .map(({ event }) => event)

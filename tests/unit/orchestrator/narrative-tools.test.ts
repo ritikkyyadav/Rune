@@ -280,9 +280,9 @@ describe("artifacts a tool result announces", () => {
   test("a research report's saved path", () => {
     const result =
       'Research complete — "vector databases"\n12 sources · 4 sub-question(s) completed\n' +
-      "Full report saved to: .gear/research/vector-databases.md\n\n# Report";
+      "Full report saved to: .rune/research/vector-databases.md\n\n# Report";
     expect(artifactsFromResult("research", result)).toEqual([
-      { kind: "report", ref: ".gear/research/vector-databases.md" },
+      { kind: "report", ref: ".rune/research/vector-databases.md" },
     ]);
   });
 

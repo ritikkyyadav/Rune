@@ -2,7 +2,7 @@ import { describe, test, expect } from "bun:test";
 
 import { diagnosticsLedger } from "../../../packages/orchestrator/src/bin/audit-cli";
 
-// P10.1: `gear audit` counts how many edits carried a language-server block
+// P10.1: `rune audit` counts how many edits carried a language-server block
 // and how many of those files were clean again before the verifier ran. The
 // ledger is pure over the session log, so it is tested without a database.
 

@@ -1,5 +1,5 @@
 /**
- * The manifest that decides whether `npm i @gear/sdk` works.
+ * The manifest that decides whether `npm i @rune/sdk` works.
  *
  * Everything here is a mistake that only shows up on somebody else's machine,
  * after install, as a resolution error with no obvious cause: a `private` flag
@@ -27,7 +27,7 @@ const manifest = JSON.parse(readFileSync(join(sdkRoot, "package.json"), "utf8"))
   scripts: Record<string, string>;
 };
 
-describe("@gear/sdk is publishable", () => {
+describe("@rune/sdk is publishable", () => {
   test("is not marked private", () => {
     // `private: true` makes `npm publish` refuse. It was set while the package
     // was a workspace seed; leaving it set is how a "published" SDK stays
@@ -55,11 +55,11 @@ describe("@gear/sdk is publishable", () => {
   });
 
   test("declares no runtime dependency a registry cannot resolve", () => {
-    // `@gear/protocol` is a private workspace package. It is VENDORED into
+    // `@rune/protocol` is a private workspace package. It is VENDORED into
     // dist by the build; if it ever appears as a runtime dependency again,
     // every install fails on a 404 that says nothing useful.
     for (const name of Object.keys(manifest.dependencies ?? {})) {
-      expect(name.startsWith("@gear/")).toBe(false);
+      expect(name.startsWith("@rune/")).toBe(false);
     }
   });
 

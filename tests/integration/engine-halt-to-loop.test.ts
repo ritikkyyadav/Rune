@@ -20,7 +20,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { LlmGateway } from "@gear/llm-gateway";
+import type { LlmGateway } from "@rune/llm-gateway";
 import { Engine } from "../../packages/orchestrator/src/engine";
 import { AgentLoop } from "../../packages/orchestrator/src/agent-loop";
 import {
@@ -119,13 +119,13 @@ describe("Engine halt reaches the agent loop", () => {
   let internals: EngineInternals;
 
   beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), "gear-halt-e2e-"));
+    root = mkdtempSync(join(tmpdir(), "rune-halt-e2e-"));
     engine = new Engine({
       model: "llama3",
       provider: "ollama",
       workspaceRoot: root,
-      dbPath: join(root, "gear.db"),
-      toolsBinaryPath: "gear-tools",
+      dbPath: join(root, "rune.db"),
+      toolsBinaryPath: "rune-tools",
       permissionMode: "auto",
       enableCheckpoints: false,
       enableSecurity: false,

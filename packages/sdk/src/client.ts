@@ -1,12 +1,12 @@
-// ─── GearClient: the typed way to drive a session over `gear serve` ───
+// ─── RuneClient: the typed way to drive a session over `rune serve` ───
 //
 // `HostClient` (packages/orchestrator/src/host-client.ts) is the same idea over
 // a unix socket, and it lives inside the orchestrator because that is what
-// `gear attach` needs. This one runs anywhere a WebSocket does — Node, Bun, a
-// browser, a VS Code extension — and depends on nothing but `@gear/protocol`.
+// `rune attach` needs. This one runs anywhere a WebSocket does — Node, Bun, a
+// browser, a VS Code extension — and depends on nothing but `@rune/protocol`.
 //
 // The design constraint that shapes it: an agent stops for a human. A client
-// that can only send prompts and read text cannot drive Gear, because the
+// that can only send prompts and read text cannot drive Rune, because the
 // interesting half of a real turn is the four round-trips it opens. So the
 // round-trips are first-class here — you register a handler and the client
 // answers for you — rather than something you assemble from raw frames.
@@ -23,7 +23,7 @@ import type {
   ResearchPlan,
   UserPermissionDecision,
   UserQuestion,
-} from "@gear/protocol";
+} from "@rune/protocol";
 import {
   PROTOCOL_VERSION,
   encodeFrame,
@@ -31,12 +31,12 @@ import {
   rpcRequest,
   toResult,
   toStream,
-} from "@gear/protocol";
+} from "@rune/protocol";
 
-export interface GearClientOptions {
+export interface RuneClientOptions {
   /** e.g. `ws://127.0.0.1:4762`. */
   url: string;
-  /** The bearer token from `~/.gear/serve.json`. Required. */
+  /** The bearer token from `~/.rune/serve.json`. Required. */
   token: string;
   /** Default per-request timeout. A turn can take minutes; this is per CALL. */
   timeoutMs?: number;
@@ -45,8 +45,8 @@ export interface GearClientOptions {
 }
 
 /** Everything a client can be told about, without reading raw frames. */
-export interface GearHandlers {
-  /** Turn events. The same 22-member union every Gear surface reads. */
+export interface RuneHandlers {
+  /** Turn events. The same 22-member union every Rune surface reads. */
   onEvent?: (event: AgentTurnEvent, sessionId?: string) => void;
   /** Research events, when a research run is in flight. */
   onResearchEvent?: (event: ResearchEvent, runId: string) => void;
@@ -80,7 +80,7 @@ export interface GearHandlers {
   onClose?: (info: { code: number; reason: string }) => void;
 }
 
-export class GearClient {
+export class RuneClient {
   private ws: WebSocket;
   private nextId = 1;
   private readonly pending = new Map<
@@ -91,11 +91,11 @@ export class GearClient {
       timer: ReturnType<typeof setTimeout>;
     }
   >();
-  private readonly handlers: GearHandlers;
+  private readonly handlers: RuneHandlers;
   private readonly timeoutMs: number;
   private closed = false;
 
-  private constructor(ws: WebSocket, handlers: GearHandlers, timeoutMs: number) {
+  private constructor(ws: WebSocket, handlers: RuneHandlers, timeoutMs: number) {
     this.ws = ws;
     this.handlers = handlers;
     this.timeoutMs = timeoutMs;
@@ -104,19 +104,19 @@ export class GearClient {
   /**
    * Connect and complete the handshake.
    *
-   * The token goes on the `gear.bearer.<token>` subprotocol because that is the
+   * The token goes on the `rune.bearer.<token>` subprotocol because that is the
    * only header a browser's `WebSocket` constructor lets you set — the same
    * client then works from a page and from a shell.
    */
-  static async connect(opts: GearClientOptions, handlers: GearHandlers = {}): Promise<GearClient> {
+  static async connect(opts: RuneClientOptions, handlers: RuneHandlers = {}): Promise<RuneClient> {
     const Impl = opts.WebSocketImpl ?? (globalThis as { WebSocket?: typeof WebSocket }).WebSocket;
     if (!Impl) {
       throw new Error(
         "no WebSocket implementation — pass WebSocketImpl (Node 18/20 need `ws` or undici)",
       );
     }
-    const ws = new Impl(opts.url, [`gear.bearer.${opts.token}`]);
-    const client = new GearClient(ws, handlers, opts.timeoutMs ?? 15 * 60_000);
+    const ws = new Impl(opts.url, [`rune.bearer.${opts.token}`]);
+    const client = new RuneClient(ws, handlers, opts.timeoutMs ?? 15 * 60_000);
 
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error(`no answer from ${opts.url}`)), 15_000);

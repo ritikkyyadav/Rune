@@ -32,7 +32,7 @@ import {
 } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { isPathInside } from "@gear/shared";
+import { isPathInside } from "@rune/shared";
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
 import { CHART_UMD, CHART_UMD_VERSION } from "./assets/chart-umd";
 import { CHART_DEFAULTS_JS, FAB_CSS, THEME_CSS, specShellHtml } from "./dashboard-theme";
@@ -67,7 +67,7 @@ export interface DashboardManagerOptions {
   host?: string;
   /** Poll cadence for watch_file bindings (ms). Tests shrink this. */
   watchIntervalMs?: number;
-  /** Launch the user's browser on create/open. Default: yes unless GEAR_NO_OPEN=1. */
+  /** Launch the user's browser on create/open. Default: yes unless RUNE_NO_OPEN=1. */
   openInBrowser?: boolean;
 }
 
@@ -97,7 +97,7 @@ function jsonForScript(value: unknown): string {
 
 /** Open a URL in the platform browser; best-effort, never throws. */
 export function openInBrowser(url: string): boolean {
-  if (process.env.GEAR_NO_OPEN === "1") return false;
+  if (process.env.RUNE_NO_OPEN === "1") return false;
   try {
     const [cmd, args] =
       process.platform === "darwin"
@@ -232,10 +232,10 @@ export function buildCsv(spec: unknown, data: unknown): string | null {
 
 /**
  * Locate a Chromium-family browser for PDF export (they all support
- * --headless --print-to-pdf). GEAR_BROWSER_BIN overrides discovery.
+ * --headless --print-to-pdf). RUNE_BROWSER_BIN overrides discovery.
  */
 export function findHeadlessBrowser(): string | null {
-  const override = process.env.GEAR_BROWSER_BIN;
+  const override = process.env.RUNE_BROWSER_BIN;
   if (override) return existsSync(override) ? override : null;
   const candidates =
     process.platform === "darwin"
@@ -338,7 +338,7 @@ export class DashboardManager {
   constructor(opts: DashboardManagerOptions = {}) {
     this.host = opts.host ?? "127.0.0.1";
     this.watchIntervalMs = opts.watchIntervalMs ?? 500;
-    this.shouldOpen = opts.openInBrowser ?? process.env.GEAR_NO_OPEN !== "1";
+    this.shouldOpen = opts.openInBrowser ?? process.env.RUNE_NO_OPEN !== "1";
   }
 
   /** The dashboard page URL for an id (server must be started). */
@@ -408,7 +408,7 @@ export class DashboardManager {
     const id = randomBytes(4).toString("hex");
     const rec: DashboardRecord = {
       id,
-      title: args.title || "Gear dashboard",
+      title: args.title || "Rune dashboard",
       html: args.spec !== undefined ? specShellHtml(jsonForScript(args.spec)) : (args.html ?? ""),
       spec: args.spec,
       // For spec dashboards the spec itself is the initial render payload
@@ -745,10 +745,10 @@ export class DashboardManager {
     const staticBootstrap = `
 <script>
 (function () {
-  window.__GEAR_STANDALONE__ = true;
-  window.__GEAR_DATA__ = ${jsonForScript(rec.spec ?? rec.data)};
+  window.__RUNE_STANDALONE__ = true;
+  window.__RUNE_DATA__ = ${jsonForScript(rec.spec ?? rec.data)};
   function boot() {
-    try { if (typeof window.render === "function") window.render(window.__GEAR_DATA__); }
+    try { if (typeof window.render === "function") window.render(window.__RUNE_DATA__); }
     catch (e) { console.error("dashboard render failed:", e); }
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
@@ -823,51 +823,51 @@ ${staticBootstrap}
     const bootstrap = `
 <script>
 (function () {
-  window.__GEAR_DATA__ = ${jsonForScript(rec.data)};
+  window.__RUNE_DATA__ = ${jsonForScript(rec.data)};
   var VERSION = ${rec.version};
   var BASE = ${JSON.stringify(base)};
   function fire(d) {
     try { if (typeof window.render === "function") window.render(d); }
     catch (e) { console.error("dashboard render failed:", e); }
   }
-  function boot() { fire(window.__GEAR_DATA__); mountFab(); }
+  function boot() { fire(window.__RUNE_DATA__); mountFab(); }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
   else boot();
 
   var markLive = function () {};
   function mountFab() {
-    if (document.getElementById("gear-fab")) return;
+    if (document.getElementById("rune-fab")) return;
     var style = document.createElement("style");
-    style.id = "gear-fab-css";
+    style.id = "rune-fab-css";
     style.textContent = ${JSON.stringify(FAB_CSS)};
     document.head.appendChild(style);
 
     var fab = document.createElement("div");
-    fab.id = "gear-fab";
-    fab.className = "gear-fab";
+    fab.id = "rune-fab";
+    fab.className = "rune-fab";
 
     var live = document.createElement("span");
-    live.className = "gear-live";
+    live.className = "rune-live";
     live.style.display = ${rec.watchFile ? '""' : '"none"'};
     var dot = document.createElement("span");
-    dot.className = "gear-live-dot";
+    dot.className = "rune-live-dot";
     live.appendChild(dot);
     live.appendChild(document.createTextNode("LIVE"));
     fab.appendChild(live);
     markLive = function () { live.style.display = ""; };
 
     var exp = document.createElement("div");
-    exp.className = "gear-export";
+    exp.className = "rune-export";
     var btn = document.createElement("button");
     btn.type = "button";
     btn.textContent = "Export \\u2193";
     btn.addEventListener("click", function (ev) {
       ev.stopPropagation();
-      exp.className = exp.className.indexOf("open") === -1 ? "gear-export open" : "gear-export";
+      exp.className = exp.className.indexOf("open") === -1 ? "rune-export open" : "rune-export";
     });
     exp.appendChild(btn);
     var menu = document.createElement("div");
-    menu.className = "gear-export-menu";
+    menu.className = "rune-export-menu";
     function link(label, href) {
       var a = document.createElement("a");
       a.textContent = label;
@@ -879,7 +879,7 @@ ${staticBootstrap}
     pdf.type = "button";
     pdf.textContent = "PDF report (print)";
     pdf.addEventListener("click", function () {
-      exp.className = "gear-export";
+      exp.className = "rune-export";
       window.print();
     });
     menu.appendChild(pdf);
@@ -888,16 +888,16 @@ ${staticBootstrap}
     link("Data (CSV)", "/export/csv");
     exp.appendChild(menu);
     fab.appendChild(exp);
-    document.addEventListener("click", function () { exp.className = "gear-export"; });
+    document.addEventListener("click", function () { exp.className = "rune-export"; });
     document.body.appendChild(fab);
   }
 
   try {
     var es = new EventSource(BASE + "/events");
     es.addEventListener("data", function (ev) {
-      try { window.__GEAR_DATA__ = JSON.parse(ev.data); } catch (e) { return; }
+      try { window.__RUNE_DATA__ = JSON.parse(ev.data); } catch (e) { return; }
       markLive();
-      fire(window.__GEAR_DATA__);
+      fire(window.__RUNE_DATA__);
     });
     es.addEventListener("reload", function () { location.reload(); });
     es.addEventListener("hello", function (ev) {
@@ -954,7 +954,7 @@ export const INTERACTIVE_DASHBOARD_SCHEMA: ToolSchema = {
     "EXPORT: every page has an Export menu (PDF via print, standalone HTML, JSON, CSV). action:'export' {format:'pdf'|'html'|'json'|'csv', path?} writes the file into the workspace and is how you deliver report files. " +
     "Raw html escape hatch (bespoke visuals a spec can't express): body-only HTML, self-contained/offline (no CDNs, no web fonts, no external images — inline SVG icons). The page INHERITS the design system: compose with .dash > .grid > .card.span-N, .card-head/.card-title/.card-aside, .kpi-label/.kpi-value/.kpi-foot, .chip.good|bad|warn|info|accent, table.tbl, .rows/.row-item, .prog, .tl, .hm, .sec, .prose and tokens var(--bg,--panel,--panel-2,--line,--line-strong,--ink,--muted,--faint,--accent,--accent-soft,--up,--down,--warn,--info,--font,--mono) — never restyle from browser defaults. Chart.js v" +
     CHART_UMD_VERSION +
-    " is preloaded as `Chart` with themed defaults + window.GEAR {palette, rgba, fmt, gradient}; define window.render(data) and draw from data, never hardcode numbers in markup.",
+    " is preloaded as `Chart` with themed defaults + window.RUNE {palette, rgba, fmt, gradient}; define window.render(data) and draw from data, never hardcode numbers in markup.",
   inputSchema: {
     type: "object",
     properties: {
@@ -1189,7 +1189,7 @@ export function createDashboardTool(manager: DashboardManager): ToolHandler {
         switch (args.action) {
           case "create": {
             const info = await manager.create({
-              title: typeof args.title === "string" ? args.title : "Gear dashboard",
+              title: typeof args.title === "string" ? args.title : "Rune dashboard",
               html: typeof args.html === "string" ? args.html : undefined,
               spec: coerceData(args.spec) ?? undefined,
               data: coerceData(args.data),
@@ -1233,7 +1233,7 @@ export function createDashboardTool(manager: DashboardManager): ToolHandler {
                 return fail(
                   "PDF export needs a Chromium-family browser (Chrome/Brave/Edge) and none was found. " +
                     "The user can still export: the open dashboard's Export menu → 'PDF report (print)'. " +
-                    "Or set GEAR_BROWSER_BIN to a browser binary.",
+                    "Or set RUNE_BROWSER_BIN to a browser binary.",
                 );
               }
               await printUrlToPdf(browser, `${manager.url(id)}/export/view`, outPath);

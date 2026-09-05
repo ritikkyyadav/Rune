@@ -33,10 +33,10 @@ const git = (...args: string[]): string =>
   }).trim();
 
 beforeEach(() => {
-  repo = mkdtempSync(join(tmpdir(), "gear-parent-check-repo-"));
+  repo = mkdtempSync(join(tmpdir(), "rune-parent-check-repo-"));
   git("init", "-q", "-b", "main");
   git("config", "user.email", "test@example.invalid");
-  git("config", "user.name", "Gear Test");
+  git("config", "user.name", "Rune Test");
   git("config", "commit.gpgsign", "false");
 });
 
@@ -59,7 +59,7 @@ function commitCheck(code: number, message: string): void {
  * POSIX-only: the fixture check IS `sh check.sh`, and the subject is "did this
  * check pass on the PARENT commit", not the shell that ran it. Windows has no
  * `sh`; a `.cmd` fixture would exercise the same logic through a different
- * shell, which is worth doing when someone runs Gear's verifier on Windows and
+ * shell, which is worth doing when someone runs Rune's verifier on Windows and
  * not before. Logged in docs/program/backlog.md.
  */
 const POSIX_SHELL = process.platform !== "win32";
@@ -90,7 +90,7 @@ describe.skipIf(!POSIX_SHELL)("runOnParentCommit", () => {
     // nothing — the precise false receipt this module exists to prevent.
     commitCheck(0, "base");
 
-    const result = runOnParentCommit(repo, "gear-definitely-not-a-real-binary --version");
+    const result = runOnParentCommit(repo, "rune-definitely-not-a-real-binary --version");
     expect(result.status).toBe("inconclusive");
   });
 
@@ -135,22 +135,22 @@ describe.skipIf(!POSIX_SHELL)("resolveParentCommit", () => {
     expect(resolveParentCommit(repo)).toEqual({ sha: git("rev-parse", "HEAD"), ref: "HEAD" });
   });
 
-  test("a landed Gear auto-commit shifts the comparison to HEAD~1", () => {
+  test("a landed Rune auto-commit shifts the comparison to HEAD~1", () => {
     commitCheck(1, "base");
     const base = git("rev-parse", "HEAD");
     // [git] autoCommit lands the run as one commit with this exact prefix.
     writeFileSync(join(repo, "check.sh"), "#!/bin/sh\nexit 0\n");
     git("add", "-A");
-    git("commit", "-q", "-m", "gear: fix the check");
+    git("commit", "-q", "-m", "rune: fix the check");
 
     expect(resolveParentCommit(repo)).toEqual({ sha: base, ref: "HEAD~1" });
   });
 
-  test("a Gear commit that is the repo's first commit has no parent to compare", () => {
+  test("a Rune commit that is the repo's first commit has no parent to compare", () => {
     mkdirSync(join(repo, "sub"), { recursive: true });
     writeFileSync(join(repo, "check.sh"), "#!/bin/sh\nexit 0\n");
     git("add", "-A");
-    git("commit", "-q", "-m", "gear: initial");
+    git("commit", "-q", "-m", "rune: initial");
 
     expect(resolveParentCommit(repo)).toBeNull();
   });

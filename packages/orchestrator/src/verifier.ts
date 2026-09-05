@@ -26,7 +26,8 @@
 // so the plan ledger could never close a step on a real check.
 
 import { existsSync, readFileSync, readdirSync } from "fs";
-import { join } from "path";
+import { homedir } from "os";
+import { isAbsolute, join, relative, resolve } from "path";
 
 /** The stacks detection knows how to verify. `jvm` covers Java and Kotlin. */
 export type Ecosystem = "js" | "go" | "python" | "rust" | "jvm";
@@ -120,7 +121,21 @@ export interface VerifyResult {
 }
 
 export interface Verifier {
-  verify(signal?: AbortSignal): Promise<VerifyResult>;
+  /**
+   * The full check set, run when the model finishes a turn that edited files.
+   *
+   * `touched` is what the run actually wrote. In a workspace that holds
+   * several projects it selects the ones to grade, for the same reason
+   * `verifyFast` does: a run that built one folder must not be failed by a
+   * sibling it never opened. Measured (session 01a067b8): a static site built
+   * in `bangla-sweets/` was graded against every sibling under the workspace
+   * root, so the run was told "verification failed" by a Python test needing
+   * pandas, a gradle build with no JDK, and a socket-binding test the sandbox
+   * denies — then spent roughly fifty completions and eight minutes trying to
+   * fix code it had never touched. Omitted or unmatched, the whole workspace
+   * is graded exactly as before.
+   */
+  verify(signal?: AbortSignal, touched?: string[]): Promise<VerifyResult>;
   /**
    * The cheap tier only — compile-class checks (typecheck, cargo check, go
    * build), never the test suite. Run at a STEP boundary rather than at the
@@ -342,7 +357,7 @@ function jsChecks(dir: string, isMonorepoRoot: boolean): Array<[CheckKind, strin
   if (scripts.test && !/no test specified/i.test(scripts.test)) {
     out.push(["test", pm === "npm" ? "npm test" : `${pm} test`]);
   } else if (!scripts.test && !isMonorepoRoot && walkHas(dir, JS_TEST_FILE)) {
-    // Scriptless project with raw test files — Gear runs on Bun, which can
+    // Scriptless project with raw test files — Rune runs on Bun, which can
     // execute bun:test files directly.
     out.push(["test", "bun test"]);
   }
@@ -434,7 +449,7 @@ function pythonChecks(dir: string): Array<[CheckKind, string]> {
     return `${run.python} -m ${name} ${args}`.trim();
   };
 
-  // Typecheck — pyright first (it is the one Gear's own LSP layer speaks),
+  // Typecheck — pyright first (it is the one Rune's own LSP layer speaks),
   // mypy when that is what the project configured. Never both.
   const pyrightConfigured = has("pyrightconfig.json") || /\[tool\.pyright\]/.test(pyproject);
   const mypyConfigured =
@@ -571,7 +586,7 @@ const MARKERS: Marker[] = [
     ecosystem: "js",
     find: (d) =>
       first(d, ["package.json", "tsconfig.json"]) ??
-      // No manifest, raw `*.test.ts` files: Gear runs on Bun and can execute
+      // No manifest, raw `*.test.ts` files: Rune runs on Bun and can execute
       // them directly. This is the greenfield "wrote tests, never wrote a
       // package.json" shape.
       (walkHas(d, JS_TEST_FILE, 3) ? "*.test.ts" : null),
@@ -654,14 +669,17 @@ export function classifyCommand(command: string): CheckKind {
   return "build";
 }
 
-/** Every detected check, ordered cheapest-signal-first. */
-export function detectChecks(workspaceRoot: string, opts?: DetectOptions): DetectedCheck[] {
-  const projects = detectProjects(workspaceRoot, opts);
-  const checks = projects.flatMap((p) => p.checks);
+/** Cheapest-signal-first, stable within a kind. */
+function orderChecks(checks: DetectedCheck[]): DetectedCheck[] {
   return checks
     .map((c, i) => ({ c, i }))
     .sort((a, b) => KIND_ORDER[a.c.kind] - KIND_ORDER[b.c.kind] || a.i - b.i)
     .map((x) => x.c);
+}
+
+/** Every detected check, ordered cheapest-signal-first. */
+export function detectChecks(workspaceRoot: string, opts?: DetectOptions): DetectedCheck[] {
+  return orderChecks(detectProjects(workspaceRoot, opts).flatMap((p) => p.checks));
 }
 
 /**
@@ -775,6 +793,93 @@ async function runCommand(
 
 // ─── Per-step compile checks ───
 
+/**
+ * Touched files, as workspace-relative POSIX paths.
+ *
+ * The model names files however it likes — `styles.css`, `./styles.css`,
+ * `~/Project/code/shop/styles.css`, `/Users/…/shop/styles.css` — while a
+ * `DetectedProject.dir` is always relative to the workspace root. Matching the
+ * two without normalising is how scoping silently failed: an absolute path
+ * never starts with `shop/`, `projectForFiles` returned nothing, and the
+ * caller fell back to checking EVERY project in the tree. Anything outside the
+ * workspace is dropped — it belongs to no project here.
+ */
+export function relativizeTouched(workspaceRoot: string, touched: readonly string[]): string[] {
+  const root = resolve(workspaceRoot);
+  const out: string[] = [];
+  for (const raw of touched) {
+    if (typeof raw !== "string" || raw.trim() === "") continue;
+    let p = raw.replace(/\\/g, "/").trim();
+    if (p === "~" || p.startsWith("~/")) p = join(homedir(), p.slice(1));
+    const abs = isAbsolute(p) ? resolve(p) : resolve(root, p);
+    const rel = insideRoot(root, abs);
+    // null is outside the workspace; "" is the root itself. Neither is a file.
+    if (rel === null || rel === "") continue;
+    if (!out.includes(rel)) out.push(rel);
+  }
+  return out;
+}
+
+/** The default file systems of macOS and Windows compare paths case-blind. */
+const CASE_INSENSITIVE_FS = process.platform === "darwin" || process.platform === "win32";
+
+function outsideRoot(rel: string): boolean {
+  return rel === ".." || rel.startsWith("../") || isAbsolute(rel);
+}
+
+/** `abs` as a path under `root`, or null when it is not inside it. */
+function insideRoot(root: string, abs: string): string | null {
+  const rel = relative(root, abs).replace(/\\/g, "/");
+  if (!outsideRoot(rel)) return rel;
+  // The same folder arrives as `~/Project/Alan` from one source and
+  // `~/project/alan` from another (a shell cwd typed in lowercase, a mission
+  // file that spells it the other way). On a case-blind file system they are
+  // one folder, so the containment test is retried case-blind; the path
+  // returned keeps the file's own spelling.
+  if (!CASE_INSENSITIVE_FS) return null;
+  const folded = relative(root.toLowerCase(), abs.toLowerCase()).replace(/\\/g, "/");
+  if (outsideRoot(folded)) return null;
+  return folded === "" ? "" : abs.replace(/\\/g, "/").slice(root.length + 1);
+}
+
+/**
+ * Every project a RUN touched: each file attributed to the innermost project
+ * that contains it, unioned.
+ *
+ * Distinct from `projectForFiles`, which answers a different question — one
+ * step's files, one project, deepest wins. Over a whole run the files can
+ * legitimately span projects, and taking only the deepest would drop the
+ * others; taking every containing project would grade a nested package twice,
+ * once through its own manifest and once through the monorepo root above it.
+ * Innermost-per-file, unioned, is the only rule that gets both right.
+ *
+ * "Innermost" is a DIRECTORY, not a project: one directory can host several
+ * ecosystems (this repository has `package.json` and `Cargo.toml` side by
+ * side at its root, two projects at depth zero), and every project at that
+ * depth owns the file. The first version kept one and silently dropped
+ * `cargo check` for every Rust edit in a mixed root.
+ *
+ * An empty result is meaningful, not a failure: the run wrote files that
+ * belong to no project here. See `CommandVerifier.checks`.
+ */
+export function projectsForRun(
+  projects: DetectedProject[],
+  touched: readonly string[],
+): DetectedProject[] {
+  const out: DetectedProject[] = [];
+  for (const file of touched) {
+    const owners = projects.filter((p) => file.startsWith(p.dir === "" ? "" : `${p.dir}/`));
+    if (owners.length === 0) continue;
+    // Every owner's dir is a prefix of the same path, so the longest is the
+    // innermost, and equal lengths are the same directory.
+    const innermost = Math.max(...owners.map((p) => p.dir.length));
+    for (const p of owners) {
+      if (p.dir.length === innermost && !out.includes(p)) out.push(p);
+    }
+  }
+  return out;
+}
+
 /** Which project a step's files belong to: the deepest project dir containing one. */
 export function projectForFiles(projects: DetectedProject[], touched: string[]): DetectedProject[] {
   if (touched.length === 0) return [];
@@ -853,8 +958,14 @@ export class CommandVerifier implements Verifier {
     return { ecosystems: this.config.ecosystems };
   }
 
-  /** Every check for this workspace, as the structured records the ledger wants. */
-  private checks(): DetectedCheck[] {
+  /**
+   * Every check for this workspace, as the structured records the ledger wants
+   * — narrowed to the project(s) `touched` belongs to when it names any.
+   *
+   * An explicit `[verify] commands` override is never narrowed: the user said
+   * exactly what to run, and that is what runs.
+   */
+  private checks(touched?: readonly string[]): DetectedCheck[] {
     const override = this.overridden();
     if (override) {
       return override.map((command) => ({
@@ -864,7 +975,21 @@ export class CommandVerifier implements Verifier {
         command,
       }));
     }
-    return detectChecks(this.config.workspaceRoot, this.detectOptions());
+    const projects = detectProjects(this.config.workspaceRoot, this.detectOptions());
+    const rel = relativizeTouched(this.config.workspaceRoot, touched ?? []);
+    // No usable file list (an older caller, or a run that wrote nothing inside
+    // the workspace): grade the whole workspace, exactly as before.
+    if (rel.length === 0) return orderChecks(projects.flatMap((p) => p.checks));
+
+    const scoped = projectsForRun(projects, rel);
+    // The run wrote real files that belong to no detected project — a folder of
+    // static files beside other people's projects. There is no check for what
+    // this run made, and the siblings' checks say nothing about it. Returning
+    // none makes `run()` report "nothing runnable detected", which is both true
+    // and the signal the doctrine already teaches: static files, not a project.
+    // Grading the siblings instead is what sent one run to install pandas for a
+    // stranger's test suite.
+    return orderChecks(scoped.flatMap((p) => p.checks));
   }
 
   private commands(): string[] {
@@ -873,8 +998,8 @@ export class CommandVerifier implements Verifier {
     );
   }
 
-  async verify(signal?: AbortSignal): Promise<VerifyResult> {
-    return this.run(this.checks(), this.config.timeoutMs ?? 120_000, signal);
+  async verify(signal?: AbortSignal, touched?: string[]): Promise<VerifyResult> {
+    return this.run(this.checks(touched), this.config.timeoutMs ?? 120_000, signal);
   }
 
   /**
@@ -900,7 +1025,11 @@ export class CommandVerifier implements Verifier {
     }
 
     const projects = detectProjects(this.config.workspaceRoot, this.detectOptions());
-    const scoped = projectForFiles(projects, touched ?? []);
+    // Normalised first: the model writes absolute and `~`-prefixed paths, and
+    // a project dir is workspace-relative. Matching them raw never hit, so
+    // every step check quietly widened to the whole tree.
+    const rel = relativizeTouched(this.config.workspaceRoot, touched ?? []);
+    const scoped = projectForFiles(projects, rel);
     const chosen = scoped.length > 0 ? scoped : projects;
 
     const fast: DetectedCheck[] = [];
@@ -908,8 +1037,8 @@ export class CommandVerifier implements Verifier {
       const own = p.checks.filter((c) => FAST_KINDS.has(c.kind));
       if (own.length > 0) {
         fast.push(...own);
-      } else if (touched && touched.length > 0) {
-        const scopedCheck = fileScopedCheck(this.config.workspaceRoot, p, touched);
+      } else if (rel.length > 0) {
+        const scopedCheck = fileScopedCheck(this.config.workspaceRoot, p, rel);
         if (scopedCheck) fast.push(scopedCheck);
       }
     }

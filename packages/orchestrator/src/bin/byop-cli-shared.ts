@@ -1,20 +1,20 @@
 // ─── Shared helpers for the BYOP CLI verbs (login / providers / use / models) ───
 // Single source of truth for the credential-merge and interactive I/O these verbs
-// need, so `gear login`, `gear providers`, and the boot path in gear-cli all
+// need, so `rune login`, `rune providers`, and the boot path in rune-cli all
 // resolve keys the same way (no drift). No Engine boot — these run standalone,
 // like the telemetry/doctor subcommands.
 
 import { createInterface } from "node:readline";
-import type { GearConfig, SecretsFile, AuthMethod, CredentialStore } from "@gear/shared";
+import type { RuneConfig, SecretsFile, AuthMethod, CredentialStore } from "@rune/shared";
 
 /**
  * The saved keys the gateway treats as "middle precedence" (below the secure
  * store, above env). Mirrors the Engine's own seed: config-file keys that don't
- * merely echo an env var, then ~/.gear/secrets.json (which wins). Kept here so
+ * merely echo an env var, then ~/.rune/secrets.json (which wins). Kept here so
  * the boot path and the CLI verbs never diverge.
  */
 export function buildSavedKeys(
-  config: GearConfig,
+  config: RuneConfig,
   secrets: SecretsFile,
   env: NodeJS.ProcessEnv = process.env,
 ): Record<string, string> {
@@ -36,7 +36,7 @@ export function buildSavedKeys(
 }
 
 /** Per-provider auth-method overrides from `[llm.<id>] authentication = "…"`. */
-export function readAuthOverrides(config: GearConfig): Record<string, AuthMethod> {
+export function readAuthOverrides(config: RuneConfig): Record<string, AuthMethod> {
   const out: Record<string, AuthMethod> = {};
   const llm = config.llm as unknown as Record<string, { authentication?: string } | undefined>;
   const valid: ReadonlySet<string> = new Set(["api_key", "oauth", "device", "local", "chain"]);
@@ -50,7 +50,7 @@ export function readAuthOverrides(config: GearConfig): Record<string, AuthMethod
 /** The one-line notice shown whenever secrets are held in the plaintext fallback. */
 export function insecureNoticeLine(store: CredentialStore): string | null {
   if (store.secure) return null;
-  return "⚠ credentials stored unencrypted at ~/.gear/credentials.json (no OS keychain available)";
+  return "⚠ credentials stored unencrypted at ~/.rune/credentials.json (no OS keychain available)";
 }
 
 /** Open a URL in the user's default browser (best effort; never throws). */

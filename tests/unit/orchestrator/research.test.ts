@@ -218,7 +218,7 @@ describe("createResearchPermissionCheck", () => {
 
 describe("createResearchRegistry", () => {
   test("web scope exposes only the web tools", () => {
-    const r = createResearchRegistry("gear-tools", "web");
+    const r = createResearchRegistry("rune-tools", "web");
     expect(r.get("web_search")).toBeDefined();
     expect(r.get("web_fetch")).toBeDefined();
     expect(r.get("read_file")).toBeUndefined();
@@ -226,14 +226,14 @@ describe("createResearchRegistry", () => {
     expect(r.get("bash")).toBeUndefined();
   });
   test("local scope exposes read tools but no web tools", () => {
-    const r = createResearchRegistry("gear-tools", "local");
+    const r = createResearchRegistry("rune-tools", "local");
     expect(r.get("read_file")).toBeDefined();
     expect(r.get("grep")).toBeDefined();
     expect(r.get("web_search")).toBeUndefined();
     expect(r.get("write_file")).toBeUndefined();
   });
   test("both scope exposes read + web, never mutating tools", () => {
-    const r = createResearchRegistry("gear-tools", "both");
+    const r = createResearchRegistry("rune-tools", "both");
     expect(r.get("read_file")).toBeDefined();
     expect(r.get("web_search")).toBeDefined();
     expect(r.get("edit_file")).toBeUndefined();
@@ -356,7 +356,7 @@ describe("runResearch", () => {
     gw.registerProvider(new JsonProvider(body));
     return {
       gateway: gw,
-      binaryPath: "gear-tools",
+      binaryPath: "rune-tools",
       model: "m",
       provider: "anthropic" as const,
       workspaceRoot: "/tmp",
@@ -983,7 +983,7 @@ describe("P10.9 — the research fan-out is the executor's", () => {
     gw.registerProvider(provider);
     return {
       gateway: gw,
-      binaryPath: "gear-tools",
+      binaryPath: "rune-tools",
       model: "m",
       provider: "anthropic" as const,
       workspaceRoot: "/tmp",

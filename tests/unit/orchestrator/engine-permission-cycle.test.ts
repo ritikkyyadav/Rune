@@ -12,13 +12,13 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmTemp(root);
 });
 
-describe("Engine five-gear Shift+Tab cycle", () => {
+describe("Engine five-rune Shift+Tab cycle", () => {
   test("four shifts from 1st gear reach auto via 2nd, 3rd, and 4th — the sandbox never moves", () => {
-    const root = mkdtempSync(join(tmpdir(), "gear-cycle-"));
+    const root = mkdtempSync(join(tmpdir(), "rune-cycle-"));
     roots.push(root);
     const engine = new Engine({
       workspaceRoot: root,
-      dbPath: join(root, "gear.db"),
+      dbPath: join(root, "rune.db"),
       sandboxEnabled: true,
       enableMcp: false,
       enableSkills: false,
@@ -46,11 +46,11 @@ describe("Engine five-gear Shift+Tab cycle", () => {
   });
 
   test("a session started with the sandbox off keeps it off through 4th gear and back", () => {
-    const root = mkdtempSync(join(tmpdir(), "gear-cycle-nosandbox-"));
+    const root = mkdtempSync(join(tmpdir(), "rune-cycle-nosandbox-"));
     roots.push(root);
     const engine = new Engine({
       workspaceRoot: root,
-      dbPath: join(root, "gear.db"),
+      dbPath: join(root, "rune.db"),
       sandboxEnabled: false,
       enableMcp: false,
       enableSkills: false,
@@ -68,11 +68,11 @@ describe("Engine five-gear Shift+Tab cycle", () => {
   });
 
   test("legacy spellings canonicalize: turing/hands-free/yolo/autonomy-iii → 4th gear, confirm → 1st", () => {
-    const root = mkdtempSync(join(tmpdir(), "gear-alias-"));
+    const root = mkdtempSync(join(tmpdir(), "rune-alias-"));
     roots.push(root);
     const engine = new Engine({
       workspaceRoot: root,
-      dbPath: join(root, "gear.db"),
+      dbPath: join(root, "rune.db"),
       enableMcp: false,
       enableSkills: false,
       enableVerification: false,

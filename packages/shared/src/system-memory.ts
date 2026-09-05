@@ -1,8 +1,8 @@
 // ─── System Memory store ("dreaming") ───
-// Gear's evergreen profile of the user and the codebases they work in — a small,
+// Rune's evergreen profile of the user and the codebases they work in — a small,
 // narrative GUIDE (not a list of rules) that gets injected into the system prompt
 // so even tiny models get useful, personalised context cheaply. Two sidecars in
-// ~/.gear/, same lenient pattern as model-store.ts / secrets.ts (a missing or
+// ~/.rune/, same lenient pattern as model-store.ts / secrets.ts (a missing or
 // malformed file is treated as empty and never throws):
 //
 //   • system-memory.md   — the human-readable guide (the text actually injected)
@@ -14,7 +14,7 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { dirname, join } from "path";
-import { getGearHome } from "./paths.js";
+import { getRuneHome } from "./paths.js";
 
 // ─── Types ───
 
@@ -48,14 +48,14 @@ export interface SystemMemory {
 // ─── Paths ───
 
 /**
- * Resolve the memory file path. Honors `GEAR_SYSTEM_MEMORY_PATH` (tests / advanced
- * setups); otherwise `~/.gear/system-memory.md`. Computed per-call so the env
+ * Resolve the memory file path. Honors `RUNE_SYSTEM_MEMORY_PATH` (tests / advanced
+ * setups); otherwise `~/.rune/system-memory.md`. Computed per-call so the env
  * override always takes effect.
  */
 export function getSystemMemoryPath(): string {
-  const override = process.env.GEAR_SYSTEM_MEMORY_PATH;
+  const override = process.env.RUNE_SYSTEM_MEMORY_PATH;
   if (override) return override;
-  return join(getGearHome(), "system-memory.md");
+  return join(getRuneHome(), "system-memory.md");
 }
 
 /** The meta sidecar sits next to the md so the env override relocates both. */

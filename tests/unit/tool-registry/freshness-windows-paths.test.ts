@@ -111,9 +111,9 @@ describe("ledgerKey on Windows-shaped paths", () => {
   });
 
   test("a UNC workspace works the same way", () => {
-    const unc = "\\\\build01\\projects\\gear";
+    const unc = "\\\\build01\\projects\\rune";
     expect(ledgerKey(unc, "src\\a.ts", { platform: "win32", realpath: stripVerbatimPrefix })).toBe(
-      ledgerKey(`\\\\?\\UNC\\build01\\projects\\gear`, "src/a.ts", {
+      ledgerKey(`\\\\?\\UNC\\build01\\projects\\rune`, "src/a.ts", {
         platform: "win32",
         realpath: stripVerbatimPrefix,
       }),

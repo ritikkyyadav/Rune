@@ -2,8 +2,8 @@
 //
 // Two scopes:
 //
-//   user       ~/.gear/mcp.json          connectors you have everywhere
-//   workspace  <root>/.gear/mcp.json     connectors this project needs
+//   user       ~/.rune/mcp.json          connectors you have everywhere
+//   workspace  <root>/.rune/mcp.json     connectors this project needs
 //
 // Workspace wins on collision, by name. The reasoning is the same as every
 // other layered config in this repo: the narrower scope is the more deliberate
@@ -17,7 +17,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { getGearHome, workspaceConfigPath } from "@gear/shared";
+import { getRuneHome, workspaceConfigPath } from "@rune/shared";
 import type { McpServerConfig } from "./discovery";
 
 export type McpScope = "user" | "workspace";
@@ -29,7 +29,7 @@ export interface McpConfigFile {
 /** The file backing one scope. */
 export function mcpConfigPath(scope: McpScope, workspaceRoot: string): string {
   return scope === "user"
-    ? join(getGearHome(), "mcp.json")
+    ? join(getRuneHome(), "mcp.json")
     : workspaceConfigPath(workspaceRoot, "mcp.json");
 }
 
@@ -67,7 +67,7 @@ export interface MergedServer {
 /**
  * Both scopes, merged, with workspace winning. Returns entries rather than a
  * plain record so callers can SAY which file an entry came from — "why is this
- * connector here" is the question `gear mcp list` exists to answer.
+ * connector here" is the question `rune mcp list` exists to answer.
  */
 export function mergedServers(workspaceRoot: string): {
   servers: MergedServer[];

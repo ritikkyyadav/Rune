@@ -2,7 +2,7 @@
 
 Every turn re-sends the whole conversation. That single fact decides an agent's
 cost curve, its latency, and — once a run is long enough — whether it still
-knows what it is doing. This page describes what Gear keeps, what it throws
+knows what it is doing. This page describes what Rune keeps, what it throws
 away, and how the throwing-away is measured.
 
 ## The three carriers
@@ -66,7 +66,7 @@ Three rules keep a compaction worth its round trip:
 - **An explicit compaction cuts harder than an automatic one.** The 30% tail is
   the automatic policy, conservative because nobody asked. `compact_context`
   and an over-limit rejection were asked to free room now, so they keep the
-  recent exchange and fold the rest. `gear audit` labels which policy produced
+  recent exchange and fold the rest. `rune audit` labels which policy produced
   a given tail, because the two are not comparable.
 
 ## The merged state, not a summary of a summary
@@ -80,7 +80,7 @@ goals are prose about prose. The state uses fixed section labels
 successive compactions can merge into a structure instead of re-writing one.
 
 This is the fix for Gap 6 of the competitive assessment
-(`docs/history/Berne-Competitive-Assessment.md`). `tests/eval/tasks-compaction.ts`
+(`docs/history/Rune-Competitive-Assessment.md`). `tests/eval/tasks-compaction.ts`
 measures it directly: no compaction may contain a prior state in its transcript
 half, exactly one summary marker may exist in the working set, and the merged
 state may not run away across compactions.
@@ -111,7 +111,7 @@ Numbers, before and after, live in [`benchmarks.md`](benchmarks.md) under
 
 ## Utilization, after the fact
 
-`gear audit` prints a **Context** section for a session: per-turn occupancy
+`rune audit` prints a **Context** section for a session: per-turn occupancy
 against the model's window, the share served from cache, and every compaction
 with its before/after sizes, what it dropped and what asked for it. It is read
 from the persisted usage rows, not from a live counter — the process holding a

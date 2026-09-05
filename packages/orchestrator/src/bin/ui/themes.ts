@@ -1,4 +1,4 @@
-// ─── Gear Terminal Themes ───
+// ─── Rune Terminal Themes ───
 // Pure data + types for the bundled colour themes. No runtime dependency on theme.ts
 // (the dependency is one-way: theme.ts imports this), so there's no import cycle.
 //
@@ -9,7 +9,7 @@
 // Themes are authored as hex; the ANSI-256 fallback is derived automatically
 // (nearestAnsi256). The `atlas` (brand) theme keeps its original hand-tuned pigments.
 
-import { GEAR_ACCENT_LABELS, gearTerminalPalette, gearAccentHex } from "@gear/shared";
+import { RUNE_ACCENT_LABELS, runeTerminalPalette, runeAccentHex } from "@rune/shared";
 
 export interface Pigment {
   /** Brand-exact 24-bit RGB. */
@@ -31,7 +31,7 @@ export interface ThemeSlots {
   line: Pigment; // borders / rules
 }
 
-/** Exact surface tokens from the Gear visual specification. Terminals cannot
+/** Exact surface tokens from the Rune visual specification. Terminals cannot
  * render CSS shadows or translucency, but they can reproduce every solid
  * surface, border, and semantic foreground with 24-bit ANSI colour. */
 export interface ThemeSurfaces {
@@ -53,19 +53,19 @@ export interface Theme {
   appearance: "dark" | "light";
   /** Terminal background — applied via OSC 11 so the whole window recolours. */
   bg: Pigment;
-  /** Canvas behind the centered terminal card. Explicit Gear themes use the
+  /** Canvas behind the centered terminal card. Explicit Rune themes use the
    *  sage/black customizer canvas; legacy themes simply fall back to `bg`. */
   canvas?: Pigment;
   /** Card, task-bar, code, diff, and popover fills from the HTML contract. */
   surfaces?: ThemeSurfaces;
-  /** Exact cosmetic signal used for the Gear mark, selection dots, and active
+  /** Exact cosmetic signal used for the Rune mark, selection dots, and active
    *  controls. It is intentionally separate from `info`: some supplied accent
    *  colours are decorative-only on a light surface, while paths and links must
    *  retain text-level contrast. */
   brand: Pigment;
   slots: ThemeSlots;
-  /** Gear customizer metadata. Absent on legacy/community palettes. */
-  gearAccent?: GearAccent;
+  /** Rune customizer metadata. Absent on legacy/community palettes. */
+  runeAccent?: RuneAccent;
   /** Follow-terminal mode keeps the host terminal's own surface instead of repainting it. */
   preserveTerminal?: boolean;
   /** No trustworthy background was detected, so emitting our own foreground
@@ -76,16 +76,16 @@ export interface Theme {
 // One accent (P3.3). The union keeps a single member rather than disappearing,
 // because `[ui] accent` survives as an undocumented override and a type that
 // can only be "datum" states the decision instead of hiding that there was one.
-export type GearAccent = "gear";
+export type RuneAccent = "rune";
 
-export const GEAR_ACCENTS: readonly GearAccent[] = ["gear"];
+export const RUNE_ACCENTS: readonly RuneAccent[] = ["rune"];
 
-// Gear opens on ink. The picker is `light | dark | auto` and nothing else: the
+// Rune opens on ink. The picker is `light | dark | auto` and nothing else: the
 // five cosmetic accents are gone from both surfaces, because one accent is a
 // brand rule and a coding agent offering a colour gallery is telling you what
 // it thinks it is. Every pigment below the Savoir pair comes from
 // packages/shared/src/design-tokens.ts.
-export const DEFAULT_THEME = "gear-dark";
+export const DEFAULT_THEME = "rune-dark";
 
 // ─── ANSI-256 nearest-match (xterm cube + grayscale ramp) ───
 
@@ -158,7 +158,7 @@ function theme(
   hex: Hexes,
   options: {
     brand?: string;
-    gearAccent?: GearAccent;
+    runeAccent?: RuneAccent;
     canvas?: string;
     surfaces?: SurfaceHexes;
   } = {},
@@ -182,7 +182,7 @@ function theme(
         }
       : undefined,
     brand: pig(options.brand ?? hex.info),
-    gearAccent: options.gearAccent,
+    runeAccent: options.runeAccent,
     slots: {
       text: pig(hex.text),
       muted: pig(hex.muted),
@@ -407,26 +407,26 @@ const ATLAS: Theme = {
 // as `info` and as `brand`. Those names are the console's, and they read from
 // what each slot MEANS rather than from what colour it happens to be.
 
-const GEAR_ACCENT_LABEL: Record<GearAccent, string> = GEAR_ACCENT_LABELS;
+const RUNE_ACCENT_LABEL: Record<RuneAccent, string> = RUNE_ACCENT_LABELS;
 
-/** Stable persisted id for one base. `gear` and `gear-dark` are the ids every
+/** Stable persisted id for one base. `rune` and `rune-dark` are the ids every
  *  existing install already has recorded, so a rebrand does not reset anyone's
  *  theme; only the pigments behind them moved. */
-export function gearThemeName(appearance: "light" | "dark", _accent: GearAccent = "gear"): string {
-  return appearance === "light" ? "gear" : "gear-dark";
+export function runeThemeName(appearance: "light" | "dark", _accent: RuneAccent = "rune"): string {
+  return appearance === "light" ? "rune" : "rune-dark";
 }
 
-function gearTheme(appearance: "light" | "dark", accentName: GearAccent = "gear"): Theme {
+function runeTheme(appearance: "light" | "dark", accentName: RuneAccent = "rune"): Theme {
   // Derived from the shared token source, including its distinction between
   // semantic text and the cosmetic accent. Translucent values arrive here
   // already composited to solid terminal colours, because a terminal has no
   // alpha channel and a guess made at render time is a different guess each
   // time.
-  const palette = gearTerminalPalette(appearance);
-  const brand = gearAccentHex(appearance, accentName);
+  const palette = runeTerminalPalette(appearance);
+  const brand = runeAccentHex(appearance, accentName);
   const label = appearance === "light" ? "Light" : "Dark";
   return theme(
-    gearThemeName(appearance, accentName),
+    runeThemeName(appearance, accentName),
     label,
     appearance,
     {
@@ -442,7 +442,7 @@ function gearTheme(appearance: "light" | "dark", accentName: GearAccent = "gear"
     },
     {
       brand,
-      gearAccent: accentName,
+      runeAccent: accentName,
       canvas: palette.canvas,
       surfaces: palette.surfaces,
     },
@@ -458,8 +458,8 @@ export const THEMES: Theme[] = [
   // a fourth identity in a repository that now has one. The community palettes
   // below stay reachable by name for anyone who wants them; they are not in
   // the picker.
-  gearTheme("dark"),
-  gearTheme("light"),
+  runeTheme("dark"),
+  runeTheme("light"),
 
   // studio — the default: a dark instrument panel (Codex-style). Near-black ground
   // with a faint green cast, grey mono text, one teal-green signal for live state
@@ -688,26 +688,29 @@ export function findTheme(name: string): Theme | undefined {
   if (name === "auto") return AUTO_THEME;
   const normalized = name.trim().toLowerCase();
   // Every retired accent name still resolves, to the ground it was saved on.
-  // Someone with `gear-violet-dark` in ~/.gear/theme.json gets the dark Savoir
-  // mode, not an "unknown theme" error and a surprise repaint.
+  // Someone with `gear-violet-dark` (or `gear-dark`, the previous name's
+  // default) in ~/.rune/theme.json gets the dark mode, not an "unknown theme"
+  // error and a surprise repaint.
   const accentAlias =
-    /^(?:gear-)?(cobalt|orange|violet|emerald|mono|datum|gear)(?:-(light|dark))?$/.exec(normalized);
+    /^(?:rune-|gear-)?(cobalt|orange|violet|emerald|mono|datum|rune|gear)(?:-(light|dark))?$/.exec(
+      normalized,
+    );
   const canonical = accentAlias
-    ? gearThemeName(
+    ? runeThemeName(
         (accentAlias[2] as "light" | "dark" | undefined) ??
           // Pre-rename `mono` was Monochrome Black: a saved bare "mono" keeps
           // its dark surface. The other bare accents defaulted to light.
           (accentAlias[1] === "mono" ? "dark" : "light"),
       )
     : normalized === "light"
-      ? "gear"
+      ? "rune"
       : normalized === "dark"
-        ? "gear-dark"
+        ? "rune-dark"
         : normalized === "system"
           ? "auto"
           : // `flow` was the dark default before the Savoir modes replaced it.
             normalized === "flow"
-            ? "gear-dark"
+            ? "rune-dark"
             : normalized;
   if (canonical === "auto") return AUTO_THEME;
   return THEMES.find((t) => t.name === canonical);
@@ -715,7 +718,7 @@ export function findTheme(name: string): Theme | undefined {
 
 // ─── Production theme set ───
 // Light, dark, and the host escape hatch. Three modes, not thirteen.
-export const PRODUCTION_THEME_NAMES: readonly string[] = ["gear-dark", "gear", "auto"];
+export const PRODUCTION_THEME_NAMES: readonly string[] = ["rune-dark", "rune", "auto"];
 
 /** Whether `name` is one of the production theme modes. */
 export function isProductionTheme(name: string): boolean {

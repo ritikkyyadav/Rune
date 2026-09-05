@@ -12,14 +12,14 @@ let dir: string;
 let prev: string | undefined;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "gear-model-"));
-  prev = process.env.GEAR_MODEL_PATH;
-  process.env.GEAR_MODEL_PATH = join(dir, "model.json");
+  dir = mkdtempSync(join(tmpdir(), "rune-model-"));
+  prev = process.env.RUNE_MODEL_PATH;
+  process.env.RUNE_MODEL_PATH = join(dir, "model.json");
 });
 
 afterEach(() => {
-  if (prev === undefined) delete process.env.GEAR_MODEL_PATH;
-  else process.env.GEAR_MODEL_PATH = prev;
+  if (prev === undefined) delete process.env.RUNE_MODEL_PATH;
+  else process.env.RUNE_MODEL_PATH = prev;
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -46,7 +46,7 @@ describe("shared/model-store", () => {
     expect(loadLastModel()).toBeNull();
   });
 
-  it("honors GEAR_MODEL_PATH for the sidecar location", () => {
+  it("honors RUNE_MODEL_PATH for the sidecar location", () => {
     expect(getModelStatePath()).toBe(join(dir, "model.json"));
   });
 });

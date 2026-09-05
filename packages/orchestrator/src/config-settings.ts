@@ -1,5 +1,5 @@
 // ─── Settable config catalog ───
-// The curated allowlist of settings Gear will change on a plain-language
+// The curated allowlist of settings Rune will change on a plain-language
 // request ("shift to 4th gear", "turn the sandbox off"). It maps the
 // words a user is likely to say onto a canonical setting + value, and onto the
 // dotted config.toml key the writer persists. Keeping this list small and
@@ -35,7 +35,7 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
     key: "gear",
     tomlPath: "permissions.gear",
     description:
-      "Which gear Gear runs in: 1 = guided (asks before writes and commands); 2 = workspace " +
+      "Which gear Rune runs in: 1 = guided (asks before writes and commands); 2 = workspace " +
       "file edits proceed; 3 = also sandboxed commands and confined delegation; 4 = full " +
       "autonomy, never asks first; auto = a separate classifier reviews risky actions.",
     kind: "enum",
@@ -255,7 +255,7 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
     tomlPath: "git.autoCommit",
     description:
       "After each successful run that changed files, commit exactly those files as one " +
-      'revertible "gear:" commit (undo with /undo).',
+      'revertible "rune:" commit (undo with /undo).',
     kind: "boolean",
     nameAliases: ["autocommit", "auto commit", "git auto commit", "commit on save"],
     live: true,

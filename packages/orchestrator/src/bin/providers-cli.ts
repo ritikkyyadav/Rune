@@ -1,7 +1,7 @@
-// ─── `gear providers` / `gear use` / `gear models` ───
+// ─── `rune providers` / `rune use` / `rune models` ───
 // Non-interactive provider surfaces, dispatched standalone like telemetry/doctor.
 //   providers — list every provider, its auth method, and credential status
-//   use        — set the active provider (+ optional model) in ~/.gear/model.json
+//   use        — set the active provider (+ optional model) in ~/.rune/model.json
 //   models     — live model discovery for a provider, cached for an hour, with
 //                the curated preset as the fallback (`--refresh` forces a call)
 
@@ -20,10 +20,10 @@ import {
   saveCachedModels,
   cachedModelsAge,
   describeAge,
-  type GearConfig,
+  type RuneConfig,
   type SecretsFile,
-} from "@gear/shared";
-import type { ProviderName, ModelInfo, ResolvedCredential } from "@gear/llm-gateway";
+} from "@rune/shared";
+import type { ProviderName, ModelInfo, ResolvedCredential } from "@rune/llm-gateway";
 import { buildGateway, resolveProviderCredentials } from "../provider-registry";
 import { bold, danger, dim, faint, info, ok, text, warn } from "./ui/theme";
 import { buildSavedKeys, readAuthOverrides, insecureNoticeLine } from "./byop-cli-shared";
@@ -32,18 +32,18 @@ const pad = "  ";
 const out = (line = "") => process.stdout.write(`${pad}${line}\n`);
 
 /** Active provider = last-used sidecar, else the configured default. */
-function activeProvider(config: GearConfig): string {
+function activeProvider(config: RuneConfig): string {
   return loadLastModel()?.provider ?? config.llm.defaultProvider;
 }
 
-function mergeLocalBaseUrls(config: GearConfig, secrets: SecretsFile): Record<string, string> {
+function mergeLocalBaseUrls(config: RuneConfig, secrets: SecretsFile): Record<string, string> {
   const o: Record<string, string> = {};
   if (config.llm.ollama?.baseUrl) o.ollama = config.llm.ollama.baseUrl;
   for (const [id, url] of Object.entries(secrets.endpoints ?? {})) if (url) o[id] = url;
   return o;
 }
 
-async function resolveAll(config: GearConfig, secrets: SecretsFile, active: string) {
+async function resolveAll(config: RuneConfig, secrets: SecretsFile, active: string) {
   const store = await openCredentialStore();
   const savedKeys = buildSavedKeys(config, secrets);
   const credentials = await resolveProviderCredentials({
@@ -57,7 +57,7 @@ async function resolveAll(config: GearConfig, secrets: SecretsFile, active: stri
   return { store, savedKeys, credentials };
 }
 
-// ─── gear providers ───
+// ─── rune providers ───
 
 export async function runProviders(): Promise<void> {
   const config = loadConfig(process.cwd());
@@ -101,19 +101,19 @@ export async function runProviders(): Promise<void> {
   out();
   out(
     faint("Sign in with ") +
-      info("gear login <provider>") +
+      info("rune login <provider>") +
       faint(" · switch with ") +
-      info("gear use <provider>"),
+      info("rune use <provider>"),
   );
 }
 
-// ─── gear use ───
+// ─── rune use ───
 
 export async function runUse(args: string[]): Promise<void> {
   const providerId = args[0];
   const modelArg = args[1];
   if (!providerId) {
-    out(warn("Usage: ") + info("gear use <provider> [model]"));
+    out(warn("Usage: ") + info("rune use <provider> [model]"));
     out(faint("Providers: ") + PROVIDER_PRESETS.map((p) => p.id).join(", "));
     process.exitCode = 1;
     return;
@@ -128,10 +128,10 @@ export async function runUse(args: string[]): Promise<void> {
   const model = modelArg ?? preset?.defaultModel ?? loadLastModel()?.model ?? "";
   saveLastModel({ provider: providerId, model });
   out(ok(`✓ Active provider set to ${bold(text(preset?.label ?? providerId))}`));
-  out(`${faint("model")} ${info(model)}  ${faint("(next `gear` session uses this)")}`);
+  out(`${faint("model")} ${info(model)}  ${faint("(next `rune` session uses this)")}`);
 }
 
-// ─── gear models ───
+// ─── rune models ───
 
 /**
  * Where a catalogue came from — the one thing this command must not blur.
@@ -227,12 +227,12 @@ export async function runModels(args: string[]): Promise<void> {
   out();
   out(
     faint("Use one with ") +
-      info(`gear use ${providerId} <model>`) +
+      info(`rune use ${providerId} <model>`) +
       faint(" or ") +
-      info(`gear -m ${providerId}/<model>`),
+      info(`rune -m ${providerId}/<model>`),
   );
   if (source === "cached")
-    out(faint("Refresh with ") + info(`gear models ${providerId} --refresh`));
+    out(faint("Refresh with ") + info(`rune models ${providerId} --refresh`));
 }
 
 /** One line of an error, bounded — a stack trace is not a status line. */

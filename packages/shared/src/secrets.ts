@@ -1,7 +1,7 @@
 // ─── Secrets store ───
 // Bring-your-own-key storage for provider API keys entered through the `/keys`
 // panel. Kept OUT of the repo and apart from the human-edited config.toml: a
-// dedicated JSON file at ~/.gear/secrets.json, written with mode 0600.
+// dedicated JSON file at ~/.rune/secrets.json, written with mode 0600.
 //
 // The resolved key for a provider follows the precedence:
 //     secrets.json  →  config.toml  →  env var
@@ -13,7 +13,7 @@
 import { existsSync, readFileSync, writeFileSync, chmodSync, mkdirSync, statSync } from "fs";
 import { dirname, join } from "path";
 import { CUSTOM_PROVIDER_ID } from "./providers.js";
-import { getGearHome } from "./paths.js";
+import { getRuneHome } from "./paths.js";
 
 /** A user-defined OpenAI-compatible endpoint (base URL + model + key). */
 export interface CustomEndpoint {
@@ -74,14 +74,14 @@ export interface SecretsFile {
 }
 
 /**
- * Resolve the secrets file path. Honors `GEAR_SECRETS_PATH` (used by tests and
- * advanced setups); otherwise `~/.gear/secrets.json`. Computed per-call so the
+ * Resolve the secrets file path. Honors `RUNE_SECRETS_PATH` (used by tests and
+ * advanced setups); otherwise `~/.rune/secrets.json`. Computed per-call so the
  * env override always takes effect.
  */
 export function getSecretsPath(): string {
-  const override = process.env.GEAR_SECRETS_PATH;
+  const override = process.env.RUNE_SECRETS_PATH;
   if (override) return override;
-  return join(getGearHome(), "secrets.json");
+  return join(getRuneHome(), "secrets.json");
 }
 
 /** Load the secrets file. Missing/malformed → an empty store (never throws). */

@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────
-#  Gear — Release builder
+#  Rune — Release builder
 #  Compiles the CLI into self-contained, standalone executables for each
 #  platform via `bun build --compile`, so end users can download ONE file and
 #  run it — no Bun, no source tree, no install step required.
 #
-#  The native Rust `gear-tools` executor cannot be cross-compiled here; this
-#  script builds it for the HOST only (dist/gear-tools-<os>-<arch>) when cargo
+#  The native Rust `rune-tools` executor cannot be cross-compiled here; this
+#  script builds it for the HOST only (dist/rune-tools-<os>-<arch>) when cargo
 #  is available. Build the other platforms on their own runners (CI does) and
 #  upload them alongside — web-install.sh fetches them best-effort.
 #
 #  Usage: bash scripts/build-release.sh
-#  Output: dist/gear-<os>-<arch> [+ dist/gear-tools-<host>] + dist/SHA256SUMS
+#  Output: dist/rune-<os>-<arch> [+ dist/rune-tools-<host>] + dist/SHA256SUMS
 # ──────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -24,7 +24,7 @@ _resolve_script_dir() {
   cd -P "$(dirname "$src")" && pwd
 }
 ROOT="$(cd -P "$(_resolve_script_dir)/.." && pwd)"
-ENTRY="$ROOT/packages/orchestrator/src/bin/gear-cli.ts"
+ENTRY="$ROOT/packages/orchestrator/src/bin/rune-cli.ts"
 OUT="$ROOT/dist"
 
 BUN="${BUN:-$( [ -x "$HOME/.bun/bin/bun" ] && echo "$HOME/.bun/bin/bun" || command -v bun )}"
@@ -35,9 +35,9 @@ BUN="${BUN:-$( [ -x "$HOME/.bun/bin/bun" ] && echo "$HOME/.bun/bin/bun" || comma
 . "$ROOT/scripts/targets.sh"
 # shellcheck source=scripts/version.sh
 . "$ROOT/scripts/version.sh"
-BUILD_VERSION="$(gear_version)"
+BUILD_VERSION="$(rune_version)"
 
-echo "  Gear release builder"
+echo "  Rune release builder"
 echo "  ─────────────────────"
 echo "  entry   : $ENTRY"
 echo "  out     : $OUT"
@@ -47,49 +47,35 @@ echo ""
 mkdir -p "$OUT"
 ( cd "$ROOT" && "$BUN" install --frozen-lockfile >/dev/null 2>&1 || true )
 
-# ─── The web client, before any compile ───
-# The product is a browser page and every one of these binaries has to carry
-# it: there is no `apps/web/dist` beside a downloaded executable, so a binary
-# compiled without this step serves nothing and answers `401 unauthorized` to
-# the first page request (P10.9a). A missing bundle stops the build; it does
-# not ship as a separate download.
-echo "  building the web client (apps/web)"
-( cd "$ROOT" && "$BUN" run --filter @gear/web build >/dev/null ) \
-  || { echo "  ✗ the web client failed to build"; exit 1; }
-[ -f "$ROOT/apps/web/dist/index.html" ] \
-  || { echo "  ✗ apps/web/dist/index.html is missing — refusing to build binaries that cannot serve the product"; exit 1; }
-( cd "$ROOT" && "$BUN" scripts/gen-web-embed.ts )
-echo ""
-
-for pair in "${GEAR_TARGETS[@]}"; do
+for pair in "${RUNE_TARGETS[@]}"; do
   target="${pair%%:*}"
   suffix="${pair##*:}"
-  outfile="$OUT/gear-$suffix"
+  outfile="$OUT/rune-$suffix"
   printf "  building %-22s → %s\n" "$target" "$(basename "$outfile")"
   ( cd "$ROOT" && "$BUN" build --compile --minify --target="$target" \
-      --define=GEAR_BUILD_VERSION="\"$BUILD_VERSION\"" "$ENTRY" --outfile "$outfile" ) \
+      --define=RUNE_BUILD_VERSION="\"$BUILD_VERSION\"" "$ENTRY" --outfile "$outfile" ) \
     || { echo "    ✗ failed ($target) — skipping"; continue; }
 done
 
-# Host-native gear-tools (best effort).
+# Host-native rune-tools (best effort).
 if command -v cargo >/dev/null 2>&1; then
   host_os="$(uname -s | tr '[:upper:]' '[:lower:]')"; case "$host_os" in darwin|linux) ;; *) host_os="" ;; esac
   host_arch="$(uname -m)"; case "$host_arch" in arm64|aarch64) host_arch="arm64" ;; x86_64|amd64) host_arch="x64" ;; *) host_arch="" ;; esac
   if [ -n "$host_os" ] && [ -n "$host_arch" ]; then
-    printf "  building %-22s → %s\n" "gear-tools (host)" "gear-tools-$host_os-$host_arch"
-    if ( cd "$ROOT" && cargo build --release -p gear-tools >/dev/null 2>&1 ); then
-      cp "$ROOT/target/release/gear-tools" "$OUT/gear-tools-$host_os-$host_arch"
+    printf "  building %-22s → %s\n" "rune-tools (host)" "rune-tools-$host_os-$host_arch"
+    if ( cd "$ROOT" && cargo build --release -p rune-tools >/dev/null 2>&1 ); then
+      cp "$ROOT/target/release/rune-tools" "$OUT/rune-tools-$host_os-$host_arch"
     else
-      echo "    ✗ cargo build failed — skipping gear-tools"
+      echo "    ✗ cargo build failed — skipping rune-tools"
     fi
   fi
 else
-  echo "  · cargo not found — skipping the host gear-tools build"
+  echo "  · cargo not found — skipping the host rune-tools build"
 fi
 
 echo ""
 echo "  checksums → dist/SHA256SUMS"
-( cd "$OUT" && { command -v shasum >/dev/null && shasum -a 256 gear-* || sha256sum gear-*; } > SHA256SUMS )
+( cd "$OUT" && { command -v shasum >/dev/null && shasum -a 256 rune-* || sha256sum rune-*; } > SHA256SUMS )
 
 echo ""
 echo "  ✓ Done ($BUILD_VERSION). Upload dist/* to your GitHub release (tag = the version)."

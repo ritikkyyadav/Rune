@@ -31,7 +31,7 @@ import { join } from "node:path";
 
 import { GARDENER_OFF_LIMITS } from "../retro";
 
-export const HOOK_MARKER = "gear:gardener-guard";
+export const HOOK_MARKER = "rune:gardener-guard";
 
 /**
  * The hook body. POSIX shell, no dependencies: it runs on a machine where the
@@ -43,7 +43,7 @@ export const HOOK_MARKER = "gear:gardener-guard";
 export function renderPreCommitHook(offLimits: readonly string[] = GARDENER_OFF_LIMITS): string {
   return [
     "#!/bin/sh",
-    `# ${HOOK_MARKER} — written by \`gear evolve gardener --run\`.`,
+    `# ${HOOK_MARKER} — written by \`rune evolve gardener --run\`.`,
     "#",
     "# A gardener run fixes harness defects on its own branch. These paths decide",
     "# what any run is ALLOWED to do, so a run may not change them: the doctrine,",

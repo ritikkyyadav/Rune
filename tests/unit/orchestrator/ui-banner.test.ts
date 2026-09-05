@@ -66,13 +66,13 @@ describe("ui/banner", () => {
 
   it("sets the name as a wordmark: letterspaced and capitalised", () => {
     // The complaint that started this was "it just looks like text", and it was
-    // right: `gear · sample-app` used one of the four instruments a terminal
+    // right: `rune · sample-app` used one of the four instruments a terminal
     // actually has (colour) and none of the other three. A monospace grid
     // cannot change family, size or width — it can change TRACKING, CASE and
     // WEIGHT, and a name spaced out across the grid cannot be read as the first
     // word of a sentence.
-    expect(row(100)).toContain("G E A R");
-    expect(row(100)).not.toContain("gear ·");
+    expect(row(100)).toContain("R U N E");
+    expect(row(100)).not.toContain("rune ·");
   });
 
   it("names the whole directory coordinate, not the folder", () => {
@@ -121,7 +121,7 @@ describe("ui/banner", () => {
     const lines = banner(120)
       .split("\n")
       .filter((line) => line.trim());
-    expect(stripAnsi(F.seamRule(F.surfaceWidth(), F.lockup("Gear").cells))).toBe(lines[1]);
+    expect(stripAnsi(F.seamRule(F.surfaceWidth(), F.lockup("Rune").cells))).toBe(lines[1]);
   });
 
   it("chrome aligns to the WINDOW, so the build lands on the rule's right edge", () => {
@@ -156,8 +156,8 @@ describe("ui/banner", () => {
     }
   });
 
-  it("uses a text glyph rather than an emoji-font gear in the compact wordmark", () => {
-    expect(stripAnsi(wordmark())).toBe(`${glyph("phase")} Gear`);
+  it("uses a text glyph rather than an emoji-font rune in the compact wordmark", () => {
+    expect(stripAnsi(wordmark())).toBe(`${glyph("phase")} Rune`);
   });
 });
 
@@ -209,7 +209,7 @@ function git(repo: string, ...args: string[]): void {
 
 describe("ui/banner git facts", () => {
   it("names a linked worktree by its branch, and stays quiet in the main checkout", () => {
-    const root = mkdtempSync(join(tmpdir(), "gear-banner-wt-"));
+    const root = mkdtempSync(join(tmpdir(), "rune-banner-wt-"));
     const repo = join(root, "repo");
     const tree = join(root, "stream-wt");
     try {
@@ -231,7 +231,7 @@ describe("ui/banner git facts", () => {
   });
 
   it("resolves the branch synchronously on first render, then refreshes in the background", async () => {
-    const root = mkdtempSync(join(tmpdir(), "gear-banner-branch-"));
+    const root = mkdtempSync(join(tmpdir(), "rune-banner-branch-"));
     const repo = join(root, "repo");
     const tree = join(root, "wt");
     try {

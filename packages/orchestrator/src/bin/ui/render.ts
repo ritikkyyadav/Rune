@@ -1,4 +1,4 @@
-// --- Gear Render Primitives ---
+// --- Rune Render Primitives ---
 // Pure, width-aware string builders. All length math uses terminal cells rather
 // than JavaScript string length, so ANSI styling, CJK, emoji, combining marks,
 // and joined graphemes do not break cursor math or box alignment.
@@ -8,7 +8,7 @@ import { glyph } from "./glyphs";
 
 let widthOverride: number | null = null;
 
-/** Full-screen Gear keeps a centered reading column on the terminal surface.
+/** Full-screen Rune keeps a centered reading column on the terminal surface.
  * Set the semantic renderer's width to that column so task bars, prose, commands,
  * and diffs wrap before the compositor applies its final safety clamp. */
 export function setTermWidthOverride(width: number | null): void {
@@ -294,7 +294,7 @@ function boxInnerWidth(lines: string[], pad: string, override?: number): number 
 
 /**
  * Frame pre-rendered content lines in a box. Content may already be colored;
- * any header (e.g. `>_ Gear`) is just the first line.
+ * any header (e.g. `>_ Rune`) is just the first line.
  */
 export function box(lines: string[], opts: BoxOpts = {}): string {
   const pad = opts.pad ?? "  ";

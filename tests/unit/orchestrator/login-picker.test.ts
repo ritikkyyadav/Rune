@@ -3,7 +3,7 @@
  *
  * What it replaces: /providers, /keys and /status. Three commands that exposed
  * the plumbing, and none that answered the only question someone who has just
- * installed Gear actually has -- how do I connect this? A person who pays for
+ * installed Rune actually has -- how do I connect this? A person who pays for
  * ChatGPT knows they pay for ChatGPT. They do not know the provider is called
  * "codex", that it signs in by OAuth, or why "providers" and "keys" are two
  * separate screens.

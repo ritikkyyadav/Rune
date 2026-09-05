@@ -1,9 +1,9 @@
 # The plan is a ledger
 
-Gear keeps a task spine outside the conversation: the goal, the plan, the
+Rune keeps a task spine outside the conversation: the goal, the plan, the
 files touched, the verification state. It is re-shown to the model every
 request, survives compaction and resume, and is rendered to
-`.gear/mission.md` in the workspace. This page describes the rules that make a
+`.rune/mission.md` in the workspace. This page describes the rules that make a
 step on that plan mean something.
 
 ## A step is completed by evidence
@@ -30,7 +30,7 @@ A completion with **nothing** behind it is refused once. The tool result
 names the step and the reason, and the plan does not move. Re-submitting the
 same completion is accepted, but the step is marked **unproven** — in the
 task-state block the model reads, in the live checklist (a `~` where a tick
-would be), in `mission.md`, and in `gear audit`. The harness cannot know
+would be), in `mission.md`, and in `rune audit`. The harness cannot know
 whether a thinking-only step needed a tool, so it never deadlocks the model;
 it makes the claim visible instead of green.
 
@@ -54,6 +54,22 @@ Other rules applied on every list:
 - Unfinished steps that vanish from a re-submitted list are noted in the
   result and logged. A replan is legitimate; a silent shrink is not.
 
+### A step that is the report
+
+Some steps are communication, not work: "hand the user the one command", "report what was
+built and what was not". No tool can attest them, and the final message is what fulfils them.
+Such a step — one whose verb addresses the user, or that is explicitly the final report or
+handoff — closes with the report instead of being refused. It shows as done, its receipt reads
+`closed by report`, and it is not counted as closed on evidence. The rule is narrow on purpose:
+"write the report generator" and "summarise the dataset into results.csv" are ordinary steps and
+still need evidence. The measured need: one run had "Hand the user the one command to start the
+server" refused five times, and each refusal cost a completion plus a command run only to back
+the handoff.
+
+A refusal for missing evidence no longer pins the reasoning effort to its ceiling for the rest
+of the run; only a step closed over a failing check does. Reporting before acting is
+bookkeeping, not difficulty.
+
 ## The step check
 
 When a list closes a step that wrote files no check ever covered, the harness
@@ -72,7 +88,7 @@ holding several projects, the check runs the one whose files the step touched.
 A toolchain that is not installed is recorded as skipped, not as a failure. See
 [`docs/verification.md`](verification.md).
 
-The receipt names the command, its exit code and its duration, and `gear audit`
+The receipt names the command, its exit code and its duration, and `rune audit`
 prints them under **Checks**. The counter used to be all there was, so a page
 whose purpose is evidence could say a step had been checked without being able
 to say by what.
@@ -179,20 +195,20 @@ under **How we got here**, and reconstructs on replay — ids included, so a
 resumed run cannot mint an `h1` that already exists. See
 [`decision-record.md`](decision-record.md) for the artifact it all ends in.
 
-## The log and `gear audit`
+## The log and `rune audit`
 
 The spine now carries its own log: plans recorded, steps closed (with their
 receipts), steps closed unproven, steps dropped, checks run, boundaries
 crossed, gates that refused a finish, handoffs. It renders into
-`.gear/mission.md` under **Log**.
+`.rune/mission.md` under **Log**.
 
 ```bash
-gear audit last
+rune audit last
 ```
 
 prints one page for a session: goal, plan with receipts and unproven marks,
 the log, runs and early terminations, tools and failures, safety decisions
 with their reasons, held steps, harness gates that fired, context utilization
-per turn with every compaction, and cost. It opens `~/.gear/gear.db` read-only
+per turn with every compaction, and cost. It opens `~/.rune/rune.db` read-only
 — no engine, no provider, instant. See [`context.md`](context.md) for what the
 **Context** section means.

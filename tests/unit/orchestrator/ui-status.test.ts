@@ -21,14 +21,14 @@ describe("ui/status renderStatus", () => {
     // from the row pinned at the top of the same window. Two dialects, one
     // claim of being one thing. It now calls the header's own lockup.
     const lines = stripAnsi(renderStatus({ ...base, version: "0.3.0" })).split("\n");
-    const mark = lines.find((line) => line.includes("G E A R"))!;
+    const mark = lines.find((line) => line.includes("R U N E"))!;
     // Same wordmark on the left, same build hard against the same right edge.
-    expect(mark.startsWith(`${F.MARK}G E A R`)).toBe(true);
+    expect(mark.startsWith(`${F.MARK}R U N E`)).toBe(true);
     expect(mark.trimEnd()).toMatch(/v0\.3\.0$/);
     expect(mark.length).toBe(F.surfaceWidth());
     // …carried on the header's two-tone rule, at the header's own width.
     expect(lines[lines.indexOf(mark) + 1]).toBe(
-      stripAnsi(F.seamRule(F.surfaceWidth(), F.lockup("Gear").cells)),
+      stripAnsi(F.seamRule(F.surfaceWidth(), F.lockup("Rune").cells)),
     );
     // And no dash rules anywhere: a dash rule reads as texture, a hairline as
     // structure, and this card was the last place still drawing them.

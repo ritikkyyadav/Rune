@@ -136,7 +136,7 @@ describe("doctrine budget", () => {
   });
 
   test("the preamble is always kept", () => {
-    expect(renderDoctrine(MINIMAL).startsWith("You are Gear")).toBe(true);
+    expect(renderDoctrine(MINIMAL).startsWith("You are Rune")).toBe(true);
   });
 
   test("no section is left with a dangling blank-line run", () => {

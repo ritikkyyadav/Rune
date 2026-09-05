@@ -30,7 +30,7 @@ function git(cwd: string, args: string[]): string {
 }
 
 function makeRepo(): string {
-  const dir = mkdtempSync(join(tmpdir(), "gear-wt-"));
+  const dir = mkdtempSync(join(tmpdir(), "rune-wt-"));
   dirs.push(dir);
   git(dir, ["init", "-q", "-b", "main"]);
   git(dir, ["config", "user.email", "t@example.com"]);
@@ -74,7 +74,7 @@ describe("P6B.1 — the worktree is seeded from the working tree, not from HEAD"
   test("a non-repository yields null rather than throwing", () => {
     // Losing delegation entirely because a directory is not a git repository
     // would be far worse than losing isolation.
-    const dir = mkdtempSync(join(tmpdir(), "gear-nonrepo-"));
+    const dir = mkdtempSync(join(tmpdir(), "rune-nonrepo-"));
     dirs.push(dir);
     expect(createWorkerWorktree(dir, "w3")).toBeNull();
   });
@@ -152,7 +152,7 @@ describe("P6B.1 — teardown", () => {
     removeWorkerWorktree(repo, wt, true);
     expect(existsSync(wt.path)).toBe(false);
     // The branch is the only copy of a failed worker's build.
-    expect(git(repo, ["branch", "--list", wt.branch])).toContain("gear/worker-w1");
+    expect(git(repo, ["branch", "--list", wt.branch])).toContain("rune/worker-w1");
   });
 
   test("the branch goes too when the work landed", () => {
@@ -168,7 +168,7 @@ describe("P6B.1 — teardown", () => {
 /**
  * POSIX-only: `runWorktreeChecks` runs each check through
  * `spawnSync("/bin/sh", ["-c", command])` (worker-worktree.ts:248) and the
- * fixtures are `sh` one-liners (`true`, `false`). Gear has no Windows shell
+ * fixtures are `sh` one-liners (`true`, `false`). Rune has no Windows shell
  * contract yet — nothing decides whether a check command means cmd.exe,
  * PowerShell or Git Bash — so there is no Windows behaviour to assert here,
  * only a decision to make. Logged in docs/program/backlog.md.

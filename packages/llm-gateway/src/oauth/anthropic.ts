@@ -10,7 +10,7 @@
 // behalf beyond what the flow itself returns.
 //
 // The client id is Anthropic's public Claude Code CLI client (not a secret);
-// override with GEAR_ANTHROPIC_OAUTH_CLIENT_ID if Anthropic rotates it.
+// override with RUNE_ANTHROPIC_OAUTH_CLIENT_ID if Anthropic rotates it.
 
 import type { OAuthFlow, ExchangeResult } from "../auth/oauth-strategy";
 
@@ -23,7 +23,7 @@ import type { OAuthFlow, ExchangeResult } from "../auth/oauth-strategy";
 //   Console (API billing)  : platform.claude.com/oauth/authorize + the manual
 //                            paste-the-code page
 //
-// Gear used the MANUAL redirect for a Pro/Max sign-in. That is the mismatch
+// Rune used the MANUAL redirect for a Pro/Max sign-in. That is the mismatch
 // behind "Authorization failed: Invalid request format", and it survived three
 // fixes aimed at the query string because the query string was never wrong.
 //
@@ -35,10 +35,10 @@ import type { OAuthFlow, ExchangeResult } from "../auth/oauth-strategy";
 // A curl check could not have seen this: the page returns 200 with the right
 // <title> and renders the failure from JavaScript after hydration.
 const AUTHORIZE_URL =
-  process.env.GEAR_ANTHROPIC_AUTHORIZE_URL ?? "https://claude.com/cai/oauth/authorize";
+  process.env.RUNE_ANTHROPIC_AUTHORIZE_URL ?? "https://claude.com/cai/oauth/authorize";
 const TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
 const CLIENT_ID =
-  process.env.GEAR_ANTHROPIC_OAUTH_CLIENT_ID ?? "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+  process.env.RUNE_ANTHROPIC_OAUTH_CLIENT_ID ?? "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 /**
  * `Ovn` from the first-party client: the deduped union of its two scope lists,
  * which is what BOTH the claude.ai and console flows send.
@@ -48,7 +48,7 @@ const CLIENT_ID =
  *         "user:mcp_servers", "user:file_upload"]
  *   Ovn = dedupe([...r, ...Tq])
  *
- * Gear sent a three-scope subset and the authorize endpoint answered
+ * Rune sent a three-scope subset and the authorize endpoint answered
  * "Authorization failed: Invalid request format" — which reads like a malformed
  * query and actually means the scope set is not one it grants. Guessing at a
  * plausible-looking subset failed twice; this is copied.
@@ -109,7 +109,7 @@ export const anthropicOAuthFlow: OAuthFlow = {
     // That assertion is false: the client builds the URL with `new URL()` +
     // `searchParams.append()`, and URLSearchParams serializes a space as `+`.
     // So `+` is what actually reaches Anthropic from the client that works,
-    // and Gear's careful `%20` was the anomaly.
+    // and Rune's careful `%20` was the anomaly.
     //
     // Using URLSearchParams here is therefore not a style choice — it is the
     // thing being copied. Param order matches the first-party call order.

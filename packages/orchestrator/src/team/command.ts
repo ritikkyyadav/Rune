@@ -20,7 +20,7 @@ export function runTeamCommand(bus: TeamBus | null, arg: string): string[] {
   if (!bus || !bus.healthy) {
     return [
       "Team layer is off — this session is not on the shared bus.",
-      "Enable it with [team] enabled = true in config.toml (or unset GEAR_TEAM), then restart.",
+      "Enable it with [team] enabled = true in config.toml (or unset RUNE_TEAM), then restart.",
     ];
   }
   const parts = arg.trim().split(/\s+/).filter(Boolean);

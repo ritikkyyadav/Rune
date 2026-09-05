@@ -1,11 +1,11 @@
 {
-  "name": "@gear/sdk",
+  "name": "@rune/sdk",
   "version": "0.3.0",
-  "description": "Drive a Gear agent session over the Gear protocol — from Node, Bun, a browser, an editor extension or a CI step.",
+  "description": "Drive a Rune agent session over the Rune protocol — from Node, Bun, a browser, an editor extension or a CI step.",
   "license": "Apache-2.0",
   "type": "module",
   "keywords": [
-    "gear",
+    "rune",
     "agent",
     "coding-agent",
     "sdk",
@@ -51,7 +51,7 @@
     "test": "bun test ../../tests/unit/sdk"
   },
   "devDependencies": {
-    "@gear/protocol": "workspace:*",
+    "@rune/protocol": "workspace:*",
     "typescript": "^5.8"
   }
 }

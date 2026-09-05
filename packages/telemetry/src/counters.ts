@@ -1,11 +1,11 @@
 // ─── Usage counters (durable accumulator) ───
 // Coarse, anonymous COUNTS only — sessions started, incidents observed, and any
 // feature tallies a surface chooses to bump. Never any content, path, argument,
-// or identifier. They accumulate in ~/.gear/telemetry-usage.json between
+// or identifier. They accumulate in ~/.rune/telemetry-usage.json between
 // heartbeats; the daily heartbeat reads-and-resets them. Every operation fails
 // safe — a counter must never be the thing that crashed the app.
 //
-// Read-modify-write is last-writer-wins: two concurrent Gear tabs can drop an
+// Read-modify-write is last-writer-wins: two concurrent Rune tabs can drop an
 // increment. That is fine — these are coarse adoption stats, not billing.
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";

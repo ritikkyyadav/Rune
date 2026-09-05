@@ -1,5 +1,5 @@
 /**
- * `gear serve`, driven the way a real client drives it.
+ * `rune serve`, driven the way a real client drives it.
  *
  * This is the acceptance test for Phase 2: a client that is NOT the terminal
  * runs a whole turn over a websocket — a turn that stops twice for a human —
@@ -28,13 +28,13 @@ import {
   toResult,
   toStream,
 } from "../../packages/protocol/src/index";
-import { GearClient } from "../../packages/sdk/src/index";
+import { RuneClient } from "../../packages/sdk/src/index";
 
-const CLI = join(import.meta.dir, "../../packages/orchestrator/src/bin/gear-cli.ts");
-const RUST_RELEASE = join(import.meta.dir, "../../target/release/gear-tools");
-const RUST_DEBUG = join(import.meta.dir, "../../target/debug/gear-tools");
-const RUST_BIN = process.env.GEAR_TOOLS_BIN
-  ? process.env.GEAR_TOOLS_BIN
+const CLI = join(import.meta.dir, "../../packages/orchestrator/src/bin/rune-cli.ts");
+const RUST_RELEASE = join(import.meta.dir, "../../target/release/rune-tools");
+const RUST_DEBUG = join(import.meta.dir, "../../target/debug/rune-tools");
+const RUST_BIN = process.env.RUNE_TOOLS_BIN
+  ? process.env.RUNE_TOOLS_BIN
   : existsSync(RUST_RELEASE)
     ? RUST_RELEASE
     : RUST_DEBUG;
@@ -81,7 +81,7 @@ class WsClient {
 
   static open(url: string, token: string, extraProtocols: string[] = []): Promise<WsClient> {
     return new Promise((resolve, reject) => {
-      const ws = new WebSocket(url, [`gear.bearer.${token}`, ...extraProtocols]);
+      const ws = new WebSocket(url, [`rune.bearer.${token}`, ...extraProtocols]);
       const client = new WsClient(ws);
       const timer = setTimeout(() => reject(new Error("websocket never opened")), 15_000);
       ws.onopen = () => {
@@ -178,7 +178,7 @@ async function freePort(): Promise<number> {
 }
 
 /**
- * Stop a `gear serve` and everything it started.
+ * Stop a `rune serve` and everything it started.
  *
  * The supervisor stops its session hosts in its SIGTERM handler, so it needs
  * the signal AND the time to run the handler. SIGKILL is the backstop for a
@@ -206,16 +206,16 @@ export async function stopServe(
   clearTimeout(timer);
 }
 
-describe("gear serve (websocket transport, real engine, fake model)", () => {
+describe("rune serve (websocket transport, real engine, fake model)", () => {
   let dir: string;
-  let gearHome: string;
+  let runeHome: string;
   let model: ReturnType<typeof Bun.serve> | null = null;
   let server: ReturnType<typeof Bun.spawn> | null = null;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "gear-serve-"));
-    gearHome = join(dir, "home");
-    mkdirSync(gearHome, { recursive: true });
+    dir = mkdtempSync(join(tmpdir(), "rune-serve-"));
+    runeHome = join(dir, "home");
+    mkdirSync(runeHome, { recursive: true });
   });
 
   afterEach(async () => {
@@ -231,7 +231,7 @@ describe("gear serve (websocket transport, real engine, fake model)", () => {
   });
 
   /**
-   * Start the fake model and `gear serve` against it.
+   * Start the fake model and `rune serve` against it.
    *
    * The provider is `custom` — the user-defined OpenAI-compatible endpoint,
    * configured entirely from `secrets.json`. That is what lets the spawned
@@ -261,11 +261,11 @@ describe("gear serve (websocket transport, real engine, fake model)", () => {
     });
 
     writeFileSync(
-      join(gearHome, "model.json"),
+      join(runeHome, "model.json"),
       JSON.stringify({ provider: "custom", model: "fake-model" }),
     );
     writeFileSync(
-      join(gearHome, "secrets.json"),
+      join(runeHome, "secrets.json"),
       JSON.stringify({
         custom: {
           baseUrl: `http://127.0.0.1:${model.port}/v1`,
@@ -275,25 +275,25 @@ describe("gear serve (websocket transport, real engine, fake model)", () => {
       }),
       { mode: 0o600 },
     );
-    if (opts.configToml) writeFileSync(join(gearHome, "config.toml"), opts.configToml);
+    if (opts.configToml) writeFileSync(join(runeHome, "config.toml"), opts.configToml);
 
     const port = await freePort();
     server = Bun.spawn(["bun", CLI, "serve", "--port", String(port), "--workspace", dir], {
       env: {
         ...process.env,
-        GEAR_HOME: gearHome,
-        GEAR_WORKSPACE: dir,
-        GEAR_DB_PATH: join(dir, "gear.db"),
-        GEAR_TOOLS_BIN: RUST_BIN,
+        RUNE_HOME: runeHome,
+        RUNE_WORKSPACE: dir,
+        RUNE_DB_PATH: join(dir, "rune.db"),
+        RUNE_TOOLS_BIN: RUST_BIN,
         // Keep the round-trips from timing out under a slow CI box while
         // still proving the mechanism exists.
-        GEAR_ROUNDTRIP_TIMEOUT_MS: "120000",
+        RUNE_ROUNDTRIP_TIMEOUT_MS: "120000",
       },
       stdout: "pipe",
       stderr: "pipe",
     });
 
-    const tokenPath = join(gearHome, "serve.json");
+    const tokenPath = join(runeHome, "serve.json");
     // The server writes this about 150ms after it is spawned, so a 100ms
     // interval was rounding every start-up in the file up by a tenth of a
     // second for nothing.
@@ -301,7 +301,7 @@ describe("gear serve (websocket transport, real engine, fake model)", () => {
     while (Date.now() < deadline && !existsSync(tokenPath)) {
       await new Promise((r) => setTimeout(r, 20));
     }
-    if (!existsSync(tokenPath)) throw new Error("gear serve never wrote its token file");
+    if (!existsSync(tokenPath)) throw new Error("rune serve never wrote its token file");
     const cfg = JSON.parse(readFileSync(tokenPath, "utf8")) as { token: string; port: number };
     return { url: `ws://127.0.0.1:${cfg.port}`, token: cfg.token };
   }
@@ -533,7 +533,7 @@ describe("gear serve (websocket transport, real engine, fake model)", () => {
   );
 
   test.skipIf(!HAS_RUST_BIN)(
-    "@gear/sdk drives the same server — the README example, executed",
+    "@rune/sdk drives the same server — the README example, executed",
     async () => {
       // The SDK seed is only worth shipping if the example in its README runs.
       // This IS that example: connect, create a session, run a prompt, answer a
@@ -545,7 +545,7 @@ describe("gear serve (websocket transport, real engine, fake model)", () => {
 
       const events: string[] = [];
       const asked: string[] = [];
-      const gear = await GearClient.connect(
+      const rune = await RuneClient.connect(
         { url, token },
         {
           onEvent: (event) => events.push(event.type),
@@ -556,8 +556,8 @@ describe("gear serve (websocket transport, real engine, fake model)", () => {
         },
       );
 
-      const sessionId = await gear.createSession();
-      await gear.run(sessionId, "say something with a shell");
+      const sessionId = await rune.createSession();
+      await rune.run(sessionId, "say something with a shell");
 
       // The handler answered the gate, so the turn ran to completion without
       // anyone touching a frame by hand.
@@ -566,24 +566,24 @@ describe("gear serve (websocket transport, real engine, fake model)", () => {
       expect(events).toContain("turn_complete");
 
       // …and the typed command surface reaches the same host.
-      const sessions = await gear.call("list_sessions");
+      const sessions = await rune.call("list_sessions");
       expect(sessions.some((s) => s.id === sessionId)).toBe(true);
 
-      gear.close();
-      expect(gear.isClosed).toBe(true);
+      rune.close();
+      expect(rune.isClosed).toBe(true);
     },
     180_000,
   );
 
   test.skipIf(!HAS_RUST_BIN)(
-    "gear serve --status reports the live server",
+    "rune serve --status reports the live server",
     async () => {
       await start([sseText("ok")]);
       const status = Bun.spawnSync(["bun", CLI, "serve", "--status"], {
-        env: { ...process.env, GEAR_HOME: gearHome },
+        env: { ...process.env, RUNE_HOME: runeHome },
       });
       const out = status.stdout.toString();
-      expect(out).toContain("gear serve");
+      expect(out).toContain("rune serve");
       expect(out).toContain("remote settings refused");
       expect(out).toContain("listening");
     },

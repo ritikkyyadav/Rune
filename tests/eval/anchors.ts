@@ -2,7 +2,7 @@
 /**
  * External anchors: the yardstick nothing inside the loop may edit.
  *
- * Every other number in this phase is Gear measuring Gear. The variants
+ * Every other number in this phase is Rune measuring Rune. The variants
  * registry, the paired A/B, the lessons ladder — all of them compare this
  * system against itself on a suite this repository owns, and a suite you own is
  * a suite you can, over enough months, quietly shape to the thing you built.
@@ -22,7 +22,7 @@
  * produce.
  *
  * The two arms are the point:
- *   · `pristine` — `gear --pristine`: no notebook, no playbook, no promoted
+ *   · `pristine` — `rune --pristine`: no notebook, no playbook, no promoted
  *     config. What the harness scores with nothing learned.
  *   · `evolved`  — the machine as it stands, promotions and lessons included.
  * Publishing only the second is how a self-improving system convinces itself.
@@ -57,7 +57,7 @@ export interface AnchorResult {
   /** Metered-equivalent cost of the whole arm, USD. */
   listUsd: number | null;
   /** Commit of THIS repository the arm ran from. */
-  gearSha: string;
+  runeSha: string;
   notes?: string;
 }
 
@@ -136,9 +136,9 @@ export function planFor(name: string, arm: AnchorArm): string[] {
       `# Dataset is NOT vendored here. Clone the official harness first:`,
       `#   git clone https://github.com/princeton-nlp/SWE-bench && cd SWE-bench && pip install -e .`,
       ``,
-      `# 1. Produce predictions with Gear, one instance per session:`,
+      `# 1. Produce predictions with Rune, one instance per session:`,
       `for id in $(jq -r '.task_ids[]' ${ANCHORS[name]}); do`,
-      `  gear -P${pristine} --workspace "$SWEBENCH_REPOS/$id" \\`,
+      `  rune -P${pristine} --workspace "$SWEBENCH_REPOS/$id" \\`,
       `    "Fix the issue described in the instance's problem statement. Do not modify tests." \\`,
       `    > "predictions/$id.patch"`,
       `done`,
@@ -146,7 +146,7 @@ export function planFor(name: string, arm: AnchorArm): string[] {
       `# 2. Score with the official harness (this repository does not score):`,
       `python -m swebench.harness.run_evaluation \\`,
       `  --dataset_name princeton-nlp/SWE-bench_Verified \\`,
-      `  --predictions_path predictions/ --run_id gear-${arm}-$(date +%Y%m%d)`,
+      `  --predictions_path predictions/ --run_id rune-${arm}-$(date +%Y%m%d)`,
       ``,
       `# 3. Record the number here:`,
       `bun run tests/eval/anchors.ts --record ${name} --arm ${arm} \\`,
@@ -158,9 +158,9 @@ export function planFor(name: string, arm: AnchorArm): string[] {
     `# Needs Docker and the official harness; nothing here starts a container:`,
     `#   uv tool install terminal-bench`,
     ``,
-    `tb run --agent custom --agent-import-path gear_agent:GearAgent \\`,
+    `tb run --agent custom --agent-import-path rune_agent:RuneAgent \\`,
     `  --task-ids $(jq -r '.task_ids | join(",")' ${ANCHORS[name]}) \\`,
-    `  --run-id gear-${arm}-$(date +%Y%m%d)${pristine ? "   # GEAR_PRISTINE=1" : ""}`,
+    `  --run-id rune-${arm}-$(date +%Y%m%d)${pristine ? "   # RUNE_PRISTINE=1" : ""}`,
     ``,
     `bun run tests/eval/anchors.ts --record ${name} --arm ${arm} \\`,
     `  --resolved <n> --attempted ${set.task_ids.length} --unscored <n> --model <id> --provider <id>`,
@@ -235,7 +235,7 @@ function main(): void {
       resolved: Number(arg(argv, "resolved") ?? 0),
       unscored: Number(arg(argv, "unscored") ?? 0),
       listUsd: arg(argv, "cost") !== undefined ? Number(arg(argv, "cost")) : null,
-      gearSha: arg(argv, "sha") ?? "unknown",
+      runeSha: arg(argv, "sha") ?? "unknown",
       notes: arg(argv, "notes"),
     };
     recordResult(result);

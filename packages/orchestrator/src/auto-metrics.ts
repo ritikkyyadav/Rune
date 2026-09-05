@@ -12,7 +12,7 @@ import { Database } from "bun:sqlite";
  *
  * P6A.1 made the underlying rows durable. This reads them back. It opens the
  * session database read-only and does nothing else — no engine, no provider, no
- * writes — so `gear audit` and `gear doctor` can call it at any time.
+ * writes — so `rune audit` and `rune doctor` can call it at any time.
  *
  * ## What "false positive" means here, precisely
  *
@@ -200,7 +200,7 @@ export function readAutoSafetyMetrics(
   }
 }
 
-/** One line for `gear doctor` / `gear audit`. Null values print as "no data". */
+/** One line for `rune doctor` / `rune audit`. Null values print as "no data". */
 export function formatAutoSafetyMetrics(m: AutoSafetyMetrics): string[] {
   const pct = (v: number | null) => (v === null ? "no data" : `${(v * 100).toFixed(1)}%`);
   const per = (v: number | null) => (v === null ? "no data" : v.toFixed(2));

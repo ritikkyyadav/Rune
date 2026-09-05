@@ -165,7 +165,7 @@ const DB_DESTRUCTION_RE = /\b(?:DROP\s+(?:DATABASE|SCHEMA)|TRUNCATE\s+TABLE)\b/i
  * Reading a credential out of an OS or cloud secret store through its CLI.
  *
  * `SECRET_PATH_RE` above matches credential FILES, so the keychain — which has
- * no path at all — was invisible to it: `security find-generic-password -s gear
+ * no path at all — was invisible to it: `security find-generic-password -s rune
  * -w` prints a secret and reads as an ordinary command. Same shape, different
  * door.
  */
@@ -235,7 +235,7 @@ const CLOUD_OBJECT_DELETE_RE =
 /**
  * Killing processes selected by pattern rather than by handle.
  *
- * Gear starts shells through `kill_shell`, which knows what it owns. A `pkill`
+ * Rune starts shells through `kill_shell`, which knows what it owns. A `pkill`
  * or a `… | xargs kill` names whatever happens to match — the user's editor,
  * their database, another session — so the blast radius is decided by the
  * machine's state, not by the command. A bare `kill <pid>` is deliberately NOT
@@ -271,25 +271,25 @@ const MONEY_NOUN_RE = /(?:^|_)(?:refund|payout|payment|charge|transfer|invoice|c
 const CONNECTOR_WRITE_VERB_RE =
   /(?:^|_)(?:create|update|delete|issue|capture|send|post|refund|pay|transfer|charge|cancel)(?:_|$)/i;
 
-// ── Gear's own control surface ──
+// ── Rune's own control surface ──
 //
 // Moved here from auto-mode.ts by P10.3 so that one module owns every
 // mechanical shape. `guardrailChangeReason` used to inspect `update_config`
 // alone, which meant the same edit reached through a shell — `sed -i` against
-// `.gear/policy.json`, `gear config set sandbox.enabled false` — was not a
+// `.rune/policy.json`, `rune config set sandbox.enabled false` — was not a
 // guardrail change to the breaker. It is now, because the check reads paths and
 // commands rather than one tool's arguments.
 
-const CONTROL_DIRS = new Set([".gear", ".alan"]);
+const CONTROL_DIRS = new Set([".rune", ".gear", ".alan"]);
 const CONTROL_FILE_RE =
   /^(?:config\.toml|hooks\.json|mcp\.json|sandbox\.json|loop\.md|org\.pub|policy(?:[._-].*)?\.(?:json|toml)|(?:secrets?|keys?|credentials?)(?:[._-].*)?\.(?:json|toml|txt|env))$/i;
 const CONTROL_SUBDIRS = new Set(["skills", "plugins", "hooks", "commands", "policy", "policies"]);
 
 /**
- * Gear's own control surface: config, hooks, MCP wiring, skills, plugins,
- * policy and secrets under a `.gear` (or legacy `.alan`) directory. The check is
- * RELATIVE to the workspace so a workspace that itself lives under `.gear/`
- * (detached-run worktrees at `.gear/worktrees/<run>`, a plugin checkout) is
+ * Rune's own control surface: config, hooks, MCP wiring, skills, plugins,
+ * policy and secrets under a `.rune` (or legacy `.gear` / `.alan`) directory. The check is
+ * RELATIVE to the workspace so a workspace that itself lives under `.rune/`
+ * (detached-run worktrees at `.rune/worktrees/<run>`, a plugin checkout) is
  * ordinary project territory; only writes that reach INTO a control directory
  * — inside or outside the workspace — are guardrail changes.
  */
@@ -300,10 +300,10 @@ export function isSelfProtectionPath(workspaceRoot: string, target: string): boo
   if (scanControlSegments(rel.split(sep).filter(Boolean))) return true;
   // A path that ESCAPES the workspace can reach into an ancestor control
   // directory without ever naming it: "../../hooks/pre.sh" from a workspace
-  // at ~/.gear/worktrees/<run> lands in ~/.gear/hooks, and the relative
+  // at ~/.rune/worktrees/<run> lands in ~/.rune/hooks, and the relative
   // segments are just ["..", "..", "hooks", "pre.sh"]. Escaping paths are
   // therefore scanned by their ABSOLUTE segments too; in-workspace paths
-  // keep the relative-only scan so a workspace living under .gear/ remains
+  // keep the relative-only scan so a workspace living under .rune/ remains
   // ordinary project territory.
   if (rel.split(sep)[0] === ".." || isAbsolute(rel)) {
     return scanControlSegments(abs.split(sep).filter(Boolean));
@@ -323,17 +323,17 @@ function scanControlSegments(parts: string[]): boolean {
 }
 
 /**
- * A shell command that CHANGES Gear's own controls, by either door: a mutation
+ * A shell command that CHANGES Rune's own controls, by either door: a mutation
  * whose target is a control file, or the CLI that edits them.
  *
- * Deliberately requires a mutation. `cat .gear/config.toml` is how an agent
+ * Deliberately requires a mutation. `cat .rune/config.toml` is how an agent
  * finds out what it is allowed to do, and reading the rules is not breaking
  * them.
  */
 const CONTROL_MUTATION_RE =
   /\b(?:sed|perl|awk|tee|truncate|install|dd|mv|cp|rm|chmod|chown|ln|python3?|ruby|node|bun)\b|>>?/;
-const GEAR_CONFIG_WRITE_RE =
-  /\b(?:gear|alan)\s+config\s+(?:set|unset|edit|write)\b|\b(?:gear|alan)\s+(?:policy|sandbox)\s+(?:set|off|disable)\b/i;
+const RUNE_CONFIG_WRITE_RE =
+  /\b(?:rune|gear|alan)\s+config\s+(?:set|unset|edit|write)\b|\b(?:rune|gear|alan)\s+(?:policy|sandbox)\s+(?:set|off|disable)\b/i;
 
 /**
  * The reason a bash command counts as a guardrail change, or undefined.
@@ -343,13 +343,13 @@ export function shellGuardrailChange(action: AutoModeAction): string | undefined
   if (action.toolName !== "bash") return undefined;
   const command = String(action.args.command ?? "");
   if (!command) return undefined;
-  if (GEAR_CONFIG_WRITE_RE.test(command)) {
-    return "the action changes Gear's own configuration, policy, or sandbox switch through the CLI";
+  if (RUNE_CONFIG_WRITE_RE.test(command)) {
+    return "the action changes Rune's own configuration, policy, or sandbox switch through the CLI";
   }
   if (!CONTROL_MUTATION_RE.test(command)) return undefined;
   const target = commandPaths(command).find((p) => isSelfProtectionPath(action.workspaceRoot, p));
   return target
-    ? `the action edits Gear's own configuration, hooks, skills, or policy surface through the shell (${target})`
+    ? `the action edits Rune's own configuration, hooks, skills, or policy surface through the shell (${target})`
     : undefined;
 }
 
@@ -484,7 +484,7 @@ const HARD_RESET_RE = /\bgit\s+reset\s+--hard\b/i;
 const DRY_RUN_SUBSTITUTES: Array<{ re: RegExp; to: string; why: string }> = [
   {
     re: /\bterraform\s+apply\b/i,
-    to: "terraform plan -out=gear.tfplan",
+    to: "terraform plan -out=rune.tfplan",
     why: "the plan shows exactly what apply would change, and changes nothing",
   },
   {
@@ -684,7 +684,7 @@ export function routeContainment(ctx: ContainmentContext): ContainmentOutcome {
   if (FORCE_PUSH_RE.test(command)) {
     return redirect(
       "force-push",
-      `git push ${remoteOf(command)} HEAD:refs/heads/gear/${scratchName(command)}`,
+      `git push ${remoteOf(command)} HEAD:refs/heads/rune/${scratchName(command)}`,
       "A force push overwrites history other people may already have. Push the work to a scratch " +
         "branch instead: nothing is lost, nothing is overwritten, and the user can fast-forward " +
         "the real branch onto it deliberately. Say in your reply that you did this.",

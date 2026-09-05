@@ -14,7 +14,7 @@
 // test enforces it against the text.
 
 import { createHash } from "node:crypto";
-import type { ReasoningEffort } from "@gear/llm-gateway";
+import type { ReasoningEffort } from "@rune/llm-gateway";
 
 /**
  * The behaviour-bearing slice of `EngineConfig`. Structural, not an import:
@@ -121,7 +121,7 @@ export function abConfigOf(config: Partial<AbConfig> | Record<string, unknown>):
 /**
  * Twelve hex characters over the A/B-relevant fields alone. Two runs with the
  * same `configHash` and the same `doctrineHash` are the same arm; that pair is
- * what `gear evolve promote` refuses to act without.
+ * what `rune evolve promote` refuses to act without.
  */
 export function configHash(config: Partial<AbConfig> | Record<string, unknown>): string {
   const ab = abConfigOf(config);
