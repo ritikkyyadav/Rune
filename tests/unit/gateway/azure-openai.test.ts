@@ -4,7 +4,7 @@
  * No Azure resource exists on this machine. What is pinned is deployment-name
  * routing (the one thing Azure does differently), the api-version, the two
  * credential headers, and that a recorded response comes back through the
- * SHARED OpenAI adapter unchanged. Live half: GEAR_LIVE_AZURE_OPENAI=1.
+ * SHARED OpenAI adapter unchanged. Live half: RUNE_LIVE_AZURE_OPENAI=1.
  */
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import {
@@ -200,7 +200,7 @@ describe("the request Azure actually receives", () => {
     mockFetch(() => recordedStream());
     await collect(new AzureOpenAIProvider({ env: ENV }).inferStream(request()));
     const body = JSON.parse(String(calls[0]!.init.body)) as { prompt_cache_key?: string };
-    expect(body.prompt_cache_key).toMatch(/^gear-[0-9a-f]{8}$/);
+    expect(body.prompt_cache_key).toMatch(/^rune-[0-9a-f]{8}$/);
   });
 });
 

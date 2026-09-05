@@ -5,7 +5,7 @@
 // string-replace edit_file fights their training and measurably degrades edit
 // success. This tool accepts that envelope natively. The FORMAT is theirs
 // (implemented fresh for interoperability — see THIRD_PARTY_NOTICES.md); the
-// application semantics are Gear's: every hunk routes through multi-edit's
+// application semantics are Rune's: every hunk routes through multi-edit's
 // applyOneEdit (exact → whitespace → indentation matching, unambiguous-or-
 // error), the whole patch validates in memory before anything is written, and
 // writes are temp+rename with best-effort rollback. Nothing lands partially.
@@ -514,7 +514,7 @@ async function fileExists(abs: string): Promise<boolean> {
 }
 
 async function atomicWrite(abs: string, content: string): Promise<void> {
-  const tmp = `${abs}.gear-tmp-${randomBytes(6).toString("hex")}`;
+  const tmp = `${abs}.rune-tmp-${randomBytes(6).toString("hex")}`;
   await writeFile(tmp, content, "utf8");
   await rename(tmp, abs);
 }

@@ -6,19 +6,19 @@
 // have to be malicious: adding a task, loosening a `verify`, re-baselining
 // after a bad run all change what "a win" means.
 //
-// So promotions are keyed to a digest of the suite. `gear evolve promote`
+// So promotions are keyed to a digest of the suite. `rune evolve promote`
 // refuses when the current digest differs from the one a human last blessed,
 // and the ledger records the digest each measurement ran under, so an old
 // entry can never be replayed against a changed yardstick.
 //
-// Re-baselining is deliberately a HUMAN act (`gear evolve yardstick --bless`).
+// Re-baselining is deliberately a HUMAN act (`rune evolve yardstick --bless`).
 // That is the whole mechanism: the loop can measure itself against a fixed
 // ruler, and it cannot pick up the ruler.
 
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
-import { getGearHome } from "@gear/shared";
+import { getRuneHome } from "@rune/shared";
 
 /** Run outputs, not the yardstick: these churn on every run by design. */
 const IGNORED_DIRS = new Set(["results", "node_modules"]);
@@ -116,12 +116,12 @@ export interface BlessedYardstick {
   repoRoot?: string;
 }
 
-export function blessedPath(home: string = getGearHome()): string {
+export function blessedPath(home: string = getRuneHome()): string {
   return join(home, BLESSED_FILE);
 }
 
 /** The digest a human last blessed, or null if never. */
-export function readBlessed(home: string = getGearHome()): BlessedYardstick | null {
+export function readBlessed(home: string = getRuneHome()): BlessedYardstick | null {
   try {
     const raw = readFileSync(blessedPath(home), "utf8");
     const parsed = JSON.parse(raw) as BlessedYardstick;
@@ -138,7 +138,7 @@ export function readBlessed(home: string = getGearHome()): BlessedYardstick | nu
 export function writeBlessed(
   hash: string,
   repoRoot: string | null,
-  home: string = getGearHome(),
+  home: string = getRuneHome(),
 ): BlessedYardstick {
   const entry: BlessedYardstick = {
     hash,

@@ -27,7 +27,7 @@ import type {
   TaskArtifact,
   TaskDecision,
   TaskKind,
-} from "@gear/protocol";
+} from "@rune/protocol";
 import type { TaskState } from "./task-state";
 
 /** The record for one task, from its state. Pure. */
@@ -86,7 +86,7 @@ function evidenceLine(refs: DecisionRecord["decisions"][number]["basedOn"]): str
 }
 
 /**
- * The record as Markdown. `gear audit --record` prints it, the session export
+ * The record as Markdown. `rune audit --record` prints it, the session export
  * embeds it, and both get the same bytes — one rendering, so a person reading
  * an export and a person reading the terminal are reading the same document.
  */

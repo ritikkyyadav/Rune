@@ -14,7 +14,7 @@ import {
 // together, including the header and the input") is invisible to a test that
 // only checks the rows are rendered somewhere.
 
-const HEADER = ["── gear 0.3.0 ──", "  alan | main", "  opus | 1st gear", "───────────────"];
+const HEADER = ["── rune 0.3.0 ──", "  atlas | main", "  opus | 1st gear", "───────────────"];
 const FOOTER = ["  > type here", "  status line"];
 
 function transcript(n: number): string[] {

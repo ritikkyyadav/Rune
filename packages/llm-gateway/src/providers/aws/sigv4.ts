@@ -3,7 +3,7 @@
 // A complete SigV4 request signer over `node:crypto`, ~200 lines, with no AWS
 // SDK dependency. The SDK would be the obvious answer and is the wrong one
 // here: `@aws-sdk/client-bedrock-runtime` pulls in ~40 packages and its own
-// HTTP stack, and Gear ships as a single `bun build --compile` binary where
+// HTTP stack, and Rune ships as a single `bun build --compile` binary where
 // every transitive dependency is weight in the artifact and a supply-chain
 // surface in the audit. Signing is a pure function of (method, path, query,
 // headers, body, credentials, clock) — the one part of AWS that is genuinely

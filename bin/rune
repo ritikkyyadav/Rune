@@ -1,0 +1,300 @@
+#!/usr/bin/env bash
+# ──────────────────────────────────────────────────────────
+#  Rune — Sovereign Agentic Coding Assistant by Savoir Studio
+#  Just type `rune` from any directory to start.
+#  Data lives in ~/.rune (an old ~/.gear or ~/.alan is moved there once, with a symlink left behind).
+# ──────────────────────────────────────────────────────────
+set -euo pipefail
+
+# ─── Stale working-directory self-heal ───
+# If this shell's cwd was deleted, moved (e.g. to Trash), or replaced while
+# the tab sat in it, getcwd() fails and the Bun runtime dies at startup with
+# a cryptic "Unexpected" / "low max file descriptors" error before Rune ever
+# runs. Re-resolve $PWD by its path: if the folder exists (again), re-enter it
+# fresh; if it is really gone, say exactly what happened and how to fix it.
+if ! pwd -P >/dev/null 2>&1; then
+  if [ -n "${PWD:-}" ] && [ -d "$PWD" ] && cd "$PWD" 2>/dev/null; then
+    echo "  ! This terminal's working directory was stale (deleted or replaced) — re-entered $PWD" >&2
+  else
+    echo "" >&2
+    echo "  ✗ Rune can't start: this terminal's working directory no longer exists." >&2
+    echo "    It was deleted, moved to Trash, or replaced while this shell was inside it." >&2
+    echo "    Fix: cd to an existing folder and retry — e.g.  cd ~  then cd back to your project." >&2
+    echo "" >&2
+    exit 1
+  fi
+fi
+
+# ─── Resolve the repository root from this script's real location ───
+# Follow symlinks so `bin/rune` and its compatibility aliases work anywhere.
+_resolve_script_dir() {
+  local src="${BASH_SOURCE[0]}"
+  # Follow symlinks until we reach the real file
+  while [ -L "$src" ]; do
+    local dir
+    dir="$(cd -P "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    # If the symlink target is relative, resolve it against the link's directory
+    [[ "$src" != /* ]] && src="$dir/$src"
+  done
+  cd -P "$(dirname "$src")" && pwd
+}
+
+SCRIPT_DIR="$(_resolve_script_dir)"
+RUNE_ROOT="$(cd -P "$SCRIPT_DIR/.." && pwd)"
+
+RUNE_DATA="$HOME/.rune"
+RUNE_ENV="$RUNE_DATA/.env"
+
+# ─── Rename migration: ~/.gear (or an older ~/.alan) → ~/.rune (once; a symlink keeps old paths alive) ───
+# A ~/.rune that exists but holds no data (no database, secrets or config —
+# created by a test run, a --version, or a bare mkdir) must not block the move:
+# it is set aside, the old home moves in, and its entries are folded back where
+# nothing of the same name came across.
+home_has_data() {
+  local f
+  for f in rune.db gear.db alan.db secrets.json config.toml model.json credentials.index.json; do
+    [ ! -e "$1/$f" ] || return 0
+  done
+  return 1
+}
+migrate_home() {
+  local old parked=""
+  if [ -e "$HOME/.rune" ]; then
+    { [ -d "$HOME/.rune" ] && [ ! -L "$HOME/.rune" ] && ! home_has_data "$HOME/.rune"; } || return 0
+  fi
+  for old in .gear .alan; do
+    if [ -d "$HOME/$old" ] && [ ! -L "$HOME/$old" ]; then
+      if [ -e "$HOME/.rune" ]; then
+        parked="$HOME/.rune.fresh-$(date +%s)"
+        mv "$HOME/.rune" "$parked" 2>/dev/null || return 0
+      fi
+      if mv "$HOME/$old" "$HOME/.rune" 2>/dev/null; then
+        ln -s "$HOME/.rune" "$HOME/$old" 2>/dev/null || true
+        echo "  · moved ~/$old → ~/.rune (a symlink ~/$old → ~/.rune keeps old paths working)" >&2
+        if [ -n "$parked" ]; then
+          local entry
+          for entry in "$parked"/* "$parked"/.[!.]*; do
+            [ -e "$entry" ] || continue
+            [ -e "$HOME/.rune/$(basename "$entry")" ] || mv "$entry" "$HOME/.rune/" 2>/dev/null || true
+          done
+          rmdir "$parked" 2>/dev/null || echo "  · kept $parked (entries that collided with the moved home)" >&2
+        fi
+      elif [ -n "$parked" ]; then
+        mv "$parked" "$HOME/.rune" 2>/dev/null || true
+      fi
+      return 0
+    fi
+  done
+}
+migrate_home
+
+# ─── Colors (Savoir Studio / L'Atlas Theme) ───
+red()    { printf '\033[38;5;166m%s\033[0m' "$*"; } # vermillion
+green()  { printf '\033[38;5;65m%s\033[0m' "$*"; }  # green (#5a8a5a)
+yellow() { printf '\033[38;5;179m%s\033[0m' "$*"; } # brass
+cyan()   { printf '\033[38;5;24m%s\033[0m' "$*"; }  # cyanotype (#1f5d7a)
+dim()    { printf '\033[38;5;245m%s\033[0m' "$*"; } # graphite-3 (#8a8a82)
+bold()   { printf '\033[1m%s\033[0m' "$*"; }
+
+# ─── Handle --help / --version before anything else ───
+for arg in "$@"; do
+  case "$arg" in
+    --help|-h)
+      cat <<'USAGE'
+Usage: rune [options] [message]
+
+Options:
+  -m, --model <model>       LLM model (default: config/provider default)
+  -p, --provider <name>     Provider: openrouter, anthropic, openai, google
+  -w, --workspace <path>    Workspace root (default: current directory)
+  --gear <1|2|3|4|auto>     Start in a gear: 1 asks, 2 trusts reads, 3 trusts the workspace,
+                            4 never prompts, auto = classifier-reviewed (Shift+Tab shifts up)
+  --yolo                    Alias for --gear 4
+  --classic                 Plain readline prompt (default is the pinned composer)
+  -r, --resume <id>         Resume a session by ID
+  -l, --list                List sessions
+
+Commands:
+  rune                      Start interactive chat (CLI agent)
+  rune "your question"      Ask a one-shot question
+  rune --list               List past sessions
+  rune --resume <id>        Resume a session
+  rune login [provider]     Sign in to a provider (API key, or OAuth where supported)
+  rune logout <provider>    Remove a provider's stored key/OAuth from the secure store
+  rune providers            List providers, auth method, and credential status
+  rune use <provider>       Set the active provider for new sessions
+  rune models [provider]    List a provider's models (live discovery + fallback)
+  rune setup                First-time setup (build + install)
+
+Config: ~/.rune/config.toml
+API keys: ~/.rune/.env
+USAGE
+      exit 0
+      ;;
+    --version|-v|-V)
+      # Single version source: ui/brand.ts (kept in lockstep with the package
+      # semver). A hardcoded copy here drifted to a version that never shipped.
+      v="$(sed -n 's/.*PRODUCT_VERSION = "\([^"]*\)".*/\1/p' \
+        "$RUNE_ROOT/packages/orchestrator/src/bin/ui/brand.ts" 2>/dev/null | head -1)"
+      echo "Rune v${v:-unknown}"
+      exit 0
+      ;;
+  esac
+done
+
+# ─── Resolve Bun ───
+find_bun() {
+  if [ -x "$HOME/.bun/bin/bun" ]; then
+    echo "$HOME/.bun/bin/bun"
+  elif command -v bun &>/dev/null; then
+    command -v bun
+  else
+    return 1
+  fi
+}
+
+# ─── First-time setup check ───
+setup() {
+  echo ""
+  echo "  $(bold '  Rune Setup')"
+  echo "  $(dim '──────────────────────────────────────')"
+  echo ""
+
+  # 1. Check Bun
+  if BUN=$(find_bun); then
+    echo "  $(green '✓') Bun found: $(dim "$BUN")"
+  else
+    echo "  $(yellow '⚡') Installing Bun..."
+    curl -fsSL https://bun.sh/install | bash
+    export PATH="$HOME/.bun/bin:$PATH"
+    BUN="$HOME/.bun/bin/bun"
+    echo "  $(green '✓') Bun installed"
+  fi
+
+  # 2. Check Rust
+  if command -v cargo &>/dev/null; then
+    echo "  $(green '✓') Rust toolchain found"
+  else
+    echo "  $(yellow '⚡') Installing Rust..."
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    source "$HOME/.cargo/env"
+    echo "  $(green '✓') Rust installed"
+  fi
+
+  # 3. Install TS dependencies
+  echo "  $(dim '...') Installing dependencies"
+  (cd "$RUNE_ROOT" && "$BUN" install --frozen-lockfile 2>&1 | tail -1)
+  echo "  $(green '✓') Dependencies installed"
+
+  # 4. Build Rust tools binary
+  echo "  $(dim '...') Building tools (this may take a minute)"
+  (cd "$RUNE_ROOT" && cargo build --release 2>&1 | tail -1)
+  echo "  $(green '✓') Rust tools built"
+
+  # 5. Ensure data directory
+  mkdir -p "$RUNE_DATA"
+
+  # 6. Create config if missing
+  if [ ! -f "$RUNE_DATA/config.toml" ]; then
+    cat > "$RUNE_DATA/config.toml" <<'TOML'
+# Rune Configuration
+[llm]
+defaultProvider = "openrouter"
+
+[llm.openrouter]
+model = "deepseek/deepseek-v4-flash:free"
+maxTokens = 8192
+
+# To use Google/Gemini instead:
+# defaultProvider = "google"
+#
+# [llm.google]
+# model = "gemini-2.5-flash"
+# maxTokens = 8192
+
+[permissions]
+defaultLevel = "confirm"
+TOML
+    echo "  $(green '✓') Config created: $(dim '~/.rune/config.toml')"
+  else
+    echo "  $(green '✓') Config exists"
+  fi
+
+  # 7. Create .env if missing
+  if [ ! -f "$RUNE_ENV" ]; then
+    cat > "$RUNE_ENV" <<'ENV'
+# Uncomment and fill in your API keys:
+# OPENROUTER_API_KEY=sk-or-v1-...
+# ANTHROPIC_API_KEY=sk-ant-...
+# OPENAI_API_KEY=sk-...
+# GOOGLE_API_KEY=...
+ENV
+    echo "  $(green '✓') API key file: $(dim '~/.rune/.env')"
+    echo ""
+    echo "  $(yellow '→') Add your API key to $(bold '~/.rune/.env') to get started"
+    echo "    $(dim 'Free models work without a key via OpenRouter')"
+  else
+    echo "  $(green '✓') API keys file exists"
+  fi
+
+  echo ""
+  echo "  $(green '✓') $(bold 'Setup complete!') Type $(cyan 'rune') to start."
+  echo ""
+}
+
+# Handle `rune setup` command
+if [ "${1:-}" = "setup" ]; then
+  setup
+  exit 0
+fi
+
+# ─── Ensure everything is ready ───
+BUN=$(find_bun) || {
+  echo ""
+  echo "  $(red '✗') Bun not found. Run: $(bold 'rune setup')"
+  echo ""
+  exit 1
+}
+
+TOOLS_BIN="$RUNE_ROOT/target/release/rune-tools"
+if [ ! -x "$TOOLS_BIN" ]; then
+  # Try debug build as fallback
+  TOOLS_BIN="$RUNE_ROOT/target/debug/rune-tools"
+  if [ ! -x "$TOOLS_BIN" ]; then
+    echo ""
+    echo "  $(yellow '!') Tools binary not found. Running first-time setup..."
+    echo ""
+    setup
+    TOOLS_BIN="$RUNE_ROOT/target/release/rune-tools"
+    BUN=$(find_bun)
+  fi
+fi
+
+# ─── Load API keys (global ~/.rune/.env then project .env) ───
+if [ -f "$RUNE_ENV" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$RUNE_ENV"
+  set +a
+fi
+# Project-local .env (Bun also auto-loads this, but export here so the
+# Rust tools binary and any subprocesses inherit the keys too).
+if [ -f "$RUNE_ROOT/.env" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$RUNE_ROOT/.env"
+  set +a
+fi
+
+# ─── Ensure data dir ───
+mkdir -p "$RUNE_DATA"
+
+# ─── Export for TS CLI ───
+export RUNE_TOOLS_BIN="$TOOLS_BIN"
+export RUNE_ROOT="$RUNE_ROOT"
+
+# ─── Launch ───
+exec "$BUN" run "$RUNE_ROOT/packages/orchestrator/src/bin/rune-cli.ts" \
+  --workspace "${PWD}" \
+  "$@"

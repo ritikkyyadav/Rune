@@ -1,8 +1,8 @@
 // ─── The AWS credential chain ───
 //
 // Resolve credentials the way every AWS tool on the machine already does, so
-// `gear -p bedrock` works for someone who has run `aws configure` or who is
-// inside a task role, with nothing Gear-specific to set up. The order is the
+// `rune -p bedrock` works for someone who has run `aws configure` or who is
+// inside a task role, with nothing Rune-specific to set up. The order is the
 // standard one:
 //
 //   1. environment variables       AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
@@ -16,12 +16,12 @@
 // **IMDS is deliberately not in the chain.** The instance metadata service is
 // the last rung in the AWS SDKs, and on a laptop it is a request to a
 // link-local address that does not answer — the SDKs pay a 1s timeout plus
-// retries for it on every cold start. Gear resolves credentials on the
-// no-credential path too (`gear providers` must print an honest row), so a
+// retries for it on every cold start. Rune resolves credentials on the
+// no-credential path too (`rune providers` must print an honest row), so a
 // hanging probe would be a second of latency on a command whose answer is
 // "no". Anything running ON EC2 with an instance role can export the standard
 // env vars or use a profile; containers, the case that actually matters for a
-// team running Gear in CI, are covered by rung 4.
+// team running Rune in CI, are covered by rung 4.
 //
 // Nothing here logs. A resolved credential's secret is returned to the signer
 // and never rendered: `describeAwsSource()` is what the UI prints.
@@ -68,7 +68,7 @@ export async function resolveAwsRegion(opts: AwsChainOpts = {}): Promise<string 
 
 /**
  * Walk the chain. Returns null when nothing resolves — the honest answer that
- * lets `gear providers` print "no credential" instead of a crash or a guess.
+ * lets `rune providers` print "no credential" instead of a crash or a guess.
  * Never throws: a malformed ~/.aws/credentials is a missing credential, not a
  * broken startup.
  */
@@ -116,7 +116,7 @@ export async function resolveAwsCredentials(
   if (tokenFile && roleArn) {
     const region = (await resolveAwsRegion(opts)) ?? "us-east-1";
     const cred = await assumeRoleWithWebIdentity(
-      { tokenFile, roleArn, sessionName: env.AWS_ROLE_SESSION_NAME || "gear", region },
+      { tokenFile, roleArn, sessionName: env.AWS_ROLE_SESSION_NAME || "rune", region },
       opts,
     );
     if (cred) return { ...cred, profile: profileName, region };
@@ -163,7 +163,7 @@ function configFilePath(opts: AwsChainOpts): string {
  *
  * Deliberately minimal: AWS's own format is `key = value` under `[section]`
  * headers with `#`/`;` comments. Nested sub-sections (`sso_session`) are
- * flattened away rather than half-supported — a profile Gear cannot fully
+ * flattened away rather than half-supported — a profile Rune cannot fully
  * resolve should fall through to the next rung, not produce a broken
  * credential.
  */
@@ -283,7 +283,7 @@ async function fetchContainerCredentials(
     if (authToken) headers.authorization = authToken;
     const doFetch = opts.fetchImpl ?? fetch;
     // Bounded: the credential endpoint is link-local and either answers at once
-    // or is not there. A hang here would stall every `gear providers`.
+    // or is not there. A hang here would stall every `rune providers`.
     const res = await doFetch(uri, { headers, signal: AbortSignal.timeout(2_000) });
     if (!res.ok) return null;
     const json = (await res.json()) as {

@@ -1,4 +1,4 @@
-import { type Logger, createLogger } from "@gear/shared";
+import { type Logger, createLogger } from "@rune/shared";
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
 import {
   HttpTransport,
@@ -182,7 +182,7 @@ export class McpClient {
   get kind(): "stdio" | "http" {
     return this.transportKind;
   }
-  /** True when this connector is waiting on `gear mcp login <server>`. */
+  /** True when this connector is waiting on `rune mcp login <server>`. */
   get needsAuthentication(): boolean {
     return this.needsAuth;
   }
@@ -208,7 +208,7 @@ export class McpClient {
     } catch (err) {
       // An unauthorized connector is a MISSING CAPABILITY, not a broken
       // session. It stays registered with zero tools and a clear reason, so
-      // `gear mcp list/doctor` can tell the user exactly what to run, and the
+      // `rune mcp list/doctor` can tell the user exactly what to run, and the
       // rest of the session proceeds as if the connector were simply absent.
       if (!this.noteUnauthorized(err)) throw err;
     } finally {
@@ -229,9 +229,9 @@ export class McpClient {
     this.onEvent?.({
       type: "server-needs-auth",
       server: this.serverName,
-      reason: `run: gear mcp login ${this.serverName}`,
+      reason: `run: rune mcp login ${this.serverName}`,
     });
-    this.logger.warn(`needs authorization — run: gear mcp login ${this.serverName}`);
+    this.logger.warn(`needs authorization — run: rune mcp login ${this.serverName}`);
     return true;
   }
 
@@ -268,7 +268,7 @@ export class McpClient {
         // an empty capabilities object will never ask, and the feature is dead
         // no matter how well the handler works.
         capabilities: this.onElicit ? { elicitation: {} } : {},
-        clientInfo: { name: "gear", version: "0.1.0" },
+        clientInfo: { name: "rune", version: "0.1.0" },
       },
       { timeoutMs: INIT_TIMEOUT_MS, allowReinit: false },
     )) as McpInitializeResult;
@@ -529,7 +529,7 @@ export class McpClient {
       {
         protocolVersion: LATEST_PROTOCOL_VERSION,
         capabilities: {},
-        clientInfo: { name: "gear", version: "0.1.0" },
+        clientInfo: { name: "rune", version: "0.1.0" },
       },
       { timeoutMs: INIT_TIMEOUT_MS, allowReinit: false },
     )) as McpInitializeResult;
@@ -831,7 +831,7 @@ export class McpClient {
           content: [
             {
               type: "text",
-              text: `${this.serverName} needs authorization — run: gear mcp login ${this.serverName}`,
+              text: `${this.serverName} needs authorization — run: rune mcp login ${this.serverName}`,
             },
           ],
           isError: true,
@@ -953,7 +953,7 @@ export class McpClient {
             result: "",
             error:
               err instanceof McpUnauthorizedError
-                ? `${client.name} needs authorization — run: gear mcp login ${client.name}`
+                ? `${client.name} needs authorization — run: rune mcp login ${client.name}`
                 : err instanceof Error
                   ? err.message
                   : String(err),

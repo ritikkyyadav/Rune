@@ -1,18 +1,18 @@
-// ─── `gear doctor` + `gear incidents`: the black box's terminal surfaces ───
-// Both open ~/.gear/blackbox.db directly (read-only usage) — no Engine boot, no
+// ─── `rune doctor` + `rune incidents`: the black box's terminal surfaces ───
+// Both open ~/.rune/blackbox.db directly (read-only usage) — no Engine boot, no
 // provider validation, instant. Deliberately plain output: this is the page an
 // annoyed user reads right after something broke.
 
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { getGearHome } from "@gear/shared";
-import type { IncidentRecord } from "@gear/shared";
-import { BlackboxStore } from "@gear/telemetry";
+import { getRuneHome } from "@rune/shared";
+import type { IncidentRecord } from "@rune/shared";
+import { BlackboxStore } from "@rune/telemetry";
 import { accent, danger, dim, faint, info, ok, text, warn } from "./ui/theme";
 import { formatAutoSafetyMetrics, readAutoSafetyMetrics } from "../auto-metrics";
 import { glyph } from "./ui/glyphs";
 
-const HOME = () => getGearHome();
+const HOME = () => getRuneHome();
 const DB = () => join(HOME(), "blackbox.db");
 const SENTINEL = () => join(HOME(), "blackbox.sentinel.json");
 const LAST_RESORT = () => join(HOME(), "blackbox.last-resort.log");
@@ -61,7 +61,7 @@ function sevPaint(severity: string, s: string): string {
 // ─── doctor ───
 
 export function runDoctor(): void {
-  console.log(`\n  ${dim("§ GEAR DOCTOR")}\n`);
+  console.log(`\n  ${dim("§ RUNE DOCTOR")}\n`);
 
   // Auto mode's own false-positive record, read from the session log.
   //
@@ -70,7 +70,7 @@ export function runDoctor(): void {
   // the harness breaking. A rising rate here is not an incident and will never
   // appear in the black box, which is exactly why it went unmeasured.
   {
-    const sessionDb = join(HOME(), "gear.db");
+    const sessionDb = join(HOME(), "rune.db");
     if (existsSync(sessionDb)) {
       const metrics = readAutoSafetyMetrics(sessionDb);
       console.log(`  ${dim("auto mode:")}`);
@@ -144,7 +144,7 @@ export function runDoctor(): void {
         console.log(`  ${ok("✓")} sentinels: ${live} live session${live === 1 ? "" : "s"} running`);
       if (stale > 0)
         console.log(
-          `  ${warn("!")} sentinels: ${stale} leftover from dead processes — next \`gear\` run files dirty-exit incident${stale === 1 ? "" : "s"}`,
+          `  ${warn("!")} sentinels: ${stale} leftover from dead processes — next \`rune\` run files dirty-exit incident${stale === 1 ? "" : "s"}`,
         );
     }
   }
@@ -161,7 +161,7 @@ export function runDoctor(): void {
   }
 
   console.log(
-    `\n  ${dim("browse:")} ${info("gear incidents")} ${dim("·")} ${info("gear incidents top")} ${dim("·")} ${info("gear incidents show <id>")}\n`,
+    `\n  ${dim("browse:")} ${info("rune incidents")} ${dim("·")} ${info("rune incidents top")} ${dim("·")} ${info("rune incidents show <id>")}\n`,
   );
   store?.close();
 }
@@ -175,8 +175,8 @@ function processAlive(pid: number): boolean {
   }
 }
 
-// ─── toolchain: gear-tools presence + compiled-binary freshness ───
-// The doctor half of the stale-`gear-compiled` trap (the launcher warns at
+// ─── toolchain: rune-tools presence + compiled-binary freshness ───
+// The doctor half of the stale-`rune-compiled` trap (the launcher warns at
 // startup; this page explains it on demand): a fix lands in the TypeScript,
 // the installed binary predates it, and "nothing changed" until a rebuild.
 
@@ -224,29 +224,29 @@ function gitHead(root: string): string | null {
 }
 
 function doctorToolchain(): void {
-  // gear-tools: same candidate order as the CLI's startup lookup.
+  // rune-tools: same candidate order as the CLI's startup lookup.
   const candidates: string[] = [];
-  if (process.env.GEAR_TOOLS_BIN) candidates.push(process.env.GEAR_TOOLS_BIN);
+  if (process.env.RUNE_TOOLS_BIN) candidates.push(process.env.RUNE_TOOLS_BIN);
   candidates.push(
-    new URL("../../../../target/release/gear-tools", import.meta.url).pathname,
-    new URL("../../../../target/debug/gear-tools", import.meta.url).pathname,
-    join(HOME(), "bin", "gear-tools"),
+    new URL("../../../../target/release/rune-tools", import.meta.url).pathname,
+    new URL("../../../../target/debug/rune-tools", import.meta.url).pathname,
+    join(HOME(), "bin", "rune-tools"),
   );
-  const tools = candidates.find((c) => existsSync(c)) ?? Bun.which("gear-tools");
+  const tools = candidates.find((c) => existsSync(c)) ?? Bun.which("rune-tools");
   if (tools) {
-    console.log(`  ${ok("✓")} gear-tools: ${info(tools)}`);
+    console.log(`  ${ok("✓")} rune-tools: ${info(tools)}`);
   } else {
     console.log(
-      `  ${danger(glyph("failure"))} gear-tools: not found — set GEAR_TOOLS_BIN, re-run scripts/install.sh, or \`cargo build --release -p gear-tools\``,
+      `  ${danger(glyph("failure"))} rune-tools: not found — set RUNE_TOOLS_BIN, re-run scripts/install.sh, or \`cargo build --release -p rune-tools\``,
     );
     for (const c of candidates) console.log(`    ${dim("searched:")} ${faint(c)}`);
   }
 
   // Build freshness, from the meta file the installer writes next to the binary.
-  const metaPath = join(dirname(process.execPath), "gear-compiled.meta");
+  const metaPath = join(dirname(process.execPath), "rune-compiled.meta");
   if (!existsSync(metaPath)) {
     console.log(
-      `  ${dim("·")} build freshness: no gear-compiled.meta next to this binary ${dim("(running from source, or an unmanaged install)")}`,
+      `  ${dim("·")} build freshness: no rune-compiled.meta next to this binary ${dim("(running from source, or an unmanaged install)")}`,
     );
     return;
   }
@@ -257,8 +257,8 @@ function doctorToolchain(): void {
         .filter((line) => line.includes("="))
         .map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
     ) as Record<string, string>;
-    const sourceRoot = meta.GEAR_SOURCE_ROOT ?? "";
-    const builtAtMs = Number(meta.GEAR_BUILT_AT ?? 0) * 1000;
+    const sourceRoot = meta.RUNE_SOURCE_ROOT ?? "";
+    const builtAtMs = Number(meta.RUNE_BUILT_AT ?? 0) * 1000;
     if (!sourceRoot || !existsSync(join(sourceRoot, "packages")) || !(builtAtMs > 0)) {
       console.log(
         `  ${dim("·")} build freshness: meta unreadable or the source tree moved ${faint(`(${metaPath})`)}`,
@@ -266,9 +266,9 @@ function doctorToolchain(): void {
       return;
     }
     const builtLabel = localTs(builtAtMs);
-    const sourceCommit = meta.GEAR_SOURCE_COMMIT ?? "";
-    const sourceBranch = meta.GEAR_SOURCE_BRANCH || "detached";
-    const dirty = meta.GEAR_SOURCE_DIRTY === "1";
+    const sourceCommit = meta.RUNE_SOURCE_COMMIT ?? "";
+    const sourceBranch = meta.RUNE_SOURCE_BRANCH || "detached";
+    const dirty = meta.RUNE_SOURCE_DIRTY === "1";
     const provenance = sourceCommit
       ? `${sourceBranch}@${sourceCommit.slice(0, 8)}${dirty ? "+dirty" : ""}`
       : "legacy meta (commit unknown)";
@@ -325,12 +325,12 @@ export function runIncidents(positionals: string[], values: Record<string, unkno
             `           ${faint(r.message.replace(/\s+/g, " ").slice(0, 96))}`,
         );
       }
-      console.log(`\n  ${dim("details:")} ${info("gear incidents show <id>")}\n`);
+      console.log(`\n  ${dim("details:")} ${info("rune incidents show <id>")}\n`);
     }
   } else if (sub === "show") {
     const prefix = positionals[2];
     if (!prefix) {
-      console.log(dim("  Usage: gear incidents show <id-prefix>"));
+      console.log(dim("  Usage: rune incidents show <id-prefix>"));
     } else {
       const r = store.getByPrefix(prefix);
       if (!r) {
@@ -361,7 +361,7 @@ export function runIncidents(positionals: string[], values: Record<string, unkno
   } else if (sub === "export") {
     const out =
       (values.out as string | undefined) ??
-      join(process.cwd(), `gear-incidents-${new Date().toISOString().slice(0, 10)}.jsonl`);
+      join(process.cwd(), `rune-incidents-${new Date().toISOString().slice(0, 10)}.jsonl`);
     const rows = store.list({ limit: 10_000, minSeverity: "debug" });
     // Everything was redacted at capture time; export as-is, newest first.
     writeFileSync(out, rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
@@ -372,7 +372,7 @@ export function runIncidents(positionals: string[], values: Record<string, unkno
     );
   } else {
     console.log(
-      dim("  Usage: gear incidents [list|show <id>|top [--by-version]|export [--out <path>]]"),
+      dim("  Usage: rune incidents [list|show <id>|top [--by-version]|export [--out <path>]]"),
     );
   }
   store.close();
@@ -404,7 +404,7 @@ function printIncident(r: IncidentRecord): void {
     for (const [k, v] of ctx) console.log(`    ${faint(`${k}: ${String(v)}`)}`);
   }
   if (r.trail.length > 0) {
-    console.log(`\n  ${dim("trail (what Gear did leading up to this)")}`);
+    console.log(`\n  ${dim("trail (what Rune did leading up to this)")}`);
     for (const t of r.trail) {
       console.log(
         `    ${dim(String(t.seq).padStart(3))} ${info(t.kind.padEnd(16))} ${faint(t.summary)}`,

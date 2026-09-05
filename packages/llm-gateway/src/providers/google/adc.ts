@@ -1,9 +1,9 @@
 // ─── Google Application Default Credentials ───
 //
 // Resolve a Google access token the way every Google tool on the machine does,
-// so `gear -p vertex` works for someone who has run `gcloud auth
+// so `rune -p vertex` works for someone who has run `gcloud auth
 // application-default login` or who is inside a service account, with nothing
-// Gear-specific to set up. The order is ADC's own:
+// Rune-specific to set up. The order is ADC's own:
 //
 //   1. GOOGLE_APPLICATION_CREDENTIALS → a service-account or authorized-user
 //      JSON key file
@@ -73,7 +73,7 @@ interface AdcKeyFile {
  * Resolve an access token from Application Default Credentials.
  *
  * Returns null when nothing resolves — the honest answer that lets
- * `gear providers` print "no credential" instead of a crash. Never throws: a
+ * `rune providers` print "no credential" instead of a crash. Never throws: a
  * malformed key file is a missing credential, not a broken startup.
  */
 export async function resolveGoogleAdc(opts: AdcOpts = {}): Promise<GoogleAccessToken | null> {

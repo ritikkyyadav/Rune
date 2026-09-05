@@ -1,4 +1,4 @@
-import { type Logger, createLogger, openCredentialStore, type CredentialStore } from "@gear/shared";
+import { type Logger, createLogger, openCredentialStore, type CredentialStore } from "@rune/shared";
 import { McpClient } from "./client";
 import { McpOAuth } from "./oauth";
 import { mergedServers } from "./config-file";
@@ -9,7 +9,7 @@ import type { ToolHandler } from "../types";
 import type { McpEvent, McpServerInfo } from "./types";
 
 // ─── MCP Config Format ───
-// Loaded from .gear/mcp.json in the workspace root. Supports local subprocess
+// Loaded from .rune/mcp.json in the workspace root. Supports local subprocess
 // (stdio) servers and remote (Streamable HTTP) servers.
 //
 //   {
@@ -45,7 +45,7 @@ export interface McpServerConfig {
     /** Set false to send static headers only and never attempt OAuth. */
     enabled?: boolean;
   };
-  /** Set false to keep the entry on file without starting it (`gear mcp disable`). */
+  /** Set false to keep the entry on file without starting it (`rune mcp disable`). */
   enabled?: boolean;
 }
 
@@ -73,7 +73,7 @@ export interface McpServerStatus {
   protocolVersion?: string;
   serverInfo?: McpServerInfo;
   lastError?: string | null;
-  /** The connector answered 401 and holds no usable token — needs `gear mcp login`. */
+  /** The connector answered 401 and holds no usable token — needs `rune mcp login`. */
   needsAuth?: boolean;
   /** Whether a token set exists in the credential store for this connector. */
   hasCredentials?: boolean;
@@ -150,7 +150,7 @@ export class McpDiscovery {
     this.logger = options.logger ?? createLogger("mcp");
   }
 
-  /** Which scope each configured server came from, for `gear mcp list`. */
+  /** Which scope each configured server came from, for `rune mcp list`. */
   getScopes(): Map<string, "user" | "workspace"> {
     const out = new Map<string, "user" | "workspace">();
     for (const s of mergedServers(this.workspaceRoot).servers) out.set(s.name, s.scope);
@@ -236,7 +236,7 @@ export class McpDiscovery {
         serverConfig.type === "http" || serverConfig.url ? "http" : "stdio";
 
       // A disabled entry stays on file and out of the session: the point of
-      // `gear mcp disable` is to stop paying for a connector without losing
+      // `rune mcp disable` is to stop paying for a connector without losing
       // the configuration that took a sign-in to produce.
       if (serverConfig.enabled === false) continue;
 

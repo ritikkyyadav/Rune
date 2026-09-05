@@ -1,15 +1,15 @@
-// ─── `gear plugin`: search the index, install from it, or from a path/URL ───
+// ─── `rune plugin`: search the index, install from it, or from a path/URL ───
 //
 // Plugins existed as a directory convention with no way to get a directory
 // there: `PluginDiscovery.errors` were computed and never shown, so a refused
 // plugin was indistinguishable from one nobody had installed.
 //
-//   gear plugin search fmt               what exists, per the index
-//   gear plugin add gear-example-skills   a name, resolved through the index
-//   gear plugin add ./my-plugin          a local path
-//   gear plugin add https://github.com/…  a git repository
-//   gear plugin add @scope/gear-plugin-x  an npm package
-//   gear plugin list                      what is installed, and what was refused
+//   rune plugin search fmt               what exists, per the index
+//   rune plugin add rune-example-skills   a name, resolved through the index
+//   rune plugin add ./my-plugin          a local path
+//   rune plugin add https://github.com/…  a git repository
+//   rune plugin add @scope/rune-plugin-x  an npm package
+//   rune plugin list                      what is installed, and what was refused
 //
 // A name resolved through the index is verified against the digest the index
 // published, BEFORE installation rewrites the manifest — installation stamps
@@ -27,12 +27,12 @@ import {
 } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { loadConfig, workspaceConfigPath } from "@gear/shared";
+import { loadConfig, workspaceConfigPath } from "@rune/shared";
 import {
   discoverPlugins,
   computeIntegrity,
-  satisfiesGearVersion,
-  GEAR_VERSION,
+  satisfiesRuneVersion,
+  RUNE_VERSION,
   type PluginManifest,
 } from "../plugins";
 import {
@@ -56,7 +56,7 @@ const say = (line = ""): void => {
 function usage(): void {
   say();
   say(
-    `${accent("gear plugin")} ${dim("— install a bundle of skills, commands, connectors, hooks and tools")}`,
+    `${accent("rune plugin")} ${dim("— install a bundle of skills, commands, connectors, hooks and tools")}`,
   );
   say();
   say(`${text("Commands")}`);
@@ -68,7 +68,7 @@ function usage(): void {
   say();
   say(`  ${faint("A bare name resolves through the plugin index and is verified against the")}`);
   say(`  ${faint("digest it publishes. Point elsewhere with --index, [extensions] index, or")}`);
-  say(`  ${faint("GEAR_PLUGIN_INDEX.")}`);
+  say(`  ${faint("RUNE_PLUGIN_INDEX.")}`);
   say();
 }
 
@@ -82,7 +82,7 @@ function workspaceOf(values: Record<string, unknown>): string {
  */
 function indexRefOf(values: Record<string, unknown>): string | undefined {
   if (typeof values.index === "string" && values.index.trim()) return values.index.trim();
-  const fromEnv = process.env.GEAR_PLUGIN_INDEX;
+  const fromEnv = process.env.RUNE_PLUGIN_INDEX;
   if (fromEnv && fromEnv.trim()) return fromEnv.trim();
   try {
     const configured = loadConfig(workspaceOf(values)).extensions?.index;
@@ -102,7 +102,7 @@ function indexRefOf(values: Record<string, unknown>): string | undefined {
 function indexStaleness(load: PluginIndexLoad): string {
   if (!load.stale) return "";
   if (load.originKind === "cache") return warn(" · offline, last fetched copy");
-  if (load.originKind === "bundled") return warn(" · offline, the copy shipped with Gear");
+  if (load.originKind === "bundled") return warn(" · offline, the copy shipped with Rune");
   return warn(" · not current");
 }
 
@@ -166,7 +166,7 @@ async function stage(source: Source): Promise<{ dir: string } | { error: string 
 
   const staging = join(
     tmpdir(),
-    `gear-plugin-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    `rune-plugin-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
   );
   mkdirSync(staging, { recursive: true });
 
@@ -243,14 +243,14 @@ async function cmdSearch(args: string[], values: Record<string, unknown>): Promi
   for (const entry of hits) {
     const fits = entryFitsThisGear(entry);
     say(
-      `    ${accent(entry.name.padEnd(24))} ${dim(`v${entry.version}`)} ${fits ? "" : danger(`needs Gear ${entry.gearVersion}`)}`,
+      `    ${accent(entry.name.padEnd(24))} ${dim(`v${entry.version}`)} ${fits ? "" : danger(`needs Rune ${entry.runeVersion}`)}`,
     );
     say(`      ${faint(entry.description)}`);
     say(`      ${capabilityLine(entry)}`);
     say(`      ${faint(entry.maintainer)}`);
   }
   say();
-  say(`  ${text("Install")}  ${accent(`gear plugin add ${hits[0]!.name}`)}`);
+  say(`  ${text("Install")}  ${accent(`rune plugin add ${hits[0]!.name}`)}`);
   say();
   return 0;
 }
@@ -283,7 +283,7 @@ async function resolveThroughIndex(
 async function cmdAdd(args: string[], values: Record<string, unknown>): Promise<number> {
   const spec = args[0];
   if (!spec) {
-    say(`  ${danger(glyph("failure"))} usage: gear plugin add <name|path|git-url|npm-package>`);
+    say(`  ${danger(glyph("failure"))} usage: rune plugin add <name|path|git-url|npm-package>`);
     return 1;
   }
   const workspaceRoot = workspaceOf(values);
@@ -300,7 +300,7 @@ async function cmdAdd(args: string[], values: Record<string, unknown>): Promise<
     if (resolved) {
       if (!entryFitsThisGear(resolved.entry)) {
         say(
-          `  ${danger(glyph("failure"))} ${accent(resolved.entry.name)} needs Gear ${resolved.entry.gearVersion}, this is ${GEAR_VERSION}`,
+          `  ${danger(glyph("failure"))} ${accent(resolved.entry.name)} needs Rune ${resolved.entry.runeVersion}, this is ${RUNE_VERSION}`,
         );
         say();
         return 1;
@@ -361,9 +361,9 @@ async function cmdAdd(args: string[], values: Record<string, unknown>): Promise<
     cleanup();
     return 1;
   }
-  if (!satisfiesGearVersion(GEAR_VERSION, manifest.gearVersion)) {
+  if (!satisfiesRuneVersion(RUNE_VERSION, manifest.runeVersion)) {
     say(
-      `  ${danger(glyph("failure"))} ${accent(name)} needs Gear ${manifest.gearVersion}, this is ${GEAR_VERSION}`,
+      `  ${danger(glyph("failure"))} ${accent(name)} needs Rune ${manifest.runeVersion}, this is ${RUNE_VERSION}`,
     );
     cleanup();
     say();
@@ -454,7 +454,7 @@ async function cmdAdd(args: string[], values: Record<string, unknown>): Promise<
 function cmdRemove(args: string[], values: Record<string, unknown>): number {
   const name = args[0];
   if (!name) {
-    say(`  ${danger(glyph("failure"))} usage: gear plugin remove <name>`);
+    say(`  ${danger(glyph("failure"))} usage: rune plugin remove <name>`);
     return 1;
   }
   const dest = join(pluginsRoot(workspaceOf(values)), name);
@@ -471,7 +471,7 @@ function cmdToggle(args: string[], values: Record<string, unknown>, enabled: boo
   const name = args[0];
   if (!name) {
     say(
-      `  ${danger(glyph("failure"))} usage: gear plugin ${enabled ? "enable" : "disable"} <name>`,
+      `  ${danger(glyph("failure"))} usage: rune plugin ${enabled ? "enable" : "disable"} <name>`,
     );
     return 1;
   }
@@ -503,7 +503,7 @@ function cmdList(values: Record<string, unknown>): number {
   say();
   if (plugins.length === 0 && errors.length === 0) {
     say(`  ${dim("No plugins installed.")}`);
-    say(`  ${text("Add one")}  ${accent("gear plugin add ./my-plugin")}`);
+    say(`  ${text("Add one")}  ${accent("rune plugin add ./my-plugin")}`);
     say();
     return 0;
   }

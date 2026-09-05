@@ -1,17 +1,17 @@
-// ─── `gear notebook`: inspect and manage the tactics notebook ───
-// Auditability is the contract: everything Gear has learned is listable,
+// ─── `rune notebook`: inspect and manage the tactics notebook ───
+// Auditability is the contract: everything Rune has learned is listable,
 // explainable (provenance), and deletable. No Engine boot needed.
 
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { getGearHome } from "@gear/shared";
+import { getRuneHome } from "@rune/shared";
 import { NotebookStore } from "../notebook/store";
 import type { NotebookEntry } from "../notebook/store";
 import { dim, faint, info, ok, text, warn } from "./ui/theme";
 
 function openStore(): NotebookStore | null {
   try {
-    return new NotebookStore(join(getGearHome(), "notebook.db"));
+    return new NotebookStore(join(getRuneHome(), "notebook.db"));
   } catch {
     return null;
   }
@@ -26,7 +26,7 @@ function scopeLabel(e: NotebookEntry): string {
 export function runNotebook(positionals: string[], values: Record<string, unknown>): void {
   const store = openStore();
   if (!store) {
-    console.log(dim("  Could not open ~/.gear/notebook.db"));
+    console.log(dim("  Could not open ~/.rune/notebook.db"));
     return;
   }
   const sub = positionals[1] ?? "list";
@@ -35,7 +35,7 @@ export function runNotebook(positionals: string[], values: Record<string, unknow
     const entries = store.list({ includeRetired: !!values.all, limit: 50 });
     if (entries.length === 0) {
       console.log(
-        dim("  Notebook is empty — Gear fills it as it verifies things about your codebases."),
+        dim("  Notebook is empty — Rune fills it as it verifies things about your codebases."),
       );
     } else {
       console.log(`\n  ${dim("§ TACTICS NOTEBOOK")} ${faint(`(${store.count()} active)`)}\n`);
@@ -50,13 +50,13 @@ export function runNotebook(positionals: string[], values: Record<string, unknow
         );
       }
       console.log(
-        `\n  ${dim("manage:")} ${info("gear notebook show <id>")} ${dim("·")} ${info("gear notebook rm <id>")}\n`,
+        `\n  ${dim("manage:")} ${info("rune notebook show <id>")} ${dim("·")} ${info("rune notebook rm <id>")}\n`,
       );
     }
   } else if (sub === "show") {
     const e = positionals[2] ? store.getByPrefix(positionals[2]) : null;
     if (!e) {
-      console.log(dim("  Usage: gear notebook show <id-prefix> (no unique match)"));
+      console.log(dim("  Usage: rune notebook show <id-prefix> (no unique match)"));
     } else {
       console.log(`\n  ${dim("§ ENTRY")} ${info(e.id)}\n`);
       console.log(`  ${text(e.body)}\n`);
@@ -74,20 +74,20 @@ export function runNotebook(positionals: string[], values: Record<string, unknow
   } else if (sub === "rm") {
     const e = positionals[2] ? store.getByPrefix(positionals[2]) : null;
     if (!e) {
-      console.log(dim("  Usage: gear notebook rm <id-prefix> (no unique match)"));
+      console.log(dim("  Usage: rune notebook rm <id-prefix> (no unique match)"));
     } else {
       store.remove(e.id);
       console.log(`  ${ok("✓")} removed: ${faint(e.body.slice(0, 70))}`);
     }
   } else if (sub === "export") {
     const out =
-      (values.out as string | undefined) ?? join(process.cwd(), "gear-notebook-export.jsonl");
+      (values.out as string | undefined) ?? join(process.cwd(), "rune-notebook-export.jsonl");
     const entries = store.list({ includeRetired: true, limit: 10_000 });
     writeFileSync(out, entries.map((e) => JSON.stringify(e)).join("\n") + "\n");
     console.log(`  ${ok("✓")} exported ${entries.length} entries → ${info(out)}`);
   } else {
     console.log(
-      dim("  Usage: gear notebook [list [--all]|show <id>|rm <id>|export [--out <path>]]"),
+      dim("  Usage: rune notebook [list [--all]|show <id>|rm <id>|export [--out <path>]]"),
     );
   }
   store.close();

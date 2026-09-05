@@ -1,12 +1,12 @@
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
 import { readdirSync, existsSync, watchFile, unwatchFile } from "fs";
 import { join, extname } from "path";
-import { createLogger, workspaceConfigPath } from "@gear/shared";
+import { createLogger, workspaceConfigPath } from "@rune/shared";
 
 const customLog = createLogger("custom-tools");
 
 // ─── Custom Tool Interface ───
-// Users drop files in .gear/tools/ that export this shape.
+// Users drop files in .rune/tools/ that export this shape.
 
 interface CustomToolExport {
   schema: {

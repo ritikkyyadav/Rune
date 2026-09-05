@@ -1,5 +1,5 @@
 {
-  "name": "@gear/eval",
+  "name": "@rune/eval",
   "version": "0.3.0",
   "private": true,
   "main": "runner.ts",
@@ -7,11 +7,11 @@
     "eval": "bun run runner.ts"
   },
   "dependencies": {
-    "@gear/orchestrator": "workspace:*",
-    "@gear/llm-gateway": "workspace:*",
-    "@gear/shared": "workspace:*",
-    "@gear/telemetry": "workspace:*",
-    "@gear/tool-registry": "workspace:*"
+    "@rune/orchestrator": "workspace:*",
+    "@rune/llm-gateway": "workspace:*",
+    "@rune/shared": "workspace:*",
+    "@rune/telemetry": "workspace:*",
+    "@rune/tool-registry": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.8"

@@ -27,10 +27,10 @@ import { currentYardstick } from "../../packages/orchestrator/src/evolve/yardsti
 // ─── Real-mode defaults & key wiring ───
 //
 // In --real mode the suite drives a LIVE model through the real engine/gateway.
-// Provider/model come from env (GEAR_EVAL_PROVIDER / GEAR_EVAL_MODEL), with the
-// older GEAR_PROVIDER / GEAR_MODEL names accepted as fallbacks. The dev default
+// Provider/model come from env (RUNE_EVAL_PROVIDER / RUNE_EVAL_MODEL), with the
+// older RUNE_PROVIDER / RUNE_MODEL names accepted as fallbacks. The dev default
 // is a FREE model (Gemini 2.5 Flash). For a later production-validation pass, set
-// GEAR_EVAL_PROVIDER / GEAR_EVAL_MODEL to a paid top-tier model
+// RUNE_EVAL_PROVIDER / RUNE_EVAL_MODEL to a paid top-tier model
 // (e.g. anthropic / claude-sonnet-4-20250514).
 
 const DEFAULT_PROVIDER = "google";
@@ -38,7 +38,7 @@ const DEFAULT_MODEL = "gemini-2.5-flash";
 
 /**
  * Providers that authenticate from a stored OAuth credential rather than an
- * env var — a ChatGPT plan, logged in once with `gear login`.
+ * env var — a ChatGPT plan, logged in once with `rune login`.
  *
  * They were absent from the map below, and the map was also the allowlist, so
  * `--real` refused to run on them at all: the suite could not measure the
@@ -136,12 +136,12 @@ function selectTasks(tasks: EvalTask[], args: CliArgs): EvalTask[] {
 
 /**
  * MODEL_SWEEP: comma-separated list of "provider:model" pairs.
- * Example: GEAR_MODEL_SWEEP="anthropic:claude-haiku-4-5-20251001,openai:gpt-4o-mini"
+ * Example: RUNE_MODEL_SWEEP="anthropic:claude-haiku-4-5-20251001,openai:gpt-4o-mini"
  *
  * Sweeps only run in real mode — in mock mode every task uses the mock provider.
  */
 function parseModelSweep(): Array<{ provider: string; model: string }> | null {
-  const raw = process.env.GEAR_MODEL_SWEEP ?? process.env.GEAR_MODEL_SWEEP;
+  const raw = process.env.RUNE_MODEL_SWEEP ?? process.env.RUNE_MODEL_SWEEP;
   if (!raw) return null;
   return raw
     .split(",")
@@ -152,10 +152,10 @@ function parseModelSweep(): Array<{ provider: string; model: string }> | null {
       if (colonIdx === -1) {
         return {
           provider:
-            process.env.GEAR_EVAL_PROVIDER ??
-            process.env.GEAR_EVAL_PROVIDER ??
-            process.env.GEAR_PROVIDER ??
-            process.env.GEAR_PROVIDER ??
+            process.env.RUNE_EVAL_PROVIDER ??
+            process.env.RUNE_EVAL_PROVIDER ??
+            process.env.RUNE_PROVIDER ??
+            process.env.RUNE_PROVIDER ??
             DEFAULT_PROVIDER,
           model: entry,
         };
@@ -166,20 +166,20 @@ function parseModelSweep(): Array<{ provider: string; model: string }> | null {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  // --real flag OR the legacy GEAR_EVAL_REAL=1 env var enables real mode.
+  // --real flag OR the legacy RUNE_EVAL_REAL=1 env var enables real mode.
   const real = args.real || IS_REAL_MODE;
 
   const provider =
-    process.env.GEAR_EVAL_PROVIDER ??
-    process.env.GEAR_EVAL_PROVIDER ??
-    process.env.GEAR_PROVIDER ??
-    process.env.GEAR_PROVIDER ??
+    process.env.RUNE_EVAL_PROVIDER ??
+    process.env.RUNE_EVAL_PROVIDER ??
+    process.env.RUNE_PROVIDER ??
+    process.env.RUNE_PROVIDER ??
     DEFAULT_PROVIDER;
   const model =
-    process.env.GEAR_EVAL_MODEL ??
-    process.env.GEAR_EVAL_MODEL ??
-    process.env.GEAR_MODEL ??
-    process.env.GEAR_MODEL ??
+    process.env.RUNE_EVAL_MODEL ??
+    process.env.RUNE_EVAL_MODEL ??
+    process.env.RUNE_MODEL ??
+    process.env.RUNE_MODEL ??
     DEFAULT_MODEL;
 
   // ── Fail fast if --real is requested without the relevant API key. ──
@@ -188,7 +188,7 @@ async function main() {
     const keyEnv = PROVIDER_KEY_ENV[provider];
     if (!keyEnv) {
       console.error(
-        `\n  \x1b[31mUnknown provider "${provider}".\x1b[0m Set GEAR_EVAL_PROVIDER to one of: ` +
+        `\n  \x1b[31mUnknown provider "${provider}".\x1b[0m Set RUNE_EVAL_PROVIDER to one of: ` +
           `${[...Object.keys(PROVIDER_KEY_ENV), ...SUBSCRIPTION_PROVIDERS].join(", ")}\n`,
       );
       process.exit(1);
@@ -199,7 +199,7 @@ async function main() {
           `  Provider: ${provider}   Model: ${model}\n\n` +
           `  Set the key and retry, e.g.:\n` +
           `    \x1b[2m${keyEnv}=sk-... bun run tests/eval/runner.ts --real\x1b[0m\n\n` +
-          `  Optional overrides: GEAR_EVAL_PROVIDER, GEAR_EVAL_MODEL, --tasks <cat|name>, --max <n>\n`,
+          `  Optional overrides: RUNE_EVAL_PROVIDER, RUNE_EVAL_MODEL, --tasks <cat|name>, --max <n>\n`,
       );
       process.exit(1);
     }
@@ -223,7 +223,7 @@ async function main() {
   }
 
   const modeLabel = real ? `real (${provider}/${model})` : "mock LLM provider";
-  console.log("\n  \x1b[1mGear eval suite\x1b[0m");
+  console.log("\n  \x1b[1mRune eval suite\x1b[0m");
   console.log(`  \x1b[2m${tasks.length} tasks · ${modeLabel}\x1b[0m\n`);
 
   // ── Paired A/B (P7.4) ──
@@ -276,7 +276,7 @@ async function main() {
     printArmComparison(cmp);
 
     if (args.abOut) {
-      // The ledger reads this file; `gear evolve promote` refuses without a
+      // The ledger reads this file; `rune evolve promote` refuses without a
       // passing entry for the exact hash pair it names.
       await Bun.write(
         args.abOut,

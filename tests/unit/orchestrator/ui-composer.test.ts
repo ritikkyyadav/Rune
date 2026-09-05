@@ -469,7 +469,7 @@ describe("ui/composer renderPermissionCard", () => {
         choices: [
           "Yes, apply this edit",
           "Yes, allow file edits for this session",
-          "No, tell Gear what to change",
+          "No, tell Rune what to change",
         ],
       },
     });

@@ -69,7 +69,7 @@ describe("Python", () => {
   });
 
   test("a virtualenv is preferred over whatever is on PATH", () => {
-    const dir = mkdtempSync(join(tmpdir(), "gear-py-venv-"));
+    const dir = mkdtempSync(join(tmpdir(), "rune-py-venv-"));
     try {
       writeFileSync(join(dir, "pyproject.toml"), '[project]\nname = "x"\nversion = "0"\n');
       mkdirSync(join(dir, ".venv", "bin"), { recursive: true });
@@ -82,7 +82,7 @@ describe("Python", () => {
   });
 
   test("a venv that has pytest installed uses the venv's own binary", () => {
-    const dir = mkdtempSync(join(tmpdir(), "gear-py-venv-"));
+    const dir = mkdtempSync(join(tmpdir(), "rune-py-venv-"));
     try {
       writeFileSync(
         join(dir, "pyproject.toml"),
@@ -166,7 +166,7 @@ describe("monorepo roots", () => {
   });
 
   test("a JS monorepo root still trusts root scripts only", () => {
-    const dir = mkdtempSync(join(tmpdir(), "gear-mono-"));
+    const dir = mkdtempSync(join(tmpdir(), "rune-mono-"));
     try {
       writeFileSync(
         join(dir, "package.json"),
@@ -190,7 +190,7 @@ describe("monorepo roots", () => {
   });
 
   test("a root go.mod claims the module — nested directories are not new projects", () => {
-    const dir = mkdtempSync(join(tmpdir(), "gear-go-mono-"));
+    const dir = mkdtempSync(join(tmpdir(), "rune-go-mono-"));
     try {
       writeFileSync(join(dir, "go.mod"), "module x\n\ngo 1.21\n");
       mkdirSync(join(dir, "cmd", "server"), { recursive: true });
@@ -203,7 +203,7 @@ describe("monorepo roots", () => {
   });
 
   test("the walk is bounded — a project below the depth limit is not found", () => {
-    const dir = mkdtempSync(join(tmpdir(), "gear-deep-"));
+    const dir = mkdtempSync(join(tmpdir(), "rune-deep-"));
     try {
       const deep = join(dir, "a", "b", "c", "d");
       mkdirSync(deep, { recursive: true });
@@ -219,7 +219,7 @@ describe("monorepo roots", () => {
 describe("directories the walk must never enter", () => {
   let dir: string;
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "gear-skip-"));
+    dir = mkdtempSync(join(tmpdir(), "rune-skip-"));
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -265,7 +265,7 @@ describe("[verify.ecosystems]", () => {
 
 describe("the shapes that were already working stay working", () => {
   test("a scriptless project with raw test files still runs bun test", () => {
-    const dir = mkdtempSync(join(tmpdir(), "gear-raw-"));
+    const dir = mkdtempSync(join(tmpdir(), "rune-raw-"));
     try {
       mkdirSync(join(dir, "src"), { recursive: true });
       writeFileSync(join(dir, "src", "thing.test.ts"), "// t");
@@ -276,7 +276,7 @@ describe("the shapes that were already working stay working", () => {
   });
 
   test("a greenfield app one directory down is found and cd-prefixed", () => {
-    const dir = mkdtempSync(join(tmpdir(), "gear-nested-"));
+    const dir = mkdtempSync(join(tmpdir(), "rune-nested-"));
     try {
       mkdirSync(join(dir, "shop"), { recursive: true });
       writeFileSync(
@@ -292,7 +292,7 @@ describe("the shapes that were already working stay working", () => {
   test("two nested apps are now TWO check sets, not silence", () => {
     // The old detection called this "ambiguous" and returned nothing, so a
     // workspace holding two apps verified as `ran: false`.
-    const dir = mkdtempSync(join(tmpdir(), "gear-two-"));
+    const dir = mkdtempSync(join(tmpdir(), "rune-two-"));
     try {
       for (const name of ["a", "b"]) {
         mkdirSync(join(dir, name), { recursive: true });

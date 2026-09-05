@@ -1,7 +1,7 @@
 /**
  * Headless runs.
  *
- * The gap this closes: nothing could drive Gear without a terminal. Every CLI
+ * The gap this closes: nothing could drive Rune without a terminal. Every CLI
  * path ended in the TUI, which is why the eval suite imports Engine and drives
  * it in-process, and why the external anchors the eval README scopes as P1 —
  * Terminal-Bench, SWE-bench — were never built. Those harnesses shell out to an
@@ -187,5 +187,51 @@ describe("the JSON envelope", () => {
     expect(env.filesChanged).toEqual(["a.ts"]);
     expect(env.usage).toEqual({ inputTokens: 10, outputTokens: 2, cacheReadTokens: 90 });
     expect(env.durationMs).toBe(1234);
+  });
+});
+
+describe("a terminal error fails the run", () => {
+  // Observed live at v0.3.0-dev+927205d: `rune -P "..." -p ollama-turbo` emitted
+  // {"type":"error","error":"No credits on ollama-turbo...","recoverable":false}
+  // and then reported {"ok":true,...,"text":""} and exited 0. The error case sat
+  // in the reducer's ignored group, so every provider failure — no credits, a
+  // retired model, a bad key — scored as a pass with an empty answer.
+  test("a non-recoverable error sets ok:false, the reason, and exit 1", async () => {
+    const r = await runHeadless(
+      fakeEngine([{ type: "error", error: "No credits on ollama-turbo.", recoverable: false }]),
+      "s",
+      "hi",
+    );
+    expect(r.ok).toBe(false);
+    expect(r.error).toBe("No credits on ollama-turbo.");
+    expect(headlessExitCode(r)).toBe(HEADLESS_EXIT.failed);
+  });
+
+  test("a RECOVERABLE error does not fail a turn the engine went on to finish", async () => {
+    // The engine retries and falls back on its own; counting a recovered error
+    // as a failure would fail runs that in fact produced their answer.
+    const r = await runHeadless(
+      fakeEngine([
+        { type: "error", error: "429 from provider; retrying", recoverable: true },
+        { type: "text_delta", text: "done" },
+      ]),
+      "s",
+      "hi",
+    );
+    expect(r.ok).toBe(true);
+    expect(r.text).toBe("done");
+    expect(headlessExitCode(r)).toBe(HEADLESS_EXIT.ok);
+  });
+
+  test("the FIRST fatal error is reported — later ones are its consequences", async () => {
+    const r = await runHeadless(
+      fakeEngine([
+        { type: "error", error: "root cause", recoverable: false },
+        { type: "error", error: "downstream", recoverable: false },
+      ]),
+      "s",
+      "hi",
+    );
+    expect(r.error).toBe("root cause");
   });
 });

@@ -1,14 +1,14 @@
 // --- Theme persistence ---
-// The active theme is saved to ~/.gear/theme.json -- a tiny JSON sidecar, because
+// The active theme is saved to ~/.rune/theme.json -- a tiny JSON sidecar, because
 // config.ts ships only a TOML *reader* (writing TOML back would clobber user comments).
-// This follows the existing ~/.gear/<file> persistence pattern.
+// This follows the existing ~/.rune/<file> persistence pattern.
 //
 // resolveInitialTheme picks the startup theme by precedence:
-//   GEAR_THEME env  >  saved sidecar  >  [ui].theme in config  >  built-in default.
+//   RUNE_THEME env  >  saved sidecar  >  [ui].theme in config  >  built-in default.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
-import { getGearHome } from "@gear/shared";
+import { getRuneHome } from "@rune/shared";
 import { DEFAULT_THEME, findTheme, isProductionTheme } from "./themes";
 
 function themeFile(dir: string): string {
@@ -17,7 +17,7 @@ function themeFile(dir: string): string {
 
 /** Persist the chosen theme name to <dir>/theme.json. Never throws -- a write failure
  *  must not crash the UI. */
-export function saveTheme(name: string, dir: string = getGearHome()): void {
+export function saveTheme(name: string, dir: string = getRuneHome()): void {
   try {
     mkdirSync(dir, { recursive: true });
     writeFileSync(themeFile(dir), JSON.stringify({ theme: name }, null, 2) + "\n");
@@ -27,7 +27,7 @@ export function saveTheme(name: string, dir: string = getGearHome()): void {
 }
 
 /** Read the saved theme name, or null if absent / unreadable / corrupt. */
-export function loadSavedTheme(dir: string = getGearHome()): string | null {
+export function loadSavedTheme(dir: string = getRuneHome()): string | null {
   try {
     const path = themeFile(dir);
     if (!existsSync(path)) return null;

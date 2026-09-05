@@ -8,10 +8,10 @@
 // putting `authenticate()` on the adapter would couple auth to inference; keeping
 // it here does not.
 
-import type { ProviderPreset, CredentialStore, AuthMethod } from "@gear/shared";
+import type { ProviderPreset, CredentialStore, AuthMethod } from "@rune/shared";
 
 // Re-export so the auth layer is the one import site for strategy code, while the
-// canonical definition stays in @gear/shared (used by ProviderPreset.auth too).
+// canonical definition stays in @rune/shared (used by ProviderPreset.auth too).
 export type { AuthMethod };
 
 /**
@@ -88,7 +88,7 @@ export class AuthError extends Error {
   readonly providerId: string;
   readonly method: AuthMethod;
   readonly retryable: boolean;
-  /** Actionable next step, e.g. "run: gear login openrouter". */
+  /** Actionable next step, e.g. "run: rune login openrouter". */
   readonly recovery?: string;
 
   constructor(opts: {

@@ -154,7 +154,7 @@ export function printReport(report: SuiteReport): void {
       ? ` · ${report.provider ?? "?"}/${report.model ?? "?"}`
       : " · mock LLM provider";
 
-  console.log("\n  \x1b[1mGear eval suite\x1b[0m" + modeLabel);
+  console.log("\n  \x1b[1mRune eval suite\x1b[0m" + modeLabel);
   console.log(`  \x1b[2m${report.total} tasks\x1b[0m\n`);
 
   // Per-category breakdown
@@ -740,7 +740,7 @@ export function printArmComparison(cmp: ArmComparison): void {
   console.log();
   if (cmp.win) {
     console.log(
-      `  \x1b[32mWIN\x1b[0m — all three gates pass. \x1b[2mgear evolve promote ${cmp.variant}\x1b[0m\n`,
+      `  \x1b[32mWIN\x1b[0m — all three gates pass. \x1b[2mrune evolve promote ${cmp.variant}\x1b[0m\n`,
     );
   } else {
     console.log(`  \x1b[33mNO CHANGE\x1b[0m — the variant is not promoted:`);

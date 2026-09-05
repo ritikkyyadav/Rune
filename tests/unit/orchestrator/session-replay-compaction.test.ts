@@ -201,11 +201,11 @@ describe("eventsToMessages — compaction replay", () => {
 });
 
 describe("compaction round-trip via SessionManager", () => {
-  const dir = mkdtempSync(join(tmpdir(), "gear-compaction-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "rune-compaction-test-"));
   afterAll(() => rmTemp(dir));
 
   test("persisted compaction event shrinks the replay but not the event log", () => {
-    const sm = new SessionManager(join(dir, "gear.db"));
+    const sm = new SessionManager(join(dir, "rune.db"));
     const s = sm.createSession("/tmp/ws", "test-model");
 
     sm.appendEvent(s.id, { type: "user_msg", payload: { content: "q1" } });

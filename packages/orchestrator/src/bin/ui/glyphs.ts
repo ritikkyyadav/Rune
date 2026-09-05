@@ -54,10 +54,10 @@ function enabled(value: string | undefined): boolean {
 
 /** Resolve the text-width rung once, when this module is loaded. */
 export function detectGlyphMode(env: Record<string, string | undefined> = process.env): GlyphMode {
-  if (enabled(env.GEAR_ASCII)) return "ascii";
+  if (enabled(env.RUNE_ASCII)) return "ascii";
   const locale = env.LC_ALL || env.LC_CTYPE || env.LANG || "";
   if (locale && !/utf-?8/i.test(locale)) return "ascii";
-  if (enabled(env.GEAR_AMBIGUOUS_WIDTH) || /^(?:ja|ko|zh)(?:[_@.]|$)/i.test(locale)) {
+  if (enabled(env.RUNE_AMBIGUOUS_WIDTH) || /^(?:ja|ko|zh)(?:[_@.]|$)/i.test(locale)) {
     return "ambig";
   }
   return "utf8";

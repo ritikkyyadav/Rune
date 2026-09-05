@@ -5,12 +5,12 @@ import { join } from "node:path";
 
 import { Engine } from "../../packages/orchestrator/src/engine";
 
-const RUST_RELEASE = join(import.meta.dir, "../../target/release/gear-tools");
-const RUST_DEBUG = join(import.meta.dir, "../../target/debug/gear-tools");
+const RUST_RELEASE = join(import.meta.dir, "../../target/release/rune-tools");
+const RUST_DEBUG = join(import.meta.dir, "../../target/debug/rune-tools");
 const RUST_BIN = existsSync(RUST_RELEASE) ? RUST_RELEASE : RUST_DEBUG;
 const HAS_RUST_BIN = existsSync(RUST_BIN);
 
-// P8 end-to-end: a plugin dropped into .gear/plugins surfaces its skill in the
+// P8 end-to-end: a plugin dropped into .rune/plugins surfaces its skill in the
 // engine's catalog, attributed to the plugin (provenance), and disappears on
 // uninstall (fresh engine after rm).
 
@@ -18,8 +18,8 @@ describe("Engine plugin bundles", () => {
   let dir: string;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "gear-engine-plugins-"));
-    const pluginRoot = join(dir, ".gear", "plugins", "acme");
+    dir = mkdtempSync(join(tmpdir(), "rune-engine-plugins-"));
+    const pluginRoot = join(dir, ".rune", "plugins", "acme");
     mkdirSync(join(pluginRoot, "skills", "release-check"), { recursive: true });
     writeFileSync(
       join(pluginRoot, "plugin.json"),
@@ -40,10 +40,10 @@ describe("Engine plugin bundles", () => {
       model: "mock-model",
       provider: "anthropic",
       workspaceRoot: dir,
-      dbPath: join(dir, "gear.db"),
+      dbPath: join(dir, "rune.db"),
       toolsBinaryPath: RUST_BIN,
       // Keep the boot light: no bundled catalog, just the workspace roots.
-      skillRoots: [join(dir, ".gear", "plugins")],
+      skillRoots: [join(dir, ".rune", "plugins")],
     });
   }
 
@@ -62,7 +62,7 @@ describe("Engine plugin bundles", () => {
   });
 
   test.skipIf(!HAS_RUST_BIN)("uninstall = delete the directory (fresh engine)", async () => {
-    rmSync(join(dir, ".gear", "plugins", "acme"), { recursive: true, force: true });
+    rmSync(join(dir, ".rune", "plugins", "acme"), { recursive: true, force: true });
     const engine = makeEngine();
     try {
       const { total } = await engine.listSkills();

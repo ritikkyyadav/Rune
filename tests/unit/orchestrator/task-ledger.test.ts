@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 function tmp(): string {
-  const d = mkdtempSync(join(tmpdir(), "gear-ledger-"));
+  const d = mkdtempSync(join(tmpdir(), "rune-ledger-"));
   dirs.push(d);
   return d;
 }

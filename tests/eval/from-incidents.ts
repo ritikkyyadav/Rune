@@ -11,14 +11,14 @@
  *
  * Three moving parts, and the split matters:
  *
- *   · MINING reads `~/.gear/blackbox.db` on a real machine. Read-only, always.
+ *   · MINING reads `~/.rune/blackbox.db` on a real machine. Read-only, always.
  *   · A SNAPSHOT (`from-incidents/classes.json`) is what gets committed. CI has
  *     no black box, so the gate has to run against a recorded set of counts
  *     rather than a live database — and writing that snapshot is a human act
  *     from a machine that has been used, not something the loop does for itself.
  *   · The CHECK (`--check`) compares the snapshot against `covered.json` and
  *     fails when an eval-able class over the threshold has no task. That is the
- *     CI gate, and it is deterministic on a runner with nothing in ~/.gear.
+ *     CI gate, and it is deterministic on a runner with nothing in ~/.rune.
  *
  * Usage:
  *   bun run tests/eval/from-incidents.ts                 # report top recurring classes
@@ -32,7 +32,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { BlackboxStore } from "@gear/telemetry";
+import { BlackboxStore } from "@rune/telemetry";
 
 const SCAFFOLD_DIR = join(__dirname, "from-incidents");
 const COVERED_PATH = join(SCAFFOLD_DIR, "covered.json");
@@ -76,7 +76,7 @@ interface CliArgs {
 
 function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = {
-    db: join(homedir(), ".gear", "blackbox.db"),
+    db: join(homedir(), ".rune", "blackbox.db"),
     minCount: DEFAULT_MIN_COUNT,
     sinceDays: 30,
     scaffold: false,

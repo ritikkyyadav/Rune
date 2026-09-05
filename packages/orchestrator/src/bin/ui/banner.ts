@@ -1,4 +1,4 @@
-// --- Gear identity header ---
+// --- Rune identity header ---
 // The masthead: who, where, which build. Three fields, one row.
 //
 //   G E A R   ~/Project/Alan · worktree fix/stream                v0.3.0
@@ -21,15 +21,15 @@ import { glyph } from "./glyphs";
 import { header as flowHeader } from "./flow";
 import { PRODUCT_NAME } from "./brand";
 
-/** Explicit text presentation. Never use the coloured emoji gear. */
-export const GEAR_MARK = glyph("phase");
+/** Explicit text presentation. Never use the coloured emoji rune. */
+export const RUNE_MARK = glyph("phase");
 
-/** The supplied Gear mark has exactly nine teeth. */
-export const GEAR_TOOTH_COUNT = 9;
+/** The supplied Rune mark has exactly nine teeth. */
+export const RUNE_TOOTH_COUNT = 9;
 
 /** Retained so callers that referenced the old raster still type-check; the
  *  header no longer draws it. */
-export const GEAR_AVATAR_LINES = ["", "", "", ""] as const;
+export const RUNE_AVATAR_LINES = ["", "", "", ""] as const;
 
 function shortPath(p: string): string {
   const home = os.homedir();
@@ -176,7 +176,7 @@ function workspaceIsLinkedWorktree(workspace: string): boolean {
 
 /** Compact lockup, still used by a few one-line notices. */
 export function wordmark(): string {
-  return `${brand(GEAR_MARK)} ${bold(text(PRODUCT_NAME))}`;
+  return `${brand(RUNE_MARK)} ${bold(text(PRODUCT_NAME))}`;
 }
 
 export function renderBanner(opts: BannerOptions): string {

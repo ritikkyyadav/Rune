@@ -70,11 +70,11 @@ export class OllamaProvider implements LlmProvider {
     let b = baseUrl ?? process.env.OLLAMA_HOST ?? "http://localhost:11434";
     if (!/^https?:\/\//.test(b)) b = `http://${b}`;
     this.baseUrl = b.replace(/\/$/, "");
-    // config.toml `[llm.ollama] keepAlive` wins; GEAR_OLLAMA_KEEP_ALIVE is the
+    // config.toml `[llm.ollama] keepAlive` wins; RUNE_OLLAMA_KEEP_ALIVE is the
     // escape hatch for one run. Ollama accepts a duration string ("30m", "1h")
     // or a number of seconds; "-1" holds the model indefinitely and "0"
     // unloads immediately.
-    this.keepAlive = opts?.keepAlive ?? process.env.GEAR_OLLAMA_KEEP_ALIVE ?? DEFAULT_KEEP_ALIVE;
+    this.keepAlive = opts?.keepAlive ?? process.env.RUNE_OLLAMA_KEEP_ALIVE ?? DEFAULT_KEEP_ALIVE;
   }
 
   async infer(request: InferenceRequest): Promise<InferenceResponse> {

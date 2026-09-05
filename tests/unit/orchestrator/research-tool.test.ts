@@ -61,7 +61,7 @@ function toolWith(
   recorded: Array<{ type: string; payload: Record<string, unknown> }>,
 ) {
   return createResearchTool({
-    binaryPath: "gear-tools",
+    binaryPath: "rune-tools",
     workspaceRoot: "/tmp/nonexistent-ws",
     resolve: () => ({ gateway: gatewayWith(body), model: "test-model", provider: "anthropic" }),
     defaults: () => ({ save: false }),

@@ -1,7 +1,7 @@
 name: Release
 
 # Tag-driven distribution: `git tag v0.3.0 && git push origin v0.3.0` builds a
-# CLI + gear-tools pair for every supported platform, generates SHA256SUMS in
+# CLI + rune-tools pair for every supported platform, generates SHA256SUMS in
 # the same job that assembled the binaries (checksum drift is impossible by
 # construction), smoke-runs the Linux pair, publishes the GitHub release, and
 # then re-installs from that release exactly the way the README tells users to.
@@ -42,7 +42,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   # A tag push is a real release; a manual run publishes only when asked.
-  GEAR_PUBLISH: ${{ github.event_name == 'push' || inputs.publish == true }}
+  RUNE_PUBLISH: ${{ github.event_name == 'push' || inputs.publish == true }}
 
 jobs:
   version:
@@ -62,14 +62,14 @@ jobs:
           # A tag push names the version. A manual run may name one, else the
           # dev version scripts/version.sh computes. Either way, ONE source.
           if [ "${{ github.event_name }}" = "push" ]; then
-            export GEAR_VERSION="${GITHUB_REF_NAME}"
+            export RUNE_VERSION="${GITHUB_REF_NAME}"
           elif [ -n "${{ inputs.version }}" ]; then
-            export GEAR_VERSION="${{ inputs.version }}"
+            export RUNE_VERSION="${{ inputs.version }}"
           fi
           v="$(bash scripts/version.sh)"
           echo "version=$v" >> "$GITHUB_OUTPUT"
-          echo "publish=${GEAR_PUBLISH}" >> "$GITHUB_OUTPUT"
-          echo "Building as: $v (publish=${GEAR_PUBLISH})"
+          echo "publish=${RUNE_PUBLISH}" >> "$GITHUB_OUTPUT"
+          echo "Building as: $v (publish=${RUNE_PUBLISH})"
 
   cli:
     name: CLI (bun cross-compile, all platforms)
@@ -81,24 +81,10 @@ jobs:
         with:
           bun-version: latest
       - run: bun install --frozen-lockfile
-      # Every binary below carries the web client inside it: a downloaded
-      # executable has no `apps/web/dist` beside it, and one compiled without
-      # this step serves nothing and answers `401 unauthorized` to the first
-      # page request (P10.9a). The bundle is never a separate download.
-      - name: Build the web client and generate the embed manifest
-        shell: bash
-        run: |
-          set -euo pipefail
-          bun run --filter @gear/web build
-          test -f apps/web/dist/index.html || {
-            echo "::error::apps/web/dist/index.html is missing; refusing to release binaries that cannot serve the product"
-            exit 1
-          }
-          bun scripts/gen-web-embed.ts
       - name: Compile standalone CLIs
         shell: bash
         env:
-          GEAR_VERSION: ${{ needs.version.outputs.version }}
+          RUNE_VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
           # One target list, one version source — the same files the local
@@ -106,19 +92,19 @@ jobs:
           # build cannot cover different platforms.
           . scripts/targets.sh
           . scripts/version.sh
-          v="$(gear_version)"
+          v="$(rune_version)"
           mkdir -p out
-          for pair in "${GEAR_TARGETS[@]}"; do
+          for pair in "${RUNE_TARGETS[@]}"; do
             target="${pair%%:*}"; suffix="${pair##*:}"
             bun build --compile --minify --target="$target" \
-              --define=GEAR_BUILD_VERSION="\"$v\"" \
-              packages/orchestrator/src/bin/gear-cli.ts --outfile "out/gear-$suffix"
+              --define=RUNE_BUILD_VERSION="\"$v\"" \
+              packages/orchestrator/src/bin/rune-cli.ts --outfile "out/rune-$suffix"
           done
           ls -la out/
       - uses: actions/upload-artifact@v4
         with:
           name: cli
-          path: out/gear-*
+          path: out/rune-*
           retention-days: 7
 
   tools-native:
@@ -127,18 +113,18 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            asset: gear-tools-darwin-arm64
-            bin: gear-tools
+            asset: rune-tools-darwin-arm64
+            bin: rune-tools
           - os: macos-latest
-            asset: gear-tools-darwin-x64
-            bin: gear-tools
+            asset: rune-tools-darwin-x64
+            bin: rune-tools
             target: x86_64-apple-darwin
           - os: ubuntu-latest
-            asset: gear-tools-linux-x64
-            bin: gear-tools
+            asset: rune-tools-linux-x64
+            bin: rune-tools
           - os: windows-latest
-            asset: gear-tools-windows-x64.exe
-            bin: gear-tools.exe
+            asset: rune-tools-windows-x64.exe
+            bin: rune-tools.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -151,9 +137,9 @@ jobs:
         shell: bash
         run: |
           if [ -n "${{ matrix.target }}" ]; then
-            cargo build --release -p gear-tools --target "${{ matrix.target }}"
+            cargo build --release -p rune-tools --target "${{ matrix.target }}"
           else
-            cargo build --release -p gear-tools
+            cargo build --release -p rune-tools
           fi
       - name: Stage asset
         shell: bash
@@ -168,21 +154,21 @@ jobs:
           retention-days: 7
 
   tools-linux-arm64:
-    name: gear-tools-linux-arm64 (cross)
+    name: rune-tools-linux-arm64 (cross)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cross
       - uses: Swatinem/rust-cache@v2
-      - run: cross build --release -p gear-tools --target aarch64-unknown-linux-gnu
+      - run: cross build --release -p rune-tools --target aarch64-unknown-linux-gnu
       - name: Stage asset
         run: |
           mkdir -p out
-          cp target/aarch64-unknown-linux-gnu/release/gear-tools out/gear-tools-linux-arm64
+          cp target/aarch64-unknown-linux-gnu/release/rune-tools out/rune-tools-linux-arm64
       - uses: actions/upload-artifact@v4
         with:
-          name: gear-tools-linux-arm64
+          name: rune-tools-linux-arm64
           path: out/*
           retention-days: 7
 
@@ -209,7 +195,7 @@ jobs:
           merge-multiple: true
       - uses: actions/download-artifact@v4
         with:
-          pattern: gear-tools-darwin-*
+          pattern: rune-tools-darwin-*
           path: in
           merge-multiple: true
       - name: Stage the darwin binaries
@@ -217,7 +203,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          for f in gear-darwin-arm64 gear-darwin-x64 gear-tools-darwin-arm64 gear-tools-darwin-x64; do
+          for f in rune-darwin-arm64 rune-darwin-x64 rune-tools-darwin-arm64 rune-tools-darwin-x64; do
             [ -f "in/$f" ] && cp "in/$f" "out/$f"
           done
           chmod +x out/* || true
@@ -239,7 +225,7 @@ jobs:
           fi
 
           # A throwaway keychain, unlocked only for this job.
-          KEYCHAIN="$RUNNER_TEMP/gear-signing.keychain-db"
+          KEYCHAIN="$RUNNER_TEMP/rune-signing.keychain-db"
           KEYCHAIN_PWD="$(openssl rand -base64 24)"
           security create-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
           security set-keychain-settings -lut 3600 "$KEYCHAIN"
@@ -303,14 +289,14 @@ jobs:
           merge-multiple: true
       - uses: actions/download-artifact@v4
         with:
-          pattern: gear-tools-windows-*
+          pattern: rune-tools-windows-*
           path: in
           merge-multiple: true
       - name: Stage the windows binaries
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path out | Out-Null
-          foreach ($f in @('gear-windows-x64.exe','gear-tools-windows-x64.exe')) {
+          foreach ($f in @('rune-windows-x64.exe','rune-tools-windows-x64.exe')) {
             if (Test-Path "in/$f") { Copy-Item "in/$f" "out/$f" }
           }
           Get-ChildItem out
@@ -325,7 +311,7 @@ jobs:
             Write-Host "::warning::WINDOWS_CERTIFICATE not set - Windows binaries ship UNSIGNED and will hit SmartScreen. See docs/release.md."
             exit 0
           }
-          $pfx = Join-Path $env:RUNNER_TEMP 'gear-signing.pfx'
+          $pfx = Join-Path $env:RUNNER_TEMP 'rune-signing.pfx'
           [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT))
           $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe |
             Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1
@@ -370,7 +356,7 @@ jobs:
           merge-multiple: true
       - uses: actions/download-artifact@v4
         with:
-          pattern: gear-tools-*
+          pattern: rune-tools-*
           path: dist
           merge-multiple: true
       - uses: actions/download-artifact@v4
@@ -384,19 +370,19 @@ jobs:
           set -euo pipefail
           . scripts/targets.sh
           missing=0
-          for pair in "${GEAR_TARGETS[@]}"; do
-            f="dist/gear-${pair##*:}"
+          for pair in "${RUNE_TARGETS[@]}"; do
+            f="dist/rune-${pair##*:}"
             [ -f "$f" ] || { echo "::error::missing CLI asset $f"; missing=1; }
           done
-          for suffix in "${GEAR_TOOLS_ASSETS[@]}"; do
-            f="dist/gear-tools-$suffix"
+          for suffix in "${RUNE_TOOLS_ASSETS[@]}"; do
+            f="dist/rune-tools-$suffix"
             [ -f "$f" ] || { echo "::error::missing tools asset $f"; missing=1; }
           done
           exit "$missing"
       - name: Checksums (generated beside the binaries they describe)
         run: |
           cd dist
-          sha256sum gear-* > SHA256SUMS
+          sha256sum rune-* > SHA256SUMS
           cat SHA256SUMS
       # ── Linux has no OS-level signing, so it gets a detached signature ──
       # Signing SHA256SUMS covers every artifact at once: that file names them
@@ -404,7 +390,7 @@ jobs:
       # binaries it describes. The public key lives in the README.
       - name: Detached Ed25519 signature over SHA256SUMS
         env:
-          GEAR_SIGNING_PRIVATE_KEY: ${{ secrets.GEAR_SIGNING_PRIVATE_KEY }}
+          RUNE_SIGNING_PRIVATE_KEY: ${{ secrets.RUNE_SIGNING_PRIVATE_KEY }}
         run: bun scripts/sign-release.ts sign dist
 
       - name: Build provenance attestation
@@ -415,29 +401,29 @@ jobs:
         continue-on-error: true
         uses: actions/attest-build-provenance@v1
         with:
-          subject-path: "dist/gear-*"
+          subject-path: "dist/rune-*"
 
       - name: Smoke the Linux pair end-to-end
         run: |
-          chmod +x dist/gear-linux-x64 dist/gear-tools-linux-x64
-          GEAR_TOOLS_BIN=dist/gear-tools-linux-x64 dist/gear-linux-x64 --version | grep -E "Gear v"
+          chmod +x dist/rune-linux-x64 dist/rune-tools-linux-x64
+          RUNE_TOOLS_BIN=dist/rune-tools-linux-x64 dist/rune-linux-x64 --version | grep -E "Rune v"
           # Not just "it starts": the pair must execute real tools together.
-          GEAR_TOOLS_BIN="$PWD/dist/gear-tools-linux-x64" dist/gear-linux-x64 tools-smoke
-          # And not just "it runs tools": it must serve the product. The page
-          # with its token, one session over the websocket, no host left behind
+          RUNE_TOOLS_BIN="$PWD/dist/rune-tools-linux-x64" dist/rune-linux-x64 tools-smoke
+          # And not just "it runs tools": it must host a session. One turn over
+          # the websocket from a host the binary spawned, no host left behind
           # (P10.9a). A release cannot ship a binary that cannot do this.
-          GEAR_HOME="$RUNNER_TEMP/gear-home-web" \
-            GEAR_TOOLS_BIN="$PWD/dist/gear-tools-linux-x64" dist/gear-linux-x64 serve --check
+          RUNE_HOME="$RUNNER_TEMP/rune-home-serve" \
+            RUNE_TOOLS_BIN="$PWD/dist/rune-tools-linux-x64" dist/rune-linux-x64 serve --check
       - name: The binary must agree with the tag
         shell: bash
         env:
           EXPECTED: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
-          # `gear --version` prints "Gear v<version>". A release whose binary
+          # `rune --version` prints "Rune v<version>". A release whose binary
           # disagrees with its tag is the exact failure four hand-maintained
           # version copies used to ship; it is now a hard stop.
-          reported="$(dist/gear-linux-x64 --version | sed -n 's/^Gear v//p' | head -1)"
+          reported="$(dist/rune-linux-x64 --version | sed -n 's/^Rune v//p' | head -1)"
           echo "tag/input: $EXPECTED"
           echo "binary   : $reported"
           if [ "$reported" != "$EXPECTED" ]; then
@@ -456,9 +442,9 @@ jobs:
           set -euo pipefail
           mkdir -p homebrew-tap/Formula
           sum() { grep -E "  $1\$" dist/SHA256SUMS | awk '{print $1}'; }
-          cat > homebrew-tap/Formula/gear.rb <<RUBY
+          cat > homebrew-tap/Formula/rune.rb <<RUBY
           # Generated by .github/workflows/release.yml. Do not edit by hand.
-          class Gear < Formula
+          class Rune < Formula
             desc "The agent that proves its work, on any model"
             homepage "https://github.com/${GITHUB_REPOSITORY}"
             version "${VERSION}"
@@ -466,64 +452,64 @@ jobs:
 
             on_macos do
               on_arm do
-                url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/gear-darwin-arm64"
-                sha256 "$(sum gear-darwin-arm64)"
-                resource "gear-tools" do
-                  url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/gear-tools-darwin-arm64"
-                  sha256 "$(sum gear-tools-darwin-arm64)"
+                url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/rune-darwin-arm64"
+                sha256 "$(sum rune-darwin-arm64)"
+                resource "rune-tools" do
+                  url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/rune-tools-darwin-arm64"
+                  sha256 "$(sum rune-tools-darwin-arm64)"
                 end
               end
               on_intel do
-                url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/gear-darwin-x64"
-                sha256 "$(sum gear-darwin-x64)"
-                resource "gear-tools" do
-                  url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/gear-tools-darwin-x64"
-                  sha256 "$(sum gear-tools-darwin-x64)"
+                url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/rune-darwin-x64"
+                sha256 "$(sum rune-darwin-x64)"
+                resource "rune-tools" do
+                  url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/rune-tools-darwin-x64"
+                  sha256 "$(sum rune-tools-darwin-x64)"
                 end
               end
             end
 
             on_linux do
               on_arm do
-                url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/gear-linux-arm64"
-                sha256 "$(sum gear-linux-arm64)"
-                resource "gear-tools" do
-                  url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/gear-tools-linux-arm64"
-                  sha256 "$(sum gear-tools-linux-arm64)"
+                url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/rune-linux-arm64"
+                sha256 "$(sum rune-linux-arm64)"
+                resource "rune-tools" do
+                  url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/rune-tools-linux-arm64"
+                  sha256 "$(sum rune-tools-linux-arm64)"
                 end
               end
               on_intel do
-                url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/gear-linux-x64"
-                sha256 "$(sum gear-linux-x64)"
-                resource "gear-tools" do
-                  url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/gear-tools-linux-x64"
-                  sha256 "$(sum gear-tools-linux-x64)"
+                url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/rune-linux-x64"
+                sha256 "$(sum rune-linux-x64)"
+                resource "rune-tools" do
+                  url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/rune-tools-linux-x64"
+                  sha256 "$(sum rune-tools-linux-x64)"
                 end
               end
             end
 
             def install
               # The CLI is useless without its native executor: file, search and
-              # shell tools all run through gear-tools.
-              bin.install stable.url.split("/").last => "gear"
-              resource("gear-tools").stage do
-                bin.install Dir["*"].first => "gear-tools"
+              # shell tools all run through rune-tools.
+              bin.install stable.url.split("/").last => "rune"
+              resource("rune-tools").stage do
+                bin.install Dir["*"].first => "rune-tools"
               end
             end
 
             def caveats
               <<~EOS
-                Gear reads GEAR_TOOLS_BIN, falling back to the gear-tools beside it.
-                Check the install with:  gear doctor && gear tools-smoke
+                Rune reads RUNE_TOOLS_BIN, falling back to the rune-tools beside it.
+                Check the install with:  rune doctor && rune tools-smoke
               EOS
             end
 
             test do
-              assert_match "Gear v#{version}", shell_output("#{bin}/gear --version")
+              assert_match "Rune v#{version}", shell_output("#{bin}/rune --version")
             end
           end
           RUBY
-          cat homebrew-tap/Formula/gear.rb
+          cat homebrew-tap/Formula/rune.rb
       - uses: actions/upload-artifact@v4
         with:
           name: homebrew-tap
@@ -539,7 +525,7 @@ jobs:
         run: |
           gh release create "$TAG" dist/* \
             --repo "$GITHUB_REPOSITORY" \
-            --title "Gear $TAG" \
+            --title "Rune $TAG" \
             $PRERELEASE \
             --generate-notes
       - name: Dry run — built, checksummed and smoked, nothing published
@@ -584,16 +570,16 @@ jobs:
           mkdir -p "$HOME/gearbin"
           cd "$RUNNER_TEMP"
           gh release download "$TAG" -R "$GITHUB_REPOSITORY" \
-            -p "gear-$SUFFIX" -p "gear-tools-$SUFFIX" -p SHA256SUMS --clobber
+            -p "rune-$SUFFIX" -p "rune-tools-$SUFFIX" -p SHA256SUMS --clobber
           # Verification is the point: an unverified download is a CDN with an
           # executable bit, which is what the installers were before P1.4.
           if command -v sha256sum >/dev/null; then
-            grep -E "gear(-tools)?-$SUFFIX\$" SHA256SUMS | sha256sum -c -
+            grep -E "rune(-tools)?-$SUFFIX\$" SHA256SUMS | sha256sum -c -
           else
-            grep -E "gear(-tools)?-$SUFFIX\$" SHA256SUMS | shasum -a 256 -c -
+            grep -E "rune(-tools)?-$SUFFIX\$" SHA256SUMS | shasum -a 256 -c -
           fi
-          install -m755 "gear-$SUFFIX" "$HOME/gearbin/gear"
-          install -m755 "gear-tools-$SUFFIX" "$HOME/gearbin/gear-tools"
+          install -m755 "rune-$SUFFIX" "$HOME/gearbin/rune"
+          install -m755 "rune-tools-$SUFFIX" "$HOME/gearbin/rune-tools"
 
       - name: Download and verify the published pair (Windows)
         if: runner.os == 'Windows'
@@ -607,18 +593,18 @@ jobs:
           New-Item -ItemType Directory -Force -Path $bin | Out-Null
           Set-Location $env:RUNNER_TEMP
           gh release download $env:TAG -R $env:GITHUB_REPOSITORY `
-            -p "gear-windows-x64.exe" -p "gear-tools-windows-x64.exe" -p SHA256SUMS --clobber
+            -p "rune-windows-x64.exe" -p "rune-tools-windows-x64.exe" -p SHA256SUMS --clobber
           $sums = @{}
           foreach ($line in Get-Content SHA256SUMS) {
             if ($line -match '^([0-9a-fA-F]{64})\s+\*?(.+)$') { $sums[$Matches[2].Trim()] = $Matches[1].ToLower() }
           }
-          foreach ($name in @('gear-windows-x64.exe','gear-tools-windows-x64.exe')) {
+          foreach ($name in @('rune-windows-x64.exe','rune-tools-windows-x64.exe')) {
             $got = (Get-FileHash -Algorithm SHA256 -Path $name).Hash.ToLower()
             if ($sums[$name] -ne $got) { throw "checksum mismatch for $name" }
             Write-Host "verified $name"
           }
-          Copy-Item -Force 'gear-windows-x64.exe' (Join-Path $bin 'gear.exe')
-          Copy-Item -Force 'gear-tools-windows-x64.exe' (Join-Path $bin 'gear-tools.exe')
+          Copy-Item -Force 'rune-windows-x64.exe' (Join-Path $bin 'rune.exe')
+          Copy-Item -Force 'rune-tools-windows-x64.exe' (Join-Path $bin 'rune-tools.exe')
 
       - name: Smoke - version, doctor, tools, and a real prompt (POSIX)
         if: runner.os != 'Windows'
@@ -626,21 +612,19 @@ jobs:
         run: |
           set -euo pipefail
           BIN="$HOME/gearbin"
-          export GEAR_TOOLS_BIN="$BIN/gear-tools"
-          export GEAR_SMOKE_HOME="$RUNNER_TEMP/gear-home"
-          export GEAR_HOME="$GEAR_SMOKE_HOME"
-          mkdir -p "$GEAR_SMOKE_HOME"
-          "$BIN/gear" --version | grep -E "Gear v[0-9]"
-          "$BIN/gear" doctor
-          "$BIN/gear" tools-smoke
+          export RUNE_TOOLS_BIN="$BIN/rune-tools"
+          export RUNE_SMOKE_HOME="$RUNNER_TEMP/rune-home"
+          export RUNE_HOME="$RUNE_SMOKE_HOME"
+          mkdir -p "$RUNE_SMOKE_HOME"
+          "$BIN/rune" --version | grep -E "Rune v[0-9]"
+          "$BIN/rune" doctor
+          "$BIN/rune" tools-smoke
           # The path a user actually takes: a prompt in, an answer out, through
           # the real binary and a mock provider that needs no credential.
-          bun scripts/smoke-print.ts "$BIN/gear"
-          # And the path the FOUNDER actually took: open the product. The page
-          # with its token, one session over the websocket, no host left behind
-          # (P10.9a). This is the first gate in the repo that runs the web
-          # product from a downloaded binary rather than from source.
-          "$BIN/gear" serve --check
+          bun scripts/smoke-print.ts "$BIN/rune"
+          # And the served engine: one session over the websocket from a host
+          # the downloaded binary spawned, no host left behind (P10.9a).
+          "$BIN/rune" serve --check
 
       - name: Smoke - version, doctor, tools, and a real prompt (Windows)
         if: runner.os == 'Windows'
@@ -648,20 +632,20 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $bin = Join-Path $env:USERPROFILE 'gearbin'
-          $gear = Join-Path $bin 'gear.exe'
-          $env:GEAR_TOOLS_BIN = Join-Path $bin 'gear-tools.exe'
-          $env:GEAR_SMOKE_HOME = Join-Path $env:RUNNER_TEMP 'gear-home'
-          $env:GEAR_HOME = $env:GEAR_SMOKE_HOME
-          New-Item -ItemType Directory -Force -Path $env:GEAR_HOME | Out-Null
-          $v = & $gear --version
+          $rune = Join-Path $bin 'rune.exe'
+          $env:RUNE_TOOLS_BIN = Join-Path $bin 'rune-tools.exe'
+          $env:RUNE_SMOKE_HOME = Join-Path $env:RUNNER_TEMP 'rune-home'
+          $env:RUNE_HOME = $env:RUNE_SMOKE_HOME
+          New-Item -ItemType Directory -Force -Path $env:RUNE_HOME | Out-Null
+          $v = & $rune --version
           Write-Host $v
-          if ($v -notmatch 'Gear v\d') { throw "unexpected --version output: $v" }
-          & $gear doctor
-          if ($LASTEXITCODE -ne 0) { throw "gear doctor exited $LASTEXITCODE" }
-          & $gear tools-smoke
-          if ($LASTEXITCODE -ne 0) { throw "gear tools-smoke exited $LASTEXITCODE" }
-          bun scripts/smoke-print.ts $gear
+          if ($v -notmatch 'Rune v\d') { throw "unexpected --version output: $v" }
+          & $rune doctor
+          if ($LASTEXITCODE -ne 0) { throw "rune doctor exited $LASTEXITCODE" }
+          & $rune tools-smoke
+          if ($LASTEXITCODE -ne 0) { throw "rune tools-smoke exited $LASTEXITCODE" }
+          bun scripts/smoke-print.ts $rune
           if ($LASTEXITCODE -ne 0) { throw "print smoke exited $LASTEXITCODE" }
-          # The web product, from the downloaded binary (P10.9a).
-          & $gear serve --check
-          if ($LASTEXITCODE -ne 0) { throw "gear serve --check exited $LASTEXITCODE" }
+          # The served engine, from the downloaded binary (P10.9a).
+          & $rune serve --check
+          if ($LASTEXITCODE -ne 0) { throw "rune serve --check exited $LASTEXITCODE" }

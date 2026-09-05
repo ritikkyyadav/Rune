@@ -48,8 +48,8 @@ async function connected(): Promise<McpClient> {
 }
 
 beforeEach(async () => {
-  home = mkdtempSync(join(tmpdir(), "gear-mcp-complete-"));
-  store = new FileCredentialStore({ ...process.env, GEAR_HOME: home });
+  home = mkdtempSync(join(tmpdir(), "rune-mcp-complete-"));
+  store = new FileCredentialStore({ ...process.env, RUNE_HOME: home });
   mock = await startMockOAuthMcpServer();
 });
 

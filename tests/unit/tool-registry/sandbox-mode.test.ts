@@ -86,7 +86,7 @@ describe("sandbox-mode state", () => {
 describe("bash tool description follows the mode", () => {
   test("registered schema text swaps between sandboxed and full-access", () => {
     const registry = new ToolRegistry();
-    registerBuiltinTools(registry, "/nonexistent-gear-tools");
+    registerBuiltinTools(registry, "/nonexistent-rune-tools");
     const schema = registry.get("bash")!.schema;
 
     setSandboxMode("on");
@@ -106,10 +106,10 @@ describe("bash tool description follows the mode", () => {
 // dispatch on Windows) and `--sandbox` selects seatbelt or bwrap, neither of
 // which exists there. Every other suite in this file is pure policy.
 describe.skipIf(process.platform === "win32")("rust bridge --sandbox flag follows the mode", () => {
-  // A stand-in "gear-tools" that just echoes its argv back as the result, so
+  // A stand-in "rune-tools" that just echoes its argv back as the result, so
   // the test asserts the exact flag surface the real binary would see.
   function fakeToolsBinary(): string {
-    const dir = mkdtempSync(join(tmpdir(), "gear-sbx-"));
+    const dir = mkdtempSync(join(tmpdir(), "rune-sbx-"));
     const bin = join(dir, "fake-tools.sh");
     writeFileSync(
       bin,

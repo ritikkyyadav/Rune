@@ -1,6 +1,6 @@
-// ─── How a session host is started, from wherever Gear happens to be ───
+// ─── How a session host is started, from wherever Rune happens to be ───
 //
-// `gear serve`, `gear web` and `gear detach` all do the same thing: spawn one
+// `rune serve`, `rune web` and `rune detach` all do the same thing: spawn one
 // `engine-host` process per session and talk to it over a unix socket. Until
 // P10.9a they all spelled that spawn the same way too —
 //
@@ -15,11 +15,11 @@
 //
 //     error: Module not found "/$bunfs/root/engine-host.ts"
 //
-// visible only in `~/.gear/run/*.log`, which nobody reads. From the installed
-// binary, `gear serve` could not run a single session.
+// visible only in `~/.rune/run/*.log`, which nobody reads. From the installed
+// binary, `rune serve` could not run a single session.
 //
-// Phase 3 already anticipated this: `gear engine-host` is a real subcommand
-// (gear-cli.ts) precisely so a packaged install can be its own sidecar. What
+// Phase 3 already anticipated this: `rune engine-host` is a real subcommand
+// (rune-cli.ts) precisely so a packaged install can be its own sidecar. What
 // was missing was the caller choosing it. That decision lives here, once, and
 // is tested in both directions rather than discovered on a user's machine.
 
@@ -44,7 +44,7 @@ export interface SpawnContext {
    * `import.meta.dir` of the caller — the honest signal.
    *
    * `process.execPath` alone is not enough: it is the Bun binary for a source
-   * run and the gear binary for a compiled one, but a renamed or symlinked
+   * run and the rune binary for a compiled one, but a renamed or symlinked
    * `bun` would be misread. Where the CALLING MODULE lives cannot lie: under
    * `/$bunfs/` there is no source tree to point a spawn at, full stop.
    */
@@ -59,10 +59,10 @@ export function currentContext(moduleDir: string): SpawnContext {
 }
 
 /**
- * Is this a compiled, standalone `gear` — as opposed to `bun some/file.ts`?
+ * Is this a compiled, standalone `rune` — as opposed to `bun some/file.ts`?
  *
  * Compiled means the source is virtual, which means `<dir>/engine-host.ts`
- * does not exist and `process.execPath` is the gear binary that knows the
+ * does not exist and `process.execPath` is the rune binary that knows the
  * `engine-host` subcommand.
  */
 export function isCompiled(ctx: SpawnContext): boolean {
@@ -72,7 +72,7 @@ export function isCompiled(ctx: SpawnContext): boolean {
 /**
  * The argv that starts one engine host.
  *
- * Compiled: `<gear> engine-host <args…>` — the binary re-enters itself, so
+ * Compiled: `<rune> engine-host <args…>` — the binary re-enters itself, so
  * nobody needs Bun or a source checkout on their machine.
  * From source: `bun <dir>/engine-host.ts <args…>` — unchanged, because a
  * developer editing engine-host.ts must see the edit on the next spawn.

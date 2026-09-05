@@ -1,8 +1,8 @@
 /**
  * The pane title.
  *
- * This is the only moving thing Warp will render for Gear — it badges agent
- * panes, and it decides what an agent pane is from a list `gear` is not on. So
+ * This is the only moving thing Warp will render for Rune — it badges agent
+ * panes, and it decides what an agent pane is from a list `rune` is not on. So
  * the assertions here are about the two ways a title can quietly stop being
  * worth anything: it stops moving when work is happening, or it goes on moving
  * when work has stopped.
@@ -21,42 +21,42 @@ describe("what the tab says", () => {
   test("the mark leads, because a vertical tab truncates from the right", () => {
     // The one character that has to survive the ellipsis is the one that moves.
     for (let f = 0; f < 4; f++) {
-      expect(titleText(working(f), "Alan").slice(1)).toStartWith(" Gear");
+      expect(titleText(working(f), "Atlas").slice(1)).toStartWith(" Rune");
     }
   });
 
   test("consecutive frames differ, or there is no animation", () => {
     const seen = new Set<string>();
-    for (let f = 0; f < 4; f++) seen.add(titleText(working(f), "Alan")[0]!);
+    for (let f = 0; f < 4; f++) seen.add(titleText(working(f), "Atlas")[0]!);
     expect(seen.size).toBe(4);
   });
 
   test("the cycle wraps rather than running off the end", () => {
-    expect(titleText(working(4), "Alan")).toBe(titleText(working(0), "Alan"));
-    expect(titleText(working(-1), "Alan")).toBe(titleText(working(3), "Alan"));
+    expect(titleText(working(4), "Atlas")).toBe(titleText(working(0), "Atlas"));
+    expect(titleText(working(-1), "Atlas")).toBe(titleText(working(3), "Atlas"));
   });
 
   test("a stalled turn stops the mark and says so in words", () => {
     // The whole argument of pulse.ts, carried onto the tab: a glyph that keeps
     // turning through a wedged tool call is worse than a tab that says nothing.
-    const stalled = titleText(working(3, 31_000), "Alan");
+    const stalled = titleText(working(3, 31_000), "Atlas");
     expect(stalled).toContain("quiet 31s");
     expect(stalled[0]).toBe(".");
     // and it is the same however many frames have gone by
-    expect(titleText(working(99, 31_000), "Alan")).toBe(stalled);
+    expect(titleText(working(99, 31_000), "Atlas")).toBe(stalled);
   });
 
   test("ragged gaps below the threshold still animate", () => {
-    expect(titleText(working(2, 3_999), "Alan")).not.toContain("quiet");
+    expect(titleText(working(2, 3_999), "Atlas")).not.toContain("quiet");
   });
 
   test("waiting on a person is stated, not implied by a stopped spinner", () => {
-    expect(titleText({ kind: "waiting" }, "Alan")).toBe("? Gear - waiting for you");
+    expect(titleText({ kind: "waiting" }, "Atlas")).toBe("? Rune - waiting for you");
   });
 
   test("idle carries the project, and nothing that suggests work", () => {
-    expect(titleText({ kind: "idle" }, "Alan")).toBe("Gear - Alan");
-    expect(titleText({ kind: "idle" }, "")).toBe("Gear");
+    expect(titleText({ kind: "idle" }, "Atlas")).toBe("Rune - Atlas");
+    expect(titleText({ kind: "idle" }, "")).toBe("Rune");
   });
 
   test("every title is ASCII -- another program's font draws this, not our grid", () => {
@@ -71,14 +71,14 @@ describe("what the tab says", () => {
     ];
     for (const st of states) {
       // eslint-disable-next-line no-control-regex
-      expect(titleText(st, "Alan")).toMatch(/^[\x20-\x7e]+$/);
+      expect(titleText(st, "Atlas")).toMatch(/^[\x20-\x7e]+$/);
     }
   });
 });
 
 describe("the wire format", () => {
   test("is OSC 0, BEL-terminated", () => {
-    const seq = titleSeq("Gear - Alan");
+    const seq = titleSeq("Rune - Atlas");
     expect(seq.startsWith("\x1b]0;")).toBe(true);
     expect(seq.endsWith("\x07")).toBe(true);
   });
@@ -86,7 +86,7 @@ describe("the wire format", () => {
   test("a title can never terminate its own sequence", () => {
     // Project names come off the filesystem, so a control character is reachable
     // here. Unlike warp.ts there is no JSON layer to neutralise one.
-    const seq = titleSeq("Gear \x07 \x1b]0;evil");
+    const seq = titleSeq("Rune \x07 \x1b]0;evil");
     expect(seq.split("\x07")).toHaveLength(2); // exactly one, the terminator
     expect(seq).not.toContain("\x1b]0;evil");
   });

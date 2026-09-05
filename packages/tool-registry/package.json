@@ -1,5 +1,5 @@
 {
-  "name": "@gear/tool-registry",
+  "name": "@rune/tool-registry",
   "version": "0.3.0",
   "private": true,
   "main": "src/index.ts",
@@ -11,9 +11,9 @@
     "test": "bun test ../../tests/unit/tool-registry ../../tests/unit/tools"
   },
   "dependencies": {
-    "@gear/llm-gateway": "workspace:*",
-    "@gear/protocol": "workspace:*",
-    "@gear/shared": "workspace:*",
+    "@rune/llm-gateway": "workspace:*",
+    "@rune/protocol": "workspace:*",
+    "@rune/shared": "workspace:*",
     "@mozilla/readability": "^0.6.0",
     "linkedom": "^0.18.5",
     "turndown": "^7.2.0"

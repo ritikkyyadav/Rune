@@ -5,15 +5,10 @@ docs/history/
 dist/
 target/
 tests/eval/results/
-tests/e2e/test-results/
-tests/e2e/playwright-report/
 bun.lock
 Cargo.lock
-apps/web/dist/
-apps/web/branding/*.png
-# Generated from apps/web/dist before every compile (P10.9a).
-packages/orchestrator/src/web-embed/generated.js
-.gear/
+.rune/
 .claude/
 .codex/
+.gear/
 .alan/

@@ -1,7 +1,7 @@
 // ─── Make the release signing keypair ───
 //
 // Prints an Ed25519 keypair: the private half to paste into the
-// GEAR_SIGNING_PRIVATE_KEY repository secret (base64, because CI secrets travel
+// RUNE_SIGNING_PRIVATE_KEY repository secret (base64, because CI secrets travel
 // more safely that way), and the public half to commit to the README so anyone
 // can verify a download.
 //
@@ -17,7 +17,7 @@ const { privateKeyPem, publicKeyPem } = generateEd25519KeyPair();
 
 console.log("─── PUBLIC key — commit this to the README ───\n");
 console.log(publicKeyPem.trim());
-console.log("\n─── PRIVATE key — GEAR_SIGNING_PRIVATE_KEY, base64 ───");
+console.log("\n─── PRIVATE key — RUNE_SIGNING_PRIVATE_KEY, base64 ───");
 console.log("Settings → Secrets and variables → Actions → New repository secret\n");
 console.log(Buffer.from(privateKeyPem, "utf8").toString("base64"));
 console.log("\nStore the private key in a password manager as well. Losing it means");

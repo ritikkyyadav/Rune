@@ -5,7 +5,7 @@ extension kinds — skills, slash commands, MCP connectors, hooks — and, since
 D6 v2, **executable tools** that run as subprocesses under the OS sandbox.
 
 ```
-.gear/plugins/<name>/
+.rune/plugins/<name>/
   plugin.json            manifest; its `name` must equal the directory name
   skills/<s>/SKILL.md    auto-discovered, attributed to <name>
   commands/<c>.md        slash commands, tagged with the plugin
@@ -21,29 +21,29 @@ about making the first half of that sentence safe.
 
 ## The index
 
-`gear plugin add ./path` has always worked. What did not exist was a way to
+`rune plugin add ./path` has always worked. What did not exist was a way to
 **ask what exists** — so the index is one versioned JSON document, served raw
-from the repository, that `gear plugin search` reads and `gear plugin add
+from the repository, that `rune plugin search` reads and `rune plugin add
 <name>` resolves through.
 
 ```
-gear plugin search                    everything
-gear plugin search fmt                name, description and capability match
-gear plugin add gear-example-skills    resolved through the index, digest-checked
+rune plugin search                    everything
+rune plugin search fmt                name, description and capability match
+rune plugin add rune-example-skills    resolved through the index, digest-checked
 ```
 
 ### The entry
 
 ```json
 {
-  "name": "gear-example-skills",
+  "name": "rune-example-skills",
   "description": "A skills-only plugin: one release-notes playbook.",
-  "source": "../examples/plugins/gear-example-skills",
+  "source": "../examples/plugins/rune-example-skills",
   "version": "0.1.0",
-  "gearVersion": ">=0.2.0",
+  "runeVersion": ">=0.2.0",
   "capabilities": ["skills"],
   "integrity": "sha256-dbe7a944…",
-  "maintainer": "Savoir <gear@savoir.dev>",
+  "maintainer": "Savoir <rune@savoir.dev>",
   "homepage": "https://github.com/…"
 }
 ```
@@ -54,7 +54,7 @@ gear plugin add gear-example-skills    resolved through the index, digest-checke
 | `description`  | one line, shown by `search`                                                                                                 |
 | `source`       | a git URL, or a path **relative to the index file**. A relative source from a _remote_ index is refused rather than guessed |
 | `version`      | the bundle's own version                                                                                                    |
-| `gearVersion`  | semver range; an entry this build does not satisfy is refused by name, before anything is fetched                           |
+| `runeVersion`  | semver range; an entry this build does not satisfy is refused by name, before anything is fetched                           |
 | `capabilities` | a closed vocabulary (below) — what the bundle is allowed to do, visible **before** you download it                          |
 | `integrity`    | `sha256-…` over the pristine tree; verified against the staged bundle before installation                                   |
 | `maintainer`   | who to blame                                                                                                                |
@@ -80,7 +80,7 @@ manifest: sha256 over every file's workspace-relative path and bytes, sorted,
 with `plugin.json`'s own `integrity` field blanked first.
 
 It is verified against the **staged** tree, before installation. That timing is
-not incidental: `gear plugin add` stamps `name` and `source` into the manifest
+not incidental: `rune plugin add` stamps `name` and `source` into the manifest
 and then recomputes the digest, so an installed tree legitimately hashes
 differently from the published one. There is exactly one moment where the two
 are comparable, and the check happens there. A mismatch prints both digests and
@@ -102,11 +102,11 @@ than someone's install.
 Resolution order, first hit wins:
 
 1. `--index <url|path>`
-2. `GEAR_PLUGIN_INDEX`
-3. `[extensions] index` in `.gear/config.toml`
+2. `RUNE_PLUGIN_INDEX`
+3. `[extensions] index` in `.rune/config.toml`
 4. the public URL
 
-A network index that answers is cached at `~/.gear/plugin-index.json`. When the
+A network index that answers is cached at `~/.rune/plugin-index.json`. When the
 fetch fails, the cached copy is used and **said to be** a cached copy; with no
 cache, the copy that shipped with this build (`plugins/index.json` beside the
 code) is used and said to be that. The three states are named separately on
@@ -118,7 +118,7 @@ Point it at your own:
 
 ```toml
 [extensions]
-index = "https://intranet.example.com/gear-plugins.json"
+index = "https://intranet.example.com/rune-plugins.json"
 ```
 
 ### What `add` does with a name
@@ -137,7 +137,7 @@ the index has no such name, the old npm path still applies.
   "name": "acme-tools",
   "version": "0.2.0",
   "description": "…",
-  "gearVersion": ">=0.3.0",
+  "runeVersion": ">=0.3.0",
   "hooks": "hooks.json",
   "mcp": "mcp.json",
   "commands": "commands",
@@ -151,7 +151,7 @@ the index has no such name, the old npm path still applies.
 `permissions` is **disclosure, not enforcement**, and the CLI says so when it
 prints it: it tells you a bundle's hooks want to block tool calls and its
 connectors want three hosts, before you enable it. A hook is a shell command
-the plugin asked Gear to run and an MCP server is a process it asked Gear to
+the plugin asked Rune to run and an MCP server is a process it asked Rune to
 start; neither is contained, and a declaration is not a sandbox.
 
 `tools` is the exception, and the whole point of D6 v2: those declarations
@@ -171,7 +171,7 @@ once they run under one.
 A declared tool is a **program** — any language — spawned as a subprocess,
 wrapped by Seatbelt (macOS) or bubblewrap (Linux) with exactly the capability
 its manifest entry declares, speaking line-delimited JSON on stdio. Nothing is
-loaded into the Gear process; there is no path from a plugin's bytes to this
+loaded into the Rune process; there is no path from a plugin's bytes to this
 process's heap.
 
 ```json
@@ -213,7 +213,7 @@ root, so a relative script path means exactly one thing.
 System reads are broad in every row for the same reason the bash sandbox makes
 them broad: an allowlist-only read policy makes `dyld` abort before `main`, so
 nothing runs at all. Credential stores (`~/.ssh`, `~/.aws`, `~/.gnupg`,
-`~/.gear/secrets.json`, …) are carved out by explicit deny in every row, from
+`~/.rune/secrets.json`, …) are carved out by explicit deny in every row, from
 the same list the bash sandbox uses.
 
 Every capability gets a **private scratch directory** — created per process,
@@ -234,9 +234,9 @@ accepted and reported as widening to every port.
 ### The protocol
 
 One JSON object per line, both directions. `stdout` is the channel; `stderr` is
-a diagnostic that Gear drains and keeps the tail of, never a result.
+a diagnostic that Rune drains and keeps the tail of, never a result.
 
-**Tool → Gear**
+**Tool → Rune**
 
 ```jsonc
 // first, immediately on start — before anything is asked of it
@@ -249,10 +249,10 @@ a diagnostic that Gear drains and keeps the tail of, never a result.
 {"type":"log","level":"info","message":"…"}          // debug log, never model context
 ```
 
-**Gear → tool**
+**Rune → tool**
 
 ```jsonc
-{"type":"hello","protocol":1,"gear":"0.3.0","plugin":"acme","workspaceRoot":"/ws"}
+{"type":"hello","protocol":1,"rune":"0.3.0","plugin":"acme","workspaceRoot":"/ws"}
 {"type":"call","id":"c1","tool":"write_text","args":{"path":"a.txt","text":"…"}}
 {"type":"shutdown"}
 ```
@@ -260,8 +260,8 @@ a diagnostic that Gear drains and keeps the tail of, never a result.
 The schema frame comes first and is not a reply to anything: schemas have to be
 known before the model is offered the tool, so a server that never advertises
 one within 15s is stopped and its refusal reported, rather than registered as a
-tool nobody can describe. `GEAR_WORKSPACE`, `GEAR_PLUGIN`, `GEAR_PLUGIN_ROOT`
-and `GEAR_TOOL_CAPABILITY` are in the child's environment for programs that
+tool nobody can describe. `RUNE_WORKSPACE`, `RUNE_PLUGIN`, `RUNE_PLUGIN_ROOT`
+and `RUNE_TOOL_CAPABILITY` are in the child's environment for programs that
 prefer variables to frames.
 
 Each advertised tool becomes `plugin_<plugin>_<tool>` to the model.
@@ -277,10 +277,10 @@ allowUnsandboxedTools = ["acme-tools"]   # or true, for every plugin
 ```
 
 Turning it on means a third party's program runs with your full access and its
-declared capability is not enforced. Gear says so three times over: a
+declared capability is not enforced. Rune says so three times over: a
 `[SECURITY]` log line, a startup notice, and the words "NOT sandboxed" in the
 tool description the model reads. A plan that could not be determined at all
-(no `gear-tools`, a parse failure) lands on the same side as "there is no
+(no `rune-tools`, a parse failure) lands on the same side as "there is no
 sandbox" — the direction that fails safe.
 
 ### Permissions, the classifier, and org policy
@@ -311,7 +311,7 @@ hand does not.
 ### What this is not
 
 `custom-loader.ts` (`[extensions] localTools`) still loads in-process
-TypeScript from `<workspace>/.gear/tools`. That is code the **user** wrote in
+TypeScript from `<workspace>/.rune/tools`. That is code the **user** wrote in
 their own workspace, off by default, and a plugin can never point at it. The
 two mechanisms are deliberately separate: one runs your code, the other runs a
 stranger's, and only the second one gets a sandbox because only the second one
@@ -323,16 +323,16 @@ needs to earn its trust.
 
 | Example                                                                                 | What it shows                                     |
 | --------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| [`examples/plugins/gear-example-skills`](../examples/plugins/gear-example-skills)       | a skills-only bundle: one `SKILL.md`, no code     |
-| [`examples/plugins/gear-example-connector`](../examples/plugins/gear-example-connector) | an MCP server plus the slash command that uses it |
-| [`examples/plugins/gear-example-tools`](../examples/plugins/gear-example-tools)         | two sandboxed executable tools, in Python         |
+| [`examples/plugins/rune-example-skills`](../examples/plugins/rune-example-skills)       | a skills-only bundle: one `SKILL.md`, no code     |
+| [`examples/plugins/rune-example-connector`](../examples/plugins/rune-example-connector) | an MCP server plus the slash command that uses it |
+| [`examples/plugins/rune-example-tools`](../examples/plugins/rune-example-tools)         | two sandboxed executable tools, in Python         |
 
 Each installs from a local path and is listed in `plugins/index.json`:
 
 ```
-gear plugin add ./examples/plugins/gear-example-skills
-gear plugin add ./examples/plugins/gear-example-connector
-gear plugin add ./examples/plugins/gear-example-tools
+rune plugin add ./examples/plugins/rune-example-skills
+rune plugin add ./examples/plugins/rune-example-connector
+rune plugin add ./examples/plugins/rune-example-tools
 ```
 
 The third one's programs deliberately validate **nothing** — `files.py` opens
@@ -346,11 +346,11 @@ permitted` while the same tools succeed inside their declared scope.
 
 ## Housekeeping
 
-`gear plugin list` prints what loaded **and what was refused**. Refusals used to
+`rune plugin list` prints what loaded **and what was refused**. Refusals used to
 be computed on every scan and shown nowhere, so an installed-but-refused plugin
 looked exactly like one nobody had installed.
 
-`gear plugin disable <name>` keeps the bundle and stops its contributions.
+`rune plugin disable <name>` keeps the bundle and stops its contributions.
 Because the manifest is part of the hashed tree, toggling recomputes the digest.
 
 `invalidatePlugins()` re-scans and re-runs every loader without a restart. All

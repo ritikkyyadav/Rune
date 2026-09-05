@@ -165,7 +165,7 @@ export interface HostCommands {
   get_turn_context: { args: { sessionId?: string }; result: TurnContext | null };
   /**
    * The session's transcript, tool calls, diffs and audit chain, optionally
-   * Ed25519-signed. The same `session-export.ts` that `gear export` uses, so a
+   * Ed25519-signed. The same `session-export.ts` that `rune export` uses, so a
    * trace exported from the desktop and one exported from the terminal are the
    * same artifact and verify with the same key.
    */
@@ -264,7 +264,7 @@ export interface HostCommands {
   /**
    * The MCP connectors this workspace has configured, and whether they work.
    *
-   * The same merge `gear mcp list` performs — user scope under workspace scope
+   * The same merge `rune mcp list` performs — user scope under workspace scope
    * — plus live discovery, so the app and the console cannot disagree about
    * what is connected. Health is what discovery actually found; a connector
    * that has never been reached says so instead of showing a hopeful dot.

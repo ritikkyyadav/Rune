@@ -17,7 +17,7 @@
 
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import { dirname, join } from "path";
-import { getGearHome } from "@gear/shared";
+import { getRuneHome } from "@rune/shared";
 
 /**
  * How long a model stays on the retired list.
@@ -57,7 +57,7 @@ interface HealthFile {
 const EMPTY: HealthFile = { version: 1, retired: [], capped: [] };
 
 function defaultPath(): string {
-  return join(getGearHome(), "provider-health.json");
+  return join(getRuneHome(), "provider-health.json");
 }
 
 /**

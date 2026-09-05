@@ -321,7 +321,7 @@ const handoffOnError: EvalTask = {
     if (!state?.handoff) return { pass: false, reason: "no handoff recorded for the dead run" };
     // `provider_lost`, not the plain `error` this asserted before b150dd2. A
     // run whose provider stops answering with steps still open now hands off
-    // under that specific reason so the record, the scorecard and `gear
+    // under that specific reason so the record, the scorecard and `rune
     // resume` know the network failed rather than the model
     // (agent-loop.ts `providerLostEnd`; the reason is listed in
     // docs/self-evolution.md, and docs/plan-ledger.md requires the handoff to

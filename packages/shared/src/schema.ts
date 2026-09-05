@@ -1,5 +1,5 @@
 /**
- * Shared SQL schema constants for Gear's SQLite databases.
+ * Shared SQL schema constants for Rune's SQLite databases.
  *
  * These are additive index definitions that can be applied on top of
  * the core tables created in session.ts and state.ts.

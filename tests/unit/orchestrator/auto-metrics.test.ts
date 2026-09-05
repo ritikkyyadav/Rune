@@ -28,9 +28,9 @@ function makeDb(
   events: Array<{ type: string; payload: Record<string, unknown>; session?: string }>,
   sessions = ["s1"],
 ): string {
-  const dir = mkdtempSync(join(tmpdir(), "gear-metrics-"));
+  const dir = mkdtempSync(join(tmpdir(), "rune-metrics-"));
   dirs.push(dir);
-  const path = join(dir, "gear.db");
+  const path = join(dir, "rune.db");
   const db = new Database(path, { create: true });
   db.exec(`
     CREATE TABLE sessions (id TEXT PRIMARY KEY, created_at TEXT, updated_at TEXT,
@@ -165,7 +165,7 @@ describe("P6A.4 — reading old data honestly", () => {
   });
 
   test("an unreadable database yields empty metrics rather than throwing", () => {
-    const m = readAutoSafetyMetrics("/nonexistent/path/to/gear.db");
+    const m = readAutoSafetyMetrics("/nonexistent/path/to/rune.db");
     expect(m.decisions).toBe(0);
     expect(m.screenFalsePositiveRate).toBeNull();
   });

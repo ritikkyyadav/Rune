@@ -13,7 +13,7 @@ import type { NotebookEntry } from "../../../packages/orchestrator/src/notebook/
 
 let dir: string;
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "gear-playbook-"));
+  dir = mkdtempSync(join(tmpdir(), "rune-playbook-"));
 });
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
@@ -82,8 +82,8 @@ describe("renderPlaybookBlock", () => {
       entry("fix:npm:def", "`npm install` needs network: true here", ["a", "c"]),
       entry("monorepo-layout", "Monorepo — JS workspaces: packages/*", ["a", "b", "c"]),
     ]);
-    expect(block.startsWith("<!-- gear:learned:start -->")).toBe(true);
-    expect(block.endsWith("<!-- gear:learned:end -->")).toBe(true);
+    expect(block.startsWith("<!-- rune:learned:start -->")).toBe(true);
+    expect(block.endsWith("<!-- rune:learned:end -->")).toBe(true);
     expect(block).toContain("from 3 sessions");
     const order = ["## Verified commands", "## Layout", "## Fixes", "## Pitfalls"].map((h) =>
       block.indexOf(h),
@@ -109,8 +109,19 @@ describe("writePlaybook", () => {
     expect(text.startsWith("---\nname: playbook\ndescription: How to work in ")).toBe(true);
     expect(text).toContain("learned from 2 sessions here");
     expect(text).toContain("# Playbook");
-    expect(text).toContain("<!-- gear:learned:start -->");
+    expect(text).toContain("<!-- rune:learned:start -->");
     expect(text).toContain("## Notes");
+  });
+
+  test("a playbook written under the previous name is adopted, not duplicated", () => {
+    const w = writePlaybook(dir, recurring)!;
+    const legacy = readFileSync(w.path, "utf8").replaceAll("rune:learned", "gear:learned");
+    writeFileSync(w.path, legacy);
+    const again = writePlaybook(dir, recurring)!;
+    expect(again.changed).toBe(true);
+    const text = readFileSync(w.path, "utf8");
+    expect(text.split("<!-- rune:learned:start -->")).toHaveLength(2);
+    expect(text).not.toContain("gear:learned");
   });
 
   test("an unchanged block is not rewritten", () => {
@@ -134,7 +145,7 @@ describe("writePlaybook", () => {
     const text = readFileSync(next.path, "utf8");
     expect(text).toContain("Run the suite unsandboxed.");
     expect(text).toContain("## Pitfalls");
-    expect(text.split("<!-- gear:learned:start -->")).toHaveLength(2);
+    expect(text.split("<!-- rune:learned:start -->")).toHaveLength(2);
   });
 
   test("a hand-written playbook without markers gets the block appended, not replaced", () => {
@@ -145,8 +156,8 @@ describe("writePlaybook", () => {
     expect(w.path).toBe(path);
     const text = readFileSync(w.path, "utf8");
     expect(text).toContain("Always run `make setup` first.");
-    expect(text).toContain("<!-- gear:learned:start -->");
-    expect(text.indexOf("make setup")).toBeLessThan(text.indexOf("<!-- gear:learned:start -->"));
+    expect(text).toContain("<!-- rune:learned:start -->");
+    expect(text.indexOf("make setup")).toBeLessThan(text.indexOf("<!-- rune:learned:start -->"));
   });
 
   // ── The consent gate (P7.7) ──
@@ -159,7 +170,7 @@ describe("writePlaybook", () => {
     // there to load. A learned skill that can direct multi-step behaviour is
     // inert until a person turns it on.
     expect(existsSync(join(dir, PLAYBOOK_REL))).toBe(false);
-    expect(readFileSync(w.path, "utf8")).toContain("<!-- gear:learned:start -->");
+    expect(readFileSync(w.path, "utf8")).toContain("<!-- rune:learned:start -->");
   });
 
   test("with consent it writes the real skill file", () => {

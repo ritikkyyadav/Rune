@@ -17,15 +17,15 @@ import {
 } from "../../../packages/shared/src/prefs-store";
 
 let dir: string;
-const original = process.env.GEAR_PREFS_PATH;
+const original = process.env.RUNE_PREFS_PATH;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "gear-prefs-"));
-  process.env.GEAR_PREFS_PATH = join(dir, "prefs.json");
+  dir = mkdtempSync(join(tmpdir(), "rune-prefs-"));
+  process.env.RUNE_PREFS_PATH = join(dir, "prefs.json");
 });
 afterEach(() => {
-  if (original === undefined) delete process.env.GEAR_PREFS_PATH;
-  else process.env.GEAR_PREFS_PATH = original;
+  if (original === undefined) delete process.env.RUNE_PREFS_PATH;
+  else process.env.RUNE_PREFS_PATH = original;
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -48,9 +48,9 @@ describe("session preferences", () => {
   });
 
   test("a malformed file is 'unset', never a crash at startup", () => {
-    writeFileSync(process.env.GEAR_PREFS_PATH!, "{ not json");
+    writeFileSync(process.env.RUNE_PREFS_PATH!, "{ not json");
     expect(loadPrefs()).toEqual({});
-    writeFileSync(process.env.GEAR_PREFS_PATH!, JSON.stringify({ gear: 42 }));
+    writeFileSync(process.env.RUNE_PREFS_PATH!, JSON.stringify({ gear: 42 }));
     expect(loadPrefs()).toEqual({});
   });
 });

@@ -64,7 +64,7 @@ export interface VertexOpts extends AdcOpts {
  * Which Vertex publisher serves a model id.
  *
  * Deliberately explicit rather than a default: an id that matches neither
- * family is a typo or a publisher Gear does not route, and answering "Gemini,
+ * family is a typo or a publisher Rune does not route, and answering "Gemini,
  * probably" would send it to an endpoint that 404s with a message about the
  * wrong publisher. Naming the real problem is cheaper to debug.
  */
@@ -92,8 +92,8 @@ export function vertexPublisherPath(
 }
 
 /**
- * A resolved-credential probe for the boot path and `gear providers`. Returns
- * a printable source ("service account gear@proj.iam…") or null — never the token.
+ * A resolved-credential probe for the boot path and `rune providers`. Returns
+ * a printable source ("service account rune@proj.iam…") or null — never the token.
  */
 export async function vertexCredentialSource(opts: AdcOpts = {}): Promise<string | null> {
   const token = await resolveGoogleAdc(opts);
@@ -172,7 +172,7 @@ export class VertexProvider implements LlmProvider {
       status: 404,
       provider: "vertex",
       message:
-        `Vertex has no publisher for "${model}". Gear routes ids starting with ` +
+        `Vertex has no publisher for "${model}". Rune routes ids starting with ` +
         `"claude" to the Anthropic publisher and "gemini" to Google's.`,
     });
   }

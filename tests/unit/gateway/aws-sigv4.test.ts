@@ -1,7 +1,7 @@
 /**
  * P10.5 — the SigV4 signer against AWS's own published vectors.
  *
- * Gear signs Bedrock requests itself rather than pulling in the AWS SDK (~40
+ * Rune signs Bedrock requests itself rather than pulling in the AWS SDK (~40
  * transitive packages into a single-file compiled binary). That is only
  * defensible if the signer is checked against something OUTSIDE itself, so
  * every constant below comes from AWS's published material — the worked

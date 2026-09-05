@@ -3,7 +3,7 @@
 // What this replaces: /providers, /keys and /status -- three commands that
 // exposed the plumbing and none that answered the only question a new user
 // actually has, which is "how do I connect this thing?". Someone who has just
-// installed Gear knows they pay for ChatGPT; they do not know that the provider
+// installed Rune knows they pay for ChatGPT; they do not know that the provider
 // is called "codex", that it authenticates by OAuth, or that a "provider" and a
 // "key" are different screens.
 //
@@ -22,7 +22,7 @@ import {
   accountLoginLabel,
   getProviderDescriptor,
   type AuthMethod,
-} from "@gear/shared";
+} from "@rune/shared";
 
 export type LoginRoute = "subscription" | "api_key" | "offline";
 

@@ -1,5 +1,5 @@
 {
-  "name": "@gear/telemetry",
+  "name": "@rune/telemetry",
   "version": "0.3.0",
   "private": true,
   "main": "src/index.ts",
@@ -11,7 +11,7 @@
     "test": "bun test ../../tests/unit/telemetry"
   },
   "dependencies": {
-    "@gear/shared": "workspace:*"
+    "@rune/shared": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.8"

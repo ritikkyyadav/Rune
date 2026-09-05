@@ -1,6 +1,6 @@
 // ─── Finding the token, without asking the user to paste it ───
 //
-// `gear serve` mints a fresh bearer token per start into `~/.gear/serve.json`
+// `rune serve` mints a fresh bearer token per start into `~/.rune/serve.json`
 // at 0600. A local script has no reason to make a person copy it out of a file
 // and into an environment variable — that is a step whose only reliable
 // outcome is the token ending up in a shell history.
@@ -15,7 +15,7 @@ export interface ServeToken {
 }
 
 /**
- * Read the running server's token and URL from `~/.gear/serve.json`.
+ * Read the running server's token and URL from `~/.rune/serve.json`.
  *
  * Returns null when there is no file, when it is unreadable, or when there is
  * no filesystem at all (a browser). A caller supplies the token by hand in
@@ -26,7 +26,7 @@ export async function readServeToken(path?: string): Promise<ServeToken | null> 
     const fs = await import("node:fs/promises");
     const os = await import("node:os");
     const nodePath = await import("node:path");
-    const home = process.env.GEAR_HOME ?? nodePath.join(os.homedir(), ".gear");
+    const home = process.env.RUNE_HOME ?? nodePath.join(os.homedir(), ".rune");
     const file = path ?? nodePath.join(home, "serve.json");
     const raw = JSON.parse(await fs.readFile(file, "utf8")) as {
       token?: string;

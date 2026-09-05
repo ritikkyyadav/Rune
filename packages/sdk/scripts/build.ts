@@ -1,8 +1,8 @@
 // ─── Building a tarball somebody else can install ───
 //
-// `@gear/sdk` re-exports the whole of `@gear/protocol`, and `@gear/protocol` is
-// a private workspace package. A consumer running `npm i @gear/sdk` has no
-// workspace, so a `dist` that still says `from "@gear/protocol"` resolves to
+// `@rune/sdk` re-exports the whole of `@rune/protocol`, and `@rune/protocol` is
+// a private workspace package. A consumer running `npm i @rune/sdk` has no
+// workspace, so a `dist` that still says `from "@rune/protocol"` resolves to
 // nothing on their machine and the package is broken on install — the failure
 // mode that makes "we published an SDK" untrue in the only place it counts.
 //
@@ -12,7 +12,7 @@
 // the same source the engine compiles, copied, with the one bare specifier
 // rewritten to a relative path.
 //
-// The alternative — publishing `@gear/protocol` too — is a second package to
+// The alternative — publishing `@rune/protocol` too — is a second package to
 // version, and the protocol is not a thing anyone should install on its own:
 // it is a contract, and the SDK is how you hold it.
 //
@@ -45,13 +45,13 @@ function copyRewritten(from: string, to: string, rewrite: (s: string) => string)
 }
 
 /**
- * `@gear/protocol` → `./protocol/index`.
+ * `@rune/protocol` → `./protocol/index`.
  *
  * Every SDK source file sits at the staging root, so the relative path is the
  * same from all of them. Both `import`/`export ... from` and the `import(...)`
  * form are covered; the SDK uses the first and this guards the second.
  */
-const PROTOCOL_SPECIFIER = /(["'])@gear\/protocol\1/g;
+const PROTOCOL_SPECIFIER = /(["'])@rune\/protocol\1/g;
 const toRelative = (src: string): string => src.replace(PROTOCOL_SPECIFIER, '"./protocol/index"');
 
 function build(): void {
@@ -73,7 +73,7 @@ function build(): void {
   // after install, as a resolution error with no obvious cause. Catch it here.
   for (const rel of walk(staging)) {
     const body = readFileSync(join(staging, rel), "utf8");
-    if (/["']@gear\//.test(body)) {
+    if (/["']@rune\//.test(body)) {
       throw new Error(`${rel} still imports a workspace package after rewriting`);
     }
   }
@@ -115,7 +115,7 @@ function build(): void {
   const emitted = (readdirSync(dist, { recursive: true }) as unknown as string[]).filter((f) =>
     String(f).endsWith(".js"),
   ).length;
-  console.log(`@gear/sdk → dist/ (${emitted} modules, protocol vendored)`);
+  console.log(`@rune/sdk → dist/ (${emitted} modules, protocol vendored)`);
 }
 
 build();

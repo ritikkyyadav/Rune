@@ -13,7 +13,7 @@
 // in-process. What crosses the wire is `summary`, which is bounded and
 // secret-scrubbed, plus an id the host can look the real arguments up by.
 
-import type { HeldStep } from "@gear/protocol";
+import type { HeldStep } from "@rune/protocol";
 import type { AutoModeDeferral } from "../auto-mode";
 
 export class HeldStepLedger {

@@ -2,8 +2,8 @@
  * P7.5 — promotion, revert, and every refusal between a measurement and a
  * change to how the agent behaves.
  *
- * Everything here runs against a TEMPORARY GEAR_HOME. A test that writes the
- * developer's real `~/.gear/config.toml` would be the same class of mistake the
+ * Everything here runs against a TEMPORARY RUNE_HOME. A test that writes the
+ * developer's real `~/.rune/config.toml` would be the same class of mistake the
  * whole phase is about: a machine changing its own configuration without a
  * human deciding.
  */
@@ -61,7 +61,7 @@ function seedWin(
 }
 
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), "gear-evolve-home-"));
+  home = mkdtempSync(join(tmpdir(), "rune-evolve-home-"));
 });
 afterEach(() => {
   rmSync(home, { recursive: true, force: true });
@@ -148,9 +148,9 @@ describe("promote writes a fenced block and a ledger row", () => {
     const r = promote("doctrine_full", { home, ...YARD });
     expect(r.ok).toBe(true);
     const toml = readFileSync(join(home, "config.toml"), "utf8");
-    expect(toml).toContain("gear:evolve:start");
+    expect(toml).toContain("rune:evolve:start");
     expect(toml).toContain('doctrineDelivery = "full"');
-    expect(toml).toContain("gear:evolve:end");
+    expect(toml).toContain("rune:evolve:end");
     const rows = readLedger(home);
     expect(rows.filter((e) => e.kind === "promotion")).toHaveLength(1);
     expect(activePromotions(rows).map((e) => e.subject)).toEqual(["doctrine_full"]);
@@ -165,7 +165,7 @@ describe("promote writes a fenced block and a ledger row", () => {
     expect(toml).toContain('theme = "paper"');
     // The block goes LAST, because the config parser lets later keys win —
     // that is what makes a promotion an override rather than a hope.
-    expect(toml.indexOf("gear:evolve:start")).toBeGreaterThan(toml.indexOf('theme = "paper"'));
+    expect(toml.indexOf("rune:evolve:start")).toBeGreaterThan(toml.indexOf('theme = "paper"'));
   });
 
   it("refuses a second promotion inside the interval", () => {
@@ -288,7 +288,15 @@ describe("the config block", () => {
   it("replaces an existing block instead of stacking them", () => {
     const first = spliceConfigBlock("", renderConfigBlock([fakePromotion("doctrine_full")]));
     const second = spliceConfigBlock(first, renderConfigBlock([fakePromotion("effort_ceiling")]));
-    expect(second.match(/gear:evolve:start/g)).toHaveLength(1);
+    expect(second.match(/rune:evolve:start/g)).toHaveLength(1);
+  });
+
+  it("replaces a block written under the previous name", () => {
+    const first = spliceConfigBlock("", renderConfigBlock([fakePromotion("doctrine_full")]));
+    const legacy = first.replaceAll("rune:evolve:", "gear:evolve:");
+    const second = spliceConfigBlock(legacy, renderConfigBlock([fakePromotion("effort_ceiling")]));
+    expect(second).not.toContain("gear:evolve:");
+    expect(second.match(/rune:evolve:start/g)).toHaveLength(1);
     expect(second).not.toContain("doctrineDelivery");
     expect(second).toContain("effortRouting");
   });

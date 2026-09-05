@@ -4,10 +4,10 @@
 // SigV4 from whatever the AWS credential chain resolves; Vertex exchanges
 // Application Default Credentials for a short-lived token; Azure accepts an
 // Entra bearer token from the environment. In all three the machine's cloud
-// login IS the credential, and Gear's job is to find it, not to hold it.
+// login IS the credential, and Rune's job is to find it, not to hold it.
 //
 // So this strategy stores NOTHING. `storeCredentials` is a no-op and `logout`
-// is a no-op, because there is no Gear-held secret to write or delete — and
+// is a no-op, because there is no Rune-held secret to write or delete — and
 // that is the feature, not a gap. A team whose whole reason for routing through
 // Bedrock is that the model traffic must stay inside their AWS account does not
 // want a second copy of their cloud credential inside a coding tool's keychain.
@@ -29,7 +29,7 @@ import { AuthError } from "./types";
 export interface ChainProbe {
   detail: string;
   /**
-   * A bearer token, for the one chain whose ambient credential Gear can
+   * A bearer token, for the one chain whose ambient credential Rune can
    * actually carry (Azure's Entra token). AWS and GCP re-authenticate per
    * request inside their adapters and have nothing to hand over here.
    */
@@ -39,7 +39,7 @@ export interface ChainProbe {
 /**
  * Probe one provider's ambient credentials.
  *
- * Split out from the strategy so the boot resolver, `gear providers` and the
+ * Split out from the strategy so the boot resolver, `rune providers` and the
  * adapters all ask the same question, and so a provider that has no chain
  * simply returns null instead of throwing.
  */
@@ -61,7 +61,7 @@ export async function probeCloudChain(
     }
     // Azure's ambient credential is an Entra ID access token in the
     // environment — `az account get-access-token` or a workload-identity
-    // sidecar puts it there. Unlike AWS and GCP it IS a bearer Gear can carry,
+    // sidecar puts it there. Unlike AWS and GCP it IS a bearer Rune can carry,
     // so it comes back as one; the resource-key path stays `api_key`.
     case "azure-openai": {
       const token = env.AZURE_OPENAI_AD_TOKEN;
@@ -116,7 +116,7 @@ export class CloudChainStrategy implements AuthenticationStrategy {
 
   /**
    * There is no interactive flow to run: signing in happens in `aws`/`gcloud`/
-   * `az`, not here. `gear login bedrock` therefore REPORTS — it says whether
+   * `az`, not here. `rune login bedrock` therefore REPORTS — it says whether
    * the chain resolves and, when it does not, exactly which command fixes it.
    * Pretending to have a flow (a prompt asking for an access key) would invite
    * someone to paste a long-lived cloud credential into a tool that has no
@@ -133,11 +133,11 @@ export class CloudChainStrategy implements AuthenticationStrategy {
       });
     }
     ctx.log?.(`Found ${ctx.preset.label} credentials: ${cred.meta?.detail ?? "resolved"}`);
-    ctx.log?.("Nothing was stored — Gear reads your cloud credentials at request time.");
+    ctx.log?.("Nothing was stored — Rune reads your cloud credentials at request time.");
     return cred;
   }
 
-  /** Re-probing IS the refresh: expiry is the chain's problem, not Gear's. */
+  /** Re-probing IS the refresh: expiry is the chain's problem, not Rune's. */
   async refresh(ctx: AuthContext): Promise<ResolvedCredential | null> {
     return this.loadCredentials(ctx);
   }

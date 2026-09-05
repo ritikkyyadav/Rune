@@ -1,17 +1,17 @@
-// ─── A Gear you can run an example against, with no API key ───
+// ─── A Rune you can run an example against, with no API key ───
 //
-// Both examples in this directory need three things: a `gear serve` to talk
+// Both examples in this directory need three things: a `rune serve` to talk
 // to, a model that answers deterministically, and a workspace it is allowed to
 // touch. An example that needs a paid provider and a running server before it
 // prints anything is not an example — it is a README with extra steps.
 //
 // So this stands the whole stack up in a temp directory: a fake
-// OpenAI-compatible endpoint playing the model, a real `gear serve` in front of
+// OpenAI-compatible endpoint playing the model, a real `rune serve` in front of
 // a real engine, and a real permission broker. Everything the SDK talks to is
 // the shipping code; only the model is fake, which is the point — the round
 // trips have to be genuine or the example teaches nothing.
 //
-// If you already have a server running (`gear serve`), both examples find it
+// If you already have a server running (`rune serve`), both examples find it
 // through `runningServer()` and drive that instead. That is the real usage;
 // this is the one that works on a fresh clone with no key and no server.
 
@@ -20,7 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const repoRoot = join(import.meta.dir, "..", "..");
-const CLI = join(repoRoot, "packages", "orchestrator", "src", "bin", "gear-cli.ts");
+const CLI = join(repoRoot, "packages", "orchestrator", "src", "bin", "rune-cli.ts");
 
 // ─── The fake model ───
 
@@ -52,28 +52,28 @@ export const calls = (id: string, name: string, args: Record<string, unknown>): 
 
 // ─── The stack ───
 
-export interface MockGear {
-  /** What `GearClient.connect` wants. */
+export interface MockRune {
+  /** What `RuneClient.connect` wants. */
   url: string;
   token: string;
   /** The directory the agent may touch. */
   workspace: string;
-  /** The session database, so `gear audit` can be pointed at this run. */
+  /** The session database, so `rune audit` can be pointed at this run. */
   dbPath: string;
-  gearHome: string;
-  /** Run `gear <args>` against this stack and return its stdout. */
-  gear(args: string[]): Promise<{ code: number; stdout: string; stderr: string }>;
+  runeHome: string;
+  /** Run `rune <args>` against this stack and return its stdout. */
+  rune(args: string[]): Promise<{ code: number; stdout: string; stderr: string }>;
   stop(): Promise<void>;
 }
 
 function toolsBinary(): string | null {
-  if (process.env.GEAR_TOOLS_BIN && existsSync(process.env.GEAR_TOOLS_BIN)) {
-    return process.env.GEAR_TOOLS_BIN;
+  if (process.env.RUNE_TOOLS_BIN && existsSync(process.env.RUNE_TOOLS_BIN)) {
+    return process.env.RUNE_TOOLS_BIN;
   }
   for (const p of [
-    join(repoRoot, "target", "release", "gear-tools"),
-    join(repoRoot, "target", "debug", "gear-tools"),
-    join(process.env.HOME ?? "", ".gear", "bin", "gear-tools"),
+    join(repoRoot, "target", "release", "rune-tools"),
+    join(repoRoot, "target", "debug", "rune-tools"),
+    join(process.env.HOME ?? "", ".rune", "bin", "rune-tools"),
   ]) {
     if (existsSync(p)) return p;
   }
@@ -88,24 +88,24 @@ async function freePort(): Promise<number> {
 }
 
 /**
- * Stand up a fake model and a real `gear serve` in front of it.
+ * Stand up a fake model and a real `rune serve` in front of it.
  *
  * `script` is one entry per model turn; the last entry repeats, so a run that
  * takes an extra turn does not hang waiting for a completion that never comes.
  */
-export async function startMockGear(script: string[]): Promise<MockGear> {
+export async function startMockRune(script: string[]): Promise<MockRune> {
   const bin = toolsBinary();
   if (!bin) {
     throw new Error(
-      "gear-tools is not built — run `cargo build --release -p gear-tools` or set GEAR_TOOLS_BIN",
+      "rune-tools is not built — run `cargo build --release -p rune-tools` or set RUNE_TOOLS_BIN",
     );
   }
 
-  const dir = mkdtempSync(join(tmpdir(), "gear-example-"));
-  const gearHome = join(dir, "home");
+  const dir = mkdtempSync(join(tmpdir(), "rune-example-"));
+  const runeHome = join(dir, "home");
   const workspace = join(dir, "workspace");
-  const dbPath = join(dir, "gear.db");
-  mkdirSync(gearHome, { recursive: true });
+  const dbPath = join(dir, "rune.db");
+  mkdirSync(runeHome, { recursive: true });
   mkdirSync(workspace, { recursive: true });
 
   let turn = 0;
@@ -126,24 +126,24 @@ export async function startMockGear(script: string[]): Promise<MockGear> {
   // `secrets.json` can override — which is what lets a spawned engine host,
   // building its own Engine from config, be pointed at a server we own.
   writeFileSync(
-    join(gearHome, "model.json"),
+    join(runeHome, "model.json"),
     JSON.stringify({ provider: "lmstudio", model: "fake-model" }),
   );
   writeFileSync(
-    join(gearHome, "secrets.json"),
+    join(runeHome, "secrets.json"),
     JSON.stringify({ endpoints: { lmstudio: `http://127.0.0.1:${model.port}/v1` } }),
     { mode: 0o600 },
   );
 
   const env = {
     ...process.env,
-    GEAR_HOME: gearHome,
-    GEAR_WORKSPACE: workspace,
-    GEAR_DB_PATH: dbPath,
-    GEAR_TOOLS_BIN: bin,
+    RUNE_HOME: runeHome,
+    RUNE_WORKSPACE: workspace,
+    RUNE_DB_PATH: dbPath,
+    RUNE_TOOLS_BIN: bin,
     // An example that stalls ten minutes on an unanswered round-trip teaches
     // the wrong lesson about what the timeout is for.
-    GEAR_ROUNDTRIP_TIMEOUT_MS: "60000",
+    RUNE_ROUNDTRIP_TIMEOUT_MS: "60000",
   };
 
   const port = await freePort();
@@ -156,7 +156,7 @@ export async function startMockGear(script: string[]): Promise<MockGear> {
     },
   );
 
-  const tokenPath = join(gearHome, "serve.json");
+  const tokenPath = join(runeHome, "serve.json");
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline && !existsSync(tokenPath)) {
     await new Promise((r) => setTimeout(r, 100));
@@ -165,7 +165,7 @@ export async function startMockGear(script: string[]): Promise<MockGear> {
     server.kill();
     model.stop(true);
     rmSync(dir, { recursive: true, force: true });
-    throw new Error("gear serve never came up");
+    throw new Error("rune serve never came up");
   }
   const cfg = JSON.parse(readFileSync(tokenPath, "utf8")) as { token: string; port: number };
 
@@ -174,8 +174,8 @@ export async function startMockGear(script: string[]): Promise<MockGear> {
     token: cfg.token,
     workspace,
     dbPath,
-    gearHome,
-    async gear(args) {
+    runeHome,
+    async rune(args) {
       const p = Bun.spawn(["bun", CLI, ...args], { env, stdout: "pipe", stderr: "pipe" });
       const [stdout, stderr] = await Promise.all([
         new Response(p.stdout).text(),
@@ -193,9 +193,9 @@ export async function startMockGear(script: string[]): Promise<MockGear> {
 }
 
 /**
- * `~/.gear/serve.json`, when a real server is actually answering.
+ * `~/.rune/serve.json`, when a real server is actually answering.
  *
- * The file outlives the process that wrote it — a `gear serve` you stopped
+ * The file outlives the process that wrote it — a `rune serve` you stopped
  * yesterday leaves a token file behind — so the port is PROBED before the
  * examples trust it. Without that, a stale file turns "the example works on a
  * fresh clone" into a connection error whose cause is nowhere on screen.
@@ -205,7 +205,7 @@ export async function runningServer(): Promise<{ url: string; token: string } | 
   let host: string;
   let port: number;
   try {
-    const home = process.env.GEAR_HOME ?? join(process.env.HOME ?? "", ".gear");
+    const home = process.env.RUNE_HOME ?? join(process.env.HOME ?? "", ".rune");
     const raw = JSON.parse(readFileSync(join(home, "serve.json"), "utf8")) as {
       token?: string;
       port?: number;

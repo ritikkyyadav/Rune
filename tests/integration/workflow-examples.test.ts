@@ -4,7 +4,7 @@
  * An example workflow that has never run is a JSON file with opinions in it.
  * These two are the shapes the feature exists for — a multi-dimension review
  * and a four-worker greenfield build — and this drives them through the real
- * `gear workflow` command, so a graph that no longer parses, a `{{token}}` that
+ * `rune workflow` command, so a graph that no longer parses, a `{{token}}` that
  * names a node nobody declared, or a wave order that silently changed is a
  * failing test rather than something the founder finds.
  *
@@ -25,7 +25,7 @@ import { join } from "node:path";
 
 import type { WorkflowState } from "../../packages/orchestrator/src/workflow";
 
-const CLI = join(import.meta.dir, "../../packages/orchestrator/src/bin/gear-cli.ts");
+const CLI = join(import.meta.dir, "../../packages/orchestrator/src/bin/rune-cli.ts");
 const EXAMPLES = join(import.meta.dir, "../../examples/workflows");
 
 const dirs: string[] = [];
@@ -33,9 +33,9 @@ afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
-/** A workspace of its own, so `.gear/workflows/` is never the repo's. */
+/** A workspace of its own, so `.rune/workflows/` is never the repo's. */
 function workspace(): string {
-  const d = mkdtempSync(join(tmpdir(), "gear-wf-ex-"));
+  const d = mkdtempSync(join(tmpdir(), "rune-wf-ex-"));
   dirs.push(d);
   return d;
 }
@@ -43,7 +43,7 @@ function workspace(): string {
 async function workflow(cwd: string, args: string[]): Promise<{ code: number; out: string }> {
   const proc = Bun.spawn(["bun", CLI, "workflow", ...args], {
     cwd,
-    env: { ...process.env, NO_COLOR: "1", GEAR_HOME: join(cwd, "home") },
+    env: { ...process.env, NO_COLOR: "1", RUNE_HOME: join(cwd, "home") },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -56,7 +56,7 @@ async function workflow(cwd: string, args: string[]): Promise<{ code: number; ou
 }
 
 function stateOf(cwd: string, name: string): WorkflowState {
-  const path = join(cwd, ".gear", "workflows", `${name}.state.json`);
+  const path = join(cwd, ".rune", "workflows", `${name}.state.json`);
   expect(existsSync(path), `${name} wrote its resume state`).toBe(true);
   return JSON.parse(readFileSync(path, "utf8")) as WorkflowState;
 }

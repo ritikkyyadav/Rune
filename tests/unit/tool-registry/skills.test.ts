@@ -14,7 +14,7 @@ import type { ToolCallInput } from "../../../packages/tool-registry/src/types";
 let workspace: string;
 
 beforeEach(async () => {
-  workspace = await mkdtemp(join(tmpdir(), "gear-skills-"));
+  workspace = await mkdtemp(join(tmpdir(), "rune-skills-"));
 });
 
 afterEach(async () => {
@@ -128,7 +128,7 @@ describe("SkillLoader · discovery", () => {
     expect(catalog[0].description).toBe("Engineering workflows");
   });
 
-  test("flat .gear/skills layout is attributed to the 'user' plugin", async () => {
+  test("flat .rune/skills layout is attributed to the 'user' plugin", async () => {
     const dir = join(workspace, "mine");
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, "SKILL.md"), "---\nname: mine\ndescription: my skill\n---\nbody");

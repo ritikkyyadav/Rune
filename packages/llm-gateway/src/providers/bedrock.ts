@@ -96,7 +96,7 @@ export function applyInferenceProfile(
 }
 
 /**
- * A resolved-credential probe for the boot path and `gear providers`. Returns
+ * A resolved-credential probe for the boot path and `rune providers`. Returns
  * a printable source ("profile default") or null — never the secret.
  */
 export async function bedrockCredentialSource(opts: AwsChainOpts = {}): Promise<string | null> {

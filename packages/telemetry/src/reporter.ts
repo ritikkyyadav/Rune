@@ -28,7 +28,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import type { IncidentContext, IncidentRecord } from "@gear/shared";
+import type { IncidentContext, IncidentRecord } from "@rune/shared";
 import { redactText } from "./redact";
 import { markHeartbeat, todayUtc, type TelemetryState } from "./consent";
 import { peekUsage, takeUsage } from "./counters";
@@ -250,7 +250,7 @@ export class TelemetryReporter {
     // The queue and counters are already durable on disk; nothing to flush.
   }
 
-  // ─── preview surface (for `gear telemetry preview`) ───
+  // ─── preview surface (for `rune telemetry preview`) ───
 
   /** The exact wire payload a report of this kind would take. */
   previewSampleIncident(): IncidentWire {

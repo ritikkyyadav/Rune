@@ -17,7 +17,7 @@ A change is **self-improvement** when it is (1) in a declared, enumerable space,
 - The retro is turn-scoped but reads the session spine (`retro.ts:209, 214, 261`); fixed in P1.1.
 - History is read and never written back: `evolve-cli.ts:113` derives 128 retros with lessons, `cmdStatus` counts them (`:380`), and `recordLessons` has one call site (`engine.ts:3916`), never the backfill. Hence 0 pitfalls.
 - Three of four tune rules key on `unproven`, `stalled`, `open_steps` (`retro.ts:593-636`): zero occurrences in 601 sessions. The failure modes that occur (`aborted` 71, `error` 64, `max_turns` 16, `halted` 9) are counted by `scorecard` (`retro.ts:511-529`) and read by no rule. `TuneProposal.config` is prose (`retro.ts:579-585`), not a patch.
-- The eval harness (`tests/eval/harness.ts`) runs real or mock models, verifies artifacts only, gates in CI (`ci.yml` `eval`, `eval-real` nightly), can sweep models (`GEAR_MODEL_SWEEP`) but **cannot A/B configurations**: `new Engine({...})` at `harness.ts:270-277` threads six fields; `doctrineDelivery` (`engine.ts:394`), `effortRouting` (`:401`), `reasoningEffort` (`:386`), `notebook`, `verify`, `context.repoMap` are not threaded.
+- The eval harness (`tests/eval/harness.ts`) runs real or mock models, verifies artifacts only, gates in CI (`ci.yml` `eval`, `eval-real` nightly), can sweep models (`RUNE_MODEL_SWEEP`) but **cannot A/B configurations**: `new Engine({...})` at `harness.ts:270-277` threads six fields; `doctrineDelivery` (`engine.ts:394`), `effortRouting` (`:401`), `reasoningEffort` (`:386`), `notebook`, `verify`, `context.repoMap` are not threaded.
 - Nothing records which configuration produced a run: `system_prompt_hash` exists in the schema (`session.ts:55`) and is NULL for all 601 sessions; the retro payload is `{retro, model, provider}` (`engine.ts:3907-3914`); `AGENT_DOCTRINE` has no version or hash.
 - The incident → eval flywheel is built and empty: `tests/eval/from-incidents.ts` scaffolds tasks; `tasks-from-incidents.ts:12-15` is `[]`; `covered.json` is `{}`; the black box holds ~5.8 MB.
 - The widest automatic action has the weakest gate: the playbook writes an executable skill into the user's workspace (`playbook.ts:18`) on a recurrence count of 2, with no measurement and no revert but git. The narrowest action (a TOML boolean) is blocked entirely.
@@ -34,11 +34,11 @@ A change is **self-improvement** when it is (1) in a declared, enumerable space,
 
 **P7.4 Paired A/B (2 days).** `runner.ts --ab <variantId>`: control then treatment on the same task set, same order, same seeds, same process; `report.ts compareArms()` reports the per-task delta and gates on: no task regresses; `cleanPassRate` up beyond the noise band; `totalListCost` not up beyond a band; throttles acceptable. Mock mode (deterministic) is the cheap gate; real mode carries the noise band. Two-key rule: both must pass.
 
-**P7.5 Promote and revert (1.5 days).** `evolve/promote.ts`: on a passing A/B write the variant's lines into `~/.gear/config.toml` inside a generated fenced block (same marker discipline as `playbook.ts:117-126`) and append to `~/.gear/evolve-ledger.jsonl` (variant, both config/doctrine hashes, both reports, per-task deltas, eval-suite commit sha, timestamp). `gear evolve ab <id>`, `gear evolve promote <id>` (refuses without a passing ledger entry for that exact hash pair), `gear evolve revert [n]`, `gear evolve why <id|lesson>` (lineage: born from incidents, fired in sessions, win curve, transitions). One promotion per interval; automatic halt after two consecutive reverts.
+**P7.5 Promote and revert (1.5 days).** `evolve/promote.ts`: on a passing A/B write the variant's lines into `~/.rune/config.toml` inside a generated fenced block (same marker discipline as `playbook.ts:117-126`) and append to `~/.rune/evolve-ledger.jsonl` (variant, both config/doctrine hashes, both reports, per-task deltas, eval-suite commit sha, timestamp). `rune evolve ab <id>`, `rune evolve promote <id>` (refuses without a passing ledger entry for that exact hash pair), `rune evolve revert [n]`, `rune evolve why <id|lesson>` (lineage: born from incidents, fired in sessions, win curve, transitions). One promotion per interval; automatic halt after two consecutive reverts.
 
 **P7.6 Lessons lifecycle (1.5 days).** `candidate → trial → active → retired` per the 2026-07 plan §2.4: candidates stored and never injected; trial injected with `(lessonId, sessionId, outcome)` logged; active after ≥5 firings with win-rate ≥ baseline + margin; retired on decay, disuse, contradiction (already built for `avoid:`), or user disable. Outcome signal: a turn is a win when the evidence gate passed, no `error+` incidents, no correction/rephrase (`struggle.*`). Repo-scoped lessons may promote on live signal; global-scope and every variant need the offline A/B. The backfill path calls `recordLessons` as candidates. `CostGovernor.allow()` gates any model-assisted distillation.
 
-**P7.7 The playbook under the same discipline (1 day).** The playbook skill is written only for `active` lessons; its promotion is a ledger entry; `gear evolve revert` removes it; the notice names the change. A learned skill that can direct multi-step behaviour is inert until the user enables it once (the consent gate from the 2026-07 plan §2.2 Layer 3).
+**P7.7 The playbook under the same discipline (1 day).** The playbook skill is written only for `active` lessons; its promotion is a ledger entry; `rune evolve revert` removes it; the notice names the change. A learned skill that can direct multi-step behaviour is inert until the user enables it once (the consent gate from the 2026-07 plan §2.2 Layer 3).
 
 **P7.8 The flywheel (1.5 days).** `from-incidents.ts` promotes every fingerprint class with ≥3 occurrences into a deterministic task in `tasks-from-incidents.ts`; `covered.json` tracks coverage; CI fails when an uncovered class crosses the threshold. Gardener fixes are validated by the same harness.
 
@@ -59,9 +59,9 @@ A change is **self-improvement** when it is (1) in a declared, enumerable space,
 git ls-files packages/orchestrator/src/retro.ts packages/orchestrator/src/playbook.ts packages/orchestrator/src/bin/evolve-cli.ts | wc -l   # 3 (tracked)
 bun test tests/unit/evolve/ tests/unit/orchestrator/evolution-invariants.test.ts
 bun run eval -- --ab doctrine_full            # paired report; mock deterministic
-gear evolve ab doctrine_full && gear evolve promote doctrine_full   # ledger entry written, config block written
-gear evolve revert                            # block removed, ledger says so
-gear evolve status                            # ≥1 active lesson with lineage, ≥1 retired, last measured lift with date
+rune evolve ab doctrine_full && rune evolve promote doctrine_full   # ledger entry written, config block written
+rune evolve revert                            # block removed, ledger says so
+rune evolve status                            # ≥1 active lesson with lineage, ≥1 retired, last measured lift with date
 ```
 
-Done means: Gear can connect an action to an observation, and cannot change what it is permitted to do.
+Done means: Rune can connect an action to an observation, and cannot change what it is permitted to do.

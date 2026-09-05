@@ -1,19 +1,19 @@
 <#
 .SYNOPSIS
-  Gear — one-line Windows installer.
+  Rune — one-line Windows installer.
 
 .DESCRIPTION
-  Downloads the prebuilt gear.exe and gear-tools.exe for this machine, VERIFIES
+  Downloads the prebuilt rune.exe and rune-tools.exe for this machine, VERIFIES
   both against the release's SHA256SUMS, and installs them to
-  %LOCALAPPDATA%\Gear\bin, adding that directory to the user PATH.
+  %LOCALAPPDATA%\Rune\bin, adding that directory to the user PATH.
 
   Windows binaries have been built by CI for months and nothing could install
   them: web-install.sh hard-exits on anything that is not Darwin or Linux, and
   there was no .ps1. This is that file.
 
-  A note on what you get: Gear has no OS sandbox on Windows. 1st and 2nd gear
+  A note on what you get: Rune has no OS sandbox on Windows. 1st and 2nd gear
   (guided, workspace edits) behave exactly as they do elsewhere; 3rd and 4th
-  gear run shell commands WITHOUT the OS-level containment macOS and Linux
+  rune run shell commands WITHOUT the OS-level containment macOS and Linux
   provide. Run under WSL2 if you want the sandbox. The installer says this out
   loud rather than letting you find out later.
 
@@ -21,19 +21,19 @@
   Release tag to install (default: latest).
 
 .PARAMETER InstallDir
-  Where the binaries go (default: %LOCALAPPDATA%\Gear\bin).
+  Where the binaries go (default: %LOCALAPPDATA%\Rune\bin).
 
 .PARAMETER Repo
   GitHub repo hosting the releases (default: ritikkyyadav/Alan).
 
 .PARAMETER SkipTools
-  Install gear.exe alone. File, search and shell tools will not work.
+  Install rune.exe alone. File, search and shell tools will not work.
 
 .PARAMETER NoPath
   Do not modify the user PATH.
 
 .PARAMETER Uninstall
-  Remove the binaries and the PATH entry. Leaves ~/.gear data alone.
+  Remove the binaries and the PATH entry. Leaves ~/.rune data alone.
 
 .EXAMPLE
   irm https://raw.githubusercontent.com/ritikkyyadav/Alan/main/scripts/install.ps1 | iex
@@ -45,9 +45,9 @@
 #>
 [CmdletBinding()]
 param(
-  [string] $Version = $(if ($env:GEAR_VERSION) { $env:GEAR_VERSION } else { 'latest' }),
-  [string] $InstallDir = $(if ($env:GEAR_INSTALL_DIR) { $env:GEAR_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'Gear\bin' }),
-  [string] $Repo = $(if ($env:GEAR_REPO) { $env:GEAR_REPO } else { 'ritikkyyadav/Alan' }),
+  [string] $Version = $(if ($env:RUNE_VERSION) { $env:RUNE_VERSION } else { 'latest' }),
+  [string] $InstallDir = $(if ($env:RUNE_INSTALL_DIR) { $env:RUNE_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'Rune\bin' }),
+  [string] $Repo = $(if ($env:RUNE_REPO) { $env:RUNE_REPO } else { 'ritikkyyadav/Alan' }),
   [switch] $SkipTools,
   [switch] $NoPath,
   [switch] $Uninstall
@@ -78,7 +78,7 @@ function Add-ToUserPath([string] $dir) {
   Write-Host ''
   $updated = if ($current.TrimEnd(';') -eq '') { $dir } else { "$($current.TrimEnd(';'));$dir" }
   [Environment]::SetEnvironmentVariable('Path', $updated, 'User')
-  # Make it work in THIS session too, so `gear` runs without a new terminal.
+  # Make it work in THIS session too, so `rune` runs without a new terminal.
   $env:Path = "$env:Path;$dir"
   Write-Ok "Added to your user PATH (open a new terminal for other shells to see it)"
 }
@@ -95,9 +95,9 @@ function Remove-FromUserPath([string] $dir) {
 
 if ($Uninstall) {
   Write-Host ''
-  Write-Step 'Gear uninstaller'
+  Write-Step 'Rune uninstaller'
   $removed = $false
-  foreach ($name in @('gear.exe', 'gear-tools.exe', 'gear.exe.backup', 'gear-tools.exe.backup')) {
+  foreach ($name in @('rune.exe', 'rune-tools.exe', 'rune.exe.backup', 'rune-tools.exe.backup')) {
     $p = Join-Path $InstallDir $name
     if (Test-Path $p) {
       Remove-Item -Force $p
@@ -108,8 +108,8 @@ if ($Uninstall) {
   if (-not $removed) { Write-Dim "nothing to remove in $InstallDir" }
   Remove-FromUserPath $InstallDir
   Write-Host ''
-  Write-Step "Your data is untouched: $(Join-Path $env:USERPROFILE '.gear') still holds sessions, config and credentials."
-  Write-Step "Remove it yourself if you mean to:  Remove-Item -Recurse -Force `"$(Join-Path $env:USERPROFILE '.gear')`""
+  Write-Step "Your data is untouched: $(Join-Path $env:USERPROFILE '.rune') still holds sessions, config and credentials."
+  Write-Step "Remove it yourself if you mean to:  Remove-Item -Recurse -Force `"$(Join-Path $env:USERPROFILE '.rune')`""
   Write-Host ''
   exit 0
 }
@@ -128,8 +128,8 @@ if ($arch -ne 'x64') {
   exit 1
 }
 
-$asset      = 'gear-windows-x64.exe'
-$toolsAsset = 'gear-tools-windows-x64.exe'
+$asset      = 'rune-windows-x64.exe'
+$toolsAsset = 'rune-tools-windows-x64.exe'
 $base = if ($Version -eq 'latest') {
   "https://github.com/$Repo/releases/latest/download"
 } else {
@@ -137,7 +137,7 @@ $base = if ($Version -eq 'latest') {
 }
 
 Write-Host ''
-Write-Step 'Gear installer'
+Write-Step 'Rune installer'
 Write-Dim  "platform : windows-$arch"
 Write-Dim  "release  : $Version"
 Write-Dim  "install  : $InstallDir"
@@ -145,7 +145,7 @@ Write-Host ''
 
 # ─── Stage everything before anything is installed ───
 
-$stage = Join-Path ([System.IO.Path]::GetTempPath()) ("gear-install-" + [Guid]::NewGuid().ToString('N'))
+$stage = Join-Path ([System.IO.Path]::GetTempPath()) ("rune-install-" + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $stage -Force | Out-Null
 
 function Get-Asset([string] $name, [string] $dest) {
@@ -215,18 +215,18 @@ try {
 
   # ─── Promote (nothing above touched the install directory) ───
   New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
-  $cliDest = Join-Path $InstallDir 'gear.exe'
+  $cliDest = Join-Path $InstallDir 'rune.exe'
   if (Test-Path $cliDest) { Copy-Item -Force $cliDest "$cliDest.backup" }
   Move-Item -Force $cliPath $cliDest
   Write-Ok "Installed: $cliDest"
 
   if ($toolsPath) {
-    $toolsDest = Join-Path $InstallDir 'gear-tools.exe'
+    $toolsDest = Join-Path $InstallDir 'rune-tools.exe'
     if (Test-Path $toolsDest) { Copy-Item -Force $toolsDest "$toolsDest.backup" }
     Move-Item -Force $toolsPath $toolsDest
     Write-Ok "Installed: $toolsDest"
   } else {
-    Write-Dim 'SkipTools - build it with: cargo build --release -p gear-tools'
+    Write-Dim 'SkipTools - build it with: cargo build --release -p rune-tools'
   }
 } finally {
   Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
@@ -236,16 +236,16 @@ if (-not $NoPath) {
   Add-ToUserPath $InstallDir
 } else {
   Write-Host ''
-  Write-Step 'Add Gear to your PATH yourself:'
+  Write-Step 'Add Rune to your PATH yourself:'
   Write-Host "      `$env:Path += `";$InstallDir`"" -ForegroundColor Cyan
 }
 
 Write-Host ''
 Write-Host '  No OS sandbox on Windows.' -ForegroundColor Yellow
 Write-Dim  '1st and 2nd gear behave normally. 3rd and 4th gear run shell commands without the'
-Write-Dim  'OS-level containment macOS and Linux provide. Run Gear under WSL2 for the sandbox.'
+Write-Dim  'OS-level containment macOS and Linux provide. Run Rune under WSL2 for the sandbox.'
 Write-Host ''
-Write-Step 'Then run: gear'
+Write-Step 'Then run: rune'
 Write-Dim  'Free to start: grab a Google AI Studio key and set $env:GOOGLE_API_KEY'
-Write-Dim  'Later: `gear upgrade --check` tells you when a newer release exists.'
+Write-Dim  'Later: `rune upgrade --check` tells you when a newer release exists.'
 Write-Host ''

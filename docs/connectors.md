@@ -1,6 +1,6 @@
 # Connectors
 
-Gear talks to outside services over the [Model Context Protocol](https://modelcontextprotocol.io).
+Rune talks to outside services over the [Model Context Protocol](https://modelcontextprotocol.io).
 A connector is an MCP server: a local subprocess (stdio) or a remote HTTP
 endpoint. This page is what you need to connect one, what it costs, and what
 happens when it breaks.
@@ -14,7 +14,7 @@ A connector is not free. Every tool it exposes ships its full JSON schema on
 you are paying for forty schemas per turn whether or not the run ever touches
 one.
 
-Gear defers them. A deferred tool is registered and callable; it is simply
+Rune defers them. A deferred tool is registered and callable; it is simply
 advertised as one catalog line instead of a full schema:
 
 ```
@@ -52,7 +52,7 @@ no connectors pays nothing for the mechanism.
 schema tokens: before=9601 after=968 reduction=89.9%
 ```
 
-`gear audit` reports the same number for a real session:
+`rune audit` reports the same number for a real session:
 
 ```
   Schema tokens  968 per request · 12 advertised · 40 deferred · 89% below 9,601 eager
@@ -67,7 +67,7 @@ schema tokens: before=9601 after=968 reduction=89.9%
 
 Every remote connector in the vendored catalog — Notion, Slack, Linear,
 Atlassian, GitHub, PagerDuty, Datadog, Google Calendar, Gmail — is
-OAuth-protected. Gear speaks the MCP authorization spec (2025-06-18) and the
+OAuth-protected. Rune speaks the MCP authorization spec (2025-06-18) and the
 RFCs it cites:
 
 | Step                                                                   | Spec          |
@@ -80,24 +80,24 @@ RFCs it cites:
 | resource indicator, so the token is audience-bound to that one server  | RFC 8707      |
 
 The redirect is captured on an ephemeral `127.0.0.1` loopback — the same engine
-`gear login` uses for Anthropic, Codex, OpenRouter and Copilot.
+`rune login` uses for Anthropic, Codex, OpenRouter and Copilot.
 
 **Where tokens live.** Under `mcp:<server>` in the OS credential store: macOS
 Keychain, libsecret on Linux, DPAPI on Windows, and a `0600` file only when
-none of those is reachable (Gear says so when it falls back).
+none of those is reachable (Rune says so when it falls back).
 
 **When a token expires.** The transport refreshes and retries once, silently.
 You do not see it.
 
 **When a refresh fails.** The _connector_ becomes unavailable — never the
-session. Its tools stop being advertised, the status line shows it, `gear mcp
+session. Its tools stop being advertised, the status line shows it, `rune mcp
 doctor` names it, and the model is told once. The rest of the run continues as
 if the connector were simply absent. This is the case that used to take the
 whole session down.
 
 ```
-gear mcp login notion       # runs the flow
-gear mcp logout notion      # forgets the token
+rune mcp login notion       # runs the flow
+rune mcp logout notion      # forgets the token
 ```
 
 **Opting out.** An entry that already carries its own `Authorization` header is
@@ -114,23 +114,23 @@ the browser click replaced by a direct fetch of the authorization URL.
 
 ---
 
-## `gear mcp`
+## `rune mcp`
 
 ```
-gear mcp add <name|url|command> [--scope user|workspace] [--header K=V] [--env K=V] [--name N]
-gear mcp remove <name> [--scope …]
-gear mcp list [--catalog]
-gear mcp login <name>
-gear mcp logout <name>
-gear mcp enable <name> / disable <name>
-gear mcp doctor
+rune mcp add <name|url|command> [--scope user|workspace] [--header K=V] [--env K=V] [--name N]
+rune mcp remove <name> [--scope …]
+rune mcp list [--catalog]
+rune mcp login <name>
+rune mcp logout <name>
+rune mcp enable <name> / disable <name>
+rune mcp doctor
 ```
 
-No Engine boot and no provider validation — like `gear doctor`, this is instant.
+No Engine boot and no provider validation — like `rune doctor`, this is instant.
 `list` and `doctor` do start the servers, because reporting real health is their
 whole job.
 
-**Resolving a name.** `gear mcp add notion` consults two sources, in order:
+**Resolving a name.** `rune mcp add notion` consults two sources, in order:
 
 1. The 20 vendored `skills/*/.mcp.json` files — 58 distinct connectors with the
    URLs each vendor publishes. This catalog was already in the repo and unused.
@@ -148,10 +148,10 @@ vendored files) is reported as such rather than written out as a broken server.
 
 |                              |                                           |
 | ---------------------------- | ----------------------------------------- |
-| `~/.gear/mcp.json`           | user — connectors you have everywhere     |
-| `<workspace>/.gear/mcp.json` | workspace — connectors this project needs |
+| `~/.rune/mcp.json`           | user — connectors you have everywhere     |
+| `<workspace>/.rune/mcp.json` | workspace — connectors this project needs |
 
-Workspace wins on collision, and `gear mcp list` says which file each entry came
+Workspace wins on collision, and `rune mcp list` says which file each entry came
 from and whether it shadows the other. The narrower scope is the more deliberate
 one.
 
@@ -160,13 +160,13 @@ without losing configuration that took a sign-in to produce.
 
 **`remove` keeps the token.** Deleting a credential is not something a `remove`
 should do silently; the command says the token is still there and names
-`gear mcp logout`.
+`rune mcp logout`.
 
 ## `[mcp]` in config.toml
 
 ```toml
 [mcp]
-defaultScope = "workspace"   # where `gear mcp add` writes without --scope
+defaultScope = "workspace"   # where `rune mcp add` writes without --scope
 timeoutSecs  = 30            # per-request tools/call timeout
 registry     = true          # consult the public MCP registry when resolving
 deferTools   = true          # false ships every schema on every request (pre-P4.1)
@@ -186,10 +186,10 @@ One event now has three consumers:
 | Surface                 | What it shows                                                                                                              |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | TUI status line         | a `notice`, through the same flow grammar every other harness message uses — no new dialect                                |
-| `gear status` / desktop | `mcp.down` names each unusable connector and why (`needs-auth` or `down`), never a bare count                              |
+| `rune status` / desktop | `mcp.down` names each unusable connector and why (`needs-auth` or `down`), never a bare count                              |
 | the model               | one harness note, **once per session**: "these connectors are configured but unavailable — do not plan around their tools" |
 
-`gear mcp doctor` prints the same, plus the command that fixes each one.
+`rune mcp doctor` prints the same, plus the command that fixes each one.
 
 The note is said once. Repeating it every turn would train the model to skim
 harness notes, which costs more than the connector did.
@@ -204,7 +204,7 @@ Events: `server-ready`, `server-down`, `server-needs-auth`, `server-restarted`,
 
 ## The rest of the protocol
 
-Gear used to speak four methods: `initialize`, `tools/list`, `tools/call`,
+Rune used to speak four methods: `initialize`, `tools/list`, `tools/call`,
 `ping`. Everything else was answered `-32601`.
 
 **Resources** — the documents, pages and records a server exposes read-only —
@@ -232,7 +232,7 @@ and a trailing multi-word argument does not need quoting.
 `ask_user` round-trip the harness already owns, so a connector's question lands
 in the same picker as the agent's own. One question surface, not two. With no
 handler wired (headless, CI) the connector is declined promptly rather than
-blocked on a person who is not there. Gear declares the `elicitation` capability
+blocked on a person who is not there. Rune declares the `elicitation` capability
 on `initialize`, because a server reading an empty capabilities object never
 asks and the feature is dead however well the handler works.
 
@@ -269,7 +269,7 @@ session carries on — that stream is additive.
 A plugin is one installable bundle of the four extension kinds:
 
 ```
-.gear/plugins/<name>/
+.rune/plugins/<name>/
   plugin.json          manifest
   skills/<s>/SKILL.md  auto-discovered, attributed to <name>
   mcp.json             connectors
@@ -278,24 +278,24 @@ A plugin is one installable bundle of the four extension kinds:
 ```
 
 ```
-gear plugin search fmt                    what exists, per the index
-gear plugin add gear-example-skills       a name, resolved through the index
-gear plugin add ./my-plugin              a local path
-gear plugin add https://github.com/…      a git repository
-gear plugin add @scope/gear-plugin-x      an npm package
-gear plugin list / remove / enable / disable
+rune plugin search fmt                    what exists, per the index
+rune plugin add rune-example-skills       a name, resolved through the index
+rune plugin add ./my-plugin              a local path
+rune plugin add https://github.com/…      a git repository
+rune plugin add @scope/rune-plugin-x      an npm package
+rune plugin list / remove / enable / disable
 ```
 
-The index (`plugins/index.json`, or `[extensions] index` / `GEAR_PLUGIN_INDEX`
+The index (`plugins/index.json`, or `[extensions] index` / `RUNE_PLUGIN_INDEX`
 pointing elsewhere) is versioned, schema-validated, and carries an sha256 per
 entry that is verified against the staged bundle before installation. It caches
-to `~/.gear/plugin-index.json` and falls back to the copy shipped with the
+to `~/.rune/plugin-index.json` and falls back to the copy shipped with the
 build when the network is unreachable. Full reference: [plugins.md](plugins.md).
 
 Plugins existed as this convention with no way to get a directory there, and
 `PluginDiscovery.errors` were computed on every scan and shown nowhere — so an
 installed-but-refused plugin looked exactly like one nobody had installed.
-`gear plugin list` prints the refusals, and so does the status line.
+`rune plugin list` prints the refusals, and so does the status line.
 
 **Plugins ship five kinds** (D6 v2): skills, commands, MCP servers, hooks — all
 declarative — and **executable tools**, which are subprocesses under the OS
@@ -308,8 +308,8 @@ install script runs. The protocol and the capability manifest are in
 
 | Field         | What it does                                                                                                                                                                                                                                                      |
 | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `gearVersion` | semver range; a plugin that does not fit is refused with a reason, rather than loaded and left to fail somewhere less legible. An unparseable range is treated as satisfied — our limitation should not become the author's problem                               |
-| `permissions` | `hosts`, `paths`, `blockingHooks`. **Disclosure, not enforcement** — printed at install and in `list`, and said to be unenforced. A hook is a shell command the plugin asked Gear to run and an MCP server a process it asked Gear to start; neither is contained |
+| `runeVersion` | semver range; a plugin that does not fit is refused with a reason, rather than loaded and left to fail somewhere less legible. An unparseable range is treated as satisfied — our limitation should not become the author's problem                               |
+| `permissions` | `hosts`, `paths`, `blockingHooks`. **Disclosure, not enforcement** — printed at install and in `list`, and said to be unenforced. A hook is a shell command the plugin asked Rune to run and an MCP server a process it asked Rune to start; neither is contained |
 | `tools`       | executable tool servers (D6 v2). The one block that **is** enforced: each is a subprocess under the OS sandbox with the capability it declares, refused where no sandbox exists. See [plugins.md](plugins.md)                                                     |
 | `integrity`   | `sha256` over the tree. A digest that no longer matches means the files changed since installation, and the plugin is refused: a plugin contributes hooks that run shell commands, and "probably fine" is not a standard to run someone else's commands under     |
 | `source`      | where it came from                                                                                                                                                                                                                                                |
@@ -332,7 +332,7 @@ It is wired now for exactly one case — **the user's own workspace**:
 
 ```toml
 [extensions]
-localTools = true   # load executable tools from <workspace>/.gear/tools
+localTools = true   # load executable tools from <workspace>/.rune/tools
 ```
 
 Off by default, in-process, and a plugin can never point at it. That separation

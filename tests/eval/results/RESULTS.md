@@ -1,6 +1,6 @@
-# Gear eval — first real measured success rate
+# Rune eval — first real measured success rate
 
-Goal: produce Gear's first measured task-success rate on the real engine (live
+Goal: produce Rune's first measured task-success rate on the real engine (live
 model, real workspaces, `verify()`-gated), runnable on both a paid ceiling and a
 free/keyless floor. This file records what was actually measured, honestly.
 
@@ -23,7 +23,7 @@ Raw: `floor-gemini-2.5-flash.json` (also the active `../baseline.json`).
 ### What's trustworthy vs contaminated
 
 - **Trustworthy:** core, comprehension, fix-failing-test, multi-file-refactor —
-  all 100% on a real model. Gear reliably does code comprehension, single-file
+  all 100% on a real model. Rune reliably does code comprehension, single-file
   bug fixes, and multi-file renames/refactors end-to-end.
 - **Contaminated:** new-feature and tool-discipline collapsed to 0/4 at ~3s /
   **0 turns / $0 cost** — the signature of Gemini free-tier rate-limiting, not a
@@ -35,8 +35,8 @@ Raw: `floor-gemini-2.5-flash.json` (also the active `../baseline.json`).
 
 ## Ceiling run — 2026-06-19 (Ollama Turbo, hardened harness) ✅
 
-`GEAR_EVAL_PROVIDER=ollama-turbo GEAR_EVAL_MODEL=qwen3-coder-next` with pacing
-(`GEAR_EVAL_TASK_DELAY_MS=3000`, retries 3 @ 8s base).
+`RUNE_EVAL_PROVIDER=ollama-turbo RUNE_EVAL_MODEL=qwen3-coder-next` with pacing
+(`RUNE_EVAL_TASK_DELAY_MS=3000`, retries 3 @ 8s base).
 
 | Category            | Measured          | Note                                  |
 | ------------------- | ----------------- | ------------------------------------- |
@@ -50,7 +50,7 @@ Raw: `floor-gemini-2.5-flash.json` (also the active `../baseline.json`).
 
 Raw: `ceiling-qwen3-coder-next.json` (now the active `../baseline.json`).
 
-**This is Gear's real measured ceiling.** Comprehension, bug-fixes, and
+**This is Rune's real measured ceiling.** Comprehension, bug-fixes, and
 multi-file refactors are 17/17 on a capable model — the 68% floor was mostly
 throttle, not capability. Two real (non-throttle) findings:
 
@@ -77,8 +77,8 @@ To get the clean ceiling: fund the OpenRouter account **or** set a direct
 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`, then:
 
 ```
-ANTHROPIC_API_KEY=sk-... GEAR_EVAL_PROVIDER=anthropic \
-  GEAR_EVAL_MODEL=claude-sonnet-4-20250514 bun run tests/eval/runner.ts --real
+ANTHROPIC_API_KEY=sk-... RUNE_EVAL_PROVIDER=anthropic \
+  RUNE_EVAL_MODEL=claude-sonnet-4-20250514 bun run tests/eval/runner.ts --real
 ```
 
 ## Harness hardening (done 2026-06-19)
@@ -93,8 +93,8 @@ harness now separates throttle noise from real failures:
   `measured = total − throttled`. Throttled tasks count as neither pass nor
   fail. Per-category shows `(N thr)`.
 - **Retry + pacing:** throttled tasks retry with exponential backoff
-  (`GEAR_EVAL_MAX_RETRIES`, `GEAR_EVAL_RETRY_BASE_MS`), and real runs pace
-  between tasks (`GEAR_EVAL_TASK_DELAY_MS`, default 1500ms) to avoid tripping
+  (`RUNE_EVAL_MAX_RETRIES`, `RUNE_EVAL_RETRY_BASE_MS`), and real runs pace
+  between tasks (`RUNE_EVAL_TASK_DELAY_MS`, default 1500ms) to avoid tripping
   per-minute limits.
 - **Baseline guard:** every run is archived to `results/run-<ts>-<tag>.json`;
   `baseline.json` is only promoted on a clean run (0 throttled) unless

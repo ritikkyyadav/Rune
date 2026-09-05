@@ -131,7 +131,7 @@ export type AgentTurnEvent =
        */
       trigger?: "auto" | "requested" | "overflow";
     }
-  // A durable run-state checkpoint was written (see @gear/shared state.ts).
+  // A durable run-state checkpoint was written (see @rune/shared state.ts).
   | { type: "checkpoint_saved"; runId: string; version: number; turnCount: number }
   // ─── Task-spine events ───
   // The run ended BEFORE finishing (turn ceiling, exhausted context, abort,

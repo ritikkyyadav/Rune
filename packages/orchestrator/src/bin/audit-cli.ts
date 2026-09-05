@@ -1,25 +1,25 @@
-// ─── `gear audit`: what a session did, and on what evidence ───
+// ─── `rune audit`: what a session did, and on what evidence ───
 //
 // The session log already holds everything — the plan with its evidence, the
 // harness's own log, every safety decision with its reason, the held steps,
 // the cost rows, the terminations. Nothing read it back as one page: the
 // reason a call was allowed lived in a SQLite row reachable only by hand, and
 // the plan's evidence lived in the mission file of whichever workspace the
-// run happened in. This is that page. It opens ~/.gear/gear.db read-only, no
-// Engine, no provider — instant, like `gear incidents`.
+// run happened in. This is that page. It opens ~/.rune/rune.db read-only, no
+// Engine, no provider — instant, like `rune incidents`.
 
 import { join } from "node:path";
-import { getGearHome, SessionManager } from "@gear/shared";
-import type { SessionEvent } from "@gear/shared";
-import { BlackboxStore } from "@gear/telemetry";
+import { getRuneHome, SessionManager } from "@rune/shared";
+import type { SessionEvent } from "@rune/shared";
+import { BlackboxStore } from "@rune/telemetry";
 import { formatAutoSafetyMetrics, readAutoSafetyMetrics } from "../auto-metrics";
 import { TaskStateStore, stepReceipt } from "../task-state";
 import { runEnding, type RunRetro } from "../retro";
 import { accent, danger, dim, faint, info, ok, text, warn } from "./ui/theme";
 import { formatCacheRate } from "../cost-report";
 import { getContextLimit, UNKNOWN_MODEL_CONTEXT_LIMIT } from "../tokenizer";
-import { MODEL_PRICING } from "@gear/llm-gateway";
-import type { DecisionRecord } from "@gear/protocol";
+import { MODEL_PRICING } from "@rune/llm-gateway";
+import type { DecisionRecord } from "@rune/protocol";
 import { buildDecisionRecord, hasRecord, renderDecisionRecordMarkdown } from "../decision-record";
 
 type Row = { seq: number; event: SessionEvent };
@@ -320,8 +320,8 @@ function filesInResult(parsed: Record<string, unknown>, block: string): string[]
 export async function runAudit(args: string[], values: Record<string, unknown>): Promise<number> {
   const dbPath =
     (typeof values.db === "string" && values.db) ||
-    process.env.GEAR_DB_PATH ||
-    join(getGearHome(), "gear.db");
+    process.env.RUNE_DB_PATH ||
+    join(getRuneHome(), "rune.db");
   let sm: SessionManager;
   try {
     sm = new SessionManager(dbPath);
@@ -332,7 +332,7 @@ export async function runAudit(args: string[], values: Record<string, unknown>):
   try {
     const id = resolveSession(sm, args[0]);
     if (!id) {
-      say(dim("  No session found. Usage: gear audit [sessionId|last]"));
+      say(dim("  No session found. Usage: rune audit [sessionId|last]"));
       return 1;
     }
     const session = sm.getSession(id)!;
@@ -372,7 +372,7 @@ export async function runAudit(args: string[], values: Record<string, unknown>):
     // ── Header ──
     say();
     say(
-      `  ${accent("Gear audit")} ${dim("·")} ${info(id)}${session.title ? `  ${text(session.title.slice(0, 70))}` : ""}`,
+      `  ${accent("Rune audit")} ${dim("·")} ${info(id)}${session.title ? `  ${text(session.title.slice(0, 70))}` : ""}`,
     );
     say(
       `  ${dim(session.workspaceRoot)} ${dim("·")} ${text(session.model)}${session.provider ? dim(` on ${session.provider}`) : ""} ${dim("·")} ${dim(`${shortTs(session.createdAt)} → ${shortTs(session.updatedAt)}`)} ${dim("·")} ${dim(`${num(rows.length)} events`)}`,
@@ -644,7 +644,7 @@ export async function runAudit(args: string[], values: Record<string, unknown>):
 
     // ── Gates and breakers, from the black box ──
     try {
-      const bb = new BlackboxStore(join(getGearHome(), "blackbox.db"));
+      const bb = new BlackboxStore(join(getRuneHome(), "blackbox.db"));
       try {
         const incidents = bb.list({ sessionId: id, class: "loop.", limit: 200 });
         if (incidents.length > 0) {
@@ -767,7 +767,7 @@ export async function runAudit(args: string[], values: Record<string, unknown>):
       }
     }
     say();
-    say(dim(`  full record: gear export ${id} --format md`));
+    say(dim(`  full record: rune export ${id} --format md`));
     say();
     return 0;
   } finally {

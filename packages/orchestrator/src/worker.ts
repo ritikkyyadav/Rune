@@ -22,8 +22,8 @@
 
 import { readFileSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import type { LlmGateway, ProviderName, ReasoningEffort } from "@gear/llm-gateway";
-import type { IncidentReporter, ModelTier } from "@gear/shared";
+import type { LlmGateway, ProviderName, ReasoningEffort } from "@rune/llm-gateway";
+import type { IncidentReporter, ModelTier } from "@rune/shared";
 import {
   isOsIsolationAvailable,
   ToolRegistry,
@@ -32,7 +32,7 @@ import {
   type ToolCallOutput,
   type ToolHandler,
   type ToolSchema,
-} from "@gear/tool-registry";
+} from "@rune/tool-registry";
 import { AgentLoop } from "./agent-loop";
 import {
   SUBAGENT_RESULT_SCHEMA,
@@ -46,7 +46,7 @@ import {
   resolveSubagentBudget,
   type BudgetBreach,
 } from "./subagent-budget";
-import { CostTracker } from "@gear/llm-gateway";
+import { CostTracker } from "@rune/llm-gateway";
 import {
   createWorkerWorktree,
   mergeWorkerWorktree,
@@ -74,7 +74,7 @@ const WORKER_READ_TOOLS = new Set(["read_file", "list_dir", "grep", "glob", "sym
 const WORKER_WRITE_TOOLS = new Set(["write_file", "edit_file", "multi_edit"]);
 
 export interface WorkerDeps {
-  /** Path to the gear-tools binary (worker registries are built per run). */
+  /** Path to the rune-tools binary (worker registries are built per run). */
   binaryPath: string;
   /**
    * Live resolver for gateway/model/provider at execute time. Workers do real
@@ -117,7 +117,7 @@ export interface WorkerDeps {
   /**
    * Cross-instance ownership (the team bus). Local claims stop THIS engine's
    * workers racing; this hook additionally leases the files repo-wide so a
-   * concurrent Gear instance's workers stay off them. `claim` returns ok:false
+   * concurrent Rune instance's workers stay off them. `claim` returns ok:false
    * (with the reason) when enforcement is "block" and a live peer holds an
    * overlapping lease; a "warn"-mode conflict returns ok:true with a note the
    * worker's report will carry.
@@ -407,7 +407,7 @@ export function createWorkerPermissionCheck(registry: ToolRegistry): PermissionC
 /** Exported for tests: the doctrine every worker carries. */
 export function workerSystemPrompt(ownedList: string): string {
   return [
-    "You are a Gear implementation worker: a focused engineer executing one contract inside a larger build.",
+    "You are a Rune implementation worker: a focused engineer executing one contract inside a larger build.",
     `You EXCLUSIVELY own these files (relative to the workspace): ${ownedList}`,
     "Rules:",
     "- Create/edit ONLY the files you own — the harness mechanically refuses everything else. All other files are read-only reference: read them freely to match interfaces and style.",
@@ -501,7 +501,7 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
       }
 
       // Repo-wide lease: make this worker's ownership visible to (and safe
-      // from) OTHER Gear instances working in the same repository.
+      // from) OTHER Rune instances working in the same repository.
       let teamNote = "";
       let teamClaimed = false;
       // Visible to the finally block, which owns worktree teardown. The
@@ -512,7 +512,7 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
         const lease = deps.team.claim(files, workerId);
         if (!lease.ok) {
           claims.release(workerId);
-          return fail(lease.error ?? "Files are leased by another Gear instance.");
+          return fail(lease.error ?? "Files are leased by another Rune instance.");
         }
         teamClaimed = true;
         if (lease.note) teamNote = lease.note;
@@ -813,7 +813,7 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
         if (teamClaimed) deps.team?.release(workerId);
         // The checkout always goes. The BRANCH survives when the work did not
         // land — it is the only copy of a failed or conflicted worker's build,
-        // and `gear/worker-<id>` is where a person looks for it.
+        // and `rune/worker-<id>` is where a person looks for it.
         if (worktree) {
           try {
             removeWorkerWorktree(input.workspaceRoot, worktree, keepBranch);

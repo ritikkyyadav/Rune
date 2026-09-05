@@ -342,7 +342,7 @@ async function assemblePreview(input: PermissionPreviewInput): Promise<Permissio
       choices: [
         "Yes, apply this edit",
         session || "Yes, allow file edits for this session",
-        "No, tell Gear what to change",
+        "No, tell Rune what to change",
       ],
       reason,
     };
@@ -386,7 +386,7 @@ async function assemblePreview(input: PermissionPreviewInput): Promise<Permissio
       choices: [
         "Yes, apply these edits",
         session || "Yes, allow file edits for this session",
-        "No, tell Gear what to change",
+        "No, tell Rune what to change",
       ],
       reason,
     };
@@ -414,7 +414,7 @@ async function assemblePreview(input: PermissionPreviewInput): Promise<Permissio
       choices: [
         creating ? "Yes, create this file" : "Yes, write this file",
         session || "Yes, allow file writes for this session",
-        "No, tell Gear what to change",
+        "No, tell Rune what to change",
       ],
       reason,
     };
@@ -496,7 +496,7 @@ async function assemblePreview(input: PermissionPreviewInput): Promise<Permissio
 
   const detail = stripToolPrefix(input.toolName, input.argsSummary) || input.toolName;
   return {
-    question: `Allow Gear to run ${input.toolName}?`,
+    question: `Allow Rune to run ${input.toolName}?`,
     scope: "explicit approval",
     detail,
     target,
@@ -509,7 +509,7 @@ async function assemblePreview(input: PermissionPreviewInput): Promise<Permissio
     choices: [
       "Yes, allow once",
       session || "Yes, allow this tool for this session",
-      "No, tell Gear what to change",
+      "No, tell Rune what to change",
     ],
     reason,
   };

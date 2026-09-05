@@ -44,7 +44,7 @@ function index(...plugins: PluginIndexEntry[]): PluginIndex {
 let workspace: string;
 
 beforeEach(() => {
-  workspace = mkdtempSync(join(tmpdir(), "gear-plugin-index-"));
+  workspace = mkdtempSync(join(tmpdir(), "rune-plugin-index-"));
 });
 
 afterEach(() => {
@@ -229,8 +229,8 @@ describe("verifyIndexIntegrity", () => {
 
 describe("entryFitsThisGear", () => {
   test("a range this build satisfies fits, one it does not is refused", () => {
-    expect(entryFitsThisGear(entry({ gearVersion: ">=0.1.0" }), "0.3.0")).toBe(true);
-    expect(entryFitsThisGear(entry({ gearVersion: ">=9.0.0" }), "0.3.0")).toBe(false);
+    expect(entryFitsThisGear(entry({ runeVersion: ">=0.1.0" }), "0.3.0")).toBe(true);
+    expect(entryFitsThisGear(entry({ runeVersion: ">=9.0.0" }), "0.3.0")).toBe(false);
     expect(entryFitsThisGear(entry(), "0.3.0")).toBe(true);
   });
 });
@@ -273,7 +273,7 @@ describe("loadPluginIndex", () => {
     expect(load.stale).toBe(false);
   });
 
-  test("an unreachable URL falls back to the copy shipped with Gear, marked stale", async () => {
+  test("an unreachable URL falls back to the copy shipped with Rune, marked stale", async () => {
     const fetchImpl = (async () => {
       throw new Error("getaddrinfo ENOTFOUND");
     }) as unknown as typeof fetch;

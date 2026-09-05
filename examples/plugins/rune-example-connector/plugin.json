@@ -1,0 +1,11 @@
+{
+  "name": "rune-example-connector",
+  "version": "0.1.0",
+  "description": "An MCP-server plugin: one stdio connector plus the slash command that drives it.",
+  "runeVersion": ">=0.2.0",
+  "mcp": "mcp.json",
+  "commands": "commands",
+  "permissions": {
+    "hosts": ["registry.npmjs.org"]
+  }
+}

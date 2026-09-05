@@ -161,14 +161,14 @@ const greenfieldParallel: EvalTask = {
     const worktrees = git(workspace, ["worktree", "list", "--porcelain"]);
     const leaked = worktrees.out
       .split("\n")
-      .filter((l) => l.startsWith("worktree ") && l.includes(join(".gear", "worktrees")));
+      .filter((l) => l.startsWith("worktree ") && l.includes(join(".rune", "worktrees")));
     if (leaked.length > 0) {
       return { pass: false, reason: `worktrees leaked: ${leaked.join(", ")}` };
     }
 
     // 4. No branch survived. A kept branch means a failed check or a conflicted
     //    merge, and this build had neither.
-    const branches = git(workspace, ["branch", "--list", "gear/worker-*"]);
+    const branches = git(workspace, ["branch", "--list", "rune/worker-*"]);
     if (branches.out.trim()) {
       return {
         pass: false,

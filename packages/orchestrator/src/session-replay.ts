@@ -1,6 +1,6 @@
-import type { ContentBlock, Message } from "@gear/llm-gateway";
-import type { SessionEvent } from "@gear/shared";
-import type { CheckpointStore, RunState } from "@gear/shared";
+import type { ContentBlock, Message } from "@rune/llm-gateway";
+import type { SessionEvent } from "@rune/shared";
+import type { CheckpointStore, RunState } from "@rune/shared";
 
 interface ToolUseRecord {
   callId: string;
@@ -61,7 +61,7 @@ export function eventsToMessages(
         type: "tool_result",
         toolCallId: callId,
         toolResultContent:
-          `Not executed: the previous Gear run ended before ${toolName || "this tool"} returned. ` +
+          `Not executed: the previous Rune run ended before ${toolName || "this tool"} returned. ` +
           "Re-run it if the result is still needed.",
         isError: true,
       })),

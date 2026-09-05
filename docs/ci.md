@@ -1,17 +1,17 @@
-# Gear in CI
+# Rune in CI
 
 One prompt in, an answer and an exit code out. No terminal, no cursor
 addressing, nothing to answer.
 
 ```bash
-gear -P "run the tests and fix what fails" --stream-json --gear 3 --workspace .
+rune -P "run the tests and fix what fails" --stream-json --gear 3 --workspace .
 ```
 
 That is the CI form, and every part of it is load-bearing:
 
 | Flag            | Why                                                                                                                                                         |
 | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `-P "<prompt>"` | headless: stdout is the answer, progress goes to stderr, so `gear -P … > out.txt` captures the answer alone                                                 |
+| `-P "<prompt>"` | headless: stdout is the answer, progress goes to stderr, so `rune -P … > out.txt` captures the answer alone                                                 |
 | `--stream-json` | every event as NDJSON while it happens, the envelope last. Without it a run reports one envelope after minutes of silence and "working" looks like "wedged" |
 | `--gear 3`      | workspace edits plus a **sandboxed** shell. `4` is full autonomy and skips the permission engine — see below                                                |
 | `--workspace .` | the directory the agent may touch, stated rather than inherited from `cwd`                                                                                  |
@@ -43,7 +43,7 @@ model asks for.
 One JSON object per line, the envelope **last**:
 
 ```bash
-$ gear -P "say ok" --stream-json
+$ rune -P "say ok" --stream-json
 {"type":"text_delta","text":"ok"}
 {"type":"usage","inputTokens":812,"outputTokens":3,...}
 {"type":"turn_complete","stopReason":"end_turn","totalTurns":1}
@@ -52,14 +52,14 @@ $ gear -P "say ok" --stream-json
 
 Every line before the envelope is an `AgentTurnEvent` — the same 22-member
 union the terminal, the desktop and the SDK read, declared once in
-`@gear/protocol`. A consumer can render progress with that package and nothing
+`@rune/protocol`. A consumer can render progress with that package and nothing
 else.
 
 The envelope carries `sessionId`, which is what makes the run auditable
 afterwards:
 
 ```bash
-gear audit <sessionId>          # the plan with its evidence, every safety decision, the cost
+rune audit <sessionId>          # the plan with its evidence, every safety decision, the cost
 ```
 
 `--json` on its own keeps the indented envelope a person reads. `--stream-json`
@@ -68,8 +68,8 @@ NDJSON and a line-by-line consumer would choke on it.
 
 ## Credentials
 
-Gear reads provider keys from the environment, under each provider's own
-conventional name — no Gear-specific rename, so a runner that already has a key
+Rune reads provider keys from the environment, under each provider's own
+conventional name — no Rune-specific rename, so a runner that already has a key
 for something else needs no new secret:
 
 | Provider   | Variable             |
@@ -83,36 +83,36 @@ for something else needs no new secret:
 | DeepSeek   | `DEEPSEEK_API_KEY`   |
 | Ollama     | `OLLAMA_API_KEY`     |
 
-Behaviour is tuned with `GEAR_*`. The ones a CI job usually wants:
+Behaviour is tuned with `RUNE_*`. The ones a CI job usually wants:
 
 | Variable                    | Effect                                                                       |
 | --------------------------- | ---------------------------------------------------------------------------- |
-| `GEAR_HOME`                 | where config, credentials and the session database live (default `~/.gear`)  |
-| `GEAR_WORKSPACE`            | the workspace root, when not passing `--workspace`                           |
-| `GEAR_DB_PATH`              | the session database, for a run that should not write to the shared one      |
-| `GEAR_TOOLS_BIN`            | the native tool executor. **Required** unless it is on the default path      |
-| `GEAR_ROUNDTRIP_TIMEOUT_MS` | how long a permission or question waits before the unattended policy applies |
-| `GEAR_TELEMETRY`            | opt-in diagnostics. Off by default; leave it off                             |
+| `RUNE_HOME`                 | where config, credentials and the session database live (default `~/.rune`)  |
+| `RUNE_WORKSPACE`            | the workspace root, when not passing `--workspace`                           |
+| `RUNE_DB_PATH`              | the session database, for a run that should not write to the shared one      |
+| `RUNE_TOOLS_BIN`            | the native tool executor. **Required** unless it is on the default path      |
+| `RUNE_ROUNDTRIP_TIMEOUT_MS` | how long a permission or question waits before the unattended policy applies |
+| `RUNE_TELEMETRY`            | opt-in diagnostics. Off by default; leave it off                             |
 
-`gear doctor` reports what is missing, and `gear tools-smoke` proves the tool
+`rune doctor` reports what is missing, and `rune tools-smoke` proves the tool
 executor works end to end. Run both in a job that is failing for reasons that
 are not the model's.
 
 ## The GitHub Action
 
-`action/` is a composite action in the `savoir/gear-action` shape. It installs
-Gear — a pinned release when one is named, otherwise a build from the checkout
+`action/` is a composite action in the `savoir/rune-action` shape. It installs
+Rune — a pinned release when one is named, otherwise a build from the checkout
 — runs one prompt over the pull request diff, and posts **one** comment with
 the review and the audit of the run that produced it.
 
 ```yaml
-- uses: savoir/gear-action@v1
+- uses: savoir/rune-action@v1
   with:
     version: v0.3.0 # omit to build from the checkout
     gear: "3"
     prompt: "" # empty runs the default review prompt
   env:
-    ANTHROPIC_API_KEY: ${{ secrets.GEAR_REVIEW_API_KEY }}
+    ANTHROPIC_API_KEY: ${{ secrets.RUNE_REVIEW_API_KEY }}
 ```
 
 One comment, edited in place on every push, found by an HTML marker rather than
@@ -138,10 +138,10 @@ any checkout. `--dry-run` prints the comment instead of posting it:
 ```bash
 bun action/review.ts --dry-run \
   --workspace . --base main --gear 3 \
-  --gear-cmd "bun packages/orchestrator/src/bin/gear-cli.ts"
+  --rune-cmd "bun packages/orchestrator/src/bin/rune-cli.ts"
 ```
 
-`tests/integration/gear-action.test.ts` runs exactly that path against a fake
+`tests/integration/rune-action.test.ts` runs exactly that path against a fake
 model, so the action is exercised on every test run rather than first executed
 on somebody's pull request.
 
@@ -150,12 +150,12 @@ on somebody's pull request.
 ```bash
 bun action/review.ts --dry-run --mock \
   --workspace . --base main --gear 2 \
-  --gear-cmd "bun packages/orchestrator/src/bin/gear-cli.ts"
+  --rune-cmd "bun packages/orchestrator/src/bin/rune-cli.ts"
 ```
 
-`--mock` (or `GEAR_REVIEW_PROVIDER=mock`) makes `review.ts` start its own
+`--mock` (or `RUNE_REVIEW_PROVIDER=mock`) makes `review.ts` start its own
 provider: Ollama reads its base URL from `OLLAMA_HOST` and authenticates
-nothing, so a thirty-line server is a complete provider as far as Gear is
+nothing, so a thirty-line server is a complete provider as far as Rune is
 concerned. Everything else is real — the diff, the session, the turn, the audit,
 the comment.
 
@@ -165,10 +165,10 @@ produced by a mock is worse than no comment at all.
 
 ### This repository's own workflow
 
-`.github/workflows/gear-review.yml` runs the action on pull requests here, in
+`.github/workflows/rune-review.yml` runs the action on pull requests here, in
 one of three modes:
 
-| `GEAR_REVIEW_API_KEY` | Pull request from | What runs                                                                              |
+| `RUNE_REVIEW_API_KEY` | Pull request from | What runs                                                                              |
 | --------------------- | ----------------- | -------------------------------------------------------------------------------------- |
 | set                   | anywhere          | a real review from a real model                                                        |
 | not set               | this repository   | the same action against the **mock provider**, posting a comment labelled as a dry run |
@@ -188,19 +188,19 @@ Both modes write the **same** comment, found by the same HTML marker, so the
 first real review replaces the dry run in place rather than starting a second
 thread under it.
 
-## `gear pr <n>`
+## `rune pr <n>`
 
 For working a pull request locally rather than in CI:
 
 ```bash
-gear pr 12            # fetch the head into its own worktree and start a session on it
-gear pr 12 --review   # frame the session as a review rather than as work
-gear pr 12 --brief    # print the brief and stop
+rune pr 12            # fetch the head into its own worktree and start a session on it
+rune pr 12 --review   # frame the session as a review rather than as work
+rune pr 12 --brief    # print the brief and stop
 ```
 
 It fetches `refs/pull/<n>/head` with plain git — a ref every GitHub remote
 publishes, so it works on a runner where `gh` is not authenticated — puts it in
-`.gear/worktrees/pr-<n>` rather than over your working tree, and hands the
+`.rune/worktrees/pr-<n>` rather than over your working tree, and hands the
 session the author's description **verbatim** as its brief. The author's own
 account of the change is the thing a review is checked against; a summary of it
 written by the reviewer is already a reading.
@@ -208,11 +208,11 @@ written by the reviewer is already a reading.
 The title and body come from `gh pr view` when the CLI is authenticated, and
 from the REST API otherwise. That fallback reads **`GITHUB_API_URL`**, the
 variable every Actions runner sets and which names the Enterprise Server API
-root on a self-hosted one, so `gear pr` works on GHES with nothing to configure.
+root on a self-hosted one, so `rune pr` works on GHES with nothing to configure.
 Both calls time out at 30 s: a GitHub that accepts a connection and never
 answers used to hang the command with nothing on screen.
 
-`tests/integration/gear-pr.test.ts` runs all of it against a **local bare
+`tests/integration/rune-pr.test.ts` runs all of it against a **local bare
 repository with a `refs/pull/<n>/head` ref in it** — the same shape GitHub
 publishes, and the only thing the command needs from a remote, which is the
 whole reason it uses plain git. It drives both metadata paths (a stub `gh` on
@@ -220,10 +220,10 @@ PATH, and the REST fallback against a fake API at `GITHUB_API_URL`) and asserts
 the worktree, the branch, the brief, and that the working tree it was run from
 is untouched.
 
-It found one defect: **re-running `gear pr <n>` after the author pushed used to
+It found one defect: **re-running `rune pr <n>` after the author pushed used to
 fail outright.** Git refuses to update a branch that is checked out in a
 worktree, so the fetch died with "refusing to fetch into branch" before the code
 that exists to move the worktree to the new head could run — the second run, the
 one a person makes _because_ the author pushed, was the broken one. The head now
-lands on `refs/gear/pull/<n>` first, which is not a branch and so is never
+lands on `refs/rune/pull/<n>` first, which is not a branch and so is never
 checked out anywhere.

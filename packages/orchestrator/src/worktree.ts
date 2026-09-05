@@ -10,14 +10,14 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
-/** New run worktrees live here; pre-rename `.alan/worktrees` checkouts are still recognized. */
-const WORKTREE_DIR = join(".gear", "worktrees");
-const WORKTREE_DIRS = [".gear/worktrees", ".alan/worktrees"];
+/** New run worktrees live here; pre-rename `.gear/worktrees` and `.alan/worktrees` checkouts are still recognized. */
+const WORKTREE_DIR = join(".rune", "worktrees");
+const WORKTREE_DIRS = [".rune/worktrees", ".gear/worktrees", ".alan/worktrees"];
 /**
  * Whether a path from `git worktree list --porcelain` is one of ours.
  *
  * Compared with FORWARD SLASHES on both sides. `join()` produces
- * `.gear\worktrees` on Windows and git prints `D:/a/repo/.gear/worktrees/run-a`
+ * `.rune\worktrees` on Windows and git prints `D:/a/repo/.rune/worktrees/run-a`
  * whatever the platform, so a native-separator needle matched nothing there:
  * `listRunWorktrees` returned an empty list on Windows and every run worktree
  * became invisible to the code that cleans them up (P10.2).
@@ -31,7 +31,7 @@ function isRunWorktreePath(path: string | undefined): boolean {
 export interface RunWorktree {
   /** Absolute path of the isolated checkout. */
   path: string;
-  /** The branch the run's commits land on (gear/run-<id>). */
+  /** The branch the run's commits land on (rune/run-<id>). */
   branch: string;
 }
 
@@ -50,8 +50,8 @@ export function isGitRepo(dir: string): boolean {
 }
 
 /**
- * Create an isolated worktree for a run at `.gear/worktrees/<runId>`, on a
- * fresh `gear/run-<runId>` branch off the current HEAD. Throws with the git
+ * Create an isolated worktree for a run at `.rune/worktrees/<runId>`, on a
+ * fresh `rune/run-<runId>` branch off the current HEAD. Throws with the git
  * error on failure — a run that THINKS it is isolated but isn't would be
  * worse than one that refuses to start.
  */
@@ -68,7 +68,7 @@ export function createRunWorktree(repoRoot: string, runId: string): RunWorktree 
   if (existsSync(path)) {
     throw new Error(`worktree already exists for run ${safeId}: ${path}`);
   }
-  const branch = `gear/run-${safeId}`;
+  const branch = `rune/run-${safeId}`;
   const res = git(repoRoot, ["worktree", "add", "-b", branch, path, "HEAD"]);
   if (!res.ok) {
     throw new Error(`git worktree add failed: ${res.stderr || res.stdout}`);
@@ -76,7 +76,7 @@ export function createRunWorktree(repoRoot: string, runId: string): RunWorktree 
   return { path, branch };
 }
 
-/** Worktrees under `.gear/worktrees` (path + branch per entry). */
+/** Worktrees under `.rune/worktrees` (path + branch per entry). */
 export function listRunWorktrees(repoRoot: string): RunWorktree[] {
   const res = git(repoRoot, ["worktree", "list", "--porcelain"]);
   if (!res.ok) return [];

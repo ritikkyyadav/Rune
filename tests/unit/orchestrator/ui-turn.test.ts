@@ -58,7 +58,7 @@ describe("TurnRenderer — customizer activity stream", () => {
     h.turn.finish();
     expect(h.output()).toContain("Just an answer.");
     expect(h.output()).not.toContain("✓ Complete");
-    expect(h.output()).not.toContain("◉ Gear");
+    expect(h.output()).not.toContain("◉ Rune");
   });
 
   it("collapses a long gathering burst into one row, above the finding it led to", () => {

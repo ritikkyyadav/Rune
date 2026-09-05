@@ -1,4 +1,4 @@
-import { type Logger, nullLogger } from "@gear/shared";
+import { type Logger, nullLogger } from "@rune/shared";
 import { INIT_TIMEOUT_MS, STDERR_RING_LINES } from "./types";
 import type { McpIncomingMessage, McpTransport, McpTransportLifecycle } from "./types";
 

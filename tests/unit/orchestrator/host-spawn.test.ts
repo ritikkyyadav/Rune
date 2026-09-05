@@ -2,10 +2,10 @@
  * How a session host is spawned, decided once and tested both ways.
  *
  * This is the unit that would have caught P10.9a's second defect. Every gate
- * before it ran Gear from source with `bun`, where `join(import.meta.dir,
+ * before it ran Rune from source with `bun`, where `join(import.meta.dir,
  * "engine-host.ts")` is a real file; from the compiled binary the same join
  * produces `/$bunfs/root/engine-host.ts`, every spawn died with "Module not
- * found", and the only trace was a line in `~/.gear/run/*.log`. So the
+ * found", and the only trace was a line in `~/.rune/run/*.log`. So the
  * decision is a pure function of two inputs and both branches are asserted
  * here rather than discovered on a user's machine.
  */
@@ -24,8 +24,8 @@ const SOURCE = {
   moduleDir: "/home/dev/Alan/packages/orchestrator/src/bin",
   execPath: "/home/dev/.bun/bin/bun",
 };
-const COMPILED = { moduleDir: "/$bunfs/root", execPath: "/usr/local/bin/gear" };
-const COMPILED_WIN = { moduleDir: "B:\\~BUN\\root", execPath: "C:\\Users\\dev\\gear.exe" };
+const COMPILED = { moduleDir: "/$bunfs/root", execPath: "/usr/local/bin/rune" };
+const COMPILED_WIN = { moduleDir: "B:\\~BUN\\root", execPath: "C:\\Users\\dev\\rune.exe" };
 
 describe("isBunfsPath", () => {
   test("recognises the POSIX virtual root", () => {
@@ -40,7 +40,7 @@ describe("isBunfsPath", () => {
 
   test("a real checkout is not virtual", () => {
     expect(isBunfsPath("/home/dev/Alan/packages/orchestrator/src/bin")).toBe(false);
-    expect(isBunfsPath("C:\\Users\\dev\\Alan\\packages")).toBe(false);
+    expect(isBunfsPath("C:\\Users\\dev\\Rune\\packages")).toBe(false);
     // Not a prefix match on a directory that merely contains the word.
     expect(isBunfsPath("/home/dev/bunfs/root")).toBe(false);
   });
@@ -57,10 +57,10 @@ describe("isCompiled", () => {
   });
 
   test("the module's own location decides, not the executable's name", () => {
-    // A `bun` renamed to `gear` on PATH is still a source run: the source is
+    // A `bun` renamed to `rune` on PATH is still a source run: the source is
     // on disk, so `bun engine-host.ts` is correct and re-entering the binary
     // would be wrong.
-    expect(isCompiled({ moduleDir: SOURCE.moduleDir, execPath: "/usr/local/bin/gear" })).toBe(
+    expect(isCompiled({ moduleDir: SOURCE.moduleDir, execPath: "/usr/local/bin/rune" })).toBe(
       false,
     );
   });
@@ -78,7 +78,7 @@ describe("hostSpawnArgv", () => {
 
   test("compiled: the binary re-enters itself through the subcommand", () => {
     expect(hostSpawnArgv(COMPILED, ["--socket", "/tmp/a.sock"])).toEqual([
-      "/usr/local/bin/gear",
+      "/usr/local/bin/rune",
       "engine-host",
       "--socket",
       "/tmp/a.sock",
@@ -100,13 +100,13 @@ describe("hostSpawnArgv", () => {
   });
 
   test("no arguments is still a valid spawn (stdio mode)", () => {
-    expect(hostSpawnArgv(COMPILED, [])).toEqual(["/usr/local/bin/gear", "engine-host"]);
+    expect(hostSpawnArgv(COMPILED, [])).toEqual(["/usr/local/bin/rune", "engine-host"]);
   });
 });
 
 describe("hostSpawnLabel", () => {
   test("names what the banner will show", () => {
-    expect(hostSpawnLabel(COMPILED)).toBe("/usr/local/bin/gear engine-host");
+    expect(hostSpawnLabel(COMPILED)).toBe("/usr/local/bin/rune engine-host");
     expect(hostSpawnLabel(SOURCE)).toContain("engine-host.ts");
   });
 });

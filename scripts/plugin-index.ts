@@ -2,7 +2,7 @@
 /**
  * Keep `plugins/index.json` honest about the trees it publishes.
  *
- * Each index entry carries the sha256 of the plugin tree, and `gear plugin add`
+ * Each index entry carries the sha256 of the plugin tree, and `rune plugin add`
  * verifies it against the STAGED bundle before installing. A digest that drifts
  * from the files in this repository would turn that check from a guarantee into
  * a nuisance the first time someone edits an example — so the check is

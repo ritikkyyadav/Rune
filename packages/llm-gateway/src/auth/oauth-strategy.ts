@@ -1,5 +1,5 @@
 // ─── Generic OAuth strategy (Authorization Code + PKCE, loopback redirect) ───
-// The reusable engine behind `gear login <provider>` for OAuth providers. It
+// The reusable engine behind `rune login <provider>` for OAuth providers. It
 // owns the security-critical mechanics — PKCE (S256), a `state` nonce, an
 // ephemeral 127.0.0.1 loopback to capture the redirect — and delegates only the
 // provider-specific URL shape and token exchange to an injected `OAuthFlow`.
@@ -10,7 +10,7 @@
 
 import { createHash, randomBytes } from "crypto";
 import { createServer } from "http";
-import { oauthAccount } from "@gear/shared";
+import { oauthAccount } from "@rune/shared";
 import type { AuthContext, AuthenticationStrategy, ResolvedCredential, AuthMethod } from "./types";
 import { AuthError } from "./types";
 
@@ -115,7 +115,7 @@ export interface Loopback {
 /**
  * The page the browser lands on after a successful sign-in.
  *
- * It is the only surface of Gear a person sees outside their terminal, and for
+ * It is the only surface of Rune a person sees outside their terminal, and for
  * a long time it was an unstyled `✓ Authorized`. It now says which product it
  * is, in the product's own mark: the gear, inline SVG so it needs no network on
  * a page served from localhost. Light and dark both, because a browser opened
@@ -127,7 +127,7 @@ export interface Loopback {
  * generically.
  */
 const SUCCESS_HTML = [
-  "<!doctype html><meta charset=utf-8><title>Connected — Gear</title>",
+  "<!doctype html><meta charset=utf-8><title>Connected — Rune</title>",
   '<meta name="viewport" content="width=device-width,initial-scale=1">',
   "<style>",
   ":root{--bg:#f7f7f5;--ink:#101114;--muted:#6b6f76;--line:#e6e5e1;--brand:#1332e0;--card:#fff}",
@@ -144,13 +144,13 @@ const SUCCESS_HTML = [
   "font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}",
   "</style>",
   '<body><main class="card">',
-  // The gear mark, drawn as a path so it scales and needs no asset fetch.
+  // The rune mark, drawn as a path so it scales and needs no asset fetch.
   '<svg class="mark" viewBox="0 0 100 100" fill="none" aria-hidden="true">',
   '<path fill="var(--brand)" d="M50 4l7.2.9c1.6.2 2.8 1.5 2.9 3.1l.5 7.4c2.6.8 5.1 1.8 7.4 3.2l5.9-4.5c1.3-1 3.1-.9 4.2.3l5.1 5.1c1.2 1.1 1.3 2.9.3 4.2l-4.5 5.9c1.4 2.3 2.4 4.8 3.2 7.4l7.4.5c1.6.1 2.9 1.3 3.1 2.9l.9 7.2-.9 7.2c-.2 1.6-1.5 2.8-3.1 2.9l-7.4.5c-.8 2.6-1.8 5.1-3.2 7.4l4.5 5.9c1 1.3.9 3.1-.3 4.2l-5.1 5.1c-1.1 1.2-2.9 1.3-4.2.3l-5.9-4.5c-2.3 1.4-4.8 2.4-7.4 3.2l-.5 7.4c-.1 1.6-1.3 2.9-2.9 3.1L50 96l-7.2-.9c-1.6-.2-2.8-1.5-2.9-3.1l-.5-7.4c-2.6-.8-5.1-1.8-7.4-3.2l-5.9 4.5c-1.3 1-3.1.9-4.2-.3l-5.1-5.1c-1.2-1.1-1.3-2.9-.3-4.2l4.5-5.9c-1.4-2.3-2.4-4.8-3.2-7.4l-7.4-.5c-1.6-.1-2.9-1.3-3.1-2.9L4 50l.9-7.2c.2-1.6 1.5-2.8 3.1-2.9l7.4-.5c.8-2.6 1.8-5.1 3.2-7.4l-4.5-5.9c-1-1.3-.9-3.1.3-4.2l5.1-5.1c1.1-1.2 2.9-1.3 4.2-.3l5.9 4.5c2.3-1.4 4.8-2.4 7.4-3.2l.5-7.4c.1-1.6 1.3-2.9 2.9-3.1L50 4zm0 30a16 16 0 100 32 16 16 0 000-32z"/>',
   "</svg>",
   "<h1>You’re connected to __PROVIDER__</h1>",
-  "<p>Close this tab and head back to your terminal — Gear is ready.</p>",
-  '<div class="name">Gear</div>',
+  "<p>Close this tab and head back to your terminal — Rune is ready.</p>",
+  '<div class="name">Rune</div>',
   "</main></body>",
 ].join("");
 
@@ -277,7 +277,7 @@ export class OAuthStrategy implements AuthenticationStrategy {
         providerId: ctx.providerId,
         method: this.method,
         message: `OAuth login failed: ${errMsg(err)}`,
-        recovery: `run: gear login ${ctx.providerId}`,
+        recovery: `run: rune login ${ctx.providerId}`,
       });
     }
   }
@@ -331,7 +331,7 @@ export class OAuthStrategy implements AuthenticationStrategy {
         providerId: ctx.providerId,
         method: this.method,
         message: `${ctx.preset.label} sign-in needs an interactive terminal to paste the code.`,
-        recovery: `run: gear login ${ctx.providerId}`,
+        recovery: `run: rune login ${ctx.providerId}`,
       });
     }
     const { verifier, challenge } = generatePkce();
@@ -348,7 +348,7 @@ export class OAuthStrategy implements AuthenticationStrategy {
         providerId: ctx.providerId,
         method: this.method,
         message: "No authorization code entered.",
-        recovery: `run: gear login ${ctx.providerId}`,
+        recovery: `run: rune login ${ctx.providerId}`,
       });
     }
     // Anthropic returns `code#state`; split it. Lenient state check: verify only
@@ -383,7 +383,7 @@ export class OAuthStrategy implements AuthenticationStrategy {
       providerId: ctx.providerId,
       method: this.method,
       message: "OAuth state mismatch — aborting (possible CSRF).",
-      recovery: `run: gear login ${ctx.providerId}`,
+      recovery: `run: rune login ${ctx.providerId}`,
     });
   }
 

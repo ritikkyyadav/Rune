@@ -3,13 +3,13 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { Database } from "bun:sqlite";
 
-import { Engine } from "@gear/orchestrator";
+import { Engine } from "@rune/orchestrator";
 import type {
   PermissionDecision as BrokerDecision,
   UserPermissionDecision,
-} from "@gear/orchestrator";
-import { openCredentialStore } from "@gear/shared";
-import type { ResolvedCredential } from "@gear/llm-gateway";
+} from "@rune/orchestrator";
+import { openCredentialStore } from "@rune/shared";
+import type { ResolvedCredential } from "@rune/llm-gateway";
 
 import { resolveProviderCredentials } from "../../packages/orchestrator/src/provider-registry";
 
@@ -72,7 +72,7 @@ export interface EvalTask {
    * Hard ceiling on tool calls across the whole task — the intra-turn runaway
    * guard (turn_complete only fires once per prompt, so a looping model never
    * trips maxTurns). Defaults: none in mock mode (scripts are finite),
-   * GEAR_EVAL_TASK_MAX_TOOL_CALLS (40) in real mode.
+   * RUNE_EVAL_TASK_MAX_TOOL_CALLS (40) in real mode.
    */
   maxToolCalls?: number;
   /** Hard ceiling on provider spend (USD) for this task; same semantics. */
@@ -212,15 +212,15 @@ function isThrottleError(msg: string): boolean {
 /** Real-mode retry/pacing knobs (env-overridable). */
 const MAX_ATTEMPTS = Math.max(
   1,
-  Number(process.env.GEAR_EVAL_MAX_RETRIES ?? process.env.GEAR_EVAL_MAX_RETRIES ?? 3),
+  Number(process.env.RUNE_EVAL_MAX_RETRIES ?? process.env.RUNE_EVAL_MAX_RETRIES ?? 3),
 );
 const RETRY_BASE_MS = Math.max(
   0,
-  Number(process.env.GEAR_EVAL_RETRY_BASE_MS ?? process.env.GEAR_EVAL_RETRY_BASE_MS ?? 4000),
+  Number(process.env.RUNE_EVAL_RETRY_BASE_MS ?? process.env.RUNE_EVAL_RETRY_BASE_MS ?? 4000),
 );
 const TASK_DELAY_MS = Math.max(
   0,
-  Number(process.env.GEAR_EVAL_TASK_DELAY_MS ?? process.env.GEAR_EVAL_TASK_DELAY_MS ?? 1500),
+  Number(process.env.RUNE_EVAL_TASK_DELAY_MS ?? process.env.RUNE_EVAL_TASK_DELAY_MS ?? 1500),
 );
 
 /**
@@ -231,26 +231,26 @@ const TASK_DELAY_MS = Math.max(
 const REAL_DEFAULT_MAX_TOOL_CALLS = Math.max(
   1,
   Number(
-    process.env.GEAR_EVAL_TASK_MAX_TOOL_CALLS ?? process.env.GEAR_EVAL_TASK_MAX_TOOL_CALLS ?? 40,
+    process.env.RUNE_EVAL_TASK_MAX_TOOL_CALLS ?? process.env.RUNE_EVAL_TASK_MAX_TOOL_CALLS ?? 40,
   ),
 );
 /** Default per-task spend cap (USD) in real mode; 0/unset disables. */
 const REAL_DEFAULT_MAX_COST = Math.max(
   0,
-  Number(process.env.GEAR_EVAL_TASK_MAX_COST ?? process.env.GEAR_EVAL_TASK_MAX_COST ?? 0),
+  Number(process.env.RUNE_EVAL_TASK_MAX_COST ?? process.env.RUNE_EVAL_TASK_MAX_COST ?? 0),
 );
 
 const TOOLS_BINARY =
-  process.env.GEAR_TOOLS_BINARY ??
-  process.env.GEAR_TOOLS_BINARY ??
-  join(__dirname, "..", "..", "target", "release", "gear-tools");
+  process.env.RUNE_TOOLS_BINARY ??
+  process.env.RUNE_TOOLS_BINARY ??
+  join(__dirname, "..", "..", "target", "release", "rune-tools");
 
 /**
  * Legacy/default real-mode signal via env var. The runner now drives mode
  * explicitly through RunOptions.real, but we keep this export so callers that
  * only set the env var (e.g. the model-sweep path) still behave as before.
  */
-const IS_REAL_MODE = (process.env.GEAR_EVAL_REAL ?? process.env.GEAR_EVAL_REAL) === "1";
+const IS_REAL_MODE = (process.env.RUNE_EVAL_REAL ?? process.env.RUNE_EVAL_REAL) === "1";
 
 export interface RunOptions {
   /** Drive a live model through the real engine/gateway instead of the mock. */
@@ -320,24 +320,24 @@ async function attemptTask(task: EvalTask, opts: RunOptions, real: boolean): Pro
   // before writing a retro still reports which arm it was: a crashed control
   // arm is a result, and an unlabelled one is noise.
   const armConfigHash = configHash(opts.configOverrides ?? {});
-  const tmpRoot = await mkdtemp(join(tmpdir(), "gear-eval-"));
+  const tmpRoot = await mkdtemp(join(tmpdir(), "rune-eval-"));
   const workspace = join(tmpRoot, "workspace");
   await mkdir(workspace, { recursive: true });
-  const dbPath = join(tmpRoot, "gear.db");
+  const dbPath = join(tmpRoot, "rune.db");
 
   const provider =
     opts.provider ??
-    process.env.GEAR_EVAL_PROVIDER ??
-    process.env.GEAR_EVAL_PROVIDER ??
-    process.env.GEAR_PROVIDER ??
-    process.env.GEAR_PROVIDER ??
+    process.env.RUNE_EVAL_PROVIDER ??
+    process.env.RUNE_EVAL_PROVIDER ??
+    process.env.RUNE_PROVIDER ??
+    process.env.RUNE_PROVIDER ??
     "anthropic";
   const model =
     opts.model ??
-    process.env.GEAR_EVAL_MODEL ??
-    process.env.GEAR_EVAL_MODEL ??
-    process.env.GEAR_MODEL ??
-    process.env.GEAR_MODEL ??
+    process.env.RUNE_EVAL_MODEL ??
+    process.env.RUNE_EVAL_MODEL ??
+    process.env.RUNE_MODEL ??
+    process.env.RUNE_MODEL ??
     "mock-model";
   const errors: string[] = [];
 

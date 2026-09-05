@@ -13,9 +13,9 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { LlmGateway } from "@gear/llm-gateway";
-import type { SessionManager } from "@gear/shared";
-import type { ToolCallInput, ToolHandler } from "@gear/tool-registry";
+import type { LlmGateway } from "@rune/llm-gateway";
+import type { SessionManager } from "@rune/shared";
+import type { ToolCallInput, ToolHandler } from "@rune/tool-registry";
 import {
   AutoModeSafetyController,
   resolveAutoModeConfig,
@@ -85,13 +85,13 @@ describe("Engine.runHeldStep", () => {
   let sessionId: string;
 
   beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), "gear-held-step-"));
+    root = mkdtempSync(join(tmpdir(), "rune-held-step-"));
     engine = new Engine({
       model: "llama3",
       provider: "ollama",
       workspaceRoot: root,
-      dbPath: join(root, "gear.db"),
-      toolsBinaryPath: "gear-tools",
+      dbPath: join(root, "rune.db"),
+      toolsBinaryPath: "rune-tools",
       permissionMode: "auto",
       enableCheckpoints: false,
       enableSecurity: false,

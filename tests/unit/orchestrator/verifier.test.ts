@@ -5,7 +5,7 @@ import { join } from "path";
 import { CommandVerifier, detectVerifyCommands } from "../../../packages/orchestrator/src/verifier";
 
 async function tmpWorkspace(files: Record<string, string>): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "gear-verify-"));
+  const dir = await mkdtemp(join(tmpdir(), "rune-verify-"));
   for (const [name, content] of Object.entries(files)) {
     await writeFile(join(dir, name), content);
   }
@@ -50,7 +50,7 @@ describe("detectVerifyCommands", () => {
 /**
  * POSIX-only. `CommandVerifier` runs each check through `Bun.spawn(["bash", "-c", …])` (verifier.ts:280).
  *
- * Gear has no Windows shell contract yet — nothing decides whether a command
+ * Rune has no Windows shell contract yet — nothing decides whether a command
  * string means cmd.exe, PowerShell or Git Bash — so there is no Windows
  * behaviour to assert, only a decision to make. Logged in
  * docs/program/backlog.md.

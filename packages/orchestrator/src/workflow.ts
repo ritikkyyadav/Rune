@@ -274,7 +274,7 @@ function saveState(statePath: string, state: WorkflowState): void {
 /** Where a workflow's resume state lives by default. */
 export function defaultStatePath(workspaceRoot: string, workflowName: string): string {
   const safe = workflowName.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 48);
-  return join(workspaceRoot, ".gear", "workflows", `${safe}.state.json`);
+  return join(workspaceRoot, ".rune", "workflows", `${safe}.state.json`);
 }
 
 // ─── Prompt assembly ───

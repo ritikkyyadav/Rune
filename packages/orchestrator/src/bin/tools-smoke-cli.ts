@@ -1,5 +1,5 @@
-// ─── `gear tools-smoke` — end-to-end native-tools diagnostic ───
-// Boots the real ToolRegistry against the resolved gear-tools binary and runs
+// ─── `rune tools-smoke` — end-to-end native-tools diagnostic ───
+// Boots the real ToolRegistry against the resolved rune-tools binary and runs
 // a write → read → edit → bash round-trip in a throwaway workspace. This is
 // what CI runs against the PACKAGED binary: `--version` proves the bundle
 // starts; this proves the artifact pair users download can actually touch
@@ -9,12 +9,12 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ToolRegistry, registerBuiltinTools } from "@gear/tool-registry";
+import { ToolRegistry, registerBuiltinTools } from "@rune/tool-registry";
 import { danger, dim, faint, ok } from "./ui/theme";
 import { glyph } from "./ui/glyphs";
 
 export async function runToolsSmoke(toolsBinary: string): Promise<number> {
-  const workspace = mkdtempSync(join(tmpdir(), "gear-tools-smoke-"));
+  const workspace = mkdtempSync(join(tmpdir(), "rune-tools-smoke-"));
   const registry = new ToolRegistry();
   registerBuiltinTools(registry, toolsBinary);
 
@@ -35,9 +35,9 @@ export async function runToolsSmoke(toolsBinary: string): Promise<number> {
   };
 
   try {
-    await call("write_file", { path: "smoke.txt", content: "gear tools smoke\n" });
+    await call("write_file", { path: "smoke.txt", content: "rune tools smoke\n" });
     const read = await call("read_file", { path: "smoke.txt" });
-    if (!String(read.result).includes("gear tools smoke")) {
+    if (!String(read.result).includes("rune tools smoke")) {
       throw new Error("read_file returned unexpected content");
     }
     await call("edit_file", { path: "smoke.txt", old_text: "smoke", new_text: "SMOKE" });

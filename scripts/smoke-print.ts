@@ -1,6 +1,6 @@
 // ─── The end-to-end smoke: a real binary, a real prompt, a fake model ───
 //
-// `gear --version` proves a binary starts. `gear tools-smoke` proves the native
+// `rune --version` proves a binary starts. `rune tools-smoke` proves the native
 // executor works. Neither proves the thing a user actually does: type a prompt
 // and get an answer back. That path runs the engine, the gateway, a provider
 // adapter, the session store and the headless printer, and until now nothing in
@@ -8,21 +8,21 @@
 //
 // It does not. Ollama needs no credential and reads its base URL from
 // OLLAMA_HOST, so a thirty-line server that speaks /api/chat and /api/tags is a
-// complete provider as far as Gear is concerned.
+// complete provider as far as Rune is concerned.
 //
 // This runner is a TypeScript program rather than a shell snippet on purpose.
 // The obvious version — start a server with `&`, run the binary, `kill %1` —
 // is three POSIX assumptions, and this smoke has to pass on windows-latest.
 // Bun runs identically on all four runners; `&` does not exist in PowerShell.
 //
-// Usage:  bun scripts/smoke-print.ts <path-to-gear-binary> [expected-word]
+// Usage:  bun scripts/smoke-print.ts <path-to-rune-binary> [expected-word]
 
 import { spawn } from "node:child_process";
 
 const binary = process.argv[2];
 const expected = (process.argv[3] ?? "ok").toLowerCase();
 if (!binary) {
-  console.error("usage: bun scripts/smoke-print.ts <path-to-gear-binary> [expected-word]");
+  console.error("usage: bun scripts/smoke-print.ts <path-to-rune-binary> [expected-word]");
   process.exit(2);
 }
 
@@ -85,8 +85,8 @@ const child = spawn(
       ...process.env,
       OLLAMA_HOST: host,
       // Keep the run inside the sandbox's temp area and away from the
-      // developer's real ~/.gear — a smoke must never touch real sessions.
-      GEAR_HOME: process.env.GEAR_SMOKE_HOME ?? undefined,
+      // developer's real ~/.rune — a smoke must never touch real sessions.
+      RUNE_HOME: process.env.RUNE_SMOKE_HOME ?? undefined,
       NO_COLOR: "1",
       CI: "1",
     } as NodeJS.ProcessEnv,

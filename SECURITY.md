@@ -13,7 +13,7 @@ Only the latest release (`v0.3.x`) receives security fixes. There is no LTS line
 
 ## Security posture
 
-Gear's controls and their limits are documented honestly in
+Rune's controls and their limits are documented honestly in
 [`docs/threat-model.md`](docs/threat-model.md) — including the platforms **without** OS-level
 sandbox isolation and the plaintext credential fallback. Dependency audits (`bun audit`,
 `cargo audit`) and the OS-sandbox test suite run in CI on every pull request.

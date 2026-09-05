@@ -1,12 +1,12 @@
-import type { LlmGateway, ProviderName, ReasoningEffort } from "@gear/llm-gateway";
-import type { IncidentReporter, ModelTier } from "@gear/shared";
+import type { LlmGateway, ProviderName, ReasoningEffort } from "@rune/llm-gateway";
+import type { IncidentReporter, ModelTier } from "@rune/shared";
 import type {
   ToolCallInput,
   ToolCallOutput,
   ToolHandler,
   ToolRegistry,
   ToolSchema,
-} from "@gear/tool-registry";
+} from "@rune/tool-registry";
 import { AgentLoop } from "./agent-loop";
 import type { PermissionCheck, ToolResultProcessor } from "./agent-loop";
 import { ContextEngine } from "./context-engine";
@@ -22,7 +22,7 @@ import {
   resolveSubagentBudget,
   type BudgetBreach,
 } from "./subagent-budget";
-import { CostTracker } from "@gear/llm-gateway";
+import { CostTracker } from "@rune/llm-gateway";
 
 /**
  * Dependencies the orchestrator must supply when constructing the `task` tool.

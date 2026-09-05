@@ -115,7 +115,7 @@ describe("capacity and billing tell the same story", () => {
 
 describe("the dropped providers are gone from every table", () => {
   // `lmstudio` (P8.6) and `copilot` (P8.5) were removed under program decision
-  // D5. Copilot's evidence: zero sessions had ever run on it in ~/.gear/gear.db
+  // D5. Copilot's evidence: zero sessions had ever run on it in ~/.rune/rune.db
   // across 601 recorded sessions, against an undocumented internal endpoint,
   // VS Code header impersonation, a stale catalog, and streams that reported no
   // usage at all.

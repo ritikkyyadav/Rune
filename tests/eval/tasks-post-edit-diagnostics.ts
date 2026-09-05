@@ -24,7 +24,7 @@
  *               asserting that it shipped; a control arm that silently agreed
  *               with the treatment would prove nothing.
  *
- * Determinism: both point GEAR_LSP_SERVERS at the fake stdio server in
+ * Determinism: both point RUNE_LSP_SERVERS at the fake stdio server in
  * tests/fixtures/lsp, so neither depends on typescript-language-server being
  * installed. The env is set in setup(), which runs before the Engine is built
  * and therefore before the server table is read.
@@ -33,7 +33,7 @@ import { writeFile, readFile } from "fs/promises";
 import { join } from "path";
 import { spawnSync } from "child_process";
 
-import { resetServerTable } from "@gear/tool-registry";
+import { resetServerTable } from "@rune/tool-registry";
 import type { EvalTask } from "./harness";
 import type { ScriptedResponse } from "./mock-provider";
 
@@ -41,7 +41,7 @@ const FAKE_SERVER = join(import.meta.dir, "..", "fixtures", "lsp", "fake-lsp-ser
 
 /** Point the whole process's LSP table at the fake server, in a chosen mode. */
 function useFakeServer(args: string[]): void {
-  process.env.GEAR_LSP_SERVERS = JSON.stringify([
+  process.env.RUNE_LSP_SERVERS = JSON.stringify([
     { id: `fake-${args.join("")}`, extensions: [".ts"], command: ["bun", FAKE_SERVER, ...args] },
   ]);
   // The table is cached per process and the two arms want different modes.
@@ -55,7 +55,7 @@ function useFakeServer(args: string[]): void {
  * suite unreproducible.
  */
 function restoreServerTable(): void {
-  delete process.env.GEAR_LSP_SERVERS;
+  delete process.env.RUNE_LSP_SERVERS;
   resetServerTable();
 }
 

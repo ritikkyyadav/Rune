@@ -26,7 +26,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { GEAR_COMMIT_PREFIX } from "./git-undo";
+import { isManagedCommitSubject } from "./git-undo";
 
 /** What running a check against the pre-change tree established. */
 export type ParentCheckStatus = "failed" | "passed" | "inconclusive";
@@ -82,7 +82,7 @@ function looksLikeMissingEnvironment(exitCode: number, output: string): boolean 
  *
  * Normally that is HEAD: the agent's edits are uncommitted, so HEAD is
  * untouched by them. The exception is a landed auto-commit — `[git] autoCommit`
- * makes each run one revertible commit, so when HEAD is a Gear commit the
+ * makes each run one revertible commit, so when HEAD is a Rune commit the
  * pre-change tree is its parent.
  */
 export function resolveParentCommit(repoRoot: string): { sha: string; ref: string } | null {
@@ -90,9 +90,9 @@ export function resolveParentCommit(repoRoot: string): { sha: string; ref: strin
   if (!head.ok || !head.stdout) return null;
 
   const subject = git(repoRoot, ["log", "-1", "--pretty=%s"]);
-  if (subject.ok && subject.stdout.startsWith(GEAR_COMMIT_PREFIX)) {
+  if (subject.ok && isManagedCommitSubject(subject.stdout)) {
     const parent = git(repoRoot, ["rev-parse", "HEAD~1"]);
-    // A Gear commit with no parent means the repo's first commit is ours;
+    // A Rune commit with no parent means the repo's first commit is ours;
     // there is no pre-change tree to compare against.
     if (!parent.ok || !parent.stdout) return null;
     return { sha: parent.stdout, ref: "HEAD~1" };
@@ -120,7 +120,7 @@ export function runOnParentCommit(
 
   let dir: string | undefined;
   try {
-    dir = mkdtempSync(join(tmpdir(), "gear-parent-check-"));
+    dir = mkdtempSync(join(tmpdir(), "rune-parent-check-"));
     const checkout = join(dir, "tree");
     const added = git(repoRoot, ["worktree", "add", "--detach", checkout, parent.sha], 60_000);
     if (!added.ok) {

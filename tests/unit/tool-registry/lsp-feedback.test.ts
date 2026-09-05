@@ -92,7 +92,7 @@ afterEach(() => setLspAutoFeedback(false));
 
 describe("post-edit LSP diagnostics (P10.1)", () => {
   test("ON: the server's verdict lands in the same tool result", async () => {
-    const workspace = mkdtempSync(join(tmpdir(), "gear-lspfb-"));
+    const workspace = mkdtempSync(join(tmpdir(), "rune-lspfb-"));
     setLspAutoFeedback(true);
     const wrapped = withLspFeedback(fakeWriteTool, fakeManager());
 
@@ -106,7 +106,7 @@ describe("post-edit LSP diagnostics (P10.1)", () => {
   });
 
   test("OFF: result is untouched and no server is spawned", async () => {
-    const workspace = mkdtempSync(join(tmpdir(), "gear-lspfb-"));
+    const workspace = mkdtempSync(join(tmpdir(), "rune-lspfb-"));
     const manager = fakeManager();
     const wrapped = withLspFeedback(fakeWriteTool, manager);
 
@@ -116,7 +116,7 @@ describe("post-edit LSP diagnostics (P10.1)", () => {
   });
 
   test("readiness gate: a server that never publishes claims nothing", async () => {
-    const workspace = mkdtempSync(join(tmpdir(), "gear-lspfb-"));
+    const workspace = mkdtempSync(join(tmpdir(), "rune-lspfb-"));
     setLspAutoFeedback(true);
     const wrapped = withLspFeedback(fakeWriteTool, fakeManager(["--mute"]));
 
@@ -128,7 +128,7 @@ describe("post-edit LSP diagnostics (P10.1)", () => {
   });
 
   test("the 2s cap holds: a silent server cannot stall the edit to the 10s gate", async () => {
-    const workspace = mkdtempSync(join(tmpdir(), "gear-lspfb-"));
+    const workspace = mkdtempSync(join(tmpdir(), "rune-lspfb-"));
     setLspAutoFeedback(true);
     const wrapped = withLspFeedback(fakeWriteTool, fakeManager(["--mute"]));
 
@@ -144,7 +144,7 @@ describe("post-edit LSP diagnostics (P10.1)", () => {
   });
 
   test("a publish that beats the budget is still reported", async () => {
-    const workspace = mkdtempSync(join(tmpdir(), "gear-lspfb-"));
+    const workspace = mkdtempSync(join(tmpdir(), "rune-lspfb-"));
     setLspAutoFeedback(true);
     const wrapped = withLspFeedback(fakeWriteTool, fakeManager(["--publish-delay=400"]));
 
@@ -153,7 +153,7 @@ describe("post-edit LSP diagnostics (P10.1)", () => {
   });
 
   test("errors come before warnings, whatever order the server published in", async () => {
-    const workspace = mkdtempSync(join(tmpdir(), "gear-lspfb-"));
+    const workspace = mkdtempSync(join(tmpdir(), "rune-lspfb-"));
     setLspAutoFeedback(true);
     const wrapped = withLspFeedback(fakeWriteTool, fakeManager(["--case=mixed"]));
 
@@ -168,7 +168,7 @@ describe("post-edit LSP diagnostics (P10.1)", () => {
   });
 
   test("truncation: 20 lines plus a +N more tail, errors surviving first", async () => {
-    const workspace = mkdtempSync(join(tmpdir(), "gear-lspfb-"));
+    const workspace = mkdtempSync(join(tmpdir(), "rune-lspfb-"));
     setLspAutoFeedback(true);
     const wrapped = withLspFeedback(fakeWriteTool, fakeManager(["--case=many"]));
 
@@ -182,7 +182,7 @@ describe("post-edit LSP diagnostics (P10.1)", () => {
   });
 
   test("hints and information never reach the block", async () => {
-    const workspace = mkdtempSync(join(tmpdir(), "gear-lspfb-"));
+    const workspace = mkdtempSync(join(tmpdir(), "rune-lspfb-"));
     setLspAutoFeedback(true);
     const wrapped = withLspFeedback(fakeWriteTool, fakeManager(["--case=noisy"]));
 
@@ -191,7 +191,7 @@ describe("post-edit LSP diagnostics (P10.1)", () => {
   });
 
   test("a clean file gets no block at all", async () => {
-    const workspace = mkdtempSync(join(tmpdir(), "gear-lspfb-"));
+    const workspace = mkdtempSync(join(tmpdir(), "rune-lspfb-"));
     setLspAutoFeedback(true);
     const wrapped = withLspFeedback(fakeWriteTool, fakeManager(["--case=typecheck"]));
 
@@ -200,7 +200,7 @@ describe("post-edit LSP diagnostics (P10.1)", () => {
   });
 
   test("the content-derived case reports the semantic error the syntax pass cannot see", async () => {
-    const workspace = mkdtempSync(join(tmpdir(), "gear-lspfb-"));
+    const workspace = mkdtempSync(join(tmpdir(), "rune-lspfb-"));
     setLspAutoFeedback(true);
     const wrapped = withLspFeedback(fakeWriteTool, fakeManager(["--case=typecheck"]));
 
@@ -213,7 +213,7 @@ describe("post-edit LSP diagnostics (P10.1)", () => {
   });
 
   test("the server's block supersedes the syntax pass for that file", async () => {
-    const workspace = mkdtempSync(join(tmpdir(), "gear-lspfb-"));
+    const workspace = mkdtempSync(join(tmpdir(), "rune-lspfb-"));
     setLspAutoFeedback(true);
     const withSyntax: ToolHandler = {
       ...fakeWriteTool,
@@ -233,7 +233,7 @@ describe("post-edit LSP diagnostics (P10.1)", () => {
   });
 
   test("no server for the extension, and failed writes, pass through untouched", async () => {
-    const workspace = mkdtempSync(join(tmpdir(), "gear-lspfb-"));
+    const workspace = mkdtempSync(join(tmpdir(), "rune-lspfb-"));
     setLspAutoFeedback(true);
     const wrapped = withLspFeedback(fakeWriteTool, fakeManager());
 
@@ -317,12 +317,12 @@ describe("diagnostics block rendering", () => {
 
 describe("default-on detection", () => {
   test("a workspace with no project markers never defaults on", () => {
-    const empty = mkdtempSync(join(tmpdir(), "gear-lspdef-"));
+    const empty = mkdtempSync(join(tmpdir(), "rune-lspdef-"));
     expect(lspAutoFeedbackDefault(empty)).toBe(false);
   });
 
   test("a TypeScript workspace defaults on exactly when its server is installed", () => {
-    const ws = mkdtempSync(join(tmpdir(), "gear-lspdef-"));
+    const ws = mkdtempSync(join(tmpdir(), "rune-lspdef-"));
     writeFileSync(join(ws, "tsconfig.json"), "{}");
     // The default is a function of the machine, so the assertion has to be
     // too — asserting `true` here would fail on a box without the server.
@@ -330,7 +330,7 @@ describe("default-on detection", () => {
   });
 
   test("a Rust workspace never defaults on (rust-analyzer indexes past the budget)", () => {
-    const ws = mkdtempSync(join(tmpdir(), "gear-lspdef-"));
+    const ws = mkdtempSync(join(tmpdir(), "rune-lspdef-"));
     writeFileSync(join(ws, "Cargo.toml"), "[package]\nname='x'\n");
     expect(lspAutoFeedbackDefault(ws)).toBe(false);
   });

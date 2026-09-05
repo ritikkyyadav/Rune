@@ -1,13 +1,13 @@
-// ─── gear detach / attach: runs that survive the terminal ───
+// ─── rune detach / attach: runs that survive the terminal ───
 //
-// `gear detach "<prompt>"` starts a per-run engine host on a unix socket,
+// `rune detach "<prompt>"` starts a per-run engine host on a unix socket,
 // hands it the prompt, prints the session id, and EXITS — the host keeps
-// working. `gear attach <session|latest>` reconnects: prior turns replay
+// working. `rune attach <session|latest>` reconnects: prior turns replay
 // from the session store, live events stream if the run is still going, and
 // Ctrl+C detaches again without stopping anything.
 //
 // Each detached run gets its own host + socket (registry at
-// ~/.gear/run/registry.json). With --worktree the run executes in an isolated
+// ~/.rune/run/registry.json). With --worktree the run executes in an isolated
 // `git worktree` checkout on its own branch, so concurrent runs — and the
 // user's own tree — never collide; merge-back is ordinary git.
 
@@ -17,11 +17,11 @@ import { join } from "node:path";
 import { HostClient } from "../host-client";
 import { createRunWorktree } from "../worktree";
 import { currentContext, hostSpawnArgv } from "./host-spawn";
-import { adoptLegacyEnv, getGearHome, migrateLegacyHome } from "@gear/shared";
+import { adoptLegacyEnv, getRuneHome, migrateLegacyHome } from "@rune/shared";
 
 adoptLegacyEnv();
 migrateLegacyHome();
-const RUN_DIR = join(getGearHome(), "run");
+const RUN_DIR = join(getRuneHome(), "run");
 const REGISTRY = join(RUN_DIR, "registry.json");
 
 interface RunEntry {
@@ -65,7 +65,7 @@ export async function runDetach(
 ): Promise<void> {
   const prompt = positionals.slice(1).join(" ").trim();
   if (!prompt) {
-    console.error('Usage: gear detach "<prompt>" [--worktree] [-w <workspace>]');
+    console.error('Usage: rune detach "<prompt>" [--worktree] [-w <workspace>]');
     process.exit(2);
   }
 
@@ -88,13 +88,13 @@ export async function runDetach(
   // The host inherits this process's env (keys etc.) but gets its own
   // workspace; stdio goes to a log file so the child never holds a tty.
   //
-  // `bun engine-host.ts` from a checkout, `<gear> engine-host` from the
+  // `bun engine-host.ts` from a checkout, `<rune> engine-host` from the
   // compiled binary, where that script path is inside the binary's virtual
   // filesystem and cannot be spawned. See host-spawn.ts (P10.9a). No
   // `--parent-pid`: outliving this process is the whole point of detach.
   const argv = hostSpawnArgv(currentContext(import.meta.dir), ["--socket", socket]);
   const child = Bun.spawn(argv, {
-    env: { ...process.env, GEAR_WORKSPACE: workspace },
+    env: { ...process.env, RUNE_WORKSPACE: workspace },
     stdin: "ignore",
     stdout: logFd,
     stderr: logFd,
@@ -124,7 +124,7 @@ export async function runDetach(
   console.log(`detached run started`);
   console.log(`  session:   ${sessionId}`);
   console.log(`  workspace: ${workspace}`);
-  console.log(`  attach:    gear attach ${sessionId.slice(0, 8)}`);
+  console.log(`  attach:    rune attach ${sessionId.slice(0, 8)}`);
   console.log(`  host log:  ${logPath}`);
   process.exit(0);
 }
@@ -134,7 +134,7 @@ export async function runAttach(positionals: string[]): Promise<void> {
   const reg = loadRegistry();
   const entries = Object.values(reg).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
   if (entries.length === 0) {
-    console.error('no detached runs recorded — start one with: gear detach "<prompt>"');
+    console.error('no detached runs recorded — start one with: rune detach "<prompt>"');
     process.exit(1);
   }
   const entry =
@@ -155,7 +155,7 @@ export async function runAttach(positionals: string[]): Promise<void> {
   } catch {
     console.error(
       `host for ${entry.sessionId.slice(0, 8)} is no longer running.\n` +
-        `The transcript is in the session store: gear resume ${entry.sessionId}`,
+        `The transcript is in the session store: rune resume ${entry.sessionId}`,
     );
     process.exit(1);
   }
@@ -195,7 +195,7 @@ export async function runAttach(positionals: string[]): Promise<void> {
   process.on("SIGINT", () => {
     client.close();
     console.log(
-      "\ndetached — the run continues. Reattach with: gear attach " + entry.sessionId.slice(0, 8),
+      "\ndetached — the run continues. Reattach with: rune attach " + entry.sessionId.slice(0, 8),
     );
     process.exit(0);
   });

@@ -2,7 +2,7 @@ import { describe, test, expect } from "bun:test";
 
 import { contextLedger } from "../../../packages/orchestrator/src/bin/audit-cli";
 
-// P10.8: `gear audit` reports how full the context window ran, turn by turn,
+// P10.8: `rune audit` reports how full the context window ran, turn by turn,
 // and what each compaction took out of it — from the persisted usage rows, not
 // from a live counter. The ledger is pure over the session log, so it is
 // tested without a database.

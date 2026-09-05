@@ -91,7 +91,7 @@ export function decodeMessage(
 
 /**
  * Decode the header block. Every header type in the spec is consumed so the
- * cursor stays correct, but only the string/byte-array ones carry values Gear
+ * cursor stays correct, but only the string/byte-array ones carry values Rune
  * reads (`:event-type`, `:message-type`, `:exception-type`); the rest are
  * rendered as their scalar text.
  */
@@ -162,7 +162,7 @@ function decodeHeaders(bytes: Uint8Array): Record<string, string> {
 }
 
 /**
- * Encode one message. Used by the fixture tests — and only by them: Gear never
+ * Encode one message. Used by the fixture tests — and only by them: Rune never
  * sends event-stream frames. It lives beside the decoder so a fixture is built
  * from the same field layout the decoder reads, which is what makes a
  * round-trip test meaningful.

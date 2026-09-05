@@ -6,7 +6,7 @@
  *  1. In a workspace holding several projects, the step check runs the one
  *     whose files the step touched — not all of them, and not none.
  *  2. The evidence ledger records WHICH command ran, its exit code and its
- *     duration. It used to hold a count and a boolean, so `gear audit` could
+ *     duration. It used to hold a count and a boolean, so `rune audit` could
  *     report that a step was checked without being able to say by what.
  *
  * The commands here are shell builtins (`true`, `exit 3`) rather than real
@@ -25,7 +25,7 @@ import { TaskStateStore } from "../../../packages/orchestrator/src/task-state";
 const POSIX_SHELL = process.platform !== "win32";
 
 function workspace(): string {
-  return mkdtempSync(join(tmpdir(), "gear-step-check-"));
+  return mkdtempSync(join(tmpdir(), "rune-step-check-"));
 }
 
 /** A three-project workspace: a Go service, a JS app, a Rust lib. */
@@ -157,14 +157,14 @@ describe.skipIf(!POSIX_SHELL)("what the verifier records about each command", ()
     try {
       const v = new CommandVerifier({
         workspaceRoot: dir,
-        commands: ["gear-no-such-compiler-xyz build ./..."],
+        commands: ["rune-no-such-compiler-xyz build ./..."],
       });
       const r = await v.verify();
       // Nothing ran, so nothing is proven — but the run is not a failure, and
       // the reason is on the record.
       expect(r.passed).toBe(true);
       expect(r.ran).toBe(false);
-      expect(r.runs![0]!.skipped).toContain("gear-no-such-compiler-xyz");
+      expect(r.runs![0]!.skipped).toContain("rune-no-such-compiler-xyz");
       expect(r.report).toContain("not installed");
     } finally {
       rmSync(dir, { recursive: true, force: true });

@@ -17,7 +17,7 @@ import { ApiError } from "../types";
 import { IdleWatchdog } from "./stream-guard";
 import { isAnthropicUpstream, promptCacheKey, type CacheBreakpointPolicy } from "./cache-policy";
 import { modelSeesImages } from "./model-capabilities";
-import { parseToolArguments } from "@gear/shared";
+import { parseToolArguments } from "@rune/shared";
 
 /**
  * Attach a prompt-cache breakpoint to one chat message, promoting its string

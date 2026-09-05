@@ -4,8 +4,8 @@
 // tool_call_start only flips the activity word). Used by the TUI; the readline
 // path keeps its own inline copy for now (same visual language).
 
-import type { AgentTurnEvent, ResearchEvent } from "@gear/protocol";
-import { assertNever } from "@gear/protocol";
+import type { AgentTurnEvent, ResearchEvent } from "@rune/protocol";
+import { assertNever } from "@rune/protocol";
 import { text, muted, faint, info, warn } from "./theme";
 import { glyph } from "./glyphs";
 import { visLen, wrap } from "./render";
@@ -238,7 +238,7 @@ export function formatEvent(
     case "decision_resolved":
     case "decision_record":
       // The task's shape and the artifact ledger drive the composed surface
-      // and `gear audit`, not a transcript line; the pending-decision list is
+      // and `rune audit`, not a transcript line; the pending-decision list is
       // the held-step panel's material, which already draws it; and the record
       // is a document the close offers rather than a row in the scrollback.
       return null;

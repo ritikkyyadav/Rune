@@ -14,7 +14,7 @@ function rows(n: number): SessionRowView[] {
 }
 
 describe("ui/composer renderSessionsPanel", () => {
-  it("renders the Gear timeline header, two-row session cards, search, and actions", () => {
+  it("renders the Rune timeline header, two-row session cards, search, and actions", () => {
     const r = renderSessionsPanel(rows(3), 0, { view: "active", pendingDelete: false }, 80);
     const plain = r.lines.map(stripAnsi);
     expect(plain[0]).toContain("Sessions");
@@ -89,7 +89,7 @@ describe("ui/composer renderSessionsPanel", () => {
           id: "abcdef123456",
           title: "polish composer",
           meta: "18 events · model-x",
-          workspace: "/tmp/gear",
+          workspace: "/tmp/rune",
           updatedAt: "2026-08-20T09:30:00Z",
           group: "Today",
           current: true,
@@ -106,7 +106,7 @@ describe("ui/composer renderSessionsPanel", () => {
     // The row shows the project, not the whole path: every row in a session
     // list tends to share a parent, so the parent is the part that carries no
     // information. Search still matches the full path.
-    expect(plain).toContain("gear");
-    expect(plain).not.toContain("/tmp/gear");
+    expect(plain).toContain("rune");
+    expect(plain).not.toContain("/tmp/rune");
   });
 });

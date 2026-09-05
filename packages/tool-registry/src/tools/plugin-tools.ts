@@ -5,14 +5,14 @@
 // once they run under one. Each declared tool is a PROGRAM — any language —
 // spawned as a subprocess wrapped by Seatbelt or bubblewrap with exactly the
 // capability its manifest entry declares, speaking line-delimited JSON on
-// stdio. Nothing is ever loaded into the Gear process; there is no `import`
+// stdio. Nothing is ever loaded into the Rune process; there is no `import`
 // anywhere in this file's path from a plugin's bytes to this process's heap.
 //
 // The four rules that make that claim mean something:
 //
 //  1. **The sandbox is the boundary, and the profile is built in Rust.**
-//     `gear-tools sandbox-plan` returns the argv; the policy lives beside the
-//     bash sandbox's, in `crates/gear-sandbox/src/spawn.rs`, so the two cannot
+//     `rune-tools sandbox-plan` returns the argv; the policy lives beside the
+//     bash sandbox's, in `crates/rune-sandbox/src/spawn.rs`, so the two cannot
 //     drift. This module owns the pipes and nothing else.
 //  2. **No sandbox, no tool.** A machine with no isolation backend (Windows,
 //     a mac without `sandbox-exec`) refuses to start a plugin tool at all.
@@ -26,14 +26,14 @@
 //     `plugin:<plugin>:<tool>`, so a signed policy denies a whole bundle with
 //     `plugin:<plugin>:*`.
 //
-// The user's own `.gear/tools` loader (custom-loader.ts) is untouched: that is
+// The user's own `.rune/tools` loader (custom-loader.ts) is untouched: that is
 // in-process code the user wrote, behind `[extensions] localTools`, and it is
 // deliberately not the mechanism a third party gets.
 
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createLogger } from "@gear/shared";
+import { createLogger } from "@rune/shared";
 
 import { isOsIsolationAvailable } from "../sandbox-capability";
 import type {
@@ -175,7 +175,7 @@ export function unsandboxedToolsAllowed(
   return false;
 }
 
-// ─── The launch plan (from gear-tools) ───
+// ─── The launch plan (from rune-tools) ───
 
 export interface PluginToolSpawnPlan {
   argv: string[];
@@ -196,7 +196,7 @@ export type SpawnPlanner = (req: {
 }) => PluginToolSpawnPlan;
 
 /**
- * Ask `gear-tools sandbox-plan` how to wrap this program on this machine.
+ * Ask `rune-tools sandbox-plan` how to wrap this program on this machine.
  *
  * Synchronous on purpose: it runs once per tool server at start, costs ~10ms,
  * and no permission decision may ever race a half-known containment state.
@@ -204,7 +204,7 @@ export type SpawnPlanner = (req: {
  * because "we could not determine the sandbox" must land on the same side of
  * the line as "there is no sandbox".
  */
-export function makeGearToolsPlanner(binaryPath: string): SpawnPlanner {
+export function makeRuneToolsPlanner(binaryPath: string): SpawnPlanner {
   return (req) => {
     const payload = {
       capability: req.capability,
@@ -232,11 +232,11 @@ export function makeGearToolsPlanner(binaryPath: string): SpawnPlanner {
         result?: PluginToolSpawnPlan;
       };
       if (parsed?.success === true && Array.isArray(parsed.result?.argv)) return parsed.result;
-      return { ...fallback, notes: ["gear-tools sandbox-plan returned no plan"] };
+      return { ...fallback, notes: ["rune-tools sandbox-plan returned no plan"] };
     } catch (err) {
       return {
         ...fallback,
-        notes: [`gear-tools sandbox-plan failed: ${err instanceof Error ? err.message : err}`],
+        notes: [`rune-tools sandbox-plan failed: ${err instanceof Error ? err.message : err}`],
       };
     }
   };
@@ -245,7 +245,15 @@ export function makeGearToolsPlanner(binaryPath: string): SpawnPlanner {
 // ─── The stdio protocol ───
 
 type OutgoingFrame =
-  | { type: "hello"; protocol: number; gear: string; plugin: string; workspaceRoot: string }
+  | {
+      type: "hello";
+      protocol: number;
+      rune: string;
+      /** The pre-rename spelling of `rune`, sent one release longer so plugins built against it still read a version. */
+      gear: string;
+      plugin: string;
+      workspaceRoot: string;
+    }
   | { type: "call"; id: string; tool: string; args: Record<string, unknown> }
   | { type: "shutdown" };
 
@@ -271,7 +279,7 @@ export interface PluginToolServerOptions {
   planner: SpawnPlanner;
   /** `[extensions] allowUnsandboxedTools`. */
   allowUnsandboxed?: boolean | string[];
-  gearVersion?: string;
+  runeVersion?: string;
   startTimeoutMs?: number;
   /** Extra environment for the child. `TMPDIR` is always the private scratch. */
   env?: Record<string, string>;
@@ -326,7 +334,7 @@ export class PluginToolServer {
     const [program, ...args] = decl.command;
     if (!program) return { ok: false, tools: [], message: "empty command" };
 
-    this.scratchDir = mkdtempSync(join(tmpdir(), `gear-plugin-tool-${this.opts.plugin}-`));
+    this.scratchDir = mkdtempSync(join(tmpdir(), `rune-plugin-tool-${this.opts.plugin}-`));
     const plan = this.opts.planner({
       workspaceRoot: this.opts.workspaceRoot,
       capability: decl.capability,
@@ -363,7 +371,7 @@ export class PluginToolServer {
     // The working directory is ALWAYS the plugin's own root, for every
     // capability. A relative path in the manifest then means exactly one thing
     // (the plugin's own file), and the workspace reaches the program as an
-    // explicit value — `GEAR_WORKSPACE` and the `hello` frame — rather than as
+    // explicit value — `RUNE_WORKSPACE` and the `hello` frame — rather than as
     // an implicit cwd that changes meaning with the capability.
     try {
       this.proc = Bun.spawn(plan.argv, {
@@ -376,10 +384,10 @@ export class PluginToolServer {
           TMPDIR: this.scratchDir,
           // A tool that cannot write its runtime's caches must not die trying.
           PYTHONDONTWRITEBYTECODE: "1",
-          GEAR_PLUGIN: this.opts.plugin,
-          GEAR_PLUGIN_ROOT: this.opts.pluginRoot,
-          GEAR_WORKSPACE: this.opts.workspaceRoot,
-          GEAR_TOOL_CAPABILITY: decl.capability,
+          RUNE_PLUGIN: this.opts.plugin,
+          RUNE_PLUGIN_ROOT: this.opts.pluginRoot,
+          RUNE_WORKSPACE: this.opts.workspaceRoot,
+          RUNE_TOOL_CAPABILITY: decl.capability,
           ...(this.opts.env ?? {}),
         },
       });
@@ -417,7 +425,8 @@ export class PluginToolServer {
     this.send({
       type: "hello",
       protocol: PLUGIN_TOOL_PROTOCOL,
-      gear: this.opts.gearVersion ?? "",
+      rune: this.opts.runeVersion ?? "",
+      gear: this.opts.runeVersion ?? "",
       plugin: this.opts.plugin,
       workspaceRoot: this.opts.workspaceRoot,
     });
@@ -752,7 +761,7 @@ export async function startPluginTools(opts: {
   declarations: PluginToolDeclaration[];
   planner: SpawnPlanner;
   allowUnsandboxed?: boolean | string[];
-  gearVersion?: string;
+  runeVersion?: string;
   startTimeoutMs?: number;
 }): Promise<StartedPluginTools> {
   const out: StartedPluginTools = { handlers: [], servers: [], notices: [] };
@@ -766,7 +775,7 @@ export async function startPluginTools(opts: {
       declaration,
       planner: opts.planner,
       allowUnsandboxed: opts.allowUnsandboxed,
-      gearVersion: opts.gearVersion,
+      runeVersion: opts.runeVersion,
       startTimeoutMs: opts.startTimeoutMs,
     });
     const started = await server.start();

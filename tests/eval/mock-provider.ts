@@ -5,7 +5,7 @@ import type {
   Message,
   StreamEvent,
   ToolDefinition,
-} from "@gear/llm-gateway";
+} from "@rune/llm-gateway";
 
 /**
  * A scripted response to one model invocation.

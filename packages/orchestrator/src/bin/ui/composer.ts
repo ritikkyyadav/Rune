@@ -9,7 +9,7 @@ import {
   isOsIsolationAvailable,
   isSandboxEnabled,
   getSandboxCapability,
-} from "@gear/tool-registry";
+} from "@rune/tool-registry";
 import {
   danger,
   faint,
@@ -34,7 +34,7 @@ import { fmtTokens } from "./events";
 import { glyph } from "./glyphs";
 import { clampVisible, truncate, rule, visLen, wrap, railCard } from "./render";
 import * as F from "./flow";
-import { GEAR_MARK } from "./banner";
+import { RUNE_MARK } from "./banner";
 import type { PermissionPreview, PermissionPreviewLine } from "./permission-preview";
 
 function shortPath(p: string): string {
@@ -82,7 +82,7 @@ export function normalizeMode(mode?: string): PermissionModeId {
 }
 
 /**
- * The autonomy ladder in Gear's own vocabulary -- gears. Shift+Tab shifts up:
+ * The autonomy ladder in Rune's own vocabulary -- gears. Shift+Tab shifts up:
  * 1st gear asks for everything, 2nd lets workspace edits through, 3rd adds the
  * sandboxed shell, 4th is full access, and Auto hands the rest to the
  * classifier. The footer, the Shift+Tab banner, and the waiting rung all read
@@ -148,7 +148,7 @@ export function modeInfo(mode?: string): ModeInfo {
         // behaviour, and 1st gear is literally "every action asks first"; this
         // is its opposite, said the same way.
         desc: "never asks first",
-        detail: "Gear acts without permission prompts; the OS sandbox is unchanged (see /sandbox).",
+        detail: "Rune acts without permission prompts; the OS sandbox is unchanged (see /sandbox).",
         paint: warn,
         loud: true,
       };
@@ -167,7 +167,7 @@ export function modeInfo(mode?: string): ModeInfo {
         // The sentence still exists in `detail`, where /status and the mode
         // switch can spell it out on request.
         detail:
-          "Gear acts without permission prompts inside the sandbox; a watcher above it stops work that did not come from you.",
+          "Rune acts without permission prompts inside the sandbox; a watcher above it stops work that did not come from you.",
         paint: brand,
         loud: false,
       };
@@ -177,7 +177,7 @@ export function modeInfo(mode?: string): ModeInfo {
         label: "1st gear",
         arrows: ">",
         desc: "every action asks first",
-        detail: "Gear asks before writing or running.",
+        detail: "Rune asks before writing or running.",
         paint: muted,
         loud: false,
       };
@@ -478,7 +478,7 @@ export function browserModeBanner(enabled: boolean): string {
     ? stateBanner(
         glyph("verified"),
         "browser on",
-        "Gear can drive a headless, isolated browser (Playwright MCP) -- navigate, read, fill, click. First use fetches @playwright/mcp, and a managed Chromium if none is installed.",
+        "Rune can drive a headless, isolated browser (Playwright MCP) -- navigate, read, fill, click. First use fetches @playwright/mcp, and a managed Chromium if none is installed.",
         "(/browser off to disable)",
         ok,
       )
@@ -966,7 +966,7 @@ export interface KeyRow {
   /**
    * Where the credential in use comes from (BYOP-aware: keychain/oauth too).
    * `chain` is an enterprise cloud route (Bedrock / Vertex / Azure with Entra):
-   * the machine's own AWS/GCP/Azure credentials, which Gear reads and never
+   * the machine's own AWS/GCP/Azure credentials, which Rune reads and never
    * stores — so there is no key to mask and `credentialDetail` carries the
    * secret-free description instead.
    */
@@ -1015,7 +1015,7 @@ export function renderKeysPanel(rows: KeyRow[], selected: number, width: number)
   const keyW = Math.max(10, Math.min(22, width - labelW - 24));
 
   const lines: string[] = [
-    `${PAD}${bold(text("API keys"))}   ${faint("bring your own -- applied live, saved to ~/.gear/secrets.json")}`,
+    `${PAD}${bold(text("API keys"))}   ${faint("bring your own -- applied live, saved to ~/.rune/secrets.json")}`,
   ];
 
   rows.forEach((r, i) => {
@@ -1146,7 +1146,7 @@ export function renderMemoryPanel(
   const lines: string[] = [];
 
   lines.push(
-    `${PAD}${bold(text("System memory"))}   ${faint("a guide Gear tailors to -- it never overrides what you ask")}`,
+    `${PAD}${bold(text("System memory"))}   ${faint("a guide Rune tailors to -- it never overrides what you ask")}`,
   );
   const empty = !v.content.trim();
   lines.push(
@@ -1159,7 +1159,7 @@ export function renderMemoryPanel(
   lines.push("");
 
   if (empty) {
-    lines.push(`${PAD}${muted("Gear hasn't learned about you yet.")}`);
+    lines.push(`${PAD}${muted("Rune hasn't learned about you yet.")}`);
     lines.push(
       `${PAD}${faint("Refresh to learn from recent sessions, add a note, or write it yourself.")}`,
     );
@@ -1275,7 +1275,7 @@ export function renderSessionsPanel(
     on ? selection(bold(text(` ${label} `))) : muted(` ${label} `);
   const tabs = `${tab("Active", opts.view === "active")} ${tab("Archived", opts.view === "archived")}`;
   const count = query ? faint(`${rows.length} ${rows.length === 1 ? "match" : "matches"}`) : "";
-  const headLeft = `${PAD}${brand(GEAR_MARK)} ${bold(text("Sessions"))}  ${tabs}${count ? "  " + count : ""}`;
+  const headLeft = `${PAD}${brand(RUNE_MARK)} ${bold(text("Sessions"))}  ${tabs}${count ? "  " + count : ""}`;
   const searchText = `${opts.searching ? brand(glyph("selection")) : faint("/")} ${
     query ? text(query) : faint("Search title, path, model...")
   }${opts.searching ? brand("|") : ""}`;
@@ -1350,7 +1350,7 @@ export function renderSessionsPanel(
   // And the id sat in the most valuable position on the screen — eight hex
   // characters before the title, on every row, in the column the eye lands on
   // first. It moves to the selected row, where it is occasionally wanted for
-  // `gear resume <id>`, and is off the other rows entirely.
+  // `rune resume <id>`, and is off the other rows entirely.
   //
   // What is left is a real grid: title left, context dim in the middle, time
   // right. Down the right edge is only ever time.
@@ -1436,7 +1436,7 @@ export function renderSessionsPanel(
   // under the row. Inline, it broke the grid's rhythm and — worse — moved every
   // row below it each time the selection moved, so the list shifted under the
   // cursor while you were reading it. Down here it is available for
-  // `gear resume <id>` and costs the list nothing.
+  // `rune resume <id>` and costs the list nothing.
   const sep2 = faint(` ${glyph("observed")} `);
   const selectedId = rows[sel]?.id ? faint(rows[sel]!.id!) : "";
   const keys = opts.pendingDelete

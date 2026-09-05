@@ -314,7 +314,7 @@ export function persist(state: unknown) { writeFileSync('.cache.json', JSON.stri
 
 // ─── Comprehension Task 7: concept query through ranked code search ───
 // Pins the search_code wiring end to end: TS schema → rust-bridge →
-// gear-tools search-code → FTS5 index built inside the eval workspace.
+// rune-tools search-code → FTS5 index built inside the eval workspace.
 
 const conceptSearch: EvalTask = {
   name: "comprehension_search_code",

@@ -1,4 +1,4 @@
-// ─── `gear login`: authenticate a provider (API key / OAuth / device / local) ───
+// ─── `rune login`: authenticate a provider (API key / OAuth / device / local) ───
 // The one place interactive authentication runs. It picks a provider + method,
 // builds an AuthContext with real browser/prompt hooks, runs the strategy's
 // authenticate(), and persists to the secure credential store. Mirrors the
@@ -18,8 +18,8 @@ import {
   authMethodLabel,
   accountLoginLabel,
   type AuthMethod,
-} from "@gear/shared";
-import { getStrategy, AuthError, type AuthContext } from "@gear/llm-gateway";
+} from "@rune/shared";
+import { getStrategy, AuthError, type AuthContext } from "@rune/llm-gateway";
 import { bold, danger, dim, faint, info, ok, text, warn } from "./ui/theme";
 import { glyph } from "./ui/glyphs";
 import {
@@ -48,7 +48,7 @@ export async function runLogin(
   const insecure = insecureNoticeLine(store);
   if (insecure) log(warn(insecure));
 
-  // `gear login --migrate` — copy legacy secrets.json keys into the secure store.
+  // `rune login --migrate` — copy legacy secrets.json keys into the secure store.
   if (values.migrate === true) {
     const result = await migrateLegacySecrets(store);
     if (result.migrated === 0) log(dim("No legacy API keys needed migrating."));
@@ -121,7 +121,7 @@ export async function runLogin(
       log(
         `${faint("Set as active — model")} ${info(preset.defaultModel)}${faint(
           `. Switch anytime with`,
-        )} ${info("gear use <provider>")}`,
+        )} ${info("rune use <provider>")}`,
       );
     }
   } catch (err) {
@@ -140,11 +140,11 @@ export async function runLogin(
   }
 }
 
-/** `gear logout <provider>` — remove any stored key/OAuth session for a provider. */
+/** `rune logout <provider>` — remove any stored key/OAuth session for a provider. */
 export async function runLogout(positionals: string[]): Promise<void> {
   const providerId = positionals[0];
   if (!providerId) {
-    log(warn("Usage: ") + info("gear logout <provider>"));
+    log(warn("Usage: ") + info("rune logout <provider>"));
     log(faint("Providers: ") + PROVIDER_PRESETS.map((p) => p.id).join(", "));
     process.exitCode = 1;
     return;
@@ -180,7 +180,7 @@ export async function runLogout(positionals: string[]): Promise<void> {
   } else {
     log(
       faint(
-        `No env/config key remains — ${info(`gear login ${providerId}`)}${faint(" to sign in again.")}`,
+        `No env/config key remains — ${info(`rune login ${providerId}`)}${faint(" to sign in again.")}`,
       ),
     );
   }
@@ -224,19 +224,19 @@ async function pickProvider(): Promise<string | undefined> {
 }
 
 function printUsage(): void {
-  log(bold(text("gear login")) + faint(" — authenticate a provider"));
+  log(bold(text("rune login")) + faint(" — authenticate a provider"));
   log();
   log(
-    `${info("gear login <provider>")}             ${faint("sign in (API key, or OAuth where supported)")}`,
+    `${info("rune login <provider>")}             ${faint("sign in (API key, or OAuth where supported)")}`,
   );
   log(
-    `${info("gear login <provider> --method oauth")} ${faint("force a method: api_key | oauth | device | local")}`,
+    `${info("rune login <provider> --method oauth")} ${faint("force a method: api_key | oauth | device | local")}`,
   );
   log(
-    `${info("gear login <provider> --no-browser")}  ${faint("print the OAuth URL instead of opening a browser")}`,
+    `${info("rune login <provider> --no-browser")}  ${faint("print the OAuth URL instead of opening a browser")}`,
   );
   log(
-    `${info("gear login --migrate")}               ${faint("move legacy secrets.json keys into the OS keychain")}`,
+    `${info("rune login --migrate")}               ${faint("move legacy secrets.json keys into the OS keychain")}`,
   );
   log();
   log(faint("Providers: ") + PROVIDER_PRESETS.map((p) => p.id).join(", "));

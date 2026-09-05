@@ -1,15 +1,15 @@
-// ─── gear acp — an Agent Client Protocol server over stdio ───
+// ─── rune acp — an Agent Client Protocol server over stdio ───
 //
 // Zed (and anything else that speaks ACP) drives an agent by spawning it and
 // talking JSON-RPC over its stdin and stdout. This is that door.
 //
 // It is a TRANSLATION, not a second engine. Underneath it is the same
-// supervisor `gear serve` is: one `engine-host` process per session, spoken to
+// supervisor `rune serve` is: one `engine-host` process per session, spoken to
 // through `HostClient`, routed by the same `routingKey`. Everything specific to
 // ACP is the mapping in this file, and there are only three interesting pieces
 // of it.
 //
-// 1. Events → `session/update`. Gear's 22-member turn union does not line up
+// 1. Events → `session/update`. Rune's 22-member turn union does not line up
 //    with ACP's update kinds, so members that have no ACP shape are either
 //    projected into a thought chunk or deliberately dropped. Dropped is a
 //    decision on the record here, not an accident — see `toUpdate`. The full
@@ -19,7 +19,7 @@
 // 2. Permission → `session/request_permission`. This is the whole reason an
 //    editor integration is worth having: the agent stops, the editor shows the
 //    prompt, the person answers in the editor. A client that could only stream
-//    text would have to run Gear in 4th gear to get anything done.
+//    text would have to run Rune in 4th gear to get anything done.
 //
 // 3. `ask_user` has no ACP primitive. ACP v1 has no way for an agent to ask a
 //    free-text question, so a question WITH options is offered as a permission
@@ -34,7 +34,7 @@
 // stderr, because one stray `console.log` desynchronises the client's parser
 // and the failure looks like a protocol bug.
 
-import { adoptLegacyEnv, loadConfig, migrateLegacyHome } from "@gear/shared";
+import { adoptLegacyEnv, loadConfig, migrateLegacyHome } from "@rune/shared";
 
 import { DEFAULT_IDLE_HOST_SECS, HostPool, noteRequestOwner, routingKey } from "./serve-cli";
 
@@ -70,7 +70,7 @@ export interface AcpUpdate {
 const textBlock = (text: string): Json => ({ type: "text", text });
 
 /**
- * Which ACP tool kind a Gear tool is.
+ * Which ACP tool kind a Rune tool is.
  *
  * The kind drives the icon and the grouping an editor shows, so "other" for
  * everything would work and would also make every tool call look the same.
@@ -95,7 +95,7 @@ export function toolKind(toolName: string): string {
  *
  * Null is a decision, not a gap. `usage`, `retry`, `fallback`, `checkpoint_saved`
  * and the rest are harness bookkeeping: an editor that rendered them would show
- * a person a stream of things they cannot act on, and `gear audit` is where
+ * a person a stream of things they cannot act on, and `rune audit` is where
  * that record belongs.
  */
 export function toUpdate(event: { type: string } & Record<string, unknown>): AcpUpdate | null {
@@ -153,7 +153,7 @@ export function toUpdate(event: { type: string } & Record<string, unknown>): Acp
     // told "verification completed" without being told whether it passed. A
     // status line that cannot distinguish success from failure is worse than
     // no status line, because it reads as reassurance. Each carries the one
-    // fact a person acts on, clipped, and `gear audit` keeps the full record.
+    // fact a person acts on, clipped, and `rune audit` keeps the full record.
     case "verification_started":
       return thought(`verification started (attempt ${String(event.attempt ?? "?")})`);
     case "verification_completed":
@@ -225,7 +225,7 @@ function thought(text: string): AcpUpdate {
  * A report, appended as one clipped clause, or nothing at all.
  *
  * A verifier report is a whole build log. An editor's thought stream is one
- * line; the full text is in `gear audit`.
+ * line; the full text is in `rune audit`.
  */
 function clause(value: unknown, max = 160): string {
   const text = typeof value === "string" ? value.trim().split("\n")[0]?.trim() : "";
@@ -250,7 +250,7 @@ class AcpServer {
   private nextOutgoingId = 1;
   private readonly awaitingClient = new Map<number, (result: Json | null) => void>();
   private readonly requestOwners = new Map<string, string>();
-  /** Per Gear session: the pending `session/prompt` waiting for turn_complete. */
+  /** Per Rune session: the pending `session/prompt` waiting for turn_complete. */
   private readonly running = new Map<string, (stopReason: string) => void>();
   private readonly pool: HostPool;
   private initialized = false;
@@ -264,8 +264,8 @@ class AcpServer {
         Math.max(1, loadConfig(workspace).serve?.idleHostSecs ?? DEFAULT_IDLE_HOST_SECS) * 1000,
       onStream: (key, stream, payload) => this.onEngineStream(key, stream, payload),
     });
-    // An editor can hold one `gear acp` open for a week. Sessions it opened and
-    // walked away from are stopped on the same window `gear serve` uses; a
+    // An editor can hold one `rune acp` open for a week. Sessions it opened and
+    // walked away from are stopped on the same window `rune serve` uses; a
     // session with a turn running is never idle.
     this.reaper = setInterval(() => this.pool.reapIdle(), 60_000);
     (this.reaper as unknown as { unref?: () => void }).unref?.();
@@ -378,7 +378,7 @@ class AcpServer {
         rawInput: prompt.rawArgs ?? {},
       },
       options: permissionOptions(prompt.sessionGrantUnavailable !== true),
-      ...(prompt.safety ? { _gearSafety: prompt.safety } : {}),
+      ...(prompt.safety ? { _runeSafety: prompt.safety } : {}),
     });
 
     const decision = decisionFrom(answer);
@@ -474,7 +474,7 @@ class AcpServer {
   /**
    * Stop every engine this server started.
    *
-   * An editor spawns `gear acp` and kills it when the window closes. Before
+   * An editor spawns `rune acp` and kills it when the window closes. Before
    * P10.0 the engines it had spawned stayed up forever, one per session, with
    * nothing left that knew they existed.
    */
@@ -498,7 +498,7 @@ class AcpServer {
             loadSession: false,
             promptCapabilities: { image: false, audio: false, embeddedContext: true },
           },
-          // Gear authenticates providers itself, through `gear login`. There is
+          // Rune authenticates providers itself, through `rune login`. There is
           // nothing for the editor to authenticate.
           authMethods: [],
         };
@@ -640,8 +640,8 @@ export async function runAcp(values: Record<string, unknown> = {}): Promise<void
   const workspace =
     typeof values.workspace === "string"
       ? values.workspace
-      : (process.env.GEAR_WORKSPACE ?? process.cwd());
-  process.stderr.write(`gear acp — ACP ${ACP_PROTOCOL_VERSION}, workspace ${workspace}\n`);
+      : (process.env.RUNE_WORKSPACE ?? process.cwd());
+  process.stderr.write(`rune acp — ACP ${ACP_PROTOCOL_VERSION}, workspace ${workspace}\n`);
   const server = new AcpServer(workspace);
   // Both ways out: the editor closes our stdin, or it signals us. Either way
   // the session engines this process spawned go with it.

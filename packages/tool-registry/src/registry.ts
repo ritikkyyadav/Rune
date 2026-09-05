@@ -1,5 +1,5 @@
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "./types";
-import type { ToolDefinition } from "@gear/llm-gateway";
+import type { ToolDefinition } from "@rune/llm-gateway";
 import {
   LOAD_TOOLS_SCHEMA,
   LOAD_TOOLS_TOOL,
@@ -141,7 +141,7 @@ export class ToolRegistry {
   /**
    * What the advertised tool surface costs, in tokens, on ONE request — and
    * what it would have cost with every tool fully described. Backs the
-   * "schema tokens" line in `gear audit`; ~4 chars/token is the repo's
+   * "schema tokens" line in `rune audit`; ~4 chars/token is the repo's
    * standing approximation (system-memory.ts uses the same).
    */
   schemaTokenReport(forModel?: string): {

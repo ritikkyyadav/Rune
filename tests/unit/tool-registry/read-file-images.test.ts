@@ -1,5 +1,5 @@
 /**
- * `read_file` on non-text files, end to end through the REAL gear-tools binary.
+ * `read_file` on non-text files, end to end through the REAL rune-tools binary.
  *
  * Before this, reading a 130 KB screenshot returned ~327 KB of
  * replacement-character mojibake as "file content" — `String::from_utf8_lossy`
@@ -35,11 +35,11 @@ const TINY_PNG = Buffer.from([
   0x42, 0x60, 0x82,
 ]);
 
-const BINARY = join(homedir(), ".gear/bin/gear-tools");
+const BINARY = join(homedir(), ".rune/bin/rune-tools");
 
 let root: string;
 beforeAll(() => {
-  root = mkdtempSync(join(tmpdir(), "gear-readfile-img-"));
+  root = mkdtempSync(join(tmpdir(), "rune-readfile-img-"));
   writeFileSync(join(root, "shot.png"), TINY_PNG);
   writeFileSync(join(root, "a.bin"), Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x00, 0x01]));
   writeFileSync(join(root, "notes.md"), "# Title\n\nSome prose.\n");

@@ -212,7 +212,7 @@ export function mayDistil(
   };
 }
 
-/** Counts per stage, for `gear evolve status`. */
+/** Counts per stage, for `rune evolve status`. */
 export function stageCounts(entries: NotebookEntry[]): Record<LessonStage, number> {
   const counts: Record<LessonStage, number> = {
     candidate: 0,

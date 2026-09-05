@@ -14,7 +14,7 @@ function inputFor(ws: string, args: Record<string, unknown>) {
 
 let ws: string;
 beforeEach(async () => {
-  ws = await mkdtemp(join(tmpdir(), "gear-medit-"));
+  ws = await mkdtemp(join(tmpdir(), "rune-medit-"));
 });
 afterEach(async () => {
   await rm(ws, { recursive: true, force: true });

@@ -3,8 +3,8 @@
 The one artifact a person reads top to bottom when they want to decide whether
 to believe the answer.
 
-Everything else Gear produces answers a different question. The transcript says
-what happened, in the order it happened. `gear audit` says what the harness did
+Everything else Rune produces answers a different question. The transcript says
+what happened, in the order it happened. `rune audit` says what the harness did
 — which gates fired, what the context cost, which safety decisions were taken
 and why. The plan ledger says which steps closed and on what evidence. None of
 them says **how the decision was reached**, and that is the thing a reader
@@ -12,8 +12,8 @@ actually needs: not the conclusion, but the branches that were tried and
 abandoned on the way to it.
 
 ```bash
-gear audit last --record        # the record as Markdown, and nothing else
-gear export <session> --format md --sign
+rune audit last --record        # the record as Markdown, and nothing else
+rune export <session> --format md --sign
 ```
 
 ## The six sections
@@ -61,7 +61,7 @@ At task end the engine builds the record from the final spine, persists it as a
 with nothing in it — no hypothesis, no decision, no artifact, no check — is not
 written at all: a heading is not a document.
 
-`gear audit --record` and `gear export` both prefer the **persisted** record
+`rune audit --record` and `rune export` both prefer the **persisted** record
 over a fresh generation, so what a person reads later is the document the run
 itself produced rather than a regeneration that could drift from it. Sessions
 that ended before the record existed fall back to building one from their

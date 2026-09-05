@@ -13,7 +13,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { getGearHome } from "@gear/shared";
+import { getRuneHome } from "@rune/shared";
 
 export const CONSENT_FILE = "evolve-consent.json";
 
@@ -23,11 +23,11 @@ export interface EvolveConsent {
   at: string;
 }
 
-export function consentPath(home: string = getGearHome()): string {
+export function consentPath(home: string = getRuneHome()): string {
   return join(home, CONSENT_FILE);
 }
 
-export function readConsent(home: string = getGearHome()): EvolveConsent | null {
+export function readConsent(home: string = getRuneHome()): EvolveConsent | null {
   try {
     const parsed = JSON.parse(readFileSync(consentPath(home), "utf8")) as EvolveConsent;
     return typeof parsed?.learnedSkills === "boolean" ? parsed : null;
@@ -37,12 +37,12 @@ export function readConsent(home: string = getGearHome()): EvolveConsent | null 
 }
 
 /** Has the user enabled learned skills? Absent means no — never "probably". */
-export function learnedSkillsEnabled(home: string = getGearHome()): boolean {
+export function learnedSkillsEnabled(home: string = getRuneHome()): boolean {
   return readConsent(home)?.learnedSkills === true;
 }
 
-/** Record (or withdraw) consent. Called only from `gear evolve playbook`. */
-export function setLearnedSkills(enabled: boolean, home: string = getGearHome()): EvolveConsent {
+/** Record (or withdraw) consent. Called only from `rune evolve playbook`. */
+export function setLearnedSkills(enabled: boolean, home: string = getRuneHome()): EvolveConsent {
   const entry: EvolveConsent = { learnedSkills: enabled, at: new Date().toISOString() };
   const path = consentPath(home);
   if (!existsSync(dirname(path))) mkdirSync(dirname(path), { recursive: true });

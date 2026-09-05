@@ -123,7 +123,7 @@ describe("replayEvents", () => {
 
   test("rows that are not turn events are skipped without complaint", () => {
     // research_*, cost, safety_decision, security_probe, retro and task_state
-    // belong to `gear audit` and to the research stream, not to a turn replay.
+    // belong to `rune audit` and to the research stream, not to a turn replay.
     const { frames, userTurns } = replayEvents([
       row(1, "research_plan", { plan: {} }),
       row(2, "cost", { usd: 0.02 }),

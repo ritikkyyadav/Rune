@@ -54,10 +54,10 @@ const TOOLCHAINS = {
  * On a laptop a missing toolchain is a clean skip. In CI it is a hole in the
  * gate: the ubuntu runner ships Go, Python and Java, and the workflow installs
  * Rust, so a skip there means the ecosystem went unproven while the job stayed
- * green. `GEAR_VERIFIER_REQUIRE_TOOLCHAINS` (set by ci.yml) turns the skip into
+ * green. `RUNE_VERIFIER_REQUIRE_TOOLCHAINS` (set by ci.yml) turns the skip into
  * a failure that names what is missing.
  */
-const REQUIRED = (process.env.GEAR_VERIFIER_REQUIRE_TOOLCHAINS ?? "")
+const REQUIRED = (process.env.RUNE_VERIFIER_REQUIRE_TOOLCHAINS ?? "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
@@ -77,7 +77,7 @@ const temps: string[] = [];
 
 /** A throwaway copy of a fixture: these commands write into the tree. */
 function copyFixture(name: string): string {
-  const dir = mkdtempSync(join(tmpdir(), `gear-verify-${name}-`));
+  const dir = mkdtempSync(join(tmpdir(), `rune-verify-${name}-`));
   cpSync(join(FIXTURES, name), dir, { recursive: true });
   temps.push(dir);
   return dir;
@@ -237,7 +237,7 @@ describe("the environment this suite ran in", () => {
     const missing = REQUIRED.filter((name) => !TOOLCHAINS[name as keyof typeof TOOLCHAINS]);
     expect(
       missing,
-      `GEAR_VERIFIER_REQUIRE_TOOLCHAINS names ${REQUIRED.join(", ")}, but ${missing.join(
+      `RUNE_VERIFIER_REQUIRE_TOOLCHAINS names ${REQUIRED.join(", ")}, but ${missing.join(
         ", ",
       )} could not run here — those ecosystems went unproven while this job stayed green.`,
     ).toEqual([]);
@@ -251,7 +251,7 @@ describe("an absent toolchain", () => {
       workspaceRoot: dir,
       // Stand in for the machine that has no Go: the same shape, a name that
       // is guaranteed absent everywhere.
-      commands: ["gear-absent-toolchain-probe build ./..."],
+      commands: ["rune-absent-toolchain-probe build ./..."],
       timeoutMs: 30_000,
     }).verify();
     expect(r.passed).toBe(true);

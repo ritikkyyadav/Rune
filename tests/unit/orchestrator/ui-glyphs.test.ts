@@ -68,7 +68,7 @@ describe("ASCII rung", () => {
     expect(detectGlyphMode({ LANG: "C" })).toBe("ascii");
     expect(detectGlyphMode({ LC_ALL: "en_US.UTF-8" })).toBe("utf8");
     expect(detectGlyphMode({ LANG: "ja_JP.UTF-8" })).toBe("ambig");
-    expect(detectGlyphMode({ GEAR_ASCII: "1", LANG: "en_US.UTF-8" })).toBe("ascii");
+    expect(detectGlyphMode({ RUNE_ASCII: "1", LANG: "en_US.UTF-8" })).toBe("ascii");
   });
 
   test("folds punctuation, diacritics, and unrepresentable data visibly", () => {
@@ -89,7 +89,7 @@ describe("ASCII rung", () => {
         // The header carries arbitrary data in two fields now — the directory
         // coordinate and the worktree clause — and both are transliterated. This
         // proves non-ASCII DATA is folded, not merely that glyphs have twins.
-        header({ name: "Gear", version: "0.3.0", workspace: "Jos\u00e9", worktree: "leave 東京 alone" }),
+        header({ name: "Rune", version: "0.3.0", workspace: "Jos\u00e9", worktree: "leave 東京 alone" }),
         said("Checked \u201cJos\u00e9\u201d \u2014 no change to 東京."),
         toolRow({ name: "test", arg: "suite", status: "pass", metric: "3 passed" }),
       ].join("\\n");
@@ -99,7 +99,7 @@ describe("ASCII rung", () => {
       cwd: ROOT,
       env: {
         ...process.env,
-        GEAR_ASCII: "1",
+        RUNE_ASCII: "1",
         NO_COLOR: "1",
         LC_ALL: "C",
         TERM: "dumb",
@@ -116,13 +116,13 @@ describe("ASCII rung", () => {
     expect(stdout).toContain("3 passed");
   });
 
-  test("the actual Gear CLI help is seven-bit and escape-free", () => {
-    const cli = join(ROOT, "packages/orchestrator/src/bin/gear-cli.ts");
+  test("the actual Rune CLI help is seven-bit and escape-free", () => {
+    const cli = join(ROOT, "packages/orchestrator/src/bin/rune-cli.ts");
     const run = Bun.spawnSync([process.execPath, cli, "--help"], {
       cwd: ROOT,
       env: {
         ...process.env,
-        GEAR_ASCII: "1",
+        RUNE_ASCII: "1",
         NO_COLOR: "1",
         LC_ALL: "C",
         TERM: "dumb",
@@ -139,7 +139,7 @@ describe("ASCII rung", () => {
     // scripts/version.sh exists to end. What matters is that the banner
     // carries the product label the build was stamped with.
     expect(stdout).toContain(`${PRODUCT_LABEL} -- AI coding agent`);
-    expect(stdout).toMatch(/Gear v\d+\.\d+\.\d+/);
+    expect(stdout).toMatch(/Rune v\d+\.\d+\.\d+/);
     expect(stdout).toContain("Usage:");
     expect(stdout).toContain("Shift+Tab shifts up: 1st -> 2nd -> 3rd -> 4th -> auto");
   });

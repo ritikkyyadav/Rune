@@ -1,15 +1,15 @@
 /**
  * P10.5 — the live half of the enterprise routes.
  *
- * The unit tests prove the request Gear BUILDS is the one each cloud documents.
+ * The unit tests prove the request Rune BUILDS is the one each cloud documents.
  * Only a real call can prove the cloud AGREES, and no cloud credential exists on
  * the machine these were written on. So every test here is doubly gated: an
- * explicit `GEAR_LIVE_<PROVIDER>=1` opt-in, and a credential that actually
+ * explicit `RUNE_LIVE_<PROVIDER>=1` opt-in, and a credential that actually
  * resolves. When either is missing the test SKIPS WITH A PRINTED REASON rather
  * than passing — a green suite that silently ran nothing is the failure this
  * whole file is arranged to avoid.
  *
- *   GEAR_LIVE_BEDROCK=1 bun test tests/integration/enterprise-providers.test.ts
+ *   RUNE_LIVE_BEDROCK=1 bun test tests/integration/enterprise-providers.test.ts
  *
  * These spend real tokens (a handful, on the cheapest model in each catalogue).
  * Nothing here prints a credential.
@@ -40,16 +40,16 @@ async function collectText(gen: AsyncGenerator<StreamEvent>): Promise<string> {
 }
 
 describe("AWS Bedrock (live)", () => {
-  const enabled = process.env.GEAR_LIVE_BEDROCK === "1";
+  const enabled = process.env.RUNE_LIVE_BEDROCK === "1";
 
   test("streams a completion through the Bedrock Messages API", async () => {
     if (!enabled) {
-      skipReason("Bedrock", "GEAR_LIVE_BEDROCK", "not enabled");
+      skipReason("Bedrock", "RUNE_LIVE_BEDROCK", "not enabled");
       return;
     }
     const cred = await resolveAwsCredentials();
     if (!cred) {
-      skipReason("Bedrock", "GEAR_LIVE_BEDROCK", "the AWS credential chain resolved nothing");
+      skipReason("Bedrock", "RUNE_LIVE_BEDROCK", "the AWS credential chain resolved nothing");
       return;
     }
     // Named, never valued: the source is safe to print, the secret is not.
@@ -73,11 +73,11 @@ describe("AWS Bedrock (live)", () => {
 
   test("lists foundation models from the control plane", async () => {
     if (!enabled) {
-      skipReason("Bedrock", "GEAR_LIVE_BEDROCK", "not enabled");
+      skipReason("Bedrock", "RUNE_LIVE_BEDROCK", "not enabled");
       return;
     }
     if (!(await resolveAwsCredentials())) {
-      skipReason("Bedrock", "GEAR_LIVE_BEDROCK", "the AWS credential chain resolved nothing");
+      skipReason("Bedrock", "RUNE_LIVE_BEDROCK", "the AWS credential chain resolved nothing");
       return;
     }
     const models = await new BedrockProvider().listModels();
@@ -87,7 +87,7 @@ describe("AWS Bedrock (live)", () => {
 });
 
 describe("Google Vertex AI (live)", () => {
-  const enabled = process.env.GEAR_LIVE_VERTEX === "1";
+  const enabled = process.env.RUNE_LIVE_VERTEX === "1";
 
   /** Both halves of "can this machine reach Vertex": a token AND a project. */
   async function preflight(): Promise<string | null> {
@@ -100,7 +100,7 @@ describe("Google Vertex AI (live)", () => {
   test("streams a Claude completion through the Vertex Anthropic endpoint", async () => {
     const blocked = await preflight();
     if (blocked) {
-      skipReason("Vertex", "GEAR_LIVE_VERTEX", blocked);
+      skipReason("Vertex", "RUNE_LIVE_VERTEX", blocked);
       return;
     }
     const text = await collectText(
@@ -118,7 +118,7 @@ describe("Google Vertex AI (live)", () => {
   test("streams a Gemini completion through the Vertex Gemini endpoint", async () => {
     const blocked = await preflight();
     if (blocked) {
-      skipReason("Vertex", "GEAR_LIVE_VERTEX", blocked);
+      skipReason("Vertex", "RUNE_LIVE_VERTEX", blocked);
       return;
     }
     // The same provider, the same project, a different publisher — the claim
@@ -138,7 +138,7 @@ describe("Google Vertex AI (live)", () => {
   test("lists models from both publishers", async () => {
     const blocked = await preflight();
     if (blocked) {
-      skipReason("Vertex", "GEAR_LIVE_VERTEX", blocked);
+      skipReason("Vertex", "RUNE_LIVE_VERTEX", blocked);
       return;
     }
     const models = await new VertexProvider().listModels();
@@ -148,7 +148,7 @@ describe("Google Vertex AI (live)", () => {
 });
 
 describe("Azure OpenAI (live)", () => {
-  const enabled = process.env.GEAR_LIVE_AZURE_OPENAI === "1";
+  const enabled = process.env.RUNE_LIVE_AZURE_OPENAI === "1";
 
   /** Azure needs BOTH an endpoint and a credential; say which is missing. */
   function preflight(): string | null {
@@ -163,12 +163,12 @@ describe("Azure OpenAI (live)", () => {
   test("streams a completion from a deployment", async () => {
     const blocked = preflight();
     if (blocked) {
-      skipReason("Azure OpenAI", "GEAR_LIVE_AZURE_OPENAI", blocked);
+      skipReason("Azure OpenAI", "RUNE_LIVE_AZURE_OPENAI", blocked);
       return;
     }
-    // GEAR_LIVE_AZURE_DEPLOYMENT names the deployment on the tester's resource;
+    // RUNE_LIVE_AZURE_DEPLOYMENT names the deployment on the tester's resource;
     // without it the model id is used, which is Azure's own default naming.
-    const model = process.env.GEAR_LIVE_AZURE_DEPLOYMENT || "gpt-4o-mini";
+    const model = process.env.RUNE_LIVE_AZURE_DEPLOYMENT || "gpt-4o-mini";
     const text = await collectText(
       new AzureOpenAIProvider().inferStream({
         messages: [{ role: "user", content: [{ type: "text", text: "Reply with the word OK." }] }],
@@ -184,7 +184,7 @@ describe("Azure OpenAI (live)", () => {
   test("lists the deployments this resource has", async () => {
     const blocked = preflight();
     if (blocked) {
-      skipReason("Azure OpenAI", "GEAR_LIVE_AZURE_OPENAI", blocked);
+      skipReason("Azure OpenAI", "RUNE_LIVE_AZURE_OPENAI", blocked);
       return;
     }
     const models = await new AzureOpenAIProvider().listModels();

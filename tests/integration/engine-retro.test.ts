@@ -2,7 +2,7 @@
  * END-TO-END retro through the REAL Engine: a fake OpenAI-compatible endpoint
  * plays the model, the run records a plan and stops with it open, and the
  * session log must end with a `retro` event that says so in numbers — the
- * record `gear audit` and `gear evolve` read, written with zero model calls.
+ * record `rune audit` and `rune evolve` read, written with zero model calls.
  */
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
@@ -43,8 +43,8 @@ function makeEngine(dir: string, port: number): Engine {
     model: "fake-model",
     provider: "custom" as ProviderName,
     workspaceRoot: dir,
-    dbPath: join(dir, "gear.db"),
-    toolsBinaryPath: "gear-tools",
+    dbPath: join(dir, "rune.db"),
+    toolsBinaryPath: "rune-tools",
     yoloMode: false,
     customEndpoint: {
       baseUrl: `http://127.0.0.1:${port}/v1`,
@@ -67,7 +67,7 @@ describe("Engine retro (end-to-end, fake provider)", () => {
   let server: ReturnType<typeof Bun.serve> | null = null;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "gear-retro-"));
+    dir = mkdtempSync(join(tmpdir(), "rune-retro-"));
   });
 
   afterEach(() => {
@@ -107,8 +107,8 @@ describe("Engine retro (end-to-end, fake provider)", () => {
     }
     engine.close();
 
-    // Read the log the way `gear audit` does: straight from the database.
-    const db = new Database(join(dir, "gear.db"), { readonly: true });
+    // Read the log the way `rune audit` does: straight from the database.
+    const db = new Database(join(dir, "rune.db"), { readonly: true });
     const rows = (
       db
         .prepare("SELECT seq, type, payload_json FROM events WHERE session_id = ? ORDER BY seq")

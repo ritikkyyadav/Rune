@@ -1,7 +1,7 @@
-import type { Message, ContentBlock, ToolDefinition } from "@gear/llm-gateway";
-import { LlmGateway, isModelGoneError } from "@gear/llm-gateway";
-import type { ProviderName } from "@gear/llm-gateway";
-import { PROVIDER_TIER_DEFAULTS } from "@gear/shared";
+import type { Message, ContentBlock, ToolDefinition } from "@rune/llm-gateway";
+import { LlmGateway, isModelGoneError } from "@rune/llm-gateway";
+import type { ProviderName } from "@rune/llm-gateway";
+import { PROVIDER_TIER_DEFAULTS } from "@rune/shared";
 import { TokenCounter, tokenCounter, countTokens, getContextLimit } from "./tokenizer";
 
 // ─── Context Budget Configuration ───

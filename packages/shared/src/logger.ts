@@ -1,18 +1,18 @@
 import { appendFileSync, mkdirSync } from "fs";
 import { join } from "path";
-import { getGearHome } from "./paths.js";
+import { getRuneHome } from "./paths.js";
 
 // ─── Minimal structured logger ───
 // Zero-dependency, leveled, namespaced. Routes to stderr (so it never corrupts
-// stdout protocol/IPC streams) and, when GEAR_LOG_DIR is set, appends to a file.
+// stdout protocol/IPC streams) and, when RUNE_LOG_DIR is set, appends to a file.
 //
 // Verbosity:
-//   GEAR_LOG=debug|info|warn|error|silent   explicit threshold (default "warn")
-//   DEBUG=<anything truthy>                  shorthand for GEAR_LOG=debug
+//   RUNE_LOG=debug|info|warn|error|silent   explicit threshold (default "warn")
+//   DEBUG=<anything truthy>                  shorthand for RUNE_LOG=debug
 //
 // Designed for subsystems like MCP that previously used raw console.* — those
 // calls corrupt a raw-mode TUI and can't be silenced. Through the logger a user
-// can set GEAR_LOG=silent (or redirect via GEAR_LOG_DIR) and get a clean screen.
+// can set RUNE_LOG=silent (or redirect via RUNE_LOG_DIR) and get a clean screen.
 
 export type LogLevel = "debug" | "info" | "warn" | "error" | "silent";
 
@@ -35,7 +35,7 @@ const LEVEL_ORDER: Record<Exclude<LogLevel, "silent">, number> = {
 /** Resolve the active threshold from the environment (re-read each call so tests
  * and runtime toggles take effect without a restart). */
 function threshold(): number {
-  const raw = (process.env.GEAR_LOG ?? "").toLowerCase().trim();
+  const raw = (process.env.RUNE_LOG ?? "").toLowerCase().trim();
   if (raw === "silent") return Number.POSITIVE_INFINITY;
   if (raw in LEVEL_ORDER) return LEVEL_ORDER[raw as keyof typeof LEVEL_ORDER];
   if (process.env.DEBUG && process.env.DEBUG !== "0" && process.env.DEBUG !== "false") {
@@ -48,7 +48,7 @@ let fileSinkChecked = false;
 let fileSinkPath: string | null = null;
 
 /**
- * Resolve (once) the file sink: GEAR_LOG_DIR when set, else ~/.gear/logs.
+ * Resolve (once) the file sink: RUNE_LOG_DIR when set, else ~/.rune/logs.
  * A default exists because under the TUI the stderr line is suppressed (see
  * emit) — a warning with nowhere else to go would otherwise vanish. Never
  * throws.
@@ -56,10 +56,10 @@ let fileSinkPath: string | null = null;
 function fileSink(): string | null {
   if (fileSinkChecked) return fileSinkPath;
   fileSinkChecked = true;
-  const dir = process.env.GEAR_LOG_DIR ?? join(getGearHome(), "logs");
+  const dir = process.env.RUNE_LOG_DIR ?? join(getRuneHome(), "logs");
   try {
     mkdirSync(dir, { recursive: true });
-    fileSinkPath = join(dir, "gear.log");
+    fileSinkPath = join(dir, "rune.log");
   } catch {
     fileSinkPath = null; // unwritable dir — silently drop the file sink
   }
@@ -96,9 +96,9 @@ function emit(
   // While the TUI owns the terminal (alt screen), a stderr line is not a log —
   // it is a rendering defect: it prints OVER the pinned chrome, and parallel
   // writers tear it mid-line (observed as "[SEC[SECURITY]…" in a live run).
-  // The TUI sets GEAR_TUI_ACTIVE for exactly this window; the file sink below
+  // The TUI sets RUNE_TUI_ACTIVE for exactly this window; the file sink below
   // still records every line.
-  if (process.env.GEAR_TUI_ACTIVE !== "1") {
+  if (process.env.RUNE_TUI_ACTIVE !== "1") {
     try {
       process.stderr.write(`${line}\n`);
     } catch {

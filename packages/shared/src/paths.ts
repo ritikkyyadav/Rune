@@ -1,27 +1,40 @@
-// ─── Gear data paths ───
-// ONE place that knows where Gear keeps its data:
+// ─── Rune data paths ───
+// ONE place that knows where Rune keeps its data:
 //
-//   home  — `~/.gear`   (override: GEAR_HOME; legacy ALAN_HOME honored)
-//   ws    — `<workspace>/.gear`  (legacy `<workspace>/.alan` still read)
+//   home  — `~/.rune`   (override: RUNE_HOME; the previous name's GEAR_HOME honored)
+//   ws    — `<workspace>/.rune`  (legacy `<workspace>/.gear` and `.alan` still read)
 //
-// Migration: the product was renamed (Alan → Gear). `migrateLegacyHome()` —
-// called by the CLI and the desktop engine host at startup, never by library
-// import — MOVES an old `~/.alan` to `~/.gear` when `~/.gear` does not exist
-// yet (sessions, secrets, model.json, theme.json, black box, notebook —
-// everything) and leaves `~/.alan` behind as a symlink, so anything still
-// pointing at the old path (shell aliases, ~/.alan/bin on PATH, other tools)
-// keeps working. Inside the home, the session database `alan.db` becomes
-// `gear.db`. Nothing is copied twice and nothing is deleted.
+// Migration: the product has been renamed twice (Alan → Gear → Rune).
+// `migrateLegacyHome()` — called by the CLI and the engine host at startup,
+// never by library import — MOVES the newest old home (`~/.gear`, else
+// `~/.alan`) to `~/.rune` when `~/.rune` does not exist yet (sessions, secrets,
+// model.json, theme.json, black box, notebook — everything) and leaves the old
+// path behind as a symlink, so anything still pointing at it (shell aliases,
+// `~/.gear/bin` on PATH, other tools) keeps working. An older `~/.alan` that is
+// already a symlink into `~/.gear` keeps resolving through the chain. Inside
+// the home, the session database `gear.db` (or `alan.db`) becomes `rune.db` and
+// the global instructions file `GEAR.md` becomes `RUNE.md`. Nothing is copied
+// twice and nothing is deleted.
 //
-// `getGearHome()` itself has no side effects: it resolves to `~/.gear` when
-// that exists, to a not-yet-migrated real `~/.alan` directory otherwise (so
-// data is never split across two homes), and to `~/.gear` for a fresh machine.
+// `getRuneHome()` itself has no side effects: it resolves to `~/.rune` when
+// that exists, to the newest not-yet-migrated real legacy directory otherwise
+// (so data is never split across two homes), and to `~/.rune` for a fresh
+// machine.
 //
-// Workspace-local config (`.gear/`) is NOT auto-migrated: it lives inside the
-// user's repository, so we read the legacy `.alan/` when `.gear/` is absent and
-// let the user rename it when they choose. New writes always go to `.gear/`.
+// Workspace-local config (`.rune/`) is NOT auto-migrated: it lives inside the
+// user's repository, so we read the legacy `.gear/` (or `.alan/`) when `.rune/`
+// is absent and let the user rename it when they choose. New writes always go
+// to `.rune/`.
 
-import { existsSync, lstatSync, mkdirSync, renameSync, symlinkSync } from "fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  renameSync,
+  rmdirSync,
+  symlinkSync,
+} from "fs";
 import { isAbsolute, join, relative, resolve } from "path";
 
 // ─── Containment ───
@@ -53,12 +66,20 @@ export function isPathInside(root: string, target: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
-export const GEAR_HOME_DIRNAME = ".gear";
-export const LEGACY_HOME_DIRNAME = ".alan";
-export const GEAR_WS_DIRNAME = ".gear";
-export const LEGACY_WS_DIRNAME = ".alan";
-export const GEAR_DB_FILENAME = "gear.db";
-export const LEGACY_DB_FILENAME = "alan.db";
+export const RUNE_HOME_DIRNAME = ".rune";
+/**
+ * Homes of the earlier names, newest first. Read when `~/.rune` does not exist
+ * yet; the newest real one is moved to `~/.rune` once by `migrateLegacyHome`.
+ */
+export const LEGACY_HOME_DIRNAMES: readonly string[] = [".gear", ".alan"];
+export const RUNE_WS_DIRNAME = ".rune";
+export const LEGACY_WS_DIRNAMES: readonly string[] = [".gear", ".alan"];
+export const RUNE_DB_FILENAME = "rune.db";
+export const LEGACY_DB_FILENAMES: readonly string[] = ["gear.db", "alan.db"];
+export const RUNE_MEMORY_FILENAME = "RUNE.md";
+export const LEGACY_MEMORY_FILENAMES: readonly string[] = ["GEAR.md", "ALAN.md"];
+/** The previous name's environment prefix: every `GEAR_<X>` still sets `RUNE_<X>` when unset. */
+export const LEGACY_ENV_PREFIX = "GEAR_";
 
 function osHome(env: NodeJS.ProcessEnv = process.env): string {
   return env.HOME ?? env.USERPROFILE ?? "~";
@@ -72,86 +93,185 @@ function isRealDir(path: string): boolean {
   }
 }
 
-let cache: { key: string; home: string } | null = null;
-let migrationNote: string | null = null;
+/**
+ * The files whose presence means a home holds a person's data. A `~/.rune`
+ * with none of them is FRESH — created by a test's `ensureRuneHome()`, by a
+ * `--version` run, by an installer's `mkdir -p` — and must not stop the old
+ * home from being moved in, or the rename silently strands every session and
+ * credential behind a directory that looks migrated and is empty.
+ */
+const HOME_DATA_MARKERS: readonly string[] = [
+  "rune.db",
+  "gear.db",
+  "alan.db",
+  "secrets.json",
+  "config.toml",
+  "model.json",
+  "credentials.index.json",
+];
 
-function cacheKey(env: NodeJS.ProcessEnv): string {
-  return [env.GEAR_HOME, env.ALAN_HOME, env.HOME, env.USERPROFILE].map((v) => v ?? "").join("\0");
+function isFreshHome(dir: string): boolean {
+  try {
+    if (!lstatSync(dir).isDirectory()) return false;
+    const entries = new Set(readdirSync(dir));
+    return !HOME_DATA_MARKERS.some((m) => entries.has(m));
+  } catch {
+    return false;
+  }
 }
 
 /**
- * Resolve Gear's home directory (no side effects). Memoized per
- * (GEAR_HOME, ALAN_HOME, HOME, USERPROFILE), so a test that swaps HOME sees
+ * Move the newest real legacy home onto `modern`. When `modern` already exists
+ * as a fresh directory, its entries are set aside first and folded back in
+ * afterwards (a legacy entry of the same name wins — it is the one with data).
+ * Returns the note to print, or null when nothing moved.
+ */
+function moveLegacyHomeInto(modern: string, legacy: string): string | null {
+  let parked: string | null = null;
+  if (existsSync(modern)) {
+    parked = `${modern}.fresh-${Date.now()}`;
+    try {
+      renameSync(modern, parked);
+    } catch {
+      return null;
+    }
+  }
+  try {
+    renameSync(legacy, modern);
+  } catch {
+    // Could not move (permissions, cross-device): put the fresh dir back and
+    // keep using the legacy dir rather than splitting data across two homes.
+    if (parked) {
+      try {
+        renameSync(parked, modern);
+      } catch {
+        // Nothing sensible left to do; the next start retries from scratch.
+      }
+    }
+    return null;
+  }
+  try {
+    symlinkSync(modern, legacy, "dir");
+  } catch {
+    // The symlink is a courtesy for old paths; the move already succeeded.
+  }
+  if (parked) {
+    for (const entry of readdirSync(parked)) {
+      const target = join(modern, entry);
+      if (existsSync(target)) continue;
+      try {
+        renameSync(join(parked, entry), target);
+      } catch {
+        // Left behind in the parked directory, which is kept for that reason.
+      }
+    }
+    try {
+      rmdirSync(parked);
+    } catch {
+      // Not empty: something collided; the parked copy stays for the user.
+    }
+  }
+  return `moved ${legacy} → ${modern} (a symlink ${legacy} → ${modern} keeps old paths working)`;
+}
+
+/** The newest legacy home that is a real directory (a symlink is a migrated one). */
+function firstRealLegacyDir(base: string, names: readonly string[]): string | null {
+  for (const name of names) {
+    const candidate = join(base, name);
+    if (isRealDir(candidate)) return candidate;
+  }
+  return null;
+}
+
+let cache: { key: string; home: string } | null = null;
+let migrationNote: string | null = null;
+
+function homeOverride(env: NodeJS.ProcessEnv): string | undefined {
+  return env.RUNE_HOME ?? env.GEAR_HOME;
+}
+
+function cacheKey(env: NodeJS.ProcessEnv): string {
+  return [env.RUNE_HOME, env.GEAR_HOME, env.HOME, env.USERPROFILE].map((v) => v ?? "").join("\0");
+}
+
+/**
+ * Resolve Rune's home directory (no side effects). Memoized per
+ * (RUNE_HOME, GEAR_HOME, HOME, USERPROFILE), so a test that swaps HOME sees
  * the change and a long-running process pays the lookup once.
  */
-export function getGearHome(env: NodeJS.ProcessEnv = process.env): string {
+export function getRuneHome(env: NodeJS.ProcessEnv = process.env): string {
   const key = cacheKey(env);
   if (cache && cache.key === key) return cache.home;
-  const override = env.GEAR_HOME ?? env.ALAN_HOME;
+  const override = homeOverride(env);
   let home: string;
   if (override) {
     home = override;
   } else {
     const base = osHome(env);
-    const modern = join(base, GEAR_HOME_DIRNAME);
-    const legacy = join(base, LEGACY_HOME_DIRNAME);
-    home = existsSync(modern) ? modern : isRealDir(legacy) ? legacy : modern;
+    const modern = join(base, RUNE_HOME_DIRNAME);
+    const legacy = firstRealLegacyDir(base, LEGACY_HOME_DIRNAMES);
+    // A fresh `~/.rune` beside a real legacy home is not the home yet: the
+    // migration has not run, and reading from the empty one would present a
+    // person with no sessions and no keys.
+    home = existsSync(modern) && !(legacy && isFreshHome(modern)) ? modern : (legacy ?? modern);
   }
   cache = { key, home };
   return home;
 }
 
+/** Rename a SQLite file together with its -wal/-shm/-journal siblings. */
+function renameWithSiblings(from: string, to: string): boolean {
+  try {
+    renameSync(from, to);
+    for (const suffix of ["-wal", "-shm", "-journal"]) {
+      if (existsSync(from + suffix)) renameSync(from + suffix, to + suffix);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
- * One-time data migration for the rename; call at process start (CLI, desktop
- * engine host) before anything opens a database. Moves `~/.alan` → `~/.gear`
- * (symlink left behind) when the new home does not exist, then renames
- * `alan.db` → `gear.db` (with its -wal/-shm siblings) inside the home when
- * `gear.db` is absent. Never throws; returns a one-line human note when
- * something moved, else null. An explicit GEAR_HOME/ALAN_HOME override
+ * One-time data migration for the rename; call at process start (CLI, engine
+ * host) before anything opens a database. Moves the newest real legacy home
+ * (`~/.gear`, else `~/.alan`) to `~/.rune` (symlink left behind) when the new
+ * home does not exist — or exists but holds no data yet — then renames `gear.db` / `alan.db` → `rune.db` (with
+ * their -wal/-shm siblings) and `GEAR.md` / `ALAN.md` → `RUNE.md` inside the
+ * home when the new name is absent. Never throws; returns a one-line human note
+ * when something moved, else null. An explicit RUNE_HOME/GEAR_HOME override
  * disables the directory move (the override IS the home).
  */
 export function migrateLegacyHome(env: NodeJS.ProcessEnv = process.env): string | null {
   const notes: string[] = [];
-  const override = env.GEAR_HOME ?? env.ALAN_HOME;
+  const override = homeOverride(env);
   let home: string;
   if (override) {
     home = override;
   } else {
     const base = osHome(env);
-    const modern = join(base, GEAR_HOME_DIRNAME);
-    const legacy = join(base, LEGACY_HOME_DIRNAME);
-    if (!existsSync(modern) && isRealDir(legacy)) {
-      try {
-        renameSync(legacy, modern);
-        try {
-          symlinkSync(modern, legacy, "dir");
-        } catch {
-          // The symlink is a courtesy for old paths; the move already succeeded.
-        }
-        notes.push(
-          `moved ${legacy} → ${modern} (a symlink ${legacy} → ${modern} keeps old paths working)`,
-        );
-      } catch {
-        // Could not move (permissions, cross-device): keep using the legacy dir
-        // rather than splitting data across two homes.
+    const modern = join(base, RUNE_HOME_DIRNAME);
+    if (!existsSync(modern) || isFreshHome(modern)) {
+      const legacy = firstRealLegacyDir(base, LEGACY_HOME_DIRNAMES);
+      if (legacy) {
+        const moved = moveLegacyHomeInto(modern, legacy);
+        if (moved) notes.push(moved);
       }
     }
-    home = existsSync(modern) ? modern : isRealDir(legacy) ? legacy : modern;
+    home = existsSync(modern) ? modern : (firstRealLegacyDir(base, LEGACY_HOME_DIRNAMES) ?? modern);
   }
   if (existsSync(home)) {
-    const oldDb = join(home, LEGACY_DB_FILENAME);
-    const newDb = join(home, GEAR_DB_FILENAME);
-    if (existsSync(oldDb) && !existsSync(newDb)) {
-      try {
-        renameSync(oldDb, newDb);
-        for (const suffix of ["-wal", "-shm", "-journal"]) {
-          if (existsSync(oldDb + suffix)) renameSync(oldDb + suffix, newDb + suffix);
+    const newDb = join(home, RUNE_DB_FILENAME);
+    for (const legacyName of LEGACY_DB_FILENAMES) {
+      const oldDb = join(home, legacyName);
+      if (!existsSync(oldDb)) continue;
+      if (!existsSync(newDb)) {
+        if (renameWithSiblings(oldDb, newDb)) {
+          notes.push(`renamed ${legacyName} → ${RUNE_DB_FILENAME} in ${home}`);
         }
-        notes.push(`renamed ${LEGACY_DB_FILENAME} → ${GEAR_DB_FILENAME} in ${home}`);
-      } catch {
-        // The old name keeps working for this run; next start retries.
+        // Otherwise the old name keeps working for this run; next start retries.
+        continue;
       }
-    } else if (existsSync(oldDb) && existsSync(newDb)) {
       // BOTH exist, so the rename above can never fire and the legacy file is
       // stranded — permanently, and silently, which is the part that bites.
       // This is not merely pre-rename residue: a build that resolved the home
@@ -164,9 +284,22 @@ export function migrateLegacyHome(env: NodeJS.ProcessEnv = process.env): string 
       // a worse failure than leaving it in place. Say so instead, so the data
       // is recoverable by someone who knows what it is.
       notes.push(
-        `${LEGACY_DB_FILENAME} still exists alongside ${GEAR_DB_FILENAME} in ${home} — ` +
+        `${legacyName} still exists alongside ${RUNE_DB_FILENAME} in ${home} — ` +
           `its sessions are NOT visible to this build; nothing was deleted`,
       );
+    }
+    // The user's global instructions follow the same rule: one rename, never a
+    // merge. A RUNE.md that already exists wins and the old file is left alone.
+    const newMemory = join(home, RUNE_MEMORY_FILENAME);
+    for (const legacyName of LEGACY_MEMORY_FILENAMES) {
+      const oldMemory = join(home, legacyName);
+      if (!existsSync(oldMemory) || existsSync(newMemory)) continue;
+      try {
+        renameSync(oldMemory, newMemory);
+        notes.push(`renamed ${legacyName} → ${RUNE_MEMORY_FILENAME} in ${home}`);
+      } catch {
+        // Next start retries; the loader still reads the old name meanwhile.
+      }
     }
   }
   cache = null;
@@ -182,60 +315,68 @@ export function takeHomeMigrationNote(): string | null {
   return n;
 }
 
-/** Test seam: forget the memoized home (after changing HOME / GEAR_HOME). */
-export function resetGearHomeCache(): void {
+/** Test seam: forget the memoized home (after changing HOME / RUNE_HOME). */
+export function resetRuneHomeCache(): void {
   cache = null;
   migrationNote = null;
 }
 
 /** `<home>/<parts…>`, creating nothing. */
-export function gearHomePath(...parts: string[]): string {
-  return join(getGearHome(), ...parts);
+export function runeHomePath(...parts: string[]): string {
+  return join(getRuneHome(), ...parts);
 }
 
-/** Ensure Gear's home exists and return it. */
-export function ensureGearHome(): string {
-  const dir = getGearHome();
+/** Ensure Rune's home exists and return it. */
+export function ensureRuneHome(): string {
+  const dir = getRuneHome();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   return dir;
 }
 
-/**
- * The workspace-local Gear directory: `<root>/.gear` when it exists, else the
- * legacy `<root>/.alan` when THAT exists (read-through for repos configured
- * before the rename), else `<root>/.gear` (where new files will be written).
- */
-export function workspaceConfigDir(workspaceRoot: string): string {
-  const modern = join(workspaceRoot, GEAR_WS_DIRNAME);
-  if (existsSync(modern)) return modern;
-  const legacy = join(workspaceRoot, LEGACY_WS_DIRNAME);
-  if (existsSync(legacy)) return legacy;
-  return modern;
+/** The newest legacy workspace directory that exists, or null. */
+function existingLegacyWorkspaceDir(workspaceRoot: string): string | null {
+  for (const name of LEGACY_WS_DIRNAMES) {
+    const candidate = join(workspaceRoot, name);
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
 }
 
-/** `<root>/.gear/<parts…>` (or the legacy dir when only it exists). */
+/**
+ * The workspace-local Rune directory: `<root>/.rune` when it exists, else the
+ * newest legacy `<root>/.gear` or `<root>/.alan` that exists (read-through for
+ * repos configured before a rename), else `<root>/.rune` (where new files will
+ * be written).
+ */
+export function workspaceConfigDir(workspaceRoot: string): string {
+  const modern = join(workspaceRoot, RUNE_WS_DIRNAME);
+  if (existsSync(modern)) return modern;
+  return existingLegacyWorkspaceDir(workspaceRoot) ?? modern;
+}
+
+/** `<root>/.rune/<parts…>` (or the legacy dir when only it exists). */
 export function workspaceConfigPath(workspaceRoot: string, ...parts: string[]): string {
   return join(workspaceConfigDir(workspaceRoot), ...parts);
 }
 
-/** True when the workspace still uses the legacy `.alan/` directory. */
+/** True when the workspace still uses a legacy `.gear/` or `.alan/` directory. */
 export function usesLegacyWorkspaceDir(workspaceRoot: string): boolean {
   return (
-    !existsSync(join(workspaceRoot, GEAR_WS_DIRNAME)) &&
-    existsSync(join(workspaceRoot, LEGACY_WS_DIRNAME))
+    !existsSync(join(workspaceRoot, RUNE_WS_DIRNAME)) &&
+    existingLegacyWorkspaceDir(workspaceRoot) !== null
   );
 }
 
 /**
- * Legacy environment names: every `ALAN_<X>` still sets `GEAR_<X>` when the
+ * Legacy environment names: every `GEAR_<X>` still sets `RUNE_<X>` when the
  * latter is unset, so old shells, launchd plists and CI configs keep working.
  * Idempotent; called at process start and again (harmlessly) by config loading.
  */
 export function adoptLegacyEnv(env: NodeJS.ProcessEnv = process.env): string[] {
   const adopted: string[] = [];
   for (const [key, value] of Object.entries(env)) {
-    if (!key.startsWith("ALAN_") || value === undefined) continue;
-    const modern = "GEAR_" + key.slice("ALAN_".length);
+    if (!key.startsWith(LEGACY_ENV_PREFIX) || value === undefined) continue;
+    const modern = "RUNE_" + key.slice(LEGACY_ENV_PREFIX.length);
     if (env[modern] === undefined) {
       env[modern] = value;
       adopted.push(key);

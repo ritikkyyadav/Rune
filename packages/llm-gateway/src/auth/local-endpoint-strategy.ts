@@ -1,7 +1,7 @@
 // ─── Local-endpoint strategy ───
 // Formalizes Ollama / LM Studio as an auth METHOD whose "credential" is mere
 // connectivity — a base URL, no secret. It carries no key material; `validate`
-// is a bounded reachability probe used by `gear providers` / status. Provider
+// is a bounded reachability probe used by `rune providers` / status. Provider
 // REGISTRATION for local runtimes stays in buildGateway exactly as before, so
 // this adds status/validation without changing who gets registered.
 

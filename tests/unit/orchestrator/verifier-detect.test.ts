@@ -14,7 +14,7 @@ import { detectVerifyCommands } from "../../../packages/orchestrator/src/verifie
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "gear-verify-detect-"));
+  dir = mkdtempSync(join(tmpdir(), "rune-verify-detect-"));
 });
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });

@@ -1,7 +1,7 @@
 /**
  * P8.7 — the effort dial reaches the wire, per provider, under its real name.
  *
- * THIS TEST IS THE POINT OF THE ITEM. Gear has shipped a depth dial that went
+ * THIS TEST IS THE POINT OF THE ITEM. Rune has shipped a depth dial that went
  * nowhere twice:
  *
  *   - Codex ran at the server default because `reasoning.effort` was never

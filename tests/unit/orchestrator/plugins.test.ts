@@ -23,7 +23,7 @@ function installPlugin(
     skill?: { id: string; description: string };
   } = {},
 ): string {
-  const root = join(workspace, ".gear", "plugins", name);
+  const root = join(workspace, ".rune", "plugins", name);
   mkdirSync(root, { recursive: true });
   writeFileSync(
     join(root, "plugin.json"),
@@ -55,7 +55,7 @@ function installPlugin(
 }
 
 beforeEach(() => {
-  workspace = mkdtempSync(join(tmpdir(), "gear-plugins-"));
+  workspace = mkdtempSync(join(tmpdir(), "rune-plugins-"));
 });
 
 afterEach(() => {
@@ -94,7 +94,7 @@ describe("discoverPlugins", () => {
   test("manifest/dir name mismatch, missing declared files, and bad JSON all refuse", () => {
     installPlugin("wrong-name", { manifest: { name: "other-name" } });
     installPlugin("missing-hooks", { manifest: { hooks: "nope.json" } });
-    const badRoot = join(workspace, ".gear", "plugins", "bad-json");
+    const badRoot = join(workspace, ".rune", "plugins", "bad-json");
     mkdirSync(badRoot, { recursive: true });
     writeFileSync(join(badRoot, "plugin.json"), "{not json");
 
@@ -125,9 +125,9 @@ describe("discoverPlugins", () => {
 
 describe("loader merges", () => {
   test("plugin hooks concatenate AFTER workspace hooks", async () => {
-    mkdirSync(join(workspace, ".gear"), { recursive: true });
+    mkdirSync(join(workspace, ".rune"), { recursive: true });
     writeFileSync(
-      join(workspace, ".gear", "hooks.json"),
+      join(workspace, ".rune", "hooks.json"),
       JSON.stringify({ postToolUse: [{ command: "echo user-hook" }] }),
     );
     installPlugin("hooky", { hooks: { postToolUse: [{ command: "echo plugin-hook" }] } });
@@ -141,8 +141,8 @@ describe("loader merges", () => {
   });
 
   test("plugin commands are tagged; user names win; plugin conflicts refuse", async () => {
-    mkdirSync(join(workspace, ".gear", "commands"), { recursive: true });
-    writeFileSync(join(workspace, ".gear", "commands", "ship.md"), "user ship");
+    mkdirSync(join(workspace, ".rune", "commands"), { recursive: true });
+    writeFileSync(join(workspace, ".rune", "commands", "ship.md"), "user ship");
     installPlugin("shipper", {
       command: { file: "ship.md", body: "plugin ship" },
     });
@@ -194,7 +194,7 @@ describe("executable tool declarations", () => {
     const { plugins, errors } = discoverPlugins(workspace);
     expect(errors).toEqual([]);
     expect(plugins[0]!.toolDeclarations[0]!.command[0]).toBe(
-      join(workspace, ".gear", "plugins", "acme-script", "tools", "run.py"),
+      join(workspace, ".rune", "plugins", "acme-script", "tools", "run.py"),
     );
   });
 
@@ -204,7 +204,7 @@ describe("executable tool declarations", () => {
     expect(plugins).toHaveLength(0);
     expect(errors.join(" ")).toContain("escapes the plugin directory");
 
-    rmSync(join(workspace, ".gear", "plugins", "acme-escape"), { recursive: true, force: true });
+    rmSync(join(workspace, ".rune", "plugins", "acme-escape"), { recursive: true, force: true });
     withTools("acme-updir", [{ id: "evil", command: ["../../../etc/passwd"], capability: "none" }]);
     expect(discoverPlugins(workspace).plugins).toHaveLength(0);
   });

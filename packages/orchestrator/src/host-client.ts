@@ -6,8 +6,8 @@
 // handler. Killing the client — or the whole terminal — never touches the
 // host; reattach and the session store has everything that happened.
 
-import type { HostCommandArgs, HostCommandName, HostCommandResult } from "@gear/protocol";
-import { encodeFrame, rpcRequest, toResult, toStream } from "@gear/protocol";
+import type { HostCommandArgs, HostCommandName, HostCommandResult } from "@rune/protocol";
+import { encodeFrame, rpcRequest, toResult, toStream } from "@rune/protocol";
 
 export interface HostStreamFrame {
   stream: string;

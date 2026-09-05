@@ -9,11 +9,6 @@ node_modules/
 dist/
 bun.lockb
 
-# The web bundle's embed manifest: generated from apps/web/dist by
-# scripts/gen-web-embed.ts before every compile, so the binary carries the
-# client inside it (P10.9a). The generator is committed; its output is not.
-packages/orchestrator/src/web-embed/generated.js
-
 # IDE
 .vscode/
 .idea/
@@ -24,7 +19,8 @@ packages/orchestrator/src/web-embed/generated.js
 .DS_Store
 Thumbs.db
 
-# Retired pre-rename project dir (config migrated to .gear/; local index DBs only)
+# Retired pre-rename project dirs (config migrated to .rune/; local index DBs only)
+.gear/
 .alan/
 
 # Codex CLI session scratch
@@ -33,18 +29,18 @@ Thumbs.db
 # Eval run archives (CI uploads them as artifacts; baseline-mock.json is the committed gate)
 tests/eval/results/run-*.json
 
-# Gear runtime
-.gear/cache/
-.gear/logs/
+# Rune runtime
+.rune/cache/
+.rune/logs/
 # The mission dossier: per-workspace run state the engine rewrites every turn
-.gear/mission.md
+.rune/mission.md
 # Local code indexes (rebuilt on demand; WAL/SHM siblings included)
-.gear/symbols.db*
-.gear/search.db*
+.rune/symbols.db*
+.rune/search.db*
 # Detached-run worktrees (git worktree checkouts; branches carry the work)
-.gear/worktrees/
+.rune/worktrees/
 # MCP server config — local, may contain credentials in headers (see mcp.json.example)
-.gear/mcp.json
+.rune/mcp.json
 
 # Environment
 .env
@@ -70,14 +66,12 @@ tests/fixtures/verifier/**/Cargo.lock
 _to_delete/
 *.tgz
 *.tar.gz
-# Packaged VS Code extension + its esbuild output (built, never committed)
-*.vsix
-apps/vscode/out/
-# The VS Code build @vscode/test-electron downloads for the live extension proof
-.vscode-test/
 # terminal captures from TUI debugging (raw ANSI dumps)
 *.cv.txt
 
 # Run byproducts written into the workspace by the engine (audits, the drafted playbook)
-.gear/audits/
-.gear/skills/playbook/
+.rune/audits/
+.rune/skills/playbook/
+
+# Claude Code session data (worktrees, local settings)
+.claude/

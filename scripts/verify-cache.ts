@@ -17,7 +17,7 @@
  * Nothing here loops. A provider with no credential is SKIPPED, loudly, and
  * exits 2 — never silently, and never by inventing a number.
  *
- * Credentials are read from the environment, falling back to ~/.gear/.env.
+ * Credentials are read from the environment, falling back to ~/.rune/.env.
  * They are never printed, logged, or copied anywhere.
  */
 
@@ -57,22 +57,22 @@ const FORCE = process.argv.includes("--force-breakpoints");
 
 /**
  * Find this provider's credential. Three sources, in the order the CLI itself
- * resolves them: the environment, the ~/.gear/.env sidecar, and the saved-keys
- * map in ~/.gear/secrets.json (what `/keys set` writes).
+ * resolves them: the environment, the ~/.rune/.env sidecar, and the saved-keys
+ * map in ~/.rune/secrets.json (what `/keys set` writes).
  *
  * The value is returned and never printed, logged, or written anywhere.
  */
 function secret(envVar: string, providerId: string): string | undefined {
   if (process.env[envVar]) return process.env[envVar];
   try {
-    const env = readFileSync(join(homedir(), ".gear", ".env"), "utf8");
+    const env = readFileSync(join(homedir(), ".rune", ".env"), "utf8");
     const hit = env.match(new RegExp(`^${envVar}=(.+)$`, "m"));
     if (hit?.[1]) return hit[1].trim();
   } catch {
     // no sidecar env file; fall through
   }
   try {
-    const raw = readFileSync(join(homedir(), ".gear", "secrets.json"), "utf8");
+    const raw = readFileSync(join(homedir(), ".rune", "secrets.json"), "utf8");
     const saved = (JSON.parse(raw) as { keys?: Record<string, string> }).keys ?? {};
     if (saved[providerId]) return saved[providerId];
   } catch {
@@ -154,7 +154,7 @@ const TARGETS: Record<string, Target> = {
   // Keyless. Nothing is billed here; what is measured is whether the KV cache
   // SURVIVES between turns, which `keep_alive` is what buys (P8.4).
   ollama: {
-    cheapestModel: process.env.GEAR_OLLAMA_MODEL ?? "llama3.1",
+    cheapestModel: process.env.RUNE_OLLAMA_MODEL ?? "llama3.1",
     build: () => new OllamaProvider(),
   },
   // The ChatGPT subscription backend. Its credential is an OAuth blob in the
@@ -200,7 +200,7 @@ if (target.fromStore) {
   if (!key) {
     console.log(
       `${PROVIDER}: SKIPPED — no credential (${target.envVar} unset, absent from ` +
-        `~/.gear/.env and ~/.gear/secrets.json)`,
+        `~/.rune/.env and ~/.rune/secrets.json)`,
     );
     process.exit(2);
   }

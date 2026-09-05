@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { Engine } from "../../packages/orchestrator/src/engine";
 import type { ProviderName } from "../../packages/llm-gateway/src/types";
 
-const RUST_RELEASE = join(import.meta.dir, "../../target/release/gear-tools");
-const RUST_DEBUG = join(import.meta.dir, "../../target/debug/gear-tools");
+const RUST_RELEASE = join(import.meta.dir, "../../target/release/rune-tools");
+const RUST_DEBUG = join(import.meta.dir, "../../target/debug/rune-tools");
 const RUST_BIN = existsSync(RUST_RELEASE) ? RUST_RELEASE : RUST_DEBUG;
 const HAS_RUST_BIN = existsSync(RUST_BIN);
 
@@ -28,7 +28,7 @@ describe("Engine browser doctrine", () => {
   let requests: Array<{ messages: unknown }> = [];
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "gear-browser-doctrine-"));
+    dir = mkdtempSync(join(tmpdir(), "rune-browser-doctrine-"));
     requests = [];
     server = Bun.serve({
       port: 0,
@@ -53,7 +53,7 @@ describe("Engine browser doctrine", () => {
       model: "fake-model",
       provider: "custom" as ProviderName,
       workspaceRoot: dir,
-      dbPath: join(dir, "gear.db"),
+      dbPath: join(dir, "rune.db"),
       toolsBinaryPath: RUST_BIN,
       yoloMode: false,
       customEndpoint: {

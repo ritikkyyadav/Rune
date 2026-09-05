@@ -2,7 +2,7 @@
  * Tiered compaction + real context-window discovery.
  *
  * The failure these replace, measured from a real 640-minute build run
- * (~/.gear/gear.db session 01a03a3b, model stealth/ox-alpha via OpenRouter):
+ * (~/.rune/rune.db session 01a03a3b, model stealth/ox-alpha via OpenRouter):
  * six auto-compactions, the worst folding 212 messages from 155,130 tokens down
  * to 834 — 0.54% of the budget. Two independent causes:
  *

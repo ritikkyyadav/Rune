@@ -1,6 +1,6 @@
-# The Gear protocol
+# The Rune protocol
 
-**`@gear/protocol` · PROTOCOL_VERSION 1.0.0**
+**`@rune/protocol` · PROTOCOL_VERSION 1.0.0**
 
 One typed, versioned contract between the engine and every surface that drives
 it: the terminal, the desktop, the web client, editors, CI and the SDK.
@@ -24,12 +24,12 @@ The same frames serve over three transports. Only the framing differs.
 | Transport   | Framing                            | Who uses it                           |
 | ----------- | ---------------------------------- | ------------------------------------- |
 | stdio       | one JSON object per line on stdout | the desktop sidecar (`engine-host`)   |
-| unix socket | one JSON object per line           | `gear detach` / `gear attach`         |
-| websocket   | one JSON object per message        | `gear serve`, the web client, the SDK |
+| unix socket | one JSON object per line           | `rune detach` / `rune attach`         |
+| websocket   | one JSON object per message        | `rune serve`, the web client, the SDK |
 
 Stream frames broadcast to every connected client; responses go only to the
 client that asked. Dropping a client never stops the engine — that is the point
-of socket mode, and `gear serve` keeps it.
+of socket mode, and `rune serve` keeps it.
 
 ## Envelope
 
@@ -204,11 +204,11 @@ having to have watched it happen. See [`decision-record.md`](decision-record.md)
 
 ## Auth
 
-`gear serve` binds **loopback only** by default.
+`rune serve` binds **loopback only** by default.
 
-- A **bearer token** is minted to `~/.gear/serve.json` (0600) and is required on
+- A **bearer token** is minted to `~/.rune/serve.json` (0600) and is required on
   every connection. Send it as `Authorization: Bearer <token>`, as the
-  `Sec-WebSocket-Protocol` value `gear.bearer.<token>`, or as `?token=`.
+  `Sec-WebSocket-Protocol` value `rune.bearer.<token>`, or as `?token=`.
   Comparison is constant-time.
 - An **Origin allowlist** is enforced. A browser origin that is not on it is
   refused, which is what stops a page you happen to have open from driving your
@@ -228,14 +228,14 @@ loop, so one process runs one turn). Three things end a host's life:
   `[serve] idleHostSecs` — ten minutes by default. A turn in flight is never
   idle however long it runs, and neither is a session someone still has open.
   The supervisor sweeps once a minute.
-- **The server stops.** `gear serve` stops the hosts it started (SIGTERM, then
+- **The server stops.** `rune serve` stops the hosts it started (SIGTERM, then
   SIGKILL after a three-second drain). `--keep-hosts` restores the older
   behaviour of leaving them running, and is what the detached server behind a
-  bare `gear` uses so a session survives the app being restarted.
+  bare `rune` uses so a session survives the app being restarted.
 - **The supervisor dies without warning.** Hosts started by a supervisor carry
   `--parent-pid` and poll it every fifteen seconds; a `kill -9` on the server
   therefore costs you the engines within one poll rather than forever. Hosts
-  started for `--keep-hosts`, and by `gear detach`, carry no parent and are not
+  started for `--keep-hosts`, and by `rune detach`, carry no parent and are not
   affected.
 
 Before P10.0 none of this ran: the window was thirty minutes, shutdown
@@ -244,77 +244,26 @@ machine in a day.
 
 ---
 
-## `gear web` — the same client, in a browser
+## `rune attach ws://host:port` — the terminal as a remote client
 
-`gear web` is `gear serve` that also hands out the page. One process, one port,
-one token.
-
-```bash
-gear web --port 7788          # loopback; open http://127.0.0.1:7788
-gear web --host 0.0.0.0       # a phone on the LAN; the printed URL carries #token=
-```
-
-One port, because a page on 7788 opening a socket on 4762 is a cross-origin
-request the Origin allowlist would have to be widened for, and widening a
-security allowlist to accommodate your own layout is how these things stop
-protecting anything.
-
-On loopback the token is embedded in the first page load —
-`window.__GEAR_SERVE__` — rather than typed into a form. Asking a person to
-paste a 43-character secret into a page the server just minted it for is
-theatre, and a process that can make that request already runs as the user and
-can read `~/.gear/serve.json` anyway.
-
-Off-loopback the token travels in the **URL fragment** (P5.5):
-
-```
-http://192.168.1.9:7788/#token=<token>
-```
-
-A fragment is never sent to the server. That is the point: a bearer token which
-grants remote code execution must not appear in an access log, a proxy log or a
-`Referer` header on the way somewhere else, and `?token=` puts it in all three.
-The page reads it once and removes it from the address bar with
-`history.replaceState`.
-
-The consequence is deliberate: because the server cannot see the fragment, it
-cannot recognise a remote page request, so it serves the bundle **without a
-token in it** and the page supplies its own. That is not a weakening — the
-bundle is public JavaScript and inert without a token — and it removes the
-credential from the request line entirely.
-
-| Request comes from | Gets the page | Token in the page                                                   |
-| ------------------ | ------------- | ------------------------------------------------------------------- |
-| loopback           | yes           | yes, embedded — the same user can already read `~/.gear/serve.json` |
-| anywhere else      | yes           | no — the page reads `#token=` from its own URL                      |
-
-The socket itself is unchanged: no token, no connection, and the Origin
-allowlist still applies. `gear web --host` adds this machine's actual LAN
-addresses to that allowlist, because for a `0.0.0.0` bind the browser's Origin
-is whichever interface the phone reached — never `http://0.0.0.0` — and listing
-the bind address alone loads the page and then refuses its socket with a 403
-that reads as a bug in the app.
-
-## `gear attach ws://host:port` — the terminal as a remote client
-
-The same `GearClient` the desktop and the web page use, in the CLI:
+The same `RuneClient` the SDK uses, in the CLI:
 
 ```bash
-export GEAR_SERVE_TOKEN=…                       # preferred: --token lands in shell history
-gear attach ws://192.168.1.9:7788               # stream what the server is doing; Ctrl+C detaches
-gear attach ws://192.168.1.9:7788 "say ok"      # run one turn and wait for it
+export RUNE_SERVE_TOKEN=…                       # preferred: --token lands in shell history
+rune attach ws://192.168.1.9:7788               # stream what the server is doing; Ctrl+C detaches
+rune attach ws://192.168.1.9:7788 "say ok"      # run one turn and wait for it
 ```
 
 The five round-trips come with the client, which is the difference between a
 remote console and a log tail: a turn that stops for a permission stops in
 _this_ terminal, and answering here unblocks a run happening on another
-machine. The token is taken from `--token`, then `GEAR_SERVE_TOKEN`, then
-`~/.gear/serve.json` — and the last only for a loopback URL, because a token
+machine. The token is taken from `--token`, then `RUNE_SERVE_TOKEN`, then
+`~/.rune/serve.json` — and the last only for a loopback URL, because a token
 minted for this machine's server is not a credential for someone else's.
 
 `tests/integration/serve-remote-attach.test.ts` is the gate, and it is two
-processes: `gear serve --host 127.0.0.1` on one side, the real `gear attach`
-CLI on the other with a `GEAR_HOME` of its own so it cannot find a token lying
+processes: `rune serve --host 127.0.0.1` on one side, the real `rune attach`
+CLI on the other with a `RUNE_HOME` of its own so it cannot find a token lying
 about on this machine. It asserts the turn's events reach the second process,
 that the token source is named while the token itself never appears in output a
 person would paste into a bug report, and that a permission with nobody at the
@@ -323,16 +272,6 @@ from there too: a well-formed wrong token exits 1 with the knob to turn, no
 token at all never opens a socket, and a browser Origin off the allowlist is
 refused before the upgrade even holding the right token. Phase 5 checked all of
 this by hand once.
-
-The client is the desktop bundle (`apps/desktop`), unchanged: the only
-difference is which transport `apps/desktop/src/lib/transport.ts` picks. That is
-what makes the web client free rather than a second application to maintain.
-
-`tests/e2e` is the browser smoke — the only place Playwright is a dependency. It
-stands up a fake OpenAI-compatible model, runs `gear web` against it in a temp
-home, and drives the whole path in Chromium: prompt → permission card (asserted
-inline, with no `[role=dialog]` on screen) → answer → the tool output in the
-transcript → spans in the trace rail → export.
 
 ## Sub-agent events
 
@@ -357,12 +296,12 @@ it would put a sub-agent's sub-agent on the lead's status line).
 
 Recursion stops at one level, which is what keeps the frame bounded.
 
-## `gear -P --stream-json`
+## `rune -P --stream-json`
 
 Every event as NDJSON on stdout, one JSON object per line, the envelope LAST:
 
 ```bash
-gear -P "say ok" --stream-json
+rune -P "say ok" --stream-json
 {"type":"text_delta","text":"ok"}
 {"type":"usage","inputTokens":0,"outputTokens":0,...}
 {"type":"turn_complete","stopReason":"end_turn","totalTurns":1}
@@ -378,8 +317,8 @@ nobody to ask.
 
 ## The SDK
 
-`@gear/sdk` is `GearClient` over a WebSocket with this protocol, re-exporting
-the whole of `@gear/protocol` so a consumer installs one package. The
+`@rune/sdk` is `RuneClient` over a WebSocket with this protocol, re-exporting
+the whole of `@rune/protocol` so a consumer installs one package. The
 round-trips are first-class: register a handler and the client answers for you;
 leave one unset and the host applies the unattended policy above.
 
@@ -387,19 +326,19 @@ See `packages/sdk/README.md` for the worked example — it is executed by
 `tests/integration/engine-serve.test.ts`, so it cannot rot silently.
 
 It is a **publishable package**: `npm pack` ships `dist/`, the README and the
-manifest, and nothing else. `@gear/protocol` is private, so it is vendored into
+manifest, and nothing else. `@rune/protocol` is private, so it is vendored into
 `dist/protocol/` by the build rather than depended on — one install, and no 404
 on a machine with no workspace. `tests/integration/sdk-pack.test.ts` packs the
 tarball, unpacks it where no workspace can rescue it, imports it and typechecks
 a consumer against its declarations. Publishing to npm is a founder action
 (D1); nothing in this repo publishes.
 
-Two runnable examples live in `examples/sdk/`. With no `gear serve` running
+Two runnable examples live in `examples/sdk/`. With no `rune serve` running
 they stand one up against a fake model, so both work on a fresh clone with no
 API key:
 
 ```bash
-bun run examples/sdk/run-task.ts     # runs a prompt, then prints `gear audit` for it
+bun run examples/sdk/run-task.ts     # runs a prompt, then prints `rune audit` for it
 bun run examples/sdk/policy-bot.ts   # answers permission requests from an allow/deny policy
 ```
 

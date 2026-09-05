@@ -127,8 +127,8 @@ describe("withNetworkPreflight — wrapper behavior", () => {
     expect(fake.calls).toBe(1);
   });
 
-  test("GEAR_NET_PREFLIGHT=0 disables the check", async () => {
-    process.env.GEAR_NET_PREFLIGHT = "0";
+  test("RUNE_NET_PREFLIGHT=0 disables the check", async () => {
+    process.env.RUNE_NET_PREFLIGHT = "0";
     try {
       const fake = fakeBash();
       const wrapped = withNetworkPreflight(fake.handler);
@@ -136,7 +136,7 @@ describe("withNetworkPreflight — wrapper behavior", () => {
       expect(out.success).toBe(true);
       expect(fake.calls).toBe(1);
     } finally {
-      delete process.env.GEAR_NET_PREFLIGHT;
+      delete process.env.RUNE_NET_PREFLIGHT;
     }
   });
 });

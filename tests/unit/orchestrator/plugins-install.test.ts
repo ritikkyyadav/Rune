@@ -17,8 +17,8 @@ import { runPlugin } from "../../../packages/orchestrator/src/bin/plugin-cli";
 import {
   discoverPlugins,
   computeIntegrity,
-  satisfiesGearVersion,
-  GEAR_VERSION,
+  satisfiesRuneVersion,
+  RUNE_VERSION,
 } from "../../../packages/orchestrator/src/plugins";
 
 let workspace: string;
@@ -52,7 +52,7 @@ function buildSourcePlugin(overrides: Record<string, unknown> = {}): void {
         mcp: "mcp.json",
         commands: "commands",
         hooks: "hooks.json",
-        gearVersion: ">=0.1.0",
+        runeVersion: ">=0.1.0",
         permissions: { hosts: ["demo.example.com"], blockingHooks: false },
         ...overrides,
       },
@@ -63,8 +63,8 @@ function buildSourcePlugin(overrides: Record<string, unknown> = {}): void {
 }
 
 beforeEach(() => {
-  workspace = mkdtempSync(join(tmpdir(), "gear-plugin-ws-"));
-  source = mkdtempSync(join(tmpdir(), "gear-plugin-src-"));
+  workspace = mkdtempSync(join(tmpdir(), "rune-plugin-ws-"));
+  source = mkdtempSync(join(tmpdir(), "rune-plugin-src-"));
   output = [];
   writeSpy = process.stdout.write.bind(process.stdout);
   process.stdout.write = ((chunk: string | Uint8Array) => {
@@ -81,9 +81,9 @@ afterEach(() => {
 
 const printed = (): string => output.join("");
 const manifestOf = (): Record<string, unknown> =>
-  JSON.parse(readFileSync(join(workspace, ".gear", "plugins", "demo", "plugin.json"), "utf8"));
+  JSON.parse(readFileSync(join(workspace, ".rune", "plugins", "demo", "plugin.json"), "utf8"));
 
-describe("gear plugin add, from a local path", () => {
+describe("rune plugin add, from a local path", () => {
   test("contributes a skill and an MCP server", async () => {
     buildSourcePlugin();
     const code = await runPlugin(["add", source, "--name", "demo"], { workspace, name: "demo" });
@@ -115,7 +115,7 @@ describe("gear plugin add, from a local path", () => {
     expect(discoverPlugins(workspace).plugins[0].integrity).toBe("verified");
 
     // The digest covers the tree, and is stable when nothing changed.
-    const dest = join(workspace, ".gear", "plugins", "demo");
+    const dest = join(workspace, ".rune", "plugins", "demo");
     expect(computeIntegrity(dest)).toBe(manifest.integrity);
   });
 
@@ -125,7 +125,7 @@ describe("gear plugin add, from a local path", () => {
 
     // Someone edits a shipped file after installation.
     writeFileSync(
-      join(workspace, ".gear", "plugins", "demo", "skills", "demo", "SKILL.md"),
+      join(workspace, ".rune", "plugins", "demo", "skills", "demo", "SKILL.md"),
       "---\nname: demo\ndescription: now something else entirely\n---\n\nrm -rf /\n",
     );
 
@@ -138,9 +138,9 @@ describe("gear plugin add, from a local path", () => {
 
   test("the refusals are printed, so a refused plugin is not invisible", async () => {
     // A bundle whose manifest name disagrees with its directory.
-    mkdirSync(join(workspace, ".gear", "plugins", "broken"), { recursive: true });
+    mkdirSync(join(workspace, ".rune", "plugins", "broken"), { recursive: true });
     writeFileSync(
-      join(workspace, ".gear", "plugins", "broken", "plugin.json"),
+      join(workspace, ".rune", "plugins", "broken", "plugin.json"),
       JSON.stringify({ name: "not-broken" }),
     );
 
@@ -151,12 +151,12 @@ describe("gear plugin add, from a local path", () => {
     expect(text).toContain("must equal the directory name");
   });
 
-  test("a plugin that needs a newer Gear is refused at install time", async () => {
-    buildSourcePlugin({ gearVersion: ">=99.0.0" });
+  test("a plugin that needs a newer Rune is refused at install time", async () => {
+    buildSourcePlugin({ runeVersion: ">=99.0.0" });
     output.length = 0;
     const code = await runPlugin(["add", source, "--name", "demo"], { workspace, name: "demo" });
     expect(code).toBe(1);
-    expect(printed()).toContain("needs Gear >=99.0.0");
+    expect(printed()).toContain("needs Rune >=99.0.0");
     expect(discoverPlugins(workspace).plugins).toEqual([]);
   });
 
@@ -210,28 +210,28 @@ describe("gear plugin add, from a local path", () => {
   });
 });
 
-describe("gearVersion ranges", () => {
+describe("runeVersion ranges", () => {
   test("the shapes a plugin author actually writes", () => {
-    expect(satisfiesGearVersion("0.3.0", ">=0.3.0")).toBe(true);
-    expect(satisfiesGearVersion("0.3.0", ">=0.4.0")).toBe(false);
-    expect(satisfiesGearVersion("0.3.5", "^0.3.0")).toBe(true);
-    expect(satisfiesGearVersion("0.4.0", "^0.3.0")).toBe(false);
-    expect(satisfiesGearVersion("0.3.5", "~0.3.1")).toBe(true);
-    expect(satisfiesGearVersion("0.4.1", "~0.3.1")).toBe(false);
-    expect(satisfiesGearVersion("0.3.9", "0.3.x")).toBe(true);
-    expect(satisfiesGearVersion("0.3.0", ">=0.2.0 <1.0.0")).toBe(true);
-    expect(satisfiesGearVersion("1.0.0", ">=0.2.0 <1.0.0")).toBe(false);
+    expect(satisfiesRuneVersion("0.3.0", ">=0.3.0")).toBe(true);
+    expect(satisfiesRuneVersion("0.3.0", ">=0.4.0")).toBe(false);
+    expect(satisfiesRuneVersion("0.3.5", "^0.3.0")).toBe(true);
+    expect(satisfiesRuneVersion("0.4.0", "^0.3.0")).toBe(false);
+    expect(satisfiesRuneVersion("0.3.5", "~0.3.1")).toBe(true);
+    expect(satisfiesRuneVersion("0.4.1", "~0.3.1")).toBe(false);
+    expect(satisfiesRuneVersion("0.3.9", "0.3.x")).toBe(true);
+    expect(satisfiesRuneVersion("0.3.0", ">=0.2.0 <1.0.0")).toBe(true);
+    expect(satisfiesRuneVersion("1.0.0", ">=0.2.0 <1.0.0")).toBe(false);
   });
 
   test("an absent or unreadable range never refuses a plugin", () => {
     // Our inability to parse a range must not become the author's problem.
-    expect(satisfiesGearVersion("0.3.0", undefined)).toBe(true);
-    expect(satisfiesGearVersion("0.3.0", "*")).toBe(true);
-    expect(satisfiesGearVersion("0.3.0", "whatever-this-is")).toBe(true);
-    expect(satisfiesGearVersion("not-a-version", ">=99.0.0")).toBe(true);
+    expect(satisfiesRuneVersion("0.3.0", undefined)).toBe(true);
+    expect(satisfiesRuneVersion("0.3.0", "*")).toBe(true);
+    expect(satisfiesRuneVersion("0.3.0", "whatever-this-is")).toBe(true);
+    expect(satisfiesRuneVersion("not-a-version", ">=99.0.0")).toBe(true);
   });
 
   test("this build reports a real version", () => {
-    expect(GEAR_VERSION).toMatch(/^\d+\.\d+\.\d+/);
+    expect(RUNE_VERSION).toMatch(/^\d+\.\d+\.\d+/);
   });
 });

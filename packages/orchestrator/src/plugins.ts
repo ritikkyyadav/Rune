@@ -3,7 +3,7 @@
 // The four extension loaders (skills, hooks.json, mcp.json, commands/*.md)
 // each work alone, but nothing ships as a unit. A plugin is a directory:
 //
-//   .gear/plugins/<name>/
+//   .rune/plugins/<name>/
 //     plugin.json          ← manifest (name must equal the directory name)
 //     skills/<s>/SKILL.md  ← auto-discovered; attributed to <name>
 //     hooks.json           ← merged into the hook runner (manifest: "hooks")
@@ -19,11 +19,11 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { isPathInside, workspaceConfigPath } from "@gear/shared";
-import { validateToolDeclaration, type PluginToolDeclaration } from "@gear/tool-registry";
+import { isPathInside, workspaceConfigPath } from "@rune/shared";
+import { validateToolDeclaration, type PluginToolDeclaration } from "@rune/tool-registry";
 
 /**
- * This build's version, for `gearVersion` range checks.
+ * This build's version, for `runeVersion` range checks.
  *
  * Read from the package manifest rather than imported from the UI's brand
  * module: the engine must not import a UI module, and a fifth hand-maintained
@@ -31,7 +31,7 @@ import { validateToolDeclaration, type PluginToolDeclaration } from "@gear/tool-
  * Unreadable means "" — and an unparseable version makes every range check
  * pass, so a packaging quirk can never refuse a working plugin.
  */
-export const GEAR_VERSION: string = (() => {
+export const RUNE_VERSION: string = (() => {
   for (const candidate of [
     join(import.meta.dir, "../package.json"),
     join(import.meta.dir, "../../package.json"),
@@ -51,9 +51,9 @@ export const GEAR_VERSION: string = (() => {
  *
  * Declared, not enforced — the declarative kinds (skills, commands, MCP
  * servers, hooks) have no containment: a hook is a shell command the plugin
- * asked Gear to run, an MCP server is a process it asked Gear to start. The
+ * asked Rune to run, an MCP server is a process it asked Rune to start. The
  * value is disclosure: a user installing a plugin can see it wants to reach
- * three hosts and run blocking hooks BEFORE they enable it, and `gear plugin
+ * three hosts and run blocking hooks BEFORE they enable it, and `rune plugin
  * list` shows it afterwards.
  *
  * `tools` (P10.7 / D6 v2) is the one part that IS enforced, because its
@@ -85,13 +85,13 @@ export interface PluginManifest {
    */
   tools?: PluginToolDeclaration[];
   /**
-   * Semver range of Gear this plugin supports, e.g. ">=0.3.0" or "0.3.x".
+   * Semver range of Rune this plugin supports, e.g. ">=0.3.0" or "0.3.x".
    * A plugin that does not fit is refused with a reason rather than loaded and
    * left to fail somewhere less legible.
    */
-  gearVersion?: string;
+  runeVersion?: string;
   permissions?: PluginPermissions;
-  /** sha256 over the plugin tree, as written by `gear plugin add`. */
+  /** sha256 over the plugin tree, as written by `rune plugin add`. */
   integrity?: string;
   /** Where it came from: an npm spec, a git URL, or a local path. */
   source?: string;
@@ -104,7 +104,7 @@ export interface LoadedPlugin {
   root: string;
   description?: string;
   version?: string;
-  gearVersion?: string;
+  runeVersion?: string;
   permissions?: PluginPermissions;
   source?: string;
   /** Whether the manifest's integrity hash matched the tree on disk. */
@@ -134,7 +134,7 @@ function resolveInsidePlugin(root: string, rel: string): string | null {
   const abs = resolve(root, rel);
   // `isPathInside`, not `startsWith(root + "/")`: on Windows both sides are
   // backslash-separated, so the old shape refused every path in every plugin
-  // and `gear plugin add` loaded nothing at all there (P10.2).
+  // and `rune plugin add` loaded nothing at all there (P10.2).
   return isPathInside(root, abs) ? abs : null;
 }
 
@@ -144,7 +144,7 @@ function resolveInsidePlugin(root: string, rel: string): string | null {
  * A bare name (`python3`, `node`, `deno`) is an interpreter resolved on PATH —
  * a plugin cannot ship a runtime and should not have to. Anything containing a
  * separator is the plugin's own program, and must stay inside the plugin: an
- * absolute path there would let a manifest point Gear at any binary on the
+ * absolute path there would let a manifest point Rune at any binary on the
  * machine and call the result a plugin tool. Containment is the sandbox's job,
  * but provenance is this one's.
  *
@@ -238,7 +238,7 @@ function cmp(a: [number, number, number], b: [number, number, number]): number {
  * refusing a plugin because we could not read its range would make our
  * limitation the author's problem.
  */
-export function satisfiesGearVersion(version: string, range: string | undefined): boolean {
+export function satisfiesRuneVersion(version: string, range: string | undefined): boolean {
   if (!range || range.trim() === "" || range.trim() === "*") return true;
   const v = parseSemver(version);
   if (!v) return true;
@@ -273,7 +273,7 @@ export function satisfiesGearVersion(version: string, range: string | undefined)
         if (cmp(v, target) >= 0) return false;
         break;
       case "^": {
-        // ^0.3.1 means >=0.3.1 <0.4.0 for a 0.x line, which is where Gear is.
+        // ^0.3.1 means >=0.3.1 <0.4.0 for a 0.x line, which is where Rune is.
         const hi: [number, number, number] =
           target[0] === 0 ? [0, target[1] + 1, 0] : [target[0] + 1, 0, 0];
         if (!(cmp(v, target) >= 0 && cmp(v, hi) < 0)) return false;
@@ -339,9 +339,15 @@ export function discoverPlugins(workspaceRoot: string): PluginDiscovery {
       continue;
     }
     if (manifest.enabled === false) continue; // disabled, not broken: say nothing
-    if (!satisfiesGearVersion(GEAR_VERSION, manifest.gearVersion)) {
+    // A manifest written for the previous name declares `gearVersion`; it means
+    // the same range and is honored so an installed plugin keeps loading.
+    if (manifest.runeVersion === undefined) {
+      const legacyRange = (manifest as { gearVersion?: unknown }).gearVersion;
+      if (typeof legacyRange === "string") manifest.runeVersion = legacyRange;
+    }
+    if (!satisfiesRuneVersion(RUNE_VERSION, manifest.runeVersion)) {
       out.errors.push(
-        `plugin "${dirName}": needs Gear ${manifest.gearVersion}, this is ${GEAR_VERSION} — not loaded`,
+        `plugin "${dirName}": needs Rune ${manifest.runeVersion}, this is ${RUNE_VERSION} — not loaded`,
       );
       continue;
     }
@@ -367,7 +373,7 @@ export function discoverPlugins(workspaceRoot: string): PluginDiscovery {
       root,
       description: manifest.description,
       version: manifest.version,
-      gearVersion: manifest.gearVersion,
+      runeVersion: manifest.runeVersion,
       permissions: manifest.permissions,
       source: manifest.source,
       integrity,

@@ -19,14 +19,14 @@ import {
 } from "../../../packages/orchestrator/src/worker";
 import type { ToolCallInput } from "../../../packages/tool-registry/src/types";
 
-// Resolve the compiled gear-tools binary the same way the CLI does
-// (bin/gear-cli.ts's findToolsBinary): release build, then debug build,
+// Resolve the compiled rune-tools binary the same way the CLI does
+// (bin/rune-cli.ts's findToolsBinary): release build, then debug build,
 // relative to this file — not a hardcoded developer-machine path, which
 // would only ever resolve on the one laptop it was written on. Tests that
 // actually shell out to it skip cleanly (test.skipIf) when it hasn't been
 // built — e.g. CI's ts-lint job runs `bun test` without a `cargo build` step.
-const RUST_RELEASE = join(import.meta.dir, "../../../target/release/gear-tools");
-const RUST_DEBUG = join(import.meta.dir, "../../../target/debug/gear-tools");
+const RUST_RELEASE = join(import.meta.dir, "../../../target/release/rune-tools");
+const RUST_DEBUG = join(import.meta.dir, "../../../target/debug/rune-tools");
 const RUST_BIN = existsSync(RUST_RELEASE) ? RUST_RELEASE : RUST_DEBUG;
 const HAS_RUST_BIN = existsSync(RUST_BIN);
 

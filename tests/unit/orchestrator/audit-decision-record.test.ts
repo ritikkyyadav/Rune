@@ -1,5 +1,5 @@
 /**
- * `gear audit <session> --record` and the export's Decision Record section.
+ * `rune audit <session> --record` and the export's Decision Record section.
  *
  * Both read a real session log, and both prefer the record the RUN persisted
  * over one generated now: what a person reads later has to be the document the
@@ -22,9 +22,9 @@ import { exportSession } from "../../../packages/orchestrator/src/session-export
 
 const dirs: string[] = [];
 function tempDb(): string {
-  const dir = mkdtempSync(join(tmpdir(), "gear-audit-record-"));
+  const dir = mkdtempSync(join(tmpdir(), "rune-audit-record-"));
   dirs.push(dir);
-  return join(dir, "gear.db");
+  return join(dir, "rune.db");
 }
 afterAll(() => {
   for (const d of dirs) {
@@ -77,7 +77,7 @@ function seed(dbPath: string, opts: { persistRecord: boolean }): string {
   return id;
 }
 
-/** Run `gear audit --record` and capture what it printed. */
+/** Run `rune audit --record` and capture what it printed. */
 async function auditRecord(dbPath: string, id: string): Promise<{ code: number; out: string }> {
   const chunks: string[] = [];
   const original = process.stdout.write.bind(process.stdout);
@@ -93,7 +93,7 @@ async function auditRecord(dbPath: string, id: string): Promise<{ code: number; 
   }
 }
 
-describe("gear audit --record", () => {
+describe("rune audit --record", () => {
   test("prints the record the run persisted, and nothing else", async () => {
     const dbPath = tempDb();
     const id = seed(dbPath, { persistRecord: true });
@@ -106,7 +106,7 @@ describe("gear audit --record", () => {
     expect(out).toContain("**confirmed**");
     expect(out).toContain("restore the (customer_id, created_at) index");
     // …and none of the audit page's own sections.
-    expect(out).not.toContain("Gear audit");
+    expect(out).not.toContain("Rune audit");
     expect(out).not.toContain("Context");
   });
 

@@ -1,4 +1,4 @@
-// ─── `gear workflow <file>`: run a deterministic multi-agent DAG ───
+// ─── `rune workflow <file>`: run a deterministic multi-agent DAG ───
 //
 // `research.ts` was the only DAG in this repository and it was hardcoded.
 // Everything good about it — the fan-out, the bounded concurrency, the fixed
@@ -26,7 +26,7 @@ const say = (s = ""): void => {
 
 function usage(): void {
   say(`
-  ${text("gear workflow")} ${dim("<file.workflow.json>")}
+  ${text("rune workflow")} ${dim("<file.workflow.json>")}
 
   Run a deterministic multi-agent workflow: a node list executed in topological
   waves, resumable from the last completed node, each node's result cached by
@@ -34,7 +34,7 @@ function usage(): void {
 
   ${dim("--dry-run")}      print the waves and exit without running anything
   ${dim("--fresh")}        ignore saved state and re-run every node
-  ${dim("--state <path>")} where resume state lives (default .gear/workflows/<name>.state.json)
+  ${dim("--state <path>")} where resume state lives (default .rune/workflows/<name>.state.json)
   ${dim("--max-parallel")} concurrency within a wave
   ${dim("--json")}         machine-readable result
   ${dim("--mock")}         run without a model: every node returns a deterministic stub

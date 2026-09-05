@@ -32,7 +32,7 @@ import { isVerificationCommand } from "../../../packages/orchestrator/src/bin/ui
 /** A registry built exactly the way the engine builds its own. */
 function builtins(): ToolRegistry {
   const registry = new ToolRegistry();
-  registerBuiltinTools(registry, "/nonexistent-gear-tools");
+  registerBuiltinTools(registry, "/nonexistent-rune-tools");
   return registry;
 }
 

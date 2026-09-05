@@ -78,15 +78,15 @@ stale downstream answer — which looks like a working cache right up until it i
 results in the key, editing one prompt invalidates that node and everything below it, and re-running
 an unchanged workflow costs nothing.
 
-State is written to `.gear/workflows/<name>.state.json` **after every node**, not after every wave.
+State is written to `.rune/workflows/<name>.state.json` **after every node**, not after every wave.
 A kill lands between two nodes far more often than between two waves, and the entire value of resume
 is not paying twice for the expensive node that already succeeded.
 
 ```
-gear workflow examples/workflows/review.workflow.json --dry-run   # print the waves
-gear workflow examples/workflows/review.workflow.json --mock      # run the graph with no model
-gear workflow examples/workflows/review.workflow.json --fresh     # ignore saved state
-gear workflow examples/workflows/greenfield.workflow.json --mock --max-parallel 1 \
+rune workflow examples/workflows/review.workflow.json --dry-run   # print the waves
+rune workflow examples/workflows/review.workflow.json --mock      # run the graph with no model
+rune workflow examples/workflows/review.workflow.json --fresh     # ignore saved state
+rune workflow examples/workflows/greenfield.workflow.json --mock --max-parallel 1 \
   --stop-after backend                                            # a kill you can aim
 ```
 
@@ -145,7 +145,7 @@ rather than as an absence.
 `research.ts` runs on this executor. Its investigator fan-out — the DAG this file was extracted
 from — is a workflow whose nodes are the round's sub-questions, run through `runWorkflow` with the
 same bounded concurrency, the same per-node failure isolation and the same events every other
-workflow gets. Its surface is unchanged: `gear research`, `/research` and the research event stream
+workflow gets. Its surface is unchanged: `rune research`, `/research` and the research event stream
 are what they were, and the research tests are untouched.
 
 A round is one wave of independent nodes. The dependency between _rounds_ is the reflect step, and

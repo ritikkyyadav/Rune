@@ -2,7 +2,7 @@ import { readFile, writeFile } from "fs/promises";
 import { join } from "path";
 import { createHash } from "crypto";
 import { Database } from "bun:sqlite";
-import { SessionManager } from "@gear/shared";
+import { SessionManager } from "@rune/shared";
 
 import type { EvalTask } from "./harness";
 import { COMPREHENSION_TASKS } from "./tasks-comprehension";

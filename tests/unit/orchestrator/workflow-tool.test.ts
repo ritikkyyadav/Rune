@@ -27,7 +27,7 @@ afterEach(() => {
 });
 
 function tmp(): string {
-  const d = mkdtempSync(join(tmpdir(), "gear-wft-"));
+  const d = mkdtempSync(join(tmpdir(), "rune-wft-"));
   dirs.push(d);
   return d;
 }

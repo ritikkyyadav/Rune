@@ -1,30 +1,25 @@
-// ─── Gear design tokens — the ONE pigment source ───
+// ─── Rune design tokens — the ONE pigment source ───
 //
-// Every surface reads from here:
+// The terminal is the product, and this is where its colours come from:
 //
-//   • The app:   scripts/generate-tokens-css.ts emits apps/web/src/styles/tokens.css.
 //   • Console:   packages/orchestrator/src/bin/ui/themes.ts builds the two
-//                terminal modes from gearTerminalPalette(), 24-bit with a
+//                terminal modes from runeTerminalPalette(), 24-bit with a
 //                derived ANSI-256 fallback.
+//   • Review:    scripts/generate-terminal-colors.ts prints the resolved table
+//                so a palette change is reviewable as swatches, not hex diffs.
 //   • Guardrail: tests/unit/shared/design-tokens-parity.test.ts pins these
-//                values and the rules they encode; tests/unit/brand-checklist.test.ts
-//                checks the BUILT stylesheet.
+//                values and the rules they encode.
 //
-// What this replaced, and why it is a deletion rather than a re-skin: Phase 3
-// applied a previous identity — drafting paper, petrol teal, a plex mono, a
-// block cursor, a 28px dot grid — that the founder had already ditched. See
-// docs/program/09-web-product.md. Nothing below descends from it, and the brand
-// checklist fails on any byte of it that survives anywhere.
+// The identity (2026-09-03): one violet, `#A28CF3`, chosen by the founder as
+// the agent's colour, on a near-black ground by default and on near-white
+// paper when the terminal is light. The rules that make a surface read as it
+// does, in the order they bite: ink is not black and the ground is not white;
+// one accent, under 5% of any screen, never carrying running text; three
+// status colours for state and nothing else; every variant DERIVED from the
+// published value by one rule rather than hand-picked twice.
 //
-// The identity is a solid electric-blue eight-tooth gear on a near-white
-// ground, and the rules that make a surface read as it does, in the order they
-// bite: ink is not black and the ground is not white; every border is one
-// hairline at 1px; one accent, under 5% of any screen, never carrying text; a
-// shadow only on things that float; radii from {6, 8, 10}; Geist for voice and
-// Geist Mono for the record; tabular numerals wherever numbers align.
-//
-// Twelve literal values. Everything else is a function of them — so a change to
-// the brand is a change to twelve lines, and the relationships cannot drift.
+// Eleven literal values. Everything else is a function of them — so a change to
+// the brand is a change to eleven lines, and the relationships cannot drift.
 //
 // Pure data + pure functions. No dependencies.
 
@@ -87,16 +82,21 @@ export function mixToward(from: string, toward: string, amount: number): string 
   ]);
 }
 
-// ─── The twelve literals ───
+// ─── The eleven literals ───
 //
-// Sampled from the mark and the ground it sits on. Every other colour in the
-// product is one of these or `mixToward` of two of them.
+// The accent is the founder's swatch; the grounds and inks are what it sits on.
+// Every other colour in the product is one of these or `mixToward` of two of
+// them.
 
-export const GEAR_PALETTE = {
-  /** THE accent, on paper. The blue of the mark. */
-  accent: "#1B3FE4",
-  /** THE accent, on ink. The same identity at a legible weight on a dark ground. */
-  accentDark: "#5B79FF",
+export const RUNE_PALETTE = {
+  /**
+   * THE accent: the violet of the mark, exact. It is painted as-is on ink (the
+   * default ground). On paper it is a pastel — 2.7:1 against the ground — so
+   * `accentFor("light")` steps it toward the ink by the same rule the status
+   * colours use, until it clears the non-text floor. One published value, two
+   * legible readings, no second hand-picked violet.
+   */
+  accent: "#A28CF3",
 
   /** Light ground, surface, sunk. Never pure white. */
   ground: "#FAFAF8",
@@ -133,10 +133,10 @@ export const GEAR_PALETTE = {
  * the exception list here rather than in the test is deliberate: a designer
  * adding a status colour has to add it to the system, not to the assertion.
  */
-export const GEAR_STATUS_COLORS = [
-  GEAR_PALETTE.ok,
-  GEAR_PALETTE.caution,
-  GEAR_PALETTE.danger,
+export const RUNE_STATUS_COLORS = [
+  RUNE_PALETTE.ok,
+  RUNE_PALETTE.caution,
+  RUNE_PALETTE.danger,
 ] as const;
 
 /** WCAG relative luminance. */
@@ -158,6 +158,13 @@ export function contrastRatio(a: string, b: string): number {
 
 /** The floor every status colour must clear as TEXT on its own surface. */
 export const STATUS_CONTRAST_FLOOR = 4.5;
+
+/**
+ * The floor the accent must clear against its ground. WCAG's non-text floor,
+ * because the accent paints glyphs, rules, the caret and emphasis — never a
+ * sentence. The status colours, which ARE words, hold the 4.5 above.
+ */
+export const ACCENT_CONTRAST_FLOOR = 3;
 
 /**
  * The same colour, moved far enough toward the ink to be read on that ground.
@@ -188,26 +195,36 @@ export function readableOn(
 
 // ─── The two grounds ───
 
-export type GearBaseName = "light" | "dark";
+export type RuneBaseName = "light" | "dark";
+
+/**
+ * The accent for one ground. Exact on ink; on paper, the published violet moved
+ * toward the ink in 2% steps until it clears `ACCENT_CONTRAST_FLOOR`.
+ */
+export function accentFor(base: RuneBaseName): string {
+  const p = RUNE_PALETTE;
+  if (base === "dark") return p.accent;
+  return readableOn(p.accent, p.ground, p.ink, ACCENT_CONTRAST_FLOOR);
+}
 
 /**
  * One accent.
  *
  * The union survives with a single member on purpose: `[ui] accent` remains as
  * an undocumented override for anyone maintaining a custom build, and a type
- * that can only ever be `"gear"` says the shape of the decision instead of
+ * that can only ever be `"rune"` says the shape of the decision instead of
  * deleting the seam and pretending there was never a choice.
  */
-export type GearAccentName = "gear";
+export type RuneAccentName = "rune";
 
-export const GEAR_ACCENT_NAMES: readonly GearAccentName[] = ["gear"] as const;
+export const RUNE_ACCENT_NAMES: readonly RuneAccentName[] = ["rune"] as const;
 
-export const GEAR_ACCENT_LABELS: Record<GearAccentName, string> = {
-  gear: "Gear blue",
+export const RUNE_ACCENT_LABELS: Record<RuneAccentName, string> = {
+  rune: "Rune violet",
 };
 
 /** Raw CSS custom-property values for one ground. */
-export interface GearBaseCss {
+export interface RuneBaseCss {
   /** The page. */
   ground: string;
   /** Cards, the composer, the sidebar head — one step above the ground. */
@@ -236,17 +253,15 @@ export interface GearBaseCss {
   ok: string;
   caution: string;
   danger: string;
-  /** The single shadow token. Legal on floating overlays and nowhere else. */
-  shadowOverlay: string;
 }
 
-function baseFor(base: GearBaseName): GearBaseCss {
-  const p = GEAR_PALETTE;
+function baseFor(base: RuneBaseName): RuneBaseCss {
+  const p = RUNE_PALETTE;
   const dark = base === "dark";
   const ground = dark ? p.groundDark : p.ground;
   const ink = dark ? p.inkDark : p.ink;
   const ink3 = dark ? p.ink3Dark : p.ink3;
-  const accent = dark ? p.accentDark : p.accent;
+  const accent = accentFor(base);
   const surface = dark ? p.surfaceDark : p.surface;
   const status = (hex: string) => readableOn(hex, surface, ink);
   return {
@@ -265,105 +280,32 @@ function baseFor(base: GearBaseName): GearBaseCss {
     hairlineStrong: mixToward(dark ? p.hairlineDark : p.hairline, ink, 0.35),
     accent,
     accentHover: mixToward(accent, dark ? "#FFFFFF" : "#000000", 0.16),
-    // White on the paper accent is 7.3:1. White on the ink accent is 3.7:1 —
-    // not enough for a button label — so on ink the accent carries the ground
-    // instead, at 5.2:1. The accent never carries text; text sits on it.
-    onAccent: dark ? p.sunkDark : "#FFFFFF",
+    // A pastel accent carries ink, never white: white on this violet is under
+    // 3:1 on either ground, while the ink clears 6:1 on both. The accent never
+    // carries running text; a glyph or a label sits on it.
+    onAccent: dark ? p.sunkDark : p.ink,
     ok: status(p.ok),
     caution: status(p.caution),
     danger: status(p.danger),
-    // Two layers, one soft and one tight, so a floating panel has an edge as
-    // well as a lift. Neutral by construction: a tinted shadow is a second
-    // hue arriving through the back door.
-    shadowOverlay: dark
-      ? "0 12px 32px rgba(0, 0, 0, 0.48), 0 2px 6px rgba(0, 0, 0, 0.32)"
-      : "0 12px 32px rgba(16, 18, 22, 0.10), 0 2px 6px rgba(16, 18, 22, 0.06)",
   };
 }
 
 /** `:root` and `:root[data-theme="dark"]`. */
-export const GEAR_BASE_CSS: Record<GearBaseName, GearBaseCss> = {
+export const RUNE_BASE_CSS: Record<RuneBaseName, RuneBaseCss> = {
   light: baseFor("light"),
   dark: baseFor("dark"),
 };
 
 /** The accent per ground. */
-export const GEAR_ACCENT_CSS: Record<GearBaseName, Record<GearAccentName, string>> = {
-  light: { gear: GEAR_PALETTE.accent },
-  dark: { gear: GEAR_PALETTE.accentDark },
+export const RUNE_ACCENT_CSS: Record<RuneBaseName, Record<RuneAccentName, string>> = {
+  light: { rune: accentFor("light") },
+  dark: { rune: accentFor("dark") },
 };
-
-/**
- * Non-colour scale constants.
- *
- * Three radii and nothing else: 6 for chips and inline tags, 8 for cards,
- * fields, buttons and panels, 10 for the composer — the one element that should
- * read as the softest thing on the page. A circle (`50%`) is a circle, not a
- * corner, and is allowed for status dots.
- */
-export const GEAR_SCALE = {
-  sans: "'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif",
-  mono: "'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace",
-  /** One curve. Decelerating, no overshoot: work finishing, not a thing arriving. */
-  ease: "cubic-bezier(0.2, 0, 0, 1)",
-  /** A state change. */
-  fast: "160ms",
-  /** A panel sliding. */
-  panel: "220ms",
-  radiusChip: "6px",
-  radius: "8px",
-  radiusComposer: "10px",
-  /** Labels open slightly; large type tightens as it grows. */
-  labelTracking: "0.02em",
-  titleTracking: "-0.015em",
-  displayTracking: "-0.02em",
-  /** Layout constants the shell and the reading column agree on. */
-  sidebarWidth: "264px",
-  /** The sidebar with its labels clipped: one 16px icon and the 8px grid. */
-  sidebarIconsWidth: "56px",
-  railWidth: "380px",
-  /** 760px of 15.5px Geist is 72–78 characters. */
-  columnMax: "760px",
-  /**
-   * The floor the reading column is never allowed under.
-   *
-   * 560px of 15.5px Geist is about 52 characters — narrower than that and
-   * prose starts wrapping mid-thought, code blocks scroll for every line, and
-   * a diff stops being readable at all. The shell gives the sidebar and the
-   * rail up before it gives this up, which is what the breakpoints below
-   * 1100px and 900px are FOR: they are not a phone layout, they are the order
-   * in which chrome is sacrificed to keep the column.
-   */
-  columnMin: "560px",
-} as const;
-
-/** The radii the brand checklist permits, as a set the test reads. */
-export const GEAR_RADII = [
-  GEAR_SCALE.radiusChip,
-  GEAR_SCALE.radius,
-  GEAR_SCALE.radiusComposer,
-] as const;
-
-/**
- * The type scale.
- *
- * Prose is looser than chrome because it is read rather than scanned, and that
- * one difference is most of why a transcript is comfortable for two hours.
- */
-export const GEAR_TYPE = {
-  display: { size: "22px", line: "1.25", tracking: GEAR_SCALE.displayTracking },
-  title: { size: "17px", line: "1.35", tracking: GEAR_SCALE.titleTracking },
-  prose: { size: "15.5px", line: "1.65", tracking: "0" },
-  body: { size: "15px", line: "1.55", tracking: "0" },
-  small: { size: "13px", line: "1.5", tracking: "0" },
-  label: { size: "12px", line: "1.4", tracking: GEAR_SCALE.labelTracking },
-  micro: { size: "11px", line: "1.35", tracking: GEAR_SCALE.labelTracking },
-} as const;
 
 // ─── Terminal derivation ───
 
 /** Solid hexes for one ground, in the terminal theme's slot vocabulary. */
-export interface GearTerminalPalette {
+export interface RuneTerminalPalette {
   bg: string;
   canvas: string;
   text: string;
@@ -392,8 +334,8 @@ export interface GearTerminalPalette {
  * alpha channel and a guess made at render time is a guess made differently
  * every time.
  */
-export function gearTerminalPalette(base: GearBaseName): GearTerminalPalette {
-  const css = GEAR_BASE_CSS[base];
+export function runeTerminalPalette(base: RuneBaseName): RuneTerminalPalette {
+  const css = RUNE_BASE_CSS[base];
   const over = (value: string) => solidOver(value, css.surface);
   return {
     bg: over(css.surface),
@@ -419,8 +361,8 @@ export function gearTerminalPalette(base: GearBaseName): GearTerminalPalette {
 }
 
 /** Accent hex for one ground (always solid). */
-export function gearAccentHex(base: GearBaseName, accent: GearAccentName = "gear"): string {
-  return GEAR_ACCENT_CSS[base][accent].toUpperCase();
+export function runeAccentHex(base: RuneBaseName, accent: RuneAccentName = "rune"): string {
+  return RUNE_ACCENT_CSS[base][accent].toUpperCase();
 }
 
 /**
@@ -432,15 +374,15 @@ export function gearAccentHex(base: GearBaseName, accent: GearAccentName = "gear
  * what it resolves to so a change is reviewable as a table rather than as a
  * diff of hex strings.
  */
-export function gearTerminalRoles(base: GearBaseName): Record<string, string> {
-  const p = gearTerminalPalette(base);
+export function runeTerminalRoles(base: RuneBaseName): Record<string, string> {
+  const p = runeTerminalPalette(base);
   return {
     // The six closed roles the console paints with. The names read from what
     // they MEAN, which is why they do not line up one-to-one with the slot
     // vocabulary they resolve through.
     body: p.text,
     dim: p.faint,
-    accent: gearAccentHex(base),
+    accent: runeAccentHex(base),
     ok: p.green,
     warn: p.ochre,
     danger: p.red,

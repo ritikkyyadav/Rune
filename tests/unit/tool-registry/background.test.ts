@@ -36,7 +36,7 @@ async function waitFor(
 /**
  * POSIX-only. Background shells run their command through the Rust executor's `sh`, and the fixtures are `sh` one-liners.
  *
- * Gear has no Windows shell contract yet — nothing decides whether a command
+ * Rune has no Windows shell contract yet — nothing decides whether a command
  * string means cmd.exe, PowerShell or Git Bash — so there is no Windows
  * behaviour to assert, only a decision to make. Logged in
  * docs/program/backlog.md.

@@ -7,8 +7,8 @@ import { setConfigValue, getConfigFilePath, loadConfig } from "../../../packages
 let root: string;
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "gear-config-"));
-  mkdirSync(join(root, ".gear"), { recursive: true });
+  root = mkdtempSync(join(tmpdir(), "rune-config-"));
+  mkdirSync(join(root, ".rune"), { recursive: true });
 });
 
 afterEach(() => {

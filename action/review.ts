@@ -1,4 +1,4 @@
-// ─── The body of `savoir/gear-action` ───
+// ─── The body of `savoir/rune-action` ───
 //
 // A composite action written in YAML is a shell script with worse quoting and
 // no way to test it. Everything with a decision in it lives here instead, so
@@ -6,8 +6,8 @@
 // comment it WOULD post. An action nobody can run outside CI is an action whose
 // first real execution is on somebody's pull request.
 //
-// What it does, in order: read the diff, run one headless Gear turn over it,
-// read the session back with `gear audit`, and post ONE comment.
+// What it does, in order: read the diff, run one headless Rune turn over it,
+// read the session back with `rune audit`, and post ONE comment.
 //
 // One comment, and it is edited in place on re-runs. A bot that appends a new
 // review to every push turns the conversation into its own scrollback, and the
@@ -34,8 +34,8 @@ export interface ReviewInputs {
   workspace: string;
   /** Print the comment instead of posting it. */
   dryRun: boolean;
-  /** The `gear` command, as argv. */
-  gearCmd: string[];
+  /** The `rune` command, as argv. */
+  runeCmd: string[];
   token?: string;
   /** Cap on the diff sent to the model, in characters. */
   maxDiffChars: number;
@@ -73,7 +73,7 @@ Review it the way this project reviews its own work:
 
 Be concise. This becomes a single pull request comment.`;
 
-const MARKER = "<!-- gear-review -->";
+const MARKER = "<!-- rune-review -->";
 
 function run(
   cmd: string[],
@@ -131,7 +131,7 @@ export function collectDiff(workspace: string, baseRef: string, maxChars: number
 // ─── The mock provider ───
 
 /** The model id the mock answers to. It appears in the audit page, so name it. */
-export const MOCK_MODEL = "gear-review-mock";
+export const MOCK_MODEL = "rune-review-mock";
 
 /**
  * The files a unified diff touches.
@@ -172,7 +172,7 @@ export function mockReviewText(diff: string): string {
  *
  * Ollama reads its base URL from `OLLAMA_HOST` and authenticates nothing, so a
  * thirty-line server that speaks `/api/chat` and `/api/tags` is a complete
- * provider as far as Gear is concerned — the same trick `scripts/smoke-print.ts`
+ * provider as far as Rune is concerned — the same trick `scripts/smoke-print.ts`
  * uses to prove a packaged binary can answer a prompt without a paid key.
  */
 export function startMockProvider(reply: string): { host: string; stop: () => void } {
@@ -242,7 +242,7 @@ export async function runReview(
   // waits on a server whose host is blocked waiting on the child.
   const res = await runAsync(
     [
-      ...inputs.gearCmd,
+      ...inputs.runeCmd,
       "-P",
       prompt,
       "--stream-json",
@@ -269,7 +269,7 @@ export async function runReview(
   }
 
   const sessionId = sessionIdFrom(envelope);
-  const audit = await runAsync([...inputs.gearCmd, "audit", sessionId ?? "last"], {
+  const audit = await runAsync([...inputs.runeCmd, "audit", sessionId ?? "last"], {
     cwd: inputs.workspace,
     ...(extra.env ? { env: extra.env } : {}),
   });
@@ -284,7 +284,7 @@ export async function runReview(
   };
 }
 
-/** The section rows of `gear audit`, without the ANSI and without the sprawl. */
+/** The section rows of `rune audit`, without the ANSI and without the sprawl. */
 export function auditSummary(audit: string | null, width = 150): string {
   if (!audit) return "_no audit page for this run_";
   const plain = audit.replace(/\u001b\[[0-9;]*m/g, "");
@@ -292,7 +292,7 @@ export function auditSummary(audit: string | null, width = 150): string {
   const keep = plain
     .split("\n")
     .filter((l) =>
-      /^\s{2}(Gear audit|Goal|Plan|Retro|Runs|Tools|Checks|Safety|Held|Cost|Harness)\b/.test(l),
+      /^\s{2}(Rune audit|Goal|Plan|Retro|Runs|Tools|Checks|Safety|Held|Cost|Harness)\b/.test(l),
     )
     .map((l) => clip(l.trim()));
   return keep.length > 0
@@ -313,7 +313,7 @@ export function composeComment(outcome: RunOutcome, inputs: ReviewInputs): strin
   // the <details> block into the previous paragraph.
   const lines: Array<string | null> = [
     MARKER,
-    inputs.mock ? `### Gear review — dry run (mock provider)` : `### Gear review`,
+    inputs.mock ? `### Rune review — dry run (mock provider)` : `### Rune review`,
     "",
     // The label is the whole ethics of this mode. A comment that looks like a
     // review and was produced by a mock is worse than no comment at all, so it
@@ -321,7 +321,7 @@ export function composeComment(outcome: RunOutcome, inputs: ReviewInputs): strin
     // for anyone reading the notification.
     inputs.mock
       ? [
-          "> `GEAR_REVIEW_API_KEY` is not set on this repository, so the action ran",
+          "> `RUNE_REVIEW_API_KEY` is not set on this repository, so the action ran",
           "> against a **mock provider**. What this proves is that the workflow, the",
           "> action body, the audit read-back and this comment path all work. It says",
           "> nothing whatever about the change. A real review replaces this once the",
@@ -346,12 +346,12 @@ export function composeComment(outcome: RunOutcome, inputs: ReviewInputs): strin
     "```",
     "",
     outcome.sessionId
-      ? `Session \`${outcome.sessionId}\` · \`gear audit ${outcome.sessionId}\` for the full page.`
+      ? `Session \`${outcome.sessionId}\` · \`rune audit ${outcome.sessionId}\` for the full page.`
       : null,
     "",
     "</details>",
     "",
-    `<sub>Gear · gear ${inputs.gear} · exit ${outcome.exitCode}` +
+    `<sub>Rune · gear ${inputs.gear} · exit ${outcome.exitCode}` +
       `${inputs.mock ? " · mock provider, no model consulted" : ""}</sub>`,
   ];
   return lines.filter((line): line is string => line !== null).join("\n");
@@ -421,13 +421,13 @@ export function parseInputs(argv: string[], env: Record<string, string | undefin
     gear: flag("gear") ?? env.INPUT_GEAR ?? "3",
     workspace,
     dryRun: argv.includes("--dry-run"),
-    gearCmd: (flag("gear-cmd") ?? env.INPUT_GEAR_CMD ?? "gear").split(" ").filter(Boolean),
+    runeCmd: (flag("rune-cmd") ?? env.INPUT_RUNE_CMD ?? "rune").split(" ").filter(Boolean),
     token: env.GITHUB_TOKEN ?? env.GH_TOKEN,
     maxDiffChars: Number(flag("max-diff") ?? env.INPUT_MAX_DIFF ?? 200_000),
     // The workflow sets the environment variable; `--mock` is for running it by
     // hand. Anything other than the exact word is a real provider, so a typo
     // fails loudly on a missing key rather than quietly posting a fake review.
-    mock: argv.includes("--mock") || env.GEAR_REVIEW_PROVIDER === "mock",
+    mock: argv.includes("--mock") || env.RUNE_REVIEW_PROVIDER === "mock",
   };
 }
 
@@ -448,7 +448,7 @@ function prNumberFromEvent(env: Record<string, string | undefined>): number | nu
 export async function main(argv: string[]): Promise<number> {
   const inputs = parseInputs(argv, process.env);
   if (!inputs.dryRun && (!inputs.repo || !inputs.prNumber)) {
-    console.error("gear-action: no pull request to comment on (need --repo and --pr)");
+    console.error("rune-action: no pull request to comment on (need --repo and --pr)");
     return 1;
   }
 
@@ -461,7 +461,7 @@ export async function main(argv: string[]): Promise<number> {
 
   const prompt = inputs.prompt.trim() || DEFAULT_PROMPT;
   console.error(
-    `gear-action: reviewing ${inputs.repo}#${inputs.prNumber} against ${inputs.baseRef} ` +
+    `rune-action: reviewing ${inputs.repo}#${inputs.prNumber} against ${inputs.baseRef} ` +
       `(${diff.length} chars of diff, gear ${inputs.gear}` +
       `${inputs.mock ? ", MOCK provider" : ""})`,
   );
@@ -497,11 +497,11 @@ export async function main(argv: string[]): Promise<number> {
   }
 
   if (!inputs.token) {
-    console.error("gear-action: no GITHUB_TOKEN — the comment above was not posted");
+    console.error("rune-action: no GITHUB_TOKEN — the comment above was not posted");
     return 1;
   }
   const posted = await postComment(inputs.repo, inputs.prNumber, comment, inputs.token);
-  console.error(`gear-action: ${posted.action} ${posted.url}`);
+  console.error(`rune-action: ${posted.action} ${posted.url}`);
   return outcome.ok ? 0 : 1;
 }
 

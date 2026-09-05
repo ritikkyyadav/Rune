@@ -15,7 +15,7 @@
 //   4. Register a client dynamically (RFC 7591) when the server offers it;
 //      otherwise use a pre-configured client_id
 //   5. Authorization Code + PKCE S256, redirect captured on an ephemeral
-//      127.0.0.1 loopback — the same engine `gear login` already uses
+//      127.0.0.1 loopback — the same engine `rune login` already uses
 //   6. Store the token set under `mcp:<server>` in the OS credential store
 //   7. Refresh before expiry; on refresh failure the SERVER goes unavailable,
 //      never the session
@@ -25,8 +25,8 @@
 // marked needing auth, its tools stop being advertised, the model is told once,
 // and everything else keeps working.
 
-import { generatePkce, startLoopback } from "@gear/llm-gateway";
-import { type Logger, nullLogger, type CredentialStore } from "@gear/shared";
+import { generatePkce, startLoopback } from "@rune/llm-gateway";
+import { type Logger, nullLogger, type CredentialStore } from "@rune/shared";
 
 // ─── Stored shape ───
 
@@ -197,7 +197,7 @@ export async function registerClient(
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify({
-        client_name: opts.clientName ?? "Gear",
+        client_name: opts.clientName ?? "Rune",
         redirect_uris: [redirectUri],
         grant_types: ["authorization_code", "refresh_token"],
         response_types: ["code"],
@@ -285,7 +285,7 @@ export interface McpOAuthOptions {
  *
  * Deliberately NOT a transport concern. The transport asks for a header and
  * reports a 401; everything about how a token is obtained lives here, so the
- * same object backs `gear mcp login`, the automatic refresh, and `doctor`.
+ * same object backs `rune mcp login`, the automatic refresh, and `doctor`.
  */
 export class McpOAuth {
   private readonly serverName: string;
@@ -343,7 +343,7 @@ export class McpOAuth {
   /**
    * Drop the cached read so the next call sees the store as it is now.
    *
-   * `gear mcp login` runs in a DIFFERENT process from a live session. Without
+   * `rune mcp login` runs in a DIFFERENT process from a live session. Without
    * this, a session that started unauthenticated would keep believing it had
    * no token for the rest of its life, and reconnecting after a sign-in would
    * fail for no visible reason.
@@ -460,7 +460,7 @@ export class McpOAuth {
       let clientSecret = (await this.load())?.clientSecret;
       if (!clientId && as.registration_endpoint) {
         const reg = await registerClient(as.registration_endpoint, loop.redirectUri, {
-          clientName: "Gear",
+          clientName: "Rune",
           scope: scope || undefined,
         });
         clientId = reg?.clientId;

@@ -1,5 +1,5 @@
 /**
- * v2 surface renderers (gear-customizer-v2.html contract):
+ * v2 surface renderers (rune-customizer-v2.html contract):
  * fallback banner, compaction line, footer context meter, queued-input strip,
  * permission risk row + y/a/n keys, model-picker tags, session day-grouping.
  * All pure functions — asserted on ANSI-stripped output.

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ToolRegistry } from "@gear/tool-registry";
+import type { ToolRegistry } from "@rune/tool-registry";
 import { Engine } from "../../../packages/orchestrator/src/engine";
 import { rmTemp } from "../../helpers/tmp";
 
@@ -17,8 +17,8 @@ function makeEngine(root: string): Engine {
     model: "llama3",
     provider: "ollama",
     workspaceRoot: root,
-    dbPath: join(root, "gear.db"),
-    toolsBinaryPath: "gear-tools",
+    dbPath: join(root, "rune.db"),
+    toolsBinaryPath: "rune-tools",
     enableCheckpoints: false,
     enableSecurity: false,
     enableRateLimiting: false,
@@ -32,7 +32,7 @@ function makeEngine(root: string): Engine {
 
 describe("Engine session-loop wiring", () => {
   test("restores an unexpired loop with its conversation", () => {
-    const root = mkdtempSync(join(tmpdir(), "gear-engine-loop-"));
+    const root = mkdtempSync(join(tmpdir(), "rune-engine-loop-"));
     roots.push(root);
     const first = makeEngine(root);
     const sessionId = first.createSession();
@@ -52,7 +52,7 @@ describe("Engine session-loop wiring", () => {
   });
 
   test("rewinding past a loop definition removes it from live state", () => {
-    const root = mkdtempSync(join(tmpdir(), "gear-engine-loop-rewind-"));
+    const root = mkdtempSync(join(tmpdir(), "rune-engine-loop-rewind-"));
     roots.push(root);
     const engine = makeEngine(root);
     try {
@@ -68,7 +68,7 @@ describe("Engine session-loop wiring", () => {
   });
 
   test("registers loop_control for adaptive iterations", () => {
-    const root = mkdtempSync(join(tmpdir(), "gear-engine-loop-tool-"));
+    const root = mkdtempSync(join(tmpdir(), "rune-engine-loop-tool-"));
     roots.push(root);
     const engine = makeEngine(root);
     try {

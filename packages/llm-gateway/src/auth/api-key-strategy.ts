@@ -3,9 +3,9 @@
 // backward-compatibility firewall: its precedence — secure store → saved key
 // (config/secrets) → env var — reproduces the legacy `resolveKey` exactly, with
 // the secure store simply prepended. Existing API-key and env-var users see no
-// change; a key set via `gear login` (into the keychain) is found first.
+// change; a key set via `rune login` (into the keychain) is found first.
 
-import { apiKeyAccount } from "@gear/shared";
+import { apiKeyAccount } from "@rune/shared";
 import type { AuthContext, AuthenticationStrategy, ResolvedCredential } from "./types";
 import { AuthError } from "./types";
 

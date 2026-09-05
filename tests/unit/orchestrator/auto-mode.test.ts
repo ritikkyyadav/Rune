@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import type { LlmGateway } from "@gear/llm-gateway";
-import type { ToolSchema } from "@gear/tool-registry";
+import type { LlmGateway } from "@rune/llm-gateway";
+import type { ToolSchema } from "@rune/tool-registry";
 import {
   AutoModeSafetyController,
   GatewayActionClassifier,
@@ -403,14 +403,14 @@ describe("Auto mode mechanical boundaries", () => {
     expect(classifier.calls).toHaveLength(0);
   });
 
-  test("writes to Gear's own control surface are refused", async () => {
+  test("writes to Rune's own control surface are refused", async () => {
     const { controller, classifier } = setup(["ALLOW"]);
     const review = await controller
       .startRun(["Improve the project hooks."])
       .review(
         action(
           "write",
-          { path: ".gear/hooks.json", content: '{"afterTool":[]}' },
+          { path: ".rune/hooks.json", content: '{"afterTool":[]}' },
           { exactGrant: true },
         ),
       );
@@ -521,7 +521,7 @@ describe("Tool-result prompt-injection probe", () => {
 
     expect(result.warningAdded).toBe(true);
     expect(result.scan.confidence).toBe("high");
-    expect(result.output.result.startsWith("[GEAR SECURITY WARNING")).toBe(true);
+    expect(result.output.result.startsWith("[RUNE SECURITY WARNING")).toBe(true);
     expect(controller.getStats().injectionsFlagged).toBe(1);
   });
 
@@ -788,7 +788,7 @@ describe("Fail-open is a policy decision", () => {
 });
 
 describe("Self-protection paths are relative to the workspace", () => {
-  const WORKTREE = "/tmp/x/.gear/worktrees/run-1";
+  const WORKTREE = "/tmp/x/.rune/worktrees/run-1";
 
   test("ordinary writes inside a detached-run worktree are plain workspace edits", async () => {
     const { controller, classifier } = setup(["ALLOW"]);
@@ -803,26 +803,26 @@ describe("Self-protection paths are relative to the workspace", () => {
     expect(isSelfProtectionPath(WORKTREE, "README.md")).toBe(false);
   });
 
-  test("control files under a .gear/.gear directory are guardrail changes, inside or outside the workspace", () => {
+  test("control files under a .rune/.rune directory are guardrail changes, inside or outside the workspace", () => {
     for (const target of [
-      ".gear/config.toml",
-      ".gear/hooks.json",
-      ".gear/mcp.json",
-      ".gear/skills/my-skill/SKILL.md",
-      ".gear/plugins/x/plugin.json",
-      ".gear/loop.md",
-      ".gear/secrets.json",
-      ".gear/policy.json",
-      "/Users/me/.gear/config.toml",
-      `${WORKTREE}/.gear/hooks.json`,
+      ".rune/config.toml",
+      ".rune/hooks.json",
+      ".rune/mcp.json",
+      ".rune/skills/my-skill/SKILL.md",
+      ".rune/plugins/x/plugin.json",
+      ".rune/loop.md",
+      ".rune/secrets.json",
+      ".rune/policy.json",
+      "/Users/me/.rune/config.toml",
+      `${WORKTREE}/.rune/hooks.json`,
     ]) {
       expect(isSelfProtectionPath(WORKTREE, target)).toBe(true);
     }
     for (const target of [
-      ".gear/notebook.json",
-      ".gear/worktrees/run-2/src/x.ts",
-      "/tmp/x/.gear/worktrees/run-1/src/y.ts",
-      ".gear/sessions/abc.db",
+      ".rune/notebook.json",
+      ".rune/worktrees/run-2/src/x.ts",
+      "/tmp/x/.rune/worktrees/run-1/src/y.ts",
+      ".rune/sessions/abc.db",
       "docs/config.toml",
       "config.toml",
     ]) {
@@ -830,10 +830,10 @@ describe("Self-protection paths are relative to the workspace", () => {
     }
   });
 
-  test("a relative reach-up into an ancestor control dir is caught without naming .gear", () => {
-    // From ~/.gear/worktrees/<run>, "../../hooks/pre.sh" lands in ~/.gear/hooks
+  test("a relative reach-up into an ancestor control dir is caught without naming .rune", () => {
+    // From ~/.rune/worktrees/<run>, "../../hooks/pre.sh" lands in ~/.rune/hooks
     // while its relative segments are just ["..", "..", "hooks", "pre.sh"] —
-    // the escape scan reads the ABSOLUTE segments so the ancestor .gear counts.
+    // the escape scan reads the ABSOLUTE segments so the ancestor .rune counts.
     expect(isSelfProtectionPath(WORKTREE, "../../hooks/pre-tool.sh")).toBe(true);
     expect(isSelfProtectionPath(WORKTREE, "../../config.toml")).toBe(true);
     expect(isSelfProtectionPath(WORKTREE, "../../policy.json")).toBe(true);
@@ -841,14 +841,14 @@ describe("Self-protection paths are relative to the workspace", () => {
     expect(isSelfProtectionPath(WORKTREE, "../../../other-project/src/x.ts")).toBe(false);
     expect(isSelfProtectionPath("/tmp/plain-workspace", "../sibling/notes.md")).toBe(false);
     // …and in-workspace paths keep the relative-only scan (a workspace under
-    // .gear/ remains ordinary project territory).
+    // .rune/ remains ordinary project territory).
     expect(isSelfProtectionPath(WORKTREE, "src/hooks/use-thing.ts")).toBe(false);
   });
 
   test("a write to the workspace's own hooks file is refused", async () => {
     const { controller, classifier } = setup(["ALLOW"]);
     const review = await controller.startRun(["Improve the project hooks."]).review({
-      ...action("write", { path: ".gear/hooks.json", content: "{}" }, { exactGrant: true }),
+      ...action("write", { path: ".rune/hooks.json", content: "{}" }, { exactGrant: true }),
       workspaceRoot: WORKTREE,
     });
     expect(review.verdict).toBe("deny");
@@ -857,7 +857,7 @@ describe("Self-protection paths are relative to the workspace", () => {
   });
 });
 
-describe("Gear vocabulary and bookkeeping", () => {
+describe("Rune vocabulary and bookkeeping", () => {
   test("loop_control is a safe-tier internal tool", () => {
     const schema: ToolSchema = {
       name: "loop_control",
@@ -924,7 +924,7 @@ describe("Gear vocabulary and bookkeeping", () => {
   test("file-sourced loop prompts are shown to the reviewer as evidence, not authorization", async () => {
     const { controller, classifier } = setup(["ALLOW"]);
     const run = controller.startRun(["Earlier trusted message."], {
-      untrustedPrompts: ["Push to production every hour (from .gear/loop.md)."],
+      untrustedPrompts: ["Push to production every hour (from .rune/loop.md)."],
     });
     await run.review(action("bash", { command: "bun test" }));
     const prompt = classifier.calls[0]!.prompt;

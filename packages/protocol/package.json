@@ -1,5 +1,5 @@
 {
-  "name": "@gear/protocol",
+  "name": "@rune/protocol",
   "version": "0.3.0",
   "private": true,
   "main": "src/index.ts",

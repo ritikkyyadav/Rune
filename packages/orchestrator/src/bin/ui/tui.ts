@@ -1,15 +1,15 @@
 // ─── TUI controller (raw mode) ───
-// Gear's terminal UI. TWO layouts, and the default has fixed chrome:
+// Rune's terminal UI. TWO layouts, and the default has fixed chrome:
 //
 //   FIXED (default, ./viewport.ts)
 //     The alternate screen split into three zones. The identity header holds
 //     the top rows, the composer and status hold the bottom rows, and the
 //     transcript in between is the ONLY thing that scrolls. Chrome that is
 //     chrome: a wheel flick, a Page Up or a streaming turn move the middle and
-//     nothing else. Gear owns the scrollback for the transcript and provides
+//     nothing else. Rune owns the scrollback for the transcript and provides
 //     the gestures itself (wheel, PgUp/PgDn, shift+arrows, End).
 //
-//   INLINE (--inline / GEAR_INLINE, ./screen.ts)
+//   INLINE (--inline / RUNE_INLINE, ./screen.ts)
 //     The transcript is committed to the terminal's OWN scrollback and only the
 //     composer is pinned. Native momentum scrolling, ⌘F, mouse selection and
 //     `| tee` all work — at the cost of the frame, because the terminal scrolls
@@ -24,7 +24,7 @@
 // inline surface, so the window inherits the user's theme instead of fighting
 // it. What it does own is layout — and layout is the thing that was wrong.
 //
-// Selected over the readline path with `--tui` / GEAR_TUI=1; `--classic` opts
+// Selected over the readline path with `--tui` / RUNE_TUI=1; `--classic` opts
 // out to the plain printer. `--fullscreen` names the default and is a no-op.
 
 import type {
@@ -59,11 +59,11 @@ import {
   saveSandboxState,
   saveBrowserState,
   getSystemMemoryPath,
-} from "@gear/shared";
-import type { CustomEndpoint } from "@gear/shared";
-import type { ReasoningEffort } from "@gear/llm-gateway";
+} from "@rune/shared";
+import type { CustomEndpoint } from "@rune/shared";
+import type { ReasoningEffort } from "@rune/llm-gateway";
 import { routeChoices, loginTargets, connectedSummary, type LoginTarget } from "./login-picker";
-import { getStrategy, type AuthContext } from "@gear/llm-gateway";
+import { getStrategy, type AuthContext } from "@rune/llm-gateway";
 import { openBrowser } from "../byop-cli-shared";
 import {
   providerChoices,
@@ -118,7 +118,7 @@ import {
   type KeyRow,
   type SessionRowView,
 } from "./composer";
-import { GEAR_MARK, renderBanner } from "./banner";
+import { RUNE_MARK, renderBanner } from "./banner";
 import { renderStatus } from "./status";
 import { notifyWarp } from "./warp";
 import { setTitle, clearTitle } from "./title";
@@ -180,7 +180,7 @@ import { saveTheme } from "./theme-store";
 import { buildPermissionPreview, type PermissionPreview } from "./permission-preview";
 import { FoldLedger, type FoldRegion } from "./folds";
 import { renderWorkspaceDiff } from "./workspace-diff";
-import { workspaceConfigPath } from "@gear/shared";
+import { workspaceConfigPath } from "@rune/shared";
 import {
   buildInteractiveDirective,
   saveInteractiveAuto,
@@ -199,7 +199,7 @@ export interface TuiContext {
   launchPick?: boolean;
   /**
    * Opt out of the fixed-chrome viewport and use the legacy layout that commits
-   * the transcript to the terminal's own scrollback (--inline / GEAR_INLINE).
+   * the transcript to the terminal's own scrollback (--inline / RUNE_INLINE).
    * Undefined means the default: pinned header, scrolling body, pinned footer.
    */
   inline?: boolean;
@@ -334,7 +334,7 @@ class Tui {
   private region = new BottomRegion(); // --inline compatibility surface only
   /** The fixed-chrome surface: pinned header, scrolling body, pinned footer. */
   private viewport = new Viewport();
-  /** False for the default fixed-chrome layout; true only through --inline / GEAR_INLINE. */
+  /** False for the default fixed-chrome layout; true only through --inline / RUNE_INLINE. */
   private readonly inline: boolean;
   private transcript: string[] = []; // fixed layout: themed lines, self-managed scrollback window
   /** Blocks that hold more than they show, openable in place -- see ./folds. */
@@ -449,7 +449,7 @@ class Tui {
   private titleFrame = 0;
 
   /**
-   * Redirect console.* to ~/.gear/logs/tui-console.log for the life of the
+   * Redirect console.* to ~/.rune/logs/tui-console.log for the life of the
    * surface. Never swallowed: the lines are still written, just not over the
    * screen. Restored by exit().
    */
@@ -457,7 +457,7 @@ class Tui {
     if (this.consoleRestore) return;
     const methods = ["log", "info", "warn", "error", "debug"] as const;
     const saved = methods.map((m) => [m, console[m]] as const);
-    const logPath = join(homedir(), ".gear", "logs", "tui-console.log");
+    const logPath = join(homedir(), ".rune", "logs", "tui-console.log");
     const sink = (level: string, args: unknown[]): void => {
       try {
         mkdirSync(dirname(logPath), { recursive: true });
@@ -642,8 +642,8 @@ class Tui {
     stdin.setEncoding("utf8");
     if (stdin.isTTY) stdin.setRawMode(true);
     process.stdout.write("\x1b[?2004h"); // bracketed paste on
-    process.env.GEAR_TUI_ACTIVE = "1"; // loggers: file sink only, never stderr over the alt screen
-    // Nothing but the compositor may write to this screen. Gear's own loggers
+    process.env.RUNE_TUI_ACTIVE = "1"; // loggers: file sink only, never stderr over the alt screen
+    // Nothing but the compositor may write to this screen. Rune's own loggers
     // honour the flag above; a third-party module (an MCP client, a plugin)
     // calling console.log would land on the alternate screen at the cursor and
     // rot the row diff. Route the console to the log file while the surface
@@ -666,7 +666,7 @@ class Tui {
     this.enterSurface();
     process.stdout.on("resize", this.onResize);
     // Replay prior conversation when launched straight into a session (--resume /
-    // `gear resume <id>`). When launchPick is set, the picker runs once input is
+    // `rune resume <id>`). When launchPick is set, the picker runs once input is
     // live (below) instead -- a fresh session has nothing to seed.
     if (!this.ctx.launchPick) this.seedFromHistory();
     // First frame synchronous so the banner and composer appear instantly --
@@ -682,7 +682,7 @@ class Tui {
     if (!this.ctx.launchPick) {
       const mem = engine.getSystemMemory();
       if (mem.enabled && !mem.content.trim() && mem.scheduleLabel === "manual") {
-        this.print(`  ${faint("tip: Gear can learn your style over time --")} ${info("/memory")}`);
+        this.print(`  ${faint("tip: Rune can learn your style over time --")} ${info("/memory")}`);
       }
       void engine
         .maybeReflectSystemMemory()
@@ -709,7 +709,7 @@ class Tui {
           this.loopPoll = null;
         }
         process.stdout.write("\x1b[?2004l"); // bracketed paste off
-        delete process.env.GEAR_TUI_ACTIVE; // terminal is the shell's again — loggers may use stderr
+        delete process.env.RUNE_TUI_ACTIVE; // terminal is the shell's again — loggers may use stderr
         if (this.drawTimer) clearTimeout(this.drawTimer); // cancel any pending coalesced paint
         this.leaveSurface();
         process.stdout.write(TERMINAL_THEME_RESET); // restore the user's terminal colours
@@ -819,7 +819,7 @@ class Tui {
    * Write the chosen gear down, so the next session opens in it.
    *
    * Every gear except the fourth persists without ceremony, because every other
-   * gear still asks before it acts — remembering them changes how much typing a
+   * rune still asks before it acts — remembering them changes how much typing a
    * session costs, not what it is permitted to do. The fourth bypasses every
    * interactive prompt, so making it sticky silently would mean a machine that
    * quietly stopped asking, forever, on the strength of one afternoon. It is
@@ -896,13 +896,13 @@ class Tui {
         tag: "shift+tab",
       },
       { name: "/diff", desc: "Inspect staged and uncommitted workspace changes", tag: "git" },
-      { name: "/undo", desc: "Revert the last Gear auto-commit" },
+      { name: "/undo", desc: "Revert the last Rune auto-commit" },
       { name: "/rewind", desc: "Roll back the conversation" },
       { name: "/cost", desc: "Session cost" },
       { name: "/status", desc: "Session status" },
       { name: "/loop", desc: "Repeat a prompt while this session stays open" },
       { name: "/loops", desc: "List and manage this session's loops" },
-      { name: "/team", desc: "Other Gear instances here -- status | send | claim | intent" },
+      { name: "/team", desc: "Other Rune instances here -- status | send | claim | intent" },
       { name: "/mcp", desc: "Connected MCP servers and tools" },
       { name: "/skills", desc: "Browse or search available skills" },
       { name: "/memory", desc: "System memory -- your evergreen profile" },
@@ -915,7 +915,7 @@ class Tui {
       { name: "/bug", desc: "Flag a problem -- records the flight trail" },
       { name: "/clear", desc: "Clear the screen" },
       { name: "/help", desc: "Show commands" },
-      { name: "/quit", desc: "Exit Gear" },
+      { name: "/quit", desc: "Exit Rune" },
     ];
     const custom: SlashItem[] = this.ctx.customCommands.map((c) => ({
       name: "/" + c.name,
@@ -1414,7 +1414,7 @@ class Tui {
    *  This used to also clear the screen and paint it in the theme background.
    *  Both are gone. Starting a program is not a licence to erase what the user
    *  had on screen — their last command's output is often the reason they
-   *  opened Gear — and asserting a background is the single largest reason a
+   *  opened Rune — and asserting a background is the single largest reason a
    *  TUI looks broken on someone else's theme. Inherit; do not assert. */
   /** Tell Warp this pane is an agent, and where it is. */
   private warp(
@@ -1647,7 +1647,7 @@ class Tui {
     if (lines.length === 0) {
       const secs = Math.max(0, Math.floor((Date.now() - this.turnStart) / 1000));
       return this.pinLiveHeight([
-        `  ${brand(GEAR_MARK)} ${bold(brand("Thinking"))}${faint("...")} ${faint(`(${secs}s)`)}`,
+        `  ${brand(RUNE_MARK)} ${bold(brand("Thinking"))}${faint("...")} ${faint(`(${secs}s)`)}`,
       ]);
     }
     // This was a flat two rows, which is why a fan-out of sub-agents could only
@@ -2116,7 +2116,7 @@ class Tui {
         const entries = engine.getNotebookEntries(10);
         if (entries.length === 0) {
           this.print(
-            `  ${muted("Notebook is empty for this workspace -- Gear fills it as it verifies how your repos work.")}`,
+            `  ${muted("Notebook is empty for this workspace -- Rune fills it as it verifies how your repos work.")}`,
           );
         } else {
           this.print(
@@ -2126,7 +2126,7 @@ class Tui {
                 (e) =>
                   `    ${info(e.id.slice(-8))} ${muted(`[${e.scope}]`)} ${text(e.body.slice(0, 90))}`,
               ),
-              `    ${muted("manage: gear notebook [show <id>|rm <id>|export]")}`,
+              `    ${muted("manage: rune notebook [show <id>|rm <id>|export]")}`,
             ].join("\n"),
           );
         }
@@ -2147,8 +2147,8 @@ class Tui {
         });
         this.print(
           id
-            ? `  ${text("* Logged with the current flight trail.")} ${muted(`gear incidents show ${id.slice(-8)}`)}`
-            : `  ${muted("Could not record -- see gear doctor.")}`,
+            ? `  ${text("* Logged with the current flight trail.")} ${muted(`rune incidents show ${id.slice(-8)}`)}`
+            : `  ${muted("Could not record -- see rune doctor.")}`,
         );
         return true;
       }
@@ -2266,7 +2266,7 @@ class Tui {
             const row = engine.getProviderStatus().find((r) => r.id === id);
             if (row && !row.hasKey && !row.local) {
               this.print(
-                `  ${warn("->")} ${muted(`${id} has no key yet -- add one:`)} ${info(`/keys set ${id} <key>`)} ${muted("or")} ${info(`gear login ${id}`)}`,
+                `  ${warn("->")} ${muted(`${id} has no key yet -- add one:`)} ${info(`/keys set ${id} <key>`)} ${muted("or")} ${info(`rune login ${id}`)}`,
               );
             }
           }
@@ -2296,7 +2296,7 @@ class Tui {
                 : faint("no key");
           // Show the real credential source so the panel never lies about what
           // the gateway uses: oauth / keychain / env, or "key" for a saved key.
-          // "chain" is an enterprise cloud route with no Gear-held secret; it
+          // "chain" is an enterprise cloud route with no Rune-held secret; it
           // reads as "cloud" because that is what a user recognises.
           const srcLabel =
             r.source === "none"
@@ -2330,7 +2330,7 @@ class Tui {
         const lines = [`  ${bold(text("MCP servers"))}`];
         if (servers.length === 0) {
           lines.push(
-            `    ${muted("None configured. Add servers in ")}${info(".gear/mcp.json")}${muted(".")}`,
+            `    ${muted("None configured. Add servers in ")}${info(".rune/mcp.json")}${muted(".")}`,
           );
         } else {
           for (const server of servers) {
@@ -2376,7 +2376,7 @@ class Tui {
                   `      ${faint(plugin.skills.map((skill) => skill.name).join(", "))}`,
                 ])
               : [
-                  `    ${muted("None found. Add skills under ")}${info("skills/")}${muted(" or ")}${info(".gear/skills/")}${muted(".")}`,
+                  `    ${muted("None found. Add skills under ")}${info("skills/")}${muted(" or ")}${info(".rune/skills/")}${muted(".")}`,
                 ]),
             `  ${faint("Skills load automatically when a request matches | search with /skills <keywords>")}`,
           ].join("\n"),
@@ -2458,7 +2458,7 @@ class Tui {
           const remembered = loadPrefs().gear;
           if (remembered) {
             this.print(
-              `  ${faint(`startup gear: ${modeInfo(remembered as never).label} -- /mode default to change it`)}`,
+              `  ${faint(`startup rune: ${modeInfo(remembered as never).label} -- /mode default to change it`)}`,
             );
           }
         }
@@ -2535,7 +2535,7 @@ class Tui {
             setTheme(themes[idx]!.name);
             this.refreshThemeSurface();
           },
-          "Flow or terminal native | persisted to ~/.gear/theme.json",
+          "Flow or terminal native | persisted to ~/.rune/theme.json",
         );
         if (i != null) {
           setTheme(themes[i]!.name);
@@ -2616,7 +2616,7 @@ class Tui {
             this.print(
               `  ${ok(glyph("verified"))} ${muted(`autonomous dashboards ${on ? "on" : "off"}`)} ${faint(
                 on
-                  ? "-- Gear builds one when an answer is data-heavy"
+                  ? "-- Rune builds one when an answer is data-heavy"
                   : "-- dashboards only when you ask (/interactive)",
               )}`,
             );
@@ -2654,7 +2654,7 @@ class Tui {
           this.print(`  ${muted(`Cannot undo -- ${r.reason}`)}`);
           if (!engine.isAutoCommitEnabled()) {
             this.print(
-              `  ${faint("Tip: set [git] autoCommit = true in ~/.gear/config.toml so every run lands as a revertible commit.")}`,
+              `  ${faint("Tip: set [git] autoCommit = true in ~/.rune/config.toml so every run lands as a revertible commit.")}`,
             );
           }
         }
@@ -2767,7 +2767,7 @@ class Tui {
           this.print(
             [
               ...head,
-              `  ${muted("Empty -- Gear hasn't built your profile yet.")}`,
+              `  ${muted("Empty -- Rune hasn't built your profile yet.")}`,
               `  ${faint("Seed it: /memory update | note: /memory add <...> | auto: /memory weekly")}`,
             ].join("\n"),
           );
@@ -2858,7 +2858,7 @@ class Tui {
           `  ${bold(text("Loop mode"))}`,
           `    ${info("/loop 5m check the deploy")} ${faint("fixed interval")}`,
           `    ${info("/loop check CI and review comments")} ${faint("adaptive 1-60m cadence")}`,
-          `    ${info("/loop")} ${faint("built-in maintenance prompt, or .gear/loop.md")}`,
+          `    ${info("/loop")} ${faint("built-in maintenance prompt, or .rune/loop.md")}`,
           `    ${info("/loops")} ${faint("list active tasks")}`,
           `    ${info("/loop cancel <id>")} ${faint("stop one | /loop clear stops all")}`,
         ].join("\n"),
@@ -2971,8 +2971,8 @@ class Tui {
       l1start,
       undefined,
       provs.length
-        ? "subscriptions (Claude Pro/Max | ChatGPT): gear login | keys: /keys"
-        : "no providers configured yet -- add a key with /keys or sign in with gear login",
+        ? "subscriptions (Claude Pro/Max | ChatGPT): rune login | keys: /keys"
+        : "no providers configured yet -- add a key with /keys or sign in with rune login",
     );
     if (a1 == null) return;
     if (a1 >= provs.length) {
@@ -3032,7 +3032,7 @@ class Tui {
       if (row.source === "oauth" || row.source === "keychain") {
         if (account?.kind === "key" || account?.kind === "env") {
           this.print(
-            `  ${faint(`note: the signed-in ${row.source} credential wins on the wire --`)} ${info(`gear logout ${chosen.id}`)} ${faint("to use API keys")}`,
+            `  ${faint(`note: the signed-in ${row.source} credential wins on the wire --`)} ${info(`rune logout ${chosen.id}`)} ${faint("to use API keys")}`,
           );
         }
       } else if (account?.kind === "env" && accounts.some((x) => x.kind === "key")) {
@@ -3228,14 +3228,14 @@ class Tui {
    * `/login` -- the three-step connect flow.
    *
    * It replaces /providers + /keys as the way in. Those exposed the plumbing
-   * and neither answered the only question someone who just installed Gear
+   * and neither answered the only question someone who just installed Rune
    * actually has: how do I connect this? A person who pays for ChatGPT knows
    * that; they do not know the provider is called "codex", that it signs in by
    * OAuth, or why a "provider" and a "key" are two different screens.
    *
    * So it asks what you HAVE (subscription / key / offline), names the products
    * the way you would say them, and runs the provider's own auth strategy --
-   * the same one `gear login` uses, so there is one code path for real auth.
+   * the same one `rune login` uses, so there is one code path for real auth.
    */
   private async openLogin(): Promise<void> {
     const routes = routeChoices();
@@ -3647,7 +3647,7 @@ class Tui {
 
   /**
    * On launch, if the session already has history (started with `--resume` /
-   * `gear resume`), replay it into the viewport so the user lands where they left
+   * `rune resume`), replay it into the viewport so the user lands where they left
    * off instead of on a blank screen.
    */
   private seedFromHistory(): void {
@@ -3930,7 +3930,7 @@ class Tui {
     if (stdin.isTTY) stdin.setRawMode(false);
     stdin.pause();
     process.stdout.write("\x1b[?25h"); // show cursor for the editor
-    delete process.env.GEAR_TUI_ACTIVE; // the editor owns the terminal now
+    delete process.env.RUNE_TUI_ACTIVE; // the editor owns the terminal now
 
     let okEdit = true;
     try {
@@ -3945,7 +3945,7 @@ class Tui {
     if (stdin.isTTY) stdin.setRawMode(true);
     stdin.resume();
     process.stdout.write("\x1b[?2004h");
-    process.env.GEAR_TUI_ACTIVE = "1";
+    process.env.RUNE_TUI_ACTIVE = "1";
     this.enterSurface();
 
     if (okEdit) {
@@ -5279,7 +5279,7 @@ class Tui {
           .replace(/^-+|-+$/g, "")
           .slice(0, 50) || "research";
       const file = join(dir, `${new Date().toISOString().slice(0, 10)}-${slug}.md`);
-      const body = `# Research: ${plan.question}\n\n_Generated by Gear | ${new Date().toISOString()}_\n\n${report.markdown}\n`;
+      const body = `# Research: ${plan.question}\n\n_Generated by Rune | ${new Date().toISOString()}_\n\n${report.markdown}\n`;
       writeFileSync(file, body);
       const shown = file.startsWith(this.ctx.workspaceRoot)
         ? file.slice(this.ctx.workspaceRoot.length).replace(/^[/\\]/, "")

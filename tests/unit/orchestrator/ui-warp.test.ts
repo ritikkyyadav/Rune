@@ -20,12 +20,12 @@ describe("the wire format", () => {
     expect(seq.endsWith("\x07")).toBe(true);
   });
 
-  test("carries the fields Warp reads, and identifies the agent as gear", () => {
+  test("carries the fields Warp reads, and identifies the agent as rune", () => {
     const seq = warpNotice(base, "0.3.0", inWarp);
     const body = JSON.parse(seq.slice(seq.indexOf("{"), -1));
     expect(body).toMatchObject({
       v: 1,
-      agent: "gear",
+      agent: "rune",
       event: "stop",
       session_id: "01a04470",
       cwd: "/Users/r/Project/evolab2",

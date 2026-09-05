@@ -8,12 +8,13 @@
 // denial is terminal even in 4th gear (the legacy turing / hands-free mode).
 //
 // Trust model:
-//  - /etc/gear/policy.json + /etc/gear/org.pub (also the macOS
-//    /Library/Application Support/Gear/ pair) are writable only by root.
+//  - /etc/rune/policy.json + /etc/rune/org.pub (also the macOS
+//    /Library/Application Support/Rune/ pair, and the same pair under the
+//    previous name `gear`, read-through only) are writable only by root.
 //    The signature stops on-disk tampering; the path ownership stops
 //    replacement. The key ships SEPARATELY from the policy — a file that
 //    carried its own key would verify any forgery.
-//  - GEAR_POLICY_FILE / GEAR_POLICY_PUBKEY env overrides are consulted ONLY
+//  - RUNE_POLICY_FILE / RUNE_POLICY_PUBKEY env overrides are consulted ONLY
 //    when no system-path policy exists (dev/test). They can never shadow an
 //    installed org policy.
 //  - A policy that exists but fails verification is an ERROR, not an absence:
@@ -89,6 +90,14 @@ export function canonicalPolicyBytes(policy: OrgPolicy): string {
 }
 
 const SYSTEM_LOCATIONS: Array<{ policy: string; pubkey: string }> = [
+  { policy: "/etc/rune/policy.json", pubkey: "/etc/rune/org.pub" },
+  {
+    policy: "/Library/Application Support/Rune/policy.json",
+    pubkey: "/Library/Application Support/Rune/org.pub",
+  },
+  // The previous name's locations. A policy an organisation deployed as root
+  // under `gear` must keep binding after the rename, or the rename silently
+  // disarms it; these are read, never written.
   { policy: "/etc/gear/policy.json", pubkey: "/etc/gear/org.pub" },
   {
     policy: "/Library/Application Support/Gear/policy.json",
@@ -104,8 +113,8 @@ const SYSTEM_LOCATIONS: Array<{ policy: string; pubkey: string }> = [
 export function loadOrgPolicy(): OrgPolicyLoadResult {
   const candidates = [...SYSTEM_LOCATIONS];
   const systemPresent = SYSTEM_LOCATIONS.some((l) => existsSync(l.policy));
-  const envPolicy = process.env.GEAR_POLICY_FILE;
-  const envPubkey = process.env.GEAR_POLICY_PUBKEY;
+  const envPolicy = process.env.RUNE_POLICY_FILE;
+  const envPubkey = process.env.RUNE_POLICY_PUBKEY;
   if (!systemPresent && envPolicy) {
     candidates.push({
       policy: envPolicy,

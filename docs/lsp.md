@@ -1,6 +1,6 @@
 # Language servers
 
-Gear talks to real language servers over LSP, for two things: the on-demand
+Rune talks to real language servers over LSP, for two things: the on-demand
 `lsp` tool the model calls itself, and **post-edit diagnostics** — the language
 server's verdict on the file the model just wrote, delivered in the same tool
 result.
@@ -99,15 +99,15 @@ autoFeedback = false   # off for this project whatever is installed
 ```
 
 or, live in a session, `/config lsp off` (`true` forces it on, Rust and Go
-included). `gear audit` reports how many edits carried a diagnostics block and
+included). `rune audit` reports how many edits carried a diagnostics block and
 how many of those were fixed before the verifier ran.
 
-### `GEAR_LSP_SERVERS`
+### `RUNE_LSP_SERVERS`
 
 A process-wide override of the server table, as JSON:
 
 ```
-GEAR_LSP_SERVERS='[{"id":"fake","extensions":[".ts"],"command":["bun","server.ts"]}]'
+RUNE_LSP_SERVERS='[{"id":"fake","extensions":[".ts"],"command":["bun","server.ts"]}]'
 ```
 
 It exists so post-edit diagnostics can be _measured_ without a language server

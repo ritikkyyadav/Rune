@@ -1,13 +1,13 @@
 // ─── The Phase 4 gate: connecting a service is one command ───
 //
-//   gear mcp add <mock> && gear mcp login <mock>
+//   rune mcp add <mock> && rune mcp login <mock>
 //
 // completes OAuth against a real (local) OAuth-protected MCP server, and a
 // session then calls one of its tools. The whole path runs through `runMcp` —
-// the same function `gear mcp` dispatches to — with only the browser click
+// the same function `rune mcp` dispatches to — with only the browser click
 // replaced by a direct fetch of the authorization URL.
 //
-// Also proves the other half of the gate: `gear mcp doctor` reports a stopped
+// Also proves the other half of the gate: `rune mcp doctor` reports a stopped
 // server as down, with a non-zero exit code.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { runMcp } from "../../packages/orchestrator/src/bin/mcp-cli";
 import { McpDiscovery } from "../../packages/tool-registry/src/mcp/discovery";
 import { mcpCredentialAccount } from "../../packages/tool-registry/src/mcp/oauth";
-import { resetGearHomeCache } from "../../packages/shared/src/paths";
+import { resetRuneHomeCache } from "../../packages/shared/src/paths";
 import { startMockOAuthMcpServer, type MockOAuthMcpServer } from "../helpers/mock-oauth-mcp-server";
 
 const SERVER = "mocknotion";
@@ -32,16 +32,16 @@ let output: string[];
 let writeSpy: typeof process.stdout.write;
 
 beforeEach(async () => {
-  home = mkdtempSync(join(tmpdir(), "gear-mcp-cli-home-"));
-  workspace = mkdtempSync(join(tmpdir(), "gear-mcp-cli-ws-"));
-  prevHome = process.env.GEAR_HOME;
-  prevBackend = process.env.GEAR_CREDENTIAL_BACKEND;
-  prevRegistry = process.env.GEAR_MCP_REGISTRY;
-  process.env.GEAR_HOME = home;
+  home = mkdtempSync(join(tmpdir(), "rune-mcp-cli-home-"));
+  workspace = mkdtempSync(join(tmpdir(), "rune-mcp-cli-ws-"));
+  prevHome = process.env.RUNE_HOME;
+  prevBackend = process.env.RUNE_CREDENTIAL_BACKEND;
+  prevRegistry = process.env.RUNE_MCP_REGISTRY;
+  process.env.RUNE_HOME = home;
   // Never touch the real keychain, and never reach the public registry.
-  process.env.GEAR_CREDENTIAL_BACKEND = "file";
-  process.env.GEAR_MCP_REGISTRY = "off";
-  resetGearHomeCache();
+  process.env.RUNE_CREDENTIAL_BACKEND = "file";
+  process.env.RUNE_MCP_REGISTRY = "off";
+  resetRuneHomeCache();
   mock = await startMockOAuthMcpServer();
 
   // The CLI writes to stdout; capture it so assertions can read what a person
@@ -57,13 +57,13 @@ beforeEach(async () => {
 afterEach(async () => {
   process.stdout.write = writeSpy;
   await mock.close();
-  if (prevHome === undefined) delete process.env.GEAR_HOME;
-  else process.env.GEAR_HOME = prevHome;
-  if (prevBackend === undefined) delete process.env.GEAR_CREDENTIAL_BACKEND;
-  else process.env.GEAR_CREDENTIAL_BACKEND = prevBackend;
-  if (prevRegistry === undefined) delete process.env.GEAR_MCP_REGISTRY;
-  else process.env.GEAR_MCP_REGISTRY = prevRegistry;
-  resetGearHomeCache();
+  if (prevHome === undefined) delete process.env.RUNE_HOME;
+  else process.env.RUNE_HOME = prevHome;
+  if (prevBackend === undefined) delete process.env.RUNE_CREDENTIAL_BACKEND;
+  else process.env.RUNE_CREDENTIAL_BACKEND = prevBackend;
+  if (prevRegistry === undefined) delete process.env.RUNE_MCP_REGISTRY;
+  else process.env.RUNE_MCP_REGISTRY = prevRegistry;
+  resetRuneHomeCache();
   rmSync(home, { recursive: true, force: true });
   rmSync(workspace, { recursive: true, force: true });
 });
@@ -77,9 +77,9 @@ const clickAllow = async (url: string): Promise<void> => {
   });
 };
 
-describe("gear mcp add + login, end to end", () => {
+describe("rune mcp add + login, end to end", () => {
   test("add writes the entry, login completes OAuth, and a session calls a tool", async () => {
-    // ── gear mcp add <url> --name mocknotion ──
+    // ── rune mcp add <url> --name mocknotion ──
     const addCode = await runMcp(["add", mock.mcpUrl, "--name", SERVER], {
       name: SERVER,
       workspace,
@@ -88,12 +88,12 @@ describe("gear mcp add + login, end to end", () => {
     expect(addCode).toBe(0);
     expect(printed()).toContain("added mocknotion");
 
-    const configPath = join(workspace, ".gear", "mcp.json");
+    const configPath = join(workspace, ".rune", "mcp.json");
     expect(existsSync(configPath)).toBe(true);
     const written = JSON.parse(readFileSync(configPath, "utf8"));
     expect(written.mcpServers[SERVER].url).toBe(mock.mcpUrl);
 
-    // ── gear mcp login mocknotion ──
+    // ── rune mcp login mocknotion ──
     output.length = 0;
     const loginCode = await runMcp(
       ["login", SERVER],
@@ -113,7 +113,7 @@ describe("gear mcp add + login, end to end", () => {
     expect(existsSync(credFile)).toBe(true);
     const creds = JSON.parse(readFileSync(credFile, "utf8"));
     const account = mcpCredentialAccount(SERVER);
-    const blob = creds[account] ?? creds[`gear:${account}`];
+    const blob = creds[account] ?? creds[`rune:${account}`];
     expect(JSON.stringify(creds)).toContain(account);
     if (blob) expect(JSON.parse(blob).accessToken).toBe(mock.issuedAccessTokens[0]);
 
@@ -176,7 +176,7 @@ describe("gear mcp add + login, end to end", () => {
     expect(code).toBe(1);
     const text = printed();
     expect(text).toContain("needs login");
-    expect(text).toContain(`gear mcp login ${SERVER}`);
+    expect(text).toContain(`rune mcp login ${SERVER}`);
   });
 
   test("workspace scope wins over user scope for the same name", async () => {
@@ -204,7 +204,7 @@ describe("gear mcp add + login, end to end", () => {
     await runMcp(["add", mock.mcpUrl, "--name", SERVER], { name: SERVER, workspace });
     expect(await runMcp(["disable", SERVER], { workspace })).toBe(0);
 
-    const written = JSON.parse(readFileSync(join(workspace, ".gear", "mcp.json"), "utf8"));
+    const written = JSON.parse(readFileSync(join(workspace, ".rune", "mcp.json"), "utf8"));
     expect(written.mcpServers[SERVER].enabled).toBe(false);
 
     const discovery = new McpDiscovery(workspace);
@@ -230,7 +230,7 @@ describe("gear mcp add + login, end to end", () => {
     expect(await runMcp(["remove", SERVER], { workspace })).toBe(0);
     const text = printed();
     expect(text).toContain("removed");
-    expect(text).toContain(`gear mcp logout ${SERVER}`);
+    expect(text).toContain(`rune mcp logout ${SERVER}`);
 
     // logout then actually forgets it.
     output.length = 0;

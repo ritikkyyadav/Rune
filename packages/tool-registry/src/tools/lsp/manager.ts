@@ -110,7 +110,7 @@ const SERVERS: Array<{ extensions: string[]; spec: ServerSpec }> = [
 export type ServerTable = Array<{ extensions: string[]; spec: ServerSpec }>;
 
 /**
- * Process-wide server table override, as JSON in `GEAR_LSP_SERVERS`:
+ * Process-wide server table override, as JSON in `RUNE_LSP_SERVERS`:
  *
  *   [{ "id": "fake", "extensions": [".ts"], "command": ["bun", "server.ts"] }]
  *
@@ -122,7 +122,7 @@ export type ServerTable = Array<{ extensions: string[]; spec: ServerSpec }>;
  * stands — a typo in an env var must never silently disable code intelligence.
  */
 function envServerTable(): ServerTable | null {
-  const raw = process.env.GEAR_LSP_SERVERS;
+  const raw = process.env.RUNE_LSP_SERVERS;
   if (!raw || !raw.trim()) return null;
   try {
     const parsed = JSON.parse(raw) as Array<{
@@ -163,7 +163,7 @@ export function serverTable(): ServerTable {
   return cachedTable;
 }
 
-/** Test seam: re-read GEAR_LSP_SERVERS after a test changes it. */
+/** Test seam: re-read RUNE_LSP_SERVERS after a test changes it. */
 export function resetServerTable(): void {
   cachedTable = null;
 }
@@ -227,7 +227,7 @@ export class LspServerManager {
 
   /**
    * Resolved per lookup, not pinned at construction: the manager is a process
-   * singleton that outlives any one workspace, so a GEAR_LSP_SERVERS change
+   * singleton that outlives any one workspace, so a RUNE_LSP_SERVERS change
    * (followed by resetServerTable) has to reach it. An explicit
    * serversOverride still wins for its whole life.
    */

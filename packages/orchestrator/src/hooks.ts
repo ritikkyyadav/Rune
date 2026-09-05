@@ -5,7 +5,7 @@
  * This is a self-contained reliability module. Wiring into the Engine is
  * intentionally left to the orchestrator — nothing here imports the Engine.
  *
- * Configuration lives in `<workspaceRoot>/.gear/hooks.json` and looks like:
+ * Configuration lives in `<workspaceRoot>/.rune/hooks.json` and looks like:
  *
  *   {
  *     "preToolUse":  [{ "match": "edit_*", "command": "./scripts/guard.sh", "blocking": true }],
@@ -15,7 +15,7 @@
  *   }
  *
  * Each command receives:
- *   - env vars: GEAR_TOOL_NAME, GEAR_TOOL_ARGS / GEAR_TOOL_OUTPUT, GEAR_HOOK_EVENT
+ *   - env vars: RUNE_TOOL_NAME, RUNE_TOOL_ARGS / RUNE_TOOL_OUTPUT, RUNE_HOOK_EVENT
  *   - stdin: a JSON payload ({ event, toolName, args } or { event, toolName, output })
  *
  * Blocking pre-tool hooks that exit non-zero veto the tool call. All other
@@ -24,9 +24,9 @@
  */
 
 import { join } from "node:path";
-import { createLogger } from "@gear/shared";
+import { createLogger } from "@rune/shared";
 const hookLog = createLogger("hooks");
-import { workspaceConfigPath } from "@gear/shared";
+import { workspaceConfigPath } from "@rune/shared";
 
 // ─── Types ───
 
@@ -85,7 +85,7 @@ const SNIPPET_LIMIT = 500;
 // ─── Config loading ───
 
 /**
- * Load hook configuration from `<workspaceRoot>/.gear/hooks.json`, plus any
+ * Load hook configuration from `<workspaceRoot>/.rune/hooks.json`, plus any
  * extra hook files (plugin bundles). Event arrays concatenate — workspace
  * hooks first, then each extra file in order, so user hooks always run before
  * plugin hooks for the same event.
@@ -241,7 +241,7 @@ export class HookRunner {
     this.logger = options?.logger ?? ((m) => hookLog.warn(m));
   }
 
-  /** Convenience: load `<workspaceRoot>/.gear/hooks.json` then build a runner. */
+  /** Convenience: load `<workspaceRoot>/.rune/hooks.json` then build a runner. */
   static async load(
     workspaceRoot: string,
     options?: { logger?: (message: string) => void; extraHookFiles?: string[] },
@@ -274,9 +274,9 @@ export class HookRunner {
 
     const payload = safeStringify({ event: "preToolUse", toolName, args });
     const env: Record<string, string> = {
-      GEAR_HOOK_EVENT: "preToolUse",
-      GEAR_TOOL_NAME: toolName,
-      GEAR_TOOL_ARGS: payload,
+      RUNE_HOOK_EVENT: "preToolUse",
+      RUNE_TOOL_NAME: toolName,
+      RUNE_TOOL_ARGS: payload,
     };
 
     for (const hook of hooks) {
@@ -314,9 +314,9 @@ export class HookRunner {
     const outputStr = safeStringify(output);
     const payload = safeStringify({ event: "postToolUse", toolName, output });
     const env: Record<string, string> = {
-      GEAR_HOOK_EVENT: "postToolUse",
-      GEAR_TOOL_NAME: toolName,
-      GEAR_TOOL_OUTPUT: outputStr,
+      RUNE_HOOK_EVENT: "postToolUse",
+      RUNE_TOOL_NAME: toolName,
+      RUNE_TOOL_OUTPUT: outputStr,
     };
 
     const feedback: string[] = [];
@@ -352,7 +352,7 @@ export class HookRunner {
   private async runLifecycle(event: HookEvent, hooks: HookDef[] | undefined): Promise<void> {
     if (!hooks || hooks.length === 0) return;
     const payload = safeStringify({ event });
-    const env: Record<string, string> = { GEAR_HOOK_EVENT: event };
+    const env: Record<string, string> = { RUNE_HOOK_EVENT: event };
     for (const hook of hooks) {
       const result = await this.execute(hook, payload, env);
       if (result.timedOut || result.spawnError !== undefined || result.exitCode !== 0) {

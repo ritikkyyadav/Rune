@@ -1,4 +1,4 @@
-// ─── `team` tool: coordinate with other Gear instances in this repository ───
+// ─── `team` tool: coordinate with other Rune instances in this repository ───
 //
 // The bus (bus.ts) is the mechanism; this tool is the model's steering wheel
 // for it: see who else is working here, tell them things, lease path scopes
@@ -6,7 +6,7 @@
 // turn-boundary mail, not a live socket — the description says so, so the
 // model never waits for an instant reply.
 
-import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "@gear/tool-registry";
+import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "@rune/tool-registry";
 import type { TeamBus, TeamPeer } from "./bus";
 
 export interface TeamToolDeps {
@@ -21,7 +21,7 @@ export const TEAM_TOOL_SCHEMA: ToolSchema = {
   name: "team",
   version: "0.1.0",
   description:
-    "Coordinate with OTHER Gear instances working in this repository (the user may run " +
+    "Coordinate with OTHER Rune instances working in this repository (the user may run " +
     "several sessions at once). Actions: 'status' lists live peers, what each is working on, " +
     "and their path claims; 'send' delivers a message to one peer (`to`) or all (omit `to`) — " +
     "delivered at the peer's next turn boundary, so never wait for an instant reply; 'claim' " +
@@ -87,7 +87,7 @@ export function renderTeamStatus(bus: TeamBus): string {
   const claims = bus.liveClaims();
   const lines: string[] = [`You are instance ${bus.instanceId}.`];
   if (peers.length === 0) {
-    lines.push("No other Gear instances are active in this repository.");
+    lines.push("No other Rune instances are active in this repository.");
   } else {
     lines.push(`Live peers (${peers.length}):`);
     for (const p of peers) lines.push(`  ${describePeer(p)}`);

@@ -1,5 +1,5 @@
 /**
- * `gear upgrade` — the update story, with GitHub replaced by a function.
+ * `rune upgrade` — the update story, with GitHub replaced by a function.
  *
  * Two properties matter more than any feature here:
  *
@@ -34,7 +34,7 @@ import {
 
 const dirs: string[] = [];
 function tempDir(): string {
-  const d = mkdtempSync(join(tmpdir(), "gear-upgrade-"));
+  const d = mkdtempSync(join(tmpdir(), "rune-upgrade-"));
   dirs.push(d);
   return d;
 }
@@ -55,8 +55,8 @@ function fakeRelease(opts: {
 }) {
   const cli = opts.cli ?? `#!cli ${opts.tag}`;
   const tools = opts.tools ?? `#!tools ${opts.tag}`;
-  const cliName = `gear-${opts.suffix}`;
-  const toolsName = `gear-tools-${opts.suffix}`;
+  const cliName = `rune-${opts.suffix}`;
+  const toolsName = `rune-tools-${opts.suffix}`;
   const sums = `${sha256(cli)}  ${cliName}\n${sha256(tools)}  ${toolsName}\n`;
   const body: LatestRelease = {
     tag_name: opts.tag,
@@ -129,13 +129,13 @@ describe("assetSuffix", () => {
 describe("parseChecksums", () => {
   test("reads both sha256sum and shasum -a 256 output", () => {
     const hex = "a".repeat(64);
-    const parsed = parseChecksums(`${hex}  gear-linux-x64\n${hex} *gear-tools-linux-x64\n\n`);
-    expect(parsed["gear-linux-x64"]).toBe(hex);
-    expect(parsed["gear-tools-linux-x64"]).toBe(hex);
+    const parsed = parseChecksums(`${hex}  rune-linux-x64\n${hex} *rune-tools-linux-x64\n\n`);
+    expect(parsed["rune-linux-x64"]).toBe(hex);
+    expect(parsed["rune-tools-linux-x64"]).toBe(hex);
   });
 });
 
-describe("gear upgrade", () => {
+describe("rune upgrade", () => {
   test("--check reports the newer release and installs nothing", async () => {
     const dir = tempDir();
     const r = fakeRelease({ tag: "v0.4.0", suffix: "linux-x64" });
@@ -150,8 +150,8 @@ describe("gear upgrade", () => {
       }),
     );
     expect(code).toBe(0);
-    expect(lines.join("\n")).toContain("Gear v0.4.0 is available");
-    expect(lines.join("\n")).toContain("gear upgrade");
+    expect(lines.join("\n")).toContain("Rune v0.4.0 is available");
+    expect(lines.join("\n")).toContain("rune upgrade");
     expect(existsSync(join(dir, "bin"))).toBe(false);
     // Only the release metadata was fetched — no asset download at all.
     expect(r.calls.every((u) => u.includes("api.github.com"))).toBe(true);
@@ -178,8 +178,8 @@ describe("gear upgrade", () => {
     const dir = tempDir();
     const bin = join(dir, "bin");
     mkdirSync(bin, { recursive: true });
-    writeFileSync(join(bin, "gear"), "OLD CLI");
-    writeFileSync(join(bin, "gear-tools"), "OLD TOOLS");
+    writeFileSync(join(bin, "rune"), "OLD CLI");
+    writeFileSync(join(bin, "rune-tools"), "OLD TOOLS");
     const r = fakeRelease({ tag: "v0.4.0", suffix: "linux-x64" });
 
     const code = await runUpgrade(
@@ -187,38 +187,38 @@ describe("gear upgrade", () => {
       env({ installDir: bin, statePath: join(dir, "state.json"), fetch: r.fetcher }),
     );
     expect(code).toBe(0);
-    expect(readFileSync(join(bin, "gear"), "utf8")).toBe(r.cli);
-    expect(readFileSync(join(bin, "gear-tools"), "utf8")).toBe(r.tools);
+    expect(readFileSync(join(bin, "rune"), "utf8")).toBe(r.cli);
+    expect(readFileSync(join(bin, "rune-tools"), "utf8")).toBe(r.tools);
     // Recoverable: the previous build is still there.
-    expect(readFileSync(join(bin, "gear.backup"), "utf8")).toBe("OLD CLI");
-    expect(readFileSync(join(bin, "gear-tools.backup"), "utf8")).toBe("OLD TOOLS");
+    expect(readFileSync(join(bin, "rune.backup"), "utf8")).toBe("OLD CLI");
+    expect(readFileSync(join(bin, "rune-tools.backup"), "utf8")).toBe("OLD TOOLS");
     // Nothing half-written is left behind.
-    expect(existsSync(join(bin, "gear.new"))).toBe(false);
+    expect(existsSync(join(bin, "rune.new"))).toBe(false);
   });
 
-  test("a source install keeps its wrapper: gear-compiled is what gets replaced", async () => {
+  test("a source install keeps its wrapper: rune-compiled is what gets replaced", async () => {
     const dir = tempDir();
     const bin = join(dir, "bin");
     mkdirSync(bin, { recursive: true });
-    writeFileSync(join(bin, "gear"), '#!/bin/sh\nexec gear-compiled "$@"\n');
-    writeFileSync(join(bin, "gear-compiled"), "OLD BINARY");
-    expect(cliTarget(bin)).toBe(join(bin, "gear-compiled"));
+    writeFileSync(join(bin, "rune"), '#!/bin/sh\nexec rune-compiled "$@"\n');
+    writeFileSync(join(bin, "rune-compiled"), "OLD BINARY");
+    expect(cliTarget(bin)).toBe(join(bin, "rune-compiled"));
 
     const r = fakeRelease({ tag: "v0.4.0", suffix: "linux-x64" });
     await runUpgrade(
       [],
       env({ installDir: bin, statePath: join(dir, "state.json"), fetch: r.fetcher }),
     );
-    expect(readFileSync(join(bin, "gear-compiled"), "utf8")).toBe(r.cli);
+    expect(readFileSync(join(bin, "rune-compiled"), "utf8")).toBe(r.cli);
     // The wrapper, which carries the env loading, is untouched.
-    expect(readFileSync(join(bin, "gear"), "utf8")).toContain("exec gear-compiled");
+    expect(readFileSync(join(bin, "rune"), "utf8")).toContain("exec rune-compiled");
   });
 
   test("a checksum mismatch installs NOTHING and leaves the old binary in place", async () => {
     const dir = tempDir();
     const bin = join(dir, "bin");
     mkdirSync(bin, { recursive: true });
-    writeFileSync(join(bin, "gear"), "OLD CLI");
+    writeFileSync(join(bin, "rune"), "OLD CLI");
     const r = fakeRelease({ tag: "v0.4.0", suffix: "linux-x64", corruptCli: true });
     const lines: string[] = [];
 
@@ -233,8 +233,8 @@ describe("gear upgrade", () => {
     );
     expect(code).toBe(1);
     expect(lines.join("\n")).toContain("Checksum mismatch");
-    expect(readFileSync(join(bin, "gear"), "utf8")).toBe("OLD CLI");
-    expect(existsSync(join(bin, "gear.backup"))).toBe(false);
+    expect(readFileSync(join(bin, "rune"), "utf8")).toBe("OLD CLI");
+    expect(existsSync(join(bin, "rune.backup"))).toBe(false);
   });
 
   test("a release with no SHA256SUMS is refused rather than trusted", async () => {
@@ -299,9 +299,9 @@ describe("the daily check", () => {
     const line = cachedUpdateNag(
       env({ installDir: join(dir, "bin"), statePath, version: "0.3.0" }),
     );
-    expect(line).toContain("Gear v0.9.0 is available");
+    expect(line).toContain("Rune v0.9.0 is available");
     expect(line).toContain("you have v0.3.0");
-    expect(line).toContain("gear upgrade");
+    expect(line).toContain("rune upgrade");
   });
 
   test("says nothing when the cache is empty, stale-but-equal, or older", () => {
@@ -354,7 +354,7 @@ describe("the daily check", () => {
     const lines: string[] = [];
     const code = await runUpgrade(["--check"], { ...off, log: (l) => lines.push(l) });
     expect(code).toBe(0);
-    expect(lines.join("\n")).toContain("Gear v9.9.9 is available");
+    expect(lines.join("\n")).toContain("Rune v9.9.9 is available");
   });
 
   test("being offline is silent and still records the attempt", async () => {

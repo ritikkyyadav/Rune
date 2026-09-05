@@ -9,15 +9,15 @@
 // produced the binaries — so one signature over it covers the whole release,
 // and verifying is two commands instead of ten.
 //
-// The primitive is the one Gear already uses for signed session exports
+// The primitive is the one Rune already uses for signed session exports
 // (`packages/orchestrator/src/signing.ts`), so there is one Ed25519
 // implementation in the repo rather than a second one for releases.
 //
 // Usage:
-//   bun scripts/sign-release.ts sign   <dir>            # needs GEAR_SIGNING_PRIVATE_KEY
+//   bun scripts/sign-release.ts sign   <dir>            # needs RUNE_SIGNING_PRIVATE_KEY
 //   bun scripts/sign-release.ts verify <dir> <pubkey>   # pubkey: PEM file or base64
 //
-// GEAR_SIGNING_PRIVATE_KEY is a PEM private key, either raw or base64-encoded
+// RUNE_SIGNING_PRIVATE_KEY is a PEM private key, either raw or base64-encoded
 // (CI secrets travel more safely base64'd, so both are accepted).
 
 import { createPublicKey } from "node:crypto";
@@ -57,11 +57,11 @@ if (!existsSync(sumsPath)) die(`no SHA256SUMS in ${dir} — nothing to sign.`);
 const sums = readFileSync(sumsPath);
 
 if (mode === "sign") {
-  const secret = process.env.GEAR_SIGNING_PRIVATE_KEY;
+  const secret = process.env.RUNE_SIGNING_PRIVATE_KEY;
   if (!secret || !secret.trim()) {
     // Not an error: a release without the secret is unsigned on Linux, and
     // saying so beats failing the build for a key the founder may not have yet.
-    console.log("  · GEAR_SIGNING_PRIVATE_KEY is not set — skipping Linux signatures.");
+    console.log("  · RUNE_SIGNING_PRIVATE_KEY is not set — skipping Linux signatures.");
     console.log("    docs/release.md says how to create one.");
     process.exit(0);
   }

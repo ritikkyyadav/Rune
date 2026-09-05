@@ -18,21 +18,21 @@ import {
   getStrategy,
   ProviderHealthStore,
   cacheBreakpointPolicyFor,
-} from "@gear/llm-gateway";
+} from "@rune/llm-gateway";
 import type {
   GatewayIncidentEvent,
   ProviderName,
   ResolvedCredential,
   AuthContext,
   AuthMethod,
-} from "@gear/llm-gateway";
-import { PROVIDER_PRESETS, CUSTOM_PROVIDER_ID, maskKey, effectiveAuthMethods } from "@gear/shared";
-import type { CustomEndpoint, CredentialStore, StoredKey } from "@gear/shared";
+} from "@rune/llm-gateway";
+import { PROVIDER_PRESETS, CUSTOM_PROVIDER_ID, maskKey, effectiveAuthMethods } from "@rune/shared";
+import type { CustomEndpoint, CredentialStore, StoredKey } from "@rune/shared";
 
 export interface BuildGatewayOpts {
   /**
    * Cross-session provider health. Defaults to the real store rooted in the
-   * gear home; pass an isolated one in tests so a run never reads or writes
+   * rune home; pass an isolated one in tests so a run never reads or writes
    * the machine it runs on.
    */
   health?: ProviderHealthStore;

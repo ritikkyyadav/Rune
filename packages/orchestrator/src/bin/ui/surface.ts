@@ -7,7 +7,7 @@
 //                    scrolling transcript, and a pinned footer. The header and
 //                    the composer hold their rows; only the middle moves. This
 //                    is the product surface.
-//   INLINE (--inline / GEAR_INLINE)  the transcript is committed to the
+//   INLINE (--inline / RUNE_INLINE)  the transcript is committed to the
 //                    terminal's own scrollback with only the composer pinned,
 //                    so native scrollback, momentum scrolling, mouse selection
 //                    and `| tee` keep working -- at the cost of the frame: a
@@ -21,7 +21,7 @@
 // -- so it inherits the user's theme exactly the way the inline surface does.
 //
 // `--classic` still opts into the plain readline printer, and a pipe still gets
-// no TUI at all. `--fullscreen` / GEAR_FULLSCREEN name the default and are
+// no TUI at all. `--fullscreen` / RUNE_FULLSCREEN name the default and are
 // accepted as a no-op, so an old alias does not error out.
 
 export interface SurfaceFlags {
@@ -30,15 +30,15 @@ export interface SurfaceFlags {
   tuiForced?: boolean;
   /** --classic: the plain readline printer path. */
   classicForced?: boolean;
-  /** --inline / GEAR_INLINE: the legacy native-scrollback layout. */
+  /** --inline / RUNE_INLINE: the legacy native-scrollback layout. */
   inline?: boolean;
-  /** --fullscreen / GEAR_FULLSCREEN: names the default. Accepted as a no-op. */
+  /** --fullscreen / RUNE_FULLSCREEN: names the default. Accepted as a no-op. */
   fullscreenForced?: boolean;
 }
 
 export interface SurfaceChoice {
   useTui: boolean;
-  /** True only for the legacy layout: --inline / GEAR_INLINE. */
+  /** True only for the legacy layout: --inline / RUNE_INLINE. */
   inline: boolean;
 }
 

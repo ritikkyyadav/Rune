@@ -1,7 +1,7 @@
 /**
  * P10.5 — the live-model cache.
  *
- * `gear models` asks the provider what it serves, because a hand-maintained
+ * `rune models` asks the provider what it serves, because a hand-maintained
  * catalogue rots. That is a network call on a command people run to look at a
  * list, so it is cached for an hour. The tests here pin the two things a cache
  * has to get right — that a fresh entry is served and a stale one is not — and
@@ -23,7 +23,7 @@ import {
 
 let path = "";
 beforeEach(() => {
-  path = join(mkdtempSync(join(tmpdir(), "gear-model-cache-")), "model-cache.json");
+  path = join(mkdtempSync(join(tmpdir(), "rune-model-cache-")), "model-cache.json");
 });
 
 const MODELS = [
@@ -114,7 +114,7 @@ describe("a broken cache never breaks the command", () => {
   });
 
   test("an unwritable location is swallowed", () => {
-    const dir = mkdtempSync(join(tmpdir(), "gear-ro-"));
+    const dir = mkdtempSync(join(tmpdir(), "rune-ro-"));
     chmodSync(dir, 0o500);
     expect(() => saveCachedModels("bedrock", MODELS, { path: join(dir, "x.json") })).not.toThrow();
     chmodSync(dir, 0o700);

@@ -402,7 +402,7 @@ describe("renderBlock", () => {
 
   test("the post-compaction budget carries far more of the goal, plus the mission pointer", () => {
     const s = new TaskStateStore();
-    s.setMissionPath(".gear/mission.md");
+    s.setMissionPath(".rune/mission.md");
     const spec = "SPEC-HEAD " + "the requirement continues ".repeat(200);
     s.beginTurn(spec);
     s.setTodos([{ content: "step", status: "in_progress" }]);
@@ -411,8 +411,8 @@ describe("renderBlock", () => {
     const goalLine = (b: string) => b.split("\n").find((l) => l.startsWith("Goal:"))!;
     expect(goalLine(boosted).length).toBeGreaterThan(goalLine(normal).length + 1_000);
     // A truncated goal always names where the full brief lives.
-    expect(boosted).toContain(".gear/mission.md");
-    expect(normal).toContain(".gear/mission.md");
+    expect(boosted).toContain(".rune/mission.md");
+    expect(normal).toContain(".rune/mission.md");
   });
 
   test("verification 'unavailable' always states WHY — the nothing-runnable red flag", () => {

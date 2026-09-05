@@ -1,7 +1,7 @@
 /**
  * The art-direction tripwire.
  *
- * The complaint it answers, from building real sites with Gear: ask for "a
+ * The complaint it answers, from building real sites with Rune: ask for "a
  * comprehensive report with an interactive view" and you get one of the worst
  * interactive views — because the agent says "I'll handle the design" and
  * applies its house style (one accent on a neutral ground) to a scientific lab,

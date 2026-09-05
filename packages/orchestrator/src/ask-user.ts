@@ -7,12 +7,12 @@
 // environments leave it unwired and the tool degrades to an instructive error
 // so the model proceeds on its best judgment instead of stalling.
 
-import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "@gear/tool-registry";
+import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "@rune/tool-registry";
 
 // `UserQuestion` is a wire shape: ask_user is one of the five round-trips a
-// non-terminal client must be able to hold (P2.2), so @gear/protocol owns it.
-export type { UserQuestion } from "@gear/protocol";
-import type { UserQuestion } from "@gear/protocol";
+// non-terminal client must be able to hold (P2.2), so @rune/protocol owns it.
+export type { UserQuestion } from "@rune/protocol";
+import type { UserQuestion } from "@rune/protocol";
 
 export type QuestionHandler = (q: UserQuestion) => Promise<string>;
 

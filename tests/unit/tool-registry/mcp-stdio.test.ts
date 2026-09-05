@@ -25,7 +25,7 @@ describe("McpClient over stdio", () => {
   test("a missing command fails start with a clear error (no hang)", async () => {
     const client = new McpClient({
       name: "bad",
-      command: "gear-no-such-binary-xyz-123",
+      command: "rune-no-such-binary-xyz-123",
       args: [],
     });
     await expect(client.start()).rejects.toThrow();

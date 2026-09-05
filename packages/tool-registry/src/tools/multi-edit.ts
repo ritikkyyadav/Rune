@@ -273,7 +273,7 @@ export function createMultiEditHandler(): ToolHandler {
       }
 
       // Atomic write: write to a temp file in the same dir, then rename over.
-      const tmp = `${abs}.gear-tmp-${randomBytes(6).toString("hex")}`;
+      const tmp = `${abs}.rune-tmp-${randomBytes(6).toString("hex")}`;
       try {
         await writeFile(tmp, content, "utf8");
         await rename(tmp, abs);

@@ -25,7 +25,7 @@ describe("ProviderHealthStore", () => {
   let path: string;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "gear-health-"));
+    dir = mkdtempSync(join(tmpdir(), "rune-health-"));
     path = join(dir, "provider-health.json");
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));

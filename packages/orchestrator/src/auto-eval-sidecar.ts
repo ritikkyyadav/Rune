@@ -3,7 +3,7 @@ import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 
 import { Database } from "bun:sqlite";
 
-import { ensureGearHome, gearHomePath } from "@gear/shared";
+import { ensureRuneHome, runeHomePath } from "@rune/shared";
 
 /**
  * The labelling sidecar.
@@ -22,11 +22,11 @@ import { ensureGearHome, gearHomePath } from "@gear/shared";
  *      nothing else turns it on. There is no remote flag, no experiment, no
  *      "helpful" default.
  *   2. **Encrypted at rest with a local key.** AES-256-GCM under a key in
- *      `~/.gear/auto-eval.key`, mode 0600, generated on first write. Losing the
+ *      `~/.rune/auto-eval.key`, mode 0600, generated on first write. Losing the
  *      key loses the sidecar, which is the correct failure mode for a file
  *      whose only purpose is local eval.
  *   3. **Structurally unexportable.** It is a separate database, keyed by
- *      `argsHash`, that no telemetry path, no `gear export`, and no black box
+ *      `argsHash`, that no telemetry path, no `rune export`, and no black box
  *      reads. The audit chain keeps hashing what it always hashed; this file is
  *      the join table, and it never leaves the machine.
  */
@@ -75,8 +75,8 @@ export interface SidecarRow {
 }
 
 function loadOrCreateKey(): Buffer {
-  ensureGearHome();
-  const path = gearHomePath(KEY_FILE);
+  ensureRuneHome();
+  const path = runeHomePath(KEY_FILE);
   if (existsSync(path)) {
     const raw = readFileSync(path);
     // A 32-byte key stored as 64 hex characters; anything else is a corrupt
@@ -122,13 +122,13 @@ export class AutoEvalSidecar {
   private key: Buffer | null = null;
   private broken = false;
 
-  constructor(private readonly path: string = gearHomePath(DB_FILE)) {}
+  constructor(private readonly path: string = runeHomePath(DB_FILE)) {}
 
   private ensure(): { db: Database; key: Buffer } | null {
     if (this.broken) return null;
     if (this.db && this.key) return { db: this.db, key: this.key };
     try {
-      ensureGearHome();
+      ensureRuneHome();
       this.key = loadOrCreateKey();
       this.db = new Database(this.path, { create: true });
       this.db.exec(SCHEMA);

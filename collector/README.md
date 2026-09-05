@@ -1,14 +1,14 @@
-# Gear telemetry collector
+# Rune telemetry collector
 
-The receiving end of Gear's opt-in diagnostics channel — a single,
-dependency-free Bun server you run yourself. It stores the reports Gear clients
+The receiving end of Rune's opt-in diagnostics channel — a single,
+dependency-free Bun server you run yourself. It stores the reports Rune clients
 send into a local SQLite file and serves a small live adoption/health dashboard.
 
 ## Run it
 
 ```bash
 # pick a strong shared secret; clients must present the same token
-GEAR_COLLECTOR_TOKEN=$(openssl rand -hex 16) bun collector/gear-collector.ts
+RUNE_COLLECTOR_TOKEN=$(openssl rand -hex 16) bun collector/rune-collector.ts
 ```
 
 Then open <http://localhost:8787/> for the dashboard.
@@ -17,9 +17,9 @@ Then open <http://localhost:8787/> for the dashboard.
 
 | Var                    | Default                        | Purpose                                                 |
 | ---------------------- | ------------------------------ | ------------------------------------------------------- |
-| `GEAR_COLLECTOR_PORT`  | `8787`                         | Port to listen on                                       |
-| `GEAR_COLLECTOR_TOKEN` | _(none)_                       | Shared bearer token; if set, `POST /ingest` requires it |
-| `GEAR_COLLECTOR_DB`    | `~/.gear-collector/reports.db` | Where reports are stored                                |
+| `RUNE_COLLECTOR_PORT`  | `8787`                         | Port to listen on                                       |
+| `RUNE_COLLECTOR_TOKEN` | _(none)_                       | Shared bearer token; if set, `POST /ingest` requires it |
+| `RUNE_COLLECTOR_DB`    | `~/.rune-collector/reports.db` | Where reports are stored                                |
 
 ### Endpoints
 
@@ -28,9 +28,9 @@ Then open <http://localhost:8787/> for the dashboard.
 - `GET /stats` — the same aggregates as JSON.
 - `GET /health` — `{ "ok": true }`.
 
-## Point a Gear build at it
+## Point a Rune build at it
 
-In the client's `~/.gear/config.toml` (the web installer can write this for you):
+In the client's `~/.rune/config.toml` (the web installer can write this for you):
 
 ```toml
 [telemetry]
@@ -39,7 +39,7 @@ endpoint = "https://your-host:8787/ingest"
 token    = "the-same-secret"
 ```
 
-Each user still gets the first-run consent prompt and can `gear telemetry off`
+Each user still gets the first-run consent prompt and can `rune telemetry off`
 at any time — the collector only ever receives what a consenting client sends.
 
 ## Privacy stance
@@ -52,7 +52,7 @@ at any time — the collector only ever receives what a consenting client sends.
 
 ## Going further
 
-The SQLite file is plain — query it directly, or point Gear's own dashboard
+The SQLite file is plain — query it directly, or point Rune's own dashboard
 tools at it. For production you'd typically front this with a real TLS
 terminator and, if you want country-level geo, wire a GeoIP database into the
 `geoLookup` function (the raw IP still never gets stored).

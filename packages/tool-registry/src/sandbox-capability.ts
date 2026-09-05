@@ -67,7 +67,7 @@ export function onSandboxCapabilityChange(fn: CapabilityListener): void {
 }
 
 /**
- * Probe the machine by running `gear-tools sandbox-check` (synchronous — a
+ * Probe the machine by running `rune-tools sandbox-check` (synchronous — a
  * one-time ~10ms startup cost buys the guarantee that no permission decision
  * ever races the probe). Any failure — binary missing, bad output — records
  * UNKNOWN/false rather than throwing: capability degrades to prompts, never

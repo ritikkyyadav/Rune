@@ -24,7 +24,7 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { dirname, join } from "path";
-import { getGearHome } from "./paths.js";
+import { getRuneHome } from "./paths.js";
 
 export interface SessionPrefs {
   /** The gear a new session opens in. */
@@ -39,10 +39,10 @@ export interface SessionPrefs {
   stickyFourthGear?: boolean;
 }
 
-/** `~/.gear/prefs.json`, or GEAR_PREFS_PATH. Computed per call so the env
+/** `~/.rune/prefs.json`, or RUNE_PREFS_PATH. Computed per call so the env
  *  override always takes effect (tests, sandboxes, throwaway profiles). */
 export function getPrefsPath(): string {
-  return process.env.GEAR_PREFS_PATH || join(getGearHome(), "prefs.json");
+  return process.env.RUNE_PREFS_PATH || join(getRuneHome(), "prefs.json");
 }
 
 /** Read stored preferences. Never throws; unset and unreadable are the same. */

@@ -5,12 +5,12 @@
  * omitted `effort`, on the stated belief that "the sol/terra/luna variants
  * encode effort in the model name" and that `reasoning.effort` was "an
  * API-key-only param rejected here". Both halves were wrong, and neither was
- * ever tested — Gear's incident history contains zero rejections of the field,
+ * ever tested — Rune's incident history contains zero rejections of the field,
  * because it never sent it once.
  *
  * The cost was the whole product on that route: every ChatGPT-subscription
  * session ran at the server's default depth with `max` unreachable, which is
- * why a frontier model felt weaker in Gear than a small model on OpenRouter.
+ * why a frontier model felt weaker in Rune than a small model on OpenRouter.
  * Compounding it, `thinkingEffort` existed on AgentLoopConfig and NOTHING in
  * the repo ever set it — no flag, no config key, no command.
  *
@@ -52,7 +52,7 @@ describe("codex reasoning.effort", () => {
     expect(reasoningOf(req()).effort).toBe("high");
   });
 
-  test("the caller's choice is honoured, including the values Gear could not reach", () => {
+  test("the caller's choice is honoured, including the values Rune could not reach", () => {
     for (const effort of ["low", "medium", "high", "xhigh", "max"] as const) {
       expect(reasoningOf(req({ thinking: { enabled: true, effort } })).effort).toBe(effort);
     }

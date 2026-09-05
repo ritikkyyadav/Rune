@@ -62,7 +62,7 @@ describe("PermissionBroker", () => {
     // The announcement goes through the shared logger (stderr outside the TUI,
     // file sink under it) — the per-call console.warn it replaced printed over
     // the alt screen on EVERY tool call and tore across parallel workers.
-    delete process.env.GEAR_TUI_ACTIVE;
+    delete process.env.RUNE_TUI_ACTIVE;
     const writeSpy = spyOn(process.stderr, "write");
     const yoloBroker = new PermissionBroker(true);
     const schema = {
@@ -116,7 +116,7 @@ describe("PermissionBroker", () => {
 });
 
 describe("PermissionBroker — workspace trust", () => {
-  const WS = "/tmp/gear-ws";
+  const WS = "/tmp/rune-ws";
   const writeSchema = {
     name: "write_file",
     permissionLevel: "confirm" as const,
@@ -216,7 +216,7 @@ describe("PermissionBroker — workspace trust", () => {
 });
 
 describe("PermissionBroker — permission modes (the Shift+Tab cycle)", () => {
-  const WS = "/tmp/gear-ws";
+  const WS = "/tmp/rune-ws";
   const bashSchema = {
     name: "bash",
     permissionLevel: "confirm" as const,
@@ -236,7 +236,7 @@ describe("PermissionBroker — permission modes (the Shift+Tab cycle)", () => {
     expect(m).toBe("gear-1");
   });
 
-  test("gear grammar: numbers, ordinals, ids, words — and the legacy 'auto' means 3rd gear only on the old key", () => {
+  test("rune grammar: numbers, ordinals, ids, words — and the legacy 'auto' means 3rd gear only on the old key", () => {
     for (const v of ["1", "1st", "first", "gear-1", "gear 1", "g1", "confirm", "guided"])
       expect(configModeToPermissionMode(v)).toBe("gear-1");
     for (const v of ["2", "2nd", "second", "gear-2", "autonomy-i", "Autonomy I", "edits"])
@@ -277,7 +277,7 @@ describe("PermissionBroker — permission modes (the Shift+Tab cycle)", () => {
     expect(GEAR_MODES).toEqual(["gear-1", "gear-2", "gear-3", "gear-4", "auto"]);
   });
 
-  test("startup config and legacy aliases resolve to the intended gear", () => {
+  test("startup config and legacy aliases resolve to the intended rune", () => {
     expect(configModeToPermissionMode("Autonomy II")).toBe("gear-3");
     expect(configModeToPermissionMode("hands-free")).toBe("gear-4");
     expect(resolveStartupPermissionFlags({ configMode: "autonomy-i" }).permissionMode).toBe(

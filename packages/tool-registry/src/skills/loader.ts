@@ -1,5 +1,5 @@
 import { readdir, readFile } from "node:fs/promises";
-import { createLogger } from "@gear/shared";
+import { createLogger } from "@rune/shared";
 
 const skillLog = createLogger("skills");
 import { existsSync } from "node:fs";
@@ -20,7 +20,7 @@ import type {
 //
 // Layouts understood (a root is globbed recursively for SKILL.md):
 //   <root>/<plugin>/skills/<skill>/SKILL.md   → plugin = "<plugin>"   (bundled marketplace)
-//   <root>/<skill>/SKILL.md                   → plugin = "user"       (flat .gear/skills)
+//   <root>/<skill>/SKILL.md                   → plugin = "user"       (flat .rune/skills)
 //
 // The plugin is the path segment immediately before a "skills" segment; if
 // there is none, the skill is attributed to the synthetic "user" plugin.
@@ -250,7 +250,7 @@ export class SkillLoader {
     for (const entry of entries) {
       if (entry.isDirectory()) {
         if (IGNORE_DIRS.has(entry.name) || entry.name.startsWith(".")) {
-          // Allow a literal ".gear" root to be passed directly, but don't
+          // Allow a literal ".rune" root to be passed directly, but don't
           // descend into dot-dirs discovered mid-walk (.git, .claude-plugin, …).
           continue;
         }

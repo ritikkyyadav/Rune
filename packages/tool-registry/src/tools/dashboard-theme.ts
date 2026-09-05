@@ -12,8 +12,8 @@
 //
 // All three exports are raw strings injected into dashboard pages:
 //   THEME_CSS          — design tokens + component classes (+ print styles)
-//   CHART_DEFAULTS_JS  — Chart.js global defaults + gearTheme plugin + window.GEAR helpers
-//   SPEC_RENDERER_JS   — renders window.__GEAR_SPEC__ into #gear-root and
+//   CHART_DEFAULTS_JS  — Chart.js global defaults + runeTheme plugin + window.RUNE helpers
+//   SPEC_RENDERER_JS   — renders window.__RUNE_SPEC__ into #rune-root and
 //                        implements window.render(payload) (full spec re-render
 //                        or key-bound live data application)
 //
@@ -42,7 +42,7 @@ export const THEME_CSS = `
 
 /* ── Art directions ──
    The dark bento grid below is one house style, and for a long time it was the
-   ONLY one: every view Gear rendered came out identical except for a single
+   ONLY one: every view Rune rendered came out identical except for a single
    accent hue, whether the subject was a genomics lab, a cost report, or a
    music festival. That sameness is what reads as "generated".
 
@@ -154,14 +154,14 @@ body {
   min-width: 0;
   position: relative;
   overflow: hidden;
-  animation: gear-in 0.45s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+  animation: rune-in 0.45s cubic-bezier(0.2, 0.7, 0.3, 1) both;
 }
 .grid > .card:nth-child(2) { animation-delay: 0.04s; }
 .grid > .card:nth-child(3) { animation-delay: 0.08s; }
 .grid > .card:nth-child(4) { animation-delay: 0.12s; }
 .grid > .card:nth-child(5) { animation-delay: 0.16s; }
 .grid > .card:nth-child(n+6) { animation-delay: 0.2s; }
-@keyframes gear-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes rune-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .card { animation: none; } }
 .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
 .card-title { font-size: 13px; font-weight: 600; color: var(--ink); letter-spacing: 0.01em; margin: 0; }
@@ -292,26 +292,26 @@ table.tbl th.num, table.tbl td.num { text-align: right; }
 // <style> so it works on model-authored full-document pages that never load
 // THEME_CSS. Self-contained: no var() dependencies.
 export const FAB_CSS = `
-.gear-fab { position: fixed; top: 14px; right: 16px; z-index: 2147483000; display: flex; align-items: center; gap: 8px;
+.rune-fab { position: fixed; top: 14px; right: 16px; z-index: 2147483000; display: flex; align-items: center; gap: 8px;
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-.gear-fab .gear-live { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; line-height: 1;
+.rune-fab .rune-live { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; line-height: 1;
   letter-spacing: 0.06em; padding: 6px 11px; border-radius: 999px; color: #c8f169;
   background: rgba(20, 22, 27, 0.85); border: 1px solid rgba(255, 255, 255, 0.13); backdrop-filter: blur(10px); }
-.gear-live-dot { width: 7px; height: 7px; border-radius: 50%; background: #c8f169; animation: gear-pulse 1.6s ease-in-out infinite; }
-@keyframes gear-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
-.gear-export { position: relative; }
-.gear-export > button { all: unset; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+.rune-live-dot { width: 7px; height: 7px; border-radius: 50%; background: #c8f169; animation: rune-pulse 1.6s ease-in-out infinite; }
+@keyframes rune-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+.rune-export { position: relative; }
+.rune-export > button { all: unset; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
   font-family: inherit; font-size: 11px; font-weight: 600; line-height: 1; padding: 6px 11px; border-radius: 999px;
   background: rgba(20, 22, 27, 0.85); color: #f0f2f5; border: 1px solid rgba(255, 255, 255, 0.13); backdrop-filter: blur(10px); }
-.gear-export > button:hover { border-color: rgba(255, 255, 255, 0.3); }
-.gear-export-menu { position: absolute; right: 0; top: calc(100% + 6px); min-width: 200px;
+.rune-export > button:hover { border-color: rgba(255, 255, 255, 0.3); }
+.rune-export-menu { position: absolute; right: 0; top: calc(100% + 6px); min-width: 200px;
   background: #1a1d24; border: 1px solid rgba(255, 255, 255, 0.13); border-radius: 12px; padding: 5px;
   display: none; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5); }
-.gear-export.open .gear-export-menu { display: block; }
-.gear-export-menu a, .gear-export-menu button { all: unset; display: block; width: 100%; cursor: pointer; box-sizing: border-box;
+.rune-export.open .rune-export-menu { display: block; }
+.rune-export-menu a, .rune-export-menu button { all: unset; display: block; width: 100%; cursor: pointer; box-sizing: border-box;
   font-family: inherit; font-size: 12px; color: #f0f2f5; padding: 8px 10px; border-radius: 8px; text-decoration: none; }
-.gear-export-menu a:hover, .gear-export-menu button:hover { background: rgba(255, 255, 255, 0.07); }
-@media print { .gear-fab { display: none !important; } }
+.rune-export-menu a:hover, .rune-export-menu button:hover { background: rgba(255, 255, 255, 0.07); }
+@media print { .rune-fab { display: none !important; } }
 `;
 
 // Palette shared with the client (kept in one place; CSS uses --accent).
@@ -359,7 +359,7 @@ export const CHART_DEFAULTS_JS = `
     if (Number.isInteger(v)) return v.toLocaleString();
     return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
   }
-  window.GEAR = { palette: PALETTE, rgba: hexToRgba, gradient: areaGradient, fmt: fmtNum };
+  window.RUNE = { palette: PALETTE, rgba: hexToRgba, gradient: areaGradient, fmt: fmtNum };
 
   C.defaults.color = MUTED;
   C.defaults.font.family = "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
@@ -419,17 +419,17 @@ export const CHART_DEFAULTS_JS = `
   T.titleFont = { weight: 600, size: 12 };
   if (C.defaults.plugins.colors) C.defaults.plugins.colors.enabled = false;
 
-  // gearTheme plugin: palette auto-assignment for uncolored datasets, gradient
+  // runeTheme plugin: palette auto-assignment for uncolored datasets, gradient
   // area fills, calm axes (no x grid, sparse muted y ticks). Everything is
   // "only if the author didn't set it" so explicit configs stay in control.
   C.register({
-    id: "gearTheme",
+    id: "runeTheme",
     beforeInit: function (chart) {
       try {
-        // Read the live palette: the spec renderer rotates window.GEAR.palette
+        // Read the live palette: the spec renderer rotates window.RUNE.palette
         // when a view sets its own accent, and auto-coloring must follow.
-        var PAL = (window.GEAR && window.GEAR.palette && window.GEAR.palette.length)
-          ? window.GEAR.palette : PALETTE;
+        var PAL = (window.RUNE && window.RUNE.palette && window.RUNE.palette.length)
+          ? window.RUNE.palette : PALETTE;
         var type = chart.config.type;
         var ds = (chart.config.data && chart.config.data.datasets) || [];
         for (var i = 0; i < ds.length; i++) {
@@ -464,14 +464,14 @@ export const CHART_DEFAULTS_JS = `
 })();
 `;
 
-// Renders window.__GEAR_SPEC__ into #gear-root and exposes window.render.
+// Renders window.__RUNE_SPEC__ into #rune-root and exposes window.render.
 export const SPEC_RENDERER_JS = `
 (function () {
   var charts = [];
   var keyed = {}; // key -> { kind, el, chart, item }
   var firstRender = true;
   var ACCENT = "#c8f169";
-  var BASE_PALETTE = null; // window.GEAR.palette before any accent rotation
+  var BASE_PALETTE = null; // window.RUNE.palette before any accent rotation
 
   // Per-view art direction: a spec-level accent recolors the CSS tokens and
   // rotates the chart palette so the accent leads series/slice assignment.
@@ -487,23 +487,23 @@ export const SPEC_RENDERER_JS = `
   }
   function applyAccent(accent) {
     var doc = document.documentElement;
-    if (window.GEAR && !BASE_PALETTE) BASE_PALETTE = window.GEAR.palette.slice();
+    if (window.RUNE && !BASE_PALETTE) BASE_PALETTE = window.RUNE.palette.slice();
     var ok = typeof accent === "string" && /^#[0-9a-fA-F]{6}$/.test(accent);
     ACCENT = ok ? accent : "#c8f169";
     if (ok) {
       doc.style.setProperty("--accent", accent);
-      if (window.GEAR) {
-        doc.style.setProperty("--accent-soft", window.GEAR.rgba(accent, 0.16));
+      if (window.RUNE) {
+        doc.style.setProperty("--accent-soft", window.RUNE.rgba(accent, 0.16));
         var rest = [];
         for (var i = 0; i < (BASE_PALETTE || []).length; i++) {
           if (BASE_PALETTE[i].toLowerCase() !== accent.toLowerCase()) rest.push(BASE_PALETTE[i]);
         }
-        window.GEAR.palette = [accent].concat(rest);
+        window.RUNE.palette = [accent].concat(rest);
       }
     } else {
       doc.style.removeProperty("--accent");
       doc.style.removeProperty("--accent-soft");
-      if (window.GEAR && BASE_PALETTE) window.GEAR.palette = BASE_PALETTE.slice();
+      if (window.RUNE && BASE_PALETTE) window.RUNE.palette = BASE_PALETTE.slice();
     }
   }
 
@@ -513,7 +513,7 @@ export const SPEC_RENDERER_JS = `
     if (text !== undefined && text !== null) e.textContent = String(text);
     return e;
   }
-  function fmt(v) { return window.GEAR ? window.GEAR.fmt(v) : String(v); }
+  function fmt(v) { return window.RUNE ? window.RUNE.fmt(v) : String(v); }
   function toneClass(t) {
     return t === "good" || t === "bad" || t === "warn" || t === "info" || t === "accent" ? t : "";
   }
@@ -538,7 +538,7 @@ export const SPEC_RENDERER_JS = `
 
   // ── charts from the simple shape ──
   function seriesColor(s, i) {
-    return s.color || (window.GEAR ? window.GEAR.palette[i % window.GEAR.palette.length] : undefined);
+    return s.color || (window.RUNE ? window.RUNE.palette[i % window.RUNE.palette.length] : undefined);
   }
   function chartConfig(c) {
     if (c.raw) return c.raw; // full Chart.js config escape hatch
@@ -595,7 +595,7 @@ export const SPEC_RENDERER_JS = `
   }
   function centerTextPlugin(center) {
     return {
-      id: "gearCenter",
+      id: "runeCenter",
       afterDraw: function (chart) {
         var area = chart.chartArea;
         if (!area) return;
@@ -627,7 +627,7 @@ export const SPEC_RENDERER_JS = `
   function sparkline(canvas, data, color) {
     var chart = new window.Chart(canvas.getContext("2d"), {
       type: "line",
-      data: { labels: data.map(function (_, i) { return i; }), datasets: [{ data: data, borderColor: color, borderWidth: 1.75, fill: true, backgroundColor: window.GEAR ? window.GEAR.gradient(color) : undefined }] },
+      data: { labels: data.map(function (_, i) { return i; }), datasets: [{ data: data, borderColor: color, borderWidth: 1.75, fill: true, backgroundColor: window.RUNE ? window.RUNE.gradient(color) : undefined }] },
       options: {
         animation: firstRender ? { duration: 400 } : false,
         plugins: { legend: { display: false }, tooltip: { enabled: false } },
@@ -785,7 +785,7 @@ export const SPEC_RENDERER_JS = `
       var fill = el("div", "prog-fill");
       fill.style.width = v + "%";
       if (it.color) fill.style.background = it.color;
-      else if (window.GEAR && item.multicolor) fill.style.background = window.GEAR.palette[i % window.GEAR.palette.length];
+      else if (window.RUNE && item.multicolor) fill.style.background = window.RUNE.palette[i % window.RUNE.palette.length];
       track.appendChild(fill);
       p.appendChild(track);
       fills.push({ fill: fill, top: top });
@@ -818,7 +818,7 @@ export const SPEC_RENDERER_JS = `
         var cell = el("div", "hm-cell");
         if (typeof v === "number" && isFinite(v) && v > 0 && max > 0) {
           var t = Math.max(0, Math.min(1, v / max));
-          if (window.GEAR) cell.style.background = window.GEAR.rgba(ACCENT, 0.07 + 0.88 * t);
+          if (window.RUNE) cell.style.background = window.RUNE.rgba(ACCENT, 0.07 + 0.88 * t);
         }
         cell.title = rows[ri] + " \\u00b7 " + cols[ci] + ": " + (v === undefined || v === null ? "\\u2014" : fmt(v));
         grid.appendChild(cell);
@@ -887,7 +887,7 @@ export const SPEC_RENDERER_JS = `
     keyed = {};
     applyDirection(spec.direction); // ground + type first: the accent sits ON it
     applyAccent(spec.accent); // before any chart exists: palette must lead
-    var root = document.getElementById("gear-root");
+    var root = document.getElementById("rune-root");
     if (!root) return;
     root.textContent = "";
     var dash = el("div", "dash");
@@ -903,7 +903,7 @@ export const SPEC_RENDERER_JS = `
       else meta.appendChild(chip(b.text, b.tone));
     });
     var updated = el("span", "chip");
-    updated.id = "gear-updated";
+    updated.id = "rune-updated";
     updated.style.display = "none";
     meta.appendChild(updated);
     header.appendChild(meta);
@@ -934,7 +934,7 @@ export const SPEC_RENDERER_JS = `
   }
 
   function stampUpdated() {
-    var s = document.getElementById("gear-updated");
+    var s = document.getElementById("rune-updated");
     if (!s) return;
     s.style.display = "";
     s.textContent = "updated " + new Date().toLocaleTimeString();
@@ -998,14 +998,14 @@ export const SPEC_RENDERER_JS = `
   window.render = function (payload) {
     if (isSpec(payload)) {
       var wasFirst = firstRender;
-      window.__GEAR_SPEC__ = payload;
+      window.__RUNE_SPEC__ = payload;
       renderSpec(payload);
       if (!wasFirst) stampUpdated();
       return;
     }
-    if (window.__GEAR_SPEC__) {
-      var root = document.getElementById("gear-root");
-      if (root && !root.firstChild) renderSpec(window.__GEAR_SPEC__);
+    if (window.__RUNE_SPEC__) {
+      var root = document.getElementById("rune-root");
+      if (root && !root.firstChild) renderSpec(window.__RUNE_SPEC__);
       applyData(payload);
     }
   };
@@ -1014,7 +1014,7 @@ export const SPEC_RENDERER_JS = `
 
 /** Body fragment for spec-driven dashboards: root node + renderer. */
 export function specShellHtml(specJson: string): string {
-  return `<div id="gear-root"></div>
-<script>window.__GEAR_SPEC__ = ${specJson};</script>
+  return `<div id="rune-root"></div>
+<script>window.__RUNE_SPEC__ = ${specJson};</script>
 <script>${SPEC_RENDERER_JS}</script>`;
 }

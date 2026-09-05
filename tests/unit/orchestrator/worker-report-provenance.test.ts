@@ -8,7 +8,7 @@
  * bug — so the lead integrated builds against the worker's running commentary
  * rather than its account of what it actually built.
  *
- * These tests need no gear-tools binary: the worker writes nothing, so the
+ * These tests need no rune-tools binary: the worker writes nothing, so the
  * scripted "model" only ever emits text.
  */
 
@@ -72,7 +72,7 @@ function scriptedGateway(script: Turn[], pre?: StreamEvent[]) {
 
 function runWorker(gateway: any, root: string, args?: Record<string, unknown>) {
   const tool = createWorkerTool({
-    binaryPath: "/nonexistent/gear-tools",
+    binaryPath: "/nonexistent/rune-tools",
     resolve: () => ({ gateway, model: "frontier-model", provider: "anthropic" as any }),
   });
   return tool.execute({
@@ -157,13 +157,13 @@ describe("the worker can see its turn budget", () => {
   test("the last two turns say to write the report now", async () => {
     // The tool turns must SUCCEED for the run to march the full budget:
     // `read_file` here shells out to the (deliberately nonexistent)
-    // gear-tools binary, so every read fails identically — and twelve
+    // rune-tools binary, so every read fails identically — and twelve
     // identical failures with nothing succeeding between them is an orbit
     // the same-shape breaker now (correctly) lands before the budget
     // expires. This test is about the clock, not the orbit, so its turns
     // run `glob` — TypeScript-native, no binary — against real seeded files.
     // (It used to be `ast_query`, retired in P4.7; `glob` is the remaining
-    // read tool in the worker set that needs no gear-tools binary.)
+    // read tool in the worker set that needs no rune-tools binary.)
     const root = ws();
     mkdirSync(join(root, "src"), { recursive: true });
     for (let i = 1; i <= 14; i++) writeFileSync(join(root, "src", `f${i}.ts`), "export {};\n");

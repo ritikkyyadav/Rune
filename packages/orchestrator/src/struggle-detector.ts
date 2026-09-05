@@ -6,7 +6,7 @@
 // at most once per run per key, so a long thrash becomes one incident, not
 // fifty.
 
-import type { IncidentReporter } from "@gear/shared";
+import type { IncidentReporter } from "@rune/shared";
 
 export interface StruggleDetectorConfig {
   /** Same file read this many times in one run (without an intervening edit) → thrash. Default 3. */

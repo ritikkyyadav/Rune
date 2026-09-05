@@ -30,7 +30,7 @@ let dir: string;
 let store: NotebookStore;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "gear-lessons-"));
+  dir = mkdtempSync(join(tmpdir(), "rune-lessons-"));
   store = new NotebookStore(join(dir, "notebook.db"));
 });
 afterEach(() => {

@@ -110,7 +110,7 @@ function notesIn(loop: AgentLoop): number {
 }
 
 function withWorkspace(fn: (ws: string) => Promise<void>): Promise<void> {
-  const ws = mkdtempSync(join(tmpdir(), "gear-greenfield-"));
+  const ws = mkdtempSync(join(tmpdir(), "rune-greenfield-"));
   return fn(ws).finally(() => rmSync(ws, { recursive: true, force: true }));
 }
 

@@ -21,12 +21,12 @@ import {
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "gear-secrets-"));
-  process.env.GEAR_SECRETS_PATH = join(dir, "secrets.json");
+  dir = mkdtempSync(join(tmpdir(), "rune-secrets-"));
+  process.env.RUNE_SECRETS_PATH = join(dir, "secrets.json");
 });
 
 afterEach(() => {
-  delete process.env.GEAR_SECRETS_PATH;
+  delete process.env.RUNE_SECRETS_PATH;
   rmSync(dir, { recursive: true, force: true });
 });
 

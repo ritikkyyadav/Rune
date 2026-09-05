@@ -1,4 +1,4 @@
-// ─── gear serve: the engine as a server ───
+// ─── rune serve: the engine as a server ───
 //
 // The engine has been a daemon in all but the door. `engine-host` already
 // speaks the protocol over stdio and over a unix socket; a unix socket is not
@@ -10,8 +10,8 @@
 //
 // It is a SUPERVISOR, not another engine. `Engine` holds one `currentAbort`
 // and one `liveLoop`, so one process can run one turn. Rather than refactor
-// that for in-process multiplexing, `gear serve` spawns one engine-host per
-// session — the same spawn + registry pattern `gear detach` has used since it
+// that for in-process multiplexing, `rune serve` spawns one engine-host per
+// session — the same spawn + registry pattern `rune detach` has used since it
 // shipped — and proxies frames. Sessions are genuinely concurrent because they
 // are genuinely separate processes, and a wedged session cannot take the
 // server with it.
@@ -40,11 +40,10 @@ import {
   toRequest,
   toResult,
   toStream,
-} from "@gear/protocol";
-import { adoptLegacyEnv, getGearHome, loadConfig, migrateLegacyHome } from "@gear/shared";
+} from "@rune/protocol";
+import { adoptLegacyEnv, getRuneHome, loadConfig, migrateLegacyHome } from "@rune/shared";
 
 import { HostClient } from "../host-client";
-import { type WebBundle, resolveWebBundle } from "../web-embed";
 import { currentContext, hostSpawnArgv, hostSpawnLabel } from "./host-spawn";
 
 // ─── Where the door key lives ───
@@ -69,18 +68,16 @@ export interface ServeConfig {
   /**
    * The folder this server's tools run in.
    *
-   * Recorded so `gear` can say which workspace the engine it is about to reuse
+   * Recorded so `rune` can say which workspace the engine it is about to reuse
    * is actually serving. One server hosts every session; silently attaching a
    * second project to the first project's tools is the papercut this line
    * exists to prevent.
    */
   workspace: string;
-  /** Whether this server is also handing out the app bundle. */
-  web: boolean;
 }
 
 export function serveConfigPath(): string {
-  return join(getGearHome(), "serve.json");
+  return join(getRuneHome(), "serve.json");
 }
 
 function mintToken(): string {
@@ -102,7 +99,6 @@ export function readServeConfig(): ServeConfig | null {
       origins: Array.isArray(raw.origins) ? raw.origins.map(String) : [],
       pid: Number(raw.pid ?? 0),
       workspace: typeof raw.workspace === "string" ? raw.workspace : "",
-      web: raw.web === true,
     };
   } catch {
     return null;
@@ -111,7 +107,7 @@ export function readServeConfig(): ServeConfig | null {
 
 function writeServeConfig(cfg: ServeConfig): void {
   const path = serveConfigPath();
-  mkdirSync(getGearHome(), { recursive: true });
+  mkdirSync(getRuneHome(), { recursive: true });
   writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n", { mode: 0o600 });
   // writeFileSync's mode only applies on CREATE. An existing file keeps
   // whatever mode it had, which for a token file is not good enough.
@@ -171,7 +167,7 @@ export function extractToken(req: Request): string | null {
   if (proto) {
     for (const part of proto.split(",")) {
       const p = part.trim();
-      if (p.startsWith("gear.bearer.")) return p.slice("gear.bearer.".length);
+      if (p.startsWith("rune.bearer.")) return p.slice("rune.bearer.".length);
     }
   }
 
@@ -188,7 +184,7 @@ export function isLoopbackAddress(address: string | undefined): boolean {
 
 // ─── The host pool (the supervisor half of P2.3) ───
 
-const RUN_DIR = (): string => join(getGearHome(), "run");
+const RUN_DIR = (): string => join(getRuneHome(), "run");
 const SERVE_REGISTRY = (): string => join(RUN_DIR(), "serve-hosts.json");
 
 /**
@@ -372,15 +368,15 @@ export class HostPool {
       // `--parent-pid` is the host's own dead-man's switch: if this supervisor
       // is SIGKILLed (no handler runs, nothing gets to stop anything), the host
       // notices its parent is gone and exits by itself. Without it a `kill -9`
-      // on `gear serve` orphaned every session engine, forever.
+      // on `rune serve` orphaned every session engine, forever.
       const hostArgs = ["--socket", socket];
       if (this.parentPid !== null) hostArgs.push("--parent-pid", String(this.parentPid));
-      // `bun engine-host.ts` from a checkout, `<gear> engine-host` from the
+      // `bun engine-host.ts` from a checkout, `<rune> engine-host` from the
       // compiled binary — where the source is virtual and the script path this
       // used to build does not exist. See host-spawn.ts (P10.9a).
       const argv = hostSpawnArgv(currentContext(import.meta.dir), hostArgs);
       const child = Bun.spawn(argv, {
-        env: { ...process.env, GEAR_WORKSPACE: this.workspace },
+        env: { ...process.env, RUNE_WORKSPACE: this.workspace },
         stdin: "ignore",
         stdout: logFd,
         stderr: logFd,
@@ -425,9 +421,9 @@ export class HostPool {
   /**
    * Stop every host and wait for the processes to go.
    *
-   * The counterpart to `detachAll`, and now the default on `gear serve` exit:
+   * The counterpart to `detachAll`, and now the default on `rune serve` exit:
    * a foreground server that spawned four engines and left them running is not
-   * "graceful", it is a leak with a rationale. `--keep-hosts` (and `gear
+   * "graceful", it is a leak with a rationale. `--keep-hosts` (and `rune
    * detach`, which never goes through here) keep the old behaviour explicitly.
    */
   async shutdownAll(graceMs = 3_000): Promise<number> {
@@ -468,10 +464,10 @@ export class HostPool {
   /**
    * Let go of every host WITHOUT stopping it.
    *
-   * The point of graceful shutdown: `gear serve` going away must not kill a
+   * The point of graceful shutdown: `rune serve` going away must not kill a
    * turn that is halfway through editing files. The hosts stay up on their
-   * sockets, the registry records where they are, and the next `gear serve`
-   * reattaches — exactly as `gear attach` does today.
+   * sockets, the registry records where they are, and the next `rune serve`
+   * reattaches — exactly as `rune attach` does today.
    */
   detachAll(): string[] {
     const sockets: string[] = [];
@@ -594,21 +590,9 @@ export interface ServeOptions {
   allowRemoteSettings?: boolean;
   origins?: string[];
   /**
-   * Serve the built web client on the same port (P3.2).
-   *
-   * Same port because the alternative — a page on one port opening a socket on
-   * another — is a cross-origin request the allowlist would have to be widened
-   * for, and widening an allowlist to accommodate your own layout is how these
-   * things stop protecting anything.
-   *
-   * Since P10.9a this is a resolved bundle rather than a directory: a compiled
-   * binary has no `apps/web/dist` beside it and serves the copy it carries.
-   */
-  web?: WebBundle;
-  /**
    * Leave the per-session engine hosts running when the server stops.
    *
-   * The pre-P10.0 behaviour, now opt-in (`gear serve --keep-hosts`). It is the
+   * The pre-P10.0 behaviour, now opt-in (`rune serve --keep-hosts`). It is the
    * right answer for a detached, long-lived server on a workstation and the
    * wrong one for everything else, which is why it stopped being the default:
    * every foreground run and every test run was leaving its engines behind.
@@ -618,64 +602,6 @@ export interface ServeOptions {
   idleHostSecs?: number;
   /** Injected by tests so they do not have to parse stdout. */
   onListening?: (info: { port: number; host: string; token: string }) => void;
-}
-
-// ─── The web client (P3.2) ───
-
-const CONTENT_TYPES: Record<string, string> = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".mjs": "text/javascript; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".ico": "image/x-icon",
-  ".woff": "font/woff",
-  ".woff2": "font/woff2",
-};
-
-/**
- * Put the connection details into the page that will use them.
- *
- * The alternative is asking a person to paste a 43-character token into a form
- * on the page it was minted for, which is theatre: the server just generated
- * the token and is serving the page over the same connection.
- */
-export function injectServeEndpoint(html: string, url: string, token: string): string {
-  // Escape `<` INSIDE the JSON only. An HTML parser ends a script at the first
-  // literal `</script>` wherever it appears, so a value containing one would
-  // truncate the tag; escaping the tag's own terminator instead (which an
-  // earlier draft of this did) leaves the script unclosed and swallows the
-  // whole document.
-  const json = JSON.stringify({ url, token }).replace(/</g, "\\u003c");
-  const tag = `<script>window.__GEAR_SERVE__=${json};</script>\n`;
-  // It must run before the bundle, which reads it during module init.
-  return html.includes("</head>") ? html.replace("</head>", `${tag}</head>`) : tag + html;
-}
-
-/**
- * Whether this request may be handed a page with the token already in it.
- *
- * On loopback, yes: any process that could make this request already runs as
- * the user and can read `~/.gear/serve.json` directly, so refusing would buy
- * nothing.
- *
- * Off-loopback, no — and since P5.5 the remote link carries its token in the
- * URL **fragment**, which the browser never sends, so the server cannot embed
- * it even in principle. What goes out instead is the bundle with no token in
- * it, and the page reads its own `#token=`. That is not a weakening: the
- * bundle is public JavaScript, inert without a token, and the alternative
- * (`?token=` so the server can recognise the request) puts a credential for
- * remote code execution into every access log it passes through.
- */
-export function mayReceiveEmbeddedToken(
-  loopback: boolean,
-  supplied: string | null,
-  token: string,
-): boolean {
-  return loopback || (supplied != null && timingSafeEqual(supplied, token));
 }
 
 /**
@@ -698,63 +624,6 @@ export function lanAddresses(): string[] {
   return out;
 }
 
-/**
- * Resolve one URL path to a readable file, or null.
- *
- * Two bundles answer to the same rules: a directory on disk (a checkout) and
- * the map the compiled binary carries inside itself, whose values are
- * `/$bunfs/root/…` paths `Bun.file()` opens like any other. Path traversal is
- * refused in both — the map lookup cannot escape because a key that is not in
- * it simply is not there, and the on-disk join is still guarded.
- */
-function resolveAsset(bundle: WebBundle, rel: string): string | null {
-  if (bundle.files) return bundle.files[rel] ?? null;
-  if (!bundle.dist) return null;
-  const resolved = join(bundle.dist, rel);
-  // `..` in a URL path is the oldest static-server bug there is.
-  return resolved.startsWith(bundle.dist) ? resolved : null;
-}
-
-/** Serve one file out of the bundle, refusing anything that climbs out of it. */
-async function serveStatic(
-  bundle: WebBundle,
-  pathname: string,
-  embed: { url: string; token: string } | null,
-): Promise<Response> {
-  const rel = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
-  const resolved = resolveAsset(bundle, rel);
-  if (!resolved) {
-    // A single-page client: unknown paths are routes, not missing files.
-    if (rel.includes(".") || rel === "index.html")
-      return new Response("not found", { status: 404 });
-    return serveStatic(bundle, "/", embed);
-  }
-
-  const file = Bun.file(resolved);
-  if (!(await file.exists())) {
-    if (rel.includes(".") || rel === "index.html")
-      return new Response("not found", { status: 404 });
-    return serveStatic(bundle, "/", embed);
-  }
-
-  // The embedded copy is named `/$bunfs/root/index-<hash>.html`, so the
-  // content type has to come from the URL the browser asked for, not from
-  // whatever Bun called the file it copied in.
-  const ext = rel.includes(".") ? rel.slice(rel.lastIndexOf(".")) : "";
-  const type = CONTENT_TYPES[ext] ?? "application/octet-stream";
-  if (ext !== ".html") {
-    return new Response(file, { headers: { "content-type": type } });
-  }
-  const html = await file.text();
-  return new Response(embed ? injectServeEndpoint(html, embed.url, embed.token) : html, {
-    headers: {
-      "content-type": type,
-      // A page carrying a bearer token has no business in any cache.
-      "cache-control": "no-store",
-    },
-  });
-}
-
 export async function runServe(
   positionals: string[],
   values: Record<string, unknown>,
@@ -767,7 +636,7 @@ export async function runServe(
     return;
   }
 
-  // `gear serve --check`: the packaged proof (P10.9a). It must run from the
+  // `rune serve --check`: the packaged proof (P10.9a). It must run from the
   // artifact, not from source, which is why it lives on the command every
   // distribution path ships rather than in the test suite.
   if (values.check === true) {
@@ -783,31 +652,6 @@ export async function runServe(
   const origins =
     typeof values.origin === "string" ? [...DEFAULT_ORIGINS, values.origin] : [...DEFAULT_ORIGINS];
 
-  // `gear serve --web` is `gear web` on the serve port: one process that also
-  // hands out the page. The flag has been declared since P3.2 and did nothing,
-  // which is worse than not having it — an editor extension that runs it gets a
-  // socket and a 404 where the client should be. `gear web` stays the command a
-  // person types; this is the form a program spawns.
-  //
-  // Imported lazily because `web-cli` imports `serve` from here, and a static
-  // cycle between them is a class of bug nobody should have to debug twice.
-  let web: WebBundle | undefined;
-  if (values.web === true) {
-    const { sourceDistDir } = await import("./web-cli");
-    web = (await resolveWebBundle(sourceDistDir())) ?? undefined;
-    if (!web) {
-      // Loud, and on the way OUT. Before P10.9a this was a `console.error` the
-      // caller never saw, `web` stayed undefined, and the browser that asked
-      // for the page fell through to the API path and was told `401
-      // unauthorized`. Refusing to start is the honest answer: a `gear serve
-      // --web` that serves no web is a bug report in twenty minutes.
-      console.error("  the web client is not built and this build embeds none.");
-      console.error("  from a checkout:  bun run --filter @gear/web build");
-      console.error("  from a binary:    reinstall — the bundle ships inside it (P10.9a)");
-      throw new Error("gear serve --web: no web client to serve");
-    }
-  }
-
   // `--keep-hosts` is the escape for a detached, long-lived server: the engines
   // outlive the door, as they did before P10.0. Everything else — a foreground
   // run, a test, an editor that spawned this and then exited — takes its hosts
@@ -821,7 +665,6 @@ export async function runServe(
     workspace,
     allowRemoteSettings,
     origins,
-    web,
     keepHosts,
     idleHostSecs,
   });
@@ -900,21 +743,6 @@ export async function serve(opts: ServeOptions = {}): Promise<{ stop: () => void
         return Response.json({ ok: true, protocolVersion: PROTOCOL_VERSION });
       }
 
-      // ── the web client (P3.2) ──
-      // Anything that is not a websocket upgrade is a page request when the
-      // server was started with a bundle to serve.
-      if (opts.web && req.headers.get("upgrade")?.toLowerCase() !== "websocket") {
-        const fromHere = isLoopbackAddress(srv.requestIP(req)?.address);
-        // Loopback gets the token baked into the page it is about to use.
-        // Everyone else gets the bundle with no token in it and supplies one
-        // from the URL fragment — which never reaches this server, and so
-        // never reaches a log. The page is inert until it has one.
-        const embed = mayReceiveEmbeddedToken(fromHere, extractToken(req), token)
-          ? { url: `ws://${url.host}`, token }
-          : null;
-        return serveStatic(opts.web, url.pathname, embed);
-      }
-
       const origin = req.headers.get("origin");
       if (!originAllowed(origin, origins)) {
         return new Response("origin not allowed", { status: 403 });
@@ -937,7 +765,7 @@ export async function serve(opts: ServeOptions = {}): Promise<{ stop: () => void
       const echo = proto
         ?.split(",")
         .map((p) => p.trim())
-        .find((p) => p.startsWith("gear.bearer."));
+        .find((p) => p.startsWith("rune.bearer."));
       if (
         srv.upgrade(req, { data: state, headers: echo ? { "Sec-WebSocket-Protocol": echo } : {} })
       ) {
@@ -1031,7 +859,6 @@ export async function serve(opts: ServeOptions = {}): Promise<{ stop: () => void
     origins,
     pid: process.pid,
     workspace,
-    web: Boolean(opts.web),
   });
 
   // Sweep often enough that the idle window means something. A minute's
@@ -1050,19 +877,8 @@ export async function serve(opts: ServeOptions = {}): Promise<{ stop: () => void
       : [loopbackOnly ? "127.0.0.1" : host];
 
   const url = `ws://${dialHosts[0]}:${boundPort}`;
-  console.log(`gear ${opts.web ? "web" : "serve"} — protocol ${PROTOCOL_VERSION}`);
+  console.log(`rune serve — protocol ${PROTOCOL_VERSION}`);
   console.log(`  listening  ${url}`);
-  if (opts.web) {
-    // The token goes in the FRAGMENT, never the query: a fragment is not sent
-    // to the server, so it cannot be written to an access log, forwarded in a
-    // Referer, or captured by a proxy on the way. On loopback the page already
-    // has the token embedded, so the bare URL is enough.
-    for (const h of dialHosts) {
-      const page = `http://${h}:${boundPort}`;
-      console.log(`  open       ${loopbackOnly ? page : `${page}/#token=${token}`}`);
-    }
-    console.log(`  bundle     ${opts.web.label}`);
-  }
   console.log(`  workspace  ${workspace}`);
   console.log(`  hosts      ${hostSpawnLabel(currentContext(import.meta.dir))}`);
   console.log(`  token      ${serveConfigPath()} (0600)`);
@@ -1085,10 +901,10 @@ export async function serve(opts: ServeOptions = {}): Promise<{ stop: () => void
     if (opts.keepHosts) {
       // The old default, now explicit. A turn halfway through editing files
       // survives the front door closing; the registry records where the hosts
-      // are and the next `gear serve` reattaches.
+      // are and the next `rune serve` reattaches.
       const left = pool.detachAll();
       if (left.length > 0) {
-        console.log(`\n${left.length} session host(s) left running; reattach with gear serve`);
+        console.log(`\n${left.length} session host(s) left running; reattach with rune serve`);
       }
       return;
     }
@@ -1106,16 +922,11 @@ export async function serve(opts: ServeOptions = {}): Promise<{ stop: () => void
 function printStatus(): void {
   const cfg = readServeConfig();
   if (!cfg) {
-    console.log("gear serve: not running (no ~/.gear/serve.json)");
+    console.log("rune serve: not running (no ~/.rune/serve.json)");
     return;
   }
   const dialHost = cfg.host === "0.0.0.0" || cfg.host === "::" ? "127.0.0.1" : cfg.host;
-  console.log(`gear serve`);
-  if (cfg.web) {
-    // The one line most people came here for. The token rides in the fragment,
-    // which the browser never sends to the server.
-    console.log(`  open       http://${dialHost}:${cfg.port}/#token=${cfg.token}`);
-  }
+  console.log(`rune serve`);
   console.log(`  bind       ${cfg.host}:${cfg.port}`);
   console.log(`  workspace  ${cfg.workspace || "(not recorded)"}`);
   console.log(`  started    ${cfg.createdAt}`);

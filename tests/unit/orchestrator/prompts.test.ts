@@ -64,7 +64,7 @@ describe("AGENT_DOCTRINE", () => {
 
 describe("snapshotEnvironment / renderEnvironmentBlock", () => {
   test("non-git directory renders without git sections", () => {
-    const dir = mkdtempSync(join(tmpdir(), "gear-prompts-"));
+    const dir = mkdtempSync(join(tmpdir(), "rune-prompts-"));
     try {
       const env = snapshotEnvironment(dir, "test-model", "anthropic");
       expect(env.isGitRepo).toBe(false);
@@ -79,7 +79,7 @@ describe("snapshotEnvironment / renderEnvironmentBlock", () => {
   });
 
   test("includes model and provider", () => {
-    const dir = mkdtempSync(join(tmpdir(), "gear-prompts-"));
+    const dir = mkdtempSync(join(tmpdir(), "rune-prompts-"));
     try {
       const block = renderEnvironmentBlock(snapshotEnvironment(dir, "m1", "openai"));
       expect(block).toContain("Model: m1 (via openai)");
@@ -90,50 +90,50 @@ describe("snapshotEnvironment / renderEnvironmentBlock", () => {
 });
 
 describe("loadProjectMemory", () => {
-  // loadProjectMemory reads the USER's global instructions (~/.gear/GEAR.md)
-  // as well as the workspace's. Without redirecting the gear home, these tests
+  // loadProjectMemory reads the USER's global instructions (~/.rune/RUNE.md)
+  // as well as the workspace's. Without redirecting the rune home, these tests
   // read the machine they run on: green on a clean CI runner, red for every
   // developer who has ever used the product — the worst way round, because the
   // failure only appears where nobody is watching for it.
   //
-  // getGearHome() honors GEAR_HOME, so pointing it at an empty directory
+  // getRuneHome() honors RUNE_HOME, so pointing it at an empty directory
   // isolates the global half without weakening what is being tested.
-  let gearHome: string;
+  let runeHome: string;
+  let prevRuneHome: string | undefined;
   let prevGearHome: string | undefined;
-  let prevAlanHome: string | undefined;
 
   beforeEach(() => {
-    gearHome = mkdtempSync(join(tmpdir(), "gear-home-"));
+    runeHome = mkdtempSync(join(tmpdir(), "rune-home-"));
+    prevRuneHome = process.env.RUNE_HOME;
     prevGearHome = process.env.GEAR_HOME;
-    prevAlanHome = process.env.ALAN_HOME;
-    process.env.GEAR_HOME = gearHome;
+    process.env.RUNE_HOME = runeHome;
     // The pre-rename fallback is consulted too; leaving it set would reopen
     // the same hole from the other side.
-    delete process.env.ALAN_HOME;
+    delete process.env.GEAR_HOME;
   });
 
   afterEach(() => {
+    if (prevRuneHome === undefined) delete process.env.RUNE_HOME;
+    else process.env.RUNE_HOME = prevRuneHome;
     if (prevGearHome === undefined) delete process.env.GEAR_HOME;
     else process.env.GEAR_HOME = prevGearHome;
-    if (prevAlanHome === undefined) delete process.env.ALAN_HOME;
-    else process.env.ALAN_HOME = prevAlanHome;
-    rmSync(gearHome, { recursive: true, force: true });
+    rmSync(runeHome, { recursive: true, force: true });
   });
 
-  test("reads the user's global instructions from the gear home", () => {
-    const dir = mkdtempSync(join(tmpdir(), "gear-mem-"));
+  test("reads the user's global instructions from the rune home", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rune-mem-"));
     try {
-      writeFileSync(join(gearHome, "GEAR.md"), "be terse");
+      writeFileSync(join(runeHome, "RUNE.md"), "be terse");
       const mem = loadProjectMemory(dir);
       expect(mem.block).toContain("be terse");
-      expect(mem.files).toEqual([join(gearHome, "GEAR.md")]);
+      expect(mem.files).toEqual([join(runeHome, "RUNE.md")]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
   test("returns empty block when no memory files exist", () => {
-    const dir = mkdtempSync(join(tmpdir(), "gear-mem-"));
+    const dir = mkdtempSync(join(tmpdir(), "rune-mem-"));
     try {
       const mem = loadProjectMemory(dir);
       expect(mem.block).toBe("");
@@ -143,59 +143,59 @@ describe("loadProjectMemory", () => {
     }
   });
 
-  test("loads GEAR.md and reports the file", () => {
-    const dir = mkdtempSync(join(tmpdir(), "gear-mem-"));
+  test("loads RUNE.md and reports the file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rune-mem-"));
     try {
-      writeFileSync(join(dir, "GEAR.md"), "Always use tabs.");
+      writeFileSync(join(dir, "RUNE.md"), "Always use tabs.");
       const mem = loadProjectMemory(dir);
       expect(mem.block).toContain("Always use tabs.");
       expect(mem.block).toContain("# Project & user instructions");
-      expect(mem.files.some((f) => f.endsWith("GEAR.md"))).toBe(true);
+      expect(mem.files.some((f) => f.endsWith("RUNE.md"))).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  test("GEAR.md wins while CLAUDE.md remains supported", () => {
-    const dir = mkdtempSync(join(tmpdir(), "gear-mem-"));
+  test("RUNE.md wins while CLAUDE.md remains supported", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rune-mem-"));
     try {
       writeFileSync(join(dir, "CLAUDE.md"), "claude instructions");
       let mem = loadProjectMemory(dir);
       expect(mem.block).toContain("claude instructions");
 
-      writeFileSync(join(dir, "GEAR.md"), "gear instructions");
+      writeFileSync(join(dir, "RUNE.md"), "rune instructions");
       mem = loadProjectMemory(dir);
-      expect(mem.block).toContain("gear instructions");
+      expect(mem.block).toContain("rune instructions");
       expect(mem.block).not.toContain("claude instructions");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  test("pre-rename ALAN.md still loads, below GEAR.md but above CLAUDE.md", () => {
-    const dir = mkdtempSync(join(tmpdir(), "gear-mem-"));
+  test("pre-rename GEAR.md still loads, below RUNE.md but above CLAUDE.md", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rune-mem-"));
     try {
       writeFileSync(join(dir, "CLAUDE.md"), "claude instructions");
-      writeFileSync(join(dir, "ALAN.md"), "alan-era instructions");
+      writeFileSync(join(dir, "GEAR.md"), "gear-era instructions");
       let mem = loadProjectMemory(dir);
-      // An upgraded install keeps its memory: ALAN.md beats the ecosystem files…
-      expect(mem.block).toContain("alan-era instructions");
+      // An upgraded install keeps its memory: GEAR.md beats the ecosystem files…
+      expect(mem.block).toContain("gear-era instructions");
       expect(mem.block).not.toContain("claude instructions");
 
-      writeFileSync(join(dir, "GEAR.md"), "gear instructions");
+      writeFileSync(join(dir, "RUNE.md"), "rune instructions");
       mem = loadProjectMemory(dir);
       // …and the new name wins once the user migrates.
-      expect(mem.block).toContain("gear instructions");
-      expect(mem.block).not.toContain("alan-era instructions");
+      expect(mem.block).toContain("rune instructions");
+      expect(mem.block).not.toContain("gear-era instructions");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
   test("truncates oversized memory files", () => {
-    const dir = mkdtempSync(join(tmpdir(), "gear-mem-"));
+    const dir = mkdtempSync(join(tmpdir(), "rune-mem-"));
     try {
-      writeFileSync(join(dir, "GEAR.md"), "x".repeat(60_000));
+      writeFileSync(join(dir, "RUNE.md"), "x".repeat(60_000));
       const mem = loadProjectMemory(dir);
       expect(mem.block).toContain("… (truncated)");
       expect(mem.block.length).toBeLessThan(45_000);
@@ -205,9 +205,9 @@ describe("loadProjectMemory", () => {
   });
 
   test("skips empty memory files", () => {
-    const dir = mkdtempSync(join(tmpdir(), "gear-mem-"));
+    const dir = mkdtempSync(join(tmpdir(), "rune-mem-"));
     try {
-      writeFileSync(join(dir, "GEAR.md"), "   \n  ");
+      writeFileSync(join(dir, "RUNE.md"), "   \n  ");
       const mem = loadProjectMemory(dir);
       expect(mem.block).toBe("");
     } finally {

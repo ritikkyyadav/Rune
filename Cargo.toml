@@ -1,9 +1,9 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/gear-sandbox",
-    "crates/gear-index",
-    "crates/gear-tools",
+    "crates/rune-sandbox",
+    "crates/rune-index",
+    "crates/rune-tools",
 ]
 
 [workspace.package]

@@ -30,7 +30,7 @@ const BASH: ToolSchema = {
  */
 function guidedBroker(): PermissionBroker {
   return new PermissionBroker(false, {
-    workspaceRoot: "/tmp/gear-grant-escape-test",
+    workspaceRoot: "/tmp/rune-grant-escape-test",
     initialMode: "gear-1",
   });
 }

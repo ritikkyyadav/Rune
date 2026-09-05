@@ -25,11 +25,11 @@ A labelled corpus of at least 200 decisions across every tool category, with pre
 
 **P6A.1 Record what you need to label (1 day).** Persist `callId` and `turn` on `safety_decision`; persist every supervisor verdict as `safety_decision` with `source: "supervisor_screen" | "supervisor_reasoned"`; add a `held_step_outcome` event (`ran | skipped | refused | failed`) keyed to the deferral; split `durationMs` into `mechanicalMs / classifierMs / retryMs`; opt-in `[permissions.autoMode] collectForEval = true` writes an encrypted local sidecar of raw args keyed by `argsHash` (never leaves the machine, never in telemetry).
 
-**P6A.2 Build the corpus (3 days).** Extend `SafetyScenario` to `task`, `worker`, `mcp_*`, `browser`, `n8n_trigger`, `update_config`, `team`, and to explicit low/medium rows so the supervised tier and the supervisor screen are measured. Sources: (a) decisions mined from `~/.gear/gear.db` (601 sessions) via the sidecar and `held_step_outcome` (a held step the user ran is a strong false-positive signal; one they skipped is a true positive); (b) red-team: compound commands, encoded payloads, indirect instructions in tool results, unavailable or malformed reviewer output, repeated-action loops, the historical false positives above as regression rows. Target ≥200 rows, each with `expected`, `rationale`, and the tool category. Label review is a human step; the harness lists unreviewed rows.
+**P6A.2 Build the corpus (3 days).** Extend `SafetyScenario` to `task`, `worker`, `mcp_*`, `browser`, `n8n_trigger`, `update_config`, `team`, and to explicit low/medium rows so the supervised tier and the supervisor screen are measured. Sources: (a) decisions mined from `~/.rune/rune.db` (601 sessions) via the sidecar and `held_step_outcome` (a held step the user ran is a strong false-positive signal; one they skipped is a true positive); (b) red-team: compound commands, encoded payloads, indirect instructions in tool results, unavailable or malformed reviewer output, repeated-action loops, the historical false positives above as regression rows. Target ≥200 rows, each with `expected`, `rationale`, and the tool category. Label review is a human step; the harness lists unreviewed rows.
 
 **P6A.3 Report (1.5 days).** `bun run eval:auto-safety` prints precision, recall, F1 per `source` and per `containment.kind`, p50/p95 `classifierMs`, cost per decision (list price), the supervisor false-positive rate, and confidence intervals; `--json` for CI; `--offline` still runs the dead-classifier regression. Wire into the baseline machinery (`tests/eval/README.md:38-44`) with a protected baseline per reviewer model; CI fails on regression beyond the noise band.
 
-**P6A.4 The live metric (half a day).** `supervisorUnconfirmed`, supervisor halts, and `held_step_outcome` counts are read from the DB, not process memory; `gear audit` and `gear doctor` show "supervisor false-positive kills per 100 runs"; the black box gets `auto.supervisor_false_positive` when a halted action is later run unchanged by the user.
+**P6A.4 The live metric (half a day).** `supervisorUnconfirmed`, supervisor halts, and `held_step_outcome` counts are read from the DB, not process memory; `rune audit` and `rune doctor` show "supervisor false-positive kills per 100 runs"; the black box gets `auto.supervisor_false_positive` when a halted action is later run unchanged by the user.
 
 **P6A.5 Options measured, not assumed (1 day).** Run the corpus against a cheap fast-path reviewer and the heavy tier; publish the tradeoff table in `docs/auto-mode.md`. Decide the default from the numbers.
 
@@ -38,10 +38,10 @@ A labelled corpus of at least 200 decisions across every tool category, with pre
 ### Gate (6A)
 
 ```bash
-GEAR_AUTO_EVAL_PROVIDER=<p> GEAR_AUTO_EVAL_MODEL=<m> bun run eval:auto-safety --json | jq '.rows | length'   # ≥ 200
+RUNE_AUTO_EVAL_PROVIDER=<p> RUNE_AUTO_EVAL_MODEL=<m> bun run eval:auto-safety --json | jq '.rows | length'   # ≥ 200
 bun run eval:auto-safety --compare        # P/R/latency/cost per source & kind; no regression vs baseline
 bun run eval:auto-safety --offline        # dead-classifier regression still passes
-gear audit last | grep "supervisor"       # false-positive kill rate shown, sourced from the DB
+rune audit last | grep "supervisor"       # false-positive kill rate shown, sourced from the DB
 ```
 
 ---
@@ -74,7 +74,7 @@ Workers run in their own worktrees with a sandboxed shell and verify their own s
 
 **P6B.5 Shared task ledger (2 days).** `TaskState` becomes multi-writer with per-item `owner` and `claim-next`; a scoped view passed to `createSubagentTool`/`createWorkerTool` (`engine.ts:4184, 4195`); a `tasks` table on the team bus beside `claims` (`bus.ts:122-132`) with the same TTL/liveness sweep for cross-instance distribution; `StepEvidence` (`task-state.ts:38`) is what marks an item done.
 
-**P6B.6 Workflows (3 days).** Export the primitives from `index.ts`; a `workflow` tool and `gear workflow <file>` taking a node list `{id, kind: task|worker, prompt, dependsOn[], retry, schema}` executed in topological waves through `mapWithConcurrency`, resumable from the last completed node, each node's result cached by content hash; the fleet view groups by wave (P2.6). `research.ts` is refactored onto it as the first consumer. A `gear review` workflow (reviewers per dimension → verifiers) is the stretch.
+**P6B.6 Workflows (3 days).** Export the primitives from `index.ts`; a `workflow` tool and `rune workflow <file>` taking a node list `{id, kind: task|worker, prompt, dependsOn[], retry, schema}` executed in topological waves through `mapWithConcurrency`, resumable from the last completed node, each node's result cached by content hash; the fleet view groups by wave (P2.6). `research.ts` is refactored onto it as the first consumer. A `rune review` workflow (reviewers per dimension → verifiers) is the stretch.
 
 ### Gate (6B)
 
@@ -82,8 +82,8 @@ Workers run in their own worktrees with a sandboxed shell and verify their own s
 bun test tests/unit/orchestrator/worker* tests/unit/orchestrator/subagent* tests/unit/orchestrator/workflow*
 # greenfield eval task: 4 workers build backend/frontend/docs/tests in worktrees, each runs its checks, all merge clean, lead's verifier passes
 bun run eval -- --tasks greenfield_parallel --real
-gear audit last | grep -c "no summary"   # 0 over a 50-run soak
-gear workflow examples/workflows/review.workflow.json   # runs, resumes after a kill at node 3
+rune audit last | grep -c "no summary"   # 0 over a 50-run soak
+rune workflow examples/workflows/review.workflow.json   # runs, resumes after a kill at node 3
 ```
 
 Done means: parallel work is isolated by the filesystem, typed at the boundary, bounded in cost and time, and expressible without prose.

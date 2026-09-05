@@ -31,8 +31,8 @@ function liftAttachments(result: unknown): ToolAttachment[] {
 }
 
 /**
- * Creates a ToolHandler that delegates to the gear-tools Rust binary.
- * Each tool invocation spawns: gear-tools --workspace <root> <subcommand>
+ * Creates a ToolHandler that delegates to the rune-tools Rust binary.
+ * Each tool invocation spawns: rune-tools --workspace <root> <subcommand>
  * with JSON piped to stdin, JSON read from stdout.
  */
 export function createRustToolHandler(
@@ -94,7 +94,7 @@ export function createRustToolHandler(
         });
 
         // Esc must actually stop the work. Forward the abort as SIGTERM —
-        // gear-tools' signal handler kills its child's whole process group
+        // rune-tools' signal handler kills its child's whole process group
         // and exits — escalating to SIGKILL if it doesn't die promptly.
         // Without this, an interrupted bash call kept running for up to its
         // full 120s timeout while the turn appeared hung.

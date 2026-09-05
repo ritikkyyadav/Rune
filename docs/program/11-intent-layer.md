@@ -1,5 +1,10 @@
 # Phase 11 — The intent layer
 
+> **Withdrawn 2026-09-03 (P11.2, P11.3).** The founder decided the product is the terminal interface
+> only; the primitives, the projection schema, the composer and the planned shell were removed with
+> the web app. P11.1 — the task state model, the narrative events and the Decision Record — is engine
+> work and stays. This file is kept as the record of the direction and its reasoning.
+
 **One agent at a time · after Phase 10 · supersedes the chat-centred parts of Phase 9**
 
 ## The correction that created this phase
@@ -7,7 +12,7 @@
 After using the Phase 9 web app the founder said it is "one of the simplest chat interfaces" and not what was asked for. What was asked for, in the founder's words and the essay they attached ("Intent Operating Layer"):
 
 - **The only static chrome is a left control deck**: spawn a new session; a catalog of named **projects** plus a personal workspace; the **session** history; the applications a person has connected (not to be called "plugins" or "connectors"; this brief uses **Apps** until the founder names it); and a top entry for **Settings** (providers, teams, the rest).
-- **The core is an intent strip.** Gear starts almost empty: a high-quality animated strip that asks what the person wants done. Below it, two lists: **Active work** with progress, and **Needs you**, an inbox of decisions across all sessions. Everything else appears only when a task needs it.
+- **The core is an intent strip.** Rune starts almost empty: a high-quality animated strip that asks what the person wants done. Below it, two lists: **Active work** with progress, and **Needs you**, an inbox of decisions across all sessions. Everything else appears only when a task needs it.
 - **The workspace is the agent's playground, but never free-form.** The agent composes the task surface from a closed catalogue of trusted primitives through a small set of projection personas; the model emits a validated projection, never HTML, so a small model cannot break the interface.
 - **The purpose is understanding.** The person must feel what is being built and learn from the work. Show the experimentation while it runs (the hypotheses tried), fold the branches that turned out wrong, and end every task in one clean artifact that a person reads top to bottom and understands how the decision was reached. Chat is the input; the interface is the output.
 
@@ -22,7 +27,7 @@ Non-goals: modes or workspaces named by category ("coding mode"); tabs for resea
    Intent Interpreter          one call: objective, task kind, constraints, the project
          │
          ▼
-   Task Graph                  sessions, sub-agents, workflows (exists: engine, team bus, gear workflow)
+   Task Graph                  sessions, sub-agents, workflows (exists: engine, team bus, rune workflow)
          │
    ┌─────┴──────┐
    │            │
@@ -49,12 +54,12 @@ The task state is the source of truth, not the screen. A projection binds primit
 
 ```
 ┌─────────────┬──────────────────────────────────────────────────────────┐
-│ ⚙ Gear    ⚙ │                                                          │
+│ ⚙ Rune    ⚙ │                                                          │
 │             │                                                          │
 │ + New       │              What do you want to get done?               │
 │             │        ┌────────────────────────────────────────┐        │
 │ Projects    │        │                                        │        │
-│  · Alan     │        └────────────────────────────────────────┘        │
+│  · Rune     │        └────────────────────────────────────────┘        │
 │  · Personal │                                                          │
 │             │   Active work                                            │
 │ Sessions    │   ──────────────────────────────────────────────         │
@@ -123,7 +128,7 @@ Added:
 - `pendingDecisions`: one list unifying held steps, `ask_user` questions, approvals and reviews, each with a deadline and a resolution; the inbox reads this.
 - `progress`: a number derived from the ledger (steps with evidence over steps), never guessed.
 
-Events added to `@gear/protocol`: `hypothesis`, `hypothesis_updated`, `decision`, `artifact`, `projection` (the composer's output for a task, and updates), `pending_decision` and `decision_resolved`. The model reports its experiments structurally through two small tools, `note_hypothesis` and `record_decision`, extending the existing `record_evidence` seam; the harness also infers hypotheses from plan steps that a verification refutes.
+Events added to `@rune/protocol`: `hypothesis`, `hypothesis_updated`, `decision`, `artifact`, `projection` (the composer's output for a task, and updates), `pending_decision` and `decision_resolved`. The model reports its experiments structurally through two small tools, `note_hypothesis` and `record_decision`, extending the existing `record_evidence` seam; the harness also infers hypotheses from plan steps that a verification refutes.
 
 ## Primitives (the closed catalogue)
 
@@ -138,15 +143,15 @@ No primitive accepts raw HTML except Preview, which renders in a sandboxed ifram
 - **Projection schema**: `{ taskId, persona, regions: { header, primary, side?, actions }, blocks: [{ id, type, props, bind?: statePath, foldWhen?: predicate }] }`, validated with zod on both sides. Blocks bind to state paths so live updates need no recomposition.
 - **Composer**: deterministic rules per task kind produce the default projection (investigate → hypotheses + evidence + timeline; build → checklist + diff + terminal + checks + approval; analyze → metric + chart + comparison + table + sources; research → claims + sources + evidence; operate → approvals + logs + timeline; write → artifact + outline + sources). The model may call `compose_view` with a persona and an emphasis list from a whitelist; an invalid call is logged and the default stands. Nothing the model says can add a block type that is not in the catalogue.
 - **Folding**: a hypothesis with status `refuted` folds to one line with its reason; folds are reversible; the Decision Record keeps them present.
-- **The Decision Record**: generated deterministically from state at task end (objective, decision with evidence, how we got here, what changed, checks, what remains); rendered from primitives; exportable as Markdown and as the signed trace; also rendered as text by `gear audit`.
+- **The Decision Record**: generated deterministically from state at task end (objective, decision with evidence, how we got here, what changed, checks, what remains); rendered from primitives; exportable as Markdown and as the signed trace; also rendered as text by `rune audit`.
 
 ## The deck
 
-New (⌘N; opens the intent strip in the current project). Projects: a catalog of named projects (a folder plus settings, sessions and apps scoped to it) and a personal workspace that is a project without a repository. Sessions: grouped by day, searchable (⌘K), each row showing kind, progress and whether it needs you. Apps: what the person connected, with status and a one-click connect flow (the `gear mcp` and `gear login` flows in-page). Settings at the top: providers and models, teams (the founder to define: multi-instance team bus, or people), gears, theme, telemetry.
+New (⌘N; opens the intent strip in the current project). Projects: a catalog of named projects (a folder plus settings, sessions and apps scoped to it) and a personal workspace that is a project without a repository. Sessions: grouped by day, searchable (⌘K), each row showing kind, progress and whether it needs you. Apps: what the person connected, with status and a one-click connect flow (the `rune mcp` and `rune login` flows in-page). Settings at the top: providers and models, teams (the founder to define: multi-instance team bus, or people), gears, theme, telemetry.
 
 ## Work items
 
-**P11.1 Task State Model and the narrative (engine, protocol).** Add `kind`, `narrative`, `artifacts`, `pendingDecisions`, `progress`; the events; the `note_hypothesis` and `record_decision` tools; the refutation inference from failed verifications; the Decision Record generator with a text rendering in `gear audit`; persistence and replay. Deterministic mock eval: a three-hypothesis bug hunt whose record must list two refuted branches with reasons, one confirmed with evidence, and a decision linked to that evidence.
+**P11.1 Task State Model and the narrative (engine, protocol).** Add `kind`, `narrative`, `artifacts`, `pendingDecisions`, `progress`; the events; the `note_hypothesis` and `record_decision` tools; the refutation inference from failed verifications; the Decision Record generator with a text rendering in `rune audit`; persistence and replay. Deterministic mock eval: a three-hypothesis bug hunt whose record must list two refuted branches with reasons, one confirmed with evidence, and a decision linked to that evidence.
 
 **P11.2 Primitives and the composer (web).** The thirty primitives with schemas and the `/gallery` page; the projection schema; the deterministic composer per task kind; `compose_view` with the persona whitelist and fallback; brand-checklist coverage of every primitive.
 
@@ -163,4 +168,4 @@ Each item is one agent, one PR, the local gate plus its own evidence; the rules 
 1. Confirm the three wireframes, or mark them up.
 2. Name the connected applications ("Apps" is the placeholder).
 3. Say what "teams" means in Settings: the multi-instance team bus, or people and organisations.
-4. The mark: the current geometric gear is provisional; supply the vector, or ask for a new mark to be designed.
+4. The mark: the current geometric rune is provisional; supply the vector, or ask for a new mark to be designed.

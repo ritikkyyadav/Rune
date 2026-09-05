@@ -16,14 +16,14 @@
 // an empty `based_on` is recorded as unbacked rather than refused: the harness
 // cannot know whether a given commitment needed a citation, and an argument the
 // model can restate more confidently is one it eventually wins. So the absence
-// is made visible — in the record, in the mission file, and in `gear audit` —
+// is made visible — in the record, in the mission file, and in `rune audit` —
 // instead of being argued about.
 //
 // Both are `read` category and cost nothing but their own schema: they touch
 // no file, run no command, and can never block.
 
-import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "@gear/tool-registry";
-import type { EvidenceRef, Hypothesis, HypothesisStatus, TaskDecision } from "@gear/protocol";
+import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "@rune/tool-registry";
+import type { EvidenceRef, Hypothesis, HypothesisStatus, TaskDecision } from "@rune/protocol";
 
 /** What the tools write into. The store, narrowed to what they may touch. */
 export interface NarrativeSink {

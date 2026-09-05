@@ -1,10 +1,10 @@
 import type { McpServerConfig } from "./discovery";
 
 // ─── Built-in browser server ───
-// Gear's agent browser rides the MCP layer: when browser mode is on
+// Rune's agent browser rides the MCP layer: when browser mode is on
 // (`/browser on`, `[browser] enabled = true`, or --browser), the engine
 // injects this spec as a built-in `browser` stdio server — merged BENEATH
-// .gear/mcp.json, so a user entry named "browser" overrides it. It runs the
+// .rune/mcp.json, so a user entry named "browser" overrides it. It runs the
 // official Playwright MCP (@playwright/mcp), which drives the browser through
 // the accessibility tree: page reads come back as structured text snapshots,
 // not screenshots, so they survive the text-only tool pipeline and stay

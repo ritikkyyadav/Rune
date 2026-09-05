@@ -1,0 +1,30 @@
+# Rune project config — free-tier dev/test defaults.
+# Precedence: built-in defaults < ~/.rune/config.toml < this file < RUNE_* env vars.
+# Keys are NOT stored here — set GOOGLE_API_KEY / OPENROUTER_API_KEY in your env or .env.
+
+[llm]
+# Free by default. Switch to "openrouter" (free models) or "ollama" (local) anytime,
+# or "anthropic" / "openai" for a later paid production-validation pass.
+defaultProvider = "google"
+
+[llm.google]
+model = "gemini-2.5-flash"
+maxTokens = 8192
+
+# Planner-executor split (used with --planner): a stronger free model plans,
+# a fast free model executes. Both stay on the free tier.
+[llm.planner]
+provider = "google"
+model = "gemini-2.5-pro"
+
+[llm.executor]
+provider = "google"
+model = "gemini-2.5-flash"
+
+[permissions]
+# This repo is a trusted, sandboxed test workspace: auto-approve in-workspace
+# edits and bash so iteration isn't gated by a prompt on every action.
+# Out-of-workspace writes and network tools (web_fetch/web_search/n8n) still
+# prompt; the Rust sandbox + dangerous-command blocklist remain active either way.
+# Remove this or set false to restore prompt-on-every-mutation behavior.
+trustWorkspace = true

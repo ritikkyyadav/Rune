@@ -12,7 +12,7 @@
 // Deliberately a precision list, not a heuristic: a false positive would
 // block an offline-capable command, so anything ambiguous (npx, cargo build,
 // go build) is left to run. Escape hatches: `--offline`-style flags skip the
-// match, and GEAR_NET_PREFLIGHT=0 disables the whole check.
+// match, and RUNE_NET_PREFLIGHT=0 disables the whole check.
 
 import { isOsIsolationAvailable } from "../sandbox-capability";
 import { isSandboxEnabled } from "../sandbox-mode";
@@ -48,6 +48,29 @@ const NETWORK_PATTERNS: Array<{ re: RegExp; what: string }> = [
 ];
 
 /**
+ * A URL's host, for every `http(s)://host[:port]` in a segment. The bracketed
+ * IPv6 form is tried FIRST: `[^\s/:"']+` happily matches the bare `[` of
+ * `http://[::1]:8080` and stops at the colon, capturing a bracket instead of a
+ * host.
+ */
+const URL_HOST_RE = /https?:\/\/(\[[0-9a-f:]+\]|[^\s/:"']+)(?::\d+)?/gi;
+/** `curl localhost:3000` — a bare loopback target with no scheme. */
+const BARE_LOOPBACK_RE =
+  /(?:^|\s)(?:localhost|127(?:\.\d{1,3}){3}|\[::1\]|0\.0\.0\.0)(?::\d+)?(?:\/\S*)?(?=\s|$)/i;
+const LOOPBACK_HOST_RE = /^(?:localhost|127(?:\.\d{1,3}){3}|\[::1\]|0\.0\.0\.0)$/i;
+
+/**
+ * True when every host the segment names is loopback. One remote host makes
+ * the whole segment a network call; a segment with no URL at all counts only
+ * when it names a bare loopback target.
+ */
+export function loopbackOnly(segment: string): boolean {
+  const hosts = [...segment.matchAll(URL_HOST_RE)].map((m) => m[1]);
+  if (hosts.length > 0) return hosts.every((h) => LOOPBACK_HOST_RE.test(h));
+  return BARE_LOOPBACK_RE.test(segment);
+}
+
+/**
  * If `command` contains a segment that needs the network, return a short
  * description of what it is; otherwise null. Segments are split on shell
  * separators so `cd x && npm install` is still caught.
@@ -57,7 +80,11 @@ export function needsNetwork(command: string): string | null {
     const segment = rawSegment.trim().replace(/^(sudo|env(\s+\w+=\S*)*)\s+/, "");
     if (!segment || OFFLINE_FLAG.test(segment)) continue;
     for (const { re, what } of NETWORK_PATTERNS) {
-      if (re.test(segment)) return what;
+      if (!re.test(segment)) continue;
+      // Loopback is open inside the sandbox: `curl http://127.0.0.1:8080` is
+      // how a page the run just served gets verified, and it would not hang.
+      if (what === "HTTP request" && loopbackOnly(segment)) continue;
+      return what;
     }
   }
   return null;
@@ -83,7 +110,7 @@ export function withNetworkPreflight(handler: ToolHandler): ToolHandler {
         isOsIsolationAvailable() &&
         args.network !== true &&
         args.run_in_background !== true;
-      if (sandboxed && process.env.GEAR_NET_PREFLIGHT !== "0") {
+      if (sandboxed && process.env.RUNE_NET_PREFLIGHT !== "0") {
         const what = typeof args.command === "string" ? needsNetwork(args.command) : null;
         if (what) {
           return {

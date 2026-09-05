@@ -16,7 +16,7 @@
 //             and the path consistent.
 //   Auth     `api-key: <resource key>`, or `Authorization: Bearer <Entra token>`.
 //
-// **Deployments are named by whoever created them.** Gear's catalogue lists
+// **Deployments are named by whoever created them.** Rune's catalogue lists
 // MODEL ids, because that is what a person picks; `[providers.azure-openai.
 // deployments]` maps a model id to the deployment your resource actually has,
 // and defaults to the id itself — the common case, since Azure lets you name a
@@ -213,7 +213,7 @@ export async function azureFetch(
  * Only two paths matter here: chat completions (per deployment) and the model
  * listing (per resource). Anything else keeps its shape under `/openai` and
  * gains the api-version, which is the right default for an endpoint Azure
- * happens to expose that Gear does not model.
+ * happens to expose that Rune does not model.
  */
 export function azureUrl(
   transport: { endpoint: string; apiVersion: string },

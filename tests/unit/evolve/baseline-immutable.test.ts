@@ -53,7 +53,7 @@ function report(overrides: Partial<SuiteReport> = {}): SuiteReport {
 
 describe("writeBaseline", () => {
   it("archives the run but leaves the baseline alone by default", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "gear-baseline-"));
+    const dir = mkdtempSync(join(tmpdir(), "rune-baseline-"));
     try {
       const baseline = baselinePathFor("mock", dir);
       writeFileSync(baseline, '{"marker":"original"}\n');
@@ -76,7 +76,7 @@ describe("writeBaseline", () => {
   });
 
   it("re-anchors only when explicitly asked", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "gear-baseline-"));
+    const dir = mkdtempSync(join(tmpdir(), "rune-baseline-"));
     try {
       const baseline = baselinePathFor("mock", dir);
       writeFileSync(baseline, '{"marker":"original"}\n');
@@ -96,7 +96,7 @@ describe("writeBaseline", () => {
   });
 
   it("a throttled run still cannot move the baseline on its own", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "gear-baseline-"));
+    const dir = mkdtempSync(join(tmpdir(), "rune-baseline-"));
     try {
       const baseline = baselinePathFor("mock", dir);
       writeFileSync(baseline, '{"marker":"original"}\n');
