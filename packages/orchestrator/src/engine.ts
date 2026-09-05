@@ -3,21 +3,24 @@ import {
   LlmGateway,
   CostTracker,
   BudgetExceededError,
-} from "@gear/llm-gateway";
+} from "@rune/llm-gateway";
 import { AutoEvalSidecar } from "./auto-eval-sidecar";
 import { validateSubagentResult } from "./subagent-result";
 import { resolveMaxParallel } from "./subagent-budget";
 import { createWorkflowTool } from "./workflow-tool";
 import { formatCostSummary } from "./cost-report";
-import type { ReasoningEffort, Message, ProviderName, ResolvedCredential } from "@gear/llm-gateway";
+import type { ReasoningEffort, Message, ProviderName, ResolvedCredential } from "@rune/llm-gateway";
 import {
   CustomToolsLoader,
   PluginToolServer,
-  makeGearToolsPlanner,
+  makeRuneToolsPlanner,
   startPluginTools,
   ToolRegistry,
   registerBuiltinTools,
   ToolRateLimiter,
+  resolveRateLimit,
+  rateLimitFromConfig,
+  type RateLimitSettings,
   DEFAULT_RATE_LIMIT,
   McpDiscovery,
   BROWSER_SERVER_NAME,
@@ -35,15 +38,15 @@ import {
   isLspAutoFeedbackEnabled,
   lspAutoFeedbackDefault,
   stopLanguageServers,
-} from "@gear/tool-registry";
-import { expandPromptCommand, findResourceMentions, readResourceText } from "@gear/tool-registry";
+} from "@rune/tool-registry";
+import { expandPromptCommand, findResourceMentions, readResourceText } from "@rune/tool-registry";
 import type {
   DashboardInfo,
   McpEvent,
   PluginCatalogEntry,
   SkillSearchHit,
   ToolCallOutput,
-} from "@gear/tool-registry";
+} from "@rune/tool-registry";
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -71,14 +74,14 @@ import {
   createLogger,
   resolveTier,
   PROVIDER_TIER_DEFAULTS,
-  getGearHome,
+  getRuneHome,
   workspaceConfigPath,
   setToolArgsSalvageListener,
-} from "@gear/shared";
-import type { ModelTier, SubagentMode, TierRef, TiersConfig } from "@gear/shared";
-import { parseTierRef } from "@gear/shared";
-import type { IncidentClass, IncidentInput, IncidentSeverity } from "@gear/shared";
-import { BlackboxStore, Recorder } from "@gear/telemetry";
+} from "@rune/shared";
+import type { ModelTier, SubagentMode, TierRef, TiersConfig } from "@rune/shared";
+import { parseTierRef } from "@rune/shared";
+import type { IncidentClass, IncidentInput, IncidentSeverity } from "@rune/shared";
+import { BlackboxStore, Recorder } from "@rune/telemetry";
 import type {
   CheckpointStore,
   CheckpointPolicy,
@@ -88,11 +91,12 @@ import type {
   SessionStatus,
   SessionInfoInternal,
   SystemMemoryMeta,
-} from "@gear/shared";
+} from "@rune/shared";
 import { buildGateway, providerStatus } from "./provider-registry";
 import type { EnterpriseRouteConfig } from "./provider-registry";
 import type { ProviderStatusRow, BuildGatewayOpts } from "./provider-registry";
-import { AgentLoop, parseInterjection } from "./agent-loop";
+import { AgentLoop, abortableSleep, parseInterjection } from "./agent-loop";
+import { renderPitfallsNote, selectPitfalls } from "./known-pitfalls";
 import type {
   PermissionCheck,
   AgentTurnEvent,
@@ -111,10 +115,10 @@ import {
   permissionModeToConfig,
 } from "./permissions";
 import { loadOrgPolicy, policyAllowsModel, type LoadedOrgPolicy } from "./org-policy";
-import { discoverPlugins, GEAR_VERSION, type LoadedPlugin } from "./plugins";
+import { discoverPlugins, RUNE_VERSION, type LoadedPlugin } from "./plugins";
 import { StruggleDetector } from "./struggle-detector";
 import { TaskStateStore } from "./task-state";
-import type { EvidenceRef, PendingDecisionKind } from "@gear/protocol";
+import type { EvidenceRef, PendingDecisionKind } from "@rune/protocol";
 import { policyForModel, type ReliabilityPolicy } from "./reliability-policy";
 import {
   NotebookStore,
@@ -221,7 +225,7 @@ import { buildRepoMap } from "./repo-map";
 import { CommandVerifier, detectVerifyCommands, fastCheckCommands } from "./verifier";
 import type { EcosystemSetting } from "./verifier";
 import type { Verifier } from "./verifier";
-import { autoCommitPaths, undoLastGearCommit, type UndoResult } from "./git-undo";
+import { autoCommitPaths, undoLastRuneCommit, type UndoResult } from "./git-undo";
 import { planResearch, runResearch as executeResearch } from "./research";
 import type { ResearchDeps, PlanResearchOpts } from "./research";
 import { isClarification } from "./research-types";
@@ -237,7 +241,7 @@ import type {
 //
 // The prompt, the decision, the Auto chip and the held-step result are wire
 // shapes: a client that is not the terminal holds all five round-trips over
-// the socket (P2.2), so `@gear/protocol` owns them and they are re-exported
+// the socket (P2.2), so `@rune/protocol` owns them and they are re-exported
 // here for the in-repo import sites.
 
 export type {
@@ -245,14 +249,14 @@ export type {
   AutoApprovalNotice,
   UserPermissionDecision,
   HeldStepRunResult,
-} from "@gear/protocol";
+} from "@rune/protocol";
 import type {
   AutoApprovalNotice,
   HeldStepRunResult,
   PermissionPrompt,
   UserPermissionDecision,
-} from "@gear/protocol";
-import { isAgentTurnEvent } from "@gear/protocol";
+} from "@rune/protocol";
+import { isAgentTurnEvent } from "@rune/protocol";
 
 export type PermissionHandler = (prompt: PermissionPrompt) => Promise<UserPermissionDecision>;
 
@@ -475,7 +479,7 @@ export function replayEvents(
       }
 
       // Rows that are not turn events: research has its own stream, and cost /
-      // safety / probe / retro / task_state rows belong to `gear audit`.
+      // safety / probe / retro / task_state rows belong to `rune audit`.
       default:
         break;
     }
@@ -703,7 +707,7 @@ export interface EngineConfig {
   /**
    * `[providers.<id>]` — coordinates for the enterprise cloud routes (an AWS
    * region, a GCP project, an Azure endpoint). Not secrets: the credential for
-   * these routes stays in the cloud's own chain and never reaches Gear's config.
+   * these routes stays in the cloud's own chain and never reaches Rune's config.
    */
   providerRoutes?: EnterpriseRouteConfig;
   /**
@@ -715,13 +719,15 @@ export interface EngineConfig {
   contextBudget?: Partial<ContextBudget>;
   enableSecurity?: boolean;
   enableRateLimiting?: boolean;
+  /** `[tools] rateLimit` — the tool pacer's limits (tool-registry/rate-limiter.ts). */
+  rateLimit?: RateLimitSettings;
   enableCheckpoints?: boolean;
   enableHooks?: boolean;
-  /** Discover and load MCP servers from <workspace>/.gear/mcp.json. Default on. */
+  /** Discover and load MCP servers from <workspace>/.rune/mcp.json. Default on. */
   enableMcp?: boolean;
-  /** Load skills (bundled `skills/` + <workspace>/.gear/skills) and the `skill` tool. Default on. */
+  /** Load skills (bundled `skills/` + <workspace>/.rune/skills) and the `skill` tool. Default on. */
   enableSkills?: boolean;
-  /** Explicit skill root dirs; when set, bundled + .gear/skills auto-detection is skipped. */
+  /** Explicit skill root dirs; when set, bundled + .rune/skills auto-detection is skipped. */
   skillRoots?: string[];
   /** Run project checks (typecheck/test/cargo) after edits so the agent self-corrects. Default on. */
   enableVerification?: boolean;
@@ -752,7 +758,7 @@ export interface EngineConfig {
   };
   /**
    * Git integration (config.toml `[git]`): autoCommit makes every successful
-   * run that wrote files land as one revertible "gear:" commit (Aider-style);
+   * run that wrote files land as one revertible "rune:" commit (Aider-style);
    * /undo resets the last one. Default off.
    */
   git?: {
@@ -808,7 +814,7 @@ export interface EngineConfig {
    * Multi-instance teamwork ([team] in config.toml). OFF unless enabled —
    * unit tests and embedders stay hermetic; the CLI passes the user's config
    * through (default on there). When on, this session registers on a local
-   * shared bus (~/.gear/team.db) so concurrent Gear processes in the same
+   * shared bus (~/.rune/team.db) so concurrent Rune processes in the same
    * repository see each other, exchange messages, and lease path claims.
    * claimEnforcement: what a write into a PEER's leased scope does — "warn"
    * (default) proceeds with a loud note in the tool result, "block" refuses
@@ -868,7 +874,7 @@ export interface EngineConfig {
     deadlineMs?: number;
   };
   /**
-   * Black box (flight recorder): incident capture to ~/.gear/blackbox.db.
+   * Black box (flight recorder): incident capture to ~/.rune/blackbox.db.
    * OFF unless enabled — unit tests and embedders stay hermetic; the CLI and
    * engine-host turn it on. `version` stamps every incident for
    * version-over-version regression queries.
@@ -892,7 +898,7 @@ export interface EngineConfig {
   };
   /**
    * Self-evolution (`[evolve]`). `playbook` renders the repository's recurring
-   * lessons to .gear/skills/playbook/SKILL.md at run end (default on; needs
+   * lessons to .rune/skills/playbook/SKILL.md at run end (default on; needs
    * the notebook). The retro itself is always written.
    */
   evolve?: {
@@ -905,14 +911,14 @@ export interface EngineConfig {
 // The agent loop clamps this to each model's real per-response output cap
 // (getMaxOutputTokens), so smaller models are unaffected.
 const MAX_TOKENS = 32000;
-// 80 agentic rounds: long autonomous builds (scaffold → install → run →
-// fix → verify → polish) legitimately spend 30-50; the cap is a runaway
-// guard, not a work budget. Context compaction keeps long runs viable.
 const loaderLog = createLogger("engine:loaders");
 
-const MAX_TURNS = 80;
+// The turn ceiling is a reliability bound like every other loop limit —
+// `[reliability] maxTurns`, default 80 in reliability-policy.ts — not a
+// constant here. It was a constant for the whole first month, with no knob,
+// and nine runs ended at it unfinished.
 
-// Per-provider cheap-model routing now lives in @gear/shared tiers.ts
+// Per-provider cheap-model routing now lives in @rune/shared tiers.ts
 // (PROVIDER_TIER_DEFAULTS) — resolved via Engine.resolveModelTier("light").
 
 const DEFAULT_ENGINE_CONFIG: EngineConfig = {
@@ -922,8 +928,8 @@ const DEFAULT_ENGINE_CONFIG: EngineConfig = {
   model: "gemini-2.5-flash",
   provider: "google",
   workspaceRoot: process.cwd(),
-  dbPath: join(getGearHome(), "gear.db"),
-  toolsBinaryPath: "gear-tools",
+  dbPath: join(getRuneHome(), "rune.db"),
+  toolsBinaryPath: "rune-tools",
   yoloMode: false,
   trustWorkspace: false,
 };
@@ -947,14 +953,14 @@ const MEMORY_MSG_CHARS = 600;
 
 function systemMemoryDistillSystemPrompt(maxTokens: number): string {
   return [
-    "You maintain a SHORT, evergreen profile of a software developer and the codebases they work in, so an AI coding assistant (Gear) can serve them better from the very first message.",
+    "You maintain a SHORT, evergreen profile of a software developer and the codebases they work in, so an AI coding assistant (Rune) can serve them better from the very first message.",
     "",
     "Write a GUIDE, not rules. Describe — never command. This is background context the assistant tailors to, not rigid instructions.",
     "",
     "Cover, ONLY where the activity actually supports it:",
     "- About the user: who they are, how they communicate (tone, terseness, language), how they like to work, clear likes and dislikes.",
     "- Style & preferences: languages, frameworks, tools, conventions, testing/verification habits, what they value (e.g. concise answers, minimal diffs).",
-    "- Their codebases: the kinds of projects Gear is used for, recurring stacks and patterns, and what they typically ask for.",
+    "- Their codebases: the kinds of projects Rune is used for, recurring stacks and patterns, and what they typically ask for.",
     "",
     "Rules:",
     `- Keep it SMALL — aim well under ~${maxTokens} tokens. Short markdown sections with terse bullets. It must fit a tiny model's context window like butter.`,
@@ -989,7 +995,7 @@ function compactMessageText(m: Message): string {
   }
   const body = parts.join(" ").replace(/\s+/g, " ").trim();
   if (!body) return "";
-  const role = m.role === "assistant" ? "Gear" : m.role === "user" ? "User" : m.role;
+  const role = m.role === "assistant" ? "Rune" : m.role === "user" ? "User" : m.role;
   return `${role}: ${body.slice(0, MEMORY_MSG_CHARS)}`;
 }
 
@@ -1206,7 +1212,7 @@ export class Engine {
     // Black box first — the gateway build below captures its tap.
     if (this.config.blackbox?.enabled) {
       this.recorder = new Recorder({
-        dbPath: this.config.blackbox.dbPath ?? join(getGearHome(), "blackbox.db"),
+        dbPath: this.config.blackbox.dbPath ?? join(getRuneHome(), "blackbox.db"),
         version: this.config.blackbox.version ?? "dev",
         spoolPath: this.config.blackbox.spoolPath,
       });
@@ -1256,7 +1262,7 @@ export class Engine {
     if (this.config.notebook?.enabled) {
       try {
         this.notebookStore = new NotebookStore(
-          this.config.notebook.dbPath ?? join(getGearHome(), "notebook.db"),
+          this.config.notebook.dbPath ?? join(getRuneHome(), "notebook.db"),
         );
         this.notebookKeys = {
           repoKey: notebookRepoKey(this.config.workspaceRoot),
@@ -1479,14 +1485,14 @@ export class Engine {
     // registerDelegationTools above, and absent in the same "off" mode.)
 
     // ── Multi-instance teamwork ──
-    // Register this session on the local shared bus so concurrent Gear
+    // Register this session on the local shared bus so concurrent Rune
     // processes in the same repository see each other, message each other,
     // and lease path scopes. Engine-level default is OFF (hermetic tests and
     // embedders); the CLI passes [team] through, which defaults to on.
     if (this.config.team?.enabled === true) {
       const identity = deriveRepoIdentity(this.config.workspaceRoot);
       this.teamBus = TeamBus.open({
-        dbPath: this.config.team.dbPath ?? join(getGearHome(), "team.db"),
+        dbPath: this.config.team.dbPath ?? join(getRuneHome(), "team.db"),
         repoKey: identity.repoKey,
         workspace: identity.workspace,
         ...(identity.branch ? { branch: identity.branch } : {}),
@@ -1564,9 +1570,9 @@ export class Engine {
       }),
     );
 
-    // update_config: change Gear's own settings from plain-language requests
+    // update_config: change Rune's own settings from plain-language requests
     // ("shift to 4th gear", "turn the sandbox off") — applied live and
-    // persisted to ~/.gear/config.toml. Main registry only: sub-agents are
+    // persisted to ~/.rune/config.toml. Main registry only: sub-agents are
     // read-only investigators and must not reconfigure the host session.
     this.registry.register(
       createUpdateConfigTool({
@@ -1753,9 +1759,9 @@ export class Engine {
       });
     }
 
-    // Rate limiter — on by default
+    // The tool pacer — on by default; `[tools] rateLimit` sets its limits.
     if (this.config.enableRateLimiting !== false) {
-      this.rateLimiter = new ToolRateLimiter();
+      this.rateLimiter = new ToolRateLimiter(rateLimitFromConfig(this.config.rateLimit));
     }
 
     // Checkpoint store — on by default
@@ -1957,8 +1963,8 @@ export class Engine {
     const bounded = (s: string) => s.replace(/\s+/g, " ").trim().slice(0, 400);
     this.pendingTurnNotes.push(
       output.success
-        ? `At the end of the last turn the user approved the held step \`${step.summary}\` and Gear ran it — it succeeded. Output (bounded): ${bounded(output.result || "(no output)")}`
-        : `At the end of the last turn the user approved the held step \`${step.summary}\` and Gear ran it — it FAILED: ${bounded(output.error ?? "unknown error")}`,
+        ? `At the end of the last turn the user approved the held step \`${step.summary}\` and Rune ran it — it succeeded. Output (bounded): ${bounded(output.result || "(no output)")}`
+        : `At the end of the last turn the user approved the held step \`${step.summary}\` and Rune ran it — it FAILED: ${bounded(output.error ?? "unknown error")}`,
     );
     return { ran: true, output };
   }
@@ -2041,27 +2047,12 @@ export class Engine {
     this.pitfallsShown.add(sessionId);
     try {
       const store = new BlackboxStore(
-        this.config.blackbox.dbPath ?? join(getGearHome(), "blackbox.db"),
+        this.config.blackbox.dbPath ?? join(getRuneHome(), "blackbox.db"),
       );
       try {
-        const rows = store
-          .top({ limit: 30, sinceDays: 30 })
-          .filter(
-            (r) =>
-              (r.class === "tool.sandbox_denial" || r.class === "tool.exec_failure") &&
-              r.count >= 3 &&
-              !/rate limit|429|quota|econnrefused|timed out|stream/i.test(r.messageSample),
-          )
-          .slice(0, 3);
-        if (rows.length === 0) return null;
-        const lines = rows.map(
-          (r) =>
-            `- ${r.component.replace(/^tool:/, "")} (${r.count}×): ${r.messageSample.replace(/\s+/g, " ").slice(0, 160)}`,
-        );
-        return (
-          "[Harness note] Recurring mistakes on this machine in the last 30 days — avoid them " +
-          `before they cost a turn:\n${lines.join("\n")}`
-        );
+        // Selection and rendering are pure (known-pitfalls.ts) and pinned by
+        // tests; this method only owns the store.
+        return renderPitfallsNote(selectPitfalls(store.top({ limit: 30, sinceDays: 30 })));
       } finally {
         store.close();
       }
@@ -2189,7 +2180,7 @@ export class Engine {
   }
 
   /**
-   * Discover plugin bundles (.gear/plugins/<name>/plugin.json) once per
+   * Discover plugin bundles (.rune/plugins/<name>/plugin.json) once per
    * engine. Each bundle feeds the four extension loaders: skills (auto,
    * attributed), hooks (merged after user hooks), MCP servers (before user
    * mcp.json so user entries still override), commands (tagged, user wins).
@@ -2252,7 +2243,7 @@ export class Engine {
   }
 
   /**
-   * Lazily load user-defined hooks from `<workspace>/.gear/hooks.json` once per
+   * Lazily load user-defined hooks from `<workspace>/.rune/hooks.json` once per
    * engine. Missing file → no-op runner. Malformed file → warn once, run without.
    */
   private async ensureHookRunner(): Promise<void> {
@@ -2269,7 +2260,7 @@ export class Engine {
   }
 
   /**
-   * Lazily discover MCP servers from `<workspace>/.gear/mcp.json` once per
+   * Lazily discover MCP servers from `<workspace>/.rune/mcp.json` once per
    * engine and register their tools into the main registry. Missing file →
    * no-op. A server that fails to start is logged and skipped (mirrors hooks).
    * MCP tools are NOT added to the read-only sub-agent registry.
@@ -2354,7 +2345,7 @@ export class Engine {
    *
    * Written once per session, after the extension loaders have run, so the
    * number reflects the real surface (built-ins + connectors + plugins) rather
-   * than the built-ins alone. `gear audit` reads it back. Deferred loading
+   * than the built-ins alone. `rune audit` reads it back. Deferred loading
    * (P4.1) is measured against itself here: `eagerTokens` is what the same set
    * would have cost with every schema shipped in full, which is what makes the
    * reduction a measurement rather than a claim.
@@ -2403,7 +2394,7 @@ export class Engine {
       this.mcpUnavailable.set(
         ev.server,
         ev.type === "server-needs-auth"
-          ? `needs authorization (run: gear mcp login ${ev.server})`
+          ? `needs authorization (run: rune mcp login ${ev.server})`
           : ev.reason,
       );
     } else if (ev.type === "server-ready" || ev.type === "server-restarted") {
@@ -2506,7 +2497,7 @@ export class Engine {
   }
 
   /**
-   * Executable tools from `<workspace>/.gear/tools`, behind `[extensions]
+   * Executable tools from `<workspace>/.rune/tools`, behind `[extensions]
    * localTools = true` (D6).
    *
    * This loader has existed and been tested since it was written, and was
@@ -2526,7 +2517,7 @@ export class Engine {
       if (handlers.length > 0) {
         const names = handlers.map((h) => h.schema.name).join(", ");
         loaderLog.info(`[extensions] loaded ${handlers.length} local tool(s): ${names}`);
-        this.mcpNotices.push(`local tools loaded from .gear/tools — ${handlers.length} (${names})`);
+        this.mcpNotices.push(`local tools loaded from .rune/tools — ${handlers.length} (${names})`);
       }
     } catch (err) {
       loaderLog.warn(
@@ -2552,7 +2543,7 @@ export class Engine {
     this.pluginToolsLoaded = true;
     const plugins = this.getPlugins().filter((p) => p.toolDeclarations.length > 0);
     if (plugins.length === 0) return;
-    const planner = makeGearToolsPlanner(this.config.toolsBinaryPath ?? "gear-tools");
+    const planner = makeRuneToolsPlanner(this.config.toolsBinaryPath ?? "rune-tools");
     for (const plugin of plugins) {
       try {
         const started = await startPluginTools({
@@ -2563,7 +2554,7 @@ export class Engine {
           declarations: plugin.toolDeclarations,
           planner,
           allowUnsandboxed: this.config.extensions?.allowUnsandboxedTools,
-          gearVersion: GEAR_VERSION,
+          runeVersion: RUNE_VERSION,
         });
         for (const handler of started.handlers) this.registry.register(handler);
         this.pluginToolServers.push(...started.servers);
@@ -2600,7 +2591,7 @@ export class Engine {
 
   /**
    * Lazily load skills once per engine: discover SKILL.md files from the bundled
-   * `skills/` catalog and `<workspace>/.gear/skills`, register the `skill` tool,
+   * `skills/` catalog and `<workspace>/.rune/skills`, register the `skill` tool,
    * and build the compact catalog injected into the system prompt. Missing dirs →
    * no-op. Any failure is logged and skipped (mirrors hooks/MCP) — skills never
    * break a session. Not added to the read-only sub-agent registry.
@@ -2627,14 +2618,14 @@ export class Engine {
   /**
    * Resolve which directories to scan for skills. Explicit `skillRoots` win;
    * otherwise use the bundled catalog (resolved relative to this module, with an
-   * GEAR_SKILLS_DIR / cwd fallback) plus the workspace's `.gear/skills`.
+   * RUNE_SKILLS_DIR / cwd fallback) plus the workspace's `.rune/skills`.
    */
   private resolveSkillRoots(): string[] {
     if (this.config.skillRoots && this.config.skillRoots.length > 0) {
       return this.config.skillRoots.filter((r) => existsSync(r));
     }
     const candidates = [
-      process.env.GEAR_SKILLS_DIR,
+      process.env.RUNE_SKILLS_DIR,
       join(import.meta.dir, "../../../skills"), // packages/orchestrator/src → repo root
       join(process.cwd(), "skills"),
     ].filter((c): c is string => typeof c === "string" && c.length > 0);
@@ -2699,13 +2690,30 @@ export class Engine {
     this.turnIndex++;
 
     return async ({ callId, toolName, args }) => {
-      // Rate limiter check
+      // The tool pacer. Read-category tools are exempt; a call over a limit
+      // is held for the short remainder of its window (the model never sees
+      // a pace) and refused only when the wait would exceed maxWaitMs. The
+      // old refusal reached the model as an error and cost a completion to
+      // re-issue a read the engine had throttled itself.
       if (this.rateLimiter) {
-        const rateResult = this.rateLimiter.checkLimit(toolName);
-        if (!rateResult.allowed) {
+        const pace = resolveRateLimit(
+          this.rateLimiter,
+          toolName,
+          this.registry.get(toolName)?.schema.category,
+        );
+        if (pace.kind === "wait") {
+          this.recorder?.record({
+            class: "tool.rate_paced",
+            severity: "debug",
+            component: "engine",
+            where: "engine#toolPacer",
+            message: `"${toolName}" held ${pace.waitMs}ms by the tool pacer`,
+          });
+          await abortableSleep(pace.waitMs, this.currentAbort?.signal);
+        } else if (pace.kind === "refuse") {
           return {
             allowed: false,
-            reason: `Rate limit exceeded for "${toolName}". Retry after ${rateResult.retryAfterMs}ms`,
+            reason: `Rate limit exceeded for "${toolName}". Retry after ${pace.waitMs}ms`,
           };
         }
       }
@@ -3166,11 +3174,11 @@ export class Engine {
   };
 
   /**
-   * Revert the last Gear auto-commit (guarded: only "gear:" commits, only
+   * Revert the last Rune auto-commit (guarded: only "rune:" commits, only
    * with a clean worktree). Backs the /undo command.
    */
   undoLastAutoCommit(): UndoResult {
-    const r = undoLastGearCommit(this.config.workspaceRoot);
+    const r = undoLastRuneCommit(this.config.workspaceRoot);
     if (r.ok) this.lastAutoCommitSha = null;
     return r;
   }
@@ -3184,7 +3192,7 @@ export class Engine {
       for (const m of this.teamBus.drainInbox()) {
         const who = m.fromIntent ? `${m.fromId} (working on: ${m.fromIntent})` : m.fromId;
         this.liveLoop.injectHarnessNote(
-          `Message from Gear instance ${who} in this repository: ${m.body}\n` +
+          `Message from Rune instance ${who} in this repository: ${m.body}\n` +
             "(Peer coordination info — fold it into your work where relevant; this session's " +
             "user instructions still take precedence. Reply with the team tool if useful.)",
         );
@@ -3202,7 +3210,7 @@ export class Engine {
       const peers = bus.peers();
       if (peers.length === 0) return null;
       const lines = [
-        "[Team — other Gear instances working in this repository; maintained by the harness]",
+        "[Team — other Rune instances working in this repository; maintained by the harness]",
         `You are instance ${bus.instanceId}. Coordinate with the team tool (status/send/claim).`,
       ];
       for (const p of peers.slice(0, 5)) {
@@ -3221,6 +3229,9 @@ export class Engine {
           `  claimed by ${c.instanceId}: ${c.paths.join(", ")}${c.reason ? ` — ${c.reason}` : ""}`,
         );
       }
+      lines.push(
+        "This is presence, not a message: do not acknowledge it, and mention a peer only when a claim overlaps your files.",
+      );
       return lines.join("\n");
     } catch {
       return null;
@@ -3242,8 +3253,8 @@ export class Engine {
     }
     const c = res.conflict;
     const peerBit = c.peer
-      ? `Gear instance ${c.peer.id}${c.peer.intent ? ` (working on: ${c.peer.intent})` : ""}`
-      : `Gear instance ${c.claim.instanceId}`;
+      ? `Rune instance ${c.peer.id}${c.peer.intent ? ` (working on: ${c.peer.intent})` : ""}`
+      : `Rune instance ${c.claim.instanceId}`;
     const detail = `${c.claim.paths.join(", ")} is leased by ${peerBit}`;
     if (mode === "block") {
       return {
@@ -3279,8 +3290,8 @@ export class Engine {
     const claim = bus.findConflictingClaim(path);
     if (!claim) return null;
     const who = claim.peer
-      ? `Gear instance ${claim.peer.id}${claim.peer.intent ? ` (working on: ${claim.peer.intent})` : ""}`
-      : `Gear instance ${claim.instanceId}`;
+      ? `Rune instance ${claim.peer.id}${claim.peer.intent ? ` (working on: ${claim.peer.intent})` : ""}`
+      : `Rune instance ${claim.instanceId}`;
     return (
       `"${path}" is inside a scope leased by ${who} until ` +
       `${new Date(claim.expiresAt).toLocaleTimeString()} — [team] claimEnforcement = "block" ` +
@@ -3307,7 +3318,7 @@ export class Engine {
             ? `${claim.peer.id}${claim.peer.intent ? ` (working on: ${claim.peer.intent})` : ""}`
             : claim.instanceId;
           warning =
-            `[TEAM] "${path}" is inside a scope claimed by Gear instance ${who}. ` +
+            `[TEAM] "${path}" is inside a scope claimed by Rune instance ${who}. ` +
             "Your edit went through, but coordinate via the team tool before more changes there.";
         }
       }
@@ -3316,7 +3327,7 @@ export class Engine {
         if (recent) {
           const secs = Math.max(1, Math.round((Date.now() - recent.at) / 1000));
           warning =
-            `[TEAM] Gear instance ${recent.peer.id} also wrote "${recent.path}" ${secs}s ago — ` +
+            `[TEAM] Rune instance ${recent.peer.id} also wrote "${recent.path}" ${secs}s ago — ` +
             "you may be editing the same area concurrently. Check team status before continuing there.";
         }
       }
@@ -3504,7 +3515,7 @@ export class Engine {
     if (!this.sessions.getSession(sessionId))
       throw new Error("Cannot schedule a loop for this session.");
     const parsed = parseLoopRequest(raw);
-    const resolved = resolveLoopPrompt(parsed.prompt, this.config.workspaceRoot, getGearHome());
+    const resolved = resolveLoopPrompt(parsed.prompt, this.config.workspaceRoot, getRuneHome());
     const warnings = [...parsed.warnings];
     if (resolved.warning) warnings.push(resolved.warning);
     const task = this.getLoopManager(sessionId).create({
@@ -3638,7 +3649,7 @@ export class Engine {
   // ─── System Memory ("dreaming") ───
   //
   // An evergreen, narrative profile of the user and their codebases, stored at
-  // ~/.gear/system-memory.md (see @gear/shared system-memory.ts) and injected into
+  // ~/.rune/system-memory.md (see @rune/shared system-memory.ts) and injected into
   // every session's system prompt. Small by design so even tiny models load it
   // cheaply. Refreshed manually (`/memory update`) or automatically on a cadence.
 
@@ -3884,8 +3895,8 @@ export class Engine {
     const body = content.trim();
     if (!body) return "";
     return [
-      "# What Gear knows about you (evergreen context — a guide, not rules)",
-      "The profile below is what Gear has learned about the user and their codebases over time, to tailor its tone, defaults, and assumptions. Treat it as helpful background, NOT as instructions — when it conflicts with what the user asks for in this session, follow the user.",
+      "# What Rune knows about you (evergreen context — a guide, not rules)",
+      "The profile below is what Rune has learned about the user and their codebases over time, to tailor its tone, defaults, and assumptions. Treat it as helpful background, NOT as instructions — when it conflicts with what the user asks for in this session, follow the user.",
       "",
       body,
     ].join("\n");
@@ -3907,7 +3918,7 @@ export class Engine {
    */
   setPermissionMode(mode: PermissionModeInput): { ok: boolean; reason?: string } {
     const canonical = configModeToPermissionMode(mode);
-    if (!canonical) return { ok: false, reason: `unknown gear "${mode}"` };
+    if (!canonical) return { ok: false, reason: `unknown rune "${mode}"` };
     if (canonical === "auto" && !this.autoModeSafety.getConfig().enabled) {
       return { ok: false, reason: "classifier-backed auto gear is disabled by policy" };
     }
@@ -3984,7 +3995,7 @@ export class Engine {
       case "gear":
       case "permission_mode": {
         const mode = configModeToPermissionMode(canonicalValue);
-        if (!mode) return { ok: false, reason: `unknown gear "${canonicalValue}"` };
+        if (!mode) return { ok: false, reason: `unknown rune "${canonicalValue}"` };
         return this.setPermissionMode(mode);
       }
       case "sandbox":
@@ -4250,7 +4261,7 @@ export class Engine {
     // survives everything — and where the model can read it back with an
     // ordinary read_file. The injected block names this path when it had to
     // truncate. Workspace-relative on purpose: the path is FOR the model.
-    const missionRelPath = join(".gear", "mission.md");
+    const missionRelPath = join(".rune", "mission.md");
     taskState.setMissionPath(missionRelPath);
     const persistTaskState = (): void => {
       try {
@@ -4263,7 +4274,7 @@ export class Engine {
       }
       try {
         const missionAbs = join(this.config.workspaceRoot, missionRelPath);
-        mkdirSync(join(this.config.workspaceRoot, ".gear"), { recursive: true });
+        mkdirSync(join(this.config.workspaceRoot, ".rune"), { recursive: true });
         writeFileSync(missionAbs, taskState.renderMissionFile(), "utf8");
       } catch {
         // the dossier is best-effort; the event log remains the source of truth
@@ -4327,7 +4338,11 @@ export class Engine {
     // The message's turn budget: a greeting or short question gets a small
     // conversational ceiling (measured: a 24-character question once ran the
     // full 80-turn loop for 53 minutes); real work keeps the full one.
-    const turnBudget = turnBudgetForMessage(userMessage, MAX_TURNS);
+    // Recovery bounds resolved per model family + [reliability] overrides —
+    // computed at run start so a /model switch takes effect next run. The
+    // turn ceiling is one of them (`[reliability] maxTurns`, default 80).
+    const reliability = policyForModel(session.model, this.config.reliability);
+    const turnBudget = turnBudgetForMessage(userMessage, reliability.maxTurns);
 
     // The map is intentionally per request rather than per session: ranking is
     // query-aware. It remains outside the cache-sensitive system prompt and is
@@ -4353,7 +4368,7 @@ export class Engine {
       this.ensurePluginTools(),
     ]);
     // What the tool surface costs per request, once the extensions are in.
-    // Recorded once per session so `gear audit` can report it (P4.1).
+    // Recorded once per session so `rune audit` can report it (P4.1).
     this.recordToolSurface(sessionId, session.model);
     // Whatever the connectors said while starting — before the first token, so
     // "notion needs authorization" arrives ahead of the answer that will not
@@ -4464,9 +4479,6 @@ export class Engine {
     // step prompts, planned without reading the codebase, and never actually
     // re-planned. Planning is now a property of the default loop — the task
     // spine + todo discipline + replan nudges — not a mode you switch into.)
-    // Recovery bounds resolved per model family + [reliability] overrides —
-    // computed at run start so a /model switch takes effect next run.
-    const reliability = policyForModel(session.model, this.config.reliability);
     const loop = new AgentLoop(
       {
         model: session.model,
@@ -4476,7 +4488,7 @@ export class Engine {
         // Was a hard 8 with no key. Eight concurrent heavy workers is a lot of
         // money at once, and eight worktrees is a lot of disk on a small machine.
         maxParallelTools: resolveMaxParallel(this.config.subagents?.maxParallel),
-        maxSecondWinds: turnBudget.conversational ? 0 : 2,
+        maxSecondWinds: turnBudget.conversational ? 0 : reliability.secondWinds,
         systemPrompt,
         priorMessages,
         contextEngine: this.contextEngine,
@@ -5018,7 +5030,7 @@ export class Engine {
       persistTaskState();
 
       // ── The Decision Record ──
-      // Generated from the state that is now final, persisted so `gear audit
+      // Generated from the state that is now final, persisted so `rune audit
       // --record` and the export read the same bytes a live surface saw, and
       // emitted so a client can show the closing artifact without asking for
       // it. Deterministic and free: no model call, nothing paraphrased. A run
@@ -5067,7 +5079,7 @@ export class Engine {
 
       // The retro: the run's own account of itself — outcome, steps by
       // evidence, checks, gates, cost — and the lessons a rule can vouch for.
-      // Written where `gear audit` and `gear evolve` read it, folded into the
+      // Written where `rune audit` and `rune evolve` read it, folded into the
       // notebook the next session is briefed from, and rendered into the
       // repository's playbook once a lesson recurs. Zero model calls.
       try {
@@ -5143,8 +5155,8 @@ export class Engine {
                 yield {
                   type: "notice",
                   message: pb.pending
-                    ? `Playbook drafted: ${PLAYBOOK_PENDING_REL} — ${pb.lessons} active lesson${pb.lessons === 1 ? "" : "s"} from ${pb.sessions} session${pb.sessions === 1 ? "" : "s"}. Nothing loads it yet; \`gear evolve playbook --enable\` turns learned skills on.`
-                    : `Playbook updated: ${PLAYBOOK_REL} — ${pb.lessons} active lesson${pb.lessons === 1 ? "" : "s"} from ${pb.sessions} session${pb.sessions === 1 ? "" : "s"} (gear evolve lessons).`,
+                    ? `Playbook drafted: ${PLAYBOOK_PENDING_REL} — ${pb.lessons} active lesson${pb.lessons === 1 ? "" : "s"} from ${pb.sessions} session${pb.sessions === 1 ? "" : "s"}. Nothing loads it yet; \`rune evolve playbook --enable\` turns learned skills on.`
+                    : `Playbook updated: ${PLAYBOOK_REL} — ${pb.lessons} active lesson${pb.lessons === 1 ? "" : "s"} from ${pb.sessions} session${pb.sessions === 1 ? "" : "s"} (rune evolve lessons).`,
                 } as AgentTurnEvent;
               }
             }
@@ -5742,7 +5754,7 @@ export class Engine {
 
   /**
    * BYOP: apply (or, with null, drop) a credential resolved by the auth layer —
-   * e.g. right after `gear login` mints an OAuth token — and rebuild the gateway
+   * e.g. right after `rune login` mints an OAuth token — and rebuild the gateway
    * so it takes effect immediately. Persistence lives in the credential store;
    * this only touches in-memory state. Returns a forced switch if dropping the
    * credential left the active provider unusable.
@@ -6110,7 +6122,7 @@ export class Engine {
     // Language servers outlived close() before: they were only reaped by the
     // manager's process-exit hook, which is fine for a session that ends with
     // the process and wrong for anything that closes an engine and keeps
-    // running (`gear -P` batches, the eval suite, the host's session churn).
+    // running (`rune -P` batches, the eval suite, the host's session churn).
     // Post-edit diagnostics spawn one on the write path, so that leak now has
     // real weight.
     stopLanguageServers().catch(() => {});

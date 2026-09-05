@@ -108,3 +108,22 @@ describe("batchSignature (conservative — feeds the loop detector)", () => {
     expect(batchSignature([r, g])).not.toBe(batchSignature([g, r]));
   });
 });
+
+// ─── Result signatures (2026-09-05) ───
+import { resultSignature } from "../../../packages/orchestrator/src/call-signature";
+
+describe("resultSignature", () => {
+  test("folds whitespace, volatile tokens and durations; keeps counts distinct", () => {
+    const a = resultSignature("3 tests passed (1.23s)\n  id 550e8400-e29b-41d4-a716-446655440000");
+    const b = resultSignature("3 tests   passed (1.47 s)\nid 123e4567-e89b-12d3-a456-426614174000");
+    expect(a).toBe(b);
+    expect(resultSignature("3 tests passed")).not.toBe(resultSignature("2 tests passed"));
+    expect(resultSignature("FAIL: expected 1")).not.toBe(resultSignature("PASS: expected 1"));
+    expect(a).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  test("a polled result that changes is a different signature each time", () => {
+    const sigs = ["line 1", "line 1\nline 2", "line 1\nline 2\nline 3"].map(resultSignature);
+    expect(new Set(sigs).size).toBe(3);
+  });
+});

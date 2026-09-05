@@ -24,6 +24,10 @@ describe("reliability policy", () => {
       maxReplanNudges: 1,
       maxStruggleNudges: 1,
       maxGreenfieldNudges: 1,
+      // The turn ceiling and its second winds joined the policy on
+      // 2026-09-05; they were a constant in engine.ts before.
+      maxTurns: 80,
+      secondWinds: 2,
     });
   });
 

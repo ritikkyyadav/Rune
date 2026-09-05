@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  TOOL_REMEDIES,
   deriveRunRetro,
   foldTurnRetros,
   gardenerBrief,
@@ -275,15 +276,98 @@ describe("retroLessons — precision over recall", () => {
     expect(retroLessons([obs("grep -rn test src/", true)])).toHaveLength(0);
   });
 
-  test("multi-line scripts and non-bash tools are never named in a lesson", () => {
+  test("multi-line scripts are never named; a non-bash tool speaks only through a remedy", () => {
     expect(
       retroLessons([
         obs("for f in *; do\n echo $f; done", false, "syntax error"),
         obs("for f in *; do\n echo $f; done", false, "syntax error"),
-        { toolName: "edit_file", args: { path: "a" }, success: false, error: "old_text not found" },
+      ]),
+    ).toHaveLength(0);
+    // 68 retros produced zero lessons under the bash-only rules while runs
+    // failed in edit_file nine times a day. A shape with a known remedy,
+    // seen twice, is a lesson — and the body is the remedy, never the error.
+    const steer = retroLessons([
+      { toolName: "edit_file", args: { path: "a" }, success: false, error: "old_text not found" },
+      { toolName: "edit_file", args: { path: "a" }, success: false, error: "old_text not found" },
+    ]);
+    expect(steer).toHaveLength(1);
+    expect(steer[0]).toMatchObject({ kind: "steer", title: "steer:edit-old-text" });
+    expect(steer[0].body).not.toContain("old_text not found");
+    expect(steer[0].body).toContain("read_file");
+    expect(steer[0].evidence).toBe("edit_file failed this way 2× in one run");
+  });
+
+  test("a remedy needs its shape twice; an unknown non-bash failure teaches nothing", () => {
+    expect(
+      retroLessons([
         { toolName: "edit_file", args: { path: "a" }, success: false, error: "old_text not found" },
       ]),
     ).toHaveLength(0);
+    expect(
+      retroLessons([
+        { toolName: "edit_file", args: {}, success: false, error: "disk is on fire" },
+        { toolName: "edit_file", args: {}, success: false, error: "disk is on fire" },
+      ]),
+    ).toHaveLength(0);
+  });
+
+  test("transient non-bash failures are not steers; a mixed run ranks by recurrence", () => {
+    expect(
+      retroLessons([
+        { toolName: "web_fetch", args: {}, success: false, error: "HTTP 404 — request timed out" },
+        { toolName: "web_fetch", args: {}, success: false, error: "HTTP 404 — request timed out" },
+      ]),
+    ).toHaveLength(0);
+    const lessons = retroLessons([
+      {
+        toolName: "read_file",
+        args: {},
+        success: false,
+        error: "IO error: No such file or directory",
+      },
+      {
+        toolName: "read_file",
+        args: {},
+        success: false,
+        error: "IO error: No such file or directory",
+      },
+      {
+        toolName: "read_file",
+        args: {},
+        success: false,
+        error: "IO error: No such file or directory",
+      },
+      {
+        toolName: "bash",
+        args: { command: "curl https://x" },
+        success: false,
+        error:
+          "Blocked before running: this looks like a HTTP request, and sandboxed bash has NO network",
+      },
+      {
+        toolName: "bash",
+        args: { command: "curl https://y" },
+        success: false,
+        error:
+          "Blocked before running: this looks like a HTTP request, and sandboxed bash has NO network",
+      },
+    ]);
+    expect(lessons.map((l) => l.title)).toEqual(["steer:path-guessed", "steer:bash-network"]);
+    expect(lessons.every((l) => l.kind === "steer")).toBe(true);
+  });
+
+  test("every remedy has a key, a tool, an error shape and imperative advice under 400 chars", () => {
+    const keys = new Set<string>();
+    for (const r of TOOL_REMEDIES) {
+      expect(r.key).toMatch(/^[a-z][a-z0-9-]+$/);
+      expect(keys.has(r.key)).toBe(false);
+      keys.add(r.key);
+      expect(r.tool).toBeInstanceOf(RegExp);
+      expect(r.error).toBeInstanceOf(RegExp);
+      expect(r.body.length).toBeGreaterThan(20);
+      expect(r.body.length).toBeLessThanOrEqual(400);
+    }
+    expect(TOOL_REMEDIES.length).toBeGreaterThanOrEqual(7);
   });
 });
 
@@ -459,7 +543,7 @@ describe("gardener", () => {
     expect(brief).toContain("bun run typecheck");
     expect(brief).toContain("Do not push, merge, or open a pull request");
     for (const p of GARDENER_OFF_LIMITS) expect(brief).toContain(p);
-    expect(brief).toContain(".gear/gardener-report.md");
+    expect(brief).toContain(".rune/gardener-report.md");
   });
 });
 
@@ -530,8 +614,8 @@ describe("deriveRunRetro — outcome across runs", () => {
 // ─── The scope defect ───
 // The engine writes a retro per RUN, and a run is one turn. Before the fix,
 // every turn retro carried the SESSION's cumulative step counts and the
-// SESSION's goal, so `gear audit` showed a two-word greeting as the whole
-// mission and `gear evolve scorecard` counted each turn as a run. The contract
+// SESSION's goal, so `rune audit` showed a two-word greeting as the whole
+// mission and `rune evolve scorecard` counted each turn as a run. The contract
 // now: work counters are a delta over the window, the plan's shape is absolute,
 // the goal belongs to the session, and N turn retros fold into one sample.
 

@@ -1,10 +1,12 @@
 /**
  * Second wind: the turn ceiling extends itself when the plan is open AND
- * moving — a step completed with evidence since the window began — and
- * nothing struggled in the window. evolab7 hit 80 turns with four of five
- * steps done and handed off; a person had to type "continue". The ceiling is
- * a guard against runaway loops, not a measure of the task; a plan that is
- * not moving, a struggle in the window, or winds = 0 keep the hard ceiling.
+ * moving — a step completed with evidence since the window began. evolab7
+ * hit 80 turns with four of five steps done and handed off; a person had to
+ * type "continue". The ceiling is a guard against runaway loops, not a
+ * measure of the task; a plan that is not moving or winds = 0 keep the hard
+ * ceiling. A struggle in the window is no longer a veto: measured over a
+ * month, the wind never fired once, because the nudges that eat the budget
+ * also set the flag that refused to extend it.
  */
 
 import { describe, expect, mock, test } from "bun:test";
@@ -164,7 +166,11 @@ describe("second wind at the turn ceiling", () => {
     expect((events.find((e) => e.type === "handoff") as any)?.reason).toBe("max_turns");
   });
 
-  test("a struggle in the window blocks the wind", async () => {
+  test("a struggle in the window does not block a moving plan", async () => {
+    // Measured: the wind never fired in a month of runs, because the runs that
+    // reach the ceiling are the ones the harness has been nudging — the
+    // struggle flag vetoed exactly the runs it was built for. Progress is the
+    // criterion; the runaway guards end a genuinely stuck run.
     const ts = plannedState();
     const incidents: string[] = [];
     const loop = makeLoop(makeGateway(5), ts, makeRegistry(ts, true), {
@@ -176,6 +182,23 @@ describe("second wind at the turn ceiling", () => {
     });
     const events = await collect(loop.run("build the whole laboratory", "s1", "/tmp"));
     expect(events.some((e) => e.type === "replanning")).toBe(true);
+    expect(incidents).toContain("loop.second_wind");
+    expect(incidents).not.toContain("loop.max_turns");
+    expect(events.find((e) => e.type === "handoff")).toBeUndefined();
+    expect(ts.hasOpenTodos()).toBe(false);
+  });
+
+  test("a struggle in the window with a plan that is NOT moving still gets no wind", async () => {
+    const ts = plannedState();
+    const incidents: string[] = [];
+    const loop = makeLoop(makeGateway(5), ts, makeRegistry(ts, false), {
+      maxSecondWinds: 2,
+      onIncident: (i: any) => incidents.push(i.class),
+    });
+    loop.injectHarnessNote("you have rewritten this file five times", {
+      replanReason: "edit churn",
+    });
+    const events = await collect(loop.run("build the whole laboratory", "s1", "/tmp"));
     expect(incidents).not.toContain("loop.second_wind");
     expect((events.find((e) => e.type === "handoff") as any)?.reason).toBe("max_turns");
   });

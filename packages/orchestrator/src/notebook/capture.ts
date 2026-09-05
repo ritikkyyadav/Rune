@@ -5,6 +5,7 @@
 // hurts, a missed one costs nothing — fuzzier distillation belongs to the
 // (governor-gated, cheapest-tier) reflection pass, not here.
 
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { NotebookStore } from "./store";
@@ -124,6 +125,32 @@ export function commandsAreVariants(failed: string, succeeded: string): boolean 
   );
 }
 
+/** The runner a command actually invokes: `cd x && FOO=1 env bun test` → `bun`. */
+function runnerHead(cmd: string): string {
+  let s = cmd.trim();
+  for (;;) {
+    const m = /^(?:cd\s+\S+\s*(?:&&|;)\s*|[A-Za-z_][A-Za-z0-9_]*=\S*\s+|env\s+)/.exec(s);
+    if (!m) break;
+    s = s.slice(m[0].length);
+  }
+  const head = (s.split(/\s+/)[0] ?? "").replace(/[^A-Za-z0-9_./-]/g, "").slice(0, 32);
+  return head || "cmd";
+}
+
+/**
+ * The tactic's dedupe key. It named the first token of each command, so
+ * every pairing under a `cd` collapsed into `prefer:cd:cd` (five tactics,
+ * three titles, measured 2026-09-05). The key names the two runners; when
+ * the runner is the same and only the directory or flags differ, the failed
+ * command's hash keeps the pairings apart.
+ */
+export function tacticTitle(succeeded: string, failed: string): string {
+  const a = runnerHead(succeeded);
+  const b = runnerHead(failed);
+  if (a !== b) return `prefer:${a}:${b}`;
+  return `prefer:${a}:${createHash("sha1").update(failed).digest("hex").slice(0, 6)}`;
+}
+
 function captureFailoverTactics(ctx: CaptureContext, observations: ToolObservation[]): string[] {
   const written: string[] = [];
   const failures: string[] = [];
@@ -144,7 +171,7 @@ function captureFailoverTactics(ctx: CaptureContext, observations: ToolObservati
           kind: "tactic",
           scope: "repo",
           repoKey: ctx.repoKey,
-          title: `prefer:${cmd.split(/\s+/)[0]}:${match.split(/\s+/)[0]}`,
+          title: tacticTitle(cmd, match),
           body: `Use \`${cmd}\` here — \`${match}\` fails in this repo.`,
           sessionId: ctx.sessionId,
         }),

@@ -30,6 +30,20 @@ export const INCIDENT_CLASSES = [
   "provider.empty_completion",
   "tool.exec_failure",
   "tool.invalid_input",
+  /**
+   * A call arrived without its schema-required arguments — normally a response
+   * cut at the output-token limit mid-JSON. Answered by the loop as invalid
+   * rather than sent to safety review: an empty call cannot do anything, so
+   * reviewing it buys nothing and costs a reasoned round trip plus a held step.
+   * Pairs with `provider.malformed_tool_json_fatal`, which records the cause.
+   */
+  "tool.malformed_call",
+  /**
+   * The tool pacer held a call for a short window instead of refusing it.
+   * The model never sees a pace; it only ever saw the old refusal, which
+   * cost a completion to re-issue a read the engine had throttled itself.
+   */
+  "tool.rate_paced",
   "tool.timeout",
   "tool.sandbox_denial",
   "tool.path_violation",
@@ -41,6 +55,11 @@ export const INCIDENT_CLASSES = [
   "loop.same_shape_failures",
   "loop.same_shape_refused",
   "loop.stuck_nudge",
+  /**
+   * The same substantive result came back again and again while the calls
+   * varied — the situation is not changing. Nudged, never bailed.
+   */
+  "loop.result_loop",
   "loop.infinite_loop",
   "loop.barren_nudge",
   "loop.barren_turns",
@@ -59,6 +78,11 @@ export const INCIDENT_CLASSES = [
   "loop.consecutive_errors",
   "loop.max_turns",
   "loop.second_wind",
+  /**
+   * A completion the harness spent on itself (a refused step, a nudge) was
+   * given back: the ceiling moved up by one. See turn-refunds.ts.
+   */
+  "loop.turn_refunded",
   "loop.user_abort",
   "loop.plan_nudge",
   "loop.replan_nudge",
@@ -136,7 +160,7 @@ export const SEVERITY_RANK: Record<IncidentSeverity, number> = {
 export type IncidentOutcome =
   "pending" | "recovered" | "turn_failed" | "user_interrupted" | "abandoned" | "crash";
 
-/** One compact entry in the flight trail: what Gear did leading up to an incident. */
+/** One compact entry in the flight trail: what Rune did leading up to an incident. */
 export interface TrailEntry {
   /** Monotonic position within the run's trail (not the session event seq). */
   seq: number;

@@ -2,6 +2,10 @@ import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../
 import { selectBackends } from "./search/index";
 import type { SearchBackend, SearchResponse } from "./search/index";
 
+/** How long a rate-limited backend sits out. */
+export const BACKEND_COOLDOWN_MS = 10 * 60_000;
+const RATE_LIMITED_RE = /\b429\b|rate.?limit|too many requests/i;
+
 export const WEB_SEARCH_SCHEMA: ToolSchema = {
   name: "web_search",
   version: "0.2.0",
@@ -34,11 +38,20 @@ export const WEB_SEARCH_SCHEMA: ToolSchema = {
  * added mid-session is picked up) and tried in priority order; the handler
  * falls through to the next backend when one errors or returns nothing.
  *
+ * A backend that answers with a rate limit is skipped for `cooldownMs` (ten
+ * minutes by default) and the next backend answers in the same call. Brave
+ * once returned 429 on fifteen consecutive searches in an afternoon and was
+ * tried first every time.
+ *
  * @param backendsFor - injectable backend selector (defaults to env-based selection; used by tests)
  */
 export function createWebSearchHandler(
   backendsFor: () => SearchBackend[] = () => selectBackends(),
+  opts: { cooldownMs?: number; now?: () => number } = {},
 ): ToolHandler {
+  const cooldownMs = opts.cooldownMs ?? BACKEND_COOLDOWN_MS;
+  const now = opts.now ?? (() => Date.now());
+  const coolingUntil = new Map<string, number>();
   return {
     schema: WEB_SEARCH_SCHEMA,
 
@@ -65,6 +78,11 @@ export function createWebSearchHandler(
       const errors: string[] = [];
 
       for (const backend of backends) {
+        const until = coolingUntil.get(backend.name);
+        if (until !== undefined && until > now()) {
+          errors.push(`${backend.name}: cooling down after a rate limit`);
+          continue;
+        }
         try {
           const resp: SearchResponse = await backend.search(query, { maxResults, recencyDays });
           if (resp.results.length === 0 && !resp.answer) {
@@ -84,7 +102,9 @@ export function createWebSearchHandler(
             durationMs: Math.round(performance.now() - start),
           };
         } catch (err) {
-          errors.push(`${backend.name}: ${err instanceof Error ? err.message : String(err)}`);
+          const message = err instanceof Error ? err.message : String(err);
+          if (RATE_LIMITED_RE.test(message)) coolingUntil.set(backend.name, now() + cooldownMs);
+          errors.push(`${backend.name}: ${message}`);
         }
       }
 
