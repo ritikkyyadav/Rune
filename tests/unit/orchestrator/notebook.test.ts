@@ -17,7 +17,7 @@ let dir: string;
 let store: NotebookStore;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "gear-notebook-"));
+  dir = mkdtempSync(join(tmpdir(), "rune-notebook-"));
   store = new NotebookStore(join(dir, "nb.db"));
 });
 
@@ -234,8 +234,8 @@ describe("engine integration", () => {
       model: "gemini-2.5-flash",
       provider: "google",
       workspaceRoot: dir,
-      dbPath: join(dir, "gear.db"),
-      toolsBinaryPath: "gear-tools",
+      dbPath: join(dir, "rune.db"),
+      toolsBinaryPath: "rune-tools",
       yoloMode: false,
       enableCheckpoints: false,
       enableSecurity: false,
@@ -258,8 +258,8 @@ describe("engine integration", () => {
       model: "gemini-2.5-flash",
       provider: "google",
       workspaceRoot: dir,
-      dbPath: join(dir, "gear2.db"),
-      toolsBinaryPath: "gear-tools",
+      dbPath: join(dir, "rune2.db"),
+      toolsBinaryPath: "rune-tools",
       yoloMode: false,
       enableCheckpoints: false,
       enableSecurity: false,
@@ -291,5 +291,50 @@ describe("CostGovernor — the ≤2% learning-spend contract", () => {
     const g = new CostGovernor();
     expect(g.allow(0.001, 0)).toBe(true); // under the $0.002 floor
     expect(g.allow(0.3, 1.0)).toBe(false); // 30% of budget — structurally refused
+  });
+});
+
+// ─── Tactic titles (2026-09-05) ───
+// The title is the dedupe key. It named the first token of each command, so
+// `cd x && npm test` → `cd x && bun test` was stored as `prefer:cd:cd`, and
+// so was every other pairing under a `cd` — five tactics, three titles.
+import { tacticTitle } from "../../../packages/orchestrator/src/notebook/capture";
+
+describe("tactic titles name the runner, not the cd", () => {
+  const ctx = () => ({
+    store,
+    repoKey: "r1",
+    stackKey: "bun+ts",
+    sessionId: "sess",
+    workspaceRoot: dir,
+  });
+
+  test("strips cd and env prefixes and names the differing runners", () => {
+    expect(tacticTitle("cd app && bun test", "cd app && npm test")).toBe("prefer:bun:npm");
+    expect(tacticTitle("FOO=1 bun test", "npm test")).toBe("prefer:bun:npm");
+    expect(tacticTitle("env CI=1 ./scripts/check.sh", "make check")).toBe(
+      "prefer:./scripts/check.sh:make",
+    );
+  });
+
+  test("the same runner from a different directory still gets a distinct key", () => {
+    const t1 = tacticTitle("cd b && bun test", "cd a && bun test");
+    const t2 = tacticTitle("cd c && bun test", "cd a && bun test");
+    expect(t1).toMatch(/^prefer:bun:[0-9a-f]{6}$/);
+    expect(t1).toBe(t2); // same failed command → same key
+    expect(t1).not.toBe(tacticTitle("cd b && bun test", "cd z && bun test"));
+    expect(t1).not.toContain("cd:cd");
+  });
+
+  test("a cd-prefixed failover is stored under the runner title", () => {
+    captureFromRun(ctx(), [
+      obs("bash", "cd web && npm test", false),
+      obs("bash", "cd web && bun test", true),
+    ]);
+    const tactic = store.list().find((e) => e.kind === "tactic");
+    expect(tactic?.title).toBe("prefer:bun:npm");
+    expect(tactic?.body).toBe(
+      "Use `cd web && bun test` here — `cd web && npm test` fails in this repo.",
+    );
   });
 });

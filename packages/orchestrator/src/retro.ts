@@ -1,10 +1,10 @@
 // ─── The retro: a run's account of itself, in numbers, and what it taught ───
 //
-// Gear recorded everything and read nothing back. The black box holds every
+// Rune recorded everything and read nothing back. The black box holds every
 // failure under a fingerprint, the notebook holds command facts, the spine
 // holds every step's evidence — and none of it changed the next run, because
 // no organ turned a finished run into a lesson. This is that organ: a
-// zero-model-call pass over the run's own session log (the same rows `gear
+// zero-model-call pass over the run's own session log (the same rows `rune
 // audit` reads) that states what happened — outcome, steps by evidence,
 // checks, gates, cost — and extracts the few lessons a rule can vouch for.
 //
@@ -12,7 +12,7 @@
 // here" costs turns on every later run; a missed one costs nothing.
 
 import { createHash } from "node:crypto";
-import type { SessionEvent } from "@gear/shared";
+import type { SessionEvent } from "@rune/shared";
 import { isVerificationCommand } from "./brief";
 import { categorizeProjectCommand } from "./notebook/capture";
 import type { ToolObservation } from "./notebook/capture";
@@ -34,8 +34,10 @@ export interface RetroLesson {
    *           facts the notebook already keeps)
    * pitfall — a command that failed repeatedly with one error and never passed
    * fix     — the same command failing, then passing with different arguments
+   * steer   — a tool failure SHAPE with a known remedy, seen twice in one run;
+   *           the body is the remedy, never the raw error (TOOL_REMEDIES)
    */
-  kind: "check" | "pitfall" | "fix";
+  kind: "check" | "pitfall" | "fix" | "steer";
   /** Notebook dedupe key within the repo scope. */
   title: string;
   /** The advice, ≤ 400 chars — it is injected under the notebook's budget. */
@@ -477,6 +479,104 @@ function argDiff(before: Record<string, unknown>, after: Record<string, unknown>
   return out.slice(0, 3);
 }
 
+// ─── Remedies: the failure shapes a run can be steered away from ───
+// The three bash rules above are precise and, measured over 68 retros,
+// produced nothing: real runs fail in edit_file and read_file and web_fetch,
+// not in one bash command repeated verbatim. Non-bash tools still never
+// speak in their own words — a raw error is not advice — but a shape with a
+// KNOWN remedy, seen twice in one run, is. The remedy is the lesson.
+
+export interface ToolRemedy {
+  /** Dedupe key; the lesson title is `steer:<key>`. */
+  key: string;
+  tool: RegExp;
+  error: RegExp;
+  /** The advice, ≤ 400 chars, in the imperative. */
+  body: string;
+}
+
+export const TOOL_REMEDIES: readonly ToolRemedy[] = [
+  {
+    key: "edit-old-text",
+    tool: /^(?:edit_file|multi_edit|apply_patch)$/,
+    error: /old_text not found|could not find (?:the )?old_text|no match for old_text/i,
+    body:
+      "Before an edit, read the exact current text (read_file or read_many) and paste it verbatim " +
+      "as old_text — the file had changed since it was last read, or the quote was from memory.",
+  },
+  {
+    key: "edit-ambiguous",
+    tool: /^(?:edit_file|multi_edit|apply_patch)$/,
+    error: /matches \d+ times|ambiguous|more than one match/i,
+    body:
+      "old_text must be unique: include the surrounding lines, or set replace_all when every " +
+      "occurrence should change.",
+  },
+  {
+    key: "path-guessed",
+    tool: /^(?:read_file|read_many|list_dir|edit_file|multi_edit)$/,
+    error: /no such file|ENOENT|does not exist|not found/i,
+    body: "Do not guess paths: list_dir or glob first, then read what exists.",
+  },
+  {
+    key: "bash-network",
+    tool: /^bash$/,
+    error: /sandboxed bash has NO network|network: true/i,
+    body:
+      "A command that reaches the network needs `network: true` on the bash call; the sandbox " +
+      "blocks egress by default and the call would hang until its timeout.",
+  },
+  {
+    key: "ask-user-shape",
+    tool: /^ask_user$/,
+    error: /each question needs text and 2-6/i,
+    body: "ask_user takes questions with text and 2–6 non-empty options; write the options first.",
+  },
+  {
+    key: "fetch-404",
+    tool: /^web_fetch$/,
+    error: /\b404\b/,
+    body: "Search for the page before fetching it; URLs written from memory come back 404.",
+  },
+  {
+    key: "close-with-evidence",
+    tool: /^todo_write$/,
+    error: /completions? refused|Plan NOT updated/i,
+    body: "A step closes only with evidence: run the check or write the file first, then mark it done.",
+  },
+  // TODO(human): add one remedy for a failure shape you have watched a run
+  // repeat — `rune incidents top` lists them. Same fields as above; the
+  // tests in tests/unit/orchestrator/retro.test.ts show the contract.
+];
+
+/** How many times a shape must recur in one run before it is a lesson. */
+const STEER_THRESHOLD = 2;
+const STEER_CAP = 3;
+
+export function steerLessons(observations: ToolObservation[]): RetroLesson[] {
+  const seen = new Map<string, { remedy: ToolRemedy; tool: string; count: number }>();
+  for (const o of observations) {
+    if (o.success) continue;
+    const line = firstLine(o.error ?? "");
+    if (!line || TRANSIENT_RE.test(line) || USER_SAID_NO_RE.test(line)) continue;
+    const remedy = TOOL_REMEDIES.find((r) => r.tool.test(o.toolName) && r.error.test(line));
+    if (!remedy) continue;
+    const hit = seen.get(remedy.key);
+    if (hit) hit.count++;
+    else seen.set(remedy.key, { remedy, tool: o.toolName, count: 1 });
+  }
+  return [...seen.values()]
+    .filter((h) => h.count >= STEER_THRESHOLD)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, STEER_CAP)
+    .map((h) => ({
+      kind: "steer" as const,
+      title: `steer:${h.remedy.key}`,
+      body: h.remedy.body,
+      evidence: `${h.tool} failed this way ${h.count}× in one run`,
+    }));
+}
+
 export function retroLessons(observations: ToolObservation[]): RetroLesson[] {
   const lessons: RetroLesson[] = [];
 
@@ -546,6 +646,7 @@ export function retroLessons(observations: ToolObservation[]): RetroLesson[] {
       command: lastCheck,
     });
   }
+  lessons.push(...steerLessons(observations));
   return lessons;
 }
 
@@ -765,7 +866,7 @@ export function scoreRates(row: ScoreRow): ScoreRates {
 
 // ─── Tuning proposals ───
 // Rule-based, printed with their evidence, and now each one names a VARIANT —
-// an id in the closed registry (`evolve/variants.ts`) that `gear evolve ab`
+// an id in the closed registry (`evolve/variants.ts`) that `rune evolve ab`
 // can actually run. Before this the `config` field was prose: a TOML line a
 // person retyped by hand, which is why 128 measured runs produced zero
 // changes. A proposal is still not an application; it is now a proposal you
@@ -897,7 +998,7 @@ export function tuneProposals(rows: ScoreRow[], opts: { minRuns?: number } = {})
         key: row.key,
         signal: `${row.halted} of ${row.runs} runs were halted by the supervisor`,
         proposal:
-          "The supervisor is stopping sessions. This is NOT a tuning question — no variant may touch Auto mode — read `gear audit` for the halt reasons and the false-positive rate in docs/auto-mode.md before changing anything.",
+          "The supervisor is stopping sessions. This is NOT a tuning question — no variant may touch Auto mode — read `rune audit` for the halt reasons and the false-positive rate in docs/auto-mode.md before changing anything.",
         variant: null,
         config: "(none — the safety layer is outside the allowlist by design)",
         confidence: "medium",
@@ -908,7 +1009,7 @@ export function tuneProposals(rows: ScoreRow[], opts: { minRuns?: number } = {})
 }
 
 // ─── The gardener's reading of the black box ───
-// Which fingerprints are harness defects a run on Gear's own repository could
+// Which fingerprints are harness defects a run on Rune's own repository could
 // fix, as opposed to the user's commands failing or a provider misbehaving.
 
 export const GARDENER_CLASSES: ReadonlySet<string> = new Set([
@@ -979,7 +1080,7 @@ export function gardenerBrief(fp: GardenerFingerprint, samples: GardenerSample[]
     })
     .join("\n");
   const lines = [
-    "You are working on Gear's own source, in this repository. Fix ONE recurring harness defect, evidenced by Gear's black box.",
+    "You are working on Rune's own source, in this repository. Fix ONE recurring harness defect, evidenced by Rune's black box.",
     "",
     `Fingerprint ${fp.fingerprint} · class ${fp.class} · component ${fp.component}`,
     `Seen ${fp.count}× (first ${fp.firstSeen.slice(0, 10)}, last ${fp.lastSeen.slice(0, 10)}) across versions ${fp.versions.join(", ") || "?"}.`,
@@ -1003,7 +1104,7 @@ export function gardenerBrief(fp: GardenerFingerprint, samples: GardenerSample[]
     "2. Before finishing, run and pass all of: `bun run typecheck`, `bun run lint`, `bun test tests/unit/`, `bunx prettier --check .`.",
     `3. Do not edit these files — they need a person: ${GARDENER_OFF_LIMITS.join(", ")}. Do not change the doctrine token ceiling or any test that guards it.`,
     "4. Commit on this branch with a message starting `fix(gardener):` that cites the fingerprint. Do not push, merge, or open a pull request — a person reviews the branch.",
-    "5. If the defect cannot be reproduced in a test, stop: write what you found and why it could not be reproduced into .gear/gardener-report.md, and do not guess at a fix.",
+    "5. If the defect cannot be reproduced in a test, stop: write what you found and why it could not be reproduced into .rune/gardener-report.md, and do not guess at a fix.",
   );
   return lines.join("\n");
 }

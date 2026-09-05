@@ -1,11 +1,11 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
 import type { AuthMethod } from "./providers.js";
-import { adoptLegacyEnv, getGearHome, workspaceConfigPath } from "./paths.js";
+import { adoptLegacyEnv, getRuneHome, workspaceConfigPath } from "./paths.js";
 
 // ─── Config Types ───
 
-export interface GearConfig {
+export interface RuneConfig {
   engine: {
     socketPath: string;
     logDir: string;
@@ -94,7 +94,7 @@ export interface GearConfig {
    * Nothing here is a secret: a region, a GCP project, an Azure endpoint and a
    * deployment-name map are the coordinates of an account, so they belong in a
    * `config.toml` a team checks in and shares — while the credential stays in
-   * the cloud's own chain and never enters a file Gear writes.
+   * the cloud's own chain and never enters a file Rune writes.
    */
   providers?: {
     bedrock?: {
@@ -143,7 +143,7 @@ export interface GearConfig {
      */
     gear?: 1 | 2 | 3 | 4 | "1" | "2" | "3" | "4" | "auto" | (string & {});
     /**
-     * LEGACY key (pre-gear). Still read when `gear` is absent. Historical
+     * LEGACY key (pre-rune). Still read when `rune` is absent. Historical
      * values: confirm → 1st gear; autonomy-i/ii/iii → 2nd/3rd/4th;
      * hands-free/turing → 4th; and the OLD meaning of "auto" (auto-approve
      * workspace work) → 3rd gear — never the classifier.
@@ -152,7 +152,7 @@ export interface GearConfig {
       "confirm" | "autonomy-i" | "autonomy-ii" | "autonomy-iii" | "auto" | "hands-free" | "turing";
     /**
      * LEGACY storage flag for the old "workspace trust" (today's 3rd gear).
-     * Read when neither `gear` nor `mode` is set.
+     * Read when neither `rune` nor `mode` is set.
      */
     trustWorkspace?: boolean;
     /**
@@ -198,8 +198,8 @@ export interface GearConfig {
       heldStepPrompt?: boolean;
       /**
        * Default FALSE. Keep an encrypted local sidecar of the raw arguments
-       * behind each safety decision (`~/.gear/auto-eval.db`, AES-256-GCM under
-       * `~/.gear/auto-eval.key`), so recorded decisions can be replayed as
+       * behind each safety decision (`~/.rune/auto-eval.db`, AES-256-GCM under
+       * `~/.rune/auto-eval.key`), so recorded decisions can be replayed as
        * labelled eval scenarios.
        *
        * The audit log deliberately stores only `argsHash`, which is why the
@@ -256,6 +256,36 @@ export interface GearConfig {
     maxPlanNudges?: number;
     maxReplanNudges?: number;
     maxStruggleNudges?: number;
+    /**
+     * The turn ceiling for a run of real work (default 80). A runaway guard,
+     * not a work budget: long builds legitimately spend 30–50, and turns the
+     * harness spends on itself are refunded (turn-refunds.ts).
+     */
+    maxTurns?: number;
+    /**
+     * How many times the ceiling may extend itself when the plan is open and
+     * moving (default 2). 0 keeps the hard ceiling.
+     */
+    secondWinds?: number;
+  };
+  /**
+   * Tool execution settings.
+   *
+   * `rateLimit` is the tool pacer (tool-registry/rate-limiter.ts). Read-
+   * category tools are never limited; a call over a limit is held for the
+   * short remainder of its window rather than refused, and refused only when
+   * the wait would exceed `maxWaitMs`. Defaults: 600 global, 120 per tool,
+   * 60 bash, 60 write per minute, 5000 ms. `enabled = false` turns it off.
+   */
+  tools?: {
+    rateLimit?: {
+      enabled?: boolean;
+      globalPerMinute?: number;
+      perToolPerMinute?: number;
+      bashPerMinute?: number;
+      writePerMinute?: number;
+      maxWaitMs?: number;
+    };
   };
   /**
    * Which provider the gateway hands the work to when the active one fails
@@ -367,10 +397,10 @@ export interface GearConfig {
    * Opt-in, transparent telemetry — the ONLY path by which anything leaves the
    * machine. Off by default; even `enabled = true` transmits nothing until BOTH
    * an `endpoint` is configured AND the local user has granted consent
-   * (~/.gear/telemetry.json, set by the first-run prompt or `gear telemetry on`).
+   * (~/.rune/telemetry.json, set by the first-run prompt or `rune telemetry on`).
    * What ships is the already-redacted Black Box incident stream plus an
    * anonymous daily usage heartbeat — never file contents, never raw IPs, never
-   * device fingerprints. `gear telemetry preview` prints the exact bytes.
+   * device fingerprints. `rune telemetry preview` prints the exact bytes.
    */
   telemetry: {
     /** Master switch / hard kill-switch. Default false. */
@@ -415,13 +445,13 @@ export interface GearConfig {
     autoApprove?: boolean;
     /** Save the finished report as a markdown file. Default true. */
     save?: boolean;
-    /** Directory for saved reports. Default `<workspace>/.gear/research`. */
+    /** Directory for saved reports. Default `<workspace>/.rune/research`. */
     outputDir?: string;
   };
   ui?: {
     /**
      * Default color theme name (see orchestrator ui/themes.ts). Used at startup unless
-     * overridden by the GEAR_THEME env var or a runtime `/theme` choice (~/.gear/theme.json).
+     * overridden by the RUNE_THEME env var or a runtime `/theme` choice (~/.rune/theme.json).
      */
     theme?: string;
   };
@@ -438,9 +468,9 @@ export interface GearConfig {
     light?: string;
   };
   /**
-   * System Memory ("dreaming") — Gear's evergreen, narrative profile of the user and the
+   * System Memory ("dreaming") — Rune's evergreen, narrative profile of the user and the
    * codebases they work in, injected into the system prompt so even small models get cheap,
-   * personalised context. Stored at ~/.gear/system-memory.md (see shared/system-memory.ts).
+   * personalised context. Stored at ~/.rune/system-memory.md (see shared/system-memory.ts).
    */
   memory?: {
     /** Inject the memory into the system prompt. Default true. */
@@ -460,7 +490,7 @@ export interface GearConfig {
     maxTokens?: number;
   };
   /**
-   * Black box (flight recorder) — local incident capture to ~/.gear/blackbox.db:
+   * Black box (flight recorder) — local incident capture to ~/.rune/blackbox.db:
    * every failure, degradation, and struggle, with trail forensics. Local-only;
    * nothing is ever transmitted. Default on.
    */
@@ -470,7 +500,7 @@ export interface GearConfig {
   /**
    * Tactics notebook (evolution loop) — learned facts/tactics from past
    * sessions, injected under a hard token budget. Capture is rule-based
-   * (zero extra model spend). Default on; `gear --pristine` disables per run.
+   * (zero extra model spend). Default on; `rune --pristine` disables per run.
    */
   notebook?: {
     enabled?: boolean;
@@ -481,14 +511,14 @@ export interface GearConfig {
    * Self-evolution. Every run writes a retro (outcome, steps by evidence,
    * checks, cost, lessons) into its session log and folds the lessons into the
    * notebook. `playbook` additionally renders the repository's recurring
-   * lessons to .gear/skills/playbook/SKILL.md. Default true.
+   * lessons to .rune/skills/playbook/SKILL.md. Default true.
    */
   evolve?: {
     playbook?: boolean;
   };
   /**
    * Git integration. autoCommit: after every successful run that wrote files,
-   * commit exactly those files as one revertible "gear:" commit; revert with
+   * commit exactly those files as one revertible "rune:" commit; revert with
    * /undo. Default false.
    */
   git?: {
@@ -503,11 +533,11 @@ export interface GearConfig {
     repoMap?: boolean;
   };
   /**
-   * Agent web browser. When enabled, Gear mounts the official Playwright
+   * Agent web browser. When enabled, Rune mounts the official Playwright
    * MCP server (bunx @playwright/mcp) as a built-in `browser` MCP server:
    * headless, isolated (fresh profile), accessibility-snapshot based.
    * `/browser on|off` toggles it at runtime and persists to
-   * ~/.gear/browser.json; --browser/--no-browser force it for one run.
+   * ~/.rune/browser.json; --browser/--no-browser force it for one run.
    * Default off.
    */
   browser?: {
@@ -531,9 +561,9 @@ export interface GearConfig {
     auto?: boolean;
   };
   /**
-   * Multi-instance teamwork (config.toml `[team]`). When several Gear
+   * Multi-instance teamwork (config.toml `[team]`). When several Rune
    * processes work in the same repository they register on a local shared
-   * bus (~/.gear/team.db): each sees the others' presence and intent, can
+   * bus (~/.rune/team.db): each sees the others' presence and intent, can
    * message them, and can lease path claims. claimEnforcement decides what a
    * write into a PEER's claimed scope does: "warn" (default) lets it proceed
    * with a loud warning in the tool result, "block" refuses it, "off"
@@ -546,10 +576,10 @@ export interface GearConfig {
     heartbeatSecs?: number;
   };
   /**
-   * Staying current. `gear upgrade` is always explicit — nothing is ever
+   * Staying current. `rune upgrade` is always explicit — nothing is ever
    * downloaded or replaced without the user typing the command. `check`
    * governs only the once-a-day background look at the latest release that
-   * produces a one-line nag; set it false and Gear never talks to GitHub on
+   * produces a one-line nag; set it false and Rune never talks to GitHub on
    * its own.
    */
   update?: {
@@ -559,7 +589,7 @@ export interface GearConfig {
     repo?: string;
   };
   /**
-   * `gear serve` / `gear web` / `gear acp` — the supervisor that runs one
+   * `rune serve` / `rune web` / `rune acp` — the supervisor that runs one
    * engine host per session.
    */
   serve?: {
@@ -579,7 +609,7 @@ export interface GearConfig {
    * individual server can still override its own behaviour in mcp.json.
    */
   mcp?: {
-    /** Where `gear mcp add` writes when `--scope` is omitted (default workspace). */
+    /** Where `rune mcp add` writes when `--scope` is omitted (default workspace). */
     defaultScope?: "user" | "workspace";
     /** Per-request timeout in seconds for tools/call (default 30). */
     timeoutSecs?: number;
@@ -599,13 +629,13 @@ export interface GearConfig {
    */
   extensions?: {
     /**
-     * Load executable tools from `<workspace>/.gear/tools` (default false).
+     * Load executable tools from `<workspace>/.rune/tools` (default false).
      * This is the user's OWN workspace only — never a path a plugin supplies.
      */
     localTools?: boolean;
     /**
-     * Where `gear plugin search` / `gear plugin add <name>` resolve names.
-     * A URL or a path; empty means the public index. `GEAR_PLUGIN_INDEX`
+     * Where `rune plugin search` / `rune plugin add <name>` resolve names.
+     * A URL or a path; empty means the public index. `RUNE_PLUGIN_INDEX`
      * overrides it.
      */
     index?: string;
@@ -616,7 +646,7 @@ export interface GearConfig {
      * does not run, and the refusal names this setting.
      *
      * Turning it on means a third party's program runs with this user's full
-     * access and its declared capability is not enforced. Gear says so at
+     * access and its declared capability is not enforced. Rune says so at
      * startup, in the tool's own description, and in `[SECURITY]` logs.
      */
     allowUnsandboxedTools?: boolean | string[];
@@ -632,20 +662,20 @@ export interface PermissionRule {
 
 // ─── Defaults ───
 
-// Legacy ALAN_* env names are adopted before anything reads the environment.
+// Legacy RUNE_* env names are adopted before anything reads the environment.
 adoptLegacyEnv();
-const gearHome = getGearHome();
+const runeHome = getRuneHome();
 
-const DEFAULT_CONFIG: GearConfig = {
+const DEFAULT_CONFIG: RuneConfig = {
   engine: {
-    socketPath: join(gearHome, "gear.sock"),
-    logDir: join(gearHome, "logs"),
-    dbPath: join(gearHome, "gear.db"),
+    socketPath: join(runeHome, "rune.sock"),
+    logDir: join(runeHome, "logs"),
+    dbPath: join(runeHome, "rune.db"),
     maxSessions: 50,
   },
   llm: {
-    // Dev/test default = free tier (Gemini). Override via ~/.gear/config.toml,
-    // <workspace>/.gear/config.toml, or GEAR_PROVIDER for production validation.
+    // Dev/test default = free tier (Gemini). Override via ~/.rune/config.toml,
+    // <workspace>/.rune/config.toml, or RUNE_PROVIDER for production validation.
     defaultProvider: "google",
   },
   permissions: {
@@ -779,68 +809,68 @@ function deepMerge(
 
 function applyEnvOverrides(config: Record<string, unknown>): void {
   const envMap: Record<string, (c: Record<string, unknown>) => void> = {
-    GEAR_PROVIDER: (c) => setNested(c, "llm.defaultProvider", process.env.GEAR_PROVIDER!),
-    GEAR_MODEL: (c) => {
+    RUNE_PROVIDER: (c) => setNested(c, "llm.defaultProvider", process.env.RUNE_PROVIDER!),
+    RUNE_MODEL: (c) => {
       const provider = getDefaultProvider(c);
-      setNested(c, `llm.${provider}.model`, process.env.GEAR_MODEL!);
+      setNested(c, `llm.${provider}.model`, process.env.RUNE_MODEL!);
     },
-    GEAR_MAX_TOKENS: (c) =>
-      setNested(c, `llm.${getDefaultProvider(c)}.maxTokens`, Number(process.env.GEAR_MAX_TOKENS!)),
-    GEAR_DB_PATH: (c) => setNested(c, "engine.dbPath", process.env.GEAR_DB_PATH!),
-    GEAR_SOCKET_PATH: (c) => setNested(c, "engine.socketPath", process.env.GEAR_SOCKET_PATH!),
-    GEAR_LOG_DIR: (c) => setNested(c, "engine.logDir", process.env.GEAR_LOG_DIR!),
-    GEAR_SANDBOX_ENABLED: (c) =>
-      setNested(c, "sandbox.enabled", process.env.GEAR_SANDBOX_ENABLED === "true"),
-    GEAR_SANDBOX_NETWORK: (c) =>
-      setNested(c, "sandbox.networkDeny", process.env.GEAR_SANDBOX_NETWORK !== "allow"),
-    GEAR_TRUST_WORKSPACE: (c) =>
-      setNested(c, "permissions.trustWorkspace", process.env.GEAR_TRUST_WORKSPACE === "true"),
-    GEAR_PERMISSION_MODE: (c) =>
-      setNested(c, "permissions.mode", process.env.GEAR_PERMISSION_MODE!),
+    RUNE_MAX_TOKENS: (c) =>
+      setNested(c, `llm.${getDefaultProvider(c)}.maxTokens`, Number(process.env.RUNE_MAX_TOKENS!)),
+    RUNE_DB_PATH: (c) => setNested(c, "engine.dbPath", process.env.RUNE_DB_PATH!),
+    RUNE_SOCKET_PATH: (c) => setNested(c, "engine.socketPath", process.env.RUNE_SOCKET_PATH!),
+    RUNE_LOG_DIR: (c) => setNested(c, "engine.logDir", process.env.RUNE_LOG_DIR!),
+    RUNE_SANDBOX_ENABLED: (c) =>
+      setNested(c, "sandbox.enabled", process.env.RUNE_SANDBOX_ENABLED === "true"),
+    RUNE_SANDBOX_NETWORK: (c) =>
+      setNested(c, "sandbox.networkDeny", process.env.RUNE_SANDBOX_NETWORK !== "allow"),
+    RUNE_TRUST_WORKSPACE: (c) =>
+      setNested(c, "permissions.trustWorkspace", process.env.RUNE_TRUST_WORKSPACE === "true"),
+    RUNE_PERMISSION_MODE: (c) =>
+      setNested(c, "permissions.mode", process.env.RUNE_PERMISSION_MODE!),
     // New-style: the gear itself (1|2|3|4|auto). `auto` here = the classifier.
-    GEAR_GEAR: (c) => setNested(c, "permissions.gear", process.env.GEAR_GEAR!),
-    GEAR_AUTO_CLASSIFIER_PROVIDER: (c) =>
+    RUNE_GEAR: (c) => setNested(c, "permissions.gear", process.env.RUNE_GEAR!),
+    RUNE_AUTO_CLASSIFIER_PROVIDER: (c) =>
       setNested(
         c,
         "permissions.autoMode.classifierProvider",
-        process.env.GEAR_AUTO_CLASSIFIER_PROVIDER!,
+        process.env.RUNE_AUTO_CLASSIFIER_PROVIDER!,
       ),
-    GEAR_AUTO_CLASSIFIER_MODEL: (c) =>
-      setNested(c, "permissions.autoMode.classifierModel", process.env.GEAR_AUTO_CLASSIFIER_MODEL!),
-    GEAR_AUTO_FAIL_CLOSED: (c) =>
+    RUNE_AUTO_CLASSIFIER_MODEL: (c) =>
+      setNested(c, "permissions.autoMode.classifierModel", process.env.RUNE_AUTO_CLASSIFIER_MODEL!),
+    RUNE_AUTO_FAIL_CLOSED: (c) =>
       setNested(
         c,
         "permissions.autoMode.failClosed",
-        process.env.GEAR_AUTO_FAIL_CLOSED !== "false",
+        process.env.RUNE_AUTO_FAIL_CLOSED !== "false",
       ),
-    GEAR_TELEMETRY: (c) => setNested(c, "telemetry.enabled", process.env.GEAR_TELEMETRY === "true"),
-    GEAR_TELEMETRY_ENDPOINT: (c) =>
-      setNested(c, "telemetry.endpoint", process.env.GEAR_TELEMETRY_ENDPOINT!),
-    GEAR_TELEMETRY_TOKEN: (c) => setNested(c, "telemetry.token", process.env.GEAR_TELEMETRY_TOKEN!),
-    GEAR_SEARCH_BACKEND: (c) => setNested(c, "search.provider", process.env.GEAR_SEARCH_BACKEND!),
-    GEAR_NATIVE_GROUNDING: (c) =>
-      setNested(c, "search.nativeGrounding", process.env.GEAR_NATIVE_GROUNDING !== "false"),
-    GEAR_RESEARCH_DEPTH: (c) => setNested(c, "research.depth", process.env.GEAR_RESEARCH_DEPTH!),
-    GEAR_RESEARCH_MAX_ROUNDS: (c) =>
-      setNested(c, "research.maxRounds", Number(process.env.GEAR_RESEARCH_MAX_ROUNDS!)),
-    GEAR_RESEARCH_MAX_PARALLEL: (c) =>
-      setNested(c, "research.maxParallel", Number(process.env.GEAR_RESEARCH_MAX_PARALLEL!)),
-    GEAR_RESEARCH_MAX_SUBQUESTIONS: (c) =>
-      setNested(c, "research.maxSubQuestions", Number(process.env.GEAR_RESEARCH_MAX_SUBQUESTIONS!)),
-    GEAR_RESEARCH_AUTO_APPROVE: (c) =>
-      setNested(c, "research.autoApprove", process.env.GEAR_RESEARCH_AUTO_APPROVE === "true"),
-    GEAR_RESEARCH_SAVE: (c) =>
-      setNested(c, "research.save", process.env.GEAR_RESEARCH_SAVE !== "false"),
-    GEAR_MEMORY_ENABLED: (c) =>
-      setNested(c, "memory.enabled", process.env.GEAR_MEMORY_ENABLED !== "false"),
-    GEAR_MEMORY_SCHEDULE: (c) => setNested(c, "memory.schedule", process.env.GEAR_MEMORY_SCHEDULE!),
-    GEAR_MEMORY_MODEL: (c) => setNested(c, "memory.model", process.env.GEAR_MEMORY_MODEL!),
-    GEAR_MEMORY_MAX_TOKENS: (c) =>
-      setNested(c, "memory.maxTokens", Number(process.env.GEAR_MEMORY_MAX_TOKENS!)),
-    GEAR_TEAM: (c) => setNested(c, "team.enabled", process.env.GEAR_TEAM !== "false"),
-    GEAR_TEAM_ENFORCEMENT: (c) =>
-      setNested(c, "team.claimEnforcement", process.env.GEAR_TEAM_ENFORCEMENT!),
-    GEAR_PLUGIN_INDEX: (c) => setNested(c, "extensions.index", process.env.GEAR_PLUGIN_INDEX!),
+    RUNE_TELEMETRY: (c) => setNested(c, "telemetry.enabled", process.env.RUNE_TELEMETRY === "true"),
+    RUNE_TELEMETRY_ENDPOINT: (c) =>
+      setNested(c, "telemetry.endpoint", process.env.RUNE_TELEMETRY_ENDPOINT!),
+    RUNE_TELEMETRY_TOKEN: (c) => setNested(c, "telemetry.token", process.env.RUNE_TELEMETRY_TOKEN!),
+    RUNE_SEARCH_BACKEND: (c) => setNested(c, "search.provider", process.env.RUNE_SEARCH_BACKEND!),
+    RUNE_NATIVE_GROUNDING: (c) =>
+      setNested(c, "search.nativeGrounding", process.env.RUNE_NATIVE_GROUNDING !== "false"),
+    RUNE_RESEARCH_DEPTH: (c) => setNested(c, "research.depth", process.env.RUNE_RESEARCH_DEPTH!),
+    RUNE_RESEARCH_MAX_ROUNDS: (c) =>
+      setNested(c, "research.maxRounds", Number(process.env.RUNE_RESEARCH_MAX_ROUNDS!)),
+    RUNE_RESEARCH_MAX_PARALLEL: (c) =>
+      setNested(c, "research.maxParallel", Number(process.env.RUNE_RESEARCH_MAX_PARALLEL!)),
+    RUNE_RESEARCH_MAX_SUBQUESTIONS: (c) =>
+      setNested(c, "research.maxSubQuestions", Number(process.env.RUNE_RESEARCH_MAX_SUBQUESTIONS!)),
+    RUNE_RESEARCH_AUTO_APPROVE: (c) =>
+      setNested(c, "research.autoApprove", process.env.RUNE_RESEARCH_AUTO_APPROVE === "true"),
+    RUNE_RESEARCH_SAVE: (c) =>
+      setNested(c, "research.save", process.env.RUNE_RESEARCH_SAVE !== "false"),
+    RUNE_MEMORY_ENABLED: (c) =>
+      setNested(c, "memory.enabled", process.env.RUNE_MEMORY_ENABLED !== "false"),
+    RUNE_MEMORY_SCHEDULE: (c) => setNested(c, "memory.schedule", process.env.RUNE_MEMORY_SCHEDULE!),
+    RUNE_MEMORY_MODEL: (c) => setNested(c, "memory.model", process.env.RUNE_MEMORY_MODEL!),
+    RUNE_MEMORY_MAX_TOKENS: (c) =>
+      setNested(c, "memory.maxTokens", Number(process.env.RUNE_MEMORY_MAX_TOKENS!)),
+    RUNE_TEAM: (c) => setNested(c, "team.enabled", process.env.RUNE_TEAM !== "false"),
+    RUNE_TEAM_ENFORCEMENT: (c) =>
+      setNested(c, "team.claimEnforcement", process.env.RUNE_TEAM_ENFORCEMENT!),
+    RUNE_PLUGIN_INDEX: (c) => setNested(c, "extensions.index", process.env.RUNE_PLUGIN_INDEX!),
     ANTHROPIC_API_KEY: (c) => setNested(c, "llm.anthropic.apiKey", process.env.ANTHROPIC_API_KEY!),
     OPENAI_API_KEY: (c) => setNested(c, "llm.openai.apiKey", process.env.OPENAI_API_KEY!),
     OPENROUTER_API_KEY: (c) =>
@@ -875,16 +905,16 @@ function setNested(obj: Record<string, unknown>, path: string, value: unknown): 
 // ─── Config Loader ───
 
 /**
- * Load Gear configuration with this precedence (later wins):
+ * Load Rune configuration with this precedence (later wins):
  * 1. Built-in defaults
- * 2. ~/.gear/config.toml (global)
- * 3. <workspace>/.gear/config.toml (project)
- * 4. GEAR_* environment variables
+ * 2. ~/.rune/config.toml (global)
+ * 3. <workspace>/.rune/config.toml (project)
+ * 4. RUNE_* environment variables
  */
-export function loadConfig(workspaceRoot?: string): GearConfig {
+export function loadConfig(workspaceRoot?: string): RuneConfig {
   let merged: Record<string, unknown> = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
 
-  // Global config (GEAR_CONFIG_PATH overrides ~/.gear/config.toml — see the writer).
+  // Global config (RUNE_CONFIG_PATH overrides ~/.rune/config.toml — see the writer).
   const globalConfig = globalConfigPath();
   if (existsSync(globalConfig)) {
     try {
@@ -911,7 +941,7 @@ export function loadConfig(workspaceRoot?: string): GearConfig {
   // Env overrides
   applyEnvOverrides(merged);
 
-  return merged as unknown as GearConfig;
+  return merged as unknown as RuneConfig;
 }
 
 // ─── Config Writer ───
@@ -924,20 +954,20 @@ export function loadConfig(workspaceRoot?: string): GearConfig {
 
 export type ConfigScope = "global" | "project";
 
-/** The config.toml path for a scope: global = ~/.gear, project = <root>/.gear. */
+/** The config.toml path for a scope: global = ~/.rune, project = <root>/.rune. */
 export function getConfigFilePath(scope: ConfigScope, workspaceRoot?: string): string {
   if (scope === "project") {
     if (!workspaceRoot) throw new Error("project config scope requires a workspaceRoot");
     return workspaceConfigPath(workspaceRoot, "config.toml");
   }
-  // GEAR_CONFIG_PATH overrides the global file (tests + advanced setups); the
+  // RUNE_CONFIG_PATH overrides the global file (tests + advanced setups); the
   // loader honors the same override so reader and writer never disagree.
   return globalConfigPath();
 }
 
-/** The effective global config.toml path (honors GEAR_CONFIG_PATH). */
+/** The effective global config.toml path (honors RUNE_CONFIG_PATH). */
 function globalConfigPath(): string {
-  return process.env.GEAR_CONFIG_PATH || join(getGearHome(), "config.toml");
+  return process.env.RUNE_CONFIG_PATH || join(getRuneHome(), "config.toml");
 }
 
 /** Render a JS value as a TOML scalar/array literal. */

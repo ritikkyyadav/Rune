@@ -54,7 +54,7 @@ export {
   PLUGIN_TOOL_PROTOCOL,
   PluginToolServer,
   createPluginToolHandler,
-  makeGearToolsPlanner,
+  makeRuneToolsPlanner,
   pluginPolicyId,
   pluginToolName,
   pluginToolPermissions,
@@ -120,7 +120,16 @@ export type {
   SkillResource,
   SkillSearchHit,
 } from "./skills/index";
-export { ToolRateLimiter, DEFAULT_RATE_LIMIT, type RateLimitConfig } from "./rate-limiter";
+export {
+  ToolRateLimiter,
+  DEFAULT_RATE_LIMIT,
+  PACER_EXEMPT_CATEGORIES,
+  resolveRateLimit,
+  rateLimitFromConfig,
+  type PaceDecision,
+  type RateLimitConfig,
+  type RateLimitSettings,
+} from "./rate-limiter";
 export {
   DashboardManager,
   createDashboardTool,

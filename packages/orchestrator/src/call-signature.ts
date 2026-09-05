@@ -20,7 +20,8 @@
 //    tokens that are volatile by construction (UUIDs, timestamps, long hashes)
 //    and whitespace are folded.
 
-import { parseToolArguments } from "@gear/shared";
+import { createHash } from "node:crypto";
+import { parseToolArguments } from "@rune/shared";
 
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const ISO_TS_RE = /\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?/g;
@@ -97,4 +98,22 @@ export function batchSignature(
   calls: ReadonlyArray<{ toolName: string; argsJson: string }>,
 ): string {
   return calls.map((c) => `${c.toolName}:${canonicalArgs(c.argsJson, false)}`).join("|");
+}
+
+/** Wall-clock noise inside results: `12ms`, `1.23s`, `(2.4 s)`, `0.5 sec`. */
+const DURATION_RE = /\b\d+(?:\.\d+)?\s?(?:ms|s|sec|secs|seconds?|m|min|mins|minutes?)\b/gi;
+
+/**
+ * Signature of a tool RESULT, for the loop guards that judge whether the
+ * world is changing. The batch detector keyed on arguments (plus the write
+ * count) alone, so a poll whose answer changed every time — `bash_output` on
+ * a running job, a test run after a fix — still read as a repeat, and a run
+ * that varied its calls while the identical answer came back 29 times read
+ * as progress. Conservative normalization (whitespace, by-construction
+ * volatile tokens) plus durations, then a short hash: "3 failed" and
+ * "2 failed" stay distinct, "(1.2s)" and "(1.4s)" do not.
+ */
+export function resultSignature(text: string): string {
+  const normalized = normalizeText(text, false).replace(DURATION_RE, "«dur»");
+  return createHash("sha1").update(normalized).digest("hex").slice(0, 16);
 }

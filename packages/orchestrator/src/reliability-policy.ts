@@ -37,6 +37,17 @@ export interface ReliabilityPolicy {
   maxStruggleNudges: number;
   /** Clarify-first nudges when a NEW project starts with zero questions asked. */
   maxGreenfieldNudges: number;
+  /**
+   * The turn ceiling for a run of real work. 80 agentic rounds: long
+   * autonomous builds (scaffold → install → run → fix → verify → polish)
+   * legitimately spend 30–50; the cap is a runaway guard, not a work budget.
+   * Turns the harness spends on itself are refunded (turn-refunds.ts) and a
+   * moving plan earns the ceiling again `secondWinds` times. Conversational
+   * turns keep their own small budget (turn-budget.ts).
+   */
+  maxTurns: number;
+  /** Second winds granted to a main run of real work; sub-agents get none. */
+  secondWinds: number;
 }
 
 /** Today's shipped behavior, verbatim — the baseline every override starts from. */
@@ -56,6 +67,8 @@ export const DEFAULT_RELIABILITY: ReliabilityPolicy = {
   maxReplanNudges: 1,
   maxStruggleNudges: 1,
   maxGreenfieldNudges: 1,
+  maxTurns: 80,
+  secondWinds: 2,
 };
 
 // Open-weight / budget-tier families fail differently than frontier models:
