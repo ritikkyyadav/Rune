@@ -25,6 +25,27 @@ live, verified against tests or mocks only, or unverified. It adds no agent capa
 
 ### Added
 
+- **The free routes lead `/login`, and say they are free.** The key list inherited the roster's
+  order, which opens with four providers that all need a funded account — on a machine with no
+  budget, the four rows that cannot answer a prompt tonight. Free tiers now sort to the top of the
+  API-key list (the sort is stable, so the frontier labs still lead the paid block in their old
+  order), each carries its marker in the label, and level 1 names them before the count. No layout
+  changed: the marker is a suffix on a string the picker already renders.
+- **`rune doctor` reports each route's health and quota window.** `~/.rune/provider-health.json` is
+  pruned only when something writes it, so a machine that stopped making calls keeps records
+  nothing believes and there was no way to ask "is my cap over?" without starting a session.
+  Doctor now says, offline: a cap in force with how long is left, or expired with how long ago and
+  marked **stale**; a retired model with its window; and — where the retired id is not one that
+  provider offers but is one another preset offers — that the retirement was filed against the
+  route a misdirected call went to, not a real failure of that provider.
+- **A fresh-`HOME` onboarding test.** The headless equivalent of the first run — empty home,
+  doctor, connect a route, choose a model, first prompt, doctor again — against a local stub
+  speaking the OpenAI wire. It completes in **0.8 s** on the machine it was written on, against a
+  180 s budget.
+- **The version source and the release asset names are pinned by tests.** Eight package manifests
+  and the Cargo workspace must agree with `scripts/version.sh`; `targets.sh`, `release.yml`,
+  `web-install.sh` and `install.ps1` must agree on `rune-*`. Both pin the agreement, never a
+  literal.
 - **The sandbox is a policy, not a switch.** `/sandbox` opens three tabs — **Mode**
   (`auto-allow` · `regular` · `off`), **Overrides** (allow an unsandboxed retry · strict) and
   **Config** (excluded commands, filesystem read/write rules) — with text forms for each
@@ -86,6 +107,20 @@ live, verified against tests or mocks only, or unverified. It adds no agent capa
 
 ### Fixed
 
+- **`rune --help` no longer prints a provider list from six presets ago.** The `-p` line said
+  `anthropic|openai|openrouter|google|ollama-turbo|ollama` long after the roster reached 37, so the
+  installed binary's own help told people that thirty-one of their options did not exist. It is
+  derived from `PROVIDER_PRESETS` and points at `rune providers`.
+- **The installer stopped telling people to run `gear`.** The last line of `web-install.sh` named
+  a command that has not existed since the rename; the release workflow staged its verified
+  download into `$HOME/gearbin`.
+- **The README says what is verified.** A three-column table — verified live, verified by tests or
+  mocks only, unverified — replaces a feature list that stated designs as results. Claims removed
+  because the record does not support them: a stale "latest release v0.2.0", parity-shaped framing,
+  measured-sounding sub-agent, teamwork, self-evolution and research claims (17 of 666 sessions used
+  sub-agents, the team bus has sent zero live messages, no A/B arm has ever run), and the implication
+  that the published one-line install works today. It does not: every release up to v0.3.1 carries
+  `gear-*` assets and the installers look for `rune-*`, so it works from v0.4.0 onward.
 - **End-of-turn verification grades what the run wrote, not the whole workspace.** Started in a
   folder of unrelated projects, Rune used to run every sibling's checks after a build and then
   chase their failures — a Python suite wanting pandas, a Gradle build with no JDK — in code it had
