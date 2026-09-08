@@ -84,6 +84,10 @@ export class NotebookStore {
   constructor(dbPath: string) {
     if (dbPath !== ":memory:") mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
+    // Wait for a lock rather than throwing out of the constructor: one engine
+    // host per session means several processes open this one file at once.
+    // See BlackboxStore for the same fix and the same reason.
+    this.db.exec("PRAGMA busy_timeout = 5000;");
     this.db.exec("PRAGMA journal_mode = WAL;");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS entries (
