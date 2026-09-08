@@ -51,6 +51,20 @@ export interface SuiteReport {
    */
   avgHarnessTalk?: number;
   avgSilence?: number;
+  /**
+   * Governance completions per task — the safety classifier, the compaction
+   * summarizer, the intent read, the sub-agent report repair. Gated against
+   * the BASELINE rather than an absolute ceiling, because unlike harness talk
+   * there is no known-correct number: a task that genuinely needs three
+   * compactions needs three summarizer calls. What must not happen is the
+   * figure drifting UP unnoticed, which is what put 45% of this agent's
+   * incidents on provider rate limits in the first place.
+   *
+   * Undefined when no task recorded it — a baseline written before the meter
+   * existed says nothing about it, and the gate stays silent rather than
+   * inventing a regression.
+   */
+  avgGovernanceCompletions?: number;
   categories: CategoryStats[];
   tasks: TaskResult[];
 }
@@ -58,6 +72,22 @@ export interface SuiteReport {
 /** Ceilings from the transcript diagnosis's done-when: A and B respectively. */
 export const HARNESS_TALK_CEILING = 0.15;
 export const SILENCE_CEILING = 0.15;
+
+/**
+ * How far governance completions per task may rise above the recorded
+ * baseline before the run fails.
+ *
+ * A ratio and not a ceiling, because there is no known-correct absolute
+ * number: a task that genuinely needs three compactions needs three
+ * summarizer calls, and a suite that grows a harder task legitimately makes
+ * more of them. What must never happen is the figure creeping up unnoticed —
+ * which is exactly how 45% of this agent's recorded incidents became provider
+ * rate limits (measured 2026-09-07, 3,160 incidents).
+ *
+ * 20% matches the cost gate's default tolerance for the same reason: below it
+ * is task mix, above it is a change in how the harness spends requests.
+ */
+export const GOVERNANCE_TOLERANCE = 0.2;
 
 function meanOf(values: Array<number | undefined>): number | undefined {
   const known = values.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
@@ -115,6 +145,7 @@ export function buildReport(
   const avgTurns = total > 0 ? results.reduce((s, r) => s + r.turns, 0) / total : 0;
   const avgHarnessTalk = meanOf(results.map((r) => r.retro?.harnessTalk));
   const avgSilence = meanOf(results.map((r) => r.retro?.silence));
+  const avgGovernanceCompletions = meanOf(results.map((r) => r.retro?.governanceCompletions));
 
   // Group by category
   const byCategory = new Map<string, TaskResult[]>();
@@ -164,6 +195,7 @@ export function buildReport(
     avgTurns,
     ...(avgHarnessTalk != null ? { avgHarnessTalk } : {}),
     ...(avgSilence != null ? { avgSilence } : {}),
+    ...(avgGovernanceCompletions != null ? { avgGovernanceCompletions } : {}),
     categories,
     tasks: results,
   };
@@ -275,6 +307,14 @@ export function printReport(report: SuiteReport): void {
       `  \x1b[2mTranscript: ${[talk, quiet].filter(Boolean).join(" · ")} (ceilings ${HARNESS_TALK_CEILING * 100}% / ${SILENCE_CEILING * 100}%)\x1b[0m`,
     );
   }
+  if (report.avgGovernanceCompletions != null) {
+    // The free-tier line: a free route is priced in requests, not dollars, so
+    // this is the figure that decides whether the suite would survive there.
+    console.log(
+      `  \x1b[2mGovernance: ${report.avgGovernanceCompletions.toFixed(2)} completions/task ` +
+        `(tolerance +${(GOVERNANCE_TOLERANCE * 100).toFixed(0)}% vs baseline)\x1b[0m`,
+    );
+  }
   console.log();
 }
 
@@ -298,6 +338,9 @@ function baselineShape(report: SuiteReport) {
     avgTurns: report.avgTurns,
     ...(report.avgHarnessTalk != null ? { avgHarnessTalk: report.avgHarnessTalk } : {}),
     ...(report.avgSilence != null ? { avgSilence: report.avgSilence } : {}),
+    ...(report.avgGovernanceCompletions != null
+      ? { avgGovernanceCompletions: report.avgGovernanceCompletions }
+      : {}),
     categories: report.categories.map((c) => ({
       category: c.category,
       passed: c.passed,
@@ -324,6 +367,13 @@ function baselineShape(report: SuiteReport) {
 export interface BaselineComparison {
   /** Fractional change in metered-equivalent cost per task vs baseline. */
   costDelta?: number;
+  /**
+   * Fractional change in GOVERNANCE completions per task vs baseline —
+   * Rune's own calls, not the work. Absent when either side did not record
+   * the figure. On free routes this is the number that decides whether a
+   * task finishes at all, because a free tier meters requests, not dollars.
+   */
+  governanceDelta?: number;
   /** False when the run regressed beyond the noise band. */
   ok: boolean;
   /** Non-null when comparison was impossible (no/incompatible baseline) — not a failure. */
@@ -349,6 +399,14 @@ export interface BaselineFile {
    * zero, or the first run after this shipped would fail on a division.
    */
   avgListCostPerTask?: number;
+  /**
+   * Governance completions per task when the baseline was written. Optional
+   * for the same reason as the cost figure: a baseline recorded before the
+   * meter existed lacks it, and its absence is "nothing to compare", never
+   * zero — a gate that read a missing meter as a perfect score would fail
+   * every run after this shipped.
+   */
+  avgGovernanceCompletions?: number;
   tasks?: Array<{ name: string; pass: boolean; throttled?: boolean }>;
 }
 
@@ -426,6 +484,30 @@ export function compareToBaseline(
         `metered-equivalent cost per task rose ${(out.costDelta * 100).toFixed(0)}% ` +
           `($${baseCost.toFixed(4)} → $${report.avgListCostPerTask.toFixed(4)}), ` +
           `past the ${(costTolerance * 100).toFixed(0)}% tolerance`,
+      );
+    }
+  }
+
+  // Governance gate. Against the BASELINE, not a ceiling: unlike harness talk
+  // there is no known-correct absolute number — a task needing three
+  // compactions needs three summarizer calls. What must not happen is the
+  // figure drifting up unnoticed. Silent when either side lacks the figure,
+  // and silent when the baseline recorded zero, which would make any first
+  // measured call an infinite regression.
+  const baseGovernance = baseline.avgGovernanceCompletions;
+  if (
+    typeof baseGovernance === "number" &&
+    baseGovernance > 0 &&
+    typeof report.avgGovernanceCompletions === "number"
+  ) {
+    out.governanceDelta = (report.avgGovernanceCompletions - baseGovernance) / baseGovernance;
+    if (out.governanceDelta > GOVERNANCE_TOLERANCE) {
+      out.ok = false;
+      out.reasons.push(
+        `governance completions per task rose ${(out.governanceDelta * 100).toFixed(0)}% ` +
+          `(${baseGovernance.toFixed(2)} → ${report.avgGovernanceCompletions.toFixed(2)}), ` +
+          `past the ${(GOVERNANCE_TOLERANCE * 100).toFixed(0)}% tolerance. ` +
+          `Rune is making more of its own calls per task; on a free tier that is what a 429 looks like.`,
       );
     }
   }

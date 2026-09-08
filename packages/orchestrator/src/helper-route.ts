@@ -102,7 +102,13 @@ function helperRank(provider: string): number {
  * compaction ended up pinned to models retired in July.
  */
 function lightModelFor(provider: string): string | undefined {
-  return PROVIDER_TIER_DEFAULTS[provider]?.light;
+  const light = PROVIDER_TIER_DEFAULTS[provider]?.light;
+  if (light) return light;
+  // Not every preset declares tiers — `ollama`, the local runtime, is the one
+  // that matters here, and it is the ideal helper (never 429s, never bills).
+  // Its preset default is the honest second answer; falling through to
+  // "no candidate" would have made the whole local-first ordering unreachable.
+  return PROVIDER_PRESETS.find((p) => p.id === provider)?.defaultModel;
 }
 
 /**
@@ -177,7 +183,9 @@ export function resolveHelperRoute(inputs: HelperRouteInputs): HelperRoute | nul
   // Nor is one that is no cheaper than the session. Routing a Sonnet session's
   // summaries onto another funded frontier model saves nothing and costs the
   // cache: the session pair is warm every turn, a second provider is cold.
-  if (helperRank(pick.provider) > helperRank(inputs.session.provider)) return null;
+  // STRICTLY cheaper, hence >= — equal capacity is not a saving, it is a
+  // second cold prefix.
+  if (helperRank(pick.provider) >= helperRank(inputs.session.provider)) return null;
 
   const capacity = PROVIDER_CAPACITY[pick.provider] ?? "free";
   return {
