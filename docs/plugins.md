@@ -19,6 +19,31 @@ about making the first half of that sentence safe.
 
 ---
 
+## Ten-minute version
+
+Install the two examples that ship with the repository and look at what each
+one contributed:
+
+```bash
+rune plugin add ./examples/plugins/rune-example-skills   # a SKILL.md, no code
+rune plugin add ./examples/plugins/rune-example-tools    # two sandboxed programs
+rune plugin list
+```
+
+Then, in a session, `/skills` lists `release-notes` attributed to
+`rune-example-skills`, and the model has `plugin_rune-example-tools_write_text`
+and `plugin_rune-example-tools_http_get` available — each asking for permission
+under the capability its manifest declared, and each confined to that capability
+by the operating system.
+
+Writing one is the same three steps in reverse: make a directory, put a
+`plugin.json` in it naming what it contributes, and `rune plugin add ./that-dir`.
+The manifest's `name` must equal the directory name. Uninstall with
+`rune plugin remove <name>`; keep it on disk but inert with
+`rune plugin disable <name>`.
+
+---
+
 ## The index
 
 `rune plugin add ./path` has always worked. What did not exist was a way to
@@ -356,3 +381,27 @@ Because the manifest is part of the hashed tree, toggling recomputes the digest.
 `invalidatePlugins()` re-scans and re-runs every loader without a restart. All
 the latches clear together on purpose: a plugin contributes across them, and a
 partial refresh leaves a bundle half-installed.
+
+---
+
+## What is verified
+
+- `tests/integration/plugin-examples.test.ts` — `rune plugin add` run against
+  both `examples/plugins/rune-example-skills` and
+  `examples/plugins/rune-example-tools` in a temp workspace: name, `source` and
+  integrity digest are stamped and re-verify; a directory that is not a plugin
+  is refused and nothing is installed; the engine loads both as
+  `integrity: verified`; the skill is attributed to its plugin and its body
+  loads through the `skill` tool; the executable tools register with the
+  capability-derived permission category and `write_text` actually writes.
+  Ran green on macOS with Seatbelt on 2026-09-08 (5/5).
+- `tests/integration/plugin-tools-sandbox.test.ts` — the containment proof: a
+  write outside the declared scope and a connection to an undeclared host both
+  come back `[Errno 1] Operation not permitted`, while the same tools succeed
+  inside their scope. Skips loudly where there is no OS sandbox.
+- `tests/unit/orchestrator/plugin-index.test.ts` and the plugin discovery tests
+  — manifest validation, name/directory mismatch, path escapes, `runeVersion`
+  ranges, MCP server-name conflicts.
+- **Not verified:** installing from a git URL or an npm package against a real
+  remote, and the published index over the network. Both are exercised only
+  against local fixtures.
