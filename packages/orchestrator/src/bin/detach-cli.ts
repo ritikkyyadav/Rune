@@ -59,15 +59,43 @@ async function connectWithRetry(socket: string, timeoutMs: number): Promise<Host
   }
 }
 
+/**
+ * The route flags a detached run was launched with, as the host's boot-time
+ * environment. `rune detach -p ollama-turbo -m gpt-oss:120b --gear 4` parsed
+ * all three and forwarded none: the host booted on model.json and the run died
+ * on a retired free model nobody had asked for. Session-scoped names, not
+ * `RUNE_PROVIDER`/`RUNE_MODEL` — those are machine defaults that the pin is
+ * meant to beat; these say "this host, these flags" and beat the pin.
+ *
+ * Pure, so it can be pinned by a test without spawning a host.
+ */
+export function detachRouteEnv(values: Record<string, unknown>): Record<string, string> {
+  const env: Record<string, string> = {};
+  const str = (key: string): string =>
+    typeof values[key] === "string" ? (values[key] as string).trim() : "";
+  const provider = str("provider");
+  const model = str("model");
+  if (provider) env.RUNE_SESSION_PROVIDER = provider;
+  if (model) env.RUNE_SESSION_MODEL = model;
+  // `--gear <1|2|3|4|auto>` and the legacy `--yolo` (4). `RUNE_GEAR` is the
+  // documented env spelling of `[permissions] gear`, read by the host's config.
+  const gear = str("gear") || (values.yolo === true ? "4" : "");
+  if (gear) env.RUNE_GEAR = gear;
+  return env;
+}
+
 export async function runDetach(
   positionals: string[],
   values: Record<string, unknown>,
 ): Promise<void> {
   const prompt = positionals.slice(1).join(" ").trim();
   if (!prompt) {
-    console.error('Usage: rune detach "<prompt>" [--worktree] [-w <workspace>]');
+    console.error(
+      'Usage: rune detach "<prompt>" [--worktree] [-w <workspace>] [-p <provider>] [-m <model>] [--gear <1-4|auto>]',
+    );
     process.exit(2);
   }
+  const route = detachRouteEnv(values);
 
   let workspace = typeof values.workspace === "string" ? values.workspace : process.cwd();
   const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
@@ -94,7 +122,7 @@ export async function runDetach(
   // `--parent-pid`: outliving this process is the whole point of detach.
   const argv = hostSpawnArgv(currentContext(import.meta.dir), ["--socket", socket]);
   const child = Bun.spawn(argv, {
-    env: { ...process.env, RUNE_WORKSPACE: workspace },
+    env: { ...process.env, RUNE_WORKSPACE: workspace, ...route },
     stdin: "ignore",
     stdout: logFd,
     stderr: logFd,
@@ -124,6 +152,12 @@ export async function runDetach(
   console.log(`detached run started`);
   console.log(`  session:   ${sessionId}`);
   console.log(`  workspace: ${workspace}`);
+  if (route.RUNE_SESSION_PROVIDER || route.RUNE_SESSION_MODEL) {
+    console.log(
+      `  route:     ${route.RUNE_SESSION_PROVIDER ?? "(pinned provider)"}/${route.RUNE_SESSION_MODEL ?? "(provider default)"}`,
+    );
+  }
+  if (route.RUNE_GEAR) console.log(`  gear:      ${route.RUNE_GEAR}`);
   console.log(`  attach:    rune attach ${sessionId.slice(0, 8)}`);
   console.log(`  host log:  ${logPath}`);
   process.exit(0);

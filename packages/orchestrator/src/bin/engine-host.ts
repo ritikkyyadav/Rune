@@ -287,11 +287,35 @@ function buildEngine(): Engine {
         (p === "ollama" || hasStoredCredential(p) || (isCliProvider(p) && hasCreds(p)));
   const sticky = lastUsed && stickyUsable(lastUsed.provider) ? lastUsed : null;
 
+  // An explicit route for THIS host beats the pin. `rune detach -p X -m Y`
+  // used to print "detached run started" and then run on whatever model.json
+  // named — the flags were parsed and dropped on the floor, and the run died
+  // on a retired free model nobody had asked for. Env is the host's only
+  // boot-time channel, so the launcher hands the flags over as session-scoped
+  // variables (never RUNE_PROVIDER, which is a machine default and rightly
+  // loses to the pin). A named provider with no credential here falls back to
+  // the ordinary choice, and says so, rather than booting a host that cannot
+  // answer.
+  const explicitProvider = process.env.RUNE_SESSION_PROVIDER?.trim() || "";
+  const explicitModel = process.env.RUNE_SESSION_MODEL?.trim() || "";
+  if (explicitProvider && !stickyUsable(explicitProvider)) {
+    process.stderr.write(
+      `engine-host: -p ${explicitProvider} has no usable credential on this machine; using the pinned route\n`,
+    );
+  }
+
   let provider: ProviderName;
   let model: string;
-  if (sticky) {
+  if (explicitProvider && stickyUsable(explicitProvider)) {
+    provider = explicitProvider as ProviderName;
+    model =
+      explicitModel ||
+      (isCliProvider(provider) ? DEFAULT_MODELS[provider] : undefined) ||
+      getPreset(provider)?.defaultModel ||
+      "";
+  } else if (sticky) {
     provider = sticky.provider as ProviderName;
-    model = sticky.model;
+    model = explicitModel || sticky.model;
   } else {
     const configProvider = config.llm.defaultProvider;
     if (configProvider && isCliProvider(configProvider) && hasCreds(configProvider))
