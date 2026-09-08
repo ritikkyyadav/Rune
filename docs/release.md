@@ -79,6 +79,27 @@ rune serve --check --port N # pin the port instead of taking an ephemeral one
 
 It uses a throwaway `RUNE_HOME` and workspace, so it never touches real sessions.
 
+### The host transport it exercises
+
+Step 2 is the interesting one, because "an engine host actually spawned" means the server reached
+it over a second, private hop — and that hop is platform-specific. On macOS and Linux it is a unix
+domain socket under `~/.rune/run`. Windows cannot bind one, so a Windows host listens on
+`127.0.0.1` with an ephemeral port and writes the same path as a 0600 JSON file naming that port
+and a per-host token; every connection's first line must present the token or the host closes it
+without a word. (See the threat model for why the token is not optional: a loopback port has none
+of a socket file's permissions.)
+
+This is what v0.4.0 shipped broken. The Windows binary passed install, `--version`, `doctor`,
+`tools-smoke` and a real headless prompt, and then `serve --check` sat for twenty seconds and
+printed Bun's `Failed to connect`, because the unix-socket dial was written once for every
+platform. The half that only Windows could run was therefore the half nothing ever ran.
+
+`RUNE_HOST_TRANSPORT=tcp` forces the Windows transport anywhere, and CI uses it: `packaged-e2e`
+runs `serve --check` twice on every platform, once per transport, and `ts-windows` now runs it
+from source as well — early, before the cargo build and the `bun build --compile` that the
+packaged gate needs. A failed host start also prints which host, whether it is still running, and
+the tail of its own log, instead of the four words that were all the release job had to go on.
+
 ### Rehearsing without publishing
 
 `workflow_dispatch` runs the entire pipeline with `publish: false` by default — build, checksums,
