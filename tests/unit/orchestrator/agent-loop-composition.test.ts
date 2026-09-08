@@ -204,3 +204,35 @@ describe("per-request composition", () => {
     expect(fullLike[0]!.composition!.conversation).toBe(jitLike[0]!.composition!.conversation);
   });
 });
+
+describe("the meter never breaks a request", () => {
+  test("a context engine that returns a non-array still sends the turn", async () => {
+    // Found by the unit suite, and the reason the measurement is wrapped: a
+    // stub whose buildPrompt takes its arguments in a different order hands
+    // back a STRING as `messages`, and `"…".slice(n)` has no `.flatMap`. This
+    // is telemetry — it is never allowed to be the reason a request does not
+    // go out. The turn proceeds and simply carries no composition row, which
+    // already reads as "not measured" everywhere downstream.
+    const seen: InferenceRequest[] = [];
+    const contextEngine = {
+      buildPrompt: () => ({
+        messages: "not an array" as unknown,
+        system: "s",
+        tools: [],
+        totalTokens: 1,
+        evictedCount: 0,
+      }),
+      noteRealUsage: () => {},
+      getContextUsage: () => ({ used: 1, limit: 100, percent: 1 }),
+      shouldCompact: () => false,
+      compactWorkingSet: async (messages: unknown) => ({ messages, compacted: false }),
+    };
+    const events = await collect(
+      makeLoop(makeGateway(seen), { contextEngine }).run("hello", "chat", "/tmp"),
+    );
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.role).toBe("primary");
+    expect(seen[0]!.composition).toBeUndefined();
+    expect(events.some((e) => e.type === "error")).toBe(false);
+  });
+});

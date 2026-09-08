@@ -11,6 +11,7 @@ import type {
   ToolDefinition,
   StreamOpts,
   CallRole,
+  PromptComposition,
 } from "@rune/llm-gateway";
 import {
   measureComposition,
@@ -1388,16 +1389,33 @@ export class AgentLoop {
       // "what is the 34k". The doctrine share is what makes the JIT setting's
       // effect visible — `/config doctrine full` moves ~2k of bytes back into
       // this row on every single request.
-      const ephemeralText = requestMessages
-        .slice(stableMessageCount)
-        .flatMap((m) => m.content.map((b) => (b.type === "text" ? b.text : "")));
-      const composition = measureComposition({
-        system: requestSystemPrompt,
-        tools,
-        messages: requestMessages.slice(0, stableMessageCount),
-        planLedger: taskBlock,
-        taskState: ephemeralText.slice(taskBlock ? 1 : 0),
-      });
+      //
+      // Total by construction, and it must stay that way: this is TELEMETRY,
+      // and a meter is never allowed to be the reason a request does not go
+      // out. A context engine that hands back something other than a message
+      // array (a stub, a future implementation, a caller with its arguments
+      // crossed) costs the composition row for that turn and nothing else.
+      let composition: PromptComposition | undefined;
+      try {
+        // NO ROW rather than a wrong one. Substituting an empty conversation
+        // for one that could not be read would report a prompt made entirely
+        // of doctrine and tool schemas — a confident, false number, which is
+        // the failure the whole cost surface is built to avoid. An absent
+        // composition already reads as "not measured" everywhere downstream.
+        if (!Array.isArray(requestMessages)) throw new Error("messages is not an array");
+        const ephemeralText = requestMessages
+          .slice(stableMessageCount)
+          .flatMap((m) => m.content.map((b) => (b.type === "text" ? b.text : "")));
+        composition = measureComposition({
+          system: requestSystemPrompt,
+          tools,
+          messages: requestMessages.slice(0, stableMessageCount),
+          planLedger: taskBlock,
+          taskState: ephemeralText.slice(taskBlock ? 1 : 0),
+        });
+      } catch {
+        composition = undefined;
+      }
 
       const request: InferenceRequest = {
         messages: requestMessages,
@@ -1405,7 +1423,7 @@ export class AgentLoop {
         system: requestSystemPrompt,
         tools: tools.length > 0 ? tools : undefined,
         role: this.config.callRole ?? "primary",
-        composition,
+        ...(composition ? { composition } : {}),
         model: this.config.model,
         provider: this.config.provider,
         // Clamp to the model's per-response output cap — most providers
