@@ -230,7 +230,9 @@ import {
   doctrineHash,
   renderDoctrine,
   extractDoctrineSection,
+  INTERACTIVE_DESIGN_CHARTER,
   type DoctrineContext,
+  type JitDoctrineSection,
   countTrackedFiles,
   workspaceHasInterface,
   GREENFIELD_FILE_THRESHOLD,
@@ -4677,24 +4679,56 @@ export class Engine {
     // per-request prompt; the loop injects each once at first relevance via
     // the jitDoctrine callback below.
     const doctrineCtx = this.doctrineContext();
-    const promptDoctrineCtx =
-      this.doctrineDelivery() === "jit"
-        ? { ...doctrineCtx, canDelegate: false, buildsInterfaces: false }
-        : doctrineCtx;
-    const systemPrompt = [
-      renderDoctrine(promptDoctrineCtx),
-      renderInteractiveDoctrine(this.interactiveAuto),
-      renderAutoModeDoctrine(this.permissions.getMode() === "auto"),
-      renderBrowserDoctrine(this.browserEnabled),
-      activeLoop ? renderLoopRunDoctrine(activeLoop) : "",
-      envBlock,
-      projectMemory.block,
-      this.buildSystemMemoryBlock(),
-      notebookBlock?.text ?? "",
-      this.skillCatalog,
-    ]
-      .filter((s) => s && s.trim())
-      .join("\n\n");
+    const jit = this.doctrineDelivery() === "jit";
+    const promptDoctrineCtx = jit
+      ? { ...doctrineCtx, canDelegate: false, buildsInterfaces: false }
+      : doctrineCtx;
+    // ── The dashboard block, only while dashboards are in play (P13.1) ──
+    // `interactive_dashboard` is a catalog line until `load_tools` promotes
+    // it, so in the default (manual) interactive mode the block is a rule
+    // about a tool the request does not carry AND that the model is told not
+    // to reach for unasked — and when the user does ask, the charter arrives
+    // just-in-time carrying this same intro line. In `[interactive] auto` the
+    // head is the only thing that makes the model build a view at all, so it
+    // always ships.
+    const dashboardsAdvertised =
+      this.registry.get("interactive_dashboard") !== undefined &&
+      !this.registry.isDeferred("interactive_dashboard");
+    const interactiveBlock =
+      !jit || this.interactiveAuto || dashboardsAdvertised
+        ? renderInteractiveDoctrine(this.interactiveAuto, !jit)
+        : "";
+    // ── Two renderings, one per doctrine phase (P13.1) ──
+    // Assembled together because everything around the doctrine — environment,
+    // project memory, skills, the notebook — is identical between them, and
+    // reading those twice would make the two prompts differ for reasons that
+    // have nothing to do with the phase.
+    const assemble = (doctrine: string): string =>
+      [
+        doctrine,
+        // In jit delivery only the policy head ships; the 4 KB design charter
+        // arrives when a dashboard actually enters play.
+        interactiveBlock,
+        renderAutoModeDoctrine(this.permissions.getMode() === "auto"),
+        renderBrowserDoctrine(this.browserEnabled),
+        activeLoop ? renderLoopRunDoctrine(activeLoop) : "",
+        envBlock,
+        projectMemory.block,
+        this.buildSystemMemoryBlock(),
+        notebookBlock?.text ?? "",
+        this.skillCatalog,
+      ]
+        .filter((s) => s && s.trim())
+        .join("\n\n");
+    const openingDoctrine = renderDoctrine(
+      jit ? { ...promptDoctrineCtx, phase: "opening" } : promptDoctrineCtx,
+    );
+    const systemPrompt = assemble(openingDoctrine);
+    // Turn 2 onward. In "full" delivery this is the same string, so the phase
+    // machinery costs nothing for a user who asked for the whole doctrine.
+    const workingSystemPrompt = jit
+      ? assemble(renderDoctrine({ ...promptDoctrineCtx, phase: "working" }))
+      : systemPrompt;
 
     // ─── What the inspector reads (P3.4) ───
     // The desktop's trace rail can show a model call's timing and tokens, but
@@ -4710,7 +4744,11 @@ export class Engine {
       model: session.model,
       systemPrompt,
       parts: [
-        { name: "doctrine", chars: renderDoctrine(promptDoctrineCtx).length },
+        { name: "doctrine", chars: openingDoctrine.length },
+        {
+          name: "doctrine (turn 2+)",
+          chars: workingSystemPrompt === systemPrompt ? 0 : workingSystemPrompt.length,
+        },
         { name: "environment", chars: envBlock.length },
         { name: "project memory", chars: projectMemory.block.length },
         { name: "system memory", chars: this.buildSystemMemoryBlock().length },
@@ -4773,6 +4811,7 @@ export class Engine {
         maxParallelTools: 8,
         maxSecondWinds: turnBudget.conversational ? 0 : reliability.secondWinds,
         systemPrompt,
+        workingSystemPrompt,
         priorMessages,
         contextEngine: this.contextEngine,
         retrievedChunks: repoMapChunks,
@@ -6334,6 +6373,14 @@ export class Engine {
    */
   private jitDelivered = new Map<string, Set<string>>();
 
+  /** The verbatim text a JIT section delivers. "" when the section is unknown. */
+  private jitSectionText(section: JitDoctrineSection): string {
+    if (section === "dashboards") return INTERACTIVE_DESIGN_CHARTER;
+    return extractDoctrineSection(
+      section === "delegation" ? "# Delegation" : "# Building interfaces",
+    );
+  }
+
   private refreshJitDelivery(sessionId: string, messages: Message[]): void {
     const body = messages
       .flatMap((m) =>
@@ -6343,24 +6390,20 @@ export class Engine {
       )
       .join("\n");
     const present = new Set<string>();
-    for (const section of ["delegation", "interfaces"] as const) {
-      const guidance = extractDoctrineSection(
-        section === "delegation" ? "# Delegation" : "# Building interfaces",
-      );
+    for (const section of ["delegation", "interfaces", "dashboards"] as const) {
+      const guidance = this.jitSectionText(section);
       if (guidance && body.includes(guidance)) present.add(section);
     }
     this.jitDelivered.set(sessionId, present);
   }
 
   /** One section, once. Null = not jit mode, not applicable, or already sent. */
-  private takeJitDoctrine(sessionId: string, section: "delegation" | "interfaces"): string | null {
+  private takeJitDoctrine(sessionId: string, section: JitDoctrineSection): string | null {
     if (this.doctrineDelivery() !== "jit") return null;
     if (section === "delegation" && !this.doctrineContext().canDelegate) return null;
     const sent = this.jitDelivered.get(sessionId) ?? new Set<string>();
     if (sent.has(section)) return null;
-    const text = extractDoctrineSection(
-      section === "delegation" ? "# Delegation" : "# Building interfaces",
-    );
+    const text = this.jitSectionText(section);
     if (!text) return null;
     sent.add(section);
     this.jitDelivered.set(sessionId, sent);
@@ -6382,6 +6425,13 @@ export class Engine {
       // still create one. Erring toward keeping it: "looks generic" is a bug
       // this section exists to prevent.
       buildsInterfaces: greenfield || workspaceHasInterface(this.config.workspaceRoot),
+      // "# Built-in modes on request" routes three plain-language asks to three
+      // tools. When all three are catalog lines, the section is describing a
+      // toolbelt this request does not carry — and `load_tools` already names
+      // every one of them. It comes back the moment any of them is loaded.
+      hasModeTools: ["research", "compact_context", "interactive_dashboard"].some(
+        (name) => this.registry.get(name) !== undefined && !this.registry.isDeferred(name),
+      ),
     };
   }
 
