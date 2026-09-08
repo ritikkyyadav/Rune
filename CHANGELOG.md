@@ -20,11 +20,28 @@ live, verified against tests or mocks only, or unverified. It adds no agent capa
 
 <!-- P12.1 — run economics on free tiers. The lane hands its CHANGELOG lines back in its report; paste them into the sections below and delete this comment. -->
 <!-- P12.2 — MCP live and /mcp. Same: lane report lines go here. -->
-<!-- P12.3 — skills, plugins and hooks as a user layer. Same: lane report lines go here. -->
-<!-- P12.5 — UI freeze and the defect pass. Same: lane report lines go here. -->
 
 ### Added
 
+- **`scripts/render-live.ts` replays any stored session through the real `TurnRenderer`** at any
+  width, read-only against `rune.db`, so the terminal UI can be inspected outside a live terminal;
+  `docs/ui-freeze.md` records the frozen layout, scrolling model, key bindings, marks and palette,
+  and the rule that changing one needs a founder decision recorded in `docs/program/`.
+- **User skills.** `.rune/skills/<name>/SKILL.md` in a repository and
+  `~/.rune/skills/<name>/SKILL.md` for you, the same frontmatter the playbook already writes, so
+  both load through one path (the workspace wins a name collision). `/skills` lists them one per
+  line with description and origin instead of a comma-separated list; `/<name> [args]` loads one
+  into the turn, substituting `$ARGUMENTS`, `$1` or `{{args}}`; `rune skill add <path> [--user]
+[--name N] [--force]`, `rune skill list` and `rune skill remove <name>` manage them. A skill is
+  instructions, never a program. `examples/skills/release-checklist` installs with `rune skill add`.
+  Verified by running the CLI against a temp workspace and a temp `RUNE_HOME`; the `/skills` render
+  and the `/<name>` invocation were exercised with the scripted mock provider, not a live model.
+- **Hooks and plugins as a user layer.** `docs/skills.md`, `docs/hooks.md` — the hook event matrix
+  derived from `hooks.ts`, one worked example per event, and `tests/fixtures/hooks/hooks.json` as
+  the exact file the doc prints, driven by a test — and a ten-minute version plus a verified
+  section in `docs/plugins.md`. `rune plugin add ./path` of the two example plugins is covered by
+  an integration test that installs them through the real CLI, re-verifies integrity, and runs
+  their tools under Seatbelt. Nothing in the sandboxing or integrity checks was weakened.
 - **The free routes lead `/login`, and say they are free.** The key list inherited the roster's
   order, which opens with four providers that all need a funded account — on a machine with no
   budget, the four rows that cannot answer a prompt tonight. Free tiers now sort to the top of the
@@ -107,6 +124,20 @@ live, verified against tests or mocks only, or unverified. It adds no agent capa
 
 ### Fixed
 
+- **A parallel tool batch no longer leaves orphaned rows in the transcript.** The renderer kept one
+  slot for the call in flight while the loop dispatches a message's calls together, so a burst of
+  four reads opened four rows and kept the fourth; the other three stood as `› read` forever and
+  the finished rows were appended underneath them. 500 rows across the five largest September
+  sessions; `scripts/render-live.ts` found them.
+- **A run that ended before finishing shows its whole state of work.** The handoff block was set
+  down verbatim — up to 346 columns on an 80-column window — and the fixed frame clips rather than
+  reflows, so goal, open steps and next step were cut off mid-sentence.
+- **A row that overflows sacrifices its argument, not its receipt.** A long path used to eat its
+  own outcome, leaving rows ending `0…`.
+- **Verification and step-check rows are clipped by the window, not by a hard-coded 100 columns.**
+- **A command in an answer is no longer split mid-token** — `python3 -m http.server 8765` came out
+  as `http.serv` / `er 8765`.
+- **An edit whose result carries no diff says what it did** instead of rendering as a bare path.
 - **`rune --help` no longer prints a provider list from six presets ago.** The `-p` line said
   `anthropic|openai|openrouter|google|ollama-turbo|ollama` long after the roster reached 37, so the
   installed binary's own help told people that thirty-one of their options did not exist. It is
