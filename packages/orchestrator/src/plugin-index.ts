@@ -38,7 +38,7 @@ import { computeIntegrity, satisfiesRuneVersion, RUNE_VERSION } from "./plugins"
 
 /** Where the public index lives when nothing overrides it. */
 export const DEFAULT_PLUGIN_INDEX_URL =
-  "https://raw.githubusercontent.com/ritikkyyadav/Alan/gear/phase-0-stabilize/plugins/index.json";
+  "https://raw.githubusercontent.com/ritikkyyadav/Rune/main/plugins/index.json";
 
 /**
  * What a plugin is allowed to contribute, as a closed vocabulary.

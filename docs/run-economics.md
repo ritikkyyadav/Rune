@@ -68,9 +68,9 @@ conversation   everything else in `messages` — the actual work
 
 Bytes and not tokens, on purpose. The provider's usage report already gives the
 exact token count for the whole request; a second, local token estimate per part
-would be a guess stacked on an exact number. Bytes are exact, they are what the
-caller can measure before sending, and the **ratios** — which is the entire
-question — are the same either way.
+would be another estimate alongside that measured total. Bytes are exact and
+available before sending. Their ratios help locate overhead, but they are not
+token ratios: schemas, prose and code can tokenize at different densities.
 
 The split is measured in the agent loop because that is the only place that can
 make it. On the wire the plan ledger is an ordinary user message,

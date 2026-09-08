@@ -24,7 +24,7 @@
   Where the binaries go (default: %LOCALAPPDATA%\Rune\bin).
 
 .PARAMETER Repo
-  GitHub repo hosting the releases (default: ritikkyyadav/Alan).
+  GitHub repo hosting the releases (default: ritikkyyadav/Rune).
 
 .PARAMETER SkipTools
   Install rune.exe alone. File, search and shell tools will not work.
@@ -36,18 +36,18 @@
   Remove the binaries and the PATH entry. Leaves ~/.rune data alone.
 
 .EXAMPLE
-  irm https://raw.githubusercontent.com/ritikkyyadav/Alan/main/scripts/install.ps1 | iex
+  irm https://raw.githubusercontent.com/ritikkyyadav/Rune/main/scripts/install.ps1 | iex
 
 .EXAMPLE
   # With options, the piped form cannot take parameters, so fetch then run:
-  irm https://raw.githubusercontent.com/ritikkyyadav/Alan/main/scripts/install.ps1 -OutFile install.ps1
+  irm https://raw.githubusercontent.com/ritikkyyadav/Rune/main/scripts/install.ps1 -OutFile install.ps1
   .\install.ps1 -Version v0.3.0 -NoPath
 #>
 [CmdletBinding()]
 param(
   [string] $Version = $(if ($env:RUNE_VERSION) { $env:RUNE_VERSION } else { 'latest' }),
   [string] $InstallDir = $(if ($env:RUNE_INSTALL_DIR) { $env:RUNE_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'Rune\bin' }),
-  [string] $Repo = $(if ($env:RUNE_REPO) { $env:RUNE_REPO } else { 'ritikkyyadav/Alan' }),
+  [string] $Repo = $(if ($env:RUNE_REPO) { $env:RUNE_REPO } else { 'ritikkyyadav/Rune' }),
   [switch] $SkipTools,
   [switch] $NoPath,
   [switch] $Uninstall

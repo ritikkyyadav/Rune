@@ -1,5 +1,9 @@
 # Runtime reliability work — 2026-09-05
 
+This is the first delivery's historical record. See the
+[2026-09-08 follow-through](audit-followthrough-20260908.md) for subsequent fixes,
+live comparison evidence, current verification and installed provenance.
+
 This change connects session state, inference accounting, delegation, settings and shell
 execution across the existing runtime. It is an engineering improvement, not evidence of
 leadership over other coding agents or a measured price comparison.

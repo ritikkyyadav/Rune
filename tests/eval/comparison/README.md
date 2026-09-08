@@ -27,6 +27,13 @@ The default routes are Rune `codex` and OpenCode `openai`. Override with `--rune
 
 Cost is normalized using Rune's pricing table and all recorded gateway usage, including child sessions and helpers. Unknown costs are null; estimated prices are explicitly marked. These values are neither invoices nor the price of a subscription. OpenCode stores output and reasoning separately; the adapter adds them, following its [versioned usage implementation](https://github.com/anomalyco/opencode/blob/v1.18.23/packages/opencode/src/session/session.ts). Rune reserves estimated spend before inference; OpenCode is stopped after reported usage reaches the ceiling. Overshoots are retained and cannot count as on-budget successes. Timeouts also cannot count as completed successes even when the files pass acceptance.
 
+Terminal quota, authentication and provider-server errors leave the task unscored even when
+some inference completed before the interruption. Actual usage and partial artifacts remain
+in the report, with a sanitized `unscoredReason`. The runner stops further tasks after an
+infrastructure interruption. Ordinary tool failures or text mentioning quotas do not trigger
+this exclusion. See the [dated evidence and corrections](../../../docs/audit-followthrough-20260908.md)
+for the early attempts; the original aggregate reports were preserved.
+
 Reproduce the adapter checks without inference:
 
 ```sh

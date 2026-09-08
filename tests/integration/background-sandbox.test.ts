@@ -69,8 +69,10 @@ test.skipIf(!native)(
 
 test("a missing native planner cannot silently launch a host background process", () => {
   setSandboxMode("on");
-  const manager = new BackgroundShellManager("/nonexistent/rune-tools");
-  managers.push(manager);
-  expect(() => manager.start("echo never", "/tmp", true)).toThrow();
-  expect(manager.list()).toEqual([]);
+  for (const unavailable of [undefined, "/nonexistent/rune-tools"]) {
+    const manager = new BackgroundShellManager(unavailable);
+    managers.push(manager);
+    expect(() => manager.start("echo never", "/tmp", true)).toThrow();
+    expect(manager.list()).toEqual([]);
+  }
 });

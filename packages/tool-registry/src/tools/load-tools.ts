@@ -19,7 +19,7 @@
 //     agent-loop change, and the catalog shrinks as tools are loaded — a run
 //     that loads everything ends up paying exactly what it paid before.
 //   * When nothing is deferred, `load_tools` is not advertised at all. A
-//     session with no connectors pays zero for this mechanism.
+//     registry with only everyday coding tools pays zero for this mechanism.
 
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
 import type { ToolRegistry } from "../registry";
@@ -32,9 +32,16 @@ export const LOAD_TOOLS_TOOL = "load_tools";
  *
  * `n8n_trigger` is an opt-in workflow integration: with no N8N_BASE_URL it is
  * already gated out entirely, and even when configured it is a rarely-reached
- * capability whose schema does not earn a slot on every request.
+ * capability whose schema does not earn a slot on every request. The dashboard
+ * and config editors together carried over 12 KB on every ordinary coding
+ * request in the live CSV pilot. They remain discoverable by name, with their
+ * complete schemas available on demand; the direct TUI controls need no load.
  */
-export const DEFERRED_BUILTINS = new Set<string>(["n8n_trigger"]);
+export const DEFERRED_BUILTINS = new Set<string>([
+  "n8n_trigger",
+  "interactive_dashboard",
+  "update_config",
+]);
 
 /** MCP tools carry this prefix (see McpClient.createHandler). */
 const MCP_PREFIX = "mcp_";
@@ -43,9 +50,9 @@ const MCP_PREFIX = "mcp_";
  * Whether a tool is catalogued rather than fully advertised, by default.
  *
  * MCP tools defer because they are the unbounded set — a user can connect ten
- * servers and no per-request budget survives that. Built-ins stay eager
- * because they are the core loop: deferring `read_file` to save 200 tokens
- * would buy an extra round-trip on nearly every turn.
+ * servers and no per-request budget survives that. Everyday coding tools stay
+ * eager: deferring `read_file` to save 200 tokens would buy an extra round-trip
+ * on nearly every turn. Only the explicitly named occasional tools defer.
  */
 export function deferredByDefault(name: string): boolean {
   return name.startsWith(MCP_PREFIX) || DEFERRED_BUILTINS.has(name);

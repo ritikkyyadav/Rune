@@ -6,12 +6,12 @@ itself on a suite this repository owns, and a suite you own is a suite you can,
 over enough months, quietly shape to the thing you built. These two exist so
 that drift has somewhere to show up.
 
-**Nothing in this repository downloads either dataset or starts a container.**
-Both harnesses are large external dependencies with their own execution models —
-SWE-bench needs per-repo Python environments, Terminal-Bench needs Docker — and
-a number produced by a re-implementation is not the benchmark's number.
-`tests/eval/anchors.ts` pins the subsets, prints the exact commands, and ingests
-what those commands produce. It never runs them.
+The [comparison adapters](../tests/eval/comparison/README.md) now generate actual
+SWE-bench prediction patches and connect Rune to Harbor's container execution interface.
+They require separately provisioned official datasets, environments and credentials.
+The official evaluators assign benchmark results; an adapter test is not a benchmark score.
+`tests/eval/anchors.ts` pins the subsets, prints the commands and records official results.
+It does not download datasets or execute the benchmarks itself.
 
 ## The subsets, and why they are pinned
 
@@ -52,17 +52,21 @@ bun run tests/eval/anchors.ts --plan swe-bench-verified-50 --arm pristine
 bun run tests/eval/anchors.ts --plan terminal-bench-20 --arm evolved
 ```
 
-`--plan` prints the commands verbatim. In outline:
+`--plan` prints prerequisites and commands for the pristine arm. Evolved execution is
+not automated: it needs a frozen learned profile and a matching official control run.
+In outline:
 
 **SWE-bench Verified.** Clone the official harness
-(`princeton-nlp/SWE-bench`), produce one patch per pinned instance with
-`rune -P` (add `--pristine` for the control arm), then score with
-`swebench.harness.run_evaluation`. Rune produces predictions; the official
-harness decides whether they resolve. This repository never scores.
+(`princeton-nlp/SWE-bench`), provision each pinned checkout at its exact base commit,
+then use `tests/eval/comparison/swebench.ts` to produce predictions containing real
+Git diffs, including new and deleted files. Score with `swebench.harness.run_evaluation`.
+Do not redirect the agent's prose into a patch file.
 
-**Terminal-Bench.** Install `terminal-bench`, register Rune as a custom agent,
-and run the pinned task ids under Docker. Each task is a container with a real
-shell, so this is the anchor that exercises the sandbox rather than the diff.
+**Terminal-Bench.** The adapter implements Harbor's custom agent interface and requires
+a Linux Rune/tools bundle and container backend. Its preflight verifies every pinned
+legacy task ID against the supplied Harbor-format dataset. These IDs are not a verified
+Terminal-Bench 2.0 subset; no automatic substitution is allowed. A Harbor run exercises
+container execution, not Rune's native Linux sandbox by itself.
 
 Then record the result:
 
@@ -88,11 +92,14 @@ is skipped is recorded as skipped rather than back-filled from a nearby run.
 
 ## Results
 
-_No run has been recorded yet._ The scaffolding, the pinned subsets and the
-commands landed with Phase 7 (P7.9); running them needs credentialed capacity
-that this machine does not currently have — the probe on 2026-09-02 returned
-`Codex request failed (429): The usage limit has been reached`, and no other
-provider has a reachable credential.
+_No official external anchor has been recorded yet._ Adapter/interface tests have run,
+but official datasets, a working container backend and the Linux bundle have not been
+provisioned for an official evaluation here. The internally authored live Rune/OpenCode
+pilots are recorded separately in the [follow-through report](audit-followthrough-20260908.md).
+They are not SWE-bench, Terminal-Bench, an overall capability score or evidence of learned lift.
+
+The dated P10 sections below describe historical experiments. Their statements about
+unavailable live quota refer to those dates, not the current account state.
 
 When runs exist this table carries them, newest first:
 

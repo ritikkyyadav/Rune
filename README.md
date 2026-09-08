@@ -63,7 +63,7 @@ install from source.
 **From source** — the supported path today. Needs [Bun](https://bun.sh) and [Rust](https://rustup.rs).
 
 ```bash
-gh repo clone ritikkyyadav/Alan && cd Alan
+gh repo clone ritikkyyadav/Rune && cd Rune
 ./scripts/install.sh
 export PATH="$HOME/.rune/bin:$PATH"    # add to ~/.zshrc or ~/.bashrc
 rune
@@ -76,8 +76,8 @@ that cannot host a session never lands.
 **Prebuilt** — from v0.4.0 onward, once the repository is public:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ritikkyyadav/Alan/main/scripts/web-install.sh | bash
-irm https://raw.githubusercontent.com/ritikkyyadav/Alan/main/scripts/install.ps1 | iex   # Windows
+curl -fsSL https://raw.githubusercontent.com/ritikkyyadav/Rune/main/scripts/web-install.sh | bash
+irm https://raw.githubusercontent.com/ritikkyyadav/Rune/main/scripts/install.ps1 | iex   # Windows
 ```
 
 Both verify every download against the release's `SHA256SUMS` before anything reaches the install

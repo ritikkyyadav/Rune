@@ -4175,6 +4175,12 @@ export class Engine {
       case "turns":
         this.config.reliability = { ...this.config.reliability, maxTurns: Number(canonicalValue) };
         return { ok: true };
+      case "evidence_gate":
+        this.config.reliability = {
+          ...this.config.reliability,
+          evidenceGate: canonicalValue as "attest" | "refuse",
+        };
+        return { ok: true };
       case "sandbox_required":
         this.config.sandboxRequireOs = canonicalValue === "true";
         setRequireOsIsolation(this.config.sandboxRequireOs);
@@ -4245,6 +4251,8 @@ export class Engine {
           : String(this.config.subagents.costCapUsd);
       case "turns":
         return String(policyForModel(this.config.model, this.config.reliability).maxTurns);
+      case "evidence_gate":
+        return policyForModel(this.config.model, this.config.reliability).evidenceGate;
       case "sandbox_required":
         return String(this.config.sandboxRequireOs === true);
       case "playbook":

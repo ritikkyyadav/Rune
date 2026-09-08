@@ -54,11 +54,11 @@ describe("the brief a PR session starts from", () => {
 
 describe("finding the repository", () => {
   test("reads a slug out of either URL shape git writes", () => {
-    expect(repoSlug("git@github.com:ritikkyyadav/Alan.git")).toBe("ritikkyyadav/Alan");
-    expect(repoSlug("https://github.com/ritikkyyadav/Alan.git")).toBe("ritikkyyadav/Alan");
-    expect(repoSlug("https://github.com/ritikkyyadav/Alan")).toBe("ritikkyyadav/Alan");
+    expect(repoSlug("git@github.com:ritikkyyadav/Rune.git")).toBe("ritikkyyadav/Rune");
+    expect(repoSlug("https://github.com/ritikkyyadav/Rune.git")).toBe("ritikkyyadav/Rune");
+    expect(repoSlug("https://github.com/ritikkyyadav/Rune")).toBe("ritikkyyadav/Rune");
     // GITHUB_REPOSITORY is already a slug.
-    expect(repoSlug("ritikkyyadav/Alan")).toBe("ritikkyyadav/Alan");
+    expect(repoSlug("ritikkyyadav/Rune")).toBe("ritikkyyadav/Rune");
     expect(repoSlug("https://gitlab.com/x/y.git")).toBeNull();
   });
 });

@@ -5,6 +5,8 @@ docs/history/
 dist/
 target/
 tests/eval/results/
+# Captured aggregate benchmark receipts retain their original bytes and hashes.
+docs/evidence/comparison-*.json
 bun.lock
 Cargo.lock
 .rune/

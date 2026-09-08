@@ -675,7 +675,7 @@ export interface RuneConfig {
   update?: {
     /** Daily startup check for a newer release. Default true. */
     check?: boolean;
-    /** GitHub repo the releases come from. Default ritikkyyadav/Alan. */
+    /** GitHub repo the releases come from. Default ritikkyyadav/Rune. */
     repo?: string;
   };
   /**

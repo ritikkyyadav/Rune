@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { AsyncLocalStorage } from "node:async_hooks";
 import { Engine } from "../../packages/orchestrator/src/engine";
+import { runSettingsCommand } from "../../packages/orchestrator/src/settings-command";
+import { loadConfig } from "../../packages/shared/src/config";
 import { runHeadless, headlessExitCode } from "../../packages/orchestrator/src/headless";
 import { eventsToMessages } from "../../packages/orchestrator/src/session-replay";
 import { SessionManager } from "../../packages/shared/src/session";
@@ -30,7 +32,7 @@ afterEach(() => {
   else process.env.RUNE_HOME = oldHome;
   rmSync(dir, { recursive: true, force: true });
 });
-function setup(model = "claude-sonnet-5") {
+function setup(model = "claude-sonnet-5", reliability?: { evidenceGate?: "attest" | "refuse" }) {
   const engine = new Engine({
     model,
     provider: "anthropic",
@@ -47,6 +49,7 @@ function setup(model = "claude-sonnet-5") {
     enableVerification: false,
     context: { repoMap: false },
     evolve: { playbook: false },
+    reliability,
   });
   engines.push(engine);
   const runtime = engine as unknown as Runtime;
@@ -59,6 +62,20 @@ async function drain(engine: Engine, session: string, text: string) {
   for await (const event of engine.chat(session, text)) events.push(event);
   return events;
 }
+
+test("the advertised evidence setting updates the real engine and survives configuration reload", async () => {
+  const { engine, provider } = setup();
+  expect(engine.readConfigSetting("evidence_gate")).toBe("attest");
+  expect(await runSettingsCommand(engine, "evidence_gate refuse")).toContain("applied now");
+  expect(engine.readConfigSetting("evidence_gate")).toBe("refuse");
+  const saved = loadConfig(dir);
+  expect(saved.reliability?.evidenceGate).toBe("refuse");
+  const restarted = setup("claude-sonnet-5", saved.reliability);
+  expect(restarted.engine.readConfigSetting("evidence_gate")).toBe("refuse");
+  expect(await runSettingsCommand(engine, "evidence_gate invalid")).toContain("Can't set");
+  expect(loadConfig(dir).reliability?.evidenceGate).toBe("refuse");
+  expect(provider.requests).toHaveLength(0);
+});
 
 test("all gateway usage is session-scoped, durable and budgeted, including late helper replies", async () => {
   const { engine, runtime, provider } = setup();

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { COMPARISON_TASKS } from "../../eval/comparison/tasks";
-import { seedTask, checkTask } from "../../eval/comparison/runner";
+import { seedTask, checkTask, providerFailureReason, runPilot } from "../../eval/comparison/runner";
 import { predictionFor, loadInstances } from "../../eval/comparison/swebench";
 import { opencodeCost, runeCost } from "../../eval/comparison/harness";
 import { runProcess } from "../../eval/comparison/process";
@@ -23,6 +23,75 @@ function git(root: string, ...args: string[]) {
   if (p.status !== 0) throw new Error(p.stderr);
   return p.stdout.trim();
 }
+
+test("provider interruptions are distinguished from task failures without publishing error data", () => {
+  expect(providerFailureReason({ type: "error", error: "Quota exceeded on codex/model" })).toBe(
+    "provider_quota",
+  );
+  expect(
+    providerFailureReason({
+      type: "error",
+      error: {
+        data: {
+          statusCode: 429,
+          message: "The usage limit has been reached",
+          headers: { cookie: "secret" },
+        },
+      },
+    }),
+  ).toBe("provider_quota");
+  expect(providerFailureReason({ type: "error", error: { data: { statusCode: 503 } } })).toBe(
+    "provider_unavailable",
+  );
+  expect(providerFailureReason({ type: "error", error: { data: { statusCode: 401 } } })).toBe(
+    "provider_authentication",
+  );
+  expect(
+    providerFailureReason({ type: "tool_result", error: "rate-limit unit test failed" }),
+  ).toBeUndefined();
+  expect(
+    providerFailureReason({ type: "text", text: "The usage limit has been reached" }),
+  ).toBeUndefined();
+  expect(
+    providerFailureReason({ type: "error", error: "Worker could not integrate changed files" }),
+  ).toBeUndefined();
+});
+
+test("a mid-run quota failure retains usage, excludes the score and stops further inference", async () => {
+  const dir = temp();
+  const fake = join(dir, "interrupted.ts");
+  writeFileSync(
+    fake,
+    `import {Database} from 'bun:sqlite';
+    if(process.argv.includes('--version')) { console.log('fixture'); process.exit(0); }
+    const db = new Database(process.env.RUNE_HOME+'/rune.db');
+    db.exec('CREATE TABLE events (payload_json TEXT)');
+    db.prepare('INSERT INTO events VALUES (?)').run(JSON.stringify({type:'cost',payload:{model:'gpt-5.6-sol',provider:'codex',priced:true,listCostUsd:0.2}}));
+    db.close();
+    console.log(JSON.stringify({type:'error',error:'Quota exceeded after one completed request'}));
+    process.exit(1);`,
+  );
+  const report = await runPilot({
+    out: join(dir, "report"),
+    model: "gpt-5.6-sol",
+    runeProvider: "codex",
+    opencodeProvider: "openai",
+    budgetUsd: 1,
+    timeoutMs: 2000,
+    runs: 1,
+    tasks: ["csv-state-machine"],
+    runeCommand: [process.execPath, fake],
+    opencodeCommand: [process.execPath, fake],
+  });
+  expect(report.results).toHaveLength(1);
+  expect(report.results[0]).toMatchObject({
+    entries: 1,
+    listUsd: 0.2,
+    scored: false,
+    unscoredReason: "provider_quota",
+    success: false,
+  });
+});
 
 test("independent acceptance rejects each broken coding fixture and accepts a correct working-tree implementation", () => {
   for (const task of COMPARISON_TASKS.filter((t) => !t.browser)) {
