@@ -190,7 +190,7 @@ import {
   stripAnsi,
   TERMINAL_THEME_RESET,
 } from "./theme";
-import { formatCostReport } from "../../cost-report";
+import { formatCostReport, formatRunEconomics } from "../../cost-report";
 import { glyph } from "./glyphs";
 import { mcpPanel } from "./mcp-panel";
 import { saveTheme } from "./theme-store";
@@ -2390,7 +2390,14 @@ class Tui {
         // The readout now answers the three questions that number can't:
         // what left the building, what it would cost metered, and what the
         // prompt cache is actually saving.
-        const rows = formatCostReport(engine.getCostBreakdown());
+        // Money first, then the half free tiers actually run on: completions
+        // split work vs governance, fresh tokens per call, cache-read ratio,
+        // list estimate, and what a prompt is made of. Appended rather than
+        // replacing anything — the existing readout is unchanged.
+        const rows = [
+          ...formatCostReport(engine.getCostBreakdown()),
+          ...formatRunEconomics(engine.getRunEconomics()),
+        ];
         const width = Math.max(...rows.map((r) => r.label.length));
         for (const row of rows) {
           const label = faint(row.label.padStart(width));

@@ -129,3 +129,64 @@ describe("transcript gates", () => {
     expect(compareToBaseline(transcriptReport(), baseline(0.1), 0.05).ok).toBe(true);
   });
 });
+
+// ─── The governance gate (P12.1) ───
+// Unlike the two transcript ceilings this one is a DELTA against the recorded
+// baseline, because there is no known-correct absolute number: a task that
+// genuinely needs three compactions needs three summarizer calls. What must
+// not happen is the figure drifting up unnoticed — 45% of this agent's
+// recorded incidents are provider rate limits, and a free tier meters
+// requests, not dollars.
+import { GOVERNANCE_TOLERANCE } from "../../../tests/eval/report";
+
+function governanceReport(avgGovernanceCompletions?: number): SuiteReport {
+  return {
+    ...report(0.1),
+    ...(avgGovernanceCompletions != null ? { avgGovernanceCompletions } : {}),
+  } as SuiteReport;
+}
+
+function governanceBaseline(avgGovernanceCompletions?: number): BaselineFile {
+  return {
+    ...baseline(0.1),
+    ...(avgGovernanceCompletions != null ? { avgGovernanceCompletions } : {}),
+  } as BaselineFile;
+}
+
+describe("governance-completions gate", () => {
+  test("more of Rune's own calls per task fails the build with every task passing", () => {
+    const out = compareToBaseline(governanceReport(6), governanceBaseline(3), 0.05);
+    expect(out.ok).toBe(false);
+    expect(out.reasons.join(" ")).toContain("governance completions per task rose 100%");
+    expect(out.governanceDelta).toBeCloseTo(1, 6);
+  });
+
+  test("drift inside the tolerance passes", () => {
+    const out = compareToBaseline(governanceReport(3.4), governanceBaseline(3), 0.05);
+    expect(out.ok).toBe(true);
+    expect(out.governanceDelta).toBeCloseTo(0.1333, 3);
+  });
+
+  test("making FEWER of its own calls is never a regression", () => {
+    const out = compareToBaseline(governanceReport(1), governanceBaseline(3), 0.05);
+    expect(out.ok).toBe(true);
+    expect(out.governanceDelta).toBeLessThan(0);
+  });
+
+  test("a baseline written before the meter existed cannot manufacture a regression", () => {
+    // "Not measured" and "made none" are different facts. A gate that read a
+    // missing meter as zero would fail every run after this shipped.
+    expect(compareToBaseline(governanceReport(4), governanceBaseline(), 0.05).ok).toBe(true);
+    expect(compareToBaseline(governanceReport(4), governanceBaseline(0), 0.05).ok).toBe(true);
+  });
+
+  test("a run that recorded nothing is not judged against a baseline that did", () => {
+    const out = compareToBaseline(governanceReport(), governanceBaseline(3), 0.05);
+    expect(out.ok).toBe(true);
+    expect(out.governanceDelta).toBeUndefined();
+  });
+
+  test("the tolerance is deliberate and matches the cost gate's band", () => {
+    expect(GOVERNANCE_TOLERANCE).toBe(0.2);
+  });
+});

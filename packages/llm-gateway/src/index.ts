@@ -1,5 +1,6 @@
 export type {
   CacheControlHint,
+  CallRole,
   ContentBlock,
   CostEntry,
   CostLedger,
@@ -11,6 +12,7 @@ export type {
   Message,
   ModelInfo,
   ModelPricing,
+  PromptComposition,
   ProviderConfig,
   ProviderName,
   ReasoningEffort,
@@ -23,6 +25,8 @@ export type {
   ToolDefinition,
 } from "./types";
 export {
+  GOVERNANCE_ROLES,
+  isGovernanceRole,
   MODEL_PRICING,
   providerCarriesImages,
   reasoningEffortsFor,
@@ -71,6 +75,15 @@ export { CostTracker, BudgetExceededError, BudgetPricingError } from "./cost-tra
 export { ProviderHealthStore, RETIREMENT_TTL_MS } from "./provider-health";
 export type { RetiredModel, CappedProvider } from "./provider-health";
 export type { BudgetScope, BudgetCap, CostBreakdown, ProviderCacheStats } from "./cost-tracker";
+export { summarizeRunEconomics, completionsByProvider } from "./run-economics";
+export type { RunEconomics, RoleEconomics, CompositionEconomics } from "./run-economics";
+export {
+  measureComposition,
+  compositionShares,
+  messageBytes,
+  toolSchemaBytes,
+  utf8Bytes,
+} from "./prompt-composition";
 export { ApiError, parseApiErrorBody } from "./types";
 // ─── BYOP authentication layer ───
 export type { AuthMethod, ResolvedCredential, AuthContext, AuthenticationStrategy } from "./auth";

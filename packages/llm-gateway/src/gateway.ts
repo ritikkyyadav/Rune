@@ -276,7 +276,7 @@ export class LlmGateway {
       try {
         const response = await provider.infer(request);
         release?.();
-        this.recordCost(request.model, request.provider, response.usage);
+        this.recordCost(request.model, request.provider, response.usage, request);
         return response;
       } catch (err) {
         lastError = err as Error;
@@ -388,7 +388,7 @@ export class LlmGateway {
           for await (const event of gen) {
             if (event.type === "message_stop") {
               release?.();
-              this.recordCost(adjustedRequest.model, providerName, event.usage);
+              this.recordCost(adjustedRequest.model, providerName, event.usage, adjustedRequest);
             }
             yieldedSinceReset = true;
             yield event;
@@ -879,9 +879,18 @@ export class LlmGateway {
     }
   }
 
-  private recordCost(model: string, provider: ProviderName, usage: TokenUsage): void {
+  private recordCost(
+    model: string,
+    provider: ProviderName,
+    usage: TokenUsage,
+    /** The request that produced it, so the ledger can say what it was FOR. */
+    request?: Pick<InferenceRequest, "role" | "composition">,
+  ): void {
     try {
-      const entry = this.costTracker.record(model, provider, usage);
+      const entry = this.costTracker.record(model, provider, usage, new Date(), {
+        ...(request?.role ? { role: request.role } : {}),
+        ...(request?.composition ? { composition: request.composition } : {}),
+      });
       for (const listener of this.usageListeners) {
         try {
           listener(entry);
