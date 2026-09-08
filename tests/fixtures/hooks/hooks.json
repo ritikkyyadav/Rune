@@ -1,0 +1,30 @@
+{
+  "preToolUse": [
+    {
+      "match": "write_file",
+      "command": "./scripts/no-secrets.sh",
+      "blocking": true,
+      "timeoutMs": 5000
+    },
+    {
+      "match": "bash",
+      "command": "echo \"pre $RUNE_TOOL_NAME\" >> \"${RUNE_HOOK_LOG:-/dev/null}\""
+    }
+  ],
+  "postToolUse": [
+    {
+      "match": "*_file",
+      "command": "./scripts/changed-note.sh"
+    }
+  ],
+  "sessionStart": [
+    {
+      "command": "echo \"$RUNE_HOOK_EVENT\" >> \"${RUNE_HOOK_LOG:-/dev/null}\""
+    }
+  ],
+  "sessionEnd": [
+    {
+      "command": "echo \"$RUNE_HOOK_EVENT\" >> \"${RUNE_HOOK_LOG:-/dev/null}\""
+    }
+  ]
+}
