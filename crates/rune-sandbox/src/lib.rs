@@ -20,6 +20,7 @@ pub mod macos;
 pub mod noop;
 pub mod path_guard;
 pub mod shell;
+pub mod shell_plan;
 pub mod spawn;
 
 use std::collections::HashMap;
@@ -30,9 +31,11 @@ use std::pin::Pin;
 use serde::{Deserialize, Serialize};
 
 pub use crate::error::SandboxError;
+// `SandboxPathLists` and `real_path` are defined below and re-exported by name.
 pub use crate::factory::{SandboxProbe, create_sandbox, probe_capability};
 pub use crate::path_guard::PathGuard;
 pub use crate::shell::{Shell, command_shell};
+pub use crate::shell_plan::{ShellPlan, plan_shell};
 pub use crate::spawn::{SpawnPlan, SpawnRequest, ToolCapability, plan_spawn};
 
 /// Escape a path for embedding inside a Seatbelt string literal.
@@ -67,6 +70,67 @@ pub(crate) fn credential_deny_paths() -> Vec<PathBuf> {
     ]
 }
 
+/// Best-effort real path for a policy entry that may not exist yet.
+///
+/// The profile matches on RESOLVED paths: on macOS `/tmp` is a symlink to
+/// `/private/tmp`, so a rule written against the unresolved path silently
+/// matches nothing — a deny that denies nothing is worse than no deny at all.
+/// A path that does not exist yet (a hooks directory nobody created) is
+/// resolved through its longest existing ancestor and re-joined.
+pub fn real_path(path: &Path) -> PathBuf {
+    if let Ok(real) = std::fs::canonicalize(path) {
+        return real;
+    }
+    let mut ancestor = path.to_path_buf();
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    while let Some(parent) = ancestor.parent() {
+        if let Some(name) = ancestor.file_name() {
+            tail.push(name.to_os_string());
+        }
+        ancestor = parent.to_path_buf();
+        if let Ok(real) = std::fs::canonicalize(&ancestor) {
+            let mut out = real;
+            for part in tail.iter().rev() {
+                out.push(part);
+            }
+            return out;
+        }
+    }
+    path.to_path_buf()
+}
+
+/// The user's path policy for one command, as the TypeScript side resolved it
+/// (absolute paths only). Mirrors `SandboxPathLists` in
+/// `packages/shared/src/sandbox-policy.ts`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SandboxPathLists {
+    /// Denied for reading, on top of `credential_deny_paths()`.
+    #[serde(default)]
+    pub deny_read: Vec<PathBuf>,
+    /// Extra writable roots.
+    #[serde(default)]
+    pub allow_write: Vec<PathBuf>,
+    /// Denied for writing even inside a writable root.
+    #[serde(default)]
+    pub deny_write: Vec<PathBuf>,
+}
+
+impl SandboxPathLists {
+    /// Fold the lists into a config. Extra write roots are additive; both
+    /// deny lists are additive too.
+    pub fn apply_to(&self, config: &mut SandboxConfig) {
+        config
+            .extra_write_paths
+            .extend(self.allow_write.iter().cloned());
+        config
+            .deny_read_paths
+            .extend(self.deny_read.iter().cloned());
+        config
+            .deny_write_paths
+            .extend(self.deny_write.iter().cloned());
+    }
+}
+
 /// Describes the level of sandboxing available on the current platform.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SandboxCapability {
@@ -91,6 +155,15 @@ pub struct SandboxConfig {
     pub extra_read_paths: Vec<PathBuf>,
     /// Additional paths that the sandbox may write (beyond workspace + cache + tmp).
     pub extra_write_paths: Vec<PathBuf>,
+    /// Paths denied for reading, on top of the credential stores in
+    /// [`credential_deny_paths`].
+    #[serde(default)]
+    pub deny_read_paths: Vec<PathBuf>,
+    /// Paths denied for writing even where they fall inside a writable root —
+    /// Rune's own control files under `<workspace>/.rune`, `.git/hooks`, and
+    /// whatever `[sandbox.filesystem] denyWrite` names.
+    #[serde(default)]
+    pub deny_write_paths: Vec<PathBuf>,
     /// Environment variable overrides merged on top of the curated env.
     pub env_overrides: HashMap<String, String>,
     /// Path to the JSONL audit log file.
@@ -106,6 +179,8 @@ impl Default for SandboxConfig {
             allow_network: false,
             extra_read_paths: Vec::new(),
             extra_write_paths: Vec::new(),
+            deny_read_paths: Vec::new(),
+            deny_write_paths: Vec::new(),
             env_overrides: HashMap::new(),
             audit_log_path: home.join(".rune").join("audit.jsonl"),
         }

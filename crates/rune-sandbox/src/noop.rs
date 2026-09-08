@@ -23,6 +23,7 @@ impl NoopSandbox {
         eprintln!("[WARN] OS-level sandbox unavailable, using PathGuard-only fallback");
         let mut guard = PathGuard::new(config.workspace_root.clone());
         guard.allow_extra_write_paths(config.extra_write_paths.clone());
+        guard.deny_extra_write_paths(config.deny_write_paths.clone());
         Self {
             config,
             path_guard: guard,

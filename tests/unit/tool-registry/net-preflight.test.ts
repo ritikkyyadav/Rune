@@ -111,12 +111,13 @@ describe("withNetworkPreflight — wrapper behavior", () => {
     expect(fake.calls).toBe(1);
   });
 
-  test("run_in_background (unsandboxed) passes straight through", async () => {
+  test("background network commands also fail fast until network is requested", async () => {
     const fake = fakeBash();
     const wrapped = withNetworkPreflight(fake.handler);
     const out = await wrapped.execute(input({ command: "git pull", run_in_background: true }));
-    expect(out.success).toBe(true);
-    expect(fake.calls).toBe(1);
+    expect(out.success).toBe(false);
+    expect(out.error).toContain("network: true");
+    expect(fake.calls).toBe(0);
   });
 
   test("offline commands are untouched", async () => {

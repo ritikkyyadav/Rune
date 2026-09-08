@@ -21,6 +21,15 @@ const TRUNCATE_TAIL_BYTES: usize = 128 * 1024;
 pub struct BashInput {
     pub command: String,
     pub timeout_ms: Option<u64>,
+    /// Network access never removes filesystem containment.
+    #[serde(default)]
+    pub network: bool,
+    /// The user's path policy, resolved to absolute paths by the harness. The
+    /// harness always overwrites this field from trusted config before the
+    /// payload reaches this binary, so a model cannot widen its own sandbox
+    /// by writing it into the tool arguments.
+    #[serde(default)]
+    pub sandbox_paths: Option<rune_sandbox::SandboxPathLists>,
 }
 
 #[derive(Debug, Serialize)]
@@ -218,12 +227,15 @@ pub async fn execute_sandboxed(
         )));
     }
 
-    let config = SandboxConfig {
+    let mut config = SandboxConfig {
         workspace_root: workspace_root.to_path_buf(),
         timeout_ms: input.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS),
-        allow_network: false,
+        allow_network: input.network,
         ..Default::default()
     };
+    if let Some(paths) = &input.sandbox_paths {
+        paths.apply_to(&mut config);
+    }
 
     let sandbox = create_sandbox(config);
     // The factory may have silently fallen back to the path-guard-only
@@ -285,6 +297,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let output = execute(
             BashInput {
+                network: false,
+                sandbox_paths: None,
                 command: "echo hello".to_string(),
                 timeout_ms: None,
             },
@@ -304,6 +318,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let output = execute(
             BashInput {
+                network: false,
+                sandbox_paths: None,
                 command: "echo err >&2".to_string(),
                 timeout_ms: None,
             },
@@ -321,6 +337,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let output = execute(
             BashInput {
+                network: false,
+                sandbox_paths: None,
                 command: "exit 42".to_string(),
                 timeout_ms: None,
             },
@@ -338,6 +356,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let output = execute(
             BashInput {
+                network: false,
+                sandbox_paths: None,
                 command: "sleep 10".to_string(),
                 timeout_ms: Some(100),
             },
@@ -356,6 +376,8 @@ mod tests {
         for cmd in ["rm -rf /", "rm -rf /*", "sudo rm -fr / ; echo done"] {
             let result = execute(
                 BashInput {
+                    network: false,
+                    sandbox_paths: None,
                     command: cmd.to_string(),
                     timeout_ms: None,
                 },
@@ -379,6 +401,8 @@ mod tests {
         let cmd = format!("rm -rf {}/junk && echo cleaned", tmp.path().display());
         let output = execute(
             BashInput {
+                network: false,
+                sandbox_paths: None,
                 command: cmd,
                 timeout_ms: None,
             },
@@ -399,6 +423,8 @@ mod tests {
         // read_to_end(stdout)-then-stderr deadlocked here until timeout.
         let output = execute(
             BashInput {
+                network: false,
+                sandbox_paths: None,
                 command: "for i in $(seq 1 4000); do echo 'stderr line padding padding padding' >&2; done; echo done-stdout".to_string(),
                 timeout_ms: Some(15_000),
             },
@@ -425,6 +451,8 @@ mod tests {
         let cmd = format!("(sleep 1 && touch {}) & wait", marker.display());
         let output = execute(
             BashInput {
+                network: false,
+                sandbox_paths: None,
                 command: cmd,
                 timeout_ms: Some(200),
             },
@@ -449,6 +477,8 @@ mod tests {
         unsafe { std::env::set_var("RUNE_BASH_ENV_PROBE", "inherited-42") };
         let output = execute(
             BashInput {
+                network: false,
+                sandbox_paths: None,
                 command: "echo $RUNE_BASH_ENV_PROBE".to_string(),
                 timeout_ms: None,
             },
@@ -468,6 +498,8 @@ mod tests {
 
         let output = execute(
             BashInput {
+                network: false,
+                sandbox_paths: None,
                 command: "cat marker.txt".to_string(),
                 timeout_ms: None,
             },
@@ -477,6 +509,32 @@ mod tests {
         .unwrap();
 
         assert_eq!(output.stdout.trim(), "found");
+    }
+
+    /// The harness sends the path policy beside the command; an older harness
+    /// (or a plain `execute`) sends none, and both must deserialize.
+    #[test]
+    fn bash_input_reads_optional_sandbox_paths() {
+        let plain: BashInput = serde_json::from_str(r#"{"command":"ls"}"#).unwrap();
+        assert!(plain.sandbox_paths.is_none());
+        let with: BashInput = serde_json::from_str(
+            r#"{"command":"ls","sandbox_paths":{"deny_write":["/ws/.rune/hooks"],"allow_write":["/opt/cache"]}}"#,
+        )
+        .unwrap();
+        let paths = with.sandbox_paths.expect("paths");
+        assert_eq!(
+            paths.deny_write,
+            vec![std::path::PathBuf::from("/ws/.rune/hooks")]
+        );
+        assert_eq!(
+            paths.allow_write,
+            vec![std::path::PathBuf::from("/opt/cache")]
+        );
+        assert!(paths.deny_read.is_empty());
+        let mut config = rune_sandbox::SandboxConfig::default();
+        paths.apply_to(&mut config);
+        assert_eq!(config.deny_write_paths.len(), 1);
+        assert_eq!(config.extra_write_paths.len(), 1);
     }
 
     #[test]

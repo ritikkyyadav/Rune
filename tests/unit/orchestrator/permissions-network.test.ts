@@ -56,7 +56,7 @@ describe("PermissionBroker — bash sandbox escapes", () => {
     const d = brokerInAutoMode().check(BASH, { command: "git push origin main", network: true });
     expect(d.type).toBe("needs_confirmation");
     if (d.type === "needs_confirmation") {
-      expect(d.argsSummary).toContain("[network — runs outside the sandbox]");
+      expect(d.argsSummary).toContain("[network enabled — filesystem sandbox retained]");
       expect(d.argsSummary).toContain("git push origin main");
     }
   });

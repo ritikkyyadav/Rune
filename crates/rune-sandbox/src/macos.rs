@@ -9,7 +9,7 @@ use crate::error::SandboxError;
 use crate::path_guard::PathGuard;
 use crate::{Sandbox, SandboxConfig, SandboxFuture, SandboxResult};
 
-use crate::{credential_deny_paths, escape_sbpl as escape_sb};
+use crate::{credential_deny_paths, escape_sbpl as escape_sb, real_path};
 
 /// macOS sandbox-exec (Seatbelt) implementation.
 ///
@@ -24,6 +24,7 @@ impl MacOsSandbox {
     pub fn new(config: SandboxConfig) -> Self {
         let mut guard = PathGuard::new(config.workspace_root.clone());
         guard.allow_extra_write_paths(config.extra_write_paths.clone());
+        guard.deny_extra_write_paths(config.deny_write_paths.clone());
         Self {
             config,
             path_guard: guard,
@@ -42,7 +43,7 @@ impl MacOsSandbox {
     /// even `echo` never runs. We instead allow reads globally and then carve
     /// out the sensitive paths with explicit denies (a `deny file-read*` on a
     /// subpath wins over the broad allow regardless of rule order in SBPL).
-    fn seatbelt_profile(&self) -> String {
+    pub(crate) fn seatbelt_profile(&self) -> String {
         let home = dirs::home_dir().unwrap_or_default();
         let workspace = escape_sb(&self.config.workspace_root.display().to_string());
         let cache_path = escape_sb(&home.join(".rune").join("cache").display().to_string());
@@ -63,18 +64,52 @@ impl MacOsSandbox {
         for p in &self.config.extra_write_paths {
             writable.push(format!(
                 "    (subpath \"{}\")",
-                escape_sb(&p.display().to_string())
+                escape_sb(&real_path(p).display().to_string())
             ));
         }
         let writable = writable.join("\n");
 
+        // Writes denied INSIDE the writable roots: Rune's own control surface
+        // in the workspace (config, hooks, skills, policy), `.git/hooks`, and
+        // the user's `[sandbox.filesystem] denyWrite`. Emitted only when the
+        // list is non-empty — a bare `(deny file-write*)` would deny every
+        // write, which is the opposite of a narrow carve-out. Seatbelt takes
+        // the last matching rule, so this block follows the allow.
+        let deny_writes: Vec<String> = self
+            .config
+            .deny_write_paths
+            .iter()
+            .map(|p| {
+                format!(
+                    "    (subpath \"{}\")",
+                    escape_sb(&real_path(p).display().to_string())
+                )
+            })
+            .collect();
+        let deny_write_rule = if deny_writes.is_empty() {
+            String::new()
+        } else {
+            format!(
+                ";; ...except Rune's own controls and policy-denied paths, even inside a writable root.\n(deny file-write*\n{}\n)\n",
+                deny_writes.join("\n")
+            )
+        };
+
         // Credential / secret stores that stay unreadable even under broad reads.
         // Mirrors PathGuard's blocked set, plus tool-specific token locations and
         // Rune's own BYOK secrets file (current and legacy homes). The list lives
-        // in lib.rs so the plugin-tool profiles cannot drift from this one.
+        // in lib.rs so the plugin-tool profiles cannot drift from this one. The
+        // user's `[sandbox.filesystem] denyRead` joins the same block. The
+        // block is emitted after every file allow (see the profile template).
         let deny_reads: String = credential_deny_paths()
             .iter()
-            .map(|p| format!("    (subpath \"{}\")", escape_sb(&p.display().to_string())))
+            .chain(self.config.deny_read_paths.iter())
+            .map(|p| {
+                format!(
+                    "    (subpath \"{}\")",
+                    escape_sb(&real_path(p).display().to_string())
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n");
 
@@ -124,19 +159,22 @@ impl MacOsSandbox {
 ;; Broad reads so dyld + real tooling work (see fn docs).
 (allow file-read*)
 
-;; ...but never expose credential / secret stores, even to read.
-(deny file-read*
-{deny_reads}
-)
-
 ;; Writes confined to the workspace, cache, temp, and pseudo-devices
 ;; (/dev/null, /dev/urandom, tty, ...). Everything else stays read-only.
 (allow file-read* file-write*
 {writable}
 )
 (allow file-write* (subpath "/dev"))
-
+{deny_write_rule}
 {extra_read}
+
+;; ...but never expose credential / secret stores, even to read. This block
+;; comes LAST among the file rules on purpose: Seatbelt takes the last matching
+;; rule, and a denied read inside the workspace (or an extra read root) must
+;; beat the broad allows above it.
+(deny file-read*
+{deny_reads}
+)
 {network_rule}
 "#
         )
@@ -151,7 +189,7 @@ impl MacOsSandbox {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()
-            .is_ok()
+            .is_ok_and(|status| status.success())
     }
 }
 
@@ -308,7 +346,9 @@ mod tests {
             "(allow network-inbound (local ip \"localhost:*\"))",
             "(allow network-outbound (remote ip \"localhost:*\"))",
         ] {
-            let at = denied.find(rule).unwrap_or_else(|| panic!("missing {rule}"));
+            let at = denied
+                .find(rule)
+                .unwrap_or_else(|| panic!("missing {rule}"));
             assert!(at > deny_at, "{rule} must follow the deny");
         }
         // No rule names a wildcard host: outbound stays pinned to localhost, so
@@ -326,6 +366,103 @@ mod tests {
         assert!(p.contains("(deny file-read*"));
         assert!(p.contains(".ssh"));
         assert!(p.contains("secrets.json"));
+    }
+
+    /// The policy's deny lists land in the profile: a denied read joins the
+    /// credential block, a denied write gets its own block AFTER the write
+    /// allow (last match wins), and an empty deny list emits NO write-deny
+    /// rule at all — `(deny file-write*)` with no filter would deny every
+    /// write, and a carve-out that is really a blanket ban is a broken profile.
+    #[test]
+    fn profile_carries_policy_deny_lists() {
+        let mut config = cfg(PathBuf::from("/tmp/ws"), false);
+        config.deny_read_paths = vec![PathBuf::from("/tmp/ws/private-notes")];
+        config.deny_write_paths = vec![PathBuf::from("/tmp/ws/.rune/hooks")];
+        let p = MacOsSandbox::new(config).seatbelt_profile();
+        assert!(p.contains("private-notes"));
+        let allow_at = p
+            .find("(allow file-read* file-write*")
+            .expect("write allow");
+        let deny_at = p.find("(deny file-write*").expect("write deny");
+        assert!(
+            deny_at > allow_at,
+            "the write deny must follow the write allow"
+        );
+        assert!(p.contains(".rune/hooks"));
+        // The read deny must follow the write allow too: `/tmp/ws/private-notes`
+        // sits inside the workspace, and an earlier deny would be overridden by
+        // the later `(allow file-read* file-write* (subpath "/tmp/ws"))`.
+        let read_deny_at = p.find("(deny file-read*").expect("read deny");
+        assert!(
+            read_deny_at > allow_at,
+            "the read deny must follow the write allow (last match wins)"
+        );
+        let mut with_extra = cfg(PathBuf::from("/tmp/ws"), false);
+        with_extra.extra_read_paths = vec![PathBuf::from("/opt/data")];
+        with_extra.deny_read_paths = vec![PathBuf::from("/opt/data/keys")];
+        let p2 = MacOsSandbox::new(with_extra).seatbelt_profile();
+        let extra_at = p2
+            .find("(allow file-read* (subpath \"/opt/data\"))")
+            .expect("extra read");
+        let read_deny_at2 = p2.find("(deny file-read*").expect("read deny");
+        assert!(
+            read_deny_at2 > extra_at,
+            "the read deny must follow the extra read allows"
+        );
+
+        let plain = MacOsSandbox::new(cfg(PathBuf::from("/tmp/ws"), false)).seatbelt_profile();
+        assert!(!plain.contains("(deny file-write*"));
+    }
+
+    #[tokio::test]
+    async fn policy_denied_read_inside_workspace_is_blocked() {
+        if !MacOsSandbox::is_available() {
+            return;
+        }
+        let ws = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(ws.path().join("secret")).unwrap();
+        std::fs::write(ws.path().join("secret/token.txt"), "s3cret\n").unwrap();
+        std::fs::write(ws.path().join("public.txt"), "hello\n").unwrap();
+        let mut config = cfg(ws.path().to_path_buf(), false);
+        config.deny_read_paths = vec![ws.path().join("secret")];
+        let sb = MacOsSandbox::new(config);
+        let r = sb
+            .execute("cat secret/token.txt", None, Some(15_000))
+            .await
+            .expect("sandbox execute failed");
+        assert_ne!(r.exit_code, 0, "a policy-denied read must fail");
+        assert!(!r.stdout.contains("s3cret"), "stdout={:?}", r.stdout);
+        // ...while an ordinary workspace read beside it still works.
+        let ok = sb
+            .execute("cat public.txt", None, Some(15_000))
+            .await
+            .expect("sandbox execute failed");
+        assert_eq!(ok.exit_code, 0, "stderr={:?}", ok.stderr);
+        assert!(ok.stdout.contains("hello"));
+    }
+
+    #[tokio::test]
+    async fn policy_denied_write_inside_workspace_is_blocked() {
+        if !MacOsSandbox::is_available() {
+            return;
+        }
+        let ws = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(ws.path().join(".rune/hooks")).unwrap();
+        let mut config = cfg(ws.path().to_path_buf(), false);
+        config.deny_write_paths = vec![ws.path().join(".rune/hooks")];
+        let sb = MacOsSandbox::new(config);
+        let r = sb
+            .execute("echo hook > .rune/hooks/pre.sh", None, Some(15_000))
+            .await
+            .expect("sandbox execute failed");
+        assert_ne!(r.exit_code, 0, "a policy-denied write must fail");
+        assert!(!ws.path().join(".rune/hooks/pre.sh").exists());
+        // ...while an ordinary workspace write beside it still works.
+        let ok = sb
+            .execute("echo fine > ordinary.txt", None, Some(15_000))
+            .await
+            .expect("sandbox execute failed");
+        assert_eq!(ok.exit_code, 0, "stderr={:?}", ok.stderr);
     }
 
     #[test]

@@ -1,13 +1,17 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import { ReviewSlots, SupervisorQueue, type SupervisedItem } from "./supervisor-queue";
 
 import type { LlmGateway, Message, ProviderName } from "@rune/llm-gateway";
 import {
+  canContainCommand,
   isOsIsolationAvailable,
   isSandboxEnabled,
   patchTargetPaths,
+  resolveSandboxLaunch,
   type ToolCallOutput,
   type ToolSchema,
 } from "@rune/tool-registry";
+import { isOrdinaryDevCommand, isReadOnlyShellCommand } from "./shell-safety";
 
 import {
   expandHome,
@@ -37,6 +41,10 @@ import {
 export type AutoModeVerdict = "allow" | "ask" | "deny";
 export type AutoModeRisk = "low" | "medium" | "high" | "critical";
 export type AutoModeTier = "safe" | "workspace" | "classifier";
+/** How much of the supervised tier the out-of-band supervisor reads. */
+export type SupervisorScope = "all" | "unusual" | "off";
+/** What Auto does with a shell command that will not run inside the OS sandbox. */
+export type UnsandboxedShellPolicy = "review" | "ask" | "allow";
 
 export interface AutoModePolicyConfig {
   /** Disable classifier-backed Auto mode entirely (Manual still works). */
@@ -91,6 +99,33 @@ export interface AutoModePolicyConfig {
    * See auto-eval-sidecar.ts.
    */
   collectForEval?: boolean;
+  /**
+   * The out-of-band supervisor's scope. `all` screens every supervised action
+   * with a background reviewer call. `unusual` (default) skips recognized
+   * ordinary development work — builds, tests, installs, linters, local git,
+   * containers — which the mechanical breakers have already read. `off`
+   * disables the background supervisor entirely.
+   *
+   * Measured reason for the default: on a rate-capped reviewer the supervisor
+   * competed with the acting agent for the same quota on every `npm audit`,
+   * and 30% of its flags did not survive the reasoned pass.
+   */
+  supervisor?: SupervisorScope;
+  /**
+   * What Auto does with a shell command that will NOT run inside the OS
+   * sandbox: the sandbox is off, the command is excluded, or it is a fallback
+   * retry. `review` (default): read-only commands run on the safe tier; every
+   * other command pays one in-path reviewer call, because when the sandbox is
+   * not the boundary the reviewer has to be. `ask`: anything not read-only
+   * prompts. `allow`: the mechanical breakers alone decide, as in 4th gear.
+   */
+  unsandboxedShell?: UnsandboxedShellPolicy;
+  /**
+   * Extra read-only command patterns that join the built-in safe tier
+   * (`adb devices`, `emulator -list-avds`). Same glob/prefix grammar as
+   * `[sandbox] excludedCommands`. Additive under managed policy.
+   */
+  safeCommands?: string[];
 }
 
 export interface ResolvedAutoModeConfig extends Required<
@@ -113,6 +148,11 @@ export interface ResolvedAutoModeConfig extends Required<
 > {
   classifierProvider?: string;
   classifierModel?: string;
+  supervisor: SupervisorScope;
+  unsandboxedShell: UnsandboxedShellPolicy;
+  safeCommands: string[];
+  /** Keys a signed org policy set, which a live `/config` change may not move. */
+  pinnedByPolicy: string[];
   /** True when signed org policy permits running fail-open at all. */
   failOpenAllowed: boolean;
   /** What the user (or policy) asked for before policy gating was applied. */
@@ -198,9 +238,31 @@ export function resolveAutoModeConfig(
     ...resolveFailClosed(user, managed),
     probeToolResults: managed.probeToolResults ?? user.probeToolResults ?? true,
     reviewerFallback: managed.reviewerFallback ?? user.reviewerFallback ?? true,
+    supervisor:
+      supervisorScope(managed.supervisor) ?? supervisorScope(user.supervisor) ?? "unusual",
+    unsandboxedShell:
+      unsandboxedShellPolicy(managed.unsandboxedShell) ??
+      unsandboxedShellPolicy(user.unsandboxedShell) ??
+      "review",
+    safeCommands: unique([
+      ...cleanStrings(user.safeCommands),
+      ...cleanStrings(managed.safeCommands),
+    ]),
+    pinnedByPolicy: [
+      ...(supervisorScope(managed.supervisor) ? ["supervisor"] : []),
+      ...(unsandboxedShellPolicy(managed.unsandboxedShell) ? ["unsandboxedShell"] : []),
+    ],
   };
   resolved.warnings.push(...retiredKeyWarnings(user, managed));
   return resolved;
+}
+
+export function supervisorScope(value: unknown): SupervisorScope | undefined {
+  return value === "all" || value === "unusual" || value === "off" ? value : undefined;
+}
+
+export function unsandboxedShellPolicy(value: unknown): UnsandboxedShellPolicy | undefined {
+  return value === "review" || value === "ask" || value === "allow" ? value : undefined;
 }
 
 /**
@@ -310,8 +372,21 @@ export type AutoModeDecisionSource =
   | "classifier_fast"
   | "classifier_reasoned"
   | "classifier_unavailable"
+  /**
+   * An allowed action the supervisor could not take on: its queue was full
+   * behind a slow reviewer, the transcript was at the reviewer's input limit,
+   * or a halt was already pending. Recorded so unsupervised actions are
+   * countable; it gated nothing, and the mechanical breakers still applied.
+   */
+  | "supervisor_skipped"
   /** A mechanical breaker tripped and Auto routed around it instead of asking. */
   | "containment"
+  /**
+   * A shell command with no sandbox underneath it, under the `ask` policy
+   * for uncontained shell. The one place Auto still puts a command to the
+   * user directly, and only because the user configured it to.
+   */
+  | "uncontained_shell"
   | "human_escalation"
   /** The out-of-band fast screen's own verdict on an action that already ran. */
   | "supervisor_screen"
@@ -576,6 +651,27 @@ export class AutoModeSafetyController {
     return this.config;
   }
 
+  /**
+   * Change the two live knobs — the supervisor's scope and the uncontained
+   * shell policy — for the rest of the process. A key a signed org policy
+   * set stays where the policy put it; the refusal names it.
+   */
+  updateConfig(patch: {
+    supervisor?: SupervisorScope;
+    unsandboxedShell?: UnsandboxedShellPolicy;
+  }): { ok: boolean; reason?: string } {
+    for (const key of ["supervisor", "unsandboxedShell"] as const) {
+      if (patch[key] !== undefined && this.config.pinnedByPolicy.includes(key)) {
+        return { ok: false, reason: `org policy pins autoMode.${key}` };
+      }
+    }
+    if (patch.supervisor !== undefined) this.config.supervisor = patch.supervisor;
+    if (patch.unsandboxedShell !== undefined) {
+      this.config.unsandboxedShell = patch.unsandboxedShell;
+    }
+    return { ok: true };
+  }
+
   getStats(): AutoModeStats {
     return { ...this.stats };
   }
@@ -738,10 +834,16 @@ export class AutoModeSafetyController {
     }
   }
 
+  private readonly supervisorSlots = new ReviewSlots(2);
+
+  scheduleSupervisor<T>(review: () => Promise<T>): Promise<T> {
+    return this.supervisorSlots.run(review);
+  }
+
   async classifierCall(
     stage: "fast" | "reasoned",
     prompt: string,
-    opts: { useFallback?: boolean } = {},
+    opts: { useFallback?: boolean; supervisorBatch?: boolean } = {},
   ): Promise<{
     text: string;
     reviewer: { provider: string; model: string };
@@ -763,7 +865,11 @@ export class AutoModeSafetyController {
       const text = await withTimeout(
         this.classifier.classify({
           stage,
-          system: stage === "fast" ? FAST_CLASSIFIER_SYSTEM : REASONED_CLASSIFIER_SYSTEM,
+          system: opts.supervisorBatch
+            ? supervisorClassifierSystem(stage)
+            : stage === "fast"
+              ? FAST_CLASSIFIER_SYSTEM
+              : REASONED_CLASSIFIER_SYSTEM,
           prompt,
           reviewer,
           signal: abort.signal,
@@ -874,6 +980,12 @@ const MAX_USER_ANSWERS = 8;
 const MAX_ANSWER_QUESTION_CHARS = 600;
 const MAX_ANSWER_CHARS = 2_000;
 
+interface SupervisorAction extends SupervisedItem {
+  action: AutoModeAction;
+  risk: AutoModeRisk;
+  prompt: string;
+}
+
 export class AutoModeRun {
   private readonly userMessages: string[];
   private readonly untrustedPrompts: string[];
@@ -899,8 +1011,10 @@ export class AutoModeRun {
    * human — so a bad call costs one executed action, not a whole run.
    */
   private pendingSupervisorHalt: string | null = null;
-  /** In-flight supervisor calls, so a run can be drained deterministically. */
-  private readonly supervisorInFlight = new Set<Promise<void>>();
+  private supervisorEpoch = 0;
+  private readonly supervisor = new SupervisorQueue<SupervisorAction>((batch) =>
+    this.reviewSupervisedBatch(batch),
+  );
   /** Outward steps Auto declined to take unattended, reported when the turn ends. */
   private readonly deferrals: AutoModeDeferral[] = [];
 
@@ -939,6 +1053,7 @@ export class AutoModeRun {
   addTrustedUserMessage(text: string): void {
     const t = typeof text === "string" ? text.trim() : "";
     if (!t) return;
+    this.supervisorEpoch++;
     this.userMessages.push(sanitizeText(t, MAX_USER_MESSAGE_CHARS));
     if (this.userMessages.length > 24) this.userMessages.shift();
     this.rebudgetUserMessages();
@@ -955,6 +1070,7 @@ export class AutoModeRun {
     const q = typeof question === "string" ? question.trim() : "";
     const a = typeof answer === "string" ? answer.trim() : "";
     if (!q || !a) return;
+    this.supervisorEpoch++;
     this.userAnswers.push({
       question: sanitizeText(q, MAX_ANSWER_QUESTION_CHARS),
       answer: sanitizeText(a, MAX_ANSWER_CHARS),
@@ -970,6 +1086,7 @@ export class AutoModeRun {
    * and the reviewer prompt carries an explicit alert. Sticky by design.
    */
   noteInjectionFinding(): void {
+    this.supervisorEpoch++;
     this.injectionFindings++;
   }
 
@@ -978,7 +1095,16 @@ export class AutoModeRun {
     this.currentCallId = action.callId;
     this.currentClassifierMs = 0;
     this.currentRetryMs = 0;
-    const tier = classifyAutoModeTier(action);
+    let tier = classifyAutoModeTier(action, {
+      safeCommands: this.controller.getConfig().safeCommands,
+    });
+    // Once injected content is suspected, a read-only shell command is no
+    // longer free: what it reads is what the next step might send. It keeps
+    // the reviewer's attention for the rest of the run, like everything else.
+    if (tier === "safe" && action.toolName === "bash" && this.injectionFindings > 0) {
+      tier = "classifier";
+    }
+    if (tier === "workspace" || action.schema.category === "write") this.supervisorEpoch++;
     let risk = assessActionRisk(action, tier);
     // Injection alert: once any tool result in this session was flagged, no
     // classifier-tier action settles on the one-token fast pass — the risk
@@ -1173,6 +1299,55 @@ export class AutoModeRun {
       });
     }
 
+    // ── A shell command with no sandbox underneath it ──
+    //
+    // The supervised tier below is safe to run unreviewed because the OS
+    // sandbox is the boundary: no writes outside the workspace, no credential
+    // reads, no network unless asked for. When THIS command will not run
+    // inside it — the sandbox is off, the command is on the user's excluded
+    // list, or it is a fallback retry — that boundary is gone, and something
+    // has to stand in for it. The read-only tier already cleared above; what
+    // reaches here can write. The policy says what stands in:
+    //
+    //   review  (default) one in-path reasoned reviewer call, the same review
+    //           a high-risk action gets. The reviewer is the boundary.
+    //   ask     the modal prompt. The old behaviour, kept for people who want
+    //           to see every host command — but only the ones that can write.
+    //   allow   the mechanical breakers alone, as in 4th gear.
+    //
+    // Before this existed the engine turned EVERY allowed bash into a
+    // high-risk "explicit approval required" prompt the moment the sandbox
+    // was off — `ls` included — which is what made "sandbox off + Auto" a
+    // mode nobody could work in.
+    const uncontainedShell = action.toolName === "bash" && !isContainedLaunch(action);
+    // Whatever stands in for the sandbox, an attack shape is never a question.
+    // Exfiltration and host destruction are "high", not "critical", so they
+    // reach this point — and putting one to the user as a yes/no card is the
+    // dialog injected text could summon. The halt needs no sandbox to hold.
+    if (uncontainedShell && this.containmentOutcome(action).kind === "halt") {
+      return this.route(action, tier, risk, started, UNCONTAINED_SHELL_BREAKER);
+    }
+    if (uncontainedShell && rules.unsandboxedShell === "ask") {
+      return this.finish({
+        verdict: "ask",
+        tier,
+        risk: risk === "low" ? "medium" : risk,
+        source: "uncontained_shell",
+        reason:
+          'This command will run on the host, not inside the OS sandbox, and [permissions.autoMode] unsandboxedShell = "ask" puts every such command that is not read-only to you.',
+        stage: 0,
+        durationMs: elapsed(started),
+      });
+    }
+    if (
+      uncontainedShell &&
+      rules.unsandboxedShell === "review" &&
+      rules.enabled &&
+      (risk === "low" || risk === "medium")
+    ) {
+      risk = "high";
+    }
+
     // ── Supervised tier: 4th-gear autonomy with a watcher above it ──
     //
     // Everything mechanical has now run: catastrophic patterns, the dangerous
@@ -1187,14 +1362,42 @@ export class AutoModeRun {
     // band — able to halt the NEXT action, never to delay this one.
     if (risk === "low" || risk === "medium") {
       this.consecutiveClassifierDenials = 0;
-      if (rules.enabled) this.superviseInBackground(action, risk);
+      if (rules.enabled) {
+        const unsupervised = this.superviseInBackground(action, risk);
+        if (unsupervised?.record) {
+          // The supervisor is a watcher, not a gate. When it cannot watch —
+          // its queue is full behind a reviewer that takes a minute per
+          // answer, or the transcript is at the reviewer's input limit — the
+          // action still runs under the mechanical breakers, and the fact
+          // that nobody watched is written down where the audit can count
+          // it. Denying ordinary reads on a free-tier reviewer turned a cost
+          // saving into a run-stopper. (A skip the USER configured — the
+          // supervisor set to "unusual" or "off" — is not an outage and is
+          // not recorded per action.)
+          this.controller.observeOutOfBand(
+            {
+              verdict: "allow",
+              tier,
+              risk,
+              source: "supervisor_skipped",
+              reason: `Background safety review skipped: ${unsupervised.reason}. The mechanical breakers applied; nothing was blocked.`,
+              stage: 0,
+              durationMs: 0,
+              callId: action.callId,
+              timings: { mechanicalMs: 0, classifierMs: 0, retryMs: 0 },
+            },
+            action,
+          );
+        }
+      }
       return this.finish({
         verdict: "allow",
         tier,
         risk,
         source: "supervised_tier",
-        reason:
-          "Ordinary action inside the sandbox: cleared the mechanical safety breakers and is running under supervision rather than waiting for review.",
+        reason: uncontainedShell
+          ? "Ordinary command on the host (no sandbox under it; unsandboxedShell = allow): cleared the mechanical safety breakers and is running under supervision."
+          : "Ordinary action inside the sandbox: cleared the mechanical safety breakers and is running under supervision rather than waiting for review.",
         stage: 0,
         durationMs: elapsed(started),
       });
@@ -1328,6 +1531,25 @@ export class AutoModeRun {
           durationMs: elapsed(started),
         });
       }
+      // No sandbox under the command AND no reviewer to stand in for it.
+      // The mechanical router still answers for the shapes it recognizes —
+      // an exfiltration halts, a publish comes back as its dry run, a
+      // persistence step is deferred — and none of those need a sandbox to
+      // honour. What has nothing left to fail contained INTO is the
+      // unrecognized ordinary command, so that one becomes the question:
+      // deferring `bun test` to the end of the turn with "its impact reaches
+      // past the workspace" would be both wrong and unhelpful.
+      if (uncontainedShell && !hasMechanicalAnswer(this.containmentOutcome(action))) {
+        return this.finish({
+          verdict: "ask",
+          tier,
+          risk,
+          source: "classifier_unavailable",
+          reason: `${reason}. This command would run on the host with no OS sandbox under it, so Auto mode fails closed to human confirmation for it.`,
+          stage: 0,
+          durationMs: elapsed(started),
+        });
+      }
       return this.route(
         action,
         tier,
@@ -1380,11 +1602,7 @@ export class AutoModeRun {
       countedAlready?: boolean;
     } = {},
   ): AutoModeReview {
-    const outcome = routeContainment({
-      action,
-      osIsolation: isSandboxEnabled() && isOsIsolationAvailable(),
-      injectionSuspected: this.injectionFindings > 0,
-    });
+    const outcome = this.containmentOutcome(action);
 
     if (outcome.kind === "extend") {
       this.consecutiveClassifierDenials = 0;
@@ -1446,6 +1664,25 @@ export class AutoModeRun {
     });
   }
 
+  /**
+   * What the mechanical router would do with this action right now. Pure in
+   * the action and the process-wide sandbox state, so `review()` may consult
+   * it before choosing a prompt and `route()` may compute it again.
+   */
+  private containmentOutcome(action: AutoModeAction): ContainmentOutcome {
+    return routeContainment({
+      action,
+      // Per action, not per process: an excluded command cannot be "run
+      // contained instead", because the user said it runs on the host.
+      osIsolation:
+        isOsIsolationAvailable() &&
+        (action.toolName === "bash"
+          ? canContainCommand(String(action.args.command ?? ""))
+          : isSandboxEnabled()),
+      injectionSuspected: this.injectionFindings > 0,
+    });
+  }
+
   private finish(review: AutoModeReview): AutoModeReview {
     // Mark the transcript entry so the reviewer sees which earlier calls were
     // BLOCKED attempts rather than executed actions — repeated-attempt and
@@ -1477,23 +1714,97 @@ export class AutoModeRun {
    * Deliberately silent on failure. A supervisor that cannot answer must not
    * degrade a run; the mechanical breakers are what actually guard destruction,
    * and they never call a model.
+   *
+   * Returns null when the action was queued for review, otherwise one clause
+   * saying why it was not — the caller records that clause (when `record` is
+   * set) but never a denial. A skip the user configured is not recorded per
+   * action: it is a setting, not an outage.
    */
-  private superviseInBackground(action: AutoModeAction, risk: AutoModeRisk): void {
-    if (this.pendingSupervisorHalt) return; // already halting; don't pile on
+  private superviseInBackground(
+    action: AutoModeAction,
+    risk: AutoModeRisk,
+  ): { reason: string; record: boolean } | null {
+    const config = this.controller.getConfig();
+    if (config.supervisor === "off") {
+      return { reason: "the background supervisor is off", record: false };
+    }
+    if (
+      config.supervisor === "unusual" &&
+      action.toolName === "bash" &&
+      isOrdinaryDevCommand(String(action.args.command ?? ""), config.safeCommands)
+    ) {
+      // The screen kept flagging exactly this stream — `npm install`,
+      // `npm audit`, `npm run test:e2e` — after it ran, and on a rate-capped
+      // reviewer each flag cost four to seven seconds of quota the acting
+      // agent needed. The mechanical breakers have read the command already;
+      // what the screen adds on ordinary work is a coin flip with a halt on
+      // one face.
+      return { reason: "recognized ordinary development work", record: false };
+    }
+    if (this.pendingSupervisorHalt) {
+      return { reason: "a supervisor halt is already pending", record: true };
+    }
     let prompt: string;
     try {
       prompt = this.buildPrompt(risk);
     } catch {
-      return;
+      return { reason: "the reviewer prompt could not be built", record: true };
     }
-    if (prompt.length > MAX_CLASSIFIER_PROMPT_CHARS) return;
+    if (prompt.length > MAX_CLASSIFIER_PROMPT_CHARS - 26_000)
+      return { reason: "the bounded transcript is at the reviewer's input limit", record: true };
+    const key = `${action.workspaceRoot}:${action.toolName}:${serializeAction(action)}`;
+    const queued = this.supervisor.enqueue({
+      action,
+      risk,
+      prompt,
+      key,
+      epoch: this.supervisorEpoch,
+      chars: key.length,
+    });
+    return queued
+      ? null
+      : {
+          reason: `${this.supervisor.size} observations are already waiting on the reviewer`,
+          record: true,
+        };
+  }
 
-    const task = (async () => {
+  private async reviewSupervisedBatch(batch: SupervisorAction[]): Promise<void> {
+    const last = batch.at(-1)!;
+    const unique = new Map<string, { toolName: string; args: string; callIds: string[] }>();
+    for (const item of batch) {
+      const entry = unique.get(item.key) ?? {
+        toolName: item.action.toolName,
+        args: serializeAction(item.action),
+        callIds: [],
+      };
+      if (item.action.callId) entry.callIds.push(item.action.callId);
+      unique.set(item.key, entry);
+    }
+    const action: AutoModeAction =
+      batch.length === 1
+        ? last.action
+        : {
+            ...last.action,
+            toolName: "supervisor_batch",
+            args: { actions: [...unique.values()], count: batch.length },
+          };
+    const risk = last.risk;
+    const prompt =
+      last.prompt.replace(
+        "Evaluate the LAST proposed tool call. Earlier calls are context only.",
+        "Evaluate EVERY action in supervised_batch. Earlier calls provide context only.",
+      ) +
+      "\n<supervised_batch>\n" +
+      JSON.stringify([...unique.values()]) +
+      "\n</supervised_batch>";
+    await this.controller.scheduleSupervisor(async () => {
       try {
         const screenAt = performance.now();
         const { text, reviewer: screenReviewer } = await this.controller.classifierCall(
           "fast",
           prompt,
+          { supervisorBatch: true },
         );
         const screenMs = elapsed(screenAt);
         const flagged = parseFastDecision(text) === "block";
@@ -1536,7 +1847,9 @@ export class AutoModeRun {
         let confirmReviewer: { provider: string; model: string } | undefined;
         const confirmAt = performance.now();
         try {
-          const confirm = await this.controller.classifierCall("reasoned", prompt);
+          const confirm = await this.controller.classifierCall("reasoned", prompt, {
+            supervisorBatch: true,
+          });
           parsed = parseReasonedDecision(confirm.text);
           confirmReviewer = confirm.reviewer;
         } catch {
@@ -1585,17 +1898,13 @@ export class AutoModeRun {
       } catch {
         // Supervisor unreachable — the mechanical breakers still stand.
       }
-    })();
-    this.supervisorInFlight.add(task);
-    void task.finally(() => this.supervisorInFlight.delete(task));
+    });
   }
 
   /** Await any in-flight supervisor calls. Used by tests for determinism, and
    *  by the engine at turn teardown to hear a verdict that lands late. */
   async drainSupervisor(): Promise<void> {
-    while (this.supervisorInFlight.size > 0) {
-      await Promise.all([...this.supervisorInFlight]);
-    }
+    await this.supervisor.drain();
   }
 
   /**
@@ -1755,10 +2064,44 @@ const REASONED_CLASSIFIER_SYSTEM = [
   "Use ask when only a human can resolve material ambiguity. Do not include chain-of-thought or quote secrets.",
 ].join("\n\n");
 
-export function classifyAutoModeTier(action: AutoModeAction): AutoModeTier {
+function supervisorClassifierSystem(stage: "fast" | "reasoned"): string {
+  const scope =
+    "Review EVERY distinct entry in supervised_batch. Earlier tool calls are context only. " +
+    "callIds identify repeated observations inside this batch, never future standing permission. " +
+    "A BLOCK/deny applies if ANY entry violates the rules; name that action in the reasoned verdict.";
+  return (
+    (stage === "fast"
+      ? FAST_CLASSIFIER_SYSTEM.replace("the LAST action", "ANY action in supervised_batch")
+      : REASONED_CLASSIFIER_SYSTEM) +
+    "\n\n" +
+    scope
+  );
+}
+
+export function classifyAutoModeTier(
+  action: AutoModeAction,
+  opts: { safeCommands?: readonly string[] } = {},
+): AutoModeTier {
   const name = action.toolName;
   // Delegation is a trust-boundary crossing even if the child is read-only.
   if (name === "task" || name === "worker") return "classifier";
+  // A shell command every segment of which is a known read-only program with
+  // no redirection, substitution or elevation has the blast radius of
+  // read_file, and takes the same tier: it runs with no model call and no
+  // supervision, whatever the sandbox state. Everything mechanical
+  // (breakers, deny/ask rules, the critical patterns) still runs first —
+  // `review()` reaches the tier check only after those.
+  //
+  // A read-only SHAPE is not enough on its own: `cat .env` and `cat
+  // ~/.ssh/id_rsa` are reads too. Anything the risk patterns flag keeps the
+  // classifier tier, so the reviewer sees it and the breakers route it.
+  if (
+    name === "bash" &&
+    isReadOnlyShellCommand(String(action.args.command ?? ""), opts.safeCommands ?? []) &&
+    shellRiskPattern(String(action.args.command ?? "")) === undefined
+  ) {
+    return "safe";
+  }
   // Asking the user and internal planning/context/loop bookkeeping have no external blast radius.
   // `team` is same-user local coordination (messages/claims on the local bus);
   // receivers frame peer mail as non-authoritative, so it stays mechanical.
@@ -1929,6 +2272,27 @@ function isRemoteMutation(command: string): boolean {
 }
 
 /**
+ * The mechanical risk a shell command carries by its text alone: critical for
+ * the catastrophic patterns, high for the outward, secret-touching, control-
+ * bypassing and pipe-to-interpreter shapes, undefined for everything else.
+ * Shared by the tier check (a flagged command is never "safe") and the risk
+ * assessment, so the two cannot disagree.
+ */
+function shellRiskPattern(command: string): "critical" | "high" | undefined {
+  if (CRITICAL_COMMAND_PATTERNS.some((p) => p.re.test(command))) return "critical";
+  if (
+    HIGH_RISK_COMMAND_RE.test(command) ||
+    PUBLISH_COMMAND_RE.test(command) ||
+    SECRET_PATH_RE.test(command) ||
+    PIPE_TO_INTERPRETER_RE.test(command) ||
+    isRemoteMutation(command)
+  ) {
+    return "high";
+  }
+  return undefined;
+}
+
+/**
  * Credential and secret stores. Touching one is rarely ordinary work: reading
  * it is how an agent routes around an auth failure instead of reporting it, and
  * sending it anywhere is the exfiltration case outright.
@@ -1964,16 +2328,9 @@ export function assessActionRisk(
   if (mechanicalBreaker(action)) return "critical";
   if (action.toolName === "bash") {
     const command = String(action.args.command ?? "");
-    if (CRITICAL_COMMAND_PATTERNS.some((p) => p.re.test(command))) return "critical";
-    if (
-      HIGH_RISK_COMMAND_RE.test(command) ||
-      PUBLISH_COMMAND_RE.test(command) ||
-      SECRET_PATH_RE.test(command) ||
-      PIPE_TO_INTERPRETER_RE.test(command) ||
-      isRemoteMutation(command)
-    ) {
-      return "high";
-    }
+    const flagged = shellRiskPattern(command);
+    if (flagged) return flagged;
+    if (tier === "safe") return "low";
     // Reaching the network is NOT itself dangerous, and rating it "high" taxed
     // the whole day: every `npm install`, `pip install`, `gh`, and API `curl`
     // was routed to the reviewer, so ordinary work waited on a model. Auto mode
@@ -2056,8 +2413,25 @@ function guardrailChangeReason(action: AutoModeAction): string | undefined {
   ) {
     return "the action disables interactive permission review and shifts into 4th gear (full autonomy — it never asks first)";
   }
-  if (setting === "sandbox" && ["false", "off", "disabled", "disable", "no"].includes(value)) {
+  if (
+    setting === "sandbox" &&
+    ["false", "off", "disabled", "disable", "no", "none"].includes(value)
+  ) {
     return "the action disables the operating-system sandbox";
+  }
+  // The newer sandbox and Auto-mode knobs: each of these lowers a guardrail
+  // in one direction only. Tightening them (strict, all, ask) is ordinary.
+  if (
+    setting === "sandbox_fallback" &&
+    ["true", "on", "enabled", "enable", "yes"].includes(value)
+  ) {
+    return "the action allows shell commands to retry outside the operating-system sandbox";
+  }
+  if (setting === "supervisor" && value === "off") {
+    return "the action turns off Auto mode's background safety supervisor";
+  }
+  if (setting === "unsandboxed_shell" && value === "allow") {
+    return "the action lets uncontained shell commands run without review";
   }
   return undefined;
 }
@@ -2070,6 +2444,11 @@ function guardrailChangeReason(action: AutoModeAction): string | undefined {
 export { isSelfProtectionPath };
 
 function selfProtectionPathReason(action: AutoModeAction): string | undefined {
+  // Reading Rune's own controls is how an agent finds out what it may do —
+  // a `read_file` of a SKILL.md was refused as "modifies Rune's own
+  // configuration" before this check, which is a breaker firing on the
+  // opposite of what it guards.
+  if (action.schema.category === "read") return undefined;
   const protectedControl = actionPaths(action).find((target) =>
     isSelfProtectionPath(action.workspaceRoot, target),
   );
@@ -2224,6 +2603,29 @@ function parseReasonedDecision(text: string): {
 
 function elapsed(started: number): number {
   return Math.max(0, Math.round(performance.now() - started));
+}
+
+/** Will this exact call run inside a working OS sandbox? */
+function isContainedLaunch(action: AutoModeAction): boolean {
+  return resolveSandboxLaunch(action.args).sandboxed && isOsIsolationAvailable();
+}
+
+const UNCONTAINED_SHELL_BREAKER = "This command would run on the host with no OS sandbox under it.";
+
+/**
+ * Does the mechanical router have a real answer for an uncontained shell
+ * command, one that needs no sandbox to honour? A halt (the attack shapes), a
+ * redirect (a dry run in place of the real thing) and a recognized deferral
+ * (persistence, a forged authorization) all do. The generic routes do not:
+ * "contain it" and "unrecognized, so defer it" both presume a sandbox to fall
+ * into, and with none there the honest answer is a question.
+ */
+function hasMechanicalAnswer(outcome: ContainmentOutcome): boolean {
+  if (outcome.kind === "halt" || outcome.kind === "redirect") return true;
+  if (outcome.kind === "defer") {
+    return outcome.route !== "unrecognized" && outcome.route !== "sandbox-unavailable";
+  }
+  return false;
 }
 
 function safeError(error: unknown): string {

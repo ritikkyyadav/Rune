@@ -6,8 +6,8 @@
 // 2026-07-07: `npm install` burned exactly 120,031ms before the timeout
 // message taught the model). This preflight recognizes the well-known
 // network commands BEFORE execution and returns the same teaching error in
-// ~0ms. It only ever fires for sandboxed foreground calls — `network: true`
-// and `run_in_background: true` (both unsandboxed) pass straight through.
+// ~0ms. It covers foreground and background calls; `network: true` enables
+// networking while keeping filesystem containment.
 //
 // Deliberately a precision list, not a heuristic: a false positive would
 // block an offline-capable command, so anything ambiguous (npx, cargo build,
@@ -15,7 +15,7 @@
 // match, and RUNE_NET_PREFLIGHT=0 disables the whole check.
 
 import { isOsIsolationAvailable } from "../sandbox-capability";
-import { isSandboxEnabled } from "../sandbox-mode";
+import { resolveSandboxLaunch } from "../sandbox-mode";
 import type { ToolCallInput, ToolCallOutput, ToolHandler } from "../types";
 
 /** Flags that mean "this package-manager run is intentionally offline". */
@@ -101,15 +101,13 @@ export function withNetworkPreflight(handler: ToolHandler): ToolHandler {
     validate: (args) => handler.validate(args),
     execute: async (input: ToolCallInput): Promise<ToolCallOutput> => {
       const { args } = input;
-      // When the user disabled the sandbox (/sandbox off), every command has
-      // network — there is nothing to preflight. Same when the machine has no
+      // When this call will not run sandboxed — the sandbox is off, the
+      // command is excluded, or it is a fallback retry — it has network, and
+      // there is nothing to preflight. Same when the machine has no
       // isolation backend: the degraded (path-guard-only) executor doesn't
       // deny network, so "this would hang" would be a false claim.
       const sandboxed =
-        isSandboxEnabled() &&
-        isOsIsolationAvailable() &&
-        args.network !== true &&
-        args.run_in_background !== true;
+        resolveSandboxLaunch(args).sandboxed && isOsIsolationAvailable() && args.network !== true;
       if (sandboxed && process.env.RUNE_NET_PREFLIGHT !== "0") {
         const what = typeof args.command === "string" ? needsNetwork(args.command) : null;
         if (what) {
