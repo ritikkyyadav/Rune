@@ -43,6 +43,7 @@ pub use crate::spawn::{SpawnPlan, SpawnRequest, ToolCapability, plan_spawn};
 /// SBPL string literals are double-quoted; backslashes and double-quotes must
 /// be escaped so a workspace path containing them cannot break out of the
 /// literal (or silently corrupt the profile).
+#[cfg(target_os = "macos")]
 pub(crate) fn escape_sbpl(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
@@ -50,6 +51,7 @@ pub(crate) fn escape_sbpl(s: &str) -> String {
 /// Credential and secret stores that stay unreadable under every profile, even
 /// where reads are otherwise broad. One list, because two lists become one
 /// list plus an omission.
+#[cfg(target_os = "macos")]
 pub(crate) fn credential_deny_paths() -> Vec<PathBuf> {
     let home = dirs::home_dir().unwrap_or_default();
     vec![

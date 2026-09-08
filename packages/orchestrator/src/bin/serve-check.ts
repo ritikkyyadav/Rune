@@ -315,6 +315,34 @@ export async function runServeCheck(values: Record<string, unknown>): Promise<nu
         /* already gone */
       }
     }
-    if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+    removeCheckDir(dir);
+  }
+}
+
+/**
+ * Remove the check's scratch directory without ever failing the check.
+ *
+ * On Windows a host that was just told to exit still holds its working
+ * directory for a moment, and `rmSync` answers EBUSY — which turned a check
+ * that had printed "✓ the binary hosts a session" into exit code 1 on the
+ * v0.4.0 release runner. Retry briefly; if it still will not go, say so and
+ * leave it: a leftover temp directory is not a failed session.
+ */
+function removeCheckDir(dir: string): void {
+  if (!existsSync(dir)) return;
+  const started = Date.now();
+  for (;;) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      const transient = code === "EBUSY" || code === "EPERM" || code === "ENOTEMPTY";
+      if (!transient || Date.now() - started > 5_000) {
+        console.error(`  · could not remove ${dir} (${code ?? "unknown"}); leaving it`);
+        return;
+      }
+      Bun.sleepSync(100);
+    }
   }
 }

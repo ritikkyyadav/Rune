@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, rm } from "fs/promises";
+import { mkdir, mkdtemp } from "fs/promises";
+import { rmTemp } from "../helpers/tmp";
 import { tmpdir } from "os";
 import { join } from "path";
 import { Database } from "bun:sqlite";
@@ -557,7 +558,10 @@ async function attemptTask(task: EvalTask, opts: RunOptions, real: boolean): Pro
     } catch {
       // A teardown failure must never rewrite the task's result.
     }
-    await rm(tmpRoot, { recursive: true, force: true });
+    // Windows keeps a just-exited child's cwd open for a moment and a plain
+    // rm answers EBUSY — which surfaced as "Fatal:" from the runner on the
+    // Windows CI job after every task in the suite had already been scored.
+    rmTemp(tmpRoot);
   }
 }
 

@@ -185,7 +185,18 @@ describe("P6B.1 — teardown", () => {
  *
  * The worktree half of this file (P6B.1) is pure git and DOES run on Windows.
  */
-describe.skipIf(process.platform === "win32")(
+/**
+ * The checks run through `rune-tools` (a real Seatbelt/bwrap-contained shell),
+ * so this half needs the native binary: `RUNE_TOOLS_BINARY`, or the cargo debug
+ * build next to the repo. The `ts-lint` CI job builds neither and used to fail
+ * these two tests with "OS isolation unavailable"; the packaged and Rust jobs
+ * are where the binary exists, and they run this contract for real.
+ */
+const TOOLS_BINARY =
+  process.env.RUNE_TOOLS_BINARY ?? join(import.meta.dir, "../../../target/debug/rune-tools");
+const HAVE_TOOLS = existsSync(TOOLS_BINARY);
+
+describe.skipIf(process.platform === "win32" || !HAVE_TOOLS)(
   "P6B.2 — the worker runs the project's checks in its own tree",
   () => {
     test("a passing check reports passed", async () => {

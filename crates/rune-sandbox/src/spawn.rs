@@ -43,6 +43,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+// Only the Seatbelt profile builder uses these; on Linux the bwrap plan has no
+// string profile to escape into, and clippy on the Linux runner treats the
+// unused import as an error.
+#[cfg(target_os = "macos")]
 use crate::{credential_deny_paths, escape_sbpl};
 
 /// What a plugin tool declared it needs. One per tool server.
@@ -116,11 +120,17 @@ fn real(path: &Path) -> PathBuf {
 
 /// A declared `host:port`, split. A bare host means "any port on that host",
 /// which Seatbelt cannot express as anything narrower than `*:*`.
+///
+/// Read only by the Seatbelt profile (bwrap's network is all-or-nothing) and
+/// by the unit tests, so it is gated the same way — the Linux clippy job
+/// otherwise reports it as dead code and fails the build.
+#[cfg(any(target_os = "macos", test))]
 struct Endpoint {
     loopback: bool,
     port: Option<u16>,
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn parse_endpoint(raw: &str) -> Option<Endpoint> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
