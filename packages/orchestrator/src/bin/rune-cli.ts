@@ -98,6 +98,7 @@ import { runTui } from "./ui/tui";
 import { resolveSurface } from "./ui/surface";
 import { exportSession } from "../session-export";
 import { loadCommands, findCommand } from "../commands";
+import { discoverUserSkills, userSkillCommands, ORIGIN_LABEL } from "../skills-user";
 import { isClarification } from "../research-types";
 import type { ResearchPlan, ResearchReport } from "../research-types";
 import { renderResearchPlan, renderClarifyingQuestions, formatResearchEvent } from "./ui/research";
@@ -177,6 +178,10 @@ const { values, positionals } = parseArgs({
     // positional, silently discarding the value.
     scope: { type: "string" },
     name: { type: "string" },
+    // `rune skill add`: install into ~/.rune/skills instead of the workspace,
+    // and replace one of the same name.
+    user: { type: "boolean", default: false },
+    force: { type: "boolean", default: false },
     // `rune plugin search|add`: read a different plugin index (a URL or a path).
     index: { type: "string" },
     header: { type: "string", multiple: true },
@@ -262,6 +267,7 @@ if (values.help) {
         `                                  --record prints the Decision Record instead: objective, decision, how we got here\n` +
         `    rune evolve [sub]             Self-evolution — status | scorecard [--by model|workspace] [--days N] | lessons | tune | gardener [--run]\n` +
         `    rune notebook [sub]           Learned tactics notebook — list | show <id> | rm <id> | export\n` +
+        `    rune skill [sub]              Your own skills — add <path> [--user] | list | remove <name>\n` +
         `    rune telemetry [sub]          Opt-in diagnostics — status | on | off | preview | reset (off by default)\n\n` +
         `  Export options:\n` +
         `    --format md|json             Output format (default: md)\n` +
@@ -340,6 +346,10 @@ if (command === "plugin" || command === "plugins") {
   process.exit(
     await runPlugin(positionals.slice(1) as string[], values as Record<string, unknown>),
   );
+}
+if (command === "skill" || command === "skills") {
+  const { runSkill } = await import("./skill-cli");
+  process.exit(await runSkill(positionals.slice(1) as string[], values as Record<string, unknown>));
 }
 if (command === "mcp") {
   const { runMcp } = await import("./mcp-cli");
@@ -1263,6 +1273,15 @@ async function main() {
     .listPlugins()
     .plugins.flatMap((p) => p.commandDirs.map((dir) => ({ dir, source: p.name })));
   const customCommands = await loadCommands(workspaceRoot, pluginCommandDirs);
+  // …and the user's own skills as `/<name>`. A skill's BODY is read at
+  // invocation, not here — discovery only reads its frontmatter. Commands win
+  // on a name conflict, and built-ins win over both (they are matched first).
+  customCommands.push(
+    ...userSkillCommands(
+      discoverUserSkills(workspaceRoot),
+      customCommands.map((c) => c.name),
+    ),
+  );
 
   // ─── Black box: crash forensics for the interactive session ───
   // Arm a pid-scoped sentinel now; it is removed by the process "exit" hook,
@@ -2216,21 +2235,36 @@ async function main() {
         );
         if (total === 0) {
           process.stdout.write(
-            `    ${muted("None found. Add skills under ")}${info("skills/")}${muted(" or ")}${info(".rune/skills/")}${muted(".")}\n\n`,
+            `    ${muted("None found. Add one with ")}${info("rune skill add <path>")}${muted(".")}\n\n`,
           );
         } else {
+          // Where each of YOUR skills came from — the loader files both
+          // `.rune/skills` and `~/.rune/skills` under the "user" plugin, and
+          // "which of the two is this" is the question a listing must answer.
+          const origins = new Map(
+            discoverUserSkills(workspaceRoot).map((s) => [s.name, ORIGIN_LABEL[s.origin]] as const),
+          );
           for (const p of plugins) {
-            const names = p.skills.map((s) => s.name).join(", ");
             process.stdout.write(
               `    ${ok("●")} ${text(p.plugin)} ${muted(`(${p.skills.length})`)}\n`,
             );
-            process.stdout.write(`      ${faint(names)}\n`);
+            if (p.plugin === "user") {
+              for (const s of p.skills) {
+                const from = origins.get(s.name);
+                process.stdout.write(
+                  `      ${info("/" + s.name)}${from ? ` ${muted(from)}` : ""}\n`,
+                );
+                if (s.description) process.stdout.write(`        ${faint(s.description)}\n`);
+              }
+            } else {
+              process.stdout.write(`      ${faint(p.skills.map((s) => s.name).join(", "))}\n`);
+            }
           }
           process.stdout.write(
             `\n  ${muted("The agent loads a skill automatically when your request matches it.")}\n`,
           );
           process.stdout.write(
-            `  ${muted("Search with ")}${info("/skills <keywords>")}${muted(".")}\n\n`,
+            `  ${muted("Run one yourself with ")}${info("/<name>")}${muted("; search with ")}${info("/skills <keywords>")}${muted(".")}\n\n`,
           );
         }
         showPrompt();
