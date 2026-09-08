@@ -378,31 +378,35 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     kind: "openai-compat",
     envVar: "OPENROUTER_API_KEY",
     baseUrl: "https://openrouter.ai/api/v1",
-    defaultModel: "minimax/minimax-m3:free",
+    defaultModel: "nvidia/nemotron-3-ultra-550b-a55b:free",
     docsUrl: "https://openrouter.ai/keys",
     keyHint: "sk-or-…",
     // OpenRouter documents a PKCE OAuth flow that mints a normal API key —
     // Rune's fully-working OAuth reference. API key stays the fallback.
     auth: ["oauth", "api_key"],
     // Free-tier churn is brutal here (qwen3-coder:free retired, the deepseek
-    // :free variants withdrawn to paid). Every id below completed a live call
-    // on 2026-08-26. Stealth models are ephemeral by nature — keep ox-alpha
-    // while it lasts, but never make it the default.
+    // :free variants withdrawn to paid, minimax-m3:free withdrawn to paid on
+    // 2026-09-08 — it answered 404 and killed a detached run that day). The
+    // Nemotron id completed a live call on 2026-09-08; the live list is what
+    // `rune models` shows, these are only the seed. Stealth models are
+    // ephemeral by nature — keep ox-alpha while it lasts, never as the default.
     models: [
-      { id: "minimax/minimax-m3:free", label: "MiniMax M3 (free)" },
       { id: "nvidia/nemotron-3-ultra-550b-a55b:free", label: "Nemotron 3 Ultra (free)" },
+      { id: "nvidia/nemotron-3-super-120b-a12b:free", label: "Nemotron 3 Super (free)" },
       { id: "stealth/ox-alpha", label: "Ox Alpha (free)" },
     ],
     // The :free tier churns constantly (qwen3-coder:free retired 2026-07-15,
-    // then deepseek-v4-flash:free and deepseek-r1:free were withdrawn to paid).
+    // then deepseek-v4-flash:free and deepseek-r1:free, then minimax-m3:free).
     // The compaction summarizer no longer trusts these first — it runs on the
     // active session model (engine.syncSummarizerTier) and only falls back here.
+    // Super is listed free on 2026-09-08 but has not answered a call here yet;
+    // Ultra has, so Ultra carries every tier until Super is proven.
     tiers: {
       heavy: "nvidia/nemotron-3-ultra-550b-a55b:free",
-      standard: "minimax/minimax-m3:free",
-      light: "minimax/minimax-m3:free",
+      standard: "nvidia/nemotron-3-ultra-550b-a55b:free",
+      light: "nvidia/nemotron-3-ultra-550b-a55b:free",
     },
-    fallbackModel: "minimax/minimax-m3:free",
+    fallbackModel: "nvidia/nemotron-3-ultra-550b-a55b:free",
   },
   {
     id: "google",
