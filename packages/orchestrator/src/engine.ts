@@ -6265,27 +6265,37 @@ export class Engine {
    * providers, which is a handful of map entries.
    */
   resolveHelper(): HelperRoute | null {
-    const persisted = this.gateway.getPersistedHealth();
-    const live = this.gateway.getProviderHealth();
-    const now = Date.now();
-    const cooling = new Map(live.cooling.map((c) => [String(c.provider), c.untilMs]));
-    const pruned = new Set(live.pruned.map(String));
-    return resolveHelperRoute({
-      setting: this.config.helperRoute,
-      session: { provider: this.config.provider, model: this.config.model },
-      registered: this.gateway.getRegisteredProviderNames().map(String),
-      isRetired: (provider, model) => persisted.isRetired(provider, model),
-      cappedUntil: (provider) =>
-        Math.max(
-          persisted.cappedUntil(provider),
-          cooling.get(provider) ?? 0,
-          // A model this session already watched die is not a helper.
-          pruned.has(provider) ? now + 1 : 0,
-        ),
-      policyDenies: (provider, model) =>
-        this.orgPolicy ? policyAllowsModel(this.orgPolicy.policy, provider, model) : null,
-      now,
-    });
+    // Total by construction. Null is a first-class answer here — it means "run
+    // the governance call wherever it runs today", which is the session model
+    // and is never wrong — so every way of failing to pick a route resolves to
+    // it rather than to an exception. A gateway that does not implement the
+    // health accessors (a stub, a partial double, a future transport) must
+    // cost the optimization, not the call it was optimizing.
+    try {
+      const persisted = this.gateway.getPersistedHealth?.();
+      const live = this.gateway.getProviderHealth?.() ?? { pruned: [], cooling: [] };
+      const now = Date.now();
+      const cooling = new Map(live.cooling.map((c) => [String(c.provider), c.untilMs]));
+      const pruned = new Set(live.pruned.map(String));
+      return resolveHelperRoute({
+        setting: this.config.helperRoute,
+        session: { provider: this.config.provider, model: this.config.model },
+        registered: (this.gateway.getRegisteredProviderNames?.() ?? []).map(String),
+        isRetired: (provider, model) => persisted?.isRetired(provider, model) ?? false,
+        cappedUntil: (provider) =>
+          Math.max(
+            persisted?.cappedUntil(provider) ?? 0,
+            cooling.get(provider) ?? 0,
+            // A model this session already watched die is not a helper.
+            pruned.has(provider) ? now + 1 : 0,
+          ),
+        policyDenies: (provider, model) =>
+          this.orgPolicy ? policyAllowsModel(this.orgPolicy.policy, provider, model) : null,
+        now,
+      });
+    } catch {
+      return null;
+    }
   }
 
   /**
