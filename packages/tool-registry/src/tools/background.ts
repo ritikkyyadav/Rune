@@ -61,7 +61,11 @@ export class BackgroundShellManager {
       unsandboxed: opts.unsandboxed === true,
     });
     if (launch.refusal) throw new Error(launch.refusal);
-    if (this.binaryPath && launch.sandboxed) {
+    if (launch.sandboxed) {
+      if (!this.binaryPath)
+        throw new Error(
+          "Cannot start a contained background shell: rune-tools is unavailable. Install the native tools before running this command.",
+        );
       const plan = Bun.spawnSync([this.binaryPath, "--workspace", cwd, "shell-plan"], {
         stdin: new TextEncoder().encode(
           JSON.stringify({ command, network, sandbox_paths: sandboxPathsFor(cwd) }),

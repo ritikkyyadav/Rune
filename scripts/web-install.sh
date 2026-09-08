@@ -32,7 +32,7 @@
 # ──────────────────────────────────────────────────────────
 set -euo pipefail
 
-REPO="${RUNE_REPO:-ritikkyyadav/Alan}"
+REPO="${RUNE_REPO:-ritikkyyadav/Rune}"
 VERSION="${RUNE_VERSION:-latest}"
 INSTALL_DIR="${RUNE_INSTALL_DIR:-$HOME/.rune/bin}"
 TELEMETRY_ENDPOINT="${RUNE_TELEMETRY_ENDPOINT:-}"

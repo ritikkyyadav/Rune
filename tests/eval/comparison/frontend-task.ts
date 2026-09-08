@@ -74,7 +74,9 @@ export const FRONTEND_TASK: ComparisonTask = {
       await page.reload({waitUntil:'networkidle'}); assert.equal(await page.getByRole('button',{name:'Favorite Kestrel',exact:true}).getAttribute('aria-pressed'),'true');
       await page.getByRole('button',{name:'Archived',exact:true}).click(); assert.equal(await cards.count(),2);
       await page.getByRole('button',{name:'All',exact:true}).click();
-      const search = page.getByRole('textbox',{name:'Search projects',exact:true});
+      // Native type=search has the searchbox role; the brief requires the
+      // accessible label, not a particular input type or ARIA role.
+      const search = page.getByLabel('Search projects',{exact:true});
       await search.fill('kestrel'); await page.waitForTimeout(350); assert.equal(await cards.count(),1);
       await page.getByRole('button',{name:'Archived',exact:true}).click(); assert.equal(await cards.count(),0);
       assert.match(await page.locator('body').innerText(), /no (?:projects|results|matches)|nothing (?:found|matches)/i);

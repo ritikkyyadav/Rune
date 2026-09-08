@@ -4,8 +4,8 @@
 [12-ship-zero-spend.md](12-ship-zero-spend.md) landed on `gear/phase-0-stabilize`: P12.4 at
 `5db254d`, P12.3 at `b178922`, P12.5 at `4e84c4f`, P12.2 at `dd1acb2` (one conflict, the doctor
 command, where the provider-health and MCP sections met; both kept), P12.1 at `25c7268`. Final gates
-with the outer sandbox off: unit **4,199 / 0**, integration **129 / 0** (5 skips are live cloud
-providers), mock evals **63 / 63** with governance at 0.26 completions per task, safety corpus
+with the outer sandbox off: unit **4,199 / 0**, integration **129 / 0** (5 skips are missing
+Go/Java toolchains), mock evals **63 / 63** with governance at 0.26 completions per task, safety corpus
 **P 90.0 / R 89.1**. Installed `v0.4.0-dev+d0c33e5` (checksum `54a3c6e0…`); `rune doctor` and
 `rune tools-smoke` green; one headless task on the free ollama.com route completed and its tests pass
 outside the agent — [docs/evidence/live-run-20260908.md](../evidence/live-run-20260908.md).

@@ -1,5 +1,10 @@
 # Audit response — 2026-09-06
 
+> Historical intermediate snapshot. [The follow-through report](audit-followthrough-20260908.md)
+> supersedes this page's current-state claims. In particular, the delegated checkpoint size is
+> a target, a page fetch cannot certify visual review, an unknown price blocks a capped request,
+> and live comparison attempts now exist. Preserve the tables below as the intermediate record.
+
 On 2026-09-06 GPT-6 (via the Codex desktop app) audited Rune against OpenCode `bbd72fb`,
 put Rune at roughly 70/100, and listed eight problems. This file records what was true,
 what was done about it, what remains, and how it was verified — so the next audit starts

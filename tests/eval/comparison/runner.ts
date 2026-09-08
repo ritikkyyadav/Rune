@@ -21,6 +21,34 @@ export interface PilotOptions {
   runeCommand: string[];
   opencodeCommand: string[];
 }
+
+/** Only terminal provider errors affect scoring. Tool failures and prose that
+ * discuss quotas are task evidence, not evidence of a provider outage. Return
+ * a category rather than publishing provider error headers or response bodies. */
+export function providerFailureReason(event: unknown): string | undefined {
+  if (!event || typeof event !== "object") return;
+  const row = event as Record<string, unknown>;
+  if (row.type !== "error") return;
+  const error = row.error;
+  const detail = error && typeof error === "object" ? (error as Record<string, unknown>) : {};
+  const data =
+    detail.data && typeof detail.data === "object" ? (detail.data as Record<string, unknown>) : {};
+  const status = data.statusCode ?? detail.statusCode;
+  const message = [
+    typeof error === "string" ? error : "",
+    row.message,
+    detail.message,
+    data.message,
+  ]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+  if (status === 429 || /quota exceeded|usage limit|rate.?limit|too many requests/i.test(message))
+    return "provider_quota";
+  if (status === 401 || /invalid api.?key|authentication failed|not authenticated/i.test(message))
+    return "provider_authentication";
+  if (typeof status === "number" && status >= 500) return "provider_unavailable";
+  return undefined;
+}
 const sha = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 const repo = resolve(import.meta.dir, "../../..");
 function git(cwd: string, args: string[]): string {
@@ -189,6 +217,7 @@ export async function runPilot(options: PilotOptions) {
         const { command, env } = prepareHarness(arm, options, dir, root, prompt);
         console.log(`${task.id} run ${run + 1}: ${arm}`);
         const monitor = new CostTracker();
+        let providerFailure: string | undefined;
         const sourceBefore =
           options.runeCommand.length === 1 && existsSync(options.runeCommand[0]!)
             ? sha(readFileSync(options.runeCommand[0]!))
@@ -201,9 +230,10 @@ export async function runPilot(options: PilotOptions) {
           stdoutPath: join(dir, "events.jsonl"),
           stderrPath: join(dir, "stderr.log"),
           onLine(line) {
-            if (arm !== "opencode") return false;
             try {
               const event = JSON.parse(line);
+              providerFailure = providerFailureReason(event) ?? providerFailure;
+              if (arm !== "opencode") return false;
               if (event.type !== "step_finish") return false;
               const t = event.part?.tokens;
               if (!t) return false;
@@ -233,7 +263,14 @@ export async function runPilot(options: PilotOptions) {
             ? sha(readFileSync(options.runeCommand[0]!))
             : sourceDigest();
         const sourceChanged = arm === "rune" && sourceBefore !== sourceAfter;
-        const infrastructure = cost.entries === 0 || sourceChanged;
+        const unscoredReason = sourceChanged
+          ? "source_changed"
+          : processResult.exitCode !== 0 && providerFailure
+            ? providerFailure
+            : cost.entries === 0
+              ? "no_model_usage"
+              : undefined;
+        const infrastructure = unscoredReason !== undefined;
         const onBudget =
           cost.listUsd !== null && cost.listUsd <= options.budgetUsd && !processResult.stopped;
         git(root, ["add", "-N", "."]);
@@ -247,6 +284,7 @@ export async function runPilot(options: PilotOptions) {
           ...cost,
           costError,
           scored: !infrastructure,
+          unscoredReason,
           acceptancePassed: check.passed,
           onBudget,
           success: !infrastructure && check.passed && onBudget && processResult.exitCode === 0,
@@ -256,7 +294,7 @@ export async function runPilot(options: PilotOptions) {
         });
         persist();
         console.log(
-          `${arm}: ${infrastructure ? "UNSCORED (no model usage)" : check.passed ? "acceptance passed" : "acceptance failed"}; ${cost.listUsd === null ? "cost unknown" : `$${cost.listUsd.toFixed(4)} list`}; ${(processResult.durationMs / 1000).toFixed(1)}s`,
+          `${arm}: ${infrastructure ? `UNSCORED (${unscoredReason})` : check.passed ? "acceptance passed" : "acceptance failed"}; ${cost.listUsd === null ? "cost unknown" : `$${cost.listUsd.toFixed(4)} list`}; ${(processResult.durationMs / 1000).toFixed(1)}s`,
         );
         if (infrastructure) break tasksRun;
       }

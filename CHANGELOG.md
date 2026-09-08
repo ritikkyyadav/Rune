@@ -336,8 +336,8 @@ evidence, the terminal was rewritten, and the cost and safety subsystems were ma
 
 Version bump, installer polish, and install-from-GitHub documentation.
 
-[Unreleased]: https://github.com/ritikkyyadav/Alan/compare/v0.4.0...HEAD
-[0.4.0]: https://github.com/ritikkyyadav/Alan/compare/v0.3.1...v0.4.0
-[0.3.1]: https://github.com/ritikkyyadav/Alan/compare/v0.3.0...v0.3.1
-[0.3.0]: https://github.com/ritikkyyadav/Alan/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/ritikkyyadav/Alan/releases/tag/v0.2.0
+[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/ritikkyyadav/Rune/compare/v0.3.1...v0.4.0
+[0.3.1]: https://github.com/ritikkyyadav/Rune/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/ritikkyyadav/Rune/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/ritikkyyadav/Rune/releases/tag/v0.2.0

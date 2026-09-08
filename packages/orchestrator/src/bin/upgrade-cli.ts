@@ -44,7 +44,7 @@ import { PRODUCT_VERSION } from "./ui/brand";
 
 // ─── The release surface ───
 
-export const DEFAULT_UPDATE_REPO = "ritikkyyadav/Alan";
+export const DEFAULT_UPDATE_REPO = "ritikkyyadav/Rune";
 
 /** How long a "no newer release" answer is trusted before we ask again. */
 export const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;

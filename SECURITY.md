@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please report suspected vulnerabilities privately via
-[GitHub Security Advisories](https://github.com/ritikkyyadav/Alan/security/advisories/new)
+[GitHub Security Advisories](https://github.com/ritikkyyadav/Rune/security/advisories/new)
 for this repository. You should receive an acknowledgment within 72 hours. Please do not open
 public issues for security reports.
 

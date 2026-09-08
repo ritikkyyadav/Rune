@@ -11,7 +11,7 @@
       "capabilities": ["skills"],
       "integrity": "sha256-8279f785dcc9622cfdc5bc54a6093e6722f4d9553a1fa36cd8e500c9acf36311",
       "maintainer": "Savoir <rune@savoir.dev>",
-      "homepage": "https://github.com/ritikkyyadav/Alan/tree/main/examples/plugins/rune-example-skills"
+      "homepage": "https://github.com/ritikkyyadav/Rune/tree/main/examples/plugins/rune-example-skills"
     },
     {
       "name": "rune-example-connector",
@@ -22,7 +22,7 @@
       "capabilities": ["mcp", "commands"],
       "integrity": "sha256-0759b5f9c299f28bdca2d0422930c083b3034a2ac4f94f48922cd552afa6ec00",
       "maintainer": "Savoir <rune@savoir.dev>",
-      "homepage": "https://github.com/ritikkyyadav/Alan/tree/main/examples/plugins/rune-example-connector"
+      "homepage": "https://github.com/ritikkyyadav/Rune/tree/main/examples/plugins/rune-example-connector"
     },
     {
       "name": "rune-example-tools",
@@ -33,7 +33,7 @@
       "capabilities": ["tools:workspace-write", "tools:network"],
       "integrity": "sha256-541b3f5fecee0c51afc4efbfcda0ff7d6aa0c2b29fa7712aabbcad7d9840a60a",
       "maintainer": "Savoir <rune@savoir.dev>",
-      "homepage": "https://github.com/ritikkyyadav/Alan/tree/main/examples/plugins/rune-example-tools"
+      "homepage": "https://github.com/ritikkyyadav/Rune/tree/main/examples/plugins/rune-example-tools"
     }
   ]
 }

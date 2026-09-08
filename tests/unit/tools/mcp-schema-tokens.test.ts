@@ -10,7 +10,13 @@
 import { describe, expect, test } from "bun:test";
 import { ToolRegistry } from "../../../packages/tool-registry/src/registry";
 import { McpClient } from "../../../packages/tool-registry/src/mcp/client";
-import { LOAD_TOOLS_TOOL } from "../../../packages/tool-registry/src/tools/load-tools";
+import {
+  createLoadToolsTool,
+  deferredByDefault,
+  LOAD_TOOLS_TOOL,
+} from "../../../packages/tool-registry/src/tools/load-tools";
+import { INTERACTIVE_DASHBOARD_SCHEMA } from "../../../packages/tool-registry/src/tools/dashboard";
+import { UPDATE_CONFIG_TOOL_SCHEMA } from "../../../packages/orchestrator/src/update-config-tool";
 import type { ToolHandler } from "../../../packages/tool-registry/src/types";
 import type {
   McpIncomingMessage,
@@ -118,6 +124,52 @@ function schemaTokens(registry: ToolRegistry): number {
 // ─── The measurement ───
 
 describe("deferred tool loading — schema tokens per request", () => {
+  test("occasional built-ins retain their exact schemas on demand without delaying coding tools", async () => {
+    const registry = new ToolRegistry();
+    for (const schema of [INTERACTIVE_DASHBOARD_SCHEMA, UPDATE_CONFIG_TOOL_SCHEMA])
+      registry.register({
+        schema,
+        validate: () => ({ valid: true }),
+        execute: async () => {
+          throw new Error("Schema loading must not execute the tool");
+        },
+      });
+    const loader = createLoadToolsTool(registry);
+    registry.register(loader);
+    registry.setDeferralEnabled(false);
+    const eager = schemaTokens(registry);
+    registry.setDeferralEnabled(true);
+    expect(schemaTokens(registry)).toBeLessThan(eager * 0.2);
+    const catalog = registry.toLlmTools().find((tool) => tool.name === LOAD_TOOLS_TOOL)!;
+    for (const name of ["interactive_dashboard", "update_config"])
+      expect(catalog.description).toContain(name);
+    for (const name of [
+      "read_file",
+      "edit_file",
+      "bash",
+      "task",
+      "worker",
+      "todo_write",
+      "ask_user",
+    ])
+      expect(deferredByDefault(name)).toBe(false);
+
+    const loaded = await loader.execute({
+      toolName: LOAD_TOOLS_TOOL,
+      callId: "load",
+      sessionId: "test",
+      workspaceRoot: "/tmp",
+      args: { names: ["interactive_dashboard", "update_config"] },
+    });
+    expect(loaded.success).toBe(true);
+    for (const schema of [INTERACTIVE_DASHBOARD_SCHEMA, UPDATE_CONFIG_TOOL_SCHEMA]) {
+      const advertised = registry.toLlmTools().find((tool) => tool.name === schema.name)!;
+      expect(advertised.description).toBe(schema.description);
+      expect(advertised.inputSchema).toEqual(schema.inputSchema);
+    }
+    expect(registry.deferredCatalog()).toEqual([]);
+  });
+
   test("two 20-tool MCP servers cost >=40% fewer schema tokens per request", async () => {
     const notion = await mockServer("notion", 20);
     const linear = await mockServer("linear", 20);

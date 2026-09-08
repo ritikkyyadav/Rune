@@ -217,7 +217,7 @@ export class ToolRegistry {
     }
 
     // Nothing deferred ⇒ no catalog, so `load_tools` itself is not advertised.
-    // A session with no connectors pays nothing for the mechanism.
+    // A registry with no deferred capabilities pays nothing for the mechanism.
     if (catalog.length > 0) {
       catalog.sort((a, b) => (a.name < b.name ? -1 : 1));
       defs.push({

@@ -3,7 +3,7 @@
  * output incrementally; kill_shell terminates; buffers are capped.
  */
 
-import { describe, test, expect } from "bun:test";
+import { afterEach, beforeEach, describe, test, expect } from "bun:test";
 import {
   BackgroundShellManager,
   createBashOutputHandler,
@@ -11,6 +11,15 @@ import {
   withBackgroundSupport,
 } from "../../../packages/tool-registry/src/tools/background";
 import type { ToolCallInput, ToolHandler } from "../../../packages/tool-registry/src/types";
+import {
+  resetSandboxPolicyForTest,
+  setSandboxMode,
+} from "../../../packages/tool-registry/src/sandbox-mode";
+
+// These lifecycle fixtures intentionally exercise the host-shell path. Native
+// containment and missing-planner refusal are covered by the integration suite.
+beforeEach(() => setSandboxMode("off"));
+afterEach(() => resetSandboxPolicyForTest());
 
 function makeInput(toolName: string, args: Record<string, unknown>): ToolCallInput {
   return { toolName, callId: "c1", args, sessionId: "s1", workspaceRoot: "/tmp" };
