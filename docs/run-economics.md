@@ -88,24 +88,42 @@ as a zero it did not earn.
 `/cost` inside a session, `rune cost [session|last]` outside one. The money
 readout is unchanged and still printed first; these lines are appended.
 
+Real output, from a seeded six-completion session:
+
 ```
-        Completions  12   (7 work · 5 governance (42%))
-         classifier  3    (34.0k fresh in · 120 out)
-         summarizer  2    (30.0k fresh in · 900 out)
-      Fresh in / call  18.0k   (32.0k on a governance call)
-    Cache read ratio  61%     (740.0k of 1.20M input served warm)
-      List estimate  ~$1.42   (~$0.51 of it governance)
- Prompt bytes / call  34.2KB  (measured on 7 of 12 completions)
-           doctrine  8.1KB   (24%)
-       tool schemas  11.4KB  (33%)
-        plan ledger  2.2KB   (6%)
-         task state  0.4KB   (1%)
-       conversation  12.1KB  (35%)
+  Cost  01a07fdc /tmp/demo
+
+               Spent  $0.00  (subscription / free tier — no metered charge)
+          Completions  6  (3 work · 3 governance (50%))
+              primary  3  (29.0k fresh in · 900 out)
+           classifier  1  (34.0k fresh in · 300 out)
+               intent  1  (900 fresh in · 300 out)
+           summarizer  1  (30.0k fresh in · 300 out)
+      Fresh in / call  15.7k  (21.6k on a governance call)
+     Cache read ratio  52%  (100.0k of 193.9k input served warm)
+        List estimate  $0.28  ($0.19 of it governance)
+  Prompt bytes / call  34.2KB  (measured on 2 of 6 completions)
+             doctrine  8.1KB  (24%)
+         tool schemas  11.4KB  (33%)
+          plan ledger  2.1KB  (6%)
+           task state  400B  (1%)
+         conversation  12.1KB  (35%)
+
+            anthropic  3  (0 governance)
+           openrouter  3  (3 governance)
+
+  per-turn detail: rune audit 01a07fdc
 ```
 
-Then, per provider, how many calls went where and how many of those were
-governance — on a free-tier run that is the line that explains a 429: one
-provider carrying both the work and the overhead.
+The tail is per provider: how many calls went where, and how many of those were
+governance. On a free-tier run that is the line that explains a 429 — here the
+work sits on one provider and every governance call on another, which is what
+`[routing] helper` is for.
+
+Two details worth reading twice in that output. `Prompt bytes / call` says
+"measured on **2** of 6": four of those completions are governance callers,
+which attribute nothing. And one of the three `primary` rows carries no `role`
+at all — it is a pre-P12.1 row, and it counts as the work.
 
 Three rules the readout keeps:
 
@@ -315,19 +333,20 @@ missing meter as zero would fail every build after it shipped.
 
 ## What is verified, and what is not
 
-| claim                                                        | how                                                      |
-| ------------------------------------------------------------ | -------------------------------------------------------- |
-| roles and composition reach the cost row and the session log | unit tests + a live mock eval run showing 0.25/task      |
-| the parts always sum to the total                            | unit test over a real `AgentLoop` request                |
-| the plan ledger is not filed under conversation              | unit test (with-plan vs without-plan)                    |
-| the JIT doctrine's effect is visible                         | unit test on the doctrine bytes                          |
-| the safety corpus does not regress                           | `eval:auto-safety --offline`, before and after           |
-| the helper picks the cheapest healthy connected route        | unit tests against the real capacity + tier tables       |
-| the automatic helper never answers a safety question         | unit test                                                |
-| the recall fires only on an identical high-confidence allow  | unit tests, including a mechanical-breaker case          |
-| **the helper reduces live rate-limit incidents**             | **NOT verified — no live run, no credits**               |
-| **the recall's live hit rate on a real run**                 | **NOT verified — the offline corpus cannot exercise it** |
-| **a live reviewer populates `confidence` sensibly**          | **NOT verified — needs a live model**                    |
+| claim                                                        | how                                                                                  |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| roles and composition reach the cost row and the session log | unit tests, a live mock eval run showing 0.25/task, and the `rune cost` output above |
+| `rune cost` renders a real session log end to end            | run, on a seeded database — the output above is verbatim                             |
+| the parts always sum to the total                            | unit test over a real `AgentLoop` request                                            |
+| the plan ledger is not filed under conversation              | unit test (with-plan vs without-plan)                                                |
+| the JIT doctrine's effect is visible                         | unit test on the doctrine bytes                                                      |
+| the safety corpus does not regress                           | `eval:auto-safety --offline`, before and after                                       |
+| the helper picks the cheapest healthy connected route        | unit tests against the real capacity + tier tables                                   |
+| the automatic helper never answers a safety question         | unit test                                                                            |
+| the recall fires only on an identical high-confidence allow  | unit tests, including a mechanical-breaker case                                      |
+| **the helper reduces live rate-limit incidents**             | **NOT verified — no live run, no credits**                                           |
+| **the recall's live hit rate on a real run**                 | **NOT verified — the offline corpus cannot exercise it**                             |
+| **a live reviewer populates `confidence` sensibly**          | **NOT verified — needs a live model**                                                |
 
 The last three need a live run on a free route with a reviewer that answers.
 None was available in this lane. They are the first things to measure in P12.6.
