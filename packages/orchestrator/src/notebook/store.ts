@@ -1,3 +1,4 @@
+import { LessonTrials } from "./trials";
 // ─── NotebookStore: the tactics notebook (evolution loop v1) ───
 // A structured, queryable store of learned facts and tactics — NOT loose
 // markdown. Entries are scoped: `repo` (this exact workspace), `stack`
@@ -23,7 +24,7 @@ export type NotebookScope = "repo" | "stack" | "global";
  *               the same as having watched it hold.
  *   trial     — learned in ≥2 distinct sessions. Injected, and every injection
  *               is logged so the win rate means something.
- *   active    — ≥5 firings with a win rate above the ambient baseline. Only
+ *   active    — controlled include/withhold evidence for this advice revision. Only
  *               active lessons reach the playbook.
  *   retired   — decayed, disused, contradicted, or turned off by the user.
  *               Kept and inspectable; revives if re-learned.
@@ -78,6 +79,7 @@ interface Row {
 
 export class NotebookStore {
   private db: Database;
+  readonly trials: LessonTrials;
 
   constructor(dbPath: string) {
     if (dbPath !== ":memory:") mkdirSync(dirname(dbPath), { recursive: true });
@@ -105,6 +107,7 @@ export class NotebookStore {
         ON entries(scope, COALESCE(repo_key,''), COALESCE(stack_key,''), title);
     `);
     this.migrate();
+    this.trials = new LessonTrials(this.db);
   }
 
   /**
@@ -179,10 +182,10 @@ export class NotebookStore {
           // being true, so it has to earn the ladder again rather than resume
           // where it left off.
           `UPDATE entries SET body = ?, provenance_json = ?, updated_at = ?, retired = 0,
-             stage = CASE WHEN stage IS NULL THEN 'trial' WHEN stage = 'retired' THEN 'candidate' ELSE stage END
+             stage = CASE WHEN body != ? AND stage = 'active' THEN 'trial' WHEN stage IS NULL THEN 'trial' WHEN stage = 'retired' THEN 'candidate' ELSE stage END
            WHERE id = ?`,
         )
-        .run(body, JSON.stringify(prov), now, existing.id);
+        .run(body, JSON.stringify(prov), now, body, existing.id);
       return existing.id;
     }
 

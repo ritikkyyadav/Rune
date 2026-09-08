@@ -9,10 +9,22 @@ export type {
 export { ToolRegistry } from "./registry";
 export {
   getSandboxMode,
+  getSandboxPolicy,
+  isSandboxAutoAllow,
   isSandboxEnabled,
+  isUnsandboxedFallbackAllowed,
   onSandboxModeChange,
+  onSandboxPolicyChange,
+  resetSandboxPolicyForTest,
+  resolveSandboxLaunch,
+  canContainCommand,
+  sandboxPathsFor,
   setSandboxMode,
+  setSandboxPolicy,
+  type SandboxLaunch,
   type SandboxMode,
+  type SandboxModeInput,
+  type SandboxPolicy,
 } from "./sandbox-mode";
 export {
   getSandboxCapability,
@@ -27,6 +39,17 @@ export {
 } from "./sandbox-capability";
 export { createRustToolHandler } from "./tools/rust-bridge";
 export { registerBuiltinTools, stopLanguageServers } from "./tools/builtin";
+// Web search: the engine roster's runtime half. `/login` and `rune login` use
+// the probe to verify a pasted key with one real search.
+export {
+  selectBackends,
+  searchBackendFor,
+  orderBackends,
+  probeSearchBackend,
+  type SearchBackend,
+  type SearchProbe,
+  type SearchBackendName,
+} from "./tools/search/index";
 export { LspServerManager, serverTable, resetServerTable } from "./tools/lsp/manager";
 export { createLspHandler, LSP_SCHEMA } from "./tools/lsp/tool";
 export {

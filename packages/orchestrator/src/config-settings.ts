@@ -14,7 +14,10 @@ export interface ConfigSetting {
   /** One-line human summary. */
   description: string;
   /** enum = a fixed set of string values; boolean = on/off. */
-  kind: "enum" | "boolean";
+  kind: "enum" | "boolean" | "number";
+  min?: number;
+  max?: number;
+  integer?: boolean;
   /** For enum: the canonical values, in the order to present them. */
   values?: readonly string[];
   /** Lowercased alias → canonical value (folded in before validation). */
@@ -31,6 +34,76 @@ export interface ConfigSetting {
 }
 
 export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
+  {
+    key: "budget",
+    tomlPath: "cost.maxSessionUsd",
+    kind: "number",
+    min: 0,
+    max: 10000,
+    description:
+      "Session limit in USD at list rates, including workers, compaction and safety review. 0 = no limit; already in-flight calls may finish.",
+    nameAliases: ["session budget", "cost cap"],
+    live: true,
+  },
+  {
+    key: "parallel",
+    tomlPath: "subagents.maxParallel",
+    kind: "number",
+    min: 1,
+    max: 16,
+    integer: true,
+    description: "Maximum simultaneous delegated tasks across workers, scouts and workflows.",
+    nameAliases: ["max parallel", "concurrency"],
+    live: true,
+  },
+  {
+    key: "subagent_budget",
+    tomlPath: "subagents.costCapUsd",
+    kind: "number",
+    min: 0.01,
+    max: 1000,
+    description: "Default per-agent spending ceiling in USD. Applies to the next dispatch.",
+    live: true,
+  },
+  {
+    key: "evidence_gate",
+    tomlPath: "reliability.evidenceGate",
+    kind: "enum",
+    values: ["attest", "refuse"],
+    valueAliases: { accept: "attest", silent: "attest", strict: "refuse", gate: "refuse" },
+    description:
+      "What the plan ledger does with a step closed on nothing: attest (default) accepts it as " +
+      "unproven and says so in one line; refuse sends the list back once. Applies to the next run.",
+    live: true,
+  },
+  {
+    key: "turns",
+    tomlPath: "reliability.maxTurns",
+    kind: "number",
+    min: 8,
+    max: 1000,
+    integer: true,
+    description:
+      "Maximum model turns in a run before the progress-based extension policy. Applies to the next run.",
+    live: true,
+  },
+  {
+    key: "sandbox_required",
+    tomlPath: "sandbox.requireOs",
+    kind: "boolean",
+    description:
+      "Require working OS isolation for sandboxed commands. Refuse execution when containment is unavailable.",
+    live: true,
+    sensitive: true,
+  },
+  {
+    key: "playbook",
+    tomlPath: "evolve.playbook",
+    kind: "boolean",
+    description:
+      "Generate learned playbooks from repeated, verified lessons. Existing consent and evidence gates still apply.",
+    live: true,
+  },
   {
     key: "gear",
     tomlPath: "permissions.gear",
@@ -122,12 +195,110 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
   },
   {
     key: "sandbox",
-    tomlPath: "sandbox.enabled",
+    tomlPath: "sandbox.mode",
     description:
-      "Whether shell commands run inside the OS sandbox (no network, workspace-confined). " +
-      "Turning it off gives commands full host access.",
-    kind: "boolean",
+      "How shell commands run. auto-allow (default): inside the OS sandbox (no network, " +
+      "workspace-confined writes) and approved without a prompt in 3rd gear and Auto. " +
+      "regular: still sandboxed, but the gear's usual permission prompt applies. off: no " +
+      "sandbox — commands get full host access and prompt as usual.",
+    kind: "enum",
+    values: ["auto-allow", "regular", "off"],
+    valueAliases: {
+      on: "auto-allow",
+      true: "auto-allow",
+      enabled: "auto-allow",
+      enable: "auto-allow",
+      "auto allow": "auto-allow",
+      autoallow: "auto-allow",
+      allow: "auto-allow",
+      sandboxed: "auto-allow",
+      "regular permissions": "regular",
+      prompt: "regular",
+      ask: "regular",
+      confirm: "regular",
+      false: "off",
+      disabled: "off",
+      disable: "off",
+      none: "off",
+      "no sandbox": "off",
+    },
     nameAliases: ["sandboxing", "sandbox mode"],
+    live: true,
+    sensitive: true,
+  },
+  {
+    key: "sandbox_fallback",
+    tomlPath: "sandbox.allowUnsandboxedFallback",
+    description:
+      "Sandbox override. on (default): a command that failed on a sandbox restriction may be " +
+      "retried with unsandboxed: true, which runs on the host under the regular permission " +
+      "prompt. off = strict: every command runs sandboxed unless listed in excludedCommands.",
+    kind: "boolean",
+    valueAliases: {
+      fallback: "true",
+      allow: "true",
+      "allow unsandboxed fallback": "true",
+      strict: "false",
+      "strict sandbox mode": "false",
+    },
+    nameAliases: [
+      "sandbox override",
+      "sandbox overrides",
+      "unsandboxed fallback",
+      "sandbox fallback",
+      "allow unsandboxed fallback",
+      "strict sandbox",
+    ],
+    live: true,
+    sensitive: true,
+  },
+  {
+    key: "supervisor",
+    tomlPath: "permissions.autoMode.supervisor",
+    description:
+      "Auto mode's background safety supervisor. unusual (default): screens supervised actions " +
+      "except recognized ordinary development work (builds, tests, installs, linters, local git, " +
+      "containers). all: screens every supervised action. off: no background screening — the " +
+      "mechanical breakers and the in-path reviewer still apply.",
+    kind: "enum",
+    values: ["all", "unusual", "off"],
+    valueAliases: {
+      everything: "all",
+      full: "all",
+      on: "all",
+      default: "unusual",
+      normal: "unusual",
+      none: "off",
+      disabled: "off",
+    },
+    nameAliases: [
+      "auto supervisor",
+      "background supervisor",
+      "supervisor scope",
+      "safety supervisor",
+    ],
+    live: true,
+    sensitive: true,
+  },
+  {
+    key: "unsandboxed_shell",
+    tomlPath: "permissions.autoMode.unsandboxedShell",
+    description:
+      "What Auto mode does with a shell command that will not run inside the OS sandbox " +
+      "(sandbox off, an excluded command, or a fallback retry). review (default): read-only " +
+      "commands run; anything else pays one reviewer call. ask: anything not read-only prompts. " +
+      "allow: only the mechanical breakers apply, as in 4th gear.",
+    kind: "enum",
+    values: ["review", "ask", "allow"],
+    valueAliases: {
+      reviewer: "review",
+      classify: "review",
+      prompt: "ask",
+      confirm: "ask",
+      open: "allow",
+      trust: "allow",
+    },
+    nameAliases: ["unsandboxed shell", "uncontained shell", "host shell", "host commands"],
     live: true,
     sensitive: true,
   },
@@ -301,8 +472,25 @@ export function normalizeSettingValue(
   raw: string,
 ): { value: string } | { error: string } {
   const v = raw.trim().toLowerCase();
+  if (setting.kind === "number") {
+    const n = Number(v);
+    if (
+      !v ||
+      !Number.isFinite(n) ||
+      n < (setting.min ?? 0) ||
+      n > (setting.max ?? Infinity) ||
+      (setting.integer && !Number.isInteger(n))
+    ) {
+      return {
+        error: `use ${setting.integer ? "a whole number" : "a number"} from ${setting.min ?? 0} to ${setting.max ?? "unlimited"}`,
+      };
+    }
+    return { value: String(n) };
+  }
   if (setting.kind === "boolean") {
-    const mapped = BOOL_ALIASES[v];
+    // A boolean may carry its own vocabulary too (`strict` → off for the
+    // sandbox override), folded in before the shared on/off aliases.
+    const mapped = BOOL_ALIASES[setting.valueAliases?.[v] ?? v];
     if (!mapped) return { error: `"${raw}" is not on/off — use on or off` };
     return { value: mapped };
   }
@@ -315,7 +503,11 @@ export function normalizeSettingValue(
 }
 
 /** The TOML literal a canonical value persists as (boolean → real bool). */
-export function settingTomlValue(setting: ConfigSetting, canonical: string): string | boolean {
+export function settingTomlValue(
+  setting: ConfigSetting,
+  canonical: string,
+): string | boolean | number {
+  if (setting.kind === "number") return Number(canonical);
   if (setting.kind === "boolean") return canonical === "true";
   return canonical;
 }
@@ -329,7 +521,13 @@ export function displaySettingValue(setting: ConfigSetting, canonical: string): 
 /** A compact catalog listing for the tool description + "what can I change" replies. */
 export function settingsCatalogSummary(): string {
   return CONFIG_SETTINGS.map((s) => {
-    const opts = s.kind === "boolean" ? "on | off" : s.values!.join(" | ");
+    const opts = settingChoices(s);
     return `- ${s.key} (${opts}): ${s.description}`;
   }).join("\n");
+}
+
+export function settingChoices(setting: ConfigSetting): string {
+  if (setting.kind === "boolean") return "on | off";
+  if (setting.kind === "number") return `${setting.min ?? 0}..${setting.max ?? "unlimited"}`;
+  return setting.values!.join(" | ");
 }

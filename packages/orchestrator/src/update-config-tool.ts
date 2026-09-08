@@ -1,5 +1,5 @@
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "@rune/tool-registry";
-import { setConfigValue } from "@rune/shared";
+import { setConfigValue, forgetSavedSandboxKey } from "@rune/shared";
 import {
   CONFIG_SETTINGS,
   resolveSetting,
@@ -7,6 +7,7 @@ import {
   settingTomlValue,
   displaySettingValue,
   settingsCatalogSummary,
+  settingChoices,
 } from "./config-settings";
 
 /**
@@ -125,7 +126,7 @@ export function createUpdateConfigTool(deps: UpdateConfigDeps): ToolHandler {
         if (!rawValue) {
           const cur = deps.readSetting(setting.key);
           const shown = cur !== undefined ? displaySettingValue(setting, cur) : "unknown";
-          const choices = setting.kind === "boolean" ? "on | off" : setting.values!.join(" | ");
+          const choices = settingChoices(setting);
           return ok(
             input,
             `${setting.key} is currently "${shown}". Options: ${choices}. ${setting.description}`,
@@ -154,11 +155,34 @@ export function createUpdateConfigTool(deps: UpdateConfigDeps): ToolHandler {
 
         // Persist so it sticks. A persist failure is non-fatal (the live change
         // already took) but must be reported honestly.
-        let persistNote = "saved to ~/.rune/config.toml";
+        let persistNote: string;
         try {
-          setConfigValue(setting.tomlPath, settingTomlValue(setting, canonical), {
+          const saved = setConfigValue(setting.tomlPath, settingTomlValue(setting, canonical), {
             scope: "global",
+            workspaceRoot: input.workspaceRoot,
+            preferExistingProject: true,
           });
+          // The /sandbox sidecar would shadow the value just written to
+          // config at the next launch; forget only the choice this write
+          // replaced, so the other tab's choice survives.
+          if (setting.key === "sandbox") forgetSavedSandboxKey("mode");
+          if (setting.key === "sandbox_fallback") forgetSavedSandboxKey("allowUnsandboxedFallback");
+          persistNote = `saved to ${saved.path}`;
+          if (
+            Object.keys(process.env).some(
+              (name) =>
+                name.startsWith("RUNE_") &&
+                [
+                  "RUNE_GEAR",
+                  "RUNE_SANDBOX_ENABLED",
+                  "RUNE_SANDBOX_MODE",
+                  "RUNE_REASONING_EFFORT",
+                ].includes(name),
+            )
+          ) {
+            persistNote +=
+              "; explicit launch flags and environment overrides still take precedence on restart";
+          }
         } catch (err) {
           persistNote = `applied for this session only — couldn't save it (${
             err instanceof Error ? err.message : String(err)
@@ -184,8 +208,17 @@ function sensitivityNote(key: string, canonical: string): string {
   if ((key === "gear" || key === "permission_mode") && canonical === "4") {
     return " ⚠ 4th gear removes every permission prompt (the sandbox switch is separate).";
   }
-  if (key === "sandbox" && canonical === "false") {
+  if (key === "sandbox" && canonical === "off") {
     return " ⚠ Sandbox off means shell commands have full host + network access.";
+  }
+  if (key === "sandbox_fallback" && canonical === "true") {
+    return " ⚠ A command that hits a sandbox wall may now retry on the host (under the regular permission prompt).";
+  }
+  if (key === "supervisor" && canonical === "off") {
+    return " ⚠ Auto mode's background safety supervisor is off; only the mechanical breakers and the in-path reviewer remain.";
+  }
+  if (key === "unsandboxed_shell" && canonical === "allow") {
+    return " ⚠ Shell commands with no sandbox under them now run on the mechanical breakers alone, as in 4th gear.";
   }
   return "";
 }

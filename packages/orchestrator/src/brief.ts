@@ -547,18 +547,35 @@ export const RECORD_EVIDENCE_SCHEMA: ToolSchema = {
     properties: {
       criterion: {
         type: "number",
-        description: "0-based index of the done_when criterion this speaks to.",
+        description:
+          "0-based index of the done_when criterion this speaks to. With no read_back in play, " +
+          "the 0-based index of the plan step it settles.",
+      },
+      claim: {
+        type: "string",
+        description:
+          "Instead of an index: the claim this command settles, in your own words. Use it when " +
+          "no read_back is in play and the command does not belong to a numbered step.",
       },
       command: {
         type: "string",
         description: "The command you ran, verbatim, exactly as you ran it.",
       },
     },
-    required: ["criterion", "command"],
+    required: ["command"],
   },
   permissionLevel: "auto",
   category: "read",
 };
+
+/** What a citation points at: a numbered criterion or step, or a claim in words. */
+function citationTarget(args: Record<string, unknown>): { index?: number; claim?: string } {
+  const raw = args.criterion;
+  if (typeof raw === "number" && Number.isInteger(raw) && raw >= 0) return { index: raw };
+  if (typeof raw === "string" && /^\d+$/.test(raw.trim())) return { index: Number(raw.trim()) };
+  const claim = String(args.claim ?? (typeof raw === "string" ? raw : "")).trim();
+  return claim ? { claim: claim.slice(0, 200) } : {};
+}
 
 export function createRecordEvidenceTool(
   getLedger: () => BriefLedger | undefined,
@@ -570,16 +587,28 @@ export function createRecordEvidenceTool(
    * degraded one. A rung nobody can substantiate should not be awarded.
    */
   probeParent?: (command: string) => ParentRun | undefined,
+  /**
+   * The plan, for a citation made with no brief in play: a numbered target is
+   * then a plan step. The citation is acknowledged in one line either way —
+   * a validation error here was never the model's fault, and it landed on
+   * the user's screen seven times in one turn.
+   */
+  getSpine?: () => { todos: Array<{ content: string }> } | undefined,
 ): ToolHandler {
   return {
     schema: RECORD_EVIDENCE_SCHEMA,
 
     validate: (args) => {
-      if (typeof args.criterion !== "number" || !Number.isInteger(args.criterion)) {
-        return { valid: false, error: "criterion must be the 0-based index of a done_when item" };
-      }
       if (!String(args.command ?? "").trim()) {
         return { valid: false, error: "command must be the command you ran, verbatim" };
+      }
+      const target = citationTarget(args);
+      if (target.index == null && !target.claim) {
+        return {
+          valid: false,
+          error:
+            "say what the command speaks to: `criterion` (a 0-based index) or `claim` (in your own words)",
+        };
       }
       return { valid: true };
     },
@@ -595,15 +624,46 @@ export function createRecordEvidenceTool(
       });
 
       const ledger = getLedger();
-      if (!ledger) {
-        return reply(
-          "No brief in play. Call read_back first — criteria have to exist before evidence can " +
-            "settle one.",
-        );
-      }
-      const index = Number((input.args ?? {}).criterion);
+      const target = citationTarget(input.args ?? {});
       const command = String((input.args ?? {}).command ?? "");
       const log = getLog();
+      if (!ledger) {
+        // No brief: the citation still gets the runtime's verdict on the
+        // command, attributed to the plan step or the claim it names, and
+        // the reply says plainly that no criterion moved.
+        const verdict = rungForCommand(log, command);
+        if (!verdict.ok) return reply(verdict.reason);
+        const step = target.index != null ? getSpine?.()?.todos[target.index] : undefined;
+        const about =
+          step != null
+            ? `step ${target.index! + 1} "${step.content.slice(0, 80)}"`
+            : target.claim
+              ? `"${target.claim}"`
+              : target.index != null
+                ? `step ${target.index + 1}`
+                : "the claim";
+        return reply(
+          `Noted for ${about}: ${verdict.rung} — ${RUNG_MEANING[verdict.rung]} ` +
+            "No read_back criteria are in play, so this settles no criterion.",
+        );
+      }
+      // A claim in words against a numbered brief: match it to a criterion
+      // by text, else say which numbers exist. One line either way.
+      let index = target.index;
+      if (index == null && target.claim) {
+        const needle = target.claim.toLowerCase();
+        const found = ledger.criteria.findIndex(
+          (c) => c.text.toLowerCase().includes(needle) || needle.includes(c.text.toLowerCase()),
+        );
+        if (found < 0) {
+          return reply(
+            `No criterion reads like "${target.claim.slice(0, 60)}". The brief's criteria are ` +
+              `numbered 0-${Math.max(0, ledger.total - 1)}; cite one by index.`,
+          );
+        }
+        index = found;
+      }
+      if (index == null) return reply("Cite a criterion by its 0-based index.");
 
       // Take the parent-commit measurement before judging the citation — but
       // only once per command, and only for a command that is currently

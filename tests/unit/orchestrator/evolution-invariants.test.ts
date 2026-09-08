@@ -133,6 +133,19 @@ function closure(entry: string): Map<string, string[]> {
   return seen;
 }
 
+function controlledWin(store: NotebookStore, id: string): void {
+  const entry = store.list({ includeRetired: true }).find((e) => e.id === id)!;
+  let controls = 0;
+  for (let i = 0; i < 150; i++) {
+    const session = `controlled-${String(i).padStart(3, "0")}`;
+    const arm = store.trials.assign(entry, session, "matched-model");
+    store.trials.finish(session, "matched-model", {
+      won: arm === "include" || controls++ % 5 === 0,
+      cost: 1,
+    });
+  }
+}
+
 describe("the deciders cannot reach the learners", () => {
   it("finds every decider file (a rename must fail loudly, not silently pass)", () => {
     for (const f of DECIDERS) {
@@ -385,7 +398,7 @@ describe("noise does not become a belief", () => {
     }
   });
 
-  it("promotes only the lesson that actually beats the ambient rate", () => {
+  it("promotes only the lesson with controlled improvement", () => {
     const dir = mkdtempSync(join(tmpdir(), "rune-superstition-"));
     try {
       const store = new NotebookStore(join(dir, "notebook.db"));
@@ -409,6 +422,7 @@ describe("noise does not become a belief", () => {
         store.touchUses([real]);
         store.recordWins([real]);
       }
+      controlledWin(store, real);
       const moved = advanceLessons(store, store.listRepo("r"));
       expect(moved.map((m) => m.title)).toEqual(["real"]);
       store.close();
@@ -544,6 +558,9 @@ describe("nothing skips a rung", () => {
       const second = advanceLessons(store, store.listRepo("r"));
       expect(second.map((m) => `${m.from}→${m.to}`)).toEqual(["candidate→trial"]);
 
+      // Recurrence and uses still cannot bypass controlled evidence.
+      expect(advanceLessons(store, store.listRepo("r"))).toEqual([]);
+      controlledWin(store, id);
       // Only now can it reach active.
       const third = advanceLessons(store, store.listRepo("r"));
       expect(third.map((m) => `${m.from}→${m.to}`)).toEqual(["trial→active"]);
@@ -578,11 +595,12 @@ describe("nothing skips a rung", () => {
         store.touchUses([id]);
         store.recordWins([id]);
       }
+      controlledWin(store, id);
       const moved = advanceLessons(store, store.listRepo("r"));
       expect(moved).toHaveLength(1);
       // Evidence-linked: the numbers that justified the move are in the text.
-      expect(moved[0].reason).toMatch(/\d+\/\d+ winning runs/);
-      expect(moved[0].reason).toContain("bar of");
+      expect(moved[0].reason).toMatch(/\d+\/\d+ included/);
+      expect(moved[0].reason).toContain("cost per success");
       store.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });

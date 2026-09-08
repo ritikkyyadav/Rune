@@ -28,6 +28,7 @@ import { dirname, isAbsolute, relative, resolve } from "path";
 import { createHash, randomBytes } from "crypto";
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
 import { applyOneEdit, type EditOp } from "./multi-edit";
+import { unifiedDiff } from "./unified-diff";
 import { checkSyntax } from "./diagnostics";
 import { diagnosticsBlockFor } from "./lsp/feedback";
 import type { LspServerManager } from "./lsp/manager";
@@ -268,6 +269,9 @@ interface FileOutcome {
   hash?: string;
   edits_applied?: number;
   syntax_issues?: Array<{ line: number; message: string }>;
+  /** The unified diff of this file's change, so the transcript shows red/green.
+   *  apply_patch ran in TS with both texts in hand but emitted none. */
+  diff?: string;
 }
 
 /**
@@ -428,6 +432,7 @@ export function createApplyPatchHandler(lspManager?: LspServerManager): ToolHand
               action: p.action,
               hash: sha256Hex(p.content),
               ...(p.edits !== undefined ? { edits_applied: p.edits } : {}),
+              diff: unifiedDiff(prior ?? "", p.content, p.path),
             });
           } else if (p.kind === "move") {
             const prior = await readFile(p.absFrom, "utf8");
@@ -444,12 +449,17 @@ export function createApplyPatchHandler(lspManager?: LspServerManager): ToolHand
               moved_to: p.moveTo,
               hash: sha256Hex(p.content),
               edits_applied: p.edits,
+              diff: unifiedDiff(prior, p.content, p.moveTo),
             });
           } else {
             const prior = await readFile(p.abs, "utf8");
             await unlink(p.abs);
             rollback.push(async () => atomicWrite(p.abs, prior));
-            outcomes.push({ path: p.path, action: "deleted" });
+            outcomes.push({
+              path: p.path,
+              action: "deleted",
+              diff: unifiedDiff(prior, "", p.path),
+            });
           }
         }
       } catch (err) {

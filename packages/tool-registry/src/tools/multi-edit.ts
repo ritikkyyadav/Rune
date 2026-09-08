@@ -2,6 +2,7 @@ import { readFile, writeFile, rename } from "fs/promises";
 import { resolve, isAbsolute } from "path";
 import { createHash, randomBytes } from "crypto";
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
+import { unifiedDiff } from "./unified-diff";
 
 export interface EditOp {
   old_text: string;
@@ -259,7 +260,8 @@ export function createMultiEditHandler(): ToolHandler {
         );
       }
 
-      let content = raw.toString("utf8");
+      const oldText = raw.toString("utf8");
+      let content = oldText;
       const reports: EditReport[] = [];
       try {
         for (let i = 0; i < args.edits.length; i++) {
@@ -293,6 +295,10 @@ export function createMultiEditHandler(): ToolHandler {
           hash: newHash,
           edits_applied: reports.length,
           edits: reports,
+          // The diff the transcript renders as red/green. multi_edit ran in TS
+          // and had both texts in hand but never emitted one, so its rows showed
+          // no change at all — the same gap apply_patch had. See ./unified-diff.
+          diff: unifiedDiff(oldText, content, args.path),
         }),
         durationMs: Math.round(performance.now() - start),
       };

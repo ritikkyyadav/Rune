@@ -360,6 +360,65 @@ describe("what a cited command is worth", () => {
   });
 });
 
+describe("record_evidence — a citation is never a validation error", () => {
+  test("with no brief in play it is acknowledged in one line, against the plan step or the claim", async () => {
+    const log = logWith([["bun test", true, "44/44"]]);
+    const tool = createRecordEvidenceTool(
+      () => undefined,
+      () => log,
+      undefined,
+      () => ({ todos: [{ content: "make the suite green" }] }),
+    );
+    expect(tool.validate({ criterion: 0, command: "bun test" }).valid).toBe(true);
+    expect(tool.validate({ claim: "the suite is green", command: "bun test" }).valid).toBe(true);
+    expect(tool.validate({ command: "bun test" }).valid).toBe(false);
+
+    const byStep = await tool.execute({
+      callId: "c1",
+      toolName: "record_evidence",
+      args: { criterion: 0, command: "bun test" },
+    } as any);
+    expect(byStep.success).toBe(true);
+    expect(byStep.result).toContain('step 1 "make the suite green"');
+    expect(byStep.result).toContain("observed");
+    expect(byStep.result).not.toMatch(/Validation failed|Call read_back first/);
+
+    const byClaim = await tool.execute({
+      callId: "c2",
+      toolName: "record_evidence",
+      args: { claim: "the suite is green", command: "bun test" },
+    } as any);
+    expect(byClaim.success).toBe(true);
+    expect(byClaim.result).toContain('"the suite is green"');
+    expect(byClaim.result).toContain("settles no criterion");
+  });
+
+  test("a claim in words is matched to a numbered criterion by its text", async () => {
+    const ledger = new BriefLedger(brief());
+    const log = logWith([["bun test", true, "44/44"]]);
+    const tool = createRecordEvidenceTool(
+      () => ledger,
+      () => log,
+    );
+    const text = ledger.criteria[1]!.text;
+    const hit = await tool.execute({
+      callId: "c1",
+      toolName: "record_evidence",
+      args: { claim: text, command: "bun test" },
+    } as any);
+    expect(hit.result).toContain("observed");
+    expect(ledger.criteria[1]!.rung).toBe("observed");
+
+    const miss = await tool.execute({
+      callId: "c2",
+      toolName: "record_evidence",
+      args: { claim: "the moon is made of cheese", command: "bun test" },
+    } as any);
+    expect(miss.success).toBe(true);
+    expect(miss.result).toContain("numbered 0-1");
+  });
+});
+
 describe("record_evidence — the model picks the criterion, never the rung", () => {
   test("it cannot upgrade a citation by asking nicely", async () => {
     const b = brief();
@@ -372,7 +431,7 @@ describe("record_evidence — the model picks the criterion, never the rung", ()
 
     // The schema offers no rung field at all — there is nothing to inflate.
     const props = (tool.schema.inputSchema as any).properties;
-    expect(Object.keys(props).sort()).toEqual(["command", "criterion"]);
+    expect(Object.keys(props).sort()).toEqual(["claim", "command", "criterion"]);
 
     const out = await tool.execute({
       callId: "c1",
@@ -515,7 +574,7 @@ describe("record_evidence — the model picks the criterion, never the rung", ()
     expect(ledger.met).toBe(0);
   });
 
-  test("without a brief there is nothing to record against", async () => {
+  test("without a brief the citation is acknowledged, and settles nothing", async () => {
     const tool = createRecordEvidenceTool(
       () => undefined,
       () => logWith([["bun test", true]]),
@@ -525,7 +584,9 @@ describe("record_evidence — the model picks the criterion, never the rung", ()
       toolName: "record_evidence",
       args: { criterion: 0, command: "bun test" },
     } as any);
-    expect(out.result).toContain("read_back first");
+    expect(out.success).toBe(true);
+    expect(out.result).toContain("No read_back criteria are in play");
+    expect(out.result).toContain("settles no criterion");
   });
 });
 

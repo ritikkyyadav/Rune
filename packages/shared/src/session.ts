@@ -315,12 +315,12 @@ export class SessionManager {
     sessionId: string,
     fromSeq: number,
     limit?: number,
-  ): Array<{ seq: number; event: SessionEvent }> {
+  ): Array<{ seq: number; event: SessionEvent; at: string }> {
     const effectiveLimit = limit ?? 999999999;
 
     const rows = this.db
       .prepare(
-        `SELECT seq, payload_json FROM events
+        `SELECT seq, payload_json, created_at FROM events
          WHERE session_id = ? AND seq >= ?
          ORDER BY seq ASC
          LIMIT ?`,
@@ -328,12 +328,28 @@ export class SessionManager {
       .all(sessionId, fromSeq, effectiveLimit) as Array<{
       seq: number;
       payload_json: string;
+      created_at: string;
     }>;
 
+    // `at` is the row's own clock. The retro's silence measure — how long a
+    // turn goes without a new transcript row — is derived from it.
     return rows.map((r) => ({
       seq: r.seq,
       event: JSON.parse(r.payload_json) as SessionEvent,
+      at: r.created_at,
     }));
+  }
+
+  /** Latest keyed checkpoint without loading the parent's full transcript. */
+  getLatestKeyedEvent(sessionId: string, type: string, id: string): SessionEvent | null {
+    const row = this.db
+      .query(
+        `SELECT payload_json FROM events
+      WHERE session_id = ? AND json_extract(payload_json, '$.type') = ?
+      AND json_extract(payload_json, '$.payload.id') = ? ORDER BY seq DESC LIMIT 1`,
+      )
+      .get(sessionId, type, id) as { payload_json: string } | null;
+    return row ? (JSON.parse(row.payload_json) as SessionEvent) : null;
   }
 
   /**

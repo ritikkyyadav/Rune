@@ -39,6 +39,8 @@ export interface AutoSafetyMetrics {
   supervisorScreens: number;
   /** Screens that fired. */
   supervisorFlags: number;
+  /** Allowed actions the supervisor could not take on: queue full, input limit, halt pending. */
+  supervisorSkipped: number;
   /** Reasoned confirmations recorded. */
   supervisorConfirmations: number;
   /** Confirmations that upheld the flag — these are what latch a halt. */
@@ -70,6 +72,7 @@ const EMPTY: AutoSafetyMetrics = {
   decisions: 0,
   supervisorScreens: 0,
   supervisorFlags: 0,
+  supervisorSkipped: 0,
   supervisorConfirmations: 0,
   supervisorConfirmed: 0,
   screenFalsePositiveRate: null,
@@ -138,6 +141,10 @@ export function readAutoSafetyMetrics(
         case "supervisor_reasoned":
           metrics.supervisorConfirmations++;
           if (verdict !== "allow") metrics.supervisorConfirmed++;
+          metrics.legacyOnly = false;
+          break;
+        case "supervisor_skipped":
+          metrics.supervisorSkipped++;
           metrics.legacyOnly = false;
           break;
         case "supervisor_halt":

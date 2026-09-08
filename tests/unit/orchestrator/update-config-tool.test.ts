@@ -14,15 +14,20 @@ import {
 
 let dir: string;
 let configPath: string;
+let oldHome: string | undefined;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "rune-updcfg-"));
   configPath = join(dir, "config.toml");
   process.env.RUNE_CONFIG_PATH = configPath;
+  oldHome = process.env.RUNE_HOME;
+  process.env.RUNE_HOME = dir;
 });
 
 afterEach(() => {
   delete process.env.RUNE_CONFIG_PATH;
+  if (oldHome === undefined) delete process.env.RUNE_HOME;
+  else process.env.RUNE_HOME = oldHome;
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -74,12 +79,22 @@ describe("config-settings catalog", () => {
     expect("error" in normalizeSettingValue(mode, "banana")).toBe(true);
   });
 
-  it("normalizes boolean values and their aliases", () => {
+  it("normalizes the sandbox mode and its historical on/off spellings", () => {
     const sb = resolveSetting("sandbox")!;
-    expect(normalizeSettingValue(sb, "off")).toEqual({ value: "false" });
-    expect(normalizeSettingValue(sb, "ON")).toEqual({ value: "true" });
-    expect(normalizeSettingValue(sb, "disable")).toEqual({ value: "false" });
+    expect(normalizeSettingValue(sb, "off")).toEqual({ value: "off" });
+    expect(normalizeSettingValue(sb, "ON")).toEqual({ value: "auto-allow" });
+    expect(normalizeSettingValue(sb, "disable")).toEqual({ value: "off" });
+    expect(normalizeSettingValue(sb, "regular")).toEqual({ value: "regular" });
     expect("error" in normalizeSettingValue(sb, "maybe")).toBe(true);
+  });
+
+  it("normalizes boolean values and their aliases", () => {
+    const fb = resolveSetting("sandbox_fallback")!;
+    expect(normalizeSettingValue(fb, "off")).toEqual({ value: "false" });
+    expect(normalizeSettingValue(fb, "ON")).toEqual({ value: "true" });
+    expect(normalizeSettingValue(fb, "strict")).toEqual({ value: "false" });
+    expect(normalizeSettingValue(fb, "fallback")).toEqual({ value: "true" });
+    expect("error" in normalizeSettingValue(fb, "maybe")).toBe(true);
   });
 });
 
@@ -99,12 +114,12 @@ describe("update_config tool", () => {
     expect(out.result).toContain("4th gear");
   });
 
-  it("turns the sandbox off and writes a real boolean", async () => {
+  it("turns the sandbox off and writes the mode", async () => {
     const { deps } = fakeDeps();
     const tool = createUpdateConfigTool(deps);
     const out = await tool.execute(call({ setting: "sandbox", value: "off" }));
     expect(out.success).toBe(true);
-    expect(readFileSync(configPath, "utf-8")).toContain("enabled = false");
+    expect(readFileSync(configPath, "utf-8")).toContain('mode = "off"');
     expect(out.result).toContain("full host");
   });
 

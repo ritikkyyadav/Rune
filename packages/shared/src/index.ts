@@ -52,7 +52,17 @@ export {
   effectiveAuthMethods,
   authMethodLabel,
   accountLoginLabel,
+  type ConnectablePreset,
 } from "./providers.js";
+export {
+  type SearchProviderPreset,
+  SEARCH_PROVIDER_PRESETS,
+  getSearchPreset,
+  isSearchProviderId,
+  keyedSearchPresets,
+  searchKeyFromEnv,
+  searchPresetsByRank,
+} from "./search-providers.js";
 export {
   type CredentialBackend,
   type CredentialStore,
@@ -68,6 +78,7 @@ export {
   oauthAccount,
   hasStoredCredential,
   migrateLegacySecrets,
+  resolveSearchCredentials,
 } from "./credential-store.js";
 export {
   type CustomEndpoint,
@@ -94,6 +105,7 @@ export {
   SEARCH_KEY_PRESETS,
   searchKeyStatus,
   applySearchKeysToEnv,
+  searchProviderConnected,
 } from "./secrets.js";
 export { type LastModel, getModelStatePath, loadLastModel, saveLastModel } from "./model-store.js";
 export {
@@ -114,7 +126,38 @@ export {
   mayPersistGear,
   shouldAskAboutFourthGear,
 } from "./prefs-store.js";
-export { loadSavedSandboxState, resolveInitialSandbox, saveSandboxState } from "./sandbox-store.js";
+export {
+  loadSavedSandboxState,
+  resolveInitialSandbox,
+  resolveInitialSandboxPolicy,
+  saveSandboxState,
+  clearSavedSandboxState,
+  forgetSavedSandboxKey,
+  type SavedSandboxState,
+  type ResolveSandboxOptions,
+} from "./sandbox-store.js";
+export {
+  DEFAULT_SANDBOX_POLICY,
+  SANDBOX_MODES,
+  BUILTIN_READ_DENY,
+  BUILTIN_WRITE_ALLOW,
+  BUILTIN_WRITE_DENY,
+  normalizeSandboxMode,
+  sandboxModeLabel,
+  splitShellSegments,
+  commandPatternMatches,
+  commandMatchesAny,
+  isExcludedCommand,
+  stripLeadingAssignments,
+  expandSandboxPath,
+  effectiveSandboxPaths,
+  normalizeSandboxPolicyInput,
+  mergeSandboxPolicy,
+  type SandboxMode,
+  type SandboxPolicy,
+  type SandboxFilesystemPolicy,
+  type SandboxPathLists,
+} from "./sandbox-policy.js";
 export { loadSavedBrowserState, resolveInitialBrowser, saveBrowserState } from "./browser-store.js";
 export {
   type ModelTier,
@@ -178,6 +221,13 @@ export {
   runeTerminalPalette,
   runeAccentHex,
   runeTerminalRoles,
+  type SyntaxRole,
+  type DiffBands,
+  RUNE_DIFF_BANDS,
+  diffBands,
+  RUNE_SYNTAX,
+  SYNTAX_ROLES,
+  syntaxPalette,
   solidOver,
   mixToward,
   hexToRgbTuple,

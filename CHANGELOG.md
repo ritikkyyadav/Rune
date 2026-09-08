@@ -11,6 +11,50 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+### Added
+
+- **The sandbox is a policy, not a switch.** `/sandbox` opens three tabs — **Mode**
+  (`auto-allow` · `regular` · `off`), **Overrides** (allow an unsandboxed retry · strict) and
+  **Config** (excluded commands, filesystem read/write rules) — with text forms for each
+  (`/sandbox mode regular`, `/sandbox override strict`, `/sandbox exclude adb *`,
+  `/sandbox config`) and config keys under `[sandbox]` and `[sandbox.filesystem]`. `regular`
+  keeps commands contained but still prompted; an excluded command runs on the host under the
+  gear's ordinary permission decision; a sandboxed command that fails on a permission error now
+  carries a `sandbox_hint` and may retry once with `unsandboxed: true` (refused under strict).
+  The kernel profile enforces the new lists: Rune's own control surface inside the workspace and
+  `.git/hooks` are denied for writing in every gear, and the path lists reach `rune-tools` from
+  trusted config only. `/config sandbox`, `sandbox_fallback`, `supervisor` and
+  `unsandboxed_shell` are live settings. See `docs/sandbox.md`.
+- **Auto mode has a safe tier for read-only shell commands.** `ls`, `cat`, `grep`, `git status`,
+  `cargo tree`, pipelines of those and `--version`/`--help` of anything run with no reviewer call
+  and no supervisor screen, whatever the sandbox state; a read the risk patterns flag (`cat .env`)
+  keeps the classifier tier, and once injection is suspected reads stop being free.
+  `[permissions.autoMode] safeCommands` extends the set.
+
+### Changed
+
+- **Auto mode no longer prompts for every shell command when the sandbox is off.** The engine
+  used to rewrite every allowed bash call into a high-risk "explicit approval required" prompt the
+  moment the sandbox was off or the machine could not isolate — `ls` included — which is what made
+  "sandbox off + Auto" unusable. A command with no sandbox under it now follows
+  `[permissions.autoMode] unsandboxedShell`: `review` (default) pays one in-path reasoned reviewer
+  call (a reviewer outage becomes a question for an ordinary command, never a deferral of
+  `bun test`; an exfiltration still halts and a publish still comes back as its dry run, whatever
+  the policy), `ask` prompts, `allow` leaves it to the breakers. Excluded commands and fallback
+  retries take the same path.
+- **A denied read inside the workspace is now actually denied.** The Seatbelt profile emitted the
+  read-deny block before the workspace allow, and Seatbelt takes the last matching rule, so
+  `[sandbox.filesystem] denyRead` held for credential stores but not for a path under the
+  workspace. The block now follows every allow; a live test reads a denied file and fails.
+- **The supervisor's scope is a setting, and the default is narrower.**
+  `[permissions.autoMode] supervisor = "unusual"` skips recognized ordinary development work —
+  builds, tests, installs, linters, local git, containers — which the mechanical breakers have
+  already read; `"all"` restores screening everything; `"off"` disables the watcher. On a
+  rate-capped reviewer the supervisor competed with the acting agent for the same quota on every
+  `npm audit`, and nearly a third of its flags did not survive the reasoned pass.
+- **Reading one of Rune's own control files is no longer refused as a guardrail change.** The
+  self-protection breaker fired on `read_file` of a `SKILL.md`; it now applies to writes only.
+
 ### Fixed
 
 - **End-of-turn verification grades what the run wrote, not the whole workspace.** Started in a

@@ -172,14 +172,16 @@ Config sets the defaults for a workspace:
 
 ```toml
 [subagents]
-maxParallel = 4      # concurrent sub-agents; default 8, clamped 1-16
+maxParallel = 3      # shared concurrent delegates; default 3, clamped 1-16
 costCapUsd = 3.0
 deadlineMs = 900000
 ```
 
-`maxParallel` was a hard 8 in the agent loop with no key at all — a reasonable default and an
-unreasonable ceiling, since eight concurrent heavy workers is a lot of money at once and eight
-worktrees is a lot of disk on a small machine.
+`maxParallel` bounds the total number of active `task` and `worker` calls in an engine,
+including calls made inside workflows. Queued calls do not start model requests; cancellation
+removes them from the queue. Change it live with `/config parallel 3`. `/config subagent_budget 1`
+sets the default dollar ceiling for each new delegate. `/config budget 5` limits the shared
+session ledger, including the lead, delegates, compaction, research and reviewers.
 
 An unpriced model contributes 0 to the cost meter, so its effective budget is the deadline. That is
 the correct behaviour: a price nobody knows cannot be capped, and inventing one would be worse.

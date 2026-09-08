@@ -795,17 +795,22 @@ const evictedResultsIdentifiable: EvalTask = {
       };
     }
 
-    // (b) …and the tier must still do its job. Keeping an excerpt is only
-    //     defensible while the excerpt is a small fraction of the body, so
-    //     this guards the fix against becoming "stop evicting". Measured
-    //     against the run's own peak request: the first one carrying an
-    //     eviction must be materially smaller than the largest one sent.
-    const firstEvicted = withEvictions[0];
-    const peak = Math.max(...everySent.map((t) => t.length));
-    if (firstEvicted.length > peak * 0.75) {
+    // (b) Compare the SAME working set before and after eviction. The old
+    // denominator was the largest request actually sent to the provider. The
+    // compactor runs before sending, so that excludes the newly appended tool
+    // results which triggered it: a real 31% reduction could appear to be 21%.
+    // Keep the 25% reclamation bar and require the runtime's durable receipt.
+    const firstEviction = compactions(dbPath, sessionId).find((row) => row.tier === "tool_results");
+    if (
+      !firstEviction ||
+      firstEviction.beforeTokens <= 0 ||
+      firstEviction.afterTokens > firstEviction.beforeTokens * 0.75
+    ) {
       return {
         pass: false,
-        reason: `eviction reclaimed too little: ${firstEvicted.length} chars against a peak of ${peak}`,
+        reason: firstEviction
+          ? `eviction reclaimed too little: ${firstEviction.afterTokens} of ${firstEviction.beforeTokens} working-set tokens remain`
+          : "eviction has no durable before/after measurement",
       };
     }
 

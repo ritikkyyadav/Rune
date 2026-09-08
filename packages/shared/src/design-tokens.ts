@@ -10,16 +10,24 @@
 //   • Guardrail: tests/unit/shared/design-tokens-parity.test.ts pins these
 //                values and the rules they encode.
 //
-// The identity (2026-09-03): one violet, `#A28CF3`, chosen by the founder as
-// the agent's colour, on a near-black ground by default and on near-white
-// paper when the terminal is light. The rules that make a surface read as it
-// does, in the order they bite: ink is not black and the ground is not white;
-// one accent, under 5% of any screen, never carrying running text; three
-// status colours for state and nothing else; every variant DERIVED from the
+// The identity (2026-09-05): Savoir blue, `#0B37E0` — the blue of the Rune
+// mark — on a clean black-and-white ground: near-white paper (`#FAFAFA`) with
+// black ink when the terminal is light, near-black (`#0B0C0D`) with white ink
+// when it is dark. Values taken from the redesigned Savoir brand (savoir.new).
+// The rules that make a surface read as it does, in the order they bite: the
+// chrome is monochrome; ONE accent — the blue — carries the mark and the few
+// critical signals and nothing else, under 5% of any screen and never running
+// text; three status colours for state (and the diff/syntax palette its own,
+// because code is meant to be read in colour); every variant DERIVED from a
 // published value by one rule rather than hand-picked twice.
 //
-// Eleven literal values. Everything else is a function of them — so a change to
-// the brand is a change to eleven lines, and the relationships cannot drift.
+// Blue is a DARK accent, the opposite of the violet it replaced: it is exact
+// on paper (11:1) and must be LIFTED on ink, where `#0B37E0` on near-black is
+// under 2:1. The lift is Savoir's own dark-ground blue, `#3E63FF`, not a value
+// invented here — so the two grounds show one blue with two legible readings.
+//
+// Everything else is a function of these literals — so a change to the brand is
+// a change to a few lines, and the relationships cannot drift.
 //
 // Pure data + pure functions. No dependencies.
 
@@ -90,37 +98,44 @@ export function mixToward(from: string, toward: string, amount: number): string 
 
 export const RUNE_PALETTE = {
   /**
-   * THE accent: the violet of the mark, exact. It is painted as-is on ink (the
-   * default ground). On paper it is a pastel — 2.7:1 against the ground — so
-   * `accentFor("light")` steps it toward the ink by the same rule the status
-   * colours use, until it clears the non-text floor. One published value, two
-   * legible readings, no second hand-picked violet.
+   * THE accent: Savoir blue, the blue of the mark. Exact on paper, where it
+   * clears 11:1 against the ground. `accentFor` returns `accentLift` on ink,
+   * because this value on near-black is under 2:1.
    */
-  accent: "#A28CF3",
+  accent: "#0B37E0",
+  /**
+   * The same blue, one published step brighter, for the near-black ground.
+   * Savoir's own dark-surface blue — white text on it clears 4.5:1 and the
+   * mark reads unmistakably as blue rather than as a dark smudge.
+   */
+  accentLift: "#3E63FF",
 
-  /** Light ground, surface, sunk. Never pure white. */
-  ground: "#FAFAF8",
+  /** Light ground, surface, sunk — near-white paper, from savoir.new. */
+  ground: "#FAFAFA",
   surface: "#FFFFFF",
-  sunk: "#F3F3F1",
-  /** Light ink, in three steps. Never pure black. */
-  ink: "#111318",
-  ink2: "#5B6070",
-  ink3: "#8B909C",
+  sunk: "#F2F2F1",
+  /** Light ink, black in three steps. The chrome is monochrome now, so the
+   *  primary reads as true black on paper. */
+  ink: "#000000",
+  ink2: "#5A5F64",
+  ink3: "#868B90",
   /** The one border colour on paper. */
-  hairline: "#E6E6E2",
+  hairline: "#E3E3E2",
 
-  /** Dark ground, surface, sunk. */
-  groundDark: "#0F1114",
-  surfaceDark: "#15181D",
-  sunkDark: "#0B0D10",
-  /** Dark ink, in three steps. */
-  inkDark: "#E8E9EC",
-  ink2Dark: "#A2A7B3",
-  ink3Dark: "#6C717D",
+  /** Dark ground, surface, sunk — near-black, from savoir.new. */
+  groundDark: "#0B0C0D",
+  surfaceDark: "#131416",
+  sunkDark: "#060607",
+  /** Dark ink, white in three steps. */
+  inkDark: "#FFFFFF",
+  ink2Dark: "#9BA0A5",
+  ink3Dark: "#6A6F74",
   /** The one border colour on ink. */
-  hairlineDark: "#232730",
+  hairlineDark: "#212325",
 
-  /** Status. State only, never decoration, never an accent. */
+  /** Status. State only, never decoration, never the accent — and the one
+   *  place chromatic colour outside the blue survives, because a failed check
+   *  and a diff's removals have to read as themselves. */
   ok: "#1F9D55",
   caution: "#C98A1A",
   danger: "#D2453B",
@@ -198,13 +213,15 @@ export function readableOn(
 export type RuneBaseName = "light" | "dark";
 
 /**
- * The accent for one ground. Exact on ink; on paper, the published violet moved
- * toward the ink in 2% steps until it clears `ACCENT_CONTRAST_FLOOR`.
+ * The accent for one ground. Blue is a DARK accent, so the exact/derived split
+ * is the mirror of the violet it replaced: exact on paper, where `#0B37E0`
+ * clears the non-text floor with room to spare, and the published lift on ink,
+ * where the same blue would read as a dark smudge. Two legible readings of one
+ * blue, both taken from savoir.new rather than derived at render time.
  */
 export function accentFor(base: RuneBaseName): string {
   const p = RUNE_PALETTE;
-  if (base === "dark") return p.accent;
-  return readableOn(p.accent, p.ground, p.ink, ACCENT_CONTRAST_FLOOR);
+  return base === "dark" ? p.accentLift : p.accent;
 }
 
 /**
@@ -220,7 +237,7 @@ export type RuneAccentName = "rune";
 export const RUNE_ACCENT_NAMES: readonly RuneAccentName[] = ["rune"] as const;
 
 export const RUNE_ACCENT_LABELS: Record<RuneAccentName, string> = {
-  rune: "Rune violet",
+  rune: "Rune blue",
 };
 
 /** Raw CSS custom-property values for one ground. */
@@ -280,10 +297,10 @@ function baseFor(base: RuneBaseName): RuneBaseCss {
     hairlineStrong: mixToward(dark ? p.hairlineDark : p.hairline, ink, 0.35),
     accent,
     accentHover: mixToward(accent, dark ? "#FFFFFF" : "#000000", 0.16),
-    // A pastel accent carries ink, never white: white on this violet is under
-    // 3:1 on either ground, while the ink clears 6:1 on both. The accent never
-    // carries running text; a glyph or a label sits on it.
-    onAccent: dark ? p.sunkDark : p.ink,
+    // Blue carries WHITE, both grounds: white clears 5:1 on the lifted blue and
+    // 11:1 on the paper blue, while black on `#0B37E0` is ~2:1. The accent never
+    // carries running text; a glyph, a label, or the person's own words sit on it.
+    onAccent: "#FFFFFF",
     ok: status(p.ok),
     caution: status(p.caution),
     danger: status(p.danger),
@@ -390,4 +407,102 @@ export function runeTerminalRoles(base: RuneBaseName): Record<string, string> {
     line: p.line,
     ground: p.bg,
   };
+}
+
+// ─── The syntax palette ───
+//
+// Code is meant to be read in colour, and the six chrome roles cannot do it:
+// painting keywords in the accent and strings in the status green made every
+// block read as one blue-and-grey texture (the founder's 2026-09-05 verdict:
+// "some kind of NASA program"). So code gets its own palette, kept OUTSIDE
+// `RUNE_PALETTE` on purpose -- the brand palette is pinned verbatim by the
+// parity test and its chromatic budget is one accent plus three status hues;
+// these nine are a reading aid for code, never chrome, never the mark.
+//
+// The values are the VS Code Dark Modern / Light Modern families, which is
+// what the samples the founder pointed at (Claude Code's diffs) actually use:
+// the most widely recognised "code in colour" vocabulary there is, so a Rune
+// diff reads like the editor it came from. Every value clears 4.5:1 as text on
+// its own ground (the parity test measures it), and the two light-ground
+// values that did not in VS Code's own table (type teal, number green) are
+// darkened one step until they do.
+
+export type SyntaxRole =
+  | "keyword"
+  | "type"
+  | "function"
+  | "string"
+  | "number"
+  | "comment"
+  | "property"
+  | "constant"
+  | "decorator";
+
+export const RUNE_SYNTAX: Record<RuneBaseName, Record<SyntaxRole, string>> = {
+  dark: {
+    keyword: "#C586C0",
+    type: "#4EC9B0",
+    function: "#DCDCAA",
+    string: "#CE9178",
+    number: "#B5CEA8",
+    comment: "#6A9955",
+    property: "#9CDCFE",
+    constant: "#569CD6",
+    decorator: "#D7BA7D",
+  },
+  light: {
+    keyword: "#AF00DB",
+    type: "#1E7A93",
+    function: "#795E26",
+    string: "#A31515",
+    number: "#067A4F",
+    comment: "#008000",
+    property: "#001080",
+    constant: "#0000FF",
+    decorator: "#795E26",
+  },
+};
+
+export const SYNTAX_ROLES: readonly SyntaxRole[] = [
+  "keyword",
+  "type",
+  "function",
+  "string",
+  "number",
+  "comment",
+  "property",
+  "constant",
+  "decorator",
+] as const;
+
+/** The syntax palette for one ground. */
+export function syntaxPalette(base: RuneBaseName): Record<SyntaxRole, string> {
+  return RUNE_SYNTAX[base];
+}
+
+// ─── The diff bands ───
+//
+// A changed row in a diff is laid on a band, and an ADDED row is laid on the
+// OPPOSITE ground (the founder's call, 2026-09-05, in two rounds): on ink it
+// is the theme's own white -- the same white the speaker band uses -- and on
+// paper it is the Savoir blue of the mark, the "CONTINUE" button blue. Both
+// are solid, saturated surfaces, so the code on them is painted with the
+// palette that reads there (black-based on the white, white-based on the
+// blue); see theme.ts bandPalette / bandInk. Removals keep a deep red on ink,
+// sampled from the Claude Code diff they pointed at, and a derived pink on
+// paper. Green-for-added was the convention; the founder wanted the change
+// itself to carry the identity.
+export interface DiffBands {
+  added: string;
+  removed: string;
+}
+export const RUNE_DIFF_BANDS: Record<RuneBaseName, DiffBands> = {
+  dark: { added: RUNE_PALETTE.inkDark, removed: "#370603" },
+  light: {
+    added: "#1936D7",
+    removed: mixToward(RUNE_PALETTE.ground, RUNE_PALETTE.danger, 0.13),
+  },
+};
+export function diffBands(base: RuneBaseName): DiffBands {
+  return RUNE_DIFF_BANDS[base];
 }

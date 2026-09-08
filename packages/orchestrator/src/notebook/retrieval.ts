@@ -15,7 +15,13 @@ export interface NotebookBlock {
 
 export function buildNotebookBlock(
   store: NotebookStore,
-  opts: { repoKey: string; stackKey: string; maxTokens?: number },
+  opts: {
+    repoKey: string;
+    stackKey: string;
+    maxTokens?: number;
+    sessionId?: string;
+    cohort?: string;
+  },
 ): NotebookBlock {
   const budgetChars = (opts.maxTokens ?? 600) * CHARS_PER_TOKEN;
   const entries = store.retrieve({ repoKey: opts.repoKey, stackKey: opts.stackKey, limit: 30 });
@@ -31,6 +37,15 @@ export function buildNotebookBlock(
     const line = `- ${scopeTag(e)} ${e.body}\n`;
     if (used + line.length > budgetChars) break;
     used += line.length;
+    // Reserve the same prompt slots in both arms. Withholding advice must
+    // not make room for a different lesson and confound its comparison.
+    if (
+      opts.sessionId &&
+      opts.cohort &&
+      (e.stage === "trial" || !store.trials.evidence(e, opts.cohort).eligible) &&
+      store.trials.assign(e, opts.sessionId, opts.cohort) === "withhold"
+    )
+      continue;
     lines.push(line);
     ids.push(e.id);
   }

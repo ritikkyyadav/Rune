@@ -55,6 +55,10 @@ export interface StepEvidence {
 export interface TodoItem {
   content: string;
   status: TodoStatus;
+  /** Required effect. Clear implementation/check language also establishes a minimum. */
+  kind?: "inspect" | "change" | "verify";
+  /** Why observed activity did not prove this particular step. Harness-owned. */
+  unprovenReason?: string;
   /** Harness-measured evidence; absent on items that never went in progress. */
   evidence?: StepEvidence;
   /**

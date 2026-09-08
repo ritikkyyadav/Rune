@@ -6,6 +6,7 @@ type TodoStatus = (typeof VALID_STATUSES)[number];
 interface TodoItem {
   content: string;
   status: TodoStatus;
+  kind?: "inspect" | "change" | "verify";
 }
 
 export const TODO_WRITE_SCHEMA: ToolSchema = {
@@ -15,12 +16,11 @@ export const TODO_WRITE_SCHEMA: ToolSchema = {
     "Record or replace your plan as a to-do list. This IS the plan: for any task with 3+ steps, " +
     "write the list BEFORE your first file edit, keep exactly one item in_progress, mark items " +
     "completed the moment they are genuinely done, and REWRITE the list whenever the approach " +
-    "changes. The harness measures each step: marking a step completed needs something to have " +
-    "actually happened while it was open (a file written, a command or check run, a file read, " +
-    "a question answered). A completion with nothing behind it, or whose last check FAILED, is " +
-    "refused once with the reason; re-submitting the same list accepts it but shows the step " +
-    "to the user as UNPROVEN rather than done. After a step that wrote files, the harness may " +
-    "run the project's compile check before accepting the step. The list is stored outside the " +
+    "changes. Set kind to inspect, change, or verify. Implementation steps require actual " +
+    "writes; verification steps require a passing check after the latest change. Reading " +
+    "a file does not prove implementation. A compound implementation-and-test step needs " +
+    "both. Insufficient evidence is reported as unproven; strict mode refuses once. " +
+    "The harness may run the project's compile check after writes. The list lives outside the " +
     "conversation and re-shown to you every turn (it survives compaction and resume), and it " +
     "powers the live checklist the user watches. The full list is replaced on each call — " +
     "include every item you want to keep; dropping unfinished steps is noted. Skip it for " +
@@ -37,6 +37,12 @@ export const TODO_WRITE_SCHEMA: ToolSchema = {
             content: {
               type: "string",
               description: "Description of the to-do item.",
+            },
+            kind: {
+              type: "string",
+              enum: ["inspect", "change", "verify"],
+              description:
+                "Required effect: inspect code, change implementation, or verify behavior. Clear step wording also establishes the minimum evidence.",
             },
             status: {
               type: "string",
@@ -78,6 +84,8 @@ export function createTodoWriteHandler(): ToolHandler {
             error: `items[${i}].content is required and must be a non-empty string`,
           };
         }
+        if (obj.kind !== undefined && !["inspect", "change", "verify"].includes(String(obj.kind)))
+          return { valid: false, error: `items[${i}].kind must be inspect, change, or verify` };
         if (!VALID_STATUSES.includes(obj.status as TodoStatus)) {
           return {
             valid: false,

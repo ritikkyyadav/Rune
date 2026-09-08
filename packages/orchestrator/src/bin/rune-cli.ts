@@ -32,8 +32,7 @@ import {
   loadPrefs,
   saveLastModel,
   loadSavedSandboxState,
-  resolveInitialSandbox,
-  saveSandboxState,
+  resolveInitialSandboxPolicy,
   loadSavedBrowserState,
   resolveInitialBrowser,
   saveBrowserState,
@@ -44,6 +43,7 @@ import {
   migrateLegacyHome,
   workspaceConfigPath,
   openCredentialStore,
+  resolveSearchCredentials,
 } from "@rune/shared";
 import type { ProviderName, ResolvedCredential } from "@rune/llm-gateway";
 import { configModeToPermissionMode, resolveStartupPermissionFlags } from "../permissions";
@@ -64,6 +64,8 @@ import {
 import { rmSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import { parseArgs } from "util";
+import { runSettingsCommand } from "../settings-command";
+import { runSandboxCommand } from "../sandbox-command";
 import * as readline from "readline";
 import { renderWelcome } from "./welcome";
 import { TurnRenderer, userBlock, renderReplay } from "./ui/turn";
@@ -278,11 +280,10 @@ if (values.help) {
         `    --trust                      Legacy alias for --gear 3 (workspace trust)\n` +
         `    --classic                    Plain readline prompt (default is the pinned composer)\n` +
         `    --tui                        Force the Codex-style pinned composer\n` +
-        `    --inline                     Legacy layout: transcript in the terminal's own scrollback,\n` +
-        `                                 only the composer pinned (default pins header + composer)\n` +
-        `    --fullscreen                 Accepted, no-op — names the default fixed-chrome layout\n` +
+        `    --fullscreen                 Names the default: the fixed frame, header pinned top + footer pinned bottom\n` +
+        `    --inline                     Opt out: terminal owns scroll/reflow/copy, header + composer trail the output\n` +
         `    --pristine                   Run without the learned tactics notebook (evolution control group)\n` +
-        `    --sandbox / --no-sandbox     Force the OS command sandbox on/off for this run (overrides /sandbox + config)\n` +
+        `    --sandbox / --no-sandbox     Force the OS command sandbox on/off for this run (overrides /sandbox + config; see /sandbox for modes, overrides and exclusions)\n` +
         `    --browser / --no-browser     Force the agent browser (Playwright MCP) on/off for this run (overrides /browser + config)\n` +
         `    -h, --help                   Show this help\n\n`,
     ),
@@ -873,14 +874,24 @@ async function main() {
     model = sticky.model;
   } else {
     // CLI arg first, then config (only if that provider has a key), then auto-detect.
-    if (cliProvider && isCliProvider(cliProvider)) provider = cliProvider;
+    // `--provider` names ANY preset, not only the six the CLI knew by hand: the
+    // roster is thirty-odd hosts now, and `rune --provider mistral` silently
+    // booting into openrouter is the same rot the sticky-model gate had.
+    if (
+      cliProvider &&
+      (isCliProvider(cliProvider) || getPreset(cliProvider) || cliProvider === CUSTOM_PROVIDER_ID)
+    )
+      provider = cliProvider as ProviderName;
     else if (configProvider && isCliProvider(configProvider) && hasCreds(configProvider))
       provider = configProvider;
     else provider = detectBestProvider();
     model =
       (values.model as string | undefined) ??
-      configuredModelForProvider(config, provider) ??
-      DEFAULT_MODELS[provider];
+      (isCliProvider(provider) ? configuredModelForProvider(config, provider) : undefined) ??
+      (isCliProvider(provider) ? DEFAULT_MODELS[provider] : undefined) ??
+      getPreset(provider)?.defaultModel ??
+      secrets.custom?.model ??
+      "";
   }
 
   // Explicit CLI rune flags win over the persisted rune.
@@ -903,7 +914,7 @@ async function main() {
   // project's policy, but between two runs with neither, what the user last
   // chose is the best available answer. Opening on the built-in default instead
   // means re-stating a preference every morning, which is not a preference.
-  const rememberedGear = loadPrefs().gear;
+  const { gear: rememberedGear, search: rememberedSearch } = loadPrefs();
   const { yoloMode, trustWorkspace, permissionMode } = resolveStartupPermissionFlags({
     gearFlag,
     yoloFlag: values.yolo as boolean,
@@ -913,26 +924,31 @@ async function main() {
     configMode: config.permissions?.mode,
     configTrustWorkspace: config.permissions?.trustWorkspace,
   });
-  // Make the [search].provider config visible to the env-based backend selector
-  // used by the web_search tool (keys themselves already come from the env).
-  if (
-    config.search?.provider &&
-    config.search.provider !== "auto" &&
-    !process.env.RUNE_SEARCH_BACKEND &&
-    !process.env.RUNE_SEARCH_BACKEND
-  ) {
-    process.env.RUNE_SEARCH_BACKEND = config.search.provider;
+  // Which search engine answers first: an explicit env var, then config.toml's
+  // `[search] provider`, then the engine `/login` connected most recently
+  // (prefs). The backend selector reads the env per call.
+  if (!process.env.RUNE_SEARCH_BACKEND) {
+    const preferred =
+      config.search?.provider && config.search.provider !== "auto"
+        ? config.search.provider
+        : rememberedSearch;
+    if (preferred) process.env.RUNE_SEARCH_BACKEND = preferred;
   }
-  // Copy saved Tavily/Brave keys into the env so the web_search backends (used
-  // by /research) pick them up; keyless DuckDuckGo remains the fallback.
+  // Copy the connected search engines' keys into the env so the web_search
+  // backends (used by /research too) pick them up; the keychain half is
+  // overlaid below once the store is open. Keyless DuckDuckGo stays the fallback.
   applySearchKeysToEnv();
-  // Sandbox posture: flag > RUNE_SANDBOX_ENABLED env > /sandbox sidecar > config > on.
-  const sandboxEnabled = resolveInitialSandbox({
+  // Sandbox posture: flag > RUNE_SANDBOX_MODE / RUNE_SANDBOX_ENABLED env >
+  // /sandbox sidecar > [sandbox] config > auto-allow. The mode comes from all
+  // of those; the override and the lists come from the sidecar and config.
+  const sandboxPolicy = resolveInitialSandboxPolicy({
     flag: values["no-sandbox"] === true ? false : values.sandbox === true ? true : undefined,
     env: process.env.RUNE_SANDBOX_ENABLED ?? null,
+    envMode: process.env.RUNE_SANDBOX_MODE ?? null,
     saved: loadSavedSandboxState(),
-    configured: config.sandbox?.enabled ?? null,
+    configured: config.sandbox ?? null,
   });
+  const sandboxEnabled = sandboxPolicy.mode !== "off";
   // Browser posture: flag > RUNE_BROWSER_ENABLED env > /browser sidecar > config > off.
   const browserEnabled = resolveInitialBrowser({
     flag: values["no-browser"] === true ? false : values.browser === true ? true : undefined,
@@ -948,6 +964,9 @@ async function main() {
   let credentials: Record<string, ResolvedCredential> = {};
   try {
     const store = await openCredentialStore();
+    // Search engines connected through `/login` live in the same store, under
+    // the same account shape; the keychain outranks secrets.json and the env.
+    applySearchKeysToEnv(process.env, await resolveSearchCredentials(store));
     credentials = await resolveProviderCredentials({
       store,
       keys: buildSavedKeys(config, secrets),
@@ -986,11 +1005,14 @@ async function main() {
     doctrineDelivery: config.llm?.doctrineDelivery,
     effortRouting: config.llm?.effortRouting,
     sandboxEnabled,
+    sandboxMode: sandboxPolicy.mode,
+    sandboxPolicy,
     sandboxRequireOs: config.sandbox?.requireOs === true,
     // Passed through UNSET on purpose: undefined means "decide from the
     // workspace" (P10.1), and `=== true` would have collapsed that to off.
     lspAutoFeedback: config.lsp?.autoFeedback,
     reliability: config.reliability,
+    maxSessionCostUsd: config.cost?.maxSessionUsd,
     // [tools] rateLimit — the tool pacer; `enabled = false` turns it off.
     enableRateLimiting: config.tools?.rateLimit?.enabled,
     rateLimit: config.tools?.rateLimit,
@@ -1191,9 +1213,11 @@ async function main() {
   // ─── Composer mode decision (needed before session resolution) ───
   // The TUI — the focused terminal workbench from docs/design/rune-customizer.html — is the default on
   // interactive terminals, with fixed chrome: a pinned header, a scrolling transcript and a pinned
-  // composer. `--inline` remains the escape hatch for users who value the terminal's own scrollback
-  // over a fixed frame. Piped/non-TTY stdin and `--classic` / RUNE_CLASSIC fall back to the plain
-  // readline prompt; `--tui` / RUNE_TUI force the TUI even past `--classic`.
+  // composer. The fixed frame (header pinned top, footer pinned bottom, only the transcript
+  // scrolls) is the DEFAULT; `--inline` / RUNE_INLINE opts out to native scrollback with a
+  // trailing composer. Piped/non-TTY stdin and
+  // `--classic` / RUNE_CLASSIC fall back to the plain readline prompt; `--tui` / RUNE_TUI force the
+  // TUI even past `--classic`.
   const surface = resolveSurface({
     isTTY: !!process.stdin.isTTY,
     classicForced: (values.classic as boolean) || !!process.env.RUNE_CLASSIC,
@@ -1676,6 +1700,7 @@ async function main() {
   // ─── Slash Command Definitions ───
 
   const SLASH_CMDS: [string, string][] = [
+    ["/config", "Settings — cost, reasoning, agents, sandbox and learning"],
     ["/theme", "Appearance — light | dark | auto"],
     ["/model", "Choose model/provider"],
     ["/sessions", "Browse, resume, rename, archive, or delete sessions"],
@@ -1701,7 +1726,7 @@ async function main() {
     ["/notebook", "Learned tactics active for this workspace"],
     ["/bug", "Flag a problem — records the flight trail to the black box"],
     ["/gear", "Shift gears — /gear 1 | 2 | 3 | 4 | auto (empty shifts up)"],
-    ["/sandbox", "OS sandbox for commands — on | off (off = full access)"],
+    ["/sandbox", "OS sandbox for commands — mode | override | exclude | config"],
     ["/browser", "Agent web browser — on | off (Playwright, headless)"],
     ["/rewind", "Roll back the conversation"],
     ["/help", "Show all commands"],
@@ -2011,6 +2036,13 @@ async function main() {
     // ─── Slash Commands ───
 
     if (!scheduledLoop) {
+      if (/^\/(?:config|settings)(?:\s|$)/.test(input)) {
+        process.stdout.write(
+          (await runSettingsCommand(engine, input.replace(/^\/(?:config|settings)\s*/, ""))) + "\n",
+        );
+        showPrompt();
+        return;
+      }
       if (input === "/") {
         // Bare slash — show all available commands
         process.stdout.write(`  ${bold(text("Commands"))}\n\n`);
@@ -2095,6 +2127,9 @@ async function main() {
               permissionMode: status.permissionMode,
               sandboxEnabled: status.sandboxEnabled,
               sandboxDegraded: status.sandboxDegraded,
+              sandboxMode: status.sandboxMode,
+              sandboxFallback: status.sandboxFallback,
+              sandboxExcluded: status.sandboxExcluded,
               orgPolicy: status.orgPolicy,
               autoMode: status.autoMode,
               registeredProviders: status.registeredProviders,
@@ -2371,10 +2406,11 @@ async function main() {
             `  ${muted("Custom ")}${info("/keys custom <baseUrl> <model> <key>")}${muted(" · providers: ")}${faint(PROVIDER_PRESETS.map((p) => p.id).join(", "))}\n\n`,
           );
 
-          // Web-search backends (used by /research). Not LLM providers — keys live
-          // in the same secrets file and feed the web_search tool via the env.
+          // Web-search engines (used by web_search and /research). Not LLM
+          // providers — keys live in the keychain or the same secrets file and
+          // feed the tool via the env.
           process.stdout.write(
-            `  ${bold(text("Search backends"))} ${faint("· power /research; keyless DuckDuckGo is the fallback")}\n\n`,
+            `  ${bold(text("Search engines"))} ${faint("· power web_search + /research; keyless DuckDuckGo is the fallback")}\n\n`,
           );
           for (const r of searchKeyStatus()) {
             const has = r.source !== "none";
@@ -2385,7 +2421,7 @@ async function main() {
             process.stdout.write(`    ${dot} ${name} ${keyCol} ${src}\n`);
           }
           process.stdout.write(
-            `\n  ${muted("Set ")}${info("/keys set tavily <key>")}${muted(" · ")}${info("/keys set brave <key>")}${muted(" · ")}${info("/keys clear <id>")}\n\n`,
+            `\n  ${muted("Connect ")}${info("/login")}${muted(" → Web search · or ")}${info("/keys set <engine> <key>")}${muted(" · ")}${info("/keys clear <id>")}\n\n`,
           );
         };
 
@@ -3050,19 +3086,14 @@ async function main() {
       }
 
       if (input === "/sandbox" || input.startsWith("/sandbox ")) {
-        const raw = input.slice("/sandbox".length).trim().toLowerCase();
-        if (raw === "on" || raw === "off") {
-          const enabled = raw === "on";
-          engine.setSandboxEnabled(enabled);
-          saveSandboxState(enabled); // sticks across sessions, like /theme
-          process.stdout.write(sandboxModeBanner(enabled) + "\n");
-        } else if (raw) {
-          process.stdout.write(
-            `  ${warn("Usage:")} ${info("/sandbox")} ${dim("[on|off] — empty shows the current state")}\n`,
-          );
-        } else {
-          process.stdout.write(sandboxModeBanner(engine.isSandboxEnabled()) + "\n");
+        const raw = input.slice("/sandbox".length).trim();
+        // The plain CLI has no picker; a bare /sandbox is the status readout
+        // plus the text forms, and /sandbox config is the Config tab.
+        const result = runSandboxCommand(engine, raw);
+        if (result.changed === "mode" || !raw) {
+          process.stdout.write(sandboxModeBanner(engine.getSandboxPolicy().mode) + "\n");
         }
+        process.stdout.write(result.lines.map((l) => `  ${dim(l)}`).join("\n") + "\n");
         showPrompt();
         return;
       }
