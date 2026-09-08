@@ -143,6 +143,17 @@ export interface RetroSummary {
   harnessTalk?: number;
   /** Share of active time ≥30 s without a new row (0-1); absent without a clock. */
   silence?: number;
+  /**
+   * Completions this task spent on Rune's OWN calls — the safety classifier,
+   * the compaction summarizer, the intent read, the sub-agent report repair —
+   * as opposed to the work. `completions` above counts assistant messages and
+   * so counts only the work; this is the number a free tier's rate limit
+   * actually meters. Absent when the run recorded no cost rows, which is "not
+   * measured" and must never be read as zero.
+   */
+  governanceCompletions?: number;
+  /** Every model call the task made, work and governance together. */
+  totalCompletions?: number;
 }
 
 /** The last `retro` event of a session, summarised for the result row. */
@@ -169,6 +180,12 @@ function lastRetro(dbPath: string, sessionId: string): RetroSummary | undefined 
         gates,
         completions: r.completions ?? 0,
         lessons: Array.isArray(r.lessons) ? r.lessons.length : 0,
+        ...(r.callsByRole
+          ? {
+              governanceCompletions: r.callsByRole.governance,
+              totalCompletions: r.callsByRole.total,
+            }
+          : {}),
         ...(r.talk && r.talk.prose > 0 ? { harnessTalk: r.talk.harness / r.talk.prose } : {}),
         ...(r.silence && r.silence.activeMs > 0
           ? { silence: r.silence.quietMs / r.silence.activeMs }
