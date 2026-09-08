@@ -15,7 +15,7 @@ export type {
   McpServerInfo,
   McpServerCapabilities,
 } from "./types";
-export { McpUnauthorizedError } from "./transport";
+export { McpUnauthorizedError, McpHttpStatusError } from "./transport";
 export type { McpAuthProvider } from "./transport";
 export {
   McpOAuth,
@@ -68,6 +68,8 @@ export {
 } from "./resources";
 export type { McpPromptCommand, ResourceRegistry } from "./resources";
 export { validateAgainstSchema } from "./validate";
+export { preflightServer, nearestExistingPath, resolveCommand, looksLikePath } from "./preflight";
+export type { McpPreflightProblem } from "./preflight";
 export type {
   McpResource,
   McpResourceContents,

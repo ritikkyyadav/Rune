@@ -221,6 +221,24 @@ export interface McpAuthProvider {
   reload?(): Promise<void>;
 }
 
+/**
+ * A non-2xx answer from an HTTP MCP endpoint, carrying its status.
+ *
+ * The status is the whole point. A bare `Error("MCP HTTP 404: …")` forced
+ * every caller that wanted to react to a status to parse the sentence back
+ * apart, which is why the legacy-SSE fallback below was described in a comment
+ * and never built: nothing upstream could tell a 404 from a 500.
+ */
+export class McpHttpStatusError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+  ) {
+    super(message);
+    this.name = "McpHttpStatusError";
+  }
+}
+
 /** Thrown when a connector needs an interactive login before it can be used. */
 export class McpUnauthorizedError extends Error {
   constructor(
@@ -334,7 +352,10 @@ export class HttpTransport implements McpTransport {
 
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      throw new Error(`MCP HTTP ${res.status}${text ? `: ${text.slice(0, 200)}` : ""}`);
+      throw new McpHttpStatusError(
+        `MCP HTTP ${res.status}${text ? `: ${text.slice(0, 200)}` : ""}`,
+        res.status,
+      );
     }
 
     const contentType = res.headers.get("content-type") ?? "";

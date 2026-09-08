@@ -199,8 +199,13 @@ export {
   describeResources,
   validateAgainstSchema,
   READ_RESOURCE_TOOL,
+  preflightServer,
+  nearestExistingPath,
+  resolveCommand,
+  looksLikePath,
 } from "./mcp/index";
 export type {
+  McpPreflightProblem,
   McpPromptCommand,
   ResourceRegistry,
   McpResource,

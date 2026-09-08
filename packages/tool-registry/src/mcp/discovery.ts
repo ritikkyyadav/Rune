@@ -67,6 +67,9 @@ export interface McpServerStatus {
   name: string;
   ready: boolean;
   kind: "stdio" | "http";
+  /** The protocol dialect actually in use — `http` covers two incompatible
+   *  ones, and a connector that fell back to 2024-11-05 SSE should say so. */
+  dialect?: "stdio" | "http" | "sse";
   toolCount: number;
   tools: string[];
   health: "healthy" | "degraded" | "down";
@@ -196,13 +199,93 @@ export class McpDiscovery {
     return this.oauthProviders.get(name);
   }
 
-  /** Re-handshake one connector after an interactive sign-in. */
+  /**
+   * Re-handshake one connector after an interactive sign-in — or start it for
+   * the first time.
+   *
+   * The second half is what `/mcp reconnect` needs and what this never had: a
+   * server whose command was missing when the session opened has NO client, so
+   * the old version answered "false" forever and the only cure for a fixed
+   * typo was restarting Rune.
+   */
   async reconnect(name: string): Promise<boolean> {
     const entry = this.clients.get(name);
-    if (!entry) return false;
-    const ok = await entry.client.reconnect();
-    if (ok) this.reindexServer(name, entry.client, entry.autoApprove);
-    return ok;
+    if (entry) {
+      const ok = await entry.client.reconnect();
+      if (ok) this.reindexServer(name, entry.client, entry.autoApprove);
+      return ok;
+    }
+    const config = this.configuredServers()[name];
+    if (!config) return false;
+    return this.startServer(name, config);
+  }
+
+  /** Built-ins beneath, `mcp.json` on top — the same merge `discover()` uses. */
+  private configuredServers(): Record<string, McpServerConfig> {
+    const { servers: scoped, errors } = mergedServers(this.workspaceRoot);
+    for (const e of errors) this.logger.error(e);
+    const configured: Record<string, McpServerConfig> = {};
+    for (const entry of scoped) configured[entry.name] = entry.config;
+    return { ...(this.options.extraServers ?? {}), ...configured };
+  }
+
+  /**
+   * Start one server and index its tools. Returns false (never throws) when it
+   * is disabled, misconfigured, or refuses to start; the reason is recorded so
+   * `getStatus()` can say it.
+   */
+  private async startServer(name: string, raw: McpServerConfig): Promise<boolean> {
+    const missing = new Set<string>();
+    const serverConfig = interpolateEnv(raw, missing);
+    if (missing.size > 0) {
+      this.logger.warn(`server "${name}": unset env var(s) ${[...missing].join(", ")}`);
+    }
+
+    const kind: "stdio" | "http" =
+      serverConfig.type === "http" || serverConfig.url ? "http" : "stdio";
+
+    // A disabled entry stays on file and out of the session: the point of
+    // `rune mcp disable` is to stop paying for a connector without losing the
+    // configuration that took a sign-in to produce.
+    if (serverConfig.enabled === false) return false;
+
+    const invalid = validateServer(serverConfig);
+    if (invalid) {
+      this.serverErrors.set(name, { error: invalid, kind });
+      this.logger.error(`server "${name}" misconfigured: ${invalid}`);
+      return false;
+    }
+
+    try {
+      const autoApprove = makeAutoApprove(serverConfig.autoApprove);
+      const client = new McpClient({
+        name,
+        type: serverConfig.type,
+        command: serverConfig.command,
+        args: serverConfig.args,
+        env: serverConfig.env,
+        url: serverConfig.url,
+        headers: serverConfig.headers,
+        auth: await this.oauthFor(name, serverConfig),
+        onElicit: this.options.onElicit,
+        logger: this.logger,
+        onEvent: this.options.onEvent,
+        onToolsChanged: () => this.handleServerToolsChanged(name),
+      });
+
+      await client.start();
+      this.clients.set(name, { client, autoApprove });
+      this.serverErrors.delete(name);
+      client.startHealthChecks();
+      this.reindexServer(name, client, autoApprove);
+      return client.isReady;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.serverErrors.set(name, { error: msg, kind });
+      this.logger.error(`failed to start server "${name}": ${msg}`);
+      this.options.onEvent?.({ type: "server-down", server: name, reason: msg });
+      return false;
+    }
   }
 
   /**
@@ -212,69 +295,13 @@ export class McpDiscovery {
    * the session.
    */
   async discover(): Promise<ToolHandler[]> {
-    // Two scopes, workspace winning on collision (see config-file.ts).
-    const { servers: scoped, errors } = mergedServers(this.workspaceRoot);
-    for (const e of errors) this.logger.error(e);
-    const configured: Record<string, McpServerConfig> = {};
-    for (const entry of scoped) configured[entry.name] = entry.config;
-    // Built-ins first, then configured — so a user entry with the same name
-    // (e.g. their own "browser" server) replaces the built-in spec.
-    const servers: Record<string, McpServerConfig> = {
-      ...(this.options.extraServers ?? {}),
-      ...configured,
-    };
+    // Built-ins beneath, `mcp.json` on top — so a user entry with the same
+    // name (e.g. their own "browser" server) replaces the built-in spec.
+    // Two scopes inside that, workspace winning on collision (config-file.ts).
+    const servers = this.configuredServers();
     if (Object.keys(servers).length === 0) return [];
-
     for (const [name, raw] of Object.entries(servers)) {
-      const missing = new Set<string>();
-      const serverConfig = interpolateEnv(raw, missing);
-      if (missing.size > 0) {
-        this.logger.warn(`server "${name}": unset env var(s) ${[...missing].join(", ")}`);
-      }
-
-      const kind: "stdio" | "http" =
-        serverConfig.type === "http" || serverConfig.url ? "http" : "stdio";
-
-      // A disabled entry stays on file and out of the session: the point of
-      // `rune mcp disable` is to stop paying for a connector without losing
-      // the configuration that took a sign-in to produce.
-      if (serverConfig.enabled === false) continue;
-
-      const invalid = validateServer(serverConfig);
-      if (invalid) {
-        this.serverErrors.set(name, { error: invalid, kind });
-        this.logger.error(`server "${name}" misconfigured: ${invalid}`);
-        continue;
-      }
-
-      try {
-        const autoApprove = makeAutoApprove(serverConfig.autoApprove);
-        const client = new McpClient({
-          name,
-          type: serverConfig.type,
-          command: serverConfig.command,
-          args: serverConfig.args,
-          env: serverConfig.env,
-          url: serverConfig.url,
-          headers: serverConfig.headers,
-          auth: await this.oauthFor(name, serverConfig),
-          onElicit: this.options.onElicit,
-          logger: this.logger,
-          onEvent: this.options.onEvent,
-          onToolsChanged: () => this.handleServerToolsChanged(name),
-        });
-
-        await client.start();
-        this.clients.set(name, { client, autoApprove });
-        this.serverErrors.delete(name);
-        client.startHealthChecks();
-        this.reindexServer(name, client, autoApprove);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        this.serverErrors.set(name, { error: msg, kind });
-        this.logger.error(`failed to start server "${name}": ${msg}`);
-        this.options.onEvent?.({ type: "server-down", server: name, reason: msg });
-      }
+      await this.startServer(name, raw);
     }
     return this.getHandlers();
   }
@@ -397,6 +424,7 @@ export class McpDiscovery {
         name,
         ready: client.isReady,
         kind: client.kind,
+        dialect: client.dialect,
         toolCount: client.getTools().length,
         tools: client.getTools().map((t) => t.name),
         health: client.getServerHealth().status,
