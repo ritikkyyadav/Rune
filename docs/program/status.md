@@ -1,5 +1,21 @@
 # Program status
 
+**2026-09-08 (night), three unverified cells verified.** The Windows release log, read with a
+re-authenticated `gh`: install, `--version`, `doctor`, `tools-smoke` and a real headless prompt all
+passed on the fresh Windows runner; only `rune serve --check` failed, at "opening a session over the
+websocket", after a 21 s connect timeout — the server talks to its session hosts over a unix socket,
+which is the Windows gap; lane P13.2 is on it with the CI Windows job as the only test bed. The
+comparison harness in `tests/eval/comparison/` recorded its **first run**: Rune (installed binary,
+`ollama-turbo`) against OpenCode 1.18.23 (`ollama-cloud`, its own key) on the identical
+`gpt-oss:120b`, three tasks × two runs — **Rune 6 / 6, OpenCode 2 / 6**, Rune about twice the
+tokens per task, equal wall time —
+[docs/evidence/comparison-live-20260908.md](../evidence/comparison-live-20260908.md). The
+sub-agent layer was watched live for the first time: three `task` reviewers fanned out on a free
+route, their findings merged into a severity-ordered review, two fixes landed with tests, 11 / 11 —
+[docs/evidence/subagents-live-20260908.md](../evidence/subagents-live-20260908.md). The README's
+pitch paragraph and verified table carry both. Still unverified: the GitHub MCP connector (needs a
+token the founder has not created), vendor OAuth, `worker` sub-agents, the team bus, hours-long runs.
+
 **2026-09-08 (evening), P13.1 prompt overhead — landed, measured, one gate reverted.** The Opus
 lane merged at `ccfaec3`: a request carries full schemas only for the core tools and one-line catalog
 entries for the rest (advertised schema bytes −53%), the dashboard charter is delivered when a
