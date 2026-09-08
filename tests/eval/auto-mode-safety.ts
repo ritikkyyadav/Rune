@@ -24,6 +24,8 @@ import {
   buildGateway,
   resolveProviderCredentials,
 } from "../../packages/orchestrator/src/provider-registry";
+import { setSandboxCapability } from "../../packages/tool-registry/src/sandbox-capability";
+import { setSandboxMode } from "../../packages/tool-registry/src/sandbox-mode";
 
 import {
   SCENARIOS,
@@ -57,12 +59,28 @@ import {
  * `--offline` runs the whole corpus against a dead reviewer. That is the
  * regression guard for the 22-minute fail-closed outage, and it is the pass
  * that runs on every change: no key, no network, no quota.
+ *
+ * The corpus models a contained machine (sandbox on, Seatbelt present) unless
+ * `--uncontained` is passed, which measures the host-shell fail-closed path
+ * instead. The two are different measurements and are never compared to one
+ * baseline.
  */
 
 // ─── Options ───
 
 interface Options {
   offline: boolean;
+  /**
+   * Model a machine with no OS sandbox under the shell. The default models a
+   * contained machine (Seatbelt or bwrap present, sandbox on), which is what
+   * the corpus was labelled against: every "medium shell" row expects the
+   * supervised tier to let ordinary work run. Since 2026-09-07 an uncontained
+   * shell routes every writable command to the reviewer instead, and with the
+   * reviewer dead that is a question, not an allow — a different measurement,
+   * taken on purpose with this flag rather than by accident of the eval process
+   * never having probed `rune-tools sandbox-check`.
+   */
+  uncontained: boolean;
   json: boolean;
   compare: boolean;
   list: boolean;
@@ -92,6 +110,7 @@ function parseOptions(argv: string[]): Options {
   };
   return {
     offline: flag("offline"),
+    uncontained: flag("uncontained"),
     json: flag("json"),
     compare: flag("compare"),
     list: flag("list"),
@@ -486,6 +505,24 @@ async function main(): Promise<void> {
   const scenarios = opts.limit ? SCENARIOS.slice(0, opts.limit) : SCENARIOS;
   const summary = corpusSummary();
 
+  // ── The machine the corpus runs on ──
+  //
+  // Auto mode's shell decision reads two process-wide facts: the sandbox mode
+  // the user chose and the isolation backend the machine has. Neither is
+  // probed here (no engine starts, no `rune-tools` runs), so both are stated,
+  // and stated the same way on every machine that runs the corpus — otherwise
+  // the score would depend on whether the eval happened inside another
+  // sandbox, which is exactly how a 25-point precision drop was once read as a
+  // regression of the classifier.
+  const machine = opts.uncontained ? "uncontained (sandbox off)" : "contained (seatbelt)";
+  if (opts.uncontained) {
+    setSandboxMode("off");
+    setSandboxCapability({ mechanism: "none", osIsolation: false });
+  } else {
+    setSandboxMode("auto-allow");
+    setSandboxCapability({ mechanism: "seatbelt", osIsolation: true });
+  }
+
   // ── Reviewer selection ──
   //
   // The old runner built its gateway with `keys: {}` and no credential map,
@@ -542,6 +579,7 @@ async function main(): Promise<void> {
     classifier = metered;
     credentialNote = `live: ${provider}/${model}, budget ${opts.maxRequests} requests`;
   }
+  credentialNote = `${credentialNote} · machine: ${machine}`;
 
   const controller = new AutoModeSafetyController(
     resolveAutoModeConfig({
