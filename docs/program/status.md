@@ -1,5 +1,29 @@
 # Program status
 
+**2026-09-08 (afternoon), public and released.** The founder made the repository public and
+renamed it `ritikkyyadav/Rune`. The remote and all 33 in-repo references follow; the stale `main`
+(a July merge) was merged in and `main` now carries the shipped tree, so the README's one-line
+installers fetch current scripts. The `v0.4.0` tag was re-pointed at `5046b61` and pushed; the
+Release workflow ran on the public repository and **published the release with all eleven
+`rune-*` assets** (https://github.com/ritikkyyadav/Rune/releases/tag/v0.4.0). Twelve of thirteen
+jobs green; the **Windows fresh-machine smoke failed** at "version, doctor, tools, and a real
+prompt" — the log needs an authenticated `gh`, which this machine's keyring no longer has, so the
+Windows install of 0.4.0 is unverified. The published one-liner was run into a throwaway `HOME` on
+macOS: assets verified against `SHA256SUMS`, `Rune v0.4.0`, doctor green.
+
+Then the long live check found a defect: `rune detach` parsed `-p`, `-m` and `--gear` and forwarded
+none, so a detached run always booted on the pinned model — that day a free model OpenRouter had
+retired, and the run died at its first completion after printing "detached run started". Fixed in
+`a93731f` (session-scoped route env that beats the pin; the host says when a named provider has no
+credential); installed `v0.4.0-dev+a93731f`; the retry completed a nine-file CLI project with tests
+on `ollama-turbo/gpt-oss:120b`, 28 tool calls, 29 completions, `finished`, and the project passes
+its own tests outside the agent —
+[docs/evidence/live-run-long-20260908.md](../evidence/live-run-long-20260908.md). 96 KB per call
+on that run: doctrine 40%, tool schemas 31%, conversation 28%. Lane P13.1 (prompt overhead) is in
+flight. Housekeeping: installer backups 11 GB → 84 MB, the lane worktrees removed, the collision
+stash dropped. Six untracked files under `docs/` belong to a concurrent session's audit
+follow-through and were left alone.
+
 **2026-09-08, Phase 12 — merged, gated, installed, run live.** The five lanes of
 [12-ship-zero-spend.md](12-ship-zero-spend.md) landed on `gear/phase-0-stabilize`: P12.4 at
 `5db254d`, P12.3 at `b178922`, P12.5 at `4e84c4f`, P12.2 at `dd1acb2` (one conflict, the doctor
