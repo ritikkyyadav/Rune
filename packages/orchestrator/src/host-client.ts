@@ -83,6 +83,14 @@ export class HostClient {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        // A connect that opened and then failed the handshake must not leave
+        // its socket behind: the callers retry this for twenty seconds, and
+        // twenty abandoned sockets is a leak nobody would think to look for.
+        try {
+          client?.close();
+        } catch {
+          /* already gone */
+        }
         reject(err instanceof Error ? err : new Error(String(err)));
       }
 
