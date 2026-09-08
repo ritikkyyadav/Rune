@@ -59,7 +59,8 @@ function keyedProviderCount(): number {
  * "how do I let it look things up?".
  */
 export function routeChoices(): RouteChoice[] {
-  const more = Math.max(0, keyedProviderCount() - 4);
+  // Three named on the hint (the free ones), so the count is of the rest.
+  const more = Math.max(0, keyedProviderCount() - 3);
   return [
     {
       id: "subscription",
@@ -69,12 +70,15 @@ export function routeChoices(): RouteChoice[] {
     {
       id: "api_key",
       label: "API key",
-      hint: `paste a key from OpenAI, Anthropic, Google, Mistral and ${more} more`,
+      // The free tiers are named here, at level 1, because that is where
+      // someone with no budget decides whether this is going to cost them
+      // anything. Inside, the free routes are the top rows.
+      hint: `free tiers first -- OpenRouter, Google, ollama.com -- then ${more} paid hosts`,
     },
     {
       id: "offline",
       label: "Offline",
-      hint: "Ollama, LM Studio, vLLM or llama.cpp on this machine",
+      hint: "free, on your own machine: Ollama, LM Studio, vLLM or llama.cpp",
     },
     {
       id: "search",
@@ -116,6 +120,45 @@ const OFFLINE_HINTS: Record<string, string> = {
   ollama: "localhost:11434 - models you have pulled",
 };
 
+/**
+ * The routes someone with no budget can start on tonight, and the word this
+ * list uses for each.
+ *
+ * Two things could have answered "which of these is free" and neither does.
+ * `PROVIDER_CAPACITY` answers a different question -- what the gateway should
+ * fall back to MID-TASK -- and for that purpose Google is `funded`, because a
+ * funded run uses a paid Google key. And a `:free` model id only marks the
+ * model, not the route. So this table is its own small fact: Google's AI Studio
+ * tier and GitHub Models are free to sign up for, OpenRouter and ollama.com
+ * publish free model ids, and Ollama is your own machine.
+ *
+ * It exists because the first list a new user reads used to open with four
+ * providers that all need a funded key. On the machine this was built on there
+ * is no budget at all, which is the ordinary case, not the edge one.
+ */
+const FREE_TIER: Record<string, string> = {
+  openrouter: "free models",
+  "ollama-turbo": "free tier",
+  google: "free tier",
+  "github-models": "free tier",
+  ollama: "free, local",
+};
+
+/** True when a person with no budget can get a first answer out of this route. */
+export function isFreeRoute(id: string): boolean {
+  return FREE_TIER[id] !== undefined;
+}
+
+/**
+ * The label with its free marker, if it has one. A suffix on the label is
+ * purely textual -- the picker renders `label` and `hint` in the columns it
+ * already has, so nothing about the layout moves.
+ */
+function markFree(id: string, label: string): string {
+  const word = FREE_TIER[id];
+  return word ? `${label} (${word})` : label;
+}
+
 /** True for a provider whose account login IS a paid plan (not a key mint). */
 function isAccountLogin(id: string, auth: AuthMethod[]): boolean {
   return (auth.includes("oauth") || auth.includes("device")) && accountLoginLabel(id) !== undefined;
@@ -156,7 +199,7 @@ export function loginTargets(route: LoginRoute, opts: LoginTargetOpts = {}): Log
       if (!isAccountLogin(preset.id, auth)) continue;
       out.push({
         providerId: preset.id,
-        label: SUBSCRIPTION_LABELS[preset.id] ?? descriptor.label,
+        label: markFree(preset.id, SUBSCRIPTION_LABELS[preset.id] ?? descriptor.label),
         hint: SUBSCRIPTION_HINTS[preset.id] ?? "sign in with your account",
         method: auth.includes("oauth") ? "oauth" : "device",
         connected: isConnected(preset.id),
@@ -166,7 +209,7 @@ export function loginTargets(route: LoginRoute, opts: LoginTargetOpts = {}): Log
       if (preset.local || !auth.includes("api_key")) continue;
       out.push({
         providerId: preset.id,
-        label: descriptor.label,
+        label: markFree(preset.id, descriptor.label),
         // The wider roster carries a one-line pitch; the frontier labs need
         // none, and for them the env var is the more useful thing to say.
         hint: preset.tagline
@@ -182,7 +225,7 @@ export function loginTargets(route: LoginRoute, opts: LoginTargetOpts = {}): Log
       if (!preset.local) continue;
       out.push({
         providerId: preset.id,
-        label: descriptor.label,
+        label: markFree(preset.id, descriptor.label),
         hint: OFFLINE_HINTS[preset.id] ?? "a local endpoint on this machine",
         method: "local",
         connected: true, // local runtimes need no credential to be usable
@@ -206,12 +249,19 @@ export function loginTargets(route: LoginRoute, opts: LoginTargetOpts = {}): Log
     });
   }
 
-  // Subscriptions read best in the order people are likely to hold them; the
-  // key list reads best with the frontier labs first. PROVIDER_PRESETS is
-  // already in that order, so only the account-login route needs a nudge: a
+  // Subscriptions read best in the order people are likely to hold them, so a
   // plain key mint (OpenRouter) is not a subscription and goes last.
   if (route === "subscription") {
     out.sort((a, b) => rank(a.providerId) - rank(b.providerId));
+  } else if (route === "api_key") {
+    // The key list used to open with the frontier labs, inheriting
+    // PROVIDER_PRESETS' order. That is the right order for someone with a
+    // budget and the wrong one for everyone else: the first four rows a new
+    // user read all needed a funded account, and the routes they could
+    // actually start on tonight were somewhere below the fold. Free tiers
+    // lead; within each group the roster's own order is untouched, because
+    // Array#sort is stable.
+    out.sort((a, b) => Number(isFreeRoute(b.providerId)) - Number(isFreeRoute(a.providerId)));
   }
   return out;
 }

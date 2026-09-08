@@ -17,6 +17,7 @@ import {
   routeChoices,
   loginTargets,
   connectedSummary,
+  isFreeRoute,
 } from "../../../packages/orchestrator/src/bin/ui/login-picker";
 import { searchPresetsByRank } from "../../../packages/shared/src/search-providers";
 
@@ -37,11 +38,19 @@ describe("the first question", () => {
     ]);
   });
 
-  test("the API-key route says how wide the roster is", () => {
+  test("the API-key route names the free tiers first, then how wide the roster is", () => {
     const hint = routeChoices().find((r) => r.id === "api_key")!.hint;
-    expect(hint).toMatch(/and \d+ more/);
-    const more = Number(hint.match(/and (\d+) more/)![1]);
+    // Someone with no budget decides at level 1 whether this is going to cost
+    // them anything, so the free routes are named before the count.
+    expect(hint).toContain("free tiers first");
+    expect(hint.indexOf("OpenRouter")).toBeLessThan(hint.indexOf("paid"));
+    expect(hint).toMatch(/then \d+ paid hosts/);
+    const more = Number(hint.match(/then (\d+) paid hosts/)![1]);
     expect(more).toBeGreaterThanOrEqual(20);
+  });
+
+  test("the offline route says it is free", () => {
+    expect(routeChoices().find((r) => r.id === "offline")!.hint).toContain("free");
   });
 
   test("every route explains itself without jargon", () => {
@@ -114,8 +123,25 @@ describe("the API-key route", () => {
     expect(list.length).toBeGreaterThanOrEqual(30);
   });
 
-  test("the frontier labs still come first, before the alphabetical block", () => {
-    expect(ids("api_key").slice(0, 4)).toEqual(["anthropic", "openai", "openrouter", "google"]);
+  test("free tiers lead the key list, then the frontier labs in roster order", () => {
+    // The list used to open with four rows that all need a funded account. On
+    // a machine with no budget — the ordinary case — those are the four rows
+    // that cannot answer a prompt tonight.
+    const list = ids("api_key");
+    expect(list.slice(0, 4)).toEqual(["openrouter", "google", "ollama-turbo", "github-models"]);
+    // Within each group the roster's own order survives: the sort is stable,
+    // so the frontier labs still lead the paid block in their old order.
+    const paid = list.filter((id) => !isFreeRoute(id));
+    expect(paid.slice(0, 2)).toEqual(["anthropic", "openai"]);
+  });
+
+  test("a free route is marked in its label, and a paid one is not", () => {
+    const targets = loginTargets("api_key");
+    expect(targets.find((t) => t.providerId === "openrouter")!.label).toContain("free");
+    expect(targets.find((t) => t.providerId === "google")!.label).toContain("free tier");
+    expect(targets.find((t) => t.providerId === "anthropic")!.label).not.toContain("free");
+    // Local runtimes carry it too, on the offline route.
+    expect(loginTargets("offline").find((t) => t.providerId === "ollama")!.label).toContain("free");
   });
 
   test("names the env var, so an existing key is discoverable rather than re-typed", () => {
