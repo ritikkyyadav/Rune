@@ -191,6 +191,7 @@ import {
 } from "./theme";
 import { formatCostReport } from "../../cost-report";
 import { glyph } from "./glyphs";
+import { mcpPanel } from "./mcp-panel";
 import { saveTheme } from "./theme-store";
 import { buildPermissionPreview, type PermissionPreview } from "./permission-preview";
 import { FoldLedger, type FoldRegion } from "./folds";
@@ -941,7 +942,7 @@ class Tui {
       { name: "/loop", desc: "Repeat a prompt while this session stays open" },
       { name: "/loops", desc: "List and manage this session's loops" },
       { name: "/team", desc: "Other Rune instances here -- status | send | claim | intent" },
-      { name: "/mcp", desc: "Connected MCP servers and tools" },
+      { name: "/mcp", desc: "MCP connectors -- health, tool count | reconnect <server>" },
       { name: "/skills", desc: "Browse or search available skills" },
       { name: "/memory", desc: "System memory -- your evergreen profile" },
       { name: "/notebook", desc: "Learned tactics for this workspace" },
@@ -2501,28 +2502,21 @@ class Tui {
         this.openKeys();
         return true;
       case "mcp": {
-        const servers = await engine.listMcpServers();
-        const lines = [`  ${bold(text("MCP servers"))}`];
-        if (servers.length === 0) {
-          lines.push(
-            `    ${muted("None configured. Add servers in ")}${info(".rune/mcp.json")}${muted(".")}`,
-          );
-        } else {
-          for (const server of servers) {
-            const dot =
-              server.health === "healthy"
-                ? ok(glyph("live"))
-                : server.health === "degraded"
-                  ? warn(glyph("live"))
-                  : faint("o");
-            lines.push(
-              `    ${dot} ${text(server.name)} ${muted(`(${server.kind}, ${server.toolCount} tools)`)}`,
-            );
-            if (server.tools.length) lines.push(`      ${faint(server.tools.join(", "))}`);
-            if (server.lastError) lines.push(`      ${warn("!")} ${faint(server.lastError)}`);
+        const [verb, who] = arg.split(/\s+/, 2);
+        if (verb === "reconnect") {
+          if (!who) {
+            this.print(`  ${muted("usage: /mcp reconnect <server>")}`);
+            return true;
           }
+          const back = await engine.reconnectMcpServer(who);
+          this.print(
+            back
+              ? `  ${ok(glyph("verified"))} ${text(who)} ${muted("reconnected")}`
+              : `  ${warn(glyph("retry"))} ${text(who)} ${muted("did not come back —")} ${info("rune mcp doctor")}`,
+          );
+          return true;
         }
-        this.print(lines.join("\n"));
+        this.print(mcpPanel(await engine.listMcpServers()));
         return true;
       }
       case "skills": {
