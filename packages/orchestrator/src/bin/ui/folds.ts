@@ -61,6 +61,23 @@ export class FoldLedger {
     this.regions = [];
   }
 
+  /**
+   * The buffer replaced rows [start, start + remove) with `insert` rows -- a
+   * block amended in place. Regions inside that range belonged to the old
+   * form and are forgotten (the amended block registers its own fold, if it
+   * has one); regions below move by the difference.
+   */
+  replaceRange(start: number, remove: number, insert: number): void {
+    const delta = insert - remove;
+    this.regions = this.regions.filter(
+      (region) => !(region.start >= start && region.start < start + remove),
+    );
+    if (delta === 0) return;
+    for (const region of this.regions) {
+      if (region.start >= start + remove) region.start += delta;
+    }
+  }
+
   /** The region that owns buffer row `index`, if any. */
   at(index: number): FoldRegion | undefined {
     return this.regions.find(

@@ -4,6 +4,7 @@ import {
   type SessionRowView,
 } from "../../../packages/orchestrator/src/bin/ui/composer";
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
+import { glyph } from "../../../packages/orchestrator/src/bin/ui/glyphs";
 
 function rows(n: number): SessionRowView[] {
   return Array.from({ length: n }, (_, i) => ({
@@ -29,6 +30,16 @@ describe("ui/composer renderSessionsPanel", () => {
     const r = renderSessionsPanel(rows(4), 2, { view: "active", pendingDelete: false }, 80);
     expect(stripAnsi(r.lines[r.caretRow])).toContain("›");
     expect(stripAnsi(r.lines[r.caretRow])).toContain("session 3");
+  });
+
+  it("paints the selected row as one full-width band, title through time", () => {
+    const r = renderSessionsPanel(rows(4), 2, { view: "active", pendingDelete: false }, 80);
+    const on = stripAnsi(r.lines[r.caretRow]!);
+    const off = stripAnsi(r.lines[r.caretRow - 1]!);
+    // The band is padded to the panel's full measure, never just to its text,
+    // so it reaches the right edge on every row regardless of title length.
+    expect(on.length).toBeGreaterThanOrEqual(off.trimEnd().length);
+    expect(on.length).toBe(Math.max(...r.lines.map((l) => stripAnsi(l).length)));
   });
 
   it("shows an empty state with no rows", () => {
@@ -79,7 +90,7 @@ describe("ui/composer renderSessionsPanel", () => {
       80,
     );
     const liveLine = r.lines.map(stripAnsi).find((l) => l.includes("live"))!;
-    expect(liveLine).toContain("●");
+    expect(liveLine).toContain(glyph("live"));
   });
 
   it("shows chronological groups, paths, and the live search query", () => {

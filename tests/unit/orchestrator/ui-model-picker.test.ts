@@ -15,6 +15,7 @@ import {
   formatModelLine,
 } from "../../../packages/orchestrator/src/bin/ui/model-picker";
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
+import { glyph } from "../../../packages/orchestrator/src/bin/ui/glyphs";
 import type { ProviderStatusRow } from "../../../packages/orchestrator/src/provider-registry";
 import { getPreset, type CustomEndpoint } from "../../../packages/shared/src";
 
@@ -100,7 +101,7 @@ describe("providerChoices (level 1)", () => {
     const env = { OPENAI_API_KEY: "sk-env" } as NodeJS.ProcessEnv;
     const out = providerChoices(rows, undefined, env, getPreset);
     const openai = stripAnsi(out[0]!.hint);
-    expect(openai).toContain("● active");
+    expect(openai).toContain(`${glyph("live")} active`);
     expect(openai).toContain("key saved sk-o…99");
     expect(openai).toContain("+env"); // both paths exist → surfaced at a glance
     expect(stripAnsi(out[1]!.hint)).toBe("localhost:11434");
@@ -302,7 +303,7 @@ describe("line rendering", () => {
           active: true,
         }),
       ),
-    ).toContain("●");
+    ).toContain(glyph("live"));
   });
 
   it("oauth providers surface signed-in state in the level-1 hint", () => {

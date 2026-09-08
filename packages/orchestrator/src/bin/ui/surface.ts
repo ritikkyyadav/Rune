@@ -1,28 +1,28 @@
 // --- Surface choice: which terminal UI a launch gets ---
 // Extracted pure so the DEFAULT is pinned by a test, not by folklore.
 //
-// TWO layouts, and the default is the one with fixed chrome:
+// TWO layouts, and the default is the FIXED frame (2026-09-05 evening, the
+// founder's call after living with inline for a day: "the header and footer
+// both launch together; keep the footer at one fixed place while I scroll"):
 //
-//   FIXED (default)  the alternate screen, split into a pinned header, a
-//                    scrolling transcript, and a pinned footer. The header and
-//                    the composer hold their rows; only the middle moves. This
-//                    is the product surface.
-//   INLINE (--inline / RUNE_INLINE)  the transcript is committed to the
-//                    terminal's own scrollback with only the composer pinned,
-//                    so native scrollback, momentum scrolling, mouse selection
-//                    and `| tee` keep working -- at the cost of the frame: a
-//                    wheel flick carries the header and the field away with it.
+//   FIXED (default)   the alternate screen with a pinned header and a pinned
+//                     footer. The wordmark holds the top rows, the composer and
+//                     status hold the bottom rows, and the transcript in between
+//                     is the ONLY thing that scrolls -- so the input box never
+//                     moves, at launch or while reading back. The frame owns
+//                     every cell: it cannot reflow old text on a resize (it
+//                     repaints at the new width and clips), and it leaves the
+//                     mouse to the terminal so click-drag copy stays native; the
+//                     wheel reaches the transcript through the terminal's
+//                     alternate-scroll mode (arrow keys), plus PgUp/PgDn.
+//   INLINE (--inline / RUNE_INLINE)  the transcript committed to the terminal's
+//                     OWN scrollback with the composer trailing the output --
+//                     how Claude Code behaves. Native reflow and copy, but the
+//                     header and the composer scroll away with the text, and on
+//                     a fresh session both sit wherever the shell prompt was.
 //
-// The fixed surface used to be the default, was removed for the inline one, and
-// is the default again. What killed it the first time was not the alternate
-// screen: it was a compositor that asserted a theme BACKGROUND over every cell,
-// so an empty session rendered as a viewport of painted nothing. This one paints
-// no background at all -- unclaimed rows are erased to the terminal's own colour
-// -- so it inherits the user's theme exactly the way the inline surface does.
-//
-// `--classic` still opts into the plain readline printer, and a pipe still gets
-// no TUI at all. `--fullscreen` / RUNE_FULLSCREEN name the default and are
-// accepted as a no-op, so an old alias does not error out.
+// `--fullscreen` / RUNE_FULLSCREEN name the default and win over `--inline`.
+// `--classic` opts into the plain readline printer, and a pipe gets no TUI.
 
 export interface SurfaceFlags {
   isTTY: boolean;
@@ -30,21 +30,22 @@ export interface SurfaceFlags {
   tuiForced?: boolean;
   /** --classic: the plain readline printer path. */
   classicForced?: boolean;
-  /** --inline / RUNE_INLINE: the legacy native-scrollback layout. */
+  /** --inline / RUNE_INLINE: opt out of the fixed frame into the native-scrollback layout. */
   inline?: boolean;
-  /** --fullscreen / RUNE_FULLSCREEN: names the default. Accepted as a no-op. */
+  /** --fullscreen / RUNE_FULLSCREEN: names the default fixed frame; wins over --inline. */
   fullscreenForced?: boolean;
 }
 
 export interface SurfaceChoice {
   useTui: boolean;
-  /** True only for the legacy layout: --inline / RUNE_INLINE. */
+  /** True only when the native-scrollback layout is asked for with --inline /
+   *  RUNE_INLINE (and --fullscreen is not also set); false for the default frame. */
   inline: boolean;
 }
 
 export function resolveSurface(flags: SurfaceFlags): SurfaceChoice {
   const useTui = flags.isTTY && (Boolean(flags.tuiForced) || !flags.classicForced);
-  // --fullscreen asks for what it already gets, so it cannot contradict
-  // --inline; if both are given the explicit opt-out wins.
-  return { useTui, inline: Boolean(flags.inline) };
+  // The fixed frame is the default. Inline is reached only by asking for it,
+  // and an explicit --fullscreen beats it: the user named the frame.
+  return { useTui, inline: Boolean(flags.inline) && !flags.fullscreenForced };
 }

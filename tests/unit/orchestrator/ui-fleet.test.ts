@@ -84,9 +84,11 @@ describe("the fleet panel — a row per sub-agent, not a count", () => {
     expect(row("map the deploy surface")).toContain("grep backend");
     expect(row("find the auth store")).toContain("read src/auth.ts");
     expect(row("survey the test suite")).not.toContain("grep backend");
-    // The summary line counts them and no longer speaks for them.
+    // The summary line -- the rung's ONE row -- counts them and no longer
+    // speaks for them; the members' rows follow it.
     expect(rung).toContain("3 sub-agents running");
-    expect(rung.split("\n")[1]).not.toContain("grep backend");
+    expect(rung.split("\n")[0]).toContain("3 sub-agents running");
+    expect(rung.split("\n")[0]).not.toContain("grep backend");
     setTermWidthOverride(undefined as unknown as number);
   });
 

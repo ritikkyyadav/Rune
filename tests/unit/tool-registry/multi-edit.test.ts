@@ -62,6 +62,12 @@ describe("createMultiEditHandler", () => {
     const parsed = JSON.parse(out.result);
     expect(parsed.hash).toBe(sha(after));
     expect(parsed.edits[0].strategy).toBe("exact");
+    // The diff the transcript paints red and green. It was missing for the
+    // whole of multi_edit's life: the row showed `edit f.ts` and nothing else.
+    expect(parsed.diff).toContain("@@ -1,1 +1,1 @@");
+    expect(parsed.diff.split("\n").filter((l: string) => l.startsWith(" "))).toHaveLength(0);
+    expect(parsed.diff).toContain("-export const greeting = 'hello';");
+    expect(parsed.diff).toContain("+export const greeting = 'world';");
   });
 
   test("applies multiple sequential edits atomically", async () => {

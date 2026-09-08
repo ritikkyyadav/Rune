@@ -65,13 +65,74 @@ function listingPath(p: string): string {
   return ".../" + parts.slice(-4).join("/");
 }
 
+/**
+ * Harness prose travels INSIDE a tool result string: a `[Doctrine — …]` or
+ * `[Harness note] …` block prepended (each ends at a blank line) and a
+ * `[post-tool hook output]` block appended. The model needs them where they
+ * are; the renderer does not -- JSON.parse choked on the prose, so an edit
+ * whose result carried a doctrine block rendered as a bare `edit foo.ts` with
+ * no diff and no path. This is the envelope, peeled deterministically: leading
+ * bracketed notes come off at their blank line, the trailing hook block comes
+ * off at its marker, and a body that still opens with prose is cut at the
+ * first line that opens a JSON value after a blank line. The notes are
+ * returned rather than dropped, for a surface that wants them.
+ */
+export function unwrapEnvelope(raw: string): { body: string; notes: string[] } {
+  const notes: string[] = [];
+  let text = raw;
+  let trailing = "";
+  const hook = text.indexOf("\n\n[post-tool hook output]\n");
+  if (hook >= 0) {
+    trailing = text.slice(hook + 2).trim();
+    text = text.slice(0, hook);
+  }
+  // Leading notes, each a bracketed heading and its paragraph.
+  for (;;) {
+    if (!/^\[(?:Doctrine|Harness note)\b/.test(text)) break;
+    const cut = text.indexOf("\n\n");
+    if (cut < 0) break;
+    notes.push(text.slice(0, cut).trim());
+    text = text.slice(cut + 2).replace(/^\n+/, "");
+  }
+  // Whatever prose is still in front of a JSON body: cut at the value.
+  if (!/^\s*[[{]/.test(text)) {
+    const lines = text.split("\n");
+    for (let i = 1; i < lines.length; i++) {
+      if (lines[i - 1]!.trim() === "" && /^[[{]/.test(lines[i]!)) {
+        notes.push(lines.slice(0, i).join("\n").trim());
+        text = lines.slice(i).join("\n");
+        break;
+      }
+    }
+  }
+  if (trailing) notes.push(trailing);
+  return { body: text, notes };
+}
+
 function tryJson(raw: string): Record<string, unknown> | null {
+  const { body } = unwrapEnvelope(raw);
   try {
-    const v = JSON.parse(raw);
+    const v = JSON.parse(body);
     return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
   } catch {
+    // The belt under the envelope: a note the peel did not recognise still
+    // leaves the object intact after its first brace.
+    const brace = body.indexOf("{");
+    if (brace > 0) {
+      try {
+        const v = JSON.parse(body.slice(brace));
+        return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
+      } catch {
+        return null;
+      }
+    }
     return null;
   }
+}
+
+/** The result as text, with the harness envelope taken off. */
+function bodyOf(raw: string): string {
+  return unwrapEnvelope(raw).body;
 }
 
 /** Non-empty result lines -- a cheap proxy for grep match / output counts. */
@@ -82,15 +143,69 @@ function nonEmptyLines(result: string): string[] {
     .filter(Boolean);
 }
 
-/** Compact `{k:v}`-ish summary of an unknown/MCP tool's args. */
-function compactArgs(args: Record<string, unknown>): string {
-  try {
-    const json = JSON.stringify(args);
-    if (!json || json === "{}") return "";
-    return truncate(json, 60);
-  } catch {
+/**
+ * What a call was about, in words, for a tool the grammar has no case for:
+ * its most descriptive scalar argument. A row never shows an object -- the
+ * old `{"criterion":0,"command":"curl -sS …` rows were the reader doing the
+ * tool's summarising, and a failure that quotes its whole argument object
+ * has named nothing.
+ */
+export function describeArgs(args: Record<string, unknown>): string {
+  const preferred = [
+    "label",
+    "name",
+    "title",
+    "path",
+    "pattern",
+    "command",
+    "query",
+    "url",
+    "text",
+    "question",
+    "prompt",
+    "key",
+    "action",
+    "id",
+  ];
+  const pick = (v: unknown): string => {
+    if (typeof v === "string") return firstLine(v).trim();
+    if (typeof v === "number" || typeof v === "boolean") return String(v);
+    if (Array.isArray(v) && v.every((x) => typeof x === "string")) return v.join(", ");
     return "";
+  };
+  for (const key of preferred) {
+    const got = pick(args[key]);
+    if (got) return truncate(got, 60);
   }
+  for (const value of Object.values(args)) {
+    const got = pick(value);
+    if (got) return truncate(got, 60);
+  }
+  return "";
+}
+
+/**
+ * The harness's own tools: the plan ledger, the read-back and its evidence,
+ * the narrative, the question to the user, the team bus, configuration.
+ * Their failures are bookkeeping, not work that went wrong -- a refused
+ * completion is not a defect in the tree -- so the transcript sets them down
+ * as quiet notes and the receipt never counts them among the failures.
+ */
+export const HARNESS_TOOLS: ReadonlySet<string> = new Set([
+  "todo_write",
+  "read_back",
+  "record_evidence",
+  "note_hypothesis",
+  "record_decision",
+  "ask_user",
+  "team",
+  "update_config",
+  "load_tools",
+  "skill",
+]);
+
+export function isHarnessTool(name: string): boolean {
+  return HARNESS_TOOLS.has(name);
 }
 
 /** The `o <text>` head that opens an assistant narration step (first line only). */
@@ -139,6 +254,7 @@ const VERB: Record<string, string> = {
   write_file: "new",
   edit_file: "edit",
   multi_edit: "edit",
+  apply_patch: "edit",
   web_search: "web",
   web_fetch: "get",
   task: "scout",
@@ -147,7 +263,22 @@ const VERB: Record<string, string> = {
   bash_output: "poll",
   kill_shell: "stop",
   interactive_dashboard: "view",
+  read_many: "read",
+  ask_user: "ask",
+  read_back: "read-back",
+  record_evidence: "evidence",
+  note_hypothesis: "hypothesis",
+  record_decision: "decision",
+  team: "team",
+  update_config: "config",
+  load_tools: "tools",
+  skill: "skill",
 };
+
+/** The verb a tool's row opens with -- the same one its provisional row opens with. */
+export function verbOf(toolName: string): string {
+  return VERB[toolName] ?? toolName;
+}
 
 /** Present-tense verb for the live "what's running now" status line. */
 const RUNNING: Record<string, string> = {
@@ -164,6 +295,14 @@ const RUNNING: Record<string, string> = {
   interactive_dashboard: "building a view",
   task: "scouting",
   worker: "delegating",
+  read_many: "reading",
+  apply_patch: "editing",
+  ask_user: "asking",
+  read_back: "reading back",
+  record_evidence: "citing",
+  note_hypothesis: "noting",
+  record_decision: "deciding",
+  todo_write: "planning",
 };
 
 /** A short label for an in-flight tool call (args aren't known yet at start). */
@@ -231,6 +370,10 @@ function railLines(body: string): string[] {
 const EXCERPT_HEAD = 5;
 const EXCERPT_TAIL = 3;
 
+/** Output lines a command that merely RAN shows inline before its last line:
+ *  four, so the head and the verdict make five, and the rest is the fold's. */
+const INLINE_HEAD = 4;
+
 /** How much of an expanded fold a single call may spend. Bounds memory and the
  *  worst-case splice, not the truth: the ledger under ctrl+r keeps going. */
 const DETAIL_HEAD = 240;
@@ -267,7 +410,7 @@ function writeRows(content: string, limit: number): F.DiffRow[] {
  */
 function delegationTakeaway(result: string): { text: string; tone: "muted" | "fail" } | null {
   const body = result.trim();
-  if (!body) return null;
+  if (!body || looksLikeJson(body)) return null;
   if (body.startsWith("[PROVENANCE")) {
     return { text: "came back on a fallback model -- re-check before relying on it", tone: "fail" };
   }
@@ -293,15 +436,52 @@ function delegationTakeaway(result: string): { text: string; tone: "muted" | "fa
  *  padded: the row says which call, the note says what the tool actually said. */
 function failedCall(v: ToolActivityView, name: string): string {
   const reason = firstLine(v.error ?? "failed").trim() || "failed";
+  // The ledger declining a claim, a question the user did not answer, a
+  // citation with nothing behind it: the harness talking, not the tree
+  // breaking. One quiet row and the reason, in the neutral tone.
+  const harness = isHarnessTool(v.toolName);
   return [
     F.toolRow({
       name,
       arg: compactTarget(v),
-      status: "fail",
-      metric: elapsed(v.durationMs),
+      status: harness ? "none" : "fail",
+      metric: harness ? "" : elapsed(v.durationMs),
     }),
-    F.toolNote(reason, "fail"),
+    F.toolNote(reason, harness ? "muted" : "fail"),
   ].join("\n");
+}
+
+/** The questions an ask_user call carried, whichever shape the model used. */
+function questionsOf(args: Record<string, unknown>): string[] {
+  const list = Array.isArray(args.questions) ? args.questions : [];
+  const out = list
+    .map((q) => (q && typeof q === "object" ? s((q as Record<string, unknown>).question) : s(q)))
+    .filter(Boolean);
+  if (out.length === 0 && s(args.question)) out.push(s(args.question));
+  return out;
+}
+
+/** Structured data, not prose: an object, or an array of values. A banner
+ *  such as `[PROVENANCE …]` opens with a bracket too, and is prose. */
+function looksLikeJson(text: string): boolean {
+  return /^\{|^\[\s*(?:[[{"\]]|-?\d)/.test(text);
+}
+
+/** A line of a result worth quoting under its row: the first non-empty one,
+ *  unless the result is structured data, which the row has already read. */
+function quotable(result: string): string {
+  const body = bodyOf(result).trim();
+  if (!body || looksLikeJson(body)) return "";
+  return firstLine(body).trim();
+}
+
+/** The first answer in an ask_user result: the whole reply for one question,
+ *  the first `A:` line for several. */
+function firstAnswer(result: string): string {
+  const body = bodyOf(result).trim();
+  if (!body || looksLikeJson(body)) return "";
+  const multi = /^A:\s*(.+)$/m.exec(body);
+  return firstLine(multi ? multi[1]! : body).trim();
 }
 
 /**
@@ -429,6 +609,48 @@ export function renderToolActivity(v: ToolActivityView): string {
       ].join("\n");
     }
 
+    case "apply_patch": {
+      // One patch can touch several files; each carries its own diff now (see
+      // apply-patch.ts). A row per file, its diff beneath it -- the same shape
+      // an edit_file row has, so a multi-file patch reads as a short stack of
+      // edits rather than one opaque `apply_patch` line.
+      const files = Array.isArray(out?.files) ? (out!.files as Array<Record<string, unknown>>) : [];
+      if (files.length === 0) {
+        return F.toolRow({
+          name,
+          arg: listingPath(s(v.args.path)),
+          argTone: "path",
+          status: "none",
+        });
+      }
+      const rows: string[] = [];
+      for (const file of files) {
+        const path = s(file.path ?? file.moved_to);
+        const raw = s(file.diff);
+        const action = s(file.action);
+        const diff = raw ? F.parseDiff(raw) : { rows: [], added: 0, removed: 0, hunks: 0 };
+        const hunkNote =
+          action === "deleted"
+            ? "deleted"
+            : action === "moved"
+              ? "moved"
+              : diff.hunks > 0
+                ? `${diff.hunks} hunk${diff.hunks === 1 ? "" : "s"}`
+                : "";
+        rows.push(
+          F.toolRow({
+            name,
+            arg: listingPath(path),
+            argTone: "path",
+            status: "none",
+            metric: F.editMetric(diff.added, diff.removed, hunkNote),
+          }),
+        );
+        rows.push(...F.diffRows(diff.rows, langOfPath(path)));
+      }
+      return rows.join("\n");
+    }
+
     case "bash": {
       const command = firstLine(s(v.args.command));
       const exit = typeof out?.exit_code === "number" ? out.exit_code : null;
@@ -459,16 +681,30 @@ export function renderToolActivity(v: ToolActivityView): string {
       // transcript gets: two hundred raw lines under a row is not evidence, it
       // is the reader doing the tool's summarising, and the full output stays
       // one keystroke away behind the row's fold (see renderToolDetail). A
-      // check that PASSED needs only its verdict; a command that merely ran
-      // already said everything in its receipt.
+      // check that PASSED needs only its verdict. A command that merely ran
+      // shows its first lines and its last -- the receipt used to be its last
+      // line alone, whatever that line happened to be, which is how `ls -lh`
+      // came to be summarised as `<!doctype html>` -- with the count of what
+      // the fold holds.
       if (failed && body) {
         const all = railLines(body);
         const closing = all.length > 1 ? all.pop()!.trim() : "";
         rows.push(
           ...F.outputRail("", F.clip(all, EXCERPT_HEAD, EXCERPT_TAIL), closing || summary, true),
         );
+      } else if (checked) {
+        if (summary) rows.push(F.toolNote(summary, "ok"));
+      } else if (body) {
+        const all = railLines(body);
+        const closing = all.pop()!.trim();
+        const head = all.slice(0, INLINE_HEAD);
+        const hidden = Math.max(0, all.length - head.length);
+        const shown = [...head];
+        if (hidden > 0)
+          shown.push(`${glyph("elision")} ${hidden} more line${hidden === 1 ? "" : "s"}`);
+        rows.push(...F.outputRail("", shown, closing, false));
       } else if (summary) {
-        rows.push(F.toolNote(summary, failed ? "fail" : checked ? "ok" : "muted"));
+        rows.push(F.toolNote(summary, "muted"));
       }
       return rows.join("\n");
     }
@@ -509,8 +745,9 @@ export function renderToolActivity(v: ToolActivityView): string {
         s(v.args.label ?? "") ||
         firstLine(s(v.args.prompt ?? v.args.description ?? "")) ||
         (v.toolName === "worker" ? "a build" : "an investigation");
-      const changed = /worker changed (\d+) files?/.exec(v.result ?? "")?.[1];
-      const steps = /\(sub-agent made (\d+) tool calls?/.exec(v.result ?? "")?.[1];
+      const report = bodyOf(v.result ?? "");
+      const changed = /worker changed (\d+) files?/.exec(report)?.[1];
+      const steps = /\(sub-agent made (\d+) tool calls?/.exec(report)?.[1];
       const rows = [
         F.toolRow({
           name,
@@ -525,7 +762,7 @@ export function renderToolActivity(v: ToolActivityView): string {
       // what it was asked and nothing at all about what it found -- the whole
       // investigation reduced to a duration. The banner cases lead instead,
       // because a report that has to be re-checked is the news about it.
-      const takeaway = delegationTakeaway(v.result ?? "");
+      const takeaway = delegationTakeaway(report);
       if (takeaway) rows.push(F.toolNote(takeaway.text, takeaway.tone));
       return rows.join("\n");
     }
@@ -539,10 +776,129 @@ export function renderToolActivity(v: ToolActivityView): string {
       return rows.join("\n");
     }
 
+    // ── The harness's own tools ──
+    // Each says what it was FOR and what came of it, in words. The old rows
+    // printed the argument object (`{"questions":[{"question":"Which data…`),
+    // which is the one thing a rail must never do.
+
+    case "ask_user": {
+      const questions = questionsOf(v.args);
+      const answer = firstAnswer(v.result);
+      const rows = [
+        F.toolRow({
+          name,
+          arg: truncate(questions[0] ?? "a question", 60),
+          metric:
+            questions.length > 1 ? `${questions.length} questions` : answer ? "" : "no answer",
+        }),
+      ];
+      if (answer) rows.push(F.toolNote(`answered ${answer}`));
+      return rows.join("\n");
+    }
+
+    case "record_evidence": {
+      const reply = quotable(v.result);
+      const rung = /\b(verified|reproduced|observed)\b/.exec(reply)?.[1] ?? "";
+      const target =
+        typeof v.args.criterion === "number"
+          ? `criterion ${v.args.criterion + 1}`
+          : s(v.args.claim ?? v.args.criterion)
+            ? truncate(s(v.args.claim ?? v.args.criterion), 40)
+            : "";
+      const rows = [
+        F.toolRow({
+          name,
+          arg: F.receiptOf([target, truncate(firstLine(s(v.args.command)), 48)]),
+          metric: rung,
+        }),
+      ];
+      // No rung means the runtime declined the citation; its one line says why.
+      if (!rung && reply) rows.push(F.toolNote(reply));
+      return rows.join("\n");
+    }
+
+    case "note_hypothesis": {
+      const text = s(v.args.text);
+      const status = s(v.args.status) || (text ? "testing" : "");
+      const rows = [
+        F.toolRow({
+          name,
+          arg: text ? `"${truncate(text, 58)}"` : s(v.args.id),
+          metric: status,
+        }),
+      ];
+      const reason = s(v.args.reason);
+      if (reason) rows.push(F.toolNote(truncate(reason, 80)));
+      return rows.join("\n");
+    }
+
+    case "record_decision": {
+      const refs = Array.isArray(v.args.based_on) ? v.args.based_on.length : 0;
+      return F.toolRow({
+        name,
+        arg: truncate(s(v.args.text), 60),
+        metric: refs > 0 ? `on ${refs} piece${refs === 1 ? "" : "s"} of evidence` : "unbacked",
+      });
+    }
+
+    case "read_back": {
+      const criteria = Array.isArray(v.args.done_when) ? v.args.done_when.length : 0;
+      const reply = quotable(v.result);
+      const accepted = /^accepted\b/i.test(reply);
+      const rows = [
+        F.toolRow({
+          name,
+          arg: s(v.args.kind) || "brief",
+          metric: F.receiptOf([
+            criteria > 0 ? `${criteria} criteri${criteria === 1 ? "on" : "a"}` : "",
+            accepted ? "accepted" : reply ? "sent back" : "",
+          ]),
+        }),
+      ];
+      if (!accepted && reply) rows.push(F.toolNote(truncate(reply, 100)));
+      return rows.join("\n");
+    }
+
+    case "read_many": {
+      const paths = Array.isArray(v.args.paths) ? v.args.paths.map((p) => s(p)) : [];
+      const text = bodyOf(v.result);
+      const heads = (text.match(/^=== .+ ===$/gm) ?? []).length;
+      const lines = text.split("\n").length - heads;
+      return F.toolRow({
+        name,
+        arg: `${paths.length || heads} file${(paths.length || heads) === 1 ? "" : "s"}`,
+        metric: lines > 0 && heads > 0 ? `${group(lines)} lines` : "",
+      });
+    }
+
+    case "team": {
+      const paths = Array.isArray(v.args.paths) ? v.args.paths.map((p) => s(p)) : [];
+      return F.toolRow({
+        name,
+        arg: F.receiptOf([s(v.args.action), paths.length ? truncate(paths.join(", "), 48) : ""]),
+      });
+    }
+
+    case "update_config": {
+      const key = s(v.args.key ?? v.args.setting ?? v.args.name);
+      const value = s(v.args.value);
+      return F.toolRow({ name, arg: key ? (value ? `${key} = ${truncate(value, 30)}` : key) : "" });
+    }
+
+    case "load_tools":
+    case "skill":
+      return F.toolRow({ name, arg: describeArgs(v.args) });
+
     default:
-      // MCP / unknown tool -- its own name, and whatever its arguments say.
-      return F.toolRow({ name, arg: compactArgs(v.args), metric: elapsed(v.durationMs) });
+      // MCP / unknown tool -- its own name, and what its arguments were about.
+      return F.toolRow({ name, arg: describeArgs(v.args), metric: elapsed(v.durationMs) });
   }
+}
+
+/** What a call is about, from its arguments alone -- the provisional row a
+ *  live sink commits the moment the call starts names it with this. */
+export function targetOf(toolName: string, args: Record<string, unknown>): string {
+  return compactTarget({ toolName, args, result: "", success: true });
 }
 
 /** Best-effort subject for a failed call (arguments only -- the result is an error). */
@@ -573,8 +929,22 @@ function compactTarget(v: ToolActivityView): string {
     case "worker":
     case "task":
       return s(v.args.label ?? "") || firstLine(s(v.args.prompt ?? v.args.description ?? ""));
+    case "ask_user":
+      return truncate(questionsOf(v.args)[0] ?? "a question", 60);
+    case "record_evidence":
+      return truncate(firstLine(s(v.args.command)), 60);
+    case "note_hypothesis":
+      return s(v.args.text) ? `"${truncate(s(v.args.text), 58)}"` : s(v.args.id);
+    case "record_decision":
+      return truncate(s(v.args.text), 60);
+    case "read_back":
+      return s(v.args.kind) || "brief";
+    case "read_many": {
+      const paths = Array.isArray(v.args.paths) ? v.args.paths.length : 0;
+      return `${paths} file${paths === 1 ? "" : "s"}`;
+    }
     default:
-      return compactArgs(v.args);
+      return describeArgs(v.args);
   }
 }
 
@@ -656,8 +1026,13 @@ export function renderToolDetail(v: ToolActivityView): string | null {
       const all = railLines(body);
       const exit = typeof out?.exit_code === "number" ? out.exit_code : null;
       const failed = out?.timed_out === true || (exit != null && exit !== 0);
-      // A failure already showed an excerpt; anything else showed one line.
-      const shownInline = failed ? EXCERPT_HEAD + EXCERPT_TAIL + 2 : 1;
+      // A failure already showed an excerpt; a passing check showed its
+      // verdict; a command that merely ran showed its first lines and its last.
+      const shownInline = failed
+        ? EXCERPT_HEAD + EXCERPT_TAIL + 2
+        : isVerificationCommand(command)
+          ? 1
+          : INLINE_HEAD + 1;
       if (all.length <= shownInline) return null;
       const checked = isVerificationCommand(command);
       const closing = all.length > 1 ? all.pop()!.trim() : "";
@@ -706,6 +1081,51 @@ export function renderToolDetail(v: ToolActivityView): string | null {
           metric: F.editMetric(total, 0, "new file"),
         }),
         ...F.diffRows(writeRows(body, DETAIL_HEAD), langOfPath(path)),
+      ].join("\n");
+    }
+    case "apply_patch": {
+      // Every file's whole diff. Worth opening only when some file's
+      // committed hunk dropped rows.
+      const files = Array.isArray(out?.files) ? (out!.files as Array<Record<string, unknown>>) : [];
+      let dropped = false;
+      const rows: string[] = [];
+      for (const file of files) {
+        const path = s(file.path ?? file.moved_to);
+        const raw = s(file.diff);
+        const full = raw
+          ? F.parseDiff(raw, DETAIL_HEAD)
+          : { rows: [], added: 0, removed: 0, hunks: 0 };
+        const shown = raw ? F.parseDiff(raw) : full;
+        if (full.rows.length > shown.rows.length) dropped = true;
+        const action = s(file.action);
+        const note =
+          action === "deleted"
+            ? "deleted"
+            : action === "moved"
+              ? "moved"
+              : full.hunks > 0
+                ? `${full.hunks} hunk${full.hunks === 1 ? "" : "s"}`
+                : "";
+        rows.push(
+          F.toolRow({
+            name: "edit",
+            arg: listingPath(path),
+            argTone: "path",
+            status: "none",
+            metric: F.editMetric(full.added, full.removed, note),
+          }),
+        );
+        rows.push(...F.diffRows(full.rows, langOfPath(path)));
+      }
+      return dropped ? rows.join("\n") : null;
+    }
+    case "read_many": {
+      // The batch row names a count; the fold names the files.
+      const paths = Array.isArray(v.args.paths) ? v.args.paths.map((p) => s(p)) : [];
+      if (paths.length === 0) return null;
+      return [
+        renderToolActivity(v),
+        ...paths.map((p) => F.toolRow({ name: "read", arg: listingPath(p), status: "none" })),
       ].join("\n");
     }
     default:

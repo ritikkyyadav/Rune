@@ -20,6 +20,9 @@ import {
   planBlock,
   stepBlock,
   isVerificationCommand,
+  isHarnessTool,
+  targetOf,
+  verbOf,
   type ToolActivityView,
   type TranscriptLineView,
 } from "./activity";
@@ -44,21 +47,45 @@ export function turnWidth(): number {
   return F.measure();
 }
 
+/** The identity a sink that owns its buffer gives a committed block. */
+export type BlockHandle = number;
+
 export interface TurnSink {
   /** Append a finished block to terminal scrollback. A block committed with
    *  `detail` holds more than it shows: the detail is the same block opened --
    *  full output, the whole diff, a chamber's per-call record -- and a sink
    *  that owns its buffer (the fixed viewport) offers it as the block's
    *  in-place expansion. A sink that writes to real scrollback ignores it;
-   *  ctrl+r's work log still carries everything. */
-  commit(block: string, detail?: string): void;
+   *  ctrl+r's work log still carries everything. A sink that can amend
+   *  returns the block's handle. */
+  commit(block: string, detail?: string): BlockHandle | void;
+  /**
+   * Replace a committed block in place. This is the contract that lets a row
+   * land the moment a call STARTS and finish when the call ends, a burst of
+   * gathering fold retroactively into one chamber row, and the model's prose
+   * stream into the transcript where it will stay. An empty block removes
+   * it. Only a sink that owns its buffer (the fixed viewport) offers it;
+   * without it the renderer commits at the end, as it always did.
+   */
+  amend?(handle: BlockHandle, block: string, detail?: string): void;
   /** Replace the small live focus above the composer. */
   preview?(lines: string[] | null): void;
+}
+
+/** A committed block the renderer may amend: its handle, and whether it was
+ *  set down tight against the row above (no blank line of its own). */
+interface BlockRef {
+  handle: BlockHandle;
+  tight: boolean;
 }
 
 export interface TurnRendererOpts {
   model?: string;
   getCost?: () => number;
+  /** The plan as the previous turn last set it down (see planKey). A first
+   *  checklist identical to it is carried-over state, not news, and is not
+   *  reprinted. */
+  priorPlanKey?: string;
 }
 
 export type WorkPhase = "understand" | "plan" | "act" | "verify";
@@ -77,6 +104,7 @@ interface EditStat {
   added: number;
   removed: number;
   created?: boolean;
+  deleted?: boolean;
 }
 
 interface CheckEvidence {
@@ -191,12 +219,12 @@ function span(from: number, to: number): string {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
-const PHASE_DEFAULT: Record<WorkPhase, string> = {
-  understand: "Reading the task and gathering context",
-  plan: "Shaping a reliable approach",
-  act: "Making the change",
-  verify: "Checking the result against real evidence",
-};
+// There is no default sentence per phase any more. The rung used to fill its
+// detail line with one invented from the tool name ("Shaping a reliable
+// approach", "Making the change") whenever the model had said nothing, and a
+// sentence the agent did not write, shown as if it had, is exactly what made
+// the rung read as a machine narrating itself. The rung now says only what
+// was measured: the running call, the active plan step, or nothing.
 
 /** The stable signal glyph used for the current phase. */
 export const HEX = glyph("phase");
@@ -246,6 +274,10 @@ function oneLine(raw: string, max = 100): string {
     .replace(/\s+/g, " ")
     .trim();
   return truncate(clean, max);
+}
+
+function firstLineOf(raw: string): string {
+  return String(raw).split("\n")[0] ?? "failed";
 }
 
 function lastNonEmpty(raw: string): string {
@@ -521,7 +553,6 @@ export class TurnRenderer {
    */
   private fleet = new Map<string, FleetAgent>();
   private phase: WorkPhase = "understand";
-  private intent = PHASE_DEFAULT.understand;
   private toolCalls = 0;
   private reads = 0;
   private searches = 0;
@@ -531,7 +562,24 @@ export class TurnRenderer {
   private errored = false;
   private hardError = false;
   private committedErrors = new Set<string>();
+  /** Gathering held until news lands -- the commit-at-end path, for a sink
+   *  that cannot amend (see flushRoutine). */
   private routineQueue: ToolActivityView[] = [];
+  /** Whether the sink can amend: rows land when a call starts, a burst folds
+   *  retroactively, prose streams in place. */
+  private readonly live: boolean;
+  /** The row of the call in flight, committed the moment it started. */
+  private pending: { ref: BlockRef | null; callId: string; name: string; arg: string } | null =
+    null;
+  /** The current run of consecutive gathering rows, as one chamber. */
+  private chamber: { views: ToolActivityView[]; refs: BlockRef[] } | null = null;
+  /** The model's prose as it streams into the transcript. `plan` is whether
+   *  it was opened as the turn's first paragraph (see planBlock). */
+  private proseRef: (BlockRef & { plan: boolean }) | null = null;
+  private proseDirty = false;
+  /** The block set down last -- the one whose height the rhythm remembers. */
+  private lastRef: BlockRef | null = null;
+  private latestPlanKey: string | null = null;
   /** The plan as last committed to scrollback, and as last rendered. The first
    *  version goes to the timeline; the final one goes to the close if it moved.
    *  The revisions in between belong to the live rung. */
@@ -578,6 +626,7 @@ export class TurnRenderer {
     private sink: TurnSink,
     private opts: TurnRendererOpts = {},
   ) {
+    this.live = typeof sink.amend === "function";
     this.updateLive();
   }
 
@@ -618,12 +667,20 @@ export class TurnRenderer {
     const { label, detail } = this.steadyFrame();
     const beat = this.pulse.sample();
     const mark = accent(pulseGlyph(beat));
-    const lines = [
-      F.flowRow(`${F.MARK}${mark} ${muted(label)}`, faint(F.receiptOf(this.receipt()))),
-    ];
-    if (detail) lines.push(`${F.BODY}${faint(truncate(detail, F.proseWidth()))}`);
+    // One row: the pulse, the label, what is measurably in flight, and the
+    // receipt. The detail used to be a second row, the streaming prose a
+    // third to sixth, and the block was pinned to the tallest it had been so
+    // the transcript would stop jumping -- three timing constants to stop it
+    // strobing, which was the code admitting the block moved too much. Prose
+    // streams into the transcript now (see settleProse), so the rung has one
+    // sentence to say and says it once.
+    const head = detail
+      ? `${muted(label)} ${faint(glyph("observed"))} ${faint(truncate(detail, Math.max(20, F.proseWidth() - label.length - 4)))}`
+      : muted(label);
+    const lines = [F.flowRow(`${F.MARK}${mark} ${head}`, faint(F.receiptOf(this.receipt())))];
     lines.push(...this.fleetLines());
-    lines.push(...this.streamingProseTail());
+    // A sink that cannot amend still shows the voice live, in the block.
+    if (!this.live) lines.push(...this.streamingProseTail());
     return lines;
   }
 
@@ -1078,10 +1135,10 @@ export class TurnRenderer {
       if (this.toolProgressNote?.callId === this.currentTool.callId) {
         return `${base} | ${this.toolProgressNote.note}`;
       }
-      // Mid-burst, the running tally. Scrollback will keep one collapsed row
-      // for the whole run, so this is where the reader gets to watch it climb
-      // -- which is the part of a long exploration that reads as progress.
-      const held = this.routineQueue.length;
+      // Mid-burst, the running tally. Scrollback keeps one row for the whole
+      // run -- retroactively, under a live sink; held, otherwise -- so this
+      // is where the reader gets to watch it climb.
+      const held = this.live ? (this.chamber?.views.length ?? 0) : this.routineQueue.length;
       const name = this.currentTool.name;
       const gathering =
         isRoutineTool(name) || name === "bash" || name === "web_search" || name === "web_fetch";
@@ -1095,9 +1152,8 @@ export class TurnRenderer {
       const done = this.todos.filter((item) => item.status === "completed").length;
       return `${active.content} | ${done}/${this.todos.length} steps`;
     }
-    // While the answer streams the intent is stale context -- stay quiet.
-    if (this.prose.trim()) return "";
-    if (this.intent && this.intent !== PHASE_DEFAULT.understand) return this.intent;
+    // Nothing measured is in flight, so the rung says nothing. The pulse
+    // alone says it is working.
     return "";
   }
 
@@ -1155,10 +1211,8 @@ export class TurnRenderer {
     this.sink.preview?.(lines);
   }
 
-  private setPhase(phase: WorkPhase, intent?: string): void {
+  private setPhase(phase: WorkPhase): void {
     this.phase = phase;
-    if (intent) this.intent = oneLine(intent, 100);
-    else if (!this.intent) this.intent = PHASE_DEFAULT[phase];
     this.updateLive();
   }
 
@@ -1169,6 +1223,31 @@ export class TurnRenderer {
     });
   }
 
+  /** The plan as last set down, as a content key. The next turn passes it
+   *  back as `priorPlanKey`, so a checklist carried over unchanged is not
+   *  reprinted at the top of every turn. */
+  planKey(): string | null {
+    return this.latestPlanKey;
+  }
+
+  /**
+   * The TUI's tick. Streamed prose is amended on the stream's own clock, at
+   * most every ~80ms; the tail the stream did not get to paint before it
+   * paused -- a model thinking mid-sentence -- lands from here.
+   */
+  tick(): void {
+    if (this.live && this.proseRef && this.proseDirty) this.paintProse();
+  }
+
+  // ── Blocks: commit, and amend in place ──
+  //
+  // Under a sink that can amend, a committed block is a handle. The renderer
+  // then writes a row the moment a call STARTS and replaces it when the call
+  // ends, folds the third consecutive gathering row and everything before it
+  // into one chamber row, and streams the model's prose straight into the
+  // transcript. A sink that writes to real scrollback (--inline, headless)
+  // returns nothing, and every one of those falls back to commit-at-end.
+
   /**
    * Vertical rhythm between blocks. A blank line separates *groups*, not rows:
    * a run of one-line calls stays tight, and anything with a body -- a diff, an
@@ -1177,18 +1256,34 @@ export class TurnRenderer {
    *
    * Every commit closes the failure streak first, so a run of suppressed
    * repeats is accounted for before anything newer lands -- see flushFailStreak.
+   * And anything with news in it ends the gathering run: the next read starts
+   * a new one rather than being folded under a finding it came after.
    */
-  private commitTimeline(block: string, detail?: string): void {
+  private commitTimeline(block: string, detail?: string): BlockRef | null {
     this.flushFailStreak();
-    this.pushBlock(block, detail);
+    this.chamber = null;
+    return this.pushBlock(block, detail);
   }
 
-  private pushBlock(block: string, detail?: string): void {
-    if (!stripAnsi(block).trim()) return;
+  private pushBlock(block: string, detail?: string): BlockRef | null {
+    if (!stripAnsi(block).trim()) return null;
     const rows = block.split("\n").filter((row) => stripAnsi(row).trim()).length;
     const tight = rows === 1 && this.lastBlockRows === 1;
     this.lastBlockRows = rows;
-    this.sink.commit(tight ? block : `\n${block}`, detail);
+    const handle = this.sink.commit(tight ? block : `\n${block}`, detail);
+    if (typeof handle !== "number") return null;
+    const ref = { handle, tight };
+    this.lastRef = ref;
+    return ref;
+  }
+
+  /** Replace a committed block in place; an empty block removes it. The
+   *  block keeps the rhythm it was set down with. */
+  private amendBlock(ref: BlockRef, block: string, detail?: string): void {
+    if (!this.sink.amend) return;
+    const rows = block.split("\n").filter((row) => stripAnsi(row).trim()).length;
+    if (rows > 0 && this.lastRef?.handle === ref.handle) this.lastBlockRows = rows;
+    this.sink.amend(ref.handle, rows === 0 ? "" : ref.tight ? block : `\n${block}`, detail);
   }
 
   /**
@@ -1199,9 +1294,11 @@ export class TurnRenderer {
    * path in it, which is the single least professional screen this product has
    * shipped. Now the FIRST failure of a kind commits in full, repeats are
    * counted instead of printed (the work log still records every one), and the
-   * count lands as one closing row the moment anything else commits.
+   * count lands as one closing row -- under a live sink, amended in beneath
+   * the first failure as it climbs; otherwise the moment anything else commits.
    */
-  private failStreak: { key: string; extra: number } | null = null;
+  private failStreak: { key: string; extra: number; ref: BlockRef | null; block: string } | null =
+    null;
 
   /** What makes two failures "the same": the verb and the reason, with numbers
    *  neutralised -- a retry window that counts down (`after 31075ms`, `after
@@ -1214,31 +1311,26 @@ export class TurnRenderer {
       .trim()}`;
   }
 
+  private static streakRow(extra: number): string {
+    return F.toolNote(`same failure repeated ${extra} more time${extra === 1 ? "" : "s"}`, "fail");
+  }
+
   private flushFailStreak(): void {
     const streak = this.failStreak;
     if (!streak) return;
     this.failStreak = null;
-    if (streak.extra > 0) {
-      this.pushBlock(
-        F.toolNote(
-          `same failure repeated ${streak.extra} more time${streak.extra === 1 ? "" : "s"}`,
-          "fail",
-        ),
-      );
-    }
+    if (streak.extra > 0 && !streak.ref) this.pushBlock(TurnRenderer.streakRow(streak.extra));
   }
 
   /**
-   * Set down the context-gathering held since the last thing worth reading.
+   * Set down the context-gathering held since the last thing worth reading --
+   * the commit-at-end path, for a sink that cannot amend.
    *
    * Every handler that is about to commit something with news in it calls this
    * first, which is what keeps the order true: the reads that led to a finding
    * land above the finding, never after it. A short run prints per call --
    * two paths cost two lines and both are worth naming. A long one collapses to
-   * a single chamber row, because the twelfth consecutive `read` tells the
-   * reader nothing the first eleven did not, and the whole burst is one fact --
-   * with its per-call record committed as the row's fold, so the reader who
-   * comes back asking "what exactly ran here?" opens it in place.
+   * a single chamber row, with its per-call record committed as the row's fold.
    *
    * Nothing is discarded either way: `addLog` has already taken the full row
    * for the work log, which is what /details prints.
@@ -1253,24 +1345,81 @@ export class TurnRenderer {
     this.commitTimeline(renderChamberHead(queued), renderChamberDetail(queued));
   }
 
-  private captureProseAsIntent(): void {
+  private renderProse(raw: string, plan: boolean): string {
+    return (plan ? planBlock(raw) : stepBlock(raw)).join("\n");
+  }
+
+  private paintProse(): void {
+    const raw = this.prose.trim();
+    if (!this.proseRef || !raw) return;
+    this.proseDirty = false;
+    this.lastProseLiveAt = Date.now();
+    if (this.proseRef.handle >= 0) {
+      this.amendBlock(this.proseRef, this.renderProse(raw, this.proseRef.plan));
+    }
+  }
+
+  /**
+   * Set down whatever the model has said since the last action. Under a live
+   * sink the block is already in the transcript -- streamed there token by
+   * token -- so this only fixes its final form and lets go of it, which is
+   * what keeps the sentence being read from moving when a call starts
+   * beneath it. Otherwise the prose has been showing in the live block, and
+   * commits here in full.
+   */
+  private settleProse(): void {
     const raw = this.prose.trim();
     this.prose = "";
-    if (!raw) return;
-    this.flushRoutine();
-    const summary = oneLine(raw, 100);
-    if (summary) {
-      this.intent = summary;
-      const block = (this.narratedPlan ? stepBlock(raw) : planBlock(raw)).join("\n");
+    this.proseDirty = false;
+    if (this.proseRef) {
+      const ref = this.proseRef;
+      this.proseRef = null;
+      if (raw && oneLine(raw, 100)) {
+        const block = this.renderProse(raw, ref.plan);
+        this.addLog(block);
+        if (ref.handle >= 0) this.amendBlock(ref, block);
+      } else if (ref.handle >= 0) {
+        this.amendBlock(ref, "");
+      }
       this.narratedPlan = true;
-      this.addLog(block);
-      this.commitTimeline(block);
+      return;
     }
+    if (!raw || !oneLine(raw, 100)) return;
+    this.flushRoutine();
+    const block = this.renderProse(raw, !this.narratedPlan);
+    this.narratedPlan = true;
+    this.addLog(block);
+    this.commitTimeline(block);
+  }
+
+  /** The row a call gets the moment it starts, before anything came back. */
+  private static provisionalRow(name: string, arg: string): string {
+    return F.toolRow({ name: verbOf(name), arg, status: "active" });
   }
 
   private recordEdit(event: any): void {
     if (!event.output?.success) return;
     const name = event.output.toolName;
+    if (name === "apply_patch") {
+      // One patch is several edits, each with its own diff.
+      const out = tryJson(String(event.output.result ?? ""));
+      const files = Array.isArray(out?.files) ? (out!.files as Array<Record<string, unknown>>) : [];
+      for (const file of files) {
+        const path = String(file.path ?? file.moved_to ?? "");
+        if (!path) continue;
+        const previous = this.editedFiles.get(path) ?? { added: 0, removed: 0 };
+        const counts = file.diff
+          ? renderUnifiedDiff(String(file.diff), "")
+          : { added: 0, removed: 0 };
+        this.editedFiles.set(path, {
+          added: previous.added + counts.added,
+          removed: previous.removed + counts.removed,
+          created: previous.created ?? (file.action === "added" ? true : undefined),
+          deleted: file.action === "deleted" ? true : previous.deleted,
+        });
+      }
+      return;
+    }
     if (name !== "edit_file" && name !== "write_file" && name !== "multi_edit") return;
     const path = String(event.args?.path ?? tryJson(String(event.output.result))?.path ?? "");
     if (!path) return;
@@ -1293,12 +1442,15 @@ export class TurnRenderer {
     const result = String(event.output?.result ?? "");
     const success = event.output?.success === true;
     this.toolCalls++;
-    if (name === "read_file" || name === "list_dir") this.reads++;
+    if (name === "read_file" || name === "list_dir" || name === "read_many") this.reads++;
     if (name === "grep" || name === "glob" || name === "symbol_search" || name === "lsp") {
       this.searches++;
     }
     if (name === "web_search" || name === "web_fetch") this.webSources++;
-    if (!success) {
+    // The harness's own tools declining something -- the ledger, a citation,
+    // a question nobody answered -- is bookkeeping, not work that failed, and
+    // the receipt does not count it as one.
+    if (!success && !isHarnessTool(name)) {
       this.failures++;
       this.errored = true;
     }
@@ -1322,36 +1474,17 @@ export class TurnRenderer {
       durationMs: event.output?.durationMs,
     };
     const rendered = renderToolActivity(view);
-    this.addLog(rendered, name === "edit_file" || name === "multi_edit");
-    if (isChamberView(view)) {
-      // Context, not news -- gathering, a clean command, a web source. Held
-      // until something worth reading lands, then set down as one chamber row
-      // -- see flushRoutine. The rung above the composer is already naming
-      // this call as it runs, so nothing is invisible meanwhile.
-      this.routineQueue.push(view);
-      this.updateLive();
-      return;
-    }
-    // Anything with news in it closes the burst that led to it, so the reads
-    // land above the result rather than trailing it.
-    this.flushRoutine();
-    if (!success) {
-      const reason = String(event.output?.error ?? "failed").split("\n")[0] ?? "failed";
-      const key = TurnRenderer.failKey(name, reason);
-      if (this.failStreak?.key === key) {
-        // The same failure again: counted, logged, not reprinted. The streak's
-        // closing row will say how many the reader was spared.
-        this.failStreak.extra++;
-      } else {
-        this.flushFailStreak();
-        this.commitErrorOnce(rendered);
-        this.failStreak = { key, extra: 0 };
-      }
-    } else {
-      // The row states the outcome; whatever it held back -- full output, the
-      // whole diff, the rest of a new file -- rides behind it as the fold.
-      this.commitTimeline(rendered, renderToolDetail(view) ?? undefined);
-    }
+    this.addLog(rendered, name === "edit_file" || name === "multi_edit" || name === "apply_patch");
+    // The narrative tools draw their rows from the narrative events that
+    // follow them (hypothesis, decision); the call row would say it twice.
+    const narrative = success && (name === "note_hypothesis" || name === "record_decision");
+    const pending =
+      this.pending && (!event.callId || this.pending.callId === String(event.callId))
+        ? this.pending
+        : null;
+    this.pending = null;
+    if (pending?.ref) this.landLive(view, rendered, pending.ref, narrative);
+    else this.landHeld(view, rendered, narrative);
 
     // The default stays one line, but review mode must preserve enough command
     // evidence to diagnose a failure or verify a claim.
@@ -1377,14 +1510,121 @@ export class TurnRenderer {
     }
   }
 
-  private commitErrorOnce(block: string): void {
-    // Numbers are neutralised in the key the way the streak neutralises them:
-    // a retry window that counts down is the same error each time it is
-    // reported, and it used to dodge this dedupe by the milliseconds alone.
-    const key = oneLine(stripAnsi(block), 180)
+  /** A finished call, under a sink that cannot amend: held if it is
+   *  gathering, committed if it is news. */
+  private landHeld(view: ToolActivityView, rendered: string, narrative: boolean): void {
+    if (narrative) return;
+    if (isChamberView(view)) {
+      // Context, not news -- gathering, a clean command, a web source. Held
+      // until something worth reading lands, then set down as one chamber row
+      // -- see flushRoutine. The rung above the composer is already naming
+      // this call as it runs, so nothing is invisible meanwhile.
+      this.routineQueue.push(view);
+      this.updateLive();
+      return;
+    }
+    // Anything with news in it closes the burst that led to it, so the reads
+    // land above the result rather than trailing it.
+    this.flushRoutine();
+    if (!view.success) {
+      const reason = firstLineOf(view.error ?? "failed");
+      const key = TurnRenderer.failKey(view.toolName, reason);
+      if (this.failStreak?.key === key) {
+        // The same failure again: counted, logged, not reprinted. The streak's
+        // closing row will say how many the reader was spared.
+        this.failStreak.extra++;
+      } else {
+        this.flushFailStreak();
+        this.commitErrorOnce(rendered);
+        this.failStreak = { key, extra: 0, ref: null, block: rendered };
+      }
+    } else {
+      // The row states the outcome; whatever it held back -- full output, the
+      // whole diff, the rest of a new file -- rides behind it as the fold.
+      this.commitTimeline(rendered, renderToolDetail(view) ?? undefined);
+    }
+  }
+
+  /**
+   * A finished call, under a live sink: its provisional row is already on
+   * screen and becomes the finished row in place. Gathering lands as it
+   * finishes; when the third consecutive gathering row lands, the run
+   * becomes one chamber row with the per-call record behind the fold, and
+   * every later one in the run only updates that row. Nothing is held.
+   */
+  private landLive(
+    view: ToolActivityView,
+    rendered: string,
+    ref: BlockRef,
+    narrative: boolean,
+  ): void {
+    if (narrative) {
+      this.amendBlock(ref, "");
+      return;
+    }
+    if (isChamberView(view)) {
+      const run = this.chamber;
+      if (run && run.refs.length > 0) {
+        run.views.push(view);
+        if (run.views.length < CHAMBER_AT) {
+          this.amendBlock(ref, rendered, renderToolDetail(view) ?? undefined);
+          run.refs.push(ref);
+        } else {
+          // The run is one fact now. Its first row becomes the chamber, the
+          // others -- this one included -- go.
+          const [head, ...rest] = run.refs;
+          this.amendBlock(head!, renderChamberHead(run.views), renderChamberDetail(run.views));
+          for (const r of rest) this.amendBlock(r, "");
+          this.amendBlock(ref, "");
+          run.refs = [head!];
+        }
+      } else {
+        this.amendBlock(ref, rendered, renderToolDetail(view) ?? undefined);
+        this.chamber = { views: [view], refs: [ref] };
+      }
+      this.updateLive();
+      return;
+    }
+    this.chamber = null;
+    if (!view.success) {
+      const reason = firstLineOf(view.error ?? "failed");
+      const key = TurnRenderer.failKey(view.toolName, reason);
+      if (this.failStreak?.key === key) {
+        this.failStreak.extra++;
+        this.amendBlock(ref, "");
+        if (this.failStreak.ref) {
+          this.amendBlock(
+            this.failStreak.ref,
+            `${this.failStreak.block}\n${TurnRenderer.streakRow(this.failStreak.extra)}`,
+          );
+        }
+        return;
+      }
+      this.flushFailStreak();
+      const seen = TurnRenderer.errorKey(rendered);
+      if (!seen || this.committedErrors.has(seen)) {
+        this.amendBlock(ref, "");
+        return;
+      }
+      this.committedErrors.add(seen);
+      this.amendBlock(ref, rendered);
+      this.failStreak = { key, extra: 0, ref, block: rendered };
+      return;
+    }
+    this.amendBlock(ref, rendered, renderToolDetail(view) ?? undefined);
+  }
+
+  /** Numbers are neutralised the way the streak neutralises them: a retry
+   *  window that counts down is the same error each time it is reported. */
+  private static errorKey(block: string): string {
+    return oneLine(stripAnsi(block), 180)
       .toLowerCase()
       .replace(/\d[\d,._]*\s*(ms|s|m)\b/g, "n$1")
       .replace(/\d{3,}/g, "n");
+  }
+
+  private commitErrorOnce(block: string): void {
+    const key = TurnRenderer.errorKey(block);
     if (!key || this.committedErrors.has(key)) return;
     this.committedErrors.add(key);
     this.commitTimeline(block);
@@ -1417,10 +1657,33 @@ export class TurnRenderer {
         this.activity = null;
         this.prose += event.text;
         this.pulse.feed(String(event.text ?? "").length);
-        // The voice streams LIVE (see streamingProseTail) -- but a repaint per
-        // token is a strobe, so paint at most every ~80ms; the animation tick
-        // catches whatever a gate skipped.
         const now = Date.now();
+        if (this.live) {
+          // The voice streams INTO the transcript, where it will stay: the
+          // block is committed at the first real words and amended in place
+          // -- at most every ~80ms; the tick paints the tail -- so the
+          // sentence being read never moves when a call starts under it.
+          const raw = this.prose.trim();
+          if (!raw || !oneLine(raw, 100)) return;
+          if (!this.proseRef) {
+            const plan = !this.narratedPlan;
+            this.flushRoutine();
+            const ref = this.commitTimeline(this.renderProse(raw, plan));
+            // A live sink always hands back a handle; a sentinel keeps a
+            // sink that did not from being asked to commit it twice.
+            this.proseRef = { handle: ref?.handle ?? -1, tight: ref?.tight ?? false, plan };
+            this.lastProseLiveAt = now;
+            this.updateLive();
+          } else if (now - this.lastProseLiveAt >= 80) {
+            this.paintProse();
+          } else {
+            this.proseDirty = true;
+          }
+          return;
+        }
+        // The voice streams LIVE in the block (see streamingProseTail) -- but a
+        // repaint per token is a strobe, so paint at most every ~80ms; the
+        // animation tick catches whatever a gate skipped.
         if (now - this.lastProseLiveAt >= 80) {
           this.lastProseLiveAt = now;
           this.updateLive();
@@ -1432,6 +1695,14 @@ export class TurnRenderer {
         // Re-streaming from scratch is work, not silence.
         this.pulse.feed(PULSE_WEIGHT.callback);
         this.prose = "";
+        this.proseDirty = false;
+        // The stream starts over, and so does the block it was writing.
+        if (this.proseRef) {
+          if (this.proseRef.handle >= 0) this.amendBlock(this.proseRef, "");
+          this.proseRef = null;
+        }
+        if (this.pending?.ref) this.amendBlock(this.pending.ref, "");
+        this.pending = null;
         this.currentTool = null;
         this.fleet.clear();
         this.activity = null;
@@ -1451,7 +1722,7 @@ export class TurnRenderer {
 
       case "tool_call_start": {
         this.pulse.feed(PULSE_WEIGHT.callback);
-        this.captureProseAsIntent();
+        this.settleProse();
         this.currentTool = {
           callId: String(event.callId ?? ""),
           name: String(event.toolName ?? "tool"),
@@ -1481,6 +1752,16 @@ export class TurnRenderer {
             checksPassed: 0,
           });
         }
+        // The action becomes a row the moment it starts. Its result attaches
+        // in place when it ends (recordTool), so intent, action and result sit
+        // next to each other on the same rail -- before this, nothing landed
+        // in the transcript until the call was over, and a burst of reads was
+        // a minute of the screen standing still.
+        if (this.live) {
+          const name = this.currentTool.name;
+          const ref = this.pushBlock(TurnRenderer.provisionalRow(name, ""));
+          this.pending = { ref, callId: this.currentTool.callId, name, arg: "" };
+        }
         this.activity = runningLabel(this.currentTool.name);
         this.setPhase(phaseForTool(this.currentTool.name, {}));
         return;
@@ -1493,6 +1774,17 @@ export class TurnRenderer {
           this.currentTool.args = partialArgs(this.currentTool.argsJson);
           this.activity = liveToolLabel(this.currentTool.name, this.currentTool.args);
           this.setPhase(phaseForTool(this.currentTool.name, this.currentTool.args));
+          // The provisional row names its target once the arguments have
+          // finished saying it -- partialArgs only yields a closed value, so
+          // this amends a few times per call, never per token.
+          if (this.pending?.ref && this.pending.callId === this.currentTool.callId) {
+            const name = this.currentTool.name;
+            const arg = name === "todo_write" ? "" : targetOf(name, this.currentTool.args);
+            if (arg && arg !== this.pending.arg) {
+              this.pending.arg = arg;
+              this.amendBlock(this.pending.ref, TurnRenderer.provisionalRow(name, arg));
+            }
+          }
         }
         // A fleet member keeps its OWN argument stream. `currentTool` holds
         // only the newest call, so by the time three scouts are running the
@@ -1507,7 +1799,7 @@ export class TurnRenderer {
 
       case "tool_call_end": {
         this.pulse.feed(PULSE_WEIGHT.callback);
-        this.captureProseAsIntent();
+        this.settleProse();
         const phase = phaseForTool(String(event.output?.toolName ?? ""), event.args ?? {});
         this.setPhase(phase);
         this.recordTool(event);
@@ -1525,7 +1817,7 @@ export class TurnRenderer {
         this.currentTool = null;
         this.lastToolEndAt = Date.now();
         this.activity = null;
-        if (failedCheck) this.setPhase("act", "Addressing the failed check");
+        if (failedCheck) this.setPhase("act");
         else this.updateLive();
         return;
       }
@@ -1534,7 +1826,6 @@ export class TurnRenderer {
         this.flushRoutine();
         this.narratedPlan = true;
         this.todos = Array.isArray(event.items) ? event.items : [];
-        const active = this.todos.find((item) => item.status === "in_progress");
         // A closed step carries its receipt -- what the harness saw happen
         // while it was open -- and a step closed on nothing wears the
         // suspected-rung tilde instead of a tick. The head counts them.
@@ -1567,22 +1858,24 @@ export class TurnRenderer {
               : {}),
           },
         ).join("\n");
+        const key = JSON.stringify(
+          this.todos.map((item) => [item.content, item.status, item.unproven ?? null]),
+        );
         this.addLog(plan);
-        // The shape of the work is committed ONCE, when it is first known --
-        // that is the part a reader needs in scrollback, and it is the moment
-        // they can still object to it. Every later revision is a tick moving,
-        // and a tick moving does not justify reprinting all seven steps: four
-        // updates cost twenty-eight rows to convey three state changes. The
-        // live rung carries the current step and the ratio while the work runs,
-        // and finish() sets down the final state beside the evidence.
+        // The shape of the work is committed ONCE per turn, when it is first
+        // known -- that is the part a reader needs in scrollback, and it is
+        // the moment they can still object to it. Every later revision is a
+        // tick moving, and a tick moving does not justify reprinting all seven
+        // steps. And a first checklist identical to the one the previous turn
+        // set down is carried-over state, not news: it is not reprinted at
+        // all. finish() sets down the final state only if it moved.
         if (this.committedPlan === null) {
           this.committedPlan = plan;
-          this.commitTimeline(plan);
+          if (key !== this.opts.priorPlanKey) this.commitTimeline(plan);
         }
         this.latestPlan = plan;
-        if (this.editedFiles.size === 0)
-          this.setPhase("plan", active?.content ?? "Planning the work");
-        else if (active) this.intent = active.content;
+        this.latestPlanKey = key;
+        if (this.editedFiles.size === 0) this.setPhase("plan");
         this.updateLive();
         return;
       }
@@ -1601,7 +1894,7 @@ export class TurnRenderer {
           this.commitTimeline(row);
         }
         if (event.type === "hypothesis") {
-          this.setPhase("plan", `Testing: ${event.hypothesis.text.slice(0, 60)}`);
+          this.setPhase("plan");
         }
         this.updateLive();
         return;
@@ -1627,7 +1920,7 @@ export class TurnRenderer {
           this.addLog(block);
           this.commitTimeline(block);
         }
-        this.setPhase("plan", "Adjusting the approach from evidence");
+        this.setPhase("plan");
         return;
       }
 
@@ -1668,13 +1961,13 @@ export class TurnRenderer {
         this.commitTimeline(row);
         if (!passed) {
           this.failures++;
-          this.setPhase("act", "Fixing what the step check found");
+          this.setPhase("act");
         }
         return;
       }
 
       case "verification_started":
-        this.captureProseAsIntent();
+        this.settleProse();
         this.flushRoutine();
         this.currentTool = null;
         // Loop invariant: verification only starts once the turn's tool batch
@@ -1682,7 +1975,7 @@ export class TurnRenderer {
         this.fleet.clear();
         this.activity = null;
         this.verificationRunning = true;
-        this.setPhase("verify", "Running the project checks");
+        this.setPhase("verify");
         return;
 
       case "verification_completed": {
@@ -1717,12 +2010,9 @@ export class TurnRenderer {
         this.commitTimeline(verification);
         if (event.ran && !event.passed) {
           this.failures++;
-          this.setPhase("act", "Fixing what the checks found");
+          this.setPhase("act");
         } else {
-          this.setPhase(
-            "verify",
-            event.ran ? "Project checks passed" : "No automatic checks detected",
-          );
+          this.setPhase("verify");
         }
         return;
       }
@@ -1796,14 +2086,14 @@ export class TurnRenderer {
         const message = String(event.message ?? "");
         if (/verifying changes/i.test(message)) {
           this.verificationRunning = true;
-          this.setPhase("verify", "Running the project checks");
+          this.setPhase("verify");
           return;
         }
         if (/verification failed|no execution evidence/i.test(message)) {
-          this.captureProseAsIntent();
-          this.setPhase("act", "Strengthening the result with real evidence");
+          this.settleProse();
+          this.setPhase("act");
         }
-        if (/replanning/i.test(message)) this.setPhase("plan", "Adjusting the approach");
+        if (/replanning/i.test(message)) this.setPhase("plan");
         if (/unavailable.*Switching to/s.test(message)) this.reroutes++;
         const block = formatEvent(event, { cost: this.opts.getCost?.() });
         if (block) {
@@ -1816,7 +2106,7 @@ export class TurnRenderer {
       }
 
       case "error": {
-        this.captureProseAsIntent();
+        this.settleProse();
         this.flushRoutine();
         this.currentTool = null;
         this.activity = null;
@@ -1880,7 +2170,7 @@ export class TurnRenderer {
     this.errored = true;
     this.hardError = true;
     this.failures++;
-    this.captureProseAsIntent();
+    this.settleProse();
     this.flushRoutine();
     const block = formatError(error instanceof Error ? error.message : String(error));
     this.addLog(block);
@@ -1938,8 +2228,19 @@ export class TurnRenderer {
    * reason -- work that did not happen is information too.
    */
   private summaryBlock(): string | null {
-    const lines: string[] = [];
+    // Only when it has news. An edit with no check, or a failing latest
+    // check, is news: the reader needs to know the tree is unverified. A
+    // clean turn -- edits checked, or nothing edited -- ends with the answer
+    // and nothing after it. The "changed 3 files · 3/3 · 12 files reviewed ·
+    // /rewind to roll back" strip was ceremony that came after every answer,
+    // and a strip that always prints stops being read.
     const edits = [...this.editedFiles.entries()];
+    const ran = this.checks.filter((check) => check.status !== "not-run");
+    const latest = ran.at(-1);
+    const failing = latest?.status === "failed";
+    const unchecked = edits.length > 0 && !latest;
+    if (!failing && !unchecked) return null;
+    const lines: string[] = [];
     if (edits.length > 0) {
       lines.push(
         ...F.checklist(
@@ -1947,7 +2248,11 @@ export class TurnRenderer {
           edits.map(([path, stat]) => ({
             status: "ok" as const,
             label: shortPath(path),
-            metric: stat.created ? "new file" : F.editMetric(stat.added, stat.removed) || undefined,
+            metric: stat.deleted
+              ? "deleted"
+              : stat.created
+                ? "new file"
+                : F.editMetric(stat.added, stat.removed) || undefined,
             metricTone: "ok" as const,
           })),
           {
@@ -1957,50 +2262,16 @@ export class TurnRenderer {
         ),
       );
     }
-
-    // Checks are evidence, not decoration. The verdict is the *latest* run: a
-    // failure the turn went on to repair is history, and reporting it as the
-    // outcome would be a lie about the tree you are holding now.
-    const ran = this.checks.filter((check) => check.status !== "not-run");
-    const latest = ran.at(-1);
-    if (latest?.status === "failed") {
+    if (failing && latest) {
       lines.push(
         F.railRow(
           `${danger(glyph("failure"))} ${text(truncate(latest.label, 44))}${latest.detail ? ` ${faint("| " + latest.detail)}` : ""}`,
         ),
       );
-    } else if (latest?.status === "passed") {
-      const badges = ran
-        .filter((check) => check.status === "passed")
-        .slice(-3)
-        .map((check) => `${ok(glyph("verified"))} ${muted(checkBadge(check))}`);
-      lines.push(F.railRow(badges.join("   ")));
-    } else if (edits.length > 0) {
+    } else {
       lines.push(F.railRow(`${warn("!")} ${muted("no check was run on this change")}`));
     }
-
-    // One faint receipt: elapsed, what the provider counted, and the checkpoint
-    // that makes this turn undoable. Nothing here is estimated.
-    const reviewed =
-      edits.length === 0
-        ? [
-            this.reads > 0 ? plural(this.reads, "file") + " reviewed" : "",
-            this.searches > 0 ? plural(this.searches, "search", "searches") : "",
-            this.webSources > 0 ? plural(this.webSources, "source") : "",
-          ].filter(Boolean)
-        : [];
-    const receipt = [
-      ...reviewed,
-      ...this.workReceipt(),
-      this.reroutes > 0 ? plural(this.reroutes, "model switch", "model switches") : "",
-      // Honest wording: /rewind rolls back the CONVERSATION log; it never
-      // reads checkpoint snapshots (they're a separate write-only store).
-      this.checkpoint ? `/rewind to roll back` : "",
-    ].filter(Boolean);
-    if (receipt.length > 0 && (edits.length > 0 || this.toolCalls > 0)) {
-      lines.push(`${F.BODY}${faint(F.receiptOf(receipt))}`);
-    }
-    return lines.length > 0 ? lines.join("\n") : null;
+    return lines.join("\n");
   }
 
   /** Live context occupancy (0-100) from the last provider report, if any. */
@@ -2015,6 +2286,20 @@ export class TurnRenderer {
 
     const answer = this.prose.trim();
     const aborted = options.aborted === true;
+    // A call still open when the turn ends never came back; its row says so
+    // rather than saying `running` forever.
+    if (this.pending?.ref) {
+      this.amendBlock(
+        this.pending.ref,
+        F.toolRow({
+          name: verbOf(this.pending.name),
+          arg: this.pending.arg,
+          status: "none",
+          metric: aborted ? "interrupted" : "no result",
+        }),
+      );
+    }
+    this.pending = null;
     this.flushRoutine();
     // A run that ends mid-streak still owes the reader the count.
     this.flushFailStreak();
@@ -2029,9 +2314,19 @@ export class TurnRenderer {
       const closing = this.completionBlock(aborted);
       if (closing) this.commitTimeline(closing);
     }
-    if (answer) this.sink.commit(responseBlock(answer));
-    else if (aborted)
+    if (answer) {
+      // The answer was streaming into the transcript already; it takes its
+      // final form in place. Otherwise it is committed now, as it always was.
+      if (this.live && this.proseRef && this.proseRef.handle >= 0 && this.sink.amend) {
+        this.sink.amend(this.proseRef.handle, responseBlock(answer));
+      } else {
+        this.sink.commit(responseBlock(answer));
+      }
+    } else if (aborted) {
+      if (this.proseRef && this.proseRef.handle >= 0) this.amendBlock(this.proseRef, "");
       this.sink.commit(`\n ${warn("!")} ${muted("stopped before a result was ready")}\n`);
+    }
+    this.proseRef = null;
     const summary = this.summaryBlock();
     if (summary) this.sink.commit(`\n${summary}\n`);
     this.prose = "";

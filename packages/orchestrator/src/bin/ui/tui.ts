@@ -7,13 +7,18 @@
 //     transcript in between is the ONLY thing that scrolls. Chrome that is
 //     chrome: a wheel flick, a Page Up or a streaming turn move the middle and
 //     nothing else. Rune owns the scrollback for the transcript and provides
-//     the gestures itself (wheel, PgUp/PgDn, shift+arrows, End).
+//     the gestures itself: PgUp/PgDn, the arrows on an empty composer, and
+//     the wheel by way of the terminal's alternate-scroll mode (a notch lands
+//     as a burst of arrow keys) -- so the mouse is never captured and
+//     click-drag copy stays the terminal's.
 //
 //   INLINE (--inline / RUNE_INLINE, ./screen.ts)
 //     The transcript is committed to the terminal's OWN scrollback and only the
 //     composer is pinned. Native momentum scrolling, ⌘F, mouse selection and
 //     `| tee` all work — at the cost of the frame, because the terminal scrolls
-//     the header and the field away along with the text.
+//     the header and the field away along with the text, and on a fresh session
+//     both open wherever the shell prompt was (the founder's 2026-09-05
+//     screenshot: header and composer "launching together" at the bottom).
 //
 // The fixed layout is what a previous phase deleted, and the reason it was
 // deleted is worth keeping straight, because it is NOT "the alternate screen is
@@ -48,7 +53,10 @@ import {
   setProviderDisabled as persistDisabled,
   setLocalEndpoint as persistLocalEndpoint,
   getPreset,
+  getSearchPreset,
   PROVIDER_PRESETS,
+  SEARCH_PROVIDER_PRESETS,
+  searchProviderConnected,
   CUSTOM_PROVIDER_ID,
   loadLastModel,
   loadPrefs,
@@ -56,7 +64,6 @@ import {
   mayPersistGear,
   shouldAskAboutFourthGear,
   saveLastModel,
-  saveSandboxState,
   saveBrowserState,
   getSystemMemoryPath,
 } from "@rune/shared";
@@ -64,6 +71,7 @@ import type { CustomEndpoint } from "@rune/shared";
 import type { ReasoningEffort } from "@rune/llm-gateway";
 import { routeChoices, loginTargets, connectedSummary, type LoginTarget } from "./login-picker";
 import { getStrategy, type AuthContext } from "@rune/llm-gateway";
+import { probeSearchBackend } from "@rune/tool-registry";
 import { openBrowser } from "../byop-cli-shared";
 import {
   providerChoices,
@@ -73,6 +81,13 @@ import {
   fetchLiveModels,
 } from "./model-picker";
 import { configModeToPermissionMode } from "../../permissions";
+import { CONFIG_SETTINGS, displaySettingValue, settingChoices } from "../../config-settings";
+import { runSettingsCommand } from "../../settings-command";
+import {
+  runSandboxCommand,
+  SANDBOX_MODE_CHOICES,
+  SANDBOX_OVERRIDE_CHOICES,
+} from "../../sandbox-command";
 import { runTeamCommand } from "../../team/command";
 import { BottomRegion } from "./screen";
 import {
@@ -86,7 +101,7 @@ import {
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { parseKeys, type Key } from "./keys";
+import { arrowRun, parseKeys, type Key } from "./keys";
 import { fmtTokens } from "./events";
 import { PasteScanner, shouldCollapse, pasteChip, expandPastes, livePasteIds } from "./paste";
 import {
@@ -179,6 +194,7 @@ import { glyph } from "./glyphs";
 import { saveTheme } from "./theme-store";
 import { buildPermissionPreview, type PermissionPreview } from "./permission-preview";
 import { FoldLedger, type FoldRegion } from "./folds";
+import { BlockLedger, type BlockHandle } from "./blocks";
 import { renderWorkspaceDiff } from "./workspace-diff";
 import { workspaceConfigPath } from "@rune/shared";
 import {
@@ -299,6 +315,13 @@ function isMeaningfulSession(session: SessionListItem): boolean {
 const cols = () => process.stdout.columns || 80;
 const rowsCount = () => process.stdout.rows || 24;
 
+/** Whether the fixed frame captures the mouse wheel. OFF by default so native
+ *  click-drag selection and copy work; RUNE_MOUSE=1 trades that for the wheel. */
+const mouseCaptureEnabled = (): boolean => {
+  const v = process.env.RUNE_MOUSE;
+  return v != null && v !== "" && v !== "0" && v.toLowerCase() !== "false";
+};
+
 /**
  * How many blank rows the pinned block holds open beneath the transcript so the
  * field sits on the bottom of the window instead of floating under the header.
@@ -322,9 +345,10 @@ const SCROLL_STEP = 3; // lines per mouse-wheel notch
 /** Ceiling on the live block above the composer: the rung, its detail row, and
  *  up to a fleet's worth of sub-agent rows plus their `+N more`. Past this the
  *  status stops being a status. */
-const LIVE_BLOCK_ROWS = 9;
+/** The live block is ONE row -- the rung -- plus a row per sub-agent in
+ *  flight when there is a fleet. The cap bounds the fleet, not the rung. */
+const LIVE_BLOCK_ROWS = 8;
 /** How long a window drag has to go quiet before the fixed layout repaints. */
-const RESIZE_SETTLE_MS = 50;
 
 export async function runTui(ctx: TuiContext): Promise<void> {
   await new Tui(ctx).run();
@@ -339,6 +363,9 @@ class Tui {
   private transcript: string[] = []; // fixed layout: themed lines, self-managed scrollback window
   /** Blocks that hold more than they show, openable in place -- see ./folds. */
   private folds = new FoldLedger();
+  /** Every committed block's rows, so the renderer can amend one in place --
+   *  a call's row finishing, a burst folding, prose streaming. See ./blocks. */
+  private blocks = new BlockLedger();
   /** Where the body zone sat on the last painted frame, for click -> row math. */
   private lastBodyMap: {
     bodyTop: number;
@@ -358,29 +385,32 @@ class Tui {
   private printedRows = 0;
   private scroll = 0; // fixed layout: lines scrolled up from the bottom (0 = following latest)
   private onResize = () => {
-    if (this.inline) {
-      // Native scrollback reflows itself; just redraw the pinned composer at the
-      // new width. There is no frame to invalidate — history above the composer
-      // was written once and is the terminal's to reflow, not ours to repaint.
-      this.renderRegion();
-      return;
-    }
-    // The fixed layout owns every cell, and a resize invalidates all of them:
-    // the row a line was on is not the row it belongs on at the new size, and
-    // the diff would happily leave the old ones there. Re-measure the width the
-    // flow grammar bounds itself to, forget the screen, repaint it whole --
-    // once the drag settles. A window drag delivers a resize per step, and
-    // repainting every one of them is the strobe the user watched.
-    setTermWidthOverride(this.contentCols());
-    if (this.resizeTimer) clearTimeout(this.resizeTimer);
-    this.resizeTimer = setTimeout(() => {
-      this.resizeTimer = null;
+    // A handler that throws once is never called again -- and an unhandled throw
+    // here was almost certainly the "resize breaks it and it stops reacting to
+    // anything" the founder hit. Whatever goes wrong at one odd size, swallow
+    // it: the next resize or keypress repaints from a clean slate.
+    try {
+      if (this.inline) {
+        // The terminal owns the scrollback and reflows it; the composer just
+        // trails the output, so all we do is redraw it at the new width. No
+        // repositioning maths -- that is exactly what used to drift it around.
+        this.renderRegion();
+        return;
+      }
+      // The fixed frame owns every cell, and a resize moved all of them. Forget
+      // the screen and repaint at the new size RIGHT NOW -- not after a settle
+      // timer. The old code waited 50ms of quiet before repainting, but a
+      // continuous drag never has 50ms of quiet, so the surface appeared frozen
+      // for the whole drag and only snapped to size when the mouse stopped.
+      // scheduleDraw already coalesces to one frame per ~16ms, so painting on
+      // every SIGWINCH is smooth, not a strobe -- and it tracks the drag.
       setTermWidthOverride(this.contentCols());
       this.viewport.invalidate();
       this.scheduleDraw();
-    }, RESIZE_SETTLE_MS);
+    } catch {
+      /* next resize/keypress repaints */
+    }
   };
-  private resizeTimer: ReturnType<typeof setTimeout> | null = null;
   private input = "";
   private caret = 0;
   private history: string[] = [];
@@ -504,6 +534,9 @@ class Tui {
   private interactiveTipShown = false; // the /interactive offer fires at most once per session
   private lastWorkLog: string | null = null; // the last turn's full work log (ctrl+r expands it)
   private liveTurn: TurnRenderer | null = null; // in-flight renderer (ctrl+r mid-turn)
+  /** The plan as the last turn set it down, so the next turn's first checklist
+   *  is not a reprint of carried-over state. */
+  private lastPlanKey: string | null = null;
   private loopPoll: ReturnType<typeof setInterval> | null = null;
   private activeLoopId: string | null = null;
 
@@ -888,7 +921,12 @@ class Tui {
     // muscle memory or script breaks.
     const builtins: SlashItem[] = [
       { name: "/model", desc: "Choose model, provider, and thinking depth", tag: "settings" },
-      { name: "/login", desc: "Connect a subscription, an API key, or a local model" },
+      {
+        name: "/config",
+        desc: "Settings: cost, reasoning, agents, sandbox and learning",
+        tag: "settings",
+      },
+      { name: "/login", desc: "Connect a subscription, an API key, a local model, or web search" },
       { name: "/sessions", desc: "Browse, resume, rename, archive & delete", tag: "history" },
       {
         name: "/gear",
@@ -908,7 +946,10 @@ class Tui {
       { name: "/memory", desc: "System memory -- your evergreen profile" },
       { name: "/notebook", desc: "Learned tactics for this workspace" },
       { name: "/interactive", desc: "Live dashboard -- [focus] | auto on|off | open" },
-      { name: "/sandbox", desc: "OS sandbox for commands -- on | off (off = full access)" },
+      {
+        name: "/sandbox",
+        desc: "OS sandbox for commands -- mode | override | exclude | config",
+      },
       { name: "/browser", desc: "Agent web browser -- on | off" },
       { name: "/compress", desc: "Summarize & shrink context" },
       { name: "/theme", desc: "Switch accent colors and light / dark mode", tag: "cosmetic" },
@@ -935,14 +976,14 @@ class Tui {
     return pref.length ? pref : all.filter((c) => c.name.slice(1).toLowerCase().includes(t));
   }
 
-  private composerBlock(): RenderedBlock {
+  private composerBlock(height = Math.max(3, rowsCount() - 1)): RenderedBlock {
     if (this.mode === "picker" && this.picker) {
       return renderPicker(
         this.picker.title,
         this.picker.items,
         this.picker.sel,
         this.contentCols(),
-        Math.max(3, rowsCount() - 1),
+        height,
         { footnote: this.picker.footnote },
       );
     }
@@ -1036,7 +1077,12 @@ class Tui {
           this.contentCols(),
         );
       }
-      return renderKeysPanel(this.keysRows, this.keysSel, this.contentCols());
+      return renderKeysPanel(
+        this.keysRows,
+        this.keysSel,
+        this.contentCols(),
+        Math.max(4, rowsCount() - 1),
+      );
     }
     if (this.mode === "sessions") {
       return renderSessionsPanel(
@@ -1142,11 +1188,27 @@ class Tui {
     if (overflow > 0) {
       this.transcript.splice(0, overflow);
       this.folds.noteTrim(overflow);
+      this.blocks.noteTrim(overflow);
     }
     return lines.length;
   }
 
-  private print(block: string, detail?: string): void {
+  /** Register a block's fold, if it has one: the region starts at its first
+   *  visible row, so the blank rhythm line above a group never becomes part
+   *  of what a click toggles. */
+  private registerFold(raw: string[], start: number, detail: string): void {
+    let first = 0;
+    while (first < raw.length && !stripAnsi(raw[first]!).trim()) first++;
+    if (first < raw.length && start + first >= 0) {
+      this.folds.register(
+        start + first,
+        raw.slice(first).map((l) => this.bound(l)),
+        detail.split("\n").map((l) => this.bound(l)),
+      );
+    }
+  }
+
+  private print(block: string, detail?: string): BlockHandle | undefined {
     if (this.inline) {
       // Inline: completed blocks flow into the terminal's native scrollback above the pinned
       // composer (the terminal owns scrolling from here). printAbove redraws the composer after.
@@ -1164,29 +1226,52 @@ class Tui {
         comp.caretCol,
         this.ownsCaret(),
       );
-      return;
+      return undefined;
     }
     const raw = block.split("\n");
     const added = this.pushLines(block);
+    const start = this.transcript.length - added;
+    // The block's identity, so the renderer can amend it in place later.
+    const handle = this.blocks.register(start, added);
     // A block that holds more than it shows registers its two forms with the
-    // fold ledger -- the region starts at its first visible row, so the blank
-    // rhythm line above a group never becomes part of what a click toggles.
-    if (detail) {
-      let first = 0;
-      while (first < raw.length && !stripAnsi(raw[first]!).trim()) first++;
-      const start = this.transcript.length - added + first;
-      if (first < raw.length && start >= 0) {
-        this.folds.register(
-          start,
-          raw.slice(first).map((l) => this.bound(l)),
-          detail.split("\n").map((l) => this.bound(l)),
-        );
-      }
-    }
+    // fold ledger.
+    if (detail) this.registerFold(raw, start, detail);
     // Follow the bottom when already there; if the user has scrolled up to read, hold their
     // view stationary as new lines stream in (don't yank them back down). Typing or submitting
     // resets scroll to 0, returning to the live tail.
     if (this.scroll > 0) this.scroll += added;
+    this.scheduleDraw();
+    return handle;
+  }
+
+  /**
+   * Replace a committed block in place: the same splice a fold makes, driven
+   * by the renderer instead of a click. A call's provisional row becomes its
+   * finished row, three gathering rows become one chamber row, the model's
+   * prose grows as it streams. An empty block removes the rows. The scroll
+   * correction is the fold's: a splice at or below the reader's window
+   * changes the distance between their content and the tail.
+   */
+  private amend(handle: BlockHandle, block: string, detail?: string): void {
+    if (this.inline) return;
+    const region = this.blocks.get(handle);
+    if (!region) return;
+    const top = this.transcript.length - this.scroll - this.frameZones().bodyRows;
+    const raw = block ? block.split("\n") : [];
+    const start = region.start;
+    const remove = region.rows;
+    this.transcript.splice(start, remove, ...raw);
+    this.folds.replaceRange(start, remove, raw.length);
+    const splice = this.blocks.replace(handle, raw.length);
+    const delta = splice?.delta ?? raw.length - remove;
+    if (detail && raw.length > 0) this.registerFold(raw, start, detail);
+    const overflow = this.transcript.length - MAX_TRANSCRIPT;
+    if (overflow > 0) {
+      this.transcript.splice(0, overflow);
+      this.folds.noteTrim(overflow);
+      this.blocks.noteTrim(overflow);
+    }
+    if (this.scroll > 0 && start >= top) this.scroll = Math.max(0, this.scroll + delta);
     this.scheduleDraw();
   }
 
@@ -1204,10 +1289,12 @@ class Tui {
     const top = this.transcript.length - this.scroll - this.frameZones().bodyRows;
     const splice = this.folds.toggle(region);
     this.transcript.splice(splice.start, splice.remove, ...splice.insert);
+    this.blocks.noteSplice(splice.start, splice.delta);
     const overflow = this.transcript.length - MAX_TRANSCRIPT;
     if (overflow > 0) {
       this.transcript.splice(0, overflow);
       this.folds.noteTrim(overflow);
+      this.blocks.noteTrim(overflow);
     }
     if (this.scroll > 0 && splice.start >= top) {
       this.scroll = Math.max(0, this.scroll + splice.delta);
@@ -1274,10 +1361,12 @@ class Tui {
    * even a panel never erases where you are.
    */
   private footerBlock(headerRows: number): { lines: string[]; caretRow: number; caretCol: number } {
-    const comp = this.composerBlock();
+    const max = Math.max(3, rowsCount() - headerRows - 1);
+    // Let selectable dialogs window their own items within the actual footer.
+    // Cropping the rendered tail can otherwise remove the selected first row.
+    const comp = this.composerBlock(max);
     let lines = comp.lines.map((l) => withThemeBg(this.bound(l)));
     let caretRow = comp.caretRow;
-    const max = Math.max(3, rowsCount() - headerRows - 1);
     if (lines.length > max) {
       const drop = lines.length - max;
       const marker = withThemeBg(
@@ -1380,7 +1469,13 @@ class Tui {
     // permission card, the sessions panel, the key sheet — parks the terminal's
     // cursor somewhere sensible and needs it visible, because there it is the
     // only signal that the pane has focus at all.
-    return this.mode === "input" || this.mode === "turn";
+    //
+    // The sessions panel joined the writing surface on 2026-09-05: its selected
+    // row is a full-width band and its search field paints a caret cell, so
+    // the parked hardware cursor had become a second, foreign-coloured block
+    // sitting on the band (Warp draws its cursor in its own theme and ignores
+    // OSC 12 -- see theme.ts). Focus is already unmistakable there.
+    return this.mode === "input" || this.mode === "turn" || this.mode === "sessions";
   }
 
   private pinnedBlock(): { lines: string[]; caretRow: number; caretCol: number } {
@@ -1388,13 +1483,14 @@ class Tui {
     let lines = comp.lines.map((l) => withThemeBg(this.bound(l)));
     let caretRow = comp.caretRow;
 
-    // Hold the field on the bottom rows until real output has earned the space.
-    const pad = holdOpenRows(rowsCount(), this.printedRows, lines.length);
-    if (pad > 0) {
-      const blank = withThemeBg(this.bound(""));
-      lines = [...Array.from({ length: pad }, () => blank), ...lines];
-      caretRow += pad;
-    }
+    // No hold-open padding. In the Claude Code model the composer TRAILS the
+    // output: right under the masthead on a fresh session, and at the bottom of
+    // the window once a screenful has scrolled. The old padding tried to jam it
+    // to the bottom of an empty screen, which (a) put a gap of blank rows
+    // between the masthead and the field and (b) drifted the field to the
+    // middle after a reflow when the row count went stale -- both read as the
+    // "floating footer". Trailing the output is simpler and is exactly how the
+    // terminal already wants to place a prompt.
     const max = Math.max(3, rowsCount() - 1);
     if (lines.length > max) {
       const drop = lines.length - max;
@@ -1451,9 +1547,18 @@ class Tui {
     process.stdout.write(terminalThemeSeq());
     if (!this.inline) {
       this.viewport.enter();
-      // The wheel is the terminal's scroll gesture, and on the alternate screen
-      // there is nothing for it to scroll. Capture it and give it the body.
-      this.viewport.captureMouse();
+      // The mouse is deliberately NOT captured by default.
+      //
+      // Capturing it (?1000h) lets the wheel scroll our own buffer, but it also
+      // intercepts click-drag, so the terminal can no longer select text and
+      // the founder cannot copy the transcript ("often it gets blocked when you
+      // jam the footer at one fixed place"). Copy matters more than the wheel:
+      // released, native selection works on everything visible. The wheel
+      // still reaches the transcript: enter() switches on the terminal's
+      // alternate-scroll mode (?1007), which turns a notch into arrow keys on
+      // the alternate screen, and onData routes that burst as a scroll. Set
+      // RUNE_MOUSE=1 to capture the wheel outright at the cost of drag-to-select.
+      if (mouseCaptureEnabled()) this.viewport.captureMouse();
     }
     this.warp("session_start");
     // Name the tab the moment we own the pane. Without this the tab keeps
@@ -1461,12 +1566,43 @@ class Tui {
     // starts, so a session sitting at the prompt looks like a bare shell --
     // which is most of the time anyone is actually glancing at the tab strip.
     setTitle({ kind: "idle" }, this.titleProject());
-    // Inline commits the banner into scrollback once. In the fixed layout the
-    // banner IS the header zone, re-rendered live every frame -- printing it
-    // into the transcript as well would leave a stale copy scrolling around
-    // underneath the real one.
-    if (this.inline) this.printBanner();
-    else this.scheduleDraw();
+    // The one-line header opens the session. When the launch picker owns the
+    // screen it is printed AFTER the picker resolves instead (printMastheadOnce,
+    // called from every session-start path); printing it here first would only
+    // be drawn over.
+    if (!this.ctx.launchPick) this.printMastheadOnce();
+    if (!this.inline) this.scheduleDraw();
+  }
+
+  private mastheadPrinted = false;
+  /**
+   * Commit the one-line header once per session start (the wordmark row + the
+   * seam rule). Idempotent: the launch picker and the direct-start path both
+   * try, and only the first wins, so the header shows exactly once whether you
+   * land in a fresh session or resume one.
+   *
+   * INLINE only: it is committed into scrollback and scrolls away with the
+   * conversation. In the fixed frame the header is PINNED and re-rendered every
+   * frame (bannerLines), so committing a copy here would leave a stale one
+   * scrolling underneath the live one.
+   */
+  private printMastheadOnce(): void {
+    if (this.mastheadPrinted) return;
+    this.mastheadPrinted = true;
+    if (!this.inline) return;
+    const { engine } = this.ctx;
+    this.print(
+      renderBanner({
+        model: engine.getModel(),
+        modelLabel: this.modelLabel(),
+        provider: engine.getProvider(),
+        effort: engine.getReasoningEffort(),
+        sessionId: this.ctx.sessionId,
+        workspace: this.ctx.workspaceRoot,
+        version: this.ctx.version,
+        ...this.gearScope(),
+      }),
+    );
   }
 
   /** Unmount the render surface, leaving the terminal as it was found. */
@@ -1521,22 +1657,6 @@ class Tui {
 
   /** Print the banner into the transcript (inline surface). The alt-screen surface renders it
    *  live as a pinned header via bannerLines() instead. */
-  private printBanner(): void {
-    const { engine } = this.ctx;
-    this.print(
-      renderBanner({
-        model: engine.getModel(),
-        modelLabel: this.modelLabel(),
-        provider: engine.getProvider(),
-        effort: engine.getReasoningEffort(),
-        sessionId: this.ctx.sessionId,
-        workspace: this.ctx.workspaceRoot,
-        version: this.ctx.version,
-        ...this.gearScope(),
-      }),
-    );
-  }
-
   /** Clear the visible transcript, on explicit user request only.
    *
    *  The absolute clear here is deliberate and is the one place it is allowed:
@@ -1546,6 +1666,7 @@ class Tui {
   private resetTranscript(): void {
     this.transcript = [];
     this.folds.clear();
+    this.blocks.clear();
     this.scroll = 0;
     if (!this.inline) {
       // The fixed layout's screen is ours: dropping the transcript and
@@ -1558,13 +1679,12 @@ class Tui {
     }
     this.region.clear();
     process.stdout.write("\x1b[2J\x1b[3J\x1b[H");
-    // The screen is empty again, so the row count that decides how much space
-    // the field holds open has to be empty too. Without this, /clear wipes the
-    // window while the padding still believes a full screen of output is above
-    // it — it computes zero, and the bar jumps up under the banner leaving the
-    // bottom of the window blank. printBanner() re-counts its own rows below.
     this.printedRows = 0;
-    this.printBanner();
+    // A fresh screen re-earns the masthead: /clear and a resume (which clears
+    // then replays) both open with the gear logo, not the one-line banner. This
+    // is also why resume shows the logo -- replayTranscript() calls this first.
+    this.mastheadPrinted = false;
+    this.printMastheadOnce();
   }
 
   /** The banner, rendered live (re-themed every frame) so the header always matches the
@@ -1618,6 +1738,31 @@ class Tui {
    * the terminal's own buffer, and a program that also scrolled it would be
    * fighting the scrollbar the user is already holding.
    */
+  /**
+   * Fixed frame only: does an arrow key READ the transcript or RECALL history?
+   * The same two keys carry both, because alternate-scroll mode delivers the
+   * wheel as arrows and the composer already uses them for history. The two
+   * meanings are told apart here, in one place, so the input and mid-turn
+   * paths cannot drift. `burst` is true when the whole read was a one-way
+   * arrow run (arrowRun) -- the wheel's signature. History stays reachable
+   * on ctrl+p / ctrl+n whatever this decides.
+   *
+   * TODO(human): this is the policy seam. Current rule: a burst always
+   * scrolls; once the transcript is scrolled away from the tail the arrows
+   * keep scrolling (down returns to the tail); a lone arrow on an EMPTY
+   * composer scrolls; a lone arrow with a draft in the composer recalls
+   * history. The trade: Up-on-empty no longer recalls the last prompt the way
+   * Claude Code does, because a slow trackpad sends one arrow per read and
+   * would otherwise recall history mid-scroll.
+   */
+  private arrowScrolls(burst: boolean): boolean {
+    if (this.inline) return false;
+    if (this.mode !== "input" && this.mode !== "turn") return false;
+    if (burst) return true;
+    if (this.scroll > 0) return true;
+    return this.input.length === 0;
+  }
+
   private scrollLines(lines: number): void {
     if (this.inline) return;
     const next = Math.max(0, Math.min(this.maxScroll(), this.scroll + lines));
@@ -1699,7 +1844,18 @@ class Tui {
     // seconds. Here the whole body is one substring, so a huge paste is effectively free.
     for (const seg of this.paste.push(chunk)) {
       if (seg.type === "paste") this.endPaste(seg.content);
-      else for (const key of parseKeys(seg.data)) this.routeKey(key);
+      else {
+        const keys = parseKeys(seg.data);
+        // A wheel notch under alternate-scroll mode lands as several arrows
+        // in ONE read; a finger on a key never does. Route the burst as a
+        // scroll of that many lines, never as a stack of history recalls.
+        const run = arrowRun(keys);
+        if (run !== 0 && this.arrowScrolls(true)) {
+          this.scrollLines(run);
+          continue;
+        }
+        for (const key of keys) this.routeKey(key);
+      }
     }
   }
 
@@ -1928,10 +2084,12 @@ class Tui {
         void this.submit();
         break;
       case "up":
-        this.historyPrev();
+        if (this.arrowScrolls(false)) this.scrollLines(1);
+        else this.historyPrev();
         break;
       case "down":
-        this.historyNext();
+        if (this.arrowScrolls(false)) this.scrollLines(-1);
+        else this.historyNext();
         break;
       case "esc":
         if (this.input.length === 0) {
@@ -1955,6 +2113,14 @@ class Tui {
 
   private ctrlKey(name: string): void {
     switch (name) {
+      // History, by name: the arrows read the transcript in the fixed frame
+      // (arrowScrolls), so recall keeps a pair of keys that never scroll.
+      case "p":
+        this.historyPrev();
+        return;
+      case "n":
+        this.historyNext();
+        return;
       case "r":
         this.expandWorkLog();
         return;
@@ -2105,6 +2271,12 @@ class Tui {
     const arg = rest.join(" ").trim();
 
     switch (cmd) {
+      case "settings":
+      case "config": {
+        if (arg) this.print(await runSettingsCommand(engine, arg));
+        else await this.showSettings();
+        return true;
+      }
       case "quit":
       case "exit":
         this.exit(0);
@@ -2192,6 +2364,9 @@ class Tui {
             permissionMode: s.permissionMode,
             sandboxEnabled: s.sandboxEnabled,
             sandboxDegraded: s.sandboxDegraded,
+            sandboxMode: s.sandboxMode,
+            sandboxFallback: s.sandboxFallback,
+            sandboxExcluded: s.sandboxExcluded,
             orgPolicy: s.orgPolicy,
             autoMode: s.autoMode,
             registeredProviders: s.registeredProviders,
@@ -2465,19 +2640,15 @@ class Tui {
         return true;
       }
       case "sandbox": {
-        const raw = (arg ?? "").toLowerCase();
-        if (raw === "on" || raw === "off") {
-          const enabled = raw === "on";
-          engine.setSandboxEnabled(enabled);
-          saveSandboxState(enabled); // sticks across sessions, like /theme
-          this.print(sandboxModeBanner(enabled));
-        } else if (raw) {
-          this.print(
-            `  ${warn("Usage:")} ${info("/sandbox")} ${faint("[on|off] -- empty shows the current state")}`,
-          );
-        } else {
-          this.print(sandboxModeBanner(engine.isSandboxEnabled()));
+        const raw = (arg ?? "").trim();
+        if (!raw) {
+          await this.runSandboxMenu();
+          return true;
         }
+        const result = runSandboxCommand(engine, raw);
+        if (result.changed === "mode")
+          this.print(sandboxModeBanner(engine.getSandboxPolicy().mode));
+        this.print(result.lines.map((l, i) => `  ${i === 0 ? text(l) : muted(l)}`).join("\n"));
         return true;
       }
       case "browser": {
@@ -3144,6 +3315,137 @@ class Tui {
 
   // -- picker mode --
 
+  private async showSettings(): Promise<void> {
+    const engine = this.ctx.engine;
+    const shortcuts = [
+      { label: "Model and reasoning", hint: "choose intelligence", command: "model" },
+      {
+        label: "API keys and internet search",
+        hint: "manage keys | /login to connect",
+        command: "keys",
+      },
+      { label: "Browser", hint: engine.isBrowserEnabled() ? "on" : "off", command: "browser" },
+    ];
+    while (true) {
+      const rows: PickerItem[] = [
+        ...shortcuts,
+        ...CONFIG_SETTINGS.map((s) => {
+          const value = engine.readConfigSetting(s.key);
+          return {
+            label: s.key.replaceAll("_", " "),
+            hint: value === undefined ? "per effort" : displaySettingValue(s, value),
+          };
+        }),
+      ];
+      const selected = await this.pick(
+        "Settings",
+        rows,
+        0,
+        undefined,
+        "Changes apply now and are saved. Esc closes.",
+      );
+      if (selected === null) return;
+      if (selected < shortcuts.length) {
+        await this.handleSlash(`/${shortcuts[selected]!.command}`);
+        return;
+      }
+      const setting = CONFIG_SETTINGS[selected - shortcuts.length]!;
+      const current = engine.readConfigSetting(setting.key);
+      let value: string | null = null;
+      if (setting.kind === "number") {
+        value = await this.promptLine(`${setting.key} (${settingChoices(setting)})`, current ?? "");
+      } else {
+        const values = setting.kind === "boolean" ? ["true", "false"] : [...setting.values!];
+        const choice = await this.pick(
+          setting.key.replaceAll("_", " "),
+          values.map((v) => ({ label: displaySettingValue(setting, v) })),
+          Math.max(0, values.indexOf(current ?? "")),
+          undefined,
+          setting.description,
+        );
+        if (choice !== null) value = values[choice]!;
+      }
+      if (value !== null && value.trim())
+        this.print(await runSettingsCommand(engine, `${setting.key} ${value}`));
+    }
+  }
+
+  /**
+   * `/sandbox` with no argument: the three-tab menu. Mode and Overrides are
+   * pickers with the current choice marked; Config is a readout of what the
+   * sandbox actually enforces, plus how to change it. Every choice made here
+   * is also reachable as text (`/sandbox mode regular`), which is what the
+   * plain CLI uses.
+   */
+  private async runSandboxMenu(): Promise<void> {
+    const engine = this.ctx.engine;
+    const policy = engine.getSandboxPolicy();
+    const tab = await this.pick(
+      "sandbox",
+      [
+        {
+          label: "Mode",
+          hint: `${policy.mode} -- ${SANDBOX_MODE_CHOICES.find((c) => c.mode === policy.mode)?.hint ?? ""}`,
+        },
+        {
+          label: "Overrides",
+          hint: policy.allowUnsandboxedFallback
+            ? "allow unsandboxed fallback"
+            : "strict sandbox mode",
+        },
+        {
+          label: "Config",
+          hint: `${policy.excludedCommands.length} excluded, filesystem read/write rules`,
+        },
+      ],
+      0,
+      undefined,
+      "Learn more: docs/sandbox.md -- text forms: /sandbox mode|override|exclude|config",
+    );
+    if (tab === null) return;
+    if (tab === 0) {
+      const current = SANDBOX_MODE_CHOICES.findIndex((c) => c.mode === policy.mode);
+      const picked = await this.pick(
+        "sandbox mode",
+        SANDBOX_MODE_CHOICES.map((c) => ({
+          label: c.label,
+          hint: c.hint,
+          current: c.mode === policy.mode,
+        })),
+        Math.max(0, current),
+        undefined,
+        "Auto-allow: the sandbox vouches for a command. Regular: contained but still prompted. Off: full access.",
+      );
+      if (picked === null) return;
+      const result = runSandboxCommand(engine, `mode ${SANDBOX_MODE_CHOICES[picked]!.mode}`);
+      this.print(sandboxModeBanner(engine.getSandboxPolicy().mode));
+      this.print(result.lines.map((l) => `  ${muted(l)}`).join("\n"));
+      return;
+    }
+    if (tab === 1) {
+      const picked = await this.pick(
+        "sandbox overrides",
+        SANDBOX_OVERRIDE_CHOICES.map((c) => ({
+          label: c.label,
+          hint: c.hint,
+          current: c.fallback === policy.allowUnsandboxedFallback,
+        })),
+        policy.allowUnsandboxedFallback ? 0 : 1,
+        undefined,
+        "Strict: unsandboxed: true is refused; only excludedCommands run on the host.",
+      );
+      if (picked === null) return;
+      const result = runSandboxCommand(
+        engine,
+        `override ${SANDBOX_OVERRIDE_CHOICES[picked]!.fallback ? "fallback" : "strict"}`,
+      );
+      this.print(result.lines.map((l, i) => `  ${i === 0 ? text(l) : muted(l)}`).join("\n"));
+      return;
+    }
+    const result = runSandboxCommand(engine, "config");
+    this.print(result.lines.map((l, i) => `  ${i === 0 ? text(l) : muted(l)}`).join("\n"));
+  }
+
   private pick(
     title: string,
     items: PickerItem[],
@@ -3208,6 +3510,22 @@ class Tui {
       if (picked < p.items.length) this.closePicker(picked);
     } else if (key.type === "char" && p.altKey && key.value.toLowerCase() === p.altKey) {
       this.closePicker(p.sel, true);
+    } else if (key.type === "char" && /^[a-z]$/i.test(key.value)) {
+      // Type-to-jump. With thirty-odd providers on one list the arrow keys
+      // alone are a chore: a letter moves to the next row whose label starts
+      // with it, cycling from the top, so "m" reaches Mistral in one press and
+      // a second "m" reaches MiniMax. Digits keep their quick-select meaning.
+      const c = key.value.toLowerCase();
+      const n = p.items.length;
+      for (let step = 1; step <= n; step++) {
+        const i = (p.sel + step) % n;
+        if (p.items[i]!.label.toLowerCase().startsWith(c)) {
+          p.sel = i;
+          p.onPreview?.(i);
+          this.scheduleDraw();
+          break;
+        }
+      }
     } else if (key.type === "enter") {
       this.closePicker(p.sel);
     } else if (key.type === "esc" || (key.type === "ctrl" && key.name === "c")) {
@@ -3239,15 +3557,20 @@ class Tui {
    */
   private async openLogin(): Promise<void> {
     const routes = routeChoices();
+    const engine = this.ctx.engine;
     const connectedIds = PROVIDER_PRESETS.map((p) => p.id).filter((id) => hasStoredCredential(id));
+    const searchIds = SEARCH_PROVIDER_PRESETS.filter(
+      (p) => !p.keyless && this.searchConnected(p.id),
+    ).map((p) => p.id);
     this.print(
-      [`  ${bold(text("Connect a model"))}`, `  ${faint(connectedSummary(connectedIds))}`].join(
-        "\n",
-      ),
+      [
+        `  ${bold(text("Connect"))} ${faint("| a model, an API key, a local server, or web search")}`,
+        `  ${faint(connectedSummary(connectedIds, searchIds))}`,
+      ].join("\n"),
     );
 
     const r = await this.pick(
-      "Connect | how do you want to sign in?",
+      "Connect | what do you want to connect?",
       routes.map((c) => ({ label: c.label, hint: c.hint })),
       0,
       undefined,
@@ -3256,7 +3579,14 @@ class Tui {
     if (r == null) return;
     const route = routes[r]!;
 
-    const targets = loginTargets(route.id, { connected: (id) => hasStoredCredential(id) });
+    const targets = loginTargets(route.id, {
+      connected: (id) =>
+        route.id === "search"
+          ? this.searchConnected(id)
+          : id === CUSTOM_PROVIDER_ID
+            ? !!engine.getCustomEndpoint()
+            : hasStoredCredential(id),
+    });
     if (targets.length === 0) {
       this.print(`  ${faint("nothing to connect on that route")}`);
       return;
@@ -3270,15 +3600,24 @@ class Tui {
       })),
       0,
       undefined,
-      "enter connect | esc back",
+      targets.length > 9
+        ? "enter connect | type a letter to jump | esc back"
+        : "enter connect | esc back",
     );
     if (t == null) return;
     const target = targets[t]!;
     await this.runLoginFor(target);
   }
 
+  /** A search engine counts as connected on any usable credential: keychain, secrets, env, or URL. */
+  private searchConnected(id: string): boolean {
+    return hasStoredCredential(id) || searchProviderConnected(id);
+  }
+
   /** Run one target's real auth strategy and apply the result to this session. */
   private async runLoginFor(target: LoginTarget): Promise<void> {
+    if (target.kind === "search") return this.runSearchLogin(target);
+    if (target.providerId === CUSTOM_PROVIDER_ID) return this.runCustomLocalLogin();
     const preset = getPreset(target.providerId);
     if (!preset) return;
 
@@ -3313,6 +3652,12 @@ class Tui {
         { providerId: target.providerId, preset, store, env: process.env } as AuthContext,
         cred,
       );
+      // Hand the credential to the engine BEFORE switching to it. The gateway
+      // rebuilds from the credentials the engine holds, and until now nobody
+      // told it about this one: the key went into the keychain, the model
+      // switched, and the next message failed with "provider not registered"
+      // until a restart re-read the store.
+      this.ctx.engine.setResolvedCredential(target.providerId, cred, this.ctx.sessionId);
       this.print(
         `  ${ok(glyph("verified"))} ${muted("connected")} ${info(target.label)}${valid ? "" : faint(" (unverified)")}`,
       );
@@ -3326,10 +3671,145 @@ class Tui {
     }
   }
 
-  private promptLine(title: string): Promise<string | null> {
+  /**
+   * Connect a web-search engine: paste a key (or a URL for a self-hosted one),
+   * keep it in the keychain, and prove it with one real search. A format check
+   * would pass a revoked key; the engine's own answer is the only verification
+   * that means anything, so that is what "connected" reports.
+   */
+  private async runSearchLogin(target: LoginTarget): Promise<void> {
+    const preset = getSearchPreset(target.providerId);
+    if (!preset) return;
+    if (preset.keyless) {
+      this.print(
+        `  ${ok(glyph("verified"))} ${info(preset.label)} ${muted("is built in -- it answers whenever nothing better is connected")}`,
+      );
+      return;
+    }
+    if (preset.urlEnvVar) {
+      const current = process.env[preset.urlEnvVar] || preset.baseUrl || "";
+      const url = (await this.promptLine(`${preset.label} URL:`, current))?.trim();
+      if (!url) return;
+      persistLocalEndpoint(preset.id, url);
+      process.env[preset.urlEnvVar] = url;
+      if (await this.reportSearchProbe(preset.id, preset.label)) this.preferSearch(preset);
+      return;
+    }
+    const strategy = getStrategy("api_key", preset.id);
+    if (!strategy) return;
+    this.print(`  ${faint("connecting")} ${info(preset.label)} ${faint(`-- ${preset.hint}`)}`);
+    try {
+      const store = await openCredentialStore();
+      const cred = await strategy.authenticate({
+        providerId: preset.id,
+        preset,
+        store,
+        env: process.env,
+        prompt: async (q: string) => (await this.promptLine(q)) ?? "",
+        log: (line?: string) => this.print(`  ${faint(line ?? "")}`),
+      } as AuthContext);
+      // The backends read the environment at call time; this is how the key
+      // reaches the very next web_search without a restart.
+      if (cred.secret && preset.envVar) process.env[preset.envVar] = cred.secret;
+      if (await this.reportSearchProbe(preset.id, preset.label)) this.preferSearch(preset);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.print(`  ${danger(glyph("failure"))} ${muted("connect failed --")} ${faint(message)}`);
+    }
+  }
+
+  /** One real search, reported honestly: connected, or saved-but-failing with the host's words. */
+  private async reportSearchProbe(id: string, label: string): Promise<boolean> {
+    this.print(`  ${faint("running a test search...")}`);
+    const probe = await probeSearchBackend(id);
+    if (probe.ok) {
+      this.print(
+        `  ${ok(glyph("verified"))} ${muted("connected")} ${info(label)} ${faint(`| answered in ${probe.ms}ms`)}`,
+      );
+    } else {
+      this.print(
+        `  ${warn("!")} ${muted("saved, but a test search failed --")} ${faint(probe.detail ?? "no results")}`,
+      );
+      this.print(
+        `  ${faint("it stays connected; web_search will try it after the engines that work")}`,
+      );
+    }
+    return probe.ok;
+  }
+
+  /**
+   * The engine you just connected is the one you meant to use -- the same
+   * reasoning that makes a fresh model sign-in the session model. It leads
+   * this session (RUNE_SEARCH_BACKEND is read per call) and the next ones
+   * (prefs); `[search] provider` in config.toml still outranks it at boot.
+   */
+  private preferSearch(preset: { id: string; label: string }): void {
+    process.env.RUNE_SEARCH_BACKEND = preset.id;
+    savePrefs({ search: preset.id });
+    this.print(
+      `  ${accent(glyph("phase"))} ${muted("web_search asks")} ${info(preset.label)} ${muted("first now")} ${faint("| kept for new sessions too")}`,
+    );
+  }
+
+  /**
+   * "Other local server" on the Offline route: LM Studio, vLLM, llama.cpp,
+   * LiteLLM -- anything OpenAI-compatible on this machine. It is the one
+   * custom endpoint slot, previously reachable only as
+   * `/keys custom <url> <model> <key>`. The server's own /models list picks the
+   * model when the server is up; otherwise the id is typed.
+   */
+  private async runCustomLocalLogin(): Promise<void> {
+    const engine = this.ctx.engine;
+    const existing = engine.getCustomEndpoint();
+    const baseUrl = (
+      await this.promptLine(
+        "Server URL (OpenAI-compatible):",
+        existing?.baseUrl ?? "http://localhost:1234/v1",
+      )
+    )?.trim();
+    if (!baseUrl) return;
+    const live = await fetchLiveModels("openai-compat", baseUrl);
+    let model: string | undefined;
+    if (live && live.length > 0) {
+      const picked = await this.pick(
+        `Model | ${baseUrl}`,
+        live.map((id) => ({ label: id, current: id === existing?.model })),
+        Math.max(0, live.indexOf(existing?.model ?? "")),
+        undefined,
+        "enter choose | esc back",
+      );
+      if (picked == null) return;
+      model = live[picked];
+    } else {
+      this.print(
+        `  ${warn("!")} ${muted("no model list at")} ${info(baseUrl)} ${faint("-- is the server running? type the model id")}`,
+      );
+      model = (await this.promptLine("Model id:", existing?.model ?? ""))?.trim();
+    }
+    if (!model) return;
+    const typedKey = (
+      await this.promptLine(
+        "API key (enter for none):",
+        existing?.key && existing.key !== "local" ? existing.key : "",
+      )
+    )?.trim();
+    // The gateway registers the custom slot only with a non-empty key; a
+    // keyless local server gets a placeholder it will ignore.
+    const ep: CustomEndpoint = {
+      baseUrl,
+      model,
+      key: typedKey || "local",
+      label: existing?.label ?? "Local server",
+    };
+    persistCustom(ep);
+    engine.setCustomEndpoint(ep, this.ctx.sessionId);
+    this.applyModelSwitch(CUSTOM_PROVIDER_ID, model, false);
+  }
+
+  private promptLine(title: string, initial = ""): Promise<string | null> {
     return new Promise((resolve) => {
-      this.input = "";
-      this.caret = 0;
+      this.input = initial;
+      this.caret = initial.length;
       this.askState = { resolve, title };
       this.mode = "ask";
       this.scheduleDraw();
@@ -3674,7 +4154,10 @@ class Tui {
       .listSessions({ status: "active" })
       .filter((s) => s.id !== fresh && isMeaningfulSession(s))
       .slice(0, 12);
-    if (recent.length === 0) return; // nothing to resume -- stay in the fresh session
+    if (recent.length === 0) {
+      this.printMastheadOnce(); // nothing to resume -- open the fresh session with the logo
+      return;
+    }
 
     const items: PickerItem[] = [
       { label: "*  Start a new session", hint: "fresh start" },
@@ -3684,15 +4167,24 @@ class Tui {
       }),
     ];
     const i = await this.pick("Resume a session", items, 0);
-    if (i == null || i === 0) return; // Esc or "new" -> keep the fresh session
+    if (i == null || i === 0) {
+      this.printMastheadOnce(); // Esc or "new" -> open the fresh session with the logo
+      return;
+    }
 
     const s = recent[i - 1];
-    if (!s) return;
+    if (!s) {
+      this.printMastheadOnce();
+      return;
+    }
     const res = this.ctx.engine.resumeSession(s.id);
     if (!res) {
+      this.printMastheadOnce();
       this.print(`  ${danger(glyph("failure"))} ${muted("could not open that session")}`);
       return;
     }
+    // replayTranscript() clears the screen and re-prints the masthead itself
+    // (via resetTranscript), so the logo lands above the replayed history.
     this.replayTranscript(s.id, s, res);
   }
 
@@ -4654,9 +5146,14 @@ class Tui {
       this.scheduleDraw();
       return;
     }
-    // Recall history and scroll the transcript while waiting.
-    if (key.type === "up") return this.historyPrev();
-    if (key.type === "down") return this.historyNext();
+    // Read the transcript (arrows on an empty composer, PgUp/PgDn) or recall
+    // history (ctrl+p / ctrl+n, or the arrows over a draft) while waiting.
+    if (key.type === "ctrl" && key.name === "p") return this.historyPrev();
+    if (key.type === "ctrl" && key.name === "n") return this.historyNext();
+    if (key.type === "up")
+      return this.arrowScrolls(false) ? this.scrollLines(1) : this.historyPrev();
+    if (key.type === "down")
+      return this.arrowScrolls(false) ? this.scrollLines(-1) : this.historyNext();
     if (key.type === "pageup") return this.scrollBy(1);
     if (key.type === "pagedown") return this.scrollBy(-1);
     // Anything else edits the composer (type-ahead).
@@ -4687,12 +5184,21 @@ class Tui {
     const turn = new TurnRenderer(
       {
         commit: (block, detail) => this.print(block, detail),
+        // The fixed viewport owns its buffer, so a row can be amended after
+        // it lands; --inline writes to the terminal's scrollback and cannot.
+        amend: this.inline
+          ? undefined
+          : (handle, block, detail) => this.amend(handle, block, detail),
         preview: (lines) => {
           this.turnPreview = lines;
           this.scheduleDraw();
         },
       },
-      { model: engine.getModel(), getCost: () => engine.getCost() },
+      {
+        model: engine.getModel(),
+        getCost: () => engine.getCost(),
+        priorPlanKey: this.lastPlanKey ?? undefined,
+      },
     );
     this.liveTurn = turn;
     // The web comp rotates the gear continuously. Terminals cannot rotate a
@@ -4708,6 +5214,7 @@ class Tui {
         // rebuilt the banner, the composer and four engine readouts to draw
         // the same rows, and that CPU was what a keypress waited behind.
         this.paintTitle(turn);
+        turn.tick();
         const lines = turn.liveLines();
         const key = lines.join("\n");
         if (key !== this.lastTickKey) {
@@ -4782,6 +5289,7 @@ class Tui {
       }
     } finally {
       turn.finish({ aborted: this.aborting });
+      this.lastPlanKey = turn.planKey() ?? this.lastPlanKey;
       this.printClose();
       // The event a long run is actually for: Warp raises a notification when
       // the pane is in the background, which is the difference between
@@ -5204,17 +5712,27 @@ class Tui {
     const turn = new TurnRenderer(
       {
         commit: (block, detail) => this.print(block, detail),
+        // The fixed viewport owns its buffer, so a row can be amended after
+        // it lands; --inline writes to the terminal's scrollback and cannot.
+        amend: this.inline
+          ? undefined
+          : (handle, block, detail) => this.amend(handle, block, detail),
         preview: (lines) => {
           this.turnPreview = lines;
           this.scheduleDraw();
         },
       },
-      { model: engine.getModel(), getCost: () => engine.getCost() },
+      {
+        model: engine.getModel(),
+        getCost: () => engine.getCost(),
+        priorPlanKey: this.lastPlanKey ?? undefined,
+      },
     );
     this.liveTurn = turn;
     this.tick = setInterval(() => {
       if (this.mode === "turn") {
         this.paintTitle(turn);
+        turn.tick();
         const lines = turn.liveLines();
         const key = lines.join("\n");
         if (key !== this.lastTickKey) {
@@ -5241,6 +5759,7 @@ class Tui {
       if (!this.aborting) turn.onError(err);
     } finally {
       turn.finish({ aborted: this.aborting });
+      this.lastPlanKey = turn.planKey() ?? this.lastPlanKey;
       this.printClose();
       // The event a long run is actually for: Warp raises a notification when
       // the pane is in the background, which is the difference between

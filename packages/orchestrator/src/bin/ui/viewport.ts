@@ -15,10 +15,11 @@
 //
 // Owning the frame means owning the viewport, so this takes the alternate
 // screen. That is a real trade and it is stated plainly in tui.ts's header: the
-// terminal's native scrollback, momentum scrolling and mouse selection stop
-// applying to the transcript, and Rune provides them itself (wheel, PgUp/PgDn,
-// shift+arrows) against its own buffer. `--inline` keeps the old layout for
-// anyone who wants the terminal's scrollback back.
+// terminal's native scrollback and momentum scrolling stop applying to the
+// transcript, and Rune scrolls its own buffer instead: PgUp/PgDn, the arrows on
+// an empty composer, and the wheel by way of alternate-scroll mode (below),
+// which keeps the mouse uncaptured so selection stays the terminal's.
+// `--inline` keeps the old layout for anyone who wants native scrollback back.
 //
 // Everything here is deliberately split into a PURE part (`composeFrame`,
 // `zones`) and a tiny writing part (`Viewport`). The pure part is where every
@@ -33,6 +34,18 @@ const SHOW = "\x1b[?25h";
 const WRAP_OFF = "\x1b[?7l";
 const WRAP_ON = "\x1b[?7h";
 const MOUSE_ON = "\x1b[?1000h\x1b[?1006h";
+/**
+ * Alternate-scroll mode (DEC private 1007). On the alternate screen the
+ * terminal has no scrollback of its own to move, so with this set it turns a
+ * wheel notch or a trackpad flick into arrow keys instead -- three per notch on
+ * most terminals, one per line on a trackpad. That is how the wheel reaches the
+ * transcript WITHOUT the mouse being captured, so click-drag selection stays
+ * the terminal's. Deliberately not reset on leave: most terminals default it
+ * on, and a shell that finds it on afterwards only gains wheel-scroll in less
+ * and vim. (Querying and restoring the prior state would need DECRQM; the
+ * sticky-on side effect is benign, the sticky-off one is not.)
+ */
+const ALT_SCROLL_ON = "\x1b[?1007h";
 const MOUSE_OFF = "\x1b[?1006l\x1b[?1000l";
 const RESET = "\x1b[0m";
 const EL = "\x1b[0K"; // erase from cursor to end of line
@@ -238,7 +251,7 @@ export class Viewport {
     if (this.active) return;
     // Autowrap off: a line one cell too wide would otherwise wrap, push every
     // row below it down by one, and desync the diff for the rest of the session.
-    this.write(ALT_ENTER + WRAP_OFF + HIDE + CLEAR_ALL);
+    this.write(ALT_ENTER + WRAP_OFF + HIDE + CLEAR_ALL + ALT_SCROLL_ON);
     this.active = true;
     this.prev = [];
     this.caret = null;

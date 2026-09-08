@@ -33,6 +33,12 @@ export interface StatusView {
   sandboxEnabled?: boolean;
   /** True when the sandbox is on but this machine has no OS isolation backend. */
   sandboxDegraded?: boolean;
+  /** auto-allow | regular | off — refines the boolean when present. */
+  sandboxMode?: "auto-allow" | "regular" | "off";
+  /** The Overrides tab: true = unsandboxed fallback allowed, false = strict. */
+  sandboxFallback?: boolean;
+  /** Command patterns excluded from the sandbox. */
+  sandboxExcluded?: string[];
   /** Verified org policy in force (managed machines). Absent hides the row. */
   orgPolicy?: { org?: string; fingerprint: string } | null;
   registeredProviders?: string[];
@@ -76,7 +82,14 @@ export function renderStatus(s: StatusView): string {
               ? bold(warn("! off | full host access"))
               : s.sandboxDegraded
                 ? bold(warn("! on | NOT ISOLATED -- no OS backend, path-guard only"))
-                : text("on | commands OS-sandboxed, no network"),
+                : text(
+                    `${s.sandboxMode ?? "on"} | commands OS-sandboxed, no network` +
+                      (s.sandboxMode === "regular" ? ", prompts apply" : "") +
+                      (s.sandboxFallback === false ? " | strict" : "") +
+                      (s.sandboxExcluded?.length
+                        ? ` | excluded: ${s.sandboxExcluded.join(", ")}`
+                        : ""),
+                  ),
           ],
         ] as [string, string][])),
     ...(s.orgPolicy

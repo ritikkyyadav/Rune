@@ -156,6 +156,24 @@ export function eventsToMessages(
         break;
       }
 
+      case "auto_compaction": {
+        // Older rows contain metrics only. New rows checkpoint the exact
+        // pair-safe working set (including result eviction and opaque provider
+        // reasoning). The raw event log remains available for audit/rewind.
+        const p = event.payload;
+        if (p.version !== 1 || !isWorkingSet(p.workingSet)) break;
+        pendingToolCalls.clear();
+        messages.length = 0;
+        for (const message of p.workingSet) {
+          messages.push(structuredClone(message));
+          for (const block of message.content) {
+            if (block.type === "tool_use") pendingToolCalls.set(block.toolCallId, block.toolName);
+            else if (block.type === "tool_result") pendingToolCalls.delete(block.toolCallId);
+          }
+        }
+        break;
+      }
+
       // system_note, checkpoint, plan_* events do not produce model-visible
       // messages directly; they are session metadata.
       default:
@@ -166,6 +184,49 @@ export function eventsToMessages(
   closePendingToolCalls();
 
   return messages;
+}
+
+/** Ignore malformed checkpoints rather than replacing recoverable history. */
+function isWorkingSet(value: unknown): value is Message[] {
+  if (!Array.isArray(value) || value.length === 0) return false;
+  return value.every(
+    (message) =>
+      message &&
+      ["user", "assistant", "tool", "system"].includes(message.role) &&
+      Array.isArray(message.content) &&
+      message.content.every((block: ContentBlock) => {
+        if (!block || typeof block !== "object") return false;
+        switch (block.type) {
+          case "text":
+            return typeof block.text === "string";
+          case "tool_use":
+            return (
+              typeof block.toolCallId === "string" &&
+              typeof block.toolName === "string" &&
+              block.toolInput !== null &&
+              typeof block.toolInput === "object"
+            );
+          case "tool_result":
+            return (
+              typeof block.toolCallId === "string" && typeof block.toolResultContent === "string"
+            );
+          case "thinking":
+            return (
+              typeof block.thinking === "string" &&
+              (block.signature === undefined || typeof block.signature === "string")
+            );
+          case "redacted_thinking":
+            return (
+              typeof block.data === "string" &&
+              (block.provider === undefined || typeof block.provider === "string")
+            );
+          case "image":
+            return typeof block.mediaType === "string" && typeof block.data === "string";
+          default:
+            return false;
+        }
+      }),
+  );
 }
 
 export interface AssistantPersistPayload {

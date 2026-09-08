@@ -12,6 +12,13 @@
 // in Terminal.app.
 
 import { glyph } from "./glyphs";
+import {
+  diffBands,
+  hexToRgbTuple,
+  syntaxPalette,
+  type RuneBaseName,
+  type SyntaxRole,
+} from "@rune/shared";
 import { terminalText } from "./glyphs";
 import {
   type ColorRole,
@@ -28,6 +35,7 @@ import {
   findTheme,
   nearestAnsi256,
   productionThemes,
+  relativeLuminance,
 } from "./themes";
 
 const RESET = "\x1b[0m";
@@ -312,12 +320,29 @@ export function bandsEnabled(): boolean {
   return COLOR_CAPABLE && DEPTH !== "ansi16" && !active.useNativeColors;
 }
 
-function bandSeq(role: "ok" | "danger"): string {
+/**
+ * The band's colour. On the product's own themes it is the published token
+ * (design-tokens.ts RUNE_DIFF_BANDS: the founder's navy for additions and deep
+ * red for removals on ink, their derived tints on paper). Any other theme --
+ * follow-terminal with a known ground, a supplied palette -- mixes the same
+ * reading from its own ground: toward the accent for an addition, toward the
+ * danger pigment for a removal.
+ */
+function bandRgb(role: "ok" | "danger"): Rgb {
+  const kind = role === "ok" ? "added" : "removed";
+  // The product's two themes are "rune-dark" and "rune" (the light one).
+  if (active.name === "rune-dark" || active.name === "rune") {
+    return hexToRgbTuple(diffBands(active.appearance === "light" ? "light" : "dark")[kind]);
+  }
   const ground = active.bg.rgb as Rgb;
-  const tone = pigmentFor(ROLE_SLOT[role]).rgb as Rgb;
+  const tone = pigmentFor(role === "ok" ? ROLE_SLOT.accent : ROLE_SLOT[role]).rgb as Rgb;
   // Further toward the pigment on a dark ground: dark mixes lose chroma faster.
   const t = active.appearance === "light" ? 0.14 : 0.24;
-  const [r, g, b] = mixRgb(ground, tone, t);
+  return mixRgb(ground, tone, t);
+}
+
+function bandSeq(role: "ok" | "danger"): string {
+  const [r, g, b] = bandRgb(role);
   if (DEPTH === "truecolor") return `\x1b[48;2;${r};${g};${b}m`;
   return `\x1b[48;5;${nearestAnsi256([r, g, b])}m`;
 }
@@ -330,12 +355,106 @@ function banded(value: string, role: "ok" | "danger"): string {
   return `${seq}${value.split(RESET).join(RESET + seq)}${RESET}`;
 }
 
+/**
+ * Which syntax palette reads on a band. An added row sits on the OPPOSITE
+ * ground (white on ink, the mark's blue on paper), so the theme's own palette
+ * would vanish there; the band's luminance decides, not the theme's.
+ */
+export function bandPalette(role: "ok" | "danger"): RuneBaseName {
+  if (!bandsEnabled()) return active.appearance === "light" ? "light" : "dark";
+  return relativeLuminance(bandRgb(role)) >= 0.42 ? "light" : "dark";
+}
+
+/**
+ * The ink that reads on a band: the contrast pole, black on a light band and
+ * white on a dark one. Off a band (bands disabled) it is the theme's text, so
+ * the degraded rendering is unchanged.
+ */
+export function bandInk(role: "ok" | "danger"): (value: string) => string {
+  if (!bandsEnabled()) return text;
+  const light = bandPalette(role) === "light";
+  return (value: string): string => {
+    const safe = terminalText(value);
+    if (DEPTH === "truecolor") {
+      return `${light ? "\x1b[38;2;0;0;0m" : "\x1b[38;2;255;255;255m"}${safe}${RESET}`;
+    }
+    return `\x1b[38;5;${light ? 16 : 231}m${safe}${RESET}`;
+  };
+}
+
 export function positiveSurface(value: string): string {
   return banded(value, "ok");
 }
 
 export function negativeSurface(value: string): string {
   return banded(value, "danger");
+}
+
+/**
+ * The person's own words, on a speaker band.
+ *
+ * The one place besides a diff where a background earns its keep, and for the
+ * same reason: it marks something true about a specific row rather than
+ * repainting the surface. Here it answers "who is speaking" -- the newest
+ * change to the whole UI's grammar. The fill is the TEXT colour and the ink is
+ * the GROUND, a clean monochrome inverse: in dark mode a white band with
+ * near-black letters, in light mode a black band with paper letters. It never
+ * borrows the accent, because the accent is the brand's and this is only the
+ * speaker's.
+ *
+ * Degrades to reverse video where the ground is unknown (follow-terminal),
+ * ANSI-16, NO_COLOR or a pipe -- which every terminal makes legible by
+ * definition, since it is the host's own pair swapped.
+ */
+export function speakerSurface(value: string): string {
+  const safe = terminalText(value);
+  if (!COLOR_CAPABLE) return safe;
+  if (active.useNativeColors || DEPTH === "ansi16") return `\x1b[7m${safe}${RESET}`;
+  const fillP = pigmentFor("text");
+  const [fr, fg, fb] = fillP.rgb;
+  const [gr, gg, gb] = active.bg.rgb as [number, number, number];
+  const fill = DEPTH === "truecolor" ? `\x1b[48;2;${fr};${fg};${fb}m` : `\x1b[48;5;${fillP.ansi}m`;
+  const ink =
+    DEPTH === "truecolor" ? `\x1b[38;2;${gr};${gg};${gb}m` : `\x1b[38;5;${active.bg.ansi}m`;
+  const seq = `${fill}${ink}`;
+  // Re-arm the pair after any inner reset so a line assembled from several
+  // fragments keeps one continuous band to its last cell -- the same rule the
+  // evidence bands follow.
+  return `${seq}${safe.split(RESET).join(RESET + seq)}${RESET}`;
+}
+
+// --- Syntax colour ---
+// Code is read in colour, and the six chrome roles are not a code palette.
+// These nine are (design-tokens.ts RUNE_SYNTAX): they paint tokens inside a
+// diff row or a fenced block and nothing else. Chosen by the active theme's
+// appearance, so a light theme gets the light table; degraded honestly --
+// ansi256 by nearest cell, ansi16 and follow-terminal by the host's own named
+// colours (keyword magenta, type cyan, function yellow, string red, ...), so a
+// bare terminal still gets several colours rather than one.
+
+const SYNTAX_ANSI16: Record<SyntaxRole, number> = {
+  keyword: 35,
+  type: 36,
+  function: 33,
+  string: 31,
+  number: 32,
+  comment: 90,
+  property: 34,
+  constant: 34,
+  decorator: 33,
+};
+
+export function syntax(role: SyntaxRole, value: string, palette?: RuneBaseName): string {
+  const safe = terminalText(value);
+  if (!COLOR_CAPABLE) return safe;
+  if (active.useNativeColors || DEPTH === "ansi16") {
+    return `\x1b[${SYNTAX_ANSI16[role]}m${safe}${RESET}`;
+  }
+  const base: RuneBaseName = palette ?? (active.appearance === "light" ? "light" : "dark");
+  const [r, g, b] = hexToRgbTuple(syntaxPalette(base)[role]);
+  const seq =
+    DEPTH === "truecolor" ? `\x1b[38;2;${r};${g};${b}m` : `\x1b[38;5;${nearestAnsi256([r, g, b])}m`;
+  return `${seq}${safe}${RESET}`;
 }
 
 export function cardSurface(value: string): string {

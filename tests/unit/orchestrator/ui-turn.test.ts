@@ -87,8 +87,8 @@ describe("TurnRenderer — customizer activity stream", () => {
     expect(h.output().indexOf("30 files")).toBeLessThan(
       h.output().indexOf("The implementation is mapped."),
     );
-    // The receipt still counts every one of them.
-    expect(h.output()).toContain("30 files reviewed");
+    // A clean turn ends with the answer and nothing after it: no receipt strip.
+    expect(h.output().trimEnd().endsWith("The implementation is mapped.")).toBe(true);
   });
 
   it("keeps a short gathering burst per call — two paths are worth naming", () => {
@@ -138,7 +138,7 @@ describe("TurnRenderer — customizer activity stream", () => {
     h.turn.finish();
     // No "Plan:" label — a sentence that needs a label is not a sentence.
     expect(h.output()).not.toContain("Plan:");
-    expect(h.output()).toContain("● Tracing the authentication path.");
+    expect(h.output()).toContain("◇ Tracing the authentication path.");
     expect(h.output()).toContain("The stale branch is the cause.");
   });
 
@@ -152,8 +152,8 @@ describe("TurnRenderer — customizer activity stream", () => {
     h.turn.onEvent(toolEnd("grep", { pattern: "stale", path: "src" }));
     h.turn.finish();
     expect(h.output()).not.toContain("Plan:");
-    expect(h.output()).toContain("● Trace the request path.");
-    expect(h.output()).toContain("● The stale branch is isolated.");
+    expect(h.output()).toContain("◇ Trace the request path.");
+    expect(h.output()).toContain("◇ The stale branch is isolated.");
   });
 
   it("collapses a mixed exploration burst into one chamber, calls behind the fold", () => {
@@ -167,10 +167,10 @@ describe("TurnRenderer — customizer activity stream", () => {
     h.turn.finish();
     // One chamber row states the whole burst; the per-call record is the fold.
     expect(h.output()).toContain("read 1 file, listed 1 directory, ran 1 command");
-    expect(h.output()).not.toContain("│ · read  src/app.ts");
-    expect(h.detail()).toContain("│ · read  src/app.ts");
-    expect(h.detail()).toContain("│ · list  src/");
-    expect(h.detail()).toContain("│ · run   git status --short");
+    expect(h.output()).not.toContain("│   read  src/app.ts");
+    expect(h.detail()).toContain("│   read  src/app.ts");
+    expect(h.detail()).toContain("│   list  src/");
+    expect(h.detail()).toContain("│   run   git status --short");
   });
 
   it("keeps a short exploration burst as one row per call", () => {
@@ -179,8 +179,8 @@ describe("TurnRenderer — customizer activity stream", () => {
     h.turn.onEvent(toolEnd("list_dir", { path: "src" }));
     h.turn.onEvent({ type: "text_delta", text: "Two calls, both worth naming." });
     h.turn.finish();
-    expect(h.output()).toContain("│ · read  src/app.ts");
-    expect(h.output()).toContain("│ · list  src/");
+    expect(h.output()).toContain("│   read  src/app.ts");
+    expect(h.output()).toContain("│   list  src/");
   });
 
   it("advances through Plan, Act, and Verify while retaining the completed rows", async () => {
@@ -327,9 +327,11 @@ describe("TurnRenderer — customizer activity stream", () => {
     });
     h.turn.onEvent({ type: "text_delta", text: "Implemented and verified." });
     h.turn.finish();
-    expect(h.output()).toContain("✓ typecheck clean"); // v2 summary-strip badge
-    expect(h.output()).toContain("bun run typecheck");
+    // The check is a row where it ran; a checked turn ends with the answer.
+    expect(h.output()).toContain("✓ $ bun run typecheck (ok)");
     expect(h.output()).not.toContain("no check was run on this change");
+    expect(h.output()).not.toContain("│ changed");
+    expect(h.output().trimEnd().endsWith("Implemented and verified.")).toBe(true);
   });
 
   it("states when changed code has no observed verification", () => {
@@ -351,7 +353,9 @@ describe("TurnRenderer — customizer activity stream", () => {
       report: "$ bun test  (exit 1)\n1 failed",
     });
     await sleep(SETTLE + 60);
-    expect(h.rung()).toContain("Fixing what the checks found");
+    // The rung says only what was measured: no invented "Fixing what the
+    // checks found" sentence while the model has said nothing.
+    expect(h.rung()).not.toContain("Fixing");
     h.turn.onEvent({
       type: "verification_completed",
       attempt: 2,
@@ -361,10 +365,11 @@ describe("TurnRenderer — customizer activity stream", () => {
     });
     h.turn.onEvent({ type: "text_delta", text: "Fixed." });
     h.turn.finish();
-    // The verdict is the latest run, not the worst one along the way.
-    expect(h.output()).toContain("✓ tests pass");
-    expect(h.output()).not.toContain("✗ bun test");
+    // The verdict is the latest run, not the worst one along the way: the
+    // repaired turn ends clean, with no failure row after the answer.
+    expect(h.output()).toContain("✓ $ bun test (ok)");
     expect(h.output()).not.toContain("stopped on an error");
+    expect(h.output().trimEnd().endsWith("Fixed.")).toBe(true);
   });
 
   it("never exposes raw thinking, including in the detail log", () => {
@@ -479,11 +484,12 @@ describe("renderReplay", () => {
         line({ role: "assistant", text: "Fixed and verified." }),
       ]),
     );
-    expect(output).toContain("› fix the bug");
-    expect(output).toContain("● I am reading the files.");
+    expect(output).toContain("fix the bug"); // the user's words, on a speaker band
+    expect(output).not.toContain("› fix the bug"); // no longer a chevron marker
+    expect(output).toContain("◇ I am reading the files.");
     // Two reads are below the chamber threshold: both worth naming.
-    expect(output).toContain("│ · read  a.ts");
-    expect(output).toContain("│ · read  b.ts");
+    expect(output).toContain("│   read  a.ts");
+    expect(output).toContain("│   read  b.ts");
     expect(output).toContain("1 file changed · 1 check passed");
     expect(output).toContain("Fixed and verified.");
   });
@@ -502,7 +508,11 @@ describe("renderReplay", () => {
 
 describe("helpers", () => {
   it("keeps the user's message visually findable", () => {
-    expect(stripAnsi(userBlock("build the app"))).toContain("› build the app");
+    // Findable now by the speaker band (a monochrome inverse), not a chevron.
+    // Colour is stripped here, so the text itself is what the assertion sees.
+    const block = stripAnsi(userBlock("build the app"));
+    expect(block).toContain("build the app");
+    expect(block).not.toContain("›");
   });
 
   it("classifies common verification commands without treating every shell call as a check", () => {
@@ -585,5 +595,296 @@ describe("a halted run closes honestly", () => {
     const out = h.output();
     expect(out).toContain("ran out of turns");
     expect(out).toContain("send a follow-up to continue");
+  });
+});
+
+// ─── The live sink: rows when a call starts, folded retroactively, prose in
+// place. This is the contract the fixed viewport offers (tui.ts amend) and
+// the one the transcript diagnosis of 2026-09-05 asked for: 45% of a
+// session's active time had no new row because a call only became a row
+// when it ended and gathering was held until news landed. ───
+
+/** A sink that owns its buffer: commits are blocks with identity, and an
+ *  amend replaces one in place. `output()` is the buffer as a reader sees it. */
+function liveHarness() {
+  const blocks = new Map<number, { block: string; detail?: string }>();
+  const order: number[] = [];
+  const previews: (string[] | null)[] = [];
+  let seq = 0;
+  const sink: TurnSink = {
+    commit: (block, detail) => {
+      const handle = ++seq;
+      blocks.set(handle, { block, detail });
+      order.push(handle);
+      return handle;
+    },
+    amend: (handle, block, detail) => {
+      if (!blocks.has(handle)) throw new Error(`amend of unknown block ${handle}`);
+      if (block === "") blocks.delete(handle);
+      else blocks.set(handle, { block, detail });
+    },
+    preview: (lines) => previews.push(lines),
+  };
+  const turn = new TurnRenderer(sink, { getCost: () => 0.01 });
+  const live = () => order.filter((h) => blocks.has(h)).map((h) => blocks.get(h)!);
+  return {
+    turn,
+    previews,
+    output: () =>
+      stripAnsi(
+        live()
+          .map((b) => b.block)
+          .join("\n"),
+      ),
+    detail: () =>
+      stripAnsi(
+        live()
+          .map((b) => b.detail ?? "")
+          .join("\n"),
+      ),
+    blocks: () => live().length,
+  };
+}
+
+function toolStart(name: string, callId: string, args: Record<string, unknown>) {
+  return [
+    { type: "tool_call_start", callId, toolName: name },
+    { type: "tool_call_args_delta", callId, partialJson: JSON.stringify(args) },
+  ];
+}
+
+describe("TurnRenderer — a sink that can amend", () => {
+  it("a started call is visible before its result, and finishes in place", () => {
+    const h = liveHarness();
+    for (const e of toolStart("bash", "b1", { command: "npx vitest run" })) h.turn.onEvent(e);
+    // Before any result: the row is on screen, marked in flight.
+    expect(h.output()).toContain("│ › run   npx vitest run");
+    expect(h.blocks()).toBe(1);
+    h.turn.onEvent({
+      type: "tool_call_end",
+      callId: "b1",
+      args: { command: "npx vitest run" },
+      output: {
+        toolName: "bash",
+        success: true,
+        result: JSON.stringify({ stdout: "12 passed", stderr: "", exit_code: 0 }),
+      },
+    });
+    // The same block, finished: no second row, no in-flight mark.
+    expect(h.blocks()).toBe(1);
+    expect(h.output()).toContain("│ ✓ run   npx vitest run");
+    expect(h.output()).toContain("│ │ 12 passed");
+    expect(h.output()).not.toContain("›");
+  });
+
+  it("gathering lands as it finishes, and folds into one chamber at the third row", () => {
+    const h = liveHarness();
+    const read = (i: number) => {
+      const callId = `r${i}`;
+      const path = `src/file-${i}.ts`;
+      for (const e of toolStart("read_file", callId, { path })) h.turn.onEvent(e);
+      h.turn.onEvent({
+        type: "tool_call_end",
+        callId,
+        args: { path },
+        output: {
+          toolName: "read_file",
+          success: true,
+          result: JSON.stringify({ path, total_lines: 10 }),
+        },
+      });
+    };
+    read(0);
+    read(1);
+    // Two paths are worth naming, and they are on screen already.
+    expect(h.output()).toContain("│   read  src/file-0.ts  10 lines");
+    expect(h.output()).toContain("│   read  src/file-1.ts  10 lines");
+    expect(h.blocks()).toBe(2);
+    read(2);
+    // The third makes the run one fact: one chamber row, the calls in its fold.
+    expect(h.blocks()).toBe(1);
+    expect(h.output()).toContain("read 3 files");
+    expect(h.output()).not.toContain("src/file-1.ts");
+    expect(h.detail()).toContain("src/file-1.ts");
+    for (let i = 3; i < 30; i++) read(i);
+    expect(h.blocks()).toBe(1);
+    expect(h.output()).toContain("read 30 files");
+    expect(h.output()).toContain("300 lines");
+    // News ends the run: the next read starts a new one, under the finding.
+    h.turn.onEvent({ type: "text_delta", text: "The implementation is mapped." });
+    read(30);
+    expect(h.output().indexOf("read 30 files")).toBeLessThan(
+      h.output().indexOf("The implementation is mapped."),
+    );
+    expect(h.output()).toContain("│   read  src/file-30.ts");
+    h.turn.finish();
+  });
+
+  it("prose streams into the transcript and stays where it streamed", () => {
+    const h = liveHarness();
+    const before = h.previews.length;
+    h.turn.onEvent({ type: "text_delta", text: "Tracing the authentication " });
+    expect(h.output()).toContain("◇ Tracing the authentication");
+    const blocksAfterFirst = h.blocks();
+    h.turn.tick();
+    h.turn.onEvent({ type: "text_delta", text: "path first." });
+    h.turn.tick();
+    // The same block, grown -- not a second paragraph.
+    expect(h.blocks()).toBe(blocksAfterFirst);
+    expect(h.output()).toContain("◇ Tracing the authentication path first.");
+    // A tool call starting beneath it does not move it or repeat it.
+    for (const e of toolStart("read_file", "r1", { path: "src/auth.ts" })) h.turn.onEvent(e);
+    expect(h.output().split("Tracing the authentication").length - 1).toBe(1);
+    expect(h.output().indexOf("Tracing")).toBeLessThan(h.output().indexOf("│ › read  src/auth.ts"));
+    // And the live block never repainted for a text delta: the words are in
+    // the transcript, and the rung has one row.
+    const proseRepaints = h.previews
+      .slice(before)
+      .filter((p) => p && p.some((l) => stripAnsi(l).includes("Tracing")));
+    expect(proseRepaints).toHaveLength(0);
+    expect(h.turn.liveLines()).toHaveLength(1);
+    h.turn.finish();
+  });
+
+  it("the final answer takes its finished form in the block it streamed into", () => {
+    const h = liveHarness();
+    h.turn.onEvent({ type: "text_delta", text: "Fixed the handler.\n\n- one\n- two" });
+    h.turn.finish();
+    expect(h.blocks()).toBe(1);
+    expect(h.output()).toContain("◇ Fixed the handler.");
+    expect(h.output()).toContain("one");
+  });
+
+  it("a run of same-reason failures folds under the first, in place", () => {
+    const h = liveHarness();
+    for (let i = 0; i < 11; i++) {
+      const callId = `f${i}`;
+      const path = `src/file${i}.ts`;
+      for (const e of toolStart("read_file", callId, { path })) h.turn.onEvent(e);
+      h.turn.onEvent({
+        type: "tool_call_end",
+        callId,
+        args: { path },
+        output: {
+          toolName: "read_file",
+          result: "",
+          success: false,
+          error: `Rate limit exceeded for "read_file". Retry after ${31075 - i * 900}ms`,
+        },
+      });
+    }
+    expect(h.blocks()).toBe(1);
+    const out = h.output();
+    expect(out.split("Rate limit exceeded").length - 1).toBe(1);
+    expect(out).toContain("same failure repeated 10 more times");
+    h.turn.finish();
+  });
+
+  it("a harness tool's refusal is a quiet note and never counts as a failure", () => {
+    const h = liveHarness();
+    for (const e of toolStart("todo_write", "t1", { items: [] })) h.turn.onEvent(e);
+    h.turn.onEvent({
+      type: "tool_call_end",
+      callId: "t1",
+      args: { items: [{ content: "x", status: "completed" }] },
+      output: {
+        toolName: "todo_write",
+        result: "",
+        success: false,
+        error: 'Plan not updated: step 1 "x" is not closed: nothing ran while it was open.',
+      },
+    });
+    h.turn.onEvent({ type: "text_delta", text: "Done." });
+    h.turn.finish();
+    expect(h.output()).toContain("│   plan  updated");
+    expect(h.output()).not.toContain("✗");
+    expect(h.output()).not.toContain("stopped on an error");
+  });
+
+  it("the live block is one row, and one row per sub-agent when there is a fleet", () => {
+    const h = liveHarness();
+    h.turn.onEvent({ type: "text_delta", text: "Reading the config." });
+    expect(h.turn.liveLines()).toHaveLength(1);
+    for (const e of toolStart("bash", "b1", { command: "ls" })) h.turn.onEvent(e);
+    expect(h.turn.liveLines()).toHaveLength(1);
+    h.turn.onEvent({ type: "tool_call_start", callId: "s1", toolName: "task" });
+    h.turn.onEvent({ type: "tool_call_start", callId: "s2", toolName: "task" });
+    expect(h.turn.liveLines()).toHaveLength(3);
+    h.turn.finish();
+  });
+});
+
+describe("TurnRenderer — the plan is set down once", () => {
+  it("a checklist carried over from the previous turn is not reprinted", () => {
+    const items = [
+      { content: "Trace the flow", status: "completed" },
+      { content: "Fix the branch", status: "in_progress" },
+    ];
+    const first = harness();
+    first.turn.onEvent({ type: "todo_updated", items });
+    first.turn.finish();
+    expect(first.output()).toContain("│ plan");
+    const key = first.turn.planKey()!;
+    expect(key).toBeTruthy();
+
+    const commits: string[] = [];
+    const next = new TurnRenderer({ commit: (b) => void commits.push(b) }, { priorPlanKey: key });
+    next.onEvent({ type: "todo_updated", items });
+    next.onEvent({ type: "text_delta", text: "Still on it." });
+    next.finish();
+    const out = stripAnsi(commits.join("\n"));
+    expect(out).not.toContain("│ plan");
+    expect(out).toContain("Still on it.");
+
+    // But a plan that MOVED is news, once, at the close.
+    const later: string[] = [];
+    const moved = new TurnRenderer({ commit: (b) => void later.push(b) }, { priorPlanKey: key });
+    moved.onEvent({ type: "todo_updated", items });
+    moved.onEvent({
+      type: "todo_updated",
+      items: [
+        { content: "Trace the flow", status: "completed" },
+        { content: "Fix the branch", status: "completed" },
+      ],
+    });
+    moved.finish();
+    const printed = stripAnsi(later.join("\n"));
+    expect(printed.split("│ plan").length - 1).toBe(1);
+    expect(printed).toContain("│ ✓ Fix the branch");
+  });
+
+  it("a clean turn is the model's words, its actions and its answer -- nothing harness-authored", () => {
+    const h = harness();
+    h.turn.onEvent({ type: "text_delta", text: "Checking the retry loop first." });
+    h.turn.onEvent(
+      toolEnd("read_file", { path: "src/retry.ts" }, '{"path":"src/retry.ts","total_lines":40}'),
+    );
+    h.turn.onEvent(
+      toolEnd(
+        "edit_file",
+        { path: "src/retry.ts" },
+        JSON.stringify({ path: "src/retry.ts", diff: "@@ -1 +1 @@\n-old\n+new" }),
+      ),
+    );
+    h.turn.onEvent(
+      toolEnd(
+        "bash",
+        { command: "bun test" },
+        JSON.stringify({ stdout: "12 passed", stderr: "", exit_code: 0 }),
+      ),
+    );
+    h.turn.onEvent({ type: "text_delta", text: "The 429 now surfaces." });
+    h.turn.finish();
+    const rows = h
+      .output()
+      .split("\n")
+      .filter((l) => l.trim());
+    // Every row is one of: the dot (the model), the rail (an action), the diff.
+    for (const row of rows) {
+      expect(row, row).toMatch(/^\s*(◇|│)/);
+    }
+    expect(h.output()).not.toContain("changed");
+    expect(h.output()).not.toContain("reviewed");
+    expect(h.output()).not.toContain("/rewind");
   });
 });
