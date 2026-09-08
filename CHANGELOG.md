@@ -58,6 +58,11 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
   been red on every recent run, so the tag went out past a red gate, not a missing one. A second
   candidate cause is fixed alongside: the blackbox and notebook databases now wait for a lock
   (`busy_timeout`) instead of throwing, since one host per session opens them concurrently.
+- **`rune serve --check` no longer fails a passed check on Windows cleanup.** The first public CI
+  run proved the loopback transport on the Windows runner — a session hosted in 1.8 s, zero leaked
+  hosts — and then exited 1 removing its scratch directory, because Windows keeps a just-exited
+  host's working directory open for a moment and `rmSync` answers EBUSY. The removal retries and
+  never fails the check; the eval harness and the comparison test retry the same way.
 - **A host that fails to start names itself**, says whether it is still running, and prints the
   tail of its own log, instead of a bare four-word socket error.
 - **`rune detach` runs on the route you gave it.** `-p`, `-m` and `--gear` were parsed and
