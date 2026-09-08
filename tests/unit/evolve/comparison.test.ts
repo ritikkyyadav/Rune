@@ -9,6 +9,7 @@ import { seedTask, checkTask, providerFailureReason, runPilot } from "../../eval
 import { predictionFor, loadInstances } from "../../eval/comparison/swebench";
 import { opencodeCost, runeCost } from "../../eval/comparison/harness";
 import { runProcess } from "../../eval/comparison/process";
+import { rmTemp } from "../../helpers/tmp";
 const dirs: string[] = [];
 const temp = () => {
   const dir = mkdtempSync(join(tmpdir(), "rune-comparison-test-"));
@@ -16,7 +17,9 @@ const temp = () => {
   return dir;
 };
 afterEach(() => {
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  // Windows holds a just-exited child's cwd for a moment; a plain rmSync
+  // throws EBUSY there and fails the test after it has already passed.
+  for (const dir of dirs.splice(0)) rmTemp(dir);
 });
 function git(root: string, ...args: string[]) {
   const p = spawnSync("git", args, { cwd: root, encoding: "utf8" });
