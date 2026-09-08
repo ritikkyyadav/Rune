@@ -23,6 +23,7 @@
 // was missing was the caller choosing it. That decision lives here, once, and
 // is tested in both directions rather than discovered on a user's machine.
 
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -96,4 +97,55 @@ export function hostSpawnLabel(ctx: SpawnContext): string {
   return isCompiled(ctx)
     ? `${ctx.execPath} engine-host`
     : `bun ${join(ctx.moduleDir, "engine-host.ts")}`;
+}
+
+// ─── When a host does not come up ───
+//
+// The v0.4.0 Windows release gate reported the whole of this failure as
+//
+//     ✗ Failed to connect
+//
+// — Bun's four-word error for a socket that never answered, with no hint of
+// which host, whether it was still running, or what it had printed on its way
+// down. The host's own log had the answer and nobody could see it: it is a
+// file in `~/.rune/run` on a runner that is deleted minutes later.
+//
+// So a failed spawn now says what it knows. The formatting is kept apart from
+// the reading of the log so its shape can be asserted by a unit test rather
+// than by staging a broken host.
+
+/** The last `max` non-empty lines of a log, oldest first. */
+export function tailLines(text: string, max: number): string[] {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  return lines.slice(Math.max(0, lines.length - max));
+}
+
+/** The same, from a path; empty when there is nothing to read. */
+export function readLogTail(path: string, max = 12): string[] {
+  try {
+    return tailLines(readFileSync(path, "utf8"), max);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * One error message naming the host that failed, its state, and what it said.
+ *
+ * `alive` is the load-bearing bit: a host that is STILL RUNNING and did not
+ * answer is a transport or a slow-boot problem, and a host that is GONE is a
+ * crash whose reason is in the log lines below it. Those two lead to opposite
+ * investigations and used to look identical.
+ */
+export function hostStartFailure(opts: {
+  address: string;
+  pid: number;
+  alive: boolean;
+  reason: string;
+  log: string[];
+}): string {
+  const state = opts.alive ? "still running" : "exited before answering";
+  const head = `engine host ${opts.pid} (${state}) never answered at ${opts.address}: ${opts.reason}`;
+  if (opts.log.length === 0) return `${head}\n  the host log is empty`;
+  return [head, "  host log:", ...opts.log.map((l) => `    ${l}`)].join("\n");
 }

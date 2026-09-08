@@ -16,7 +16,7 @@ import { join } from "node:path";
 
 import { HostClient } from "../host-client";
 import { createRunWorktree } from "../worktree";
-import { currentContext, hostSpawnArgv } from "./host-spawn";
+import { currentContext, hostSpawnArgv, hostStartFailure, readLogTail } from "./host-spawn";
 import { adoptLegacyEnv, getRuneHome, migrateLegacyHome } from "@rune/shared";
 
 adoptLegacyEnv();
@@ -45,6 +45,15 @@ function loadRegistry(): Record<string, RunEntry> {
 function saveRegistry(reg: Record<string, RunEntry>): void {
   mkdirSync(RUN_DIR, { recursive: true });
   writeFileSync(REGISTRY, JSON.stringify(reg, null, 2) + "\n");
+}
+
+function hostAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function connectWithRetry(socket: string, timeoutMs: number): Promise<HostClient> {
@@ -129,7 +138,23 @@ export async function runDetach(
   });
   child.unref(); // our exit must not take the host down
 
-  const client = await connectWithRetry(socket, 20_000);
+  let client: HostClient;
+  try {
+    client = await connectWithRetry(socket, 20_000);
+  } catch (err) {
+    // The log is right there and used to go unmentioned; a detach that cannot
+    // reach its own host must say why rather than print a bare Bun error.
+    console.error(
+      hostStartFailure({
+        address: socket,
+        pid: child.pid,
+        alive: hostAlive(child.pid),
+        reason: err instanceof Error ? err.message : String(err),
+        log: readLogTail(logPath),
+      }),
+    );
+    process.exit(1);
+  }
   const ack = (await client.request("chat_start", {
     sessionId: "detached",
     message: prompt,

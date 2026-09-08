@@ -44,7 +44,13 @@ import {
 import { adoptLegacyEnv, getRuneHome, loadConfig, migrateLegacyHome } from "@rune/shared";
 
 import { HostClient } from "../host-client";
-import { currentContext, hostSpawnArgv, hostSpawnLabel } from "./host-spawn";
+import {
+  currentContext,
+  hostSpawnArgv,
+  hostSpawnLabel,
+  hostStartFailure,
+  readLogTail,
+} from "./host-spawn";
 
 // ─── Where the door key lives ───
 
@@ -364,7 +370,8 @@ export class HostPool {
     if (this.spawnHost) {
       ({ pid, client } = await this.spawnHost(key, socket));
     } else {
-      const logFd = openSync(join(RUN_DIR(), `${id}.log`), "a");
+      const logPath = join(RUN_DIR(), `${id}.log`);
+      const logFd = openSync(logPath, "a");
       // `--parent-pid` is the host's own dead-man's switch: if this supervisor
       // is SIGKILLed (no handler runs, nothing gets to stop anything), the host
       // notices its parent is gone and exits by itself. Without it a `kill -9`
@@ -385,7 +392,21 @@ export class HostPool {
       // shutdown path asks politely and the host drains before it goes.
       child.unref();
       pid = child.pid;
-      client = await connectWithRetry(socket, 20_000);
+      try {
+        client = await connectWithRetry(socket, 20_000);
+      } catch (err) {
+        // Never let the caller see only "Failed to connect": say which host,
+        // whether it is still alive, and what it printed. See host-spawn.ts.
+        throw new Error(
+          hostStartFailure({
+            address: socket,
+            pid,
+            alive: processAlive(pid),
+            reason: err instanceof Error ? err.message : String(err),
+            log: readLogTail(logPath),
+          }),
+        );
+      }
     }
 
     client.onStream((frame) => {
