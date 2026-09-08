@@ -3,6 +3,7 @@ import {
   TokenCounter,
   countTokens,
   getContextLimit,
+  tokenCounter,
 } from "../../../packages/orchestrator/src/tokenizer";
 
 describe("TokenCounter", () => {
@@ -95,6 +96,11 @@ describe("getContextLimit", () => {
 
 describe("countTokens (convenience)", () => {
   test("returns same result as TokenCounter instance", () => {
+    // `countTokens` uses the process-wide shared counter, which other test
+    // files calibrate against real provider counts and never reset; bun runs
+    // files in a platform-dependent order, so on the Linux runner this read 2
+    // where a fresh instance read 5. Compare from a known state.
+    tokenCounter.resetCalibrations();
     const counter = new TokenCounter();
     const text = "Quick test string";
     expect(countTokens(text)).toBe(counter.countTokens(text));

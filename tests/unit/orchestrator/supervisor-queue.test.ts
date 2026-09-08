@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import {
   AutoModeSafetyController,
   resolveAutoModeConfig,
@@ -6,6 +6,29 @@ import {
 } from "../../../packages/orchestrator/src/auto-mode";
 import { ReviewSlots, SupervisorQueue } from "../../../packages/orchestrator/src/supervisor-queue";
 import type { LlmGateway } from "@rune/llm-gateway";
+import {
+  resetSandboxCapabilityForTest,
+  setSandboxCapability,
+} from "../../../packages/tool-registry/src/sandbox-capability";
+import {
+  resetSandboxPolicyForTest,
+  setSandboxMode,
+} from "../../../packages/tool-registry/src/sandbox-mode";
+
+// These tests are about the supervisor queue, not about the machine. Auto
+// mode's shell decision reads two process-wide facts — the sandbox mode and
+// whether an isolation backend exists — and since 2026-09-07 an uncontained
+// shell routes every writable command to the reviewer instead of the supervised
+// tier. On the Linux CI runner nothing had probed capability, so `bun test`
+// came back "ask" where macOS said "allow". State the contained machine the
+// scenarios were written against, the way auto-mode-shell-tier.test.ts does.
+setSandboxMode("auto-allow");
+setSandboxCapability({ mechanism: "seatbelt", osIsolation: true });
+// bun runs every file in one process: give the state back when this file ends.
+afterAll(() => {
+  resetSandboxPolicyForTest();
+  resetSandboxCapabilityForTest();
+});
 
 test("a burst shares one review, keeps all call IDs, and never caches a later approval", async () => {
   const calls: ClassifierCall[] = [];
