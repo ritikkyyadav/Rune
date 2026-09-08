@@ -464,6 +464,7 @@ export async function repairToSchema(opts: {
       maxTokens: 1200,
       temperature: 0,
       stream: false,
+      role: "repair",
       responseFormat: SUBAGENT_RESPONSE_FORMAT,
       ...(opts.signal ? { signal: opts.signal } : {}),
       system:
