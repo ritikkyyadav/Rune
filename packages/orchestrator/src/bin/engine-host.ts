@@ -46,8 +46,20 @@ import {
   streamNotification,
   toRequest,
   toResponse,
+  toStream,
 } from "@rune/protocol";
 import { FrameWriter, type FramedSocket } from "./host-framing";
+import {
+  AUTH_GRACE_MS,
+  type TcpEndpoint,
+  authFrame,
+  authorizes,
+  hostTransportFor,
+  isLoopbackHost,
+  mintHostToken,
+  readEndpointFile,
+  writeEndpointFile,
+} from "../host-transport";
 import { RoundTripRegistry } from "./host-roundtrips";
 import { HeldStepLedger } from "./host-held-steps";
 import type { ResearchEvent, ResearchOptions } from "../research-types";
@@ -1303,31 +1315,113 @@ if (PARENT_PID) {
   (watchdog as unknown as { unref?: () => void }).unref?.();
 }
 
+// ─── Is someone already home? ───
+
+/** `::ffff:127.0.0.1` is 127.0.0.1 wearing a hat. */
+function normalizeAddress(address: string): string {
+  return address.startsWith("::ffff:") ? address.slice(7) : address;
+}
+
+/** Does a live host already own this unix socket? */
+async function unixHostAlive(path: string): Promise<boolean> {
+  return await new Promise<boolean>((resolveProbe) => {
+    Bun.connect({
+      unix: path,
+      socket: {
+        open(s) {
+          resolveProbe(true);
+          s.end();
+        },
+        data() {},
+        error() {
+          resolveProbe(false);
+        },
+        connectError() {
+          resolveProbe(false);
+        },
+      },
+    }).catch(() => resolveProbe(false));
+  });
+}
+
+/**
+ * Does a live host already own this rendezvous file?
+ *
+ * Stricter than the unix probe has to be, because a port is not a socket file:
+ * a crashed host's port can have been handed to some unrelated process, and
+ * "something accepted a TCP connection" would be a false positive that stops
+ * this host from ever starting. Only a peer that takes this file's own token
+ * and answers `ready` counts as the host that owns it.
+ */
+async function tcpHostAlive(path: string): Promise<boolean> {
+  const ep: TcpEndpoint | null = readEndpointFile(path);
+  if (!ep) return false;
+  return await new Promise<boolean>((resolveProbe) => {
+    let buffer = "";
+    let settled = false;
+    const finish = (alive: boolean): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolveProbe(alive);
+    };
+    const timer = setTimeout(() => finish(false), 1_000);
+    Bun.connect({
+      hostname: ep.host,
+      port: ep.port,
+      socket: {
+        open(s) {
+          s.write(authFrame(ep.token));
+        },
+        data(s, chunk) {
+          buffer += chunk.toString();
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            let frame: unknown;
+            try {
+              frame = JSON.parse(line);
+            } catch {
+              continue; // not a frame we know — keep reading until the timer
+            }
+            if (toStream(frame)?.stream === "ready") {
+              finish(true);
+              s.end();
+              return;
+            }
+          }
+        },
+        close() {
+          finish(false);
+        },
+        error() {
+          finish(false);
+        },
+        connectError() {
+          finish(false);
+        },
+      },
+    }).catch(() => finish(false));
+  });
+}
+
 if (SOCKET_PATH) {
   // ─── Socket mode: the host outlives its clients ───
-  // A stale socket file from a crashed host would block startup forever, so
-  // probe it: if nothing answers, remove and claim; if a live host answers,
-  // refuse — two hosts on one socket is a corruption factory.
+  //
+  // `--socket <path>` is a RENDEZVOUS path, not necessarily a unix socket:
+  // POSIX binds it, Windows writes a 0600 file naming the loopback port and a
+  // per-host token it will demand from every connection. See host-transport.ts
+  // for why, and for what replaces the socket file's permissions.
+  const transport = hostTransportFor();
   mkdirSync(dirname(SOCKET_PATH), { recursive: true });
+
+  // A stale rendezvous from a crashed host would block startup forever, so
+  // probe it: if nothing answers, remove and claim; if a live host answers,
+  // refuse — two hosts on one address is a corruption factory.
   if (existsSync(SOCKET_PATH)) {
-    const live = await new Promise<boolean>((resolveProbe) => {
-      Bun.connect({
-        unix: SOCKET_PATH,
-        socket: {
-          open(s) {
-            resolveProbe(true);
-            s.end();
-          },
-          data() {},
-          error() {
-            resolveProbe(false);
-          },
-          connectError() {
-            resolveProbe(false);
-          },
-        },
-      }).catch(() => resolveProbe(false));
-    });
+    const live =
+      transport === "unix" ? await unixHostAlive(SOCKET_PATH) : await tcpHostAlive(SOCKET_PATH);
     if (live) {
       logErr(`engine-host: a live host already owns ${SOCKET_PATH} — refusing to start`);
       process.exit(1);
@@ -1335,62 +1429,134 @@ if (SOCKET_PATH) {
     unlinkSync(SOCKET_PATH);
   }
 
-  // Per-connection line buffering: unix sockets deliver arbitrary chunks.
+  // Null on POSIX: the socket file's own permissions are the door. On TCP it
+  // is the ONLY door, so nothing is served before a connection presents it.
+  const authToken = transport === "tcp" ? mintHostToken() : null;
+
+  // Per-connection line buffering: sockets deliver arbitrary chunks.
   const buffers = new Map<SocketLike, string>();
-  Bun.listen({
-    unix: SOCKET_PATH,
-    socket: {
-      open(socket) {
-        connectedClients.add(socket);
-        buffers.set(socket, "");
-        // Same readiness contract as stdio, scoped to the new client.
-        frames.write(
-          socket,
-          JSON.stringify(
-            streamNotification("ready", {
-              ...mappedStatus(engine),
-              protocolVersion: PROTOCOL_VERSION,
-            }),
-          ) + "\n",
-        );
-      },
-      data(socket, chunk) {
-        const buffered = (buffers.get(socket) ?? "") + chunk.toString();
-        const lines = buffered.split("\n");
-        buffers.set(socket, lines.pop() ?? "");
-        for (const line of lines) {
-          handleRequestLine(line, (obj) => {
-            try {
-              frames.write(socket, JSON.stringify(obj) + "\n");
-            } catch {
-              /* client vanished mid-response — the run continues regardless */
-            }
-          });
-        }
-      },
-      drain(socket) {
-        // The socket can take more: send whatever the last write left behind.
-        frames.flush(socket);
-      },
-      close(socket) {
-        // THE point of socket mode: dropping a client never stops the engine.
-        connectedClients.delete(socket);
+  // Connections that have opened but not yet authenticated, with the timer
+  // that drops them if they never do.
+  const pendingAuth = new Map<SocketLike, ReturnType<typeof setTimeout>>();
+
+  const admit = (socket: SocketLike): void => {
+    connectedClients.add(socket);
+    // Same readiness contract as stdio, scoped to the new client.
+    frames.write(
+      socket,
+      JSON.stringify(
+        streamNotification("ready", {
+          ...mappedStatus(engine),
+          protocolVersion: PROTOCOL_VERSION,
+        }),
+      ) + "\n",
+    );
+  };
+
+  const forget = (socket: SocketLike): void => {
+    const timer = pendingAuth.get(socket);
+    if (timer) clearTimeout(timer);
+    pendingAuth.delete(socket);
+    connectedClients.delete(socket);
+    buffers.delete(socket);
+    frames.forget(socket);
+    // A pending question with nobody left to answer it is a wedge, not
+    // resilience. When the LAST client goes, every open round-trip settles by
+    // the stated policy and the run continues, contained.
+    if (connectedClients.size === 0) roundTrips.clientsGone();
+  };
+
+  const handlers = {
+    open(socket: SocketLike & { end(): void; remoteAddress?: string }) {
+      buffers.set(socket, "");
+      if (!authToken) {
+        admit(socket);
+        return;
+      }
+      // Bound to 127.0.0.1, so this can only fail if something very odd is
+      // going on — which is exactly when you want it to fail closed.
+      const remote = socket.remoteAddress ?? "";
+      if (remote && !isLoopbackHost(normalizeAddress(remote))) {
+        logErr(`engine-host: refused a connection from ${remote} — loopback only`);
         buffers.delete(socket);
-        frames.forget(socket);
-        // But a pending question with nobody left to answer it is a wedge, not
-        // resilience. When the LAST client goes, every open round-trip settles
-        // by the stated policy and the run continues, contained.
-        if (connectedClients.size === 0) roundTrips.clientsGone();
-      },
-      error(socket) {
-        connectedClients.delete(socket);
-        buffers.delete(socket);
-        frames.forget(socket);
-        if (connectedClients.size === 0) roundTrips.clientsGone();
-      },
+        socket.end();
+        return;
+      }
+      pendingAuth.set(
+        socket,
+        setTimeout(() => {
+          logErr("engine-host: dropping a connection that never authenticated");
+          forget(socket);
+          try {
+            socket.end();
+          } catch {
+            /* already gone */
+          }
+        }, AUTH_GRACE_MS),
+      );
     },
-  });
-  logErr(`engine-host: listening on ${SOCKET_PATH}`);
+    data(socket: SocketLike & { end(): void }, chunk: Uint8Array) {
+      const buffered = (buffers.get(socket) ?? "") + chunk.toString();
+      const lines = buffered.split("\n");
+      buffers.set(socket, lines.pop() ?? "");
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        if (pendingAuth.has(socket)) {
+          // The first line a TCP client sends must be the token. Anything
+          // else — including a perfectly valid command — is refused, so a
+          // peer that skips the handshake cannot drive the engine.
+          if (!authorizes(line, authToken ?? "")) {
+            logErr("engine-host: refused a connection that failed the handshake");
+            forget(socket);
+            try {
+              socket.end();
+            } catch {
+              /* already gone */
+            }
+            return;
+          }
+          const timer = pendingAuth.get(socket);
+          if (timer) clearTimeout(timer);
+          pendingAuth.delete(socket);
+          admit(socket);
+          continue;
+        }
+        handleRequestLine(line, (obj) => {
+          try {
+            frames.write(socket, JSON.stringify(obj) + "\n");
+          } catch {
+            /* client vanished mid-response — the run continues regardless */
+          }
+        });
+      }
+    },
+    drain(socket: SocketLike) {
+      // The socket can take more: send whatever the last write left behind.
+      frames.flush(socket);
+    },
+    // THE point of socket mode: dropping a client never stops the engine.
+    close(socket: SocketLike) {
+      forget(socket);
+    },
+    error(socket: SocketLike) {
+      forget(socket);
+    },
+  };
+
+  if (transport === "unix") {
+    Bun.listen({ unix: SOCKET_PATH, socket: handlers });
+    logErr(`engine-host: listening on ${SOCKET_PATH}`);
+  } else {
+    const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: handlers });
+    // Written LAST and in one shot: a client that can read a port from this
+    // file can rely on the host already being able to accept it.
+    writeEndpointFile(SOCKET_PATH, {
+      host: "127.0.0.1",
+      port: server.port,
+      token: authToken as string,
+    });
+    logErr(`engine-host: listening on 127.0.0.1:${server.port} (rendezvous ${SOCKET_PATH})`);
+  }
 } else {
   // ─── stdio mode (desktop sidecar) — unchanged contract ───
   const rl = readline.createInterface({ input: process.stdin });
