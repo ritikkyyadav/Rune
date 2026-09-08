@@ -41,6 +41,19 @@ export interface CompositionEconomics {
   toolSchemas: number;
   conversation: number;
   total: number;
+  /**
+   * The FIXED overhead (doctrine + tool schemas) on the first measured
+   * completion and on the last (P13.1).
+   *
+   * The averages above hide the shape a run actually has. Rune now sends a
+   * bigger prefix on the opening completion than on the ones after it — the
+   * opening rituals leave the doctrine at turn 2 — and it sends MORE tool
+   * schema as catalogued tools are loaded. An average over both is a number
+   * that describes no request that was ever sent. These two say which way the
+   * overhead moved, which is the whole question the meter exists to answer.
+   */
+  fixedFirst: number;
+  fixedLast: number;
 }
 
 export interface RunEconomics {
@@ -134,6 +147,8 @@ export function summarizeRunEconomics(
     toolSchemas: 0,
     conversation: 0,
     total: 0,
+    fixedFirst: 0,
+    fixedLast: 0,
   };
 
   for (const e of entries) {
@@ -174,6 +189,9 @@ export function summarizeRunEconomics(
       comp.toolSchemas += e.composition.toolSchemas || 0;
       comp.conversation += e.composition.conversation || 0;
       comp.total += e.composition.total || 0;
+      const fixed = (e.composition.doctrine || 0) + (e.composition.toolSchemas || 0);
+      if (comp.measured === 1) comp.fixedFirst = fixed;
+      comp.fixedLast = fixed;
     }
   }
 

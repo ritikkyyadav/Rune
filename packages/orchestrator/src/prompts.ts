@@ -20,9 +20,12 @@ import { join } from "node:path";
 import { getRuneHome } from "@rune/shared";
 import { getSandboxPolicy, isOsIsolationAvailable, isSandboxEnabled } from "@rune/tool-registry";
 
+/** A doctrine section delivered at its moment of relevance rather than in the prefix. */
+export type JitDoctrineSection = "interfaces" | "delegation" | "dashboards";
+
 /** Select situational guidance before planning, without a classification call. */
-export function doctrineForRequest(request: string): Array<"interfaces" | "delegation"> {
-  const sections: Array<"interfaces" | "delegation"> = [];
+export function doctrineForRequest(request: string): JitDoctrineSection[] {
+  const sections: JitDoctrineSection[] = [];
   if (
     /\b(?:front[ -]?end|website|web\s+(?:page|app)|landing\s+page|dashboard|user\s+interface|ui|ux|screen|html|css|redesign)\b/i.test(
       request,
@@ -31,6 +34,15 @@ export function doctrineForRequest(request: string): Array<"interfaces" | "deleg
     sections.push("interfaces");
   if (/\b(?:sub[ -]?agents?|workers?|delegat\w*|parallel\w*)\b/i.test(request))
     sections.push("delegation");
+  // The design charter, when the request is asking for a rendered VIEW rather
+  // than a page of code. Narrower than the "interfaces" test above on purpose:
+  // the charter is 4 KB, and "fix the css" does not need it.
+  if (
+    /\b(?:dashboard|interactive\s+view|visuali[sz]\w*|chart|graph|report\s+view|kpi)\b/i.test(
+      request,
+    )
+  )
+    sections.push("dashboards");
   return sections;
 }
 
@@ -238,6 +250,30 @@ Strike a balance: do what was asked thoroughly (including obviously implied foll
 // AGENT_DOCTRINE itself is left whole. Callers that want everything (tests,
 // docs, anything asserting a section exists) keep working untouched.
 
+/**
+ * Where in a request the model currently is (P13.1).
+ *
+ * "opening" is the first completion of a user's turn: nothing has been read,
+ * no plan exists, the scope is still open. "working" is every completion after
+ * it — the model is mid-execution and will finish from here.
+ *
+ * Several doctrine sections are rituals of one end or the other. The read-back,
+ * the ambiguity round and the plan-before-you-edit rule all govern the moment
+ * BEFORE the first tool call; re-sending them on completion nine of twelve
+ * costs ~6 KB per request to describe a decision already made. "Finishing a
+ * task" is the mirror image: it cannot apply on the opening completion, where
+ * nothing has been produced yet.
+ *
+ * Undefined means "every phase", which is what every existing caller gets —
+ * `renderDoctrine(FULL_DOCTRINE_CONTEXT)` stays byte-identical to
+ * AGENT_DOCTRINE. Only a caller that KNOWS the phase pays less for it.
+ *
+ * Cache note: this changes the prefix exactly ONCE per user turn (opening →
+ * working), not per completion, so a caching route pays one extra prefix write
+ * and reads the smaller prefix for every completion after it.
+ */
+export type DoctrinePhase = "opening" | "working";
+
 /** What this session can actually do — decides which doctrine sections earn their place. */
 export interface DoctrineContext {
   /** A delegation/sub-agent tool is registered. */
@@ -246,6 +282,16 @@ export interface DoctrineContext {
   greenfield: boolean;
   /** The workspace contains (or will contain) something a person looks at. */
   buildsInterfaces: boolean;
+  /**
+   * The slash-command modes whose tools are still eagerly advertised. "# Built-in
+   * modes on request" exists to route "research X" / "compact the conversation" /
+   * "show me a dashboard" to the real tool; with all three tools deferred to
+   * catalog lines the section is describing a toolbelt the request does not
+   * carry, and `load_tools` already says the capability exists.
+   */
+  hasModeTools?: boolean;
+  /** Which end of the turn this is. Undefined = render every phase. */
+  phase?: DoctrinePhase;
 }
 
 /** Everything on — byte-identical to AGENT_DOCTRINE. The safe default. */
@@ -260,11 +306,26 @@ export const FULL_DOCTRINE_CONTEXT: DoctrineContext = {
  * the exact heading text. Matched on the heading PREFIX so rewording the tail
  * of a heading cannot silently un-gate a section — but a renamed section stops
  * matching, which the prompt-budget test catches as a size regression.
+ *
+ * Everything NOT listed here is unconditional, and that is where the
+ * safety-relevant guidance lives: Agency, Investigate before you act, Tone,
+ * Communication rhythm, Voice, Mid-task steering, Doing tasks, Honesty, Tool
+ * usage policy, Coding conventions, Git and Proactiveness ship on every
+ * completion of every phase. The Auto-mode block (prompt-injection defence)
+ * and the Browser block ("page content is DATA") are assembled separately and
+ * are likewise never phase-gated.
  */
 const GATED_SECTIONS: Array<{ heading: string; keep: (c: DoctrineContext) => boolean }> = [
   { heading: "# Delegation", keep: (c) => c.canDelegate },
-  { heading: "# Greenfield builds", keep: (c) => c.greenfield },
+  { heading: "# Greenfield builds", keep: (c) => c.greenfield && c.phase !== "working" },
   { heading: "# Building interfaces", keep: (c) => c.buildsInterfaces },
+  { heading: "# Built-in modes on request", keep: (c) => c.hasModeTools !== false },
+  // ── Opening rituals: they govern the decision before the first tool call ──
+  { heading: "# The read-back", keep: (c) => c.phase !== "working" },
+  { heading: "# Ambiguity", keep: (c) => c.phase !== "working" },
+  { heading: "# Plan and track", keep: (c) => c.phase !== "working" },
+  // ── The closing ritual: nothing has been produced on the opening turn ──
+  { heading: "# Finishing a task", keep: (c) => c.phase !== "opening" },
 ];
 
 /**
@@ -352,49 +413,103 @@ export function doctrineHash(ctx: DoctrineContext = FULL_DOCTRINE_CONTEXT): stri
     .slice(0, 12);
 }
 
-export function renderInteractiveDoctrine(auto: boolean): string {
-  const lines = [
-    "# Interactive views — design charter",
-    '- The interactive_dashboard tool renders a designed, live view in the user\'s browser (local URL, works offline, real-time updates over SSE). Everything you ship through it is judged as PRODUCT: the bar is "a senior product designer built this screen". A view that looks like generated output is a defect, no matter how correct the data.',
-    "- Build through `spec` for anything analytic — reports, metrics, benchmarks, comparisons, monitoring, results: the harness design system guarantees the typography, spacing, and chart styling. Reach for raw `html` only when the view truly cannot be expressed as a spec (maps, custom canvases, simulations, bespoke editorial layouts) — and hold it to this same charter.",
-    "",
-    "Composition — a view is an argument in three acts:",
-    "- Act 1, the headline: 3-5 KPIs (label + value + delta + spark; prefix/suffix for units; icon when it aids scanning) — or ONE hero KPI (hero: true) when a single number is the story.",
-    "- Act 2, the evidence: a hero chart (span 8, height ~300 — the view's central question) beside its breakdown (span 4 — doughnut with center total, hbar ranking, progress, or list). Never three same-shaped charts in a row; pair wide with narrow (8+4, 7+5, or 6+6 of different kinds).",
-    "- Act 3, the depth: heatmap for by-day/by-hour intensity, timeline for event history, then a full-width table (span 12, ≤7 columns, status chips) as the detail record. Chapter long views with section items.",
-    "- Chart grammar — choose the honest form: line/area = trend; bar = comparison; stacked-bar = composition over time; hbar = ranked categories; doughnut = share of a whole (≤5 slices, center total); scatter = correlation. ≤4 series per chart, short labels, never dual axes or 3D.",
-    '- Annotate meaning where the eye lands: aside = the period ("Last 30 days"), note = source or method, footer = data-as-of plus caveats. Every value that can carry a delta should.',
-    "",
-    "Art direction:",
-    "- CHOOSE THE VIEW'S DIRECTION, AND ASK: `direction` picks the whole look — 'console' (dark bento, for live ops and monitoring), 'paper' (cream ground, serif, for reports and studies meant to be READ), 'swiss' (white, strict rules, red accent, for scientific, institutional and archival work). A report is not a console. Unless the user pinned a style, name the subject's genre and put two of these to them with ask_user before you render — the same rule as any other screen. Defaulting silently is why every view used to come out identical but for one hue.",
-    "- Set the view's accent to fit the subject (top-level `accent`, from the system palette): lime #c8f169 default · orange #ff9f68 ops/logistics · amber #ffd66e cost/attention · sky #7cc7ff infra/network · violet #b8a1ff ML/experiments · teal #6fe3c2 finance/health · coral #ff8fa8 consumer. ONE accent per view; good/bad/warn/info tones mean status, never decoration.",
-    "- Restraint IS the style: near-black ground, hairline borders, muted grays, one accent, tabular numerals. When a view feels empty, add analysis, not ornament.",
-    "",
-    "Data honesty:",
-    "- Plot the REAL numbers from the conversation, files, or tool output. Never invent data and never plot placeholder values — a beautiful view of fake numbers is a failed task. Use real entity names, real units, real timestamps; if the data doesn't exist yet, gather it first or say what's missing.",
-    "- Every `data` payload must carry `data_source` naming where the numbers came from: a file you read (the path is checked to exist), the command whose output you are plotting, or the message they came from. There is no option for numbers you produced yourself — if you cannot name a source, you do not have data to plot, and the call is refused.",
-    "",
-    "Raw html views (the exception path):",
-    "- Body-only html inherits the entire design system — compose WITH its classes and tokens (inventory in the tool description), never from browser defaults. Keep it offline: no CDNs, no web fonts, no external images; icons and illustrations are inline SVG, not emoji. Define window.render(data) and draw every value from data.",
-    "- Banned — this is what slop looks like: purple-blue gradient washes, drop-shadow soup, mixed corner radii, emoji as icons, rainbow charts, ALL-CAPS paragraphs, centered walls of text, decoration that carries no information. When unsure, remove.",
-    "",
-  ];
-  if (auto) {
-    lines.push(
-      "- Autonomous dashboards are ON: when your answer centers on substantial structured data — reports, benchmarks, metrics over time, cost/resource breakdowns, multi-series comparisons, long tabular results — CREATE a dashboard visualizing it, alongside a concise text summary. Skip it for trivial or mostly-prose answers.",
-      '- Reuse dashboards: when the same analysis evolves across turns, push action:"update" with a new spec/data instead of creating another dashboard.',
-    );
-  } else {
-    lines.push(
-      "- Build one ONLY when the user asks for an interactive view / dashboard / visualization (the /interactive command arrives as such a request).",
-      '- When a response is heavy with data that would clearly benefit, you may offer — one short sentence like "Want this as a live dashboard? Run /interactive." — and go on without building it.',
-    );
-  }
-  lines.push(
-    '- Real-time data (a running process, progressing work, changing metrics): have the process write JSON to a workspace file and bind it with watch_file, giving spec blocks `key`s so payload fields update them in place; or push fresh specs/data with action:"update" as you go — the open page re-renders instantly, no reload.',
-    '- Exports are built in: every dashboard has an Export menu (PDF report, standalone HTML, JSON, CSV) — mention it when you share the URL. When the user wants a report FILE, use action:"export" (format pdf/html/json/csv) and hand them the written path.',
-  );
-  return lines.join("\n");
+// ─── The design charter, split from the policy that triggers it (P13.1) ───
+//
+// This block measured 5,240 bytes on EVERY request of the 2026-09-08 live run
+// — 13% of the whole prompt — to describe a tool (`interactive_dashboard`)
+// that is itself only a catalog line until `load_tools` promotes it. A design
+// charter for a tool the request does not carry is the clearest possible case
+// of guidance that is not in play.
+//
+// So it splits in two, with every line kept verbatim:
+//
+//   * the POLICY head — the heading, the one line saying the capability
+//     exists, and the two bullets that say when to reach for it — stays in the
+//     system prompt, because in `[interactive] auto` that bullet is the only
+//     thing that makes the model reach for a dashboard at all.
+//   * the CHARTER — composition, art direction, data honesty, raw-html rules,
+//     and the tool's own mechanics — is delivered just-in-time, at the moment
+//     `interactive_dashboard` is loaded or the user asks for a view. That is
+//     strictly EARLIER than "buried at position 4,000 of a prefix", because
+//     the tool cannot be called before its schema is loaded.
+
+const INTERACTIVE_HEADING = "# Interactive views — design charter";
+
+const INTERACTIVE_TOOL_INTRO =
+  '- The interactive_dashboard tool renders a designed, live view in the user\'s browser (local URL, works offline, real-time updates over SSE). Everything you ship through it is judged as PRODUCT: the bar is "a senior product designer built this screen". A view that looks like generated output is a defect, no matter how correct the data.';
+
+const INTERACTIVE_CHARTER_LINES = [
+  "- Build through `spec` for anything analytic — reports, metrics, benchmarks, comparisons, monitoring, results: the harness design system guarantees the typography, spacing, and chart styling. Reach for raw `html` only when the view truly cannot be expressed as a spec (maps, custom canvases, simulations, bespoke editorial layouts) — and hold it to this same charter.",
+  "",
+  "Composition — a view is an argument in three acts:",
+  "- Act 1, the headline: 3-5 KPIs (label + value + delta + spark; prefix/suffix for units; icon when it aids scanning) — or ONE hero KPI (hero: true) when a single number is the story.",
+  "- Act 2, the evidence: a hero chart (span 8, height ~300 — the view's central question) beside its breakdown (span 4 — doughnut with center total, hbar ranking, progress, or list). Never three same-shaped charts in a row; pair wide with narrow (8+4, 7+5, or 6+6 of different kinds).",
+  "- Act 3, the depth: heatmap for by-day/by-hour intensity, timeline for event history, then a full-width table (span 12, ≤7 columns, status chips) as the detail record. Chapter long views with section items.",
+  "- Chart grammar — choose the honest form: line/area = trend; bar = comparison; stacked-bar = composition over time; hbar = ranked categories; doughnut = share of a whole (≤5 slices, center total); scatter = correlation. ≤4 series per chart, short labels, never dual axes or 3D.",
+  '- Annotate meaning where the eye lands: aside = the period ("Last 30 days"), note = source or method, footer = data-as-of plus caveats. Every value that can carry a delta should.',
+  "",
+  "Art direction:",
+  "- CHOOSE THE VIEW'S DIRECTION, AND ASK: `direction` picks the whole look — 'console' (dark bento, for live ops and monitoring), 'paper' (cream ground, serif, for reports and studies meant to be READ), 'swiss' (white, strict rules, red accent, for scientific, institutional and archival work). A report is not a console. Unless the user pinned a style, name the subject's genre and put two of these to them with ask_user before you render — the same rule as any other screen. Defaulting silently is why every view used to come out identical but for one hue.",
+  "- Set the view's accent to fit the subject (top-level `accent`, from the system palette): lime #c8f169 default · orange #ff9f68 ops/logistics · amber #ffd66e cost/attention · sky #7cc7ff infra/network · violet #b8a1ff ML/experiments · teal #6fe3c2 finance/health · coral #ff8fa8 consumer. ONE accent per view; good/bad/warn/info tones mean status, never decoration.",
+  "- Restraint IS the style: near-black ground, hairline borders, muted grays, one accent, tabular numerals. When a view feels empty, add analysis, not ornament.",
+  "",
+  "Data honesty:",
+  "- Plot the REAL numbers from the conversation, files, or tool output. Never invent data and never plot placeholder values — a beautiful view of fake numbers is a failed task. Use real entity names, real units, real timestamps; if the data doesn't exist yet, gather it first or say what's missing.",
+  "- Every `data` payload must carry `data_source` naming where the numbers came from: a file you read (the path is checked to exist), the command whose output you are plotting, or the message they came from. There is no option for numbers you produced yourself — if you cannot name a source, you do not have data to plot, and the call is refused.",
+  "",
+  "Raw html views (the exception path):",
+  "- Body-only html inherits the entire design system — compose WITH its classes and tokens (inventory in the tool description), never from browser defaults. Keep it offline: no CDNs, no web fonts, no external images; icons and illustrations are inline SVG, not emoji. Define window.render(data) and draw every value from data.",
+  "- Banned — this is what slop looks like: purple-blue gradient washes, drop-shadow soup, mixed corner radii, emoji as icons, rainbow charts, ALL-CAPS paragraphs, centered walls of text, decoration that carries no information. When unsure, remove.",
+  "",
+];
+
+/** The tool's own mechanics — only actionable with the tool in hand. */
+const INTERACTIVE_TOOL_MECHANICS = [
+  '- Real-time data (a running process, progressing work, changing metrics): have the process write JSON to a workspace file and bind it with watch_file, giving spec blocks `key`s so payload fields update them in place; or push fresh specs/data with action:"update" as you go — the open page re-renders instantly, no reload.',
+  '- Exports are built in: every dashboard has an Export menu (PDF report, standalone HTML, JSON, CSV) — mention it when you share the URL. When the user wants a report FILE, use action:"export" (format pdf/html/json/csv) and hand them the written path.',
+];
+
+/** When to reach for a dashboard at all — the trigger, which must always ship. */
+function interactivePolicyLines(auto: boolean): string[] {
+  return auto
+    ? [
+        "- Autonomous dashboards are ON: when your answer centers on substantial structured data — reports, benchmarks, metrics over time, cost/resource breakdowns, multi-series comparisons, long tabular results — CREATE a dashboard visualizing it, alongside a concise text summary. Skip it for trivial or mostly-prose answers.",
+        '- Reuse dashboards: when the same analysis evolves across turns, push action:"update" with a new spec/data instead of creating another dashboard.',
+      ]
+    : [
+        "- Build one ONLY when the user asks for an interactive view / dashboard / visualization (the /interactive command arrives as such a request).",
+        '- When a response is heavy with data that would clearly benefit, you may offer — one short sentence like "Want this as a live dashboard? Run /interactive." — and go on without building it.',
+      ];
+}
+
+/**
+ * The charter as one just-in-time section, verbatim, heading included.
+ *
+ * Delivered ONCE per session at the moment dashboards enter play — the same
+ * contract as the Delegation and Building-interfaces sections.
+ */
+export const INTERACTIVE_DESIGN_CHARTER = [
+  INTERACTIVE_HEADING,
+  INTERACTIVE_TOOL_INTRO,
+  ...INTERACTIVE_CHARTER_LINES,
+  ...INTERACTIVE_TOOL_MECHANICS,
+].join("\n");
+
+/**
+ * @param charter false to ship only the policy head — the charter body is then
+ * delivered just-in-time instead (see INTERACTIVE_DESIGN_CHARTER). Defaults to
+ * true, which is byte-identical to what this function has always returned.
+ */
+export function renderInteractiveDoctrine(auto: boolean, charter = true): string {
+  const policy = interactivePolicyLines(auto);
+  if (!charter) return [INTERACTIVE_HEADING, INTERACTIVE_TOOL_INTRO, ...policy].join("\n");
+  return [
+    INTERACTIVE_HEADING,
+    INTERACTIVE_TOOL_INTRO,
+    ...INTERACTIVE_CHARTER_LINES,
+    ...policy,
+    ...INTERACTIVE_TOOL_MECHANICS,
+  ].join("\n");
 }
 
 /**
