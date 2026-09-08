@@ -567,7 +567,7 @@ jobs:
           SUFFIX: ${{ matrix.suffix }}
         run: |
           set -euo pipefail
-          mkdir -p "$HOME/gearbin"
+          mkdir -p "$HOME/runebin"
           cd "$RUNNER_TEMP"
           gh release download "$TAG" -R "$GITHUB_REPOSITORY" \
             -p "rune-$SUFFIX" -p "rune-tools-$SUFFIX" -p SHA256SUMS --clobber
@@ -578,8 +578,8 @@ jobs:
           else
             grep -E "rune(-tools)?-$SUFFIX\$" SHA256SUMS | shasum -a 256 -c -
           fi
-          install -m755 "rune-$SUFFIX" "$HOME/gearbin/rune"
-          install -m755 "rune-tools-$SUFFIX" "$HOME/gearbin/rune-tools"
+          install -m755 "rune-$SUFFIX" "$HOME/runebin/rune"
+          install -m755 "rune-tools-$SUFFIX" "$HOME/runebin/rune-tools"
 
       - name: Download and verify the published pair (Windows)
         if: runner.os == 'Windows'
@@ -589,7 +589,7 @@ jobs:
           TAG: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', needs.version.outputs.version) }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $bin = Join-Path $env:USERPROFILE 'gearbin'
+          $bin = Join-Path $env:USERPROFILE 'runebin'
           New-Item -ItemType Directory -Force -Path $bin | Out-Null
           Set-Location $env:RUNNER_TEMP
           gh release download $env:TAG -R $env:GITHUB_REPOSITORY `
@@ -611,7 +611,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          BIN="$HOME/gearbin"
+          BIN="$HOME/runebin"
           export RUNE_TOOLS_BIN="$BIN/rune-tools"
           export RUNE_SMOKE_HOME="$RUNNER_TEMP/rune-home"
           export RUNE_HOME="$RUNE_SMOKE_HOME"
@@ -631,7 +631,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $bin = Join-Path $env:USERPROFILE 'gearbin'
+          $bin = Join-Path $env:USERPROFILE 'runebin'
           $rune = Join-Path $bin 'rune.exe'
           $env:RUNE_TOOLS_BIN = Join-Path $bin 'rune-tools.exe'
           $env:RUNE_SMOKE_HOME = Join-Path $env:RUNNER_TEMP 'rune-home'
