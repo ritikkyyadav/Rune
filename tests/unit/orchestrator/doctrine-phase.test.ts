@@ -27,7 +27,17 @@ import {
 const ALL_ON: DoctrineContext = { ...FULL_DOCTRINE_CONTEXT };
 
 /** The rituals of the opening: they describe a decision, not an execution. */
-const OPENING_ONLY = ["# The read-back", "# Ambiguity", "# Plan and track"];
+const OPENING_ONLY = ["# The read-back", "# Ambiguity"];
+/**
+ * Looked like an opening ritual and is not. Dropping "# Plan and track" after
+ * the first completion was measured on 2026-09-08 (sessions 01a08036 vs
+ * 01a08059, same task, same free route): malformed `todo_write` calls went
+ * from one to seven — items passed as strings, an invalid status — because the
+ * ledger-keeping rules (one item in_progress, mark done when done, rewrite on a
+ * change of approach) govern every completion, and each fumble is a wasted
+ * completion. The plan is the product's ledger; the section rides every phase.
+ */
+const EVERY_PHASE_BY_MEASUREMENT = ["# Plan and track"];
 /** The mirror image: nothing has been produced on the first completion. */
 const WORKING_ONLY = ["# Finishing a task"];
 
@@ -82,6 +92,15 @@ describe("doctrine phases", () => {
       const rendered = renderDoctrine({ ...ALL_ON, phase });
       for (const section of ALWAYS) {
         expect(rendered, `${section} must never be phase-gated (${phase})`).toContain(section);
+      }
+    }
+  });
+
+  test("the plan ledger's rules ride every completion — measured, not assumed", () => {
+    for (const phase of ["opening", "working"] as const) {
+      const rendered = renderDoctrine({ ...ALL_ON, phase });
+      for (const section of EVERY_PHASE_BY_MEASUREMENT) {
+        expect(rendered, `${section} governs the whole run (${phase})`).toContain(section);
       }
     }
   });
