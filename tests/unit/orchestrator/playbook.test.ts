@@ -130,6 +130,17 @@ describe("writePlaybook", () => {
     expect(again.changed).toBe(false);
   });
 
+  test("a new session over the same lessons refreshes the count silently", () => {
+    writePlaybook(dir, recurring);
+    const moreSessions = [
+      entry("test-command", "test: `bun test` (verified working here)", ["a", "b", "c"]),
+    ];
+    const again = writePlaybook(dir, moreSessions)!;
+    expect(again.changed).toBe(false);
+    expect(again.sessions).toBe(3);
+    expect(readFileSync(again.path, "utf8")).toContain("Learned by Rune from 3 sessions");
+  });
+
   test("a person's edits outside the markers survive a rewrite", () => {
     const w = writePlaybook(dir, recurring)!;
     const edited = readFileSync(w.path, "utf8").replace(

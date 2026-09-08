@@ -1,3 +1,10 @@
+import {
+  DelegatedSessions,
+  withDelegatedSessions,
+  delegatedHistory,
+  bindDelegatedLoop,
+  delegatedFallback,
+} from "./delegated-sessions";
 import type { LlmGateway, ProviderName, ReasoningEffort } from "@rune/llm-gateway";
 import type { IncidentReporter, ModelTier } from "@rune/shared";
 import type {
@@ -36,6 +43,7 @@ import { CostTracker } from "@rune/llm-gateway";
  * sub-agent — but the caller should still pass a curated read-only registry.
  */
 export interface SubagentDeps {
+  delegatedSessions?: DelegatedSessions;
   gateway: LlmGateway;
   registry: ToolRegistry;
   model: string;
@@ -185,19 +193,19 @@ export const TASK_TOOL_SCHEMA: ToolSchema = {
           "Budget preset: 'quick' for one-lookup questions, 'standard' (default), " +
           "'thorough' for wide surveys that must visit many files.",
       },
-    },
-    costCapUsd: {
-      type: "number",
-      description:
-        "Optional list-price ceiling in USD for this sub-agent's own inference. It STOPS " +
-        "and returns what it has when exceeded — a budget never destroys work. Defaults " +
-        "come from `effort`.",
-    },
-    deadlineMs: {
-      type: "number",
-      description:
-        "Optional wall-clock ceiling in milliseconds from dispatch. Same stop-and-return " +
-        "behaviour as costCapUsd. Defaults come from `effort`.",
+      costCapUsd: {
+        type: "number",
+        description:
+          "Optional list-price ceiling in USD for this sub-agent's own inference. It STOPS " +
+          "and returns what it has when exceeded — a budget never destroys work. Defaults " +
+          "come from `effort`.",
+      },
+      deadlineMs: {
+        type: "number",
+        description:
+          "Optional wall-clock ceiling in milliseconds from dispatch. Same stop-and-return " +
+          "behaviour as costCapUsd. Defaults come from `effort`.",
+      },
     },
     required: ["prompt"],
   },
@@ -246,373 +254,385 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
   const maxTokens = deps.maxTokens ?? DEFAULT_MAX_TOKENS;
   const systemPrompt = deps.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
 
-  return {
-    schema: TASK_TOOL_SCHEMA,
+  return withDelegatedSessions(
+    {
+      schema: TASK_TOOL_SCHEMA,
 
-    validate: (args) => {
-      if (typeof args.prompt !== "string" || args.prompt.trim().length === 0) {
-        return { valid: false, error: "prompt is required and must be a non-empty string" };
-      }
-      if (args.context !== undefined && typeof args.context !== "string") {
-        return { valid: false, error: "context must be a string when provided" };
-      }
-      if (args.tier !== undefined && !TIERS.has(args.tier as ModelTier)) {
-        return { valid: false, error: "tier must be one of: light, standard, heavy" };
-      }
-      if (
-        args.effort !== undefined &&
-        !(typeof args.effort === "string" && args.effort in EFFORT_PRESETS)
-      ) {
-        return { valid: false, error: "effort must be one of: quick, standard, thorough" };
-      }
-      return { valid: true };
-    },
+      validate: (args) => {
+        if (typeof args.prompt !== "string" || args.prompt.trim().length === 0) {
+          return { valid: false, error: "prompt is required and must be a non-empty string" };
+        }
+        if (args.context !== undefined && typeof args.context !== "string") {
+          return { valid: false, error: "context must be a string when provided" };
+        }
+        if (args.tier !== undefined && !TIERS.has(args.tier as ModelTier)) {
+          return { valid: false, error: "tier must be one of: light, standard, heavy" };
+        }
+        if (
+          args.effort !== undefined &&
+          !(typeof args.effort === "string" && args.effort in EFFORT_PRESETS)
+        ) {
+          return { valid: false, error: "effort must be one of: quick, standard, thorough" };
+        }
+        return { valid: true };
+      },
 
-    execute: async (input: ToolCallInput): Promise<ToolCallOutput> => {
-      const start = performance.now();
-      const { prompt, context, tier, effort } = input.args as {
-        prompt: string;
-        context?: string;
-        tier?: ModelTier;
-        effort?: string;
-      };
-
-      try {
-        const permissionCheck = createReadOnlyPermissionCheck(deps.registry);
-
-        // Live resolution (tier routing + current gateway) when available.
-        // A per-call `tier` routes THIS investigation up from the light default.
-        const live = deps.resolve?.(tier) ?? {
-          gateway: deps.gateway,
-          model: deps.model,
-          provider: deps.provider,
+      execute: async (input: ToolCallInput): Promise<ToolCallOutput> => {
+        const start = performance.now();
+        const { prompt, context, tier, effort } = input.args as {
+          prompt: string;
+          context?: string;
+          tier?: ModelTier;
+          effort?: string;
         };
-        const budget = effort ? EFFORT_PRESETS[effort] : { maxTurns, maxTokens };
-        // See worker.ts: without a context engine the loop's over-limit
-        // recovery is gated off, so a long scout dies on three consecutive
-        // errors rather than compacting. Summarizer = this scout's own model,
-        // the one id guaranteed not to have rotted (it is serving this loop).
-        const nestedContext = new ContextEngine(
-          { summarizerModel: live.model, summarizerProvider: live.provider },
-          live.gateway,
-        );
-        nestedContext.setSummarizer(live.model, live.provider, {
-          model: live.model,
-          provider: live.provider,
-        });
 
-        const loop = new AgentLoop(
-          {
+        try {
+          const permissionCheck = createReadOnlyPermissionCheck(deps.registry);
+
+          // Live resolution (tier routing + current gateway) when available.
+          // A per-call `tier` routes THIS investigation up from the light default.
+          const live = deps.resolve?.(tier) ?? {
+            gateway: deps.gateway,
+            model: deps.model,
+            provider: deps.provider,
+          };
+          const budget = effort ? EFFORT_PRESETS[effort] : { maxTurns, maxTokens };
+          // See worker.ts: without a context engine the loop's over-limit
+          // recovery is gated off, so a long scout dies on three consecutive
+          // errors rather than compacting. Summarizer = this scout's own model,
+          // the one id guaranteed not to have rotted (it is serving this loop).
+          const nestedContext = new ContextEngine(
+            { summarizerModel: live.model, summarizerProvider: live.provider },
+            live.gateway,
+          );
+          nestedContext.setSummarizer(live.model, live.provider, {
             model: live.model,
             provider: live.provider,
-            maxTokens: budget.maxTokens,
-            maxTurns: budget.maxTurns,
-            // The budget is stated in the prompt, not just enforced behind it:
-            // a scout that does not know its limit cannot summarize before it.
-            systemPrompt: systemPrompt + budgetContract(budget.maxTurns),
-            // Mirror/configured orchestration passes the session's reasoning
-            // dial through; absent, the child keeps its historical "high".
-            ...(live.thinkingEffort ? { thinkingEffort: live.thinkingEffort } : {}),
-            toolResultProcessor: deps.toolResultProcessor,
-            onIncident: deps.onIncident,
-            // Show the clock the contract above tells it to watch.
-            turnBudgetNotice: true,
-            contextEngine: nestedContext,
-          },
-          live.gateway,
-          deps.registry,
-          permissionCheck,
-        );
-
-        const fullPrompt =
-          context && context.trim().length > 0 ? `${context}\n\n${prompt}` : prompt;
-
-        // The summary is the text written AFTER the last tool call — not the
-        // sum of every delta the scout ever emitted.
-        //
-        // This used to be one `finalText += event.text` across the whole run,
-        // with no reset and no separator, so what came back was the scout's
-        // entire running commentary glued end to end ("…verify invariants.No
-        // tests exist. Now let me look at…"). The parent then read abandoned
-        // hypotheses ("Critical issue spotted: …") and their retractions three
-        // lines later as findings, and wrote them into the user's report. It
-        // was not the model hallucinating; it was faithfully summarizing a
-        // stream of consciousness handed to it as an answer.
-        //
-        // Text before a tool call is narration by construction — the turn
-        // continued. Only the trailing block is the scout addressing its
-        // parent, which is exactly the contract budgetContract() states.
-        let finalText = "";
-        let toolCallCount = 0;
-        let loopError: string | undefined;
-        // The provider/model that actually served this run, when the gateway
-        // swapped mid-flight. Sub-agents used to drop `fallback` events on the
-        // floor (they hit the `default:` arm), so a scout demoted from the
-        // session's frontier model to a free fallback reported its findings in
-        // exactly the same voice, with no way for the parent — or the user —
-        // to know they came from somewhere else.
-        let servedBy: { provider: string; model: string } | null = null;
-        let fallbackReason: string | undefined;
-        // Why the loop stopped. Previously discarded, which is why running out
-        // of turns and genuinely returning nothing were reported identically —
-        // all 33 recorded failures carried no cause at all.
-        let stopReason = "";
-        // Cost and wall clock, checked between turns. Never mid-call: aborting
-        // a request already in flight pays for it and loses the reply.
-        const budgetCaps = resolveSubagentBudget(effort, {
-          costCapUsd: input.args.costCapUsd ?? deps.budgetDefaults?.costCapUsd,
-          deadlineMs: input.args.deadlineMs ?? deps.budgetDefaults?.deadlineMs,
-        });
-        const costTracker = new CostTracker();
-        const budgetState = { spentUsd: 0, startedAt: Date.now() };
-        let breach: BudgetBreach | null = null;
-        // What the scout actually did, kept so an empty summary still returns
-        // the ground it covered instead of nothing. Bounded: this rides back
-        // into the parent's context.
-        const trail: string[] = [];
-
-        // Propagate the abort signal: without it Ctrl-C/Esc could not
-        // interrupt a running sub-agent — the turn blocked until it finished.
-        for await (const event of loop.run(
-          fullPrompt,
-          input.sessionId,
-          input.workspaceRoot,
-          input.signal,
-        )) {
-          // The typed channel (P2.6). A scout's callId is its identity in the
-          // fleet — one sub-agent per call — so the parent can keep a row per
-          // member instead of folding a fan-out into one shared heartbeat.
-          input.onEvent?.({
-            agentId: input.callId,
-            label: String(prompt ?? "").slice(0, 80),
-            event,
           });
-          switch (event.type) {
-            case "text_delta":
-              finalText += event.text;
-              break;
-            case "stream_reset":
-              // The provider abandoned this assistant message mid-flight and
-              // is re-streaming it. Anything accumulated for it is about to
-              // arrive again — keeping it would duplicate the summary.
-              finalText = "";
-              break;
-            case "fallback":
-              servedBy = event.to;
-              fallbackReason = event.reason;
-              input.onProgress?.(`↯ ${event.to.provider}/${event.to.model}`);
-              break;
-            case "tool_call_start":
-              // Everything written before this call was narration on the way
-              // to it, not the report. Drop it: the summary is what follows
-              // the LAST tool call.
-              //
-              // Keyed to the START, not the end: a call the permission gate
-              // refuses, the repeated-failure breaker blocks, or the run ends
-              // before executing never produces a `tool_call_end` — and the
-              // narration ahead of it is narration either way. Keying this to
-              // completion let exactly those runs return "And now the routes."
-              // as their findings.
-              finalText = "";
-              break;
-            case "tool_call_end": {
-              toolCallCount++;
-              // Live movement for the parent's status rung — sub-agents used
-              // to run completely dark for their whole multi-minute life.
-              const p = describeCall(event.args);
-              const label = `${event.output.toolName}${p}`;
-              input.onProgress?.(label);
-              // Deduplicated, order preserved: the parent wants the ground
-              // covered, not a transcript. Re-reads are already surfaced as a
-              // struggle signal; repeating them here would just spend the
-              // parent's context to say the same file eight times.
-              if (trail.length < MAX_TRAIL_ENTRIES && !trail.includes(label)) {
-                trail.push(label);
+
+          const loop = new AgentLoop(
+            {
+              priorMessages: delegatedHistory(live),
+              model: live.model,
+              provider: live.provider,
+              maxTokens: budget.maxTokens,
+              maxTurns: budget.maxTurns,
+              // The budget is stated in the prompt, not just enforced behind it:
+              // a scout that does not know its limit cannot summarize before it.
+              systemPrompt: systemPrompt + budgetContract(budget.maxTurns),
+              // Mirror/configured orchestration passes the session's reasoning
+              // dial through; absent, the child keeps its historical "high".
+              ...(live.thinkingEffort ? { thinkingEffort: live.thinkingEffort } : {}),
+              toolResultProcessor: deps.toolResultProcessor,
+              onIncident: deps.onIncident,
+              // Show the clock the contract above tells it to watch.
+              turnBudgetNotice: true,
+              contextEngine: nestedContext,
+            },
+            live.gateway,
+            deps.registry,
+            permissionCheck,
+          );
+
+          bindDelegatedLoop(loop);
+          const fullPrompt =
+            context && context.trim().length > 0 ? `${context}\n\n${prompt}` : prompt;
+
+          // The summary is the text written AFTER the last tool call — not the
+          // sum of every delta the scout ever emitted.
+          //
+          // This used to be one `finalText += event.text` across the whole run,
+          // with no reset and no separator, so what came back was the scout's
+          // entire running commentary glued end to end ("…verify invariants.No
+          // tests exist. Now let me look at…"). The parent then read abandoned
+          // hypotheses ("Critical issue spotted: …") and their retractions three
+          // lines later as findings, and wrote them into the user's report. It
+          // was not the model hallucinating; it was faithfully summarizing a
+          // stream of consciousness handed to it as an answer.
+          //
+          // Text before a tool call is narration by construction — the turn
+          // continued. Only the trailing block is the scout addressing its
+          // parent, which is exactly the contract budgetContract() states.
+          let finalText = "";
+          let toolCallCount = 0;
+          let loopError: string | undefined;
+          // The provider/model that actually served this run, when the gateway
+          // swapped mid-flight. Sub-agents used to drop `fallback` events on the
+          // floor (they hit the `default:` arm), so a scout demoted from the
+          // session's frontier model to a free fallback reported its findings in
+          // exactly the same voice, with no way for the parent — or the user —
+          // to know they came from somewhere else.
+          let servedBy: { provider: string; model: string } | null = null;
+          let fallbackReason: string | undefined;
+          // Why the loop stopped. Previously discarded, which is why running out
+          // of turns and genuinely returning nothing were reported identically —
+          // all 33 recorded failures carried no cause at all.
+          let stopReason = "";
+          // Cost and wall clock, checked between turns. Never mid-call: aborting
+          // a request already in flight pays for it and loses the reply.
+          const budgetCaps = resolveSubagentBudget(effort, {
+            costCapUsd: input.args.costCapUsd ?? deps.budgetDefaults?.costCapUsd,
+            deadlineMs: input.args.deadlineMs ?? deps.budgetDefaults?.deadlineMs,
+          });
+          const costTracker = new CostTracker();
+          const budgetState = { spentUsd: 0, startedAt: Date.now() };
+          let breach: BudgetBreach | null = null;
+          // What the scout actually did, kept so an empty summary still returns
+          // the ground it covered instead of nothing. Bounded: this rides back
+          // into the parent's context.
+          const trail: string[] = [];
+
+          // Propagate the abort signal: without it Ctrl-C/Esc could not
+          // interrupt a running sub-agent — the turn blocked until it finished.
+          for await (const event of loop.run(
+            fullPrompt,
+            input.sessionId,
+            input.workspaceRoot,
+            input.signal,
+          )) {
+            // The typed channel (P2.6). A scout's callId is its identity in the
+            // fleet — one sub-agent per call — so the parent can keep a row per
+            // member instead of folding a fan-out into one shared heartbeat.
+            input.onEvent?.({
+              agentId: input.callId,
+              label: String(prompt ?? "").slice(0, 80),
+              event,
+            });
+            switch (event.type) {
+              case "text_delta":
+                finalText += event.text;
+                break;
+              case "stream_reset":
+                // The provider abandoned this assistant message mid-flight and
+                // is re-streaming it. Anything accumulated for it is about to
+                // arrive again — keeping it would duplicate the summary.
+                finalText = "";
+                break;
+              case "fallback":
+                delegatedFallback(event.to);
+                servedBy = event.to;
+                fallbackReason = event.reason;
+                input.onProgress?.(`↯ ${event.to.provider}/${event.to.model}`);
+                break;
+              case "tool_call_start":
+                // Everything written before this call was narration on the way
+                // to it, not the report. Drop it: the summary is what follows
+                // the LAST tool call.
+                //
+                // Keyed to the START, not the end: a call the permission gate
+                // refuses, the repeated-failure breaker blocks, or the run ends
+                // before executing never produces a `tool_call_end` — and the
+                // narration ahead of it is narration either way. Keying this to
+                // completion let exactly those runs return "And now the routes."
+                // as their findings.
+                finalText = "";
+                break;
+              case "tool_call_end": {
+                toolCallCount++;
+                // Live movement for the parent's status rung — sub-agents used
+                // to run completely dark for their whole multi-minute life.
+                const p = describeCall(event.args);
+                const label = `${event.output.toolName}${p}`;
+                input.onProgress?.(label);
+                // Deduplicated, order preserved: the parent wants the ground
+                // covered, not a transcript. Re-reads are already surfaced as a
+                // struggle signal; repeating them here would just spend the
+                // parent's context to say the same file eight times.
+                if (trail.length < MAX_TRAIL_ENTRIES && !trail.includes(label)) {
+                  trail.push(label);
+                }
+                break;
               }
+              case "usage":
+                // List price, from the provider's own numbers. An unpriced model
+                // contributes 0, which means its budget is effectively the
+                // deadline — correct, since a price nobody knows cannot be capped.
+                budgetState.spentUsd += costTracker.estimate(event.model ?? live.model, {
+                  inputTokens: event.inputTokens,
+                  outputTokens: event.outputTokens,
+                  cacheReadTokens: event.cacheReadTokens,
+                  cacheCreationTokens: event.cacheCreationTokens,
+                });
+                break;
+              case "error":
+                // Keep the last error; only fatal (non-recoverable) errors end the run.
+                loopError = event.error;
+                break;
+              case "turn_complete":
+                // Sub-agent finished (end_turn, max_turns, aborted, …). Stop consuming.
+                stopReason = event.stopReason;
+                break;
+              default:
+                break;
+            }
+            if (event.type === "turn_complete") break;
+            // A budget is a stop, not a failure: the loop ends here and whatever
+            // the scout has found so far comes back, exactly as it does on
+            // max_turns. The parent is told which budget and by how much, so
+            // "re-dispatch with more" is actionable rather than a guess.
+            breach = checkBudget(budgetCaps, budgetState);
+            if (breach) {
+              stopReason = breach.kind === "cost" ? "cost_budget" : "time_budget";
               break;
             }
-            case "usage":
-              // List price, from the provider's own numbers. An unpriced model
-              // contributes 0, which means its budget is effectively the
-              // deadline — correct, since a price nobody knows cannot be capped.
-              budgetState.spentUsd += costTracker.estimate(event.model ?? live.model, {
-                inputTokens: event.inputTokens,
-                outputTokens: event.outputTokens,
-                cacheReadTokens: event.cacheReadTokens,
-                cacheCreationTokens: event.cacheCreationTokens,
-              });
-              break;
-            case "error":
-              // Keep the last error; only fatal (non-recoverable) errors end the run.
-              loopError = event.error;
-              break;
-            case "turn_complete":
-              // Sub-agent finished (end_turn, max_turns, aborted, …). Stop consuming.
-              stopReason = event.stopReason;
-              break;
-            default:
-              break;
           }
-          if (event.type === "turn_complete") break;
-          // A budget is a stop, not a failure: the loop ends here and whatever
-          // the scout has found so far comes back, exactly as it does on
-          // max_turns. The parent is told which budget and by how much, so
-          // "re-dispatch with more" is actionable rather than a guess.
-          breach = checkBudget(budgetCaps, budgetState);
-          if (breach) {
-            stopReason = breach.kind === "cost" ? "cost_budget" : "time_budget";
-            break;
-          }
-        }
 
-        const trimmed = finalText.trim();
+          const trimmed = finalText.trim();
 
-        // Provenance banner. A scout that finished on a different model than
-        // the one it was dispatched to is reporting SECONDHAND from somewhere
-        // the caller did not choose — usually a free fallback picked up after
-        // the session model hit a plan quota. The parent has no other way to
-        // learn this (the swap happens inside a nested loop), and it changes
-        // how much the findings are worth, so it leads the result instead of
-        // being buried at the end.
-        const provenance = servedBy
-          ? `[PROVENANCE — this sub-agent did not run on ${live.provider}/${live.model}. ` +
-            `The gateway switched it to ${servedBy.provider}/${servedBy.model} mid-run` +
-            `${fallbackReason ? ` (${fallbackReason})` : ""}. Treat everything below as ` +
-            `UNVERIFIED: re-check any claim before you rely on it or repeat it to the user.]\n\n`
-          : "";
+          // Provenance banner. A scout that finished on a different model than
+          // the one it was dispatched to is reporting SECONDHAND from somewhere
+          // the caller did not choose — usually a free fallback picked up after
+          // the session model hit a plan quota. The parent has no other way to
+          // learn this (the swap happens inside a nested loop), and it changes
+          // how much the findings are worth, so it leads the result instead of
+          // being buried at the end.
+          const provenance = servedBy
+            ? `[PROVENANCE — this sub-agent did not run on ${live.provider}/${live.model}. ` +
+              `The gateway switched it to ${servedBy.provider}/${servedBy.model} mid-run` +
+              `${fallbackReason ? ` (${fallbackReason})` : ""}. Treat everything below as ` +
+              `UNVERIFIED: re-check any claim before you rely on it or repeat it to the user.]\n\n`
+            : "";
 
-        // An empty summary is not an empty investigation.
-        //
-        // This used to return `success: false, result: ""` — discarding every
-        // file the scout read and every search it ran, and reporting a cause
-        // it had not bothered to capture. It was ~48% of all `task` calls
-        // (33 of 68 in this install's audit log), against 0 of 43 for
-        // `worker`. The asymmetry was never the model: worker falls back to
-        // its changed-file list when it writes no prose, so its work survives.
-        // A read-only scout has no file changes to fall back on — but it does
-        // have the ground it covered, which is exactly what the parent needs
-        // to either finish the job itself or re-dispatch with more budget.
-        if (trimmed.length === 0) {
-          // Nothing written AND nothing done: there is genuinely no result.
-          // This is the only case that still fails, mirroring worker's
-          // `!trimmed && changed.size === 0`.
-          if (toolCallCount === 0) {
+          // An empty summary is not an empty investigation.
+          //
+          // This used to return `success: false, result: ""` — discarding every
+          // file the scout read and every search it ran, and reporting a cause
+          // it had not bothered to capture. It was ~48% of all `task` calls
+          // (33 of 68 in this install's audit log), against 0 of 43 for
+          // `worker`. The asymmetry was never the model: worker falls back to
+          // its changed-file list when it writes no prose, so its work survives.
+          // A read-only scout has no file changes to fall back on — but it does
+          // have the ground it covered, which is exactly what the parent needs
+          // to either finish the job itself or re-dispatch with more budget.
+          if (trimmed.length === 0) {
+            // Nothing written AND nothing done: there is genuinely no result.
+            // This is the only case that still fails, mirroring worker's
+            // `!trimmed && changed.size === 0`.
+            if (toolCallCount === 0) {
+              return {
+                callId: input.callId,
+                toolName: input.toolName,
+                success: false,
+                result: "",
+                // The swap belongs on the ERROR path too. A scout that was
+                // demoted and then produced nothing is the single most useful
+                // place to name the model: it usually means the fallback could
+                // not do the job at all, and without this the parent reads a
+                // bare "did nothing" and re-dispatches into the same wall.
+                error:
+                  (servedBy ? `[ran on ${servedBy.provider}/${servedBy.model}] ` : "") +
+                  (loopError
+                    ? `Sub-agent did nothing and wrote nothing (last error: ${loopError})`
+                    : `Sub-agent did nothing and wrote nothing${stopReason ? ` (stopped: ${stopReason})` : ""}`),
+                durationMs: Math.round(performance.now() - start),
+              };
+            }
+
+            // Partial, but real: the parent can act on this. Failing here is
+            // what threw the work away.
+            const partial = buildSubagentResult({
+              finalText: "",
+              toolCallCount,
+              stopReason,
+              loopError,
+              trail,
+              servedBy: servedBy ?? undefined,
+            });
             return {
               callId: input.callId,
               toolName: input.toolName,
-              success: false,
-              result: "",
-              // The swap belongs on the ERROR path too. A scout that was
-              // demoted and then produced nothing is the single most useful
-              // place to name the model: it usually means the fallback could
-              // not do the job at all, and without this the parent reads a
-              // bare "did nothing" and re-dispatches into the same wall.
-              error:
-                (servedBy ? `[ran on ${servedBy.provider}/${servedBy.model}] ` : "") +
-                (loopError
-                  ? `Sub-agent did nothing and wrote nothing (last error: ${loopError})`
-                  : `Sub-agent did nothing and wrote nothing${stopReason ? ` (stopped: ${stopReason})` : ""}`),
+              success: true,
+              result: renderTaskResult(partial, {
+                maxTurns: budget.maxTurns,
+                topBudget: EFFORT_PRESETS.thorough.maxTurns,
+                effort,
+                dispatched: { provider: live.provider, model: live.model },
+                fallbackReason,
+              }),
+              structured: partial as unknown as Record<string, unknown>,
               durationMs: Math.round(performance.now() - start),
             };
           }
 
-          // Partial, but real: the parent can act on this. Failing here is
-          // what threw the work away.
-          const partial = buildSubagentResult({
-            finalText: "",
+          // The schema, forced — but only when the prose did not already carry
+          // it, so a sub-agent that answers in shape costs nothing extra. The
+          // repair call is tool-less by construction: a JSON schema on a turn
+          // that still offers tools makes providers choose between structured
+          // output and tool calling, and they choose differently.
+          let result = buildSubagentResult({
+            finalText: trimmed,
             toolCallCount,
             stopReason,
             loopError,
             trail,
             servedBy: servedBy ?? undefined,
           });
+          if (
+            !breach &&
+            !input.signal?.aborted &&
+            result.findings.length === 0 &&
+            result.unresolved.length === 0
+          ) {
+            const repaired = await repairToSchema({
+              gateway: live.gateway,
+              provider: live.provider as ProviderName,
+              model: live.model,
+              text: trimmed,
+              signal: input.signal,
+            });
+            if (repaired) {
+              result = {
+                ...repaired,
+                // Harness facts still win over anything the repair call says.
+                toolCallCount,
+                stopReason,
+                servedBy: servedBy ?? undefined,
+                filesExamined: repaired.filesExamined.length ? repaired.filesExamined : trail,
+              };
+            }
+          }
+          // A summary written on the way out of a turn budget is a summary of an
+          // investigation that did not finish. Unmarked, it reads to the parent
+          // exactly like a complete answer.
+          if (stopReason === "max_turns") {
+            result.unresolved = [
+              `Hit the ${budget.maxTurns}-turn limit, so this covers only what it reached.`,
+              ...result.unresolved,
+            ];
+          } else if (stopReason === "aborted") {
+            result.unresolved = ["Aborted before finishing.", ...result.unresolved];
+          } else if (breach) {
+            result.unresolved = [`The sub-agent ${describeBreach(breach)}.`, ...result.unresolved];
+          }
+
           return {
             callId: input.callId,
             toolName: input.toolName,
             success: true,
-            result: renderTaskResult(partial, {
+            result: renderTaskResult(result, {
               maxTurns: budget.maxTurns,
               topBudget: EFFORT_PRESETS.thorough.maxTurns,
               effort,
               dispatched: { provider: live.provider, model: live.model },
               fallbackReason,
             }),
-            structured: partial as unknown as Record<string, unknown>,
+            structured: result as unknown as Record<string, unknown>,
+            durationMs: Math.round(performance.now() - start),
+          };
+        } catch (err) {
+          // Never throw out of execute — surface as a failed tool result instead.
+          return {
+            callId: input.callId,
+            toolName: input.toolName,
+            success: false,
+            result: "",
+            error: err instanceof Error ? err.message : String(err),
             durationMs: Math.round(performance.now() - start),
           };
         }
-
-        // The schema, forced — but only when the prose did not already carry
-        // it, so a sub-agent that answers in shape costs nothing extra. The
-        // repair call is tool-less by construction: a JSON schema on a turn
-        // that still offers tools makes providers choose between structured
-        // output and tool calling, and they choose differently.
-        let result = buildSubagentResult({
-          finalText: trimmed,
-          toolCallCount,
-          stopReason,
-          loopError,
-          trail,
-          servedBy: servedBy ?? undefined,
-        });
-        if (result.findings.length === 0 && result.unresolved.length === 0) {
-          const repaired = await repairToSchema({
-            gateway: live.gateway,
-            provider: live.provider as ProviderName,
-            model: live.model,
-            text: trimmed,
-            signal: input.signal,
-          });
-          if (repaired) {
-            result = {
-              ...repaired,
-              // Harness facts still win over anything the repair call says.
-              toolCallCount,
-              stopReason,
-              servedBy: servedBy ?? undefined,
-              filesExamined: repaired.filesExamined.length ? repaired.filesExamined : trail,
-            };
-          }
-        }
-        // A summary written on the way out of a turn budget is a summary of an
-        // investigation that did not finish. Unmarked, it reads to the parent
-        // exactly like a complete answer.
-        if (stopReason === "max_turns") {
-          result.unresolved = [
-            `Hit the ${budget.maxTurns}-turn limit, so this covers only what it reached.`,
-            ...result.unresolved,
-          ];
-        } else if (stopReason === "aborted") {
-          result.unresolved = ["Aborted before finishing.", ...result.unresolved];
-        } else if (breach) {
-          result.unresolved = [`The sub-agent ${describeBreach(breach)}.`, ...result.unresolved];
-        }
-
-        return {
-          callId: input.callId,
-          toolName: input.toolName,
-          success: true,
-          result: renderTaskResult(result, {
-            maxTurns: budget.maxTurns,
-            topBudget: EFFORT_PRESETS.thorough.maxTurns,
-            effort,
-            dispatched: { provider: live.provider, model: live.model },
-            fallbackReason,
-          }),
-          structured: result as unknown as Record<string, unknown>,
-          durationMs: Math.round(performance.now() - start),
-        };
-      } catch (err) {
-        // Never throw out of execute — surface as a failed tool result instead.
-        return {
-          callId: input.callId,
-          toolName: input.toolName,
-          success: false,
-          result: "",
-          error: err instanceof Error ? err.message : String(err),
-          durationMs: Math.round(performance.now() - start),
-        };
-      }
+      },
     },
-  };
+    "task",
+    deps.delegatedSessions,
+  );
 }

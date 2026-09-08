@@ -64,6 +64,9 @@ import {
   loadSecrets,
   providerKeyEntries,
   applySearchKeysToEnv,
+  resolveSearchCredentials,
+  openCredentialStore,
+  loadPrefs,
   setProviderKey as persistProviderKey,
   clearProviderKey as persistClearKey,
   searchKeyStatus,
@@ -76,7 +79,7 @@ import {
   loadLastModel,
   saveLastModel,
   loadSavedSandboxState,
-  resolveInitialSandbox,
+  resolveInitialSandboxPolicy,
   setConfigValue,
 } from "@rune/shared";
 import {
@@ -297,20 +300,34 @@ function buildEngine(): Engine {
     const cfgModel = (
       config.llm[provider as keyof typeof config.llm] as { model?: string } | undefined
     )?.model;
-    model = cfgModel ?? DEFAULT_MODELS[provider];
+    // The provider may be any preset now, not only the six the host knew by hand.
+    model =
+      cfgModel ??
+      (isCliProvider(provider) ? DEFAULT_MODELS[provider] : undefined) ??
+      getPreset(provider)?.defaultModel ??
+      "";
   }
 
-  // Make [search].provider visible to the env-based web_search backend selector,
-  // and copy saved Tavily/Brave keys into the env so /research + web_search use them.
-  if (
-    config.search?.provider &&
-    config.search.provider !== "auto" &&
-    !process.env.RUNE_SEARCH_BACKEND &&
-    !process.env.RUNE_SEARCH_BACKEND
-  ) {
-    process.env.RUNE_SEARCH_BACKEND = config.search.provider;
+  // Which search engine answers first: an explicit env var, then config.toml's
+  // `[search] provider`, then the engine `/login` connected most recently.
+  if (!process.env.RUNE_SEARCH_BACKEND) {
+    const preferred =
+      config.search?.provider && config.search.provider !== "auto"
+        ? config.search.provider
+        : loadPrefs().search;
+    if (preferred) process.env.RUNE_SEARCH_BACKEND = preferred;
   }
+  // Copy the connected search engines' keys into the env so /research +
+  // web_search use them: the secrets file first, then the keychain overlaid
+  // (best effort — a keychain that prompts or errors costs an engine, never boot).
   applySearchKeysToEnv();
+  // The keychain half lands asynchronously: this boot path is synchronous and
+  // a keychain read is not. It resolves long before a request can reach
+  // web_search, and a keychain that prompts or errors costs nothing here.
+  void openCredentialStore()
+    .then((store) => resolveSearchCredentials(store))
+    .then((keys) => applySearchKeysToEnv(process.env, keys))
+    .catch(() => {});
 
   const permissionFlags = resolveStartupPermissionFlags({
     configGear: config.permissions?.gear,
@@ -332,15 +349,28 @@ function buildEngine(): Engine {
     reasoningEffort: config.llm?.reasoningEffort,
     doctrineDelivery: config.llm?.doctrineDelivery,
     effortRouting: config.llm?.effortRouting,
+    reliability: config.reliability,
+    maxSessionCostUsd: config.cost?.maxSessionUsd,
+    sandboxRequireOs: config.sandbox?.requireOs === true,
+    enableRateLimiting: config.tools?.rateLimit?.enabled,
+    rateLimit: config.tools?.rateLimit,
     // Unset means "decide from the workspace" (P10.1), same as the CLI.
     lspAutoFeedback: config.lsp?.autoFeedback,
     autoMode: config.permissions?.autoMode,
     // Same posture resolution as the CLI, minus CLI flags (desktop has none).
-    sandboxEnabled: resolveInitialSandbox({
-      env: process.env.RUNE_SANDBOX_ENABLED ?? null,
-      saved: loadSavedSandboxState(),
-      configured: config.sandbox?.enabled ?? null,
-    }),
+    ...(() => {
+      const sandboxPolicy = resolveInitialSandboxPolicy({
+        env: process.env.RUNE_SANDBOX_ENABLED ?? null,
+        envMode: process.env.RUNE_SANDBOX_MODE ?? null,
+        saved: loadSavedSandboxState(),
+        configured: config.sandbox ?? null,
+      });
+      return {
+        sandboxEnabled: sandboxPolicy.mode !== "off",
+        sandboxMode: sandboxPolicy.mode,
+        sandboxPolicy,
+      };
+    })(),
     // Config-file keys count as "saved" unless they merely echo an env var.
     anthropicApiKey: process.env.ANTHROPIC_API_KEY ? undefined : config.llm.anthropic?.apiKey,
     openaiApiKey: process.env.OPENAI_API_KEY ? undefined : config.llm.openai?.apiKey,

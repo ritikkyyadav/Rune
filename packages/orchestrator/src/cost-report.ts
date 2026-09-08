@@ -113,6 +113,7 @@ export function formatCostReport(b: CostBreakdown): CostReportLine[] {
   const providers = Object.entries(b.cacheByProvider);
   if (providers.length > 1) {
     for (const [provider, stats] of providers) {
+      if (!stats) continue;
       lines.push({
         label: `  ${provider}`,
         value: formatCacheRate(stats.hitRate),

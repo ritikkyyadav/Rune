@@ -127,7 +127,9 @@ describe("the task-state tail block", () => {
     const block = lastText(gw.requests[1]);
     expect(block).toContain("[Task state — maintained by the harness");
     expect(block).toContain("not a message to answer");
-    expect(block).toContain("do not acknowledge, restate or summarize it");
+    expect(block).toContain("never acknowledge, restate, or narrate it");
+    // State is data: no imperative the model could echo as its opening line.
+    expect(block).not.toMatch(/\bAct on\b|continue from|re-?submit|Just do the work/i);
   });
 
   test("every request after a plan carries the goal and the plan", async () => {

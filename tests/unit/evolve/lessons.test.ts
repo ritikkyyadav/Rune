@@ -45,6 +45,9 @@ const clean = {
   unprovenSteps: 0,
   checksFailed: 0,
   struggled: false,
+  completedWork: true,
+  checksPassed: 1,
+  openSteps: 0,
 };
 
 function seed(
@@ -111,7 +114,7 @@ describe("candidates are stored and never injected", () => {
   });
 });
 
-describe("trial → active needs firings AND a win rate above the ambient rate", () => {
+describe("trial → active needs controlled evidence", () => {
   it("does not promote before ACTIVE_FIRINGS injections", () => {
     const id = seed("test-command", { sessions: ["s1", "s2"], stage: "trial" });
     for (let i = 0; i < ACTIVE_FIRINGS - 1; i++) {
@@ -122,16 +125,14 @@ describe("trial → active needs firings AND a win rate above the ambient rate",
     expect(store.listRepo(REPO)[0].stage).toBe("trial");
   });
 
-  it("promotes once it has the firings and beats the bar", () => {
+  it("does not promote merely because repeated uses all won", () => {
     const id = seed("test-command", { sessions: ["s1", "s2"], stage: "trial" });
     for (let i = 0; i < ACTIVE_FIRINGS; i++) {
       store.touchUses([id]);
       store.recordWins([id]);
     }
-    const moved = advanceLessons(store, store.listRepo(REPO));
-    expect(moved).toHaveLength(1);
-    expect(moved[0]).toMatchObject({ from: "trial", to: "active" });
-    expect(store.listRepo(REPO)[0].stage).toBe("active");
+    expect(advanceLessons(store, store.listRepo(REPO))).toHaveLength(0);
+    expect(store.listRepo(REPO)[0].stage).toBe("trial");
   });
 
   it("refuses a lesson that fires often and rarely wins", () => {
@@ -162,18 +163,18 @@ describe("trial → active needs firings AND a win rate above the ambient rate",
   });
 });
 
-describe("active → retired when it stops helping", () => {
-  it("retires an active lesson whose win rate falls under the floor", () => {
+describe("legacy active advice must earn controlled evidence", () => {
+  it("returns an unvalidated active lesson to trial without deleting it", () => {
     const id = seed("test-command", { sessions: ["s1", "s2"], stage: "active" });
     for (let i = 0; i < 10; i++) store.touchUses([id]);
     store.recordWins([id]);
     store.recordWins([id]); // 2/10
     const moved = advanceLessons(store, store.listRepo(REPO));
     expect(moved).toHaveLength(1);
-    expect(moved[0]).toMatchObject({ from: "active", to: "retired" });
-    expect(moved[0].reason).toContain(`${ACTIVE_FLOOR * 100}% floor`);
-    // Retired means out of retrieval, still inspectable.
-    expect(store.retrieve({ repoKey: REPO, stackKey: "bun" })).toHaveLength(0);
+    expect(moved[0]).toMatchObject({ from: "active", to: "trial" });
+    expect(moved[0].reason).toContain("No qualifying controlled evidence");
+    // The hint remains available for bounded trials, and is inspectable.
+    expect(store.retrieve({ repoKey: REPO, stackKey: "bun" })).toHaveLength(1);
     expect(store.listRepo(REPO)).toHaveLength(1);
   });
 

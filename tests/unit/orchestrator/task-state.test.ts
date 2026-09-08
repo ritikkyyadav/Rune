@@ -173,26 +173,60 @@ describe("task boundary rule (beginTurn)", () => {
 });
 
 describe("a step is completed by evidence", () => {
-  test("a completion with nothing behind it is refused once, then accepted as unproven", () => {
+  test("a completion with nothing behind it is accepted as unproven, in one line of fact", () => {
     const s = new TaskStateStore();
+    s.beginTurn("run the tests and fix what fails");
+    s.setTodos([{ content: "run the test suite", status: "in_progress" }]);
+    const v = s.setTodos([{ content: "run the test suite", status: "completed" }]);
+    expect(v.accepted).toBe(true);
+    if (v.accepted) {
+      expect(v.notes).toEqual(["Step 1 closed unproven: nothing ran while it was open."]);
+      // A fact, never an instruction the model can echo back on screen.
+      expect(v.notes.join(" ")).not.toMatch(/re-?submit|re-?run|do the step|handle it/i);
+    }
+    const item = s.snapshot().todos[0];
+    expect(item.status).toBe("completed");
+    expect(item.unproven).toBe("no_evidence");
+    expect(stepReceipt(item)).toContain("unproven");
+    expect(s.todoCounts()).toEqual({ done: 1, total: 1, unproven: 1, open: 0 });
+  });
+
+  test("refuse mode sends the list back once, in one line, then accepts it as unproven", () => {
+    const s = new TaskStateStore();
+    s.setEvidenceGate("refuse");
     s.beginTurn("run the tests and fix what fails");
     s.setTodos([{ content: "run the test suite", status: "in_progress" }]);
     const first = s.setTodos([{ content: "run the test suite", status: "completed" }]);
     expect(first.accepted).toBe(false);
     if (!first.accepted) {
       expect(first.refused).toHaveLength(1);
-      expect(first.refused[0].reason).toContain("nothing ran");
+      expect(first.refused[0].reason).toBe("nothing ran while it was open.");
     }
     // The list did not move.
     expect(s.snapshot().todos[0].status).toBe("in_progress");
     // The same claim again is accepted — visibly unproven.
     const second = s.setTodos([{ content: "run the test suite", status: "completed" }]);
     expect(second.accepted).toBe(true);
+    expect(s.snapshot().todos[0].unproven).toBe("no_evidence");
+  });
+
+  test("evidence that lands after an unproven close clears the mark without re-opening the step", () => {
+    const s = new TaskStateStore();
+    s.beginTurn("add the endpoint");
+    s.setTodos([{ content: "write the handler", status: "in_progress" }]);
+    s.setTodos([{ content: "write the handler", status: "completed" }]);
+    expect(s.snapshot().todos[0].unproven).toBe("no_evidence");
+    s.noteEffect("write");
+    s.noteEffect("check_pass", { command: "bun test", summary: "ok" });
+    const v = s.setTodos([{ content: "write the handler", status: "completed" }]);
+    expect(v.accepted).toBe(true);
     const item = s.snapshot().todos[0];
-    expect(item.status).toBe("completed");
-    expect(item.unproven).toBe("no_evidence");
-    expect(stepReceipt(item)).toContain("unproven");
-    expect(s.todoCounts()).toEqual({ done: 1, total: 1, unproven: 1, open: 0 });
+    expect(item.unproven).toBeUndefined();
+    expect(stepReceipt(item)).toContain("check ok");
+    // With nothing new behind it, a re-submission changes nothing.
+    const again = s.setTodos([{ content: "write the handler", status: "completed" }]);
+    expect(again.accepted).toBe(true);
+    expect(s.snapshot().todos[0].unproven).toBeUndefined();
   });
 
   test("a write while the step was open is evidence, and the receipt says so", () => {
@@ -222,22 +256,23 @@ describe("a step is completed by evidence", () => {
     expect(s.snapshot().todos[0].evidence?.reads).toBe(2);
   });
 
-  test("a step closed right after a FAILING check is refused; a fix re-opens the question", () => {
+  test("a step closed right after a FAILING check is unproven; the fix clears it", () => {
     const s = new TaskStateStore();
     s.beginTurn("make the suite green");
     s.setTodos([{ content: "fix the parser tests", status: "in_progress" }]);
     s.noteEffect("write");
     s.noteEffect("check_fail", { command: "bun test", summary: "2 failed" });
-    const refused = s.setTodos([{ content: "fix the parser tests", status: "completed" }]);
-    expect(refused.accepted).toBe(false);
-    if (!refused.accepted) expect(refused.refused[0].reason).toContain("FAILED");
-    // Another edit after the failure means the step check should run again,
-    // not that the step is unproven.
+    const closed = s.setTodos([{ content: "fix the parser tests", status: "completed" }]);
+    expect(closed.accepted).toBe(true);
+    if (closed.accepted) {
+      expect(closed.notes[0]).toBe(
+        "Step 1 closed unproven: its last check failed (bun test: 2 failed).",
+      );
+    }
+    expect(s.snapshot().todos[0].unproven).toBe("check_failed");
+    // The fix lands and the check passes: the same list re-submitted is
+    // re-judged on that evidence and the mark clears.
     s.noteEffect("write");
-    expect(
-      s.planCompletions([{ content: "fix the parser tests", status: "completed" }])[0]
-        .uncheckedWrites,
-    ).toBe(true);
     s.noteEffect("check_pass", { command: "bun test", summary: "ok" });
     const ok = s.setTodos([{ content: "fix the parser tests", status: "completed" }]);
     expect(ok.accepted).toBe(true);

@@ -1,3 +1,4 @@
+import { DelegatedSessions } from "./delegated-sessions";
 import {
   reasoningEffortsFor,
   LlmGateway,
@@ -7,9 +8,18 @@ import {
 import { AutoEvalSidecar } from "./auto-eval-sidecar";
 import { validateSubagentResult } from "./subagent-result";
 import { resolveMaxParallel } from "./subagent-budget";
+import { DelegationPool } from "./delegation-pool";
+import { resolveSetting, normalizeSettingValue } from "./config-settings";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createWorkflowTool } from "./workflow-tool";
 import { formatCostSummary } from "./cost-report";
-import type { ReasoningEffort, Message, ProviderName, ResolvedCredential } from "@rune/llm-gateway";
+import type {
+  CostEntry,
+  ReasoningEffort,
+  Message,
+  ProviderName,
+  ResolvedCredential,
+} from "@rune/llm-gateway";
 import {
   CustomToolsLoader,
   PluginToolServer,
@@ -31,6 +41,11 @@ import {
   createDashboardTool,
   isSandboxEnabled,
   setSandboxMode,
+  getSandboxMode,
+  getSandboxPolicy,
+  setSandboxPolicy,
+  type SandboxMode,
+  type SandboxPolicy,
   isOsIsolationAvailable,
   probeSandboxCapability,
   setRequireOsIsolation,
@@ -641,6 +656,16 @@ export interface EngineConfig {
    */
   sandboxEnabled?: boolean;
   /**
+   * The full sandbox mode — auto-allow | regular | off. Wins over the
+   * boolean above when both are given. See tool-registry/sandbox-mode.
+   */
+  sandboxMode?: SandboxMode;
+  /**
+   * The Overrides and Config tabs: the unsandboxed-fallback override, the
+   * excluded-command patterns, and the filesystem deny/allow lists.
+   */
+  sandboxPolicy?: Partial<SandboxPolicy>;
+  /**
    * Refuse sandbox-tier bash instead of silently degrading when no OS
    * isolation backend exists on this machine (`[sandbox] requireOs = true`).
    * Default false: degraded runs are allowed but lose auto-approval and are
@@ -751,7 +776,7 @@ export interface EngineConfig {
   redactOutputs?: boolean;
   /** Web-search configuration (backend preference + native grounding). */
   search?: {
-    /** Preferred web_search backend: auto | tavily | brave | duckduckgo. */
+    /** Preferred web_search engine: auto, or any id from SEARCH_PROVIDER_PRESETS. */
     provider?: string;
     /** Use provider-native grounding (Gemini/Anthropic) when available. Default true. */
     nativeGrounding?: boolean;
@@ -1075,6 +1100,14 @@ export class Engine {
   /** Providers whose model catalog has already supplied real context windows. */
   private contextCatalogWarmed = new Set<ProviderName>();
   private costTracker: CostTracker;
+  private costSessionId: string | null = null;
+  private costSessions = new Map<string, CostTracker>();
+  private costContext = new AsyncLocalStorage<string>();
+  private delegatedSessions!: DelegatedSessions;
+  private readonly lessonCohortExcluded = new Set<string>();
+  private delegationPool = new DelegationPool(() =>
+    resolveMaxParallel(this.config.subagents?.maxParallel),
+  );
   /**
    * Set when a session spend ceiling trips. Held so the turn can report WHY it
    * stopped — an abort with no explanation reads as a crash, and a cost cap
@@ -1195,7 +1228,10 @@ export class Engine {
 
     // Sandbox posture before any tool can run. Process-wide by design (one
     // real engine per process); default is ON — full access is an opt-out.
-    setSandboxMode(this.config.sandboxEnabled === false ? "off" : "on");
+    if (this.config.sandboxPolicy) setSandboxPolicy(this.config.sandboxPolicy);
+    setSandboxMode(
+      this.config.sandboxMode ?? (this.config.sandboxEnabled === false ? "off" : "auto-allow"),
+    );
     // Capability, not just intent: probe what this machine can actually
     // isolate with, BEFORE the first permission decision. On the missing-
     // backend path the probe records "none" and bash loses auto-approval —
@@ -1268,6 +1304,16 @@ export class Engine {
           repoKey: notebookRepoKey(this.config.workspaceRoot),
           stackKey: notebookStackKey(this.config.workspaceRoot),
         };
+        advanceLessons(this.notebookStore, this.notebookStore.listRepo(this.notebookKeys.repoKey), {
+          cohort: this.lessonTrialCohort(),
+        });
+        if (this.config.evolve?.playbook !== false && learnedSkillsEnabled()) {
+          writePlaybook(
+            this.config.workspaceRoot,
+            this.notebookStore.listRepo(this.notebookKeys.repoKey),
+            { enabled: true },
+          );
+        }
       } catch (err) {
         this.notebookStore = null;
         this.recorder?.record({
@@ -1423,6 +1469,11 @@ export class Engine {
             ...(result.reason ? { reason: result.reason } : {}),
           };
         },
+        // With no brief in play the citation lands against the plan instead
+        // of being refused: a plan step by index, or the criterion in the
+        // model's own words. Seven validation errors on one screen was a
+        // harness bug wearing the model's face.
+        () => this.liveSpine ?? undefined,
       ),
     );
 
@@ -1583,6 +1634,7 @@ export class Engine {
 
     // Initialize Session Manager
     this.sessions = new SessionManager(this.config.dbPath);
+    this.delegatedSessions = new DelegatedSessions(this.sessions);
 
     // ── Org policy: load + verify BEFORE the broker exists. A managed machine
     // with a tampered/unsigned policy refuses to start — running unpoliced is
@@ -1743,6 +1795,7 @@ export class Engine {
         ? { budgets: [{ scope: "session", limitUsd: config.maxSessionCostUsd }] }
         : {},
     );
+    this.observeGatewayCosts();
 
     // Checkpoint policy
     this.checkpointPolicy = {
@@ -1789,6 +1842,7 @@ export class Engine {
       // difference between two runs cannot be attributed to the prompt.
       this.doctrineHashForSession(),
     );
+    this.activateCostSession(session.id);
     return session.id;
   }
 
@@ -2377,9 +2431,13 @@ export class Engine {
     if (ev.type === "progress" || ev.type === "log") return;
 
     this.mcpEvents.set(ev.server, { ...ev, at: new Date().toISOString() });
+    // A connector the model was told about and can no longer use is worth one
+    // sentence; a connector that came up healthy is not. Ready is the expected
+    // state — it is recorded (status object, `rune mcp status`) but never
+    // narrated into the transcript, where it read as work done on a greeting.
     const line =
       ev.type === "server-ready"
-        ? `connector ${ev.server} ready — ${ev.toolCount} tool${ev.toolCount === 1 ? "" : "s"}`
+        ? null
         : ev.type === "server-down"
           ? `connector ${ev.server} is down: ${ev.reason}`
           : ev.type === "server-needs-auth"
@@ -2387,9 +2445,7 @@ export class Engine {
             : ev.type === "server-restarted"
               ? `connector ${ev.server} restarted`
               : `connector ${ev.server} changed its tools — ${ev.toolCount} now`;
-    this.mcpNotices.push(line);
-    // A connector the model was told about and can no longer use is worth one
-    // sentence; a connector that came up healthy is not.
+    if (line) this.mcpNotices.push(line);
     if (ev.type === "server-down" || ev.type === "server-needs-auth") {
       this.mcpUnavailable.set(
         ev.server,
@@ -2726,11 +2782,8 @@ export class Engine {
         }
       }
 
-      // Cost budget pre-execution check
-      const estimatedCost = this.costTracker.estimateToolCost(toolName);
-      if (!this.costTracker.preExecutionCheck(estimatedCost)) {
-        return { allowed: false, reason: "Session cost budget exceeded" };
-      }
+      // Paid work is checked at the gateway. A completed model response may
+      // still finish its local tool calls, including saving state or settings.
 
       const handler = this.registry.get(toolName);
       if (!handler) {
@@ -2794,6 +2847,12 @@ export class Engine {
           workspaceRoot: this.config.workspaceRoot,
           exactGrant: decision.type === "allowed" && decision.basis === "exact_grant",
         });
+        // A bash call with no sandbox under it is Auto mode's own concern
+        // now (`unsandboxedShell` in auto-mode.ts): read-only commands run,
+        // the rest pay one reviewer call or prompt, per policy. This used to
+        // rewrite EVERY allowed bash into a high-risk "explicit approval
+        // required" prompt the moment the sandbox was off — `ls` included.
+        //
         // Safe/workspace-tier allows only move in-memory counters — persisting
         // every read_file would multiply the audit log by the read rate.
         if (shouldRecordAutoModeDecision(autoReview)) {
@@ -3446,6 +3505,7 @@ export class Engine {
   } | null {
     const info = this.sessions.getSessionInfo(sessionId);
     if (!info) return null;
+    this.activateCostSession(sessionId);
     if (info.status !== "active") this.sessions.setSessionStatus(sessionId, "active");
 
     const wanted = info.provider ?? inferProviderFromModel(info.model);
@@ -3611,6 +3671,7 @@ export class Engine {
   > {
     const session = this.sessions.getSession(sessionId);
     if (!session) return { compacted: false, reason: "session not found" };
+    this.activateCostSession(sessionId);
 
     const events = this.sessions.getEvents(sessionId, 1);
     const messages = eventsToMessages(events);
@@ -3620,7 +3681,9 @@ export class Engine {
       return { compacted: false, reason: "not enough conversation yet" };
     }
 
-    const result = await this.contextEngine.summarizeConversation(messages, instructions);
+    const result = await this.costContext.run(sessionId, () =>
+      this.contextEngine.summarizeConversation(messages, instructions),
+    );
     if (!result) return { compacted: false, reason: "summarization failed" };
 
     const lastSeq = events.length > 0 ? events[events.length - 1].seq : 0;
@@ -3966,9 +4029,31 @@ export class Engine {
    * turn's system prompt states the new posture.
    */
   setSandboxEnabled(enabled: boolean): void {
-    setSandboxMode(enabled ? "on" : "off");
-    this.config.sandboxEnabled = enabled;
+    this.setSandboxModeLive(enabled ? "auto-allow" : "off");
+  }
+
+  /** The Mode tab, live: auto-allow | regular | off. */
+  setSandboxModeLive(mode: SandboxMode): void {
+    setSandboxMode(mode);
+    this.config.sandboxMode = mode;
+    this.config.sandboxEnabled = mode !== "off";
     this.envBlocks.clear();
+  }
+
+  /** The Overrides and Config tabs, live. */
+  updateSandboxPolicy(patch: Partial<SandboxPolicy>): void {
+    setSandboxPolicy(patch);
+    this.config.sandboxPolicy = { ...(this.config.sandboxPolicy ?? {}), ...patch };
+    this.envBlocks.clear();
+  }
+
+  getSandboxPolicy(): Readonly<SandboxPolicy> {
+    return getSandboxPolicy();
+  }
+
+  /** Auto mode's live knobs: the supervisor's scope and the uncontained-shell policy. */
+  getAutoModeConfig(): Readonly<ReturnType<AutoModeSafetyController["getConfig"]>> {
+    return this.autoModeSafety.getConfig();
   }
 
   /**
@@ -3991,7 +4076,36 @@ export class Engine {
    * setting the machine won't honor.
    */
   applyConfigSetting(key: string, canonicalValue: string): { ok: boolean; reason?: string } {
+    const setting = resolveSetting(key);
+    if (!setting) return { ok: false, reason: `Unknown setting: ${key}` };
+    const normalized = normalizeSettingValue(setting, canonicalValue);
+    if ("error" in normalized) return { ok: false, reason: normalized.error };
+    key = setting.key;
+    canonicalValue = normalized.value;
     switch (key) {
+      case "budget":
+        this.config.maxSessionCostUsd = Number(canonicalValue);
+        this.costTracker.setSessionBudget(Number(canonicalValue) || null);
+        this.costCapTripped = null;
+        return { ok: true };
+      case "parallel":
+      case "subagent_budget":
+        this.config.subagents = {
+          mode: this.config.subagents?.mode ?? "auto",
+          ...this.config.subagents,
+          [key === "parallel" ? "maxParallel" : "costCapUsd"]: Number(canonicalValue),
+        };
+        return { ok: true };
+      case "turns":
+        this.config.reliability = { ...this.config.reliability, maxTurns: Number(canonicalValue) };
+        return { ok: true };
+      case "sandbox_required":
+        this.config.sandboxRequireOs = canonicalValue === "true";
+        setRequireOsIsolation(this.config.sandboxRequireOs);
+        return { ok: true };
+      case "playbook":
+        this.config.evolve = { ...this.config.evolve, playbook: canonicalValue === "true" };
+        return { ok: true };
       case "gear":
       case "permission_mode": {
         const mode = configModeToPermissionMode(canonicalValue);
@@ -3999,8 +4113,19 @@ export class Engine {
         return this.setPermissionMode(mode);
       }
       case "sandbox":
-        this.setSandboxEnabled(canonicalValue === "true");
+        this.setSandboxModeLive(canonicalValue as SandboxMode);
         return { ok: true };
+      case "sandbox_fallback":
+        this.updateSandboxPolicy({ allowUnsandboxedFallback: canonicalValue === "true" });
+        return { ok: true };
+      case "supervisor":
+        return this.autoModeSafety.updateConfig({
+          supervisor: canonicalValue as "all" | "unusual" | "off",
+        });
+      case "unsandboxed_shell":
+        return this.autoModeSafety.updateConfig({
+          unsandboxedShell: canonicalValue as "review" | "ask" | "allow",
+        });
       case "auto_commit":
         this.setAutoCommit(canonicalValue === "true");
         return { ok: true };
@@ -4031,11 +4156,31 @@ export class Engine {
   /** The current canonical value of a settable config, for the tool's reports. */
   readConfigSetting(key: string): string | undefined {
     switch (key) {
+      case "budget":
+        return String(this.config.maxSessionCostUsd ?? 0);
+      case "parallel":
+        return String(resolveMaxParallel(this.config.subagents?.maxParallel));
+      case "subagent_budget":
+        return this.config.subagents?.costCapUsd === undefined
+          ? undefined
+          : String(this.config.subagents.costCapUsd);
+      case "turns":
+        return String(policyForModel(this.config.model, this.config.reliability).maxTurns);
+      case "sandbox_required":
+        return String(this.config.sandboxRequireOs === true);
+      case "playbook":
+        return String(this.config.evolve?.playbook !== false);
       case "gear":
       case "permission_mode":
         return permissionModeToConfig(this.getPermissionMode());
       case "sandbox":
-        return this.isSandboxEnabled() ? "true" : "false";
+        return getSandboxMode();
+      case "sandbox_fallback":
+        return getSandboxPolicy().allowUnsandboxedFallback ? "true" : "false";
+      case "supervisor":
+        return this.autoModeSafety.getConfig().supervisor;
+      case "unsandboxed_shell":
+        return this.autoModeSafety.getConfig().unsandboxedShell;
       case "auto_commit":
         return this.isAutoCommitEnabled() ? "true" : "false";
       case "effort":
@@ -4053,6 +4198,10 @@ export class Engine {
       default:
         return undefined;
     }
+  }
+
+  getWorkspaceRoot(): string {
+    return this.config.workspaceRoot;
   }
 
   // ─── Browser mode (/browser on|off) ───
@@ -4105,10 +4254,13 @@ export class Engine {
   ): Promise<ResearchPlan | ResearchClarification> {
     const session = this.sessions.getSession(sessionId);
     if (!session) throw new Error("Session not found");
-    const plan = await planResearch(
-      { gateway: this.gateway, model: session.model, provider: this.config.provider },
-      question,
-      { ...this.config.research, ...opts },
+    this.activateCostSession(sessionId);
+    const plan = await this.costContext.run(sessionId, () =>
+      planResearch(
+        { gateway: this.gateway, model: session.model, provider: this.config.provider },
+        question,
+        { ...this.config.research, ...opts },
+      ),
     );
     if (!isClarification(plan)) {
       this.sessions.appendEvent(sessionId, { type: "research_plan", payload: { plan } });
@@ -4140,6 +4292,14 @@ export class Engine {
     plan: ResearchPlan,
     opts?: ResearchOptions,
   ): AsyncGenerator<ResearchEvent> {
+    yield* this.runInCostSession(sessionId, this.researchRun(sessionId, plan, opts));
+  }
+
+  private async *researchRun(
+    sessionId: string,
+    plan: ResearchPlan,
+    opts?: ResearchOptions,
+  ): AsyncGenerator<ResearchEvent> {
     const session = this.sessions.getSession(sessionId);
     if (!session) {
       yield { type: "error", error: "Session not found", recoverable: false };
@@ -4147,6 +4307,7 @@ export class Engine {
     }
 
     // Persist the question as a user turn so follow-up chat sees it.
+    this.activateCostSession(sessionId);
     this.sessions.appendEvent(sessionId, { type: "user_msg", payload: { content: plan.question } });
 
     const abortController = new AbortController();
@@ -4203,6 +4364,22 @@ export class Engine {
    * is enabled; otherwise falls back to the flat ReAct loop.
    */
   async *chat(sessionId: string, userMessage: string): AsyncGenerator<AgentTurnEvent> {
+    yield* this.runInCostSession(sessionId, this.chatRun(sessionId, userMessage));
+  }
+
+  private async *runInCostSession<T>(sessionId: string, run: AsyncGenerator<T>): AsyncGenerator<T> {
+    try {
+      while (true) {
+        const next = await this.costContext.run(sessionId, () => run.next());
+        if (next.done) return;
+        yield next.value;
+      }
+    } finally {
+      await this.costContext.run(sessionId, () => run.return(undefined));
+    }
+  }
+
+  private async *chatRun(sessionId: string, userMessage: string): AsyncGenerator<AgentTurnEvent> {
     // Line-ending normalization at INGESTION, whatever the entry path (TUI
     // paste, desktop, CLI arg, resume). Terminals paste line breaks as bare
     // CR; everything downstream — the model prompt, the mission file, every
@@ -4213,6 +4390,7 @@ export class Engine {
       yield { type: "error", error: "Session not found", recoverable: false };
       return;
     }
+    this.activateCostSession(sessionId);
 
     // Org policy model/provider allowlist: enforced per turn (model switches
     // mid-session must not slip past a start-time-only check).
@@ -4239,6 +4417,7 @@ export class Engine {
       // resume with a deterministic Responses API 400.
       dropLegacyToolProtocol: session.provider === "codex",
     });
+    this.refreshJitDelivery(sessionId, priorMessages);
 
     // Task spine: reuse the live store, else restore the latest snapshot from
     // the session log (resume across engine restarts), else start fresh. This
@@ -4342,6 +4521,7 @@ export class Engine {
     // computed at run start so a /model switch takes effect next run. The
     // turn ceiling is one of them (`[reliability] maxTurns`, default 80).
     const reliability = policyForModel(session.model, this.config.reliability);
+    taskState.setEvidenceGate(reliability.evidenceGate);
     const turnBudget = turnBudgetForMessage(userMessage, reliability.maxTurns);
 
     // The map is intentionally per request rather than per session: ranking is
@@ -4487,7 +4667,9 @@ export class Engine {
         maxTurns: turnBudget.maxTurns,
         // Was a hard 8 with no key. Eight concurrent heavy workers is a lot of
         // money at once, and eight worktrees is a lot of disk on a small machine.
-        maxParallelTools: resolveMaxParallel(this.config.subagents?.maxParallel),
+        // Cheap independent file tools keep the loop's normal parallelism.
+        // Paid delegates are separately bounded by the engine-wide pool.
+        maxParallelTools: 8,
         maxSecondWinds: turnBudget.conversational ? 0 : reliability.secondWinds,
         systemPrompt,
         priorMessages,
@@ -4686,15 +4868,18 @@ export class Engine {
         if (event.type === "verification_completed" || event.type === "handoff") {
           persistTaskState();
         }
-        // Record auto-compactions as session METADATA (distinct from the
-        // /compress "compaction" event, whose replay semantics squash the
-        // whole history). Before this, auto-compaction left no durable trace
-        // at all — a session's history could shrink with nothing recording
-        // when or by how much.
+        // Persist the reduced working set, not just its size. Each user turn
+        // creates a new loop from the event log: metadata alone resurrected
+        // every evicted result on the next message. Flush the original events
+        // first so the checkpoint replaces exactly the history before it.
         if (event.type === "compaction") {
+          persistPending();
+          this.refreshJitDelivery(sessionId, runner.getMessages());
           this.sessions.appendEvent(sessionId, {
             type: "auto_compaction",
             payload: {
+              version: 1,
+              workingSet: runner.getMessages(),
               beforeTokens: event.beforeTokens,
               afterTokens: event.afterTokens,
               limitTokens: event.limitTokens,
@@ -4866,65 +5051,9 @@ export class Engine {
           }
         }
 
-        // Price the run. The CostTracker existed, held the pricing table, and
-        // was NEVER fed — nothing called record(), so getBreakdown() reported
-        // zero for every session and the signed export shipped "unknown". The
-        // authoritative token counts arrive right here, so this is where they
-        // become money.
-        //
-        // Also persisted as a `cost` event: exportSession is a standalone
-        // reader over the DB with no access to this in-memory tracker, and an
-        // audit artifact that cannot state what a run cost is missing a fact
-        // an auditor will always ask for.
-        // Cached input counts as billable work: a turn served almost entirely
-        // from a warm cache can report inputTokens: 0 and still cost money, so
-        // the cache fields belong in this guard. Testing fresh input alone
-        // would drop exactly the cheapest, most cache-efficient turns from the
-        // ledger — biasing the average cost per turn upward.
-        if (
-          event.type === "usage" &&
-          (event.inputTokens > 0 ||
-            event.outputTokens > 0 ||
-            (event.cacheReadTokens ?? 0) > 0 ||
-            (event.cacheCreationTokens ?? 0) > 0)
-        ) {
-          const billedModel = event.model ?? session.model;
-          try {
-            const entry = this.costTracker.record(billedModel, this.config.provider, {
-              inputTokens: event.inputTokens,
-              outputTokens: event.outputTokens,
-              cacheReadTokens: event.cacheReadTokens,
-              cacheCreationTokens: event.cacheCreationTokens,
-            });
-            this.sessions.appendEvent(sessionId, {
-              type: "cost",
-              payload: {
-                model: entry.model,
-                provider: entry.provider,
-                inputTokens: entry.inputTokens,
-                outputTokens: entry.outputTokens,
-                cacheReadTokens: entry.cacheReadTokens,
-                cacheCreationTokens: entry.cacheCreationTokens,
-                costUsd: entry.costUsd,
-                listCostUsd: entry.listCostUsd,
-                billing: entry.billing,
-                priced: entry.priced,
-                estimated: entry.estimated,
-              },
-            });
-          } catch (err) {
-            // The provider already billed for THIS response, so it is always
-            // recorded and never rejected — the cap governs whether a NEXT
-            // request goes out, not whether this one counts.
-            if (err instanceof BudgetExceededError) {
-              this.costCapTripped = err;
-              // Stop before spending more. Without this the cap could only be
-              // observed after the fact, which is a report, not a limit.
-              this.currentAbort?.abort();
-            }
-            // Anything else is accounting noise and must never interrupt a run.
-          }
-        }
+        // Usage is accounted at the gateway, including nested loops,
+        // compaction and safety review. Pricing it here would count the lead
+        // twice and miss every call that does not project a UI usage event.
 
         // Persist whatever this event's turn appended BEFORE handing the
         // event on — a crash at any later point loses at most the in-flight
@@ -4995,6 +5124,7 @@ export class Engine {
       // interjected after this point could never be drained by the loop.
       const steeredLoop = this.liveLoop;
       this.liveLoop = null;
+      if (this.costCapTripped) runError = this.costCapTripped.message;
 
       // Final drain: persist anything produced after the last in-loop drain
       // (abort/error paths can exit between drains).
@@ -5084,7 +5214,7 @@ export class Engine {
       // repository's playbook once a lesson recurs. Zero model calls.
       try {
         const retro = deriveRunRetro(this.sessions.getEvents(sessionId, runStartSeq), {
-          aborted: signal.aborted,
+          aborted: signal.aborted && !this.costCapTripped,
           runError,
           sinceAt: runStartedAt,
           durationMs: Date.now() - runStartMs,
@@ -5127,18 +5257,37 @@ export class Engine {
               runError: Boolean(runError),
               unprovenSteps: retro.gates.unproven ?? 0,
               checksFailed: retro.checks.failed,
+              checksPassed: retro.checks.passed,
+              openSteps: retro.steps.open,
+              completedWork: retro.steps.done > 0 || retro.filesWritten > 0,
+              visualVerified: taskState.snapshot().visualReview?.status !== "pending",
               struggled: this.struggles?.struggled() ?? false,
             });
             if (nb && nb.injectedIds.length > 0 && won) {
               this.notebookStore.recordWins(nb.injectedIds);
             }
-            // Then walk the ladder: candidate → trial on recurrence, trial →
-            // active on a win rate above the ambient baseline, active → retired
-            // when it stops helping. Repo scope only; anything wider needs the
-            // offline A/B.
+            // Score at most one completed task per session. Unknown prices,
+            // infrastructure failures, and a model/config switch are excluded.
+            const taskFinished =
+              retro.steps.open === 0 && (retro.steps.done > 0 || retro.filesWritten > 0);
+            if (
+              taskFinished &&
+              !runError &&
+              !signal.aborted &&
+              !this.lessonCohortExcluded.has(sessionId) &&
+              this.costTracker.getLedger().unpricedModels.length === 0
+            ) {
+              this.notebookStore.trials.finish(sessionId, this.lessonTrialCohort(), {
+                won,
+                cost: this.getListCost(),
+              });
+            }
+            // Promote only on a fixed controlled trial for this advice revision.
+            // Recurrence alone permits a bounded experimental hint.
             advanceLessons(
               this.notebookStore,
               this.notebookStore.listRepo(this.notebookKeys.repoKey),
+              { cohort: this.lessonTrialCohort() },
             );
 
             if (this.config.evolve?.playbook !== false) {
@@ -5170,7 +5319,9 @@ export class Engine {
       // recovered is noise; one that killed the run is signal — outcome is
       // what separates them.
       if (this.recorder) {
-        if (signal.aborted) {
+        if (this.costCapTripped) {
+          this.recorder.endRun("turn_failed");
+        } else if (signal.aborted) {
           this.recorder.record({
             class: "loop.user_abort",
             severity: "debug",
@@ -5199,13 +5350,16 @@ export class Engine {
       if (this.costCapTripped) {
         const cap = this.costCapTripped;
         this.costCapTripped = null;
-        yield {
-          type: "notice",
-          message:
+        const event: AgentTurnEvent = {
+          type: "error",
+          recoverable: false,
+          error:
             `Stopped at the session spend ceiling: $${cap.projectedUsd.toFixed(2)} of ` +
             `$${cap.limitUsd.toFixed(2)} (metered-equivalent). Raise or remove ` +
-            `maxSessionCostUsd to continue.`,
-        } as AgentTurnEvent;
+            `/config budget <USD> to continue (0 removes the limit).`,
+        };
+        this.sessions.appendEvent(sessionId, { type: "run_trace", payload: { ...event } });
+        yield event;
       }
       // Report the outward steps Auto declined to take, once, with the work
       // already done — the deliberate opposite of interrupting to ask.
@@ -5385,13 +5539,95 @@ export class Engine {
    * tier — those are real routes with a real bill of $0, so any caller using
    * this as a proxy for "how much work happened" wants getListCost() instead.
    *
-   * Reads the engine's own tracker, NOT the gateway's. Both ledgers exist and
-   * count honestly, but they count different things: the gateway sees every
-   * provider attempt including failed ones and fallback retries, while this
-   * sees the usage the agent loop actually received. `/cost` reports this one,
-   * so everything the engine exposes reports this one — a status line and a
-   * cost command that disagree are worse than either alone.
+   * The engine subscribes to gateway usage and attributes all paid helper and
+   * foreground requests to their session, including late background replies.
    */
+  private activateCostSession(sessionId: string): void {
+    if (this.costSessionId === sessionId) return;
+    const known = this.costSessions.get(sessionId);
+    if (known) {
+      this.costTracker = known;
+      this.costTracker.setSessionBudget(this.config.maxSessionCostUsd ?? null);
+      this.costSessionId = sessionId;
+      this.costCapTripped = null;
+      return;
+    }
+    this.costTracker = new CostTracker();
+    this.costTracker.setSessionBudget(null);
+    this.costTracker.reset();
+    for (const { event } of this.sessions.getEvents(sessionId, 1)) {
+      if (event.type === "lesson_trial_excluded") this.lessonCohortExcluded.add(sessionId);
+      if (event.type !== "cost") continue;
+      const p = event.payload;
+      if (typeof p.model !== "string" || typeof p.provider !== "string") continue;
+      if (
+        p.source === "gateway" &&
+        typeof p.costUsd === "number" &&
+        Number.isFinite(p.costUsd) &&
+        p.costUsd >= 0 &&
+        typeof p.listCostUsd === "number" &&
+        Number.isFinite(p.listCostUsd) &&
+        p.listCostUsd >= 0
+      ) {
+        this.costTracker.recordEntry({
+          ...(p as unknown as CostEntry),
+          timestamp: new Date(String(p.timestamp)),
+        });
+        continue;
+      }
+      this.costTracker.record(p.model, p.provider as ProviderName, {
+        inputTokens: Number(p.inputTokens) || 0,
+        outputTokens: Number(p.outputTokens) || 0,
+        cacheReadTokens: Number(p.cacheReadTokens) || 0,
+        cacheCreationTokens: Number(p.cacheCreationTokens) || 0,
+      });
+    }
+    this.costTracker.setSessionBudget(this.config.maxSessionCostUsd ?? null);
+    this.costSessionId = sessionId;
+    this.costSessions.set(sessionId, this.costTracker);
+    this.costCapTripped = null;
+  }
+
+  private observeGatewayCosts(): void {
+    this.gateway.onUsage((entry: CostEntry) => {
+      // Async scope follows late background reviewers past turn teardown, so
+      // a reply arriving after a session switch is charged to its own task.
+      const sessionId = this.costContext.getStore() ?? this.costSessionId;
+      const tracker = (sessionId && this.costSessions.get(sessionId)) || this.costTracker;
+      // Record first, even when this response crossed the cap. A completed
+      // response is paid for and must remain in both the transcript and bill.
+      try {
+        tracker.recordEntry(entry);
+      } catch (error) {
+        // Crossing the cap does not invalidate the response. Only refusing a
+        // subsequent request marks the run as stopped by its budget.
+        if (!(error instanceof BudgetExceededError)) throw error;
+      }
+      if (sessionId) {
+        this.sessions.appendEvent(sessionId, {
+          type: "cost",
+          payload: { ...entry, timestamp: entry.timestamp.toISOString(), source: "gateway" },
+        });
+      }
+    });
+    this.gateway.setRequestGuard((request) => {
+      const sessionId = this.costContext.getStore() ?? this.costSessionId;
+      const tracker = (sessionId && this.costSessions.get(sessionId)) || this.costTracker;
+      const cap = this.config.maxSessionCostUsd;
+      const spent = tracker.getLedger().totalListCostUsd;
+      if (cap && cap > 0 && spent >= cap) {
+        const error = new BudgetExceededError("session", cap, spent);
+        if (sessionId === this.costSessionId) {
+          this.costCapTripped = error;
+          this.currentAbort?.abort();
+        }
+        throw error;
+      }
+      if (!(cap && cap > 0)) return undefined;
+      return tracker.reserveRequest(request, cap);
+    });
+  }
+
   getCost() {
     return this.costTracker.getLedger().totalCostUsd;
   }
@@ -5427,6 +5663,8 @@ export class Engine {
    * orchestration mode is enforced in exactly one place.
    */
   private registerDelegationTools(): void {
+    const engine = this;
+    const delegatedSessions = this.delegatedSessions;
     const subRegistry = new ToolRegistry();
     registerBuiltinTools(subRegistry, this.config.toolsBinaryPath);
     // `todo_write` has category "read", so it was reachable from a `task`
@@ -5437,13 +5675,13 @@ export class Engine {
     subRegistry.unregister("todo_write");
     this.registry.register(
       createSubagentTool({
+        delegatedSessions,
         gateway: this.gateway,
         registry: subRegistry,
         model: this.config.model,
         provider: this.config.provider,
-        budgetDefaults: {
-          costCapUsd: this.config.subagents?.costCapUsd,
-          deadlineMs: this.config.subagents?.deadlineMs,
+        get budgetDefaults() {
+          return engine.config.subagents;
         },
         resolve: (tier) => this.resolveSubagentModel(tier, "light"),
         toolResultProcessor: (ctx) => this.processToolResult(ctx),
@@ -5452,6 +5690,7 @@ export class Engine {
     );
     this.registry.register(
       createWorkerTool({
+        delegatedSessions,
         binaryPath: this.config.toolsBinaryPath,
         // A worktree per worker, and the project's own checks run inside it
         // before anything merges back. `fastCheckCommands` is the compile-class
@@ -5465,9 +5704,8 @@ export class Engine {
             : detectVerifyCommands(this.config.workspaceRoot),
         ),
         checkTimeoutMs: this.config.verifyTimeoutMs ?? 120_000,
-        budgetDefaults: {
-          costCapUsd: this.config.subagents?.costCapUsd,
-          deadlineMs: this.config.subagents?.deadlineMs,
+        get budgetDefaults() {
+          return engine.config.subagents;
         },
         resolve: (tier) => this.resolveSubagentModel(tier, "standard"),
         toolResultProcessor: (ctx) => this.processToolResult(ctx),
@@ -5483,11 +5721,17 @@ export class Engine {
     // The workflow tool drives the two above through the live registry rather
     // than owning a second delegation path — same ownership, same budgets, same
     // schema, same worktrees. A parallel path would drift within a month.
+    for (const name of ["task", "worker"]) {
+      const handler = this.registry.get(name);
+      if (handler) this.registry.register(this.delegationPool.wrap(handler));
+    }
     this.registry.register(
       createWorkflowTool({
         registry: this.registry,
         workspaceRoot: this.config.workspaceRoot,
-        maxParallel: resolveMaxParallel(this.config.subagents?.maxParallel),
+        get maxParallel() {
+          return resolveMaxParallel(engine.config.subagents?.maxParallel);
+        },
       }),
     );
   }
@@ -5664,6 +5908,16 @@ export class Engine {
       modelIntegrity: this.config.modelIntegrity,
       // Closure reads this.recorder lazily, so key-edit rebuilds keep the tap.
       onIncident: (gi) => {
+        if (gi.kind === "fallback") {
+          const sessionId = this.costContext.getStore() ?? this.costSessionId;
+          if (sessionId && !this.lessonCohortExcluded.has(sessionId)) {
+            this.lessonCohortExcluded.add(sessionId);
+            this.sessions?.appendEvent(sessionId, {
+              type: "lesson_trial_excluded",
+              payload: { reason: "provider fallback changed the trial cohort" },
+            });
+          }
+        }
         if (!this.recorder) return;
         const cls: IncidentClass =
           gi.kind === "fallback"
@@ -5692,6 +5946,7 @@ export class Engine {
 
   private rebuildGateway(): void {
     this.gateway = buildGateway(this.gatewayOpts());
+    this.observeGatewayCosts();
     // Keep the context engine pointed at the live gateway + light tier so
     // /compress and rolling compaction follow key/provider/toggle changes
     // instead of using a stale gateway or the anthropic default.
@@ -5933,6 +6188,24 @@ export class Engine {
    */
   private jitDelivered = new Map<string, Set<string>>();
 
+  private refreshJitDelivery(sessionId: string, messages: Message[]): void {
+    const body = messages
+      .flatMap((m) =>
+        m.content.map((b) =>
+          b.type === "text" ? b.text : b.type === "tool_result" ? b.toolResultContent : "",
+        ),
+      )
+      .join("\n");
+    const present = new Set<string>();
+    for (const section of ["delegation", "interfaces"] as const) {
+      const guidance = extractDoctrineSection(
+        section === "delegation" ? "# Delegation" : "# Building interfaces",
+      );
+      if (guidance && body.includes(guidance)) present.add(section);
+    }
+    this.jitDelivered.set(sessionId, present);
+  }
+
   /** One section, once. Null = not jit mode, not applicable, or already sent. */
   private takeJitDoctrine(sessionId: string, section: "delegation" | "interfaces"): string | null {
     if (this.doctrineDelivery() !== "jit") return null;
@@ -5979,6 +6252,10 @@ export class Engine {
     permissionMode: PermissionMode;
     sandboxEnabled: boolean;
     sandboxDegraded: boolean;
+    /** auto-allow | regular | off, and the Overrides/Config tabs beside it. */
+    sandboxMode: SandboxMode;
+    sandboxFallback: boolean;
+    sandboxExcluded: string[];
     registeredProviders: ProviderName[];
     cost: number;
     /** One-line cost readout; see the field's note at the assignment site. */
@@ -6006,6 +6283,9 @@ export class Engine {
       permissionMode: this.permissions.getMode(),
       sandboxEnabled: isSandboxEnabled(),
       sandboxDegraded: isSandboxEnabled() && !isOsIsolationAvailable(),
+      sandboxMode: getSandboxMode(),
+      sandboxFallback: getSandboxPolicy().allowUnsandboxedFallback,
+      sandboxExcluded: [...getSandboxPolicy().excludedCommands],
       registeredProviders: this.getRegisteredProviders(),
       cost: this.getCost(),
       // One-line cost readout. Carried alongside the raw number because on a
@@ -6074,6 +6354,18 @@ export class Engine {
    * invalidate the provider's prefix cache and cost far more than the notebook
    * saves. New learnings appear in the NEXT session, which is the contract.
    */
+  private lessonTrialCohort(): string {
+    return JSON.stringify({
+      version: 1,
+      repo: this.notebookKeys?.repoKey,
+      provider: this.config.provider,
+      model: this.config.model,
+      subagents: this.config.subagents,
+      thinking: this.config.reasoningEffort,
+      doctrine: this.doctrineHashForSession(),
+    });
+  }
+
   private buildNotebookInjection(sessionId: string): NotebookBlock | null {
     if (!this.notebookStore || !this.notebookKeys) return null;
     const cached = this.notebookBlocks.get(sessionId);
@@ -6083,6 +6375,8 @@ export class Engine {
         repoKey: this.notebookKeys.repoKey,
         stackKey: this.notebookKeys.stackKey,
         maxTokens: this.config.notebook?.maxInjectTokens ?? 600,
+        sessionId,
+        cohort: this.lessonTrialCohort(),
       });
       this.notebookBlocks.set(sessionId, block);
       return block;

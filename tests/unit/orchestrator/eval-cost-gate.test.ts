@@ -90,3 +90,42 @@ describe("cost-regression gate", () => {
     expect(out.reasons.join(" ")).toContain("cleanPassRate");
   });
 });
+
+// ─── The transcript gates ───
+// Two absolute ceilings from the transcript diagnosis of 2026-09-05: prose
+// about the harness (A: under 15%) and active time without a new row (B:
+// under 15%). Absolute, because a run whose prose is 62% about the ledger is
+// wrong whatever the baseline scored.
+import { HARNESS_TALK_CEILING, SILENCE_CEILING } from "../../../tests/eval/report";
+
+function transcriptReport(avgHarnessTalk?: number, avgSilence?: number): SuiteReport {
+  return {
+    ...report(0.1),
+    ...(avgHarnessTalk != null ? { avgHarnessTalk } : {}),
+    ...(avgSilence != null ? { avgSilence } : {}),
+  } as SuiteReport;
+}
+
+describe("transcript gates", () => {
+  test("the ceilings are the diagnosis's done-when numbers", () => {
+    expect(HARNESS_TALK_CEILING).toBe(0.15);
+    expect(SILENCE_CEILING).toBe(0.15);
+  });
+
+  test("harness talk over the ceiling fails the build with every task passing", () => {
+    const out = compareToBaseline(transcriptReport(0.62, 0.05), baseline(0.1), 0.05);
+    expect(out.ok).toBe(false);
+    expect(out.reasons.join(" ")).toContain("harness talk 62%");
+  });
+
+  test("silence over the ceiling fails the build", () => {
+    const out = compareToBaseline(transcriptReport(0.02, 0.45), baseline(0.1), 0.05);
+    expect(out.ok).toBe(false);
+    expect(out.reasons.join(" ")).toContain("silence 45%");
+  });
+
+  test("under both ceilings passes, and an unmeasured run is not judged", () => {
+    expect(compareToBaseline(transcriptReport(0.1, 0.12), baseline(0.1), 0.05).ok).toBe(true);
+    expect(compareToBaseline(transcriptReport(), baseline(0.1), 0.05).ok).toBe(true);
+  });
+});

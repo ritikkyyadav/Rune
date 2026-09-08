@@ -135,6 +135,27 @@ describe("extractDoctrineSection", () => {
 });
 
 describe("jit injection in the loop", () => {
+  test("interface planning guidance is present BEFORE the first inference", async () => {
+    const jit = onceJit();
+    const gw = makeGateway([{ text: "done" }]);
+    let firstRequest = "";
+    const stream = gw.inferStream;
+    gw.inferStream = async function* (request: unknown) {
+      firstRequest ||= JSON.stringify(request);
+      yield* stream(request);
+    };
+    await collect(makeLoop(gw, jit.fn).run("Build a responsive dashboard", "design", "/tmp"));
+    expect(firstRequest).toContain("# Building interfaces");
+    expect(firstRequest).toContain("ART DIRECTION");
+    expect(firstRequest).toContain("screenshots");
+  });
+
+  test("ordinary backend requests do not pay for interface guidance", async () => {
+    const jit = onceJit();
+    const loop = makeLoop(makeGateway([{ text: "done" }]), jit.fn);
+    await collect(loop.run("Fix parsing of empty JSON objects", "backend", "/tmp"));
+    expect(jit.calls).toEqual([]);
+  });
   test("the FIRST worker result carries the delegation section, later ones do not", async () => {
     const jit = onceJit();
     const gw = makeGateway([

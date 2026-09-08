@@ -187,6 +187,15 @@ export class ContextEngine {
   // provider reports the request's REAL count — the pair calibrates the
   // token counter for this model (see TokenCounter.noteCalibration).
   private lastHeuristicTotal: number | null = null;
+  /** System, tools and auxiliary context consume the same window as history. */
+  private lastFixedPromptTokens = 0;
+  private lastCompacted?: {
+    messages: Message[];
+    length: number;
+    last?: Message;
+    fixed: number;
+    limit?: number;
+  };
   // Set by requestCompaction() (the compact_context tool / an explicit user
   // ask): forces the next shouldCompact()/compactWorkingSet() pair to run
   // regardless of the usage high-water mark. Consumed by compactWorkingSet.
@@ -363,6 +372,7 @@ export class ContextEngine {
       limit: model ? getContextLimit(model) : maxTokens,
     };
     this.lastHeuristicTotal = totalTokens;
+    this.lastFixedPromptTokens = systemTokens + toolTokens + auxUsed;
 
     return {
       messages: finalMessages,
@@ -389,7 +399,8 @@ export class ContextEngine {
     if (used <= 0) return;
     // Pair this authoritative count with the heuristic made for the same
     // request — the ratio tunes every subsequent estimate for this model.
-    if (this.lastHeuristicTotal != null) {
+    if (this.lastHeuristicTotal != null && this.lastHeuristicTotal > 0) {
+      this.lastFixedPromptTokens *= used / this.lastHeuristicTotal;
       this.tokenCounter.noteCalibration(model, this.lastHeuristicTotal, used);
       this.lastHeuristicTotal = null;
     }
@@ -549,6 +560,27 @@ export class ContextEngine {
       return { messages, compacted: false };
     }
 
+    const prior = this.lastCompacted;
+    if (
+      !force &&
+      prior?.messages === messages &&
+      prior.length === messages.length &&
+      prior.last === messages.at(-1) &&
+      prior.fixed === this.lastFixedPromptTokens &&
+      prior.limit === this.lastTokenUsage?.limit
+    ) {
+      return { messages, compacted: false };
+    }
+    const remember = (set: Message[]) => {
+      this.lastCompacted = {
+        messages: set,
+        length: set.length,
+        last: set.at(-1),
+        fixed: this.lastFixedPromptTokens,
+        limit: this.lastTokenUsage?.limit,
+      };
+      return set;
+    };
     const countSet = (set: Message[]) =>
       set.reduce((sum, m) => sum + this.tokenCounter.countTokens(messageTokenText(m)), 0);
 
@@ -567,7 +599,19 @@ export class ContextEngine {
     const usage = this.lastTokenUsage;
     let safeCutPoint: number;
     if (usage && usage.limit > 0 && !force) {
+      // Reserve fixed instructions and schemas before sizing history, while
+      // keeping the normal recent-tail allowance when the window permits it.
+      // A large fixed prompt may make the ideal 50% target unattainable; it is
+      // not a reason to erase the recent working context.
       const tailBudget = Math.floor(usage.limit * COMPACT_TAIL_RATIO);
+      const workingTarget = Math.max(
+        0,
+        Math.min(
+          Math.max(tailBudget, usage.limit * COMPACT_TARGET_RATIO - this.lastFixedPromptTokens),
+          usage.limit * 0.85 - this.lastFixedPromptTokens,
+          countSet(messages) * (1 - MIN_SUMMARIZABLE_HEAD_SHARE),
+        ),
+      );
       const countOne = (m: Message): number => this.tokenCounter.countTokens(messageTokenText(m));
       safeCutPoint = safeCutForTail(
         messages,
@@ -583,13 +627,22 @@ export class ContextEngine {
       // has already rejected the request and only a hard shrink is sure to
       // help.)
       if (safeCutPoint > 0) {
-        const evicted = evictOldToolResults(messages, safeCutPoint);
-        if (
-          evicted.evictedCount > 0 &&
-          countSet(evicted.messages) <= Math.floor(usage.limit * COMPACT_TARGET_RATIO)
-        ) {
+        let evicted = evictOldToolResults(messages, safeCutPoint, workingTarget, countSet);
+        if (countSet(evicted.messages) > workingTarget) {
+          // Bulky results can span one large tool batch. Prune the oldest
+          // bodies individually, stopping at the target, rather than dropping
+          // an entire exchange or retaining a huge batch because of its role.
+          // The current tool exchange always stays verbatim.
+          evicted = evictOldToolResults(
+            messages,
+            findSafeCutPoint(messages, 2),
+            workingTarget,
+            countSet,
+          );
+        }
+        if (evicted.evictedCount > 0 && countSet(evicted.messages) <= workingTarget) {
           return {
-            messages: evicted.messages,
+            messages: remember(evicted.messages),
             compacted: true,
             beforeTokens: countSet(messages),
             afterTokens: countSet(evicted.messages),
@@ -628,7 +681,7 @@ export class ContextEngine {
       if (after >= before) return null;
       void why;
       return {
-        messages: evicted.messages,
+        messages: remember(evicted.messages),
         compacted: true,
         beforeTokens: before,
         afterTokens: after,
@@ -741,7 +794,7 @@ export class ContextEngine {
     }
 
     return {
-      messages: compactedSet,
+      messages: remember(compactedSet),
       compacted: true,
       tier: "summarized",
       trigger,
@@ -1199,14 +1252,18 @@ function tailCutPoint(
 function evictOldToolResults(
   messages: Message[],
   headEnd: number,
+  targetTokens?: number,
+  countSet?: (messages: Message[]) => number,
 ): { messages: Message[]; evictedCount: number; reclaimedChars: number } {
   let evictedCount = 0;
   let reclaimedChars = 0;
+  let remaining = countSet?.(messages) ?? Infinity;
   const out = messages.map((msg, i) => {
     if (i >= headEnd) return msg;
     let touched = false;
     const content = msg.content.map((block) => {
-      if (block.type !== "tool_result") return block;
+      if (block.type !== "tool_result" || (targetTokens !== undefined && remaining <= targetTokens))
+        return block;
       const body = block.toolResultContent ?? "";
       // Small results aren't worth the stub, and an already-evicted one must
       // not be re-counted on a later compaction pass.
@@ -1223,7 +1280,11 @@ function evictOldToolResults(
       touched = true;
       evictedCount++;
       reclaimedChars += body.length - stub.length;
-      return { ...block, toolResultContent: stub };
+      const replacement = { ...block, toolResultContent: stub };
+      if (countSet)
+        remaining -=
+          countSet([{ ...msg, content: [block] }]) - countSet([{ ...msg, content: [replacement] }]);
+      return replacement;
     });
     return touched ? { ...msg, content } : msg;
   });

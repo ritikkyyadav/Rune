@@ -81,6 +81,23 @@ describe("AGENT_DOCTRINE — investigation layer", () => {
     expect(AGENT_DOCTRINE).toContain('"Completed" is measured');
     expect(AGENT_DOCTRINE).toContain("UNPROVEN");
     expect(AGENT_DOCTRINE).toContain("A failed or blocked step is NOT done");
+    // The ledger records; it never argues, and the doctrine never says it does.
+    expect(AGENT_DOCTRINE).not.toMatch(/refuses a completion|re-submitted claim/);
+  });
+
+  test("communication rhythm: one sentence before an action, never the state of the plan", () => {
+    expect(AGENT_DOCTRINE).toContain(
+      "Before an action, one sentence saying what you are about to do and why",
+    );
+    expect(AGENT_DOCTRINE).toContain(
+      "After a result, one sentence only if it changes the next step",
+    );
+    expect(AGENT_DOCTRINE).toContain("Never open a message with the state of the plan or a step");
+    // The story register and its worked beats are gone: they cost 62% of a
+    // weak model's sentences and taught the wrong thing to narrate.
+    expect(AGENT_DOCTRINE).not.toContain("story being told");
+    expect(AGENT_DOCTRINE).not.toContain("Narrate in present tense");
+    expect(AGENT_DOCTRINE).not.toContain("micro-confirmations");
   });
 
   test("never fabricate observations; blocked calls escalate honestly", () => {

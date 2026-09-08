@@ -137,8 +137,31 @@ const todo = (items: Array<{ content: string; status: string }>): Step => ({
 });
 
 describe("step completion needs evidence", () => {
-  test("a completion with nothing behind it is a refused todo_write; the retry is accepted as unproven", async () => {
+  test("a completion with nothing behind it is accepted as unproven, in one line of fact", async () => {
     const ts = new TaskStateStore();
+    const gw = makeGateway([
+      todo([{ content: "run the test suite", status: "in_progress" }]),
+      todo([{ content: "run the test suite", status: "completed" }]),
+      { text: "done" },
+    ]);
+    const loop = makeLoop(gw, ts);
+    const events = await collect(loop.run("run the tests", "s1", "/tmp"));
+
+    const closed = toolResultFor(loop, "c2")!;
+    expect(closed.isError).toBe(false);
+    expect(closed.text).toContain("Step 1 closed unproven: nothing ran while it was open.");
+    // A fact the model reads once — never an instruction it can narrate back.
+    expect(closed.text).not.toMatch(/re-?submit|re-?run|Plan NOT updated/i);
+
+    const updates = events.filter((e) => e.type === "todo_updated") as any[];
+    // One for the plan, one for the close: the ledger never argues.
+    expect(updates).toHaveLength(2);
+    expect(updates[1].items[0].unproven).toBe("no_evidence");
+  });
+
+  test("refuse mode sends the list back once, in one line; the retry is accepted as unproven", async () => {
+    const ts = new TaskStateStore();
+    ts.setEvidenceGate("refuse");
     const gw = makeGateway([
       todo([{ content: "run the test suite", status: "in_progress" }]),
       todo([{ content: "run the test suite", status: "completed" }]),
@@ -150,8 +173,9 @@ describe("step completion needs evidence", () => {
 
     const refused = toolResultFor(loop, "c2")!;
     expect(refused.isError).toBe(true);
-    expect(refused.text).toContain("Plan NOT updated");
-    expect(refused.text).toContain("nothing ran");
+    expect(refused.text).toBe(
+      'Error: Plan not updated: step 1 "run the test suite" is not closed: nothing ran while it was open.',
+    );
     const accepted = toolResultFor(loop, "c3")!;
     expect(accepted.isError).toBe(false);
 
@@ -180,7 +204,7 @@ describe("step completion needs evidence", () => {
     expect(item.evidence.runs).toBe(1);
   });
 
-  test("a failing test run recorded during the step refuses the completion", async () => {
+  test("a failing test run recorded during the step closes it as unproven", async () => {
     const ts = new TaskStateStore();
     const gw = makeGateway([
       todo([{ content: "make the suite green", status: "in_progress" }]),
@@ -190,16 +214,17 @@ describe("step completion needs evidence", () => {
     ]);
     const loop = makeLoop(gw, ts);
     await collect(loop.run("fix the tests", "s1", "/tmp"));
-    const refused = toolResultFor(loop, "c3")!;
-    expect(refused.isError).toBe(true);
-    expect(refused.text).toContain("FAILED");
-    expect(refused.text).toContain("bun test");
-    expect(ts.snapshot().todos[0].status).toBe("in_progress");
+    const closed = toolResultFor(loop, "c3")!;
+    expect(closed.isError).toBe(false);
+    expect(closed.text).toContain("closed unproven: its last check failed");
+    expect(closed.text).toContain("bun test");
+    expect(ts.snapshot().todos[0].status).toBe("completed");
+    expect(ts.snapshot().todos[0].unproven).toBe("check_failed");
   });
 });
 
 describe("the step check", () => {
-  test("a step that wrote files nobody checked gets the compile check; a failure refuses the step, a fix passes it", async () => {
+  test("a step that wrote files nobody checked gets the compile check; a failure closes it unproven, a fix clears it", async () => {
     const ts = new TaskStateStore();
     const results: VerifyResult[] = [
       {
@@ -213,9 +238,9 @@ describe("the step check", () => {
     const gw = makeGateway([
       todo([{ content: "write the handler", status: "in_progress" }]),
       { tool: "write_file", args: { path: "src/h.ts", content: "x" } },
-      todo([{ content: "write the handler", status: "completed" }]), // check fails → refused
+      todo([{ content: "write the handler", status: "completed" }]), // check fails → unproven
       { tool: "edit_file", args: { path: "src/h.ts", old: "x", new: "y" } }, // the fix
-      todo([{ content: "write the handler", status: "completed" }]), // check passes → accepted
+      todo([{ content: "write the handler", status: "completed" }]), // check passes → cleared
       { text: "done" },
     ]);
     const loop = makeLoop(gw, ts, { stepCheck });
@@ -226,11 +251,13 @@ describe("the step check", () => {
     expect(checks.map((c) => c.passed)).toEqual([false, true]);
     expect(checks[0].step).toBe("write the handler");
 
-    const refused = toolResultFor(loop, "c3")!;
-    expect(refused.isError).toBe(true);
-    expect(refused.text).toContain("tsc");
+    const unproven = toolResultFor(loop, "c3")!;
+    expect(unproven.isError).toBe(false);
+    expect(unproven.text).toContain("closed unproven");
+    expect(unproven.text).toContain("tsc");
     const accepted = toolResultFor(loop, "c5")!;
     expect(accepted.isError).toBe(false);
+    expect(accepted.text).not.toContain("unproven");
     const item = ts.snapshot().todos[0];
     expect(item.status).toBe("completed");
     expect(item.unproven).toBeUndefined();

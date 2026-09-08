@@ -1,3 +1,4 @@
+import { VisualVerification, visualChangedPaths } from "./visual-verification";
 import type {
   ReasoningEffort,
   ContentBlock,
@@ -12,6 +13,8 @@ import type {
 } from "@rune/llm-gateway";
 import {
   LlmGateway,
+  BudgetExceededError,
+  BudgetPricingError,
   providerCarriesImages,
   providerSupportsNativeSearch,
   providerAllowsGroundingWithTools,
@@ -26,6 +29,7 @@ import {
   resultSignature,
 } from "./call-signature";
 import { TurnRefunds } from "./turn-refunds";
+import { doctrineForRequest } from "./prompts";
 import type { IncidentContext, IncidentReporter, IncidentSeverity } from "@rune/shared";
 import type { IncidentClass } from "@rune/shared";
 import type { ToolCallInput, ToolCallOutput } from "@rune/tool-registry";
@@ -947,10 +951,28 @@ export class AgentLoop {
     // ── Product-sight gate ──
     // The run wrote something a person will LOOK at; finishing without ever
     // looking at it is how a phylogenetic tree ships as a raw string dump
-    // with every check green. "Looked" = a browser tool ran, or a tool result
-    // carried an image the model was actually shown.
+    // with every check green. Receipts bind current preview screenshots,
+    // responsive widths and interactions to the latest visual edit.
     let wroteVisualThisRun = false;
-    let sawOwnWork = false;
+    // The receipts need the Playwright browser, which is off unless --browser
+    // or [browser] enabled. Without it the bar is a fetch of the served page,
+    // and the finish says so instead of asking for screenshots no tool here
+    // can take.
+    // Unknown (a registry that cannot be listed) reads as mounted: the
+    // stricter bar is the safe default, and an observed browser call proves
+    // it either way (see VisualVerification.snapshot).
+    const browserMounted = (() => {
+      try {
+        return this.registry.list().some((schema) => /^mcp_browser_/.test(schema.name));
+      } catch {
+        return true;
+      }
+    })();
+    const visualReview = new VisualVerification(
+      workspaceRoot,
+      this.config.taskState?.snapshot().visualReview,
+      { browser: browserMounted },
+    );
     let productSightNudges = 0;
     // ── Batching nudge ──
     // Four consecutive turns of exactly one read each is a serial crawl the
@@ -977,6 +999,12 @@ export class AgentLoop {
     // The request right after a compaction carries a boosted task-state block:
     // that is the moment the verbatim spec just left the transcript.
     let justCompacted = false;
+    // Design and delegation advice must arrive before the first decision.
+    // The tool-result path remains a fallback for work discovered mid-run.
+    for (const section of doctrineForRequest(userMessage)) {
+      const guidance = this.config.jitDoctrine?.(section);
+      if (guidance) this.injectHarnessNote(guidance);
+    }
     // ── Effort routing ──
     // Latched to the ceiling for the rest of the run on the first sign of
     // difficulty; every transition is reported so the routing is auditable.
@@ -1551,6 +1579,14 @@ export class AgentLoop {
           }
         }
       } catch (err) {
+        // Admission failures need a changed budget/configuration, not another
+        // identical inference attempt or a provider fallback.
+        if (err instanceof BudgetExceededError || err instanceof BudgetPricingError) {
+          this.state = "error";
+          yield* this.handoffEvents("error");
+          yield { type: "error", error: err.message, recoverable: false };
+          return;
+        }
         // Handle clean abort
         if (signal?.aborted) {
           this.state = "done";
@@ -2011,9 +2047,14 @@ export class AgentLoop {
         // it. Every automated check can be green while the screen is wrong —
         // the observed case: a phylogenetic tree shipped as a raw Newick
         // string in a <code> tag, typecheck and tests all passing. "Looked"
-        // means a browser tool ran or an image came back through a tool
-        // result; one refused finish converts into one review pass.
-        if (wroteVisualThisRun && !sawOwnWork && productSightNudges < 1 && !signal?.aborted) {
+        // requires current preview receipts; one bounded nudge requests the
+        // missing checks, and unresolved review stays visible in task state.
+        if (
+          visualReview.required &&
+          visualReview.snapshot().status !== "reviewed" &&
+          productSightNudges < 1 &&
+          !signal?.aborted
+        ) {
           productSightNudges++;
           latchEffort("product-sight gate refused the finish");
           this.report(
@@ -2029,13 +2070,14 @@ export class AgentLoop {
                 type: "text",
                 text:
                   "Stop — you built or changed something a person will LOOK at, and you " +
-                  "never looked at it. Green checks cannot see a broken screen. Before " +
+                  "never looked at it with a complete review of the latest changes. Green checks cannot see a broken screen. Before " +
                   "finishing: open what you built and read it back — with the browser tool " +
                   "(navigate, then snapshot) if available; otherwise serve or render the " +
                   "page and inspect what it ACTUALLY shows (a screenshot you then read with " +
                   "read_file, or the served response's real rendered structure). Then fix " +
                   "the worst thing you can see, once, and finish. If nothing in this " +
-                  "environment can show it, say so and mark the UI explicitly as unreviewed.",
+                  "environment can show it, say so and mark the UI explicitly as unreviewed. " +
+                  `Remaining checks: ${visualReview.snapshot().missing.join("; ")}.`,
               },
             ],
           });
@@ -2045,6 +2087,23 @@ export class AgentLoop {
           };
           this.state = "observing";
           continue;
+        }
+        if (visualReview.required) {
+          const review = visualReview.snapshot();
+          if (review.status !== "reviewed") {
+            this.config.taskState?.setVisualReview(review);
+            yield {
+              type: "notice",
+              message: `UI review incomplete: ${review.missing.join("; ")}.`,
+            };
+          } else if (review.method === "fetch") {
+            yield {
+              type: "notice",
+              message:
+                "UI reviewed by fetching the served page only — no browser is mounted in this run. " +
+                "Enable one with --browser for screenshot review.",
+            };
+          }
         }
 
         // ── Open-steps gate ──
@@ -2597,6 +2656,10 @@ export class AgentLoop {
         );
       }
       const toolResults: ContentBlock[] = [];
+      const attached = planned
+        .flatMap((p) => p.output?.attachments ?? [])
+        .filter((a) => a.kind === "image")
+        .slice(0, MAX_IMAGES_PER_MESSAGE);
       for (const p of planned) {
         let output = p.output!;
         toolCallsThisRun++;
@@ -2727,11 +2790,26 @@ export class AgentLoop {
                   settled = settle("refuted", checkReasonFrom(failed.reason), failed.content);
                 }
               } else {
+                // In attest mode a step closed over a failing check is
+                // accepted as unproven rather than refused; it is the same
+                // negative result, and the hypothesis it was testing is
+                // refuted the same way.
+                const overFailure = verdict.completed.find(
+                  (t) => t.unproven === "check_failed" && t.evidence?.lastCheck,
+                );
                 const closed = verdict.completed.find(
                   (t) => !t.unproven && evidenceWeight(t.evidence) > 0,
                 );
                 const check = closed?.evidence?.lastCheck;
-                if (closed && check && !check.passed) {
+                if (overFailure) {
+                  const fc = overFailure.evidence!.lastCheck!;
+                  settled = settle(
+                    "refuted",
+                    `${fc.command ?? "the step's check"} failed` +
+                      (fc.summary ? `: ${fc.summary}` : ""),
+                    overFailure.content,
+                  );
+                } else if (closed && check && !check.passed) {
                   settled = settle(
                     "refuted",
                     `${check.command ?? "the step's check"} failed` +
@@ -2752,6 +2830,14 @@ export class AgentLoop {
             }
             if (verdict.accepted) {
               acceptedPlan = structuredClone(ts.todos);
+              // A step closed over a FAILING check is the one sign of
+              // difficulty the ledger sees. In attest mode it is accepted as
+              // unproven rather than refused, and it still raises the
+              // reasoning ceiling for the rest of the run -- a no-evidence
+              // close does not, it is bookkeeping.
+              if (verdict.completed.some((t) => t.unproven === "check_failed")) {
+                latchEffort("a step was closed over a failing check");
+              }
               // ── Art direction, asked at PLAN time ──
               // The plan names a screen, no screen exists yet, and the user
               // was never asked how it should look. Asking now, on the plan,
@@ -2794,8 +2880,11 @@ export class AgentLoop {
                 );
               }
             } else {
+              // Refuse mode: told once, in one line, with no instruction to
+              // re-run. The transcript renders this as a quiet harness note,
+              // not a failure row (see ui/activity HARNESS_TOOLS).
               const lines = verdict.refused.map(
-                (r) => `- step ${r.index + 1} "${r.content.slice(0, 100)}": ${r.reason}`,
+                (r) => `step ${r.index + 1} "${r.content.slice(0, 80)}" is not closed: ${r.reason}`,
               );
               this.report(
                 "loop.step_refused",
@@ -2815,9 +2904,8 @@ export class AgentLoop {
                 ...output,
                 success: false,
                 error:
-                  `Plan NOT updated — ${verdict.refused.length} completion${verdict.refused.length === 1 ? "" : "s"} refused:\n` +
-                  lines.join("\n") +
-                  (verdict.notes.length > 0 ? `\n${verdict.notes.join(" ")}` : ""),
+                  `Plan not updated: ${lines.join("; ")}` +
+                  (verdict.notes.length > 0 ? ` ${verdict.notes.join(" ")}` : ""),
               };
             }
             p.output = output;
@@ -2865,9 +2953,16 @@ export class AgentLoop {
           } else if (output.success) {
             if (p.isWrite) ts.noteEffect("write");
             else if (READ_EVIDENCE_TOOLS.has(name)) ts.noteEffect("read");
-            else if (name === "worker" || name === "task") ts.noteEffect("delegate");
-            else if (name === "ask_user") ts.noteEffect("answer");
-            else if (name.startsWith("mcp_browser")) ts.noteEffect("look");
+            else if (name === "worker" || name === "task") {
+              ts.noteEffect("delegate");
+              if (
+                name === "worker" &&
+                output.structured?.integration !== "retained" &&
+                Array.isArray(output.structured?.filesChanged) &&
+                output.structured.filesChanged.length > 0
+              )
+                ts.noteEffect("write");
+            } else if (name === "ask_user") ts.noteEffect("answer");
           }
         }
 
@@ -2895,8 +2990,14 @@ export class AgentLoop {
             }
           } else if (p.isWrite && pathArg) {
             ts.noteFileWritten(pathArg);
-          } else if (p.tc.toolName === "worker" && Array.isArray(p.parsedArgs.files)) {
-            for (const f of p.parsedArgs.files) {
+          } else if (
+            p.tc.toolName === "worker" &&
+            output.structured?.integration !== "retained" &&
+            Array.isArray(p.parsedArgs.files)
+          ) {
+            for (const f of Array.isArray(output.structured?.filesChanged)
+              ? output.structured.filesChanged
+              : p.parsedArgs.files) {
               if (typeof f === "string") ts.noteFileWritten(f);
             }
           }
@@ -2915,7 +3016,11 @@ export class AgentLoop {
         // "execute", so the isWrite path below never saw it — the doctrine
         // steers big builds to workers, which made the largest work exactly
         // the work that skipped verification.)
-        if (output.success && p.tc.toolName === "worker") {
+        if (
+          output.success &&
+          p.tc.toolName === "worker" &&
+          output.structured?.integration !== "retained"
+        ) {
           editsSinceVerify = true;
           anyWritesThisRun = true;
           writeCount++;
@@ -2928,10 +3033,35 @@ export class AgentLoop {
           }
         }
 
-        // The product-sight gate's "looked" signal: a browser tool actually ran.
-        if (output.success && p.tc.toolName.startsWith("mcp_browser")) {
-          sawOwnWork = true;
+        const visualWrite =
+          (p.isWrite || p.tc.toolName === "worker") &&
+          visualChangedPaths(p.tc.toolName, p.parsedArgs, output).some((path) =>
+            VISUAL_FILE_RE.test(path),
+          );
+        if (visualWrite) {
+          wroteVisualThisRun = true;
+          visualReview.changed();
         }
+        const batchWrites = planned.some(
+          (call) =>
+            call.output &&
+            (call.isWrite || call.tc.toolName === "worker") &&
+            visualChangedPaths(call.tc.toolName, call.parsedArgs, call.output).some((path) =>
+              VISUAL_FILE_RE.test(path),
+            ),
+        );
+        if (
+          visualReview.observe(
+            p.tc.toolName,
+            p.parsedArgs,
+            output,
+            providerCarriesImages(this.config.provider) &&
+              (output.attachments?.some((a) => attached.includes(a)) ?? false),
+            batchWrites,
+          )
+        )
+          this.config.taskState?.noteEffect("look");
+        if (visualReview.required) this.config.taskState?.setVisualReview(visualReview.snapshot());
 
         if (!p.allowed) {
           // A user's "no" is a decision, not a failure — it must never charge
@@ -3191,7 +3321,7 @@ export class AgentLoop {
       thisEntry.resultSig = resultSignature(
         planned
           .map((p) => (p.output?.success ? p.output.result : `ERR:${p.output?.error ?? ""}`))
-          .join(" "),
+          .join("\0"),
       );
       for (const p of planned) {
         if (!p.allowed || !p.output?.success) continue;
@@ -3243,18 +3373,13 @@ export class AgentLoop {
       // agent actually seeing its own interface. Without this the loop can
       // build a UI but never look at it, and no automated gate catches a
       // Newick string rendered raw into a <code> tag.
-      const attached = planned
-        .flatMap((p) => p.output?.attachments ?? [])
-        .filter((a) => a.kind === "image")
-        .slice(0, MAX_IMAGES_PER_MESSAGE);
       if (attached.length > 0) {
         const labels = attached.map((a) => a.label).join(", ");
         if (providerCarriesImages(this.config.provider)) {
-          // The model is about to actually SEE pixels — that satisfies the
-          // product-sight gate. The else branch below does not: a dropped
-          // image the model is told it has NOT seen is not looking.
-          sawOwnWork = true;
-          this.config.taskState?.noteEffect("look");
+          // Deliver actual pixels. The visual-verification tracker separately
+          // decides whether they came from the workspace's current preview.
+          // A reference image is still useful input, but does not prove the
+          // agent reviewed its own current UI. The browser receipts do that.
           this.appendMessage({
             role: "user",
             content: [
