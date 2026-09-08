@@ -5,6 +5,11 @@ A connector is an MCP server: a local subprocess (stdio) or a remote HTTP
 endpoint. This page is what you need to connect one, what it costs, and what
 happens when it breaks.
 
+New here? [mcp.md](./mcp.md) is the one-minute quickstart — three configs, each
+marked with whether it has been run against the real thing — and
+[evidence/mcp-live-20260908.md](./evidence/mcp-live-20260908.md) is the record
+of the client driven against the reference servers.
+
 ---
 
 ## Deferred tool loading
