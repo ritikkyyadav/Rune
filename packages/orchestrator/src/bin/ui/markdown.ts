@@ -305,12 +305,25 @@ export function renderMarkdown(md: string, opts: MarkdownOpts = {}): string[] {
       // the same painter the diffs use, so a block in an answer reads like
       // the editor it will be pasted into. An unlabelled block stays plain --
       // guessing a language mis-tints words, and plain is never wrong.
+      // A line too long for the column continues on the next row. It used to
+      // continue at exactly `width` characters, mid-token: the answer that
+      // ended "run it yourself" set `python3 -m http.server 8765` down as
+      // `http.serv` / `er 8765`, and the command is the part the reader
+      // copies. The break moves back to the last space in the chunk when
+      // there is one in its final third; a genuinely unbreakable token (a
+      // URL, a hash, a base64 blob) still cuts at the column, because
+      // hanging it off the edge is worse than splitting it.
       let ln = raw.replace(/\t/g, "  ");
       do {
-        const chunk = ln.slice(0, width);
+        let take = width;
+        if (ln.length > width) {
+          const space = ln.lastIndexOf(" ", width);
+          if (space > Math.floor(width * 0.66)) take = space;
+        }
+        const chunk = ln.slice(0, take);
         if (fenceLang) emit(paintCode(chunk, fenceLang, text));
         else emit(chunk.trimStart().startsWith("#") ? muted(chunk) : text(chunk));
-        ln = ln.slice(width);
+        ln = ln.slice(take).replace(/^ /, "");
       } while (ln.length > 0);
       continue;
     }

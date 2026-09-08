@@ -593,7 +593,19 @@ export function renderToolActivity(v: ToolActivityView): string {
       const path = s(out?.path ?? v.args.path);
       const raw = s(out?.diff);
       if (!raw) {
-        return F.toolRow({ name, arg: listingPath(path), argTone: "path", status: "none" });
+        // No diff in the result: either an older multi_edit (the tool only
+        // began returning one on 2026-09-05) or an edit whose replacement was
+        // textually identical. The row still has to say what happened -- a
+        // bare `edit index.html` with no metric reads exactly like a call that
+        // did nothing, and 22 of them stand in the September sessions.
+        const applied = Number(out?.edits_applied ?? 0);
+        return F.toolRow({
+          name,
+          arg: listingPath(path),
+          argTone: "path",
+          status: "none",
+          metric: applied > 0 ? `${applied} edit${applied === 1 ? "" : "s"} applied` : "no change",
+        });
       }
       const diff = F.parseDiff(raw);
       const hunkNote = diff.hunks > 0 ? `${diff.hunks} hunk${diff.hunks === 1 ? "" : "s"}` : "";
