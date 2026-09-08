@@ -1,5 +1,44 @@
 # Program status
 
+**2026-09-08, Phase 12 — P12.4 (onboarding, a truthful README, 0.4.0 prep).** Landed on
+`lane/p12.4-onboarding-readme-040` off `6452981`. The main session extends this entry with the
+other four lanes.
+
+- **First run.** `/login` now leads with the routes someone with no budget can start on — OpenRouter,
+  Google, ollama.com, GitHub Models, local Ollama — each marked in its label, with the free tiers
+  named at level 1 before the roster count. The sort is stable, so the frontier labs still lead the
+  paid block in their old order, and the marker is a suffix on a string the picker already renders:
+  no layout change. `FREE_TIER` is deliberately its own small table rather than a reuse of
+  `PROVIDER_CAPACITY`, which answers a different question (what to fall back to mid-task, where
+  Google is `funded`).
+- **Measured.** `tests/integration/fresh-home-onboarding.test.ts` walks the headless equivalent of
+  the first run against an empty `RUNE_HOME` — doctor, connect a route, `rune use`, one prompt,
+  doctor again — against a local stub speaking the OpenAI wire. **0.8 s end to end** on this
+  machine; the assertion is a 180 s budget. It binds a port, so it needs the unsandboxed run.
+- **`rune doctor` reads `provider-health.json`.** The file is pruned only on write, so a machine that
+  stopped calling keeps records nothing believes. Doctor now prints each route's window — in force
+  with time left, or expired with how long ago and marked STALE — and names a retirement filed
+  against the wrong route. The founder's own record has one of each: a Codex cap that expired
+  2026-09-07 19:34, and a `google` retirement for `gpt-5.6-sol`, which is a Codex model id.
+- **README rewritten** around a three-column "What is verified" table (verified live · verified by
+  tests or mocks only · unverified), with the experimental features named as such and the pitch
+  stated as completion rate and auditability on free and rotting lineups — explicitly not parity.
+  Placeholders are left in the table for P12.1–P12.3.
+- **0.4.0 prep.** `[Unreleased]` became `## [0.4.0] - 2026-09-08` with an empty Unreleased above and
+  marked placeholders for the four sibling lanes; eight package manifests and the Cargo workspace
+  are at 0.4.0, and `bash scripts/version.sh` reports it. **No tag.**
+- **Two rename leftovers fixed**, both found by auditing the release path in both directions:
+  `web-install.sh` ended with `Then run: gear`, and `release.yml` staged its verified download into
+  `$HOME/gearbin`. The four asset-name paths (`targets.sh`, `release.yml`, `web-install.sh`,
+  `install.ps1`) already agreed on `rune-*` and are now pinned by a test. The mismatch this
+  program recorded is on the other side and cannot be fixed here: **every published release up to
+  v0.3.1 carries `gear-*` assets**, so the one-line install works only from v0.4.0 onward.
+- **One defect outside the lane's scope, fixed because it is what a new user reads:** `rune --help`
+  printed a hand-written `-p` union of six providers against a 37-preset roster. Derived now.
+
+Still open after this lane: the tag and the release (founder), the repository is still
+`ritikkyyadav/Alan` and private, no mark, and nothing here is measured on a live long run.
+
 **2026-09-05, the capability-cap program.** The "Rune at 72" scorecard was checked against `~/.rune/rune.db` and `~/.rune/blackbox.db` (three of its claims did not survive: the retro is per-run correct, the sub-agent empty-summary failure was already fixed, the pitfalls read-back already existed) and the record's real limiters were fixed the same day — see `docs/program/capability-cap-program.md`. Landed: `[reliability] maxTurns` / `secondWinds` (the 80-turn constant is gone), second wind no longer vetoed by a struggle nudge (it had fired zero times in a month), turn refunds for completions the harness discards (`turn-refunds.ts`, `loop.turn_refunded`), the tool rate limiter turned into a pacer (reads exempt, short waits absorbed, `[tools] rateLimit`), the loop detector keyed on results with a `loop.result_loop` nudge, `steer` remedy lessons so retros stop producing nothing, tactic titles that name runners, a search-backend cooldown, and a test for the malformed-call answer. Gates green; mock evals 63/63 **with the outer sandbox off** (rune-tools' Seatbelt cannot nest — inside it four bash-check tasks fail and read as a false regression); integration 107 + 5 skips + the known LSP failure; binary installed.
 
 **2026-09-03 (evening), the product is the terminal.** The founder's direction: the CLI/TUI interface only, and a new name. Removed: `apps/web` and the bundle embedded in the binary, `rune web` / `rune open` / the bare-command browser entry, `apps/vscode` (a webview around that bundle), `tests/e2e` (Playwright), the brand-checklist and web unit suites, the token-CSS, mark and primitives generators, and the web design docs. Kept: `rune serve` (the WebSocket engine for `rune attach ws://` and the SDK, now without a static-page branch), `rune serve --check` (trimmed to the host-spawn proof: one session over the socket, no host left behind), ACP, headless `-P --stream-json`, and P11.1's task state, narrative events and Decision Record. **Renamed Gear → Rune** everywhere a name appears — packages `@rune/*`, crates `rune-*`, the `rune` binary and `rune-tools`, `~/.rune` and `rune.db`, `RUNE_*` env, `.rune/` in a workspace, `RUNE.md` — with one generation of read-through for existing data: the first start moves `~/.gear` to `~/.rune` (symlink left behind) and renames `gear.db` and `GEAR.md`; `GEAR_*` variables are adopted; the `gear` keychain service, `gear:` auto-commits, the playbook and evolve markers, `/etc/gear` org policies and `gearVersion` manifests are still read. The permission ladder keeps its vocabulary (`--gear 1..4`, `/gear`, "4th gear"). **The accent is the founder's violet `#A28CF3`**, exact on the dark ground and derived to `#9682E1` on paper for a 3:1 floor. Open: a v0.4.0 release (the installers now look for `rune-*` assets that no published release carries yet), the GitHub repository is still `ritikkyyadav/Alan`, and the eight-tooth gear glyph in the wordmark no longer matches the name.
