@@ -15,7 +15,7 @@
 //   trial      learned in ≥2 distinct sessions — the same bar the playbook has
 //              always used for "a fact about the repository rather than a note".
 //              Injected, and every injection is counted.
-//   active     ≥5 firings with a win rate above the ambient baseline. Only
+//   active     a controlled include/withhold trial with verified outcomes and a cost gate. Only
 //              active lessons reach the playbook, which is the widest automatic
 //              action the loop takes.
 //   retired    decayed, disused, contradicted, or turned off. Kept and
@@ -46,9 +46,8 @@ export const ACTIVE_FLOOR = 0.5;
  * The ambient win rate: wins over uses, pooled across every entry that has been
  * injected at all.
  *
- * This is the control group the lifecycle has instead of an A/B — the rate at
- * which runs go well WITH lessons injected. A lesson must beat it, not merely
- * coexist with it. Null when nothing has been injected yet, which reads as "no
+ * This is a descriptive historical statistic, NOT a control group: the rate at
+ * which runs went well WITH lessons injected. It cannot justify promotion. Null when nothing has been injected yet, which reads as "no
  * baseline", never as zero.
  */
 export function lessonBaseline(entries: NotebookEntry[], excludeId?: string): number | null {
@@ -97,12 +96,17 @@ export interface RunOutcomeSignal {
   checksFailed: number;
   /** A `struggle.*` signal fired: a correction, a rephrase, thrash. */
   struggled: boolean;
+  checksPassed?: number;
+  openSteps?: number;
+  completedWork?: boolean;
+  visualVerified?: boolean;
 }
 
 export function isWinningRun(s: RunOutcomeSignal): boolean {
   if (s.aborted || s.runError) return false;
   if (s.unprovenSteps > 0 || s.checksFailed > 0) return false;
-  if (s.struggled) return false;
+  if (s.struggled || s.visualVerified === false) return false;
+  if (!s.completedWork || (s.checksPassed ?? 0) < 1 || (s.openSteps ?? 0) > 0) return false;
   return true;
 }
 
@@ -127,7 +131,7 @@ export interface StageTransition {
 export function advanceLessons(
   store: NotebookStore,
   entries: NotebookEntry[],
-  opts: { now?: Date } = {},
+  opts: { now?: Date; cohort?: string } = {},
 ): StageTransition[] {
   const out: StageTransition[] = [];
   for (const e of entries) {
@@ -141,7 +145,7 @@ export function advanceLessons(
             title: e.title,
             from: "candidate",
             to: "trial",
-            reason: `seen in ${e.provenance.sessions.length} sessions (≥${TRIAL_SESSIONS}) — a repeated observation is a fact about the repository, so it starts being injected and counted`,
+            reason: `seen in ${e.provenance.sessions.length} sessions (≥${TRIAL_SESSIONS}) — a repeated observation can enter a bounded include/withhold trial`,
           });
         }
       }
@@ -154,37 +158,32 @@ export function advanceLessons(
         // advising other projects. That needs the offline A/B.
         continue;
       }
-      if (e.uses < ACTIVE_FIRINGS) continue;
-      const rate = e.wins / e.uses;
-      // Leave-one-out: the baseline is how runs go with the OTHER lessons
-      // injected. Including the candidate in its own baseline makes the bar
-      // move with it, and the first lesson in a fresh store could never clear
-      // its own rate plus a margin.
-      const baseline = lessonBaseline(entries, e.id);
-      const bar = activeThreshold(baseline);
-      if (rate >= bar && store.setStage(e.id, "active")) {
+      const evidence = store.trials.evidence(e, opts.cohort);
+      if (evidence.eligible && store.setStage(e.id, "active")) {
         out.push({
           id: e.id,
           title: e.title,
           from: "trial",
           to: "active",
-          reason: `${e.wins}/${e.uses} winning runs (${(rate * 100).toFixed(0)}%) against a bar of ${(bar * 100).toFixed(0)}%${baseline === null ? " (no ambient baseline yet; the floor applies)" : ` (ambient ${(baseline * 100).toFixed(0)}% + ${ACTIVE_MARGIN * 100}%)`}`,
+          reason: `${evidence.treatment.wins}/${evidence.treatment.runs} included vs ${evidence.control.wins}/${evidence.control.runs} withheld: ${evidence.reason}`,
         });
       }
       continue;
     }
 
-    if (e.stage === "active" && e.uses >= ACTIVE_FIRINGS) {
-      const rate = e.wins / e.uses;
-      if (rate < ACTIVE_FLOOR && store.setStage(e.id, "retired")) {
-        out.push({
-          id: e.id,
-          title: e.title,
-          from: "active",
-          to: "retired",
-          reason: `win rate fell to ${(rate * 100).toFixed(0)}%, below the ${ACTIVE_FLOOR * 100}% floor — an active lesson that stops helping is worse than no lesson, because it costs tokens on every run`,
-        });
-      }
+    if (
+      e.stage === "active" &&
+      !store.trials.evidence(e, opts.cohort).eligible &&
+      store.setStage(e.id, "trial")
+    ) {
+      out.push({
+        id: e.id,
+        title: e.title,
+        from: "active",
+        to: "trial",
+        reason:
+          "No qualifying controlled evidence for this advice revision; retained as an experimental hint.",
+      });
     }
   }
   void opts;

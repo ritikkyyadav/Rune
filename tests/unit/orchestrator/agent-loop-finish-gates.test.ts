@@ -193,7 +193,7 @@ describe("product-sight gate", () => {
     expect(events.at(-1)?.type).toBe("turn_complete");
   });
 
-  test("a browser tool call counts as looking — no refusal", async () => {
+  test("an arbitrary browser tool cannot certify the workspace UI", async () => {
     const ts = new TaskStateStore();
     const gw = makeGateway([
       { tools: [{ name: "write_file", args: { path: "web/index.html" } }] },
@@ -203,7 +203,8 @@ describe("product-sight gate", () => {
     ]);
     const loop = makeLoop(gw, ts);
     await collect(loop.run("build the landing page", "s1", "/tmp"));
-    expect(transcriptText(loop)).not.toContain("never looked at it");
+    expect(transcriptText(loop)).toContain("never looked at it");
+    expect(ts.snapshot().visualReview?.status).toBe("pending");
   });
 
   test("non-visual work never trips the gate", async () => {

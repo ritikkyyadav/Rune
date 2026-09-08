@@ -9,8 +9,8 @@
 // Only ACTIVE lessons get in (P7.7). "Recurred twice" was the old bar, and it
 // was the weakest gate in the whole loop attached to its widest action: two
 // observations, no measurement, and an executable skill written into the user's
-// workspace. Active means the lesson was injected at least five times and won
-// more often than the ambient rate — the same ladder every other lesson climbs.
+// workspace. Active requires a fixed controlled trial with positive verification and a
+// cost-per-success gate for the current model and advice revision.
 //
 // The generated block sits between markers; everything a person writes outside
 // them is kept on every rewrite.
@@ -128,6 +128,19 @@ export function renderPlaybookBlock(entries: NotebookEntry[]): string {
   return lines.join("\n");
 }
 
+/**
+ * The block with every session counter removed — the preamble sentence and
+ * each row's `_(N sessions)_` suffix — which is what a person would call
+ * "the lessons". Two blocks that agree here differ only in bookkeeping.
+ */
+function lessonLines(block: string): string {
+  return block
+    .split("\n")
+    .filter((l) => !l.startsWith("Learned by Rune from "))
+    .map((l) => l.replace(/ _\(\d+ sessions?\)_$/, ""))
+    .join("\n");
+}
+
 function frontmatter(workspaceName: string, sessions: number): string {
   return [
     "---",
@@ -171,6 +184,13 @@ export function writePlaybook(
         return { path, changed: false, lessons: rows.length, sessions, pending };
       }
       next = current.slice(0, found.start) + block + current.slice(found.end);
+      // The preamble carries the session count, which moves every session.
+      // A moved counter over the same lessons is worth keeping on disk but
+      // not announcing: "changed" means the lessons changed.
+      if (lessonLines(existing) === lessonLines(block)) {
+        writeFileSync(path, next);
+        return { path, changed: false, lessons: rows.length, sessions, pending };
+      }
     } else {
       // A hand-written playbook without markers: append ours, keep theirs.
       next = `${current.replace(/\s*$/, "")}\n\n${block}\n`;

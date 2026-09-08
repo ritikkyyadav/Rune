@@ -789,3 +789,118 @@ describe("foldTurnRetros", () => {
     expect(scored[0].stepsDone).toBe(2);
   });
 });
+
+// ─── The two transcript measures: harness talk and silence ───
+// The diagnosis of 2026-09-05 computed both by hand from rune.db; the retro
+// computes them per run so `rune audit`, the scorecard and the eval gate read
+// the same figure and nothing can drift back unmeasured.
+
+import {
+  measureTalk,
+  measureSilence,
+  HARNESS_TALK_RE,
+  SILENCE_AFTER_MS,
+  IDLE_AFTER_MS,
+} from "../../../packages/orchestrator/src/retro";
+
+const at = (ms: number) => new Date(1_700_000_000_000 + ms).toISOString();
+const stamped = (type: string, payload: Record<string, unknown>, ms: number): EventRow => ({
+  ...row(type, payload),
+  at: at(ms),
+});
+
+describe("harness talk", () => {
+  test("counts the prose about the ledger, and the openers, out of all prose", () => {
+    const rows = [
+      row("assistant_msg", { content: "Picking up the open step.", toolUses: [] }),
+      row("assistant_msg", {
+        content: "Closing the three unproven steps with the evidence I just collected.",
+        toolUses: [],
+      }),
+      row("assistant_msg", {
+        content: "Found it: the timer is cleared before the await.",
+        toolUses: [],
+      }),
+      row("assistant_msg", {
+        content: "",
+        toolUses: [{ callId: "c", toolName: "bash", toolInput: {} }],
+      }),
+    ];
+    expect(measureTalk(rows)).toEqual({ prose: 3, harness: 2, openers: 1 });
+    expect(HARNESS_TALK_RE.test("Budget is tight.")).toBe(true);
+  });
+
+  test("rides the run's retro and folds across turns", () => {
+    const rows = [
+      row("user_msg", { content: "fix it" }),
+      row("assistant_msg", { content: "Resuming the open step.", toolUses: [] }),
+      row("assistant_msg", { content: "The parser is the cause.", toolUses: [] }),
+    ];
+    const r = deriveRunRetro(rows)!;
+    expect(r.talk).toEqual({ prose: 2, harness: 1, openers: 1 });
+    const folded = foldTurnRetros([r, r])!;
+    expect(folded.talk).toEqual({ prose: 4, harness: 2, openers: 2 });
+    const [rowOf] = scorecard(
+      [{ retro: folded, model: "m", workspaceRoot: "/w", sessionId: "s" }],
+      "model",
+    );
+    expect(scoreRates(rowOf!).harnessTalkRate).toBeCloseTo(0.5, 5);
+  });
+});
+
+describe("silence", () => {
+  test("is null without a clock, and measures the gaps between rows with one", () => {
+    expect(measureSilence([row("assistant_msg", { content: "hi", toolUses: [] })])).toBeNull();
+    const rows = [
+      stamped("user_msg", { content: "go" }, 0),
+      // The message with its calls lands 5 s later: a row.
+      stamped(
+        "assistant_msg",
+        { content: "Reading.", toolUses: [{ callId: "c1", toolName: "read_file", toolInput: {} }] },
+        5_000,
+      ),
+      // Its result 40 s after that: quiet.
+      stamped("tool_result", { callId: "c1", content: "{}", isError: false }, 45_000),
+      // Then a plan change 10 s later.
+      stamped("task_state", { state: {} }, 55_000),
+      // The user walks away for an hour: excluded.
+      stamped("user_msg", { content: "and now?" }, 55_000 + IDLE_AFTER_MS + 60_000),
+      stamped("assistant_msg", { content: "Done.", toolUses: [] }, 55_000 + IDLE_AFTER_MS + 62_000),
+    ];
+    const s = measureSilence(rows)!;
+    expect(s.activeMs).toBe(5_000 + 40_000 + 10_000 + 2_000);
+    expect(s.quietMs).toBe(40_000);
+    expect(s.longestMs).toBe(40_000);
+    expect(SILENCE_AFTER_MS).toBe(30_000);
+    const r = deriveRunRetro(rows)!;
+    expect(r.silence).toEqual(s);
+    const [rowOf] = scorecard(
+      [{ retro: r, model: "m", workspaceRoot: "/w", sessionId: "s" }],
+      "model",
+    );
+    expect(scoreRates(rowOf!).silenceRate).toBeCloseTo(40_000 / 57_000, 5);
+  });
+});
+
+describe("the close-with-evidence steer in attest mode", () => {
+  test("two steps closed unproven in one run is the lesson, without any refusal", () => {
+    const s = new TaskStateStore();
+    s.beginTurn("build the thing");
+    s.setTodos([
+      { content: "one", status: "in_progress" },
+      { content: "two", status: "pending" },
+    ]);
+    s.setTodos([
+      { content: "one", status: "completed" },
+      { content: "two", status: "completed" },
+    ]);
+    const rows: EventRow[] = [
+      row("user_msg", { content: "build the thing" }),
+      row("assistant_msg", { content: "On it.", toolUses: [] }),
+      row("task_state", { state: s.snapshot() }),
+    ];
+    const r = deriveRunRetro(rows)!;
+    expect(r.gates.unproven).toBe(2);
+    expect(r.lessons.map((l) => l.title)).toContain("steer:close-with-evidence");
+  });
+});

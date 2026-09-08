@@ -235,13 +235,16 @@ describe("report steps in the ledger", () => {
     expect(s.todoCounts()).toEqual({ done: 2, total: 2, unproven: 0, open: 0 });
   });
 
-  test("an ordinary step with nothing behind it is still refused once", () => {
+  test("an ordinary step with nothing behind it closes unproven, and says so in one line", () => {
     const s = new TaskStateStore();
     s.beginTurn("build the shop");
     s.setTodos([{ content: "Wire the cart", status: "in_progress" }]);
     const verdict = s.setTodos([{ content: "Wire the cart", status: "completed" }]);
-    expect(verdict.accepted).toBe(false);
-    if (!verdict.accepted) expect(verdict.refused[0].reason).toContain("nothing ran");
+    expect(verdict.accepted).toBe(true);
+    if (verdict.accepted)
+      expect(verdict.notes[0]).toContain("closed unproven: no implementation was written");
+    expect(s.snapshot().todos[0].unproven).toBe("no_evidence");
+    expect(s.snapshot().todos[0].closedBy).toBeUndefined();
   });
 });
 
@@ -275,16 +278,17 @@ describe("the loop: refusals and the effort latch", () => {
     expect(incidents).not.toContain("loop.effort_latched");
   });
 
-  test("a no-evidence refusal on an ordinary step no longer latches effort", async () => {
+  test("a no-evidence close on an ordinary step is accepted as unproven and does not latch effort", async () => {
     const incidents: string[] = [];
     const ts = new TaskStateStore();
-    // Refused once; then the step is actually done and the list re-submitted
+    // Closed unproven; then the step is actually done and the list re-submitted
     // with a report step added (a different call, so the loop's own repeat
     // detector — which also latches — stays out of the measurement), so the
     // run ends with nothing open and no finish gate in the way.
     const gw = makeGateway([
       todo([{ content: "Wire the cart", status: "in_progress" }]),
       todo([{ content: "Wire the cart", status: "completed" }]),
+      { tool: "write_file", args: { path: "src/cart.ts", content: "export const cart = [];" } },
       { tool: "bash", args: { command: "bun run src/cart.ts" } },
       todo([
         { content: "Wire the cart", status: "completed" },
@@ -295,14 +299,16 @@ describe("the loop: refusals and the effort latch", () => {
     const loop = makeLoop(gw, ts, incidents);
     await collect(loop.run("build me a shop site", "s1", "/tmp"));
 
-    const refused = toolResultFor(loop, "c2")!;
-    expect(refused.isError).toBe(true);
-    expect(refused.text).toContain("nothing ran");
-    expect(incidents).toContain("loop.step_refused");
+    const closed = toolResultFor(loop, "c2")!;
+    expect(closed.isError).toBe(false);
+    expect(closed.text).toContain("closed unproven: no implementation was written");
+    expect(incidents).not.toContain("loop.step_refused");
     expect(incidents).not.toContain("loop.effort_latched");
+    // The run that followed cleared the mark: evidence landed, the list was re-submitted.
+    expect(ts.snapshot().todos[0].unproven).toBeUndefined();
   });
 
-  test("a step closed over a FAILING check is refused AND still latches effort", async () => {
+  test("a step closed over a FAILING check is accepted as unproven AND still latches effort", async () => {
     const incidents: string[] = [];
     const ts = new TaskStateStore();
     const gw = makeGateway([
@@ -314,9 +320,10 @@ describe("the loop: refusals and the effort latch", () => {
     const loop = makeLoop(gw, ts, incidents);
     await collect(loop.run("fix the parser tests", "s1", "/tmp"));
 
-    const refused = toolResultFor(loop, "c3")!;
-    expect(refused.isError).toBe(true);
-    expect(refused.text).toContain("FAILED");
+    const closed = toolResultFor(loop, "c3")!;
+    expect(closed.isError).toBe(false);
+    expect(closed.text).toContain("closed unproven: its last check failed");
+    expect(ts.snapshot().todos[0].unproven).toBe("check_failed");
     expect(incidents).toContain("loop.effort_latched");
   });
 });

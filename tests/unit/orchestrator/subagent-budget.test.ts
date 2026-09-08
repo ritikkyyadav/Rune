@@ -89,9 +89,9 @@ describe("P6B.4 — breach detection", () => {
 });
 
 describe("P6B.4 — the concurrency ceiling", () => {
-  test("the historical default is preserved when nothing is configured", () => {
-    expect(resolveMaxParallel(undefined)).toBe(8);
-    expect(resolveMaxParallel("not a number")).toBe(8);
+  test("defaults to three concurrent delegates to bound peak spend", () => {
+    expect(resolveMaxParallel(undefined)).toBe(3);
+    expect(resolveMaxParallel("not a number")).toBe(3);
   });
 
   test("a configured value is honoured and clamped", () => {

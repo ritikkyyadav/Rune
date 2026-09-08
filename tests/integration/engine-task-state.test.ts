@@ -138,6 +138,6 @@ describe("Engine task-spine resume (end-to-end, fake provider)", () => {
     expect(text).toContain("[ ] handle comments");
     expect(text).toContain("[ ] write tests");
     expect(text).toContain("Goal: build me a config parser");
-    expect(text).toContain("Resume note (open_steps)");
+    expect(text).toContain("Resumed after: open_steps");
   });
 });

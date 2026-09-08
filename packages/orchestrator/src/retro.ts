@@ -20,7 +20,26 @@ import type { NotebookStore } from "./notebook/store";
 import { TaskStateStore } from "./task-state";
 import type { HandoffReason, StepLogKind, TaskState } from "./task-state";
 
-export type EventRow = { seq: number; event: SessionEvent };
+/**
+ * Prose about the harness rather than the work: the plan ledger, its steps,
+ * evidence, resuming, the budget. The transcript diagnosis of 2026-09-05
+ * counted 62% of one session's sentences with this pattern; it is a heuristic
+ * (the direction is not in doubt, the second decimal is) and it is kept here
+ * so the retro, the audit and the eval gate all count the same thing.
+ */
+export const HARNESS_TALK_RE =
+  /\b(open step|unproven|the plan|plan (?:is|was|needs|update|changed|just)|closing .{0,40}step|recording .{0,20}evidence|evidence I|budget|resuming|picking up|continuing (?:from|the)|rewriting the plan|updating the plan)\b/i;
+
+/** The openers weaker models echoed from the task-state block's imperatives. */
+export const HARNESS_OPENER_RE = /^\s*(?:picking up|continuing|resuming|plan update)\b/i;
+
+export type EventRow = {
+  seq: number;
+  event: SessionEvent;
+  /** ISO time the row was persisted. Present on rows read from the store;
+   *  the silence metric needs it, everything else ignores it. */
+  at?: string;
+};
 
 /** How a run ended. `finished` is the only clean one; the rest are handoffs. */
 export type RunOutcome = "finished" | HandoffReason;
@@ -88,8 +107,91 @@ export interface RunRetro {
   cost: { usd: number; listUsd: number; inputTokens: number; outputTokens: number };
   durationMs: number;
   lessons: RetroLesson[];
+  /**
+   * How much of the model's prose was about the harness rather than the work
+   * (HARNESS_TALK_RE), and how many messages opened with a step-state echo
+   * (HARNESS_OPENER_RE). The transcript diagnosis's first number: 62% on one
+   * session. Counted here so the audit, the scorecard and the eval gate all
+   * read the same figure.
+   */
+  talk?: { prose: number; harness: number; openers: number };
+  /**
+   * Active turn time spent at least 30 s without a new transcript row, under
+   * the renderer's contract that a call is a row the moment it starts. The
+   * diagnosis's second number: 45% on one session. Absent when the rows
+   * carried no clock (an in-memory replay).
+   */
+  silence?: { activeMs: number; quietMs: number; longestMs: number };
   /** Derived after the fact from a whole session, not written at run end. */
   backfilled?: boolean;
+}
+
+// ─── The two transcript measures ───
+
+export interface TalkMeasure {
+  prose: number;
+  harness: number;
+  openers: number;
+}
+
+/** Harness talk over a run's rows: every assistant message with words in it,
+ *  and how many of those were about the ledger, its steps, evidence, resuming
+ *  or the budget. */
+export function measureTalk(rows: EventRow[]): TalkMeasure {
+  const out: TalkMeasure = { prose: 0, harness: 0, openers: 0 };
+  for (const r of rows) {
+    if (r.event.type !== "assistant_msg") continue;
+    const content = r.event.payload.content;
+    const text = typeof content === "string" ? content.trim() : "";
+    if (!text) continue;
+    out.prose++;
+    if (HARNESS_TALK_RE.test(text)) out.harness++;
+    if (HARNESS_OPENER_RE.test(text.split("\n")[0] ?? "")) out.openers++;
+  }
+  return out;
+}
+
+export interface SilenceMeasure {
+  activeMs: number;
+  quietMs: number;
+  longestMs: number;
+}
+
+/** A stretch this long without a new row is silence the reader notices. */
+export const SILENCE_AFTER_MS = 30_000;
+/** A gap this long is the user away, not the agent silent, and is excluded. */
+export const IDLE_AFTER_MS = 20 * 60_000;
+
+/**
+ * Silence over a run's rows, under the renderer's contract: a transcript row
+ * lands when the user speaks, when the model's message lands (its prose, and
+ * the provisional row of every call it dispatched), when a call's result
+ * comes back, and when the plan changes. Everything between consecutive rows
+ * inside a turn is measured; a gap of thirty seconds or more counts as quiet
+ * and the longest one is kept. Null when the rows carry no clock.
+ */
+export function measureSilence(rows: EventRow[]): SilenceMeasure | null {
+  const stamped = rows.filter((r) => typeof r.at === "string" && !Number.isNaN(Date.parse(r.at!)));
+  if (stamped.length === 0) return null;
+  const out: SilenceMeasure = { activeMs: 0, quietMs: 0, longestMs: 0 };
+  let lastRowAt: number | null = null;
+  for (const r of stamped) {
+    const type = r.event.type;
+    const at = Date.parse(r.at!);
+    if (type === "user_msg") {
+      lastRowAt = at; // a new turn: the clock starts at its first row
+      continue;
+    }
+    const isRow = type === "assistant_msg" || type === "tool_result" || type === "task_state";
+    if (!isRow || lastRowAt === null) continue;
+    const gap = at - lastRowAt;
+    lastRowAt = at;
+    if (gap < 0 || gap >= IDLE_AFTER_MS) continue;
+    out.activeMs += gap;
+    if (gap >= SILENCE_AFTER_MS) out.quietMs += gap;
+    if (gap > out.longestMs) out.longestMs = gap;
+  }
+  return out;
 }
 
 export interface DeriveOptions {
@@ -342,7 +444,28 @@ export function deriveRunRetro(rows: EventRow[], opts: DeriveOptions = {}): RunR
     cost,
     durationMs: Math.max(0, Math.round(opts.durationMs ?? 0)),
     lessons: retroLessons(observations),
+    talk: measureTalk(rows),
   };
+  const silence = measureSilence(rows);
+  if (silence) retro.silence = silence;
+  // In attest mode the ledger never refuses, so the steer that used to fire
+  // on "Plan NOT updated" errors fires on the spine instead: two or more
+  // steps closed unproven in one run is the same lesson.
+  const unprovenCloses = gates.unproven ?? 0;
+  if (
+    unprovenCloses >= STEER_THRESHOLD &&
+    !retro.lessons.some((l) => l.title === "steer:close-with-evidence")
+  ) {
+    const remedy = TOOL_REMEDIES.find((r) => r.key === "close-with-evidence");
+    if (remedy) {
+      retro.lessons.push({
+        kind: "steer",
+        title: "steer:close-with-evidence",
+        body: remedy.body,
+        evidence: `${unprovenCloses} steps closed unproven in one run`,
+      });
+    }
+  }
   if (opts.backfilled) retro.backfilled = true;
   return retro;
 }
@@ -384,9 +507,22 @@ export function foldTurnRetros(retros: RunRetro[], goal?: string): RunRetro | nu
     cost: { usd: 0, listUsd: 0, inputTokens: 0, outputTokens: 0 },
     durationMs: 0,
     lessons,
+    talk: { prose: 0, harness: 0, openers: 0 },
   };
+  let silence: SilenceMeasure | null = null;
 
   for (const r of parts) {
+    if (r.talk) {
+      folded.talk!.prose += r.talk.prose;
+      folded.talk!.harness += r.talk.harness;
+      folded.talk!.openers += r.talk.openers;
+    }
+    if (r.silence) {
+      silence ??= { activeMs: 0, quietMs: 0, longestMs: 0 };
+      silence.activeMs += r.silence.activeMs;
+      silence.quietMs += r.silence.quietMs;
+      silence.longestMs = Math.max(silence.longestMs, r.silence.longestMs);
+    }
     folded.steps.done += r.steps.done;
     folded.steps.unproven += r.steps.unproven;
     folded.checks.passed += r.checks.passed;
@@ -419,6 +555,7 @@ export function foldTurnRetros(retros: RunRetro[], goal?: string): RunRetro | nu
   }
   folded.cost.usd = Math.round(folded.cost.usd * 1e6) / 1e6;
   folded.cost.listUsd = Math.round(folded.cost.listUsd * 1e6) / 1e6;
+  if (silence) folded.silence = silence;
 
   const g = (goal ?? parts.find((r) => r.goal)?.goal ?? "")
     .replace(/\s+/g, " ")
@@ -541,7 +678,7 @@ export const TOOL_REMEDIES: readonly ToolRemedy[] = [
   {
     key: "close-with-evidence",
     tool: /^todo_write$/,
-    error: /completions? refused|Plan NOT updated/i,
+    error: /completions? refused|Plan (?:NOT|not) updated|is not closed:/i,
     body: "A step closes only with evidence: run the check or write the file first, then mark it done.",
   },
   // TODO(human): add one remedy for a failure shape you have watched a run
@@ -753,6 +890,12 @@ export interface ScoreRow {
   durationMs: number;
   /** Runs that carried a lesson. */
   lessons: number;
+  /** Prose messages, and how many of them were about the harness. */
+  proseMsgs: number;
+  harnessMsgs: number;
+  /** Active turn time, and how much of it passed ≥30 s without a new row. */
+  activeMs: number;
+  quietMs: number;
 }
 
 function emptyRow(key: string): ScoreRow {
@@ -779,6 +922,10 @@ function emptyRow(key: string): ScoreRow {
     listUsd: 0,
     durationMs: 0,
     lessons: 0,
+    proseMsgs: 0,
+    harnessMsgs: 0,
+    activeMs: 0,
+    quietMs: 0,
   };
 }
 
@@ -826,6 +973,14 @@ export function scorecard(samples: RetroSample[], by: "model" | "workspace"): Sc
     row.listUsd += r.cost.listUsd;
     row.durationMs += r.durationMs;
     if (r.lessons.length > 0) row.lessons++;
+    if (r.talk) {
+      row.proseMsgs += r.talk.prose;
+      row.harnessMsgs += r.talk.harness;
+    }
+    if (r.silence) {
+      row.activeMs += r.silence.activeMs;
+      row.quietMs += r.silence.quietMs;
+    }
     rows.set(key, row);
   }
   return [...rows.values()].sort((a, b) => b.runs - a.runs || a.key.localeCompare(b.key));
@@ -845,12 +1000,18 @@ export interface ScoreRates {
   toolFailRate: number;
   usdPerRun: number;
   completionsPerRun: number;
+  /** Prose about the harness over all prose; null when no prose was counted. */
+  harnessTalkRate: number | null;
+  /** Quiet time over active time; null when no run carried a clock. */
+  silenceRate: number | null;
 }
 
 export function scoreRates(row: ScoreRow): ScoreRates {
   const runs = Math.max(1, row.runs);
   const checks = row.checksPassed + row.checksFailed;
   return {
+    harnessTalkRate: row.proseMsgs > 0 ? row.harnessMsgs / row.proseMsgs : null,
+    silenceRate: row.activeMs > 0 ? row.quietMs / row.activeMs : null,
     finishedRate: row.finished / runs,
     openStepsRate: row.openSteps / runs,
     stalledRate: row.stalled / runs,

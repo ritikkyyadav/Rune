@@ -35,7 +35,7 @@ import { TaskStateStore } from "../task-state";
 import { configHash } from "../evolve/config-hash";
 import { consentPath, learnedSkillsEnabled, setLearnedSkills } from "../evolve/consent";
 import { installGardenerGuard } from "../evolve/gardener-guard";
-import { activeThreshold, lessonBaseline, stageCounts } from "../evolve/lessons";
+import { stageCounts } from "../evolve/lessons";
 import {
   activePromotions,
   appendLedger,
@@ -218,6 +218,8 @@ function printScorecard(rows: ScoreRow[], by: "model" | "workspace"): void {
     `${"unproven".padStart(10)}` +
     `${"checks".padStart(8)}` +
     `${"tool-fail".padStart(11)}` +
+    `${"talk".padStart(6)}` +
+    `${"silent".padStart(8)}` +
     `${"$/run".padStart(9)}`;
   say(dim(head));
   for (const r of rows) {
@@ -234,6 +236,8 @@ function printScorecard(rows: ScoreRow[], by: "model" | "workspace"): void {
         `${unprovenPaint(`${r.stepsUnproven}/${r.stepsDone}`.padStart(10))}` +
         `${checks.padStart(8)}` +
         `${pct(x.toolFailRate).padStart(11)}` +
+        `${(x.harnessTalkRate === null ? dim("  —") : (x.harnessTalkRate <= 0.15 ? ok : x.harnessTalkRate <= 0.3 ? warn : danger)(pct(x.harnessTalkRate))).padStart(6)}` +
+        `${(x.silenceRate === null ? dim("  —") : (x.silenceRate <= 0.15 ? ok : x.silenceRate <= 0.3 ? warn : danger)(pct(x.silenceRate))).padStart(8)}` +
         `${`$${x.usdPerRun.toFixed(3)}`.padStart(9)}`,
     );
   }
@@ -241,6 +245,11 @@ function printScorecard(rows: ScoreRow[], by: "model" | "workspace"): void {
   say(
     dim(
       "  finished = ended with the plan done · open = ended with steps open · unproven = completed steps without evidence · $ = list price per run",
+    ),
+  );
+  say(
+    dim(
+      "  talk = prose about the plan ledger, steps, evidence or budget (ceiling 15%) · silent = active time ≥30 s without a new transcript row (ceiling 15%)",
     ),
   );
 }
@@ -329,6 +338,7 @@ function cmdLessons(workspaceRoot: string, opts: Record<string, string | true>):
       );
     }
     for (const e of entries) {
+      const evidence = store.trials.evidence(e);
       const n = e.provenance.sessions.length;
       const kind = e.title.startsWith("avoid:")
         ? warn("pitfall")
@@ -345,6 +355,11 @@ function cmdLessons(workspaceRoot: string, opts: Record<string, string | true>):
             : dim("candidate");
       say(
         `  ${kind} ${text(e.body.slice(0, 96))}\n          ${stage} ${faint(`· ${n} session${n === 1 ? "" : "s"}`)}${inPlaybook.has(e.id) ? faint(" · in playbook") : ""}${record} ${faint(`· ${e.id.slice(-8)}`)}`,
+      );
+      say(
+        dim(
+          `          trial: included ${evidence.treatment.wins}/${evidence.treatment.runs}, withheld ${evidence.control.wins}/${evidence.control.runs} · ${evidence.reason}`,
+        ),
       );
     }
     const pb = join(workspaceRoot, PLAYBOOK_REL);
@@ -504,7 +519,6 @@ function cmdStatus(
     try {
       const all = nb.list({ includeRetired: true, limit: 5000 });
       const stages = stageCounts(all);
-      const baseline = lessonBaseline(all);
       const here = nb.listRepo(repoKeyOf(workspaceRoot));
       const hereStages = stageCounts(here);
       // The ladder, not a headcount: "12 entries" said nothing about which of
@@ -513,7 +527,7 @@ function cmdStatus(
         `  ${text("Lessons")}   ${dim("candidate")} ${stages.candidate} ${dim("→ trial")} ${stages.trial} ${dim("→")} ${ok(`active ${stages.active}`)} ${dim("·")} ${warn(`${stages.retired} retired`)} ${dim("·")} ${lessons} from measured runs`,
       );
       say(
-        `  ${text("Bar")}       active needs ≥5 injections and a win rate ≥ ${pct(activeThreshold(baseline))} ${dim(baseline === null ? "(no ambient baseline yet; the floor applies)" : `(ambient ${pct(baseline)} + margin)`)}`,
+        `  ${text("Bar")}       active needs 20 outcomes per arm, separated success intervals, and competitive cost per verified success`,
       );
       const live = existsSync(join(workspaceRoot, PLAYBOOK_REL));
       const draft = existsSync(join(workspaceRoot, PLAYBOOK_PENDING_REL));
@@ -1095,7 +1109,7 @@ function cmdPlaybook(workspaceRoot: string, opts: Record<string, string | true>)
   say();
   say(
     dim(
-      "  Only ACTIVE lessons reach it: ≥5 injections with a win rate above the ambient baseline.",
+      "  Only ACTIVE lessons reach it: controlled outcomes for the current advice revision, with a cost-per-success gate.",
     ),
   );
   say(dim(`  enable: rune evolve playbook --enable`));

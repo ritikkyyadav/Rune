@@ -223,15 +223,13 @@ describe("progress is derived, never asserted", () => {
   });
 
   test("an UNPROVEN completion does not move it", () => {
-    // The claim the ledger already refuses once. Letting it count here would
-    // put the same unearned tick back on the number a person reads.
+    // The ledger accepts the claim as unproven and says so. Letting it count
+    // here would put the same unearned tick back on the number a person reads.
     const s = new TaskStateStore();
     s.beginTurn("build the thing");
     s.setTodos([{ content: "run the tests", status: "in_progress" }]);
-    const first = s.setTodos([{ content: "run the tests", status: "completed" }]);
-    expect(first.accepted).toBe(false);
-    const second = s.setTodos([{ content: "run the tests", status: "completed" }]);
-    expect(second.accepted).toBe(true);
+    const closed = s.setTodos([{ content: "run the tests", status: "completed" }]);
+    expect(closed.accepted).toBe(true);
     expect(s.snapshot().todos[0].unproven).toBe("no_evidence");
     expect(s.progress()).toBe(0);
   });

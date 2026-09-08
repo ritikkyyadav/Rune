@@ -5,7 +5,15 @@
  */
 
 import { describe, test, expect } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -369,4 +377,131 @@ describe("worker tool — schema + end-to-end run", () => {
     release();
     expect((await third).success).toBe(true);
   });
+});
+
+describe("worker isolation contract", () => {
+  function gitRepo(): string {
+    const root = ws();
+    for (const args of [
+      ["init", "-q", "-b", "main"],
+      ["config", "user.email", "t@example.com"],
+      ["config", "user.name", "T"],
+    ])
+      spawnSync("git", args, { cwd: root });
+    writeFileSync(join(root, "README.md"), "# base\n");
+    spawnSync("git", ["add", "-A"], { cwd: root });
+    spawnSync("git", ["commit", "-q", "-m", "base"], { cwd: root });
+    return root;
+  }
+  function scriptedGateway() {
+    let call = 0;
+    return {
+      inferStream: async function* () {
+        call++;
+        if (call === 1) {
+          yield { type: "tool_use_start", toolCallId: "t1", toolName: "write_file" };
+          yield {
+            type: "tool_use_stop",
+            toolCallId: "t1",
+            toolInput: { path: "widget.ts", content: "export const widget = () => 42;\n" },
+          };
+          yield {
+            type: "message_stop",
+            stopReason: "tool_use",
+            usage: { inputTokens: 1, outputTokens: 1 },
+          };
+        } else {
+          yield {
+            type: "content_delta",
+            contentIndex: 0,
+            delta: { type: "text_delta", text: "Created widget.ts." },
+          };
+          yield {
+            type: "message_stop",
+            stopReason: "end_turn",
+            usage: { inputTokens: 1, outputTokens: 1 },
+          };
+        }
+      },
+    };
+  }
+
+  test.skipIf(!HAS_RUST_BIN)(
+    "a checkout that cannot be created falls back to the shared tree and says so",
+    async () => {
+      const root = gitRepo();
+      writeFileSync(join(root, ".rune"), "not a directory");
+      const tool = createWorkerTool({
+        binaryPath: RUST_BIN,
+        resolve: () => ({
+          gateway: scriptedGateway() as any,
+          model: "m",
+          provider: "google" as any,
+        }),
+      });
+      const out = await tool.execute({
+        toolName: "worker",
+        callId: "c1",
+        args: { prompt: "Create widget.ts", files: ["widget.ts"] },
+        sessionId: "s",
+        workspaceRoot: root,
+      } as ToolCallInput);
+      expect(out.success).toBe(true);
+      expect(out.result).toContain("ISOLATION UNAVAILABLE");
+      expect(out.structured?.integration).toBe("shared");
+      expect(String(out.structured?.isolationNote)).toContain("shared tree");
+      expect(readFileSync(join(root, "widget.ts"), "utf8")).toContain("42");
+    },
+  );
+
+  test.skipIf(!HAS_RUST_BIN)(
+    "a snapshot that would be partial fails the dispatch with the remedy, never a stale worker",
+    async () => {
+      const root = gitRepo();
+      symlinkSync("/etc/hosts", join(root, "escape"));
+      const tool = createWorkerTool({
+        binaryPath: RUST_BIN,
+        resolve: () => ({
+          gateway: scriptedGateway() as any,
+          model: "m",
+          provider: "google" as any,
+        }),
+      });
+      const out = await tool.execute({
+        toolName: "worker",
+        callId: "c1",
+        args: { prompt: "Create widget.ts", files: ["widget.ts"] },
+        sessionId: "s",
+        workspaceRoot: root,
+      } as ToolCallInput);
+      expect(out.success).toBe(false);
+      expect(out.error).toContain("leaves the project");
+      expect(existsSync(join(root, "widget.ts"))).toBe(false);
+    },
+  );
+
+  test.skipIf(!HAS_RUST_BIN)(
+    "a worker with its own checkout reports what provisioning cost",
+    async () => {
+      const root = gitRepo();
+      const tool = createWorkerTool({
+        binaryPath: RUST_BIN,
+        resolve: () => ({
+          gateway: scriptedGateway() as any,
+          model: "m",
+          provider: "google" as any,
+        }),
+      });
+      const out = await tool.execute({
+        toolName: "worker",
+        callId: "c1",
+        args: { prompt: "Create widget.ts", files: ["widget.ts"] },
+        sessionId: "s",
+        workspaceRoot: root,
+      } as ToolCallInput);
+      expect(out.success).toBe(true);
+      expect(out.result).toContain("[ISOLATION] own checkout");
+      expect(out.structured?.provisioning).toMatchObject({ untrackedFiles: 0 });
+    },
+  );
 });

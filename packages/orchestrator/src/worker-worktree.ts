@@ -1,6 +1,21 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import {
+  existsSync,
+  mkdirSync,
+  lstatSync,
+  readFileSync,
+  readlinkSync,
+  cpSync,
+  rmSync,
+} from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import {
+  WorkerSnapshotError,
+  checkedWorkerPath,
+  copyUntrackedSource,
+  provisionWorkerDependencies,
+} from "./worker-snapshot";
+import { runContainedCheck } from "./worker-verification";
 
 import { isGitRepo } from "./worktree";
 
@@ -39,6 +54,39 @@ export interface WorkerWorktree {
   branch: string;
   /** True when the lead's uncommitted work was carried in. */
   seededFromWorkingTree: boolean;
+  /** Immutable snapshot before this worker changes anything. */
+  baseCommit?: string;
+  provisioned?: string[];
+  /** What building this filesystem cost. */
+  provisioning?: WorkerProvisioning;
+}
+
+/**
+ * What building the worker's filesystem cost — measured, because "reflinks
+ * are cheap" is a claim about APFS and the fallback is a byte copy of
+ * node_modules per worker on everything else.
+ */
+export interface WorkerProvisioning {
+  untrackedFiles: number;
+  untrackedBytes: number;
+  /** Tracked diff, untracked copy and the snapshot commit. */
+  snapshotMs: number;
+  /** Installed environments (node_modules, .venv) reflinked or copied. */
+  provisionMs: number;
+  provisioned: string[];
+}
+
+/**
+ * The isolated checkout could not be CREATED — storage, `git worktree add`,
+ * the branch, the tracked diff. Nothing partial was handed over, so the
+ * shared tree, which has every file, is a safe fallback for the caller.
+ * Contrast WorkerSnapshotError, which must never fall back.
+ */
+export class WorkerIsolationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WorkerIsolationError";
+  }
 }
 
 export interface MergeOutcome {
@@ -57,7 +105,7 @@ const WORKTREE_DIR = join(".rune", "worktrees");
 function git(
   cwd: string,
   args: string[],
-  opts: { input?: string; timeout?: number } = {},
+  opts: { input?: string; timeout?: number; raw?: boolean } = {},
 ): { ok: boolean; stdout: string; stderr: string } {
   const res = spawnSync("git", args, {
     cwd,
@@ -68,7 +116,7 @@ function git(
   });
   return {
     ok: res.status === 0,
-    stdout: (res.stdout ?? "").trim(),
+    stdout: opts.raw ? (res.stdout ?? "") : (res.stdout ?? "").trim(),
     stderr: (res.stderr ?? "").trim(),
   };
 }
@@ -80,11 +128,21 @@ function safeId(id: string): string {
 /**
  * Create a worker's worktree, seeded from the lead's working tree.
  *
- * Returns null rather than throwing when isolation is not possible (no git, no
- * repo). A worker that cannot get a worktree must still be able to run in the
- * shared tree the way it always has — losing delegation entirely because a
- * directory is not a git repository would be a much worse outcome than losing
- * isolation.
+ * Returns null when the workspace is not a git repository at all. Otherwise
+ * it either returns a COMPLETE checkout or throws one of two things, and the
+ * distinction is the caller's policy:
+ *
+ *   · WorkerIsolationError — the checkout could not be created (storage, the
+ *     worktree, the branch, the tracked diff). Nothing partial exists, so the
+ *     shared tree is an honest fallback: it has every file. Losing delegation
+ *     because `git worktree` failed would be far worse than losing isolation.
+ *   · WorkerSnapshotError — the checkout exists but the snapshot would be
+ *     partial (too many files, too many bytes, a special file, a link that
+ *     leaves the project). This never falls back: a worker on stale code
+ *     reports stale work as done. The message carries the remedy.
+ *
+ * Either way the half-made checkout and its branch are removed before the
+ * throw.
  */
 export function createWorkerWorktree(repoRoot: string, workerId: string): WorkerWorktree | null {
   if (!isGitRepo(repoRoot)) return null;
@@ -92,41 +150,80 @@ export function createWorkerWorktree(repoRoot: string, workerId: string): Worker
   const base = join(repoRoot, WORKTREE_DIR);
   try {
     mkdirSync(base, { recursive: true });
-  } catch {
-    return null;
+  } catch (error) {
+    throw new WorkerIsolationError(`Cannot create isolated worker storage: ${String(error)}`);
   }
   const path = join(base, id);
-  if (existsSync(path)) return null;
+  if (existsSync(path)) throw new WorkerIsolationError(`Worker checkout already exists: ${path}`);
   const branch = `rune/worker-${id}`;
 
-  // A stale branch from a crashed run would fail `worktree add`; remove it
-  // first. It is ours by name and it has already been merged or abandoned.
-  git(repoRoot, ["branch", "-D", branch]);
+  // A retained branch may be the only copy of a failed worker. Never delete it.
+  if (git(repoRoot, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]).ok)
+    throw new WorkerIsolationError(
+      `Worker branch already exists: ${branch}; resume or inspect it before reusing this ID.`,
+    );
   const add = git(repoRoot, ["worktree", "add", "--detach", path, "HEAD"]);
-  if (!add.ok) return null;
+  if (!add.ok) throw new WorkerIsolationError(`Cannot create worker checkout: ${add.stderr}`);
   const checkout = git(path, ["checkout", "-b", branch]);
   if (!checkout.ok) {
     git(repoRoot, ["worktree", "remove", "--force", path]);
-    return null;
+    throw new WorkerIsolationError(`Cannot create worker branch: ${checkout.stderr}`);
   }
 
-  // Carry the lead's uncommitted work across. `git diff HEAD` covers staged and
-  // unstaged tracked changes; untracked files are deliberately NOT carried,
-  // because the set is unbounded (build output, node_modules, caches) and a
-  // worker that needs an untracked file can be told about it in its prompt.
-  let seeded = false;
-  const diff = git(repoRoot, ["diff", "HEAD", "--binary"]);
-  if (diff.ok && diff.stdout) {
-    const applied = git(path, ["apply", "--index", "--allow-empty", "-"], {
-      input: `${diff.stdout}\n`,
-    });
-    seeded = applied.ok;
-    // A diff that will not apply is not fatal: the worker gets a clean HEAD
-    // checkout, which is the old behaviour, and its report will simply be
-    // written against committed state.
+  try {
+    const snapshotStarted = performance.now();
+    const diff = git(repoRoot, ["diff", "HEAD", "--binary"], { raw: true });
+    if (!diff.ok) throw new WorkerIsolationError(`Cannot snapshot tracked work: ${diff.stderr}`);
+    if (diff.stdout) {
+      const applied = git(path, ["apply", "--allow-empty", "-"], { input: diff.stdout });
+      if (!applied.ok)
+        throw new WorkerIsolationError(`Worker source snapshot failed: ${applied.stderr}`);
+    }
+    const untrackedStats = { bytes: 0 };
+    const untracked = copyUntrackedSource(repoRoot, path, untrackedStats);
+    const added = git(path, ["add", "-A"]);
+    if (!added.ok) throw new WorkerIsolationError(`Cannot stage worker snapshot: ${added.stderr}`);
+    if (!git(path, ["diff", "--cached", "--quiet"]).ok) {
+      const seeded = git(path, [
+        "-c",
+        "user.name=Rune",
+        "-c",
+        "user.email=rune@localhost",
+        "-c",
+        "commit.gpgSign=false",
+        "commit",
+        "--no-verify",
+        "-qm",
+        "rune: working source snapshot",
+      ]);
+      if (!seeded.ok)
+        throw new WorkerIsolationError(`Cannot save worker snapshot: ${seeded.stderr}`);
+    }
+    const baseCommit = git(path, ["rev-parse", "HEAD"]).stdout;
+    const snapshotMs = Math.round(performance.now() - snapshotStarted);
+    const provisionStarted = performance.now();
+    const provisioned = provisionWorkerDependencies(repoRoot, path);
+    const provisionMs = Math.round(performance.now() - provisionStarted);
+    return {
+      path,
+      branch,
+      baseCommit,
+      provisioned,
+      seededFromWorkingTree: !!diff.stdout || untracked.length > 0,
+      provisioning: {
+        untrackedFiles: untracked.length,
+        untrackedBytes: untrackedStats.bytes,
+        snapshotMs,
+        provisionMs,
+        provisioned,
+      },
+    };
+  } catch (error) {
+    git(repoRoot, ["worktree", "remove", "--force", path]);
+    git(repoRoot, ["branch", "-D", branch]);
+    if (error instanceof WorkerSnapshotError || error instanceof WorkerIsolationError) throw error;
+    throw new WorkerIsolationError(error instanceof Error ? error.message : String(error));
   }
-
-  return { path, branch, seededFromWorkingTree: seeded };
 }
 
 /**
@@ -139,6 +236,63 @@ export function createWorkerWorktree(repoRoot: string, workerId: string): Worker
  * extraction is the worktree branch and the target is the working tree, one
  * owned path at a time.
  */
+export function saveWorkerChanges(wt: WorkerWorktree, ownedPaths: string[], summary: string): void {
+  for (const path of ownedPaths) checkedWorkerPath(wt.path, path.replace(/\/$/, ""));
+  // A declared file may never have been created. One missing path must not
+  // stop Git from preserving all the other edited files.
+  for (const path of ownedPaths) {
+    const tracked = git(wt.path, ["ls-files", "--", path]).stdout;
+    if (!tracked && !existsSync(join(wt.path, path))) continue;
+    const staged = git(wt.path, ["add", "-A", "--", path]);
+    if (!staged.ok) throw new Error(`Cannot preserve ${path}: ${staged.stderr}`);
+  }
+  if (git(wt.path, ["diff", "--cached", "--quiet"]).ok) return;
+  const result = git(wt.path, [
+    "-c",
+    "user.name=Rune",
+    "-c",
+    "user.email=rune@localhost",
+    "-c",
+    "commit.gpgSign=false",
+    "commit",
+    "--no-verify",
+    "-qm",
+    `rune(worker): ${summary.replace(/\s+/g, " ").slice(0, 64)}`,
+  ]);
+  if (!result.ok) throw new Error(`Could not preserve worker changes: ${result.stderr}`);
+}
+
+/** Reapply a failed child's owned changes onto the new dispatch snapshot.
+ * git apply validates the complete patch before changing files. A conflict
+ * leaves the parent and original retained branch intact. */
+export function restoreWorkerChanges(
+  wt: WorkerWorktree,
+  previous: { branch: string; baseCommit: string },
+  ownedPaths: string[],
+): string[] {
+  const diff = git(
+    wt.path,
+    ["diff", previous.baseCommit, previous.branch, "--binary", "--", ...ownedPaths],
+    { raw: true },
+  );
+  if (!diff.ok) throw new Error(`Retained worker branch is unavailable: ${diff.stderr}`);
+  if (!diff.stdout) return [];
+  const check = git(wt.path, ["apply", "--check", "-"], { input: diff.stdout });
+  if (!check.ok)
+    throw new Error(
+      `Retained worker changes conflict with the current workspace. Inspect ${previous.branch}: ${check.stderr}`,
+    );
+  const applied = git(wt.path, ["apply", "-"], { input: diff.stdout });
+  if (!applied.ok) throw new Error(`Cannot restore retained worker changes: ${applied.stderr}`);
+  return git(
+    wt.path,
+    ["diff", "--name-only", "-z", previous.baseCommit, previous.branch, "--", ...ownedPaths],
+    { raw: true },
+  )
+    .stdout.split("\0")
+    .filter(Boolean);
+}
+
 export function mergeWorkerWorktree(
   repoRoot: string,
   wt: WorkerWorktree,
@@ -146,73 +300,69 @@ export function mergeWorkerWorktree(
   summary: string,
 ): MergeOutcome {
   const conflicts: string[] = [];
-
-  // Stage and commit only what the worker owned, in its own tree.
-  //
-  // A failing `git add` is usually a pathspec that never materialised — the
-  // worker was given three files to own and wrote two of them, which is not an
-  // error. So the staged set decides, not the exit code: nothing staged means
-  // the worker wrote nothing, which is a clean empty merge.
-  const add = git(wt.path, ["add", "-A", "--", ...ownedPaths]);
-  const nothing = git(wt.path, ["diff", "--cached", "--quiet"]);
-  if (nothing.ok) {
-    return { merged: true, conflicts, manifest: [], branch: wt.branch, reason: "no changes" };
+  const base = wt.baseCommit ?? git(wt.path, ["rev-parse", "HEAD"]).stdout;
+  try {
+    saveWorkerChanges(wt, ownedPaths, summary);
+  } catch (error) {
+    return { merged: false, conflicts, manifest: [], branch: wt.branch, reason: String(error) };
   }
-  if (!add.ok && !nothing.ok) {
-    // Something staged AND git complained: a real failure worth reporting.
-    const partial = git(wt.path, ["diff", "--cached", "--name-only"]);
-    if (!partial.stdout) {
-      return {
-        merged: false,
-        conflicts,
-        manifest: [],
-        branch: wt.branch,
-        reason: `git add: ${add.stderr}`,
-      };
-    }
-  }
-  const message = `rune(worker): ${summary.replace(/\s+/g, " ").trim().slice(0, 64) || "changes"}`;
-  const commit = git(wt.path, ["commit", "--no-verify", "-m", message]);
-  if (!commit.ok) {
-    return {
-      merged: false,
-      conflicts,
-      manifest: [],
-      branch: wt.branch,
-      reason: `git commit: ${commit.stderr}`,
-    };
-  }
-
-  // The manifest is git's, not the model's.
-  const stat = git(repoRoot, ["diff", "--name-only", "HEAD", wt.branch, "--", ...ownedPaths]);
-  const manifest = stat.ok && stat.stdout ? stat.stdout.split("\n").filter(Boolean) : [];
-
-  // Take the worker's version of each owned path. `checkout <branch> -- <path>`
-  // is a copy, not a merge, and that is correct here precisely BECAUSE
-  // ownership is exclusive: no one else was allowed to write these paths while
-  // the worker held them, so there is no third version to reconcile.
-  //
-  // The exception is a path the lead changed anyway (a manual edit, another
-  // tool, a hook). That is a genuine conflict, and it is detected by comparing
-  // the lead's current content against the seed the worker started from.
-  for (const path of manifest) {
-    const leadChanged = git(repoRoot, ["diff", "--quiet", "HEAD", "--", path]);
-    const workerBase = git(repoRoot, ["diff", "--quiet", "HEAD", `${wt.branch}^`, "--", path]);
-    // leadChanged.ok === true means "no difference from HEAD" — i.e. the lead
-    // did NOT change it. A difference on both sides is the conflict.
-    if (!leadChanged.ok && !workerBase.ok) {
+  const diff = git(wt.path, ["diff", "--name-only", "-z", base, "HEAD", "--", ...ownedPaths], {
+    raw: true,
+  });
+  if (!diff.ok)
+    return { merged: false, conflicts, manifest: [], branch: wt.branch, reason: diff.stderr };
+  const paths = diff.stdout.split("\0").filter(Boolean);
+  const manifest: string[] = [];
+  // Check the whole merge before touching the lead: a conflict does not leave
+  // half an API integrated. Compare against the dispatch snapshot, including
+  // untracked source, rather than against the repository's old HEAD.
+  for (const path of paths) {
+    try {
+      checkedWorkerPath(repoRoot, path);
+      checkedWorkerPath(wt.path, path);
+      const tree = git(wt.path, ["ls-tree", base, "--", path]).stdout;
+      const match = /^(\d+) blob ([a-f0-9]+)\t/.exec(tree);
+      const lead = join(repoRoot, path);
+      let current: string | null = null;
+      try {
+        const stat = lstatSync(lead);
+        const bytes = stat.isSymbolicLink() ? Buffer.from(readlinkSync(lead)) : readFileSync(lead);
+        const hash = spawnSync("git", ["hash-object", "--stdin"], {
+          cwd: repoRoot,
+          input: bytes,
+          encoding: "utf8",
+        });
+        const mode = stat.isSymbolicLink() ? "120000" : stat.mode & 0o111 ? "100755" : "100644";
+        current = `${mode}:${hash.stdout.trim()}`;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      if (current !== (match ? `${match[1]}:${match[2]}` : null)) conflicts.push(path);
+    } catch {
       conflicts.push(path);
-      continue;
     }
-    const take = git(repoRoot, ["checkout", wt.branch, "--", path]);
-    if (!take.ok) conflicts.push(path);
   }
-
-  // Never leave the merged files staged: the lead's own auto-commit decides
-  // what gets committed, and a surprise staged set would make it refuse.
-  if (manifest.length > 0) git(repoRoot, ["reset", "--quiet", "HEAD", "--", ...manifest]);
-
-  return { merged: conflicts.length === 0, conflicts, manifest, branch: wt.branch };
+  if (conflicts.length) return { merged: false, conflicts, manifest, branch: wt.branch };
+  for (const path of paths) {
+    const source = join(wt.path, path),
+      destination = join(repoRoot, path);
+    mkdirSync(dirname(destination), { recursive: true });
+    rmSync(destination, { force: true });
+    if (
+      existsSync(source) ||
+      (() => {
+        try {
+          return lstatSync(source).isSymbolicLink();
+        } catch {
+          return false;
+        }
+      })()
+    )
+      cpSync(source, destination, { verbatimSymlinks: true });
+    manifest.push(path);
+  }
+  // Filesystem integration leaves the user's existing Git index untouched.
+  return { merged: true, conflicts, manifest, branch: wt.branch };
 }
 
 /**
@@ -225,6 +375,8 @@ export function removeWorkerWorktree(
   wt: WorkerWorktree,
   keepBranch: boolean,
 ): void {
+  if (keepBranch && git(wt.path, ["status", "--porcelain"]).stdout)
+    throw new Error(`Worker checkout retained because it still has uncommitted work: ${wt.path}`);
   git(repoRoot, ["worktree", "remove", "--force", wt.path]);
   if (!keepBranch) git(repoRoot, ["branch", "-D", wt.branch]);
 }
@@ -237,27 +389,39 @@ export function removeWorkerWorktree(
  * lead's tree or the internet — a "check" that installs dependencies from the
  * network is not a check, it is a second build.
  */
-export function runWorktreeChecks(
+export async function runWorktreeChecks(
   worktreePath: string,
   commands: string[],
   timeoutMs: number,
-): { outcome: "passed" | "failed" | "not_run"; failures: string[] } {
-  if (commands.length === 0) return { outcome: "not_run", failures: [] };
+  binaryPath = process.env.RUNE_TOOLS_BINARY ??
+    resolve(import.meta.dir, "../../../target/debug/rune-tools"),
+  signal?: AbortSignal,
+): Promise<{ outcome: "passed" | "failed" | "not_run"; failures: string[] }> {
+  if (!commands.length) return { outcome: "not_run", failures: [] };
   const failures: string[] = [];
+  // Build caches live outside the tree by default — Go's build cache, pip's
+  // wheel cache, npm's — and the sandbox will not let a check write there, so
+  // an offline `go build` failed on permissions before it failed on code.
+  // Point them into the worktree: writable, and thrown away with it. Cargo
+  // already builds into <cwd>/target.
+  const cacheRoot = join(worktreePath, ".rune", "cache");
+  const env = {
+    GOCACHE: join(cacheRoot, "go-build"),
+    PIP_CACHE_DIR: join(cacheRoot, "pip"),
+    npm_config_cache: join(cacheRoot, "npm"),
+    CARGO_TARGET_DIR: join(worktreePath, "target"),
+  };
   for (const command of commands) {
-    const res = spawnSync("/bin/sh", ["-c", command], {
-      cwd: worktreePath,
-      encoding: "utf8",
-      timeout: timeoutMs,
-      maxBuffer: 8 * 1024 * 1024,
-      env: { ...process.env, RUNE_WORKER_CHECK: "1" },
-    });
-    if (res.status !== 0) {
-      const detail = ((res.stderr || res.stdout) ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
-      failures.push(
-        `${command} → ${res.status === null ? "timed out" : `exit ${res.status}`}${detail ? `: ${detail}` : ""}`,
-      );
-    }
+    const result = await runContainedCheck(
+      binaryPath,
+      worktreePath,
+      command,
+      timeoutMs,
+      signal,
+      env,
+    );
+    if (!result.passed) failures.push(`${command} → ${result.detail}`);
+    if (signal?.aborted) break;
   }
-  return { outcome: failures.length === 0 ? "passed" : "failed", failures };
+  return { outcome: failures.length ? "failed" : "passed", failures };
 }

@@ -106,7 +106,7 @@ export function describeBreach(breach: BudgetBreach): string {
  * a lot of disk. Clamped to 1–16 because zero means "no delegation at all",
  * which is what `[subagents] mode = "off"` is for.
  */
-export function resolveMaxParallel(configured: unknown, fallback = 8): number {
+export function resolveMaxParallel(configured: unknown, fallback = 3): number {
   const n = Number(configured);
   if (!Number.isFinite(n)) return fallback;
   return Math.min(16, Math.max(1, Math.floor(n)));

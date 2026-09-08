@@ -15,6 +15,20 @@ import { describe, expect, test } from "bun:test";
 import { BudgetExceededError, CostTracker } from "../../../packages/llm-gateway/src/cost-tracker";
 
 describe("session spend ceiling", () => {
+  test("replaying cost rows preserves historical rates instead of repricing old work", () => {
+    const old = new CostTracker().record("claude-sonnet-5", "anthropic", {
+      inputTokens: 1000,
+      outputTokens: 100,
+    });
+    const replay = new CostTracker();
+    replay.recordEntry({ ...old, costUsd: 0.0042, listCostUsd: 0.0042 });
+    expect(replay.getLedger().totalCostUsd).toBe(0.0042);
+    replay.setSessionBudget(0.003);
+    expect(replay.preExecutionCheck(0)).toBe(false);
+    replay.setSessionBudget(0.01);
+    expect(replay.preExecutionCheck(0)).toBe(true);
+    expect(replay.getLedger().entries).toHaveLength(1);
+  });
   test("fires on a subscription route, where actual spend is always zero", () => {
     const t = new CostTracker({ budgets: [{ scope: "session", limitUsd: 1 }] });
     // gpt-5.6-sol on Codex: $0 spent, ~$1.25 of metered value.

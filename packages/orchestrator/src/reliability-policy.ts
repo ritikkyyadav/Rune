@@ -48,6 +48,8 @@ export interface ReliabilityPolicy {
   maxTurns: number;
   /** Second winds granted to a main run of real work; sub-agents get none. */
   secondWinds: number;
+  /** See `[reliability] evidenceGate` in config.ts. */
+  evidenceGate: "attest" | "refuse";
 }
 
 /** Today's shipped behavior, verbatim — the baseline every override starts from. */
@@ -69,6 +71,7 @@ export const DEFAULT_RELIABILITY: ReliabilityPolicy = {
   maxGreenfieldNudges: 1,
   maxTurns: 80,
   secondWinds: 2,
+  evidenceGate: "attest",
 };
 
 // Open-weight / budget-tier families fail differently than frontier models:
@@ -93,8 +96,12 @@ export function policyForModel(
     policy.maxStuckNudges = 2;
   }
   for (const [key, value] of Object.entries(overrides ?? {})) {
+    if (key === "evidenceGate") {
+      if (value === "attest" || value === "refuse") policy.evidenceGate = value;
+      continue;
+    }
     if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
-      policy[key as keyof ReliabilityPolicy] = Math.floor(value);
+      (policy as unknown as Record<string, number>)[key] = Math.floor(value);
     }
   }
   return policy;

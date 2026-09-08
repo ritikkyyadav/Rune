@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,6 +17,8 @@ import {
   mergeWorkerWorktree,
   removeWorkerWorktree,
   runWorktreeChecks,
+  saveWorkerChanges,
+  restoreWorkerChanges,
 } from "../../../packages/orchestrator/src/worker-worktree";
 
 /**
@@ -178,42 +188,168 @@ describe("P6B.1 — teardown", () => {
 describe.skipIf(process.platform === "win32")(
   "P6B.2 — the worker runs the project's checks in its own tree",
   () => {
-    test("a passing check reports passed", () => {
+    test("a passing check reports passed", async () => {
       const repo = makeRepo();
       const wt = createWorkerWorktree(repo, "w1")!;
-      const res = runWorktreeChecks(wt.path, ["true"], 10_000);
+      const res = await runWorktreeChecks(wt.path, ["true"], 10_000);
       expect(res.outcome).toBe("passed");
       expect(res.failures).toEqual([]);
       removeWorkerWorktree(repo, wt, false);
     });
 
-    test("a failing check reports failed and names the command", () => {
+    test("a failing check reports failed and names the command", async () => {
       const repo = makeRepo();
       const wt = createWorkerWorktree(repo, "w1")!;
-      const res = runWorktreeChecks(wt.path, ["echo boom >&2; exit 3"], 10_000);
+      const res = await runWorktreeChecks(wt.path, ["echo boom >&2; exit 3"], 10_000);
       expect(res.outcome).toBe("failed");
       expect(res.failures[0]).toContain("exit 3");
       expect(res.failures[0]).toContain("boom");
       removeWorkerWorktree(repo, wt, false);
     });
 
-    test("no configured checks is not_run, never a silent pass", () => {
+    test("no configured checks is not_run, never a silent pass", async () => {
       // The difference between "checks passed" and "no checks exist" is the
       // difference between a report and a claim.
       const repo = makeRepo();
       const wt = createWorkerWorktree(repo, "w1")!;
-      expect(runWorktreeChecks(wt.path, [], 10_000).outcome).toBe("not_run");
+      expect((await runWorktreeChecks(wt.path, [], 10_000)).outcome).toBe("not_run");
       removeWorkerWorktree(repo, wt, false);
     });
 
-    test("checks run in the worktree, not in the lead's tree", () => {
+    test("checks run in the worktree, not in the lead's tree", async () => {
       const repo = makeRepo();
       const wt = createWorkerWorktree(repo, "w1")!;
       writeFileSync(join(wt.path, "marker.txt"), "in the worktree\n");
-      const res = runWorktreeChecks(wt.path, ["test -f marker.txt"], 10_000);
+      const res = await runWorktreeChecks(wt.path, ["test -f marker.txt"], 10_000);
       expect(res.outcome).toBe("passed");
       expect(existsSync(join(repo, "marker.txt"))).toBe(false);
       removeWorkerWorktree(repo, wt, false);
     });
   },
 );
+
+describe("complete worker snapshots and integration", () => {
+  test("new source and installed dependencies are available and independent", () => {
+    const repo = makeRepo();
+    writeFileSync(join(repo, ".gitignore"), "node_modules/\n.rune/\n");
+    writeFileSync(join(repo, "src", "new-api.ts"), "export const version = 2;\n");
+    mkdirSync(join(repo, "node_modules", "fixture-dependency"), { recursive: true });
+    writeFileSync(
+      join(repo, "node_modules", "fixture-dependency", "index.js"),
+      "module.exports = 42;\n",
+    );
+    const wt = createWorkerWorktree(repo, "new-source")!;
+    expect(readFileSync(join(wt.path, "src", "new-api.ts"), "utf8")).toContain("version = 2");
+    const dependency = join("node_modules", "fixture-dependency", "index.js");
+    expect(readFileSync(join(wt.path, dependency), "utf8")).toContain("42");
+    writeFileSync(join(wt.path, dependency), "changed in worker");
+    expect(readFileSync(join(repo, dependency), "utf8")).toContain("42");
+    const merged = mergeWorkerWorktree(repo, wt, ["src/new-api.ts"], "no edits");
+    expect(merged.manifest).toEqual([]);
+    removeWorkerWorktree(repo, wt, false);
+  });
+
+  test("a dirty dispatch snapshot merges correctly and preserves the lead's index", () => {
+    const repo = makeRepo();
+    writeFileSync(join(repo, "src", "base.ts"), "export const base = 2;\n");
+    git(repo, ["add", "src/base.ts"]);
+    const indexBefore = git(repo, ["diff", "--cached"]);
+    const wt = createWorkerWorktree(repo, "dirty")!;
+    writeFileSync(join(wt.path, "src", "base.ts"), "export const base = 3;\n");
+    expect(mergeWorkerWorktree(repo, wt, ["src/base.ts"], "improve").merged).toBe(true);
+    expect(readFileSync(join(repo, "src", "base.ts"), "utf8")).toContain("base = 3");
+    expect(git(repo, ["diff", "--cached"])).toBe(indexBefore);
+    removeWorkerWorktree(repo, wt, false);
+  });
+
+  test("a concurrent lead edit refuses the entire integration", () => {
+    const repo = makeRepo(),
+      wt = createWorkerWorktree(repo, "conflict")!;
+    writeFileSync(join(wt.path, "src", "base.ts"), "worker");
+    writeFileSync(join(wt.path, "src", "new.ts"), "worker feature");
+    writeFileSync(join(repo, "src", "base.ts"), "user");
+    const result = mergeWorkerWorktree(repo, wt, ["src/base.ts", "src/new.ts"], "changes");
+    expect(result.conflicts).toEqual(["src/base.ts"]);
+    expect(result.manifest).toEqual([]);
+    expect(existsSync(join(repo, "src", "new.ts"))).toBe(false);
+    expect(readFileSync(join(repo, "src", "base.ts"), "utf8")).toBe("user");
+    removeWorkerWorktree(repo, wt, true);
+  });
+
+  test("a worker can delete an owned file", () => {
+    const repo = makeRepo(),
+      wt = createWorkerWorktree(repo, "delete")!;
+    rmSync(join(wt.path, "src", "base.ts"));
+    expect(mergeWorkerWorktree(repo, wt, ["src/base.ts"], "remove").merged).toBe(true);
+    expect(existsSync(join(repo, "src", "base.ts"))).toBe(false);
+    removeWorkerWorktree(repo, wt, false);
+  });
+
+  test("failed work cannot be discarded by keeping only an empty branch", () => {
+    const repo = makeRepo(),
+      wt = createWorkerWorktree(repo, "failed")!;
+    writeFileSync(join(wt.path, "src", "base.ts"), "unfinished implementation");
+    expect(() => removeWorkerWorktree(repo, wt, true)).toThrow("uncommitted work");
+    expect(existsSync(join(wt.path, "src", "base.ts"))).toBe(true);
+  });
+
+  test("missing isolation never executes a post-build check", async () => {
+    const repo = makeRepo();
+    const result = await runWorktreeChecks(
+      repo,
+      ["touch escaped-check"],
+      1000,
+      "/missing/native-tool",
+    );
+    expect(result.outcome).toBe("failed");
+    expect(existsSync(join(repo, "escaped-check"))).toBe(false);
+  });
+});
+
+test("a follow-up restores retained changes and can merge without repeating the edit", () => {
+  const repo = makeRepo();
+  const first = createWorkerWorktree(repo, "failed-first")!;
+  writeFileSync(join(first.path, "src/base.ts"), "export const base = 7;\n");
+  // A missing second owned file must not suppress staging the first file.
+  saveWorkerChanges(first, ["src/base.ts", "src/never-created.ts"], "partial work");
+  const previous = { branch: first.branch, baseCommit: first.baseCommit! };
+  removeWorkerWorktree(repo, first, true);
+  expect(readFileSync(join(repo, "src/base.ts"), "utf8")).not.toContain("7");
+  const next = createWorkerWorktree(repo, "follow-up")!;
+  expect(restoreWorkerChanges(next, previous, ["src/base.ts"])).toEqual(["src/base.ts"]);
+  expect(readFileSync(join(next.path, "src/base.ts"), "utf8")).toContain("7");
+  expect(mergeWorkerWorktree(repo, next, ["src/base.ts"], "verified retained work").merged).toBe(
+    true,
+  );
+  expect(readFileSync(join(repo, "src/base.ts"), "utf8")).toContain("7");
+  removeWorkerWorktree(repo, next, false);
+});
+
+import { WorkerIsolationError } from "../../../packages/orchestrator/src/worker-worktree";
+import { WorkerSnapshotError } from "../../../packages/orchestrator/src/worker-snapshot";
+
+test("a checkout that cannot be created is an isolation error; a partial snapshot is a snapshot error; neither leaves debris", () => {
+  const blocked = makeRepo();
+  writeFileSync(join(blocked, ".rune"), "not a directory");
+  expect(() => createWorkerWorktree(blocked, "blocked")).toThrow(WorkerIsolationError);
+
+  const partial = makeRepo();
+  symlinkSync("/etc/hosts", join(partial, "escape"));
+  expect(() => createWorkerWorktree(partial, "partial")).toThrow(WorkerSnapshotError);
+  expect(git(partial, ["worktree", "list"])).not.toContain("partial");
+  expect(git(partial, ["branch", "--list", "rune/worker-partial"])).toBe("");
+});
+
+test("a worktree reports what its provisioning cost", () => {
+  const repo = makeRepo();
+  writeFileSync(join(repo, ".gitignore"), "node_modules/\n.rune/\n");
+  writeFileSync(join(repo, "src", "new.ts"), "export const n = 1;\n");
+  mkdirSync(join(repo, "node_modules", "dep"), { recursive: true });
+  writeFileSync(join(repo, "node_modules", "dep", "index.js"), "module.exports = 1;\n");
+  const wt = createWorkerWorktree(repo, "stats")!;
+  expect(wt.provisioning).toMatchObject({ untrackedFiles: 2, provisioned: ["node_modules"] });
+  expect(wt.provisioning!.untrackedBytes).toBeGreaterThan(0);
+  expect(wt.provisioning!.snapshotMs).toBeGreaterThanOrEqual(0);
+  expect(wt.provisioning!.provisionMs).toBeGreaterThanOrEqual(0);
+  removeWorkerWorktree(repo, wt, false);
+});

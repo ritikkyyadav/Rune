@@ -1,3 +1,4 @@
+import type { VisualReviewState } from "./visual-verification";
 // ─── Task state: the spine of a run ───
 //
 // Why this exists: the agent's understanding of WHAT IT IS DOING used to live
@@ -30,6 +31,7 @@
 
 import type { SessionEvent } from "@rune/shared";
 import { countTokens } from "./tokenizer";
+import { missingStepEvidence, stepShape } from "./step-evidence";
 
 // The plan-ledger wire shapes live in `@rune/protocol`: `todo_updated` and
 // `handoff` carry them to every surface, so the union and its evidence counts
@@ -121,6 +123,7 @@ export interface TaskState {
   filesRead: string[];
   /** One-line decisions/assumptions worth remembering across compaction. */
   decisions: string[];
+  visualReview?: VisualReviewState;
   verification: {
     status: "none" | "passed" | "failed" | "unavailable";
     attempts: number;
@@ -357,7 +360,10 @@ function mergeEvidence(a: StepEvidence | undefined, b: StepEvidence | undefined)
     out.answers += src.answers;
     out.delegations += src.delegations;
     out.looks += src.looks;
-    out.writesSinceCheck += src.writesSinceCheck ?? 0;
+    // A later check covers earlier edits. Adding both accumulators made a
+    // repaired step stay unproven forever after its passing re-check.
+    if (src.lastCheck) out.writesSinceCheck = src.writesSinceCheck ?? 0;
+    else out.writesSinceCheck += src.writesSinceCheck ?? 0;
   }
   // The later check wins: `b` is the more recent accumulator by convention.
   out.lastCheck = b?.lastCheck ?? a?.lastCheck;
@@ -417,6 +423,7 @@ export function isReportStep(content: string): boolean {
 
 export function stepReceipt(item: TodoItem): string {
   if (item.unproven === "check_failed") return "unproven — last check failed";
+  if (item.unproven && item.unprovenReason) return `unproven — ${item.unprovenReason}`;
   if (item.unproven === "no_evidence") return "unproven — nothing ran";
   if (item.closedBy === "report") return "closed by report";
   const ev = item.evidence;
@@ -500,8 +507,20 @@ export class TaskStateStore {
    * minute the step did not have. Same lifetime as `pending`, same reason.
    */
   private pendingWrites: string[] = [];
-  /** Completion keys refused once; the second submission is accepted as unproven. */
+  /** Completion keys refused once (refuse mode only); the second submission is accepted as unproven. */
   private refusedOnce = new Set<string>();
+  /** Steps already asked for a kind — the ask is made once per step, not on every plan write. */
+  private kindAsked = new Set<string>();
+  /**
+   * What a completion with nothing behind it gets. `attest` (the default)
+   * accepts it, marks the step unproven, and says so in one line of fact;
+   * `refuse` sends the list back once. See `[reliability] evidenceGate`.
+   */
+  private gate: "attest" | "refuse" = "attest";
+
+  setEvidenceGate(mode: "attest" | "refuse"): void {
+    this.gate = mode;
+  }
   /**
    * Id counters for the narrative. Restored from the snapshot rather than kept
    * only in memory: a resumed session that started again at `h1` would give
@@ -685,7 +704,15 @@ export class TaskStateStore {
     for (const item of items) {
       if (item.status !== "completed") continue;
       const prev = old.get(todoKey(item.content));
-      if (prev?.status === "completed") continue;
+      if (prev?.status === "completed") {
+        // An unproven step re-submitted after a fix landed is closing AGAIN
+        // as far as the check is concerned: the writes since the failing
+        // check are exactly what needs compiling before the mark can clear.
+        if (prev.unproven && (this.pending.writesSinceCheck ?? 0) > 0) {
+          out.push({ item, uncheckedWrites: true });
+        }
+        continue;
+      }
       const ev =
         prev?.status === "in_progress"
           ? (prev.evidence ?? emptyEvidence())
@@ -704,11 +731,15 @@ export class TaskStateStore {
    *   progress, plus everything observed since the last accepted list (for
    *   steps that were never marked in progress — the model often works first
    *   and reports after).
-   * - Zero evidence, or a last check that FAILED, refuses the list once with
-   *   a reason the model reads as the tool result. The same completion
-   *   re-submitted is then accepted and marked `unproven` — the harness
-   *   cannot know whether a thinking-only step needed a tool, so it never
-   *   deadlocks the model; it makes the claim visible instead.
+   * - Zero evidence, or a last check that FAILED, closes the step as
+   *   `unproven` and says so in ONE line of fact — never an instruction to
+   *   re-run or re-submit, which weaker models echoed on screen for whole
+   *   turns. The harness cannot know whether a thinking-only step needed a
+   *   tool, so it never argues; it makes the claim visible instead. (In
+   *   `refuse` mode the list comes back once, as one line, and the
+   *   re-submission is accepted as unproven.) An unproven step re-submitted
+   *   after real work landed is re-judged on that work, so a fix clears the
+   *   mark without the step being re-opened.
    * - Exactly one item may be in progress; extras are demoted, and the note
    *   says so.
    * - Unfinished steps that vanish from the list are noted and logged. A
@@ -728,6 +759,7 @@ export class TaskStateStore {
       .filter((t) => typeof t.content === "string" && t.content.trim().length > 0)
       .map((t) => ({
         content: t.content.slice(0, 300),
+        ...(["inspect", "change", "verify"].includes(t.kind ?? "") ? { kind: t.kind } : {}),
         status: t.status === "in_progress" || t.status === "completed" ? t.status : "pending",
       }));
     let seenActive = false;
@@ -761,10 +793,32 @@ export class TaskStateStore {
     const next: TodoItem[] = cleaned.map((t, index) => {
       const key = todoKey(t.content);
       const prev = oldByKey.get(key);
-      const item: TodoItem = { content: t.content, status: t.status };
+      const item: TodoItem = {
+        content: t.content,
+        status: t.status,
+        ...(t.kind || prev?.kind ? { kind: t.kind ?? prev?.kind } : {}),
+      };
       if (prev?.evidence) item.evidence = structuredClone(prev.evidence);
       if (prev?.unproven && t.status === "completed" && prev.status === "completed") {
-        item.unproven = prev.unproven;
+        // Re-judged on what landed since: evidence clears the mark, so a fix
+        // counts without the model re-opening the step. With nothing new
+        // behind it, the mark stands.
+        const since = mergeEvidence(prev.evidence, this.pending);
+        item.evidence = { ...since, completedAt: now };
+        const stillFailing =
+          !!since.lastCheck && !since.lastCheck.passed && (since.writesSinceCheck ?? 0) === 0;
+        if (
+          enforce &&
+          evidenceWeight(this.pending) > 0 &&
+          !stillFailing &&
+          !missingStepEvidence(item, since)
+        ) {
+          item.evidence = { ...since, completedAt: now };
+          completed.push(item);
+        } else {
+          item.unproven = prev.unproven;
+          item.unprovenReason = missingStepEvidence(item, since) ?? prev.unprovenReason;
+        }
       }
       // The report mark rides the same way, or the very next plan write would
       // turn "closed by report" back into a bare tick with no receipt.
@@ -784,6 +838,7 @@ export class TaskStateStore {
         item.evidence = ev;
         if (enforce) {
           const weight = evidenceWeight(ev);
+          const missing = missingStepEvidence(item, ev);
           const failedCheck =
             !!ev.lastCheck && !ev.lastCheck.passed && (ev.writesSinceCheck ?? 0) === 0;
           if (weight === 0 && !failedCheck && isReportStep(t.content)) {
@@ -794,19 +849,22 @@ export class TaskStateStore {
             notes.push(
               `Step ${index + 1} closes with your report to the user — it needs no tool evidence.`,
             );
-          } else if (weight === 0 || failedCheck) {
-            if (this.refusedOnce.has(key)) {
-              item.unproven = failedCheck ? "check_failed" : "no_evidence";
-            } else {
+          } else if (missing || failedCheck) {
+            const kind = failedCheck ? "check_failed" : "no_evidence";
+            // One line of fact, and no verb aimed at the model. The old
+            // wording ("Fix it and re-run the check, or re-submit to mark the
+            // step unproven") was answered by narrating exactly that on
+            // screen, seven messages in a row.
+            const fact = failedCheck
+              ? `its last check failed${ev.lastCheck?.command ? ` (${ev.lastCheck.command}${ev.lastCheck.summary ? `: ${ev.lastCheck.summary}` : ""})` : ""}`
+              : (missing ?? "nothing ran while it was open");
+            if (this.gate === "refuse" && !this.refusedOnce.has(key)) {
               this.refusedOnce.add(key);
-              refused.push({
-                index,
-                content: t.content,
-                kind: failedCheck ? "check_failed" : "no_evidence",
-                reason: failedCheck
-                  ? `the last check during this step FAILED${ev.lastCheck?.command ? ` (${ev.lastCheck.command})` : ""}${ev.lastCheck?.summary ? `: ${ev.lastCheck.summary}` : ""}. Fix it and re-run the check, or re-submit to mark the step unproven.`
-                  : "nothing ran while it was open — no file written, no command run, no check, no read. Do the step, or re-submit the same list to mark it unproven (the user will see it as unproven, not done).",
-              });
+              refused.push({ index, content: t.content, kind, reason: `${fact}.` });
+            } else {
+              item.unproven = kind;
+              item.unprovenReason = fact;
+              notes.push(`Step ${index + 1} closed unproven: ${fact}.`);
             }
           }
         }
@@ -814,6 +872,31 @@ export class TaskStateStore {
       }
       return item;
     });
+
+    // A step whose wording names no action the ledger recognises will close
+    // on "something ran" — exactly the freedom the evidence gate exists to
+    // remove. The `kind` field is the structural answer; ask for it once per
+    // step, as a note, never as a refusal. Completed steps are judged on
+    // their evidence already, and a report step needs none.
+    const unshaped = next
+      .map((item, index) => ({ item, index }))
+      .filter(
+        ({ item }) =>
+          item.status !== "completed" &&
+          !item.kind &&
+          !isReportStep(item.content) &&
+          !stepShape(item).recognised &&
+          !this.kindAsked.has(todoKey(item.content)),
+      );
+    if (unshaped.length > 0) {
+      for (const { item } of unshaped) this.kindAsked.add(todoKey(item.content));
+      const one = unshaped.length === 1;
+      notes.push(
+        `Step${one ? "" : "s"} ${unshaped.map((u) => u.index + 1).join(", ")} name${one ? "s" : ""} no recognisable action; ` +
+          `set kind (inspect | change | verify) on ${one ? "it" : "them"} so ${one ? "its" : "their"} evidence can be checked — ` +
+          "without a kind, a completion needs only that something ran.",
+      );
+    }
 
     if (refused.length > 0) {
       this.touch();
@@ -897,9 +980,11 @@ export class TaskStateStore {
     delete this.state.kindRevised;
     delete this.state.narrative;
     delete this.state.progress;
+    delete this.state.visualReview;
     this.hypothesisSeq = 0;
     this.decisionSeq = 0;
     this.refusedOnce.clear();
+    this.kindAsked.clear();
     this.logEvent("boundary", `new goal: ${nextGoal.slice(0, 120)}`);
   }
 
@@ -1047,6 +1132,11 @@ export class TaskStateStore {
    * Record something the run produced. Deduplicated on (kind, ref): a file
    * edited nine times is one artifact, not nine.
    */
+  setVisualReview(review: VisualReviewState): void {
+    this.state.visualReview = structuredClone(review);
+    this.touch();
+  }
+
   recordArtifact(kind: ArtifactKind, ref: string): TaskArtifact | null {
     const trimmed = ref.trim();
     if (!trimmed) return null;
@@ -1133,9 +1223,14 @@ export class TaskStateStore {
     const todos = this.state.todos;
     if (todos.length === 0) return undefined;
     const proven = todos.filter(
-      (t) => t.status === "completed" && !t.unproven && evidenceWeight(t.evidence) > 0,
+      (t) =>
+        t.status === "completed" &&
+        !t.unproven &&
+        evidenceWeight(t.evidence) > 0 &&
+        !missingStepEvidence(t, t.evidence),
     ).length;
-    return proven / todos.length;
+    const review = this.state.visualReview;
+    return (proven + (review?.status === "reviewed" ? 1 : 0)) / (todos.length + (review ? 1 : 0));
   }
 
   addClarification(question: string, answer: string): void {
@@ -1419,7 +1514,14 @@ export class TaskStateStore {
         );
       }
       if (s.handoff) {
-        lines.push(`Resume note (${s.handoff.reason}): continue from the next unfinished step.`);
+        // Stated as fact, not as an instruction: "continue from the next
+        // unfinished step" was echoed verbatim by weaker models as "Continuing
+        // from the next unfinished step" at the top of every message. The
+        // unfinished steps are already listed below; the model does not need to
+        // be told to work them, and being told invites it to narrate that it is.
+        lines.push(
+          `Resumed after: ${s.handoff.reason}. Unfinished steps remain in the list below.`,
+        );
       }
       if (detail >= 1 && s.clarifications.length > 0) {
         for (const c of s.clarifications.slice(-4)) {
@@ -1476,6 +1578,10 @@ export class TaskStateStore {
             .join(" | ")}`,
         );
       }
+      if (s.visualReview)
+        lines.push(
+          `UI review: ${s.visualReview.status}${s.visualReview.missing.length ? ` — ${s.visualReview.missing.join("; ")}` : " (screenshots, responsive viewports, interaction observed)"}`,
+        );
       if (s.verification.status !== "none") {
         // "failed" shows its first error line at high detail; "unavailable"
         // ALWAYS shows why — after a session that wrote files, "nothing
@@ -1493,9 +1599,15 @@ export class TaskStateStore {
             rep,
         );
       }
+      // State is data. Every imperative this block ever carried came back as
+      // the opening of the model's next message ("Act on the next open step"
+      // became "Picking up the open step" at the top of 19 of 25 messages in
+      // one run), so the tail states how the list works and the one thing
+      // the model must not do with it — and issues no instruction it could
+      // repeat back.
       lines.push(
-        "Keep this list accurate with todo_write. If the plan changed, rewrite it. A step is completed only by evidence — something must have run while it was open; a step that is itself the report to the user closes with that report.",
-        "This block is harness state, not a message to answer: do not acknowledge, restate or summarize it. Act on the next open step.",
+        "Kept current by todo_write. A step closes on evidence — something ran while it was open — or, for a step that is itself the report to the user, on that report.",
+        "This block is harness state, not a message to answer: never acknowledge, restate, or narrate it, and never open a message by naming which step you are on.",
       );
       const block = lines.join("\n");
       if (countTokens(block) <= maxTokens || detail === 0) return block;

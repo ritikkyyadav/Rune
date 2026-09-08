@@ -81,6 +81,8 @@ export const SUBAGENT_RESULT_SCHEMA: Record<string, unknown> = {
     unresolved: { type: "array", items: { type: "string" }, description: "What remains open." },
     stopReason: { type: "string" },
     toolCallCount: { type: "integer" },
+    integration: { type: "string", enum: ["merged", "retained", "shared"] },
+    branch: { type: "string" },
   },
 };
 

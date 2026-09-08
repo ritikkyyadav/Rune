@@ -28,6 +28,9 @@ describe("reliability policy", () => {
       // 2026-09-05; they were a constant in engine.ts before.
       maxTurns: 80,
       secondWinds: 2,
+      // The evidence gate joined on 2026-09-06: attest accepts an unbacked
+      // completion as unproven in one line; refuse sends the list back once.
+      evidenceGate: "attest",
     });
   });
 
