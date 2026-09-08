@@ -1752,7 +1752,7 @@ async function main() {
     ["/status", "Session status"],
     ["/providers", "List providers"],
     ["/keys", "Manage API keys"],
-    ["/mcp", "List MCP servers"],
+    ["/mcp", "MCP connectors — health, tool count · reconnect <server>"],
     ["/team", "Other Rune instances in this repo — status · send · claim"],
     ["/skills", "Browse & search skills"],
     ["/research", "Research — propose a plan, then a cited report"],
@@ -2204,29 +2204,19 @@ async function main() {
         return;
       }
 
-      if (input === "/mcp") {
-        const servers = await engine.listMcpServers();
-        process.stdout.write(`  ${bold(text("MCP Servers"))}\n\n`);
-        if (servers.length === 0) {
+      if (input === "/mcp" || input.startsWith("/mcp ")) {
+        const rest = input.slice("/mcp".length).trim();
+        const [verb, who] = rest.split(/\s+/, 2);
+        if (verb === "reconnect") {
+          const back = who ? await engine.reconnectMcpServer(who) : false;
           process.stdout.write(
-            `    ${muted("None configured. Add servers in ")}${info(".rune/mcp.json")}${muted(".")}\n\n`,
+            who
+              ? `  ${back ? ok(glyph("verified")) : warn(glyph("retry"))} ${text(who)} ${muted(back ? "reconnected" : "did not come back — rune mcp doctor")}\n\n`
+              : `  ${muted("usage: /mcp reconnect <server>")}\n\n`,
           );
         } else {
-          for (const s of servers) {
-            const dot =
-              s.health === "healthy" ? ok("●") : s.health === "degraded" ? warn("●") : faint("○");
-            const proto = s.protocolVersion ? muted(` · MCP ${s.protocolVersion}`) : "";
-            process.stdout.write(
-              `    ${dot} ${text(s.name)} ${muted(`(${s.kind}, ${s.toolCount} tools)`)}${proto}\n`,
-            );
-            if (s.tools.length) {
-              process.stdout.write(`      ${faint(s.tools.join(", "))}\n`);
-            }
-            if (s.lastError) {
-              process.stdout.write(`      ${warn("⚠")} ${faint(s.lastError)}\n`);
-            }
-          }
-          process.stdout.write("\n");
+          const { mcpPanel } = await import("./ui/mcp-panel");
+          process.stdout.write(`${mcpPanel(await engine.listMcpServers())}\n\n`);
         }
         showPrompt();
         return;

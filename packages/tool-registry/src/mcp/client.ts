@@ -2,8 +2,10 @@ import { type Logger, createLogger } from "@rune/shared";
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
 import {
   HttpTransport,
+  McpHttpStatusError,
   McpSessionExpiredError,
   McpUnauthorizedError,
+  SseTransport,
   StdioTransport,
 } from "./transport";
 import type { McpAuthProvider } from "./transport";
@@ -97,9 +99,12 @@ type Pending = {
  * health (ping-based, restart-safe).
  */
 export class McpClient {
+  private config: McpClientConfig;
   private serverName: string;
   private transport: McpTransport;
   private transportKind: "stdio" | "http";
+  /** True once we have dropped from Streamable HTTP to the 2024-11-05 SSE pair. */
+  private legacySse = false;
   private logger: Logger;
   private onEvent?: (ev: McpEvent) => void;
   private onToolsChangedCb?: () => void;
@@ -144,6 +149,7 @@ export class McpClient {
   private progressSeq = 0;
 
   constructor(config: McpClientConfig) {
+    this.config = config;
     this.serverName = config.name;
     this.authProvider = config.auth;
     this.logger = (config.logger ?? createLogger("mcp")).child(config.name);
@@ -206,6 +212,15 @@ export class McpClient {
       await Promise.race([this.handshake(), exitDuringInit]);
       this.needsAuth = false;
     } catch (err) {
+      // A server of the older vintage answers our POST with "there is nothing
+      // here" — because on 2024-11-05 the URL you were given is a GET stream
+      // and the POST endpoint is something the SERVER names. Retry once in
+      // that dialect before calling the connector broken: which protocol
+      // version a vendor deployed is not something a user should have to know.
+      if (await this.tryLegacySse(err)) {
+        this.needsAuth = false;
+        return;
+      }
       // An unauthorized connector is a MISSING CAPABILITY, not a broken
       // session. It stays registered with zero tools and a clear reason, so
       // `rune mcp list/doctor` can tell the user exactly what to run, and the
@@ -214,6 +229,74 @@ export class McpClient {
     } finally {
       this.startupExitReject = null;
     }
+  }
+
+  /**
+   * Swap a Streamable HTTP transport for the legacy SSE pair and re-handshake.
+   *
+   * Only 404/405/406 qualify: those are the three ways a server says "not this
+   * method, not this route". A 500 is a server that understood us and broke,
+   * and retrying it in another dialect would just hide the real error.
+   */
+  private async tryLegacySse(err: unknown): Promise<boolean> {
+    if (this.legacySse || this.transportKind !== "http") return false;
+    if (!(err instanceof McpHttpStatusError)) return false;
+    if (![404, 405, 406].includes(err.status)) return false;
+    const url = this.config.url;
+    if (!url) return false;
+
+    this.logger.info(`streamable HTTP refused (${err.status}) — retrying as 2024-11-05 SSE`);
+    const streamable = this.transport;
+    try {
+      await streamable.close();
+    } catch {
+      // Nothing was open.
+    }
+    this.legacySse = true;
+    this.transport = this.buildSseTransport(url);
+    try {
+      await this.transport.start();
+      await this.handshake();
+      return true;
+    } catch (retryErr) {
+      // The fallback is a second chance, not a second failure mode: put the
+      // streamable transport back and report the ORIGINAL error, which is the
+      // one that describes the server the user actually configured.
+      this.logger.warn(
+        `SSE fallback also failed: ${retryErr instanceof Error ? retryErr.message : String(retryErr)}`,
+      );
+      try {
+        await this.transport.close();
+      } catch {
+        // Already down.
+      }
+      this.legacySse = false;
+      this.transport = streamable;
+      this.transport.setMessageHandler((msg) => this.handleMessage(msg));
+      this.transport.setLifecycleHandler?.((ev) => this.handleLifecycle(ev));
+      return false;
+    }
+  }
+
+  private buildSseTransport(url: string): McpTransport {
+    const transport = new SseTransport({
+      url,
+      headers: this.config.headers,
+      logger: this.logger,
+      auth: this.config.auth,
+    });
+    transport.setMessageHandler((msg) => this.handleMessage(msg));
+    transport.setLifecycleHandler((ev) => this.handleLifecycle(ev));
+    return transport;
+  }
+
+  /**
+   * Which dialect this connection actually speaks. `/mcp` and `rune mcp list`
+   * show it, because "http" covering two incompatible protocols is exactly the
+   * ambiguity that let the fallback go missing for a release.
+   */
+  get dialect(): "stdio" | "http" | "sse" {
+    return this.transportKind === "stdio" ? "stdio" : this.legacySse ? "sse" : "http";
   }
 
   /**
