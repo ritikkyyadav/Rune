@@ -63,6 +63,9 @@ pub enum ToolCapability {
     Network,
 }
 
+// Windows has no isolation backend, so the profile builders that read these
+// are compiled out there and clippy (-D warnings) sees dead methods.
+#[cfg_attr(not(any(target_os = "macos", target_os = "linux")), allow(dead_code))]
 impl ToolCapability {
     fn reads_workspace(self) -> bool {
         matches!(self, Self::WorkspaceRead | Self::WorkspaceWrite)
@@ -114,6 +117,7 @@ pub struct SpawnPlan {
 /// `/tmp` is a symlink to `/private/tmp`, so a rule written against the
 /// unresolved path silently matches nothing — a deny that denies nothing is
 /// worse than no deny at all.
+#[cfg_attr(not(any(target_os = "macos", target_os = "linux")), allow(dead_code))]
 fn real(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
