@@ -32,7 +32,7 @@ import {
   resultSignature,
 } from "./call-signature";
 import { TurnRefunds } from "./turn-refunds";
-import { doctrineForRequest } from "./prompts";
+import { doctrineForRequest, type JitDoctrineSection } from "./prompts";
 import type { IncidentContext, IncidentReporter, IncidentSeverity } from "@rune/shared";
 import type { IncidentClass } from "@rune/shared";
 import type { ToolCallInput, ToolCallOutput } from "@rune/tool-registry";
@@ -141,6 +141,13 @@ export interface AgentLoopConfig {
    */
   maxSecondWinds?: number;
   systemPrompt: string;
+  /**
+   * The same prompt rendered for the WORKING phase — used from turn 2 of a
+   * request on, when the opening rituals (read-back, ambiguity, plan-first)
+   * are no longer in play (P13.1). Absent = one prompt for every turn, which
+   * is what every caller got before this existed.
+   */
+  workingSystemPrompt?: string;
   temperature?: number;
   priorMessages?: Message[];
   contextEngine?: ContextEngine;
@@ -156,7 +163,7 @@ export interface AgentLoopConfig {
    * relevance (first sub-agent report, first visual write), null after — the
    * loop prefixes it to that tool result, where it lands in cached history.
    */
-  jitDoctrine?: (section: "delegation" | "interfaces") => string | null;
+  jitDoctrine?: (section: JitDoctrineSection) => string | null;
   /**
    * Per-request reasoning-effort routing. "conservative" runs ordinary turns
    * one notch below the thinkingEffort ceiling and LATCHES back to the ceiling
@@ -303,6 +310,17 @@ const TOOL_RESULT_TAIL_CHARS = 6_000;
  * chosen, silently, unless someone stops to ask.
  */
 const VISUAL_FILE_RE = /\.(html?|css|s[ac]ss|tsx|jsx|vue|svelte)$/i;
+
+/**
+ * How far back "named in the last N turns" looks when deciding which
+ * catalogued tools to advertise in full (P13.1).
+ *
+ * Twelve messages is roughly the last three exchanges. It does not need to be
+ * larger: promotion is sticky, so a tool named once at message three is still
+ * advertised at message ninety — the window only decides how soon a name is
+ * noticed, never how long the schema survives.
+ */
+const WARM_LOOKBACK_MESSAGES = 12;
 
 /**
  * A plan step that names a screen. Read at PLAN time so the art-direction
@@ -700,6 +718,45 @@ export class AgentLoop {
 
   getState(): AgentState {
     return this.state;
+  }
+
+  /**
+   * Promote catalogued tools that the recent conversation NAMED (P13.1).
+   *
+   * Only text the harness or the model wrote is scanned — user requests,
+   * harness notes, assistant prose, and the names of tools actually called.
+   * Tool RESULTS are deliberately excluded: a file the model happened to read
+   * could name every tool in the registry, and warming on foreign text would
+   * turn the catalog back into the eager surface it replaced.
+   *
+   * Total by construction. A registry double that predates this method (the
+   * unit suites hand the loop partial objects) costs the optimization for that
+   * turn and nothing else — the request still goes out.
+   */
+  private warmAdvertisedTools(): void {
+    const warm = (this.registry as Partial<ToolRegistry>).warmFromText;
+    if (typeof warm !== "function") return;
+    const parts: string[] = [];
+    for (const message of this.messages.slice(-WARM_LOOKBACK_MESSAGES)) {
+      for (const block of message.content) {
+        if (block.type === "text") parts.push(block.text);
+        else if (block.type === "tool_use") parts.push(block.toolName);
+      }
+    }
+    if (parts.length === 0) return;
+    try {
+      const promoted = warm.call(this.registry, parts.join("\n"));
+      if (promoted.length > 0) {
+        this.report(
+          "loop.tools_warmed",
+          "debug",
+          "warmTools",
+          `advertised ${promoted.join(", ")} in full — named in the conversation`,
+        );
+      }
+    } catch {
+      // Advertisement is an optimization; it never breaks a request.
+    }
   }
 
   /** Guarded incident report — component fixed to "agent-loop". */
@@ -1257,6 +1314,11 @@ export class AgentLoop {
         };
       }
 
+      // A tool NAMED in the recent conversation is a tool in play: promote it
+      // out of the catalog before the surface is resolved, so the request that
+      // needs it already carries its schema (P13.1).
+      this.warmAdvertisedTools();
+
       // Build inference request. Passing the model gates family-specific
       // tools (apply_patch for the Codex lineage); the model is fixed for the
       // life of this loop, so the advertised set stays stable per session.
@@ -1289,13 +1351,25 @@ export class AgentLoop {
       // final message and thirty refused calls.
       const tools = haltReportPending ? [] : advertised;
 
+      // ── Doctrine phase (P13.1) ──
+      // Turn 1 of a request is the opening: scope is still open, nothing has
+      // been read, and the read-back / ambiguity / plan-first sections are the
+      // guidance that matters. From turn 2 the model is executing, and those
+      // sections describe a decision already made — ~6 KB per request to say
+      // it. The engine hands both renderings; the loop picks by turn, so the
+      // prefix changes exactly ONCE per request, not per completion.
+      const phaseSystemPrompt =
+        turn > 1 && this.config.workingSystemPrompt
+          ? this.config.workingSystemPrompt
+          : this.config.systemPrompt;
+
       // Before building the request, apply context engine if available
       let requestMessages = this.messages;
-      let requestSystemPrompt = this.config.systemPrompt;
+      let requestSystemPrompt = phaseSystemPrompt;
 
       if (this.config.contextEngine) {
         const built = this.config.contextEngine.buildPrompt(
-          this.config.systemPrompt || "",
+          phaseSystemPrompt || "",
           tools.length > 0 ? tools : [],
           this.messages,
           this.config.retrievedChunks,
@@ -3256,6 +3330,21 @@ export class AgentLoop {
                 p.parsedArgs.files.some((f) => typeof f === "string" && VISUAL_FILE_RE.test(f)));
             if (visualWrite) {
               const sec = this.config.jitDoctrine("interfaces");
+              if (sec) {
+                resultContent = `[Doctrine — applies for the rest of the session]\n${sec}\n\n${resultContent}`;
+              }
+            }
+            // The design charter rides the moment a dashboard enters play —
+            // which, because `interactive_dashboard` is a catalog line until
+            // it is loaded, is the `load_tools` call that fetches its schema.
+            // That is strictly BEFORE the first render, not after it.
+            const dashboardInPlay =
+              p.tc.toolName === "interactive_dashboard" ||
+              (p.tc.toolName === "load_tools" &&
+                Array.isArray(p.parsedArgs.names) &&
+                p.parsedArgs.names.some((n) => n === "interactive_dashboard"));
+            if (dashboardInPlay) {
+              const sec = this.config.jitDoctrine("dashboards");
               if (sec) {
                 resultContent = `[Doctrine — applies for the rest of the session]\n${sec}\n\n${resultContent}`;
               }

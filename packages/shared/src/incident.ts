@@ -94,6 +94,9 @@ export const INCIDENT_CLASSES = [
   "loop.batch_nudge",
   "loop.wrapup_reserve",
   "loop.effort_routed",
+  // A catalogued tool named in the conversation was promoted to a full schema
+  // for the rest of the session (P13.1, prompt overhead).
+  "loop.tools_warmed",
   "loop.effort_latched",
   "loop.effort_released",
   "loop.handoff",
