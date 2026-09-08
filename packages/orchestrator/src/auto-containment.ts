@@ -877,14 +877,14 @@ export function routeContainment(ctx: ContainmentContext): ContainmentOutcome {
           route: "sandbox-escape",
           label: "contained",
           instruction:
-            "This call asked to run outside the sandbox. Auto mode runs it inside instead. Re-issue " +
-            "the same command without the escape; if it genuinely needs network or a port, say which " +
+            "This call requested network access or a detached lifetime. Auto mode limits it to a " +
+            "foreground command with network denied. If it needs network or a port, say which " +
             "and why in one line and re-issue it — that reason is what gets recorded.",
           containedArgs: sandboxedArgs(action.args),
         }
       : defer(
           "sandbox-unavailable",
-          "This call needs to run outside the sandbox and this machine has no OS isolation backend, " +
+          "This call requests broader execution and this machine has no OS isolation backend, " +
             "so there is nothing to run it inside. Continue with the rest of the work; the step is " +
             "recorded and reported to the user when the turn ends.",
         );
@@ -929,13 +929,17 @@ function redirect(
 // ── Helpers ──
 
 /**
- * The two ways a bash call leaves the sandbox: `network: true` (explicit
- * escalation to the host with the internet) and `run_in_background: true`
- * (detached, binds ports, outlives the turn).
+ * Legacy helper name for broader execution: network effects or a process
+ * that outlives its call. Both retain filesystem containment in current tools;
+ * the fallback can still reduce them to foreground, network-denied work.
  */
 export function escapesSandbox(action: AutoModeAction): boolean {
   if (action.toolName !== "bash") return false;
-  return action.args.network === true || action.args.run_in_background === true;
+  return (
+    action.args.network === true ||
+    action.args.run_in_background === true ||
+    action.args.unsandboxed === true
+  );
 }
 
 /**
@@ -955,11 +959,12 @@ function scratchName(command: string): string {
   return `${target.replace(/[^\w.-]+/g, "-")}-contained`;
 }
 
-/** The same call with both escapes removed. */
+/** The same call with every escape removed — network, detachment, and the host. */
 function sandboxedArgs(args: Record<string, unknown>): Record<string, unknown> {
   const next = { ...args };
   delete next.network;
   delete next.run_in_background;
+  delete next.unsandboxed;
   return next;
 }
 

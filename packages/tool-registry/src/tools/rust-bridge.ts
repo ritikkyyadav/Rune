@@ -1,5 +1,9 @@
 import { isOsIsolationAvailable, isOsIsolationRequired } from "../sandbox-capability";
-import { isSandboxEnabled } from "../sandbox-mode";
+import {
+  isUnsandboxedFallbackAllowed,
+  resolveSandboxLaunch,
+  sandboxPathsFor,
+} from "../sandbox-mode";
 import type {
   ToolAttachment,
   ToolCallInput,
@@ -31,6 +35,33 @@ function liftAttachments(result: unknown): ToolAttachment[] {
 }
 
 /**
+ * The kernel says "Operation not permitted" and nothing else when Seatbelt or
+ * bubblewrap refuses a syscall, so a command that tripped a sandbox rule reads
+ * exactly like one with a bug. When a sandboxed run fails with that shape, the
+ * result carries a hint naming the likely restriction and the sanctioned way
+ * out — `unsandboxed: true` under the fallback override, or the user's
+ * excludedCommands under strict — so the model does not spend three turns
+ * guessing.
+ */
+const SANDBOX_DENIAL_RE =
+  /operation not permitted|permission denied|read-only file system|eperm|eacces|erofs|sandbox(?:-exec)?:|deny\(1\)|could not (?:create|write|open)|cannot create (?:directory|regular file)/i;
+
+export function sandboxDenialHint(
+  stderr: string,
+  exitCode: number | null | undefined,
+): string | null {
+  if (!stderr || exitCode === 0 || exitCode === undefined) return null;
+  if (!SANDBOX_DENIAL_RE.test(stderr)) return null;
+  const base =
+    "This command ran inside the OS sandbox and failed with a permission error, which is usually a " +
+    "sandbox restriction: writes are confined to the workspace, temp and Rune's cache; credential " +
+    "stores (~/.ssh, ~/.aws, keychains) are unreadable; the network is closed unless network: true.";
+  return isUnsandboxedFallbackAllowed()
+    ? `${base} If the command genuinely needs host access, re-run it once with unsandboxed: true — it then runs on the host under the regular permission prompt. If it only needs the network, use network: true instead.`
+    : `${base} The sandbox is strict, so unsandboxed: true is not available. If the command genuinely needs host access, tell the user which access and why; they can add it to [sandbox] excludedCommands or change the override with /sandbox.`;
+}
+
+/**
  * Creates a ToolHandler that delegates to the rune-tools Rust binary.
  * Each tool invocation spawns: rune-tools --workspace <root> <subcommand>
  * with JSON piped to stdin, JSON read from stdout.
@@ -57,38 +88,54 @@ export function createRustToolHandler(
       }
       try {
         const args = ["--workspace", input.workspaceRoot];
-        // Sandbox-level tools run inside the OS sandbox (deny-net, confined
-        // writes) — EXCEPT when the model explicitly requested network access
-        // (network: true), which escalates to an unsandboxed run, or when the
-        // user disabled the sandbox entirely (/sandbox off, --no-sandbox).
-        // The per-call escalation is permission-gated upstream: the broker
-        // never auto-approves a network run outside 4th gear.
-        if (
-          schema.permissionLevel === "sandbox" &&
-          input.args.network !== true &&
-          isSandboxEnabled()
-        ) {
-          // requireOs: the user declared containment mandatory. When this
-          // machine has no isolation backend, refusing beats the factory's
-          // silent path-guard-only degradation.
-          if (isOsIsolationRequired() && !isOsIsolationAvailable()) {
+        // The payload the binary reads. For bash it is the model's arguments
+        // with the policy folded in: `unsandboxed` never reaches Rust (it is a
+        // launch decision, made here), and the path lists are ALWAYS taken
+        // from the trusted policy — whatever the model put in that field is
+        // dropped, so a call cannot widen its own sandbox.
+        let payload: Record<string, unknown> = input.args;
+        // Network is a separate capability, never permission to drop filesystem
+        // isolation. The Rust executor reads network from this call's payload.
+        if (schema.permissionLevel === "sandbox") {
+          const launch = resolveSandboxLaunch(input.args);
+          if (launch.refusal) {
             return {
               callId: input.callId,
               toolName: input.toolName,
               success: false,
               result: "",
-              error:
-                "OS sandbox required ([sandbox] requireOs = true) but no isolation backend " +
-                "is available on this machine (sandbox-exec/bwrap missing). Install one, or " +
-                "set requireOs = false to allow degraded (path-guard-only) execution.",
+              error: launch.refusal,
               durationMs: Math.round(performance.now() - start),
             };
           }
-          args.push("--sandbox");
+          const { unsandboxed: _dropped, sandbox_paths: _model, ...rest } = input.args;
+          payload = rest;
+          if (launch.sandboxed) {
+            // requireOs: the user declared containment mandatory. When this
+            // machine has no isolation backend, refusing beats the factory's
+            // silent path-guard-only degradation. An excluded or fallback
+            // command is the user's own decision to run on the host, so it
+            // is not refused here.
+            if (isOsIsolationRequired() && !isOsIsolationAvailable()) {
+              return {
+                callId: input.callId,
+                toolName: input.toolName,
+                success: false,
+                result: "",
+                error:
+                  "OS sandbox required ([sandbox] requireOs = true) but no isolation backend " +
+                  "is available on this machine (sandbox-exec/bwrap missing). Install one, or " +
+                  "set requireOs = false to allow degraded (path-guard-only) execution.",
+                durationMs: Math.round(performance.now() - start),
+              };
+            }
+            args.push("--sandbox");
+            payload = { ...payload, sandbox_paths: sandboxPathsFor(input.workspaceRoot) };
+          }
         }
         args.push(subcommand);
         const proc = Bun.spawn([binaryPath, ...args], {
-          stdin: new Blob([JSON.stringify(input.args)]),
+          stdin: new Blob([JSON.stringify(payload)]),
           stdout: "pipe",
           stderr: "pipe",
         });
@@ -166,6 +213,20 @@ export function createRustToolHandler(
         }
 
         const parsed = JSON.parse(stdout);
+        // A sandboxed bash that died on a permission error gets the hint that
+        // names the wall it hit and the sanctioned way around it.
+        if (
+          schema.permissionLevel === "sandbox" &&
+          parsed.result &&
+          typeof parsed.result === "object" &&
+          parsed.result.sandboxed === true
+        ) {
+          const hint = sandboxDenialHint(
+            String(parsed.result.stderr ?? ""),
+            parsed.result.exit_code as number | null | undefined,
+          );
+          if (hint) parsed.result.sandbox_hint = hint;
+        }
         // Pixels ride beside the result, never inside it. `result` is
         // JSON.stringify'd straight into the model's transcript, so a base64
         // field left in place would be the same context bomb the binary read

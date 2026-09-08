@@ -64,12 +64,17 @@ function callInput(args: Record<string, unknown>): ToolCallInput {
 }
 
 describe("sandbox-mode state", () => {
-  test("defaults to on; set/get round-trips", () => {
-    expect(getSandboxMode()).toBe("on");
+  test("defaults to auto-allow; set/get round-trips; `on` still spells auto-allow", () => {
+    expect(getSandboxMode()).toBe("auto-allow");
     expect(isSandboxEnabled()).toBe(true);
     setSandboxMode("off");
     expect(getSandboxMode()).toBe("off");
     expect(isSandboxEnabled()).toBe(false);
+    setSandboxMode("regular");
+    expect(getSandboxMode()).toBe("regular");
+    expect(isSandboxEnabled()).toBe(true);
+    setSandboxMode("on");
+    expect(getSandboxMode()).toBe("auto-allow");
   });
 
   test("listeners fire immediately on subscribe and again on change", () => {
@@ -92,7 +97,7 @@ describe("bash tool description follows the mode", () => {
     setSandboxMode("on");
     expect(schema.description).toContain("OS sandbox with NO network access");
     const propsOn = schema.inputSchema.properties as Record<string, { description: string }>;
-    expect(propsOn.network.description).toContain("Run OUTSIDE the sandbox");
+    expect(propsOn.network.description).toContain("retaining filesystem containment");
 
     setSandboxMode("off");
     expect(schema.description).toContain("sandbox is DISABLED");
@@ -119,7 +124,7 @@ describe.skipIf(process.platform === "win32")("rust bridge --sandbox flag follow
     return bin;
   }
 
-  test("on → --sandbox passed; off → omitted; network:true always omits", async () => {
+  test("on retains --sandbox with network access; off omits it", async () => {
     const handler = createRustToolHandler(BASH_SCHEMA, "bash", fakeToolsBinary());
 
     setSandboxMode("on");
@@ -127,7 +132,7 @@ describe.skipIf(process.platform === "win32")("rust bridge --sandbox flag follow
     expect(sandboxed.result).toContain("--sandbox");
 
     const escalated = await handler.execute(callInput({ command: "ls", network: true }));
-    expect(escalated.result).not.toContain("--sandbox");
+    expect(escalated.result).toContain("--sandbox");
 
     setSandboxMode("off");
     const full = await handler.execute(callInput({ command: "ls" }));
@@ -177,6 +182,15 @@ describe("permission broker confinement follows the mode", () => {
     expect(decision.type).toBe("needs_confirmation");
     if (decision.type === "needs_confirmation") {
       expect(decision.argsSummary).toContain("sandbox off — full host access");
+    }
+  });
+
+  test("regular mode: contained, but the gear's prompt still applies", () => {
+    setSandboxMode("regular");
+    const decision = autoBroker().check(BASH_SCHEMA, { command: "ls" });
+    expect(decision.type).toBe("needs_confirmation");
+    if (decision.type === "needs_confirmation") {
+      expect(decision.argsSummary).toContain("sandboxed — regular permissions");
     }
   });
 

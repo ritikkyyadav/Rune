@@ -1,5 +1,12 @@
 import { isAbsolute, relative, resolve } from "path";
-import { isOsIsolationAvailable, isSandboxEnabled, patchTargetPaths } from "@rune/tool-registry";
+import {
+  getSandboxMode,
+  isOsIsolationAvailable,
+  isSandboxAutoAllow,
+  isSandboxEnabled,
+  patchTargetPaths,
+  resolveSandboxLaunch,
+} from "@rune/tool-registry";
 import type { PermissionLevel, ToolSchema } from "@rune/tool-registry";
 import { createLogger, isPathInside as pathInside } from "@rune/shared";
 import { policyDenial, type OrgPolicy } from "./org-policy";
@@ -479,19 +486,22 @@ export class PermissionBroker {
    * therefore safe to auto-approve under workspace trust. Path-based writes are
    * confined when their target resolves inside the workspace root; `bash` is
    * confined because the Rust sandbox is the real containment boundary —
-   * UNLESS the call escalates out of the sandbox (network: true), which must
-   * keep prompting. Network-reaching tools (web_fetch, web_search,
+   * Network access and detached lifetime still require a separate grant in
+   * workspace-trust mode. Network-reaching tools (web_fetch, web_search,
    * n8n_trigger) are never confined and keep prompting.
    */
   private isWorkspaceConfined(schema: ToolSchema, args: Record<string, unknown>): boolean {
     if (!this.workspaceRoot) return false;
-    // Both escapes leave the sandbox: network:true (explicit escalation) and
-    // run_in_background:true (servers must bind ports, so they run
-    // unsandboxed). Neither may be auto-approved by workspace trust — only
-    // sandbox-confined foreground commands are. And when the user disabled
-    // the sandbox entirely (/sandbox off), NO bash call is contained, so
-    // workspace trust stops auto-approving bash altogether — full access
-    // means every command earns a prompt outside 4th gear.
+    // Network effects and a process that outlives the call require a separate
+    // grant even though both now retain OS filesystem containment. When the
+    // sandbox is off, NO bash call is contained, so workspace trust stops
+    // auto-approving bash altogether — full access means every command earns
+    // a prompt outside 4th gear. The same holds per call for an EXCLUDED
+    // command (the user listed it as running on the host) and for a fallback
+    // retry (`unsandboxed: true`): the walls are gone, so the vouching is too.
+    //
+    // "regular" mode keeps the walls and drops the vouching on purpose: the
+    // command runs contained AND the gear's ordinary prompt still applies.
     //
     // Intent is not capability: "sandbox on" only justifies auto-approval when
     // this MACHINE can actually isolate (seatbelt/bwrap present). On the
@@ -499,8 +509,9 @@ export class PermissionBroker {
     // contained, so bash must earn a prompt exactly as if the sandbox were off.
     if (schema.name === "bash") {
       return (
-        isSandboxEnabled() &&
+        isSandboxAutoAllow() &&
         isOsIsolationAvailable() &&
+        resolveSandboxLaunch(args).sandboxed &&
         args.network !== true &&
         args.run_in_background !== true
       );
@@ -558,7 +569,7 @@ export class PermissionBroker {
    */
   private static escapesContainment(tool: string, args: Record<string, unknown>): boolean {
     if (tool !== "bash") return false;
-    return args.network === true || args.run_in_background === true;
+    return args.network === true || args.run_in_background === true || args.unsandboxed === true;
   }
 
   /** The narrow lookup behind the exact-grant fast path in check(). */
@@ -608,11 +619,18 @@ export class PermissionBroker {
       case "edit_file":
         return `${tool} ${args.path ?? "unknown path"}`;
       case "bash": {
+        const launch = resolveSandboxLaunch(args);
         const net = !isSandboxEnabled()
           ? " [sandbox off — full host access]"
-          : args.network === true
-            ? " [network — runs outside the sandbox]"
-            : "";
+          : launch.reason === "excluded"
+            ? ` [excluded from the sandbox (${launch.matched}) — full host access]`
+            : launch.reason === "fallback"
+              ? " [unsandboxed retry — full host access]"
+              : args.network === true
+                ? " [network enabled — filesystem sandbox retained]"
+                : getSandboxMode() === "regular"
+                  ? " [sandboxed — regular permissions]"
+                  : "";
         return `bash${net}: ${String(args.command ?? "").slice(0, 100)}`;
       }
       case "worker": {

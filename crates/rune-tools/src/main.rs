@@ -41,6 +41,8 @@ enum Commands {
     SandboxCheck,
     /// Plan the argv that launches a plugin tool under this machine's sandbox
     SandboxPlan,
+    /// Plan a background shell using the foreground bash sandbox policy
+    ShellPlan,
 }
 
 fn read_stdin() -> String {
@@ -180,6 +182,25 @@ async fn main() {
         }
         Commands::SandboxCheck => {
             output_result::<rune_sandbox::SandboxProbe>(Ok(rune_sandbox::probe_capability()));
+        }
+        Commands::ShellPlan => {
+            let input: rune_tools::bash::BashInput = serde_json::from_str(&input_json)
+                .unwrap_or_else(|e| {
+                    eprintln!("Invalid input JSON: {e}");
+                    std::process::exit(2);
+                });
+            let mut config = rune_sandbox::SandboxConfig {
+                workspace_root: workspace.clone(),
+                allow_network: input.network,
+                ..Default::default()
+            };
+            if let Some(paths) = &input.sandbox_paths {
+                paths.apply_to(&mut config);
+            }
+            output_result(
+                rune_sandbox::plan_shell(config, &input.command)
+                    .map_err(|e| rune_tools::error::ToolError::CommandFailed(e.to_string())),
+            );
         }
         Commands::SandboxPlan => {
             // The Seatbelt/bwrap policy for a long-lived plugin tool stays in

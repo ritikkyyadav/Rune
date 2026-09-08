@@ -10,6 +10,13 @@ import {
   type AutoModeReview,
   type ClassifierCall,
 } from "../../../packages/orchestrator/src/auto-mode";
+import { setSandboxCapability } from "../../../packages/tool-registry/src/sandbox-capability";
+
+// Until the engine probes rune-tools the capability is UNKNOWN and "not
+// isolated", which makes every bash call an uncontained one. These tests
+// describe a healthy machine, so say so — without this the file only passes
+// when another file's stub happens to run first.
+setSandboxCapability({ mechanism: "seatbelt", osIsolation: true });
 
 /**
  * P6A.1 — what a decision has to carry before it can be labelled.
@@ -79,6 +86,9 @@ function controllerWith(
       classifierModel: "test-model",
       failClosed: true,
       timeoutMs: 5_000,
+      // These tests measure what the supervisor writes down, so it has to
+      // see the ordinary commands they use; the default scope skips them.
+      supervisor: "all",
       ...overrides,
     }),
     classifier,

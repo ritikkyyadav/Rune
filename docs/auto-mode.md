@@ -31,11 +31,25 @@ order:
    `curl … | sh` and in `browser(download, execute: true)`. Every one of those pairs used to be
    half-covered, and the corpus is what found the other halves.
 
-5. A tier check clears built-in safe reads and ordinary workspace-confined edits with no model call.
+5. A tier check clears built-in safe reads, ordinary workspace-confined edits, and **read-only shell
+   commands** with no model call. A shell command every segment of which is a known read-only
+   program — `ls`, `cat`, `grep`, `git status`, `cargo tree`, a pipeline of those — with no
+   redirection, substitution or elevation has the blast radius of `read_file` and takes its tier,
+   whatever the sandbox state. A read-only shape is not enough on its own: anything the risk
+   patterns flag (`cat .env`, `cat ~/.ssh/id_rsa`) keeps the classifier tier, and once injected
+   content is suspected, reads stop being free. `[permissions.autoMode] safeCommands` extends the
+   set (`shell-safety.ts`).
+   5b. **A shell command with no sandbox under it** — the sandbox is off, the command is on
+   `[sandbox] excludedCommands`, or it is an `unsandboxed: true` fallback retry — follows
+   `unsandboxedShell`: `review` (default) pays one in-path reasoned reviewer call, because when the
+   sandbox is not the boundary the reviewer has to be; `ask` prompts; `allow` leaves it to the
+   breakers. See [`sandbox.md`](sandbox.md#auto-mode-and-the-shell).
 6. **The supervised tier.** Everything mechanical has already run, so what remains at low or medium
    risk is the day's work: builds, tests, dependency installs, API calls, ordinary shell. It runs
    immediately, and the supervisor observes it out of band. Common work therefore costs **zero**
-   extra model calls and waits on nothing.
+   extra model calls and waits on nothing. How much of it the supervisor reads is
+   `supervisor`: `unusual` (default) skips recognized ordinary development work, `all` screens
+   everything, `off` disables the watcher.
 7. What is left is high or critical risk. It pays exactly **one** reasoned reviewer call (about 9
    seconds), which returns a structured `allow`, `ask` or `deny` with a risk rating. A failed call
    retries once against the engine's own heavy/standard tier when a distinct one is configured
@@ -196,6 +210,17 @@ probeToolResults = true
 # tier (same data boundary) before failing closed to a human prompt.
 reviewerFallback = true
 
+# The out-of-band supervisor's scope: "all" screens every supervised action,
+# "unusual" (default) skips recognized ordinary development work (builds,
+# tests, installs, linters, local git, containers), "off" disables it.
+supervisor = "unusual"
+# What a shell command does when it will NOT run inside the OS sandbox
+# (sandbox off, an excluded command, a fallback retry): "review" (default)
+# pays one reviewer call, "ask" prompts, "allow" leaves it to the breakers.
+unsandboxedShell = "review"
+# Extra read-only command patterns that join the built-in safe tier.
+safeCommands = ["adb shell getprop *", "emulator -list-avds"]
+
 # Supplying environment replaces Rune's built-in entry. Keep the first line if
 # the default workspace/remotes boundary still applies.
 environment = [
@@ -240,6 +265,11 @@ The next Shift+Tab returns to 1st gear. Use `/gear 1|2|3|4|auto` (bare `/gear` s
 directly; `/autonomy I|II|III` remains a legacy alias for the 2nd/3rd/4th gears, and the legacy
 `/hands-free`, `/turing`, `--yolo`, and `permissions.mode = "hands-free"` spellings still map to
 the 4th gear for migration only.
+
+The sandbox is its own policy — a mode (`auto-allow` / `regular` / `off`), an override (allow an
+unsandboxed retry, or strict), excluded commands and filesystem rules — opened with `/sandbox` and
+described in [`sandbox.md`](sandbox.md). `supervisor` and `unsandboxedShell` above are live
+settings too: `/config supervisor all`, `/config unsandboxed_shell ask`.
 
 ### Rule semantics
 
@@ -403,17 +433,17 @@ Every decision Auto makes that is worth persisting (classifier-tier reviews, eve
 verdict, human escalations, rule matches and exact grants — `shouldRecordAutoModeDecision`) becomes
 one `safety_decision` session event and one hash-chained `audit_log` entry.
 
-| Field                               | Meaning                                                                                 |
-| ----------------------------------- | --------------------------------------------------------------------------------------- |
-| `toolName`, `argsHash`              | The action. Arguments are **hashed, never stored** — the audit log is exportable.       |
-| `verdict`, `tier`, `risk`           | allow / ask / deny · safe \| workspace \| classifier · low → critical.                  |
-| `source`                            | Which of the sixteen decision sources produced it (thirteen in-path, three supervisor). |
-| `stage`                             | 0 mechanical · 1 fast screen · 2 reasoned.                                              |
-| `reason`, `reviewer`, `matchedRule` | Why, by whom, and against which configured rule.                                        |
-| `callId`                            | The tool call this decision gated, so a row joins to the `tool_result` that followed.   |
-| `turn`                              | The turn it belongs to.                                                                 |
-| `durationMs`                        | Total wall clock, unchanged.                                                            |
-| `timings`                           | `{ mechanicalMs, classifierMs, retryMs }` — the three parts sum to `durationMs`.        |
+| Field                               | Meaning                                                                                   |
+| ----------------------------------- | ----------------------------------------------------------------------------------------- |
+| `toolName`, `argsHash`              | The action. Arguments are **hashed, never stored** — the audit log is exportable.         |
+| `verdict`, `tier`, `risk`           | allow / ask / deny · safe \| workspace \| classifier · low → critical.                    |
+| `source`                            | Which of the seventeen decision sources produced it (fourteen in-path, three supervisor). |
+| `stage`                             | 0 mechanical · 1 fast screen · 2 reasoned.                                                |
+| `reason`, `reviewer`, `matchedRule` | Why, by whom, and against which configured rule.                                          |
+| `callId`                            | The tool call this decision gated, so a row joins to the `tool_result` that followed.     |
+| `turn`                              | The turn it belongs to.                                                                   |
+| `durationMs`                        | Total wall clock, unchanged.                                                              |
+| `timings`                           | `{ mechanicalMs, classifierMs, retryMs }` — the three parts sum to `durationMs`.          |
 
 The timing split exists because one average over both phases described neither: mechanical routing
 costs microseconds and a reviewer call costs seconds, so a p50 over `durationMs` was a statement
@@ -430,6 +460,11 @@ rows under their own sources:
 - `supervisor_reasoned` — the careful confirmation. A screen that fires and a reasoned pass that
   refuses to confirm it _is_ a caught false positive, and that pair is the measurement.
 - `supervisor_late` — a confirmed halt that landed after the run ended.
+- `supervisor_skipped` — an allowed action the supervisor could not take on: its queue was full
+  behind a slow reviewer, the transcript was at the reviewer's input limit, or a halt was already
+  pending. The action still ran under the mechanical breakers; the row makes unsupervised actions
+  countable. (A full queue used to _deny_ the action, which turned a cost saving into a
+  run-stopper on a free-tier reviewer.)
 
 These rows gate nothing, so they do not enter the tamper-evident chain of approvals and do not move
 the decision counters. Before this, the "screen fired, review disagreed" event incremented a

@@ -1,7 +1,7 @@
 /**
  * The Rust bridge decides per-call whether bash runs inside the OS sandbox:
- * default → `--sandbox`; the model's `network: true` escalation → no flag
- * (unsandboxed, full network). Verified against a stub binary that echoes its
+ * default → `--sandbox`; `network: true` retains that flag and enables network
+ * inside the native filesystem boundary. A stub binary echoes its
  * argv back as the tool result.
  */
 
@@ -72,9 +72,9 @@ describe.skipIf(!POSIX)("rust-bridge sandbox flag routing", () => {
     expect(argv).toContain("bash");
   });
 
-  test("network: true escalates OUT of the sandbox (--sandbox absent)", async () => {
+  test("network: true retains filesystem isolation (--sandbox present)", async () => {
     const argv = await argvFor({ command: "npm install", network: true });
-    expect(argv).not.toContain("--sandbox");
+    expect(argv).toContain("--sandbox");
     expect(argv).toContain("bash");
   });
 

@@ -20,6 +20,7 @@ import type {
 } from "../../../packages/orchestrator/src/agent-loop";
 import { Engine } from "../../../packages/orchestrator/src/engine";
 import { rmTemp } from "../../helpers/tmp";
+import { setSandboxCapability } from "../../../packages/tool-registry/src/sandbox-capability";
 
 class QueueClassifier implements ActionClassifier {
   readonly calls: ClassifierCall[] = [];
@@ -70,6 +71,10 @@ describe("Engine Auto-mode wiring", () => {
       memory: { enabled: false },
     });
     internals = engine as unknown as EngineInternals;
+    // The constructor probes rune-tools for the isolation backend; with no
+    // binary on the test path that records "none", and every bash call
+    // becomes an uncontained one. These tests describe a healthy machine.
+    setSandboxCapability({ mechanism: "seatbelt", osIsolation: true });
     classifier = new QueueClassifier([
       JSON.stringify({
         verdict: "deny",
@@ -315,7 +320,8 @@ describe("Engine Auto-mode wiring", () => {
     const sessionId = engine.createSession();
     const classifier = new QueueClassifier(["ALLOW"]);
     internals.autoModeSafety = new AutoModeSafetyController(
-      resolveAutoModeConfig(),
+      // "all": the default supervisor scope leaves `bun test` unscreened.
+      resolveAutoModeConfig({ supervisor: "all" }),
       classifier,
       () => ({ gateway: {} as LlmGateway, provider: "anthropic", model: "isolated-reviewer" }),
     );
@@ -342,6 +348,9 @@ describe("Engine Auto-mode wiring", () => {
     });
 
     expect(decision.allowed).toBe(true);
+    await (
+      engine as unknown as { activeAutoRun: { drainSupervisor(): Promise<void> } }
+    ).activeAutoRun.drainSupervisor();
     const trusted = classifier.calls[0]!.prompt;
     expect(trusted).toContain("yes, push the branch once tests pass");
   });

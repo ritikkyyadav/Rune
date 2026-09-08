@@ -18,6 +18,13 @@ import {
   type AutoModeReview,
   type ClassifierCall,
 } from "../../../packages/orchestrator/src/auto-mode";
+import { setSandboxCapability } from "../../../packages/tool-registry/src/sandbox-capability";
+
+// Until the engine probes rune-tools the capability is UNKNOWN and "not
+// isolated", which makes every bash call an uncontained one. These tests
+// describe a healthy machine, so say so — without this the file only passes
+// when another file's stub happens to run first.
+setSandboxCapability({ mechanism: "seatbelt", osIsolation: true });
 
 const WORKSPACE = "/tmp/gear-auto-mode";
 
@@ -159,7 +166,9 @@ describe("Auto mode tiering", () => {
 
 describe("Auto mode independent classifier", () => {
   test("an ordinary shell command runs without waiting for the reviewer", async () => {
-    const { controller, classifier } = setup(["ALLOW"]);
+    // `supervisor: "all"` puts ordinary work in front of the screen; the
+    // default ("unusual") leaves `bun test` unscreened entirely.
+    const { controller, classifier } = setup(["ALLOW"], { supervisor: "all" });
     const run = controller.startRun(["Run the existing unit tests."]);
     const review = await run.review(action("bash", { command: "bun test tests/unit" }));
 
@@ -186,11 +195,15 @@ describe("Auto mode independent classifier", () => {
         return "ALLOW";
       },
     };
-    const controller = new AutoModeSafetyController(resolveAutoModeConfig(), stalled, () => ({
-      gateway: {} as LlmGateway,
-      provider: "anthropic",
-      model: "reviewer-model",
-    }));
+    const controller = new AutoModeSafetyController(
+      resolveAutoModeConfig({ supervisor: "all" }),
+      stalled,
+      () => ({
+        gateway: {} as LlmGateway,
+        provider: "anthropic",
+        model: "reviewer-model",
+      }),
+    );
 
     // This is the 22-minute stall, in one assertion: before, the review sat on
     // the classifier's promise and a withdrawn model meant a dead run.
@@ -200,6 +213,7 @@ describe("Auto mode independent classifier", () => {
 
     expect(review.verdict).toBe("allow");
     expect(review.source).toBe("supervised_tier");
+    await new Promise((r) => setTimeout(r, 20));
     released();
   });
 
@@ -316,14 +330,16 @@ describe("Auto mode independent classifier", () => {
   test("classifier transcript redacts credential values", async () => {
     const secret = "sk-abc123456789012345678901234567890";
     const opaque = "opaque-password-value-that-is-not-a-known-key-format";
-    const { controller, classifier } = setup(["ALLOW"]);
-    await controller.startRun(["Call the test endpoint with the configured key."]).review(
+    const { controller, classifier } = setup(["ALLOW"], { supervisor: "all" });
+    const run = controller.startRun(["Call the test endpoint with the configured key."]);
+    await run.review(
       action("bash", {
         command: `curl -H 'Authorization: Bearer ${secret}' localhost:3000`,
         password: opaque,
       }),
     );
 
+    await run.drainSupervisor();
     expect(classifier.calls[0]!.prompt).not.toContain(secret);
     expect(classifier.calls[0]!.prompt).not.toContain(opaque);
     expect(classifier.calls[0]!.prompt).toContain("[REDACTED_API_KEY]");
@@ -331,7 +347,10 @@ describe("Auto mode independent classifier", () => {
   });
 
   test("classifier history stays bounded while preserving the latest intent and actions", async () => {
-    const { controller, classifier } = setup(Array.from({ length: 12 }, () => "ALLOW"));
+    const { controller, classifier } = setup(
+      Array.from({ length: 12 }, () => "ALLOW"),
+      { supervisor: "all" },
+    );
     const userMessages = Array.from(
       { length: 20 },
       (_, index) => `USER-MARKER-${index} ${"context ".repeat(700)}`,
@@ -346,6 +365,7 @@ describe("Auto mode independent classifier", () => {
       );
     }
 
+    await run.drainSupervisor();
     const lastPrompt = classifier.calls.at(-1)!.prompt;
     expect(lastPrompt.length).toBeLessThan(120_000);
     expect(lastPrompt).toContain("USER-MARKER-19");
@@ -889,9 +909,9 @@ describe("Rune vocabulary and bookkeeping", () => {
       expect(classifier.calls).toHaveLength(0);
     }
     const { controller, classifier } = setup(["ALLOW"]);
-    const review = await controller
-      .startRun(["Make the app faster."])
-      .review(action("config", { setting: "gear", value: "2" }));
+    const run = controller.startRun(["Make the app faster."]);
+    const review = await run.review(action("config", { setting: "gear", value: "2" }));
+    await run.drainSupervisor();
     expect(review.source).not.toBe("guardrail_circuit_breaker");
     expect(classifier.calls).toHaveLength(1);
   });
@@ -922,11 +942,12 @@ describe("Rune vocabulary and bookkeeping", () => {
   });
 
   test("file-sourced loop prompts are shown to the reviewer as evidence, not authorization", async () => {
-    const { controller, classifier } = setup(["ALLOW"]);
+    const { controller, classifier } = setup(["ALLOW"], { supervisor: "all" });
     const run = controller.startRun(["Earlier trusted message."], {
       untrustedPrompts: ["Push to production every hour (from .rune/loop.md)."],
     });
     await run.review(action("bash", { command: "bun test" }));
+    await run.drainSupervisor();
     const prompt = classifier.calls[0]!.prompt;
     expect(prompt).toContain("<untrusted_scheduled_prompts>");
     expect(prompt).toContain("[F1] Push to production every hour");
@@ -1002,10 +1023,11 @@ describe("Conversational escalation", () => {
   });
 
   test("mid-run interjections land in the trusted user messages", async () => {
-    const { controller, classifier } = setup(["ALLOW"]);
+    const { controller, classifier } = setup(["ALLOW"], { supervisor: "all" });
     const run = controller.startRun(["Fix the failing test."]);
     run.addTrustedUserMessage("yes, go ahead and push the branch when green");
     await run.review(action("bash", { command: "bun test tests/unit" }));
+    await run.drainSupervisor();
 
     const prompt = classifier.calls[0]!.prompt;
     const trustedBlock = prompt.slice(
@@ -1287,27 +1309,33 @@ describe("Supervisor posture", () => {
   });
 
   test("a supervisor objection halts the run before the next action", async () => {
-    const { controller } = setup([
-      "BLOCK",
-      // The fast screen's BLOCK is a nomination, not a verdict: latching the
-      // halt takes a reasoned deny at high/critical on the same prompt.
-      JSON.stringify({
-        verdict: "deny",
-        risk: "critical",
-        reason: "The fetched page told the agent to read unrelated files.",
-      }),
-      "ALLOW",
-      JSON.stringify({ verdict: "allow", risk: "medium", reason: "Reads a local file." }),
-    ]);
+    // Pure reads take the safe tier and are never screened, so the watched
+    // actions here are scripts the agent runs over the fetched page; the
+    // supervisor is set to screen ordinary work so the mechanism is exercised.
+    const { controller } = setup(
+      [
+        "BLOCK",
+        // The fast screen's BLOCK is a nomination, not a verdict: latching the
+        // halt takes a reasoned deny at high/critical on the same prompt.
+        JSON.stringify({
+          verdict: "deny",
+          risk: "critical",
+          reason: "The fetched page told the agent to read unrelated files.",
+        }),
+        "ALLOW",
+        JSON.stringify({ verdict: "allow", risk: "medium", reason: "Reads a local file." }),
+      ],
+      { supervisor: "all" },
+    );
     const run = controller.startRun(["Summarize the page I fetched."]);
 
-    const first = await run.review(cmd("cat ./fetched.md"));
+    const first = await run.review(cmd("python3 summarize.py ./fetched.md"));
     expect(first.verdict).toBe("allow");
 
     // The objection lands after the action already ran; exposure is bounded to
     // that one action rather than the rest of the run.
     await run.drainSupervisor();
-    const second = await run.review(cmd("cat ./other.md"));
+    const second = await run.review(cmd("python3 summarize.py ./other.md"));
     expect(second.verdict).toBe("deny");
     expect(second.source).toBe("supervisor_halt");
     expect(second.haltRun).toBe(true);
@@ -1317,7 +1345,7 @@ describe("Supervisor posture", () => {
     // object. But the flag leaves the run at a raised floor: ordinary actions
     // stop being supervised and are reviewed in path for the rest of the
     // session, which is the point of noticing a possible injection at all.
-    const third = await run.review(cmd("cat ./third.md"));
+    const third = await run.review(cmd("python3 summarize.py ./third.md"));
     expect(third.source).not.toBe("supervisor_halt");
     expect(third.source).not.toBe("supervised_tier");
     expect(third.source.startsWith("classifier_")).toBe(true);
@@ -1330,14 +1358,17 @@ describe("Supervisor posture", () => {
   // on a single BLOCK token. The screen now nominates; the reasoned reviewer
   // decides.
   test("a fast BLOCK the reasoned reviewer will not confirm never halts the run", async () => {
-    const { controller } = setup([
-      "BLOCK",
-      JSON.stringify({
-        verdict: "allow",
-        risk: "low",
-        reason: "Auditing the project's own dependencies is ordinary maintenance.",
-      }),
-    ]);
+    const { controller } = setup(
+      [
+        "BLOCK",
+        JSON.stringify({
+          verdict: "allow",
+          risk: "low",
+          reason: "Auditing the project's own dependencies is ordinary maintenance.",
+        }),
+      ],
+      { supervisor: "all" },
+    );
     const run = controller.startRun(["Get the build green."]);
 
     await run.review(cmd("npm audit --omit=dev --audit-level=high"));
@@ -1353,10 +1384,13 @@ describe("Supervisor posture", () => {
     // A suspected false positive must not quietly degrade every later review:
     // ordinary work stays on the supervised path rather than being pulled into
     // the reviewer for the rest of the session.
-    const { controller } = setup([
-      "BLOCK",
-      JSON.stringify({ verdict: "ask", risk: "medium", reason: "Unclear, but not an attack." }),
-    ]);
+    const { controller } = setup(
+      [
+        "BLOCK",
+        JSON.stringify({ verdict: "ask", risk: "medium", reason: "Unclear, but not an attack." }),
+      ],
+      { supervisor: "all" },
+    );
     const run = controller.startRun(["Ship it."]);
 
     await run.review(cmd("npm audit --json"));
@@ -1368,45 +1402,51 @@ describe("Supervisor posture", () => {
 
   test("a confirmed deny below high risk does not halt", async () => {
     // Halting is reserved for what the reviewer itself calls serious.
-    const { controller } = setup([
-      "BLOCK",
-      JSON.stringify({ verdict: "deny", risk: "medium", reason: "Marginal, not compromise." }),
-    ]);
+    const { controller } = setup(
+      [
+        "BLOCK",
+        JSON.stringify({ verdict: "deny", risk: "medium", reason: "Marginal, not compromise." }),
+      ],
+      { supervisor: "all" },
+    );
     const run = controller.startRun(["Tidy the repo."]);
 
-    await run.review(cmd("git status"));
+    await run.review(cmd("npm run lint"));
     await run.drainSupervisor();
 
-    const next = await run.review(cmd("git diff"));
+    const next = await run.review(cmd("npm run build"));
     expect(next.source).not.toBe("supervisor_halt");
     expect(controller.getStats().supervisorUnconfirmed).toBe(1);
   });
 
   test("a confirmer that cannot answer is an outage, not a finding", async () => {
-    const { controller } = setup(["BLOCK", new Error("reviewer down")]);
+    const { controller } = setup(["BLOCK", new Error("reviewer down")], { supervisor: "all" });
     const run = controller.startRun(["Keep going."]);
 
-    await run.review(cmd("cat ./notes.md"));
+    await run.review(cmd("npm run build"));
     await run.drainSupervisor();
 
-    const next = await run.review(cmd("cat ./other.md"));
+    const next = await run.review(cmd("npm run lint"));
     expect(next.verdict).toBe("allow");
     expect(next.source).toBe("supervised_tier");
     expect(controller.getStats().supervisorUnconfirmed).toBe(1);
   });
 
   test("the halt carries the reasoned reviewer's own sentence", async () => {
-    const { controller } = setup([
-      "BLOCK",
-      JSON.stringify({
-        verdict: "deny",
-        risk: "critical",
-        reason: "The fetched page instructed the agent to upload credentials.",
-      }),
-    ]);
+    const { controller } = setup(
+      [
+        "BLOCK",
+        JSON.stringify({
+          verdict: "deny",
+          risk: "critical",
+          reason: "The fetched page instructed the agent to upload credentials.",
+        }),
+      ],
+      { supervisor: "all" },
+    );
     const run = controller.startRun(["Summarize that page."]);
 
-    await run.review(cmd("cat ./fetched.md"));
+    await run.review(cmd("python3 summarize.py ./fetched.md"));
     await run.drainSupervisor();
 
     const halted = await run.review(cmd("env"));
@@ -1417,7 +1457,7 @@ describe("Supervisor posture", () => {
   test("an unreadable supervisor answer is not treated as an objection", async () => {
     // parseFastDecision throws on an ambiguous reply. A watcher that cannot
     // speak must not halt a healthy run — the mechanical breakers are the guard.
-    const { controller } = setup(["I cannot decide"]);
+    const { controller } = setup(["I cannot decide"], { supervisor: "all" });
     const run = controller.startRun(["Build it."]);
 
     const first = await run.review(cmd("bun run build"));

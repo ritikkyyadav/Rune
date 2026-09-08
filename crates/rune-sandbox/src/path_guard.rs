@@ -14,6 +14,8 @@ pub struct PathGuard {
     workspace_root: PathBuf,
     allowed_write: Vec<PathBuf>,
     blocked_paths: Vec<PathBuf>,
+    /// Prefixes denied for writing even inside an allowed root (policy `denyWrite`).
+    denied_write: Vec<PathBuf>,
 }
 
 impl PathGuard {
@@ -76,12 +78,19 @@ impl PathGuard {
             workspace_root,
             allowed_write,
             blocked_paths,
+            denied_write: Vec::new(),
         }
     }
 
     /// Extend the set of paths that are allowed for writing.
     pub fn allow_extra_write_paths(&mut self, paths: Vec<PathBuf>) {
         self.allowed_write.extend(paths);
+    }
+
+    /// Deny writes under these prefixes even where an allowed root covers them.
+    pub fn deny_extra_write_paths(&mut self, paths: Vec<PathBuf>) {
+        self.denied_write
+            .extend(paths.into_iter().map(|p| crate::real_path(&p)));
     }
 
     /// Validate that the given path is safe for write operations.
@@ -120,6 +129,21 @@ impl PathGuard {
                     ),
                 });
             }
+        }
+
+        // Policy denials win over any allowed root they sit inside.
+        if let Some(denied) = self
+            .denied_write
+            .iter()
+            .find(|denied| canonical.starts_with(denied))
+        {
+            return Err(SandboxError::PathBlocked {
+                path: canonical.display().to_string(),
+                reason: format!(
+                    "path is denied for writing by the sandbox policy ({})",
+                    denied.display()
+                ),
+            });
         }
 
         // Check that the path falls under at least one allowed write root.

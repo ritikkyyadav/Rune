@@ -22,6 +22,7 @@ impl LinuxSandbox {
     pub fn new(config: SandboxConfig) -> Self {
         let mut guard = PathGuard::new(config.workspace_root.clone());
         guard.allow_extra_write_paths(config.extra_write_paths.clone());
+        guard.deny_extra_write_paths(config.deny_write_paths.clone());
         Self {
             config,
             path_guard: guard,
@@ -29,7 +30,7 @@ impl LinuxSandbox {
     }
 
     /// Build the argument list for `bwrap`.
-    fn bwrap_args(&self, command: &str, cwd: &Path) -> Vec<String> {
+    pub(crate) fn bwrap_args(&self, command: &str, cwd: &Path) -> Vec<String> {
         let workspace = self.config.workspace_root.display().to_string();
         let rune_cache = dirs::home_dir()
             .unwrap_or_default()
@@ -72,6 +73,29 @@ impl LinuxSandbox {
             if p.exists() {
                 let s = p.display().to_string();
                 args.extend_from_slice(&["--bind".to_string(), s.clone(), s]);
+            }
+        }
+
+        // Policy denials, AFTER the binds they carve out of: a later bind over
+        // the same path masks the earlier one. A denied write becomes a
+        // read-only view of itself; a denied read becomes an empty tmpfs (a
+        // directory) or a bind of /dev/null (a file). Paths that do not exist
+        // need no mask — there is nothing to reach.
+        for p in &self.config.deny_write_paths {
+            if p.exists() {
+                let s = p.display().to_string();
+                args.extend_from_slice(&["--ro-bind".to_string(), s.clone(), s]);
+            }
+        }
+        for p in &self.config.deny_read_paths {
+            if p.is_dir() {
+                args.extend_from_slice(&["--tmpfs".to_string(), p.display().to_string()]);
+            } else if p.exists() {
+                args.extend_from_slice(&[
+                    "--ro-bind".to_string(),
+                    "/dev/null".to_string(),
+                    p.display().to_string(),
+                ]);
             }
         }
 
