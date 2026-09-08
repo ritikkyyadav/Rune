@@ -18,10 +18,27 @@ _Nothing yet._
 Phase 12 ships what exists, on free model routes, with every claim in the README marked verified
 live, verified against tests or mocks only, or unverified. It adds no agent capability.
 
-<!-- P12.1 — run economics on free tiers. The lane hands its CHANGELOG lines back in its report; paste them into the sections below and delete this comment. -->
-
 ### Added
 
+- **`[routing] helper` (`/config helper`): a separate model for Rune's own calls** — the
+  compaction summarizer, the intent read, the system-memory dream. `auto` picks the cheapest
+  healthy connected route by capacity (`local → free → subscription → funded`) against the live
+  gateway and the health store, never a hand-written list, and refuses a route dearer than the
+  session's. The session model is untouched; the Auto-mode safety reviewer is not rerouted by
+  default, because a free model wrongly allowing is worse than mechanical containment.
+  `/config helper` reads back the resolved route, not the setting.
+- **Every completion records what it was for and what its prompt was made of** — a `role` and a
+  byte composition (doctrine, plan ledger, task state, tool schemas, conversation) on each `cost`
+  row — so the JIT doctrine's effect is measurable rather than asserted. A meter that cannot
+  measure emits no row rather than a wrong one, and is never the reason a request fails.
+- **`rune cost [session|last]`** prints run economics from the session log, headless, and `/cost`
+  now also reports completions split work vs governance and by role, fresh tokens per completion,
+  cache-read ratio, a list-price estimate with governance's share, and the prompt composition per
+  call. The money readout is unchanged and printed first.
+- **The mock eval suite fails when governance completions per task rise more than 20% above the
+  recorded baseline** (`callsByRole` on the retro; 0.25 per task at this release). What is not
+  measured, stated in `docs/run-economics.md`: whether the helper reduces live rate-limit incidents,
+  and the reviewer recall's live hit rate — both need a live free-route run.
 - **The MCP client was driven live against real servers, and two defects fell out.**
   `@modelcontextprotocol/server-filesystem`, `server-memory` and `server-everything` over stdio,
   streamable HTTP and the 2024-11-05 SSE protocol: tools, resources, prompts, progress and image
@@ -95,6 +112,11 @@ live, verified against tests or mocks only, or unverified. It adds no agent capa
 
 ### Changed
 
+- **Auto mode's reviewer is no longer re-asked about an action it already allowed in the same run
+  at high confidence.** The reasoned contract gained `confidence`; a `"high"` allow is cached under
+  the conservative canonical signature and recalled as `classifier_recall`, cleared on any injection
+  finding, reviewer denial or supervisor flag, bounded at 128, and never for a mechanically stopped
+  action. Offline safety corpus recall unchanged at 92.1%.
 - **Auto mode no longer prompts for every shell command when the sandbox is off.** The engine
   used to rewrite every allowed bash call into a high-risk "explicit approval required" prompt the
   moment the sandbox was off or the machine could not isolate — `ls` included — which is what made
