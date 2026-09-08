@@ -25,6 +25,7 @@ import {
   nearestNames,
   mcpConfigPath,
   mergedServers,
+  preflightServer,
   upsertServer,
   removeServer,
   setServerEnabled,
@@ -72,8 +73,10 @@ function usage(): void {
   say(`  ${accent("logout")} <name>`);
   say(`  ${accent("enable")} <name> ${dim(" / ")} ${accent("disable")} <name>`);
   say(
-    `  ${accent("doctor")} ${dim("               start every connector and report what is wrong")}`,
+    `  ${accent("doctor")} ${dim("               check the config, start every connector, report what is wrong")}`,
   );
+  say();
+  say(`  ${dim("in a session:")} ${accent("/mcp")} ${dim("·")} ${accent("/mcp reconnect <name>")}`);
   say();
   say(`${text("Examples")}`);
   say(`  ${dim("$")} rune mcp add notion ${dim("--scope user")}`);
@@ -468,6 +471,11 @@ function cmdToggle(args: string[], values: Record<string, unknown>, enabled: boo
 
 // ─── doctor ───
 
+/** The row already names the connector; the problem should not say it twice. */
+function stripName(problem: string, name: string): string {
+  return problem.startsWith(`${name}: `) ? problem.slice(name.length + 2) : problem;
+}
+
 async function cmdDoctor(values: Record<string, unknown>): Promise<number> {
   const workspaceRoot = workspaceOf(values);
   const { servers, errors } = mergedServers(workspaceRoot);
@@ -496,6 +504,13 @@ async function cmdDoctor(values: Record<string, unknown>): Promise<number> {
     say(`    ${warn(glyph("retry"))} no OS keychain — tokens are in a 0600 file`);
   }
 
+  // What is wrong on paper, before anything is spawned.
+  //
+  // A connector whose directory does not exist dies with the server's own
+  // stderr in the notice — which reports that a process exited and nothing
+  // about why. The answer was on disk the whole time.
+  const paper = new Map(servers.map((s) => [s.name, preflightServer(s.name, s.config)]));
+
   const discovery = new McpDiscovery(workspaceRoot);
   await discovery.discover().catch(() => []);
   const statuses = new Map(discovery.getStatus().map((s) => [s.name, s]));
@@ -511,6 +526,17 @@ async function cmdDoctor(values: Record<string, unknown>): Promise<number> {
 
     if (!enabled) {
       say(`    ${label} ${dim("disabled")} ${faint(`— rune mcp enable ${s.name}`)}`);
+      continue;
+    }
+
+    const onPaper = paper.get(s.name) ?? [];
+    if (onPaper.length > 0) {
+      problems++;
+      const first = onPaper[0]!;
+      say(
+        `    ${label} ${danger("misconfigured")} ${dim(`— ${stripName(first.problem, s.name)}`)}`,
+      );
+      for (const p of onPaper) say(`      ${faint(`fix: ${p.fix}`)}`);
       continue;
     }
     if (!status) {
@@ -543,7 +569,7 @@ async function cmdDoctor(values: Record<string, unknown>): Promise<number> {
       continue;
     }
     say(
-      `    ${label} ${ok("up")} ${dim(`${status.toolCount} tools · ${status.protocolVersion ?? "?"}`)}` +
+      `    ${label} ${ok("up")} ${dim(`${status.toolCount} tools · ${status.dialect ?? status.kind} · ${status.protocolVersion ?? "?"}`)}` +
         `${hasCreds ? dim(" · authorized") : ""}`,
     );
   }
