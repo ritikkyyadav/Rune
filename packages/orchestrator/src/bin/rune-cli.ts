@@ -254,7 +254,7 @@ if (values.help) {
         `    rune providers                List providers, their auth method, and credential status\n` +
         `    rune use <provider> [model]   Set the active provider (+ model) for new sessions\n` +
         `    rune models [provider]        List a provider's models (live discovery, static fallback)\n` +
-        `    rune doctor                   Health: incidents, crash sentinel, rune-tools, build freshness\n` +
+        `    rune doctor                   Health: incidents, crash sentinel, provider routes + quota windows, rune-tools, build freshness\n` +
         `    rune upgrade [--check]        Install the latest release (checksum-verified); --check only reports\n` +
         `    rune tools-smoke              Verify the native tool executor end to end (write/read/edit/bash)\n` +
         `    rune incidents [sub]          Browse recorded failures — list | show <id> | top [--by-version] | export\n` +
