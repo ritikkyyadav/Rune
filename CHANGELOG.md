@@ -19,10 +19,22 @@ Phase 12 ships what exists, on free model routes, with every claim in the README
 live, verified against tests or mocks only, or unverified. It adds no agent capability.
 
 <!-- P12.1 — run economics on free tiers. The lane hands its CHANGELOG lines back in its report; paste them into the sections below and delete this comment. -->
-<!-- P12.2 — MCP live and /mcp. Same: lane report lines go here. -->
 
 ### Added
 
+- **The MCP client was driven live against real servers, and two defects fell out.**
+  `@modelcontextprotocol/server-filesystem`, `server-memory` and `server-everything` over stdio,
+  streamable HTTP and the 2024-11-05 SSE protocol: tools, resources, prompts, progress and image
+  attachments all answered on 2026-09-08 (record: `docs/evidence/mcp-live-20260908.md`;
+  `tests/integration/mcp-live-servers.test.ts` repeats it and skips offline). The GitHub connector
+  and OAuth against a real vendor remain unverified: no credentials on this machine.
+- **`/mcp` shows connector health, protocol dialect, tool count and the command that fixes each
+  one that is down**; `/mcp reconnect <server>` re-handshakes one connector without restarting the
+  session, including one that never started. One builder serves the TUI and the readline fallback.
+- **`rune mcp doctor` checks the config before spawning anything.** A command that is not on PATH,
+  or a directory that does not exist, is reported with the corrected path when a sibling within a
+  typo's distance exists. `rune doctor` carries the same in one line and still starts no server.
+- **`docs/mcp.md`** — the quickstart: three configs, each marked verified or not.
 - **`scripts/render-live.ts` replays any stored session through the real `TurnRenderer`** at any
   width, read-only against `rune.db`, so the terminal UI can be inspected outside a live terminal;
   `docs/ui-freeze.md` records the frozen layout, scrolling model, key bindings, marks and palette,
@@ -124,6 +136,11 @@ live, verified against tests or mocks only, or unverified. It adds no agent capa
 
 ### Fixed
 
+- **MCP connectors on the 2024-11-05 SSE protocol now connect.** The fallback from streamable HTTP
+  to SSE was described in a comment and never implemented, so a URL pointing at an older server
+  failed permanently with a 404. The client now retries once as SSE on 404, 405 or 406 only.
+- **A connector that never started can be reconnected without restarting the session.**
+  `reconnect` returned false for any name with no client, which is exactly the fixed-typo case.
 - **A parallel tool batch no longer leaves orphaned rows in the transcript.** The renderer kept one
   slot for the call in flight while the loop dispatches a message's calls together, so a burst of
   four reads opened four rows and kept the fourth; the other three stood as `› read` forever and
