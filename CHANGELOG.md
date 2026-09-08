@@ -11,6 +11,18 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.4.0] - 2026-09-08
+
+Phase 12 ships what exists, on free model routes, with every claim in the README marked verified
+live, verified against tests or mocks only, or unverified. It adds no agent capability.
+
+<!-- P12.1 — run economics on free tiers. The lane hands its CHANGELOG lines back in its report; paste them into the sections below and delete this comment. -->
+<!-- P12.2 — MCP live and /mcp. Same: lane report lines go here. -->
+<!-- P12.3 — skills, plugins and hooks as a user layer. Same: lane report lines go here. -->
+<!-- P12.5 — UI freeze and the defect pass. Same: lane report lines go here. -->
+
 ### Added
 
 - **The sandbox is a policy, not a switch.** `/sandbox` opens three tabs — **Mode**
@@ -54,6 +66,23 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
   `npm audit`, and nearly a third of its flags did not survive the reasoned pass.
 - **Reading one of Rune's own control files is no longer refused as a guardrail change.** The
   self-protection breaker fired on `read_file` of a `SKILL.md`; it now applies to writes only.
+- **The product is named Rune.** Every name moves with it: the `rune` command and the `rune-tools`
+  executor, `~/.rune` and `rune.db`, `RUNE_*` environment variables, `.rune/` in a workspace,
+  `@rune/*` packages and `rune-*` crates, `RUNE.md` instructions, `rune:` auto-commits and the
+  `rune` keychain service. An installed Gear keeps working through one generation of read-through:
+  the first start moves `~/.gear` to `~/.rune` (leaving a symlink), renames `gear.db` and `GEAR.md`,
+  adopts `GEAR_*` variables, reads the `gear` keychain service, undoes `gear:` commits, recognises
+  the playbook and `rune evolve` markers under either name, loads `gearVersion` plugin manifests and
+  binds `/etc/gear` org policies. The permission ladder keeps its vocabulary (`--gear 1..4`, `/gear`,
+  "4th gear"). Terminals that key behaviour on the process name (Warp's CLI-agent channel) see a
+  new name.
+- **The terminal is the only interface.** The web app, the bundle embedded in the binary,
+  `rune web`, `rune open`, the bare-command browser entry, the VS Code extension and the Playwright
+  suite are removed. `rune serve` keeps the WebSocket engine for `rune attach ws://` and the SDK and
+  no longer serves a page; `rune serve --check` proves the compiled binary can spawn its own session
+  hosts. A bare `rune` starts the console.
+- **The accent is violet.** `#A28CF3`, exact on the dark ground and derived to `#9682E1` on paper so
+  it clears a 3:1 floor; the electric blue and the web token pipeline are gone.
 
 ### Fixed
 
@@ -89,26 +118,6 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
   lets a loopback URL through instead of claiming it would hang. Seatbelt's `localhost` filter also
   admits a `0.0.0.0` bind, which `auto-containment` already refuses as a mechanical breaker; the
   threat model states this rather than claiming "loopback only".
-
-### Changed
-
-- **The product is named Rune.** Every name moves with it: the `rune` command and the `rune-tools`
-  executor, `~/.rune` and `rune.db`, `RUNE_*` environment variables, `.rune/` in a workspace,
-  `@rune/*` packages and `rune-*` crates, `RUNE.md` instructions, `rune:` auto-commits and the
-  `rune` keychain service. An installed Gear keeps working through one generation of read-through:
-  the first start moves `~/.gear` to `~/.rune` (leaving a symlink), renames `gear.db` and `GEAR.md`,
-  adopts `GEAR_*` variables, reads the `gear` keychain service, undoes `gear:` commits, recognises
-  the playbook and `rune evolve` markers under either name, loads `gearVersion` plugin manifests and
-  binds `/etc/gear` org policies. The permission ladder keeps its vocabulary (`--gear 1..4`, `/gear`,
-  "4th gear"). Terminals that key behaviour on the process name (Warp's CLI-agent channel) see a
-  new name.
-- **The terminal is the only interface.** The web app, the bundle embedded in the binary,
-  `rune web`, `rune open`, the bare-command browser entry, the VS Code extension and the Playwright
-  suite are removed. `rune serve` keeps the WebSocket engine for `rune attach ws://` and the SDK and
-  no longer serves a page; `rune serve --check` proves the compiled binary can spawn its own session
-  hosts. A bare `rune` starts the console.
-- **The accent is violet.** `#A28CF3`, exact on the dark ground and derived to `#9682E1` on paper so
-  it clears a 3:1 floor; the electric blue and the web token pipeline are gone.
 
 ### Removed
 
@@ -221,5 +230,8 @@ evidence, the terminal was rewritten, and the cost and safety subsystems were ma
 
 Version bump, installer polish, and install-from-GitHub documentation.
 
-[Unreleased]: https://github.com/ritikkyyadav/Alan/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/ritikkyyadav/Alan/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/ritikkyyadav/Alan/compare/v0.3.1...v0.4.0
+[0.3.1]: https://github.com/ritikkyyadav/Alan/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/ritikkyyadav/Alan/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/ritikkyyadav/Alan/releases/tag/v0.2.0
