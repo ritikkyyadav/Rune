@@ -91,3 +91,36 @@ Doctrine plus schemas is still 71% of every call. That is what lane P13.1 is wor
 - Proves: the `rune detach` route defect and its fix, on the same day.
 - Does not prove: hours-long reliability (this was thirteen minutes), behaviour under a
   rate-limit cap mid-run, or anything about sub-agents.
+
+## Three builds, one task, one route — the afternoon comparison
+
+Same prompt, same fresh workspace shape, `ollama-turbo/gpt-oss:120b`, `--gear 4`, detached.
+One run per arm; the model's own variance is visible in the completion counts, so read the
+per-call rows as the measurement and the per-run rows as anecdotes.
+
+|                              |    morning build `a93731f` (full doctrine) | P13.1 as landed `6774add` (plan section gated) | P13.1 + plan restored `cdfb475` |
+| ---------------------------- | -----------------------------------------: | ---------------------------------------------: | ------------------------------: |
+| Session                      |                                 `01a08036` |                                     `01a08059` |                      `01a0805e` |
+| Outcome                      | finished, 9/9 tests pass outside the agent |                                  finished, 9/9 |                 finished, 10/10 |
+| Completions                  |                                         29 |                                             28 |                              60 |
+| Tool calls / failed          |                                     28 / 2 |                                         27 / 7 |                          57 / 7 |
+| Malformed `todo_write` calls |                                          1 |                                          **7** |                               3 |
+| Plan steps closed            |                                          3 |                                              0 |                               1 |
+| Checks passed / failed       |                                      3 / 0 |                                          5 / 0 |                          18 / 3 |
+| Fresh input tokens per call  |                                      23.4k |                                   18.0k (−23%) |                    19.8k (−15%) |
+| Prompt bytes per call        |                                    96.0 KB |                                        69.6 KB |                         77.7 KB |
+| Doctrine per call            |                                    38.3 KB |                                        24.9 KB |                         26.2 KB |
+| Tool schemas per call        |                                    30.2 KB |                                        20.2 KB |                         20.2 KB |
+| Conversation per call        |                                    26.6 KB |                                        24.5 KB |                         30.0 KB |
+
+What holds across all three: the per-call saving from P13.1 — schemas −33%, doctrine −32%,
+fresh tokens −15% to −23% — and task completion with independently passing tests. What does
+not hold: the number of completions a task takes. The third run chose a `tsconfig` + `tsc`
+route the other two did not and spent twice the completions fighting type errors; that is the
+model, not the prompt. With one run per arm, per-task cost is noise-dominated, and a real
+comparison needs several runs per arm — the comparison harness in `tests/eval/comparison/`
+exists for exactly that and has recorded zero runs.
+
+On the plan section: malformed `todo_write` calls went 1 → 7 when the section was gated and
+back to 3 when restored. Consistent with the section mattering, not proof at n=1; the section
+costs about 1 KB per call and the ledger is the product's contract, so it stays.

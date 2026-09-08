@@ -1,5 +1,21 @@
 # Program status
 
+**2026-09-08 (evening), P13.1 prompt overhead — landed, measured, one gate reverted.** The Opus
+lane merged at `ccfaec3`: a request carries full schemas only for the core tools and one-line catalog
+entries for the rest (advertised schema bytes −53%), the dashboard charter is delivered when a
+dashboard enters play, and the read-back, ambiguity and greenfield sections leave after the first
+completion. Gates: unit 4,231 / 0, integration 130 / 0, mock evals 63 / 63, governance 0.26.
+Three detached runs of the same task on `ollama-turbo/gpt-oss:120b`, one per build, in
+[docs/evidence/live-run-long-20260908.md](../evidence/live-run-long-20260908.md): per call, fresh
+input tokens −15% to −23%, doctrine −32%, schemas −33%, every run finished with independently
+passing tests. The lane had also gated `# Plan and track` after the first completion; malformed
+`todo_write` calls went 1 → 7 on that build and back to 3 with the section restored, so `cdfb475`
+keeps it on every completion, with a test that says why. Per-task completions varied 29 / 28 / 60
+across the three runs — the model's route choice, not the prompt — so per-task cost at one run per
+arm is noise; the comparison harness with several runs per arm is the next measurement. OpenRouter's
+seeded free models were re-probed: `minimax-m3:free` is gone, `nemotron-3-ultra:free` is the seed.
+Installed `v0.4.0-dev+cdfb475`.
+
 **2026-09-08 (afternoon), public and released.** The founder made the repository public and
 renamed it `ritikkyyadav/Rune`. The remote and all 33 in-repo references follow; the stale `main`
 (a July merge) was merged in and `main` now carries the shipped tree, so the README's one-line
