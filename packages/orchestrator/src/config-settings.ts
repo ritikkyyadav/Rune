@@ -395,11 +395,12 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
     placeholder: "auto | off | model | provider/model",
     description:
       "Which model answers Rune's OWN calls — the compaction summarizer, the intent read, the " +
-      "sub-agent report repair — as opposed to your work. 'auto' (default) picks the cheapest " +
-      "healthy connected route; 'off' runs them on the session model as before; a model id or " +
-      "'provider/model' names one. Naming one explicitly also lets it answer Auto mode's " +
-      "safety questions; the automatic pick never does. Your session model is untouched.",
-    valueAliases: { session: "off", none: "off", default: "auto", cheapest: "auto" },
+      "sub-agent report repair — as opposed to your work. 'off' (default) runs them on the " +
+      "session model; 'auto' picks the cheapest healthy connected route, which may be another " +
+      "provider; a model id or 'provider/model' names one. Naming one explicitly also lets it " +
+      "answer Auto mode's safety questions; the automatic pick never does. Your session model " +
+      "is untouched either way.",
+    valueAliases: { session: "off", none: "off", default: "off", cheapest: "auto" },
     nameAliases: ["helper model", "helper route", "governance model", "routing helper"],
     validate: (v) => {
       if (v.length > 120) return "that is too long for a model id";

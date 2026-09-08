@@ -4273,7 +4273,7 @@ export class Engine {
         // for, "ollama/…" is what is in force, and the second is the answer to
         // "what is my helper". Falls back to naming the session model, which
         // is what actually runs a governance call when nothing cheaper exists.
-        const setting = this.config.helperRoute ?? "auto";
+        const setting = this.config.helperRoute ?? "off";
         const route = this.resolveHelper();
         if (route) return `${route.provider}/${route.model}`;
         return setting.toLowerCase() === "off" ||

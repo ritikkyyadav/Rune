@@ -27,6 +27,7 @@ const OLLAMA_LIGHT =
 describe("resolveHelperRoute — auto", () => {
   test("prefers a local runtime over a free pool over a funded key", () => {
     const route = resolveHelperRoute({
+      setting: "auto",
       session: SESSION,
       registered: ["anthropic", "openrouter", "ollama"],
     });
@@ -42,6 +43,7 @@ describe("resolveHelperRoute — auto", () => {
 
   test("falls to the free pool when no local runtime is connected", () => {
     const route = resolveHelperRoute({
+      setting: "auto",
       session: SESSION,
       registered: ["anthropic", "openrouter"],
     });
@@ -53,9 +55,12 @@ describe("resolveHelperRoute — auto", () => {
     // to the session's own capacity is the status quo with extra words, and
     // the readout has to be able to say so rather than print a route that
     // changes nothing.
-    expect(resolveHelperRoute({ session: SESSION, registered: ["anthropic"] })).toBeNull();
+    expect(
+      resolveHelperRoute({ setting: "auto", session: SESSION, registered: ["anthropic"] }),
+    ).toBeNull();
     expect(
       resolveHelperRoute({
+        setting: "auto",
         session: { provider: "ollama", model: OLLAMA_LIGHT },
         registered: ["ollama"],
       }),
@@ -66,6 +71,7 @@ describe("resolveHelperRoute — auto", () => {
     // Cross-provider routing between two equally-funded routes saves nothing
     // and costs the prompt cache: the session pair is warm every turn.
     const route = resolveHelperRoute({
+      setting: "auto",
       session: { provider: "openai", model: "gpt-5.6" },
       registered: ["openai", "anthropic"],
     });
@@ -75,6 +81,7 @@ describe("resolveHelperRoute — auto", () => {
   test("skips a provider whose plan/quota cap has not lifted", () => {
     const now = 1_000_000;
     const route = resolveHelperRoute({
+      setting: "auto",
       session: SESSION,
       registered: ["anthropic", "openrouter", "ollama"],
       cappedUntil: (p) => (p === "ollama" ? now + 60_000 : 0),
@@ -85,6 +92,7 @@ describe("resolveHelperRoute — auto", () => {
 
   test("skips a model a previous session watched die", () => {
     const route = resolveHelperRoute({
+      setting: "auto",
       session: SESSION,
       registered: ["anthropic", "openrouter", "ollama"],
       isRetired: (p) => p === "ollama",
@@ -94,6 +102,7 @@ describe("resolveHelperRoute — auto", () => {
 
   test("skips a pair signed org policy rejects", () => {
     const route = resolveHelperRoute({
+      setting: "auto",
       session: SESSION,
       registered: ["anthropic", "openrouter", "ollama"],
       policyDenies: (p) => (p === "ollama" ? "policy: local runtimes are not allowed" : null),
@@ -103,6 +112,7 @@ describe("resolveHelperRoute — auto", () => {
 
   test("null when every candidate is unhealthy", () => {
     const route = resolveHelperRoute({
+      setting: "auto",
       session: SESSION,
       registered: ["anthropic", "openrouter", "ollama"],
       isRetired: () => true,
@@ -176,6 +186,7 @@ describe("resolveHelperRoute — explicit and off", () => {
 describe("helperAppliesToSafety", () => {
   test("only an explicitly named helper may answer safety questions", () => {
     const auto = resolveHelperRoute({
+      setting: "auto",
       session: SESSION,
       registered: ["anthropic", "ollama"],
     });
@@ -192,5 +203,20 @@ describe("helperAppliesToSafety", () => {
     });
     expect(helperAppliesToSafety(named)).toBe(true);
     expect(helperAppliesToSafety(null)).toBe(false);
+  });
+});
+
+describe("resolveHelperRoute — unset", () => {
+  test("unset is off, not auto: a cheaper route connected does not change where governance runs", () => {
+    // The integration suite once had its mock summarizer answered by a live
+    // free model because "auto" was what an unset value meant. A governance
+    // call that leaves the session's provider without being asked is a
+    // network call nobody configured.
+    expect(
+      resolveHelperRoute({ session: SESSION, registered: ["anthropic", "openrouter", "ollama"] }),
+    ).toBeNull();
+    expect(
+      resolveHelperRoute({ setting: "", session: SESSION, registered: ["anthropic", "ollama"] }),
+    ).toBeNull();
   });
 });

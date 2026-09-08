@@ -24,7 +24,8 @@ live, verified against tests or mocks only, or unverified. It adds no agent capa
   compaction summarizer, the intent read, the system-memory dream. `auto` picks the cheapest
   healthy connected route by capacity (`local → free → subscription → funded`) against the live
   gateway and the health store, never a hand-written list, and refuses a route dearer than the
-  session's. The session model is untouched; the Auto-mode safety reviewer is not rerouted by
+  session's. The default is `off`: an automatic pick may cross providers, and the saving is
+  unmeasured live, so it is opted into. The session model is untouched; the Auto-mode safety reviewer is not rerouted by
   default, because a free model wrongly allowing is worse than mechanical containment.
   `/config helper` reads back the resolved route, not the setting.
 - **Every completion records what it was for and what its prompt was made of** — a `role` and a
