@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { PROVIDER_PRESETS } from "../../../packages/shared/src/providers";
 import { mkdtempSync, rmSync, existsSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -83,7 +84,12 @@ describe("rune use", () => {
     await capture(() => runUse(["openrouter"]));
     // The catalog default tracks OpenRouter's live free tier (qwen3-coder:free
     // was retired 2026-07-15).
-    expect(loadLastModel()).toEqual({ provider: "openrouter", model: "minimax/minimax-m3:free" });
+    // The preset's default, not a literal: the :free lineup rots (minimax-m3:free was
+    // withdrawn on 2026-09-08) and a literal here would pin the test to a dead model.
+    expect(loadLastModel()).toEqual({
+      provider: "openrouter",
+      model: PROVIDER_PRESETS.find((p) => p.id === "openrouter")!.defaultModel,
+    });
   });
 
   it("honors an explicit model argument", async () => {
