@@ -2512,7 +2512,7 @@ class Tui {
           this.print(
             back
               ? `  ${ok(glyph("verified"))} ${text(who)} ${muted("reconnected")}`
-              : `  ${warn(glyph("retry"))} ${text(who)} ${muted("did not come back —")} ${info("rune mcp doctor")}`,
+              : `  ${warn(glyph("retry"))} ${text(who)} ${muted("did not come back")}  ${info("rune mcp doctor")}`,
           );
           return true;
         }
