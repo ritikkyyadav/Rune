@@ -11,7 +11,16 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
-_Nothing yet._
+### Fixed
+
+- **`rune detach` runs on the route you gave it.** `-p`, `-m` and `--gear` were parsed and
+  forwarded nowhere, so a detached run always booted on the pinned model — on release day that
+  pin was a free model OpenRouter had retired, and the run died at its first completion after
+  printing "detached run started". The launcher now hands the flags to the host as a
+  session-scoped route that beats the pin, prints the route and gear it used, and the host says
+  when a named provider has no credential on the machine instead of booting one that cannot
+  answer. Found by the first detached live run after the release; the retry completed a nine-file
+  project with tests on `ollama-turbo/gpt-oss:120b` (`docs/evidence/live-run-long-20260908.md`).
 
 ## [0.4.0] - 2026-09-08
 
