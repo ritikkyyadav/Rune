@@ -232,6 +232,26 @@ if (values.version) {
 
 // ─── Top-level --help ───
 
+/**
+ * What `-p` accepts, read off the registry.
+ *
+ * This line used to carry a hand-written union — `anthropic|openai|openrouter|
+ * google|ollama-turbo|ollama` — written when the roster was six presets. The
+ * roster has been 37 since 2026-09-06, so the installed binary's own help was
+ * telling people that thirty-one of their options did not exist. Rune has been
+ * bitten by exactly this before: a sticky `codex` pick was rejected at boot by
+ * two hand-maintained provider lists that had rotted, which is why the
+ * `ProviderName` type is deliberately open and `PROVIDER_PRESETS` is the one
+ * source. A help string is no different — derive it, never restate it.
+ */
+function providerHelpSummary(): string {
+  const ids = PROVIDER_PRESETS.map((p) => p.id);
+  const shown = 6;
+  const lead = ids.slice(0, shown).join("|");
+  const rest = ids.length - shown;
+  return rest > 0 ? `${lead} and ${rest} more — see \`rune providers\`` : lead;
+}
+
 if (values.help) {
   process.stdout.write(
     terminalText(
@@ -269,7 +289,7 @@ if (values.help) {
         `    --out <path>                 Write output to file instead of stdout\n\n` +
         `  Global options:\n` +
         `    -m, --model <model>          LLM model to use\n` +
-        `    -p, --provider <provider>    LLM provider (anthropic|openai|openrouter|google|ollama-turbo|ollama)\n` +
+        `    -p, --provider <provider>    LLM provider (${providerHelpSummary()})\n` +
         `    -w, --workspace <path>       Workspace root directory\n` +
         `    -r, --resume <sessionId>     Resume an existing session\n` +
         `    -n, --new                    Start a fresh session (skip the resume picker)\n` +
