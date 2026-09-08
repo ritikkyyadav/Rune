@@ -31,6 +31,9 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
   62.8 KB per prompt. The doctrine row of that live comparison is not controlled (per-user memory
   grew between the runs); the offline arm is −33% on ordinary turns. The read-back leaving after the first completion has
   not shown a cost on the two live runs so far; the plan section was put back on measurement, above.
+- **CI runs on pushes to `lane/**`** — the workflow only listened for pull requests against those
+  branches, so a lane push never ran — and gates `rune serve --check` on Windows from source as
+  well as from the packaged binary, plus once per host transport on every platform.
 - **OpenRouter's seeded free models re-probed.** `minimax/minimax-m3:free` was withdrawn to paid
   and answered 404 on release day; the seeds and the fallback tiers now name
   `nvidia/nemotron-3-ultra-550b-a55b:free`, which answered a live call the same day.
@@ -45,6 +48,18 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ### Fixed
 
+- **`rune serve` can host a session on Windows.** Each session host was reached over a unix domain
+  socket on every platform, with no Windows branch anywhere; Windows now listens on a loopback port
+  and publishes it with a per-host token in a 0600 rendezvous file, and a host serves nothing —
+  not even `ready` — until a connection presents that token. POSIX is byte-for-byte unchanged, and
+  `RUNE_HOST_TRANSPORT=tcp|unix` forces either transport anywhere so the Windows path is testable
+  on a Mac. The v0.4.0 Windows binary installed, ran doctor and tools, answered a real prompt, and
+  then failed `rune serve --check` with "Failed to connect"; the packaged Windows gate in CI had
+  been red on every recent run, so the tag went out past a red gate, not a missing one. A second
+  candidate cause is fixed alongside: the blackbox and notebook databases now wait for a lock
+  (`busy_timeout`) instead of throwing, since one host per session opens them concurrently.
+- **A host that fails to start names itself**, says whether it is still running, and prints the
+  tail of its own log, instead of a bare four-word socket error.
 - **`rune detach` runs on the route you gave it.** `-p`, `-m` and `--gear` were parsed and
   forwarded nowhere, so a detached run always booted on the pinned model — on release day that
   pin was a free model OpenRouter had retired, and the run died at its first completion after
