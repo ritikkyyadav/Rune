@@ -210,7 +210,23 @@ export function flowRow(left: string, receipt = "", budgetWidth = measure()): st
   // a narrow terminal -- `row` had always truncated it, and dropping that on
   // the way past was a regression, not a simplification.
   const joined = visLen(receipt) ? `${left}  ${receipt}` : left;
-  return visLen(joined) > budgetWidth ? truncate(joined, budgetWidth) : joined;
+  if (visLen(joined) <= budgetWidth) return joined;
+  // On overflow the ARGUMENT gives way, never the receipt.
+  //
+  // Truncating the joined row cut from the right, and the right is where the
+  // outcome lives: on an 80-column window a long path ate its own result and
+  // the rail filled up with rows ending `0…`, `4 fil…`, `+208 | 1 hu…`. A row
+  // whose receipt is gone has reported nothing -- the path was already visible
+  // in the call above it. So the left side is cut to make room and the receipt
+  // is set down whole, as long as it is small enough to leave the row a
+  // readable left half; a receipt wider than that is not a receipt, and the
+  // old whole-row truncation still applies to it.
+  const receiptWidth = visLen(receipt);
+  const room = budgetWidth - receiptWidth - 2;
+  if (receiptWidth === 0 || room < Math.min(24, Math.floor(budgetWidth / 3))) {
+    return truncate(joined, budgetWidth);
+  }
+  return `${truncate(left, room)}  ${receipt}`;
 }
 
 /**
