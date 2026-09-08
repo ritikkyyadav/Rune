@@ -10,6 +10,7 @@ import type { IncidentRecord } from "@rune/shared";
 import { BlackboxStore } from "@rune/telemetry";
 import { accent, danger, dim, faint, info, ok, text, warn } from "./ui/theme";
 import { formatAutoSafetyMetrics, readAutoSafetyMetrics } from "../auto-metrics";
+import { providerRouteLines, readProviderRouteReport } from "../provider-health-report";
 import { glyph } from "./ui/glyphs";
 
 const HOME = () => getRuneHome();
@@ -149,6 +150,8 @@ export function runDoctor(): void {
     }
   }
 
+  doctorProviderRoutes();
+
   doctorToolchain();
 
   // The recorder's own failures land here — this file should not exist.
@@ -164,6 +167,26 @@ export function runDoctor(): void {
     `\n  ${dim("browse:")} ${info("rune incidents")} ${dim("·")} ${info("rune incidents top")} ${dim("·")} ${info("rune incidents show <id>")}\n`,
   );
   store?.close();
+}
+
+/**
+ * The routes this machine can reach, and what the gateway remembers about them.
+ *
+ * `~/.rune/provider-health.json` is pruned on write, so a machine that stopped
+ * making calls keeps records nobody believes. The person then has no way to ask
+ * "is my Codex cap over?" without starting a session and finding out. This
+ * section answers it offline, and says plainly when a record is stale or was
+ * filed against the wrong route.
+ */
+function doctorProviderRoutes(): void {
+  const now = Date.now();
+  const lines = providerRouteLines(readProviderRouteReport({ home: HOME(), now }), now);
+  for (const line of lines) {
+    const mark =
+      line.level === "ok" ? ok("✓") : line.level === "warn" ? warn("!") : danger(glyph("failure"));
+    console.log(`  ${mark} ${line.level === "ok" ? line.text : text(line.text)}`);
+    for (const sub of line.sub) console.log(`    ${faint(sub)}`);
+  }
 }
 
 function processAlive(pid: number): boolean {

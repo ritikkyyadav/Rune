@@ -11,8 +11,41 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.4.0] - 2026-09-08
+
+Phase 12 ships what exists, on free model routes, with every claim in the README marked verified
+live, verified against tests or mocks only, or unverified. It adds no agent capability.
+
+<!-- P12.1 — run economics on free tiers. The lane hands its CHANGELOG lines back in its report; paste them into the sections below and delete this comment. -->
+<!-- P12.2 — MCP live and /mcp. Same: lane report lines go here. -->
+<!-- P12.3 — skills, plugins and hooks as a user layer. Same: lane report lines go here. -->
+<!-- P12.5 — UI freeze and the defect pass. Same: lane report lines go here. -->
+
 ### Added
 
+- **The free routes lead `/login`, and say they are free.** The key list inherited the roster's
+  order, which opens with four providers that all need a funded account — on a machine with no
+  budget, the four rows that cannot answer a prompt tonight. Free tiers now sort to the top of the
+  API-key list (the sort is stable, so the frontier labs still lead the paid block in their old
+  order), each carries its marker in the label, and level 1 names them before the count. No layout
+  changed: the marker is a suffix on a string the picker already renders.
+- **`rune doctor` reports each route's health and quota window.** `~/.rune/provider-health.json` is
+  pruned only when something writes it, so a machine that stopped making calls keeps records
+  nothing believes and there was no way to ask "is my cap over?" without starting a session.
+  Doctor now says, offline: a cap in force with how long is left, or expired with how long ago and
+  marked **stale**; a retired model with its window; and — where the retired id is not one that
+  provider offers but is one another preset offers — that the retirement was filed against the
+  route a misdirected call went to, not a real failure of that provider.
+- **A fresh-`HOME` onboarding test.** The headless equivalent of the first run — empty home,
+  doctor, connect a route, choose a model, first prompt, doctor again — against a local stub
+  speaking the OpenAI wire. It completes in **0.8 s** on the machine it was written on, against a
+  180 s budget.
+- **The version source and the release asset names are pinned by tests.** Eight package manifests
+  and the Cargo workspace must agree with `scripts/version.sh`; `targets.sh`, `release.yml`,
+  `web-install.sh` and `install.ps1` must agree on `rune-*`. Both pin the agreement, never a
+  literal.
 - **The sandbox is a policy, not a switch.** `/sandbox` opens three tabs — **Mode**
   (`auto-allow` · `regular` · `off`), **Overrides** (allow an unsandboxed retry · strict) and
   **Config** (excluded commands, filesystem read/write rules) — with text forms for each
@@ -54,9 +87,40 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
   `npm audit`, and nearly a third of its flags did not survive the reasoned pass.
 - **Reading one of Rune's own control files is no longer refused as a guardrail change.** The
   self-protection breaker fired on `read_file` of a `SKILL.md`; it now applies to writes only.
+- **The product is named Rune.** Every name moves with it: the `rune` command and the `rune-tools`
+  executor, `~/.rune` and `rune.db`, `RUNE_*` environment variables, `.rune/` in a workspace,
+  `@rune/*` packages and `rune-*` crates, `RUNE.md` instructions, `rune:` auto-commits and the
+  `rune` keychain service. An installed Gear keeps working through one generation of read-through:
+  the first start moves `~/.gear` to `~/.rune` (leaving a symlink), renames `gear.db` and `GEAR.md`,
+  adopts `GEAR_*` variables, reads the `gear` keychain service, undoes `gear:` commits, recognises
+  the playbook and `rune evolve` markers under either name, loads `gearVersion` plugin manifests and
+  binds `/etc/gear` org policies. The permission ladder keeps its vocabulary (`--gear 1..4`, `/gear`,
+  "4th gear"). Terminals that key behaviour on the process name (Warp's CLI-agent channel) see a
+  new name.
+- **The terminal is the only interface.** The web app, the bundle embedded in the binary,
+  `rune web`, `rune open`, the bare-command browser entry, the VS Code extension and the Playwright
+  suite are removed. `rune serve` keeps the WebSocket engine for `rune attach ws://` and the SDK and
+  no longer serves a page; `rune serve --check` proves the compiled binary can spawn its own session
+  hosts. A bare `rune` starts the console.
+- **The accent is violet.** `#A28CF3`, exact on the dark ground and derived to `#9682E1` on paper so
+  it clears a 3:1 floor; the electric blue and the web token pipeline are gone.
 
 ### Fixed
 
+- **`rune --help` no longer prints a provider list from six presets ago.** The `-p` line said
+  `anthropic|openai|openrouter|google|ollama-turbo|ollama` long after the roster reached 37, so the
+  installed binary's own help told people that thirty-one of their options did not exist. It is
+  derived from `PROVIDER_PRESETS` and points at `rune providers`.
+- **The installer stopped telling people to run `gear`.** The last line of `web-install.sh` named
+  a command that has not existed since the rename; the release workflow staged its verified
+  download into `$HOME/gearbin`.
+- **The README says what is verified.** A three-column table — verified live, verified by tests or
+  mocks only, unverified — replaces a feature list that stated designs as results. Claims removed
+  because the record does not support them: a stale "latest release v0.2.0", parity-shaped framing,
+  measured-sounding sub-agent, teamwork, self-evolution and research claims (17 of 666 sessions used
+  sub-agents, the team bus has sent zero live messages, no A/B arm has ever run), and the implication
+  that the published one-line install works today. It does not: every release up to v0.3.1 carries
+  `gear-*` assets and the installers look for `rune-*`, so it works from v0.4.0 onward.
 - **End-of-turn verification grades what the run wrote, not the whole workspace.** Started in a
   folder of unrelated projects, Rune used to run every sibling's checks after a build and then
   chase their failures — a Python suite wanting pandas, a Gradle build with no JDK — in code it had
@@ -89,26 +153,6 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
   lets a loopback URL through instead of claiming it would hang. Seatbelt's `localhost` filter also
   admits a `0.0.0.0` bind, which `auto-containment` already refuses as a mechanical breaker; the
   threat model states this rather than claiming "loopback only".
-
-### Changed
-
-- **The product is named Rune.** Every name moves with it: the `rune` command and the `rune-tools`
-  executor, `~/.rune` and `rune.db`, `RUNE_*` environment variables, `.rune/` in a workspace,
-  `@rune/*` packages and `rune-*` crates, `RUNE.md` instructions, `rune:` auto-commits and the
-  `rune` keychain service. An installed Gear keeps working through one generation of read-through:
-  the first start moves `~/.gear` to `~/.rune` (leaving a symlink), renames `gear.db` and `GEAR.md`,
-  adopts `GEAR_*` variables, reads the `gear` keychain service, undoes `gear:` commits, recognises
-  the playbook and `rune evolve` markers under either name, loads `gearVersion` plugin manifests and
-  binds `/etc/gear` org policies. The permission ladder keeps its vocabulary (`--gear 1..4`, `/gear`,
-  "4th gear"). Terminals that key behaviour on the process name (Warp's CLI-agent channel) see a
-  new name.
-- **The terminal is the only interface.** The web app, the bundle embedded in the binary,
-  `rune web`, `rune open`, the bare-command browser entry, the VS Code extension and the Playwright
-  suite are removed. `rune serve` keeps the WebSocket engine for `rune attach ws://` and the SDK and
-  no longer serves a page; `rune serve --check` proves the compiled binary can spawn its own session
-  hosts. A bare `rune` starts the console.
-- **The accent is violet.** `#A28CF3`, exact on the dark ground and derived to `#9682E1` on paper so
-  it clears a 3:1 floor; the electric blue and the web token pipeline are gone.
 
 ### Removed
 
@@ -221,5 +265,8 @@ evidence, the terminal was rewritten, and the cost and safety subsystems were ma
 
 Version bump, installer polish, and install-from-GitHub documentation.
 
-[Unreleased]: https://github.com/ritikkyyadav/Alan/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/ritikkyyadav/Alan/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/ritikkyyadav/Alan/compare/v0.3.1...v0.4.0
+[0.3.1]: https://github.com/ritikkyyadav/Alan/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/ritikkyyadav/Alan/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/ritikkyyadav/Alan/releases/tag/v0.2.0

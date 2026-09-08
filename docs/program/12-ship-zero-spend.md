@@ -10,17 +10,17 @@ or not. It adds no agent research. Anything not on this page is frozen.
 Measured on 2026-09-07 from `~/.rune/rune.db` (666 sessions) and `~/.rune/blackbox.db`
 (3,160 incidents):
 
-| Signal | Value |
-| --- | --- |
-| Turns that ended in error, halt, max-turns or abort | 40 of 120 retro'd turns |
-| Tool calls that failed | 83 of 1,055 |
-| Provider rate-limit incidents | 1,414 of 3,160 (45%) |
-| Hard crashes (dirty exit) | 162 total, 0 in September |
-| Sessions that used sub-agents | 17 of 666 |
-| Team-bus messages ever sent | 0 |
-| Completions since the meter | 2,494 — $0.47 paid, $30 list-equivalent |
-| Fresh input tokens per completion | ~34k |
-| Uncommitted tree at the start of the phase | 202 files, +10,780 / −2,444 |
+| Signal                                              | Value                                   |
+| --------------------------------------------------- | --------------------------------------- |
+| Turns that ended in error, halt, max-turns or abort | 40 of 120 retro'd turns                 |
+| Tool calls that failed                              | 83 of 1,055                             |
+| Provider rate-limit incidents                       | 1,414 of 3,160 (45%)                    |
+| Hard crashes (dirty exit)                           | 162 total, 0 in September               |
+| Sessions that used sub-agents                       | 17 of 666                               |
+| Team-bus messages ever sent                         | 0                                       |
+| Completions since the meter                         | 2,494 — $0.47 paid, $30 list-equivalent |
+| Fresh input tokens per completion                   | ~34k                                    |
+| Uncommitted tree at the start of the phase          | 202 files, +10,780 / −2,444             |
 
 Two conclusions drive the plan. **Free tiers break on Rune's own completion count**:
 classifier, reviewer, verifier, summarizer and retro are separate calls, each carrying
