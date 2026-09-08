@@ -12,6 +12,7 @@ import {
   apiKeyAccount,
   oauthAccount,
 } from "../../../packages/shared/src/credential-store";
+import { PROVIDER_PRESETS } from "../../../packages/shared/src/providers";
 
 // Inject an empty env so the host's real keys never leak into assertions.
 const noEnv = {} as NodeJS.ProcessEnv;
@@ -39,6 +40,34 @@ describe("buildGateway", () => {
       env: { ANTHROPIC_API_KEY: "sk-ant" } as NodeJS.ProcessEnv,
     });
     expect(gw.getRegisteredProviderNames()).toContain("anthropic");
+  });
+
+  it("registers every wider-roster host from its env var alone", () => {
+    for (const preset of PROVIDER_PRESETS) {
+      if (preset.kind !== "openai-compat" || preset.local || !preset.envVar) continue;
+      const gw = buildGateway({
+        provider: "google",
+        keys: {},
+        env: { [preset.envVar]: "k" } as NodeJS.ProcessEnv,
+      });
+      expect({ id: preset.id, names: gw.getRegisteredProviderNames() }).toEqual({
+        id: preset.id,
+        names: [preset.id],
+      });
+    }
+  });
+
+  it("honours a per-host base URL override for an OpenAI-compatible preset", () => {
+    // Z.ai's coding plan is a different path on the same host; DashScope has a
+    // China twin. `/keys url <id> <baseUrl>` lands in localBaseUrls.
+    const gw = buildGateway({
+      provider: "zai",
+      keys: { zai: "k" },
+      localBaseUrls: { zai: "https://api.z.ai/api/coding/paas/v4" },
+      env: noEnv,
+    });
+    const provider = gw.getProvider("zai") as unknown as { client?: { baseURL?: string } };
+    expect(provider.client?.baseURL).toBe("https://api.z.ai/api/coding/paas/v4");
   });
 
   it("registers a custom OpenAI-compatible endpoint under 'custom'", () => {

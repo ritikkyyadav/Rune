@@ -1,5 +1,6 @@
 import type {
   CostLedger,
+  CostEntry,
   GatewayConfig,
   GatewayIncidentEvent,
   InferenceRequest,
@@ -82,6 +83,19 @@ export class LlmGateway {
    * delegates to the same tracker the engine uses.
    */
   private costTracker = new CostTracker();
+  private usageListeners = new Set<(entry: CostEntry) => void>();
+  private requestGuard?: (request: InferenceRequest) => void | (() => void);
+
+  /** One accounting boundary for main, delegated, review and utility calls. */
+  onUsage(listener: (entry: CostEntry) => void): () => void {
+    this.usageListeners.add(listener);
+    return () => this.usageListeners.delete(listener);
+  }
+
+  /** Runs before each paid attempt, including retries and fallbacks. */
+  setRequestGuard(guard: (request: InferenceRequest) => void | (() => void)): void {
+    this.requestGuard = guard;
+  }
   /**
    * Providers whose model is GONE (404/410/"retired"), pruned for this
    * gateway's lifetime — a retired model does not come back mid-session.
@@ -258,8 +272,10 @@ export class LlmGateway {
     let lastError: Error | undefined;
 
     for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
+      const release = this.requestGuard?.(request);
       try {
         const response = await provider.infer(request);
+        release?.();
         this.recordCost(request.model, request.provider, response.usage);
         return response;
       } catch (err) {
@@ -272,6 +288,8 @@ export class LlmGateway {
         // silent — `retryEvent` reports it to the black box on the way past.
         this.retryEvent(request.provider, request.model, attempt, lastError);
         await this.backoff(lastError, attempt);
+      } finally {
+        release?.();
       }
     }
 
@@ -364,10 +382,12 @@ export class LlmGateway {
       let shouldFallback = false;
 
       for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
+        const release = this.requestGuard?.(adjustedRequest);
         try {
           const gen = provider.inferStream(adjustedRequest, opts);
           for await (const event of gen) {
             if (event.type === "message_stop") {
+              release?.();
               this.recordCost(adjustedRequest.model, providerName, event.usage);
             }
             yieldedSinceReset = true;
@@ -484,6 +504,8 @@ export class LlmGateway {
           }
           yield this.retryEvent(providerName, adjustedRequest.model, attempt, lastError);
           await this.backoff(lastError, attempt);
+        } finally {
+          release?.();
         }
       }
 
@@ -859,7 +881,14 @@ export class LlmGateway {
 
   private recordCost(model: string, provider: ProviderName, usage: TokenUsage): void {
     try {
-      this.costTracker.record(model, provider, usage);
+      const entry = this.costTracker.record(model, provider, usage);
+      for (const listener of this.usageListeners) {
+        try {
+          listener(entry);
+        } catch {
+          // A completed response must survive a broken telemetry consumer.
+        }
+      }
     } catch {
       // record() throws only on a budget cap, which this gateway does not set.
       // Accounting must never abort a response the provider already billed for.

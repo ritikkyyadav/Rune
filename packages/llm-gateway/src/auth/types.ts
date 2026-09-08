@@ -8,7 +8,7 @@
 // putting `authenticate()` on the adapter would couple auth to inference; keeping
 // it here does not.
 
-import type { ProviderPreset, CredentialStore, AuthMethod } from "@rune/shared";
+import type { ConnectablePreset, CredentialStore, AuthMethod } from "@rune/shared";
 
 // Re-export so the auth layer is the one import site for strategy code, while the
 // canonical definition stays in @rune/shared (used by ProviderPreset.auth too).
@@ -39,7 +39,13 @@ export interface ResolvedCredential {
  */
 export interface AuthContext {
   providerId: string;
-  preset: ProviderPreset;
+  /**
+   * What is being connected. `ConnectablePreset` rather than `ProviderPreset`
+   * so a web-search engine (Tavily, Exa, …) signs in through the very same
+   * strategies as a model provider — the strategies only ever needed the
+   * label, the env var, the key hint, the docs URL and a base URL.
+   */
+  preset: ConnectablePreset;
   /** The secure credential store (injected — keychain or file fallback). */
   store: CredentialStore;
   /** Injected env for key/precedence resolution and testability. */

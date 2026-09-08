@@ -8,12 +8,13 @@ const RATE_LIMITED_RE = /\b429\b|rate.?limit|too many requests/i;
 
 export const WEB_SEARCH_SCHEMA: ToolSchema = {
   name: "web_search",
-  version: "0.2.0",
+  version: "0.3.0",
   description:
-    "Search the web for current information. Uses the Tavily or Brave API when a key is set " +
-    "(TAVILY_API_KEY / BRAVE_API_KEY), otherwise falls back to DuckDuckGo — no key required. " +
-    "Returns ranked results with titles, URLs, and snippets. Set recencyDays to bias toward the " +
-    "freshest results (latest news/updates).",
+    "Search the web for current information. Asks whichever search engine is connected " +
+    "(Tavily, Exa, Brave, Serper, Perplexity, Firecrawl, Jina, You.com, Kagi, SerpAPI or a " +
+    "self-hosted SearXNG — connected with /login → Web search) and falls back to keyless " +
+    "DuckDuckGo. Returns ranked results with titles, URLs, and snippets. Set recencyDays to " +
+    "bias toward the freshest results (latest news/updates).",
   inputSchema: {
     type: "object",
     properties: {

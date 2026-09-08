@@ -2,8 +2,10 @@
 
 Rune can authenticate a provider by any of five methods. The rest of Rune never
 learns _how_ a provider signed in — it asks for an authenticated provider and
-streams. This is an **authentication-layer** feature: no new LLM providers are
-added, and existing API-key users see zero behavior change.
+streams. This is an **authentication-layer** feature; existing API-key users
+see zero behavior change. Since 2026-09-06 the same layer connects the
+web-search engines (Tavily, Exa, Brave, …): one API-key strategy, one keychain
+account shape, one `/login` — see the roster in [providers.md](./providers.md).
 
 ## Auth methods
 
@@ -24,7 +26,10 @@ default (`api_key` for cloud, `local` for runtimes).
 ```
 rune login [provider]        Sign in. Picks a provider + method, runs the flow, stores the result.
                               Flags: --method api_key|oauth|device|local|chain, --no-browser, --migrate
-rune providers               List every provider, its auth method, and credential status.
+rune login <engine>          Connect a web-search engine (tavily, exa, brave, serper, …): paste the
+                              key, then one real search verifies it and it answers first from now on.
+rune logout <provider|engine> Forget a stored key or OAuth session.
+rune providers               List every provider and every search engine, with credential status.
 rune use <provider> [model]  Set the active provider (+ model) for new sessions.
 rune models [provider]       List a provider's models — live discovery, cached an hour,
                               curated preset as the fallback. `--refresh` forces a call.
@@ -36,7 +41,9 @@ Examples:
 rune login openrouter            # opens a browser, authorizes via OAuth (PKCE), stores the key
 rune login anthropic             # prompts for an API key, stores it in your OS keychain
 rune login openrouter --no-browser   # prints the URL to open manually (headless boxes)
-rune providers                   # see who's signed in and how
+rune login mistral               # any of the thirty-odd keyed hosts, by id
+rune login exa                   # a search engine: paste the key, one test search proves it
+rune providers                   # see who's signed in and how — models and search engines
 rune use openrouter              # make OpenRouter the active provider
 rune models openrouter           # live model catalog
 ```
@@ -146,5 +153,6 @@ When omitted, the method is auto-selected as described above.
 ## Migrating existing keys
 
 `rune login --migrate` copies API keys from the legacy `~/.rune/secrets.json`
-into the secure store. It never overwrites an existing entry and **never deletes
-secrets.json**, so rollback is trivial. See [byop-migration.md](./byop-migration.md).
+into the secure store — model providers and web-search engines alike. It never
+overwrites an existing entry and **never deletes secrets.json**, so rollback is
+trivial. See [byop-migration.md](./byop-migration.md).

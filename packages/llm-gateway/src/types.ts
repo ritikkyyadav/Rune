@@ -68,6 +68,32 @@ export type ProviderName =
   | "groq"
   | "xai"
   | "deepseek"
+  // The wider roster (2026-09-06): OpenAI-compatible hosts, each one a preset
+  // in @rune/shared. Named here for autocomplete; see the open tail below.
+  | "alibaba"
+  | "ai21"
+  | "baseten"
+  | "cerebras"
+  | "chutes"
+  | "cohere"
+  | "deepinfra"
+  | "fireworks"
+  | "github-models"
+  | "huggingface"
+  | "hyperbolic"
+  | "inception"
+  | "minimax"
+  | "mistral"
+  | "moonshot"
+  | "nebius"
+  | "novita"
+  | "nvidia"
+  | "sambanova"
+  | "scaleway"
+  | "siliconflow"
+  | "together"
+  | "vercel"
+  | "zai"
   // Subscription-backed transport (its own endpoint, not the vendor's public
   // API): the ChatGPT-backend Codex "responses" API.
   | "codex"
@@ -79,7 +105,13 @@ export type ProviderName =
   | "bedrock" // Anthropic models via the AWS Bedrock Messages API (SigV4)
   | "vertex" // Anthropic + Gemini via Google Vertex AI (ADC)
   | "azure-openai" // OpenAI models via Azure deployments (api-key / Entra)
-  | "custom";
+  | "custom"
+  // The open tail. The literals above are documentation and autocomplete; the
+  // real set is PROVIDER_PRESETS in @rune/shared, and a hand-written copy of it
+  // has rotted before — a sticky `codex` pick was rejected at boot by a list
+  // that predated the subscription transports. Keeping the type open means a
+  // preset added there is a provider here with no second edit to forget.
+  | (string & {});
 
 /**
  * Providers that can run web search server-side (the model grounds itself on
@@ -607,6 +639,126 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   "nemotron-3-super": { inputPerMillion: 0.3, outputPerMillion: 0.9, estimated: true },
   "nemotron-3-nano:30b": { inputPerMillion: 0.06, outputPerMillion: 0.18, estimated: true },
   "gemma4:31b": { inputPerMillion: 0.06, outputPerMillion: 0.18, estimated: true },
+
+  // ─── The wider roster (2026-09-06) ───
+  // Keyed by the BARE id (pricingFor falls back to the segment after the last
+  // "/"), so one row serves every host that spells a model the same way:
+  // `gpt-oss-120b` covers openai/…, accounts/fireworks/models/… and the bare
+  // Cerebras/SambaNova/Scaleway ids alike. Casing is part of the key, which is
+  // why Kimi-K2 and DeepSeek-V3.1 appear in the spellings their hosts use.
+  //
+  // First-party hosts (Mistral, Cohere, Moonshot, Z.ai, AI21, MiniMax,
+  // Inception, Alibaba, Cerebras) carry their published list rates. Ids served
+  // by several hosts at several prices carry a mid-market ESTIMATE and say so —
+  // the metered-equivalent column is populated rather than silently zero, and
+  // every readout marks the figure as inferred.
+
+  // AI21
+  "jamba-large": { inputPerMillion: 2, outputPerMillion: 8 },
+  "jamba-mini": { inputPerMillion: 0.2, outputPerMillion: 0.4 },
+
+  // Alibaba Model Studio (first tier of a context-tiered sheet; longer inputs cost more)
+  "qwen3-coder-plus": { inputPerMillion: 1, outputPerMillion: 5, estimated: true },
+  "qwen3-coder-flash": { inputPerMillion: 0.3, outputPerMillion: 1.5, estimated: true },
+  "qwen-max": { inputPerMillion: 1.6, outputPerMillion: 6.4, estimated: true },
+  "qwen-plus": { inputPerMillion: 0.4, outputPerMillion: 1.2, estimated: true },
+  "qwen-turbo": { inputPerMillion: 0.05, outputPerMillion: 0.2, estimated: true },
+
+  // Cerebras
+  "qwen-3-coder-480b": { inputPerMillion: 2, outputPerMillion: 2 },
+  "qwen-3-235b-a22b-instruct-2507": { inputPerMillion: 0.6, outputPerMillion: 1.2 },
+  "llama-3.3-70b": { inputPerMillion: 0.85, outputPerMillion: 1.2 },
+
+  // Cohere
+  "command-a-03-2025": { inputPerMillion: 2.5, outputPerMillion: 10 },
+  "command-r-plus-08-2024": { inputPerMillion: 2.5, outputPerMillion: 10 },
+  "command-r7b-12-2024": { inputPerMillion: 0.0375, outputPerMillion: 0.15 },
+
+  // Fireworks spellings
+  "deepseek-v3p1": { inputPerMillion: 0.56, outputPerMillion: 1.68 },
+  "kimi-k2-instruct-0905": { inputPerMillion: 0.6, outputPerMillion: 2.5 },
+  "llama-v3p3-70b-instruct": { inputPerMillion: 0.9, outputPerMillion: 0.9 },
+  "qwen3-coder-480b-a35b-instruct": {
+    inputPerMillion: 0.45,
+    outputPerMillion: 1.8,
+    estimated: true,
+  },
+
+  // Inception
+  "mercury-coder": { inputPerMillion: 0.25, outputPerMillion: 1 },
+  mercury: { inputPerMillion: 0.25, outputPerMillion: 1 },
+
+  // MiniMax
+  "MiniMax-M2": { inputPerMillion: 0.3, outputPerMillion: 1.2 },
+  "MiniMax-M1": { inputPerMillion: 0.4, outputPerMillion: 2.2 },
+
+  // Mistral (the -latest aliases, plus the dated ids other hosts use)
+  "mistral-large-latest": { inputPerMillion: 2, outputPerMillion: 6 },
+  "mistral-medium-latest": { inputPerMillion: 0.4, outputPerMillion: 2 },
+  "devstral-medium-latest": { inputPerMillion: 0.4, outputPerMillion: 2 },
+  "codestral-latest": { inputPerMillion: 0.3, outputPerMillion: 0.9 },
+  "codestral-2501": { inputPerMillion: 0.3, outputPerMillion: 0.9 },
+  "magistral-medium-latest": { inputPerMillion: 2, outputPerMillion: 5 },
+  "mistral-small-latest": { inputPerMillion: 0.1, outputPerMillion: 0.3 },
+  "mistral-small-3.2-24b-instruct-2506": {
+    inputPerMillion: 0.15,
+    outputPerMillion: 0.35,
+    estimated: true,
+  },
+
+  // Moonshot (Kimi)
+  "kimi-k2-0905-preview": { inputPerMillion: 0.6, outputPerMillion: 2.5 },
+  "kimi-k2-thinking": { inputPerMillion: 0.6, outputPerMillion: 2.5 },
+  "kimi-k2-turbo-preview": { inputPerMillion: 1.15, outputPerMillion: 8 },
+  "kimi-latest": { inputPerMillion: 1, outputPerMillion: 3, estimated: true },
+
+  // Z.ai (GLM). The flash tier is a real zero, not an unknown one.
+  "glm-4.6": { inputPerMillion: 0.6, outputPerMillion: 2.2 },
+  "glm-4.5": { inputPerMillion: 0.6, outputPerMillion: 2.2 },
+  "glm-4.5-air": { inputPerMillion: 0.2, outputPerMillion: 1.1 },
+  "glm-4.5-flash": { inputPerMillion: 0, outputPerMillion: 0 },
+
+  // Open weights served by many hosts (Baseten, Chutes, DeepInfra, Hugging
+  // Face, Hyperbolic, Nebius, Novita, NVIDIA, SambaNova, Scaleway, SiliconFlow,
+  // Together): mid-market estimates in each host's spelling.
+  "Kimi-K2-Instruct-0905": { inputPerMillion: 0.6, outputPerMillion: 2.5, estimated: true },
+  "Kimi-K2-Instruct": { inputPerMillion: 0.6, outputPerMillion: 2.5, estimated: true },
+  "kimi-k2-instruct": { inputPerMillion: 0.6, outputPerMillion: 2.5, estimated: true },
+  "kimi-k2": { inputPerMillion: 0.6, outputPerMillion: 2.5, estimated: true },
+  "Qwen3-Coder-480B-A35B-Instruct": {
+    inputPerMillion: 0.4,
+    outputPerMillion: 1.6,
+    estimated: true,
+  },
+  "Qwen3-Coder-480B-A35B-Instruct-FP8": {
+    inputPerMillion: 2,
+    outputPerMillion: 2,
+    estimated: true,
+  },
+  "Qwen3-32B": { inputPerMillion: 0.4, outputPerMillion: 0.8, estimated: true },
+  "qwen3-coder-30b-a3b-instruct": { inputPerMillion: 0.2, outputPerMillion: 0.8, estimated: true },
+  "DeepSeek-V3.1": { inputPerMillion: 0.27, outputPerMillion: 1.1, estimated: true },
+  "deepseek-v3.1": { inputPerMillion: 0.27, outputPerMillion: 1.1, estimated: true },
+  "DeepSeek-V3-0324": { inputPerMillion: 0.27, outputPerMillion: 1.1, estimated: true },
+  "deepseek-v3-0324": { inputPerMillion: 0.27, outputPerMillion: 1.1, estimated: true },
+  "gpt-oss-120b": { inputPerMillion: 0.1, outputPerMillion: 0.5, estimated: true },
+  "Llama-3.3-70B-Instruct": { inputPerMillion: 0.3, outputPerMillion: 0.4, estimated: true },
+  "Llama-3.3-70B-Instruct-Turbo": {
+    inputPerMillion: 0.88,
+    outputPerMillion: 0.88,
+    estimated: true,
+  },
+  "Meta-Llama-3.3-70B-Instruct": { inputPerMillion: 0.6, outputPerMillion: 1.2, estimated: true },
+  "llama-3.3-70b-instruct": { inputPerMillion: 0.3, outputPerMillion: 0.4, estimated: true },
+  "llama-3.3-nemotron-super-49b-v1.5": {
+    inputPerMillion: 0.1,
+    outputPerMillion: 0.4,
+    estimated: true,
+  },
+
+  // Gateway-prefixed frontier ids (Vercel AI Gateway, GitHub Models) that the
+  // bare-id fallback cannot reach because the spelling differs from ours.
+  "claude-sonnet-4.5": { inputPerMillion: 3, outputPerMillion: 15 },
 
   // ─── OpenRouter-prefixed ids for the same models ───
   "anthropic/claude-sonnet-4": { inputPerMillion: 3, outputPerMillion: 15 },

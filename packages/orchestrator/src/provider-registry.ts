@@ -231,10 +231,15 @@ export function buildGateway(opts: BuildGatewayOpts): LlmGateway {
       case "openai-compat":
         // OpenRouter keeps its bespoke adapter (custom health check); every
         // other OpenAI-compatible host runs through OpenAIProvider + base URL.
+        // The base URL is overridable per host (`/keys url <id> <baseUrl>`,
+        // the same `endpoints` map the local runtimes use): several hosts on
+        // the wider roster have a regional twin or a plan-specific path —
+        // DashScope in China, Z.ai's coding-plan endpoint — and the key is
+        // the same on both, so the door is the only thing to change.
         if (preset.id === "openrouter") gw.registerProvider(new OpenRouterProvider(key));
         else
           gw.registerProvider(
-            new OpenAIProvider(key, preset.baseUrl, preset.id as ProviderName, {
+            new OpenAIProvider(key, localBaseUrls[preset.id] ?? preset.baseUrl, preset.id, {
               cacheBreakpoints: cacheBreakpointPolicyFor(preset.id),
             }),
           );

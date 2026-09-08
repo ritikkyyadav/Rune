@@ -3,13 +3,23 @@
 // builds an AuthContext with real browser/prompt hooks, runs the strategy's
 // authenticate(), and persists to the secure credential store. Mirrors the
 // standalone dispatch of `telemetry`/`doctor` — no Engine boot.
+//
+// Two rosters answer to it: model providers (`rune login mistral`) and
+// web-search engines (`rune login exa`). An engine takes the same API-key
+// strategy and the same keychain account, then proves the key with one real
+// search instead of a format check.
 
 import {
   loadConfig,
   loadSecrets,
   getPreset,
   getProviderDescriptor,
+  getSearchPreset,
+  keyedSearchPresets,
   PROVIDER_PRESETS,
+  SEARCH_PROVIDER_PRESETS,
+  setLocalEndpoint,
+  savePrefs,
   openCredentialStore,
   migrateLegacySecrets,
   saveLastModel,
@@ -20,6 +30,7 @@ import {
   type AuthMethod,
 } from "@rune/shared";
 import { getStrategy, AuthError, type AuthContext } from "@rune/llm-gateway";
+import { probeSearchBackend } from "@rune/tool-registry";
 import { bold, danger, dim, faint, info, ok, text, warn } from "./ui/theme";
 import { glyph } from "./ui/glyphs";
 import {
@@ -72,11 +83,18 @@ export async function runLogin(
     if (!providerId) return;
   }
 
+  const searchPreset = getSearchPreset(providerId);
+  if (searchPreset) {
+    await loginSearch(searchPreset, store, noBrowser);
+    return;
+  }
+
   const preset = getPreset(providerId);
   const descriptor = getProviderDescriptor(providerId);
   if (!preset || !descriptor) {
     log(danger(`Unknown provider "${providerId}".`));
-    log(dim(`Known: ${PROVIDER_PRESETS.map((p) => p.id).join(", ")}`));
+    log(dim(`Models: ${PROVIDER_PRESETS.map((p) => p.id).join(", ")}`));
+    log(dim(`Search: ${SEARCH_PROVIDER_PRESETS.map((p) => p.id).join(", ")}`));
     process.exitCode = 1;
     return;
   }
@@ -140,16 +158,96 @@ export async function runLogin(
   }
 }
 
-/** `rune logout <provider>` — remove any stored key/OAuth session for a provider. */
+/**
+ * Connect a web-search engine from the command line: the same API-key strategy
+ * and keychain account a model provider uses, then one real search as the
+ * verification — a revoked key passes a format check and fails a search.
+ */
+async function loginSearch(
+  preset: NonNullable<ReturnType<typeof getSearchPreset>>,
+  store: Awaited<ReturnType<typeof openCredentialStore>>,
+  _noBrowser: boolean,
+): Promise<void> {
+  if (preset.keyless) {
+    log(ok(`${preset.label} is built in — it answers whenever nothing better is connected.`));
+    return;
+  }
+  if (preset.urlEnvVar) {
+    if (!isInteractive()) {
+      log(
+        danger(`${preset.label} needs a URL; set ${preset.urlEnvVar} or run this interactively.`),
+      );
+      process.exitCode = 1;
+      return;
+    }
+    const current = process.env[preset.urlEnvVar] || preset.baseUrl || "";
+    const url = (await promptLine(`${pad}${preset.label} URL [${current}]:`)).trim() || current;
+    if (!url) return;
+    setLocalEndpoint(preset.id, url);
+    process.env[preset.urlEnvVar] = url;
+    await reportProbe(preset.id, preset.label);
+    return;
+  }
+  const strategy = getStrategy("api_key", preset.id);
+  if (!strategy) return;
+  log(`${faint("Connecting")} ${bold(text(preset.label))} ${faint(`— ${preset.hint}`)}`);
+  try {
+    const cred = await strategy.authenticate({
+      providerId: preset.id,
+      preset,
+      store,
+      env: process.env,
+      prompt: promptLine,
+      log,
+    });
+    if (cred.secret && preset.envVar) process.env[preset.envVar] = cred.secret;
+    await reportProbe(preset.id, preset.label);
+  } catch (err) {
+    log();
+    if (err instanceof AuthError) log(danger(`${glyph("failure")} ${err.message}`));
+    else
+      log(
+        danger(
+          `${glyph("failure")} Connect failed: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+      );
+    process.exitCode = 1;
+  }
+}
+
+async function reportProbe(id: string, label: string): Promise<void> {
+  log(faint("Running a test search…"));
+  const probe = await probeSearchBackend(id);
+  log();
+  if (probe.ok) {
+    log(ok(`✓ Connected ${label} — answered in ${probe.ms}ms`));
+    // The engine you just connected is the one you meant to use.
+    savePrefs({ search: id });
+    log(
+      `${faint("web_search asks")} ${info(label)} ${faint("first now. Override with")} ${info("[search] provider")} ${faint("in config.toml.")}`,
+    );
+  } else {
+    log(warn(`! Saved, but a test search failed: ${probe.detail ?? "no results"}`));
+    log(faint("It stays connected; web_search will try it after the engines that work."));
+  }
+}
+
+/** `rune logout <provider>` — remove any stored key/OAuth session for a provider or search engine. */
 export async function runLogout(positionals: string[]): Promise<void> {
   const providerId = positionals[0];
   if (!providerId) {
     log(warn("Usage: ") + info("rune logout <provider>"));
-    log(faint("Providers: ") + PROVIDER_PRESETS.map((p) => p.id).join(", "));
+    log(faint("Models: ") + PROVIDER_PRESETS.map((p) => p.id).join(", "));
+    log(
+      faint("Search: ") +
+        keyedSearchPresets()
+          .map((p) => p.id)
+          .join(", "),
+    );
     process.exitCode = 1;
     return;
   }
-  const preset = getPreset(providerId);
+  const preset = getPreset(providerId) ?? getSearchPreset(providerId);
   if (!preset) {
     log(danger(`Unknown provider "${providerId}".`));
     process.exitCode = 1;
@@ -205,22 +303,31 @@ async function chooseMethod(
 }
 
 async function pickProvider(): Promise<string | undefined> {
-  const rows = PROVIDER_PRESETS;
-  log(bold(text("Select provider to configure:")));
-  rows.forEach((p, i) => {
+  const models = PROVIDER_PRESETS;
+  const engines = keyedSearchPresets();
+  log(bold(text("Select what to connect:")));
+  log(faint("Models"));
+  models.forEach((p, i) => {
     const d = getProviderDescriptor(p.id)!;
     // Prefer the subscription/account name where a provider has one (Claude
-    // Pro/Max, ChatGPT Plus/Pro); otherwise show the methods.
-    const hint = accountLoginLabel(p.id) ?? d.auth.join(", ");
+    // Pro/Max, ChatGPT Plus/Pro); then the pitch; otherwise the methods.
+    const hint = accountLoginLabel(p.id) ?? p.tagline ?? d.auth.join(", ");
     log(`  ${info(String(i + 1).padStart(2))}. ${text(p.label.padEnd(22))} ${faint(hint)}`);
   });
-  const answer = (await promptLine(`${pad}Choose a provider [1-${rows.length}]:`)).trim();
+  log(faint("Web search"));
+  engines.forEach((p, i) => {
+    log(
+      `  ${info(String(models.length + i + 1).padStart(2))}. ${text(p.label.padEnd(22))} ${faint(p.hint)}`,
+    );
+  });
+  const all = [...models, ...engines];
+  const answer = (await promptLine(`${pad}Choose [1-${all.length}]:`)).trim();
   const idx = Number(answer) - 1;
-  if (!Number.isInteger(idx) || idx < 0 || idx >= rows.length) {
+  if (!Number.isInteger(idx) || idx < 0 || idx >= all.length) {
     log(dim("Nothing selected."));
     return undefined;
   }
-  return rows[idx].id;
+  return all[idx].id;
 }
 
 function printUsage(): void {
@@ -238,6 +345,10 @@ function printUsage(): void {
   log(
     `${info("rune login --migrate")}               ${faint("move legacy secrets.json keys into the OS keychain")}`,
   );
+  log(
+    `${info("rune login <engine>")}               ${faint("connect a web-search engine (tavily, exa, brave, serper, …)")}`,
+  );
   log();
-  log(faint("Providers: ") + PROVIDER_PRESETS.map((p) => p.id).join(", "));
+  log(faint("Models: ") + PROVIDER_PRESETS.map((p) => p.id).join(", "));
+  log(faint("Search: ") + SEARCH_PROVIDER_PRESETS.map((p) => p.id).join(", "));
 }

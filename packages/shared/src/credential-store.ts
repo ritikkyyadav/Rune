@@ -24,6 +24,7 @@ import { dirname, join } from "path";
 import { spawn } from "child_process";
 import { loadSecrets } from "./secrets.js";
 import { PROVIDER_PRESETS } from "./providers.js";
+import { keyedSearchPresets } from "./search-providers.js";
 import { getRuneHome } from "./paths.js";
 
 export type CredentialBackend = "keychain" | "secret-service" | "wincred" | "file";
@@ -525,12 +526,16 @@ export interface MigrationResult {
  * Opportunistically copy API keys from the home's legacy `secrets.json` into a
  * (secure) credential store. Non-destructive by contract: it only writes
  * accounts that are not already present and NEVER deletes secrets.json, so the
- * old path keeps working and rollback stays trivial. Web-search keys
- * (tavily/brave) and the custom endpoint are intentionally skipped — the former
- * aren't providers, the latter carries a base URL + model the store can't hold.
+ * old path keeps working and rollback stays trivial. Web-search keys migrate
+ * too — they are first-class connections now (`/login` → Web search), stored
+ * under the same `provider:<id>` account as everything else. The custom
+ * endpoint is still skipped: it carries a base URL + model the store can't hold.
  */
 export async function migrateLegacySecrets(store: CredentialStore): Promise<MigrationResult> {
-  const providerIds = new Set(PROVIDER_PRESETS.map((p) => p.id));
+  const providerIds = new Set([
+    ...PROVIDER_PRESETS.map((p) => p.id),
+    ...keyedSearchPresets().map((p) => p.id),
+  ]);
   const secrets = loadSecrets();
   const migrated: string[] = [];
   for (const [id, key] of Object.entries(secrets.keys)) {
@@ -546,4 +551,26 @@ export async function migrateLegacySecrets(store: CredentialStore): Promise<Migr
     }
   }
   return { migrated: migrated.length, providerIds: migrated };
+}
+
+/**
+ * The search-engine keys held in the secure store, by engine id. The boot path
+ * and `/login` feed the result to `applySearchKeysToEnv`, which is how a key
+ * pasted once reaches the web_search backends in every later session. Each
+ * lookup is best-effort: a keychain that prompts or errors costs that one
+ * engine, never startup.
+ */
+export async function resolveSearchCredentials(
+  store: CredentialStore,
+): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  for (const preset of keyedSearchPresets()) {
+    try {
+      const key = await store.get(apiKeyAccount(preset.id));
+      if (key) out[preset.id] = key;
+    } catch {
+      // A single unreadable account must not break the rest.
+    }
+  }
+  return out;
 }

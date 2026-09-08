@@ -6,6 +6,7 @@
 
 import { createInterface } from "node:readline";
 import type { RuneConfig, SecretsFile, AuthMethod, CredentialStore } from "@rune/shared";
+import { PROVIDER_PRESETS } from "@rune/shared";
 
 /**
  * The saved keys the gateway treats as "middle precedence" (below the secure
@@ -18,21 +19,17 @@ export function buildSavedKeys(
   secrets: SecretsFile,
   env: NodeJS.ProcessEnv = process.env,
 ): Record<string, string> {
-  return {
-    ...(config.llm.anthropic?.apiKey && !env.ANTHROPIC_API_KEY
-      ? { anthropic: config.llm.anthropic.apiKey }
-      : {}),
-    ...(config.llm.openai?.apiKey && !env.OPENAI_API_KEY
-      ? { openai: config.llm.openai.apiKey }
-      : {}),
-    ...(config.llm.openrouter?.apiKey && !env.OPENROUTER_API_KEY
-      ? { openrouter: config.llm.openrouter.apiKey }
-      : {}),
-    ...(config.llm.google?.apiKey && !env.GOOGLE_API_KEY
-      ? { google: config.llm.google.apiKey }
-      : {}),
-    ...secrets.keys,
-  };
+  // Walk the roster rather than four hand-named sections: `[llm.<id>]` may
+  // carry an apiKey for any preset, and a hand-written list of ids is the
+  // shape that rotted the sticky-model gate. A config key that merely echoes
+  // the env var (config.ts maps the env in) does not count as "saved".
+  const llm = config.llm as unknown as Record<string, { apiKey?: string } | undefined>;
+  const out: Record<string, string> = {};
+  for (const p of PROVIDER_PRESETS) {
+    const key = llm[p.id]?.apiKey;
+    if (key && !(p.envVar && env[p.envVar])) out[p.id] = key;
+  }
+  return { ...out, ...secrets.keys };
 }
 
 /** Per-provider auth-method overrides from `[llm.<id>] authentication = "…"`. */
@@ -40,9 +37,9 @@ export function readAuthOverrides(config: RuneConfig): Record<string, AuthMethod
   const out: Record<string, AuthMethod> = {};
   const llm = config.llm as unknown as Record<string, { authentication?: string } | undefined>;
   const valid: ReadonlySet<string> = new Set(["api_key", "oauth", "device", "local", "chain"]);
-  for (const id of ["anthropic", "openai", "openrouter", "google", "ollama"]) {
-    const m = llm[id]?.authentication;
-    if (m && valid.has(m)) out[id] = m as AuthMethod;
+  for (const p of PROVIDER_PRESETS) {
+    const m = llm[p.id]?.authentication;
+    if (m && valid.has(m)) out[p.id] = m as AuthMethod;
   }
   return out;
 }

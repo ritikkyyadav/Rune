@@ -670,7 +670,7 @@ async function investigate(
         queue.push({
           type: "notice",
           message:
-            "A web search returned no results (DuckDuckGo may be throttling). Add a Tavily/Brave key via /keys for reliable research.",
+            "A web search returned no results (DuckDuckGo may be throttling). Connect a search engine with /login → Web search (Tavily, Exa, Brave, …) for reliable research.",
         });
       }
     } else if (ev.type === "error" && !ev.recoverable) {

@@ -73,6 +73,69 @@ describe("provider presets", () => {
   });
 });
 
+describe("the wider roster (2026-09-06)", () => {
+  const roster = PROVIDER_PRESETS.filter((p) => !!p.tagline);
+
+  it("offers the hosts OpenCode and Pi users expect", () => {
+    const ids = PROVIDER_PRESETS.map((p) => p.id);
+    for (const id of [
+      "mistral",
+      "cerebras",
+      "together",
+      "fireworks",
+      "moonshot",
+      "zai",
+      "minimax",
+      "alibaba",
+      "nvidia",
+      "huggingface",
+      "github-models",
+      "vercel",
+      "cohere",
+      "sambanova",
+      "deepinfra",
+    ]) {
+      expect(ids).toContain(id);
+    }
+    expect(PROVIDER_PRESETS.length).toBeGreaterThanOrEqual(35);
+  });
+
+  it("every wider-roster host is an OpenAI-compatible door: https base URL + its own env var", () => {
+    for (const p of roster) {
+      expect({ id: p.id, kind: p.kind }).toEqual({ id: p.id, kind: "openai-compat" });
+      expect(p.baseUrl).toMatch(/^https:\/\//);
+      expect(p.envVar).toMatch(/^[A-Z][A-Z0-9_]+$/);
+    }
+  });
+
+  it("no two providers read the same env var", () => {
+    const vars = PROVIDER_PRESETS.map((p) => p.envVar).filter((v): v is string => !!v);
+    expect(new Set(vars).size).toBe(vars.length);
+  });
+
+  it("never turns a general-purpose GITHUB_TOKEN into a provider credential", () => {
+    // Set on most developer machines for gh/CI; an env var present means
+    // "registered", so a dedicated name keeps the connection a choice.
+    expect(PROVIDER_PRESETS.some((p) => p.envVar === "GITHUB_TOKEN")).toBe(false);
+    expect(getPreset("github-models")!.envVar).toBe("GITHUB_MODELS_TOKEN");
+  });
+
+  it("ships seed lineups with no tier table: unverified ids never run unattended", () => {
+    for (const p of roster) {
+      expect({ id: p.id, tiers: p.tiers }).toEqual({ id: p.id, tiers: undefined });
+      expect(p.models!.length).toBeGreaterThan(0);
+      expect(p.models!.some((m) => m.id === p.defaultModel)).toBe(true);
+    }
+  });
+
+  it("sorts the wider block alphabetically by label, after the frontier labs", () => {
+    const labels = roster.map((p) => p.label.toLowerCase());
+    expect(labels).toEqual([...labels].sort());
+    const first = PROVIDER_PRESETS.findIndex((p) => !!p.tagline);
+    expect(PROVIDER_PRESETS.slice(0, first).map((p) => p.id)).toContain("anthropic");
+  });
+});
+
 describe("auth methods + descriptor", () => {
   const noEnv = {} as NodeJS.ProcessEnv;
 
