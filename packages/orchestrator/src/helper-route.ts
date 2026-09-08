@@ -48,7 +48,15 @@ export interface HelperRoute {
 }
 
 export interface HelperRouteInputs {
-  /** The raw `[routing] helper` value. Unset/"auto" = pick the cheapest healthy free route. */
+  /**
+   * The raw `[routing] helper` value. Unset, "off" or "session" = the session
+   * model, as before; "auto" = pick the cheapest healthy free route; anything
+   * else names one. Unset is OFF, not auto: an automatic pick crosses providers,
+   * and a governance call that leaves the session's provider without being
+   * asked is a network call nobody configured — the integration suite found
+   * its mock summarizer answered by a live free model the first time auto was
+   * the default. The saving is real and unmeasured live; it is opted into.
+   */
   setting?: string;
   /** The session's own provider/model — the fallback that is proven alive every turn. */
   session: { provider: string; model: string };
@@ -136,8 +144,9 @@ export function resolveHelperRoute(inputs: HelperRouteInputs): HelperRoute | nul
   const raw = (inputs.setting ?? "").trim();
   const lowered = raw.toLowerCase();
 
-  // "off"/"session": the historical behaviour, named so it can be asked for.
-  if (lowered === "off" || lowered === "session" || lowered === "none") return null;
+  // Unset, "off", "session": the historical behaviour. Unset is off (see
+  // `HelperRouteInputs.setting`); "auto" has to be asked for.
+  if (!raw || lowered === "off" || lowered === "session" || lowered === "none") return null;
 
   // An explicitly named route. "provider/model" when the prefix is a known
   // provider id; a bare model id otherwise — model ids legitimately contain

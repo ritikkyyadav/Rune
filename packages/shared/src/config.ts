@@ -546,8 +546,8 @@ export interface RuneConfig {
    * finishing and a 429; 45% of this agent's recorded incidents are rate
    * limits (measured 2026-09-07, 3,160 incidents).
    *
-   * helper: "auto" (default) picks the cheapest healthy connected route;
-   * "off"/"session" keeps the historical behaviour; "model" or
+   * helper: "off" (default) runs them on the session model; "auto" picks the cheapest healthy connected route;
+   * "session" is an alias for "off"; "model" or
    * "provider/model" names one explicitly. Naming one explicitly ALSO lets it
    * answer Auto mode's safety questions — the automatic pick deliberately
    * never does, because a free model wrongly allowing a dangerous action is

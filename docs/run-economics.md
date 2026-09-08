@@ -162,8 +162,8 @@ commented.
 
 ```toml
 [routing]
-helper = "auto"                       # default: the cheapest healthy connected route
-# helper = "off"                      # or "session" — run them on the session model, as before
+helper = "off"                        # default: the session model answers its own calls
+# helper = "auto"                     # opt in: the cheapest healthy connected route, possibly another provider
 # helper = "ollama/gpt-oss:20b"       # or name one: provider/model
 # helper = "claude-haiku-4-5"         # or a bare model id on the session's provider
 ```
