@@ -324,7 +324,7 @@ else
 fi
 
 echo ""
-say "Then run: $(c 1 gear)"
-say "$(c 90 'Free to start: grab a Google AI Studio key and `export GOOGLE_API_KEY=...`')"
+say "Then run: $(c 1 rune)"
+say "$(c 90 'Free to start: the first screen lists the free routes first — OpenRouter, Google or a local Ollama.')"
 say "$(c 90 'Later: `rune upgrade --check` tells you when a newer release exists.')"
 echo ""
