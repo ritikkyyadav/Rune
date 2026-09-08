@@ -1,4 +1,5 @@
 import type {
+  InferenceRequest,
   BillingMode,
   CostEntry,
   CostLedger,
@@ -83,6 +84,13 @@ export class BudgetExceededError extends Error {
   }
 }
 
+export class BudgetPricingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BudgetPricingError";
+  }
+}
+
 /** Zero-filled usage, so callers may pass a partial report. */
 function normalizeUsage(usage: TokenUsage): Required<TokenUsage> {
   return {
@@ -103,6 +111,14 @@ export class CostTracker {
   private budgets: BudgetCap[];
   private pricing: Record<string, ModelPricing>;
   private unpriced = new Set<string>();
+  private reservations = new Map<symbol, number>();
+  /**
+   * Running mean of output tokens actually returned, per model. What a
+   * reservation is sized from once there is history: reserving the whole
+   * allowance for every call refused a third parallel child on paper while
+   * real spend was a tenth of the hold.
+   */
+  private observedOutput = new Map<string, number>();
 
   constructor(options: { budgets?: BudgetCap[]; pricing?: Record<string, ModelPricing> } = {}) {
     this.budgets = options.budgets ?? [];
@@ -166,6 +182,60 @@ export class CostTracker {
     return (allInput * price.inputPerMillion + u.outputTokens * price.outputPerMillion) / 1_000_000;
   }
 
+  /** Outstanding request estimates are separate from billed usage. Acquisition
+   * is synchronous, so parallel children cannot all spend the same balance. */
+  getReservedUsd(): number {
+    return [...this.reservations.values()].reduce((sum, value) => sum + value, 0);
+  }
+
+  reserveRequest(request: InferenceRequest, limitUsd: number): () => void {
+    if (!Number.isFinite(limitUsd) || limitUsd <= 0) return () => {};
+    const price = this.pricingFor(request.model);
+    if (!price || this.unpriced.size > 0) {
+      throw new BudgetPricingError(
+        `Cannot enforce the dollar cap: ${!price ? request.model : [...this.unpriced].join(", ")} has unpriced usage. Configure a priced model or explicitly disable the dollar cap.`,
+      );
+    }
+    // Byte count deliberately overestimates normal text tokens. Reserve the
+    // observed output estimate and the higher cold/cache-write input rate. This
+    // is a conservative admission estimate, not a provider invoice guarantee.
+    const payload = JSON.stringify({
+      messages: request.messages,
+      system: request.system,
+      tools: request.tools,
+      responseFormat: request.responseFormat,
+    });
+    const inputTokens = new TextEncoder().encode(payload).length + 1024;
+    const ceiling = Math.max(request.maxTokens, request.thinking?.budgetTokens ?? 0);
+    if (!Number.isFinite(ceiling) || ceiling <= 0)
+      throw new BudgetPricingError("A capped request requires a finite output token limit.");
+    // The first request for a model reserves its whole allowance. After that,
+    // twice the running mean of what the model actually returned — never above
+    // the allowance, never below a floor. An unusually long reply can still
+    // overshoot its own hold; that overshoot is bounded per in-flight request
+    // and recorded on completion, which is the documented cap semantics.
+    const outputTokens = this.expectedOutputTokens(request.model, ceiling);
+    const inputRate = Math.max(
+      price.inputPerMillion,
+      price.cacheWritePerMillion ?? price.inputPerMillion * DEFAULT_CACHE_WRITE_RATIO,
+    );
+    const estimate = (inputTokens * inputRate + outputTokens * price.outputPerMillion) / 1_000_000;
+    const projected = this.ledger.totalListCostUsd + this.getReservedUsd() + estimate;
+    if (projected > limitUsd) throw new BudgetExceededError("session", limitUsd, projected);
+    const key = Symbol("request");
+    this.reservations.set(key, estimate);
+    return () => {
+      this.reservations.delete(key);
+    };
+  }
+
+  /** Output tokens a reservation for this model is sized to, given its allowance. */
+  expectedOutputTokens(model: string, ceiling: number): number {
+    const observed = this.observedOutput.get(model);
+    if (observed === undefined) return ceiling;
+    return Math.min(ceiling, Math.max(256, Math.ceil(observed * 2)));
+  }
+
   record(
     model: string,
     provider: ProviderName,
@@ -198,13 +268,24 @@ export class CostTracker {
       estimated: price?.estimated === true,
       timestamp,
     };
+    return this.recordEntry(entry);
+  }
+
+  /** Preserve the rates and billing mode recorded at request time on replay. */
+  recordEntry(entry: CostEntry): CostEntry {
+    if (!entry.priced) this.unpriced.add(entry.model);
+    const prior = this.observedOutput.get(entry.model);
+    this.observedOutput.set(
+      entry.model,
+      prior === undefined ? entry.outputTokens : prior * 0.7 + entry.outputTokens * 0.3,
+    );
     // Record BEFORE the cap is tested. The provider has already served and
     // billed this response; refusing to count it would make the ledger
     // understate exactly the run that overspent. The cap governs whether the
     // NEXT request goes out, not whether this one happened.
     this.ledger.entries.push(entry);
-    this.ledger.totalCostUsd += costUsd;
-    this.ledger.totalListCostUsd += listCostUsd;
+    this.ledger.totalCostUsd += entry.costUsd;
+    this.ledger.totalListCostUsd += entry.listCostUsd;
     this.ledger.unpricedModels = [...this.unpriced];
 
     // Tested against the METERED-EQUIVALENT total, not actual spend. A cap on
@@ -229,6 +310,14 @@ export class CostTracker {
       totalListCostUsd: this.ledger.totalListCostUsd,
       unpricedModels: [...this.unpriced],
     };
+  }
+
+  /** Live budget changes preserve the ledger and take effect on the next request. */
+  setSessionBudget(limitUsd: number | null): void {
+    this.budgets = this.budgets.filter((budget) => budget.scope !== "session");
+    if (limitUsd !== null && Number.isFinite(limitUsd) && limitUsd > 0) {
+      this.budgets.push({ scope: "session", limitUsd });
+    }
   }
 
   getBreakdown(): CostBreakdown {
@@ -323,7 +412,7 @@ export class CostTracker {
   preExecutionCheck(estimatedCost: number): boolean {
     const sessionBudget = this.budgets.find((b) => b.scope === "session");
     if (!sessionBudget) return true;
-    return this.ledger.totalCostUsd + estimatedCost <= sessionBudget.limitUsd;
+    return this.ledger.totalListCostUsd + estimatedCost <= sessionBudget.limitUsd;
   }
 
   reset(): void {

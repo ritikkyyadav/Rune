@@ -216,20 +216,24 @@ describe("openCredentialStore backend selection", () => {
 });
 
 describe("migrateLegacySecrets", () => {
-  it("copies provider keys, skips search keys, and never deletes secrets.json", async () => {
+  it("copies provider AND search-engine keys, skips unknown ids, and never deletes secrets.json", async () => {
     process.env.RUNE_SECRETS_PATH = join(dir, "secrets.json");
     try {
       setProviderKey("openrouter", "sk-or-legacy-123456");
       setProviderKey("groq", "gsk_legacy_123456");
-      setProviderKey("tavily", "tvly-not-a-provider"); // web-search key, must be skipped
+      // A web-search key is a first-class connection now (`/login` → Web
+      // search) and migrates into the same account shape.
+      setProviderKey("tavily", "tvly-legacy-123456");
+      setProviderKey("not-a-thing", "xx-unknown-123456"); // no roster knows it: skipped
 
       const store = await openCredentialStore({ forceBackend: "file", env });
       const result = await migrateLegacySecrets(store);
 
-      expect(result.migrated).toBe(2);
-      expect(result.providerIds.sort()).toEqual(["groq", "openrouter"]);
+      expect(result.migrated).toBe(3);
+      expect(result.providerIds.sort()).toEqual(["groq", "openrouter", "tavily"]);
       expect(await store.get(apiKeyAccount("openrouter"))).toBe("sk-or-legacy-123456");
-      expect(await store.get(apiKeyAccount("tavily"))).toBeNull(); // skipped
+      expect(await store.get(apiKeyAccount("tavily"))).toBe("tvly-legacy-123456");
+      expect(await store.get(apiKeyAccount("not-a-thing"))).toBeNull(); // skipped
       // non-destructive: the legacy file survives
       expect(existsSync(join(dir, "secrets.json"))).toBe(true);
     } finally {

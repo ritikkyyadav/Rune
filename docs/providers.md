@@ -4,8 +4,92 @@ What Rune can talk to, how each host handles prompt caching, and what has
 actually been measured rather than assumed.
 
 The provider list itself lives in one place — `packages/shared/src/providers.ts`
-(`PROVIDER_PRESETS`). This page is the economics side of it: caching policy,
-measured cache behaviour, and the decisions behind rows that were removed.
+(`PROVIDER_PRESETS`); the web-search engines in its sibling
+`search-providers.ts` (`SEARCH_PROVIDER_PRESETS`). This page is the roster and
+the economics side of it: caching policy, measured cache behaviour, and the
+decisions behind rows that were removed.
+
+---
+
+## The roster (2026-09-06)
+
+Thirty-seven model providers and twelve web-search engines, connected from one
+place: `/login` in the terminal, or `rune login <id>` from a shell. The connect
+flow asks what you _have_ — a subscription, an API key, a machine running a
+model, or a search engine — and names products the way you would say them.
+
+### Model providers
+
+| Route        | Providers                                                                                                                                                                                                                                                                                                                                                        |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Subscription | ChatGPT Plus/Pro (`codex`), Claude Pro/Max (`anthropic`), an OpenRouter account                                                                                                                                                                                                                                                                                  |
+| API key      | `anthropic` `openai` `openrouter` `google` `groq` `xai` `deepseek` `ollama-turbo` `azure-openai` `ai21` `alibaba` `baseten` `cerebras` `chutes` `cohere` `deepinfra` `fireworks` `github-models` `huggingface` `hyperbolic` `inception` `minimax` `mistral` `moonshot` `nebius` `novita` `nvidia` `sambanova` `scaleway` `siliconflow` `together` `vercel` `zai` |
+| Cloud chain  | `bedrock`, `vertex` (and `azure-openai` with an Entra token)                                                                                                                                                                                                                                                                                                     |
+| Offline      | `ollama`, plus any OpenAI-compatible local server (LM Studio, vLLM, llama.cpp, LiteLLM) as the `custom` endpoint                                                                                                                                                                                                                                                 |
+
+The block from `ai21` to `zai` is twenty-four OpenAI-compatible hosts, each a
+base URL + an env var + a short seed model list on the adapter OpenRouter
+already proved out. Two rules kept that block honest, and they are the rules
+for adding the next host:
+
+1. **Seed lists are short and prefer stable aliases** (`mistral-large-latest`,
+   `qwen-plus`). None of those ids completed a live call from this machine (no
+   credential here), so live discovery is the source of truth: `/model` lists
+   what the account can actually see and `rune models <id> --refresh` re-asks
+   the host.
+2. **No `tiers` block.** A tier table names ids the summarizer and the scout
+   sub-agents run unattended; on a host whose lineup nobody here has verified,
+   the tier resolver's fallback — the session model — is the safe answer, not
+   a guess that 404s mid-compaction.
+
+Regional twins and plan-specific paths (DashScope in China, Z.ai's coding-plan
+endpoint, MiniMax's `.minimaxi.com` host, SiliconFlow's `.cn`) take the other
+base URL with `/keys url <id> <baseUrl>` — the override `buildGateway` honours
+for every OpenAI-compatible preset; the key is the same on both doors.
+`github-models` deliberately reads `GITHUB_MODELS_TOKEN`, not `GITHUB_TOKEN`:
+that variable is set on most developer machines for `gh` and CI, and an env
+var present means "registered".
+
+`--provider <id>` accepts any preset now (it used to accept six, and
+`rune --provider mistral` silently booted into openrouter — the same rot the
+sticky-model gate had), and a key pasted through `/login` reaches the live
+gateway immediately: the engine adopts the credential before the model
+switch, where it used to fail with "provider not registered" until a restart.
+
+### Web-search engines
+
+`web_search` (and `/research`) ask whichever engine is connected, in this
+order, and walk down the list on failure; keyless DuckDuckGo always closes it.
+
+| Engine       | Env var                                  | Notes                                            |
+| ------------ | ---------------------------------------- | ------------------------------------------------ |
+| `tavily`     | `TAVILY_API_KEY`                         | built for agents: an answer + clean snippets     |
+| `exa`        | `EXA_API_KEY`                            | neural search, strong for research               |
+| `brave`      | `BRAVE_API_KEY` (`BRAVE_SEARCH_API_KEY`) | independent web index, free tier                 |
+| `serper`     | `SERPER_API_KEY`                         | Google results                                   |
+| `perplexity` | `PERPLEXITY_API_KEY`                     | the Search API (results only), not Sonar         |
+| `firecrawl`  | `FIRECRAWL_API_KEY`                      | search with page content                         |
+| `jina`       | `JINA_API_KEY`                           | `s.jina.ai`, titles + descriptions only          |
+| `you`        | `YDC_API_KEY` (`YOU_API_KEY`)            |                                                  |
+| `kagi`       | `KAGI_API_KEY`                           | paid                                             |
+| `serpapi`    | `SERPAPI_API_KEY` (`SERPAPI_KEY`)        | scraped Google and other engines                 |
+| `searxng`    | `SEARXNG_URL`                            | self-hosted; the instance must allow JSON output |
+| `duckduckgo` | —                                        | built in, HTML scraping, rate-limited            |
+
+Connecting an engine (`/login` → Web search, or `rune login exa`) puts the key
+in the OS keychain under the same `provider:<id>` account a model provider
+uses, runs **one real search** as the verification — a revoked key passes a
+format check and fails a search — and, on success, makes that engine answer
+first (remembered in `~/.rune/prefs.json`). `[search] provider` in
+`config.toml` outranks the remembered choice; `RUNE_SEARCH_BACKEND` outranks
+both. `rune providers` reads both rosters back on one screen, and
+`rune logout <id>` forgets either kind.
+
+The nine engines added on 2026-09-06 have their request shapes pinned by tests
+with `fetch` stubbed (`tests/unit/tool-registry/search.test.ts`); none has
+completed a live call from this machine. A wrong shape surfaces at connect
+time as "saved, but a test search failed — <the host's own words>", never as
+a silent fallthrough.
 
 ---
 

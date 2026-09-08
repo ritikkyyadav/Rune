@@ -106,6 +106,34 @@ export const PROVIDER_CAPACITY: Record<string, ProviderCapacity> = {
   // A user-supplied OpenAI-compatible endpoint: they chose and pay for it, so
   // it is treated as funded capacity rather than guessed at.
   custom: "funded",
+  // The wider roster: pay-as-you-go API keys, every one of them. Funded on the
+  // same reasoning as groq/xai/deepseek — a top-up account, not a plan seat and
+  // not a free pool. GitHub Models is the exception: a rate-limited free tier on
+  // a personal token, which is exactly the "cheap and rots" shape `free` names.
+  alibaba: "funded",
+  ai21: "funded",
+  baseten: "funded",
+  cerebras: "funded",
+  chutes: "funded",
+  cohere: "funded",
+  deepinfra: "funded",
+  fireworks: "funded",
+  "github-models": "free",
+  huggingface: "funded",
+  hyperbolic: "funded",
+  inception: "funded",
+  minimax: "funded",
+  mistral: "funded",
+  moonshot: "funded",
+  nebius: "funded",
+  novita: "funded",
+  nvidia: "funded",
+  sambanova: "funded",
+  scaleway: "funded",
+  siliconflow: "funded",
+  together: "funded",
+  vercel: "funded",
+  zai: "funded",
   codex: "subscription",
   openrouter: "free",
   // The ids Rune ships for Ollama Cloud are the ones verified on the DEFAULT,
@@ -195,6 +223,31 @@ export interface ProviderCapabilities {
   contextLength?: number;
 }
 
+/**
+ * The fields a sign-in flow needs from ANY connectable thing — a model provider
+ * or a web-search provider. The auth strategies are written against this
+ * shape rather than `ProviderPreset`, so the one API-key strategy (paste →
+ * keychain → env precedence) serves both rosters and `/login` has a single
+ * code path for "put a secret somewhere safe". A `ProviderPreset` satisfies it
+ * structurally; `SearchProviderPreset` (search-providers.ts) declares it.
+ */
+export interface ConnectablePreset {
+  /** Stable id; the credential-store account is derived from it. */
+  id: string;
+  /** Display name, as the product calls itself. */
+  label: string;
+  /** Where to get a key (shown as a hint when pasting). */
+  docsUrl: string;
+  /** Env var that also supplies the key (checked after a saved key). */
+  envVar?: string;
+  /** Rough key-shape hint (e.g. "sk-ant-…"). */
+  keyHint?: string;
+  /** Base URL for hosts reached by URL. */
+  baseUrl?: string;
+  /** Reached on this machine / network by URL, no secret. */
+  local?: boolean;
+}
+
 export interface ProviderPreset {
   /** Stable id; also the registered provider name in the gateway. */
   id: string;
@@ -218,6 +271,12 @@ export interface ProviderPreset {
   baseUrl?: string;
   /** Rough key-shape hint shown in the panel (e.g. "sk-ant-…"). */
   keyHint?: string;
+  /**
+   * The picker's one-line pitch — what this host is FOR, in the words someone
+   * choosing between thirty rows needs ("Codestral, Devstral, EU-hosted").
+   * Optional; the frontier labs need no introduction.
+   */
+  tagline?: string;
   /**
    * Curated models offered in the `/model` picker for this provider. The picker
    * is data-driven from this list, so adding a provider = add a preset with its
@@ -589,6 +648,427 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     tiers: { heavy: "gpt-5", standard: "gpt-4o", light: "gpt-4o-mini" },
     fallbackModel: "gpt-4o",
   },
+  // ─── The wider roster (2026-09-06) ───
+  // Every host below speaks the OpenAI Chat Completions wire, so each one is a
+  // base URL + an env var + a seed model list on the adapter OpenRouter already
+  // proved out — the same mechanism, twenty-four more doors. Two rules keep
+  // the block honest:
+  //
+  //   1. The seed lists are SHORT and lean on stable aliases (`-latest`,
+  //      `qwen-plus`) wherever a host offers one. Hand-written ids rot — see
+  //      the retirement graveyard above — and none of these completed a live
+  //      call from this machine (no credential here). Live discovery is the
+  //      source of truth: `/model` lists what the account can actually see,
+  //      and `rune models <id> --refresh` re-asks the host.
+  //   2. No `tiers` block. A tier table names ids the summarizer and the scout
+  //      sub-agents run unattended; on a host whose lineup nobody here has
+  //      verified, the safe answer is the session model (the tier resolver's
+  //      fallback), not a guess that 404s mid-compaction.
+  //
+  // A host with a regional twin (DashScope/Moonshot/MiniMax/SiliconFlow in
+  // China, Z.ai's coding-plan endpoint) takes the other base URL through
+  // `/keys url <id> <baseUrl>` — the override buildGateway honours for every
+  // OpenAI-compatible preset. Sorted by label; `tagline` is the picker's pitch.
+  {
+    id: "ai21",
+    label: "AI21 Labs",
+    kind: "openai-compat",
+    envVar: "AI21_API_KEY",
+    baseUrl: "https://api.ai21.com/studio/v1",
+    defaultModel: "jamba-large",
+    docsUrl: "https://studio.ai21.com/account/api-key",
+    tagline: "Jamba, long context",
+    models: [
+      { id: "jamba-large", label: "Jamba Large" },
+      { id: "jamba-mini", label: "Jamba Mini" },
+    ],
+  },
+  {
+    id: "alibaba",
+    label: "Alibaba Qwen",
+    kind: "openai-compat",
+    envVar: "DASHSCOPE_API_KEY",
+    baseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    defaultModel: "qwen3-coder-plus",
+    docsUrl: "https://modelstudio.console.alibabacloud.com/?tab=model#/api-key",
+    keyHint: "sk-…",
+    tagline: "Qwen3 Coder, Qwen Max",
+    models: [
+      { id: "qwen3-coder-plus", label: "Qwen3 Coder Plus" },
+      { id: "qwen3-coder-flash", label: "Qwen3 Coder Flash" },
+      { id: "qwen-max", label: "Qwen Max" },
+      { id: "qwen-plus", label: "Qwen Plus" },
+      { id: "qwen-turbo", label: "Qwen Turbo" },
+    ],
+  },
+  {
+    id: "baseten",
+    label: "Baseten",
+    kind: "openai-compat",
+    envVar: "BASETEN_API_KEY",
+    baseUrl: "https://inference.baseten.co/v1",
+    defaultModel: "moonshotai/Kimi-K2-Instruct-0905",
+    docsUrl: "https://app.baseten.co/settings/api_keys",
+    tagline: "Kimi K2, Qwen3 Coder, DeepSeek",
+    models: [
+      { id: "moonshotai/Kimi-K2-Instruct-0905", label: "Kimi K2 Instruct" },
+      { id: "Qwen/Qwen3-Coder-480B-A35B-Instruct", label: "Qwen3 Coder 480B" },
+      { id: "deepseek-ai/DeepSeek-V3.1", label: "DeepSeek V3.1" },
+      { id: "openai/gpt-oss-120b", label: "GPT-OSS 120B" },
+    ],
+  },
+  {
+    id: "cerebras",
+    label: "Cerebras",
+    kind: "openai-compat",
+    envVar: "CEREBRAS_API_KEY",
+    baseUrl: "https://api.cerebras.ai/v1",
+    defaultModel: "gpt-oss-120b",
+    docsUrl: "https://cloud.cerebras.ai/platform",
+    keyHint: "csk-…",
+    tagline: "fastest tokens per second",
+    models: [
+      { id: "gpt-oss-120b", label: "GPT-OSS 120B" },
+      { id: "qwen-3-coder-480b", label: "Qwen3 Coder 480B" },
+      { id: "qwen-3-235b-a22b-instruct-2507", label: "Qwen3 235B" },
+      { id: "llama-3.3-70b", label: "Llama 3.3 70B" },
+    ],
+  },
+  {
+    id: "chutes",
+    label: "Chutes",
+    kind: "openai-compat",
+    envVar: "CHUTES_API_KEY",
+    baseUrl: "https://llm.chutes.ai/v1",
+    defaultModel: "deepseek-ai/DeepSeek-V3.1",
+    docsUrl: "https://chutes.ai/app/api",
+    tagline: "cheap open-weight hosting",
+    models: [
+      { id: "deepseek-ai/DeepSeek-V3.1", label: "DeepSeek V3.1" },
+      { id: "moonshotai/Kimi-K2-Instruct-0905", label: "Kimi K2 Instruct" },
+      { id: "Qwen/Qwen3-Coder-480B-A35B-Instruct", label: "Qwen3 Coder 480B" },
+      { id: "openai/gpt-oss-120b", label: "GPT-OSS 120B" },
+    ],
+  },
+  {
+    id: "cohere",
+    label: "Cohere",
+    kind: "openai-compat",
+    envVar: "COHERE_API_KEY",
+    baseUrl: "https://api.cohere.ai/compatibility/v1",
+    defaultModel: "command-a-03-2025",
+    docsUrl: "https://dashboard.cohere.com/api-keys",
+    tagline: "Command A",
+    models: [
+      { id: "command-a-03-2025", label: "Command A" },
+      { id: "command-r-plus-08-2024", label: "Command R+" },
+      { id: "command-r7b-12-2024", label: "Command R7B" },
+    ],
+  },
+  {
+    id: "deepinfra",
+    label: "DeepInfra",
+    kind: "openai-compat",
+    envVar: "DEEPINFRA_API_KEY",
+    baseUrl: "https://api.deepinfra.com/v1/openai",
+    defaultModel: "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+    docsUrl: "https://deepinfra.com/dash/api_keys",
+    tagline: "open weights, pay per token",
+    models: [
+      { id: "Qwen/Qwen3-Coder-480B-A35B-Instruct", label: "Qwen3 Coder 480B" },
+      { id: "moonshotai/Kimi-K2-Instruct-0905", label: "Kimi K2 Instruct" },
+      { id: "deepseek-ai/DeepSeek-V3.1", label: "DeepSeek V3.1" },
+      { id: "meta-llama/Llama-3.3-70B-Instruct", label: "Llama 3.3 70B" },
+    ],
+  },
+  {
+    id: "fireworks",
+    label: "Fireworks AI",
+    kind: "openai-compat",
+    envVar: "FIREWORKS_API_KEY",
+    baseUrl: "https://api.fireworks.ai/inference/v1",
+    defaultModel: "accounts/fireworks/models/kimi-k2-instruct-0905",
+    docsUrl: "https://fireworks.ai/account/api-keys",
+    keyHint: "fw_…",
+    tagline: "Kimi K2, Qwen3 Coder, DeepSeek",
+    models: [
+      { id: "accounts/fireworks/models/kimi-k2-instruct-0905", label: "Kimi K2 Instruct" },
+      { id: "accounts/fireworks/models/qwen3-coder-480b-a35b-instruct", label: "Qwen3 Coder 480B" },
+      { id: "accounts/fireworks/models/deepseek-v3p1", label: "DeepSeek V3.1" },
+      { id: "accounts/fireworks/models/gpt-oss-120b", label: "GPT-OSS 120B" },
+      { id: "accounts/fireworks/models/llama-v3p3-70b-instruct", label: "Llama 3.3 70B" },
+    ],
+  },
+  {
+    // Deliberately NOT `GITHUB_TOKEN`: that variable is set on most developer
+    // machines for `gh` and CI, and an env var present means "registered" —
+    // half the world would silently gain a provider whose token lacks the
+    // `models:read` scope. A dedicated name makes the connection a choice.
+    id: "github-models",
+    label: "GitHub Models",
+    kind: "openai-compat",
+    envVar: "GITHUB_MODELS_TOKEN",
+    baseUrl: "https://models.github.ai/inference",
+    defaultModel: "openai/gpt-4.1",
+    docsUrl: "https://github.com/settings/personal-access-tokens",
+    keyHint: "github_pat_… (models:read)",
+    tagline: "free tier on a GitHub token",
+    models: [
+      { id: "openai/gpt-4.1", label: "GPT-4.1" },
+      { id: "openai/gpt-5", label: "GPT-5" },
+      { id: "openai/gpt-4o", label: "GPT-4o" },
+      { id: "deepseek/deepseek-v3-0324", label: "DeepSeek V3" },
+      { id: "meta/llama-3.3-70b-instruct", label: "Llama 3.3 70B" },
+      { id: "mistral-ai/codestral-2501", label: "Codestral" },
+    ],
+  },
+  {
+    id: "huggingface",
+    label: "Hugging Face",
+    kind: "openai-compat",
+    envVar: "HF_TOKEN",
+    baseUrl: "https://router.huggingface.co/v1",
+    defaultModel: "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+    docsUrl: "https://huggingface.co/settings/tokens",
+    keyHint: "hf_…",
+    tagline: "Inference Providers router",
+    models: [
+      { id: "Qwen/Qwen3-Coder-480B-A35B-Instruct", label: "Qwen3 Coder 480B" },
+      { id: "moonshotai/Kimi-K2-Instruct-0905", label: "Kimi K2 Instruct" },
+      { id: "deepseek-ai/DeepSeek-V3.1", label: "DeepSeek V3.1" },
+      { id: "openai/gpt-oss-120b", label: "GPT-OSS 120B" },
+      { id: "meta-llama/Llama-3.3-70B-Instruct", label: "Llama 3.3 70B" },
+    ],
+  },
+  {
+    id: "hyperbolic",
+    label: "Hyperbolic",
+    kind: "openai-compat",
+    envVar: "HYPERBOLIC_API_KEY",
+    baseUrl: "https://api.hyperbolic.xyz/v1",
+    defaultModel: "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+    docsUrl: "https://app.hyperbolic.xyz/settings",
+    tagline: "open weights, low cost",
+    models: [
+      { id: "Qwen/Qwen3-Coder-480B-A35B-Instruct", label: "Qwen3 Coder 480B" },
+      { id: "moonshotai/Kimi-K2-Instruct", label: "Kimi K2 Instruct" },
+      { id: "deepseek-ai/DeepSeek-V3-0324", label: "DeepSeek V3" },
+      { id: "meta-llama/Llama-3.3-70B-Instruct", label: "Llama 3.3 70B" },
+    ],
+  },
+  {
+    id: "inception",
+    label: "Inception (Mercury)",
+    kind: "openai-compat",
+    envVar: "INCEPTION_API_KEY",
+    baseUrl: "https://api.inceptionlabs.ai/v1",
+    defaultModel: "mercury-coder",
+    docsUrl: "https://platform.inceptionlabs.ai/dashboard/api-keys",
+    tagline: "diffusion LLM, very fast",
+    models: [
+      { id: "mercury-coder", label: "Mercury Coder" },
+      { id: "mercury", label: "Mercury" },
+    ],
+  },
+  {
+    id: "minimax",
+    label: "MiniMax",
+    kind: "openai-compat",
+    envVar: "MINIMAX_API_KEY",
+    baseUrl: "https://api.minimax.io/v1",
+    defaultModel: "MiniMax-M2",
+    docsUrl: "https://platform.minimax.io/user-center/basic-information/interface-key",
+    tagline: "MiniMax M-series",
+    models: [
+      { id: "MiniMax-M2", label: "MiniMax M2" },
+      { id: "MiniMax-M1", label: "MiniMax M1" },
+    ],
+  },
+  {
+    id: "mistral",
+    label: "Mistral AI",
+    kind: "openai-compat",
+    envVar: "MISTRAL_API_KEY",
+    baseUrl: "https://api.mistral.ai/v1",
+    defaultModel: "mistral-large-latest",
+    docsUrl: "https://console.mistral.ai/api-keys",
+    tagline: "Codestral, Devstral, EU-hosted",
+    models: [
+      { id: "mistral-large-latest", label: "Mistral Large" },
+      { id: "mistral-medium-latest", label: "Mistral Medium" },
+      { id: "devstral-medium-latest", label: "Devstral Medium" },
+      { id: "codestral-latest", label: "Codestral" },
+      { id: "magistral-medium-latest", label: "Magistral Medium" },
+      { id: "mistral-small-latest", label: "Mistral Small" },
+    ],
+  },
+  {
+    id: "moonshot",
+    label: "Moonshot (Kimi)",
+    kind: "openai-compat",
+    envVar: "MOONSHOT_API_KEY",
+    baseUrl: "https://api.moonshot.ai/v1",
+    defaultModel: "kimi-k2-0905-preview",
+    docsUrl: "https://platform.moonshot.ai/console/api-keys",
+    keyHint: "sk-…",
+    tagline: "Kimi K2 from the source",
+    models: [
+      { id: "kimi-k2-0905-preview", label: "Kimi K2" },
+      { id: "kimi-k2-thinking", label: "Kimi K2 Thinking" },
+      { id: "kimi-k2-turbo-preview", label: "Kimi K2 Turbo" },
+      { id: "kimi-latest", label: "Kimi (latest)" },
+    ],
+  },
+  {
+    id: "nebius",
+    label: "Nebius AI Studio",
+    kind: "openai-compat",
+    envVar: "NEBIUS_API_KEY",
+    baseUrl: "https://api.studio.nebius.com/v1",
+    defaultModel: "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+    docsUrl: "https://studio.nebius.com/settings/api-keys",
+    tagline: "EU-hosted open weights",
+    models: [
+      { id: "Qwen/Qwen3-Coder-480B-A35B-Instruct", label: "Qwen3 Coder 480B" },
+      { id: "moonshotai/Kimi-K2-Instruct", label: "Kimi K2 Instruct" },
+      { id: "deepseek-ai/DeepSeek-V3-0324", label: "DeepSeek V3" },
+      { id: "meta-llama/Llama-3.3-70B-Instruct", label: "Llama 3.3 70B" },
+    ],
+  },
+  {
+    id: "novita",
+    label: "Novita AI",
+    kind: "openai-compat",
+    envVar: "NOVITA_API_KEY",
+    baseUrl: "https://api.novita.ai/v3/openai",
+    defaultModel: "qwen/qwen3-coder-480b-a35b-instruct",
+    docsUrl: "https://novita.ai/settings/key-management",
+    tagline: "open weights, pay per token",
+    models: [
+      { id: "qwen/qwen3-coder-480b-a35b-instruct", label: "Qwen3 Coder 480B" },
+      { id: "moonshotai/kimi-k2-instruct", label: "Kimi K2 Instruct" },
+      { id: "deepseek/deepseek-v3-0324", label: "DeepSeek V3" },
+      { id: "meta-llama/llama-3.3-70b-instruct", label: "Llama 3.3 70B" },
+    ],
+  },
+  {
+    id: "nvidia",
+    label: "NVIDIA NIM",
+    kind: "openai-compat",
+    envVar: "NVIDIA_API_KEY",
+    baseUrl: "https://integrate.api.nvidia.com/v1",
+    defaultModel: "qwen/qwen3-coder-480b-a35b-instruct",
+    docsUrl: "https://build.nvidia.com/settings/api-keys",
+    keyHint: "nvapi-…",
+    tagline: "Nemotron and open weights",
+    models: [
+      { id: "qwen/qwen3-coder-480b-a35b-instruct", label: "Qwen3 Coder 480B" },
+      { id: "nvidia/llama-3.3-nemotron-super-49b-v1.5", label: "Nemotron Super 49B" },
+      { id: "moonshotai/kimi-k2-instruct", label: "Kimi K2 Instruct" },
+      { id: "deepseek-ai/deepseek-v3.1", label: "DeepSeek V3.1" },
+      { id: "openai/gpt-oss-120b", label: "GPT-OSS 120B" },
+    ],
+  },
+  {
+    id: "sambanova",
+    label: "SambaNova",
+    kind: "openai-compat",
+    envVar: "SAMBANOVA_API_KEY",
+    baseUrl: "https://api.sambanova.ai/v1",
+    defaultModel: "DeepSeek-V3.1",
+    docsUrl: "https://cloud.sambanova.ai/apis",
+    tagline: "fast open-weight inference",
+    models: [
+      { id: "DeepSeek-V3.1", label: "DeepSeek V3.1" },
+      { id: "gpt-oss-120b", label: "GPT-OSS 120B" },
+      { id: "Meta-Llama-3.3-70B-Instruct", label: "Llama 3.3 70B" },
+      { id: "Qwen3-32B", label: "Qwen3 32B" },
+    ],
+  },
+  {
+    id: "scaleway",
+    label: "Scaleway",
+    kind: "openai-compat",
+    envVar: "SCW_SECRET_KEY",
+    baseUrl: "https://api.scaleway.ai/v1",
+    defaultModel: "gpt-oss-120b",
+    docsUrl: "https://console.scaleway.com/iam/api-keys",
+    tagline: "EU (Paris) hosted",
+    models: [
+      { id: "gpt-oss-120b", label: "GPT-OSS 120B" },
+      { id: "qwen3-coder-30b-a3b-instruct", label: "Qwen3 Coder 30B" },
+      { id: "llama-3.3-70b-instruct", label: "Llama 3.3 70B" },
+      { id: "mistral-small-3.2-24b-instruct-2506", label: "Mistral Small 3.2" },
+    ],
+  },
+  {
+    id: "siliconflow",
+    label: "SiliconFlow",
+    kind: "openai-compat",
+    envVar: "SILICONFLOW_API_KEY",
+    baseUrl: "https://api.siliconflow.com/v1",
+    defaultModel: "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+    docsUrl: "https://cloud.siliconflow.com/account/ak",
+    tagline: "Qwen, Kimi, DeepSeek",
+    models: [
+      { id: "Qwen/Qwen3-Coder-480B-A35B-Instruct", label: "Qwen3 Coder 480B" },
+      { id: "moonshotai/Kimi-K2-Instruct-0905", label: "Kimi K2 Instruct" },
+      { id: "deepseek-ai/DeepSeek-V3.1", label: "DeepSeek V3.1" },
+    ],
+  },
+  {
+    id: "together",
+    label: "Together AI",
+    kind: "openai-compat",
+    envVar: "TOGETHER_API_KEY",
+    baseUrl: "https://api.together.xyz/v1",
+    defaultModel: "moonshotai/Kimi-K2-Instruct-0905",
+    docsUrl: "https://api.together.ai/settings/api-keys",
+    tagline: "Kimi K2, Qwen3 Coder, DeepSeek",
+    models: [
+      { id: "moonshotai/Kimi-K2-Instruct-0905", label: "Kimi K2 Instruct" },
+      { id: "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8", label: "Qwen3 Coder 480B" },
+      { id: "deepseek-ai/DeepSeek-V3.1", label: "DeepSeek V3.1" },
+      { id: "openai/gpt-oss-120b", label: "GPT-OSS 120B" },
+      { id: "meta-llama/Llama-3.3-70B-Instruct-Turbo", label: "Llama 3.3 70B Turbo" },
+    ],
+  },
+  {
+    id: "vercel",
+    label: "Vercel AI Gateway",
+    kind: "openai-compat",
+    envVar: "AI_GATEWAY_API_KEY",
+    baseUrl: "https://ai-gateway.vercel.sh/v1",
+    defaultModel: "anthropic/claude-sonnet-4.5",
+    docsUrl: "https://vercel.com/docs/ai-gateway",
+    tagline: "one key, every frontier model",
+    models: [
+      { id: "anthropic/claude-sonnet-4.5", label: "Claude Sonnet 4.5" },
+      { id: "openai/gpt-5", label: "GPT-5" },
+      { id: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+      { id: "moonshotai/kimi-k2", label: "Kimi K2" },
+      { id: "xai/grok-4", label: "Grok 4" },
+    ],
+  },
+  {
+    // The GLM Coding Plan lives on a different path of the same host
+    // (`https://api.z.ai/api/coding/paas/v4`) — point the preset there with
+    // `/keys url zai <baseUrl>` and the same key keeps working.
+    id: "zai",
+    label: "Z.ai (GLM)",
+    kind: "openai-compat",
+    envVar: "ZAI_API_KEY",
+    baseUrl: "https://api.z.ai/api/paas/v4",
+    defaultModel: "glm-4.6",
+    docsUrl: "https://z.ai/manage-apikey/apikey-list",
+    tagline: "GLM-4.6",
+    models: [
+      { id: "glm-4.6", label: "GLM-4.6" },
+      { id: "glm-4.5", label: "GLM-4.5" },
+      { id: "glm-4.5-air", label: "GLM-4.5 Air" },
+      { id: "glm-4.5-flash", label: "GLM-4.5 Flash" },
+    ],
+  },
   {
     // Local Ollama (no key). Reached over /api/chat on the user's machine via
     // OllamaProvider. The base URL is editable in /keys and config.toml; any
@@ -662,6 +1142,13 @@ const VISION_PROVIDERS: ReadonlySet<string> = new Set([
   "bedrock",
   "vertex",
   "azure-openai",
+  // Hosts whose seed lineup includes a vision-capable model (Pixtral, Qwen-VL,
+  // GLM-4.5V, and the gateways that front the frontier labs).
+  "mistral",
+  "alibaba",
+  "zai",
+  "vercel",
+  "github-models",
 ]);
 const REASONING_PROVIDERS: ReadonlySet<string> = new Set([
   "anthropic",
@@ -673,6 +1160,25 @@ const REASONING_PROVIDERS: ReadonlySet<string> = new Set([
   "bedrock",
   "vertex",
   "azure-openai",
+  // Hosts serving a thinking model in their seed lineup (Magistral, Kimi K2
+  // Thinking, GLM-4.6, Qwen3, MiniMax, DeepSeek V3.1 hybrid reasoning).
+  "mistral",
+  "moonshot",
+  "zai",
+  "alibaba",
+  "minimax",
+  "together",
+  "fireworks",
+  "deepinfra",
+  "nebius",
+  "novita",
+  "nvidia",
+  "siliconflow",
+  "hyperbolic",
+  "chutes",
+  "baseten",
+  "sambanova",
+  "vercel",
 ]);
 
 function deriveCapabilities(preset: ProviderPreset): ProviderCapabilities {

@@ -20,6 +20,9 @@ import {
   saveCachedModels,
   cachedModelsAge,
   describeAge,
+  searchKeyStatus,
+  resolveSearchCredentials,
+  SEARCH_PROVIDER_PRESETS,
   type RuneConfig,
   type SecretsFile,
 } from "@rune/shared";
@@ -99,9 +102,34 @@ export async function runProviders(): Promise<void> {
     out(`${marker} ${name} ${faint(method.padEnd(8))} ${status}`);
   }
   out();
+
+  // The second roster: what web_search asks. Same store, same account shape,
+  // read back on the same command so "what am I connected to?" has one answer.
+  const preferred = process.env.RUNE_SEARCH_BACKEND || config.search?.provider || "auto";
+  out(bold(text("Web search")) + faint(`   asks first: ${preferred}`));
+  out();
+  const keyed = searchKeyStatus(process.env, await resolveSearchCredentials(store));
+  for (const preset of SEARCH_PROVIDER_PRESETS) {
+    const row = keyed.find((r) => r.id === preset.id);
+    const urlSet = preset.urlEnvVar
+      ? secrets.endpoints?.[preset.id] || process.env[preset.urlEnvVar]
+      : undefined;
+    const connected = preset.keyless || !!row?.hasKey || !!urlSet;
+    const marker = preset.id === preferred ? ok("●") : connected ? info("●") : faint("○");
+    const status = preset.keyless
+      ? faint("built in")
+      : urlSet
+        ? ok(`connected · ${urlSet}`)
+        : row?.hasKey
+          ? ok(`connected · ${row.source}`)
+          : dim("—");
+    const kind = preset.keyless ? "none" : preset.urlEnvVar ? "url" : "api_key";
+    out(`${marker} ${text(preset.label.padEnd(22))} ${faint(kind.padEnd(8))} ${status}`);
+  }
+  out();
   out(
     faint("Sign in with ") +
-      info("rune login <provider>") +
+      info("rune login <provider|engine>") +
       faint(" · switch with ") +
       info("rune use <provider>"),
   );

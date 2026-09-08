@@ -18,6 +18,7 @@ import {
   loginTargets,
   connectedSummary,
 } from "../../../packages/orchestrator/src/bin/ui/login-picker";
+import { searchPresetsByRank } from "../../../packages/shared/src/search-providers";
 
 const ids = (route: Parameters<typeof loginTargets>[0]) =>
   loginTargets(route).map((t) => t.providerId);
@@ -26,8 +27,21 @@ const labels = (route: Parameters<typeof loginTargets>[0]) =>
 
 describe("the first question", () => {
   test("asks what you have, in that order", () => {
-    // Subscription leads because it is the case the old surface served worst.
-    expect(routeChoices().map((r) => r.id)).toEqual(["subscription", "api_key", "offline"]);
+    // Subscription leads because it is the case the old surface served worst;
+    // web search closes because it is the one thing here that is not a model.
+    expect(routeChoices().map((r) => r.id)).toEqual([
+      "subscription",
+      "api_key",
+      "offline",
+      "search",
+    ]);
+  });
+
+  test("the API-key route says how wide the roster is", () => {
+    const hint = routeChoices().find((r) => r.id === "api_key")!.hint;
+    expect(hint).toMatch(/and \d+ more/);
+    const more = Number(hint.match(/and (\d+) more/)![1]);
+    expect(more).toBeGreaterThanOrEqual(20);
   });
 
   test("every route explains itself without jargon", () => {
@@ -79,9 +93,43 @@ describe("the API-key route", () => {
     expect(list).not.toContain("ollama");
   });
 
+  test("carries the wider roster — the hosts OpenCode and Pi users expect", () => {
+    const list = ids("api_key");
+    for (const id of [
+      "mistral",
+      "cerebras",
+      "together",
+      "fireworks",
+      "moonshot",
+      "zai",
+      "minimax",
+      "alibaba",
+      "nvidia",
+      "huggingface",
+      "github-models",
+      "vercel",
+    ]) {
+      expect({ id, listed: list.includes(id) }).toEqual({ id, listed: true });
+    }
+    expect(list.length).toBeGreaterThanOrEqual(30);
+  });
+
+  test("the frontier labs still come first, before the alphabetical block", () => {
+    expect(ids("api_key").slice(0, 4)).toEqual(["anthropic", "openai", "openrouter", "google"]);
+  });
+
   test("names the env var, so an existing key is discoverable rather than re-typed", () => {
     const openai = loginTargets("api_key").find((t) => t.providerId === "openai");
     expect(openai?.hint).toContain("OPENAI_API_KEY");
+    // A wider-roster host leads with its pitch and still names the var.
+    const mistral = loginTargets("api_key").find((t) => t.providerId === "mistral");
+    expect(mistral?.hint).toContain("MISTRAL_API_KEY");
+    expect(mistral?.hint).toMatch(/Codestral/);
+  });
+
+  test("every target says which roster it belongs to", () => {
+    for (const t of loginTargets("api_key")) expect(t.kind).toBe("model");
+    for (const t of loginTargets("search")) expect(t.kind).toBe("search");
   });
 
   test("codex is absent — a ChatGPT plan has no API key to paste", () => {
@@ -90,17 +138,56 @@ describe("the API-key route", () => {
 });
 
 describe("the offline route", () => {
-  test("is exactly the local runtimes", () => {
-    expect(ids("offline").sort()).toEqual(["ollama"]);
+  test("is the local runtimes plus one slot for any other local server", () => {
+    // `custom` is LM Studio / vLLM / llama.cpp: the OpenAI-compatible endpoint
+    // that was reachable only as `/keys custom <url> <model> <key>`.
+    expect(ids("offline")).toEqual(["ollama", "custom"]);
   });
 
   test("says where each one lives, since that is the only thing to get wrong", () => {
     const byId = Object.fromEntries(loginTargets("offline").map((t) => [t.providerId, t]));
     expect(byId.ollama!.hint).toContain("11434");
+    expect(byId.custom!.hint).toMatch(/LM Studio/);
   });
 
-  test("needs no credential to count as usable", () => {
-    for (const t of loginTargets("offline")) expect(t.connected).toBe(true);
+  test("a local runtime needs no credential to count as usable; the custom slot reflects its setup", () => {
+    const byId = Object.fromEntries(loginTargets("offline").map((t) => [t.providerId, t]));
+    expect(byId.ollama!.connected).toBe(true);
+    expect(byId.custom!.connected).toBe(false);
+    const configured = loginTargets("offline", { connected: (id) => id === "custom" });
+    expect(configured.find((t) => t.providerId === "custom")!.connected).toBe(true);
+  });
+});
+
+describe("the web-search route", () => {
+  test("lists the engines in answer order: an LLM-built index first, the built-in scraper last", () => {
+    const list = ids("search");
+    expect(list).toEqual(searchPresetsByRank().map((p) => p.id));
+    expect(list[0]).toBe("tavily");
+    expect(list.at(-1)).toBe("duckduckgo");
+  });
+
+  test("a keyed engine pastes a key; the self-hosted and built-in ones run the local step", () => {
+    const byId = Object.fromEntries(loginTargets("search").map((t) => [t.providerId, t]));
+    expect(byId.exa!.method).toBe("api_key");
+    expect(byId.searxng!.method).toBe("local");
+    expect(byId.duckduckgo!.method).toBe("local");
+  });
+
+  test("the built-in engine is always connected; the rest report what they were told", () => {
+    const targets = loginTargets("search", { connected: (id) => id === "brave" });
+    const byId = Object.fromEntries(targets.map((t) => [t.providerId, t]));
+    expect(byId.duckduckgo!.connected).toBe(true);
+    expect(byId.brave!.connected).toBe(true);
+    expect(byId.tavily!.connected).toBe(false);
+  });
+
+  test("every engine explains what it is good for, without jargon", () => {
+    for (const t of loginTargets("search")) {
+      expect(t.hint.length).toBeGreaterThan(0);
+      expect(t.hint).not.toContain("backend");
+      expect(t.hint).not.toContain("provider");
+    }
   });
 });
 
@@ -114,5 +201,13 @@ describe("the list doubles as a status readout", () => {
   test("the summary speaks product names, and says so plainly when empty", () => {
     expect(connectedSummary([])).toBe("nothing connected yet");
     expect(connectedSummary(["codex"])).toContain("ChatGPT Plus / Pro");
+  });
+
+  test("the summary answers both halves: can it think, and can it look things up", () => {
+    expect(connectedSummary(["codex"], ["tavily"])).toBe(
+      "connected: ChatGPT Plus / Pro | search: Tavily",
+    );
+    expect(connectedSummary(["mistral"], [])).toBe("connected: Mistral AI");
+    expect(connectedSummary([], ["exa"])).toBe("no model connected yet | search: Exa");
   });
 });
