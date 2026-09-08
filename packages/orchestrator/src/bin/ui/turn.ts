@@ -568,9 +568,21 @@ export class TurnRenderer {
   /** Whether the sink can amend: rows land when a call starts, a burst folds
    *  retroactively, prose streams in place. */
   private readonly live: boolean;
-  /** The row of the call in flight, committed the moment it started. */
-  private pending: { ref: BlockRef | null; callId: string; name: string; arg: string } | null =
-    null;
+  /**
+   * The row each call in flight was given the moment it started, by callId.
+   *
+   * This was ONE slot, and the loop dispatches tool calls in parallel: a model
+   * message carrying four reads opened four rows and kept the fourth. The other
+   * three were never amended into their finished form and never removed, so a
+   * burst left `> read` / `> read` / `> read` standing in the transcript
+   * forever and then appended the finished rows underneath them. Measured on
+   * the five largest September sessions, 500 rows across them were orphaned
+   * that way -- a third of everything the reader saw on the rail.
+   *
+   * Insertion-ordered, which is the order the rows were set down in, so
+   * finish() closes them top to bottom.
+   */
+  private pending = new Map<string, { ref: BlockRef | null; name: string; arg: string }>();
   /** The current run of consecutive gathering rows, as one chamber. */
   private chamber: { views: ToolActivityView[]; refs: BlockRef[] } | null = null;
   /** The model's prose as it streams into the transcript. `plan` is whether
@@ -1478,11 +1490,19 @@ export class TurnRenderer {
     // The narrative tools draw their rows from the narrative events that
     // follow them (hypothesis, decision); the call row would say it twice.
     const narrative = success && (name === "note_hypothesis" || name === "record_decision");
-    const pending =
-      this.pending && (!event.callId || this.pending.callId === String(event.callId))
-        ? this.pending
-        : null;
-    this.pending = null;
+    // The row this call opened, and only this call's. A result whose id names
+    // a row takes that row; a result with no id at all (the legacy unpaired
+    // shape) takes the oldest one still open; a result whose id names nothing
+    // takes none -- stealing a sibling's row is how a parallel batch used to
+    // report one call's outcome on another call's line.
+    const callId = String(event.callId ?? "");
+    const key = callId
+      ? this.pending.has(callId)
+        ? callId
+        : ""
+      : ([...this.pending.keys()][0] ?? "");
+    const pending = key ? this.pending.get(key) : undefined;
+    if (key) this.pending.delete(key);
     if (pending?.ref) this.landLive(view, rendered, pending.ref, narrative);
     else this.landHeld(view, rendered, narrative);
 
@@ -1701,8 +1721,10 @@ export class TurnRenderer {
           if (this.proseRef.handle >= 0) this.amendBlock(this.proseRef, "");
           this.proseRef = null;
         }
-        if (this.pending?.ref) this.amendBlock(this.pending.ref, "");
-        this.pending = null;
+        for (const open of this.pending.values()) {
+          if (open.ref) this.amendBlock(open.ref, "");
+        }
+        this.pending.clear();
         this.currentTool = null;
         this.fleet.clear();
         this.activity = null;
@@ -1760,7 +1782,7 @@ export class TurnRenderer {
         if (this.live) {
           const name = this.currentTool.name;
           const ref = this.pushBlock(TurnRenderer.provisionalRow(name, ""));
-          this.pending = { ref, callId: this.currentTool.callId, name, arg: "" };
+          this.pending.set(this.currentTool.callId, { ref, name, arg: "" });
         }
         this.activity = runningLabel(this.currentTool.name);
         this.setPhase(phaseForTool(this.currentTool.name, {}));
@@ -1777,12 +1799,13 @@ export class TurnRenderer {
           // The provisional row names its target once the arguments have
           // finished saying it -- partialArgs only yields a closed value, so
           // this amends a few times per call, never per token.
-          if (this.pending?.ref && this.pending.callId === this.currentTool.callId) {
+          const open = this.pending.get(this.currentTool.callId);
+          if (open?.ref) {
             const name = this.currentTool.name;
             const arg = name === "todo_write" ? "" : targetOf(name, this.currentTool.args);
-            if (arg && arg !== this.pending.arg) {
-              this.pending.arg = arg;
-              this.amendBlock(this.pending.ref, TurnRenderer.provisionalRow(name, arg));
+            if (arg && arg !== open.arg) {
+              open.arg = arg;
+              this.amendBlock(open.ref, TurnRenderer.provisionalRow(name, arg));
             }
           }
         }
@@ -1953,10 +1976,15 @@ export class TurnRenderer {
           status: passed ? "passed" : "failed",
           count: 1,
         });
-        const row =
-          `  ${passed ? ok(glyph("verified")) : danger(glyph("failure"))} ` +
-          muted(`step check ${glyph("observed")} ${command} ${passed ? "ok" : "failed"}`) +
-          (passed ? "" : ` ${faint(oneLine(lastNonEmpty(report), 60))}`);
+        // Clipped at the WINDOW, not at a number. The command budget (48) and
+        // the reason budget (60) were absolute, so a failing step check built
+        // a 133-column row and the fixed frame -- which clips rather than
+        // reflows -- cut it wherever the window happened to end.
+        const row = F.flowRow(
+          `${F.MARK}${passed ? ok(glyph("verified")) : danger(glyph("failure"))} ` +
+            muted(`step check ${glyph("observed")} ${command} ${passed ? "ok" : "failed"}`) +
+            (passed ? "" : ` ${faint(oneLine(lastNonEmpty(report), 60))}`),
+        );
         this.addLog(row);
         this.commitTimeline(row);
         if (!passed) {
@@ -2001,11 +2029,15 @@ export class TurnRenderer {
           status: !event.ran ? "not-run" : event.passed ? "passed" : "failed",
           count: event.ran ? commandCount : 0,
         });
-        const verification = `  ${event.passed && event.ran ? ok(glyph("verified")) : event.ran ? danger(glyph("failure")) : faint("o")} ${muted(
-          event.ran
-            ? oneLine(report, 100)
-            : oneLine(report, 100) || "No project checks were detected",
-        )}`;
+        // Same clip as the step check: the window decides, not the number 100.
+        // At 80 columns this row ran 24 cells past the right edge and the frame
+        // cut the verdict off.
+        const verdictBudget = Math.max(24, F.measure() - F.MARK.length - 2);
+        const verification = F.flowRow(
+          `${F.MARK}${event.passed && event.ran ? ok(glyph("verified")) : event.ran ? danger(glyph("failure")) : faint("o")} ${muted(
+            oneLine(report, verdictBudget) || (event.ran ? "" : "No project checks were detected"),
+          )}`,
+        );
         this.addLog(verification);
         this.commitTimeline(verification);
         if (event.ran && !event.passed) {
@@ -2288,18 +2320,19 @@ export class TurnRenderer {
     const aborted = options.aborted === true;
     // A call still open when the turn ends never came back; its row says so
     // rather than saying `running` forever.
-    if (this.pending?.ref) {
+    for (const open of this.pending.values()) {
+      if (!open.ref) continue;
       this.amendBlock(
-        this.pending.ref,
+        open.ref,
         F.toolRow({
-          name: verbOf(this.pending.name),
-          arg: this.pending.arg,
+          name: verbOf(open.name),
+          arg: open.arg,
           status: "none",
           metric: aborted ? "interrupted" : "no result",
         }),
       );
     }
-    this.pending = null;
+    this.pending.clear();
     this.flushRoutine();
     // A run that ends mid-streak still owes the reader the count.
     this.flushFailStreak();

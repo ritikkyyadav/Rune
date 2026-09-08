@@ -179,17 +179,39 @@ export function formatEvent(
       // A run that ended BEFORE finishing: render the honest state-of-work so
       // "ran out of turns" never again looks identical to "done". The reason
       // names the shape: steps left open on purpose, or a run that stalled.
-      const lines = String(ev.state ?? "").split("\n");
       const label =
         ev.reason === "open_steps"
           ? "ended with planned steps still open"
           : ev.reason === "stalled"
             ? "stopped -- nothing new was happening"
             : "paused before finishing";
-      return [
-        F.railRow(`${warn("!")} ${text(label)}`),
-        ...lines.map((l: string) => `${F.BODY}${faint(l)}`),
-      ].join("\n");
+      // The state block arrives as prose the spine composed for a model (see
+      // task-state.handoffState): a goal that can be a whole paragraph, one
+      // line per step, and a `Files touched:` line that is every path joined
+      // with commas. It was set down verbatim, and verbatim meant 346 columns
+      // on an 80-column window -- the fixed frame clips rather than reflows,
+      // so the one block a run that DIED owes the reader was the one block
+      // guaranteed to be cut off mid-sentence. It wraps to the measure now,
+      // and a step's continuation hangs under the step rather than back at
+      // the margin, so the list still reads as a list.
+      const lines: string[] = [];
+      for (const raw of String(ev.state ?? "").split("\n")) {
+        if (!raw.trim()) {
+          lines.push("");
+          continue;
+        }
+        const lead = raw.match(/^\s*/)![0];
+        // An indented single-character marker and a space is a step line
+        // (`  <tick> Audit the repository`); its continuation hangs under the
+        // text rather than under the marker. Matched structurally -- the
+        // markers themselves are closed-set glyphs and never literals here.
+        const hang = lead + (/^\s+\S\s/.test(raw) ? "  " : "");
+        const body = raw.slice(lead.length);
+        const wrapped = wrap(body, Math.max(16, F.measure() - F.BODY.length - lead.length));
+        lines.push(`${F.BODY}${lead}${faint(wrapped[0] ?? "")}`);
+        for (const rest of wrapped.slice(1)) lines.push(`${F.BODY}${hang}${faint(rest)}`);
+      }
+      return [F.railRow(`${warn("!")} ${text(label)}`), ...lines].join("\n");
     }
 
     // ── The narrative ──
