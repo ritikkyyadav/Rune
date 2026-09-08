@@ -1,5 +1,5 @@
 import { describe, test, expect, afterAll, beforeAll } from "bun:test";
-import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, symlinkSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -66,12 +66,22 @@ describe.skipIf(!HAS_SERVER)(
         JSON.stringify({ compilerOptions: { strict: true, noEmit: true, target: "ES2022" } }),
       );
       writeFileSync(join(workspace, "package.json"), JSON.stringify({ name: "fixture" }));
+      // A server executable alone does not include a TypeScript compiler.
+      // Supply the repository's pinned dependency, as a real TS project does,
+      // instead of depending on an unrelated global npm installation.
+      mkdirSync(join(workspace, "node_modules"));
+      symlinkSync(
+        join(import.meta.dir, "../../node_modules/typescript"),
+        join(workspace, "node_modules/typescript"),
+        "junction",
+      );
       manager = new LspServerManager();
     });
 
     afterAll(async () => {
       setLspAutoFeedback(false);
       await manager.stopAll();
+      rmSync(workspace, { recursive: true, force: true });
     });
 
     test("this workspace defaults the feature ON", () => {

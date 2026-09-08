@@ -17,8 +17,10 @@ teams.
 
 ## Features
 
-- **Multi-provider gateway** — Anthropic, OpenAI, OpenRouter, Google, **AWS Bedrock**, **Google
-  Vertex AI**, **Azure OpenAI**, and local **Ollama**, with automatic provider fallback, retry, and
+- **Multi-provider gateway** — 37 providers from one `/login`: Anthropic, OpenAI, OpenRouter, Google,
+  Mistral, Groq, xAI, DeepSeek, Cerebras, Together, Fireworks, Moonshot, Z.ai, MiniMax, Alibaba,
+  NVIDIA, Hugging Face, GitHub Models and more, plus **AWS Bedrock**, **Google Vertex AI**,
+  **Azure OpenAI**, and local **Ollama**, with automatic provider fallback, retry, and
   backoff. The enterprise routes reach the same models through your own cloud account,
   authenticating from its credential chain (see [docs/providers.md](docs/providers.md)).
 - **Tool suite** — `read_file`, `write_file`, `edit_file`, `multi_edit`, `glob`, `grep`, `list_dir`,
@@ -48,8 +50,10 @@ teams.
   output redaction, per-tool rate limiting, OS sandboxing, and the five-rune permission ladder.
   In the CLI, Shift+Tab shifts up: 1st gear (every action asks) → 2nd (workspace edits proceed) →
   3rd (adds sandboxed commands and confined delegation) → 4th (full autonomy) → Auto
-  (classifier-reviewed), then wraps. The OS sandbox is a separate `/sandbox` switch — no gear
-  changes it.
+  (classifier-reviewed), then wraps. The OS sandbox is a separate `/sandbox` policy — a mode
+  (`auto-allow` / `regular` / `off`), an override (allow an unsandboxed retry, or strict),
+  excluded commands and filesystem read/write rules — and no gear changes it. See
+  [`docs/sandbox.md`](docs/sandbox.md).
 - **Hooks** — run shell commands automatically around tool use and session lifecycle via
   `.rune/hooks.json` (e.g. format/lint after edits, block protected paths).
 - **Plugins** — one installable directory bundling skills, slash commands, MCP connectors, hooks
@@ -79,8 +83,9 @@ teams.
   synthesizer writes a **cited** markdown report. `/research` is the standard preset; `/deepresearch`
   runs more rounds, sources, and a longer report. Sources are captured from the investigators' tool
   calls (not hallucinated), and the report streams to the terminal, saves under `.rune/research/`, and
-  stays in the session for follow-ups. Set a **Tavily/Brave** key via `/keys` for higher-quality
-  search; keyless DuckDuckGo is the fallback.
+  stays in the session for follow-ups. Connect a search engine (Tavily, Exa, Brave, Serper,
+  Perplexity, Kagi and more) via `/login` → Web search for higher-quality search; keyless
+  DuckDuckGo is the fallback.
 - **Skills** — 181 bundled expert playbooks (code review, debugging, architecture, data analysis,
   PDF handling, and more) surfaced by progressive disclosure: a compact catalog rides in the system
   prompt and the model loads a skill's full instructions on demand via the `skill` tool. Browse with
@@ -404,6 +409,29 @@ Common flags: `-m/--model`, `-p/--provider`, `-w/--workspace <dir>`,
 `--autonomy <I|II|III>`, `--trust` (Auto), `-r/--resume <sessionId>`, `-l/--list`.
 
 ## Configuration
+
+Type **`/config`** in the terminal to open settings. It includes shortcuts for models,
+API keys and internet search, and the browser, plus editable budget, concurrency,
+reasoning, sandbox, and learning settings. Changes apply immediately and are saved;
+an existing project override is updated in its own file. `/settings` is an alias.
+
+```text
+/config budget 5            # session list-price budget in USD; 0 removes the cap
+/config parallel 3          # shared limit for tasks, workers and workflow delegates
+/config subagent_budget 1   # default USD budget for each new delegate
+/config sandbox regular     # auto-allow | regular | off — or open the menu with /sandbox
+/config sandbox_fallback off   # strict: no unsandboxed retries, only excludedCommands run on the host
+/config supervisor all      # Auto's background supervisor: all | unusual | off
+/config unsandboxed_shell ask  # Auto and a command with no sandbox under it: review | ask | allow
+/config sandbox_required on
+/config playbook off
+```
+
+The session ledger includes the lead, delegates, compaction, research, and reviewers.
+A budget stops new inference after recorded usage reaches the cap; responses already in
+flight can cross it, and unknown model prices remain explicitly unpriced. See
+[runtime reliability and validation](docs/runtime-reliability.md) for the implementation
+and its tested limits.
 
 **Environment:** `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GOOGLE_API_KEY`,
 `OLLAMA_HOST`, `N8N_BASE_URL`, and `TAVILY_API_KEY` / `BRAVE_API_KEY` for web search (used by

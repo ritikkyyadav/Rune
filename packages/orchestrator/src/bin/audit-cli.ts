@@ -478,7 +478,13 @@ export async function runAudit(args: string[], values: Record<string, unknown>):
     if (rt && rt.v === 1) {
       say();
       say(
-        `  ${text("Retro")}  ${rt.outcome === "finished" ? ok(rt.outcome) : warn(rt.outcome)} ${dim("·")} steps ${rt.steps.done}/${rt.steps.total}${rt.steps.unproven > 0 ? ` ${warn(`~${rt.steps.unproven}`)}` : ""} ${dim("·")} checks ${ok(String(rt.checks.passed))}/${rt.checks.failed > 0 ? danger(String(rt.checks.failed)) : "0"} ${dim("·")} ${num(rt.tools.calls)} tool calls${rt.tools.failed > 0 ? ` (${warn(`${rt.tools.failed} failed`)})` : ""} ${dim("·")} ${num(rt.completions)} completions ${dim("·")} $${rt.cost.listUsd.toFixed(4)} ${dim("list")}`,
+        `  ${text("Retro")}  ${rt.outcome === "finished" ? ok(rt.outcome) : warn(rt.outcome)} ${dim("·")} steps ${rt.steps.done}/${rt.steps.total}${rt.steps.unproven > 0 ? ` ${warn(`~${rt.steps.unproven}`)}` : ""} ${dim("·")} checks ${ok(String(rt.checks.passed))}/${rt.checks.failed > 0 ? danger(String(rt.checks.failed)) : "0"} ${dim("·")} ${num(rt.tools.calls)} tool calls${rt.tools.failed > 0 ? ` (${warn(`${rt.tools.failed} failed`)})` : ""} ${dim("·")} ${num(rt.completions)} completions ${dim("·")} $${rt.cost.listUsd.toFixed(4)} ${dim("list")}` +
+          (rt.talk && rt.talk.prose > 0
+            ? ` ${dim("·")} talk ${(rt.talk.harness / rt.talk.prose <= 0.15 ? ok : warn)(`${Math.round((100 * rt.talk.harness) / rt.talk.prose)}%`)}`
+            : "") +
+          (rt.silence && rt.silence.activeMs > 0
+            ? ` ${dim("·")} silent ${(rt.silence.quietMs / rt.silence.activeMs <= 0.15 ? ok : warn)(`${Math.round((100 * rt.silence.quietMs) / rt.silence.activeMs)}%`)}`
+            : ""),
       );
       for (const l of rt.lessons.slice(0, 6)) {
         say(

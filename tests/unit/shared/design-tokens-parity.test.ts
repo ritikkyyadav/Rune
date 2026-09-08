@@ -1,16 +1,17 @@
 // ─── The pigment guardrail ───
 //
-// This test has been rebound three times: from `docs/design/rune-customizer-v2.html`
-// to the Savoir DNA, from the Savoir DNA to the electric-blue identity, and now
-// to the founder's violet with the terminal as the only surface. Rebound rather
-// than deleted, because what it holds is not a hex table.
+// This test has been rebound four times: from `docs/design/rune-customizer-v2.html`
+// to the Savoir DNA, from the Savoir DNA to an electric-blue identity, to the
+// founder's violet, and now to the redesigned Savoir brand — one blue on a
+// clean black-and-white ground. Rebound rather than deleted, because what it
+// holds is not a hex table.
 //
-// It pins two things. The eleven literal values, so a brand change arrives as a
+// It pins two things. The literal values, so a brand change arrives as a
 // deliberate edit to a list rather than as drift. And the RULES those values
-// encode — one accent, painted exact on ink and derived on paper; three status
-// colours; derived rather than hand-picked variants; measured contrast floors —
-// because a hex table alone would let the system be dismantled a value at a
-// time while every assertion stayed green.
+// encode — one accent, painted exact on PAPER and lifted on INK because blue is
+// a dark accent; three status colours for state; derived rather than hand-picked
+// variants; measured contrast floors — because a hex table alone would let the
+// system be dismantled a value at a time while every assertion stayed green.
 
 import { describe, it, expect } from "bun:test";
 import {
@@ -51,21 +52,22 @@ describe("the palette, verbatim", () => {
     // If one of these changes, the brand changed — which is a decision, not a
     // refactor, and should arrive as a deliberate edit to this list.
     expect(RUNE_PALETTE).toEqual({
-      accent: "#A28CF3",
-      ground: "#FAFAF8",
+      accent: "#0B37E0",
+      accentLift: "#3E63FF",
+      ground: "#FAFAFA",
       surface: "#FFFFFF",
-      sunk: "#F3F3F1",
-      ink: "#111318",
-      ink2: "#5B6070",
-      ink3: "#8B909C",
-      hairline: "#E6E6E2",
-      groundDark: "#0F1114",
-      surfaceDark: "#15181D",
-      sunkDark: "#0B0D10",
-      inkDark: "#E8E9EC",
-      ink2Dark: "#A2A7B3",
-      ink3Dark: "#6C717D",
-      hairlineDark: "#232730",
+      sunk: "#F2F2F1",
+      ink: "#000000",
+      ink2: "#5A5F64",
+      ink3: "#868B90",
+      hairline: "#E3E3E2",
+      groundDark: "#0B0C0D",
+      surfaceDark: "#131416",
+      sunkDark: "#060607",
+      inkDark: "#FFFFFF",
+      ink2Dark: "#9BA0A5",
+      ink3Dark: "#6A6F74",
+      hairlineDark: "#212325",
       ok: "#1F9D55",
       caution: "#C98A1A",
       danger: "#D2453B",
@@ -73,9 +75,9 @@ describe("the palette, verbatim", () => {
   });
 
   it("carries no trace of the identities it replaced", () => {
-    // The Savoir DNA (petrol teal, drafting paper, the brick negative) and the
-    // electric-blue gear that followed it. A value surviving here would be the
-    // rebrand half-done.
+    // The Savoir DNA (petrol teal, drafting paper, the brick negative), the
+    // first electric-blue gear, and the founder's violet that followed it. A
+    // value surviving here would be the rebrand half-done.
     const values = Object.values(RUNE_PALETTE).map((v) => v.toUpperCase());
     for (const ditched of [
       "#0E5E63",
@@ -86,6 +88,7 @@ describe("the palette, verbatim", () => {
       "#C7CABF",
       "#1B3FE4",
       "#5B79FF",
+      "#A28CF3",
     ]) {
       expect(values, `${ditched} is from a ditched identity`).not.toContain(ditched);
     }
@@ -98,27 +101,26 @@ describe("the palette, verbatim", () => {
     expect(Object.keys(RUNE_ACCENT_CSS.dark)).toHaveLength(1);
   });
 
-  it("paints the founder's swatch exactly on ink, the default ground", () => {
-    expect(runeAccentHex("dark")).toBe("#A28CF3");
-    expect(RUNE_BASE_CSS.dark.accent).toBe(RUNE_PALETTE.accent);
+  it("paints the blue exactly on paper, where a dark accent belongs", () => {
+    // Blue is dark, so paper is the ground it reads on exactly: #0B37E0 clears
+    // the non-text floor on near-white with room to spare.
+    expect(runeAccentHex("light")).toBe("#0B37E0");
+    expect(RUNE_BASE_CSS.light.accent).toBe(RUNE_PALETTE.accent);
+    expect(accentFor("light")).toBe(RUNE_PALETTE.accent);
   });
 
-  it("derives the paper accent from the same swatch rather than authoring a second violet", () => {
-    // A pastel on near-white is a swatch, not a signal: the published value is
-    // 2.7:1 there. The paper reading steps it toward the ink by the status
-    // colours' own rule until it clears the non-text floor — and no further.
-    expect(RUNE_BASE_CSS.light.accent).toBe(
-      readableOn(RUNE_PALETTE.accent, RUNE_PALETTE.ground, RUNE_PALETTE.ink, ACCENT_CONTRAST_FLOOR),
-    );
-    expect(RUNE_BASE_CSS.light.accent).toBe(accentFor("light"));
-    expect(runeAccentHex("light")).toBe(accentFor("light").toUpperCase());
-    expect(contrastRatio(RUNE_BASE_CSS.light.accent, RUNE_PALETTE.ground)).toBeGreaterThanOrEqual(
-      ACCENT_CONTRAST_FLOOR,
-    );
-    // Still recognisably the same violet: a small move, not a new colour.
-    const [pr, pg, pb] = hexToRgbTuple(RUNE_PALETTE.accent);
-    const [cr, cg, cb] = hexToRgbTuple(RUNE_BASE_CSS.light.accent);
-    expect(Math.abs(pr - cr) + Math.abs(pg - cg) + Math.abs(pb - cb)).toBeLessThan(140);
+  it("lifts the blue on ink to a published second reading, not a smudge", () => {
+    // #0B37E0 on near-black is under 2:1 — a dark accent on a dark ground. The
+    // ink reading is Savoir's own dark-surface blue, taken from savoir.new
+    // rather than derived at render time, so the mark reads unmistakably blue.
+    expect(runeAccentHex("dark")).toBe("#3E63FF");
+    expect(RUNE_BASE_CSS.dark.accent).toBe(RUNE_PALETTE.accentLift);
+    expect(accentFor("dark")).toBe(RUNE_PALETTE.accentLift);
+    // Both readings are one blue: blue-dominant, and close in hue.
+    for (const hex of [RUNE_PALETTE.accent, RUNE_PALETTE.accentLift]) {
+      const [r, g, b] = hexToRgbTuple(hex);
+      expect(b, `${hex} is blue-dominant`).toBeGreaterThan(Math.max(r, g) + 60);
+    }
   });
 
   it("keeps status to three colours, used for state and never as an accent", () => {
@@ -153,7 +155,7 @@ describe("the palette, verbatim", () => {
     }
   });
 
-  it("derives the hover accent rather than authoring a second violet", () => {
+  it("derives the hover accent rather than authoring a second blue", () => {
     expect(RUNE_BASE_CSS.light.accentHover).toBe(
       mixToward(RUNE_BASE_CSS.light.accent, "#000000", 0.16),
     );
@@ -164,13 +166,16 @@ describe("the palette, verbatim", () => {
 });
 
 describe("contrast", () => {
-  it("ink is not black and the ground is not white", () => {
-    // The one decision that decides whether someone can read this for two
-    // hours. Pure black on pure white is the contrast that makes eyes ache.
-    expect(RUNE_PALETTE.ink).not.toBe("#000000");
+  it("commits to black-and-white ink on off-pure grounds", () => {
+    // The redesigned Savoir brand is deliberately monochrome: the ink is true
+    // black on paper and true white on ink. What keeps it off the aching pole
+    // is the GROUND, which is never pure — paper is #FAFAFA, ink is #0B0C0D —
+    // so the surface a person stares at for two hours is softened even though
+    // the text on it is pure. That is the founder's direction, not drift.
+    expect(RUNE_PALETTE.ink).toBe("#000000");
+    expect(RUNE_PALETTE.inkDark).toBe("#FFFFFF");
     expect(RUNE_PALETTE.ground).not.toBe("#FFFFFF");
     expect(RUNE_PALETTE.groundDark).not.toBe("#000000");
-    expect(RUNE_PALETTE.inkDark).not.toBe("#FFFFFF");
   });
 
   it("body and secondary text clear WCAG AA on both grounds", () => {
@@ -194,7 +199,9 @@ describe("contrast", () => {
       expect(contrastRatio(css.accent, css.ground), `${base} accent`).toBeGreaterThanOrEqual(
         ACCENT_CONTRAST_FLOOR,
       );
-      // A pastel carries ink, never white: white on this violet is under 3:1.
+      // Blue carries white, never ink: black on #0B37E0 is ~2:1, white clears
+      // 4.5:1 on both the paper blue and the lifted ink blue.
+      expect(css.onAccent).toBe("#FFFFFF");
       expect(contrastRatio(css.onAccent, css.accent), `${base} on-accent`).toBeGreaterThanOrEqual(
         4.5,
       );
@@ -225,10 +232,10 @@ describe("the terminal derivation", () => {
 
   it("the console paints the accent the token source resolves, on both grounds", () => {
     // One brand, one surface, one source. If the console ever carried its own
-    // violet, a palette change here would leave the product looking different.
+    // blue, a palette change here would leave the product looking different.
     expect(runeTerminalRoles("light").accent).toBe(runeAccentHex("light"));
     expect(runeTerminalRoles("dark").accent).toBe(runeAccentHex("dark"));
-    expect(runeTerminalRoles("dark").accent).toBe("#A28CF3");
+    expect(runeTerminalRoles("dark").accent).toBe("#3E63FF");
   });
 
   it("composites translucency deterministically, because a terminal has no alpha", () => {
@@ -241,5 +248,56 @@ describe("the terminal derivation", () => {
   it("the two grounds are genuinely inverted, not two shades of the same", () => {
     expect(luminance(runeTerminalPalette("light").bg)).toBeGreaterThan(0.6);
     expect(luminance(runeTerminalPalette("dark").bg)).toBeLessThan(0.05);
+  });
+});
+
+// The syntax palette: nine reading-aid colours for code, kept OUTSIDE the
+// brand palette (pinned verbatim above) and held to the same text floor.
+import {
+  RUNE_SYNTAX,
+  SYNTAX_ROLES,
+  syntaxPalette,
+} from "../../../packages/shared/src/design-tokens";
+
+describe("the syntax palette", () => {
+  it("names nine roles on both grounds", () => {
+    for (const base of ["light", "dark"] as const) {
+      expect(Object.keys(syntaxPalette(base)).sort()).toEqual([...SYNTAX_ROLES].sort());
+    }
+  });
+  it("clears 4.5:1 as text on its own ground, every role, both grounds", () => {
+    const ground = { light: RUNE_PALETTE.ground, dark: RUNE_PALETTE.groundDark } as const;
+    for (const base of ["light", "dark"] as const) {
+      for (const role of SYNTAX_ROLES) {
+        expect(
+          contrastRatio(RUNE_SYNTAX[base][role], ground[base]),
+          `${base} ${role}`,
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+  it("stays out of the brand palette", () => {
+    const brand = new Set(Object.values(RUNE_PALETTE).map((v) => v.toUpperCase()));
+    for (const base of ["light", "dark"] as const)
+      for (const hex of Object.values(RUNE_SYNTAX[base]))
+        expect(brand.has(hex.toUpperCase())).toBe(false);
+  });
+});
+
+// The diff bands: the founder's swatches on ink, derived tints on paper.
+import { RUNE_DIFF_BANDS } from "../../../packages/shared/src/design-tokens";
+
+describe("the diff bands", () => {
+  it("lays an added row on the opposite ground: the theme's white on ink, the mark's blue on paper", () => {
+    expect(RUNE_DIFF_BANDS.dark).toEqual({ added: RUNE_PALETTE.inkDark, removed: "#370603" });
+    expect(RUNE_DIFF_BANDS.light.added).toBe("#1936D7");
+  });
+  it("keeps one ink pole legible on every band", () => {
+    for (const base of ["light", "dark"] as const) {
+      for (const band of Object.values(RUNE_DIFF_BANDS[base])) {
+        const pole = Math.max(contrastRatio("#000000", band), contrastRatio("#FFFFFF", band));
+        expect(pole, `${base} ${band}`).toBeGreaterThanOrEqual(7);
+      }
+    }
   });
 });

@@ -125,6 +125,8 @@ export interface RuneConfig {
       deployments?: Record<string, string>;
     };
   };
+  /** Unified metered-equivalent session ceiling. 0 or absent = unlimited. */
+  cost?: { maxSessionUsd?: number };
   permissions: {
     defaultLevel: "auto" | "confirm" | "sandbox";
     rules: PermissionRule[];
@@ -208,10 +210,63 @@ export interface RuneConfig {
        * no telemetry path, no export, no black box reads it.
        */
       collectForEval?: boolean;
+      /**
+       * The out-of-band supervisor's scope. `all` screens every supervised
+       * action with a background reviewer call; `unusual` (default) skips
+       * recognized ordinary development work — builds, tests, installs,
+       * linters, local git, containers — which the mechanical breakers have
+       * already read; `off` disables the background supervisor entirely.
+       */
+      supervisor?: "all" | "unusual" | "off";
+      /**
+       * What Auto does with a shell command that will NOT run inside the OS
+       * sandbox (sandbox off, an excluded command, or a fallback retry).
+       * `review` (default): read-only commands run; anything else pays one
+       * in-path reviewer call. `ask`: anything that is not read-only prompts.
+       * `allow`: the mechanical breakers alone decide, as in 4th gear.
+       */
+      unsandboxedShell?: "review" | "ask" | "allow";
+      /**
+       * Extra read-only command patterns that join Auto's built-in safe tier
+       * (`adb devices`, `emulator -list-avds`). Same glob/prefix grammar as
+       * `[sandbox] excludedCommands`.
+       */
+      safeCommands?: string[];
     };
   };
   sandbox: {
+    /** LEGACY on/off switch; `mode` wins when both are present. */
     enabled: boolean;
+    /**
+     * auto-allow (default): commands run in the OS sandbox and, because the
+     * sandbox is the boundary, 3rd gear and Auto approve them without a prompt.
+     * regular: same containment, but the gear's ordinary permission prompt
+     * still applies. off: no sandbox — full host access, prompts as usual.
+     */
+    mode?: "auto-allow" | "regular" | "off";
+    /**
+     * The Overrides tab. true (default): a command that failed on a sandbox
+     * restriction may be retried with `unsandboxed: true`, which runs on the
+     * host under regular permissions. false: strict — every command runs
+     * sandboxed unless it is listed in `excludedCommands`.
+     */
+    allowUnsandboxedFallback?: boolean;
+    /**
+     * Command patterns that always run OUTSIDE the sandbox (`adb *`,
+     * `docker`). A pattern with `*` globs the whole segment; a bare name is a
+     * command prefix. Excluded commands lose auto-allow along with the
+     * walls, so the gear's ordinary permission decision applies to them.
+     */
+    excludedCommands?: string[];
+    /** `[sandbox.filesystem]` — paths the profile denies or additionally allows. */
+    filesystem?: {
+      /** Denied for reading, on top of the built-in credential stores. */
+      denyRead?: string[];
+      /** Extra writable roots, on top of the workspace, Rune's cache and temp. */
+      allowWrite?: string[];
+      /** Denied for writing even inside an allowed root. */
+      denyWrite?: string[];
+    };
     networkDeny: boolean;
     fsAllowlist: string[];
     /**
@@ -267,6 +322,15 @@ export interface RuneConfig {
      * moving (default 2). 0 keeps the hard ceiling.
      */
     secondWinds?: number;
+    /**
+     * What the plan ledger does with a step closed on nothing. "attest" (the
+     * default) accepts the completion, marks the step unproven, and tells the
+     * model so in one line of fact. "refuse" sends the list back once, in one
+     * line, and accepts the re-submission as unproven. Neither ever tells the
+     * model to re-run anything: the ledger arguing with the model used to
+     * write the transcript's worst sentences.
+     */
+    evidenceGate?: "attest" | "refuse";
   };
   /**
    * Tool execution settings.
@@ -424,8 +488,13 @@ export interface RuneConfig {
     autoVerifyAudit: boolean;
   };
   search?: {
-    /** Preferred web_search backend. Keys come from env (TAVILY_API_KEY / BRAVE_API_KEY). */
-    provider?: "auto" | "tavily" | "brave" | "duckduckgo";
+    /**
+     * Preferred web_search engine: "auto" (answer order by rank) or any id from
+     * SEARCH_PROVIDER_PRESETS — tavily, exa, brave, serper, perplexity,
+     * firecrawl, jina, you, kagi, serpapi, searxng, duckduckgo. Keys are
+     * connected with `/login` → Web search (or the engine's env var).
+     */
+    provider?: string;
     /** Use provider-native grounding (Gemini/Anthropic) when available. Default true. */
     nativeGrounding?: boolean;
   };
@@ -821,6 +890,7 @@ function applyEnvOverrides(config: Record<string, unknown>): void {
     RUNE_LOG_DIR: (c) => setNested(c, "engine.logDir", process.env.RUNE_LOG_DIR!),
     RUNE_SANDBOX_ENABLED: (c) =>
       setNested(c, "sandbox.enabled", process.env.RUNE_SANDBOX_ENABLED === "true"),
+    RUNE_SANDBOX_MODE: (c) => setNested(c, "sandbox.mode", process.env.RUNE_SANDBOX_MODE!),
     RUNE_SANDBOX_NETWORK: (c) =>
       setNested(c, "sandbox.networkDeny", process.env.RUNE_SANDBOX_NETWORK !== "allow"),
     RUNE_TRUST_WORKSPACE: (c) =>
@@ -1007,7 +1077,7 @@ export interface SetConfigResult {
 export function setConfigValue(
   dottedKey: string,
   value: string | number | boolean | string[],
-  opts: { scope?: ConfigScope; workspaceRoot?: string } = {},
+  opts: { scope?: ConfigScope; workspaceRoot?: string; preferExistingProject?: boolean } = {},
 ): SetConfigResult {
   const parts = dottedKey.split(".").filter(Boolean);
   if (parts.length < 2) {
@@ -1016,7 +1086,21 @@ export function setConfigValue(
   const key = parts[parts.length - 1]!;
   const section = parts.slice(0, -1).join(".");
   const rendered = toTomlValue(value);
-  const path = getConfigFilePath(opts.scope ?? "global", opts.workspaceRoot);
+  let scope = opts.scope ?? "global";
+  if (opts.preferExistingProject && opts.workspaceRoot) {
+    const projectPath = getConfigFilePath("project", opts.workspaceRoot);
+    if (existsSync(projectPath)) {
+      let existingValue: unknown = parseToml(readFileSync(projectPath, "utf8"));
+      for (const part of parts) {
+        existingValue =
+          existingValue && typeof existingValue === "object"
+            ? (existingValue as Record<string, unknown>)[part]
+            : undefined;
+      }
+      if (existingValue !== undefined) scope = "project";
+    }
+  }
+  const path = getConfigFilePath(scope, opts.workspaceRoot);
 
   const existing = existsSync(path) ? readFileSync(path, "utf-8") : "";
   const hadTrailingNewline = existing.endsWith("\n") || existing === "";

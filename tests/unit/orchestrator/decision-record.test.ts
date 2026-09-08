@@ -50,6 +50,7 @@ function bugHunt(): TaskStateStore {
     { kind: "check", ref: "explain analyze", detail: "seq scan on orders" },
   ]);
   s.noteFileWritten("migrations/0042_orders_index.sql");
+  s.noteEffect("write");
   s.noteEffect("check_pass", {
     command: "bun test",
     source: "harness",
@@ -57,7 +58,6 @@ function bugHunt(): TaskStateStore {
     durationMs: 4200,
     summary: "12 pass",
   });
-  s.noteEffect("write");
   s.setTodos([
     { content: "test the cache theory", status: "completed" },
     { content: "test the pool theory", status: "completed" },

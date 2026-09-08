@@ -184,8 +184,25 @@ export class TokenCounter {
       ["deepseek", 131072],
       ["kimi", 131072],
       ["llama-3", 131072],
+      // Fireworks spells the same family "llama-v3p3-70b-instruct".
+      ["llama-v3", 131072],
       ["llama3", 8192],
       ["grok", 131072],
+      // ─── The wider roster (2026-09-06) ───
+      // Documented windows for the families the new presets seed, floored
+      // where a host is known to serve less. Mistral's coding/reasoning lines
+      // are spelled without the "mistral" substring (codestral, devstral,
+      // magistral, ministral), so each needs its own rule ahead of the
+      // generic one.
+      ["jamba", 256000], // AI21 Jamba 1.5/1.6 Large and Mini
+      ["command-a", 256000], // Cohere Command A
+      ["command-r", 128000], // Command R+, R7B
+      ["codestral", 256000], // Codestral 25.01
+      ["devstral", 131072],
+      ["magistral", 131072], // Magistral 1.2; 1.0 was 40k and is not served as -latest
+      ["ministral", 131072],
+      ["mistral", 131072], // Large/Medium/Small; Large 3 serves 256k, floored to the line
+      ["mercury", 128000], // Inception Mercury / Mercury Coder
     ];
     const lower = model.toLowerCase();
     for (const [pattern, limit] of families) {

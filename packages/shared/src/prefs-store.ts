@@ -37,6 +37,13 @@ export interface SessionPrefs {
    * we do not nag again; `true` means agreed, so it persists like any other.
    */
   stickyFourthGear?: boolean;
+  /**
+   * The web-search engine to ask first, by preset id. Set when `/login` →
+   * Web search connects one: the engine you just connected is the one you
+   * meant to use, the same way a fresh model sign-in becomes the session
+   * model. `[search] provider` in config.toml still wins over it.
+   */
+  search?: string;
 }
 
 /** `~/.rune/prefs.json`, or RUNE_PREFS_PATH. Computed per call so the env
@@ -54,6 +61,7 @@ export function loadPrefs(): SessionPrefs {
     const prefs: SessionPrefs = {};
     if (typeof raw?.gear === "string" && raw.gear) prefs.gear = raw.gear;
     if (typeof raw?.stickyFourthGear === "boolean") prefs.stickyFourthGear = raw.stickyFourthGear;
+    if (typeof raw?.search === "string" && raw.search) prefs.search = raw.search;
     return prefs;
   } catch {
     return {};

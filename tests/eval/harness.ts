@@ -139,6 +139,10 @@ export interface RetroSummary {
   gates: number;
   completions: number;
   lessons: number;
+  /** Share of prose messages about the harness (0-1); absent when no prose. */
+  harnessTalk?: number;
+  /** Share of active time ≥30 s without a new row (0-1); absent without a clock. */
+  silence?: number;
 }
 
 /** The last `retro` event of a session, summarised for the result row. */
@@ -165,6 +169,10 @@ function lastRetro(dbPath: string, sessionId: string): RetroSummary | undefined 
         gates,
         completions: r.completions ?? 0,
         lessons: Array.isArray(r.lessons) ? r.lessons.length : 0,
+        ...(r.talk && r.talk.prose > 0 ? { harnessTalk: r.talk.harness / r.talk.prose } : {}),
+        ...(r.silence && r.silence.activeMs > 0
+          ? { silence: r.silence.quietMs / r.silence.activeMs }
+          : {}),
       };
     } finally {
       db.close();

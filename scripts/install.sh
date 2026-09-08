@@ -104,6 +104,13 @@ meta_value() {
   sed -n "s/^${key}=//p" "$file" | tail -1
 }
 
+# macOS paths can differ only by case or symlinks and still name this checkout.
+# Filesystem identity avoids falsely rejecting a same-checkout update while
+# retaining the dirty cross-worktree and commit-ancestry guards below.
+same_checkout() {
+  [ "$1" = "$2" ] || { [ -d "$1" ] && [ -d "$2" ] && [ "$1" -ef "$2" ]; }
+}
+
 sha256_file() {
   local file="$1"
   if command -v shasum >/dev/null 2>&1; then
@@ -147,7 +154,7 @@ if [ -f "$INSTALLED_META" ] && [ "${RUNE_ALLOW_NON_FF_INSTALL:-0}" != "1" ]; the
   INSTALLED_COMMIT="$(meta_value RUNE_SOURCE_COMMIT "$INSTALLED_META")"
   INSTALLED_DIRTY="$(meta_value RUNE_SOURCE_DIRTY "$INSTALLED_META")"
 
-  if [ -n "$INSTALLED_ROOT" ] && [ "$INSTALLED_ROOT" != "$RUNE_ROOT" ] && \
+  if [ -n "$INSTALLED_ROOT" ] && ! same_checkout "$INSTALLED_ROOT" "$RUNE_ROOT" && \
      { [ "$INSTALLED_DIRTY" = "1" ] || [ "$CANDIDATE_DIRTY" = "1" ]; }; then
     echo ""
     echo "  $(red '✗') Refusing to replace a dirty build from another worktree."

@@ -7,11 +7,11 @@
 //   bash_output { shell_id }                   → new output since last read
 //   kill_shell { shell_id }                    → SIGTERM the process
 //
-// Background commands bypass the Rust sandbox (a dev server needs to bind
-// ports, which deny-net would break) — they are still permission-gated as
-// `bash`, so the user approves the command unless in trust/turing mode.
+// Background commands use the same native sandbox profile as foreground bash.
+// A server can request network access while keeping filesystem isolation.
 
 import { spawn, type ChildProcess } from "node:child_process";
+import { resolveSandboxLaunch, sandboxPathsFor } from "../sandbox-mode";
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
 
 /** Cap the retained output per shell — a chatty server must not eat memory. */
@@ -37,18 +37,63 @@ export class BackgroundShellManager {
   private shells = new Map<string, BackgroundShell>();
   private nextId = 1;
 
-  constructor() {
+  constructor(private readonly binaryPath?: string) {
     // Never leave orphaned servers behind when Rune exits.
     process.on("exit", () => this.killAll());
   }
 
-  start(command: string, cwd: string): { shellId: string } {
+  start(
+    command: string,
+    cwd: string,
+    network = false,
+    opts: { unsandboxed?: boolean } = {},
+  ): { shellId: string; sandboxed: boolean } {
+    let program = "bash";
+    let args = ["-lc", command];
+    let env: NodeJS.ProcessEnv | undefined;
+    let sandboxed = false;
+    // The same launch decision as foreground bash: the sandbox mode, the
+    // excluded-command list and the fallback override all apply, and a strict
+    // policy refuses an `unsandboxed` request here exactly as it does there.
+    const launch = resolveSandboxLaunch({
+      command,
+      network,
+      unsandboxed: opts.unsandboxed === true,
+    });
+    if (launch.refusal) throw new Error(launch.refusal);
+    if (this.binaryPath && launch.sandboxed) {
+      const plan = Bun.spawnSync([this.binaryPath, "--workspace", cwd, "shell-plan"], {
+        stdin: new TextEncoder().encode(
+          JSON.stringify({ command, network, sandbox_paths: sandboxPathsFor(cwd) }),
+        ),
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 5000,
+      });
+      if (plan.exitCode !== 0)
+        throw new Error(
+          "Cannot start a contained background shell: " +
+            new TextDecoder().decode(plan.stdout.length ? plan.stdout : plan.stderr),
+        );
+      const parsed = JSON.parse(new TextDecoder().decode(plan.stdout));
+      if (
+        parsed.success !== true ||
+        parsed.result?.sandboxed !== true ||
+        !Array.isArray(parsed.result.args)
+      ) {
+        throw new Error(
+          "The shell planner did not provide OS isolation. Background command was not started.",
+        );
+      }
+      ({ program, args, env, sandboxed } = parsed.result);
+    }
     const id = `shell_${this.nextId++}`;
     // detached → the shell leads its own process group, so kill() can take
     // down the ENTIRE tree (bash + the dev server it spawned), not just bash —
     // a leader-only kill leaves grandchildren running and holding ports.
-    const proc: ChildProcess = spawn("bash", ["-lc", command], {
+    const proc: ChildProcess = spawn(program, args, {
       cwd,
+      ...(env ? { env } : {}),
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -83,7 +128,8 @@ export class BackgroundShellManager {
       on(event: "error", cb: (err: Error) => void): void;
       on(event: "exit", cb: (code: number | null) => void): void;
     };
-    procEvents.on("error", () => {
+    procEvents.on("error", (error) => {
+      append(`Failed to start background command: ${error.message}\n`);
       if (shell.status === "running") shell.status = "failed";
     });
     procEvents.on("exit", (code) => {
@@ -93,7 +139,7 @@ export class BackgroundShellManager {
       shell.exitCode = code;
     });
 
-    return { shellId: id };
+    return { shellId: id, sandboxed };
   }
 
   /** Signal the shell's whole process group; falls back to the leader only. */
@@ -279,6 +325,15 @@ export function withBackgroundSupport(
     validate: (args) => bashHandler.validate(args),
     execute: async (input: ToolCallInput): Promise<ToolCallOutput> => {
       if (input.args.run_in_background === true) {
+        if (input.signal?.aborted)
+          return {
+            callId: input.callId,
+            toolName: input.toolName,
+            success: false,
+            result: "",
+            error: "Interrupted before start.",
+            durationMs: 0,
+          };
         const command = String(input.args.command ?? "");
         if (!command.trim()) {
           return {
@@ -290,13 +345,29 @@ export function withBackgroundSupport(
             durationMs: 0,
           };
         }
-        const { shellId } = manager.start(command, input.workspaceRoot);
+        let started: { shellId: string; sandboxed: boolean };
+        try {
+          started = manager.start(command, input.workspaceRoot, input.args.network === true, {
+            unsandboxed: input.args.unsandboxed === true,
+          });
+        } catch (error) {
+          return {
+            callId: input.callId,
+            toolName: input.toolName,
+            success: false,
+            result: "",
+            error: error instanceof Error ? error.message : String(error),
+            durationMs: 0,
+          };
+        }
+        const { shellId, sandboxed } = started;
         return {
           callId: input.callId,
           toolName: input.toolName,
           success: true,
           result: JSON.stringify({
             shell_id: shellId,
+            sandboxed,
             status: "running",
             note: "Command started in the background. Poll bash_output with this shell_id for output; kill_shell to stop it.",
           }),

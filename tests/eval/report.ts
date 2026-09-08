@@ -43,8 +43,26 @@ export interface SuiteReport {
   avgListCostPerTask: number;
   avgDurationMs: number;
   avgTurns: number;
+  /**
+   * The transcript's two measures, averaged over the tasks whose retro
+   * carried them (see RetroSummary): prose about the harness, and active time
+   * without a new row. Gated at absolute ceilings, not against the baseline:
+   * the numbers the diagnosis set as done-when (15% each).
+   */
+  avgHarnessTalk?: number;
+  avgSilence?: number;
   categories: CategoryStats[];
   tasks: TaskResult[];
+}
+
+/** Ceilings from the transcript diagnosis's done-when: A and B respectively. */
+export const HARNESS_TALK_CEILING = 0.15;
+export const SILENCE_CEILING = 0.15;
+
+function meanOf(values: Array<number | undefined>): number | undefined {
+  const known = values.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+  if (known.length === 0) return undefined;
+  return known.reduce((s, v) => s + v, 0) / known.length;
 }
 
 export interface ModelSweepResult {
@@ -95,6 +113,8 @@ export function buildReport(
   const avgListCostPerTask = total > 0 ? totalListCost / total : 0;
   const avgDurationMs = total > 0 ? results.reduce((s, r) => s + r.durationMs, 0) / total : 0;
   const avgTurns = total > 0 ? results.reduce((s, r) => s + r.turns, 0) / total : 0;
+  const avgHarnessTalk = meanOf(results.map((r) => r.retro?.harnessTalk));
+  const avgSilence = meanOf(results.map((r) => r.retro?.silence));
 
   // Group by category
   const byCategory = new Map<string, TaskResult[]>();
@@ -142,6 +162,8 @@ export function buildReport(
     avgListCostPerTask,
     avgDurationMs,
     avgTurns,
+    ...(avgHarnessTalk != null ? { avgHarnessTalk } : {}),
+    ...(avgSilence != null ? { avgSilence } : {}),
     categories,
     tasks: results,
   };
@@ -242,6 +264,17 @@ export function printReport(report: SuiteReport): void {
       `  \x1b[2mTotal cost: $${report.totalCost.toFixed(4)} · avg $/task: $${report.avgCostPerTask.toFixed(4)}\x1b[0m`,
     );
   }
+  if (report.avgHarnessTalk != null || report.avgSilence != null) {
+    const talk =
+      report.avgHarnessTalk != null
+        ? `harness talk ${(report.avgHarnessTalk * 100).toFixed(0)}%`
+        : "";
+    const quiet =
+      report.avgSilence != null ? `silence ${(report.avgSilence * 100).toFixed(0)}%` : "";
+    console.log(
+      `  \x1b[2mTranscript: ${[talk, quiet].filter(Boolean).join(" · ")} (ceilings ${HARNESS_TALK_CEILING * 100}% / ${SILENCE_CEILING * 100}%)\x1b[0m`,
+    );
+  }
   console.log();
 }
 
@@ -263,6 +296,8 @@ function baselineShape(report: SuiteReport) {
     avgListCostPerTask: report.avgListCostPerTask,
     avgDurationMs: report.avgDurationMs,
     avgTurns: report.avgTurns,
+    ...(report.avgHarnessTalk != null ? { avgHarnessTalk: report.avgHarnessTalk } : {}),
+    ...(report.avgSilence != null ? { avgSilence: report.avgSilence } : {}),
     categories: report.categories.map((c) => ({
       category: c.category,
       passed: c.passed,
@@ -393,6 +428,24 @@ export function compareToBaseline(
           `past the ${(costTolerance * 100).toFixed(0)}% tolerance`,
       );
     }
+  }
+
+  // The transcript gates are absolute ceilings, not deltas: a run whose prose
+  // is 62% about the harness is wrong however the baseline scored, and a
+  // baseline recorded before the measure existed says nothing about it.
+  if (report.avgHarnessTalk != null && report.avgHarnessTalk > HARNESS_TALK_CEILING) {
+    out.ok = false;
+    out.reasons.push(
+      `harness talk ${(report.avgHarnessTalk * 100).toFixed(0)}% of prose messages, over the ` +
+        `${HARNESS_TALK_CEILING * 100}% ceiling`,
+    );
+  }
+  if (report.avgSilence != null && report.avgSilence > SILENCE_CEILING) {
+    out.ok = false;
+    out.reasons.push(
+      `silence ${(report.avgSilence * 100).toFixed(0)}% of active time without a new row, over the ` +
+        `${SILENCE_CEILING * 100}% ceiling`,
+    );
   }
 
   if (Array.isArray(baseline.tasks)) {

@@ -13,6 +13,11 @@
 import { existsSync, readFileSync, writeFileSync, chmodSync, mkdirSync, statSync } from "fs";
 import { dirname, join } from "path";
 import { CUSTOM_PROVIDER_ID } from "./providers.js";
+import {
+  SEARCH_PROVIDER_PRESETS,
+  keyedSearchPresets,
+  searchKeyFromEnv,
+} from "./search-providers.js";
 import { getRuneHome } from "./paths.js";
 
 /** A user-defined OpenAI-compatible endpoint (base URL + model + key). */
@@ -45,8 +50,8 @@ export interface SecretsFile {
   /**
    * providerId → the ACTIVE apiKey for the named presets. This is the mirror the
    * gateway reads: it always equals the active entry in `keyEntries[id]` when a
-   * provider has a multi-key pool. Single-key providers (and the non-provider
-   * search keys, ids "tavily"/"brave") live here alone with no `keyEntries`.
+   * provider has a multi-key pool. Single-key providers (and the web-search
+   * engines, ids like "tavily"/"exa") live here alone with no `keyEntries`.
    */
   keys: Record<string, string>;
   /**
@@ -429,67 +434,80 @@ export function setProviderDisabled(id: string, disabled: boolean): SecretsFile 
   return s;
 }
 
-// ─── Web-search backend keys ───
-// Tavily/Brave keys live in the SAME secrets file (under `keys`, ids "tavily"
-// and "brave") but are NOT LLM providers, so they're invisible to the gateway
-// (which only knows PROVIDER_PRESETS). The web_search backends read them from
-// the environment, so a saved key is copied into process.env at startup and
-// whenever it changes via the `/keys` panel.
+// ─── Web-search engine keys ───
+// Search-engine keys (ids from SEARCH_PROVIDER_PRESETS: "tavily", "exa", …)
+// live in the SAME secrets file (under `keys`) and, since `/login` learned the
+// Web search route, in the OS keychain under the same `provider:<id>` account
+// a model provider uses. They are NOT LLM providers, so the gateway (which only
+// knows PROVIDER_PRESETS) never sees them. The web_search backends read the
+// environment at call time, so every connected key is copied into process.env
+// at startup and whenever one is added — the bridge below.
 
 export interface SearchKeyPreset {
   id: string;
   label: string;
-  /** Primary env var the backend reads. */
   envVar: string;
-  /** Optional alternate env var also honored by the backend. */
   altEnvVar?: string;
   docsUrl: string;
   keyHint: string;
 }
 
-export const SEARCH_KEY_PRESETS: SearchKeyPreset[] = [
-  {
-    id: "tavily",
-    label: "Tavily",
-    envVar: "TAVILY_API_KEY",
-    docsUrl: "https://app.tavily.com/home",
-    keyHint: "tvly-…",
-  },
-  {
-    id: "brave",
-    label: "Brave Search",
-    envVar: "BRAVE_API_KEY",
-    altEnvVar: "BRAVE_SEARCH_API_KEY",
-    docsUrl: "https://brave.com/search/api/",
-    keyHint: "BSA…",
-  },
-];
+/**
+ * The keyed search engines, in the legacy shape the `/keys` panel and the REPL
+ * read. DERIVED from `SEARCH_PROVIDER_PRESETS` (search-providers.ts), which is
+ * the one roster `/login` offers — this used to be a second hand-written list
+ * of two entries, and a second list is a second thing to forget.
+ */
+export const SEARCH_KEY_PRESETS: SearchKeyPreset[] = keyedSearchPresets().map((p) => ({
+  id: p.id,
+  label: p.label,
+  envVar: p.envVar!,
+  ...(p.altEnvVars?.[0] ? { altEnvVar: p.altEnvVars[0] } : {}),
+  docsUrl: p.docsUrl,
+  keyHint: p.keyHint ?? "",
+}));
 
 export interface SearchKeyStatusRow {
   id: string;
   label: string;
   hasKey: boolean;
-  source: "saved" | "env" | "none";
+  /** "keychain" = the secure store (`/login`), "saved" = secrets.json, "env" = an env var. */
+  source: "keychain" | "saved" | "env" | "none";
   masked: string;
   docsUrl: string;
   keyHint: string;
 }
 
-/** Per-backend status for the keys panel. Reveals no raw keys. */
-export function searchKeyStatus(env: NodeJS.ProcessEnv = process.env): SearchKeyStatusRow[] {
+/**
+ * Per-engine status for the keys panel. Reveals no raw keys. `keychain` is the
+ * map the boot path resolved from the secure store (see
+ * `resolveSearchCredentials`); it outranks the secrets file, which outranks
+ * the environment — the same precedence the model providers use.
+ */
+export function searchKeyStatus(
+  env: NodeJS.ProcessEnv = process.env,
+  keychain: Record<string, string> = {},
+): SearchKeyStatusRow[] {
   const s = loadSecrets();
   return SEARCH_KEY_PRESETS.map((p) => {
-    const saved = s.keys[p.id];
-    const envKey = !saved
-      ? env[p.envVar] || (p.altEnvVar ? env[p.altEnvVar] : undefined)
-      : undefined;
-    const source: SearchKeyStatusRow["source"] = saved ? "saved" : envKey ? "env" : "none";
+    const secure = keychain[p.id];
+    const saved = !secure ? s.keys[p.id] : undefined;
+    const envKey =
+      !secure && !saved ? env[p.envVar] || (p.altEnvVar ? env[p.altEnvVar] : undefined) : undefined;
+    const source: SearchKeyStatusRow["source"] = secure
+      ? "keychain"
+      : saved
+        ? "saved"
+        : envKey
+          ? "env"
+          : "none";
+    const inUse = secure ?? saved ?? envKey;
     return {
       id: p.id,
       label: p.label,
-      hasKey: !!(saved || envKey),
+      hasKey: !!inUse,
       source,
-      masked: saved ? maskKey(saved) : envKey ? maskKey(envKey) : "",
+      masked: inUse ? maskKey(inUse) : "",
       docsUrl: p.docsUrl,
       keyHint: p.keyHint,
     };
@@ -497,16 +515,41 @@ export function searchKeyStatus(env: NodeJS.ProcessEnv = process.env): SearchKey
 }
 
 /**
- * Copy saved search keys into the environment so the web_search backends
- * (which read env at call time) pick them up. A saved key wins over an existing
- * env var, mirroring provider-key precedence.
+ * Copy the connected search engines into the environment so the web_search
+ * backends (which read env at call time, so a key added mid-session is picked
+ * up) see them. Precedence: the secure store (`keychain`, resolved at boot and
+ * after a `/login`) → the secrets file → whatever the env already held. A
+ * self-hosted engine's URL (`/keys url searxng …`) rides the same path into
+ * its URL variable.
  */
-export function applySearchKeysToEnv(env: NodeJS.ProcessEnv = process.env): void {
+export function applySearchKeysToEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  keychain: Record<string, string> = {},
+): void {
   const s = loadSecrets();
   for (const p of SEARCH_KEY_PRESETS) {
-    const key = s.keys[p.id];
+    const key = keychain[p.id] || s.keys[p.id];
     if (key) env[p.envVar] = key;
   }
+  for (const p of SEARCH_PROVIDER_PRESETS) {
+    if (!p.urlEnvVar) continue;
+    const url = s.endpoints?.[p.id];
+    if (url) env[p.urlEnvVar] = url;
+  }
+}
+
+/** True when an engine has any usable credential: keychain, secrets, env, a URL, or none needed. */
+export function searchProviderConnected(
+  id: string,
+  env: NodeJS.ProcessEnv = process.env,
+  keychain: Record<string, string> = {},
+): boolean {
+  const p = SEARCH_PROVIDER_PRESETS.find((x) => x.id === id);
+  if (!p) return false;
+  if (p.keyless) return true;
+  const s = loadSecrets();
+  if (p.urlEnvVar) return !!(s.endpoints?.[p.id] || env[p.urlEnvVar]);
+  return !!(keychain[p.id] || s.keys[p.id] || searchKeyFromEnv(p, env));
 }
 
 // ─── Helpers ───

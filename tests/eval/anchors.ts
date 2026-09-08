@@ -18,7 +18,7 @@
  * dependencies with their own execution models (SWE-bench needs per-repo Python
  * environments; Terminal-Bench needs Docker), and pretending to run them from
  * here would produce numbers that are not the benchmark's. `--plan` prints the
- * exact commands a person runs; `--record` ingests the results those commands
+ * available adapter commands and explicit prerequisites; `--record` ingests the results those commands
  * produce.
  *
  * The two arms are the point:
@@ -129,41 +129,33 @@ export function anchorLift(
 /** The commands a person runs. Printed, never executed. */
 export function planFor(name: string, arm: AnchorArm): string[] {
   const set = loadAnchor(name);
-  const pristine = arm === "pristine" ? " --pristine" : "";
-  if (set.benchmark.startsWith("SWE-bench")) {
+  const record = `bun run tests/eval/anchors.ts --record ${name} --arm ${arm} --resolved <official-resolved> --attempted ${set.task_ids.length} --unscored <infra-only> --model <id> --provider <id>`;
+  if (arm === "evolved")
     return [
-      `# ${set.benchmark} · ${set.task_ids.length} pinned instances · arm: ${arm}`,
-      `# Dataset is NOT vendored here. Clone the official harness first:`,
-      `#   git clone https://github.com/princeton-nlp/SWE-bench && cd SWE-bench && pip install -e .`,
-      ``,
-      `# 1. Produce predictions with Rune, one instance per session:`,
-      `for id in $(jq -r '.task_ids[]' ${ANCHORS[name]}); do`,
-      `  rune -P${pristine} --workspace "$SWEBENCH_REPOS/$id" \\`,
-      `    "Fix the issue described in the instance's problem statement. Do not modify tests." \\`,
-      `    > "predictions/$id.patch"`,
-      `done`,
-      ``,
-      `# 2. Score with the official harness (this repository does not score):`,
-      `python -m swebench.harness.run_evaluation \\`,
-      `  --dataset_name princeton-nlp/SWE-bench_Verified \\`,
-      `  --predictions_path predictions/ --run_id rune-${arm}-$(date +%Y%m%d)`,
-      ``,
-      `# 3. Record the number here:`,
-      `bun run tests/eval/anchors.ts --record ${name} --arm ${arm} \\`,
-      `  --resolved <n> --attempted ${set.task_ids.length} --unscored <n> --model <id> --provider <id>`,
+      `# ${set.benchmark} · arm: evolved`,
+      "# No evolved anchor has been run. Freeze and identify the learned profile before evaluation;",
+      "# the automated adapters currently run the pristine control only. Do not label that output evolved.",
+      "# Record only after an official evaluation with a matched control and retained profile provenance:",
+      record,
     ];
-  }
+  if (set.benchmark.startsWith("SWE-bench"))
+    return [
+      `# ${set.benchmark} · ${set.task_ids.length} pinned instances · arm: pristine (--pristine)`,
+      "# Export the official dataset to JSONL and prepare disposable repos at their base_commit.",
+      "# This adapter passes each actual problem_statement and exports the working-tree Git patch:",
+      'bun run tests/eval/comparison/swebench.ts --real --dataset-jsonl "$SWE_DATASET_JSONL" --repos-root "$SWEBENCH_REPOS" --model <id> --provider <id> --out <fresh-output>',
+      "# Official scoring, with a unique run id (avoid the harness's cached prior run):",
+      "python -m swebench.harness.run_evaluation --dataset_name princeton-nlp/SWE-bench_Verified --predictions_path <fresh-output>/predictions.jsonl --run_id <unique-run-id>",
+      record,
+    ];
   return [
-    `# ${set.benchmark} · ${set.task_ids.length} pinned tasks · arm: ${arm}`,
-    `# Needs Docker and the official harness; nothing here starts a container:`,
-    `#   uv tool install terminal-bench`,
-    ``,
-    `tb run --agent custom --agent-import-path rune_agent:RuneAgent \\`,
-    `  --task-ids $(jq -r '.task_ids | join(",")' ${ANCHORS[name]}) \\`,
-    `  --run-id rune-${arm}-$(date +%Y%m%d)${pristine ? "   # RUNE_PRISTINE=1" : ""}`,
-    ``,
-    `bun run tests/eval/anchors.ts --record ${name} --arm ${arm} \\`,
-    `  --resolved <n> --attempted ${set.task_ids.length} --unscored <n> --model <id> --provider <id>`,
+    `# ${set.benchmark} · ${set.task_ids.length} legacy pinned tasks · arm: pristine`,
+    "# Install Harbor 0.22.0 in an isolated environment. Supply a matching Linux Rune bundle",
+    "# through RUNE_BENCH_BUNDLE and a Harbor-format dataset containing every pinned task.",
+    "# These legacy IDs are not silently replaced with Terminal-Bench 2.0 tasks.",
+    'python tests/eval/comparison/harbor_run.py --tasks-root "$TERMINAL_TASKS" --model <id> --out <fresh-job>',
+    "# After the preflight succeeds, add --real. Harbor's verifier produces the score.",
+    record,
   ];
 }
 
@@ -206,7 +198,7 @@ function main(): void {
       );
     }
     console.log(
-      `\n  \x1b[2mNothing here downloads a dataset or starts a container. --plan <anchor> --arm <pristine|evolved>\n  prints the exact commands; --record ingests what they produce. See docs/benchmarks.md.\x1b[0m\n`,
+      `\n  \x1b[2mNothing here downloads a dataset or starts a container. --plan <anchor> --arm <pristine|evolved>\n  prints adapter commands and prerequisites; --record ingests what they produce. See docs/benchmarks.md.\x1b[0m\n`,
     );
     return;
   }

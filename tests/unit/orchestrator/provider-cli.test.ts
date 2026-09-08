@@ -171,7 +171,8 @@ describe("rune login --migrate", () => {
   it("prints usage for `login` with no provider on a non-TTY", async () => {
     const out = await capture(() => runLogin([], {}));
     expect(out).toMatch(/rune login/);
-    expect(out).toMatch(/Providers:/);
+    expect(out).toMatch(/Models:/);
+    expect(out).toMatch(/Search:/);
   });
 });
 

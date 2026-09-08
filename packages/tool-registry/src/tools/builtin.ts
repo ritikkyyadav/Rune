@@ -1,7 +1,7 @@
 import type { ToolSchema } from "../types";
 import type { ToolRegistry } from "../registry";
 import { isOsIsolationAvailable, onSandboxCapabilityChange } from "../sandbox-capability";
-import { isSandboxEnabled, onSandboxModeChange } from "../sandbox-mode";
+import { getSandboxPolicy, isSandboxEnabled, onSandboxPolicyChange } from "../sandbox-mode";
 import { createRustToolHandler } from "./rust-bridge";
 import { FileFreshness, withFreshness } from "./freshness";
 import { createReadManyHandler } from "./read-many";
@@ -132,7 +132,7 @@ const BASH_DESC_COMMON =
 
 const BASH_DESC_SANDBOXED =
   BASH_DESC_COMMON +
-  " Commands run in an OS sandbox with NO network access by default; on macOS loopback is open, so a local server on 127.0.0.1 and a curl against it work without it. For commands that need the internet or touch files outside the workspace " +
+  " Commands run in an OS sandbox with NO network access by default; on macOS loopback is open, so a local server on 127.0.0.1 and a curl against it work without it. For commands that need the internet " +
   "(npm/pip/cargo/brew install, git push/pull/fetch/clone, curl/wget to a remote host, gh), set network: true — otherwise they fail with DNS/connection errors.";
 
 const BASH_DESC_FULL_ACCESS =
@@ -144,10 +144,23 @@ const BASH_DESC_DEGRADED =
   " The sandbox is ON but this machine has NO OS isolation backend: commands run with path-guard checks only — full network and host filesystem access, nothing is contained. Do not set network: true — it is unnecessary. Treat every command as running directly on the user's machine.";
 
 const BASH_NET_DESC_SANDBOXED =
-  "Run OUTSIDE the sandbox with full network and filesystem access. Required for package installs, git remote operations, and any command that talks to the internet. Prompts the user for approval unless the session is in 4th gear (full autonomy).";
+  "Allow network access for this command while retaining filesystem containment and credential protections. Use for package installs and internet requests. This does not permit writes outside the workspace.";
 
 const BASH_NET_DESC_FULL_ACCESS =
   "No effect — the sandbox is disabled, so every command already has full network and filesystem access.";
+
+const BASH_UNSANDBOXED_DESC_FALLBACK =
+  "Run this one command OUTSIDE the OS sandbox, on the host with full filesystem access. Only for a command that " +
+  "already failed on a sandbox restriction (a write outside the workspace, a tool that needs host state) — " +
+  "the result carries a sandbox_hint when that happened. The retry goes through the regular permission prompt. " +
+  "Never use it for network access alone: that is network: true.";
+
+const BASH_UNSANDBOXED_DESC_STRICT =
+  "Not available — the sandbox is strict. A command that needs host access is refused; report which access it " +
+  "needs so the user can add it to excludedCommands.";
+
+const BASH_UNSANDBOXED_DESC_OFF =
+  "No effect — the sandbox is disabled, so every command already runs on the host.";
 
 const BASH_SCHEMA: ToolSchema = {
   name: "bash",
@@ -167,6 +180,10 @@ const BASH_SCHEMA: ToolSchema = {
         description:
           "Run detached and return a shell_id immediately instead of waiting. Use for servers/watchers.",
       },
+      unsandboxed: {
+        type: "boolean",
+        description: BASH_UNSANDBOXED_DESC_FALLBACK,
+      },
     },
     required: ["command"],
   },
@@ -183,18 +200,30 @@ const BASH_SCHEMA: ToolSchema = {
 function refreshBashDescriptions(): void {
   const enabled = isSandboxEnabled();
   const isolated = isOsIsolationAvailable();
-  BASH_SCHEMA.description = !enabled
-    ? BASH_DESC_FULL_ACCESS
-    : isolated
-      ? BASH_DESC_SANDBOXED
-      : BASH_DESC_DEGRADED;
+  const policy = getSandboxPolicy();
+  // Excluded commands are stated to the model so it neither sets network:
+  // true for them nor wonders why `adb` reached the host.
+  const excluded =
+    enabled && isolated && policy.excludedCommands.length
+      ? ` These command patterns run OUTSIDE the sandbox on the host (the user excluded them; the regular permission prompt applies): ${policy.excludedCommands.join(", ")}.`
+      : "";
+  BASH_SCHEMA.description =
+    (!enabled ? BASH_DESC_FULL_ACCESS : isolated ? BASH_DESC_SANDBOXED : BASH_DESC_DEGRADED) +
+    excluded;
   const props = BASH_SCHEMA.inputSchema.properties as Record<string, { description?: string }>;
   if (props.network) {
     props.network.description =
       enabled && isolated ? BASH_NET_DESC_SANDBOXED : BASH_NET_DESC_FULL_ACCESS;
   }
+  if (props.unsandboxed) {
+    props.unsandboxed.description = !enabled
+      ? BASH_UNSANDBOXED_DESC_OFF
+      : policy.allowUnsandboxedFallback
+        ? BASH_UNSANDBOXED_DESC_FALLBACK
+        : BASH_UNSANDBOXED_DESC_STRICT;
+  }
 }
-onSandboxModeChange(refreshBashDescriptions);
+onSandboxPolicyChange(refreshBashDescriptions);
 onSandboxCapabilityChange(refreshBashDescriptions);
 
 const SYMBOL_SEARCH_SCHEMA: ToolSchema = {
@@ -301,7 +330,7 @@ export function registerBuiltinTools(registry: ToolRegistry, binaryPath: string)
 
   // Background shells: bash gains run_in_background; bash_output/kill_shell
   // monitor and stop them. One manager per registry (killed on process exit).
-  const shells = new BackgroundShellManager();
+  const shells = new BackgroundShellManager(binaryPath);
 
   // The on-demand `lsp` tool, the post-edit feedback wrapper and apply_patch
   // all share the process's one manager (see lspManagerForProcess above).
