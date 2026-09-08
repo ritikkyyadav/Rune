@@ -202,6 +202,14 @@ export class ContextEngine {
   private compactRequested = false;
   // Why the most recent generateSummary() failed (null when it succeeded).
   private lastSummaryFailure: string | null = null;
+  /**
+   * `[routing] helper` — the cheapest healthy route for Rune's own calls,
+   * supplied as a THUNK because it is resolved against live provider health
+   * and must not be frozen at construction. Tried before every other
+   * candidate; the whole existing walk still stands behind it, so a helper
+   * that has rotted costs one round trip and then the session model answers.
+   */
+  private helperRoute: () => { provider: ProviderName; model: string } | null = () => null;
 
   constructor(
     config: {
@@ -257,6 +265,11 @@ export class ContextEngine {
    */
   setGateway(gateway: LlmGateway): void {
     this.gateway = gateway;
+  }
+
+  /** Point governance summaries at `[routing] helper`. See helper-route.ts. */
+  setHelperRoute(resolve: () => { provider: ProviderName; model: string } | null): void {
+    this.helperRoute = resolve;
   }
 
   // ─── Build Prompt ───
@@ -949,6 +962,7 @@ ${sections}${focus}`
           provider,
           maxTokens: comprehensive ? 2000 : 500,
           stream: false,
+          role: "summarizer",
           signal: bound.signal,
         });
         const textBlock = response.content.find((b) => b.type === "text");
@@ -1086,6 +1100,16 @@ ${sections}${focus}`
       seen.add(key);
       out.push({ provider, model });
     };
+    // The helper first: a summary is exactly the governance call `[routing]
+    // helper` exists for, and on a free tier the request itself is the scarce
+    // resource. Everything below is unchanged and still backs it up.
+    let helper: { provider: ProviderName; model: string } | null = null;
+    try {
+      helper = this.helperRoute();
+    } catch {
+      // A resolver that throws must never be why a session cannot compact.
+    }
+    if (helper) push(helper.provider, helper.model);
     push(this.summarizerProvider, this.summarizerModel);
     // Session model BEFORE the static light default: the session pair is
     // proven alive every turn, the table entry is hearsay.

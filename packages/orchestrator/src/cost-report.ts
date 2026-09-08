@@ -9,7 +9,8 @@
 // A meter that cannot distinguish "free" from "unmeasured", or show what the
 // same work costs metered, answers no question anyone actually asks.
 
-import type { CostBreakdown } from "@rune/llm-gateway";
+import type { CostBreakdown, RunEconomics } from "@rune/llm-gateway";
+import { compositionShares } from "@rune/llm-gateway";
 
 export type CostTone = "normal" | "muted" | "warn" | "good";
 
@@ -155,6 +156,133 @@ export function formatCostReport(b: CostBreakdown): CostReportLine[] {
     });
   }
 
+  return lines;
+}
+
+/** Bytes, compacted the way formatTokens compacts counts. */
+export function formatBytes(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "0B";
+  if (n < 1_024) return `${Math.round(n)}B`;
+  if (n < 1_024 * 1_024) return `${(n / 1_024).toFixed(1)}KB`;
+  return `${(n / (1_024 * 1_024)).toFixed(2)}MB`;
+}
+
+/**
+ * The run-economics readout: what a task cost in COMPLETIONS rather than in
+ * dollars.
+ *
+ * This is the half of the meter that free tiers actually need. A free route
+ * bills nothing and rate-limits everything, so `formatCostReport` above — which
+ * answers "what did this cost" — correctly reports $0.00 and says nothing about
+ * whether the run will survive. These lines answer the question that decides it:
+ * how many requests did Rune make, how many of those were its OWN, how much
+ * fresh input did each one carry, and how much of that was served warm.
+ *
+ * Appended to `/cost` and printed by `rune cost`. Returns [] when nothing has
+ * been recorded, so a fresh session prints the money readout unchanged.
+ */
+export function formatRunEconomics(e: RunEconomics): CostReportLine[] {
+  if (e.completions === 0) return [];
+  const lines: CostReportLine[] = [];
+  const tilde = e.unpricedModels.length > 0 ? "~" : "";
+
+  // 1. The completion count, split. The number a rate limit meters.
+  lines.push({
+    label: "Completions",
+    value: String(e.completions),
+    note:
+      `${e.primaryCompletions} work · ${e.governanceCompletions} governance` +
+      (e.governanceShare === null ? "" : ` (${formatPercent(e.governanceShare)})`),
+    tone: e.governanceShare !== null && e.governanceShare >= 0.5 ? "warn" : "normal",
+  });
+
+  // 2. Which of Rune's own calls, by name. Only roles that actually ran.
+  for (const role of e.byRole) {
+    if (role.completions === 0) continue;
+    lines.push({
+      label: `  ${role.role}`,
+      value: String(role.completions),
+      note: `${formatTokens(role.freshInputTokens)} fresh in · ${formatTokens(role.outputTokens)} out`,
+      tone: "muted",
+    });
+  }
+
+  // 3. Fresh tokens per completion — the other half of the pressure. The
+  //    founder's measurement was ~34k; this is where it becomes visible.
+  if (e.freshTokensPerCompletion !== null) {
+    lines.push({
+      label: "Fresh in / call",
+      value: formatTokens(Math.round(e.freshTokensPerCompletion)),
+      note:
+        e.governanceFreshTokensPerCompletion === null
+          ? "uncached input the provider had to read"
+          : `${formatTokens(Math.round(e.governanceFreshTokensPerCompletion))} on a governance call`,
+      tone: "normal",
+    });
+  }
+
+  // 4. Cache. Same rule as everywhere: null is "no data", never 0%.
+  lines.push({
+    label: "Cache read ratio",
+    value: formatCacheRate(e.cacheReadRatio),
+    note:
+      e.cacheReadRatio === null
+        ? "no provider reported cache counters"
+        : `${formatTokens(e.cacheReadTokens)} of ${formatTokens(
+            e.freshInputTokens + e.cacheReadTokens + e.cacheCreationTokens,
+          )} input served warm`,
+    tone: e.cacheReadRatio !== null && e.cacheReadRatio >= 0.5 ? "good" : "normal",
+  });
+
+  // 5. What the same completions cost at list rates, and what governance's
+  //    share of that is — the price of Rune's own overhead, stated.
+  lines.push({
+    label: "List estimate",
+    value: `${tilde}${formatUsd(e.listCostUsd)}`,
+    note:
+      e.governanceListCostUsd > 0
+        ? `${tilde}${formatUsd(e.governanceListCostUsd)} of it governance`
+        : "at published rates, regardless of who paid",
+    tone: "muted",
+  });
+
+  // 6. What a request is MADE of. Only when something measured it — the
+  //    governance callers do not, and a composition row averaged over calls
+  //    that never reported one would be a fiction.
+  const shares = e.composition ? compositionShares(e.composition) : null;
+  if (e.composition && shares) {
+    const perCall = e.composition.total / e.composition.measured;
+    lines.push({
+      label: "Prompt bytes / call",
+      value: formatBytes(perCall),
+      note: `measured on ${e.composition.measured} of ${e.completions} completions`,
+      tone: "muted",
+    });
+    const parts: Array<[string, number, number]> = [
+      ["doctrine", e.composition.doctrine, shares.doctrine],
+      ["tool schemas", e.composition.toolSchemas, shares.toolSchemas],
+      ["plan ledger", e.composition.planLedger, shares.planLedger],
+      ["task state", e.composition.taskState, shares.taskState],
+      ["conversation", e.composition.conversation, shares.conversation],
+    ];
+    for (const [label, bytes, share] of parts) {
+      lines.push({
+        label: `  ${label}`,
+        value: formatBytes(bytes / e.composition.measured),
+        note: formatPercent(share),
+        tone: "muted",
+      });
+    }
+  }
+
+  if (e.unpricedModels.length > 0) {
+    lines.push({
+      label: "Unpriced",
+      value: e.unpricedModels.join(", "),
+      note: "the list estimate above understates by these models' tokens",
+      tone: "warn",
+    });
+  }
   return lines;
 }
 

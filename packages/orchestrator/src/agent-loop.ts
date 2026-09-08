@@ -10,8 +10,11 @@ import type {
   TokenUsage,
   ToolDefinition,
   StreamOpts,
+  CallRole,
+  PromptComposition,
 } from "@rune/llm-gateway";
 import {
+  measureComposition,
   LlmGateway,
   BudgetExceededError,
   BudgetPricingError,
@@ -164,6 +167,12 @@ export interface AgentLoopConfig {
    * already route via model tiers, leave it off.
    */
   effortRouting?: "conservative" | "off";
+  /**
+   * What this loop's completions are, for the ledger: "primary" (the default,
+   * the user's own turn) or "subagent" when the loop is running a delegated
+   * task. Descriptive only — nothing about the request changes.
+   */
+  callRole?: CallRole;
   /** Request-specific local context, budgeted alongside all other auxiliary context. */
   retrievedChunks?: RetrievedChunk[];
   /** Runs project checks after edits; on failure the agent is asked to fix. */
@@ -1372,11 +1381,49 @@ export class AgentLoop {
         ];
       }
 
+      // ── What this request is made of, in bytes ──
+      // Measured HERE because this is the only place that knows which trailing
+      // messages are the ephemeral blocks: on the wire the plan ledger is an
+      // ordinary user message, indistinguishable from the work. `stableMessageCount`
+      // already draws that line for the cache breakpoint; the same line answers
+      // "what is the 34k". The doctrine share is what makes the JIT setting's
+      // effect visible — `/config doctrine full` moves ~2k of bytes back into
+      // this row on every single request.
+      //
+      // Total by construction, and it must stay that way: this is TELEMETRY,
+      // and a meter is never allowed to be the reason a request does not go
+      // out. A context engine that hands back something other than a message
+      // array (a stub, a future implementation, a caller with its arguments
+      // crossed) costs the composition row for that turn and nothing else.
+      let composition: PromptComposition | undefined;
+      try {
+        // NO ROW rather than a wrong one. Substituting an empty conversation
+        // for one that could not be read would report a prompt made entirely
+        // of doctrine and tool schemas — a confident, false number, which is
+        // the failure the whole cost surface is built to avoid. An absent
+        // composition already reads as "not measured" everywhere downstream.
+        if (!Array.isArray(requestMessages)) throw new Error("messages is not an array");
+        const ephemeralText = requestMessages
+          .slice(stableMessageCount)
+          .flatMap((m) => m.content.map((b) => (b.type === "text" ? b.text : "")));
+        composition = measureComposition({
+          system: requestSystemPrompt,
+          tools,
+          messages: requestMessages.slice(0, stableMessageCount),
+          planLedger: taskBlock,
+          taskState: ephemeralText.slice(taskBlock ? 1 : 0),
+        });
+      } catch {
+        composition = undefined;
+      }
+
       const request: InferenceRequest = {
         messages: requestMessages,
         ...(stableMessageCount > 0 && { cacheBreakpointIndex: stableMessageCount - 1 }),
         system: requestSystemPrompt,
         tools: tools.length > 0 ? tools : undefined,
+        role: this.config.callRole ?? "primary",
+        ...(composition ? { composition } : {}),
         model: this.config.model,
         provider: this.config.provider,
         // Clamp to the model's per-response output cap — most providers

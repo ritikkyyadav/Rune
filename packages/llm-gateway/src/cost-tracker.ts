@@ -1,9 +1,11 @@
 import type {
+  CallRole,
   InferenceRequest,
   BillingMode,
   CostEntry,
   CostLedger,
   ModelPricing,
+  PromptComposition,
   ProviderName,
   TokenUsage,
 } from "./types";
@@ -11,6 +13,7 @@ import {
   billingModeFor,
   DEFAULT_CACHE_READ_RATIO,
   DEFAULT_CACHE_WRITE_RATIO,
+  isGovernanceRole,
   MODEL_PRICING,
 } from "./types";
 
@@ -241,6 +244,8 @@ export class CostTracker {
     provider: ProviderName,
     usage: TokenUsage,
     timestamp = new Date(),
+    /** What the completion was for, and what its prompt was made of (P12.1). */
+    attribution: { role?: CallRole; composition?: PromptComposition } = {},
   ): CostEntry {
     const u = normalizeUsage(usage);
     const price = this.pricingFor(model);
@@ -266,6 +271,8 @@ export class CostTracker {
       billing,
       priced,
       estimated: price?.estimated === true,
+      ...(attribution.role ? { role: attribution.role } : {}),
+      ...(attribution.composition ? { composition: attribution.composition } : {}),
       timestamp,
     };
     return this.recordEntry(entry);

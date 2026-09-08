@@ -317,6 +317,7 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
               provider: live.provider,
               maxTokens: budget.maxTokens,
               maxTurns: budget.maxTurns,
+              callRole: "subagent",
               // The budget is stated in the prompt, not just enforced behind it:
               // a scout that does not know its limit cannot summarize before it.
               systemPrompt: systemPrompt + budgetContract(budget.maxTurns),

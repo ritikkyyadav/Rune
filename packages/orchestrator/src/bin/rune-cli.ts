@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { Engine } from "../engine";
-import { formatCostReport } from "../cost-report";
+import { formatCostReport, formatRunEconomics } from "../cost-report";
 import type { PermissionHandler, UserPermissionDecision } from "../engine";
 import {
   hasStoredCredential,
@@ -285,6 +285,7 @@ if (values.help) {
         `    rune incidents [sub]          Browse recorded failures — list | show <id> | top [--by-version] | export\n` +
         `    rune audit [session|last]     One page on a session: plan with evidence, log, safety decisions, held steps, cost\n` +
         `                                  --record prints the Decision Record instead: objective, decision, how we got here\n` +
+        `    rune cost [session|last]      Run economics: completions split work vs governance, fresh tokens per call, cache ratio, list estimate\n` +
         `    rune evolve [sub]             Self-evolution — status | scorecard [--by model|workspace] [--days N] | lessons | tune | gardener [--run]\n` +
         `    rune notebook [sub]           Learned tactics notebook — list | show <id> | rm <id> | export\n` +
         `    rune skill [sub]              Your own skills — add <path> [--user] | list | remove <name>\n` +
@@ -354,6 +355,10 @@ if (command === "workflow") {
 if (command === "audit") {
   const { runAudit } = await import("./audit-cli");
   process.exit(await runAudit(positionals.slice(1) as string[], values as Record<string, unknown>));
+}
+if (command === "cost") {
+  const { runCost } = await import("./cost-cli");
+  process.exit(await runCost(positionals.slice(1) as string[], values as Record<string, unknown>));
 }
 if (command === "evolve") {
   const { runEvolve } = await import("./evolve-cli");
@@ -1034,6 +1039,7 @@ async function main() {
     reasoningEffort: config.llm?.reasoningEffort,
     doctrineDelivery: config.llm?.doctrineDelivery,
     effortRouting: config.llm?.effortRouting,
+    helperRoute: config.routing?.helper,
     sandboxEnabled,
     sandboxMode: sandboxPolicy.mode,
     sandboxPolicy,
@@ -2120,7 +2126,10 @@ async function main() {
       if (input === "/cost") {
         // Same readout as the TUI — one formatter, so the two front ends can
         // never drift into reporting different numbers for the same session.
-        const rows = formatCostReport(engine.getCostBreakdown());
+        const rows = [
+          ...formatCostReport(engine.getCostBreakdown()),
+          ...formatRunEconomics(engine.getRunEconomics()),
+        ];
         const width = Math.max(...rows.map((r) => r.label.length));
         for (const row of rows) {
           const note = row.note ? dim(` (${row.note})`) : "";

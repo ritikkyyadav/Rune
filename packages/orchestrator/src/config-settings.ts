@@ -13,8 +13,13 @@ export interface ConfigSetting {
   tomlPath: string;
   /** One-line human summary. */
   description: string;
-  /** enum = a fixed set of string values; boolean = on/off. */
-  kind: "enum" | "boolean" | "number";
+  /**
+   * enum = a fixed set of string values; boolean = on/off; number = numeric;
+   * text = a free-form string validated by `validate` (a model id, which the
+   * catalog cannot enumerate without inheriting the provider-list rot that has
+   * killed compaction three times).
+   */
+  kind: "enum" | "boolean" | "number" | "text";
   min?: number;
   max?: number;
   integer?: boolean;
@@ -24,6 +29,10 @@ export interface ConfigSetting {
   valueAliases?: Record<string, string>;
   /** Other names the user might call this setting (lowercased). */
   nameAliases?: readonly string[];
+  /** For text: reject a value with a reason, or return undefined to accept. */
+  validate?: (value: string) => string | undefined;
+  /** For text: what to show in `settingChoices` (the catalog line). */
+  placeholder?: string;
   /** Whether a change takes effect immediately (vs only on next launch). */
   live: boolean;
   /**
@@ -380,6 +389,31 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
     live: true,
   },
   {
+    key: "helper",
+    tomlPath: "routing.helper",
+    kind: "text",
+    placeholder: "auto | off | model | provider/model",
+    description:
+      "Which model answers Rune's OWN calls — the compaction summarizer, the intent read, the " +
+      "sub-agent report repair — as opposed to your work. 'auto' (default) picks the cheapest " +
+      "healthy connected route; 'off' runs them on the session model as before; a model id or " +
+      "'provider/model' names one. Naming one explicitly also lets it answer Auto mode's " +
+      "safety questions; the automatic pick never does. Your session model is untouched.",
+    valueAliases: { session: "off", none: "off", default: "auto", cheapest: "auto" },
+    nameAliases: ["helper model", "helper route", "governance model", "routing helper"],
+    validate: (v) => {
+      if (v.length > 120) return "that is too long for a model id";
+      // Deliberately NOT checked against a provider/model list. Every
+      // hand-written union of provider or model ids in this repo has rotted
+      // and rejected a live model (the sticky-model bug, the summarizer
+      // graveyard). The route resolver checks it against what is actually
+      // REGISTERED at resolve time, which cannot rot.
+      if (/[\s]/.test(v)) return "a model id has no spaces";
+      return undefined;
+    },
+    live: true,
+  },
+  {
     key: "subagents",
     tomlPath: "subagents.mode",
     description:
@@ -487,6 +521,12 @@ export function normalizeSettingValue(
     }
     return { value: String(n) };
   }
+  if (setting.kind === "text") {
+    const mapped = setting.valueAliases?.[v] ?? raw.trim();
+    if (!mapped) return { error: `use ${setting.placeholder ?? "a value"}` };
+    const problem = setting.validate?.(mapped);
+    return problem ? { error: problem } : { value: mapped };
+  }
   if (setting.kind === "boolean") {
     // A boolean may carry its own vocabulary too (`strict` → off for the
     // sandbox override), folded in before the shared on/off aliases.
@@ -529,5 +569,6 @@ export function settingsCatalogSummary(): string {
 export function settingChoices(setting: ConfigSetting): string {
   if (setting.kind === "boolean") return "on | off";
   if (setting.kind === "number") return `${setting.min ?? 0}..${setting.max ?? "unlimited"}`;
+  if (setting.kind === "text") return setting.placeholder ?? "text";
   return setting.values!.join(" | ");
 }

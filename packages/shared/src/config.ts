@@ -537,6 +537,27 @@ export interface RuneConfig {
     light?: string;
   };
   /**
+   * `[routing]` — where Rune's OWN calls go, as opposed to the user's work.
+   *
+   * The compaction summarizer, the intent read and the sub-agent report repair
+   * are completions nobody asked for, and they ran on the session model
+   * because nothing had ever said otherwise. On a free tier — priced in
+   * requests per minute, not dollars — that is the difference between a task
+   * finishing and a 429; 45% of this agent's recorded incidents are rate
+   * limits (measured 2026-09-07, 3,160 incidents).
+   *
+   * helper: "auto" (default) picks the cheapest healthy connected route;
+   * "off"/"session" keeps the historical behaviour; "model" or
+   * "provider/model" names one explicitly. Naming one explicitly ALSO lets it
+   * answer Auto mode's safety questions — the automatic pick deliberately
+   * never does, because a free model wrongly allowing a dangerous action is
+   * worse than the mechanical containment that already backstops the reviewer.
+   * The primary model path is untouched by all of this.
+   */
+  routing?: {
+    helper?: string;
+  };
+  /**
    * System Memory ("dreaming") — Rune's evergreen, narrative profile of the user and the
    * codebases they work in, injected into the system prompt so even small models get cheap,
    * personalised context. Stored at ~/.rune/system-memory.md (see shared/system-memory.ts).
