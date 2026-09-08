@@ -323,7 +323,14 @@ const GATED_SECTIONS: Array<{ heading: string; keep: (c: DoctrineContext) => boo
   // ── Opening rituals: they govern the decision before the first tool call ──
   { heading: "# The read-back", keep: (c) => c.phase !== "working" },
   { heading: "# Ambiguity", keep: (c) => c.phase !== "working" },
-  { heading: "# Plan and track", keep: (c) => c.phase !== "working" },
+  // "# Plan and track" is NOT an opening ritual, and dropping it was measured:
+  // the same task on the same free route went from one malformed todo_write
+  // to seven (items passed as strings, invalid status) once the section left
+  // after the first completion — the ledger-keeping rules (one item
+  // in_progress, mark done the moment it is, rewrite on a change of approach)
+  // govern every completion of the run, and the plan IS the product's ledger.
+  // Seven wasted completions cost more than the ~1 KB the section weighs.
+  // Session 01a08059 vs 01a08036, 2026-09-08.
   // ── The closing ritual: nothing has been produced on the opening turn ──
   { heading: "# Finishing a task", keep: (c) => c.phase !== "opening" },
 ];

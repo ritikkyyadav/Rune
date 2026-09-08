@@ -20,15 +20,17 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
   Tool results are deliberately not scanned. Advertised schema bytes fall 53%.
 - **The just-in-time doctrine is now genuinely just-in-time.** The 4.9 KB dashboard design charter
   is delivered when a dashboard enters play instead of on every request; the opening rituals
-  (read-back, ambiguity, plan-first, greenfield) leave the prompt from the second completion of a
-  request, and "Finishing a task" leaves the opening one. The prefix changes once per request,
+  (read-back, ambiguity, greenfield) leave the prompt from the second completion of a request, and
+  "Finishing a task" leaves the opening one. "Plan and track" stays on every completion: dropping it
+  was tried and measured on the same task and route — malformed `todo_write` calls went from one to
+  seven, each a wasted completion, because the ledger-keeping rules govern the whole run, not its
+  opening. The prefix changes once per request,
   never per completion. Safety guidance is never phase-gated; no doctrine wording changed, and
   `/config doctrine full` still ships one prompt per turn. Measured on the same free route and task
   as the morning baseline: **18.2k → 12.8k fresh input tokens per completion (−30%)**, 84.3 KB →
   62.8 KB per prompt. The doctrine row of that live comparison is not controlled (per-user memory
-  grew between the runs); the offline arm is −33% on ordinary turns. What still needs a live
-  long-horizon run: that dropping the read-back and plan rituals after the first completion costs
-  nothing, since the harness enforces both mechanically.
+  grew between the runs); the offline arm is −33% on ordinary turns. The read-back leaving after the first completion has
+  not shown a cost on the two live runs so far; the plan section was put back on measurement, above.
 - **OpenRouter's seeded free models re-probed.** `minimax/minimax-m3:free` was withdrawn to paid
   and answered 404 on release day; the seeds and the fallback tiers now name
   `nvidia/nemotron-3-ultra-550b-a55b:free`, which answered a live call the same day.

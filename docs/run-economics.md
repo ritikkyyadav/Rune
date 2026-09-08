@@ -191,12 +191,18 @@ the bullet that decides when to reach for it) stays whenever `[interactive] auto
 is on, because that bullet is the only thing that makes the model build a view
 unasked. Not one word was rewritten; the block was split.
 
-The _opening rituals_ — `# The read-back`, `# Ambiguity`, `# Plan and track` and
-`# Greenfield builds` — govern the moment before the first tool call. From turn
-2 of a request they are describing a decision already made, and the harness
-enforces the contracts they teach mechanically anyway: `record_evidence` returns
-the runtime's own verdict, and a step closed with nothing behind it is marked
-UNPROVEN in the tool result. `# Finishing a task` is the mirror image and leaves
+The _opening rituals_ — `# The read-back`, `# Ambiguity` and `# Greenfield
+builds` — govern the moment before the first tool call. From turn 2 of a request
+they are describing a decision already made. `# Plan and track` was gated the
+same way at first and put back on measurement: on the same task and free route
+(sessions `01a08036` vs `01a08059`, 2026-09-08) malformed `todo_write` calls
+went from one to seven once the section left after the first completion —
+items passed as strings, an invalid status — because the ledger-keeping rules
+(one item in progress, mark done when done, rewrite on a change of approach)
+govern every completion, and each fumble is a wasted completion that costs more
+than the ~1 KB the section weighs. The harness still enforces the evidence
+contract mechanically: `record_evidence` returns the runtime's own verdict, and
+a step closed with nothing behind it is marked UNPROVEN in the tool result. `# Finishing a task` is the mirror image and leaves
 the _opening_ turn, where nothing has been produced yet. The engine renders the
 doctrine twice and the loop picks by turn, so the prefix changes **once per
 request**, not per completion — one extra prefix write on a caching route,
@@ -257,8 +263,9 @@ reads the same on both providers tried:
        fixed overhead  62.4KB → 56.0KB  (6.4KB less doctrine + schema on the last call than the first)
 ```
 
-6.4 KB is exactly the four opening rituals minus `# Finishing a task`, measured
-on the wire. The rows that do not depend on per-user content — tool schemas,
+6.4 KB was exactly the four sections then gated minus `# Finishing a task`,
+measured on the wire before `# Plan and track` was put back; the first-to-last
+line now reads about 1 KB less. The rows that do not depend on per-user content — tool schemas,
 prompt bytes, fresh tokens — are directly comparable, and the growth in the
 untouched blocks makes those a **lower bound** on the saving, not an upper one.
 
