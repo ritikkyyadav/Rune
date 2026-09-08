@@ -13,6 +13,8 @@
 
 import { createHash } from "node:crypto";
 import type { SessionEvent } from "@rune/shared";
+import type { CallRole } from "@rune/llm-gateway";
+import { isGovernanceRole } from "@rune/llm-gateway";
 import { isVerificationCommand } from "./brief";
 import { categorizeProjectCommand } from "./notebook/capture";
 import type { ToolObservation } from "./notebook/capture";
@@ -103,6 +105,38 @@ export interface RunRetro {
   gates: Partial<Record<StepLogKind, number>>;
   /** Model completions the run took (assistant messages persisted). */
   completions: number;
+  /**
+   * `completions.governance` — every model call the run actually made, split
+   * by what it was FOR, read from the `cost` rows rather than the transcript.
+   *
+   * `completions` above counts assistant messages, so it counts the WORK and
+   * nothing else: the safety classifier, the compaction summarizer, the intent
+   * read and the sub-agent report repair never appear in it. On a metered
+   * account that omission is invisible. On a free tier it is the whole story —
+   * a free route is priced in requests, not dollars, and 45% of this agent's
+   * recorded incidents are the rate limits those uncounted requests caused
+   * (measured 2026-09-07 over 3,160 incidents).
+   *
+   * `fresh` is uncached input tokens, the other half of the same pressure:
+   * fewer completions AND fewer fresh tokens per completion is the lane.
+   *
+   * Absent when the window carried no `cost` rows at all — "not measured",
+   * which is not the same fact as zero.
+   */
+  callsByRole?: {
+    /** Every cost row in the window. */
+    total: number;
+    /** Rows doing the user's work: primary, sub-agents, research. */
+    primary: number;
+    /** Rows that are Rune's own overhead. THE number this lane moves. */
+    governance: number;
+    /** Fresh (uncached) input tokens over every row. */
+    fresh: number;
+    /** Fresh input tokens on the governance rows alone. */
+    governanceFresh: number;
+    /** Warm share of all input, 0-1, or absent when no input was reported. */
+    cacheReadRatio?: number;
+  };
   filesWritten: number;
   cost: { usd: number; listUsd: number; inputTokens: number; outputTokens: number };
   durationMs: number;
@@ -413,13 +447,32 @@ export function deriveRunRetro(rows: EventRow[], opts: DeriveOptions = {}): RunR
   }
 
   const cost = { usd: 0, listUsd: 0, inputTokens: 0, outputTokens: 0 };
+  const calls = { total: 0, primary: 0, governance: 0, fresh: 0, governanceFresh: 0 };
+  let warmInput = 0;
+  let allInput = 0;
   for (const r of rows) {
     if (r.event.type !== "cost") continue;
     const p = r.event.payload;
     cost.usd += Number(p.costUsd ?? 0) || 0;
     cost.listUsd += Number(p.listCostUsd ?? 0) || 0;
-    cost.inputTokens += Number(p.inputTokens ?? 0) || 0;
+    const fresh = Number(p.inputTokens ?? 0) || 0;
+    const read = Number(p.cacheReadTokens ?? 0) || 0;
+    const written = Number(p.cacheCreationTokens ?? 0) || 0;
+    cost.inputTokens += fresh;
     cost.outputTokens += Number(p.outputTokens ?? 0) || 0;
+    // A row with no `role` predates P12.1 or came from a caller that did not
+    // say. Both are the work — governance is what had to be tagged.
+    const governance = isGovernanceRole((p.role ?? "primary") as CallRole);
+    calls.total++;
+    calls.fresh += fresh;
+    if (governance) {
+      calls.governance++;
+      calls.governanceFresh += fresh;
+    } else {
+      calls.primary++;
+    }
+    warmInput += read;
+    allInput += fresh + read + written;
   }
   // Sums of list prices carry float dust; the record keeps micro-dollars.
   cost.usd = Math.round(cost.usd * 1e6) / 1e6;
@@ -445,6 +498,17 @@ export function deriveRunRetro(rows: EventRow[], opts: DeriveOptions = {}): RunR
     durationMs: Math.max(0, Math.round(opts.durationMs ?? 0)),
     lessons: retroLessons(observations),
     talk: measureTalk(rows),
+    // Absent, not zeroed, when the window held no cost rows: "not measured"
+    // and "made no calls" are different facts and the eval gate must not
+    // read a missing meter as a perfect score.
+    ...(calls.total > 0
+      ? {
+          callsByRole: {
+            ...calls,
+            ...(allInput > 0 ? { cacheReadRatio: warmInput / allInput } : {}),
+          },
+        }
+      : {}),
   };
   const silence = measureSilence(rows);
   if (silence) retro.silence = silence;
@@ -510,6 +574,10 @@ export function foldTurnRetros(retros: RunRetro[], goal?: string): RunRetro | nu
     talk: { prose: 0, harness: 0, openers: 0 },
   };
   let silence: SilenceMeasure | null = null;
+  let calls: RunRetro["callsByRole"] | null = null;
+  // Completion-weighted, so a 40-call turn is not averaged against a 1-call one.
+  let warmWeighted = 0;
+  let warmWeight = 0;
 
   for (const r of parts) {
     if (r.talk) {
@@ -522,6 +590,21 @@ export function foldTurnRetros(retros: RunRetro[], goal?: string): RunRetro | nu
       silence.activeMs += r.silence.activeMs;
       silence.quietMs += r.silence.quietMs;
       silence.longestMs = Math.max(silence.longestMs, r.silence.longestMs);
+    }
+    if (r.callsByRole) {
+      // Warm share is re-derived from the folded totals below rather than
+      // averaged: a mean of ratios over turns of wildly different size is a
+      // number that describes no turn.
+      calls ??= { total: 0, primary: 0, governance: 0, fresh: 0, governanceFresh: 0 };
+      calls.total += r.callsByRole.total;
+      calls.primary += r.callsByRole.primary;
+      calls.governance += r.callsByRole.governance;
+      calls.fresh += r.callsByRole.fresh;
+      calls.governanceFresh += r.callsByRole.governanceFresh;
+      if (r.callsByRole.cacheReadRatio !== undefined) {
+        warmWeighted += r.callsByRole.cacheReadRatio * r.callsByRole.total;
+        warmWeight += r.callsByRole.total;
+      }
     }
     folded.steps.done += r.steps.done;
     folded.steps.unproven += r.steps.unproven;
@@ -556,6 +639,12 @@ export function foldTurnRetros(retros: RunRetro[], goal?: string): RunRetro | nu
   folded.cost.usd = Math.round(folded.cost.usd * 1e6) / 1e6;
   folded.cost.listUsd = Math.round(folded.cost.listUsd * 1e6) / 1e6;
   if (silence) folded.silence = silence;
+  if (calls) {
+    folded.callsByRole = {
+      ...calls,
+      ...(warmWeight > 0 ? { cacheReadRatio: warmWeighted / warmWeight } : {}),
+    };
+  }
 
   const g = (goal ?? parts.find((r) => r.goal)?.goal ?? "")
     .replace(/\s+/g, " ")

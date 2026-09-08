@@ -19,7 +19,9 @@ import type {
   Message,
   ProviderName,
   ResolvedCredential,
+  RunEconomics,
 } from "@rune/llm-gateway";
+import { summarizeRunEconomics } from "@rune/llm-gateway";
 import {
   CustomToolsLoader,
   PluginToolServer,
@@ -175,6 +177,8 @@ import {
 } from "./auto-mode";
 import { HookRunner } from "./hooks";
 import { pickFallbackReviewer } from "./reviewer-fallback";
+import { resolveHelperRoute, helperAppliesToSafety } from "./helper-route";
+import type { HelperRoute } from "./helper-route";
 import { turnBudgetForMessage } from "./turn-budget";
 import { createSubagentTool } from "./subagent";
 import { TeamBus } from "./team/bus";
@@ -641,6 +645,15 @@ export interface EngineConfig {
    * ceiling everywhere. Persisted at llm.effortRouting (/config routing).
    */
   effortRouting?: "conservative" | "off";
+  /**
+   * Where Rune's OWN calls go — the compaction summarizer, the intent read,
+   * the sub-agent report repair. "auto" (default) picks the cheapest healthy
+   * connected route; "off"/"session" runs them on the session model as before;
+   * a model id or "provider/model" names one explicitly (and only an explicit
+   * one may answer Auto mode's safety questions — see helper-route.ts).
+   * Persisted at routing.helper (/config helper). The primary path is untouched.
+   */
+  helperRoute?: string;
   /**
    * Stop the session once its METERED-EQUIVALENT cost passes this many US
    * dollars. Unset by default — a cap that surprises a user mid-task is worse
@@ -1681,12 +1694,27 @@ export class Engine {
     }
     const resolvePrimaryReviewer = (): ReviewerIdentity => {
       const heavy = this.resolveModelTier("heavy");
-      const provider = (autoConfig.classifierProvider ?? heavy.provider) as ProviderName;
+      // `[routing] helper` may answer safety questions ONLY when the user
+      // NAMED a model. The automatic pick never does: reviewer-fallback.ts
+      // states the reason and it has not changed — "a free or local model
+      // wrongly ALLOWING a dangerous action is strictly worse than the
+      // mechanical containment that already backstops a reviewer outage".
+      // Choosing that trade for everyone silently, to save requests, would be
+      // the exact bargain this codebase has twice refused. A user who writes a
+      // model into [routing] helper has made the choice themselves.
+      // `[permissions.autoMode] classifierModel` is more specific still and
+      // wins over both.
+      const namedHelper = helperAppliesToSafety(this.resolveHelper()) ? this.resolveHelper() : null;
+      const provider = (autoConfig.classifierProvider ??
+        namedHelper?.provider ??
+        heavy.provider) as ProviderName;
       const model =
         autoConfig.classifierModel ??
-        (provider === heavy.provider
-          ? heavy.model
-          : (getPreset(provider)?.defaultModel ?? this.config.model));
+        (namedHelper && provider === namedHelper.provider
+          ? namedHelper.model
+          : provider === heavy.provider
+            ? heavy.model
+            : (getPreset(provider)?.defaultModel ?? this.config.model));
       if (!this.gateway.getProvider(provider)) {
         throw new Error(`classifier provider "${provider}" is not configured`);
       }
@@ -1763,6 +1791,14 @@ export class Engine {
       },
       this.gateway,
     );
+    // `[routing] helper` reaches compaction as a THUNK, not a value: the route
+    // is resolved against live provider health at each call, so a helper that
+    // rots (or a provider that goes over quota) stops being chosen without
+    // anything having to invalidate a cached decision.
+    this.contextEngine.setHelperRoute(() => {
+      const route = this.resolveHelper();
+      return route ? { provider: route.provider as ProviderName, model: route.model } : null;
+    });
     // Re-sync immediately: this also hands the engine the active session pair,
     // the summarizer's guaranteed-alive fallback candidate.
     this.syncSummarizerTier();
@@ -2135,16 +2171,21 @@ export class Engine {
     opts: { allowModelCall: boolean },
   ): Promise<AgentTurnEvent | null> {
     if (spine.kind) return null;
+    // One read of the intent question is a governance call by definition: the
+    // user asked for work, not for a taxonomy. It goes to the helper route.
+    const helper = this.resolveHelper();
     const ask =
       opts.allowModelCall && this.config.intent?.interpreter === "model"
         ? async (system: string, question: string): Promise<string> => {
             const resp = await this.gateway.infer({
               messages: [{ role: "user", content: [{ type: "text", text: question }] }],
               system,
-              model: this.config.model,
-              provider: this.config.provider,
+              ...(helper
+                ? { model: helper.model, provider: helper.provider as ProviderName }
+                : { model: this.config.model, provider: this.config.provider }),
               maxTokens: 8,
               stream: false,
+              role: "intent",
             });
             const block = resp.content.find((b) => b.type === "text");
             return block && block.type === "text" ? block.text : "";
@@ -3799,6 +3840,16 @@ export class Engine {
       registered.includes(p),
     );
     const cheap = (p: ProviderName) => PROVIDER_TIER_DEFAULTS[p]?.light ?? this.config.model;
+    // `[routing] helper`, when one resolves, leads the walk: distilling the
+    // system memory is Rune's own housekeeping, not the user's work. An
+    // explicit `[memory] model` below still wins — it is the more specific ask.
+    const helper = this.resolveHelper();
+    const withHelper = (
+      rest: Array<{ provider: ProviderName; model: string }>,
+    ): Array<{ provider: ProviderName; model: string }> =>
+      helper && !helper.explicit
+        ? [{ provider: helper.provider as ProviderName, model: helper.model }, ...rest]
+        : rest;
 
     // Explicit "provider/model" (note: model ids may contain '/', so split once).
     if (
@@ -3816,12 +3867,14 @@ export class Engine {
       }
     }
     if (modelPref === "active") {
-      return order.map((p) => ({
-        provider: p,
-        model: p === active ? this.config.model : cheap(p),
-      }));
+      return withHelper(
+        order.map((p) => ({
+          provider: p,
+          model: p === active ? this.config.model : cheap(p),
+        })),
+      );
     }
-    return order.map((p) => ({ provider: p, model: cheap(p) }));
+    return withHelper(order.map((p) => ({ provider: p, model: cheap(p) })));
   }
 
   /**
@@ -3900,6 +3953,7 @@ export class Engine {
             provider,
             maxTokens: Math.min(2048, Math.ceil(cfg.maxTokens * 1.3)),
             stream: false,
+            role: "memory",
           });
           const block = resp.content.find((b) => b.type === "text");
           out = block && block.type === "text" ? block.text.trim() : "";
@@ -4138,6 +4192,9 @@ export class Engine {
       case "routing":
         this.config.effortRouting = canonicalValue as "conservative" | "off";
         return { ok: true };
+      case "helper":
+        this.config.helperRoute = canonicalValue;
+        return { ok: true };
       case "lsp": {
         const on = canonicalValue === "true";
         this.config.lspAutoFeedback = on;
@@ -4189,6 +4246,20 @@ export class Engine {
         return this.doctrineDelivery();
       case "routing":
         return this.config.effortRouting ?? "conservative";
+      case "helper": {
+        // The RESOLVED route, not the raw setting: "auto" is what was asked
+        // for, "ollama/…" is what is in force, and the second is the answer to
+        // "what is my helper". Falls back to naming the session model, which
+        // is what actually runs a governance call when nothing cheaper exists.
+        const setting = this.config.helperRoute ?? "auto";
+        const route = this.resolveHelper();
+        if (route) return `${route.provider}/${route.model}`;
+        return setting.toLowerCase() === "off" ||
+          setting.toLowerCase() === "session" ||
+          setting.toLowerCase() === "none"
+          ? "off (session model)"
+          : `auto → ${this.config.provider}/${this.config.model} (nothing cheaper connected)`;
+      }
       case "lsp":
         // The live module state, not the config field: unset config resolves
         // to a per-workspace default, and the user asked what is in force.
@@ -6183,6 +6254,41 @@ export class Engine {
   }
 
   /**
+   * Where this session's GOVERNANCE calls go — `[routing] helper`, resolved
+   * against what is actually registered and healthy right now rather than
+   * against a stored provider list (every hand-written provider union in this
+   * repo has rotted; the summarizer graveyard and the sticky-model bug are the
+   * receipts). Null means "run it wherever it runs today", which is the
+   * session model and is never wrong.
+   *
+   * Cheap enough to call per governance call: it walks the registered
+   * providers, which is a handful of map entries.
+   */
+  resolveHelper(): HelperRoute | null {
+    const persisted = this.gateway.getPersistedHealth();
+    const live = this.gateway.getProviderHealth();
+    const now = Date.now();
+    const cooling = new Map(live.cooling.map((c) => [String(c.provider), c.untilMs]));
+    const pruned = new Set(live.pruned.map(String));
+    return resolveHelperRoute({
+      setting: this.config.helperRoute,
+      session: { provider: this.config.provider, model: this.config.model },
+      registered: this.gateway.getRegisteredProviderNames().map(String),
+      isRetired: (provider, model) => persisted.isRetired(provider, model),
+      cappedUntil: (provider) =>
+        Math.max(
+          persisted.cappedUntil(provider),
+          cooling.get(provider) ?? 0,
+          // A model this session already watched die is not a helper.
+          pruned.has(provider) ? now + 1 : 0,
+        ),
+      policyDenies: (provider, model) =>
+        this.orgPolicy ? policyAllowsModel(this.orgPolicy.policy, provider, model) : null,
+      now,
+    });
+  }
+
+  /**
    * Sections already JIT-delivered, per session — each is injected once and
    * then lives in (cached, persisted) history for the rest of the session.
    */
@@ -6241,6 +6347,15 @@ export class Engine {
 
   getCostBreakdown() {
     return this.costTracker.getBreakdown();
+  }
+
+  /**
+   * The session's economics: completions split work vs governance, fresh
+   * tokens per completion, cache-read ratio, list estimate, and what a prompt
+   * is made of. The half of the meter free tiers need — see run-economics.ts.
+   */
+  getRunEconomics(): RunEconomics {
+    return summarizeRunEconomics(this.costTracker.getLedger().entries);
   }
 
   getStatus(sessionId?: string): {

@@ -611,6 +611,10 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
               provider: live.provider,
               maxTokens: budget.maxTokens,
               maxTurns: budget.maxTurns,
+              // Delegated work is still the user's work, not Rune's overhead:
+              // the ledger separates it from `primary` without calling it
+              // governance. See llm-gateway/types.ts CallRole.
+              callRole: "subagent",
               systemPrompt: workerSystemPrompt(ownership.describe(input.workspaceRoot)),
               // Mirror/configured orchestration passes the session's reasoning
               // dial through; absent, the child keeps its historical "high".

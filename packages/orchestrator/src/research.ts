@@ -625,6 +625,7 @@ async function investigate(
       provider: deps.provider,
       maxTokens: s.investigatorMaxTokens,
       maxTurns: s.maxTurns,
+      callRole: "research",
       systemPrompt: investigatorSystemPrompt(sq, s.maxSourcesPerStep),
       // Force the explicit web tools (never provider-native grounding) so we can
       // capture sources from tool I/O — and so it works on every provider.

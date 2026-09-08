@@ -227,6 +227,83 @@ export interface ResponseFormat {
   jsonSchema: Record<string, unknown>;
 }
 
+// ─── What a completion was FOR (P12.1) ───
+//
+// Measured 2026-09-07 on the founder's run DB: 45% of all incidents are
+// provider rate limits, and the harness's own calls — the safety classifier,
+// the compaction summarizer, the intent read, the schema repair — are separate
+// completions that each carry a fresh system prompt and tool surface. The
+// ledger could not tell them apart from the work, so "how many completions did
+// this task actually need" had no answer and nothing could be traded away.
+//
+// A request says what it is; the meter carries it through to the cost entry
+// and the session log. Absent means "primary" — the agent's own turn.
+
+/**
+ * The role a completion plays. `primary` is the agent's turn — the work the
+ * user asked for. Everything else is GOVERNANCE: Rune's own overhead.
+ */
+export type CallRole =
+  /** The agent loop's turn. The work. */
+  | "primary"
+  /** Auto mode's in-path safety reviewer. */
+  | "classifier"
+  /** Auto mode's out-of-band supervisor screen/confirm. */
+  | "supervisor"
+  /** Context compaction's summarizer walk. */
+  | "summarizer"
+  /** The intent read that gives a task its kind. */
+  | "intent"
+  /** System-memory distillation ("dreaming"). */
+  | "memory"
+  /** Repairing a sub-agent report into its schema. */
+  | "repair"
+  /** A delegated sub-agent's own turn. */
+  | "subagent"
+  /** Research synthesis. */
+  | "research";
+
+/** Every role that is Rune's overhead rather than the user's work. */
+export const GOVERNANCE_ROLES: readonly CallRole[] = [
+  "classifier",
+  "supervisor",
+  "summarizer",
+  "intent",
+  "memory",
+  "repair",
+];
+
+export function isGovernanceRole(role: CallRole | undefined): boolean {
+  return role !== undefined && (GOVERNANCE_ROLES as readonly string[]).includes(role);
+}
+
+/**
+ * What one request was made of, in BYTES of the wire payload.
+ *
+ * Bytes, not tokens: this is measured locally before the request goes out, and
+ * a token estimate here would be a second guess layered on the provider's own
+ * count (which the usage report already gives, exactly). Bytes are what the
+ * composition question is actually about — "which block is 34k of fresh input"
+ * — and they are exact.
+ *
+ * The four named parts plus `conversation` sum to `total`; `other` absorbs
+ * anything the caller did not attribute.
+ */
+export interface PromptComposition {
+  /** The doctrine + environment + memory system prompt. */
+  doctrine: number;
+  /** The plan-ledger / task-state block riding as an ephemeral tail. */
+  planLedger: number;
+  /** Task-state prose OUTSIDE the ledger block (budget, team, spine notices). */
+  taskState: number;
+  /** JSON of every advertised tool definition. */
+  toolSchemas: number;
+  /** Everything else in `messages` — the actual conversation. */
+  conversation: number;
+  /** Sum of the above. */
+  total: number;
+}
+
 export interface InferenceRequest {
   messages: Message[];
   system?: string;
@@ -275,6 +352,19 @@ export interface InferenceRequest {
    * defaults to "high": shallow reasoning is how tasks get half-done fast.
    */
   thinking?: { enabled: boolean; budgetTokens?: number; effort?: ReasoningEffort };
+  /**
+   * What this completion is for. Absent means `primary`. Purely descriptive:
+   * no provider reads it, and nothing about the request changes because of it.
+   * It exists so the ledger can answer "how many of these were the work".
+   */
+  role?: CallRole;
+  /**
+   * Bytes per prompt part, measured by the caller that assembled the request.
+   * Only the agent loop attributes all five parts; a governance caller that
+   * passes nothing simply has no composition row, which reads as "not
+   * measured" rather than as a zero it did not earn.
+   */
+  composition?: PromptComposition;
   stream: boolean;
 }
 
@@ -801,6 +891,13 @@ export interface CostEntry {
   priced: boolean;
   /** True when the rate is inferred rather than published. */
   estimated: boolean;
+  /**
+   * What the completion was for. Absent on replayed pre-P12.1 rows and on
+   * anything that did not say; readers treat absent as "primary".
+   */
+  role?: CallRole;
+  /** Bytes per prompt part, when the caller measured them. */
+  composition?: PromptComposition;
   timestamp: Date;
 }
 

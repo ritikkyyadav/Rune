@@ -12,6 +12,7 @@ import {
   type ToolSchema,
 } from "@rune/tool-registry";
 import { isOrdinaryDevCommand, isReadOnlyShellCommand } from "./shell-safety";
+import { batchSignature } from "./call-signature";
 
 import {
   expandHome,
@@ -195,6 +196,13 @@ const MAX_USER_TRANSCRIPT_CHARS = 24_000;
 const MAX_ACTION_TRANSCRIPT_CHARS = 48_000;
 const MAX_CLASSIFIER_PROMPT_CHARS = 120_000;
 const MAX_TOOL_RESULT_SCAN_CHARS = 1_000_000;
+/**
+ * How many high-confidence allows one run remembers. The actions worth
+ * recalling are the ones a run REPEATS — a formatter, a test command, a write
+ * to the same generated file — and there are few of them; the bound exists so
+ * a thousand-turn run cannot grow an unbounded map, not because it binds.
+ */
+const MAX_CONFIDENT_ALLOWS = 128;
 
 /** Managed entries are additive and therefore cannot be removed by a user config. */
 export function resolveAutoModeConfig(
@@ -371,6 +379,13 @@ export type AutoModeDecisionSource =
   | "exact_user_grant"
   | "classifier_fast"
   | "classifier_reasoned"
+  /**
+   * The reasoned reviewer already allowed THIS EXACT action, in this run, with
+   * high confidence — so the verdict was recalled instead of re-asked. The
+   * fourth reviewer skip, after the safe tier, the workspace tier and the
+   * supervised tier. See `recallConfidentAllow`.
+   */
+  | "classifier_recall"
   | "classifier_unavailable"
   /**
    * An allowed action the supervisor could not take on: its queue was full
@@ -454,6 +469,12 @@ export interface ClassifierCall {
   prompt: string;
   reviewer: ReviewerIdentity;
   /**
+   * Which safety call this is, for the ledger: the in-path reviewer or the
+   * out-of-band supervisor. Descriptive only — nothing about the request or
+   * the verdict changes. Absent means the in-path reviewer.
+   */
+  role?: "classifier" | "supervisor";
+  /**
    * Aborted when the stage's timeout fires. `LlmGateway.infer` does not accept
    * an AbortSignal today, so the built-in gateway classifier cannot cancel the
    * in-flight HTTP request (the late response is discarded); custom
@@ -491,6 +512,7 @@ export class GatewayActionClassifier implements ActionClassifier {
       // to the reasoned stage when they exhaust the small budget.
       thinking:
         call.stage === "reasoned" ? { enabled: true, effort: "medium" } : { enabled: false },
+      role: call.role ?? "classifier",
       stream: false,
     });
     return response.content
@@ -872,6 +894,7 @@ export class AutoModeSafetyController {
               : REASONED_CLASSIFIER_SYSTEM,
           prompt,
           reviewer,
+          role: opts.supervisorBatch ? "supervisor" : "classifier",
           signal: abort.signal,
         }),
         this.config.timeoutMs,
@@ -1000,6 +1023,32 @@ export class AutoModeRun {
   private consecutiveClassifierDenials = 0;
   /** Sticky for the rest of the run once any tool result is flagged. */
   private injectionFindings = 0;
+  /**
+   * Actions the reasoned reviewer allowed with HIGH confidence this run,
+   * keyed by canonical signature. A repeat is allowed on the recorded verdict
+   * instead of paying a second reviewer call.
+   *
+   * Why this is safe, stated plainly, because it is the one place in this file
+   * that skips a review a previous version performed:
+   *
+   *  - It is a CACHE OF AN ANSWER, not a widening of one. The reviewer said
+   *    allow, at high confidence, to this action, in this run, with this
+   *    user request behind it. Asking again is asking the same question of
+   *    the same evidence.
+   *  - The key is `batchSignature` — the CONSERVATIVE signature (whitespace,
+   *    key order, UUIDs, timestamps and long hashes folded; small numbers
+   *    kept distinct). `rm -rf /tmp/a` and `rm -rf /tmp/b` are different
+   *    entries; `ls  -la` and `ls -la` are one.
+   *  - Everything mechanical still runs first, unchanged: the catastrophic
+   *    patterns, the dangerous-command list, the guardrail and self-protection
+   *    breakers, and the deny/ask rules all execute BEFORE the tier check that
+   *    reaches this. A recall can never resurrect an action a breaker stops.
+   *  - It is cleared the moment the run's trust picture changes: any flagged
+   *    tool result, any reviewer deny, any supervisor flag. What was obviously
+   *    fine before an injection finding is not obviously fine after one.
+   *  - It dies with the run.
+   */
+  private confidentAllows = new Map<string, { risk: AutoModeRisk; reason: string }>();
   /** The call under review, stamped onto the row so it can be joined to its result. */
   private currentCallId: string | undefined;
   /** Reviewer time inside the current review(), split first call vs retry. */
@@ -1088,6 +1137,49 @@ export class AutoModeRun {
   noteInjectionFinding(): void {
     this.supervisorEpoch++;
     this.injectionFindings++;
+    this.forgetConfidentAllows();
+  }
+
+  // ─── The confident-allow recall ───
+
+  /**
+   * The canonical key an action is remembered under. `batchSignature` — the
+   * CONSERVATIVE normalizer: whitespace, key order and by-construction-volatile
+   * tokens (UUIDs, timestamps, long hashes) are folded; every ordinary number
+   * stays distinct, so `--port 3001` and `--port 3002` are two entries and
+   * `rm -rf build` and `rm -rf ~` could never collapse into one.
+   *
+   * The tool name is part of the signature by construction.
+   */
+  private recallKey(action: AutoModeAction): string {
+    return batchSignature([{ toolName: action.toolName, argsJson: JSON.stringify(action.args) }]);
+  }
+
+  /** A recorded high-confidence allow for this exact action, or undefined. */
+  private recallConfidentAllow(
+    action: AutoModeAction,
+  ): { risk: AutoModeRisk; reason: string } | undefined {
+    // A run under suspicion re-reviews everything, whatever was cached
+    // before. The map is cleared when suspicion arrives, so this is belt and
+    // braces — and it is the belt worth wearing twice.
+    if (this.injectionFindings > 0) return undefined;
+    return this.confidentAllows.get(this.recallKey(action));
+  }
+
+  private rememberConfidentAllow(action: AutoModeAction, risk: AutoModeRisk, reason: string): void {
+    if (this.injectionFindings > 0) return;
+    // Bounded: a long run must not accumulate an unbounded map, and the
+    // actions worth recalling are the ones a run repeats, which are few.
+    if (this.confidentAllows.size >= MAX_CONFIDENT_ALLOWS) {
+      const oldest = this.confidentAllows.keys().next();
+      if (!oldest.done) this.confidentAllows.delete(oldest.value);
+    }
+    this.confidentAllows.set(this.recallKey(action), { risk, reason });
+  }
+
+  /** Drop every recalled verdict — the run's trust picture changed. */
+  private forgetConfidentAllows(): void {
+    this.confidentAllows.clear();
   }
 
   async review(action: AutoModeAction): Promise<AutoModeReview> {
@@ -1415,6 +1507,31 @@ export class AutoModeRun {
       });
     }
 
+    // ── The fourth reviewer skip: an answer already given ──
+    //
+    // The safe tier, the workspace tier and the supervised tier all skip the
+    // reviewer because of what the ACTION is. This one skips it because of
+    // what the REVIEWER already said, in this run, about this exact action,
+    // at high confidence. Measured motive: on free routes the reviewer call
+    // is not a cost, it is a REQUEST, and requests are what a free tier
+    // meters — 45% of this agent's recorded incidents are rate limits.
+    //
+    // Nothing mechanical is skipped: every breaker, the dangerous-command
+    // list and the deny/ask rules have already run above this line.
+    const recalled = this.recallConfidentAllow(action);
+    if (recalled) {
+      this.consecutiveClassifierDenials = 0;
+      return this.finish({
+        verdict: "allow",
+        tier,
+        risk: recalled.risk,
+        source: "classifier_recall",
+        reason: `${recalled.reason} (The safety reviewer allowed this exact action earlier in this run at high confidence; the verdict was recalled rather than re-asked.)`,
+        stage: 2,
+        durationMs: elapsed(started),
+      });
+    }
+
     const prompt = this.buildPrompt(risk);
     if (prompt.length > MAX_CLASSIFIER_PROMPT_CHARS) {
       return this.route(
@@ -1462,6 +1579,12 @@ export class AutoModeRun {
       }
       if (parsed.verdict === "allow") {
         this.consecutiveClassifierDenials = 0;
+        // Only an EXPLICIT high confidence is remembered. A reviewer that
+        // omits the field, or a model that never learned it, produces
+        // `undefined` and nothing is cached — the old behaviour, exactly.
+        if (parsed.confidence === "high") {
+          this.rememberConfidentAllow(action, parsed.risk ?? risk, parsed.reason);
+        }
         return this.finish({
           verdict: "allow",
           tier,
@@ -1473,6 +1596,11 @@ export class AutoModeRun {
           durationMs: elapsed(started),
         });
       }
+      // Any non-allow verdict changes the run's trust picture: what looked
+      // obviously fine before the reviewer started refusing is no longer
+      // obviously fine. Every recalled verdict is dropped and the actions
+      // behind them are re-reviewed from scratch.
+      this.forgetConfidentAllows();
       // Both remaining verdicts mean the same thing at different strengths:
       // the reviewer cannot trace this action back to the user. Nobody needs
       // to be interrupted to establish that — it is precisely what the broker
@@ -1889,6 +2017,7 @@ export class AutoModeRun {
         // the run the same way an injection finding does, and stop before the
         // next action so exposure is bounded to this one.
         this.injectionFindings++;
+        this.forgetConfidentAllows();
         this.pendingSupervisorHalt =
           `The safety supervisor flagged the preceding ${action.toolName} action after it ran` +
           (action.toolName === "bash" && typeof action.args.command === "string"
@@ -2060,8 +2189,14 @@ const REASONED_CLASSIFIER_SYSTEM = [
   `Rules:\n- ${SHARED_CLASSIFIER_RULES}`,
   "Check in order: hard-deny impact, soft-deny impact, narrow allow exceptions, exact user authorization, target ownership/trust boundary, reversibility, and blast radius.",
   "Return ONLY compact JSON with this schema:",
-  '{"verdict":"allow|ask|deny","risk":"low|medium|high|critical","reason":"one concise evidence-based sentence"}',
+  '{"verdict":"allow|ask|deny","risk":"low|medium|high|critical","confidence":"low|medium|high","reason":"one concise evidence-based sentence"}',
   "Use ask when only a human can resolve material ambiguity. Do not include chain-of-thought or quote secrets.",
+  // Why confidence is asked for at all: a high-confidence ALLOW is REUSABLE.
+  // The identical action, repeated later in the same run, does not need a
+  // second call to reach the same verdict — and on a free tier that second
+  // call is a request the work needed. Anything short of "high", and every
+  // non-allow verdict, is re-reviewed exactly as before.
+  'Set confidence to "high" ONLY when the verdict follows from the request and the action alone with nothing left ambiguous — an IDENTICAL action later in this run will be allowed on the strength of it, without a second review. Use "medium" or "low" whenever the call was a judgement.',
 ].join("\n\n");
 
 function supervisorClassifierSystem(stage: "fast" | "reasoned"): string {
@@ -2574,6 +2709,8 @@ export function parseFastDecision(text: string): "allow" | "block" {
 function parseReasonedDecision(text: string): {
   verdict: AutoModeVerdict;
   risk?: AutoModeRisk;
+  /** Absent when the reviewer did not say — which is treated as "not high". */
+  confidence?: "low" | "medium" | "high";
   reason: string;
 } {
   const start = text.indexOf("{");
@@ -2598,7 +2735,15 @@ function parseReasonedDecision(text: string): {
     typeof parsed.reason === "string" && parsed.reason.trim()
       ? parsed.reason.trim().slice(0, 600)
       : "The reviewer did not provide a rationale.";
-  return { verdict, risk: validRisk, reason };
+  // Unstated, unrecognized, or a model that ignored the field: NOT high. The
+  // recall only fires on an explicit "high", so a reviewer that never learned
+  // the field keeps the old behaviour exactly — every action reviewed, always.
+  const rawConfidence = String(parsed.confidence ?? "").toLowerCase();
+  const confidence =
+    rawConfidence === "low" || rawConfidence === "medium" || rawConfidence === "high"
+      ? (rawConfidence as "low" | "medium" | "high")
+      : undefined;
+  return { verdict, risk: validRisk, ...(confidence ? { confidence } : {}), reason };
 }
 
 function elapsed(started: number): number {
