@@ -21,6 +21,7 @@ import {
   codeSurface,
   panel,
 } from "./theme";
+import { langOfLabel, paintCode, type CodeLang } from "./code-paint";
 import { glyph } from "./glyphs";
 import { termWidth } from "./render";
 
@@ -264,6 +265,7 @@ export function renderMarkdown(md: string, opts: MarkdownOpts = {}): string[] {
 
   let inFence = false;
   let fenceMark = "```";
+  let fenceLang: CodeLang = null;
   let lastBlank = true; // collapse runs of blank lines
 
   const emit = (ln: string) => {
@@ -287,6 +289,7 @@ export function renderMarkdown(md: string, opts: MarkdownOpts = {}): string[] {
       // The language is a label, not a frame. A box around code buys nothing a
       // blank line and a change of weight does not already buy.
       const langRaw = fence[2] ?? "";
+      fenceLang = langOfLabel(langRaw);
       if (langRaw) emit(faint(langRaw));
       continue;
     }
@@ -298,10 +301,15 @@ export function renderMarkdown(md: string, opts: MarkdownOpts = {}): string[] {
       }
       // Code is the record: verbatim, hard-cut to the column, and set brighter
       // than the prose around it because the command is the part you copy.
+      // Painted by the fence's own label (```ts, ```python, ```bash ...) with
+      // the same painter the diffs use, so a block in an answer reads like
+      // the editor it will be pasted into. An unlabelled block stays plain --
+      // guessing a language mis-tints words, and plain is never wrong.
       let ln = raw.replace(/\t/g, "  ");
       do {
         const chunk = ln.slice(0, width);
-        emit(chunk.trimStart().startsWith("#") ? muted(chunk) : text(chunk));
+        if (fenceLang) emit(paintCode(chunk, fenceLang, text));
+        else emit(chunk.trimStart().startsWith("#") ? muted(chunk) : text(chunk));
         ln = ln.slice(width);
       } while (ln.length > 0);
       continue;

@@ -1,6 +1,10 @@
 // ─── Rendering the read-back ───
 // The block the agent commits BEFORE it opens a file: what it understood, what
-// it will leave alone, and how it will know it is done.
+// it will leave alone, and how it will know it is done. Three rows -- reading,
+// leave, done when -- and a fourth for `touch` only when the model named it.
+// It used to open with a phase banner and close with a key legend, and cost
+// nine rows before the first row of work; the picker that follows it already
+// says what the keys do, and the product's thesis does not need a heading.
 //
 // Two things about this layout are load-bearing rather than decorative. The
 // labels are a fixed-width column, so `touch` / `leave` / `done when` line up
@@ -31,13 +35,12 @@ function body(width: number, s: string, indent: string = F.MARK): string[] {
   return wrap(s, Math.max(20, width - indent.length)).map((line) => indent + text(line));
 }
 
-/** The read-back, as committed scrollback. */
+/** The read-back, as committed scrollback: three labelled rows. */
 export function renderReadBack(brief: Brief, width = F.measure()): string {
   const rows: string[] = [];
-  rows.push(`${F.MARK}${accent(glyph("phase"))} ${bold(text("understand"))}`);
-  rows.push("");
-  rows.push(...body(width, brief.reading));
-  rows.push("");
+  const reading = body(width, brief.reading, F.MARK + " ".repeat(LABEL_W));
+  rows.push(`${F.MARK}${label("reading")}${reading[0]?.slice(F.MARK.length + LABEL_W) ?? ""}`);
+  rows.push(...reading.slice(1));
 
   if (brief.touch.length > 0) {
     rows.push(
@@ -52,14 +55,6 @@ export function renderReadBack(brief: Brief, width = F.measure()): string {
   );
   rows.push(
     `${F.MARK}${label("done when")}${text(truncate(brief.criteria.map((c) => c.text).join(SEP()), width - LABEL_W - 4))}`,
-  );
-  rows.push("");
-  rows.push(
-    `${F.MARK}${F.keyLegend([
-      ["enter", "go"],
-      ["e", "edit this"],
-      ["?", "ask me something"],
-    ])}`,
   );
   return rows.join("\n");
 }

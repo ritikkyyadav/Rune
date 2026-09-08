@@ -149,6 +149,12 @@ describe("apply_patch execution", () => {
     const result = JSON.parse(out.result);
     expect(result.files).toHaveLength(2);
     expect(result.files[0].edits_applied).toBe(2);
+    // Each file carries its own unified diff for the transcript's red/green.
+    expect(result.files[0].diff).toContain("-  return a - b;");
+    expect(result.files[0].diff).toContain("+  return a * b;");
+    // Two edits three lines apart share one hunk, as they would in git.
+    expect((result.files[0].diff.match(/^@@ /gm) ?? []).length).toBe(1);
+    expect(result.files[1].diff).toContain("+import { add, mul } from './math';");
   });
 
   test("create and delete files", async () => {

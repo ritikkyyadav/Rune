@@ -24,6 +24,7 @@ import {
   brand,
   panel,
   selection,
+  speakerSurface,
   hairline,
   popoverSurface,
   codeSurface,
@@ -438,13 +439,14 @@ export function waitingRung(seconds: number, toolName: string, mode?: string): s
  * machine can actually isolate -- on the degraded path the banner is just as
  * loud, because the user would otherwise be trusting a layer that is not there.
  */
-export function sandboxModeBanner(enabled: boolean): string {
-  if (!enabled) {
+export function sandboxModeBanner(state: boolean | "auto-allow" | "regular" | "off"): string {
+  const mode = state === true ? "auto-allow" : state === false ? "off" : state;
+  if (mode === "off") {
     return stateBanner(
       "!",
       "sandbox off",
-      "Commands run directly on this machine, with full network and filesystem access.",
-      "(/sandbox on to re-enable)",
+      "Commands run directly on this machine, with full network and filesystem access. In Auto, read-only commands run and anything else is reviewed first.",
+      "(/sandbox to choose a mode)",
       warn,
       true,
     );
@@ -452,18 +454,27 @@ export function sandboxModeBanner(enabled: boolean): string {
   if (!isOsIsolationAvailable()) {
     return stateBanner(
       "!",
-      "sandbox on -- not isolated",
+      `sandbox ${mode} -- not isolated`,
       `No OS sandbox backend on this machine (${getSandboxCapability().mechanism}): commands run with path-guard checks only, full network and host access, and bash still asks for approval.`,
       "(install sandbox-exec or bwrap for real isolation)",
       warn,
       true,
     );
   }
+  if (mode === "regular") {
+    return stateBanner(
+      glyph("verified"),
+      "sandbox on -- regular permissions",
+      "Commands run in an OS sandbox -- no network, workspace-confined writes -- and the gear's usual permission prompt still applies to each one.",
+      "(/sandbox to choose a mode)",
+      ok,
+    );
+  }
   return stateBanner(
     glyph("verified"),
-    "sandbox on",
-    "Commands run in an OS sandbox -- no network, workspace-confined writes. A call that sets network: true escalates just that one command.",
-    "(/sandbox off for full access)",
+    "sandbox on -- auto-allow",
+    "Commands run in an OS sandbox -- no network, workspace-confined writes -- and are approved without a prompt in 3rd gear and Auto. A call that sets network: true escalates just that one command.",
+    "(/sandbox to choose a mode, an override, or exclusions)",
     ok,
   );
 }
@@ -851,7 +862,11 @@ export function renderPicker(
   const headGap = " ".repeat(Math.max(1, maxWidth - visLen(heading) - visLen(close) - 1));
   const lines: string[] = [clampVisible(popoverRow(`${heading}${headGap}${close}`), maxWidth)];
   const sel = items.length ? Math.max(0, Math.min(selected, items.length - 1)) : 0;
-  const maxItems = Math.max(1, Math.min(items.length || 1, Math.floor(height) - 2));
+  // The footnote occupies a row too. Keep the selected item visible even when
+  // the caller can give a dialog only its header, one item and key hints.
+  const showFootnote = Boolean(options.footnote) && height >= 4;
+  const chromeRows = 2 + (showFootnote ? 1 : 0);
+  const maxItems = Math.max(1, Math.min(items.length || 1, Math.floor(height) - chromeRows));
   let start = 0;
   if (items.length > maxItems) {
     start = Math.min(Math.max(0, sel - Math.floor(maxItems / 2)), items.length - maxItems);
@@ -873,8 +888,8 @@ export function renderPicker(
     const row = clampVisible(`${PAD}${marker} ${number} ${prefix}${label}${hint}${tags}`, maxWidth);
     lines.push(on ? popoverRow(selection(row)) : popoverRow(row));
   });
-  if (options.footnote) {
-    lines.push(popoverRow(`${PAD}${faint(truncate(options.footnote, maxWidth - 4))}`));
+  if (showFootnote) {
+    lines.push(popoverRow(`${PAD}${faint(truncate(options.footnote ?? "", maxWidth - 4))}`));
   }
   lines.push(
     popoverRow(`${PAD}${faint("up/down navigate | 1-9 quick select | enter select | esc close")}`),
@@ -1009,17 +1024,32 @@ export function formatKeyDate(iso?: string): string {
  * on/off toggle. A leading `>` marks the selected row. Returns a RenderedBlock so
  * the TUI can pin it like the picker; the caret is parked on the selected row.
  */
-export function renderKeysPanel(rows: KeyRow[], selected: number, width: number): RenderedBlock {
+export function renderKeysPanel(
+  rows: KeyRow[],
+  selected: number,
+  width: number,
+  height = Number.POSITIVE_INFINITY,
+): RenderedBlock {
   const sel = rows.length ? Math.max(0, Math.min(selected, rows.length - 1)) : 0;
+  // Window around the selection, like the picker: the roster is thirty-odd
+  // providers now, and a panel that painted every row overran a short
+  // terminal and pushed its own key hints off the bottom.
+  const maxRows = Math.max(1, Math.min(rows.length || 1, Math.floor(height) - 2));
+  let start = 0;
+  if (rows.length > maxRows) {
+    start = Math.min(Math.max(0, sel - Math.floor(maxRows / 2)), rows.length - maxRows);
+  }
+  const view = rows.slice(start, start + maxRows);
+  const windowed = rows.length > maxRows ? faint(`  ${sel + 1} of ${rows.length}`) : "";
   const labelW = Math.min(15, Math.max(8, ...rows.map((r) => r.label.length), 8));
   const keyW = Math.max(10, Math.min(22, width - labelW - 24));
 
   const lines: string[] = [
-    `${PAD}${bold(text("API keys"))}   ${faint("bring your own -- applied live, saved to ~/.rune/secrets.json")}`,
+    `${PAD}${bold(text("API keys"))}   ${faint("bring your own -- applied live, saved to ~/.rune/secrets.json")}${windowed}`,
   ];
 
-  rows.forEach((r, i) => {
-    const on = i === sel;
+  view.forEach((r, i) => {
+    const on = start + i === sel;
     // Local runtimes are usable without a key; treat a configured/active one as "ready".
     const ready = r.local ? !!r.hasKey : r.source !== "none";
     const marker = on ? info(glyph("selection")) : " ";
@@ -1058,9 +1088,9 @@ export function renderKeysPanel(rows: KeyRow[], selected: number, width: number)
   });
 
   lines.push(
-    `${PAD}${faint("up/down move | enter manage keys | space on/off | d clear | esc close")}`,
+    `${PAD}${faint("up/down move | enter manage keys | space on/off | d clear | /login connect | esc close")}`,
   );
-  return { lines, caretRow: sel + 1, caretCol: 0 };
+  return { lines, caretRow: sel - start + 1, caretCol: 0 };
 }
 
 /**
@@ -1278,7 +1308,7 @@ export function renderSessionsPanel(
   const headLeft = `${PAD}${brand(RUNE_MARK)} ${bold(text("Sessions"))}  ${tabs}${count ? "  " + count : ""}`;
   const searchText = `${opts.searching ? brand(glyph("selection")) : faint("/")} ${
     query ? text(query) : faint("Search title, path, model...")
-  }${opts.searching ? brand("|") : ""}`;
+  }${opts.searching ? cursorCell(" ") : ""}`;
   const close = keyHint("esc", "close");
   const lines: string[] = [];
   let searchRow: number;
@@ -1387,7 +1417,14 @@ export function renderSessionsPanel(
       previousGroup = group;
     }
 
-    const marker = on ? info(glyph("selection")) : " ";
+    // The selected row is a BAND: the same full-width inverse block the user's
+    // own messages get (speakerSurface), from the left edge through the title
+    // and context to the time. A tinted title alone was not enough to tell
+    // which of thirty near-identical rows the cursor was on (the founder's
+    // 2026-09-05 screenshot). Inside the band every fragment stays uncoloured
+    // -- bold for the title, nothing else -- so the block is one block; a grey
+    // context column on a white band would read as a hole in it.
+    const marker = on ? glyph("selection") : " ";
     // The live session is the only row that earns a mark. Archived rows say so
     // in the context column; everything else is simply a session.
     const dot = r.current ? info(glyph("live")) : " ";
@@ -1411,18 +1448,25 @@ export function renderSessionsPanel(
     const ctxBudget = room >= 46 ? Math.min(34, Math.floor(room / 2.4)) : 0;
     const titleBudget = Math.max(8, room - (ctxBudget ? ctxBudget + 2 : 0));
     const titleText = truncate(r.title, titleBudget);
-    const title = on ? bold(text(titleText)) : text(titleText);
+    const title = on ? bold(titleText) : text(titleText);
     const ctxText = ctxBudget ? truncate(context, ctxBudget) : "";
-    const ctx = ctxText ? faint(ctxText) : "";
+    const ctx = ctxText ? (on ? ctxText : faint(ctxText)) : "";
 
     const titleCell = titleText.padEnd(titleBudget).slice(titleText.length);
     let row = `${lead}${title}${titleCell}`;
     if (ctx) row += `  ${ctx}${" ".repeat(Math.max(0, ctxBudget - visLen(ctxText)))}`;
     const gap = Math.max(1, maxWidth - visLen(row) - visLen(tail));
-    row += `${" ".repeat(gap)}${faint(tail)}`;
+    row += `${" ".repeat(gap)}${on ? tail : faint(tail)}`;
 
     if (on) caretRow = lines.length;
-    lines.push(on ? selection(clampVisible(row, maxWidth)) : clampVisible(row, maxWidth));
+    if (on) {
+      // Pad to the full measure first: the band is the row's whole width, not
+      // the width of its text.
+      const clamped = clampVisible(row, maxWidth);
+      lines.push(speakerSurface(clamped + " ".repeat(Math.max(0, maxWidth - visLen(clamped)))));
+    } else {
+      lines.push(clampVisible(row, maxWidth));
+    }
   });
 
   if (rows.length > view.length) {

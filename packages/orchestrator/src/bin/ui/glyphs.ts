@@ -17,7 +17,22 @@ export const GLYPH_BUDGET_MARKER = "FLOW_GLYPH_BUDGET_V1";
 
 export const GLYPH_DEFINITIONS = {
   phase: { utf8: "◆", ascii: "*", role: "accent" },
-  live: { utf8: "●", ascii: "o", role: "accent" },
+  // The brand mark: the Rune gear, one cell, in the Savoir blue -- the same
+  // gear-beside-the-wordmark lockup the Savoir site uses at small sizes
+  // (SAV⚙IR becomes "SAVOIR ⚙" where the toothed O cannot resolve). A literal
+  // ⚙ paints blue as a text glyph on most terminals; where a terminal forces
+  // its emoji face instead, swap to a mono cog (⊛) -- the header is the only
+  // caller that shows it large. ascii twin `*`.
+  gear: { utf8: "⚙", ascii: "*", role: "accent" },
+  // The agent's voice. NOT a filled circle: a hollow diamond, geometric and
+  // quiet, echoing the gear mark rather than borrowing Claude Code's ●. Painted
+  // `muted` at the call site so blue stays reserved for the mark and critical
+  // signals; the role here is only its fallback tint.
+  live: { utf8: "◇", ascii: "o", role: "dim" },
+  // The inline separator between receipt parts and header fields -- a middot,
+  // which is what a separator should be. It is NOT used as a leading bullet any
+  // more: the tool row's neutral tick is blank (see STATUS_GLYPH.ok in flow.ts),
+  // so the dots left the work rows.
   observed: { utf8: "·", ascii: ".", role: "dim" },
   verified: { utf8: "✓", ascii: "+", role: "ok" },
   failure: { utf8: "✗", ascii: "x", role: "danger" },
@@ -33,6 +48,27 @@ export const GLYPH_DEFINITIONS = {
 } as const satisfies Record<string, GlyphDefinition>;
 
 export type GlyphName = keyof typeof GLYPH_DEFINITIONS;
+
+// The Rune mark as a masthead: the Savoir gear, a round eight-tooth cog with a
+// round hub, drawn in QUADRANT block cells (each cell is a 2x2 grid of solid
+// sub-pixels) so the edges are smoother than half-blocks can manage while the
+// fill stays solid -- the ceiling a character grid can reach for this shape.
+// The pixel grid is 2:1 (32x16) because a quadrant sub-pixel is twice as tall
+// as it is wide, so an equal grid would render an oval. Lives here because this
+// is the only bin/ui file allowed non-ASCII literals, and it is NOT part of the
+// closed glyph budget above -- it is art, printed once at session start, not a
+// mark the grammar reuses. On a seven-bit terminal the caller drops it and
+// shows the wordmark alone. Eight rows.
+export const RUNE_LOGO: readonly string[] = [
+  "    ▗▄▄  ▄▄▖",
+  "    ▜██▄▄██▛",
+  " ▟█▄██▀▀▀▀██▄█▙",
+  "▝▀▜█▛      ▜█▛▀▘",
+  "▗▄▟█▙      ▟█▙▄▖",
+  " ▜█▀██▄▄▄▄██▀█▛",
+  "    ▟██▀▀██▙",
+  "    ▝▀▀  ▀▀▘",
+];
 
 export const PULSE_GLYPHS = [
   { utf8: "▁", ascii: "_", role: "accent" },

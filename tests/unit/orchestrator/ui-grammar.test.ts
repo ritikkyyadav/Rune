@@ -96,6 +96,58 @@ function rows(): Array<[string, string]> {
   ];
 }
 
+describe("the grammar law — a row is words, never an object", () => {
+  // Every tool the harness ships, succeeding and failing, plus an MCP tool
+  // with nested arguments: no committed row may contain the opening of a
+  // JSON object. The old default case printed `compactArgs`, and the
+  // harness's own tools -- record_evidence, ask_user, read_back,
+  // note_hypothesis -- all fell through to it.
+  const args: Record<string, Record<string, unknown>> = {
+    read_file: { path: "src/a.ts" },
+    list_dir: { path: "src" },
+    grep: { pattern: "x", path: "src" },
+    glob: { pattern: "**/*.ts" },
+    write_file: { path: "src/n.ts", content: "x" },
+    edit_file: { path: "src/a.ts", old_text: "a", new_text: "b" },
+    multi_edit: { path: "src/a.ts", edits: [{ old_text: "a", new_text: "b" }] },
+    apply_patch: { patch: "*** Begin Patch" },
+    bash: { command: "ls" },
+    web_search: { query: "q" },
+    web_fetch: { url: "https://x" },
+    todo_write: { items: [{ content: "a", status: "completed" }] },
+    task: { label: "scout", prompt: "p" },
+    worker: { label: "build", prompt: "p", files: ["a"] },
+    ask_user: { questions: [{ question: "Which?", options: ["a", "b"] }] },
+    read_back: { kind: "build", reading: "r", done_when: ["d"] },
+    record_evidence: { criterion: 0, command: "bun test" },
+    note_hypothesis: { text: "t" },
+    record_decision: { text: "d", based_on: [] },
+    read_many: { paths: ["a", "b"] },
+    team: { action: "status" },
+    update_config: { key: "k", value: "v" },
+    interactive_dashboard: { action: "create", title: "T", spec: { a: { b: 1 } } },
+    mcp_browser_click: { selector: { css: "#x" }, options: { force: true } },
+  };
+  for (const [toolName, a] of Object.entries(args)) {
+    for (const success of [true, false]) {
+      it(`${toolName} ${success ? "succeeded" : "failed"}: no row contains {"`, () => {
+        const block = renderToolActivity({
+          toolName,
+          args: a,
+          result: success ? "ok — the tool's own report, in prose" : "",
+          success,
+          // A tool's own error text is content, like a diff line; the rule is
+          // about what the RENDERER builds from arguments.
+          error: success ? undefined : "Validation failed: field is not allowed",
+        });
+        for (const line of block.split("\n")) {
+          expect(plain(line), `${toolName}: ${JSON.stringify(plain(line))}`).not.toContain('{"');
+        }
+      });
+    }
+  }
+});
+
 describe("the grammar law — one left edge", () => {
   it("no transcript row pads to the right margin, at any terminal width", () => {
     for (const columns of [60, 100, 160, 240]) {

@@ -189,6 +189,9 @@ describe("ui/viewport Viewport", () => {
     h.vp.enter();
     h.vp.captureMouse();
     expect(h.all()).toContain("\x1b[?1049h");
+    // Alternate-scroll mode rides along: the wheel reaches the transcript as
+    // arrow keys with the mouse left uncaptured (selection stays native).
+    expect(h.all()).toContain("\x1b[?1007h");
     expect(h.all()).toContain("\x1b[?7l"); // autowrap off: a wrapped row desyncs every row below it
     expect(h.all()).toContain("\x1b[?1006h");
     h.reset();

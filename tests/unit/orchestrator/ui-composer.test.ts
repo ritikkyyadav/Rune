@@ -511,6 +511,24 @@ describe("ui/composer renderPicker", () => {
     expect(stripAnsi(r.lines.join("\n"))).toContain("item 23");
     expect(stripAnsi(r.lines[r.caretRow]!)).toContain("›");
   });
+
+  it("keeps the settings title, selection and hints within the footer including its footnote", () => {
+    const items = Array.from({ length: 18 }, (_, i) => ({ label: `setting ${i}` }));
+    for (const height of [3, 7, 20]) {
+      for (const selected of [0, 9, 17]) {
+        const r = renderPicker("Settings", items, selected, 80, height, {
+          footnote: "Changes apply now and are saved.",
+        });
+        expect(r.lines.length).toBeLessThanOrEqual(height);
+        expect(stripAnsi(r.lines[0]!)).toContain("settings");
+        expect(stripAnsi(r.lines[r.caretRow]!)).toContain(`setting ${selected}`);
+        expect(stripAnsi(r.lines.at(-1)!)).toContain("enter select");
+        expect(r.lines.some((line) => stripAnsi(line).includes("Changes apply now"))).toBe(
+          height >= 4,
+        );
+      }
+    }
+  });
 });
 
 describe("ui/composer footer filesEdited readout", () => {

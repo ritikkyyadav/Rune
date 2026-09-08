@@ -28,16 +28,17 @@
 import {
   bandsEnabled,
   bold,
-  colorEnabled,
   danger,
   faint,
-  heavy,
   info,
   muted,
   negativeSurface,
+  bandInk,
+  bandPalette,
   ok,
   positiveSurface,
   quiet,
+  speakerSurface,
   text,
   warn,
 } from "./theme";
@@ -291,14 +292,12 @@ export interface FlowHeader {
  * measure a painted string without stripping it again.
  */
 export function lockup(name: string): { text: string; cells: number } {
+  // The wordmark IS the logo: the name, set the way Savoir sets its letters --
+  // bold, WHITE, wide-tracked (a space between each letter) -- and nothing else.
+  // No gear, no chip. Clean type is the mark. The blue lives in the seam rule
+  // beneath it and in the one accent the grammar uses, not in the wordmark.
   const letters = name.toUpperCase().split("").join(" ");
-  // The padding cells belong to the CHIP, so they exist only when there is a
-  // chip to inset. Piped into a file or run under NO_COLOR there is no fill to
-  // sit inside, and two stray spaces around the name would be exactly that:
-  // stray. It also keeps the mark starting in the frame's own column, which is
-  // a law the launch-frame test enforces on every painted line.
-  const mark = colorEnabled ? ` ${letters} ` : letters;
-  return { text: heavy(mark), cells: mark.length };
+  return { text: bold(text(letters)), cells: visLen(letters) };
 }
 
 /** The build, for the far right of a masthead. Quiet: it is the least urgent
@@ -362,7 +361,10 @@ export function header(opts: FlowHeader): string {
 
   // What is left after the two fixed ends have taken their columns: the
   // wordmark and its gap on the left, the version and the two-space minimum
-  // that keeps it from touching the location on the right.
+  // that keeps it from touching the location on the right. The brand gear is
+  // NOT here -- it is drawn full-size in the opening masthead (renderMasthead),
+  // and a one-cell glyph pretending to be it in the pinned row only read as a
+  // dot. The pinned header stays a clean wordmark; the masthead carries the mark.
   const room = Math.max(8, budget - mark.cells - LOCKUP_GAP.length - visLen(version) - 2);
   const SEP = ` ${glyph("observed")} `;
 
@@ -469,58 +471,39 @@ export function hairline(width = surfaceWidth()): string {
 
 // --- Turn markers ---
 
-/** Paste chips carried inside an echoed message. They are attachments, not
- *  words, so they are painted apart from the sentence: the eye steps over them
- *  while reading and can still find them when the question is what was
- *  attached. Kept in sync with pasteChip() in ./paste.ts. */
-const ECHO_CHIP = /\[Pasted text #\d+ \+\d+ (?:lines|chars)\]/g;
-
-/** One line of the echo: the sentence recedes, its attachments recede further. */
-function echoed(part: string): string {
-  let out = "";
-  let last = 0;
-  for (const match of part.matchAll(ECHO_CHIP)) {
-    const at = match.index ?? 0;
-    if (at > last) out += quiet(part.slice(last, at));
-    out += faint(match[0]);
-    last = at + match[0].length;
-  }
-  if (last === 0) return quiet(part);
-  return last < part.length ? out + quiet(part.slice(last)) : out;
-}
-
 /**
- * What you asked, at the left margin.
+ * What you asked, on a speaker band.
  *
- * This used to be set in full body text, on the argument that the message is
- * the strongest landmark in scrollback precisely because nothing decorates it.
- * Half of that is right and the half that is wrong made the transcript tiring:
- * "findable when you scan back" and "brightest when you read forward" are
- * different properties, and only the first one is what a landmark needs. You
- * already know what you typed. The sentence you came back for is the answer,
- * and it was competing with your own words at identical weight.
+ * The distinction the whole grammar now turns on: the person's words carry a
+ * monochrome inverse band -- a white block in dark mode, a black block in light
+ * -- and the agent's words are plain text on the ground. Nothing else in the
+ * transcript is inverted, so a glance down a session reads as a conversation:
+ * highlighted question, plain answer, highlighted question. The band is inset
+ * from the frame edge by MARK, like every other block, and each wrapped line is
+ * padded to one common width so it reads as a clean rectangle rather than a
+ * ragged highlight.
  *
- * So the emphasis moves from AREA to POINT: the whole block steps back to the
- * muted slot, and the marker -- one cell -- takes the identity pigment. That is
- * quieter to sit in front of for an hour and easier to find when scrolling,
- * because a dim paragraph under a coloured pip is a landmark and a bright
- * paragraph among bright paragraphs is not.
- *
- * It steps back to `quiet`, never to `faint`: see the note on quiet() in
- * ./theme.ts for why the obvious call would have shipped a 2:1 block.
+ * The blue is deliberately absent here. Blue is the brand's mark and its few
+ * critical signals; whose turn it is is not a critical signal, it is the shape
+ * of the conversation, and monochrome carries shape.
  */
 export function asked(body: string): string {
-  const lines: string[] = [""];
-  let first = true;
+  const width = proseWidth();
+  const inner = Math.max(8, width - 2);
+  const wrapped: string[] = [];
   for (const source of body.replace(/\r\n?/g, "\n").split("\n")) {
-    for (const part of wrap(source, proseWidth())) {
-      lines.push(
-        first ? `${MARK}${info(glyph("selection"))} ${echoed(part)}` : `${BODY}${echoed(part)}`,
-      );
-      first = false;
-    }
+    for (const part of wrap(source, inner)) wrapped.push(part);
   }
-  return lines.join("\n");
+  if (wrapped.length === 0) wrapped.push("");
+  // One band width for the block: the longest line, plus the one-cell inset on
+  // each side. Trailing pad sits inside the band, so stripped of colour it is
+  // trailing whitespace -- which the one-left-edge law ignores.
+  const bandWidth = Math.min(width, Math.max(...wrapped.map((line) => visLen(line))) + 2);
+  const band = (line: string): string => {
+    const pad = " ".repeat(Math.max(0, bandWidth - visLen(line) - 1));
+    return speakerSurface(` ${line}${pad}`);
+  };
+  return ["", ...wrapped.map((line) => `${MARK}${band(line)}`)].join("\n");
 }
 
 /**
@@ -534,7 +517,7 @@ export function dot(lines: string[]): string[] {
   if (first < 0) return lines;
   return lines.map((line, index) =>
     index === first && line.startsWith(BODY)
-      ? `${MARK}${info(glyph("live"))} ${line.slice(BODY.length)}`
+      ? `${MARK}${muted(glyph("live"))} ${line.slice(BODY.length)}`
       : line,
   );
 }
@@ -549,7 +532,7 @@ export function said(body: string, paint: (v: string) => string = text): string 
       continue;
     }
     for (const part of wrap(source, proseWidth())) {
-      lines.push(first ? `${MARK}${info(glyph("live"))} ${paint(part)}` : `${BODY}${paint(part)}`);
+      lines.push(first ? `${MARK}${muted(glyph("live"))} ${paint(part)}` : `${BODY}${paint(part)}`);
       first = false;
     }
   }
@@ -577,7 +560,11 @@ export type Status = "ok" | "pass" | "fail" | "active" | "none" | "unproven";
  * column holds whether or not a row carries a mark.
  */
 const STATUS_GLYPH: Record<Status, string> = {
-  ok: glyph("observed"),
+  // A completed neutral call carries NO bullet: the rail and the verb say it
+  // ran, and the receipt says what it produced. Only the outcomes that mean
+  // something -- a check that passed, work that failed, a call in flight -- earn
+  // a mark. This is where the leading `·` dot left the work rows.
+  ok: " ",
   pass: glyph("verified"),
   fail: glyph("failure"),
   active: glyph("selection"),
@@ -691,8 +678,13 @@ export function diffRows(rows: DiffRow[], lang: CodeLang = null): string[] {
     // the no-right-alignment law -- stripped of colour they are trailing
     // whitespace, which the law ignores, and with colour off this branch is
     // never taken at all.
+    // An added row sits on the opposite ground (white on ink, the mark's blue
+    // on paper), so everything on it -- gutter, sign, code -- is painted with
+    // the ink and the palette that read THERE, not the theme's.
+    const role = r.kind === "add" ? "ok" : "danger";
+    const ink = bandInk(role);
     const pad = " ".repeat(Math.max(0, codeWidth - visLen(body)));
-    const laid = `${number} ${r.kind === "add" ? ok("+") : danger("-")} ${paintCode(body, lang, text)}${pad}`;
+    const laid = `${ink(String(r.line ?? "").padStart(4))} ${ink(r.kind === "add" ? "+" : "-")} ${paintCode(body, lang, ink, bandPalette(role))}${pad}`;
     return `${rail()}${r.kind === "add" ? positiveSurface(laid) : negativeSurface(laid)}`;
   });
 }

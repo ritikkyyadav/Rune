@@ -26,6 +26,33 @@ export type Key =
   | { type: "paste-start" }
   | { type: "paste-end" };
 
+/**
+ * The wheel, seen through the terminal's alternate-scroll mode (DEC 1007): a
+ * notch or a trackpad flick lands as several identical arrow keys in ONE read
+ * -- three per notch on most terminals, one per line on a trackpad. A finger
+ * on a key never does that: key repeat delivers one arrow per read. So a chunk
+ * that is nothing but two or more arrows all pointing one way is the wheel,
+ * and the count is how far it turned. Returns +n for n ups, -n for n downs,
+ * 0 for anything else (a lone arrow included -- that one is the keyboard's).
+ */
+export function arrowRun(keys: readonly Key[]): number {
+  if (keys.length < 2) return 0;
+  const first = keys[0]!.type;
+  if (first !== "up" && first !== "down") return 0;
+  for (const k of keys) if (k.type !== first) return 0;
+  return first === "up" ? keys.length : -keys.length;
+}
+
+// SS3 finals -> key: the application-mode twins of the CSI arrows.
+const SS3_KEYS: Record<string, Key> = {
+  A: { type: "up" },
+  B: { type: "down" },
+  C: { type: "right" },
+  D: { type: "left" },
+  H: { type: "home" },
+  F: { type: "end" },
+};
+
 const CSI = "\x1b[";
 
 // Recognised CSI escape sequences -> key (the part after ESC[).
@@ -131,6 +158,20 @@ export function parseKeys(data: string): Key[] {
         // Unknown CSI -- skip it whole.
         i = j + 1;
         continue;
+      }
+      // -- SS3 (ESC O x): the application-cursor form of the arrows/Home/End --
+      // Warp sends the wheel this way under alternate-scroll mode (ESC O A per
+      // line), and any terminal does once DECCKM is on. Unparsed, the ESC read
+      // as Escape and "OA" was typed into the composer on every scroll notch.
+      // F1-F4 (P Q R S) share the prefix and are consumed silently.
+      if (data[i + 1] === "O" && i + 2 < data.length) {
+        const fin = data[i + 2]!;
+        const key = SS3_KEYS[fin];
+        if (key) keys.push(key);
+        if (key || "PQRS".includes(fin)) {
+          i += 3;
+          continue;
+        }
       }
       // Lone ESC (or ESC + non-CSI). If it's the last byte, it's Escape.
       if (i === data.length - 1) {

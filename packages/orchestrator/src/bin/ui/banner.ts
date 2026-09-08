@@ -16,12 +16,16 @@
 
 import * as os from "os";
 import { execFile, execFileSync } from "child_process";
-import { bold, text, brand } from "./theme";
-import { glyph } from "./glyphs";
-import { header as flowHeader } from "./flow";
-import { PRODUCT_NAME } from "./brand";
+import { bold, text, brand, dim, faint } from "./theme";
+import { glyph, RUNE_LOGO, TERMINAL_GLYPH_MODE } from "./glyphs";
+import { header as flowHeader, MARK } from "./flow";
+import { PRODUCT_NAME, PRODUCT_VERSION } from "./brand";
+import { visLen } from "./render";
 
 /** Explicit text presentation. Never use the coloured emoji rune. */
+// The small process mark (the "thinking" pulse, the sessions header). NOT a
+// gear: the founder wants the identity to be the wordmark alone, no cog. A
+// quiet diamond in the accent reads as a mark without pretending to be a logo.
 export const RUNE_MARK = glyph("phase");
 
 /** The supplied Rune mark has exactly nine teeth. */
@@ -177,6 +181,39 @@ function workspaceIsLinkedWorktree(workspace: string): boolean {
 /** Compact lockup, still used by a few one-line notices. */
 export function wordmark(): string {
   return `${brand(RUNE_MARK)} ${bold(text(PRODUCT_NAME))}`;
+}
+
+/**
+ * The masthead: the Savoir gear drawn in blue half-blocks, the wordmark and a
+ * line of orientation set beside it. Printed ONCE at session start where Claude
+ * Code prints its creature -- it scrolls up with the conversation, so it costs
+ * the working area nothing, and the compact header stays pinned below it. On a
+ * seven-bit terminal the gear cannot be drawn, so the wordmark stands alone.
+ */
+export function renderMasthead(opts: { version?: string; workspace?: string } = {}): string {
+  const version = opts.version ?? PRODUCT_VERSION;
+  const where = opts.workspace ? shortPath(opts.workspace) : "";
+
+  if (TERMINAL_GLYPH_MODE === "ascii") {
+    const tail = where
+      ? `\n${MARK}${dim(where)}  ${faint(`v${version}`)}`
+      : `  ${faint(`v${version}`)}`;
+    return `\n${MARK}${wordmark()}${where ? tail : ` ${faint(`v${version}`)}`}\n`;
+  }
+
+  const gearW = Math.max(...RUNE_LOGO.map((line) => visLen(line)));
+  const mid = Math.floor(RUNE_LOGO.length / 2); // 3 on a seven-row gear
+  const beside: Record<number, string> = {
+    [mid - 1]: bold(brand("R U N E")),
+    [mid]: dim("the terminal coding agent"),
+    [mid + 1]: where ? `${dim(where)}  ${faint(`v${version}`)}` : faint(`v${version}`),
+  };
+  const GAP = "   ";
+  const rows = RUNE_LOGO.map((line, index) => {
+    const gear = brand(line.padEnd(gearW));
+    return `${MARK}${gear}${GAP}${beside[index] ?? ""}`;
+  });
+  return ["", ...rows, ""].join("\n");
 }
 
 export function renderBanner(opts: BannerOptions): string {

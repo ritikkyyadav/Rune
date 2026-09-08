@@ -157,6 +157,9 @@ describe("ui/banner", () => {
   });
 
   it("uses a text glyph rather than an emoji-font rune in the compact wordmark", () => {
+    // The compact notice mark is the quiet phase diamond, one text cell. The
+    // identity is the wordmark alone (no gear); this small mark only prefixes
+    // one-line notices, not the header logo.
     expect(stripAnsi(wordmark())).toBe(`${glyph("phase")} Rune`);
   });
 });

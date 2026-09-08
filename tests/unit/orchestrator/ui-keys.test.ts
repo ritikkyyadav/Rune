@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { parseKeys, type Key } from "../../../packages/orchestrator/src/bin/ui/keys";
+import { arrowRun, parseKeys, type Key } from "../../../packages/orchestrator/src/bin/ui/keys";
 
 const types = (data: string) => parseKeys(data).map((k) => k.type);
 
@@ -101,5 +101,47 @@ describe("OSC replies in the key stream", () => {
     expect(types("\x1b]11;rgb:1e1e/20")).toEqual([]);
     // …while a lone ESC at the end of a chunk still means Escape.
     expect(types("\x1b")).toEqual(["esc"]);
+  });
+});
+
+// The wheel under alternate-scroll mode: a burst of one-way arrows in a single
+// read is the wheel, and its length is the distance. One arrow is a keypress.
+describe("ui/keys arrowRun", () => {
+  it("reads a one-way burst as the wheel, signed by direction", () => {
+    expect(arrowRun(parseKeys("\x1b[A\x1b[A\x1b[A"))).toBe(3);
+    expect(arrowRun(parseKeys("\x1b[B\x1b[B"))).toBe(-2);
+  });
+  it("leaves a lone arrow to the keyboard", () => {
+    expect(arrowRun(parseKeys("\x1b[A"))).toBe(0);
+    expect(arrowRun([])).toBe(0);
+  });
+  it("is not fooled by mixed or non-arrow chunks", () => {
+    expect(arrowRun(parseKeys("\x1b[A\x1b[B"))).toBe(0);
+    expect(arrowRun(parseKeys("\x1b[A\x1b[A" + "x"))).toBe(0);
+    expect(arrowRun(parseKeys("\x1b[C\x1b[C"))).toBe(0);
+  });
+});
+
+// The application-cursor (SS3) arrows. Warp delivers the wheel as ESC O A
+// under alternate-scroll mode; before this branch that read as Esc + "OA".
+describe("ui/keys SS3 arrows", () => {
+  it("parses ESC O A-D/H/F as the same keys as their CSI twins", () => {
+    expect(types("\x1bOA\x1bOB\x1bOC\x1bOD\x1bOH\x1bOF")).toEqual([
+      "up",
+      "down",
+      "right",
+      "left",
+      "home",
+      "end",
+    ]);
+  });
+  it("reads a Warp wheel notch as an arrow burst, never as typed text", () => {
+    const keys = parseKeys("\x1bOA\x1bOA\x1bOA");
+    expect(keys.map((k) => k.type)).toEqual(["up", "up", "up"]);
+    expect(arrowRun(keys)).toBe(3);
+  });
+  it("swallows F1-F4 and still treats a bare ESC O as Escape + text", () => {
+    expect(types("\x1bOP")).toEqual([]);
+    expect(types("\x1bOx")).toEqual(["esc", "char", "char"]);
   });
 });

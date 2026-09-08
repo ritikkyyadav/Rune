@@ -90,7 +90,10 @@ describe("turn v2 metadata", () => {
     h.turn.finish();
     const out = h.output();
     expect(out).toContain("provider degraded -- rerouted mid-turn");
-    expect(out).toContain("1 model switch");
+    // The banner is the row; the "1 model switch" receipt strip after the
+    // answer is gone with the rest of the ceremony (a summary prints only
+    // with news about the tree).
+    expect(out).not.toContain("model switch");
   });
 
   test("one compaction event → exactly one compacted receipt", () => {
@@ -108,15 +111,18 @@ describe("turn v2 metadata", () => {
     expect(h.output()).toContain("82% -> 51%");
   });
 
-  test("checkpoint receipt lands in the summary strip with the /rewind hint", () => {
+  test("a checkpoint is never a transcript row: the summary carries news, not receipts", () => {
     const h = harness();
     h.turn.onEvent(editEnd("src/auth/session.ts"));
     h.turn.onEvent({ type: "checkpoint_saved", runId: "s1-123", version: 2, turnCount: 3 });
     h.turn.onEvent({ type: "turn_complete", stopReason: "end_turn", totalTurns: 3 });
     h.turn.finish();
     const out = h.output();
+    // An unchecked edit IS news, so the changed list and its warning print.
     expect(out).toContain("│ changed  1 file");
-    expect(out).toContain("/rewind to roll back");
+    expect(out).toContain("no check was run on this change");
+    // The /rewind affordance lives in the footer and /help, not after every answer.
+    expect(out).not.toContain("/rewind");
   });
 
   test("no checkpoint → no checkpoint line, and no invented tokens", () => {

@@ -20,6 +20,7 @@ import {
 } from "../../../packages/orchestrator/src/session-replay";
 import { SessionManager } from "../../../packages/shared/src/session";
 import type { SessionEvent } from "../../../packages/shared/src/session";
+import type { Message } from "../../../packages/llm-gateway/src/types";
 import { rmTemp } from "../../helpers/tmp";
 
 type Ev = { seq: number; event: SessionEvent };
@@ -34,6 +35,99 @@ function firstText(content: { type: string; text?: string }[]): string {
 }
 
 describe("eventsToMessages — compaction replay", () => {
+  test("automatic checkpoints retain evicted results and exact reasoning after restart", () => {
+    const workingSet: Message[] = [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "[Conversation summary]\nBuild the parser. Preserve comments." },
+        ],
+      },
+      {
+        role: "assistant",
+        content: [
+          { type: "redacted_thinking", provider: "codex", data: "opaque-signature" },
+          {
+            type: "tool_use",
+            toolCallId: "read",
+            toolName: "read_file",
+            toolInput: { path: "parser.ts" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool_result",
+            toolCallId: "read",
+            toolResultContent: "[evicted result; parser.ts]",
+          },
+        ],
+      },
+    ];
+    const events = [
+      ev(1, "user_msg", { content: "very large original transcript".repeat(1000) }),
+      ev(2, "auto_compaction", { version: 1, workingSet }),
+      ev(3, "assistant_msg", { content: "Completed the parser." }),
+      ev(4, "user_msg", { content: "Add TOML support." }),
+    ];
+    const replay = eventsToMessages(JSON.parse(JSON.stringify(events)));
+    expect(replay.slice(0, 3)).toEqual(workingSet);
+    expect(replay).toHaveLength(5);
+    expect(JSON.stringify(replay)).not.toContain("very large original transcript");
+    replay[0]!.content.push({ type: "text", text: "mutated view" });
+    expect(workingSet[0]!.content).toHaveLength(1);
+    // Rewind before the checkpoint still has the original audit history.
+    expect(JSON.stringify(eventsToMessages(events.slice(0, 1)))).toContain(
+      "very large original transcript",
+    );
+  });
+
+  test("malformed and legacy automatic checkpoints do not erase recoverable history", () => {
+    for (const payload of [
+      { tokensBefore: 100, tokensAfter: 50 },
+      { version: 1, workingSet: [] },
+      { version: 1, workingSet: [{ role: "assistant", content: [{ type: "redacted_thinking" }] }] },
+      {
+        version: 2,
+        workingSet: [{ role: "user", content: [{ type: "text", text: "unknown format" }] }],
+      },
+    ]) {
+      expect(
+        eventsToMessages([
+          ev(1, "user_msg", { content: "keep me" }),
+          ev(2, "auto_compaction", payload),
+        ]),
+      ).toEqual([{ role: "user", content: [{ type: "text", text: "keep me" }] }]);
+    }
+  });
+
+  test("interrupted calls at the checkpoint tail are repaired and later compactions replace it", () => {
+    const checkpoint = ev(2, "auto_compaction", {
+      version: 1,
+      workingSet: [
+        {
+          role: "assistant",
+          content: [
+            { type: "tool_use", toolCallId: "pending", toolName: "read_file", toolInput: {} },
+          ],
+        },
+      ],
+    });
+    const events = [
+      ev(1, "user_msg", { content: "old" }),
+      checkpoint,
+      ev(3, "user_msg", { content: "continue" }),
+    ];
+    expect(eventsToMessages(events)[1]!.content[0]).toMatchObject({
+      type: "tool_result",
+      toolCallId: "pending",
+      isError: true,
+    });
+    events.push(ev(4, "compaction", { summary: "latest summary" }));
+    expect(eventsToMessages(events)).toHaveLength(1);
+  });
   test("repairs a historical tool call left open by an aborted run", () => {
     const events: Ev[] = [
       ev(1, "user_msg", { content: "inspect x" }),
