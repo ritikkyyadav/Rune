@@ -127,7 +127,28 @@ flag, and no way to start one without a token.
 | Credential writes | `save_settings`, login and key writes are **refused over a non-loopback link** unless the token was minted with `--allow-remote-settings`                      |
 | Transport         | **Plaintext `ws://`.** Anyone who can see the traffic sees the token and the session                                                                           |
 | Session isolation | One engine-host process per session; a wedged session cannot take the server with it                                                                           |
+| Host hop          | Unix socket (POSIX, filesystem-protected) or loopback TCP with a per-host token (Windows) — see below                                                          |
 | Shutdown          | Graceful — the front door closes and running session hosts keep going, as `rune detach` does                                                                   |
+
+### Reaching a session host (and why Windows is different)
+
+The front door above is the WebSocket. Behind it, the server talks to each session's engine host
+over a second, private hop, and that hop is not the same thing on every platform. On macOS and
+Linux it is a **unix domain socket** under `~/.rune/run`, protected by the filesystem: another
+local user cannot open it. Windows cannot bind one, so since P13.2 a Windows host listens on
+**127.0.0.1 with an ephemeral port** and writes the same path as a 0600 JSON file naming that port
+and a **token minted per host** — 32 random bytes, base64url, the same shape as the server's own
+door key.
+
+That token is not a nicety, it is the replacement for the file permissions the unix socket had: a
+loopback port has none, and **any process on the machine, under any account, can connect to it**.
+So the host serves nothing at all — not a `ready` frame, not a status, not an engine — until a
+connection's first line presents the token, compared in constant time. A connection that presents
+the wrong one, or that skips the handshake and simply issues a valid command, is closed without a
+reply; a connection that authenticates within neither is dropped after ten seconds; and anything
+that is not loopback is refused outright. The residual exposure is the file: a local process
+running **as the same user** can read the rendezvous file and drive that session, which is the same
+exposure that user already has over `~/.rune/serve.json` and the credential store.
 
 **The token never goes in a query string.** A bearer token that grants remote code execution must
 not appear in an access log, a proxy log or a `Referer` header on the way somewhere else, and

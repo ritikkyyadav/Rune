@@ -62,6 +62,14 @@ export class BlackboxStore {
   constructor(dbPath: string) {
     if (dbPath !== ":memory:") mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
+    // Before anything that takes a lock, including the WAL pragma below.
+    // `rune serve` runs one engine host PER SESSION against this one shared
+    // file, so a second host booting while the first is mid-write is the
+    // normal case, not a rare one. The session store has always waited
+    // (`PRAGMA busy_timeout = 5000`); this did not, and an unwaited
+    // SQLITE_BUSY here throws out of a constructor and takes the whole host
+    // down before it can listen. bun:sqlite's default is not to wait at all.
+    this.db.exec("PRAGMA busy_timeout = 5000;");
     this.db.exec("PRAGMA journal_mode = WAL;");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS incidents (

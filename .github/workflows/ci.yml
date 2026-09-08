@@ -2,7 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # `pull_request.branches` filters the BASE branch, so a lane branch pushed
+    # without a PR open against one of those bases used to run NOTHING — and a
+    # lane exists precisely to be proved by CI before it is merged.
+    branches: [main, "lane/**"]
   pull_request:
     branches: [main, gear/phase-0-stabilize, "lane/**"]
   schedule:
@@ -175,6 +178,20 @@ jobs:
         # its identical siblings passed at 1.2s. Raised, not removed: a hung
         # test still fails, thirty seconds later.
         run: bun test tests/unit/ --timeout 30000
+      # ── The session host transport, on the platform that could not dial it ──
+      # `rune serve` spawns one engine host per session and talks to it over a
+      # socket, and until P13.2 that socket was a unix domain socket on every
+      # platform — which Windows cannot bind. It reached a release because the
+      # only gate that ran it on Windows was packaged-e2e, behind a cargo build
+      # and a `bun build --compile`; from source it costs seconds, so it runs
+      # here too, early, where a Windows regression is cheapest to see.
+      - name: rune serve --check (from source)
+        shell: bash
+        run: |
+          set -euo pipefail
+          export RUNE_HOME="$RUNNER_TEMP/rune-home-serve"
+          mkdir -p "$RUNE_HOME"
+          bun packages/orchestrator/src/bin/rune-cli.ts serve --check
       - name: PowerShell installer parses and passes PSScriptAnalyzer
         shell: pwsh
         run: |
@@ -276,6 +293,14 @@ jobs:
           export RUNE_HOME="$RUNNER_TEMP/rune-home-serve"
           mkdir -p "$RUNE_HOME"
           "$out" serve --check
+          # And again over the WINDOWS transport, wherever this is running.
+          # The Windows host transport (loopback TCP + a per-host token) was
+          # reachable only from Windows until P13.2, which is exactly how it
+          # shipped broken; forcing it here means a Linux runner proves it too,
+          # and what stays Windows-only is whether Bun binds a loopback port.
+          export RUNE_HOME="$RUNNER_TEMP/rune-home-serve-tcp"
+          mkdir -p "$RUNE_HOME"
+          RUNE_HOST_TRANSPORT=tcp "$out" serve --check
 
   # ── Stage 4e: Script + Rust supply-chain hygiene ──
   shellcheck:
