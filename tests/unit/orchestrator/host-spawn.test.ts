@@ -11,6 +11,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 
 import {
   currentContext,
@@ -68,9 +69,13 @@ describe("isCompiled", () => {
 
 describe("hostSpawnArgv", () => {
   test("from source: bun runs the script on disk", () => {
+    // The script path is joined onto the caller's own directory, so it wears
+    // the host's separator — on Windows the real `import.meta.dir` is
+    // `C:\…\src\bin` and the spawn must carry `C:\…\src\bin\engine-host.ts`.
+    // Assert the join, not one platform's spelling of it.
     expect(hostSpawnArgv(SOURCE, ["--socket", "/tmp/a.sock"])).toEqual([
       "bun",
-      "/home/dev/Alan/packages/orchestrator/src/bin/engine-host.ts",
+      join(SOURCE.moduleDir, "engine-host.ts"),
       "--socket",
       "/tmp/a.sock",
     ]);

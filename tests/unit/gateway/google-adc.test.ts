@@ -13,6 +13,7 @@
  */
 import { describe, test, expect } from "bun:test";
 import { createVerify, generateKeyPairSync } from "node:crypto";
+import { join } from "node:path";
 import {
   buildServiceAccountJwt,
   createGoogleTokenResolver,
@@ -46,10 +47,19 @@ const AUTHORIZED_USER = JSON.stringify({
   quota_project_id: "rune-quota-project",
 });
 
+/**
+ * Serve a key file by name; anything else is "missing".
+ *
+ * `gcloudAdcPath` builds its path with `join`, so on Windows it asks for
+ * `\home\dev\.config\gcloud\application_default_credentials.json` and a
+ * `/application_default_credentials.json` suffix match would answer ENOENT.
+ * Match on the last SEGMENT, which is the same question on both separators.
+ */
 function files(map: Record<string, string>) {
   return async (path: string) => {
-    for (const [suffix, body] of Object.entries(map)) {
-      if (path.endsWith(suffix)) return body;
+    const name = path.split(/[\\/]/).pop() ?? path;
+    for (const [key, body] of Object.entries(map)) {
+      if (name === key) return body;
     }
     throw new Error("ENOENT");
   };
@@ -134,7 +144,7 @@ describe("rung 1: GOOGLE_APPLICATION_CREDENTIALS", () => {
     let seen: { url: string; body: string } | null = null;
     const token = await resolveGoogleAdc({
       env: { GOOGLE_APPLICATION_CREDENTIALS: "/keys/sa.json" },
-      readFileImpl: files({ "/keys/sa.json": SERVICE_ACCOUNT }),
+      readFileImpl: files({ "sa.json": SERVICE_ACCOUNT }),
       fetchImpl: tokenEndpoint((url, body) => {
         seen = { url, body };
       }),
@@ -161,7 +171,7 @@ describe("rung 1: GOOGLE_APPLICATION_CREDENTIALS", () => {
     let body = "";
     const token = await resolveGoogleAdc({
       env: { GOOGLE_APPLICATION_CREDENTIALS: "/keys/user.json" },
-      readFileImpl: files({ "/keys/user.json": AUTHORIZED_USER }),
+      readFileImpl: files({ "user.json": AUTHORIZED_USER }),
       fetchImpl: tokenEndpoint((_u, b) => {
         body = b;
       }),
@@ -174,7 +184,7 @@ describe("rung 1: GOOGLE_APPLICATION_CREDENTIALS", () => {
   test("a malformed key file falls through instead of throwing", async () => {
     const token = await resolveGoogleAdc({
       env: { GOOGLE_APPLICATION_CREDENTIALS: "/keys/broken.json" },
-      readFileImpl: files({ "/keys/broken.json": "{ not json" }),
+      readFileImpl: files({ "broken.json": "{ not json" }),
       fetchImpl: tokenEndpoint(),
     });
     expect(token).toBeNull();
@@ -184,7 +194,7 @@ describe("rung 1: GOOGLE_APPLICATION_CREDENTIALS", () => {
     const token = await resolveGoogleAdc({
       env: { GOOGLE_APPLICATION_CREDENTIALS: "/keys/bad-pem.json" },
       readFileImpl: files({
-        "/keys/bad-pem.json": JSON.stringify({
+        "bad-pem.json": JSON.stringify({
           type: "service_account",
           client_email: "x@y.iam.gserviceaccount.com",
           private_key: "-----BEGIN PRIVATE KEY-----\nnope\n-----END PRIVATE KEY-----\n",
@@ -201,15 +211,18 @@ describe("rung 2: the gcloud ADC file", () => {
     const token = await resolveGoogleAdc({
       env: {},
       home: "/home/dev",
-      readFileImpl: files({ "/application_default_credentials.json": AUTHORIZED_USER }),
+      readFileImpl: files({ "application_default_credentials.json": AUTHORIZED_USER }),
       fetchImpl: tokenEndpoint(),
     });
     expect(token).toMatchObject({ source: "gcloud", detail: "gcloud ADC" });
   });
 
   test("CLOUDSDK_CONFIG relocates it", () => {
+    // The path is joined, so it wears the host's separator: gcloud on Windows
+    // reads `C:\…\application_default_credentials.json`. Assert the join, not
+    // one platform's spelling of it.
     expect(gcloudAdcPath({ env: { CLOUDSDK_CONFIG: "/custom/gcloud" } })).toBe(
-      "/custom/gcloud/application_default_credentials.json",
+      join("/custom/gcloud", "application_default_credentials.json"),
     );
   });
 });
@@ -269,7 +282,7 @@ describe("project resolution", () => {
     expect(
       await resolveGoogleProject({
         env: { GOOGLE_APPLICATION_CREDENTIALS: "/keys/sa.json" },
-        readFileImpl: files({ "/keys/sa.json": SERVICE_ACCOUNT }),
+        readFileImpl: files({ "sa.json": SERVICE_ACCOUNT }),
         fetchImpl: tokenEndpoint(),
       }),
     ).toBe("rune-test-project");
@@ -304,7 +317,7 @@ describe("the cached resolver", () => {
     let clock = 1_800_000_000_000;
     const resolve = createGoogleTokenResolver({
       env: { GOOGLE_APPLICATION_CREDENTIALS: "/keys/sa.json" },
-      readFileImpl: files({ "/keys/sa.json": SERVICE_ACCOUNT }),
+      readFileImpl: files({ "sa.json": SERVICE_ACCOUNT }),
       fetchImpl: (async () => {
         exchanges++;
         return new Response(JSON.stringify({ access_token: `t${exchanges}`, expires_in: 3599 }), {
