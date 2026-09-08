@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import { getRuneHome } from "@rune/shared";
 import type { IncidentRecord } from "@rune/shared";
 import { BlackboxStore } from "@rune/telemetry";
+import { mergedServers, preflightServer } from "@rune/tool-registry";
 import { accent, danger, dim, faint, info, ok, text, warn } from "./ui/theme";
 import { formatAutoSafetyMetrics, readAutoSafetyMetrics } from "../auto-metrics";
 import { providerRouteLines, readProviderRouteReport } from "../provider-health-report";
@@ -153,6 +154,7 @@ export function runDoctor(): void {
   doctorProviderRoutes();
 
   doctorToolchain();
+  doctorMcp();
 
   // The recorder's own failures land here — this file should not exist.
   if (existsSync(LAST_RESORT())) {
@@ -186,6 +188,42 @@ function doctorProviderRoutes(): void {
       line.level === "ok" ? ok("✓") : line.level === "warn" ? warn("!") : danger(glyph("failure"));
     console.log(`  ${mark} ${line.level === "ok" ? line.text : text(line.text)}`);
     for (const sub of line.sub) console.log(`    ${faint(sub)}`);
+  }
+}
+
+// ─── connectors, on paper ───
+//
+// One line, and it never starts a server: `rune doctor` is the page someone
+// reads while already annoyed, and spawning half a dozen npx wrappers to fill
+// in a status would cost it the one property it has. What IS free is reading
+// the config and checking that each command and path exists — which is exactly
+// the failure that has actually happened here. The live check is one command
+// away and this line says so.
+
+function doctorMcp(): void {
+  let servers: ReturnType<typeof mergedServers>["servers"];
+  try {
+    servers = mergedServers(process.cwd()).servers;
+  } catch {
+    return;
+  }
+  const active = servers.filter((s) => s.config.enabled !== false);
+  if (active.length === 0) {
+    console.log(`  ${dim("mcp: no connectors configured")} ${faint("— rune mcp add notion")}`);
+    return;
+  }
+  const broken = active.flatMap((s) => preflightServer(s.name, s.config));
+  if (broken.length === 0) {
+    console.log(
+      `  ${ok("✓")} mcp: ${active.length} connector${active.length === 1 ? "" : "s"} configured, none misconfigured ${faint("— live health: rune mcp doctor")}`,
+    );
+    return;
+  }
+  console.log(
+    `  ${danger(glyph("failure"))} mcp: ${broken.length} misconfigured — ${broken[0]!.problem} ${faint(`(${broken[0]!.fix})`)}`,
+  );
+  for (const p of broken.slice(1)) {
+    console.log(`    ${faint(`${p.problem} — ${p.fix}`)}`);
   }
 }
 
