@@ -39,6 +39,7 @@ import type {
   TranscriptLine,
 } from "../../engine";
 import { findCommand, type SlashCommand } from "../../commands";
+import { discoverUserSkills, ORIGIN_LABEL } from "../../skills-user";
 import {
   hasStoredCredential,
   openCredentialStore,
@@ -2542,18 +2543,39 @@ class Tui {
           return true;
         }
         const catalog = await engine.listSkills();
+        // The loader files both `.rune/skills` and `~/.rune/skills` under the
+        // synthetic "user" plugin; a listing has to say which of the two, and
+        // what each skill is for, or it cannot be acted on.
+        const origins = new Map(
+          discoverUserSkills(this.ctx.workspaceRoot).map(
+            (skill) => [skill.name, ORIGIN_LABEL[skill.origin]] as const,
+          ),
+        );
+        const groupRows = (plugin: (typeof catalog.plugins)[number]): string[] => {
+          const head = `    ${ok(glyph("live"))} ${text(plugin.plugin)} ${muted(`(${plugin.skills.length})`)}`;
+          if (plugin.plugin !== "user") {
+            return [head, `      ${faint(plugin.skills.map((skill) => skill.name).join(", "))}`];
+          }
+          return [
+            head,
+            ...plugin.skills.flatMap((skill) => {
+              const from = origins.get(skill.name);
+              return [
+                `      ${info("/" + skill.name)}${from ? ` ${muted(from)}` : ""}`,
+                ...(skill.description ? [`        ${faint(skill.description)}`] : []),
+              ];
+            }),
+          ];
+        };
         this.print(
           [
             `  ${bold(text("Skills"))} ${muted(`(${catalog.total} across ${catalog.plugins.length} domains)`)}`,
             ...(catalog.total
-              ? catalog.plugins.flatMap((plugin) => [
-                  `    ${ok(glyph("live"))} ${text(plugin.plugin)} ${muted(`(${plugin.skills.length})`)}`,
-                  `      ${faint(plugin.skills.map((skill) => skill.name).join(", "))}`,
-                ])
+              ? catalog.plugins.flatMap(groupRows)
               : [
-                  `    ${muted("None found. Add skills under ")}${info("skills/")}${muted(" or ")}${info(".rune/skills/")}${muted(".")}`,
+                  `    ${muted("None found. Add one with ")}${info("rune skill add <path>")}${muted(".")}`,
                 ]),
-            `  ${faint("Skills load automatically when a request matches | search with /skills <keywords>")}`,
+            `  ${faint("Skills load automatically when a request matches | run one with /<name> | search with /skills <keywords>")}`,
           ].join("\n"),
         );
         return true;

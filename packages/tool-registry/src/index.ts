@@ -134,7 +134,7 @@ export type {
   AuthorizationServerMetadata,
   BrowserServerOptions,
 } from "./mcp/index";
-export { SkillLoader, createSkillTool } from "./skills/index";
+export { SkillLoader, createSkillTool, splitFrontmatter, substituteArgs } from "./skills/index";
 export type {
   LoadedSkill,
   PluginCatalogEntry,
