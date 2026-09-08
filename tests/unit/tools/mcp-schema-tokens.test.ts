@@ -143,16 +143,44 @@ describe("deferred tool loading — schema tokens per request", () => {
     const catalog = registry.toLlmTools().find((tool) => tool.name === LOAD_TOOLS_TOOL)!;
     for (const name of ["interactive_dashboard", "update_config"])
       expect(catalog.description).toContain(name);
+    // The core set — read / write / edit / bash / search, the plan tools, the
+    // clarify tool and the read-only scout — is never deferred: an extra
+    // round-trip on nearly every turn costs far more than the schema does.
     for (const name of [
       "read_file",
+      "read_many",
+      "list_dir",
+      "write_file",
       "edit_file",
+      "multi_edit",
       "bash",
+      "grep",
+      "glob",
       "task",
-      "worker",
       "todo_write",
+      "read_back",
+      "record_evidence",
       "ask_user",
+      "web_search",
     ])
-      expect(deferredByDefault(name)).toBe(false);
+      expect(deferredByDefault(name), `${name} is core and must stay eager`).toBe(false);
+    // Everything outside it starts as a catalog line (P13.1). `worker` is the
+    // write-capable delegate: read-only fan-out via `task` still costs nothing,
+    // and a parallel BUILD is a decision worth one load_tools call.
+    for (const name of [
+      "worker",
+      "research",
+      "workflow",
+      "loop_control",
+      "compact_context",
+      "web_fetch",
+      "lsp",
+      "symbol_search",
+      "search_code",
+      "note_hypothesis",
+      "record_decision",
+    ])
+      expect(deferredByDefault(name), `${name} should ship as a catalog line`).toBe(true);
 
     const loaded = await loader.execute({
       toolName: LOAD_TOOLS_TOOL,

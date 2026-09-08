@@ -114,6 +114,36 @@ export class ToolRegistry {
   }
 
   /**
+   * Promote every deferred tool whose NAME appears in `text` (P13.1).
+   *
+   * "Core, or used or named in the last N turns" is the advertisement rule;
+   * this is the "named" half. The agent loop feeds it each turn's new text —
+   * the user's request, harness notes, tool results — so a request that says
+   * "use web_fetch on this URL", or a doctrine line that names
+   * `record_decision`, arrives with the schema already in hand instead of
+   * costing a `load_tools` round-trip.
+   *
+   * Warming is STICKY, and that is the point: N is effectively "the rest of
+   * the session". Un-warming a tool would shrink the advertised prefix
+   * mid-run, and a prefix that churns is a prefix that never caches — the
+   * exact cost this lane exists to remove. The set therefore only ever grows,
+   * and it grows only at moments of real evidence.
+   *
+   * Returns the names it promoted, for the report.
+   */
+  warmFromText(text: string): string[] {
+    if (!this.deferralEnabled || !text) return [];
+    const promoted: string[] = [];
+    for (const name of this.deferredNames) {
+      if (this.activatedNames.has(name)) continue;
+      if (!text.includes(name)) continue;
+      this.activatedNames.add(name);
+      promoted.push(name);
+    }
+    return promoted;
+  }
+
+  /**
    * Promote deferred tools to full advertisement for the rest of the run.
    * Returns the full definitions of what was loaded, and the names that matched
    * nothing so the caller can say so rather than failing silently.
@@ -241,6 +271,12 @@ export class ToolRegistry {
         durationMs: 0,
       };
     }
+
+    // "Used" is the other half of the advertisement rule (P13.1). A model that
+    // calls a catalogued tool from its one-line summary has proved the tool is
+    // in play; from the next request it carries the full schema, so the second
+    // call is made against the real argument list rather than a guess.
+    if (this.isDeferred(input.toolName)) this.activatedNames.add(input.toolName);
 
     // Check circuit breaker
     const circuit = this.circuits.get(input.toolName)!;
