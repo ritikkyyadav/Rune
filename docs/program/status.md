@@ -1,5 +1,35 @@
 # Program status
 
+**2026-09-08, Phase 12 — merged, gated, installed, run live.** The five lanes of
+[12-ship-zero-spend.md](12-ship-zero-spend.md) landed on `gear/phase-0-stabilize`: P12.4 at
+`5db254d`, P12.3 at `b178922`, P12.5 at `4e84c4f`, P12.2 at `dd1acb2` (one conflict, the doctor
+command, where the provider-health and MCP sections met; both kept), P12.1 at `25c7268`. Final gates
+with the outer sandbox off: unit **4,199 / 0**, integration **129 / 0** (5 skips are live cloud
+providers), mock evals **63 / 63** with governance at 0.26 completions per task, safety corpus
+**P 90.0 / R 89.1**. Installed `v0.4.0-dev+d0c33e5` (checksum `54a3c6e0…`); `rune doctor` and
+`rune tools-smoke` green; one headless task on the free ollama.com route completed and its tests pass
+outside the agent — [docs/evidence/live-run-20260908.md](../evidence/live-run-20260908.md).
+
+Three things the gate found that the lanes' own reports had read differently:
+
+- **Two false regressions.** A mock-eval score of 25 / 63 and five unit-suite timeouts were the
+  outer sandbox (rune-tools' Seatbelt cannot nest) and three suites running at once; idle and
+  unsandboxed, both are clean. The safety corpus at P 65.0 was the eval process never probing
+  sandbox capability, so the 2026-09-07 policy routed every writable shell command to the
+  reviewer that `--offline` kills. `5eab2da`: the harness states the machine it models, and
+  `--uncontained` measures the host-shell path on purpose.
+- **One real defect.** `[routing] helper` meant `auto` when unset, and `auto` crosses providers: an
+  integration test's compaction summary was written by a live free model because the engine's
+  gateway also held this machine's credentials. `d0c33e5`: unset is off; `auto` is opted into.
+- **The economics number.** On the live run, 84 KB per prompt: doctrine 46%, tool schemas 50%,
+  conversation 4%, cache read 0% on that route. The fixed overhead is the next target, and it is
+  measured now.
+
+Open for the founder: make the repository public (GitHub Actions is free there; the release
+workflow cannot run until then), then confirm CI on the `v0.4.0` tag and the `rune-*` assets. Not
+done in this phase: the GitHub MCP connector and vendor OAuth (no credentials), long-horizon live
+validation, the helper route's live effect.
+
 **2026-09-08, Phase 12 — P12.4 (onboarding, a truthful README, 0.4.0 prep).** Landed on
 `lane/p12.4-onboarding-readme-040` off `6452981`. The main session extends this entry with the
 other four lanes.
