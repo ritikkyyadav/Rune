@@ -149,6 +149,48 @@ describe("summarizeRunEconomics", () => {
     expect(e.composition!.total / e.composition!.measured).toBe(1000);
   });
 
+  test("the fixed overhead is reported first-to-last, not as an average", () => {
+    // The shape a run actually has: a bigger opening prefix (the opening
+    // doctrine), then a smaller one — and a tool loaded mid-run growing the
+    // schema back. An average over the three describes no request that was
+    // ever sent, which is why both ends are carried.
+    const at = (doctrine: number, toolSchemas: number) => ({
+      doctrine,
+      planLedger: 0,
+      taskState: 0,
+      toolSchemas,
+      conversation: 100,
+      total: doctrine + toolSchemas + 100,
+    });
+    const e = summarizeRunEconomics([
+      entry({ role: "primary", composition: at(400, 200) }),
+      entry({ role: "primary", composition: at(300, 200) }),
+      // Governance measures nothing and must not be mistaken for the last call.
+      entry({ role: "classifier" }),
+      entry({ role: "primary", composition: at(300, 250) }),
+    ]);
+    expect(e.composition!.fixedFirst).toBe(600);
+    expect(e.composition!.fixedLast).toBe(550);
+  });
+
+  test("one measured completion reports the same value at both ends", () => {
+    const e = summarizeRunEconomics([
+      entry({
+        role: "primary",
+        composition: {
+          doctrine: 10,
+          planLedger: 0,
+          taskState: 0,
+          toolSchemas: 5,
+          conversation: 1,
+          total: 16,
+        },
+      }),
+    ]);
+    expect(e.composition!.fixedFirst).toBe(15);
+    expect(e.composition!.fixedLast).toBe(15);
+  });
+
   test("an unpriced model is named so the list estimate is not read as complete", () => {
     const e = summarizeRunEconomics([entry({ model: "some-model-nobody-priced" })]);
     expect(e.unpricedModels).toEqual(["some-model-nobody-priced"]);

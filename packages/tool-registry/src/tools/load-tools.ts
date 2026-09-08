@@ -41,6 +41,40 @@ export const DEFERRED_BUILTINS = new Set<string>([
   "n8n_trigger",
   "interactive_dashboard",
   "update_config",
+  // ─── P13.1: everything outside the core coding set ───
+  //
+  // The 2026-09-08 live run measured 41.8 KB of tool schemas on every one of
+  // twelve completions — 50% of the prompt — for a task that used seven tools.
+  // The rule the set below encodes: a request carries the FULL schema only for
+  // tools that are core, and a catalog line for everything else.
+  //
+  // CORE, and deliberately never listed here: read_file, read_many, list_dir,
+  // write_file, edit_file, multi_edit, apply_patch, bash, bash_output,
+  // kill_shell, grep, glob, todo_write, read_back, record_evidence, ask_user,
+  // task, web_search, skill. That is read / write / edit / bash / search, the
+  // plan tools, the clarify tool, the read-only scout, and the one network
+  // reach the doctrine tells the model to make before it guesses.
+  //
+  // Each entry below is either a slash-command mode with a tool form, a
+  // narrative bookkeeping call, or a code-intelligence tool measured at 0.3%
+  // of all calls across three local session databases (2026-09-01). None of
+  // them is unreachable: the catalog names every one, `load_tools` returns the
+  // exact schema, and calling one without loading it still executes.
+  "research",
+  "workflow",
+  "loop_control",
+  "compact_context",
+  "web_fetch",
+  "lsp",
+  "symbol_search",
+  "search_code",
+  "note_hypothesis",
+  "record_decision",
+  // The write-capable delegate. `task` (the read-only scout) stays eager, so
+  // fan-out investigation costs nothing extra; a parallel BUILD is a decision
+  // big enough to carry one load_tools call, and the delegation doctrine it
+  // needs is itself just-in-time already.
+  "worker",
 ]);
 
 /** MCP tools carry this prefix (see McpClient.createHandler). */

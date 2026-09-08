@@ -273,6 +273,23 @@ export function formatRunEconomics(e: RunEconomics): CostReportLine[] {
         tone: "muted",
       });
     }
+    // Which way the fixed overhead moved across the run (P13.1). The averages
+    // above hide it: the opening completion carries the opening doctrine, and
+    // the tool surface grows as catalogued tools are loaded. Only shown when
+    // the two actually differ — on a one-completion run they cannot.
+    const { fixedFirst, fixedLast } = e.composition;
+    if (e.composition.measured > 1 && fixedFirst !== fixedLast) {
+      const delta = fixedLast - fixedFirst;
+      lines.push({
+        label: "  fixed overhead",
+        value: `${formatBytes(fixedFirst)} → ${formatBytes(fixedLast)}`,
+        note:
+          delta < 0
+            ? `${formatBytes(-delta)} less doctrine + schema on the last call than the first`
+            : `${formatBytes(delta)} more — tools were loaded into the prompt mid-run`,
+        tone: "muted",
+      });
+    }
   }
 
   if (e.unpricedModels.length > 0) {
