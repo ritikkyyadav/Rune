@@ -866,6 +866,8 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   "deepseek/deepseek-v4-flash:free": { inputPerMillion: 0, outputPerMillion: 0 },
   "deepseek/deepseek-r1:free": { inputPerMillion: 0, outputPerMillion: 0 },
   "minimax/minimax-m3:free": { inputPerMillion: 0, outputPerMillion: 0 },
+  // Verified 2026-09-08: https://openrouter.ai/nvidia/nemotron-3-super-120b-a12b:free
+  "nvidia/nemotron-3-super-120b-a12b:free": { inputPerMillion: 0, outputPerMillion: 0 },
   "nvidia/nemotron-3-ultra-550b-a55b:free": { inputPerMillion: 0, outputPerMillion: 0 },
   "stealth/ox-alpha": { inputPerMillion: 0, outputPerMillion: 0 },
 };
