@@ -865,6 +865,34 @@ describe("Self-protection paths are relative to the workspace", () => {
     expect(isSelfProtectionPath(WORKTREE, "src/hooks/use-thing.ts")).toBe(false);
   });
 
+  // P12.3: user skills are a documented surface now — `rune skill add` puts a
+  // SKILL.md under .rune/skills and `/name` loads it. Reading one is how the
+  // agent finds out what it was asked to follow; the breaker guards WRITES.
+  test("reading a user skill is not a guardrail change", async () => {
+    const { controller } = setup(["ALLOW"]);
+    const review = await controller.startRun(["Follow the release checklist."]).review({
+      ...action("read", { path: ".rune/skills/release-checklist/SKILL.md" }),
+      workspaceRoot: WORKTREE,
+    });
+    expect(review.verdict).not.toBe("deny");
+    expect(review.source).not.toBe("guardrail_circuit_breaker");
+  });
+
+  test("writing a user skill is still refused", async () => {
+    const { controller, classifier } = setup(["ALLOW"]);
+    const review = await controller.startRun(["Write yourself a skill."]).review({
+      ...action(
+        "write",
+        { path: ".rune/skills/release-checklist/SKILL.md", content: "---\nname: x\n---\n" },
+        { exactGrant: true },
+      ),
+      workspaceRoot: WORKTREE,
+    });
+    expect(review.verdict).toBe("deny");
+    expect(review.source).toBe("guardrail_circuit_breaker");
+    expect(classifier.calls).toHaveLength(0);
+  });
+
   test("a write to the workspace's own hooks file is refused", async () => {
     const { controller, classifier } = setup(["ALLOW"]);
     const review = await controller.startRun(["Improve the project hooks."]).review({

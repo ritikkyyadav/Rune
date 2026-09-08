@@ -90,6 +90,7 @@ import {
   resolveTier,
   PROVIDER_TIER_DEFAULTS,
   getRuneHome,
+  runeHomePath,
   workspaceConfigPath,
   setToolArgsSalvageListener,
 } from "@rune/shared";
@@ -2695,6 +2696,10 @@ export class Engine {
     }
     const userSkills = workspaceConfigPath(this.config.workspaceRoot, "skills");
     if (existsSync(userSkills)) roots.push(userSkills);
+    // The person's own skills, available in every workspace. After the
+    // workspace root, so a repository's copy of a name wins over the home one.
+    const homeSkills = runeHomePath("skills");
+    if (existsSync(homeSkills)) roots.push(homeSkills);
     // Plugin bundles: <plugins>/<name>/skills/<skill>/SKILL.md — the loader's
     // path-based attribution names each skill after its plugin directory.
     if (this.getPlugins().some((p) => p.hasSkills)) {
