@@ -2553,6 +2553,23 @@ export class Engine {
   }
 
   /**
+   * Re-handshake one connector (or start one that never came up), then
+   * reconcile its tools into the live registry — backs `/mcp reconnect`.
+   *
+   * A fixed typo in `mcp.json` used to need a restart of the whole session,
+   * because a connector with no client had nothing to reconnect and the
+   * registry was only reconciled on a server's own list-changed notification.
+   */
+  async reconnectMcpServer(name: string): Promise<boolean> {
+    await this.ensureMcpServers();
+    if (!this.mcpDiscovery) return false;
+    const ok = await this.mcpDiscovery.reconnect(name).catch(() => false);
+    this.reconcileMcpTools();
+    if (ok) this.mcpUnavailable.delete(name);
+    return ok;
+  }
+
+  /**
    * Executable tools from `<workspace>/.rune/tools`, behind `[extensions]
    * localTools = true` (D6).
    *
