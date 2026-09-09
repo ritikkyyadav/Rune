@@ -18,7 +18,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 const repoRoot = join(import.meta.dir, "../../..");
 
@@ -38,7 +38,7 @@ const MANIFESTS = [
 ];
 
 function manifestVersion(relOrAbs: string): string | undefined {
-  const path = relOrAbs.startsWith("/") ? relOrAbs : join(repoRoot, relOrAbs);
+  const path = isAbsolute(relOrAbs) ? relOrAbs : join(repoRoot, relOrAbs);
   const pkg = JSON.parse(readFileSync(path, "utf-8")) as { version?: string };
   return pkg.version;
 }
