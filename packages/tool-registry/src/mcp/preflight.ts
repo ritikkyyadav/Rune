@@ -14,7 +14,7 @@
 
 import { accessSync, constants, existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { delimiter, dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
 import type { McpServerConfig } from "./discovery";
 
 export interface McpPreflightProblem {
@@ -92,8 +92,15 @@ export function nearestExistingPath(target: string): string | null {
   const full = resolve(expandHome(target));
   if (existsSync(full)) return null;
 
-  const parts = full.split(sep).filter(Boolean);
-  let current: string = sep;
+  // The walk starts at the path's OWN root, which is `/` on POSIX and the drive
+  // on Windows (`C:\`, or `\\server\share\` for a UNC path). Starting at the
+  // separator instead cost Windows the whole check: `C:\Users\…` split on `\`
+  // makes `C:` an ordinary segment, `\C:` does not exist, and the suggester
+  // either walked the wrong volume or gave up — so a mistyped connector path on
+  // Windows got "create it" where macOS got the corrected path.
+  const { root } = parse(full);
+  const parts = full.slice(root.length).split(sep).filter(Boolean);
+  let current: string = root;
   let corrected = false;
 
   for (const part of parts) {
@@ -129,25 +136,58 @@ export function nearestExistingPath(target: string): string | null {
   return corrected && existsSync(current) ? current : null;
 }
 
+/**
+ * The suffixes a bare command name may be wearing on disk.
+ *
+ * On Windows an executable IS its extension: `npx` is `npx.cmd`, `uvx` is
+ * `uvx.exe`, and npm and bun write `.cmd` shims rather than shebang scripts.
+ * Looking only for the literal name reported every one of them as "not on
+ * PATH" — a preflight that refuses a connector that would have started fine.
+ * `PATHEXT` is the list the shell itself uses, so use it, and keep the empty
+ * suffix first so an extensionless file still wins where one exists.
+ */
+function commandSuffixes(): string[] {
+  if (process.platform !== "win32") return [""];
+  const ext = process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD";
+  return [
+    "",
+    ...ext
+      .split(";")
+      .map((e) => e.trim())
+      .filter(Boolean),
+  ];
+}
+
 /** Is this name runnable — an executable on PATH, or a file we can execute? */
 export function resolveCommand(command: string): string | null {
   const expanded = expandHome(command);
   const executable = (p: string): boolean => {
     try {
       if (!statSync(p).isFile()) return false;
+      // X_OK is meaningless on Windows — every existing file answers yes — so
+      // the extension check above is what actually decides there.
       accessSync(p, constants.X_OK);
       return true;
     } catch {
       return false;
     }
   };
-  if (expanded.includes(sep) || isAbsolute(expanded)) {
-    return executable(resolve(expanded)) ? resolve(expanded) : null;
+  // A separator of EITHER kind means the user gave a path, not a PATH lookup:
+  // people write `C:/tools/server.exe` in a hand-edited JSON file as readily as
+  // they write it with backslashes.
+  if (expanded.includes(sep) || expanded.includes("/") || isAbsolute(expanded)) {
+    const abs = resolve(expanded);
+    for (const suffix of commandSuffixes()) {
+      if (executable(abs + suffix)) return abs + suffix;
+    }
+    return null;
   }
   for (const dir of (process.env.PATH ?? "").split(delimiter)) {
     if (!dir) continue;
-    const candidate = join(dir, expanded);
-    if (executable(candidate)) return candidate;
+    for (const suffix of commandSuffixes()) {
+      const candidate = join(dir, expanded + suffix);
+      if (executable(candidate)) return candidate;
+    }
   }
   return null;
 }

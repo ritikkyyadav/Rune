@@ -9,7 +9,7 @@
 import { afterEach, beforeAll, afterAll, describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   canContainCommand,
   getSandboxMode,
@@ -112,9 +112,12 @@ describe("resolveSandboxLaunch", () => {
       filesystem: { denyRead: [], allowWrite: ["~/.gradle"], denyWrite: ["dist"] },
     });
     const paths = sandboxPathsFor("/ws");
-    expect(paths.deny_write).toContain("/ws/.rune/hooks");
-    expect(paths.deny_write).toContain("/ws/.git/hooks");
-    expect(paths.deny_write).toContain("/ws/dist");
+    // Expanded policy paths wear the host's separator — the kernel that matches
+    // them knows one spelling per platform — so resolve the expectations the
+    // same way rather than pinning the POSIX literal.
+    expect(paths.deny_write).toContain(resolve("/ws", ".rune/hooks"));
+    expect(paths.deny_write).toContain(resolve("/ws", ".git/hooks"));
+    expect(paths.deny_write).toContain(resolve("/ws", "dist"));
     expect(paths.allow_write[0]).toMatch(/\.gradle$/);
   });
 });

@@ -8,7 +8,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   BUILTIN_WRITE_DENY,
   commandPatternMatches,
@@ -102,12 +102,18 @@ describe("excludedCommands grammar", () => {
   });
 });
 
+// An expanded policy path is absolute and wears the host's separator: the list
+// crosses into Rust and is matched by the kernel, which knows one spelling of a
+// path per platform. So the expectations are `resolve`d the same way the
+// implementation resolves them — on Windows `/ws/.rune/hooks` is
+// `D:\ws\.rune\hooks`, and asserting the POSIX literal would be asserting the
+// wrong answer rather than catching a wrong one.
 describe("paths", () => {
   test("expandSandboxPath resolves ~, $HOME, relative and absolute forms", () => {
     expect(expandSandboxPath("~/.gradle", "/ws")).toBe(join(homedir(), ".gradle"));
     expect(expandSandboxPath("$HOME/x", "/ws")).toBe(join(homedir(), "x"));
-    expect(expandSandboxPath(".rune/hooks", "/ws")).toBe("/ws/.rune/hooks");
-    expect(expandSandboxPath("/opt/cache", "/ws")).toBe("/opt/cache");
+    expect(expandSandboxPath(".rune/hooks", "/ws")).toBe(resolve("/ws", ".rune/hooks"));
+    expect(expandSandboxPath("/opt/cache", "/ws")).toBe(resolve("/opt/cache"));
   });
 
   test("effectiveSandboxPaths always carries the built-in write denials", () => {
@@ -117,9 +123,9 @@ describe("paths", () => {
     );
     expect(paths.deny_read).toEqual([join(homedir(), "Private")]);
     expect(paths.allow_write).toEqual([join(homedir(), ".gradle")]);
-    expect(paths.deny_write).toContain("/ws/.rune/hooks");
-    expect(paths.deny_write).toContain("/ws/.git/hooks");
-    expect(paths.deny_write).toContain("/ws/dist");
+    expect(paths.deny_write).toContain(resolve("/ws", ".rune/hooks"));
+    expect(paths.deny_write).toContain(resolve("/ws", ".git/hooks"));
+    expect(paths.deny_write).toContain(resolve("/ws", "dist"));
     expect(paths.deny_write.length).toBe(BUILTIN_WRITE_DENY.length + 1);
   });
 });
