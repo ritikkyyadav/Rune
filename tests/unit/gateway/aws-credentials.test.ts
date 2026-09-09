@@ -344,7 +344,9 @@ describe("the cached resolver", () => {
       env: {},
       readFileImpl: async (path: string) => {
         reads++;
-        return path.endsWith("/credentials") ? CREDENTIALS_FILE : CONFIG_FILE;
+        return (path.split(/[\\/]/).pop() ?? path) === "credentials"
+          ? CREDENTIALS_FILE
+          : CONFIG_FILE;
       },
     });
     await resolve();
