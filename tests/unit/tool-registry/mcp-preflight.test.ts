@@ -78,9 +78,14 @@ describe("preflight — the command", () => {
     expect(problems[0]!.fix).toContain("rune-no-such-binary-xyz");
   });
 
+  // The interpreter every machine has, which is not the same one on every
+  // machine: Windows has no `sh` on PATH and reaches `cmd`, whose file on disk
+  // is `cmd.exe` — the PATHEXT case `resolveCommand` has to get right.
+  const SHELL = process.platform === "win32" ? "cmd" : "sh";
+
   test("finds a command that is", () => {
-    expect(resolveCommand("sh")).toBeTruthy();
-    expect(preflightServer("fine", { command: "sh", args: ["-c", "true"] })).toEqual([]);
+    expect(resolveCommand(SHELL)).toBeTruthy();
+    expect(preflightServer("fine", { command: SHELL, args: ["-c", "true"] })).toEqual([]);
   });
 
   test("points a Node-based server at Node rather than at nothing", () => {
