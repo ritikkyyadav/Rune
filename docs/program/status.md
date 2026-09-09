@@ -1,5 +1,21 @@
 # Program status
 
+**2026-09-09, the first fully green CI run, and v0.4.1.** Lane P13.3 took the Windows unit job from
+about nineteen failures to two using only the CI log: two were product defects — the plugin
+integrity digest hashed raw bytes, so a `core.autocrlf` checkout failed every plugin's verification,
+and the MCP connector preflight neither found `.cmd`/`.exe` commands nor suggested paths on a drive
+— the rest were tests spelling paths one platform's way, and five hook tests now skip on Windows
+because `hooks.ts` still spawns `/bin/sh` (backlog P10.2). Two leftovers (an absolute-path check
+written as a leading slash, a fixture matching a POSIX suffix) went in b04dff1, and run 34332238432
+came back **22 of 22 green** in six minutes, the first fully green run since the repository went
+public. **v0.4.1** was tagged at 5a808b4 and the release workflow published all eleven assets with
+**13 of 13 jobs green, the Windows fresh-machine install included** — install, `--version`,
+`doctor`, `tools-smoke`, a headless prompt and `serve --check`, the step v0.4.0 failed. The release
+commit's own CI run then failed one Windows unit test: the Python syntax checker's three-second
+budget expired on a cold interpreter start and the runner reported the file _clean_ instead of
+_inconclusive_; a timeout now returns null (785de65) and the test warms the interpreter first.
+Installed locally from the tagged tree: `Rune v0.4.1`.
+
 **2026-09-08 (night), three unverified cells verified.** The Windows release log, read with a
 re-authenticated `gh`: install, `--version`, `doctor`, `tools-smoke` and a real headless prompt all
 passed on the fresh Windows runner; only `rune serve --check` failed, at "opening a session over the
