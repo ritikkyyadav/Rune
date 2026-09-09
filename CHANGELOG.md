@@ -13,6 +13,10 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ### Fixed
 
+- **Todo‑write now normalises and validates flexible inputs.** Previously malformed payloads (strings with
+  markdown checkboxes, missing status, synonym fields, read‑back shapes) caused schema rejections and
+  wasted completions. The tool now coerces these forms into the canonical `{content, status, kind?}` shape,
+  maps status/kind synonyms, adds default status, and rejects unsupported shapes with clear examples.
 - **A syntax checker that runs out of time reports nothing, not a clean file.** The post-edit
   checkers (`bash -n`, `python3 ast.parse`) get three seconds; one killed at the deadline exits
   non-zero with empty stderr, which was read as "no issues". It now reads as inconclusive, the same
