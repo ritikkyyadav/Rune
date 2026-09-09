@@ -15,7 +15,18 @@ import {
 import type { Message } from "../../../packages/llm-gateway/src/types";
 const dirs: string[] = [];
 afterEach(() => {
-  for (const p of dirs.splice(0)) rmSync(p, { recursive: true, force: true });
+  for (const p of dirs.splice(0)) {
+    // Windows keeps a directory busy for a moment after the SQLite file inside
+    // it is closed — the handle, its WAL sidecars and any scanner reading them
+    // are released asynchronously — so this removal raised EBUSY on
+    // windows-latest and failed a test whose assertions had all passed. Retry,
+    // then let it go: a temp directory the OS will reap is not a test result.
+    try {
+      rmSync(p, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+    } catch {
+      /* the directory outlives the run rather than failing it */
+    }
+  }
 });
 
 test("a child retains findings across follow-up, process restart, and parent scoping", async () => {

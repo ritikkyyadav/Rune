@@ -37,17 +37,25 @@ region = us-west-2
 region = eu-central-1
 `;
 
-/** Serve the two shared files by path; anything else is "missing". */
+/**
+ * Serve the two shared files by name; anything else is "missing".
+ *
+ * The resolver builds its paths with `join(home, ".aws", "credentials")`, so on
+ * Windows it asks for `C:\Users\…\.aws\credentials` and a `/credentials`
+ * suffix match would answer ENOENT to every rung. Match on the last SEGMENT
+ * instead, which is the same question on both separators.
+ */
 function files(map: Record<string, string>) {
   return async (path: string) => {
-    for (const [suffix, body] of Object.entries(map)) {
-      if (path.endsWith(suffix)) return body;
+    const name = path.split(/[\\/]/).pop() ?? path;
+    for (const [key, body] of Object.entries(map)) {
+      if (name === key) return body;
     }
     throw new Error("ENOENT");
   };
 }
 
-const SHARED = files({ "/credentials": CREDENTIALS_FILE, "/config": CONFIG_FILE });
+const SHARED = files({ credentials: CREDENTIALS_FILE, config: CONFIG_FILE });
 
 /** A fetch that fails the test if anything reaches the network. */
 const noNetwork = (async () => {
@@ -167,7 +175,7 @@ describe("rung 3: web identity", () => {
         AWS_ROLE_ARN: "arn:aws:iam::1:role/rune",
         AWS_REGION: "us-east-2",
       },
-      readFileImpl: files({ "/var/run/token": "oidc-token-value" }),
+      readFileImpl: files({ token: "oidc-token-value" }),
       fetchImpl: (async (url: string, init: RequestInit) => {
         seen = { url: String(url), body: String(init.body) };
         return new Response(
@@ -196,7 +204,7 @@ describe("rung 3: web identity", () => {
   test("an STS refusal resolves to nothing rather than throwing", async () => {
     const cred = await resolveAwsCredentials({
       env: { AWS_WEB_IDENTITY_TOKEN_FILE: "/t", AWS_ROLE_ARN: "arn:x" },
-      readFileImpl: files({ "/t": "tok" }),
+      readFileImpl: files({ t: "tok" }),
       fetchImpl: (async () => new Response("denied", { status: 403 })) as unknown as typeof fetch,
     });
     expect(cred).toBeNull();
