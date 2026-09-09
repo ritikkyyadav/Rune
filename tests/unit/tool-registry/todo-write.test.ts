@@ -138,15 +138,29 @@ describe("createTodoWriteHandler", () => {
     expect(result.valid).toBe(true);
   });
 
-  test("rejects read‑back shape with helpful message", () => {
+  // --- canonical kinds must survive validation ---
+  test("preserves canonical kind 'inspect'", () => {
+    const result = handler.validate({ items: [{ content: "c1", kind: "inspect" }] });
+    expect(result.valid).toBe(true);
+  });
+  test("preserves canonical kind 'change' (case-insensitive)", () => {
+    const result = handler.validate({ items: [{ content: "c2", kind: "Change" }] });
+    expect(result.valid).toBe(true);
+  });
+  test("preserves canonical kind 'verify'", () => {
+    const result = handler.validate({ items: [{ content: "c3", kind: "verify" }] });
+    expect(result.valid).toBe(true);
+  });
+
+  test("rejects read-back shape with helpful message", () => {
     const result = handler.validate({
       items: [{ done_when: [], reading: "you" }],
     });
     expect(result.valid).toBe(false);
-    expect(result.error).toMatch(/read‑back shape/);
+    expect(result.error).toMatch(/read-back shape/);
   });
 
-  test("rejects non‑object item like number", () => {
+  test("rejects non-object item like number", () => {
     const result = handler.validate({ items: [42] });
     expect(result.valid).toBe(false);
     expect(result.error).toMatch(/number/);

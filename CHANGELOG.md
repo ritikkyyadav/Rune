@@ -13,10 +13,15 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ### Fixed
 
-- **Todo‑write now normalises and validates flexible inputs.** Previously malformed payloads (strings with
-  markdown checkboxes, missing status, synonym fields, read‑back shapes) caused schema rejections and
-  wasted completions. The tool now coerces these forms into the canonical `{content, status, kind?}` shape,
-  maps status/kind synonyms, adds default status, and rejects unsupported shapes with clear examples.
+- **`todo_write` accepts the shapes models actually send.** Thirteen of the last twenty-one recorded
+  tool failures were plan-ledger calls the validator refused: bare strings with a markdown checkbox,
+  items with `content` but no `status`, and the read-back tool's shape sent to the wrong tool. Each
+  refusal cost a completion. The tool now normalizes once, in `normalizeTodoItems`: checkbox strings
+  become items, a missing status is `pending`, status and kind synonyms map to the canonical words,
+  a canonical kind is kept as written, an unknown kind is dropped, and a shape it cannot read is
+  refused with what was received and a one-line correct example. A normalizer failure at execution
+  returns an error, never an empty plan. Written by Rune itself on `ollama-turbo/gpt-oss:120b`
+  (sessions 01a086b0 and 01a086b7) in its own tree, reviewed and finished by hand.
 - **A syntax checker that runs out of time reports nothing, not a clean file.** The post-edit
   checkers (`bash -n`, `python3 ast.parse`) get three seconds; one killed at the deadline exits
   non-zero with empty stderr, which was read as "no issues". It now reads as inconclusive, the same

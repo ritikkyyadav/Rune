@@ -96,22 +96,23 @@ export function normalizeTodoItems(
       let content: unknown = obj.content;
       if (typeof content !== "string" || !content) {
         for (const key of contentSynonyms) {
-          if (typeof (obj as any)[key] === "string" && (obj as any)[key]) {
-            content = (obj as any)[key];
+          const maybe = obj[key];
+          if (typeof maybe === "string" && maybe) {
+            content = maybe;
             break;
           }
         }
       }
       if (typeof content !== "string" || !content) {
-        // likely a read‑back shape – special message
+        // likely a read-back shape – special message
         const hasReadBackKeys = ["done_when", "reading", "leave", "touch"].some((k) => k in obj);
         if (hasReadBackKeys) {
           return {
             ok: false,
-            error: `items[${i}] appears to be a read‑back shape, which is not a valid todo_write payload. Example: ${example}`,
+            error: `items[${i}] appears to be a read-back shape, which is not a valid todo_write payload. Example: ${example}`,
           };
         }
-        return { ok: false, error: `items[${i}] missing non‑empty content. Example: ${example}` };
+        return { ok: false, error: `items[${i}] missing non-empty content. Example: ${example}` };
       }
 
       // status extraction & mapping
@@ -135,7 +136,12 @@ export function normalizeTodoItems(
       let kind: "inspect" | "change" | "verify" | undefined;
       if (typeof obj.kind === "string") {
         const lowerKind = obj.kind.toLowerCase();
-        if (lowerKind in kindSynonyms) kind = kindSynonyms[lowerKind];
+        // Preserve canonical kinds (case-insensitive) rather than dropping them.
+        if (lowerKind === "inspect" || lowerKind === "change" || lowerKind === "verify") {
+          kind = lowerKind as typeof kind;
+        } else if (lowerKind in kindSynonyms) {
+          kind = kindSynonyms[lowerKind];
+        }
       }
 
       normalized.push({ content: content as string, status, ...(kind ? { kind } : {}) });
@@ -206,7 +212,8 @@ export function createTodoWriteHandler(): ToolHandler {
     schema: TODO_WRITE_SCHEMA,
 
     validate: (args) => {
-      const result = normalizeTodoItems((args as any).items);
+      const { items } = args as { items: unknown };
+      const result = normalizeTodoItems(items);
       if (!result.ok) {
         return { valid: false, error: result.error };
       }
@@ -215,10 +222,19 @@ export function createTodoWriteHandler(): ToolHandler {
 
     execute: async (input: ToolCallInput): Promise<ToolCallOutput> => {
       const start = performance.now();
-      const rawItems = (input.args as any).items;
+      const { items: rawItems } = input.args as { items: unknown };
       const norm = normalizeTodoItems(rawItems);
+      if (!norm.ok) {
+        return {
+          callId: input.callId,
+          toolName: input.toolName,
+          success: false,
+          result: norm.error,
+          durationMs: Math.round(performance.now() - start),
+        };
+      }
       // Validation already ran, but ensure we output canonical form
-      const items = norm.ok ? norm.items : [];
+      const items = norm.items;
       return {
         callId: input.callId,
         toolName: input.toolName,
