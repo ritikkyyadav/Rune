@@ -77,7 +77,11 @@ describe("rune pr <n> (a real fetch, a real worktree, a fake pull request)", () 
     git(seed, ["commit", "-qm", "flip the operator"]);
     const head = git(seed, ["rev-parse", "HEAD"]);
 
-    git(dir, ["init", "-q", "--bare", remote]);
+    // `-b main` on the bare remote too: a clone checks out whatever the
+    // remote's HEAD names, and a bare `git init` names `init.defaultBranch`,
+    // which is `master` on the Linux runner — the clone then sat on `master`
+    // and the "local is untouched, still on main" assertion below failed there.
+    git(dir, ["init", "-q", "--bare", "-b", "main", remote]);
     git(seed, ["push", "-q", remote, "main"]);
     // The ref GitHub publishes for every open pull request. Writing it by hand
     // is the whole trick: `rune pr` needs nothing else from a remote.
