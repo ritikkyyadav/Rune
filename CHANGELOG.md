@@ -63,6 +63,20 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
   hosts — and then exited 1 removing its scratch directory, because Windows keeps a just-exited
   host's working directory open for a moment and `rmSync` answers EBUSY. The removal retries and
   never fails the check; the eval harness and the comparison test retry the same way.
+- **Plugin verification works on a Windows checkout.** A plugin's integrity digest hashed the
+  bytes on disk, so a tree git checked out with `core.autocrlf=true` produced a different digest
+  from the published one, and every plugin carrying a text file would have failed `rune plugin add`
+  on Windows. The digest now folds CRLF to LF before hashing — as a byte filter, never a decode, so
+  invalid UTF-8 is not mangled, and a file containing NUL is hashed verbatim as binary. Published
+  digests are unchanged. Reproduced from macOS: the LF and CRLF digests of one plugin file are
+  exactly the pair the Windows CI job printed.
+- **The MCP connector preflight tells the truth on Windows.** It looked for a command by its literal
+  name on `PATH`, where `npx` is `npx.cmd` and `uvx` is `uvx.exe`, so a working connector was
+  reported missing with an install line for something already installed; it now tries each
+  `PATHEXT` suffix and reads a name containing a slash as a path. Its "did you mean" suggestion
+  walked up from the path separator, which on a Windows drive stops at `C:` and answered "create
+  it" where macOS names the directory; it now starts from the parsed root, right for a drive
+  letter and a UNC share.
 - **A host that fails to start names itself**, says whether it is still running, and prints the
   tail of its own log, instead of a bare four-word socket error.
 - **`rune detach` runs on the route you gave it.** `-p`, `-m` and `--gear` were parsed and
