@@ -11,6 +11,14 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-09
+
+The Windows release, cut from the first fully green CI run on the public repository: 22 of 22
+jobs on 2026-09-09, including the Windows unit suite, which had been red on every run since the
+repository went public, and the packaged `rune serve --check` on a Windows runner over both host
+transports. The v0.4.0 Windows binary installed and answered a prompt but could not host a session.
+0.4.1 adds no agent capability.
+
 ### Changed
 
 - **Prompts carry only the tool schemas a turn can use.** Core tools (read, write, edit, bash,
@@ -411,7 +419,8 @@ evidence, the terminal was rewritten, and the cost and safety subsystems were ma
 
 Version bump, installer polish, and install-from-GitHub documentation.
 
-[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/ritikkyyadav/Rune/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/ritikkyyadav/Rune/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/ritikkyyadav/Rune/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/ritikkyyadav/Rune/compare/v0.2.0...v0.3.0
