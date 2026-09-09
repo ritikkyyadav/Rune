@@ -111,10 +111,18 @@ function checkJson(content: string): SyntaxIssue[] {
 async function runChecker(argv: string[], errorPattern: RegExp): Promise<SyntaxIssue[] | null> {
   try {
     const proc = Bun.spawn(argv, { stdout: "ignore", stderr: "pipe", stdin: "ignore" });
-    const timer = setTimeout(() => proc.kill(), CHECK_TIMEOUT_MS);
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      proc.kill();
+    }, CHECK_TIMEOUT_MS);
     const stderr = await new Response(proc.stderr).text();
     const exitCode = await proc.exited;
     clearTimeout(timer);
+    // A checker killed at the deadline has said nothing about the file. On a
+    // cold CI runner a python start alone can outlast the budget, and "no
+    // diagnostics" here must mean inconclusive, never clean.
+    if (timedOut) return null;
     if (exitCode === 0) return [];
     const issues: SyntaxIssue[] = [];
     for (const line of stderr.split("\n")) {
@@ -133,7 +141,8 @@ async function runChecker(argv: string[], errorPattern: RegExp): Promise<SyntaxI
 
 /**
  * Syntax-check a file. Returns the issues found ([] = clean), or null when no
- * checker applies (unknown extension, checker unavailable, file too big).
+ * checker applies (unknown extension, checker unavailable, file too big) or
+ * the checker ran out of time.
  */
 export async function checkSyntax(path: string, content: string): Promise<SyntaxIssue[] | null> {
   if (Buffer.byteLength(content, "utf8") > MAX_CHECK_BYTES) return null;

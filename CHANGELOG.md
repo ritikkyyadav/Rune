@@ -11,6 +11,14 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+### Fixed
+
+- **A syntax checker that runs out of time reports nothing, not a clean file.** The post-edit
+  checkers (`bash -n`, `python3 ast.parse`) get three seconds; one killed at the deadline exits
+  non-zero with empty stderr, which was read as "no issues". It now reads as inconclusive, the same
+  as a missing interpreter. Found by the v0.4.1 release commit's Windows CI run, where a cold
+  `python3` start alone outlasted the budget.
+
 ## [0.4.1] - 2026-09-09
 
 The Windows release, cut from the first fully green CI run on the public repository: 22 of 22
