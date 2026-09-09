@@ -162,11 +162,45 @@ function resolveToolProgram(root: string, program: string): string | null {
 const INTEGRITY_SKIP = new Set([".git", "node_modules", ".DS_Store", ".turbo"]);
 
 /**
+ * The bytes a text file is hashed by, with CRLF folded to LF.
+ *
+ * A plugin tree arrives through git, and git on Windows checks text out with
+ * CRLF by default (`core.autocrlf=true` is the Git-for-Windows default and the
+ * GitHub runner's). Hashing the raw bytes therefore gave a Windows checkout a
+ * different digest from the one `rune plugin add` published from macOS, so
+ * EVERY plugin carrying a text file failed its integrity check on Windows —
+ * which is not a tampered tree, it is the same tree with the line endings the
+ * platform asked for. `ts-windows` caught it on this repository's own bundled
+ * example: sha256-8279f78… on LF, sha256-de5693e… on CRLF.
+ *
+ * A file with a NUL byte is binary and is hashed verbatim: an executable or an
+ * image must not have anything about it normalised away. The check this weakens
+ * is "these two text files differ only in line endings", which is exactly the
+ * difference the transport introduces and never a difference an attacker gains
+ * anything by.
+ *
+ * The fold is done on the BYTES — drop each 0x0D that a 0x0A follows — rather
+ * than by decoding to a string, so a file that is not valid UTF-8 is never
+ * quietly rewritten into replacement characters on its way into the hash.
+ */
+function digestBytes(buf: Buffer): Buffer {
+  if (buf.includes(0)) return buf;
+  const out = Buffer.allocUnsafe(buf.length);
+  let n = 0;
+  for (let i = 0; i < buf.length; i++) {
+    if (buf[i] === 0x0d && buf[i + 1] === 0x0a) continue;
+    out[n++] = buf[i]!;
+  }
+  return n === buf.length ? buf : out.subarray(0, n);
+}
+
+/**
  * sha256 over the plugin tree: every file's workspace-relative path and its
  * bytes, in sorted order, so the digest is stable across machines and
- * checkouts. `integrity` in the manifest is excluded by construction — it is
- * computed BEFORE the field is written, and verification recomputes the same
- * way by blanking the field first.
+ * checkouts — including across the line endings git hands each platform.
+ * `integrity` in the manifest is excluded by construction — it is computed
+ * BEFORE the field is written, and verification recomputes the same way by
+ * blanking the field first.
  */
 export function computeIntegrity(root: string): string {
   const hash = createHash("sha256");
@@ -200,11 +234,11 @@ export function computeIntegrity(root: string): string {
           delete parsed.integrity;
           hash.update(JSON.stringify(parsed, Object.keys(parsed).sort()));
         } catch {
-          hash.update(readFileSync(abs));
+          hash.update(digestBytes(readFileSync(abs)));
         }
       } else {
         try {
-          hash.update(readFileSync(abs));
+          hash.update(digestBytes(readFileSync(abs)));
         } catch {
           // An unreadable file makes the digest differ, which is the point.
           hash.update("<unreadable>");
