@@ -91,8 +91,9 @@ of a socket file's permissions.)
 
 This is what v0.4.0 shipped broken. The Windows binary passed install, `--version`, `doctor`,
 `tools-smoke` and a real headless prompt, and then `serve --check` sat for twenty seconds and
-printed Bun's `Failed to connect`, because the unix-socket dial was written once for every
-platform. The half that only Windows could run was therefore the half nothing ever ran.
+printed Bun's `Failed to connect`, because the unix-socket dial was written once for every platform.
+The half that only Windows could run was therefore the half nothing ever ran. The v0.4.1 release
+workflow ran that same Windows fresh-machine job green on 2026-09-09, `serve --check` included.
 
 `RUNE_HOST_TRANSPORT=tcp` forces the Windows transport anywhere, and CI uses it: `packaged-e2e`
 runs `serve --check` twice on every platform, once per transport, and `ts-windows` now runs it
