@@ -75,18 +75,95 @@ describe("createTodoWriteHandler", () => {
     expect(result.error).toMatch(/content/);
   });
 
-  test("rejects item with invalid status", () => {
+  test("accepts item with status synonym 'done' as completed", () => {
     const result = handler.validate({
       items: [{ content: "Do work", status: "done" }],
     });
-    expect(result.valid).toBe(false);
-    expect(result.error).toMatch(/status/);
+    expect(result.valid).toBe(true);
   });
 
-  test("rejects non-object item in array", () => {
+  test("accepts string shortcut items", () => {
     const result = handler.validate({ items: ["not-an-object"] });
+    expect(result.valid).toBe(true);
+  });
+
+  // --- validate: coercions and edge cases ---
+  test("coerces string with completed checkbox", () => {
+    const result = handler.validate({ items: ["[x] Done thing"] });
+    expect(result.valid).toBe(true);
+  });
+
+  test("coerces string with pending checkbox", () => {
+    const result = handler.validate({ items: ["[ ] Pending thing"] });
+    expect(result.valid).toBe(true);
+  });
+
+  test("coerces string with dash prefix", () => {
+    const result = handler.validate({ items: ["- simple task"] });
+    expect(result.valid).toBe(true);
+  });
+
+  test("adds missing status as pending", () => {
+    const result = handler.validate({ items: [{ content: "no status" }] });
+    expect(result.valid).toBe(true);
+  });
+
+  test("maps status synonyms to completed", () => {
+    const result = handler.validate({ items: [{ content: "x", status: "done" }] });
+    expect(result.valid).toBe(true);
+  });
+
+  test("maps status synonyms to in_progress", () => {
+    const result = handler.validate({ items: [{ content: "x", status: "wip" }] });
+    expect(result.valid).toBe(true);
+  });
+
+  test("maps status synonyms to pending", () => {
+    const result = handler.validate({ items: [{ content: "x", status: "open" }] });
+    expect(result.valid).toBe(true);
+  });
+
+  test("accepts content synonym title", () => {
+    const result = handler.validate({ items: [{ title: "my title" }] });
+    expect(result.valid).toBe(true);
+  });
+
+  test("maps kind synonym to inspect", () => {
+    const result = handler.validate({ items: [{ content: "look", kind: "review" }] });
+    expect(result.valid).toBe(true);
+  });
+
+  test("drops unknown kind without error", () => {
+    const result = handler.validate({ items: [{ content: "task", kind: "unknown" }] });
+    expect(result.valid).toBe(true);
+  });
+
+  // --- canonical kinds must survive validation ---
+  test("preserves canonical kind 'inspect'", () => {
+    const result = handler.validate({ items: [{ content: "c1", kind: "inspect" }] });
+    expect(result.valid).toBe(true);
+  });
+  test("preserves canonical kind 'change' (case-insensitive)", () => {
+    const result = handler.validate({ items: [{ content: "c2", kind: "Change" }] });
+    expect(result.valid).toBe(true);
+  });
+  test("preserves canonical kind 'verify'", () => {
+    const result = handler.validate({ items: [{ content: "c3", kind: "verify" }] });
+    expect(result.valid).toBe(true);
+  });
+
+  test("rejects read-back shape with helpful message", () => {
+    const result = handler.validate({
+      items: [{ done_when: [], reading: "you" }],
+    });
     expect(result.valid).toBe(false);
-    expect(result.error).toMatch(/object/);
+    expect(result.error).toMatch(/read-back shape/);
+  });
+
+  test("rejects non-object item like number", () => {
+    const result = handler.validate({ items: [42] });
+    expect(result.valid).toBe(false);
+    expect(result.error).toMatch(/number/);
   });
 
   // --- execute: result shape ---
@@ -116,5 +193,15 @@ describe("createTodoWriteHandler", () => {
     expect(parsed.items).toHaveLength(1);
     expect(parsed.items[0].content).toBe("Only task");
     expect(parsed.items[0].status).toBe("completed");
+  });
+
+  test("execute normalises string shortcut to canonical shape", async () => {
+    const raw = { items: ["[x] Done thing", "- simple"] } as any;
+    const output = await handler.execute({ ...FAKE_INPUT, args: raw });
+    const parsed = JSON.parse(output.result);
+    expect(parsed.items).toEqual([
+      { content: "Done thing", status: "completed" },
+      { content: "simple", status: "pending" },
+    ]);
   });
 });
